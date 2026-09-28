@@ -8,6 +8,7 @@ import {
   DocumentedApiLimitation,
   documentedApiOperations,
   documentedCredentialHeader,
+  documentedProbeRead,
   EFFECT_LENGTH,
   HttpAdapter,
   HTTP_TIMEOUT_MS,
@@ -17,6 +18,7 @@ import {
   type ApiConnector,
 } from '../../../src/surfaces/http';
 import { READ_EFFECT_LENGTH } from '../../../src/surfaces/mock';
+import { TransientProviderError } from '../../../src/lib/transport-error';
 import type {
   AdapterRun,
   BeforeSurfaceTransport,
@@ -89,6 +91,9 @@ function adapter(
   return new HttpAdapter(surfaces, {
     decrypt: vi.fn(async (): Promise<string> => secret),
     fetch: fetchImpl.fetch,
+    // A documented API that is not Slack is reached through the checked
+    // connector; here it answers from the same fake, with no DNS.
+    connect: async (endpoint: string) => ({ url: new URL(endpoint), fetch: fetchImpl.fetch }),
     now: (): number => now,
     beforeTransport,
     spanModel: new RecordedSpanModel(),
@@ -348,7 +353,8 @@ describe('HTTP adapter', (): void => {
     );
     expect(badHeader).toMatchObject({
       ok: false,
-      reason: 'secret placeholders are not allowed in header names',
+      reason:
+        '{{secret}} goes only in a header value, never in the header name {{secret}}, so the credential was not sent',
     });
     expect(fetchImpl.calls).toHaveLength(0);
     await expect(adapter(fetchImpl).apply(ctx, run, post, 0, 'k')).resolves.toMatchObject({
@@ -487,6 +493,7 @@ const TRACKER_PAGE = [
   '- `GET /issues/{id}` reads one issue.',
   '- `DELETE https://other.example.com/api/v2/issues` belongs to another system.',
   '- `Content-Type: application/json` on every write.',
+  '- Probe read: `GET /issues`',
 ].join('\n');
 
 const TRACKER = 'https://tracker.example.com/api/v2/';
@@ -515,14 +522,17 @@ describe('the operations a documented API offers', (): void => {
       { method: 'GET', operation: 'issues' },
       { method: 'GET', operation: 'projects' },
       { method: 'POST', operation: 'comments' },
+      { method: 'GET', operation: 'issues/{id}' },
     ]);
   });
 
-  // The HTTP rung and the gate compare a request's path with the allowlist
-  // exactly, so a templated path could never match a real request.
-  it('leaves out a path with a parameter segment, which no request matches exactly', (): void => {
-    const page = '`GET /issues/{id}` `GET /issues/:id/comments` `PATCH /issues/<id>`';
-    expect(documentedApiOperations(page, TRACKER)).toEqual([]);
+  it('keeps a value segment as one template segment, whichever way the page spells it', (): void => {
+    const page = '`GET /issues/{id}` `GET /issues/:id/comments` `PATCH /issues/<key>`';
+    expect(documentedApiOperations(page, TRACKER)).toEqual([
+      { method: 'GET', operation: 'issues/{id}' },
+      { method: 'GET', operation: 'issues/{id}/comments' },
+      { method: 'PATCH', operation: 'issues/{key}' },
+    ]);
   });
 
   it('leaves out an address on another host or above the documented base', (): void => {
@@ -574,8 +584,36 @@ describe('the header a documented API takes its credential in', (): void => {
   });
 });
 
+describe('the read a page names for the probe', (): void => {
+  it('takes the documented probe read, and a plain path under the base only', (): void => {
+    expect(documentedProbeRead(TRACKER_PAGE, TRACKER)).toEqual({
+      method: 'GET',
+      operation: 'issues',
+    });
+    expect(
+      documentedProbeRead('Probe read: `GET https://tracker.example.com/api/v2/me?x=1`', TRACKER),
+    ).toEqual({ method: 'GET', operation: 'me' });
+    expect(documentedProbeRead('Probe read: `GET /issues/{id}`', TRACKER)).toBeUndefined();
+    expect(
+      documentedProbeRead('Probe read: `GET https://other.example/me`', TRACKER),
+    ).toBeUndefined();
+    expect(documentedProbeRead('Probe read: `POST /me`', TRACKER)).toBeUndefined();
+  });
+
+  it('never guesses one: a documented GET is not a probe read (review M2)', (): void => {
+    const page = '- `GET /auth/logout` signs the key out.\n- `GET /issues` lists the issues.';
+    expect(documentedApiOperations(page, TRACKER)).toHaveLength(2);
+    expect(documentedProbeRead(page, TRACKER)).toBeUndefined();
+  });
+
+  it('skips a named read the gate classes a write, and takes the next', (): void => {
+    const page = 'Probe read: `GET /tokens/revoke`\nProbe read: `GET /me`';
+    expect(documentedProbeRead(page, TRACKER)).toEqual({ method: 'GET', operation: 'me' });
+  });
+});
+
 describe('probing a documented API that is not Slack', (): void => {
-  it('checks the credential with the first documented read and admits every documented path', async (): Promise<void> => {
+  it('checks the credential with the documented probe read and admits every operation with its verb', async (): Promise<void> => {
     const tracker = trackerConnector(() => Response.json([{ id: 'TRK-1' }]));
     const discovery = await probeDocumentedApi(
       TRACKER,
@@ -584,7 +622,7 @@ describe('probing a documented API that is not Slack', (): void => {
       tracker.connect,
     );
     expect(discovery).toEqual({
-      toolAllowlist: ['issues', 'projects', 'comments'],
+      toolAllowlist: ['GET issues', 'GET projects', 'POST comments', 'GET issues/{id}'],
       toolArguments: [],
     });
     expect(tracker.calls).toHaveLength(1);
@@ -606,8 +644,21 @@ describe('probing a documented API that is not Slack', (): void => {
       ),
     ).rejects.toThrow(DocumentedApiLimitation);
     await expect(
-      probeDocumentedApi(TRACKER, 'k', '# Tracker\n`GET /issues.delete`', tracker.connect),
+      probeDocumentedApi(
+        TRACKER,
+        'k',
+        '# Tracker\n`GET /issues.delete`\nProbe read: `GET /issues.delete`',
+        tracker.connect,
+      ),
     ).rejects.toThrow('names no read');
+    await expect(
+      probeDocumentedApi(
+        TRACKER,
+        'k',
+        '# Tracker\n`GET /auth/logout` `GET /issues`',
+        tracker.connect,
+      ),
+    ).rejects.toThrow('does not guess one that could change something');
     expect(tracker.calls).toEqual([]);
   });
 
@@ -626,6 +677,19 @@ describe('probing a documented API that is not Slack', (): void => {
     const tracker = trackerConnector(() => new Response('{"error":"bad key"}', { status: 401 }));
     await expect(probeDocumentedApi(TRACKER, 'k', TRACKER_PAGE, tracker.connect)).rejects.toThrow(
       'GET issues answered HTTP 401',
+    );
+  });
+
+  it('answers a rate limit or a server error as a transient that carries the wait asked for', async (): Promise<void> => {
+    const limited = trackerConnector(
+      () => new Response('slow down', { status: 429, headers: { 'Retry-After': '12' } }),
+    );
+    const failure = probeDocumentedApi(TRACKER, 'k', TRACKER_PAGE, limited.connect);
+    await expect(failure).rejects.toBeInstanceOf(TransientProviderError);
+    await expect(failure).rejects.toMatchObject({ status: 429, retryAfterMs: 12_000 });
+    const down = trackerConnector(() => new Response('', { status: 503 }));
+    await expect(probeDocumentedApi(TRACKER, 'k', TRACKER_PAGE, down.connect)).rejects.toThrow(
+      'GET issues answered HTTP 503.',
     );
   });
 
@@ -713,5 +777,166 @@ describe('probing a documented API that is not Slack', (): void => {
     expect(row).toMatchObject({ ok: true, effect: expect.stringContaining('Renewal call') });
     expect(fake.calls[0].url).toBe('https://tracker.example.com/api/v2/issues');
     expect(new Headers(fake.calls[0].init.headers).get('x-api-key')).toBe('tracker-key');
+  });
+});
+
+describe('the HTTP rung on a documented API that is not Slack', (): void => {
+  const tracker: SurfaceRecord = {
+    slug: 'tracker',
+    displayName: 'Tracker',
+    class: 'kanban',
+    verdict: 'connected',
+    credentialLanded: true,
+    lastVerifiedAt: now,
+    endpoint: TRACKER,
+    path: 'documented-api',
+    toolAllowlist: ['GET issues', 'GET issues/{id}', 'POST comments'],
+    credentialId: 'cred-tracker',
+    credentialKind: 'value',
+  };
+
+  const request = (method: string, path: string, body?: string): MockAction => ({
+    tool: 'http.request',
+    args: {
+      surface: 'tracker',
+      method,
+      path,
+      headersJson: JSON.stringify({ 'X-Api-Key': '{{secret}}' }),
+      ...(body === undefined ? {} : { body }),
+    },
+  });
+
+  function trackerAdapter(connect: ApiConnector): {
+    adapter: HttpAdapter;
+    direct: FakeFetch;
+  } {
+    const direct = fakeFetch(() => Response.json({ ok: true }));
+    return {
+      direct,
+      adapter: new HttpAdapter([tracker], {
+        decrypt: async (): Promise<string> => 'tracker-key',
+        fetch: direct.fetch,
+        connect,
+        now: (): number => now,
+      }),
+    };
+  }
+
+  it('refuses DELETE /issues when only GET /issues is documented (review M3)', async (): Promise<void> => {
+    const pinned = trackerConnector(() => Response.json({}));
+    const { adapter: rung } = trackerAdapter(pinned.connect);
+    for (const method of ['DELETE', 'PATCH', 'PUT']) {
+      await expect(rung.apply(ctx, run, request(method, '/issues'), 0, 'k')).resolves.toMatchObject(
+        { ok: false, reason: `tool not in the surface allowlist (${method} issues)` },
+      );
+    }
+    expect(pinned.calls).toEqual([]);
+    await expect(rung.apply(ctx, run, request('GET', '/issues'), 0, 'k')).resolves.toMatchObject({
+      ok: true,
+    });
+  });
+
+  it('matches a templated operation one segment for one segment', async (): Promise<void> => {
+    const pinned = trackerConnector(() => Response.json({ id: 'TRK-7' }));
+    const { adapter: rung } = trackerAdapter(pinned.connect);
+    await expect(
+      rung.apply(ctx, run, request('GET', '/issues/TRK-7'), 0, 'k'),
+    ).resolves.toMatchObject({ ok: true, providerId: 'TRK-7' });
+    for (const path of ['/issues/TRK-7/comments', '/issues/', '/issues/TRK-7/../admin']) {
+      await expect(rung.apply(ctx, run, request('GET', path), 0, 'k')).resolves.toMatchObject({
+        ok: false,
+      });
+    }
+    expect(pinned.calls.map((call) => call.url)).toEqual([
+      'https://tracker.example.com/api/v2/issues/TRK-7',
+    ]);
+  });
+
+  it('never puts the credential in a body, a documented field or not, or a path (review M4)', async (): Promise<void> => {
+    const pinned = trackerConnector(() => Response.json({ ok: true }));
+    const { adapter: rung } = trackerAdapter(pinned.connect);
+    const inBody = await rung.apply(
+      ctx,
+      run,
+      request('POST', '/comments', JSON.stringify({ issue: 'TRK-7', body: 'key: {{secret}}' })),
+      0,
+      'k',
+    );
+    expect(inBody).toMatchObject({
+      ok: false,
+      reason:
+        '{{secret}} goes only in a header value, never in the body, so the credential was not sent',
+    });
+    const inPath = await rung.apply(ctx, run, request('GET', '/issues/{{secret}}'), 0, 'k');
+    expect(inPath).toMatchObject({ ok: false });
+    expect(inPath.reason).toContain('never in the path');
+    const unfilled = await rung.apply(ctx, run, request('GET', '/issues/{{issue}}'), 0, 'k');
+    expect(unfilled.reason).toContain('a value was left unfilled');
+    expect(pinned.calls).toEqual([]);
+    // The header is where the key goes.
+    await rung.apply(
+      ctx,
+      run,
+      request('POST', '/comments', '{"issue":"TRK-7","body":"Done."}'),
+      0,
+      'k',
+    );
+    expect(new Headers(pinned.calls[0]!.init.headers).get('x-api-key')).toBe('tracker-key');
+    expect(pinned.calls[0]!.init.body).toBe('{"issue":"TRK-7","body":"Done."}');
+  });
+
+  it("sends a listed host's write to the address it checked for that write, never by the plain fetch", async (): Promise<void> => {
+    const checkedFor: string[] = [];
+    const sent: string[] = [];
+    const connect: ApiConnector = async (endpoint: string) => {
+      checkedFor.push(endpoint);
+      return {
+        url: new URL(endpoint),
+        fetch: async (input: URL): Promise<Response> => {
+          sent.push(input.href);
+          return Response.json({ id: 'C-1' });
+        },
+      };
+    };
+    const { adapter: rung, direct } = trackerAdapter(connect);
+    await expect(
+      rung.apply(ctx, run, request('POST', '/comments', '{"body":"Done."}'), 0, 'k'),
+    ).resolves.toMatchObject({ ok: true });
+    expect(checkedFor).toEqual([TRACKER]);
+    expect(sent).toEqual(['https://tracker.example.com/api/v2/comments']);
+    expect(direct.calls).toEqual([]);
+  });
+
+  it('sends nothing when the address no longer passes the check at the write (DNS rebinding)', async (): Promise<void> => {
+    const connect: ApiConnector = async (): Promise<never> => {
+      throw new DocumentedApiLimitation(
+        'The approved API hostname is listed in DAY0_PRIVATE_HOSTS but resolved to a loopback address.',
+      );
+    };
+    const { adapter: rung, direct } = trackerAdapter(connect);
+    const row = await rung.apply(
+      ctx,
+      run,
+      request('POST', '/comments', '{"body":"Done."}'),
+      0,
+      'k',
+    );
+    expect(row).toMatchObject({ ok: false, reason: expect.stringContaining('loopback') });
+    // Refused before anything was sent, so a Retry is safe.
+    expect(row).not.toHaveProperty('outcomeUnknown');
+    expect(direct.calls).toEqual([]);
+  });
+
+  it('reaches the default connector for a documented API, which refuses a private address', async (): Promise<void> => {
+    const direct = fakeFetch(() => Response.json({ ok: true }));
+    const rung = new HttpAdapter([{ ...tracker, endpoint: 'https://tracker.internal/api/v2/' }], {
+      decrypt: async (): Promise<string> => 'tracker-key',
+      fetch: direct.fetch,
+      now: (): number => now,
+    });
+    const row = await rung.apply(ctx, run, request('GET', '/issues'), 0, 'k');
+    expect(row).toMatchObject({ ok: false });
+    expect(row.reason).toContain('public HTTPS hostname');
+    expect(direct.calls).toEqual([]);
   });
 });

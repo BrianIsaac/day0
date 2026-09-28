@@ -10,7 +10,11 @@ import {
 } from '../../../convex/orientationActions';
 import { structuralSystemCandidates } from '../../../src/docs/system-discovery';
 import { structuralSpans } from '../../../src/redaction/structural';
-import { browserTitleMarker } from '../../../src/surfaces/browser';
+import {
+  browserSignedInMarker,
+  browserTitleMarker,
+  documentedUsername,
+} from '../../../src/surfaces/browser';
 import * as http from '../../../src/surfaces/http';
 import { scopeCandidates } from '../../../src/surfaces/intake-scope';
 import { extractManifestTemplate } from '../../../src/surfaces/slack-manifest';
@@ -35,15 +39,6 @@ function example(name: string): string {
   if (!found) throw new Error(`the guide has no example "${name}"`);
   return found[1]!;
 }
-
-/** The documented-API grammar's readers, present once the HTTP rung reads a page. */
-const apiGrammar = http as unknown as {
-  documentedApiOperations?: (
-    documentation: string,
-    endpoint: string,
-  ) => Array<{ method: string; operation: string }>;
-  documentedCredentialHeader?: (documentation: string) => { name: string; scheme?: string };
-};
 
 /** One synced page, as orientation reads it. */
 function page(ref: string, markdown: string): Doc<'docPages'> {
@@ -96,6 +91,17 @@ describe('the documentation author guide', (): void => {
     expect(browserTitleMarker(example('probe-marker'))).toBe('Pipeline coverage');
   });
 
+  it('reads the element after sign-in and the account name the probe signs in with', (): void => {
+    const text = example('probe-signed-in');
+    expect(browserTitleMarker(text)).toBe('Sign in - Looker');
+    expect(browserSignedInMarker(text)).toBe('Pipeline coverage');
+    expect(documentedUsername(text)).toBe('revops');
+    // The credential on the same line is still stored, not read as the account name.
+    expect(structuralSpans(text).map((span) => text.slice(span.start, span.end))).toContain(
+      'pipeline-tile-local',
+    );
+  });
+
   it('stores the quoted credential and leaves the prose login alone', (): void => {
     const credential = example('credential');
     expect(
@@ -138,20 +144,18 @@ describe('the documentation author guide', (): void => {
     );
   });
 
-  // prettier-ignore
-  it.skipIf(apiGrammar.documentedApiOperations === undefined)( // skipped until the documented-API probe (wave 3 U6) lands its grammar
-    'admits the documented operations, leaves the placeholder path out and finds the key header',
-    (): void => {
-      const text = example('api-operations');
-      expect(
-        apiGrammar.documentedApiOperations!(text, 'https://tracker.example.com/api/v2/'),
-      ).toEqual([
-        { method: 'GET', operation: 'issues' },
-        { method: 'POST', operation: 'comments' },
-      ]);
-      expect(apiGrammar.documentedCredentialHeader!(text)).toEqual({ name: 'X-Api-Key' });
-    },
-  );
+  it('admits each documented operation with its verb, reads the probe read and finds the key header', (): void => {
+    const text = example('api-operations');
+    const base = 'https://tracker.example.com/api/v2/';
+    expect(http.documentedApiOperations(text, base)).toEqual([
+      { method: 'GET', operation: 'issues' },
+      { method: 'POST', operation: 'comments' },
+      { method: 'GET', operation: 'issues/{id}' },
+      { method: 'GET', operation: 'me' },
+    ]);
+    expect(http.documentedProbeRead(text, base)).toEqual({ method: 'GET', operation: 'me' });
+    expect(http.documentedCredentialHeader(text)).toEqual({ name: 'X-Api-Key' });
+  });
 
   it('finds the manifest block', (): void => {
     const manifest = example('manifest');

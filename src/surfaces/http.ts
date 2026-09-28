@@ -2,19 +2,28 @@ import type { ActionCtx } from '../../convex/_generated/server';
 import type { Id } from '../../convex/_generated/dataModel';
 import type { MockAction, MockSurfaceSnapshot } from '../work/types';
 import { decryptCredential, type DecryptCredential } from './credentials';
+import { transientFromResponse } from '../lib/transport-error';
 import { checkMcpAddress, McpAddressRefusal, pinnedFetch } from './mcp-address';
 import { clipEffect, READ_EFFECT_LENGTH } from './mock';
 import {
   actionIntent,
+  allowlistEntry,
+  canonicalOperation,
   documentedRpcRead,
+  operationRefusal,
+  operationUnderBase,
   parseSurfaceAction,
   resolveRequestUrl,
   surfaceRefusal,
-  TOOL_NOT_ALLOWED,
   type HttpMethod,
   type ParsedHttpRequest,
 } from './policy';
-import { hasPlaceholder, injectSecret, SecretTemplateError } from './secrets';
+import {
+  hasPlaceholder,
+  httpSecretPlacementRefusal,
+  injectSecret,
+  SecretTemplateError,
+} from './secrets';
 import { redactOutcome } from './redact';
 import type { SpanModel } from '../redaction/client';
 import { isSlackApiEndpoint, slackApiBaseUrl } from './slack-endpoint';
@@ -36,7 +45,14 @@ export type FetchLike = (input: URL, init: RequestInit) => Promise<Response>;
 
 export interface HttpAdapterDeps {
   decrypt: DecryptCredential;
+  /** The transport to Slack's fixed Web API base, which the code names and no page can move. */
   fetch: FetchLike;
+  /**
+   * How a documented API's base address is checked and reached on every
+   * request, as the probe reached it; `connectCheckedApi` unless a test
+   * replaces it.
+   */
+  connect?: ApiConnector;
   now: () => number;
   beforeTransport?: BeforeSurfaceTransport;
   /** The span model outcomes are redacted with; undefined degrades to the structural floor. */
@@ -176,8 +192,8 @@ export function providerIdFrom(payload: unknown): string | undefined {
 /** A verb and path the documentation gives for one operation, as `` `GET /issues` ``. */
 const DOCUMENTED_OPERATION = /`\s*(GET|HEAD|POST|PUT|PATCH|DELETE)\s+([^\s`]+)\s*`/g;
 
-/** A path segment that stands for a value: `{id}`, `:id` or `<id>`. */
-const PATH_PARAMETER = /(?:^|\/)(?:\{[^/}]*\}|:[A-Za-z_][\w-]*|<[^/>]*>)(?=\/|$)/;
+/** The read a page names for the probe: `` Probe read: `GET /me` ``. */
+const DOCUMENTED_PROBE_READ = /\bProbe read:\s*`\s*GET\s+([^\s`]+)\s*`/gi;
 
 /**
  * A header the documentation shows the credential in: `` `X-Api-Key: {{secret}}` ``,
@@ -241,14 +257,28 @@ function operationUnder(base: URL, written: string): string | undefined {
   return target.pathname.slice(base.pathname.length).replace(/^\/+/, '');
 }
 
+/** The documented base as the operations are read under it, or undefined when it is not a URL. */
+function documentedBase(endpoint: string): URL | undefined {
+  let base: URL;
+  try {
+    base = new URL(endpoint);
+  } catch {
+    // An endpoint that is not a URL names no operation; the probe says so.
+    return undefined;
+  }
+  if (!base.pathname.endsWith('/')) base.pathname = `${base.pathname}/`;
+  return base;
+}
+
 /**
  * Read the operations a surface's documentation names on its API.
  *
  * An operation is a backticked verb and path, written relative to the
- * documented base (`` `GET /issues` ``) or as an address under it. A path with
- * a parameter segment is left out: the HTTP rung and the gate compare a
- * request's path with the allowlist exactly, so a template could never match
- * the request it describes. The query is not part of an operation.
+ * documented base (`` `GET /issues` ``) or as an address under it. A segment
+ * that stands for a value (`{id}`, `:id` or `<id>`) is kept as `{id}` and
+ * matches any one segment of a request, so `GET /issues/{id}` admits
+ * `GET /issues/ENG-12` and nothing longer. The query is not part of an
+ * operation.
  *
  * @param documentation - The surface's own documentation.
  * @param endpoint - The documented API base the surface was approved with.
@@ -258,25 +288,55 @@ export function documentedApiOperations(
   documentation: string,
   endpoint: string,
 ): DocumentedApiOperation[] {
-  let base: URL;
-  try {
-    base = new URL(endpoint);
-  } catch {
-    // An endpoint that is not a URL names no operation; the probe says so.
-    return [];
-  }
-  if (!base.pathname.endsWith('/')) base.pathname = `${base.pathname}/`;
+  const base = documentedBase(endpoint);
+  if (!base) return [];
   const found = new Map<string, DocumentedApiOperation>();
   for (const match of documentation.matchAll(DOCUMENTED_OPERATION)) {
     const written = match[2].split(/[?#]/, 1)[0];
-    if (PATH_PARAMETER.test(written)) continue;
     const operation = operationUnder(base, written);
     if (!operation) continue;
     const method = match[1] as HttpMethod;
-    const key = `${method} ${operation}`;
-    if (!found.has(key)) found.set(key, { method, operation });
+    const entry = { method, operation: canonicalOperation(operation) };
+    const key = allowlistEntry(entry.method, entry.operation);
+    if (!found.has(key)) found.set(key, entry);
   }
   return [...found.values()];
+}
+
+/**
+ * Read the one request the page names for checking the credential:
+ * `` Probe read: `GET /me` ``.
+ *
+ * Only a line written for the purpose is taken: a documented `GET` is not a
+ * read because its words miss a list of mutation verbs (`GET /auth/logout`
+ * reads as one and signs the key out), so the page's author names the read,
+ * and a page that names none is not guessed at. The read must be a plain
+ * path under the base with no value segment, and the gate must class it a
+ * read as well; the first line that is both is the one used.
+ *
+ * @param documentation - The surface's own documentation.
+ * @param endpoint - The documented API base the surface was approved with.
+ * @returns The probe's read, or undefined when the page names none it may send.
+ */
+export function documentedProbeRead(
+  documentation: string,
+  endpoint: string,
+): DocumentedApiOperation | undefined {
+  const base = documentedBase(endpoint);
+  if (!base) return undefined;
+  for (const match of documentation.matchAll(DOCUMENTED_PROBE_READ)) {
+    const operation = operationUnder(base, match[1].split(/[?#]/, 1)[0]);
+    if (!operation || canonicalOperation(operation).includes('{')) continue;
+    const request: ParsedHttpRequest = {
+      kind: 'http.request',
+      surface: '',
+      method: 'GET',
+      path: operation,
+      headers: {},
+    };
+    if (actionIntent(request) === 'read') return { method: 'GET', operation };
+  }
+  return undefined;
 }
 
 /**
@@ -317,12 +377,15 @@ export async function connectCheckedApi(endpoint: string): Promise<CheckedApi> {
 
 /**
  * Verify a documented API that is not Slack: check the credential with one
- * documented read and admit every operation the documentation names.
+ * documented read and admit every operation the documentation names, each
+ * with its verb.
  *
- * The read is the first documented `GET` the gate would class as a read, so
- * checking the credential never changes anything on the system. It is sent
+ * The read is the one the page names for the probe (`documentedProbeRead`),
+ * so checking the credential never changes anything on the system. It is sent
  * with the credential in the documented header, follows no redirect, and a
- * 2xx answer without an `ok: false` envelope connects the surface.
+ * 2xx answer without an `ok: false` envelope connects the surface. A 429 or a
+ * 5xx is a `TransientProviderError` carrying the wait the answer asked for,
+ * so the probe tries again rather than marking the system dead.
  *
  * @param endpoint - The documented API base the surface was approved with.
  * @param credential - The surface's decrypted credential.
@@ -346,20 +409,10 @@ export async function probeDocumentedApi(
       `The documentation names no operation on ${endpoint} in the form \`GET /path\`, so Day0 has nothing it may call there. This is not evidence that the system is unavailable.`,
     );
   }
-  const read = operations.find(
-    (entry: DocumentedApiOperation): boolean =>
-      entry.method === 'GET' &&
-      actionIntent({
-        kind: 'http.request',
-        surface: '',
-        method: 'GET',
-        path: entry.operation,
-        headers: {},
-      }) === 'read',
-  );
+  const read = documentedProbeRead(documentation, endpoint);
   if (!read) {
     throw new DocumentedApiLimitation(
-      `The documentation names no read (\`GET\`) operation on ${endpoint}, so Day0 cannot check the credential without changing anything. This is not evidence that the system is unavailable.`,
+      `The documentation names no read for Day0 to check the credential with on ${endpoint} (a line \`Probe read: GET /path\`), so Day0 does not guess one that could change something. This is not evidence that the system is unavailable.`,
     );
   }
   const api = await connect(endpoint);
@@ -381,6 +434,11 @@ export async function probeDocumentedApi(
       `${label} could not be reached: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
+  const transient = transientFromResponse(response, label);
+  if (transient) {
+    await response.body?.cancel();
+    throw transient;
+  }
   const bounded = await readBoundedResponse(response);
   if (!response.ok) {
     const redirect = response.status >= 300 && response.status < 400;
@@ -401,9 +459,9 @@ export async function probeDocumentedApi(
     throw new Error(`${label} answered ok: false${detail}.`);
   }
   return {
-    toolAllowlist: [
-      ...new Set(operations.map((entry: DocumentedApiOperation): string => entry.operation)),
-    ],
+    toolAllowlist: operations.map((entry: DocumentedApiOperation): string =>
+      allowlistEntry(entry.method, entry.operation),
+    ),
     toolArguments: [],
   };
 }
@@ -440,6 +498,24 @@ export class HttpAdapter implements SurfaceAdapter {
     void ctx;
     void agentId;
     return {};
+  }
+
+  /**
+   * The fetch one request goes out on. Slack's base is fixed by the code, so
+   * it is reached directly; any other documented API's base is resolved,
+   * checked and pinned on every request, as the probe checked it, so a name
+   * that resolved to a permitted address at the probe cannot be re-pointed
+   * at a private or metadata address before a write.
+   *
+   * @throws DocumentedApiLimitation or Error when the address is refused.
+   */
+  private async transportFor(
+    surface: SurfaceRecord,
+    transportEndpoint: string,
+  ): Promise<FetchLike> {
+    if (isSlackApiEndpoint(surface.endpoint)) return this.deps.fetch;
+    const checked = await (this.deps.connect ?? connectCheckedApi)(transportEndpoint);
+    return checked.fetch;
   }
 
   /**
@@ -504,14 +580,31 @@ export class HttpAdapter implements SurfaceAdapter {
     } catch (error) {
       return { tool: action.tool, ok: false, reason: (error as Error).message, idempotencyKey };
     }
-    const base = new URL(transportEndpoint);
-    if (!base.pathname.endsWith('/')) base.pathname = `${base.pathname}/`;
-    const operation = url.pathname.slice(base.pathname.length).replace(/^\/+/, '');
-    if (!surface.toolAllowlist?.includes(operation)) {
+    const unlisted = operationRefusal(
+      surface.toolAllowlist,
+      request.method,
+      operationUnderBase(url, transportEndpoint),
+    );
+    if (unlisted) return { tool: action.tool, ok: false, reason: unlisted, idempotencyKey };
+    // A documented RPC read's body travels in the query, where every
+    // parameter is checked and a `token` is left behind, and a GET or HEAD
+    // sends none; only a body that is sent can carry the credential away.
+    const bodySent =
+      documentedRpcRead(request) === undefined &&
+      request.method !== 'GET' &&
+      request.method !== 'HEAD';
+    const misplaced = httpSecretPlacementRefusal({
+      path: request.path,
+      headers: request.headers,
+      ...(bodySent && request.body !== undefined ? { body: request.body } : {}),
+    });
+    if (misplaced) return { tool: action.tool, ok: false, reason: misplaced, idempotencyKey };
+    if (hasPlaceholder(request.path)) {
       return {
         tool: action.tool,
         ok: false,
-        reason: `${TOOL_NOT_ALLOWED} (${operation})`,
+        reason:
+          'the path carries a placeholder: a value was left unfilled, so the call was not sent',
         idempotencyKey,
       };
     }
@@ -532,6 +625,8 @@ export class HttpAdapter implements SurfaceAdapter {
         if (bodyMoved && key.toLowerCase() === 'content-type') continue;
         headers[key] = injectSecret(value, secret, surface.slug);
       }
+      // The placement rule kept `{{secret}}` out of the body, so this only
+      // refuses a placeholder the skill left unfilled.
       const body =
         bodyMoved ||
         request.body === undefined ||
@@ -545,8 +640,9 @@ export class HttpAdapter implements SurfaceAdapter {
       if (authorityRefusal) {
         return { tool: action.tool, ok: false, reason: authorityRefusal, idempotencyKey };
       }
+      const transport = await this.transportFor(surface, transportEndpoint);
       writeAttempted = actionIntent(request) === 'write';
-      const response = await this.deps.fetch(url, {
+      const response = await transport(url, {
         method: request.method,
         headers,
         body,

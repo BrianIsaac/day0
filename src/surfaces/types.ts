@@ -121,6 +121,15 @@ export interface ActionOutcome {
   actionClass?: ActionClass;
   providerId?: string;
   /**
+   * The elements a browser action acted on, as the page offered them when the
+   * action was resolved: the driver's ref, the accessible name and the role.
+   * The action's own arguments carry only what the skill called each one; a
+   * page redesign can make the two differ, and the audit needs to know which
+   * control was pressed. Absent on every other row, and on rows sent before it
+   * was recorded.
+   */
+  elements?: ActedElement[];
+  /**
    * The first attempt at this row, when the provider refused its arguments
    * and the executor re-authored them once. The row itself is the second
    * attempt's outcome; nothing was applied twice.
@@ -140,6 +149,15 @@ export interface ActionOutcome {
    * run's `work.failed` record.
    */
   refreshed?: ReadRefresh;
+}
+
+/** One element a browser action acted on, as the page's snapshot named it. */
+export interface ActedElement {
+  /** The driver's reference, valid only for the snapshot it was read from. */
+  readonly ref: string;
+  /** The accessible name, with the credential and stored values removed. */
+  readonly name: string;
+  readonly role: string;
 }
 
 /** The carried read a re-read on resume replaced, and when it was read again. */

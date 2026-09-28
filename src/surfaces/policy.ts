@@ -44,6 +44,13 @@ export const AWAITING_APPROVAL = "awaiting the manager's approval";
  */
 export const WITHHELD_AFTER_FAILED_WRITE =
   'withheld: an earlier write in this set did not land, so this message could report it wrongly';
+/**
+ * Why a browser write is not sent after an earlier write on the same page did
+ * not land: the page is not as the run left it, and a Save would commit
+ * whatever the page holds, such as the value a failed fill left in place.
+ */
+export const WITHHELD_AFTER_FAILED_BROWSER_WRITE =
+  'withheld: an earlier write on this page did not land, so this one would act on a page that is not as the run left it';
 export const NOT_AUTOMATIC = 'not an automatic action';
 export const UNKNOWN_TOOL = 'unknown tool';
 export const STATUS_WITHOUT_COMMENT = 'status change without audit comment';
@@ -113,11 +120,18 @@ const READ_TOOL_PREFIX =
  * Browser tools that observe the page without changing anything on it.
  *
  * The floor's tool names carry no read verb - opening a page is `navigate`,
- * reading it is `snapshot` - so without naming them the generic rule counts
- * both as writes, and a run that only looked at a dashboard would be held for
- * the manager as though it had edited one.
+ * reading it is `snapshot`, waiting for it to render is `wait_for` - so
+ * without naming them the generic rule counts each as a write, and a run that
+ * only looked at a dashboard would be held for the manager as though it had
+ * edited one. `wait` stays out of `READ_TOOL_PREFIX`: a third party's
+ * `wait_and_merge` is not a read because the floor's wait is.
  */
-const BROWSER_READ_TOOLS = new Set(['browser_navigate', 'browser_snapshot', 'browser_hover']);
+const BROWSER_READ_TOOLS = new Set([
+  'browser_navigate',
+  'browser_snapshot',
+  'browser_hover',
+  'browser_wait_for',
+]);
 const HTTP_MUTATION_WORDS = new Set([
   'activate',
   'add',
@@ -1008,26 +1022,136 @@ export function mcpEndpointRefusal(surface: SurfaceRecord): string | undefined {
     : 'surface endpoint must be an HTTPS URL without userinfo';
 }
 
+/** A path segment that stands for one value: `{id}`, `:id` or `<id>`. */
+const TEMPLATE_SEGMENT = /^(?:\{([^/{}]+)\}|:([A-Za-z_][\w-]*)|<([^/<>]+)>)$/;
+
+/** An allowlist entry that names its verb: `GET issues/{id}`. */
+const VERBED_ENTRY = /^(GET|HEAD|POST|PUT|PATCH|DELETE) (\S+)$/;
+
+/**
+ * Write one path under a documented API's base the way the allowlist keeps
+ * it: each segment that stands for a value as `{name}`, whichever of the
+ * three spellings the page used or however a URL encoded it, and every other
+ * segment as the request would send it.
+ *
+ * @param operation - A path under the base, without its query.
+ */
+export function canonicalOperation(operation: string): string {
+  return operation
+    .split('/')
+    .map((segment: string): string => {
+      let decoded = segment;
+      try {
+        decoded = decodeURIComponent(segment);
+      } catch {
+        // Not percent-encoded text, so not an encoded template either.
+        return segment;
+      }
+      const template = TEMPLATE_SEGMENT.exec(decoded);
+      return template ? `{${template[1] ?? template[2] ?? template[3]}}` : segment;
+    })
+    .join('/');
+}
+
+/**
+ * The allowlist entry for one documented operation of an API that is not
+ * RPC-shaped: the verb and the path, so admitting `GET issues` never admits
+ * `DELETE issues`.
+ *
+ * @param method - The documented verb.
+ * @param operation - The path under the base, in `canonicalOperation` form.
+ */
+export function allowlistEntry(method: HttpMethod, operation: string): string {
+  return `${method} ${operation}`;
+}
+
+/**
+ * Whether one request segment may stand in for a `{name}` segment: not empty,
+ * and not a path in disguise. An encoded slash or backslash would reach a
+ * server that decodes it as a deeper path the entry never documented, so
+ * `issues/{id}` would admit `issues/7%2Fdelete`.
+ */
+function templateValue(segment: string): boolean {
+  if (segment === '') return false;
+  try {
+    return !/[/\\]/.test(decodeURIComponent(segment));
+  } catch {
+    // Not decodable, so not a value a server would read the same way.
+    return false;
+  }
+}
+
+/** Whether a path matches an entry's path, a `{name}` segment standing for any one value segment. */
+function pathMatches(pattern: string, operation: string): boolean {
+  const wanted = pattern.split('/');
+  const given = operation.split('/');
+  return (
+    wanted.length === given.length &&
+    wanted.every((segment: string, index: number): boolean =>
+      /^\{[^/{}]+\}$/.test(segment) ? templateValue(given[index]!) : segment === given[index],
+    )
+  );
+}
+
+/**
+ * Why a request's verb and path are outside a documented API's allowlist, or
+ * undefined when an entry admits them. The gate and the HTTP rung both ask
+ * this, so the operation the manager approved is the one the transport sends.
+ *
+ * An entry names its verb and path (`GET issues/{id}`), a `{name}` segment
+ * matching any one segment. An entry with no verb is an RPC method
+ * (`chat.postMessage`), where the path is the operation whatever verb
+ * carries it; a bare REST path admits nothing, so an entry written before
+ * the verb was kept never admits a verb the page did not document.
+ *
+ * @param allowlist - The surface's probed allowlist.
+ * @param method - The request's verb.
+ * @param operation - The request's path under the base, without its query.
+ */
+export function operationRefusal(
+  allowlist: readonly string[] | undefined,
+  method: HttpMethod,
+  operation: string,
+): string | undefined {
+  const admitted = (allowlist ?? []).some((entry: string): boolean => {
+    const verbed = VERBED_ENTRY.exec(entry);
+    if (!verbed) return rpcMethod(entry) !== undefined && entry === operation;
+    return verbed[1] === method && pathMatches(verbed[2], operation);
+  });
+  if (admitted) return undefined;
+  return rpcMethod(operation) !== undefined
+    ? `${TOOL_NOT_ALLOWED} (${operation})`
+    : `${TOOL_NOT_ALLOWED} (${method} ${operation})`;
+}
+
+/** The path of a resolved request under its surface's base, as the allowlist names operations. */
+export function operationUnderBase(target: URL, endpoint: string): string {
+  const base = new URL(endpoint);
+  if (!base.pathname.endsWith('/')) base.pathname = `${base.pathname}/`;
+  return target.pathname.slice(base.pathname.length).replace(/^\/+/, '');
+}
+
 /** Why an operation is outside the surface's probed allowlist, if it is. */
 export function toolRefusal(
   parsed: ParsedSurfaceAction,
   surface: SurfaceRecord,
 ): string | undefined {
-  let operation = parsed.kind === 'mcp.call' ? parsed.tool : '';
-  if (parsed.kind === 'http.request') {
-    let target: URL;
-    try {
-      target = resolveRequestUrl(surface.endpoint ?? '', parsed.path);
-    } catch (error) {
-      return error instanceof Error ? error.message : String(error);
-    }
-    const base = new URL(surface.endpoint ?? '');
-    if (!base.pathname.endsWith('/')) base.pathname = `${base.pathname}/`;
-    operation = target.pathname.slice(base.pathname.length).replace(/^\/+/, '');
+  if (parsed.kind === 'mcp.call') {
+    return surface.toolAllowlist?.includes(parsed.tool)
+      ? undefined
+      : `${TOOL_NOT_ALLOWED} (${parsed.tool})`;
   }
-  return surface.toolAllowlist?.includes(operation)
-    ? undefined
-    : `${TOOL_NOT_ALLOWED} (${operation})`;
+  let target: URL;
+  try {
+    target = resolveRequestUrl(surface.endpoint ?? '', parsed.path);
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+  return operationRefusal(
+    surface.toolAllowlist,
+    parsed.method,
+    operationUnderBase(target, surface.endpoint ?? ''),
+  );
 }
 
 /** How the gate will treat one row of a run. */
