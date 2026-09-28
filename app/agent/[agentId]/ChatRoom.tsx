@@ -8,6 +8,7 @@ import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { INIT_PROMPT, managerReplies } from '@/agent/day-one-turn';
 import { postCharterSynthesis } from './charter-synthesis';
+import { ROOM_HEIGHT } from './room-frame';
 
 function textOf(message: UIMessage): string {
   return message.parts
@@ -331,7 +332,9 @@ export function ChatRoom({
   }
 
   return (
-    <section className="bg-[var(--color-card)] border border-[var(--color-accent)]/40 rounded-xl flex flex-col h-[28rem]">
+    <section
+      className={`bg-[var(--color-card)] border border-[var(--color-accent)]/40 rounded-xl flex flex-col ${ROOM_HEIGHT}`}
+    >
       <header className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between">
         <h2 className="text-sm font-semibold">Day-1 1:1 · chat mode</h2>
         <div className="flex items-center gap-3">

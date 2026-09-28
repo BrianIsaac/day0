@@ -92,6 +92,7 @@ import {
   useNow,
 } from './time';
 import { eventLabel } from './event-labels';
+import { ROOM_HEIGHT } from './room-frame';
 import {
   compareWaitingRows,
   EVALUATION_ATTEMPTS_SPENT,
@@ -149,7 +150,7 @@ function PanelLoading({ label, frame }: { label: string; frame: string }): React
 }
 
 /** The frames the three panels occupy, as their own markup sizes them. */
-const ROOM_FRAME = 'min-h-[28rem] rounded-xl border border-[var(--color-border)]';
+const ROOM_FRAME = `${ROOM_HEIGHT} rounded-xl border border-[var(--color-border)]`;
 const ENVIRONMENT_FRAME = 'min-h-[30rem] rounded-xl border border-[var(--color-border)]';
 
 /*
