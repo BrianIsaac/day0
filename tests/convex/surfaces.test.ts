@@ -1136,7 +1136,7 @@ describe('surface probe generations', (): void => {
         toolArguments: [{ tool: 'list_issues', arguments: ['project', 'updatedAt'] }],
         managerDmChannelId: 'DMANAGER',
         managerUserId: 'UMANAGER',
-        managerName: 'Brian',
+        managerName: 'Sam',
         verifiedAt: 100,
       }),
     ).resolves.toBe(true);
@@ -1146,7 +1146,7 @@ describe('surface probe generations', (): void => {
       lastVerifiedAt: 100,
       managerDmChannelId: 'DMANAGER',
       managerUserId: 'UMANAGER',
-      managerName: 'Brian',
+      managerName: 'Sam',
     });
     const hourly = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
     if (!hourly.reserved) throw new Error('hourly probe was not reserved');
@@ -2062,7 +2062,7 @@ describe('surface approval state machine', (): void => {
       await ctx.db.patch(surfaceId, {
         managerDmChannelId: 'DMANAGER',
         managerUserId: 'UMANAGER',
-        managerName: 'Brian',
+        managerName: 'Sam',
       });
     });
     expect(await readSurface(harness, surfaceId)).toMatchObject({ credentialKind: 'value' });

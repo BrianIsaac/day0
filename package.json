@@ -28,6 +28,7 @@
     "redaction:record": "tsx --env-file-if-exists=.env.local scripts/redaction-record.ts",
     "sync:env": "./scripts/sync-convex-env.sh",
     "check:setup": "tsx scripts/check-setup.ts",
+    "fixtures:substitute": "tsx scripts/fixture-substitution.ts",
     "demo:bed": "tsx scripts/demo-bed.ts",
     "test": "vitest run",
     "build": "next build",

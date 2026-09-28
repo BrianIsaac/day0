@@ -1460,7 +1460,7 @@ describe('the charter card and the strikes approval can honour', (): void => {
   it('offers the 15 September strike as the clause it removes, and disables the one strike that was always refused', (): void => {
     const markup = renderToStaticMarkup(<CharterCard charter={draft(strikeRefusalBody(false))} />);
     expect(markup).toContain(
-      'strikes the clause: “Take ownership of Northstar CRM-dependent work that Brain must handle.”',
+      'strikes the clause: “Take ownership of Northstar CRM-dependent work that Sam must handle.”',
     );
     expect(markup).toContain(
       'cannot be struck: strike or edit the whole will-not-do clause; removing only part could change its boundary',
@@ -1471,12 +1471,12 @@ describe('the charter card and the strikes approval can honour', (): void => {
   it('refuses up front the strike that would drop the only clause bounding a system', (): void => {
     const body = strikeRefusalBody(false);
     body.proposedBoundaries.willNotDo = [
-      'Take ownership of Northstar CRM-dependent work that Brain must handle.',
+      'Take ownership of Northstar CRM-dependent work that Sam must handle.',
     ];
     body.proposedBoundaries.escalationTriggers = [];
     const markup = renderToStaticMarkup(<CharterCard charter={draft(body)} />);
     expect(markup).toContain(
-      'cannot be struck: strike refused: “Take ownership of Northstar CRM-dependent work that Brain must handle.” is the only clause that bounds Northstar CRM',
+      'cannot be struck: strike refused: “Take ownership of Northstar CRM-dependent work that Sam must handle.” is the only clause that bounds Northstar CRM',
     );
     expect(strikeButtons(markup)[2]).toBe(true);
   });
@@ -1484,7 +1484,7 @@ describe('the charter card and the strikes approval can honour', (): void => {
   it('enables exactly the strikes whose toggled charter approval would apply', (): void => {
     const bounded = strikeRefusalBody(false);
     bounded.proposedBoundaries.willNotDo = [
-      'Take ownership of Northstar CRM-dependent work that Brain must handle.',
+      'Take ownership of Northstar CRM-dependent work that Sam must handle.',
     ];
     bounded.proposedBoundaries.escalationTriggers = [];
     for (const body of [strikeRefusalBody(false), bounded]) {

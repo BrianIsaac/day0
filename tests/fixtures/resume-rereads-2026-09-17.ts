@@ -84,7 +84,7 @@ export function firstAttempt2026_09_17(workItemId: string): {
         ok: true,
         authority: 'autonomous',
         effect:
-          'HTTP 200 · {"ok":true,"channel":"D0BS5SXMXPZ","ts":"1789592857.505309","message":{"user":"U0BTFK6FLNL","type":"message","ts":"1789592857.505309"',
+          'HTTP 200 · {"ok":true,"channel":"D0MANAGER","ts":"1789592857.505309","message":{"user":"U0BTFK6FLNL","type":"message","ts":"1789592857.505309"',
         providerId: '1789592857.505309',
         idempotencyKey: key(7),
       },

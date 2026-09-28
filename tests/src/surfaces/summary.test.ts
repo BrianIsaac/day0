@@ -28,7 +28,7 @@ const slack: SurfaceRecord = {
   endpoint: 'https://slack.com/api/',
   credentialKind: 'value',
   managerDmChannelId: 'D0MANAGER',
-  managerName: 'Brian',
+  managerName: 'Sam',
 };
 
 const surfaces = [linear, slack];
@@ -118,7 +118,7 @@ describe('the plain-language action line', (): void => {
         http('POST', 'chat.postMessage?x=1', { channel: 'D0MANAGER', text: 'Hi' }),
         surfaces,
       ),
-    ).toBe('Send Brian a Slack DM: "Hi"');
+    ).toBe('Send Sam a Slack DM: "Hi"');
   });
 
   it('names the manager DM and every other chat post by its channel', (): void => {
@@ -130,13 +130,13 @@ describe('the plain-language action line', (): void => {
         }),
         surfaces,
       ),
-    ).toBe('Send Brian a Slack DM: "Draft ready for sign-off."');
+    ).toBe('Send Sam a Slack DM: "Draft ready for sign-off."');
     expect(
       summariseAction(
         http('POST', '/chat.postMessage', { channel: 'D0MANAGER', text: longBody }),
         surfaces,
       ),
-    ).toBe(`Send Brian a Slack DM: "${excerpt(longBody)}"`);
+    ).toBe(`Send Sam a Slack DM: "${excerpt(longBody)}"`);
     expect(
       summariseAction(http('POST', '/chat.postMessage', { channel: 'D0MANAGER', text: 'Hi' }), [
         linear,
@@ -330,7 +330,7 @@ describe('the plain-language action line', (): void => {
       }),
       surfaces,
     );
-    expect(line).toBe('Send Brian a Slack DM: "Token [credential] stays literal."');
+    expect(line).toBe('Send Sam a Slack DM: "Token [credential] stays literal."');
     expect(line).not.toContain('{{secret}}');
     expect(line).not.toContain('Authorization');
   });
@@ -338,9 +338,9 @@ describe('the plain-language action line', (): void => {
   it('neutralises markup-shaped labels and bidi controls from provider display fields', (): void => {
     const line = summariseAction(
       http('POST', 'chat.postMessage', { channel: 'D0MANAGER', text: 'Ready.' }),
-      [linear, { ...slack, managerName: 'Brian<script>\u202Ecod.exe' }],
+      [linear, { ...slack, managerName: 'Sam<script>\u202Ecod.exe' }],
     );
-    expect(line).toContain('Brian‹script›cod.exe');
+    expect(line).toContain('Sam‹script›cod.exe');
     expect(line).not.toContain('<script>');
     expect(line).not.toContain('\u202E');
   });

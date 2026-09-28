@@ -43,7 +43,7 @@ const ROOT = fileURLToPath(new URL('../../', import.meta.url));
  */
 
 const SLUG = 'looker-pipeline-tile';
-const MANAGER_DM = 'D0BS5SXMXPZ';
+const MANAGER_DM = 'D0MANAGER';
 const RUNBOOK = readFileSync(
   join(ROOT, 'bed/company/folder/revops/runbooks/how-to-refresh-the-tile.md'),
   'utf8',

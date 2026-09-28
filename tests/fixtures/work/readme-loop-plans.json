@@ -23,7 +23,7 @@
       "Hold all non-DM writes and the Looker refresh until the manager gives literal approval.",
       "After approval, refresh the Looker pipeline tile via the web UI, then add the approved Linear audit/status comment preserving the source Linear identifier and approval reference."
     ],
-    "summary": "Plan to handle Brian’s Linear ticket-queue request to refresh the Looker pipeline tile, with approval gating because autonomous actions are off and the source issue identifier is not yet explicit."
+    "summary": "Plan to handle Sam’s Linear ticket-queue request to refresh the Looker pipeline tile, with approval gating because autonomous actions are off and the source issue identifier is not yet explicit."
   },
   {
     "estimatedMinutes": 10,
@@ -36,7 +36,7 @@
       "Send the draft comment and proposed Done transition to the manager DM for literal approval; autonomous writes are OFF, so only reads and the manager DM can happen now.",
       "After explicit manager approval, post the approved audit comment on the originating Linear issue and move it to Done, then record the approval/exception in the close-work ledger."
     ],
-    "summary": "Plan to draft a close-summary audit comment for the Linear REVOPS request from Brian and move it to Done only after explicit manager approval. Source currently provided as `linear / ticket-queue`; a specific Linear issue ID is needed before any ticket write."
+    "summary": "Plan to draft a close-summary audit comment for the Linear REVOPS request from Sam and move it to Done only after explicit manager approval. Source currently provided as `linear / ticket-queue`; a specific Linear issue ID is needed before any ticket write."
   },
   {
     "estimatedMinutes": 10,
@@ -49,7 +49,7 @@
       "Get manager approval for both the comment text and the Done transition during cold start.",
       "After approval, post the comment on the confirmed Linear issue, move it to Done, and add an audit note preserving the source identifier and approval reference."
     ],
-    "summary": "For source `linear/ticket-queue` / Brian / “Add the close-week reminder note,” prepare a manager-approved Linear ticket update that adds the close-week reminder and then moves the originating issue to Done."
+    "summary": "For source `linear/ticket-queue` / Sam / “Add the close-week reminder note,” prepare a manager-approved Linear ticket update that adds the close-week reminder and then moves the originating issue to Done."
   },
   {
     "estimatedMinutes": 6,
@@ -71,11 +71,11 @@
     "riskNotes": "Do not alter Linear status or post comments before manager approval. Escalate in manager DM if close-check evidence is incomplete, the issue identifier cannot be preserved, or the status move is blocked by permissions/workflow.",
     "steps": [
       "Read the source Linear ticket and any linked close-check details needed to summarize only completed checks.",
-      "Draft a concise Linear audit comment that includes the source identifier: linear / ticket-queue, Brian, “Add the close-summary audit note.”",
+      "Draft a concise Linear audit comment that includes the source identifier: linear / ticket-queue, Sam, “Add the close-summary audit note.”",
       "Send the draft comment and proposed move-to-Done action to the manager DM for approval.",
       "After literal manager approval, post the approved comment to the originating Linear issue and move it to Done; otherwise make only requested revisions."
     ],
-    "summary": "Draft a close-summary audit comment for the Linear ticket from Brian and prepare the status move to Done, preserving the source identifier. Because autonomous actions are OFF, any write beyond reads and manager DM will be held for literal manager approval."
+    "summary": "Draft a close-summary audit comment for the Linear ticket from Sam and prepare the status move to Done, preserving the source identifier. Because autonomous actions are OFF, any write beyond reads and manager DM will be held for literal manager approval."
   },
   {
     "estimatedMinutes": 15,
@@ -101,6 +101,6 @@
       "Draft the intended refresh note for the manager DM, including the Linear issue ID, data source to be used, proposed Looker tile update, and any blockers or assumptions.",
       "After the manager’s literal approval, perform only the approved routine refresh/update and prepare the Linear audit comment/status update for approval or posting as instructed."
     ],
-    "summary": "Plan to handle Linear ticket from Brian, source `linear / ticket-queue`, titled “Refresh the Looker pipeline tile,” as a bounded RevOps request. Because autonomous actions are OFF, I can read and DM the manager now, but any Looker/spreadsheet/ticket/write update will be held for the manager’s literal approval."
+    "summary": "Plan to handle Linear ticket from Sam, source `linear / ticket-queue`, titled “Refresh the Looker pipeline tile,” as a bounded RevOps request. Because autonomous actions are OFF, I can read and DM the manager now, but any Looker/spreadsheet/ticket/write update will be held for the manager’s literal approval."
   }
 ]

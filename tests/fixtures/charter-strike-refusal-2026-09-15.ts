@@ -11,12 +11,12 @@ export function strikeRefusalBody(struck = true): Charter {
   const body: Charter = {
     adjacentRoles: [
       {
-        staysOutOfTheirLaneBy: 'Routing Northstar CRM-dependent work to Brain and not accessing or executing work in Northstar CRM.',
-        who: 'Brain'
+        staysOutOfTheirLaneBy: 'Routing Northstar CRM-dependent work to Sam and not accessing or executing work in Northstar CRM.',
+        who: 'Sam'
       }
     ],
     approvalChain: {
-      boss: 'Brain',
+      boss: 'Sam',
       confidence: 'high'
     },
     constraints: [
@@ -25,24 +25,24 @@ export function strikeRefusalBody(struck = true): Charter {
         origin: 'synthesis',
         quote: "there's also Northstar CRM, but you won't have access to that, so anything that needs it comes to me.",
         wording: [
-          'route any Northstar CRM-dependent work to Brain',
-          'Route Northstar CRM-dependent requests to Brain.',
+          'route any Northstar CRM-dependent work to Sam',
+          'Route Northstar CRM-dependent requests to Sam.',
           'Access or execute work in Northstar CRM.',
-          'A request requires access to Northstar CRM; route it to Brain.'
+          'A request requires access to Northstar CRM; route it to Sam.'
         ]
       },
       {
         kind: 'reporting-line',
         origin: 'synthesis',
-        quote: 'just me for now, your boss, brain',
+        quote: 'just me for now, your boss, sam',
         wording: [
-          'Brain'
+          'Sam'
         ]
       },
       {
         kind: 'candidate-property',
         origin: 'derived',
-        quote: 'Take ownership of Northstar CRM-dependent work that Brain must handle.',
+        quote: 'Take ownership of Northstar CRM-dependent work that Sam must handle.',
         struck: true,
         wording: [
           'ownership'
@@ -79,7 +79,7 @@ export function strikeRefusalBody(struck = true): Charter {
     namedCollaborators: [
       {
         introPath: 'manager',
-        name: 'Brain',
+        name: 'Sam',
         topic: 'Manager, approval owner, and owner of Northstar CRM-dependent work'
       }
     ],
@@ -116,24 +116,24 @@ export function strikeRefusalBody(struck = true): Charter {
     ],
     proposedBoundaries: {
       escalationTriggers: [
-        'A request requires access to Northstar CRM; route it to Brain.',
+        'A request requires access to Northstar CRM; route it to Sam.',
         'The scope of “all ops related work” or the intended handling of a request is unclear.'
       ],
       willDo: [
         'Answer operations-related questions when pinged in Slack.',
         'Pick up operations work in Linear.',
         'Work formal operations tickets in the Linear REVOPS team and Q3 close project.',
-        'Route Northstar CRM-dependent requests to Brain.'
+        'Route Northstar CRM-dependent requests to Sam.'
       ],
       willNotDo: [
         'Access or execute work in Northstar CRM.',
-        'Take ownership of Northstar CRM-dependent work that Brain must handle.'
+        'Take ownership of Northstar CRM-dependent work that Sam must handle.'
       ]
     },
-    proposedFunction: 'Provide first-line operational support for questions received in Slack and execute formal operations work tracked in Linear; route any Northstar CRM-dependent work to Brain.',
+    proposedFunction: 'Provide first-line operational support for questions received in Slack and execute formal operations work tracked in Linear; route any Northstar CRM-dependent work to Sam.',
     shortTermGoals: {
       day30: 'Respond to operations questions received in Slack and pick up applicable operations tickets in Linear.',
-      day60: 'Establish a reliable working cadence across the Linear REVOPS team and Q3 close project while routing CRM-dependent requests to Brain.',
+      day60: 'Establish a reliable working cadence across the Linear REVOPS team and Q3 close project while routing CRM-dependent requests to Sam.',
       day90: 'Maintain clear intake and execution coverage for operations work within the agreed Slack and Linear scope.'
     },
     source: 'day-1 manager 1:1',

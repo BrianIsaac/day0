@@ -135,7 +135,7 @@ export const RUN_4_SLACK_STEP_2 =
   `Reply in the originating #revops-asks thread (channel ${RUN_4_SLACK_CHANNEL}, thread_ts ${RUN_4_SLACK_THREAD_TS}) via chat.postMessage: confirm pipeline coverage is 74% per the Friday standup summary, quote the tile's audit line as evidence, and state that per-deal reconciliation for the three standup deals cannot be confirmed because no approved surface exists for the Q4 pipeline tracker / Northstar CRM.`;
 /** Run 4 Slack step 3, verbatim: the escalation. */
 export const RUN_4_SLACK_STEP_3 =
-  'Escalate the deal-reconciliation gap to the manager DM: Northstar CRM has no connected surface (charter willNotDo), so per-deal confirmation must be routed to Brian or an approved access path obtained before the Q3 close summary goes out.';
+  'Escalate the deal-reconciliation gap to the manager DM: Northstar CRM has no connected surface (charter willNotDo), so per-deal confirmation must be routed to Sam or an approved access path obtained before the Q3 close summary goes out.';
 
 export const run4SlackObligations: PlanObligations = {
   steps: [
@@ -164,7 +164,7 @@ export const run4SlackPrerequisiteLedger: AppliedAction[] = tileLedger('run-slac
 export const RUN_4_SLACK_REPLY =
   `Pipeline coverage is 74% per the Friday standup summary; the Looker pipeline tile was refreshed and the save was read back: ${RUN_4_AUDIT_LINE}. Per-deal reconciliation for the three standup deals cannot be confirmed: no approved surface exists for the Q4 pipeline tracker / Northstar CRM.`;
 export const RUN_4_SLACK_ESCALATION =
-  'Escalation: the #revops-asks reply quotes the 74% figure and the audit line; per-deal reconciliation cannot be confirmed because Northstar CRM has no connected surface (charter willNotDo). Per-deal confirmation must be routed to Brian or an approved access path obtained before the Q3 close summary goes out.';
+  'Escalation: the #revops-asks reply quotes the 74% figure and the audit line; per-deal reconciliation cannot be confirmed because Northstar CRM has no connected surface (charter willNotDo). Per-deal confirmation must be routed to Sam or an approved access path obtained before the Q3 close summary goes out.';
 export const run4SlackOutcomes: PlanStepOutcome[] = [
   { step: 1, status: 'satisfied', evidence: `ledger rows 1 to 6 landed on the tile; row 6: ${RUN_4_TILE_READ_BACK}` },
   { step: 2, status: 'satisfied', evidence: 'the threaded reply in this response' },

@@ -358,7 +358,7 @@ describe('Slack documented API probing', (): void => {
       if (url.includes('/users.lookupByEmail')) {
         return slackResponse({
           ok: true,
-          user: { id: 'UMANAGER', real_name: 'Brian Isaac', profile: { display_name: 'brian' } },
+          user: { id: 'UMANAGER', real_name: 'Sam Ortiz', profile: { display_name: 'sam' } },
         });
       }
       return slackResponse({ ok: true, channel: { id: 'DMANAGER' } });
@@ -384,7 +384,7 @@ describe('Slack documented API probing', (): void => {
       channelsNotJoined: [],
       managerDmChannelId: 'DMANAGER',
       managerUserId: 'UMANAGER',
-      managerName: 'Brian Isaac',
+      managerName: 'Sam Ortiz',
       providerIdentityId: 'UBOT',
       providerBotId: 'BBOT',
       providerWorkspaceId: 'TWORKSPACE',
@@ -395,14 +395,14 @@ describe('Slack documented API probing', (): void => {
   });
 
   it('reads the manager display name in the order Slack prefers', (): void => {
-    expect(managerDisplayName({ id: 'U1', real_name: ' Brian Isaac ' })).toBe('Brian Isaac');
+    expect(managerDisplayName({ id: 'U1', real_name: ' Sam Ortiz ' })).toBe('Sam Ortiz');
     expect(
-      managerDisplayName({ id: 'U1', profile: { display_name: 'brian', real_name: 'Brian I' } }),
-    ).toBe('brian');
+      managerDisplayName({ id: 'U1', profile: { display_name: 'sam', real_name: 'Sam O' } }),
+    ).toBe('sam');
     expect(
-      managerDisplayName({ id: 'U1', profile: { display_name: '', real_name: 'Brian I' } }),
-    ).toBe('Brian I');
-    expect(managerDisplayName({ id: 'U1', name: 'brian.isaac' })).toBe('brian.isaac');
+      managerDisplayName({ id: 'U1', profile: { display_name: '', real_name: 'Sam O' } }),
+    ).toBe('Sam O');
+    expect(managerDisplayName({ id: 'U1', name: 'sam.ortiz' })).toBe('sam.ortiz');
     expect(managerDisplayName({ id: 'U1' })).toBeUndefined();
     expect(managerDisplayName(undefined)).toBeUndefined();
   });
@@ -1576,7 +1576,7 @@ describe('a dedicated app that has not been invited to its channels', (): void =
         return slackResponse({ ok: true, user_id: 'UNEWBOT', team_id: 'TWORKSPACE' });
       }
       if (url.includes('/users.lookupByEmail')) {
-        return slackResponse({ ok: true, user: { id: 'UMANAGER', real_name: 'Brian Isaac' } });
+        return slackResponse({ ok: true, user: { id: 'UMANAGER', real_name: 'Sam Ortiz' } });
       }
       if (url.includes('/conversations.list')) {
         return slackResponse({ ok: true, channels });

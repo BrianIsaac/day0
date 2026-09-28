@@ -121,12 +121,12 @@ describe('stripProvenanceSuffix', (): void => {
 
   it('leaves brackets that are part of the clause alone', (): void => {
     for (const clause of [
-      'Escalate to the manager (Brian).',
+      'Escalate to the manager (Sam).',
       'Attend the weekly 1:1 (Fridays).',
       'Read the day-1 notes (onboarding page).',
       'Meet Priya (pipeline) before the Friday standup.',
-      'Raise blockers in the 1:1 (the Monday 1:1 with Brian).',
-      'Ask Brian before touching the tile (1:1 with the CRM owner).',
+      'Raise blockers in the 1:1 (the Monday 1:1 with Sam).',
+      'Ask Sam before touching the tile (1:1 with the CRM owner).',
       'Prepare the agenda [day-1 review].',
     ]) {
       expect(stripProvenanceSuffix(clause)).toBe(clause);
@@ -378,18 +378,18 @@ describe('striking a derived constraint', (): void => {
 
   it('previews the fixture strike as the clause it removes', (): void => {
     expect(strikePreview(strikeRefusalBody(false), 2)).toEqual({
-      removedClauses: ['Take ownership of Northstar CRM-dependent work that Brain must handle.'],
+      removedClauses: ['Take ownership of Northstar CRM-dependent work that Sam must handle.'],
       rewrittenClauses: [],
     });
     expect(strikePreview(strikeRefusalBody(false), 0)).toEqual({
       removedClauses: [
-        'Route Northstar CRM-dependent requests to Brain.',
+        'Route Northstar CRM-dependent requests to Sam.',
         'Access or execute work in Northstar CRM.',
-        'A request requires access to Northstar CRM; route it to Brain.',
+        'A request requires access to Northstar CRM; route it to Sam.',
       ],
       rewrittenClauses: [],
     });
-    // "Brain" is a word inside both will-not-do clauses, so this strike was
+    // "Sam" is a word inside both will-not-do clauses, so this strike was
     // always refused; now the card learns that before the manager presses it.
     expect(strikePreview(strikeRefusalBody(false), 1)).toEqual({
       removedClauses: [],

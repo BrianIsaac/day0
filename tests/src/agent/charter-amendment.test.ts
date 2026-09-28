@@ -23,7 +23,7 @@ function approvedBody(): Charter {
     namedSystems: [{ name: 'Linear', class: 'kanban', whereMentioned: 'Work is in Linear.' }],
     priorityReading: [],
     adjacentRoles: [],
-    approvalChain: { boss: 'Brian', confidence: 'high' },
+    approvalChain: { boss: 'Sam', confidence: 'high' },
     openQuestions: ['Whether Northstar CRM access will be granted.'],
     constraints: [
       {

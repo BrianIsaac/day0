@@ -51,7 +51,7 @@ const connectedSlack: SurfaceRecord = {
   endpoint: 'https://slack.com/api/',
   toolAllowlist: ['chat.postMessage'],
   managerDmChannelId: 'D0MANAGER',
-  managerName: 'Brian',
+  managerName: 'Sam',
 };
 
 const dm: MockAction = {
@@ -116,12 +116,12 @@ describe('dashboard exact-action gate', (): void => {
     expect(html).not.toContain(HELD_BEFORE_AUTONOMY_NOTE);
     // The plain line comes first, the reason on the same line, and the literal payload is folded away.
     expect(html).toMatch(
-      /<p[^>]*>Send Brian a Slack DM: &quot;Draft ready\.&quot;<span[^>]*> · system-of-record mutation held for the manager<\/span><\/p>/,
+      /<p[^>]*>Send Sam a Slack DM: &quot;Draft ready\.&quot;<span[^>]*> · system-of-record mutation held for the manager<\/span><\/p>/,
     );
     expect(html).toMatch(
       /<p[^>]*>Post to Slack channel C0PUBLIC: &quot;x{120}…&quot;<span[^>]*> · refused · no grant \(slack:write\)<\/span><\/p>/,
     );
-    expect(html.indexOf('Send Brian a Slack DM')).toBeLessThan(
+    expect(html.indexOf('Send Sam a Slack DM')).toBeLessThan(
       html.indexOf('&quot;tool&quot;: &quot;http.request&quot;'),
     );
     expect(html).toMatch(/<details[^>]*><summary[^>]*>exact payload<\/summary><code/);
@@ -170,7 +170,7 @@ describe('dashboard exact-action gate', (): void => {
       'held for your approval',
     );
     expect(html).not.toContain('Read issue REVOPS-10');
-    expect(html).not.toContain('Send Brian a Slack DM');
+    expect(html).not.toContain('Send Sam a Slack DM');
     expect(html).toContain('Reply in #revops-asks thread: &quot;Covered.&quot;');
     expect(html).toMatch(/<input type="checkbox"[^>]*aria-label="approve action 3" checked=""/);
     expect(html).not.toMatch(/aria-label="approve action 1"/);

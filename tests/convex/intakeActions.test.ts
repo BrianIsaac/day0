@@ -1912,7 +1912,7 @@ describe('intake provider contracts', (): void => {
           priority: { value: 1, name: 'Urgent' },
           url: 'https://linear.app/day00/issue/REVOPS-5/add-the-close-summary-audit-note',
           status: 'Backlog',
-          createdBy: 'Brian',
+          createdBy: 'Sam',
           team: 'RevOps',
         },
         surface,
@@ -1927,8 +1927,8 @@ describe('intake provider contracts', (): void => {
       contentRefs: ['https://linear.app/day00/issue/REVOPS-5/add-the-close-summary-audit-note'],
       observedAt: new Date(observedAt),
       priority: 'Urgent',
-      requesterLabel: 'Brian',
-      requester: 'Brian',
+      requesterLabel: 'Sam',
+      requester: 'Sam',
     });
     const assigneeOnly = linearCandidate(
       {
@@ -1968,13 +1968,13 @@ describe('intake provider contracts', (): void => {
         id: 'REVOPS-8',
         title: 'Reconcile the close ledger',
         url: 'https://linear.app/day00/issue/REVOPS-8',
-        creator: { name: 'Brian' },
+        creator: { name: 'Sam' },
         assignee: { name: 'Ana' },
       },
       surface,
       observedAt,
     );
-    expect(both).toMatchObject({ owner: 'Ana', requester: 'Brian', requesterLabel: 'Brian' });
+    expect(both).toMatchObject({ owner: 'Ana', requester: 'Sam', requesterLabel: 'Sam' });
 
     const neither = linearCandidate(
       { id: 'REVOPS-9', title: 'Unassigned', url: 'https://linear.app/day00/issue/REVOPS-9' },
@@ -2585,13 +2585,13 @@ describe('each employee reads its own approved queues', (): void => {
         'Post the close status note for the September close on this ticket.\n\nday0-demo-key: fin-status',
       priority: { value: 0, name: 'No priority' },
       url: 'https://linear.app/day00/issue/FIN-1/post-the-september-close-status-note',
-      gitBranchName: 'brian/fin-1-post-the-september-close-status-note',
+      gitBranchName: 'sam/fin-1-post-the-september-close-status-note',
       createdAt: '2026-09-18T18:25:26.000Z',
       updatedAt: '2026-09-18T21:13:58.000Z',
       status: 'Todo',
       statusType: 'unstarted',
       labels: ['day0-demo'],
-      createdBy: 'Brian',
+      createdBy: 'Sam',
       project: 'September close',
       team: 'Finance close',
     };

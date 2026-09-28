@@ -233,7 +233,7 @@ const fillCoverage = looker('browser_fill_form', {
 const clickSave = looker('browser_click', { element: 'Save' });
 
 /** The manager's DM channel on the export's Slack surface. */
-export const MANAGER_DM = 'D0BS5SXMXPZ';
+export const MANAGER_DM = 'D0MANAGER';
 
 /** The Slack mention's phase one, idx 0-3: navigate, sign in, read the tile. */
 export const slackPhaseOne: MockAction[] = [navigate, signIn, clickSignIn, snapshot];
