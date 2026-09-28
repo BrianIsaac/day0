@@ -1,6 +1,13 @@
 import { NextResponse } from 'next/server';
 import { establishCaller } from '@/lib/dev-auth-server';
 import { env } from '@/env';
+import { log } from '@/lib/logger';
+
+/** How long the signed-URL request may take before the page is told voice is unreachable. */
+const SIGNED_URL_TIMEOUT_MS = 10_000;
+
+const UNCONFIGURED_REASON =
+  'Voice mode needs ELEVENLABS_API_KEY and ELEVENLABS_AGENT_ID. Chat mode runs the same Day-1 1:1 without them.';
 
 /**
  * Hand the browser the agent id so it can mount the ElevenLabs widget,
@@ -28,9 +35,6 @@ import { env } from '@/env';
  * browser posts the transcript on disconnect, so the webhook only matters
  * when the tab dies mid-call.
  */
-const UNCONFIGURED_REASON =
-  'Voice mode needs ELEVENLABS_API_KEY and ELEVENLABS_AGENT_ID. Chat mode runs the same Day-1 1:1 without them.';
-
 export async function GET(req: Request): Promise<NextResponse> {
   const caller = await establishCaller();
   if (!caller.ok) return caller.refusal;
@@ -60,6 +64,7 @@ export async function GET(req: Request): Promise<NextResponse> {
       `https://api.elevenlabs.io/v1/convai/conversation/get-signed-url?agent_id=${voiceAgentId}`,
       {
         headers: { 'xi-api-key': apiKey },
+        signal: AbortSignal.timeout(SIGNED_URL_TIMEOUT_MS),
       },
     );
     if (!res.ok) {
@@ -84,7 +89,12 @@ export async function GET(req: Request): Promise<NextResponse> {
       signedUrl: data.signed_url ?? null,
       public: !data.signed_url,
     });
-  } catch (err) {
-    return NextResponse.json({ error: (err as Error).message }, { status: 500 });
+  } catch (err: unknown) {
+    // A transport error names hosts and, through a proxy, can carry its
+    // credentials: it goes to the log, and the page gets the fixed reason (C-34).
+    log.warn('the ElevenLabs signed-URL request failed', {
+      reason: err instanceof Error ? err.message : String(err),
+    });
+    return NextResponse.json({ error: 'the voice service could not be reached' }, { status: 502 });
   }
 }

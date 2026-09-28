@@ -3,6 +3,7 @@ import { v } from 'convex/values';
 import { agentReadsSource } from './docSources';
 import type { Doc } from './_generated/dataModel';
 import { browserComponentRefusal, withBrowserComponentState } from '../src/surfaces/browser';
+import { isManagerLookupFailure } from '../src/surfaces/manager-lookup';
 
 /** Return declared surface rows for one server-authorised orientation run. */
 export const surfacesForAgent = internalQuery({
@@ -84,11 +85,13 @@ export const charterForOrientation = internalQuery({
  * Decide whether a surface belongs in the hourly provider re-probe.
  *
  * A connected surface is re-verified so liveness stays fresh. A surface the
- * last probe left `listed-dead` is retried as long as it still holds both
- * approvals and a credential, so a transient provider failure heals on the
- * next hour instead of waiting for a human to press Probe. `ungranted`
- * rows are not retried: nothing changes until a credential lands, and
- * landing one schedules its own probe.
+ * last probe left `listed-dead` is retried as long as it still holds its
+ * approval and a credential, so a transient provider failure heals on the
+ * next hour instead of waiting for a human to press Probe. So is a chat
+ * surface left `ungranted` by the manager lookup (Q6): the credential works
+ * and the person changed, so a reactivated account heals on the hour too.
+ * Any other `ungranted` row is not retried: nothing changes until a
+ * credential lands, and landing one schedules its own probe.
  *
  * Args:
  *   surface: Persisted surface row.
@@ -98,20 +101,35 @@ export const charterForOrientation = internalQuery({
  */
 export function isReprobeCandidate(surface: Doc<'surfaces'>): boolean {
   if (surface.verdict === 'connected') return true;
-  return (
-    surface.verdict === 'listed-dead' &&
-    surface.credentialId !== undefined &&
-    surface.managerApprovedAt !== undefined &&
-    surface.itApprovedAt !== undefined
-  );
+  const retriable =
+    surface.verdict === 'listed-dead' ||
+    (surface.verdict === 'ungranted' &&
+      surface.class === 'chat' &&
+      isManagerLookupFailure(surface.reason));
+  return retriable && surface.credentialId !== undefined && surface.managerApprovedAt !== undefined;
 }
 
-/** Return the surfaces eligible for the hourly provider re-probe. */
+/**
+ * Return the surfaces eligible for the hourly provider re-probe. Internal;
+ * reads only the connected, listed-dead and ungranted cards, by verdict, not
+ * every card the documented estate declares.
+ */
 export const reprobeCandidates = internalQuery({
   args: {},
   handler: async (ctx): Promise<Doc<'surfaces'>[]> => {
-    const surfaces = await ctx.db.query('surfaces').collect();
-    return surfaces.filter(isReprobeCandidate);
+    const inVerdict = async (
+      verdict: 'connected' | 'listed-dead' | 'ungranted',
+    ): Promise<Doc<'surfaces'>[]> =>
+      await ctx.db
+        .query('surfaces')
+        .withIndex('by_verdict', (index) => index.eq('verdict', verdict))
+        .collect();
+    const rows = await Promise.all([
+      inVerdict('connected'),
+      inVerdict('listed-dead'),
+      inVerdict('ungranted'),
+    ]);
+    return rows.flat().filter(isReprobeCandidate);
   },
 });
 

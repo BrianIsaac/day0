@@ -13,7 +13,19 @@ export function renderBullets(values: string[], indent: string): string[] {
   return values.map((v) => `${indent}- ${v}`);
 }
 
-export function identityFromCharter(c: Charter): string {
+/**
+ * Render IDENTITY.md from a charter and the agent's manager.
+ *
+ * The manager is the agent row's `bossEmail`, the one source for who
+ * approves (U9 D3 (b)): the charter's own `approvalChain` is what the 1:1
+ * drafted and is not rendered, so the file cannot name a manager the product
+ * does not ask. A draft is rendered without one until approval renders it.
+ *
+ * @param c - The charter body.
+ * @param manager - The agent's manager, as the agent row holds it.
+ * @returns The file's Markdown.
+ */
+export function identityFromCharter(c: Charter, manager?: string): string {
   const lines = [
     '# IDENTITY',
     '',
@@ -35,6 +47,7 @@ export function identityFromCharter(c: Charter): string {
     '## Escalation triggers',
     ...renderBullets(c.proposedBoundaries.escalationTriggers, ''),
     '',
+    ...(manager === undefined ? [] : ['## Manager (who approves)', `- ${manager}`, '']),
     '## Key relationships',
     ...c.namedCollaborators.map((n) => `- ${n.name} — ${n.topic} (intro path: ${n.introPath})`),
     '',

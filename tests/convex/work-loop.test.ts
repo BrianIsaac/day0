@@ -290,7 +290,7 @@ async function insertDiscovered(
 }
 
 describe('the server-side steps', (): void => {
-  it('does not let a pre-claim failure stop another caller\'s execution', async (): Promise<void> => {
+  it("does not let a pre-claim failure stop another caller's execution", async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     const harness = convexTest(contractSchema(), allConvexModules());
@@ -464,7 +464,9 @@ describe('the server drives the work loop in real mode', (): void => {
     expect(recorded.planCalls).toEqual(['Add the Q3 close-summary audit note']);
     expect(recorded.skillRuns).toEqual([]);
     expect(
-      recorded.http.filter((call) => call.url.endsWith('/chat.postMessage')).map((call) => call.body),
+      recorded.http
+        .filter((call) => call.url.endsWith('/chat.postMessage'))
+        .map((call) => call.body),
     ).toEqual([expect.objectContaining({ channel: 'D0MANAGER' })]);
   });
 
@@ -594,6 +596,7 @@ describe('the server drives the work loop in real mode', (): void => {
 
   it('schedules nothing for a revocation trial row', async (): Promise<void> => {
     useSurfaceMode('real');
+    vi.stubEnv('DAY0_EVALUATION_BED', 'revocation-test');
     vi.useFakeTimers();
     const harness = convexTest(contractSchema(), allConvexModules());
     const agentId = await seedEmployee(harness, { bossEmail: 'eval-revocation-01@day0.local' });
@@ -654,15 +657,22 @@ describe('the server drives the work loop in real mode', (): void => {
     });
     await harness.mutation(internal.work.setPlan, {
       workItemId,
-      plan: { summary: 'x', steps: ['x'], expectedOutputType: 'message', riskNotes: '', reversibility: 'r', estimatedMinutes: 1 },
+      plan: {
+        summary: 'x',
+        steps: ['x'],
+        expectedOutputType: 'message',
+        riskNotes: '',
+        reversibility: 'r',
+        estimatedMinutes: 1,
+      },
     });
     await harness.withIdentity(OWNER).mutation(api.work.approvePlan, { workItemId });
     await harness.mutation(internal.work.resumeStalledSteps, {});
 
     expect((await readItem(harness, workItemId)).state).toBe('plan-approved');
-    expect((await scheduledNames(harness)).filter((name) => name.startsWith('workActions:'))).toEqual(
-      [],
-    );
+    expect(
+      (await scheduledNames(harness)).filter((name) => name.startsWith('workActions:')),
+    ).toEqual([]);
     const row = await readItem(harness, workItemId);
     expect(row).not.toHaveProperty('evaluationClaimedAt');
     expect(row).not.toHaveProperty('draftClaimedAt');
@@ -740,9 +750,9 @@ describe('the loop under load (P9-1)', (): void => {
     }
 
     expect(claims).toEqual([
-      { claimed: true },
-      { claimed: true },
-      { claimed: true },
+      { claimed: true, claimedAt: expect.any(Number) },
+      { claimed: true, claimedAt: expect.any(Number) },
+      { claimed: true, claimedAt: expect.any(Number) },
       { claimed: false, reason: 'queued' },
       { claimed: false, reason: 'queued' },
     ]);
@@ -821,9 +831,9 @@ describe('a scope call that fails parks the row (E-70)', (): void => {
       expect(recorded.scopeCalls).toHaveLength(1);
       expect(recorded.planCalls).toEqual([]);
       expect(recorded.skillRuns).toEqual([]);
-      expect((await eventsOf(harness, 'work.scope-judgement-unavailable')).map((e) => e.payload)).toEqual([
-        { workItemId, cause },
-      ]);
+      expect(
+        (await eventsOf(harness, 'work.scope-judgement-unavailable')).map((e) => e.payload),
+      ).toEqual([{ workItemId, cause }]);
       expect(await eventsOf(harness, 'work.evaluated')).toEqual([]);
       expect(await eventsOf(harness, 'work.execution-claimed')).toEqual([]);
     },
@@ -856,6 +866,180 @@ describe('a scope call that fails parks the row (E-70)', (): void => {
     expect((await eventsOf(harness, 'work.evaluated')).map((event) => event.payload)).toEqual([
       expect.objectContaining({ workItemId, decision: 'claim' }),
     ]);
+  });
+});
+
+describe('an evaluation that keeps dying (wave 2 review M23, E-70 D2)', (): void => {
+  /** The rows the sweep scheduled an evaluation for. */
+  async function scheduledEvaluations(harness: Harness): Promise<unknown[]> {
+    return (
+      await harness.run(async (ctx) => await ctx.db.system.query('_scheduled_functions').collect())
+    )
+      .filter((job) => job.name === 'workActions:evaluateWorkItemInternal')
+      .map((job) => (job.args[0] as { workItemId: unknown }).workItemId);
+  }
+
+  /** A waiting row whose evaluation began `attempts` times and last died a lease ago. */
+  async function diedRow(
+    harness: Harness,
+    agentId: Id<'agents'>,
+    externalId: string,
+    attempts: number,
+    unavailable = false,
+  ): Promise<Id<'workItems'>> {
+    const workItemId = await insertDiscovered(harness, agentId, externalId);
+    const claimedAt = Date.now() - STEP_LEASE_MS - 1;
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        evaluationAttempts: attempts,
+        evaluationClaimedAt: claimedAt,
+        ...(unavailable ? { evaluationUnavailableAt: claimedAt + 1 } : {}),
+      });
+    });
+    return workItemId;
+  }
+
+  it('counts each evaluation it starts, and forgets the count once a verdict lands', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    recorded.scopeOutcome = new Error('provider answered 503');
+    const workItemId = await seedTicket(harness, agentId, 'REVOPS-80');
+    await drain(harness);
+    expect(await readItem(harness, workItemId)).toMatchObject({
+      state: 'discovered',
+      evaluationAttempts: 1,
+      evaluationUnavailableAt: expect.any(Number),
+      evaluationUnavailableCause: expect.stringContaining('provider answered 503'),
+    });
+
+    recorded.scopeOutcome = undefined;
+    vi.advanceTimersByTime(STEP_LEASE_MS);
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+    await drain(harness);
+    const evaluated = await readItem(harness, workItemId);
+    expect(evaluated.state).toBe('plan-pending');
+    expect(evaluated).not.toHaveProperty('evaluationAttempts');
+    expect(evaluated).not.toHaveProperty('evaluationUnavailableAt');
+    expect(evaluated).not.toHaveProperty('evaluationUnavailableCause');
+  });
+
+  it('marks a row unavailable only for the attempt that holds its claim, never from a late answer of a lapsed one', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const workItemId = await insertDiscovered(harness, agentId, 'REVOPS-86');
+    const first = await harness.mutation(internal.work.claimLoopStep, {
+      workItemId,
+      step: 'evaluation',
+    });
+    if (!first.claimed) throw new Error('the first attempt claims');
+    vi.advanceTimersByTime(STEP_LEASE_MS + 1);
+    const second = await harness.mutation(internal.work.claimLoopStep, {
+      workItemId,
+      step: 'evaluation',
+    });
+    if (!second.claimed) throw new Error('the second attempt claims once the first lapsed');
+
+    await harness.mutation(internal.work.recordScopeJudgementUnavailable, {
+      workItemId,
+      cause: 'provider answered 503',
+      claimedAt: first.claimedAt,
+    });
+    expect(await readItem(harness, workItemId)).not.toHaveProperty('evaluationUnavailableAt');
+    expect(await readItem(harness, workItemId)).not.toHaveProperty('evaluationUnavailableCause');
+    await harness.mutation(internal.work.recordScopeJudgementUnavailable, {
+      workItemId,
+      cause: 'provider answered 503',
+      claimedAt: second.claimedAt,
+    });
+    expect(await readItem(harness, workItemId)).toMatchObject({
+      evaluationAttempts: 2,
+      evaluationUnavailableAt: expect.any(Number),
+      evaluationUnavailableCause: 'provider answered 503',
+    });
+  });
+
+  it('gives the free slot at cap one to the next row while an evaluation that died twice waits behind it', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const dying = await diedRow(harness, agentId, 'REVOPS-81', 2);
+    vi.advanceTimersByTime(1);
+    const next = await insertDiscovered(harness, agentId, 'REVOPS-82');
+
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+
+    expect(await scheduledEvaluations(harness)).toEqual([next]);
+    expect((await readItem(harness, dying)).state).toBe('discovered');
+  });
+
+  it('parks a row whose evaluation died three times, with the event, and evaluates the next', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const dying = await diedRow(harness, agentId, 'REVOPS-83', 3);
+    const next = await insertDiscovered(harness, agentId, 'REVOPS-84');
+
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+
+    expect(await readItem(harness, dying)).toMatchObject({
+      state: 'deferred',
+      verdict: { decision: 'defer', reason: 'evaluation-attempts-spent', attempts: 3 },
+    });
+    expect((await readItem(harness, dying)).evaluationClaimedAt).toBeUndefined();
+    expect(
+      (await eventsOf(harness, 'work.evaluation-parked')).map((event) => event.payload),
+    ).toEqual([{ workItemId: dying, attempts: 3, reason: 'evaluation-attempts-spent' }]);
+    expect(await scheduledEvaluations(harness)).toEqual([next]);
+
+    // Nothing but the manager's Retry brings it back.
+    await harness.mutation(internal.work.reevaluatePending, {
+      agentId,
+      trigger: 'charter',
+      key: 'charter:amended',
+    });
+    await harness.mutation(internal.work.readmitSatisfiedDeferrals, { agentId });
+    expect((await readItem(harness, dying)).state).toBe('deferred');
+    await harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId: dying });
+    const retried = await readItem(harness, dying);
+    expect(retried.state).toBe('discovered');
+    expect(retried).not.toHaveProperty('evaluationAttempts');
+  });
+
+  it('parks a row whose last evaluation could not reach the scope judgement as unavailable, and re-admits it on the charter trigger and on Check for new work', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const parked = await diedRow(harness, agentId, 'REVOPS-85', 3, true);
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+    expect(await readItem(harness, parked)).toMatchObject({
+      state: 'deferred',
+      verdict: { decision: 'defer', reason: 'scope-judgement-unavailable', attempts: 3 },
+    });
+
+    await harness.mutation(internal.work.reevaluatePending, {
+      agentId,
+      trigger: 'charter',
+      key: 'charter:amended',
+    });
+    const readmitted = await readItem(harness, parked);
+    expect(readmitted.state).toBe('discovered');
+    expect(readmitted).not.toHaveProperty('evaluationAttempts');
+
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(parked, {
+        state: 'deferred',
+        verdict: { decision: 'defer', reason: 'scope-judgement-unavailable', attempts: 3 },
+      });
+    });
+    await harness.mutation(internal.work.readmitSatisfiedDeferrals, { agentId });
+    expect((await readItem(harness, parked)).state).toBe('discovered');
   });
 });
 
@@ -900,6 +1084,9 @@ describe('checking for new work on demand', (): void => {
       .withIdentity(OWNER)
       .mutation(api.workLoop.checkForNewWork, { agentId });
     expect(later).toMatchObject({ scheduled: 2 });
+    // The polls the advanced clock fired are still running: finish them here,
+    // so none of them runs on into a later test.
+    await harness.finishInProgressScheduledFunctions();
   });
 
   it('refuses a caller who does not own the employee, and the mock deployment', async (): Promise<void> => {
@@ -977,7 +1164,7 @@ describe('what an outage leaves (P7-18)', (): void => {
     ]);
   });
 
-  it('counts the dead drafts again from the manager\'s last Retry', async (): Promise<void> => {
+  it("counts the dead drafts again from the manager's last Retry", async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     const harness = convexTest(contractSchema(), allConvexModules());
@@ -1039,7 +1226,9 @@ describe('what an outage leaves (P7-18)', (): void => {
     // A set with nothing held has nothing to ask about, and is not asked every sweep.
     await harness.run(
       async (ctx) =>
-        await ctx.db.patch(workItemId, { actionVerdicts: [{ disposition: 'refused', reason: 'x' }] }),
+        await ctx.db.patch(workItemId, {
+          actionVerdicts: [{ disposition: 'refused', reason: 'x' }],
+        }),
     );
     await harness.mutation(internal.work.resumeStalledSteps, {});
     expect(await scheduledCalls(harness, 'managerChannelActions:requestDecision')).toEqual([]);
@@ -1069,7 +1258,11 @@ describe('a closing phase whose authoring never claimed the run (P5-1)', (): voi
       await ctx.db.patch(workItemId, {
         state: 'executing',
         executionRunId: claim,
-        output: { ...managerDm, phase: 'dependent-authoring', applied: [{ tool: 'http.request', ok: true }] },
+        output: {
+          ...managerDm,
+          phase: 'dependent-authoring',
+          applied: [{ tool: 'http.request', ok: true }],
+        },
       });
       return claim;
     });
@@ -1077,7 +1270,10 @@ describe('a closing phase whose authoring never claimed the run (P5-1)', (): voi
     const jobs = (
       await harness.run(async (ctx) => await ctx.db.system.query('_scheduled_functions').collect())
     ).map((job) => ({ name: job.name, args: job.args[0] }));
-    expect(jobs).toContainEqual({ name: 'work:recoverDependentAuthoring', args: { workItemId, runId } });
+    expect(jobs).toContainEqual({
+      name: 'work:recoverDependentAuthoring',
+      args: { workItemId, runId },
+    });
     expect(jobs.map((job) => job.name)).not.toContain('work:setFailed');
   });
 });
@@ -1107,10 +1303,9 @@ describe('queued work while the charter is not approved (step 4)', (): void => {
         verdict: { decision: 'defer', reason: AWAITING_CHARTER },
       });
     }
-    expect((await eventsOf(harness, 'work.waiting-for-charter')).map((event) => event.payload)).toEqual([
-      { workItemId: first },
-      { workItemId: second },
-    ]);
+    expect(
+      (await eventsOf(harness, 'work.waiting-for-charter')).map((event) => event.payload),
+    ).toEqual([{ workItemId: first }, { workItemId: second }]);
     expect(await scheduledNames(harness)).not.toContain('workActions:evaluateWorkItemInternal');
 
     await harness.run(async (ctx) => {

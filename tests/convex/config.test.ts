@@ -66,11 +66,16 @@ describe('model settings', (): void => {
     await expect(harness.query(api.config.modelSettings, {})).resolves.toEqual({
       model: 'gpt-5.6-terra',
       skillSandboxBackend: 'local',
+      evaluationBed: null,
     });
     vi.stubEnv('OPENAI_MODEL', 'qwen3:8b');
     vi.stubEnv('OPENAI_API_KEY', 'sk-should-never-be-returned');
     const settings = await harness.query(api.config.modelSettings, {});
-    expect(settings).toEqual({ model: 'qwen3:8b', skillSandboxBackend: 'local' });
+    expect(settings).toEqual({
+      model: 'qwen3:8b',
+      skillSandboxBackend: 'local',
+      evaluationBed: null,
+    });
     expect(JSON.stringify(settings)).not.toContain('sk-');
   });
 
@@ -78,7 +83,17 @@ describe('model settings', (): void => {
     const harness = convexTest(schema, allConvexModules());
     vi.stubEnv('DAYTONA_API_KEY', 'daytona-secret');
     const settings = await harness.query(api.config.modelSettings, {});
-    expect(settings).toEqual({ model: 'gpt-5.6-terra', skillSandboxBackend: 'daytona' });
+    expect(settings).toEqual({
+      model: 'gpt-5.6-terra',
+      skillSandboxBackend: 'daytona',
+      evaluationBed: null,
+    });
     expect(JSON.stringify(settings)).not.toContain('daytona-secret');
+  });
+
+  it('names the evaluation bed the deployment is, so a harness can refuse before it spends anything', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    vi.stubEnv('DAY0_EVALUATION_BED', 'comparison');
+    expect((await harness.query(api.config.modelSettings, {})).evaluationBed).toBe('comparison');
   });
 });

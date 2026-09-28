@@ -48,7 +48,8 @@ describe('the smoke test verdict', (): void => {
     const { verdictFor } = await import('../../../src/lib/skill-sandbox');
     expect(verdictFor('daytona', run('\n  \n'))).toMatchObject({
       ok: false,
-      failureReason: 'smoke test exited 0 but printed nothing, so the run produced no verification signal',
+      failureReason:
+        'smoke test exited 0 but printed nothing, so the run produced no verification signal',
     });
     for (const stdout of ['ok OPS-3 61%\n', 'ok OPS-3 61%\nok OPS-3 61%\n']) {
       expect(verdictFor('local', run(stdout))).toMatchObject({

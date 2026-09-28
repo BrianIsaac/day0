@@ -34,10 +34,12 @@ const recorded = vi.hoisted(() => ({
 }));
 
 /** What the mention's second closing authoring answers: the reply, from the read-back now in its ledger. */
-const REPLY_TEXT = 'Pipeline coverage reads 74% on the Looker tile, per its audit line (Last updated by revops).';
+const REPLY_TEXT =
+  'Pipeline coverage reads 74% on the Looker tile, per its audit line (Last updated by revops).';
 
 const r7Plan: ExecutionPlan = {
-  summary: 'Refresh the Looker pipeline tile to the approved 74%, read it back and tell the manager.',
+  summary:
+    'Refresh the Looker pipeline tile to the approved 74%, read it back and tell the manager.',
   steps: [
     'In one browser session on the looker surface, sign in, fill Pipeline coverage with 74% and click Save.',
     'Read the tile back with browser_snapshot and confirm the figure and the audit line.',
@@ -99,14 +101,23 @@ vi.mock('../../src/lib/mastra', async () => {
                     method: 'POST',
                     path: '/chat.postMessage',
                     headersJson: JSON.stringify({ Authorization: 'Bearer {{secret}}' }),
-                    body: JSON.stringify({ channel: 'C0BSF04TZ19', thread_ts: '1787746453.202809', text: REPLY_TEXT }),
+                    body: JSON.stringify({
+                      channel: 'C0BSF04TZ19',
+                      thread_ts: '1787746453.202809',
+                      text: REPLY_TEXT,
+                    }),
                   },
                 },
               ],
               procedureTrails: [],
               planStepOutcomes: fixture.slackClosingReply.planStepOutcomes.map((outcome) =>
                 outcome.step === 3
-                  ? { ...outcome, status: 'satisfied', evidence: 'ledger row 6: visible figure 74% and the audit line; the reply in this response quotes them' }
+                  ? {
+                      ...outcome,
+                      status: 'satisfied',
+                      evidence:
+                        'ledger row 6: visible figure 74% and the audit line; the reply in this response quotes them',
+                    }
                   : outcome,
               ),
             };
@@ -131,15 +142,32 @@ vi.mock('../../src/lib/mastra', async () => {
             ],
             procedureTrails: [],
             planStepOutcomes: [
-              { step: 1, status: 'satisfied', basis: 'ledger', evidence: 'ledger rows 0 to 5 landed on the tile' },
-              { step: 2, status: 'satisfied', basis: 'ledger', evidence: 'ledger row 6: visible figure 74% and the audit line' },
-              { step: 3, status: 'satisfied', basis: 'ledger', evidence: 'the manager DM in this response' },
+              {
+                step: 1,
+                status: 'satisfied',
+                basis: 'ledger',
+                evidence: 'ledger rows 0 to 5 landed on the tile',
+              },
+              {
+                step: 2,
+                status: 'satisfied',
+                basis: 'ledger',
+                evidence: 'ledger row 6: visible figure 74% and the audit line',
+              },
+              {
+                step: 3,
+                status: 'satisfied',
+                basis: 'ledger',
+                evidence: 'the manager DM in this response',
+              },
             ],
           };
         }
         throw new Error(`unscripted agent ${name}`);
       })();
-      return args.schema.parse((await import('./fakes/executor-reply')).asCurrentExecutorReply(reply)) as T;
+      return args.schema.parse(
+        (await import('./fakes/executor-reply')).asCurrentExecutorReply(reply),
+      ) as T;
     },
     agentText: async (): Promise<string> => '',
   };
@@ -172,7 +200,9 @@ vi.stubGlobal('fetch', async (input: URL | string, init?: RequestInit): Promise<
 type Harness = TestConvex<typeof schema>;
 const OWNER = { subject: 'owner' };
 
-async function seed(harness: Harness): Promise<{ slack: Id<'workItems'>; revops7: Id<'workItems'> }> {
+async function seed(
+  harness: Harness,
+): Promise<{ slack: Id<'workItems'>; revops7: Id<'workItems'> }> {
   return await harness.run(async (ctx) => {
     const agentId = await ctx.db.insert('agents', {
       bossEmail: 'boss@day0.local',
@@ -191,7 +221,10 @@ async function seed(harness: Harness): Promise<{ slack: Id<'workItems'>; revops7
       body: {
         proposedFunction: 'Own routine revenue operations work for the RevOps team.',
         proposedBoundaries: {
-          willDo: ['Keep the Looker pipeline tile at the approved figure.', 'Answer RevOps asks in Slack.'],
+          willDo: [
+            'Keep the Looker pipeline tile at the approved figure.',
+            'Answer RevOps asks in Slack.',
+          ],
           willNotDo: ['Post to public channels without approval.'],
           escalationTriggers: ['Unclear ownership'],
         },
@@ -201,7 +234,8 @@ async function seed(harness: Harness): Promise<{ slack: Id<'workItems'>; revops7
     await ctx.db.insert('skills', {
       agentId,
       name: 'chat-thread-reply',
-      description: 'Reply in the Slack thread a request came from, after doing the work it asks for.',
+      description:
+        'Reply in the Slack thread a request came from, after doing the work it asks for.',
       body: [
         '# Reply in the Slack thread',
         'Do the work the ask names on its connected surfaces, then reply in the thread with slack chat.postMessage and DM the manager when something needs them.',
@@ -274,7 +308,10 @@ async function seed(harness: Harness): Promise<{ slack: Id<'workItems'>; revops7
       toolArguments: [
         { arguments: ['url'], tool: 'browser_navigate' },
         { arguments: ['boxes', 'depth', 'filename', 'target'], tool: 'browser_snapshot' },
-        { arguments: ['button', 'doubleClick', 'element', 'modifiers', 'target'], tool: 'browser_click' },
+        {
+          arguments: ['button', 'doubleClick', 'element', 'modifiers', 'target'],
+          tool: 'browser_click',
+        },
         { arguments: ['element', 'slowly', 'submit', 'target', 'text'], tool: 'browser_type' },
         { arguments: ['fields'], tool: 'browser_fill_form' },
       ],
@@ -308,10 +345,19 @@ async function seed(harness: Harness): Promise<{ slack: Id<'workItems'>; revops7
       contentRefs: [
         'https://app.slack.com/client/T0BSQSQG0UU/C0BSF04TZ19/thread/C0BSF04TZ19-1787746453202809',
       ],
-      replyTarget: { channel: 'C0BSF04TZ19', channelName: 'revops-asks', threadTs: '1787746453.202809' },
+      replyTarget: {
+        channel: 'C0BSF04TZ19',
+        channelName: 'revops-asks',
+        threadTs: '1787746453.202809',
+      },
       state: 'plan-approved',
       plan: slackPlan,
-      verdict: { decision: 'claim', value: 60, risk: 40, requiredPermissions: ['boss:message', 'slack:read'] },
+      verdict: {
+        decision: 'claim',
+        value: 60,
+        risk: 40,
+        requiredPermissions: ['boss:message', 'slack:read'],
+      },
       observedAt: 1,
       createdAt: 1,
     } as never);
@@ -321,11 +367,17 @@ async function seed(harness: Harness): Promise<{ slack: Id<'workItems'>; revops7
       sourceSystem: 'linear',
       externalId: 'REVOPS-7',
       title: 'Refresh the Looker pipeline tile',
-      contentSummary: 'Refresh the Looker pipeline tile with the approved 74% and record the audit line.',
+      contentSummary:
+        'Refresh the Looker pipeline tile with the approved 74% and record the audit line.',
       contentRefs: ['https://linear.app/day00/issue/REVOPS-7/refresh-the-looker-pipeline-tile'],
       state: 'plan-approved',
       plan: r7Plan,
-      verdict: { decision: 'claim', value: 70, risk: 30, requiredPermissions: ['boss:message', 'linear:read'] },
+      verdict: {
+        decision: 'claim',
+        value: 70,
+        risk: 30,
+        requiredPermissions: ['boss:message', 'linear:read'],
+      },
       observedAt: 1,
       createdAt: 1,
     } as never);
@@ -344,13 +396,17 @@ function ledger(row: Doc<'workItems'>): AppliedAction[] {
 }
 
 /** Apply one work item's pending phase with the double attributing its calls to that item. */
-async function applyAs(harness: Harness, label: string, workItemId: Id<'workItems'>): Promise<void> {
+async function applyAs(
+  harness: Harness,
+  label: string,
+  workItemId: Id<'workItems'>,
+): Promise<void> {
   recorded.driver!.label = label;
   await harness.action(internal.workActions.applyApprovedActions, { workItemId });
   recorded.driver!.label = undefined;
 }
 
-describe('a browser sequence split across a run\'s two phases (16 September 21:07 UTC)', (): void => {
+describe("a browser sequence split across a run's two phases (16 September 21:07 UTC)", (): void => {
   beforeEach((): void => {
     useSurfaceMode('real');
     vi.stubEnv('DAY0_BROWSER_MCP_URL', 'http://playwright-mcp:8931/mcp');
@@ -384,7 +440,9 @@ describe('a browser sequence split across a run\'s two phases (16 September 21:0
     const runId = authoring.executionRunId!;
 
     // REVOPS-7 refreshes the tile to 74% in its own run.
-    await t.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId: revops7 });
+    await t
+      .withIdentity(OWNER)
+      .action(api.workActions.executeApprovedPlan, { workItemId: revops7 });
     await applyAs(t, 'revops-7', revops7);
 
     // The Slack mention's closing set, authored from its ledger and applied
@@ -394,7 +452,10 @@ describe('a browser sequence split across a run\'s two phases (16 September 21:0
     // Its reply step was blocked for a read-back that only this apply
     // produced, so the closing set is authored once more from the ledger
     // (finding W, 19 September), and that set is applied.
-    expect((await readItem(t, slack)).output).toMatchObject({ phase: 'dependent-authoring', closingRound: { reason: 'reply-owed', prerequisiteCount: 4 } });
+    expect((await readItem(t, slack)).output).toMatchObject({
+      phase: 'dependent-authoring',
+      closingRound: { reason: 'reply-owed', prerequisiteCount: 4 },
+    });
     await t.action(internal.workActions.authorDependentActions, { workItemId: slack, runId });
     await applyAs(t, 'slack', slack);
     await t.finishAllScheduledFunctions(vi.runAllTimers);
@@ -413,12 +474,14 @@ describe('a browser sequence split across a run\'s two phases (16 September 21:0
         step.replayOf,
         step.authority,
       ]),
-    ).toEqual([0, 1, 2].map((index) => [
-      true,
-      `${slack}:${runId}:4.session-${index}`,
-      `${slack}:${runId}:${index}`,
-      'autonomous',
-    ]));
+    ).toEqual(
+      [0, 1, 2].map((index) => [
+        true,
+        `${slack}:${runId}:4.session-${index}`,
+        `${slack}:${runId}:${index}`,
+        'autonomous',
+      ]),
+    );
     expect(slackLedger[5]).not.toHaveProperty('sessionRestore');
     // 2. The closing snapshot reads the refreshed figure and the audit line,
     //    and nothing anywhere read a blank page.
@@ -429,20 +492,32 @@ describe('a browser sequence split across a run\'s two phases (16 September 21:0
     // 3. The Slack item did not fail, and the person who asked is answered:
     //    on the day it completed with its reply step blocked and no reply.
     const events = await t.run(async (ctx) => await ctx.db.query('events').collect());
-    const mine = events.filter((event) => (event.payload as { workItemId?: string }).workItemId === slack);
+    const mine = events.filter(
+      (event) => (event.payload as { workItemId?: string }).workItemId === slack,
+    );
     expect(mine.filter((event) => event.type === 'work.failed')).toEqual([]);
     expect(mine.filter((event) => event.type === 'work.closing-reauthored')).toHaveLength(1);
     expect(slackRow.state).toBe('completed');
     expect(slackLedger.every((row) => row.ok && !row.held)).toBe(true);
     expect(recorded.slackClosings).toBe(2);
     expect(
-      recorded.http.map((call) => call.body as { channel?: string; thread_ts?: string; text?: string })
-        .filter((body) => body.channel === 'C0BSF04TZ19' && body.thread_ts === '1787746453.202809' && body.text?.startsWith(REPLY_TEXT)),
+      recorded.http
+        .map((call) => call.body as { channel?: string; thread_ts?: string; text?: string })
+        .filter(
+          (body) =>
+            body.channel === 'C0BSF04TZ19' &&
+            body.thread_ts === '1787746453.202809' &&
+            body.text?.startsWith(REPLY_TEXT),
+        ),
     ).toHaveLength(1);
     expect((slackRow.output as { prerequisiteCount?: number }).prerequisiteCount).toBe(4);
     // 4. REVOPS-7 landed every browser row, in a browser that served no
     //    Slack call.
-    expect(ledger(revops7Row).slice(0, 7).every((row) => row.ok && !row.held)).toBe(true);
+    expect(
+      ledger(revops7Row)
+        .slice(0, 7)
+        .every((row) => row.ok && !row.held),
+    ).toBe(true);
     const revops7Contexts = recorded.driver!.contextsServing('revops-7');
     const slackContexts = recorded.driver!.contextsServing('slack');
     expect(revops7Contexts.size).toBeGreaterThan(0);

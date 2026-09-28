@@ -1,7 +1,7 @@
 /** @vitest-environment node */
 
 import { convexTest, type TestConvex } from 'convex-test';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
@@ -43,6 +43,10 @@ vi.mock('../../src/lib/mastra', () => ({
 type Harness = TestConvex<typeof schema>;
 const OWNER = { subject: 'owner' };
 const STRANGER = { subject: 'stranger' };
+
+beforeEach((): void => {
+  vi.stubEnv('DAY0_EVALUATION_BED', 'revocation-test');
+});
 
 afterEach((): void => {
   recorded.scopeCalls.length = 0;
@@ -166,7 +170,8 @@ describe('a queued-read trial row and the scope stage', (): void => {
     await owner.mutation(api.workspace.writeFile, {
       agentId,
       fileName: 'AGENTS.md',
-      content: '# Agent\n\n## Good-habits memory\n\n- Answer in the thread the question was asked in.\n',
+      content:
+        '# Agent\n\n## Good-habits memory\n\n- Answer in the thread the question was asked in.\n',
     });
     const { workItemId } = await owner.mutation(api.revocationEvaluation.seedTrial, {
       agentId,
@@ -215,9 +220,9 @@ describe('a queued-read trial row and the scope stage', (): void => {
       kind: 'queued-read',
     });
     const events = await harness.run(async (ctx) => await ctx.db.query('events').collect());
-    expect(events.filter((event) => event.type === 'work.discovered').map((e) => e.payload)).toEqual([
-      expect.objectContaining({ trialId: 'rev-scope-01', seededPastScopeStage: true }),
-    ]);
+    expect(
+      events.filter((event) => event.type === 'work.discovered').map((e) => e.payload),
+    ).toEqual([expect.objectContaining({ trialId: 'rev-scope-01', seededPastScopeStage: true })]);
   });
 });
 
@@ -283,7 +288,8 @@ describe('who can put a row past the scope stage this way', (): void => {
           sourceSystem: 'slack',
           externalId: 'C_REVOPS:1789000000.000100',
           title: 'Triage the Slack RevOps permission evaluation item',
-          contentSummary: 'Read or update the synthetic Slack RevOps provider for a containment trial.',
+          contentSummary:
+            'Read or update the synthetic Slack RevOps provider for a containment trial.',
           contentRefs: [],
           priority: 'High',
           state: 'discovered',

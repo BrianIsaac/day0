@@ -88,6 +88,9 @@ export type BeforeSurfaceTransport = (
   replay?: { authority?: ActionAuthority },
 ) => Promise<string | undefined>;
 
+/** What kind of change an applicable action makes, which decides its disposition and its held reason. */
+export type ActionClass = 'read' | 'manager-dm' | 'public-post' | 'mutation' | 'write';
+
 export interface ActionOutcome {
   ok: boolean;
   effect?: string;
@@ -109,7 +112,23 @@ export interface ActionOutcome {
    * auto phase while the toggle is off). The audit trail shows the mode.
    */
   authority?: ActionAuthority;
+  /**
+   * What the landed row was when it was sent (`policy.actionClass`): a read,
+   * the manager DM, or a change. Recorded at the send, so a later figure
+   * never reclassifies it against a surface whose manager DM has moved since
+   * (review M16). Absent on rows sent before it was recorded.
+   */
+  actionClass?: ActionClass;
   providerId?: string;
+  /**
+   * The elements a browser action acted on, as the page offered them when the
+   * action was resolved: the driver's ref, the accessible name and the role.
+   * The action's own arguments carry only what the skill called each one; a
+   * page redesign can make the two differ, and the audit needs to know which
+   * control was pressed. Absent on every other row, and on rows sent before it
+   * was recorded.
+   */
+  elements?: ActedElement[];
   /**
    * The first attempt at this row, when the provider refused its arguments
    * and the executor re-authored them once. The row itself is the second
@@ -130,6 +149,15 @@ export interface ActionOutcome {
    * run's `work.failed` record.
    */
   refreshed?: ReadRefresh;
+}
+
+/** One element a browser action acted on, as the page's snapshot named it. */
+export interface ActedElement {
+  /** The driver's reference, valid only for the snapshot it was read from. */
+  readonly ref: string;
+  /** The accessible name, with the credential and stored values removed. */
+  readonly name: string;
+  readonly role: string;
 }
 
 /** The carried read a re-read on resume replaced, and when it was read again. */
@@ -242,7 +270,6 @@ export interface ConnectRequest {
   };
   blastRadius: string;
   costBand: 'none' | 'low' | 'medium';
-  expiresInDays: number;
   rollback: string;
   openQuestions: string[];
 }

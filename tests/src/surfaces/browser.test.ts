@@ -8,8 +8,14 @@ import {
   browserComponent,
   browserPageUrl,
   browserPageTitle,
+  browserSignedInMarker,
   browserTitleMarker,
+  documentedUsername,
+  loginForm,
+  pageShowsElement,
   carriesSecretPlaceholder,
+  isCredentialField,
+  isLoginNameField,
   DEFAULT_BROWSER_MCP_URL,
   elementDescriptions,
   navigationRefusal,
@@ -130,13 +136,15 @@ describe('what the card says about the browser component', (): void => {
 });
 
 describe('the tools the floor may use', (): void => {
-  it('is the set a person needs to read a page and complete a form', (): void => {
+  it('is the set a person needs to read a page, wait for it and complete a form', (): void => {
     expect([...BROWSER_TOOLS]).toEqual([
       'browser_navigate',
       'browser_snapshot',
+      'browser_wait_for',
       'browser_click',
       'browser_type',
       'browser_fill_form',
+      'browser_handle_dialog',
     ]);
   });
 
@@ -148,7 +156,6 @@ describe('the tools the floor may use', (): void => {
       'browser_tabs',
       'browser_network_requests',
       'browser_take_screenshot',
-      'browser_handle_dialog',
     ]) {
       expect(BROWSER_TOOLS).not.toContain(tool);
     }
@@ -234,6 +241,29 @@ describe('checking where a browser navigation landed', (): void => {
       'Pipeline coverage - Looker',
     );
     expect(browserTitleMarker('Open the browser and look for Pipeline coverage.')).toBeUndefined();
+  });
+
+  it('reads the element a signed-in page shows, apart from the title marker', (): void => {
+    const page = [
+      '- Probe marker: page title `Sign in - Looker`.',
+      '- Probe marker: after sign-in, element `Pipeline coverage`.',
+    ].join('\n');
+    expect(browserSignedInMarker(page)).toBe('Pipeline coverage');
+    expect(browserTitleMarker(page)).toBe('Sign in - Looker');
+    expect(browserSignedInMarker('Probe marker: after signin element `Revenue`')).toBe('Revenue');
+    expect(browserSignedInMarker('- Probe marker: page title `Sign in - Looker`.')).toBeUndefined();
+  });
+
+  it('reads the documented account name from a credential line', (): void => {
+    expect(
+      documentedUsername(
+        '- Dashboard login (Looker tile): `<redacted>` (username `revops`), held by the RevOps lead',
+      ),
+    ).toBe('revops');
+    expect(documentedUsername('Login: (user name `ops@kestrel.example`)')).toBe(
+      'ops@kestrel.example',
+    );
+    expect(documentedUsername('- Dashboard login (Looker tile): `<redacted>`')).toBeUndefined();
   });
 
   it('refuses a redirect to another origin', (): void => {
@@ -522,6 +552,21 @@ describe('where a browser action may carry the credential', (): void => {
   const password: SnapshotElement = { name: 'Password', ref: 'e14', role: 'textbox' };
   const notes: SnapshotElement = { name: 'Password notes', ref: 'e30', role: 'textbox' };
 
+  it('names a credential field and an account field apart, role words aside', (): void => {
+    for (const name of ['Password', 'Password field', 'passcode', 'API key', 'Access code box']) {
+      expect(isCredentialField(name)).toBe(true);
+      expect(isLoginNameField(name)).toBe(false);
+    }
+    for (const name of ['Username', 'User name', 'E-mail address', 'Email field']) {
+      expect(isLoginNameField(name)).toBe(true);
+      expect(isCredentialField(name)).toBe(false);
+    }
+    for (const name of ['Password notes', 'Pipeline coverage', 42]) {
+      expect(isCredentialField(name)).toBe(false);
+      expect(isLoginNameField(name)).toBe(false);
+    }
+  });
+
   it('finds a placeholder anywhere in an argument tree', (): void => {
     expect(carriesSecretPlaceholder({ fields: [{ value: '{{ secret }}' }] })).toBe(true);
     expect(carriesSecretPlaceholder({ url: 'http://x/?t={{secret:tile}}' })).toBe(true);
@@ -640,5 +685,41 @@ describe('where a browser action may carry the credential', (): void => {
         'tile',
       ),
     ).toEqual({ element: 'Password', text: 's' });
+  });
+});
+
+describe('whether a page shows an element', (): void => {
+  it('matches the accessible name whatever the role, case or spacing, and however many share it', (): void => {
+    const page = [
+      '- heading "Pipeline coverage" [level=2] [ref=e20]',
+      '- textbox "Pipeline  Coverage" [ref=e21]',
+    ].join('\n');
+    expect(pageShowsElement(page, 'pipeline coverage')).toBe(true);
+    expect(pageShowsElement(page, 'Pipeline')).toBe(false);
+    expect(pageShowsElement(page, '  ')).toBe(false);
+  });
+});
+
+describe('the login form on a page', (): void => {
+  it('finds the account box, the password box and the controls a sign-in uses', (): void => {
+    expect(loginForm(SIGN_IN_PAGE)).toMatchObject({
+      account: { role: 'textbox', name: 'Username' },
+      credential: { role: 'textbox', name: 'Password' },
+      submit: { role: 'button', name: 'Sign in' },
+    });
+  });
+
+  it('takes no control from a heading, and none a name two controls share', (): void => {
+    const form = loginForm(
+      [
+        '- heading "Sign in" [level=1] [ref=e7]',
+        '- textbox "Password" [ref=e14]',
+        '- textbox "Password" [ref=e16]',
+        '- link "Log in" [ref=e20]',
+      ].join('\n'),
+    );
+    expect(form.credential).toBeUndefined();
+    expect(form.submit).toMatchObject({ role: 'link', name: 'Log in' });
+    expect(loginForm(RELABELLED_SIGN_IN_PAGE).submit).toMatchObject({ name: 'Log in' });
   });
 });

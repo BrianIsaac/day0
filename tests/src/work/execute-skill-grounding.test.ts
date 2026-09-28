@@ -81,7 +81,11 @@ const charter: Charter = {
   proposedFunction: 'Operations coordination',
   evidence: [],
   shortTermGoals: { day30: 'Learn', day60: 'Own', day90: 'Improve' },
-  proposedBoundaries: { willDo: ['Keep the tracker current.'], willNotDo: [], escalationTriggers: [] },
+  proposedBoundaries: {
+    willDo: ['Keep the tracker current.'],
+    willNotDo: [],
+    escalationTriggers: [],
+  },
   namedCollaborators: [],
   namedSystems: [],
   priorityReading: [],
@@ -145,13 +149,21 @@ describe('documentation grounding in the executor prompts', (): void => {
       mode: 'real',
       surfaces: [],
       managerFeedback: 'Quote the checklist items from the handbook.',
-      initialOutput: { draft: '', notes: '', needsDependentPhase: true, actions: [], procedureTrails: [] },
+      initialOutput: {
+        draft: '',
+        notes: '',
+        needsDependentPhase: true,
+        actions: [],
+        procedureTrails: [],
+      },
       initialLedger: [],
     });
 
     expect(recorded.users).toHaveLength(1);
     expect(recorded.users[0]).toContain('--- Team docs (read-only context) ---');
-    expect(recorded.users[0]).toContain('Close checklist: reconcile the ledger, confirm the owner, file the summary.');
+    expect(recorded.users[0]).toContain(
+      'Close checklist: reconcile the ledger, confirm the owner, file the summary.',
+    );
     expect(recorded.instructions[0]).toContain('citable');
   });
 
@@ -175,7 +187,13 @@ describe('documentation grounding in the executor prompts', (): void => {
     };
     await runDependentSkill({
       ...closingArgs,
-      initialOutput: { draft: '', notes: '', needsDependentPhase: true, actions: [], procedureTrails: [] },
+      initialOutput: {
+        draft: '',
+        notes: '',
+        needsDependentPhase: true,
+        actions: [],
+        procedureTrails: [],
+      },
     });
     expect(recorded.instructions[0]).toContain(`Emit at most ${CLOSING_SET_CAP} closing actions.`);
     await runDependentSkill({
@@ -184,7 +202,12 @@ describe('documentation grounding in the executor prompts', (): void => {
         draft: '',
         notes: '',
         needsDependentPhase: true,
-        actions: [{ tool: 'mcp.call', args: { surface: 'tracker', tool: 'get_issue', toolArgsJson: '{"id":"T-1"}' } }],
+        actions: [
+          {
+            tool: 'mcp.call',
+            args: { surface: 'tracker', tool: 'get_issue', toolArgsJson: '{"id":"T-1"}' },
+          },
+        ],
         procedureTrails: [],
         deferredActions: [
           {
@@ -229,7 +252,13 @@ describe('documentation grounding in the executor prompts', (): void => {
       mockEnv,
       mode: 'real',
       surfaces: [],
-      initialOutput: { draft: '', notes: '', needsDependentPhase: true, actions: [], procedureTrails: [] },
+      initialOutput: {
+        draft: '',
+        notes: '',
+        needsDependentPhase: true,
+        actions: [],
+        procedureTrails: [],
+      },
       initialLedger: [],
     });
 
@@ -245,7 +274,12 @@ describe('documentation grounding in the executor prompts', (): void => {
       actions: [],
       procedureTrails: [],
       planStepOutcomes: [
-        { step: 1, status: 'satisfied', evidence: 'Manager: REVOPS-7 is owned by Priya.', basis: 'manager-feedback' },
+        {
+          step: 1,
+          status: 'satisfied',
+          evidence: 'Manager: REVOPS-7 is owned by Priya.',
+          basis: 'manager-feedback',
+        },
         { step: 2, status: 'satisfied', evidence: 'ledger row 0', basis: 'ledger' },
       ],
     });
@@ -265,17 +299,30 @@ describe('documentation grounding in the executor prompts', (): void => {
       mode: 'real',
       surfaces: [],
       managerFeedback: 'REVOPS-7 is owned by Priya.',
-      initialOutput: { draft: '', notes: '', needsDependentPhase: true, actions: [], procedureTrails: [] },
+      initialOutput: {
+        draft: '',
+        notes: '',
+        needsDependentPhase: true,
+        actions: [],
+        procedureTrails: [],
+      },
       initialLedger: [],
     });
 
     // The rule is in the closing instructions and the fact is in the prompt, so
     // the step the manager settled is reported on their word, and the record says so.
-    expect(recorded.instructions[0]).toContain("A fact the manager's feedback states is approved evidence");
+    expect(recorded.instructions[0]).toContain(
+      "A fact the manager's feedback states is approved evidence",
+    );
     expect(recorded.instructions[0]).toContain('`manager-feedback`');
     expect(recorded.users[0]).toContain(JSON.stringify('REVOPS-7 is owned by Priya.'));
     expect(output.planStepOutcomes).toEqual([
-      { step: 1, status: 'satisfied', evidence: 'Manager: REVOPS-7 is owned by Priya.', basis: 'manager-feedback' },
+      {
+        step: 1,
+        status: 'satisfied',
+        evidence: 'Manager: REVOPS-7 is owned by Priya.',
+        basis: 'manager-feedback',
+      },
       { step: 2, status: 'satisfied', evidence: 'ledger row 0' },
     ]);
   });
@@ -296,7 +343,13 @@ describe('documentation grounding in the executor prompts', (): void => {
       mockEnv,
       mode: 'real',
       surfaces: [],
-      initialOutput: { draft: '', notes: '', needsDependentPhase: true, actions: [], procedureTrails: [] },
+      initialOutput: {
+        draft: '',
+        notes: '',
+        needsDependentPhase: true,
+        actions: [],
+        procedureTrails: [],
+      },
       initialLedger: [],
     });
     expect(recorded.instructions[0]).not.toContain("A fact the manager's feedback states");
@@ -319,7 +372,13 @@ describe('documentation grounding in the executor prompts', (): void => {
       mockEnv,
       mode: 'real',
       surfaces: [],
-      initialOutput: { draft: '', notes: '', needsDependentPhase: true, actions: [], procedureTrails: [] },
+      initialOutput: {
+        draft: '',
+        notes: '',
+        needsDependentPhase: true,
+        actions: [],
+        procedureTrails: [],
+      },
       initialLedger: [],
     }).catch((): undefined => undefined);
 
@@ -360,7 +419,13 @@ describe('advisory steps in the closing phase', (): void => {
       mockEnv,
       mode: 'real',
       surfaces: [],
-      initialOutput: { draft: '', notes: '', needsDependentPhase: true, actions: [], procedureTrails: [] },
+      initialOutput: {
+        draft: '',
+        notes: '',
+        needsDependentPhase: true,
+        actions: [],
+        procedureTrails: [],
+      },
       initialLedger: [],
     });
     expect(recorded.instructions[0]).toContain('Advisory plan steps: 1.');
@@ -372,14 +437,31 @@ describe('advisory steps in the closing phase', (): void => {
   });
 
   it('uses charter-derived properties when auditing an older approved plan', async (): Promise<void> => {
-    recorded.planStepOutcomes = [{ step: 1, status: 'blocked', evidence: 'No customer-facing field exists' }];
+    recorded.planStepOutcomes = [
+      { step: 1, status: 'blocked', evidence: 'No customer-facing field exists' },
+    ];
     const output = await runDependentSkill({
       skill: { name: 'tracker-action', description: 'Tracker work.', body: '# Skill' },
-      plan: { summary: 'Check scope.', steps: ['Confirm the ticket is customer-facing.'],
-        expectedOutputType: 'ticket-update', riskNotes: '', reversibility: '', estimatedMinutes: 1 },
-      candidate, charter: { ...charter, proposedFunction: 'Handle customer-facing tickets.' },
-      mockEnv, mode: 'real', surfaces: [],
-      initialOutput: { draft: '', notes: '', needsDependentPhase: true, actions: [], procedureTrails: [] },
+      plan: {
+        summary: 'Check scope.',
+        steps: ['Confirm the ticket is customer-facing.'],
+        expectedOutputType: 'ticket-update',
+        riskNotes: '',
+        reversibility: '',
+        estimatedMinutes: 1,
+      },
+      candidate,
+      charter: { ...charter, proposedFunction: 'Handle customer-facing tickets.' },
+      mockEnv,
+      mode: 'real',
+      surfaces: [],
+      initialOutput: {
+        draft: '',
+        notes: '',
+        needsDependentPhase: true,
+        actions: [],
+        procedureTrails: [],
+      },
       initialLedger: [],
     });
     expect(output.planStepOutcomes[0].status).toBe('not-verifiable');
@@ -394,10 +476,23 @@ describe('advisory steps in the closing phase', (): void => {
       plan: {
         summary: 'Read back the tile.',
         steps: ['Read back the visible 74% and audit line from the Looker pipeline tile.'],
-        expectedOutputType: 'message', riskNotes: '', reversibility: '', estimatedMinutes: 1,
+        expectedOutputType: 'message',
+        riskNotes: '',
+        reversibility: '',
+        estimatedMinutes: 1,
       },
-      candidate, charter, mockEnv, mode: 'real', surfaces: [],
-      initialOutput: { draft: '', notes: '', needsDependentPhase: true, actions: [], procedureTrails: [] },
+      candidate,
+      charter,
+      mockEnv,
+      mode: 'real',
+      surfaces: [],
+      initialOutput: {
+        draft: '',
+        notes: '',
+        needsDependentPhase: true,
+        actions: [],
+        procedureTrails: [],
+      },
       initialLedger: [],
     });
     expect(output.planStepOutcomes).toEqual([
@@ -421,7 +516,13 @@ describe('advisory steps in the closing phase', (): void => {
       mockEnv,
       mode: 'real',
       surfaces: [],
-      initialOutput: { draft: '', notes: '', needsDependentPhase: true, actions: [], procedureTrails: [] },
+      initialOutput: {
+        draft: '',
+        notes: '',
+        needsDependentPhase: true,
+        actions: [],
+        procedureTrails: [],
+      },
       initialLedger: [],
     });
     expect(recorded.instructions[0]).not.toContain('Advisory plan steps');
@@ -501,7 +602,8 @@ describe('deferral by data, not by judgement', (): void => {
       },
     ],
   } as MockSurfaceSnapshot;
-  const skillBody = 'Refresh the looker-pipeline-tile as the runbook says, then record the result on linear.';
+  const skillBody =
+    'Refresh the looker-pipeline-tile as the runbook says, then record the result on linear.';
   const getIssue: MockAction = {
     tool: 'mcp.call',
     args: { surface: 'linear', tool: 'get_issue', toolArgsJson: '{"id":"REVOPS-7"}' },
@@ -597,40 +699,86 @@ describe('deferral by data, not by judgement', (): void => {
     recorded.outputs.push(gatedOutput, gatedOutput);
     const corrections: Array<[number[], string]> = [];
     const output = await runSkill({
-      ...runArgs, mockEnv: tileRunbook,
-      onAuditCorrection: (indices, reason) => { corrections.push([indices, reason]); },
+      ...runArgs,
+      mockEnv: tileRunbook,
+      onAuditCorrection: (indices, reason) => {
+        corrections.push([indices, reason]);
+      },
     });
     expect(recorded.users).toHaveLength(2);
     expect(output.actions).toEqual([getIssue]);
     expect(output.needsDependentPhase).toBe(true);
-    expect(corrections).toEqual([[[], expect.stringContaining(`${DEFERRALS_KEPT}: deferred an action with no result dependency`)]]);
-    expect(corrections[0]![1]).toContain('Looker pipeline tile (looker-pipeline-tile) sequence has no action in this phase');
+    expect(corrections).toEqual([
+      [
+        [],
+        expect.stringContaining(`${DEFERRALS_KEPT}: deferred an action with no result dependency`),
+      ],
+    ]);
+    expect(corrections[0]![1]).toContain(
+      'Looker pipeline tile (looker-pipeline-tile) sequence has no action in this phase',
+    );
   });
 
   it('rejects result wording without a declared dependency', (): void => {
-    expect(deferralAudit({
-      notes: '', needsDependentPhase: true, actions: [getIssue, ...tileSequence],
-      procedureTrails: [{ trailId: 'trail-1', state: 'deferred', reason: 'pending confirmation of ownership' }],
-    }, ticket, context)).toHaveLength(1);
+    expect(
+      deferralAudit(
+        {
+          notes: '',
+          needsDependentPhase: true,
+          actions: [getIssue, ...tileSequence],
+          procedureTrails: [
+            { trailId: 'trail-1', state: 'deferred', reason: 'pending confirmation of ownership' },
+          ],
+        },
+        ticket,
+        context,
+      ),
+    ).toHaveLength(1);
   });
 
   it.each([
     [0, 'assignee', [getIssue]],
     [5, 'visible figure', [getIssue, ...tileSequence]],
     [99, 'visible figure', [getIssue, ...tileSequence]],
-  ])('rejects an irrelevant, write or missing dependency at index %s', (index, field, actions): void => {
-    expect(deferralAudit({
-      notes: 'looker-pipeline-tile awaits confirmation', needsDependentPhase: true, actions,
-      procedureTrails: [{ trailId: 'trail-1', state: 'deferred', reason: 'pending confirmation of ownership',
-        dependsOnActionIndex: index, dependsOnField: field }],
-    }, ticket, context).join(' ')).toContain('procedure trail trail-1');
-  });
+  ])(
+    'rejects an irrelevant, write or missing dependency at index %s',
+    (index, field, actions): void => {
+      expect(
+        deferralAudit(
+          {
+            notes: 'looker-pipeline-tile awaits confirmation',
+            needsDependentPhase: true,
+            actions,
+            procedureTrails: [
+              {
+                trailId: 'trail-1',
+                state: 'deferred',
+                reason: 'pending confirmation of ownership',
+                dependsOnActionIndex: index,
+                dependsOnField: field,
+              },
+            ],
+          },
+          ticket,
+          context,
+        ).join(' '),
+      ).toContain('procedure trail trail-1');
+    },
+  );
 
   it('audits closing work outside the parsed trail inventory', (): void => {
     const output = {
-      notes: '', needsDependentPhase: true, actions: [getIssue, ...tileSequence],
-      deferredActions: [{ description: 'Closing comment', reason: 'Quote the observed figure',
-        dependsOnActionIndex: 6, dependsOnField: 'visible figure' }],
+      notes: '',
+      needsDependentPhase: true,
+      actions: [getIssue, ...tileSequence],
+      deferredActions: [
+        {
+          description: 'Closing comment',
+          reason: 'Quote the observed figure',
+          dependsOnActionIndex: 6,
+          dependsOnField: 'visible figure',
+        },
+      ],
     };
     expect(deferralAudit(output, ticket, context)).toEqual([]);
     output.deferredActions[0].dependsOnActionIndex = 5;
@@ -645,7 +793,13 @@ describe('deferral by data, not by judgement', (): void => {
       needsDependentPhase: true,
       actions: [getIssue, ...tileSequence],
       procedureTrails: [
-        { trailId: 'trail-1', state: 'deferred', reason: 'quotes the read-back figure', dependsOnActionIndex: 6, dependsOnField: 'visible figure' },
+        {
+          trailId: 'trail-1',
+          state: 'deferred',
+          reason: 'quotes the read-back figure',
+          dependsOnActionIndex: 6,
+          dependsOnField: 'visible figure',
+        },
       ],
     };
     expect(deferralAudit(deferredOnData, ticket, trailContext)).toEqual([]);
@@ -658,7 +812,9 @@ describe('deferral by data, not by judgement', (): void => {
     };
     const issues = deferralAudit(deferredOnJudgement, ticket, trailContext);
     expect(issues).toHaveLength(1);
-    expect(issues[0]).toContain('procedure trail trail-1 is deferred for "pending ownership verification"');
+    expect(issues[0]).toContain(
+      'procedure trail trail-1 is deferred for "pending ownership verification"',
+    );
   });
 
   it('lets a browser sequence wait when the notes name the surface and the result it consumes', (): void => {
@@ -686,15 +842,19 @@ describe('deferral by data, not by judgement', (): void => {
       procedureTrails: [],
     };
     expect(deferralAudit(gatedOutput, ticket, { ...context, mode: 'mock' })).toEqual([]);
-    expect(
-      deferralAudit({ ...gatedOutput, needsDependentPhase: false }, ticket, context),
-    ).toEqual([]);
+    expect(deferralAudit({ ...gatedOutput, needsDependentPhase: false }, ticket, context)).toEqual(
+      [],
+    );
     const unnamed = {
       ...context,
       skillBody: 'Comment on the ticket.',
       plan: { summary: 'Comment.', steps: ['Comment on REVOPS-7.'] },
     };
-    const commentOnly: WorkCandidate = { ...ticket, title: 'Add a note', contentSummary: 'Add a note.' };
+    const commentOnly: WorkCandidate = {
+      ...ticket,
+      title: 'Add a note',
+      contentSummary: 'Add a note.',
+    };
     expect(deferralAudit(gatedOutput, commentOnly, unnamed)).toEqual([]);
     expect(
       deferralAudit(gatedOutput, ticket, {
@@ -780,7 +940,10 @@ describe('deferral by data, not by judgement', (): void => {
         ticket,
         {
           ...recordContext,
-          plan: { ...plan, steps: ['Read the thread.', 'Post "Standup moved to 10:00" in #revops-asks on Slack.'] },
+          plan: {
+            ...plan,
+            steps: ['Read the thread.', 'Post "Standup moved to 10:00" in #revops-asks on Slack.'],
+          },
         },
       ),
     ).toEqual([]);
@@ -793,9 +956,12 @@ describe('deferral by data, not by judgement', (): void => {
     'Comment on "REVOPS-7" in Linear with the outcome.',
     'Draft the Linear comment: "Friday standup summary for Q3 close" for the manager to approve.',
     'Do not post "done" in Slack until the manager approves.',
-  ])('leaves a record write alone when its payload consumes a result, is a reference, a draft, or is withheld: %s', (step): void => {
-    expect(readOnly(['Read REVOPS-7 in Linear.', step])).toEqual([]);
-  });
+  ])(
+    'leaves a record write alone when its payload consumes a result, is a reference, a draft, or is withheld: %s',
+    (step): void => {
+      expect(readOnly(['Read REVOPS-7 in Linear.', step])).toEqual([]);
+    },
+  );
 
   it('never audits a fixed-payload write on a surface that is not connected', (): void => {
     const disconnected = { ...linear, verdict: 'absent' as const, credentialLanded: false };
@@ -864,7 +1030,11 @@ describe('deferral by data, not by judgement', (): void => {
   };
   const done: MockAction = {
     tool: 'mcp.call',
-    args: { surface: 'linear', tool: 'save_issue', toolArgsJson: '{"id":"REVOPS-7","state":"Done"}' },
+    args: {
+      surface: 'linear',
+      tool: 'save_issue',
+      toolArgsJson: '{"id":"REVOPS-7","state":"Done"}',
+    },
   };
   const post = (channel: string, text: string, threadTs?: string): MockAction => ({
     tool: 'http.request',
@@ -887,7 +1057,9 @@ describe('deferral by data, not by judgement', (): void => {
         { kind: 'read' as const, reads: ['linear'], writes: [] },
         { kind: 'write' as const, reads: [], writes: ['linear'] },
       ],
-      transition: 'promised' as const, transitionStep: 2, basis: 'judgement' as const,
+      transition: 'promised' as const,
+      transitionStep: 2,
+      basis: 'judgement' as const,
     },
   };
 
@@ -938,7 +1110,10 @@ describe('deferral by data, not by judgement', (): void => {
           ...recordContext,
           plan: {
             ...plan,
-            steps: ['Read REVOPS-9 in Linear.', 'Add the comment "Kick-off scheduled for Monday" to REVOPS-9 in Linear, then read it back.'],
+            steps: [
+              'Read REVOPS-9 in Linear.',
+              'Add the comment "Kick-off scheduled for Monday" to REVOPS-9 in Linear, then read it back.',
+            ],
           },
         },
       ),
@@ -960,7 +1135,13 @@ describe('deferral by data, not by judgement', (): void => {
       ask,
       {
         ...recordContext,
-        plan: { ...plan, steps: ['Read REVOPS-7 in Linear.', 'Reply in the thread with the figure once the read lands.'] },
+        plan: {
+          ...plan,
+          steps: [
+            'Read REVOPS-7 in Linear.',
+            'Reply in the thread with the figure once the read lands.',
+          ],
+        },
       },
     );
     expect(replyIssues).toHaveLength(1);
@@ -971,16 +1152,32 @@ describe('deferral by data, not by judgement', (): void => {
   it('lets a fixed-payload comment stand when the body differs from the quoted literal only by sentence punctuation or edge whitespace', (): void => {
     const fixedPlan = {
       ...plan,
-      steps: ['Read REVOPS-9 in Linear.', 'Add the comment "Kick-off scheduled for Monday" to REVOPS-9 in Linear, then read it back.'],
+      steps: [
+        'Read REVOPS-9 in Linear.',
+        'Add the comment "Kick-off scheduled for Monday" to REVOPS-9 in Linear, then read it back.',
+      ],
     };
     const comment = (body: string): MockAction => ({
       tool: 'mcp.call',
-      args: { surface: 'linear', tool: 'save_comment', toolArgsJson: JSON.stringify({ issueId: 'REVOPS-9', body }) },
+      args: {
+        surface: 'linear',
+        tool: 'save_comment',
+        toolArgsJson: JSON.stringify({ issueId: 'REVOPS-9', body }),
+      },
     });
-    for (const body of ['Kick-off scheduled for Monday.', ' Kick-off scheduled for Monday', 'Kick-off scheduled for Monday!\n']) {
+    for (const body of [
+      'Kick-off scheduled for Monday.',
+      ' Kick-off scheduled for Monday',
+      'Kick-off scheduled for Monday!\n',
+    ]) {
       expect(
         deferralAudit(
-          { notes: '', needsDependentPhase: true, actions: [getIssue, comment(body)], procedureTrails: [] },
+          {
+            notes: '',
+            needsDependentPhase: true,
+            actions: [getIssue, comment(body)],
+            procedureTrails: [],
+          },
           ticket,
           { ...recordContext, plan: fixedPlan },
         ),
@@ -990,7 +1187,12 @@ describe('deferral by data, not by judgement', (): void => {
     for (const body of ['Kick-off scheduled for Monday, done', 'Kick-off scheduled', 'Done']) {
       expect(
         deferralAudit(
-          { notes: '', needsDependentPhase: true, actions: [getIssue, comment(body)], procedureTrails: [] },
+          {
+            notes: '',
+            needsDependentPhase: true,
+            actions: [getIssue, comment(body)],
+            procedureTrails: [],
+          },
           ticket,
           { ...recordContext, plan: fixedPlan },
         ),
@@ -1001,37 +1203,76 @@ describe('deferral by data, not by judgement', (): void => {
 
   it('accepts the 16 September second retry deferring Done until the ordered audit comment lands', () => {
     const retryTicket = { ...ticket, externalId: 'REVOPS-5', contentRefs: ['ticket://REVOPS-5'] };
-    const retryDone = { ...done, args: { ...done.args, toolArgsJson: '{"id":"REVOPS-5","state":"Done"}' } };
+    const retryDone = {
+      ...done,
+      args: { ...done.args, toolArgsJson: '{"id":"REVOPS-5","state":"Done"}' },
+    };
     const retryPlan = {
       ...plan,
-      steps: ['Add the comment "Audit checked" to REVOPS-5 in Linear.', 'After the comment lands, move the Linear issue to Done.'],
+      steps: [
+        'Add the comment "Audit checked" to REVOPS-5 in Linear.',
+        'After the comment lands, move the Linear issue to Done.',
+      ],
     };
-    const comment: MockAction = { tool: 'mcp.call', args: {
-      surface: 'linear', tool: 'save_comment', toolArgsJson: '{"issueId":"REVOPS-5","body":"Audit checked"}',
-    } };
+    const comment: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'save_comment',
+        toolArgsJson: '{"issueId":"REVOPS-5","body":"Audit checked"}',
+      },
+    };
     const deferred: ExecutionOutput = {
-      draft: '', notes: '', needsDependentPhase: true, actions: [comment],
-      procedureTrails: [{ trailId: 'Emit linear save_issue', state: 'deferred',
-        reason: 'Wait until the audit comment lands before the Done move.', dependsOnActionIndex: 0, dependsOnField: 'id' }],
+      draft: '',
+      notes: '',
+      needsDependentPhase: true,
+      actions: [comment],
+      procedureTrails: [
+        {
+          trailId: 'Emit linear save_issue',
+          state: 'deferred',
+          reason: 'Wait until the audit comment lands before the Done move.',
+          dependsOnActionIndex: 0,
+          dependsOnField: 'id',
+        },
+      ],
     };
     const retryContext = { ...recordContext, plan: retryPlan, skillBody: '' };
     expect(deferralAudit(deferred, retryTicket, retryContext)).toEqual([]);
-    expect(deferralAudit({ ...deferred, actions: [comment, retryDone], procedureTrails: [] }, retryTicket, retryContext))
-      .toEqual([expect.stringContaining('prewrote a closing action')]);
-    expect(deferralAudit(deferred, retryTicket, { ...retryContext, plan: { ...retryPlan, steps: retryPlan.steps.slice(0, 1) } }))
-      .toEqual([expect.stringContaining('deferred an action with no result dependency')]);
+    expect(
+      deferralAudit(
+        { ...deferred, actions: [comment, retryDone], procedureTrails: [] },
+        retryTicket,
+        retryContext,
+      ),
+    ).toEqual([expect.stringContaining('prewrote a closing action')]);
+    expect(
+      deferralAudit(deferred, retryTicket, {
+        ...retryContext,
+        plan: { ...retryPlan, steps: retryPlan.steps.slice(0, 1) },
+      }),
+    ).toEqual([expect.stringContaining('deferred an action with no result dependency')]);
   });
 
   it('removes only prewritten closing actions after the single repair still fails', async () => {
     const prewritten = {
-      draft: 'Read, commented and closed.', notes: '', needsDependentPhase: true,
-      actions: [getIssue, auditComment, done], procedureTrails: [], deferredActions: null,
+      draft: 'Read, commented and closed.',
+      notes: '',
+      needsDependentPhase: true,
+      actions: [getIssue, auditComment, done],
+      procedureTrails: [],
+      deferredActions: null,
     };
     recorded.outputs.push(prewritten, prewritten);
     const corrected: number[][] = [];
     const output = await runSkill({
-      ...runArgs, plan: readBackPlan, surfaces: [linear], mockEnv: tileRunbook,
-      onAuditCorrection: indices => { corrected.push(indices); },
+      ...runArgs,
+      plan: readBackPlan,
+      surfaces: [linear],
+      mockEnv: tileRunbook,
+      onAuditCorrection: (indices) => {
+        corrected.push(indices);
+      },
     });
     expect(recorded.users).toHaveLength(2);
     expect(output.actions).toEqual([getIssue]);
@@ -1041,21 +1282,40 @@ describe('deferral by data, not by judgement', (): void => {
 
   it('removes the prewritten close and leaves an unjustified deferral to the closing phase when both remain after the one repair', async () => {
     const invalid = {
-      draft: '', notes: '', needsDependentPhase: true, actions: [getIssue, done], procedureTrails: [],
-      deferredActions: [{ description: 'Refresh tile', reason: 'Waiting', dependsOnActionIndex: null, dependsOnField: null }],
+      draft: '',
+      notes: '',
+      needsDependentPhase: true,
+      actions: [getIssue, done],
+      procedureTrails: [],
+      deferredActions: [
+        {
+          description: 'Refresh tile',
+          reason: 'Waiting',
+          dependsOnActionIndex: null,
+          dependsOnField: null,
+        },
+      ],
     };
     recorded.outputs.push(invalid, invalid);
     const corrections: Array<[number[], string]> = [];
     const output = await runSkill({
-      ...runArgs, plan: readBackPlan, surfaces: [linear], mockEnv: tileRunbook,
-      onAuditCorrection: (indices, reason) => { corrections.push([indices, reason]); },
+      ...runArgs,
+      plan: readBackPlan,
+      surfaces: [linear],
+      mockEnv: tileRunbook,
+      onAuditCorrection: (indices, reason) => {
+        corrections.push([indices, reason]);
+      },
     });
     expect(recorded.users).toHaveLength(2);
     expect(output.actions).toEqual([getIssue]);
     expect(output.deferredActions).toEqual(invalid.deferredActions);
     expect(corrections).toEqual([
       [[1], 'prewritten closing actions'],
-      [[], expect.stringContaining(`${DEFERRALS_KEPT}: deferred an action with no result dependency`)],
+      [
+        [],
+        expect.stringContaining(`${DEFERRALS_KEPT}: deferred an action with no result dependency`),
+      ],
     ]);
   });
 
@@ -1087,7 +1347,7 @@ describe('deferral by data, not by judgement', (): void => {
     expect(output.actions).toEqual([getIssue]);
   });
 
-  it('carries the manager\'s answers at approval into both phases\' prompts, and no block without them', async (): Promise<void> => {
+  it("carries the manager's answers at approval into both phases' prompts, and no block without them", async (): Promise<void> => {
     recorded.outputs.push({
       draft: 'd',
       notes: '',
@@ -1101,11 +1361,17 @@ describe('deferral by data, not by judgement', (): void => {
       plan: { ...plan, steps: ['Comment on REVOPS-7 in Linear.'] },
       surfaces: [linear],
       mockEnv: tileRunbook,
-      managerAnswers: [{ question: 'Who owns the Looker pipeline tile.', answer: 'Priya owns it.' }],
+      managerAnswers: [
+        { question: 'Who owns the Looker pipeline tile.', answer: 'Priya owns it.' },
+      ],
     });
     expect(recorded.users[0]).toContain("--- Manager's answers at plan approval ---");
-    expect(recorded.users[0]).toContain('[{"question":"Who owns the Looker pipeline tile.","answer":"Priya owns it."}]');
-    expect(recorded.users[0]!.indexOf("Manager's answers")).toBeLessThan(recorded.users[0]!.indexOf('--- Candidate ---'));
+    expect(recorded.users[0]).toContain(
+      '[{"question":"Who owns the Looker pipeline tile.","answer":"Priya owns it."}]',
+    );
+    expect(recorded.users[0]!.indexOf("Manager's answers")).toBeLessThan(
+      recorded.users[0]!.indexOf('--- Candidate ---'),
+    );
     recorded.users.length = 0;
     recorded.outputs.push({
       draft: 'd',
@@ -1136,8 +1402,14 @@ describe('deferral by data, not by judgement', (): void => {
     const single = await runSkill({
       ...runArgs,
       plan: {
-        ...plan, steps: ['Comment on REVOPS-7 in Linear.'],
-        obligations: { steps: [{ kind: 'write' as const, reads: [], writes: ['linear'] }], transition: 'none' as const, transitionStep: null, basis: 'judgement' as const },
+        ...plan,
+        steps: ['Comment on REVOPS-7 in Linear.'],
+        obligations: {
+          steps: [{ kind: 'write' as const, reads: [], writes: ['linear'] }],
+          transition: 'none' as const,
+          transitionStep: null,
+          basis: 'judgement' as const,
+        },
       },
       surfaces: [linear],
       mockEnv: tileRunbook,
@@ -1160,10 +1432,16 @@ describe('deferral by data, not by judgement', (): void => {
     const corrections: Array<[number[], string]> = [];
     const output = await runSkill({
       ...runArgs,
-      plan: { ...readBackPlan, obligations: undefined, obligationsFailedOpen: 'the judgement reply did not satisfy the schema' },
+      plan: {
+        ...readBackPlan,
+        obligations: undefined,
+        obligationsFailedOpen: 'the judgement reply did not satisfy the schema',
+      },
       surfaces: [linear],
       mockEnv: tileRunbook,
-      onAuditCorrection: (indices, reason) => { corrections.push([indices, reason]); },
+      onAuditCorrection: (indices, reason) => {
+        corrections.push([indices, reason]);
+      },
     });
     expect(recorded.users[1]).toContain('prewrote a closing action');
     expect(output.needsDependentPhase).toBe(true);
@@ -1183,11 +1461,21 @@ describe('deferral by data, not by judgement', (): void => {
     };
     for (const historicalPlan of readmePlans) {
       expect(planPreconditionAudit(historicalPlan, ticket, tileRunbook).flagged).toEqual([]);
-      expect(planPreconditionAudit(historicalPlan, ticket, tileRunbook, runThrough).flagged).toEqual([]);
-      expect(deferralAudit({
-        notes: '', needsDependentPhase: true,
-        actions: [getIssue, ...tileSequence], procedureTrails: [],
-      }, ticket, { ...context, plan: historicalPlan })).toEqual([]);
+      expect(
+        planPreconditionAudit(historicalPlan, ticket, tileRunbook, runThrough).flagged,
+      ).toEqual([]);
+      expect(
+        deferralAudit(
+          {
+            notes: '',
+            needsDependentPhase: true,
+            actions: [getIssue, ...tileSequence],
+            procedureTrails: [],
+          },
+          ticket,
+          { ...context, plan: historicalPlan },
+        ),
+      ).toEqual([]);
     }
   });
 
@@ -1252,12 +1540,18 @@ describe('deferral by data, not by judgement', (): void => {
       ],
     };
     const output: ExecutionOutput = {
-      draft: 'Reading the issue before commenting.', notes: '',
-      needsDependentPhase: true, actions: [getIssue], procedureTrails: [],
+      draft: 'Reading the issue before commenting.',
+      notes: '',
+      needsDependentPhase: true,
+      actions: [getIssue],
+      procedureTrails: [],
     };
     recorded.outputs.push(output, output);
     const result = await runSkill({
-      ...runArgs, candidate: referenceOnly, plan: referencePlan, mockEnv: tileRunbook,
+      ...runArgs,
+      candidate: referenceOnly,
+      plan: referencePlan,
+      mockEnv: tileRunbook,
     });
     expect(result.actions).toEqual([getIssue]);
     expect(recorded.users).toHaveLength(1);
@@ -1270,7 +1564,13 @@ describe('deferral by data, not by judgement', (): void => {
       needsDependentPhase: true,
       actions: [getIssue, ...tileSequence],
       procedureTrails: [
-        { trailId: 'trail-1', state: 'deferred', reason: 'quotes the read-back figure', dependsOnActionIndex: 6, dependsOnField: 'visible figure' },
+        {
+          trailId: 'trail-1',
+          state: 'deferred',
+          reason: 'quotes the read-back figure',
+          dependsOnActionIndex: 6,
+          dependsOnField: 'visible figure',
+        },
       ],
     };
     recorded.outputs.push(wholeBatch);
@@ -1345,7 +1645,9 @@ describe('the evidence invariant in the closing phase', (): void => {
       onAdditionalModelCall: () => {
         additionalCalls += 1;
       },
-      onAuditCorrection: (indices, reason) => { corrections.push([indices, reason]); },
+      onAuditCorrection: (indices, reason) => {
+        corrections.push([indices, reason]);
+      },
     });
     expect(additionalCalls).toBe(1);
     expect(recorded.users).toHaveLength(2);
@@ -1355,7 +1657,10 @@ describe('the evidence invariant in the closing phase', (): void => {
     // After the failed repair the comment is withheld with the reason, never sent, and the response goes on without it.
     expect(output.actions).toEqual([]);
     expect(output.withheldActions).toEqual([
-      { action: UNSUPPORTED_ACTION_2026_09_15, reason: expect.stringContaining(UNSUPPORTED_CLAIM_2026_09_15) },
+      {
+        action: UNSUPPORTED_ACTION_2026_09_15,
+        reason: expect.stringContaining(UNSUPPORTED_CLAIM_2026_09_15),
+      },
     ]);
     expect(corrections).toEqual([[[0], expect.stringContaining(WITHHELD_BY_EVIDENCE)]]);
   });
@@ -1430,33 +1735,72 @@ describe('the evidence invariant in the closing phase', (): void => {
     });
     expect(additionalCalls).toBe(1);
     expect(recorded.users).toHaveLength(2);
-    expect(recorded.users[1]).toContain('the not-confirmed line names check 2 but check 3 ("Close tickets at Done") reports Backlog where the check requires Done');
-    expect(recorded.users[1]).toContain("record the manager's acceptance beside the evidence, never in place of it");
+    expect(recorded.users[1]).toContain(
+      'the not-confirmed line names check 2 but check 3 ("Close tickets at Done") reports Backlog where the check requires Done',
+    );
+    expect(recorded.users[1]).toContain(
+      "record the manager's acceptance beside the evidence, never in place of it",
+    );
     expect(output.actions).toEqual([RUN_3_RETRY_ACTION_CORRECTED]);
   });
 
   it('lets a closing message cite the comment an earlier run landed, listed under the writes already landed, without a repair', async (): Promise<void> => {
     const landedComment: MockAction = {
       tool: 'mcp.call',
-      args: { surface: 'linear', tool: 'save_comment', toolArgsJson: JSON.stringify({ issueId: 'REVOPS-5', body: 'Q3 close summary — three checks.\n1. Pipeline coverage confirmed. 68%.\nNot confirmed: checks 1, 2 and 3.' }) },
+      args: {
+        surface: 'linear',
+        tool: 'save_comment',
+        toolArgsJson: JSON.stringify({
+          issueId: 'REVOPS-5',
+          body: 'Q3 close summary — three checks.\n1. Pipeline coverage confirmed. 68%.\nNot confirmed: checks 1, 2 and 3.',
+        }),
+      },
     };
     const dm: MockAction = {
       tool: 'http.request',
-      args: { surface: 'slack', method: 'POST', path: '/chat.postMessage', headersJson: '{}', body: JSON.stringify({ channel: 'D0MANAGER', text: 'The audit comment landed in the earlier run as comment-6098cba6. Moving the ticket to Done as you said.' }) },
+      args: {
+        surface: 'slack',
+        method: 'POST',
+        path: '/chat.postMessage',
+        headersJson: '{}',
+        body: JSON.stringify({
+          channel: 'D0MANAGER',
+          text: 'The audit comment landed in the earlier run as comment-6098cba6. Moving the ticket to Done as you said.',
+        }),
+      },
     };
-    const doneAction: MockAction = { tool: 'mcp.call', args: { surface: 'linear', tool: 'save_issue', toolArgsJson: JSON.stringify({ id: 'REVOPS-5', state: 'Done' }) } };
-    recorded.outputs.push({ ...run3Reply(doneAction) as object, actions: [dm, doneAction] });
+    const doneAction: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'save_issue',
+        toolArgsJson: JSON.stringify({ id: 'REVOPS-5', state: 'Done' }),
+      },
+    };
+    recorded.outputs.push({ ...(run3Reply(doneAction) as object), actions: [dm, doneAction] });
     let additionalCalls = 0;
     const output = await runDependentSkill({
       ...run3Args,
-      landedWrites: [{ action: landedComment, applied: { tool: 'mcp.call', ok: true, providerId: 'comment-6098cba6', idempotencyKey: 'wi_95/run_1/5' } }],
+      landedWrites: [
+        {
+          action: landedComment,
+          applied: {
+            tool: 'mcp.call',
+            ok: true,
+            providerId: 'comment-6098cba6',
+            idempotencyKey: 'wi_95/run_1/5',
+          },
+        },
+      ],
       onAdditionalModelCall: () => {
         additionalCalls += 1;
       },
     });
     expect(additionalCalls).toBe(0);
     expect(recorded.users).toHaveLength(1);
-    expect(recorded.users[0]).toContain('linear · save_comment · REVOPS-5 · provider id comment-6098cba6');
+    expect(recorded.users[0]).toContain(
+      'linear · save_comment · REVOPS-5 · provider id comment-6098cba6',
+    );
     expect(output.actions).toEqual([dm, doneAction]);
   });
 
@@ -1466,36 +1810,94 @@ describe('the evidence invariant in the closing phase', (): void => {
     expect(recorded.users).toHaveLength(2);
     expect(output.actions).toEqual([]);
     expect(output.withheldActions).toEqual([
-      { action: RUN_3_RETRY_ACTION, reason: expect.stringMatching(/check 3 \("Close tickets at Done"\) reports Backlog/) },
+      {
+        action: RUN_3_RETRY_ACTION,
+        reason: expect.stringMatching(/check 3 \("Close tickets at Done"\) reports Backlog/),
+      },
     ]);
   });
 });
 
 describe('what stands after the evidence check withholds a message', (): void => {
   const chat: SurfaceRecord[] = [
-    { slug: 'slack', displayName: 'Slack', class: 'chat', path: 'documented-api', endpoint: 'https://slack.com/api/', toolAllowlist: ['chat.postMessage'], managerDmChannelId: 'D0MANAGER', verdict: 'connected', credentialLanded: true, lastVerifiedAt: 1 },
+    {
+      slug: 'slack',
+      displayName: 'Slack',
+      class: 'chat',
+      path: 'documented-api',
+      endpoint: 'https://slack.com/api/',
+      toolAllowlist: ['chat.postMessage'],
+      managerDmChannelId: 'D0MANAGER',
+      verdict: 'connected',
+      credentialLanded: true,
+      lastVerifiedAt: 1,
+    },
   ];
   const post = (body: Record<string, unknown>): MockAction => ({
     tool: 'http.request',
-    args: { surface: 'slack', method: 'POST', path: '/chat.postMessage', headersJson: JSON.stringify({ Authorization: 'Bearer {{secret}}' }), body: JSON.stringify(body) },
+    args: {
+      surface: 'slack',
+      method: 'POST',
+      path: '/chat.postMessage',
+      headersJson: JSON.stringify({ Authorization: 'Bearer {{secret}}' }),
+      body: JSON.stringify(body),
+    },
   });
   /** The run 4 Slack shape: the thread reply asserts what no ledger row carries, and the escalation DM says the reply was sent. */
-  const reply = post({ channel: 'C0REVOPSASKS', thread_ts: '1789000000.000200', text: 'All three standup deals are reconciled against the tracker.' });
-  const escalation = post({ channel: 'D0MANAGER', text: 'Reply sent in thread 1789000000.000200 confirming the deals are reconciled.' });
+  const reply = post({
+    channel: 'C0REVOPSASKS',
+    thread_ts: '1789000000.000200',
+    text: 'All three standup deals are reconciled against the tracker.',
+  });
+  const escalation = post({
+    channel: 'D0MANAGER',
+    text: 'Reply sent in thread 1789000000.000200 confirming the deals are reconciled.',
+  });
   const mentionCandidate: WorkCandidate = {
-    ...candidate, sourceCategory: 'event-stream', sourceSystem: 'slack', externalId: 'C0REVOPSASKS:1789000000.000200',
-    title: 'Mention in #revops-asks', contentSummary: 'What is pipeline coverage after Friday?', contentRefs: ['slack://C0REVOPSASKS/1789000000.000200'],
+    ...candidate,
+    sourceCategory: 'event-stream',
+    sourceSystem: 'slack',
+    externalId: 'C0REVOPSASKS:1789000000.000200',
+    title: 'Mention in #revops-asks',
+    contentSummary: 'What is pipeline coverage after Friday?',
+    contentRefs: ['slack://C0REVOPSASKS/1789000000.000200'],
   };
   const closingArgs = {
     skill: { name: 'chat-thread-reply', description: 'Reply in the thread.', body: '# Skill' },
-    plan: { summary: 'Reply in the thread and escalate the gap.', steps: ['Reply in the originating thread.', 'Escalate the reconciliation gap to the manager DM.'], expectedOutputType: 'message' as const, riskNotes: '', reversibility: '', estimatedMinutes: 1 },
-    candidate: mentionCandidate, charter, mockEnv, mode: 'real' as const, surfaces: chat,
-    initialOutput: { draft: '', notes: '', needsDependentPhase: true, actions: [], procedureTrails: [] },
+    plan: {
+      summary: 'Reply in the thread and escalate the gap.',
+      steps: [
+        'Reply in the originating thread.',
+        'Escalate the reconciliation gap to the manager DM.',
+      ],
+      expectedOutputType: 'message' as const,
+      riskNotes: '',
+      reversibility: '',
+      estimatedMinutes: 1,
+    },
+    candidate: mentionCandidate,
+    charter,
+    mockEnv,
+    mode: 'real' as const,
+    surfaces: chat,
+    initialOutput: {
+      draft: '',
+      notes: '',
+      needsDependentPhase: true,
+      actions: [],
+      procedureTrails: [],
+    },
     initialLedger: [],
   };
   const closing = (actions: MockAction[]) => ({
-    draft: '', notes: '', actions, procedureTrails: [],
-    planStepOutcomes: [{ step: 1, status: 'satisfied', evidence: 'this response', basis: 'ledger' }, { step: 2, status: 'satisfied', evidence: 'this response', basis: 'ledger' }],
+    draft: '',
+    notes: '',
+    actions,
+    procedureTrails: [],
+    planStepOutcomes: [
+      { step: 1, status: 'satisfied', evidence: 'this response', basis: 'ledger' },
+      { step: 2, status: 'satisfied', evidence: 'this response', basis: 'ledger' },
+    ],
   });
 
   beforeEach((): void => {
@@ -1506,7 +1908,12 @@ describe('what stands after the evidence check withholds a message', (): void =>
   it('withholds the DM that asserted a withheld reply was sent: a message supported only by one beside it goes with it', async (): Promise<void> => {
     recorded.outputs.push(closing([reply, escalation]), closing([reply, escalation]));
     const corrections: Array<[number[], string]> = [];
-    const output = await runDependentSkill({ ...closingArgs, onAuditCorrection: (indices, reason) => { corrections.push([indices, reason]); } });
+    const output = await runDependentSkill({
+      ...closingArgs,
+      onAuditCorrection: (indices, reason) => {
+        corrections.push([indices, reason]);
+      },
+    });
     expect(recorded.users).toHaveLength(2);
     // The first pass names the reply alone: the DM stood on the reply's thread beside it.
     expect(recorded.users[1]).toContain('action 0 (slack POST /chat.postMessage)');
@@ -1514,7 +1921,10 @@ describe('what stands after the evidence check withholds a message', (): void =>
     expect(output.actions).toEqual([]);
     expect(output.withheldActions).toEqual([
       { action: reply, reason: expect.stringContaining('All three standup deals are reconciled') },
-      { action: escalation, reason: expect.stringContaining('Reply sent in thread 1789000000.000200') },
+      {
+        action: escalation,
+        reason: expect.stringContaining('Reply sent in thread 1789000000.000200'),
+      },
     ]);
     expect(corrections).toEqual([
       [[0], expect.stringContaining(WITHHELD_BY_EVIDENCE)],
@@ -1523,7 +1933,10 @@ describe('what stands after the evidence check withholds a message', (): void =>
   });
 
   it('keeps a DM that stands on its own after the reply beside it is withheld', async (): Promise<void> => {
-    const honest = post({ channel: 'D0MANAGER', text: 'Could not confirm the per-deal reconciliation: no tracker surface is connected. Do you want one set up?' });
+    const honest = post({
+      channel: 'D0MANAGER',
+      text: 'Could not confirm the per-deal reconciliation: no tracker surface is connected. Do you want one set up?',
+    });
     recorded.outputs.push(closing([reply, honest]), closing([reply, honest]));
     const output = await runDependentSkill(closingArgs);
     expect(output.actions).toEqual([honest]);
@@ -1533,23 +1946,71 @@ describe('what stands after the evidence check withholds a message', (): void =>
 
 describe('a ticket state change after its audit comment is withheld', (): void => {
   const linear: SurfaceRecord[] = [
-    { slug: 'linear', displayName: 'Linear', class: 'kanban', path: 'mcp', endpoint: 'https://mcp.linear.app/mcp', toolAllowlist: ['get_issue', 'list_issues', 'save_comment', 'save_issue'], verdict: 'connected', credentialLanded: true, lastVerifiedAt: 1 },
+    {
+      slug: 'linear',
+      displayName: 'Linear',
+      class: 'kanban',
+      path: 'mcp',
+      endpoint: 'https://mcp.linear.app/mcp',
+      toolAllowlist: ['get_issue', 'list_issues', 'save_comment', 'save_issue'],
+      verdict: 'connected',
+      credentialLanded: true,
+      lastVerifiedAt: 1,
+    },
   ];
-  const call = (tool: string, args: Record<string, unknown>): MockAction => ({ tool: 'mcp.call', args: { surface: 'linear', tool, toolArgsJson: JSON.stringify(args) } });
-  const unsupported = call('save_comment', { issueId: 'REVOPS-7', body: 'All three standup deals are reconciled and the Northstar ownership is confirmed.' });
+  const call = (tool: string, args: Record<string, unknown>): MockAction => ({
+    tool: 'mcp.call',
+    args: { surface: 'linear', tool, toolArgsJson: JSON.stringify(args) },
+  });
+  const unsupported = call('save_comment', {
+    issueId: 'REVOPS-7',
+    body: 'All three standup deals are reconciled and the Northstar ownership is confirmed.',
+  });
   const done = call('save_issue', { id: 'REVOPS-7', state: 'Done' });
   const read = call('get_issue', { id: 'REVOPS-7' });
-  const ticketCandidate: WorkCandidate = { ...candidate, sourceSystem: 'linear', externalId: 'REVOPS-7', title: 'Refresh the Looker pipeline tile', contentRefs: ['ticket://REVOPS-7'] };
-  const closingArgs = (initialActions: MockAction[], initialLedger: Array<{ tool: string; ok: boolean; idempotencyKey: string }>) => ({
+  const ticketCandidate: WorkCandidate = {
+    ...candidate,
+    sourceSystem: 'linear',
+    externalId: 'REVOPS-7',
+    title: 'Refresh the Looker pipeline tile',
+    contentRefs: ['ticket://REVOPS-7'],
+  };
+  const closingArgs = (
+    initialActions: MockAction[],
+    initialLedger: Array<{ tool: string; ok: boolean; idempotencyKey: string }>,
+  ) => ({
     skill: { name: 'kanban-comment-and-close', description: 'Comment and close.', body: '# Skill' },
-    plan: { summary: 'Comment on REVOPS-7 and close it.', steps: ['Read REVOPS-7.', 'Comment on REVOPS-7 with the result, then move it to Done.'], expectedOutputType: 'ticket-update' as const, riskNotes: '', reversibility: '', estimatedMinutes: 1 },
-    candidate: ticketCandidate, charter, mockEnv, mode: 'real' as const, surfaces: linear,
-    initialOutput: { draft: '', notes: '', needsDependentPhase: true, actions: initialActions, procedureTrails: [] },
+    plan: {
+      summary: 'Comment on REVOPS-7 and close it.',
+      steps: ['Read REVOPS-7.', 'Comment on REVOPS-7 with the result, then move it to Done.'],
+      expectedOutputType: 'ticket-update' as const,
+      riskNotes: '',
+      reversibility: '',
+      estimatedMinutes: 1,
+    },
+    candidate: ticketCandidate,
+    charter,
+    mockEnv,
+    mode: 'real' as const,
+    surfaces: linear,
+    initialOutput: {
+      draft: '',
+      notes: '',
+      needsDependentPhase: true,
+      actions: initialActions,
+      procedureTrails: [],
+    },
     initialLedger,
   });
   const closing = (actions: MockAction[]) => ({
-    draft: '', notes: '', actions, procedureTrails: [],
-    planStepOutcomes: [{ step: 1, status: 'satisfied', evidence: 'ledger row 0', basis: 'ledger' }, { step: 2, status: 'satisfied', evidence: 'this response', basis: 'ledger' }],
+    draft: '',
+    notes: '',
+    actions,
+    procedureTrails: [],
+    planStepOutcomes: [
+      { step: 1, status: 'satisfied', evidence: 'ledger row 0', basis: 'ledger' },
+      { step: 2, status: 'satisfied', evidence: 'this response', basis: 'ledger' },
+    ],
   });
 
   beforeEach((): void => {
@@ -1560,28 +2021,66 @@ describe('a ticket state change after its audit comment is withheld', (): void =
   it('withholds the Done with the comment it was to follow, naming the comment, so the gate sees the omitted transition instead of the provider refusing the Done', async (): Promise<void> => {
     recorded.outputs.push(closing([unsupported, done]), closing([unsupported, done]));
     const corrections: Array<[number[], string]> = [];
-    const output = await runDependentSkill({ ...closingArgs([read], [{ tool: 'mcp.call', ok: true, idempotencyKey: 'r' }]), onAuditCorrection: (indices, reason) => { corrections.push([indices, reason]); } });
+    const output = await runDependentSkill({
+      ...closingArgs([read], [{ tool: 'mcp.call', ok: true, idempotencyKey: 'r' }]),
+      onAuditCorrection: (indices, reason) => {
+        corrections.push([indices, reason]);
+      },
+    });
     expect(output.actions).toEqual([]);
     expect(output.withheldActions).toEqual([
-      { action: unsupported, reason: expect.stringContaining('All three standup deals are reconciled') },
-      { action: done, reason: expect.stringContaining('the audit comment on REVOPS-7 it was to follow was withheld') },
+      {
+        action: unsupported,
+        reason: expect.stringContaining('All three standup deals are reconciled'),
+      },
+      {
+        action: done,
+        reason: expect.stringContaining(
+          'the audit comment on REVOPS-7 it was to follow was withheld',
+        ),
+      },
     ]);
     expect(corrections).toHaveLength(2);
-    expect(corrections[1]).toEqual([[0], expect.stringContaining('the audit comment on REVOPS-7 it was to follow was withheld')]);
+    expect(corrections[1]).toEqual([
+      [0],
+      expect.stringContaining('the audit comment on REVOPS-7 it was to follow was withheld'),
+    ]);
   });
 
   it('keeps the Done when a comment on the ticket already landed in phase one, and when the withheld message is not its comment', async (): Promise<void> => {
-    const landedComment = call('save_comment', { issueId: 'REVOPS-7', body: 'Refreshed the tile; audit line read back.' });
+    const landedComment = call('save_comment', {
+      issueId: 'REVOPS-7',
+      body: 'Refreshed the tile; audit line read back.',
+    });
     recorded.outputs.push(closing([unsupported, done]), closing([unsupported, done]));
-    const withLanded = await runDependentSkill(closingArgs([read, landedComment], [{ tool: 'mcp.call', ok: true, idempotencyKey: 'r' }, { tool: 'mcp.call', ok: true, idempotencyKey: 'c' }]));
+    const withLanded = await runDependentSkill(
+      closingArgs(
+        [read, landedComment],
+        [
+          { tool: 'mcp.call', ok: true, idempotencyKey: 'r' },
+          { tool: 'mcp.call', ok: true, idempotencyKey: 'c' },
+        ],
+      ),
+    );
     expect(withLanded.actions).toEqual([done]);
     expect(withLanded.withheldActions?.map((row) => row.action)).toEqual([unsupported]);
 
-    const otherTicket = call('save_comment', { issueId: 'REVOPS-6', body: 'All three standup deals are reconciled and the Northstar ownership is confirmed.' });
-    const supported = call('save_comment', { issueId: 'REVOPS-7', body: 'Could not confirm the deal reconciliation: no tracker surface is connected.' });
+    const otherTicket = call('save_comment', {
+      issueId: 'REVOPS-6',
+      body: 'All three standup deals are reconciled and the Northstar ownership is confirmed.',
+    });
+    const supported = call('save_comment', {
+      issueId: 'REVOPS-7',
+      body: 'Could not confirm the deal reconciliation: no tracker surface is connected.',
+    });
     recorded.outputs.length = 0;
-    recorded.outputs.push(closing([otherTicket, supported, done]), closing([otherTicket, supported, done]));
-    const other = await runDependentSkill(closingArgs([read], [{ tool: 'mcp.call', ok: true, idempotencyKey: 'r' }]));
+    recorded.outputs.push(
+      closing([otherTicket, supported, done]),
+      closing([otherTicket, supported, done]),
+    );
+    const other = await runDependentSkill(
+      closingArgs([read], [{ tool: 'mcp.call', ok: true, idempotencyKey: 'r' }]),
+    );
     expect(other.actions).toEqual([supported, done]);
     expect(other.withheldActions?.map((row) => row.action)).toEqual([otherTicket]);
   });

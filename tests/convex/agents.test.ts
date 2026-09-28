@@ -84,7 +84,6 @@ describe('agent documentation selection', (): void => {
     });
     const row = await owner.query(api.agents.get, { agentId: inheriting });
     expect(row?.excludedDocSourceIds).toBeUndefined();
-    expect(row?.docSourceIds).toBeUndefined();
   });
 
   it('inherits a source linked after deploy unless it was excluded', async (): Promise<void> => {
@@ -261,7 +260,6 @@ describe('agent surface grants', (): void => {
     // Autonomous actions are off from deployment: the field is absent, which reads as off.
     const realRow = await realHarness.run(async (ctx) => await ctx.db.get(realAgent));
     expect(realRow?.autonomousActions).toBeUndefined();
-    expect(realRow?.posture).toBeUndefined();
     expect(autonomousActionsOn(realRow ?? {})).toBe(false);
   });
 
@@ -850,6 +848,8 @@ async function seedParked(
       | 'managerFeedback'
       | 'providerReconciliation'
       | 'pendingRunId'
+      | 'evaluationClaimedAt'
+      | 'evaluationAttempts'
     >
   >,
 ): Promise<Id<'workItems'>> {
@@ -1050,7 +1050,8 @@ describe('the employee roster', (): void => {
         roleLine:
           'Own routine revenue operations work from owned, prioritized Linear tickets for the RevOps\u2026',
         openCount: 3,
-        parkedCount: 0,
+        // The discovered row waits for a free slot, unevaluated (U3 D5).
+        parkedCount: 1,
         stoppedCount: 1,
         needsYou: 3,
         docSourceCount: 2,
@@ -1115,7 +1116,8 @@ describe('the employee roster', (): void => {
       verdict: { decision: 'needs-skill', reason: 'no registered skill fits' },
       proposedSkillId: registered,
     });
-    // Mateo mid-run: the ask waits for plan approval, FIN-1 waits behind the cap, FIN-2 waits for its evaluation.
+    // Mateo mid-run: the ask waits for plan approval, FIN-1 waits behind the cap, FIN-2 waits for
+    // its evaluation; both wait for a free slot, so both are parked (U3 D5).
     await seedWork(harness, mateo, ['plan-pending']);
     await seedParked(harness, mateo, 'FIN-1', 'discovered', {
       verdict: {
@@ -1125,7 +1127,19 @@ describe('the employee roster', (): void => {
       },
     });
     await seedParked(harness, mateo, 'FIN-2', 'discovered', {});
-    expect(await counts()).toEqual({ Priya: [0, 3, 2], Mateo: [1, 1, 1], Aiko: [0, 1, 0] });
+    expect(await counts()).toEqual({ Priya: [0, 3, 2], Mateo: [1, 2, 1], Aiko: [0, 1, 0] });
+    // A row whose evaluation is running holds the slot it runs in; one whose
+    // evaluation died waits again once the lease has passed.
+    await seedParked(harness, mateo, 'FIN-3', 'discovered', {
+      evaluationClaimedAt: Date.now() - 60_000,
+      evaluationAttempts: 1,
+    });
+    expect((await counts()).Mateo).toEqual([1, 2, 1]);
+    await seedParked(harness, mateo, 'FIN-4', 'discovered', {
+      evaluationClaimedAt: Date.now() - 11 * 60_000,
+      evaluationAttempts: 1,
+    });
+    expect((await counts()).Mateo).toEqual([1, 3, 1]);
 
     // A `needs-skill` row is the manager's to release while its skill waits on a manager's click.
     const live = Date.now() - 60_000;
@@ -1486,7 +1500,7 @@ describe('agents.setBossEmail', (): void => {
     'the manager email old@day0.local is not a member of this Slack workspace (users_not_found).';
 
   /**
-   * Seed one surface for the agent with both approvals and a credential.
+   * Seed one surface for the agent with its approval and a credential.
    *
    * Args:
    *   harness: Convex test harness.
@@ -1522,7 +1536,6 @@ describe('agents.setBossEmail', (): void => {
         credentialId,
         credentialLanded: fields.verdict === 'connected',
         managerApprovedAt: 10,
-        itApprovedAt: 11,
         createdAt: 1,
       });
     });

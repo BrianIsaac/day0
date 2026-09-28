@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -11,6 +11,9 @@ import {
 import type { DocSourceRecord } from '../../../../src/docs/types';
 
 const temporaryDirectories: string[] = [];
+
+/** Root reads a file whatever its mode, so no file can be made unreadable to it. */
+const RUNS_AS_ROOT = process.getuid?.() === 0;
 
 /**
  * Create one isolated documentation tree.
@@ -67,6 +70,37 @@ describe('folder documentation reader', (): void => {
     expect(second.pages.map((page) => page.ref)).toEqual(['runbooks/ticket.md']);
     expect(second.nextCursor).toBeUndefined();
   });
+
+  it.skipIf(RUNS_AS_ROOT)(
+    'names a file it cannot read and reads the rest, so one file never fails the source (P5-11)',
+    async (): Promise<void> => {
+      const root = await mkdtemp(join(tmpdir(), 'day0-folder-unread-'));
+      try {
+        await writeFile(join(root, 'a.md'), '# A');
+        await writeFile(join(root, 'b.md'), '# B');
+        await chmod(join(root, 'a.md'), 0o000);
+        const batch = await new FolderReader(root).listPageBatch(
+          {
+            _id: 'source-folder' as Id<'docSources'>,
+            label: 'Folder',
+            kind: 'folder',
+            locator: '.',
+          },
+          undefined,
+          undefined,
+          25,
+        );
+        expect(batch.pages.map((page) => page.ref)).toEqual(['b.md']);
+        expect(batch.unread).toEqual([{ ref: 'a.md', reason: expect.stringContaining('EACCES') }]);
+        expect(batch.unread[0]?.reason).toContain("'a.md'");
+        expect(batch.unread[0]?.reason).not.toContain(root);
+        expect(batch.nextCursor).toBeUndefined();
+      } finally {
+        await chmod(join(root, 'a.md'), 0o600);
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   it('refuses absolute and escaping locators', (): void => {
     expect((): string => resolveFolderLocator('/docs', '/etc')).toThrow('must be relative');

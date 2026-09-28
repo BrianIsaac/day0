@@ -1,13 +1,14 @@
 'use node';
 
 import { randomUUID } from 'node:crypto';
-import { v } from 'convex/values';
+import { ConvexError, v } from 'convex/values';
 import type { GenericId } from 'convex/values';
 import type { FunctionReference } from 'convex/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { action, internalAction, type ActionCtx } from './_generated/server';
 import { assertOwnsAgentAction } from './ownership';
+import { PROBEABLE_VERDICTS, type ProbeRefusal, type ProbeReservation } from './surfaces';
 import { relevantSystemText } from './orientationActions';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 import { createSecretMcpClient } from '../src/surfaces/mcp-client';
@@ -26,11 +27,21 @@ import {
   BROWSER_DRIVER_ABSENT_REASON,
   isDriverUnreachable,
   browserPageTitle,
+  browserPageUrl,
+  browserSignedInMarker,
   browserTitleMarker,
   BROWSER_TOOLS,
+  documentedUsername,
+  loginForm,
   navigationResultRefusal,
+  pageShowsElement,
+  refFieldFor,
+  withinDocumentedSurface,
+  withResolvedRefs,
+  type LoginForm,
+  type SnapshotElement,
 } from '../src/surfaces/browser';
-import { interpretToolResult } from '../src/surfaces/mcp';
+import { interpretToolResult, isServerToolError } from '../src/surfaces/mcp';
 import {
   channelsAwaitingInvite,
   documentedChannelNames,
@@ -42,6 +53,11 @@ import { ownerKnownValues } from '../src/redaction/known-values';
 import { isSlackApiEndpoint, slackApiUrl } from '../src/surfaces/slack-endpoint';
 import { actionIntent } from '../src/surfaces/policy';
 import { DocumentedApiLimitation, probeDocumentedApi } from '../src/surfaces/http';
+import {
+  PROVIDER_BACKOFF,
+  TransientProviderError,
+  transientFromResponse,
+} from '../src/lib/transport-error';
 
 const SLACK_METHOD_DEFAULTS = [
   'auth.test',
@@ -51,6 +67,9 @@ const SLACK_METHOD_DEFAULTS = [
   'conversations.history',
   'conversations.replies',
   'chat.postMessage',
+  // Marks Day0's own decision request decided in the manager DM; optional,
+  // so a policy that does not name it leaves the request as sent.
+  'chat.update',
 ] as const;
 
 const REQUIRED_SLACK_METHODS = ['auth.test', 'users.lookupByEmail', 'conversations.open'] as const;
@@ -124,6 +143,14 @@ type CredentialId = GenericId<'credentials'>;
 class Day0ProbeLimitation extends Error {}
 
 /**
+ * A web UI that answered but did not let the credential in: the signed-in
+ * page never showed its documented element. The password may have been
+ * rotated or the login redesigned; either is the manager's or IT's to fix,
+ * and neither says the system is down.
+ */
+class BrowserSignInRefused extends Error {}
+
+/**
  * Run one Day0-side step so its failure is never read as provider liveness.
  *
  * Reading the agent's pages and writing the connected row are Day0's own
@@ -157,23 +184,58 @@ const ACCESS_REFUSAL =
   /\b(?:HTTP\s+)?(?:401|403)\b|\bunauthori[sz]ed\b|\bforbidden\b|invalid[_ -]?(?:auth|token|credential)|token[_ -]?expired|missing[_ -]?scope|not[_ -]?authed|not a member|no manager email|deactivated|own bot user/i;
 
 function probeFailureVerdict(error: unknown, safeReason: string): 'ungranted' | 'listed-dead' {
-  if (error instanceof Day0ProbeLimitation || safeReason.includes(BROWSER_DRIVER_ABSENT)) {
+  if (
+    error instanceof Day0ProbeLimitation ||
+    error instanceof BrowserSignInRefused ||
+    safeReason.includes(BROWSER_DRIVER_ABSENT)
+  ) {
     return 'ungranted';
   }
   if (ACCESS_REFUSAL.test(safeReason)) return 'ungranted';
   return 'listed-dead';
 }
 
-/** The verdicts `beginProbe` admits; a row that left them is no longer this probe's to call. */
-const PROBEABLE_VERDICTS: ReadonlyArray<Doc<'surfaces'>['verdict']> = [
-  'approved',
-  'connected',
-  'ungranted',
-  'listed-dead',
-];
+/**
+ * The verdicts whose cards the hourly sweep probes again, with a credential
+ * and an approval (`orientationData.isReprobeCandidate`); a card with any
+ * other verdict is probed only when something asks.
+ */
+const SWEPT_VERDICTS: ReadonlyArray<Doc<'surfaces'>['verdict']> = ['connected', 'listed-dead'];
 
 /** How long a probe waits before its one retry. */
 export const PROBE_RETRY_WAIT_MS = 5_000;
+
+/**
+ * A provider saying "not now": HTTP 429, Slack's `ratelimited`, or the words
+ * an MCP server or a gateway uses for either. It is an answer about pace, not
+ * about the system or the key, so it never marks a surface dead (Q13).
+ */
+const RATE_LIMITED =
+  /\bratelimited\b|\brate[ _-]?limit(?:ed|ing)?\b|too many requests|\b(?:HTTP|status)\W{0,3}429\b/i;
+
+/** Whether a failed probe call was the provider limiting its rate. */
+function isRateLimited(error: unknown, safeReason: string): boolean {
+  if (error instanceof TransientProviderError && error.status === 429) return true;
+  return RATE_LIMITED.test(safeReason);
+}
+
+/** The wait a rate-limited provider asked for, when it named one. */
+function askedWait(error: unknown): number | undefined {
+  return error instanceof TransientProviderError ? error.retryAfterMs : undefined;
+}
+
+/** The fewest and most milliseconds before a rate-limited card that no hourly sweep covers is probed again. */
+const RATE_LIMITED_REPROBE_MS = { min: 5 * 60_000, max: 60 * 60_000 } as const;
+
+/** A probe the provider rate-limited on its retry as well; the verdict is left as it was. */
+class ProbeRateLimited extends Error {
+  constructor(
+    message: string,
+    readonly retryAfterMs: number | undefined,
+  ) {
+    super(message);
+  }
+}
 
 /**
  * A connection that never completed, or a provider answering 5xx.
@@ -208,12 +270,13 @@ class McpProbeFailure extends Error {
  *   safeReason: Its redacted, clipped text.
  *
  * Returns:
- *   True for a connection-level failure or a provider 5xx.
+ *   True for a connection-level failure, a provider 5xx or a rate limit.
  */
 function isTransientProbeFailure(error: unknown, safeReason: string): boolean {
   if (probeFailureVerdict(error, safeReason) !== 'listed-dead') return false;
   if (error instanceof McpProbeFailure && error.transient) return true;
-  return TRANSIENT_FAILURE.test(safeReason);
+  if (error instanceof TransientProviderError) return true;
+  return TRANSIENT_FAILURE.test(safeReason) || isRateLimited(error, safeReason);
 }
 
 /** A newer probe, or a withdrawn approval, took the surface away while this probe waited to retry. */
@@ -462,6 +525,179 @@ function createBrowserProbeClient(endpoint: URL): BrowserProbeClient {
   };
 }
 
+/** What the documentation says a browser probe should see. */
+export interface BrowserProbeMarkers {
+  /** The page title the documented page shows when it opens (`Probe marker: page title`). */
+  readonly title?: string;
+  /** An element the page shows once signed in (`Probe marker: after sign-in, element`). */
+  readonly afterSignIn?: string;
+}
+
+/** The login a browser probe signs in with. */
+export interface BrowserProbeLogin {
+  /** The surface's decrypted credential, typed only into the page's credential field. */
+  readonly credential: string;
+  /** The documented account name, for a form that asks for one. */
+  readonly username?: string;
+}
+
+/** One browser probe: where the page is, the driver that reaches it, and what to check. */
+export interface BrowserProbeRequest {
+  readonly endpoint: string | undefined;
+  readonly driverUrl: string | undefined;
+  readonly markers: BrowserProbeMarkers;
+  /** Absent when no credential is landed on the surface. */
+  readonly login?: BrowserProbeLogin;
+}
+
+/** The argument names the driver's schema gives one browser tool. */
+function argumentNamesOf(discovery: McpDiscovery, tool: string): string[] | undefined {
+  return discovery.toolArguments.find((entry) => entry.tool === tool)?.arguments;
+}
+
+/**
+ * Call one driver tool for the probe, refusing a tool the floor does not
+ * have or a call the driver refuses. The page answered before any of these
+ * calls, so a refusal here is Day0 not completing the sign-in, never the
+ * system being down. The driver's text is never quoted: after a credential is
+ * typed it can echo the page.
+ */
+async function probeCall(
+  client: BrowserProbeClient,
+  discovery: McpDiscovery,
+  tool: string,
+  args: Record<string, unknown>,
+): Promise<string> {
+  if (!discovery.toolAllowlist.includes(tool)) {
+    throw new Day0ProbeLimitation(
+      `Day0 browser component does not expose ${tool}, which signing in needs.`,
+    );
+  }
+  const refused = new Day0ProbeLimitation(
+    `The browser driver refused ${tool} while Day0 was signing in, so the credential was not checked. This is not evidence that the system is unavailable.`,
+  );
+  let result: { isError: boolean; text: string };
+  try {
+    result = await client.callTool(tool, args);
+  } catch (error) {
+    // The client throws the driver's own refusal (`onToolError: 'throw'`);
+    // the driver answered, so this is the same refusal as an `isError` result.
+    if (!isServerToolError(error)) throw error;
+    throw refused;
+  }
+  if (result.isError) throw refused;
+  return result.text;
+}
+
+/** Take a snapshot and refuse it when the page has left the documented surface. */
+async function probeSnapshot(
+  client: BrowserProbeClient,
+  discovery: McpDiscovery,
+  endpoint: string,
+): Promise<string> {
+  const text = await probeCall(client, discovery, 'browser_snapshot', {});
+  const page = browserPageUrl(text);
+  if (!page) {
+    throw new Day0ProbeLimitation(
+      'The browser driver reported no page address while Day0 was signing in, so the credential was not checked.',
+    );
+  }
+  if (!withinDocumentedSurface(page, endpoint)) {
+    throw new Day0ProbeLimitation(
+      `The sign-in left the approved surface (${endpoint}); Day0 signs in only on the documented page.`,
+    );
+  }
+  return text;
+}
+
+/** Click one resolved control on the probe's page. */
+async function probeClick(
+  client: BrowserProbeClient,
+  discovery: McpDiscovery,
+  control: SnapshotElement,
+): Promise<void> {
+  await probeCall(
+    client,
+    discovery,
+    'browser_click',
+    withResolvedRefs(
+      'browser_click',
+      { element: control.name },
+      [control],
+      refFieldFor(argumentNamesOf(discovery, 'browser_click')),
+    ),
+  );
+}
+
+/**
+ * Sign the probe's browser in on the page it has open, and return the
+ * snapshot of the page the sign-in reached.
+ *
+ * The form is read by the names the apply types a credential into: the
+ * account field takes the documented user name, the credential field takes
+ * the credential, and the sign-in control submits it. A two-page login is
+ * followed through its Next control. The credential is never typed anywhere
+ * else, and nothing on the page is clicked but those two controls.
+ */
+async function signInForProbe(
+  client: BrowserProbeClient,
+  discovery: McpDiscovery,
+  endpoint: string,
+  login: BrowserProbeLogin,
+  signedIn: string,
+): Promise<string> {
+  // The documented element must be one the page shows only once signed in;
+  // one the login page shows too would read a rotated password as connected,
+  // so the probe refuses before it types the credential (wave 3.5 review M6).
+  const refuseIfShownBeforeSignIn = (snapshot: string): void => {
+    if (pageShowsElement(snapshot, signedIn)) {
+      throw new BrowserSignInRefused(
+        `The sign-in page already shows the documented element "${signedIn}" before Day0 signs in, so a signed-in page cannot be told from the login page; document an element the page shows only once signed in.`,
+      );
+    }
+  };
+  const fill = async (fields: ReadonlyArray<[SnapshotElement, string]>): Promise<void> => {
+    await probeCall(
+      client,
+      discovery,
+      'browser_fill_form',
+      withResolvedRefs(
+        'browser_fill_form',
+        { fields: fields.map(([element, value]) => ({ name: element.name, value })) },
+        fields.map(([element]) => element),
+        refFieldFor(argumentNamesOf(discovery, 'browser_fill_form')),
+      ),
+    );
+  };
+  const account = (form: LoginForm): Array<[SnapshotElement, string]> => {
+    if (!form.account) return [];
+    if (!login.username) {
+      throw new Day0ProbeLimitation(
+        'The sign-in page asks for a user name and the documentation gives none; write it beside the credential as (username `...`).',
+      );
+    }
+    return [[form.account, login.username]];
+  };
+  let snapshot = await probeSnapshot(client, discovery, endpoint);
+  refuseIfShownBeforeSignIn(snapshot);
+  let form = loginForm(snapshot);
+  if (!form.credential && form.account && form.next) {
+    await fill(account(form));
+    await probeClick(client, discovery, form.next);
+    snapshot = await probeSnapshot(client, discovery, endpoint);
+    refuseIfShownBeforeSignIn(snapshot);
+    form = { ...loginForm(snapshot), account: undefined };
+  }
+  if (!form.credential || !form.submit) {
+    throw new BrowserSignInRefused(
+      'The documented page shows no sign-in form Day0 can complete (a text box named for the password and a Sign in control), so the credential was not checked.',
+    );
+  }
+  await fill([...account(form), [form.credential, login.credential]]);
+  await probeClick(client, discovery, form.submit);
+  return await probeSnapshot(client, discovery, endpoint);
+}
+
 /**
  * Verify the browser floor can reach one documented web UI.
  *
@@ -471,30 +707,37 @@ function createBrowserProbeClient(endpoint: URL): BrowserProbeClient {
  * would connect a surface whose system is gone - presence is not liveness, and
  * on this path the driver's presence says nothing at all about the system's.
  *
- * Args:
- *   endpoint: The documented web UI address from the surface row.
- *   driverUrl: Configured browser driver address.
- *   makeClient: Client factory, replaceable by behavioural tests.
+ * When the documentation names an element the signed-in page shows, the
+ * probe signs in with the credential and looks for it, so a rotated password
+ * or a redesigned login leaves the surface unconnected instead of being found
+ * by the first write. A page that documents only its title is checked by the
+ * title, and says nothing about the credential.
  *
- * Returns:
- *   Allowlisted browser tools and their provider-discovered argument names.
- *
- * Raises:
- *   Error: If the driver is unreachable, exposes none of the floor's tools, or
- *     cannot open the documented page.
+ * @param request - The page, the driver, the documented markers and the login.
+ * @param makeClient - Client factory, replaceable by behavioural tests.
+ * @returns Allowlisted browser tools and their provider-discovered argument names.
+ * @throws Error when the driver is unreachable, exposes none of the floor's
+ *   tools or cannot open the page; BrowserSignInRefused when the signed-in
+ *   page does not show the documented element.
  */
 export async function probeBrowserSurface(
-  endpoint: string | undefined,
-  driverUrl: string | undefined,
+  request: BrowserProbeRequest,
   makeClient: (url: URL) => BrowserProbeClient = createBrowserProbeClient,
-  titleMarker?: string,
 ): Promise<McpDiscovery> {
+  const { endpoint, markers, login } = request;
   if (!endpoint) {
     throw new Day0ProbeLimitation('No web UI address is documented for this surface.');
   }
-  if (!titleMarker?.trim()) {
+  const title = markers.title?.trim();
+  const signedIn = markers.afterSignIn?.trim();
+  if (!title && !signedIn) {
     throw new Day0ProbeLimitation(
-      'No page title marker is documented for this browser surface, so Day0 cannot verify the page safely.',
+      'No probe marker (a page title, or an element after sign-in) is documented for this browser surface, so Day0 cannot verify the page safely.',
+    );
+  }
+  if (signedIn && !login?.credential) {
+    throw new Day0ProbeLimitation(
+      'The documentation names an element to check after sign-in, but no credential is landed for this surface, so Day0 cannot sign in.',
     );
   }
   let target: URL;
@@ -503,7 +746,7 @@ export async function probeBrowserSurface(
   } catch {
     throw new Day0ProbeLimitation('The documented web UI address is not a valid URL.');
   }
-  const component = browserComponent(driverUrl);
+  const component = browserComponent(request.driverUrl);
   if (!component.present) throw new Error(component.reason);
   const client = makeClient(component.url);
   try {
@@ -527,10 +770,25 @@ export async function probeBrowserSurface(
     }
     const outside = navigationResultRefusal('browser_navigate', opened.text, endpoint);
     if (outside) throw new Day0ProbeLimitation(outside);
-    if (browserPageTitle(opened.text) !== titleMarker.trim()) {
+    if (title && browserPageTitle(opened.text) !== title) {
       throw new Day0ProbeLimitation(
-        `The documented page answered, but its title did not match the approved marker (${titleMarker.trim()}).`,
+        `The documented page answered, but its title did not match the approved marker (${title}).`,
       );
+    }
+    if (signedIn && login) {
+      const page = await signInForProbe(client, discovery, endpoint, login, signedIn);
+      if (!pageShowsElement(page, signedIn)) {
+        throw new BrowserSignInRefused(
+          `Day0 signed in with the stored credential, but the page did not show the documented element "${signedIn}": the credential may have been rotated or the sign-in page changed.`,
+        );
+      }
+      // The element shown beside a credential box still asking is the login
+      // page with the element on it, not a signed-in page (wave 3.5 review M6).
+      if (loginForm(page).credential !== undefined) {
+        throw new BrowserSignInRefused(
+          `Day0 signed in with the stored credential, but the page still asks for it beside the documented element "${signedIn}": the credential may have been rotated, or the element is one the login page shows too.`,
+        );
+      }
     }
     return discovery;
   } catch (error) {
@@ -718,6 +976,10 @@ async function callSlack(
   }).catch((error: unknown): never => {
     throw new Error(`Slack ${method} could not be reached: ${transportErrorDetail(error)}.`);
   });
+  // A rate limit or a server error is a pace answer, whatever the body says,
+  // and carries the wait Slack asked for.
+  const transient = transientFromResponse(response, `Slack ${method}`);
+  if (transient) throw transient;
   // A gateway answering for Slack sends HTML. Parsing it would replace the
   // status with a syntax error, and the status is what the reason needs.
   const payload = (await response.json().catch((): Record<string, unknown> => ({}))) as Record<
@@ -889,12 +1151,30 @@ export async function probeSlackSurface(
   };
 }
 
+/** One probe asked for: the card, and whether it is a routine re-probe. */
+export interface ProbeRequest {
+  readonly surfaceId: Id<'surfaces'>;
+  /**
+   * The hourly sweep's re-probe or a rate limit's re-ask, which yields to a
+   * probe of the card already in flight (E-88). Every other probe is asked
+   * for by a person's action and supersedes one in flight.
+   */
+  readonly routine?: boolean;
+}
+
+/** What a probe `beginProbe` refused says, by the refusal. */
+const PROBE_REFUSED: Readonly<Record<ProbeRefusal, string>> = {
+  'not-probeable': 'Surface is not ready to probe.',
+  'access-ended': "The card's access has ended; only the manager's renewal probes it again.",
+  'in-flight': 'A probe of this card is already running; this routine re-probe was not made.',
+};
+
 /**
  * Execute one generation-fenced provider probe.
  *
  * Args:
  *   ctx: Convex Node action context.
- *   surfaceId: Surface being verified.
+ *   request: The surface being verified, and whether the probe is routine.
  *
  * Returns:
  *   Safe connection outcome containing no credential or provider response body.
@@ -902,14 +1182,26 @@ export async function probeSlackSurface(
  */
 export async function runSurfaceProbe(
   ctx: ActionCtx,
-  surfaceId: Id<'surfaces'>,
+  request: ProbeRequest,
   dependencies: ProbeDependencies = probeDependencies,
 ): Promise<ProbeOutcome> {
-  const claimed: { surface: Doc<'surfaces'>; generation: number } | null = await ctx.runMutation(
-    internal.surfaces.beginProbe,
-    { surfaceId },
-  );
-  if (!claimed) return { verdict: 'skipped', reason: 'Surface is not ready to probe.' };
+  const { surfaceId } = request;
+  const claimed: ProbeReservation = await ctx.runMutation(internal.surfaces.beginProbe, {
+    surfaceId,
+    ...(request.routine === true ? { routine: true } : {}),
+  });
+  if (!claimed.reserved) {
+    // A re-ask on a card no hourly sweep covers is the only probe that card
+    // gets, so one that met a probe in flight is asked again once it ends.
+    if (claimed.refusal === 'in-flight' && !SWEPT_VERDICTS.includes(claimed.verdict)) {
+      await ctx.scheduler.runAfter(
+        Math.max(0, claimed.leaseEndsAt - Date.now()),
+        internal.surfaceActions.probeInternal,
+        { surfaceId, routine: true },
+      );
+    }
+    return { verdict: 'skipped', reason: PROBE_REFUSED[claimed.refusal] };
+  }
   let { surface, generation } = claimed;
   const context = await ctx.runQuery(internal.orientationData.surfaceForOrientation, { surfaceId });
   if (!context) return { verdict: 'skipped', reason: 'Surface no longer exists.' };
@@ -973,33 +1265,85 @@ export async function runSurfaceProbe(
     known: readonly string[],
     call: () => Promise<T>,
   ): Promise<T> => {
+    let first: unknown;
     try {
       return await call();
     } catch (error) {
-      const reason = safeProviderError(error, credential, known);
-      if (!isTransientProbeFailure(error, reason)) throw error;
-      const recorded: boolean = await ctx.runMutation(internal.surfaces.recordProbeRetry, {
-        surfaceId,
-        generation,
-        reason,
-        retryAfterMs: PROBE_RETRY_WAIT_MS,
-        attemptedAt: dependencies.now(),
-      });
-      if (!recorded) throw new ProbeSuperseded();
-      await (dependencies.wait ?? waitRealTime)(PROBE_RETRY_WAIT_MS);
-      // The second call carries the key, so it is made only for a row that is
-      // still this probe's and still approved.
-      const current = await ctx.runQuery(internal.orientationData.surfaceForOrientation, {
-        surfaceId,
-      });
-      if (
-        current?.surface.probeGeneration !== generation ||
-        !PROBEABLE_VERDICTS.includes(current.surface.verdict)
-      ) {
-        throw new ProbeSuperseded();
-      }
-      return await call();
+      first = error;
     }
+    const reason = safeProviderError(first, credential, known);
+    if (!isTransientProbeFailure(first, reason)) throw first;
+    // A rate limit is waited out for as long as the provider asks, within one
+    // bounded backoff; a longer ask is not waited for inside the action.
+    const asked = isRateLimited(first, reason) ? askedWait(first) : undefined;
+    if (asked !== undefined && asked > PROVIDER_BACKOFF.maxWaitMs) {
+      throw new ProbeRateLimited(reason, asked);
+    }
+    const wait = asked ?? PROBE_RETRY_WAIT_MS;
+    const recorded: boolean = await ctx.runMutation(internal.surfaces.recordProbeRetry, {
+      surfaceId,
+      generation,
+      reason,
+      retryAfterMs: wait,
+      attemptedAt: dependencies.now(),
+    });
+    if (!recorded) throw new ProbeSuperseded();
+    await (dependencies.wait ?? waitRealTime)(wait);
+    // The second call carries the key, so it is made only for a row that is
+    // still this probe's and still approved.
+    const current = await ctx.runQuery(internal.orientationData.surfaceForOrientation, {
+      surfaceId,
+    });
+    if (
+      current?.surface.probeGeneration !== generation ||
+      !PROBEABLE_VERDICTS.includes(current.surface.verdict)
+    ) {
+      throw new ProbeSuperseded();
+    }
+    try {
+      return await call();
+    } catch (error) {
+      const again = safeProviderError(error, credential, known);
+      if (isRateLimited(error, again)) throw new ProbeRateLimited(again, askedWait(error));
+      throw error;
+    }
+  };
+
+  /**
+   * Leave the verdict as it was after the provider rate-limited the probe, and
+   * say when Day0 asks again. A connected or dead card is asked again by the
+   * hourly sweep; any other card is not in the sweep, so one probe is
+   * scheduled for when the provider said it could answer, within bounds.
+   */
+  const leaveRateLimited = async (limited: ProbeRateLimited): Promise<ProbeOutcome> => {
+    const swept = SWEPT_VERDICTS.includes(surface.verdict);
+    const next = swept
+      ? RATE_LIMITED_REPROBE_MS.max
+      : Math.min(
+          RATE_LIMITED_REPROBE_MS.max,
+          Math.max(RATE_LIMITED_REPROBE_MS.min, limited.retryAfterMs ?? 0),
+        );
+    const recorded: boolean = await ctx.runMutation(internal.surfaces.recordProbeRetry, {
+      surfaceId,
+      generation,
+      reason: limited.message,
+      retryAfterMs: next,
+      attemptedAt: dependencies.now(),
+      endsProbe: true,
+    });
+    if (!recorded) {
+      return { verdict: 'skipped', reason: 'A newer surface probe superseded this result.' };
+    }
+    if (!swept) {
+      await ctx.scheduler.runAfter(next, internal.surfaceActions.probeInternal, {
+        surfaceId,
+        routine: true,
+      });
+    }
+    return {
+      verdict: 'skipped',
+      reason: `The provider is limiting its rate (${limited.message}); the card keeps its verdict and Day0 probes again in ${Math.round(next / 60_000)} minutes.`,
+    };
   };
 
   // The route list is capped to the three actual rungs when orientation stores
@@ -1071,27 +1415,30 @@ export async function runSurfaceProbe(
         const pages: Doc<'docPages'>[] = await day0Step(
           'read the linked documentation',
           (): Promise<Doc<'docPages'>[]> =>
-            ctx.runQuery(internal.orientationData.pagesForAgent, { agentId: surface.agentId }),
+            ctx.runQuery(internal.docSources.cardPagesForSurface, { surfaceId: surface._id }),
         );
-        // Scoped to this surface's own documentation. Read across every page,
-        // one marker would serve every browser-driven surface the agent has,
-        // and the second such surface would be checked against the first's page
-        // title - which matters now that a public web UI reaches this rung
-        // without a login.
-        const titleMarker = browserTitleMarker(
-          pages
-            .map((page: Doc<'docPages'>): string =>
-              relevantSystemText(page.markdown, surface.displayName, page.title),
-            )
-            .join('\n\n'),
-        );
+        // Scoped to this surface's own documentation: the pages its card cites
+        // (D D3), and within them the text about the system. Read across every
+        // page, one marker would serve every browser-driven surface the agent
+        // has, and the second such surface would be checked against the
+        // first's page title - which matters now that a public web UI reaches
+        // this rung without a login.
+        const documentation = pages
+          .map((page: Doc<'docPages'>): string =>
+            relevantSystemText(page.markdown, surface.displayName, page.title),
+          )
+          .join('\n\n');
+        const username = documentedUsername(documentation);
         const discovery = await withOneRetry(credential, known, () =>
-          dependencies.probeBrowser(
-            surface.endpoint,
-            process.env.DAY0_BROWSER_MCP_URL,
-            undefined,
-            titleMarker,
-          ),
+          dependencies.probeBrowser({
+            endpoint: surface.endpoint,
+            driverUrl: process.env.DAY0_BROWSER_MCP_URL,
+            markers: {
+              title: browserTitleMarker(documentation),
+              afterSignIn: browserSignedInMarker(documentation),
+            },
+            ...(credential ? { login: { credential, ...(username ? { username } : {}) } } : {}),
+          }),
         );
         toolAllowlist = discovery.toolAllowlist;
         toolArguments = discovery.toolArguments;
@@ -1100,9 +1447,9 @@ export async function runSurfaceProbe(
         surface.class === 'chat' &&
         !isSlackApiEndpoint(surface.endpoint)
       ) {
-        // Chat intake reads every documented-API chat surface through Slack's
-        // Web API with the surface's key (`intakeActions.ts` `slackGet`), so
-        // another chat system connected here would have its key sent to Slack.
+        // The documented-API chat reader speaks Slack's Web API alone
+        // (`chatReaderFor`), so another chat system connected here would have
+        // no reader, and a reader pointed at Slack would send it its key.
         throw new Day0ProbeLimitation(
           `Day0 reads chat over a documented API only through Slack's Web API, so it does not connect ${surface.displayName} at ${surface.endpoint ?? 'an undocumented address'}. ` +
             `This is a limitation of this Day0 deployment, not evidence that ${surface.displayName} is unavailable. ` +
@@ -1112,7 +1459,7 @@ export async function runSurfaceProbe(
         const pages: Doc<'docPages'>[] = await day0Step(
           'read the linked documentation',
           (): Promise<Doc<'docPages'>[]> =>
-            ctx.runQuery(internal.orientationData.pagesForAgent, { agentId: surface.agentId }),
+            ctx.runQuery(internal.docSources.cardPagesForSurface, { surfaceId: surface._id }),
         );
         // Scoped to this surface's own pages, as the browser marker is: another
         // system's documented operations are not this one's to call.
@@ -1135,7 +1482,7 @@ export async function runSurfaceProbe(
         const pages: Doc<'docPages'>[] = await day0Step(
           'read the linked documentation',
           (): Promise<Doc<'docPages'>[]> =>
-            ctx.runQuery(internal.orientationData.pagesForAgent, { agentId: surface.agentId }),
+            ctx.runQuery(internal.docSources.cardPagesForSurface, { surfaceId: surface._id }),
         );
         const slack = await withOneRetry(credential, known, () =>
           dependencies.probeSlack(
@@ -1208,6 +1555,7 @@ export async function runSurfaceProbe(
       if (error instanceof ProbeSuperseded) {
         return { verdict: 'skipped', reason: 'A newer surface probe superseded this result.' };
       }
+      if (error instanceof ProbeRateLimited) return await leaveRateLimited(error);
       const reason = safeProviderError(error, credential, known);
       const verdict = probeFailureVerdict(error, reason);
       const outcome = await failOrDemote(reason, verdict);
@@ -1236,13 +1584,20 @@ export const probe = action({
 /**
  * Internal approval and maintenance entry point for one isolated probe.
  *
- * `renewExpiry` is retired and ignored: a probe never moves the access end
- * date (Q5). It stays accepted until the Slack install
- * (`slackProvisionActions.ts`) stops passing it.
+ * `routine` marks the hourly sweep's re-probe and a rate limit's re-ask,
+ * which yield to a probe already in flight (E-88); every other caller is a
+ * person's action and supersedes it. `renewExpiry` is retired and ignored: a
+ * probe never moves the access end date (Q5). It stays accepted until the
+ * Slack install (`slackProvisionActions.ts`) stops passing it.
  */
 export const probeInternal = internalAction({
-  args: { surfaceId: v.id('surfaces'), renewExpiry: v.optional(v.boolean()) },
-  handler: async (ctx, args): Promise<ProbeOutcome> => await runSurfaceProbe(ctx, args.surfaceId),
+  args: {
+    surfaceId: v.id('surfaces'),
+    routine: v.optional(v.boolean()),
+    renewExpiry: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args): Promise<ProbeOutcome> =>
+    await runSurfaceProbe(ctx, { surfaceId: args.surfaceId, routine: args.routine }),
 });
 
 /**
@@ -1250,6 +1605,43 @@ export const probeInternal = internalAction({
  *
  * The plaintext is passed directly to Lane A's encrypted store action and is
  * never returned or persisted on the surface.
+ */
+/** A Slack bot token: the only token the Slack rung posts with as the employee's app. */
+const SLACK_BOT_TOKEN = /^xoxb-[A-Za-z0-9-]+$/;
+
+/**
+ * Why a credential typed into the card may not be stored, or undefined when
+ * it may.
+ *
+ * Nothing is stored before the card is approved: a credential for a system
+ * nobody has agreed the employee may reach is a secret held for no purpose.
+ * On Slack only a bot token is taken; a user token passes Slack's own check
+ * and then posts as that person, and an app-level token posts nothing.
+ *
+ * @param surface - The surface the card lands the credential on.
+ * @param plaintext - The trimmed value typed into the card; never echoed.
+ */
+export function credentialLandingRefusal(
+  surface: Pick<Doc<'surfaces'>, 'managerApprovedAt' | 'endpoint'>,
+  plaintext: string,
+): string | undefined {
+  if (surface.managerApprovedAt === undefined) {
+    return 'Approve the card before landing its credential; nothing was stored.';
+  }
+  if (isSlackApiEndpoint(surface.endpoint) && !SLACK_BOT_TOKEN.test(plaintext)) {
+    return "Slack takes the app's bot token here, the one that begins xoxb-; a user token would post as that person. Nothing was stored.";
+  }
+  return undefined;
+}
+
+/**
+ * Store a credential typed into an approved card, attach it to the surface
+ * and probe it at once.
+ *
+ * Public, owner-guarded (`assertOwnsAgentAction`), real mode only. Writes one
+ * `credentials` row (encrypted) and the surface's credential fields; refuses
+ * with a `ConvexError`, storing nothing, before the card is approved or when
+ * Slack is given anything but a bot token (`credentialLandingRefusal`).
  */
 export const landCredential = action({
   args: { surfaceId: v.id('surfaces'), label: v.string(), plaintext: v.string() },
@@ -1263,6 +1655,8 @@ export const landCredential = action({
     if (!context.agent.userId) throw new Error('Agent has no owner.');
     const plaintext = args.plaintext.trim();
     if (!plaintext) throw new Error('Credential value is required.');
+    const refusal = credentialLandingRefusal(context.surface, plaintext);
+    if (refusal) throw new ConvexError(refusal);
     // A value typed into the card is never the product of an OAuth install:
     // on an `oauth` surface it is the shared bot token landed as the fallback,
     // a shared credential like any other, so writes through it carry
@@ -1290,14 +1684,11 @@ export const landCredential = action({
       credentialKind: kind,
       credentialLocation: context.surface.credentialLocation,
     });
-    const probeScheduled =
-      context.surface.managerApprovedAt !== undefined && context.surface.itApprovedAt !== undefined;
-    if (probeScheduled) {
-      await ctx.scheduler.runAfter(0, internal.surfaceActions.probeInternal, {
-        surfaceId: context.surface._id,
-      });
-    }
-    return { landed: true, probeScheduled };
+    // The card is approved (the refusal above), so the credential is probed at once.
+    await ctx.scheduler.runAfter(0, internal.surfaceActions.probeInternal, {
+      surfaceId: context.surface._id,
+    });
+    return { landed: true, probeScheduled: true };
   },
 });
 
@@ -1306,7 +1697,7 @@ export const landCredential = action({
  * hourly re-probes by surface.
  *
  * Connected surfaces are re-verified; a surface the last probe left
- * `listed-dead` with its credential and approvals intact is retried, so a
+ * `listed-dead` with its credential and approval intact is retried, so a
  * transient provider failure does not stay dead until a human clicks Probe.
  * The re-probe neither extends nor ends access (Q5): the end date does.
  */
@@ -1335,6 +1726,7 @@ export const reprobeAll = internalAction({
       if (notice) noticed += 1;
       await ctx.scheduler.runAfter(0, internal.surfaceActions.probeInternal, {
         surfaceId: surface._id,
+        routine: true,
       });
       scheduled += 1;
     }

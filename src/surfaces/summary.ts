@@ -1,11 +1,13 @@
 import type { MockAction, ReplyTarget } from '../work/types';
 import {
+  isChatPost,
   isManagerDm,
   parseSurfaceAction,
   targetChannel,
   type JsonObject,
   type ParsedSurfaceAction,
 } from './policy';
+import { isSlackApiEndpoint } from './slack-endpoint';
 import type { SurfaceRecord } from './types';
 
 /**
@@ -23,16 +25,54 @@ export type { ReplyTarget };
 export interface SummaryContext {
   /** Where a reply to the work item's source belongs, when it came from a chat thread. */
   replyTarget?: ReplyTarget;
+  /**
+   * How much of a comment or message body the line quotes; `SUMMARY_TEXT_LIMIT`
+   * by default. A request that is read on its own, such as the manager's
+   * Slack request, quotes more (U9 step 24).
+   */
+  textLimit?: number;
+  /**
+   * Whether Slack renders the text, so a Slack channel is named by Slack's
+   * own mention (`<#C…>`), which its client shows as the channel's name to a
+   * reader who can see it (P8-6). Plain text elsewhere keeps the id.
+   */
+  slackMarkup?: boolean;
 }
+
+/** A Slack public or private channel id, the only kind a `<#…>` mention names. */
+const SLACK_CHANNEL_ID = /^[CG][A-Z0-9]{6,}$/;
 
 /** How much of a comment or message body the line quotes. */
 export const SUMMARY_TEXT_LIMIT = 120;
 
 const ISSUE_KEYS = ['issueId', 'issue_id', 'id', 'issue', 'ticketId', 'ticket'] as const;
-const STATE_KEYS = ['state', 'status', 'stateId', 'state_id', 'statusId', 'status_id', 'workflowState'] as const;
+const STATE_KEYS = [
+  'state',
+  'status',
+  'stateId',
+  'state_id',
+  'statusId',
+  'status_id',
+  'workflowState',
+] as const;
 const TEXT_KEYS = ['body', 'text', 'comment', 'message'] as const;
-const CHANNEL_KEYS = ['channel', 'channel_id', 'channelId', 'conversation', 'conversationId'] as const;
-const THREAD_KEYS = ['thread_ts', 'threadTs', 'thread_id', 'threadId', 'threadKey', 'parentId', 'replyTo', 'reply_to'] as const;
+const CHANNEL_KEYS = [
+  'channel',
+  'channel_id',
+  'channelId',
+  'conversation',
+  'conversationId',
+] as const;
+const THREAD_KEYS = [
+  'thread_ts',
+  'threadTs',
+  'thread_id',
+  'threadId',
+  'threadKey',
+  'parentId',
+  'replyTo',
+  'reply_to',
+] as const;
 const READ_VERB = /^(?:get|read|fetch|retrieve|show|describe)$/i;
 const LIST_VERB = /^(?:list|search|query|find)$/i;
 const BIDI_CONTROLS = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g;
@@ -71,8 +111,23 @@ function label(text: string, limit = 80): string {
 }
 
 /** Quote body text so it cannot visually continue the action grammar. */
-function quote(text: string): string {
-  return JSON.stringify(excerpt(text));
+function quote(text: string, limit = SUMMARY_TEXT_LIMIT): string {
+  return inQuotes(excerpt(text, limit));
+}
+
+/**
+ * Wrap text already on one line in quotation marks, turning its own `"` into
+ * typographic ones in pairs so none can close the quote early. Not JSON: a
+ * reader sees the text as written, with no backslash escapes (P8-6).
+ */
+function inQuotes(text: string): string {
+  let opening = true;
+  const inner = text.replace(/"/g, (): string => {
+    const mark = opening ? '“' : '”';
+    opening = !opening;
+    return mark;
+  });
+  return `"${inner}"`;
 }
 
 function fieldList(keys: readonly string[]): string {
@@ -137,15 +192,24 @@ function describeBrowserStep(tool: string, args: JsonObject, name: string): stri
         const record = field as JsonObject;
         const fieldName = firstString(record, ['name', 'element', 'ref']);
         const value = record.value;
-        if (!fieldName || (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean')) return [];
+        if (
+          !fieldName ||
+          (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean')
+        )
+          return [];
         // A credential typed as a literal is named, never quoted: this line goes to a DM.
-        const shownValue = CREDENTIAL_FIELD.test(fieldName) ? '[credential]' : excerpt(String(value), 60);
-        return [`${label(fieldName, 40)} to ${JSON.stringify(shownValue)}`];
+        const shownValue = CREDENTIAL_FIELD.test(fieldName)
+          ? '[credential]'
+          : excerpt(String(value), 60);
+        return [`${label(fieldName, 40)} to ${inQuotes(shownValue)}`];
       });
       if (set.length === 0) return undefined;
       const shown = set.slice(0, BROWSER_FIELD_LIMIT);
       const rest = set.length - shown.length;
-      const listed = shown.length > 1 ? `${shown.slice(0, -1).join(', ')} and ${shown[shown.length - 1]}` : shown[0];
+      const listed =
+        shown.length > 1
+          ? `${shown.slice(0, -1).join(', ')} and ${shown[shown.length - 1]}`
+          : shown[0];
       return `Set ${listed}${rest > 0 ? ` (+${rest} more)` : ''} on ${name}`;
     }
     case 'browser_click':
@@ -154,11 +218,15 @@ function describeBrowserStep(tool: string, args: JsonObject, name: string): stri
       const text = firstString(args, ['text']);
       if (!element || text === undefined) return undefined;
       const shownValue = CREDENTIAL_FIELD.test(element) ? '[credential]' : excerpt(text, 60);
-      return `Set ${label(element, 40)} to ${JSON.stringify(shownValue)} on ${name}`;
+      return `Set ${label(element, 40)} to ${inQuotes(shownValue)} on ${name}`;
     }
     case 'browser_select_option': {
-      const values = Array.isArray(args.values) ? args.values.filter((value): value is string => typeof value === 'string') : [];
-      return element && values.length > 0 ? `Choose ${quote(values.join(', '))} in ${label(element, 40)} on ${name}` : undefined;
+      const values = Array.isArray(args.values)
+        ? args.values.filter((value): value is string => typeof value === 'string')
+        : [];
+      return element && values.length > 0
+        ? `Choose ${quote(values.join(', '))} in ${label(element, 40)} on ${name}`
+        : undefined;
     }
     case 'browser_snapshot':
       return `Read the page on ${name}`;
@@ -170,10 +238,13 @@ function describeBrowserStep(tool: string, args: JsonObject, name: string): stri
 function describeMcpCall(
   parsed: Extract<ParsedSurfaceAction, { kind: 'mcp.call' }>,
   surfaces: readonly SurfaceRecord[],
+  limit: number,
 ): string {
   const name = surfaceName(parsed.surface, surfaces);
   const args = parsed.toolArgs;
-  const browserStep = parsed.tool.startsWith('browser_') ? describeBrowserStep(parsed.tool, args, name) : undefined;
+  const browserStep = parsed.tool.startsWith('browser_')
+    ? describeBrowserStep(parsed.tool, args, name)
+    : undefined;
   if (browserStep) return browserStep;
   const { verb, noun } = verbAndNoun(parsed.tool);
   const ref = firstString(args, ISSUE_KEYS);
@@ -181,11 +252,12 @@ function describeMcpCall(
   if (/^save_comment$/i.test(parsed.tool) || (/comment/i.test(noun) && text !== undefined)) {
     const commentId = firstString(args, ['id']);
     const target = firstString(args, ['issueId', 'issue_id', 'issue', 'ticketId', 'ticket']);
-    const quoted = text === undefined ? '' : `: ${quote(text)}`;
+    const quoted = text === undefined ? '' : `: ${quote(text, limit)}`;
     if (commentId) {
       return `Edit comment ${label(commentId)} on ${name}${target ? ` for ${label(target)}` : ''}${quoted}`;
     }
-    if (firstString(args, ['parentId'])) return `Reply on ${target ? label(target) : name}${quoted}`;
+    if (firstString(args, ['parentId']))
+      return `Reply on ${target ? label(target) : name}${quoted}`;
     return `Comment on ${target ? label(target) : name}${quoted}`;
   }
   if (/^(?:save|update|set|change|transition|move)$/i.test(verb) && noun) {
@@ -200,13 +272,15 @@ function describeMcpCall(
       return `Move ${label(ref)} to ${label(state)} on ${name}${extras}`;
     }
     if (ref) {
-      const fields = Object.keys(args).filter((key) => !(ISSUE_KEYS as readonly string[]).includes(key));
+      const fields = Object.keys(args).filter(
+        (key) => !(ISSUE_KEYS as readonly string[]).includes(key),
+      );
       return `Update ${label(noun)} ${label(ref)} on ${name}${fields.length ? ` (${fieldList(fields)})` : ''}`;
     }
     const title = firstString(args, ['title', 'name']);
     const createFields = Object.keys(args).filter((key) => key !== 'title' && key !== 'name');
     const extras = createFields.length ? `; also set ${fieldList(createFields)}` : '';
-    return `Create ${label(noun)} on ${name}${title ? `: ${quote(title)}` : ''}${extras}`;
+    return `Create ${label(noun)} on ${name}${title ? `: ${quote(title, limit)}` : ''}${extras}`;
   }
   if (READ_VERB.test(verb) && noun) {
     return `Read ${label(noun)}${ref ? ` ${label(ref)}` : ''} on ${name}`;
@@ -217,7 +291,7 @@ function describeMcpCall(
     return `List ${label(noun)} on ${name}${scope ? ` (${label(scope)})` : ''}`;
   }
   if (/^(?:create|add|post)$/i.test(verb) && noun) {
-    return `Create ${label(noun)} on ${name}${text ? `: ${quote(text)}` : ''}`;
+    return `Create ${label(noun)} on ${name}${text ? `: ${quote(text, limit)}` : ''}`;
   }
   if (/^(?:delete|remove|archive)$/i.test(verb) && noun) {
     return `${verb[0].toUpperCase()}${verb.slice(1)} ${label(noun)}${ref ? ` ${label(ref)}` : ''} on ${name}`;
@@ -234,38 +308,43 @@ function describeHttpRequest(
   const name = surfaceName(parsed.surface, surfaces);
   const body = parsed.bodyJson;
   const text = body ? firstString(body, ['text']) : undefined;
-  const isChatPost =
-    parsed.method === 'POST' &&
-    /^\/*chat\.postMessage$/.test(parsed.path) &&
-    surface?.class === 'chat' &&
-    text !== undefined;
-  if (isChatPost) {
+  if (surface !== undefined && text !== undefined && isChatPost(parsed, surface)) {
     const channel = targetChannel(parsed);
-    const quoted = `: ${quote(text)}`;
+    const quoted = `: ${quote(text, context.textLimit)}`;
     const extraFields = Object.keys(body ?? {}).filter(
       (key) =>
         key !== 'text' &&
         !(CHANNEL_KEYS as readonly string[]).includes(key) &&
         !(THREAD_KEYS as readonly string[]).includes(key),
     );
-    const extras = extraFields.length && body ? `; also send ${fieldEffects(body, extraFields)}` : '';
+    const extras =
+      extraFields.length && body ? `; also send ${fieldEffects(body, extraFields)}` : '';
     if (surface && isManagerDm(parsed, surface)) {
       return `Send ${surface.managerName ? label(surface.managerName) : 'the manager'} a ${name} DM${quoted}${extras}`;
     }
     const threadTs = body ? firstString(body, ['thread_ts']) : undefined;
     const target = context.replyTarget;
-    // The ask's own channel reads as a reply to it; anything else stays the
-    // channel id the payload names, so the line never claims a thread it is
-    // not in.
+    // The ask's own channel reads by its name, and as a reply to the ask only
+    // in the ask's own thread, so the line never claims a thread it is not
+    // in; a channel whose name is not known stays the id the payload names.
     if (target && channel === target.channel && target.channelName) {
       const where = `#${label(target.channelName)}`;
-      if (threadTs !== undefined && threadTs === target.threadTs) {
-        return `Reply in ${where} thread${quoted}${extras}`;
-      }
       if (threadTs === undefined) return `Post in ${where}${quoted}${extras}`;
+      return threadTs === target.threadTs
+        ? `Reply in ${where} thread${quoted}${extras}`
+        : `Post in ${where}, in another thread${quoted}${extras}`;
     }
     const thread = threadTs !== undefined ? ' (in thread)' : '';
-    return `Post to ${name} channel ${channel ? label(channel) : '(unknown)'}${thread}${quoted}${extras}`;
+    const named =
+      channel &&
+      context.slackMarkup &&
+      isSlackApiEndpoint(surface?.endpoint) &&
+      SLACK_CHANNEL_ID.test(channel)
+        ? `<#${channel}>`
+        : channel
+          ? label(channel)
+          : '(unknown)';
+    return `Post to ${name} channel ${named}${thread}${quoted}${extras}`;
   }
   return `${parsed.method} ${label(parsed.path, 120)} on ${name}`;
 }
@@ -292,10 +371,11 @@ export function summariseAction(
     const parsed = parseSurfaceAction(action);
     if (parsed.ok) {
       return parsed.action.kind === 'mcp.call'
-        ? describeMcpCall(parsed.action, surfaces)
+        ? describeMcpCall(parsed.action, surfaces, context.textLimit ?? SUMMARY_TEXT_LIMIT)
         : describeHttpRequest(parsed.action, surfaces, context);
     }
-    const tool = action.tool === 'mcp.call' ? firstString(args, ['tool']) ?? action.tool : action.tool;
+    const tool =
+      action.tool === 'mcp.call' ? (firstString(args, ['tool']) ?? action.tool) : action.tool;
     return `${label(tool)} on ${surfaceName(slug, surfaces)}`;
   }
   return slug ? `${label(action.tool)} on ${label(slug)}` : label(action.tool);

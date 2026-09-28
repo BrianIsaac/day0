@@ -493,6 +493,18 @@ export type CandidateRecord =
   | { surface: string; tool: string; subject: CandidateRecordSubject; text: string }
   | { surface: string; tool: string; subject: CandidateRecordSubject; unavailable: string };
 
+/**
+ * Why a plan was drafted without its candidate's record (P7-18): the source
+ * system, what was not read, and whether the system was not connected or was
+ * and the read did not land.
+ */
+export interface PlanDraftedWithout {
+  /** The source system's surface slug. */
+  readonly surfaceSlug: string;
+  readonly subject: CandidateRecordSubject;
+  readonly cause: 'not-connected' | 'read-failed';
+}
+
 /** A grounding read before it is applied: the action and what it fetches. */
 export interface CandidateGroundingRead {
   surface: string;
@@ -563,6 +575,44 @@ export function candidateRecordRead(
         toolArgsJson: JSON.stringify({ [argument]: candidate.externalId }),
       },
     },
+  };
+}
+
+/**
+ * The record a plan is drafted without, when the candidate's system would
+ * have been read but is not connected: a ticket or an ask's thread whose
+ * surface is down, ungranted or not yet approved (U9 step 20, P7-18). The
+ * planner is told the record was not read and why, rather than nothing, so
+ * the plan does not read as grounded in it.
+ *
+ * @param candidate - The work candidate.
+ * @param surfaces - The agent's surfaces.
+ * @param now - The clock the connection verdict is resolved against.
+ * @returns The unavailable record, or undefined when the system is connected
+ *   or the candidate has no record to read.
+ */
+export function unreadCandidateRecord(
+  candidate: Pick<WorkCandidate, 'sourceCategory' | 'sourceSystem' | 'replyTarget'>,
+  surfaces: readonly SurfaceRecord[],
+  now: number,
+): CandidateRecord | undefined {
+  const surface = surfaces.find((row) => row.slug === surfaceSlug(candidate.sourceSystem));
+  if (!surface) return undefined;
+  const verdict = verdictFor(surface, now);
+  if (verdict === 'connected') return undefined;
+  const subject: CandidateRecordSubject | undefined =
+    candidate.sourceCategory === 'ticket-queue'
+      ? 'record'
+      : candidate.sourceCategory === 'event-stream' && candidate.replyTarget?.threadTs
+        ? 'thread'
+        : undefined;
+  if (subject === undefined) return undefined;
+  const noun = subject === 'record' ? 'ticket' : 'thread';
+  return {
+    surface: surface.slug,
+    tool: 'not read',
+    subject,
+    unavailable: `${surface.displayName} is not connected (${verdict}), so the ${noun} was not read; plan from the candidate alone and name what the ${subject} would settle`,
   };
 }
 

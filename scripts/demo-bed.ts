@@ -36,11 +36,21 @@
  */
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { connect } from 'node:net';
 import { basename, dirname, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { pathToFileURL } from 'node:url';
+import { parse as parseYaml } from 'yaml';
 import { PROFILES } from './compose';
 import {
   checkoutReleases,
@@ -410,7 +420,9 @@ export function parseDemoBedArguments(
     );
   }
   if (options.command === 'snapshot' && projectExplicit) {
-    throw new Error('snapshot does not take --project; choose the read-only source with --from-volume.');
+    throw new Error(
+      'snapshot does not take --project; choose the read-only source with --from-volume.',
+    );
   }
   return options;
 }
@@ -455,26 +467,31 @@ export function assertBedProject(name: string): void {
 }
 
 /**
- * Every volume `down --volumes` would remove for a project, each one checked.
+ * Every volume `down --volumes` would remove for a project, each one checked:
+ * each volume the compose file declares, read from it so a new one is never
+ * left behind by a teardown (review m38).
  *
- * Args:
- *   project: The compose project name.
- *
- * Returns:
- *   The five volume names the compose file declares, prefixed with the project.
- *
- * Raises:
- *   Error: When the project, or any of its volumes, is protected or read-only.
+ * @param project - The compose project name.
+ * @param composeText - The compose file; `docker-compose.yml` by default.
+ * @returns The declared volume names, prefixed with the project.
+ * @throws Error when the project, or any of its volumes, is protected or
+ *   read-only, or the compose file declares no volumes.
  */
-export function projectVolumeNames(project: string): string[] {
+export function projectVolumeNames(
+  project: string,
+  composeText: string = readFileSync(COMPOSE_FILE, 'utf8'),
+): string[] {
   assertBedProject(project);
-  return ['convex_data', 'sandbox_socket', 'model_data', 'redactor_venv', 'redactor_models'].map(
-    (suffix: string): string => {
-      const volume = `${project}_${suffix}`;
-      assertNotProtected(volume);
-      return volume;
-    },
-  );
+  const declared = (parseYaml(composeText) as { volumes?: Record<string, unknown> } | null)
+    ?.volumes;
+  if (!declared || Object.keys(declared).length === 0) {
+    throw new Error(`${COMPOSE_FILE} declares no volumes to remove.`);
+  }
+  return Object.keys(declared).map((suffix: string): string => {
+    const volume = `${project}_${suffix}`;
+    assertNotProtected(volume);
+    return volume;
+  });
 }
 
 /**
@@ -713,10 +730,14 @@ export function publishedHostPort(ports: string, containerPort: number): number 
       bindings.push({ host: match[1], port: Number.parseInt(match[2], 10) });
     }
   }
-  const matches = bindings.filter((binding) => binding.host === '127.0.0.1' ||
-    binding.host === '0.0.0.0');
-  if (matches.length === 0 || bindings.some((binding) =>
-      !['127.0.0.1', '0.0.0.0', '[::]', '::'].includes(binding.host))) return undefined;
+  const matches = bindings.filter(
+    (binding) => binding.host === '127.0.0.1' || binding.host === '0.0.0.0',
+  );
+  if (
+    matches.length === 0 ||
+    bindings.some((binding) => !['127.0.0.1', '0.0.0.0', '[::]', '::'].includes(binding.host))
+  )
+    return undefined;
   const uniquePorts = new Set(bindings.map((binding) => binding.port));
   return uniquePorts.size === 1 ? matches[0].port : undefined;
 }
@@ -933,13 +954,15 @@ export function demoTiers(inputs: TierInputs): TierVerdict[] {
                 : `backend, fake-slack, looker-tile and the redactor are up in real mode, and the onboarding dials ${inputs.rungModelRoute}; model onboarding remains unverified by this checklist`,
   };
   let warm: TierVerdict;
-  const missingSettings = (['OPENAI_MAX_OUTPUT_TOKENS', 'OPENAI_REASONING_EFFORT'] as const)
-    .filter((key) => !inputs.deploymentModelSettings?.[key]?.trim());
+  const missingSettings = (['OPENAI_MAX_OUTPUT_TOKENS', 'OPENAI_REASONING_EFFORT'] as const).filter(
+    (key) => !inputs.deploymentModelSettings?.[key]?.trim(),
+  );
   if (isOpenAi(inputs.modelBaseUrl) || isOpenAi(inputs.rungModelRoute)) {
     warm = {
       name: 'Tier 3, the warm bed with a live model rung',
       go: false,
-      reason: 'The host or backend model route is empty or OpenAI; OpenAI is never called from the venue',
+      reason:
+        'The host or backend model route is empty or OpenAI; OpenAI is never called from the venue',
     };
   } else if (missingSettings.length > 0) {
     warm = {
@@ -982,7 +1005,10 @@ export function demoTiers(inputs: TierInputs): TierVerdict[] {
  * Returns:
  *   The refusal, or undefined when no running container holds it.
  */
-export function snapshotRefusal(volume: string, runningHolders: readonly string[]): string | undefined {
+export function snapshotRefusal(
+  volume: string,
+  runningHolders: readonly string[],
+): string | undefined {
   if (runningHolders.length === 0) return undefined;
   return (
     `volume ${volume} is attached to the running ${runningHolders.join(', ')}. Stop that container first ` +
@@ -1054,7 +1080,9 @@ export function warmRedactorPlan(input: WarmRedactorInput): WarmRedactorPlan {
     throw new Error(`--warm-from ${input.warmFrom} names this bed's own project.`);
   }
   if (input.warmFrom !== undefined) assertNotProtected(input.warmFrom);
-  const own = REDACTOR_VOLUME_SUFFIXES.map((suffix: string): string => `${input.project}_${suffix}`);
+  const own = REDACTOR_VOLUME_SUFFIXES.map(
+    (suffix: string): string => `${input.project}_${suffix}`,
+  );
   if (own.every((volume: string): boolean => input.volumes.includes(volume))) {
     return {
       clone: [],
@@ -1198,13 +1226,20 @@ export function offlineRungRefusal(input: RungReadiness): string | undefined {
   if ((input.values.DAY0_SURFACE_MODE || 'mock') !== 'real') {
     return `DAY0_SURFACE_MODE must be real in ${ENV_FILE} for the revocation trial.`;
   }
-  if (input.values.DAY0_REDACTOR_URL !== REDACTOR_URL ||
-      input.deploymentRedactorUrl !== REDACTOR_URL) return `${REDACTOR_UNWIRED_FIX}.`;
-  if (input.values.DAY0_TEST_SLACK_API_URL !== TEST_SLACK_API_URL ||
-      input.deploymentSlackUrl !== TEST_SLACK_API_URL) {
-    return `DAY0_TEST_SLACK_API_URL must be ${TEST_SLACK_API_URL} in ${ENV_FILE} and on this ` +
+  if (
+    input.values.DAY0_REDACTOR_URL !== REDACTOR_URL ||
+    input.deploymentRedactorUrl !== REDACTOR_URL
+  )
+    return `${REDACTOR_UNWIRED_FIX}.`;
+  if (
+    input.values.DAY0_TEST_SLACK_API_URL !== TEST_SLACK_API_URL ||
+    input.deploymentSlackUrl !== TEST_SLACK_API_URL
+  ) {
+    return (
+      `DAY0_TEST_SLACK_API_URL must be ${TEST_SLACK_API_URL} in ${ENV_FILE} and on this ` +
       `project's deployment before the rung runs. Set it in ${ENV_FILE}, then run pnpm demo:bed up ` +
-      `--project ${input.project} to push it to the restored copy.`;
+      `--project ${input.project} to push it to the restored copy.`
+    );
   }
   const published = publishedHostPort(row('backend')?.ports ?? '', CONTAINER_BACKEND_PORT);
   if (published === undefined) {
@@ -1223,7 +1258,7 @@ export function offlineRungRefusal(input: RungReadiness): string | undefined {
       `fake-slack in project ${input.project} publishes ${CONTAINER_FAKE_SLACK_PORT} on ` +
       `${slack === undefined ? 'no host port' : `host port ${slack}`}, but ${ENV_FILE} addresses ` +
       `${input.ports.fakeSlack}; the rung reads its provider call counts from there, so every ` +
-      'attempt would be measured against another project\'s double. Set FAKE_SLACK_HOST_PORT to ' +
+      "attempt would be measured against another project's double. Set FAKE_SLACK_HOST_PORT to " +
       `${slack ?? 'the port this project publishes'}, or bring the bed up from this file.`
     );
   }
@@ -1240,7 +1275,10 @@ export function offlineRungRefusal(input: RungReadiness): string | undefined {
  * Returns:
  *   The refusal, or undefined when the redactor reports healthy.
  */
-export function redactorRefusal(redactor: ServiceRow | undefined, project: string): string | undefined {
+export function redactorRefusal(
+  redactor: ServiceRow | undefined,
+  project: string,
+): string | undefined {
   if (redactor?.health === 'healthy') return undefined;
   const logs = `docker compose -p ${project} --profile redactor logs redactor`;
   if (!redactor) {
@@ -1261,9 +1299,7 @@ export function redactorRefusal(redactor: ServiceRow | undefined, project: strin
       `pnpm demo:bed preflight --project ${project} reports it healthy.`
     );
   }
-  return (
-    `the redactor is not healthy (${redactor.health}) in project ${project}, and ${REDACTOR_WHY}; read ${logs}.`
-  );
+  return `the redactor is not healthy (${redactor.health}) in project ${project}, and ${REDACTOR_WHY}; read ${logs}.`;
 }
 
 /**
@@ -1293,9 +1329,7 @@ export function rungOutputRefusal(out: string, exists: boolean): string | undefi
  * Returns:
  *   One `<digest>  <name>` line per file, sorted by name, newline-terminated.
  */
-export function sha256SumsText(
-  digests: ReadonlyArray<{ name: string; digest: string }>,
-): string {
+export function sha256SumsText(digests: ReadonlyArray<{ name: string; digest: string }>): string {
   return [...digests]
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
     .map(({ name, digest }): string => `${digest}  ${name}\n`)
@@ -1463,10 +1497,21 @@ function assertBedTarget(project: string, values: Readonly<Values>, ports: BedPo
     const value = values[key];
     if (!value) continue;
     let url: URL;
-    try { url = new URL(value); } catch { throw new Error(`${key} is not a valid URL.`); }
-    if (url.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) ||
-        Number(url.port || 80) !== port || url.pathname !== '/' || url.search || url.hash ||
-        url.username || url.password) {
+    try {
+      url = new URL(value);
+    } catch {
+      throw new Error(`${key} is not a valid URL.`);
+    }
+    if (
+      url.protocol !== 'http:' ||
+      !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) ||
+      Number(url.port || 80) !== port ||
+      url.pathname !== '/' ||
+      url.search ||
+      url.hash ||
+      url.username ||
+      url.password
+    ) {
       throw new Error(`${key} must address this bed on loopback port ${port}.`);
     }
   }
@@ -1495,6 +1540,9 @@ export function bedEnvDefaults(
     if (!values.DAY0_TEST_SLACK_API_URL) derived.DAY0_TEST_SLACK_API_URL = TEST_SLACK_API_URL;
     if (!values.DAY0_TEST_SLACK_AUTHORIZE_URL)
       derived.DAY0_TEST_SLACK_AUTHORIZE_URL = `http://127.0.0.1:${ports.fakeSlack}/oauth/v2/authorize`;
+    // The offline rung is the revocation trial, which refuses a deployment
+    // that does not name itself an evaluation bed (N9).
+    if (!values.DAY0_EVALUATION_BED) derived.DAY0_EVALUATION_BED = project;
   }
   return derived;
 }
@@ -1586,7 +1634,14 @@ function volumeHolders(name: string, includeStopped: boolean): string[] {
   const result = must(
     run(
       'docker',
-      ['ps', ...(includeStopped ? ['-a'] : []), '--filter', `volume=${name}`, '--format', '{{.Names}}'],
+      [
+        'ps',
+        ...(includeStopped ? ['-a'] : []),
+        '--filter',
+        `volume=${name}`,
+        '--format',
+        '{{.Names}}',
+      ],
       { timeoutMs: 15_000 },
     ),
     'docker ps',
@@ -1713,14 +1768,18 @@ function snapshotOutput(requested: string): string {
   const directory = resolve(KIT_DIR, 'snapshots');
   const target = resolve(requested);
   if (dirname(target) !== directory || !basename(target).endsWith('.tar.gz')) {
-    throw new Error(`snapshot output must be a .tar.gz file directly in ${KIT_DIR}/snapshots; ` +
-      `use --snapshot ${KIT_DIR}/snapshots/<name>.tar.gz.`);
+    throw new Error(
+      `snapshot output must be a .tar.gz file directly in ${KIT_DIR}/snapshots; ` +
+        `use --snapshot ${KIT_DIR}/snapshots/<name>.tar.gz.`,
+    );
   }
   for (const path of [resolve(KIT_DIR), directory]) {
     try {
       const entry = lstatSync(path);
       if (!entry.isDirectory() || entry.isSymbolicLink()) {
-        throw new Error(`snapshot output directory ${path} must be a real directory, not a symlink.`);
+        throw new Error(
+          `snapshot output directory ${path} must be a real directory, not a symlink.`,
+        );
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
@@ -1740,7 +1799,9 @@ function snapshotOutput(requested: string): string {
 
 function snapshot(options: DemoBedOptions): void {
   const source = options.fromVolume;
-  const target = snapshotOutput(options.snapshot ?? `${KIT_DIR}/snapshots/${source}-${stamp()}.tar.gz`);
+  const target = snapshotOutput(
+    options.snapshot ?? `${KIT_DIR}/snapshots/${source}-${stamp()}.tar.gz`,
+  );
   if (!volumeExists(source)) throw new Error(`volume ${source} does not exist on this machine.`);
   const refusal = snapshotRefusal(source, volumeHeldByRunning(source));
   if (refusal) throw new Error(refusal);
@@ -1760,8 +1821,10 @@ function snapshot(options: DemoBedOptions): void {
   }
   if (holdersAfter.length > 0) {
     rmSync(target, { force: true });
-    throw new Error(`${holdersAfter.join(', ')} started while the snapshot ran; discarded the tar. ` +
-      `Stop the backend and keep it stopped until snapshot finishes, then retry.`);
+    throw new Error(
+      `${holdersAfter.join(', ')} started while the snapshot ran; discarded the tar. ` +
+        `Stop the backend and keep it stopped until snapshot finishes, then retry.`,
+    );
   }
   const digest = sha256(target);
   writeFileSync(`${target}.sha256`, `${digest}  ${basename(target)}\n`, 'utf8');
@@ -1800,7 +1863,9 @@ async function restore(options: DemoBedOptions): Promise<void> {
   if (!existsSync(source)) throw new Error(`${source} does not exist.`);
   const sidecar = `${source}.sha256`;
   if (!existsSync(sidecar)) {
-    throw new Error(`checksum sidecar ${sidecar} is missing; create a fresh snapshot before restoring.`);
+    throw new Error(
+      `checksum sidecar ${sidecar} is missing; create a fresh snapshot before restoring.`,
+    );
   }
   const expected = readFileSync(sidecar, 'utf8').trim().split(/\s+/)[0];
   const actual = sha256(source);
@@ -1913,7 +1978,10 @@ async function up(options: DemoBedOptions): Promise<void> {
       volumes,
       image,
     });
-    const refusal = redactorVenvRefusal(redactorVenvDevice(plan.sourceVenv, image), plan.sourceVenv);
+    const refusal = redactorVenvRefusal(
+      redactorVenvDevice(plan.sourceVenv, image),
+      plan.sourceVenv,
+    );
     if (refusal) throw new Error(refusal);
   }
 
@@ -1935,7 +2003,10 @@ async function up(options: DemoBedOptions): Promise<void> {
   if (plan) {
     log(`      ${plan.note}`);
     for (const step of plan.clone) {
-      must(run('docker', step.create, { timeoutMs: 60_000 }), `docker volume create ${step.volume}`);
+      must(
+        run('docker', step.create, { timeoutMs: 60_000 }),
+        `docker volume create ${step.volume}`,
+      );
       must(run('docker', step.copy, { timeoutMs: 900_000 }), `copy into ${step.volume}`);
       log(`      ${step.volume}`);
     }
@@ -2365,9 +2436,10 @@ async function preflight(options: DemoBedOptions): Promise<number> {
           ].join('\n'),
   });
 
-  const deployment = version && values.CONVEX_SELF_HOSTED_ADMIN_KEY
-    ? deploymentEnv(bedEnvironment(options, values))
-    : {};
+  const deployment =
+    version && values.CONVEX_SELF_HOSTED_ADMIN_KEY
+      ? deploymentEnv(bedEnvironment(options, values))
+      : {};
   if (version && values.CONVEX_SELF_HOSTED_ADMIN_KEY) {
     const stale = Object.keys(deployment).length
       ? secretsToClear(values, deployment, syncScriptKeys(readFileSync(SYNC_SCRIPT, 'utf8')))
@@ -2399,8 +2471,7 @@ async function preflight(options: DemoBedOptions): Promise<number> {
   const redactorRow = services?.find((row: ServiceRow): boolean => row.service === 'redactor');
   const redactorHealthy = redactorRow?.health === 'healthy';
   const redactorWired =
-    values.DAY0_REDACTOR_URL === REDACTOR_URL &&
-    deployment.DAY0_REDACTOR_URL === REDACTOR_URL;
+    values.DAY0_REDACTOR_URL === REDACTOR_URL && deployment.DAY0_REDACTOR_URL === REDACTOR_URL;
   items.push({
     label: 'Redactor component',
     status: redactorHealthy && redactorWired ? 'ok' : 'gap',
@@ -2422,7 +2493,9 @@ async function preflight(options: DemoBedOptions): Promise<number> {
   });
 
   const backendRow = services?.find((row: ServiceRow): boolean => row.service === 'backend');
-  const publishedBackend = backendRow ? publishedHostPort(backendRow.ports, CONTAINER_BACKEND_PORT) : undefined;
+  const publishedBackend = backendRow
+    ? publishedHostPort(backendRow.ports, CONTAINER_BACKEND_PORT)
+    : undefined;
   items.push({
     label: `Backend port belongs to project ${options.project}`,
     status: publishedBackend === ports.backend ? 'ok' : 'gap',
@@ -2437,8 +2510,8 @@ async function preflight(options: DemoBedOptions): Promise<number> {
   const rungReady =
     surfaceMode === 'real' && !!version && healthy('fake-slack') && healthy('looker-tile');
   const slackDouble = values.DAY0_TEST_SLACK_API_URL ?? '';
-  const slackDoubleWired = slackDouble === TEST_SLACK_API_URL &&
-    deployment.DAY0_TEST_SLACK_API_URL === TEST_SLACK_API_URL;
+  const slackDoubleWired =
+    slackDouble === TEST_SLACK_API_URL && deployment.DAY0_TEST_SLACK_API_URL === TEST_SLACK_API_URL;
   const spent = typeof surfaces !== 'string' && surfaces.rungAlreadyRun;
   items.push({
     label: 'Offline rung doubles',
@@ -2595,7 +2668,9 @@ async function offlineRung(options: DemoBedOptions): Promise<void> {
   const took = elapsed(startedAt);
   if (result.status !== 0)
     throw new Error(`eval:revocation failed after ${took} (status ${result.status}).`);
-  const missing = RUNG_OUTPUT_FILES.filter((name: string): boolean => !existsSync(`${out}/${name}`));
+  const missing = RUNG_OUTPUT_FILES.filter(
+    (name: string): boolean => !existsSync(`${out}/${name}`),
+  );
   if (missing.length > 0) {
     throw new Error(`eval:revocation returned without writing ${missing.join(', ')} in ${out}.`);
   }
@@ -2612,7 +2687,9 @@ async function offlineRung(options: DemoBedOptions): Promise<void> {
   log('');
   log(`Wall clock: ${took}`);
   for (const line of revocationSummary(readFileSync(`${out}/trials.md`, 'utf8'))) log(line);
-  log(`Wrote ${out}/SHA256SUMS over ${RUNG_OUTPUT_FILES.join(', ')}; check with: (cd ${out} && sha256sum -c SHA256SUMS)`);
+  log(
+    `Wrote ${out}/SHA256SUMS over ${RUNG_OUTPUT_FILES.join(', ')}; check with: (cd ${out} && sha256sum -c SHA256SUMS)`,
+  );
 }
 
 /* ---------------------------------- down ----------------------------------- */

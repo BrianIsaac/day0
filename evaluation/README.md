@@ -583,7 +583,10 @@ service after changing it and confirm the loaded context in its startup log.
 pnpm install
 
 # .env.local: self-hosted URL/admin key, no-auth keys, model settings,
-# DAY0_SURFACE_MODE=mock. For bundled qwen3:8b, also set:
+# DAY0_SURFACE_MODE=mock, and the evaluation bed flag, without which the
+# harness refuses every call:
+# DAY0_EVALUATION_BED=comparison
+# For bundled qwen3:8b, also set:
 # OPENAI_MODEL=qwen3:8b
 # OLLAMA_CONTEXT_LENGTH=16384
 # Then push the same settings to the deployment.
@@ -641,7 +644,7 @@ pnpm eval:comparison -- --runs 1 --tasks docs-team-cadence,EVAL-WRITE-01
 `--arms` accepts `day0`, `baseline` or both; `--tasks` accepts fixture ids or
 `EVAL-*` external ids. Defaults are both arms, three runs, all tasks, a 750 ms
 approval delay and each task's declared timeout. An event trace for any agent in a
-run can be captured with `npx convex run exportActions:exportForAgent '{"agentId":"<id>"}' --identity '{"subject":"dev-no-auth|local-boss"}'`;
+run can be captured with `pnpm export:trace <id> --out trace.json`, a page at a time;
 the export carries no credential material and no personal address.
 
 ## Build provenance

@@ -3,7 +3,7 @@
 import type { ReactNode } from 'react';
 import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
-import type { AgentMetrics, OwnerMetrics } from '@convex/metrics';
+import type { AgentMetrics, OwnerMetrics, PilotFigures } from '@convex/metrics';
 import { formatAuditTrail, formatMetricDuration } from './metric-format';
 
 const NUMBER_WORDS = [
@@ -38,7 +38,7 @@ const DEFINITIONS = {
     'Plans and actions the manager approved or rejected, pooled across employees, because one manager made them.',
   wait: 'How long each decision waited for the manager, median and 90th percentile. The company row takes both over every decision pooled, the one manager’s distribution, not a median of the employees’ medians.',
   actions:
-    'Automatic: applied without asking, under standing or autonomous authority; a browser call replayed to sign in again is never an automatic action. Approved: approved by the manager. Held: waiting for the manager. Rejected: rejected by the manager. Refused: blocked by the gate or a missing grant.',
+    'Automatic changes: writes to a system applied without asking, under standing or autonomous authority. Reads and messages to the manager also apply on their own and are counted on the line below, never as changes; a browser call replayed to sign in again is never an automatic action. Approved: approved by the manager. Held: waiting for the manager. Rejected: rejected by the manager. Refused: blocked by the gate or a missing grant.',
   audit:
     'Landed ledger rows that carry their tool, authority, effect, run and idempotency key, over every landed row, replayed browser calls included. The company row pools every employee’s rows.',
   company: 'Every employee above, pooled. Evaluation agents and baseline arms are left out.',
@@ -56,7 +56,11 @@ const COLUMNS: readonly Column[] = [
   { label: 'Charter', unit: 'approved after', definition: DEFINITIONS.charter, width: 'w-[17rem]' },
   { label: 'Decisions', unit: 'approved / rejected', definition: DEFINITIONS.decisions },
   { label: 'Decision wait', unit: 'median / p90', definition: DEFINITIONS.wait },
-  { label: 'Actions', unit: 'automatic · approved · held · rejected · refused', definition: DEFINITIONS.actions },
+  {
+    label: 'Actions',
+    unit: 'automatic changes · approved · held · rejected · refused',
+    definition: DEFINITIONS.actions,
+  },
   { label: 'Audit trail', unit: 'complete', definition: DEFINITIONS.audit },
 ];
 
@@ -79,8 +83,93 @@ function waitCell(decisions: AgentMetrics['decisions']): string {
 }
 
 function actionsCell(actions: AgentMetrics['actions']): string {
-  return `${actions.autoApplied} · ${actions.approved} · ${actions.held} · ${actions.rejected} · ${actions.refused}`;
+  return `${actions.automatic.writes} · ${actions.approved} · ${actions.held} · ${actions.rejected} · ${actions.refused}`;
 }
+
+/**
+ * What applied on its own besides the automatic changes: the reads and the
+ * messages to the manager (U12 D4 (b)), which change nothing in a system.
+ *
+ * Args:
+ *   automatic: The automatic rows by what they did.
+ *
+ * Returns:
+ *   For example "12 reads, 1 manager message".
+ */
+export function readsAndMessages(automatic: AgentMetrics['actions']['automatic']): string {
+  return `${count(automatic.reads, 'read')}, ${count(automatic.managerMessages, 'manager message')}`;
+}
+
+/** Hours from the manager's own estimates, to one decimal place. */
+function hours(value: number): string {
+  const rounded = Math.round(value * 10) / 10;
+  return `${Number.isInteger(rounded) ? rounded : rounded.toFixed(1)} h`;
+}
+
+/** One of decision A9's pilot figures as the Supervision cards print it. */
+export interface PilotFigure {
+  readonly label: string;
+  readonly unit: string;
+  readonly definition: string;
+  readonly value: (pilot: PilotFigures) => string;
+}
+
+/**
+ * Decision A9's five pilot figures, each recomputable from an exported
+ * trace (`metrics:recompute`). Hours saved is the manager's own estimate
+ * summed over finished work: an internal gauge, never a headline (N11).
+ */
+export const PILOT_FIGURES: readonly PilotFigure[] = [
+  {
+    label: 'Skill reuse',
+    unit: 'runs with a skill made for other work',
+    definition:
+      'Of the distinct work item and skill runs, those run with a skill first made for another item.',
+    value: ({ skillReuse }) =>
+      skillReuse.runs === 0 || skillReuse.rate === null
+        ? 'not yet'
+        : `${skillReuse.reused} of ${skillReuse.runs} (${Math.round(skillReuse.rate * 100)}%)`,
+  },
+  {
+    label: 'Cycle time',
+    unit: 'ask to done, median / p90',
+    definition:
+      'From the ask (the provider’s own time when intake had one) to the item’s first completion, over the items completed.',
+    value: ({ cycleTime }) =>
+      cycleTime.completed === 0
+        ? cycleTime.ended === 0
+          ? 'not yet'
+          : `none done; ${count(cycleTime.ended, 'item')} ended after ${formatMetricDuration(cycleTime.medianToEndMs)}`
+        : `${formatMetricDuration(cycleTime.medianToCompletionMs)} / ${formatMetricDuration(cycleTime.p90ToCompletionMs)} (${cycleTime.completed} done)`,
+  },
+  {
+    label: 'Reorientation',
+    unit: 'answers that changed the charter',
+    definition:
+      'The charter questions the manager answered, and how many of the answers amended it.',
+    value: ({ reorientation }) =>
+      reorientation.answered === 0
+        ? 'not yet'
+        : `${reorientation.amended} of ${count(reorientation.answered, 'answer')}`,
+  },
+  {
+    label: 'Hours saved',
+    unit: 'your estimates, internal gauge',
+    definition:
+      'The minutes you estimated a plan would have taken you, summed over completed items. An internal gauge for you, never a headline figure.',
+    value: ({ hoursSaved }) =>
+      hoursSaved.hours === null
+        ? 'no estimates yet'
+        : `${hours(hoursSaved.hours)} over ${count(hoursSaved.estimatedItems, 'item')}`,
+  },
+  {
+    label: 'Retrieval',
+    unit: 'tokens read',
+    definition:
+      'Counted once each run records the documentation blocks it selected and the provider’s usage; not measured yet.',
+    value: () => 'not measured yet',
+  },
+];
 
 function FigureCells({
   charter,
@@ -98,7 +187,12 @@ function FigureCells({
       <td className="px-3 py-2.5 align-top">{charter}</td>
       <td className="whitespace-nowrap px-3 py-2.5 align-top">{decisionsCell(decisions)}</td>
       <td className="whitespace-nowrap px-3 py-2.5 align-top">{waitCell(decisions)}</td>
-      <td className="whitespace-nowrap px-3 py-2.5 align-top">{actionsCell(actions)}</td>
+      <td className="whitespace-nowrap px-3 py-2.5 align-top">
+        <span className="block">{actionsCell(actions)}</span>
+        <span className="block text-[var(--color-muted)]">
+          + {readsAndMessages(actions.automatic)}
+        </span>
+      </td>
       <td className="whitespace-nowrap px-3 py-2.5 align-top">{formatAuditTrail(auditTrail)}</td>
     </>
   );
@@ -124,6 +218,71 @@ function CompanyCharterCell({ charter }: { charter: OwnerMetrics['company']['cha
         </span>
       ) : null}
     </>
+  );
+}
+
+/**
+ * The five pilot figures (A9), one row per employee and a company row pooled
+ * before any median or rate is taken, beside the supervision figures.
+ */
+function PilotFiguresTable({ figures }: { figures: OwnerMetrics }) {
+  const rows = [
+    ...figures.employees.map((employee) => ({
+      key: String(employee.agentId),
+      name: employee.name,
+      pilot: employee.metrics.pilot,
+    })),
+    { key: 'company', name: 'Company', pilot: figures.company.pilot },
+  ];
+  return (
+    <div className="overflow-x-auto border-t border-[var(--color-border)]">
+      <table className="w-full min-w-[640px] text-left text-xs tabular-nums">
+        <caption className="px-5 pt-3 text-left text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
+          Pilot figures
+        </caption>
+        <thead>
+          <tr className="border-b border-[var(--color-border)] text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
+            <th scope="col" className="px-5 py-2 align-bottom font-medium">
+              Employee
+            </th>
+            {PILOT_FIGURES.map((figure) => (
+              <th
+                key={figure.label}
+                scope="col"
+                title={figure.definition}
+                className="cursor-help px-3 py-2 align-bottom font-medium"
+              >
+                <span className="block underline decoration-dotted underline-offset-2">
+                  {figure.label}
+                </span>
+                <span className="block normal-case tracking-normal">{figure.unit}</span>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="font-mono text-[var(--color-fg)]">
+          {rows.map((row) => (
+            <tr
+              key={row.key}
+              className={
+                row.key === 'company'
+                  ? 'bg-[var(--color-bg)]/60'
+                  : 'border-b border-[var(--color-border)]'
+              }
+            >
+              <th scope="row" className="px-5 py-2.5 align-top font-sans font-semibold">
+                {row.name}
+              </th>
+              {PILOT_FIGURES.map((figure) => (
+                <td key={figure.label} className="px-3 py-2.5 align-top">
+                  {figure.value(row.pilot)}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -213,6 +372,7 @@ export function CompanySupervisionCard({ figures }: { figures: OwnerMetrics }) {
           </tbody>
         </table>
       </div>
+      <PilotFiguresTable figures={figures} />
       {notes.length > 0 ? (
         <p className="border-t border-[var(--color-border)] px-5 py-2 text-[10px] leading-relaxed text-[var(--color-muted)]">
           {notes.join(' · ')}

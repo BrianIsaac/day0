@@ -6,6 +6,7 @@ import { internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
+import { surfaceSlug } from '../../src/surfaces/slug';
 
 /** Controllable discovery classifier boundary. */
 const model = vi.hoisted(() => ({
@@ -137,6 +138,49 @@ describe('the documentation discovery action', (): void => {
         }),
       ],
     });
+  });
+
+  it('keys a documented Chinese system by the digest slug its charter row carries (U15 finding 2)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, runId } = await seedGeneration(harness, 0);
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'systems.md',
+        title: 'Systems',
+        markdown: [
+          '| System | What it is for | Access owner |',
+          '|---|---|---|',
+          '| 飞书 | The chat system the team takes requests in. | Messaging administrator |',
+          '| 钉钉 | The chat system approvals are sent in. | Messaging administrator |',
+        ].join('\n'),
+        updatedAt: 1,
+      });
+    });
+    model.systems = [
+      { name: '飞书', class: 'chat', pageRef: 'systems.md' },
+      { name: '钉钉', class: 'chat', pageRef: 'systems.md' },
+    ];
+
+    await expect(
+      harness.action(internal.documentationDiscoveryActions.discoverSource, { sourceId, runId }),
+    ).resolves.toMatchObject({ applied: true, systems: 2 });
+    const discoveries = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('docSystemDiscoveries')
+          .withIndex('by_source', (index) => index.eq('sourceId', sourceId))
+          .collect(),
+    );
+    expect(
+      discoveries
+        .filter((row) => row.current)
+        .map((row) => [row.displayName, row.slug])
+        .sort(),
+    ).toEqual([
+      ['钉钉', surfaceSlug('钉钉')],
+      ['飞书', surfaceSlug('飞书')],
+    ]);
   });
 
   it('does not turn an unattached transport line into a system', async (): Promise<void> => {

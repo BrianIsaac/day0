@@ -1,6 +1,13 @@
 import type { MockAction, ReplyTarget } from '../work/types';
+import { isInterstitialControl, NEXT_CONTROL, SIGN_IN_CONTROL } from './browser';
 import { MOCK_TOOLS } from './mock';
-import type { ActionAuthority, AppliedAction, CredentialKind, SurfaceRecord } from './types';
+import type {
+  ActionAuthority,
+  ActionClass,
+  AppliedAction,
+  CredentialKind,
+  SurfaceRecord,
+} from './types';
 import { verdictFor } from './verdict';
 
 /**
@@ -24,6 +31,10 @@ export const HELD_PUBLIC_POST = 'public post held for the manager';
 export const HELD_BROWSER_SEQUENCE =
   'held with the rest of this browser session, which runs in one browser';
 
+/** Why a session restore refuses to repeat a click that was the run's own work. */
+export const REPLAY_NOT_INTERSTITIAL =
+  'replayed click is neither a login control nor one a login ends on';
+
 export const HELD_MUTATION = 'system-of-record mutation held for the manager';
 /** Why a ticket state change waits under the switch: the approved plan said the state stays where it is. */
 export const HELD_WITHHELD_TRANSITION =
@@ -38,6 +49,13 @@ export const AWAITING_APPROVAL = "awaiting the manager's approval";
  */
 export const WITHHELD_AFTER_FAILED_WRITE =
   'withheld: an earlier write in this set did not land, so this message could report it wrongly';
+/**
+ * Why a browser write is not sent after an earlier write on the same page did
+ * not land: the page is not as the run left it, and a Save would commit
+ * whatever the page holds, such as the value a failed fill left in place.
+ */
+export const WITHHELD_AFTER_FAILED_BROWSER_WRITE =
+  'withheld: an earlier write on this page did not land, so this one would act on a page that is not as the run left it';
 export const NOT_AUTOMATIC = 'not an automatic action';
 export const UNKNOWN_TOOL = 'unknown tool';
 export const STATUS_WITHOUT_COMMENT = 'status change without audit comment';
@@ -56,6 +74,8 @@ export const SHARED_WRITE_WITHOUT_ATTRIBUTION =
 export const LEGACY_SHARED_WRITE_WITHOUT_ATTRIBUTION =
   'shared credential write without attributable content';
 export const REPLY_TARGET_REFUSED = 'chat reply does not match the work item reply target';
+export const MESSAGE_EDIT_REFUSED =
+  'a chat message edit is sent only as the edit that marks a decided request';
 
 /** Every reason the gate refuses a row by before anything is sent; several take a detail in brackets. */
 const GATE_REFUSAL_REASONS: readonly string[] = [
@@ -73,6 +93,7 @@ const GATE_REFUSAL_REASONS: readonly string[] = [
   SHARED_WRITE_WITHOUT_ATTRIBUTION,
   LEGACY_SHARED_WRITE_WITHOUT_ATTRIBUTION,
   REPLY_TARGET_REFUSED,
+  MESSAGE_EDIT_REFUSED,
 ];
 const PATH_REFUSAL = /^(?:mcp\.call|http\.request) is not allowed on surface path /;
 
@@ -101,16 +122,24 @@ export function isGateRefusal(reason: string | undefined): boolean {
 export const SHARED_IDENTITY_ICON = ':briefcase:';
 
 const HTTP_METHODS = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'] as const;
-const READ_TOOL_PREFIX = /^(?:list|get|search|read|fetch|retrieve|query|find|describe|show)(?:[_-]|$)/i;
+const READ_TOOL_PREFIX =
+  /^(?:list|get|search|read|fetch|retrieve|query|find|describe|show)(?:[_-]|$)/i;
 /**
  * Browser tools that observe the page without changing anything on it.
  *
  * The floor's tool names carry no read verb - opening a page is `navigate`,
- * reading it is `snapshot` - so without naming them the generic rule counts
- * both as writes, and a run that only looked at a dashboard would be held for
- * the manager as though it had edited one.
+ * reading it is `snapshot`, waiting for it to render is `wait_for` - so
+ * without naming them the generic rule counts each as a write, and a run that
+ * only looked at a dashboard would be held for the manager as though it had
+ * edited one. `wait` stays out of `READ_TOOL_PREFIX`: a third party's
+ * `wait_and_merge` is not a read because the floor's wait is.
  */
-const BROWSER_READ_TOOLS = new Set(['browser_navigate', 'browser_snapshot', 'browser_hover']);
+const BROWSER_READ_TOOLS = new Set([
+  'browser_navigate',
+  'browser_snapshot',
+  'browser_hover',
+  'browser_wait_for',
+]);
 const HTTP_MUTATION_WORDS = new Set([
   'activate',
   'add',
@@ -214,7 +243,16 @@ const DOCUMENTED_RPC_READS = new Set([
   'conversations.replies',
 ]);
 /** Verbs an undocumented RPC method must lead its operation with to be read as a read. */
-const RPC_READ_VERBS = new Set(['get', 'history', 'info', 'list', 'lookup', 'replies', 'search', 'test']);
+const RPC_READ_VERBS = new Set([
+  'get',
+  'history',
+  'info',
+  'list',
+  'lookup',
+  'replies',
+  'search',
+  'test',
+]);
 /** One dotted method and nothing else: `family.operation`, with no further path segment. */
 const RPC_METHOD_PATH = /^\/*([A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)+)\/*$/;
 /**
@@ -231,7 +269,15 @@ const RPC_METHOD_PATH = /^\/*([A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)+)\/
  */
 const COMPOUND_TOOL_WORDS = new Set(['and', 'or', 'then']);
 const STATUS_TOOL = /^(?:save|update|set|change|transition|move)[_-]|status|state/i;
-const STATUS_KEYS = ['status', 'state', 'stateId', 'state_id', 'statusId', 'status_id', 'workflowState'];
+const STATUS_KEYS = [
+  'status',
+  'state',
+  'stateId',
+  'state_id',
+  'statusId',
+  'status_id',
+  'workflowState',
+];
 const COMMENT_TOOL = /comment|message|post|reply|note/i;
 const MESSAGE_KEYS = ['text', 'body', 'message', 'content'];
 const MCP_CHAT_POST_TOOLS = new Set([
@@ -281,9 +327,7 @@ export interface ParsedHttpRequest {
 
 export type ParsedSurfaceAction = ParsedMcpCall | ParsedHttpRequest;
 
-export type ParseResult =
-  | { ok: true; action: ParsedSurfaceAction }
-  | { ok: false; reason: string };
+export type ParseResult = { ok: true; action: ParsedSurfaceAction } | { ok: false; reason: string };
 
 function operationTokens(value: string): string[] {
   let decoded = value;
@@ -371,7 +415,11 @@ export function serialiseSurfaceAction(parsed: ParsedSurfaceAction): MockAction 
   if (parsed.kind === 'mcp.call') {
     return {
       tool: 'mcp.call',
-      args: { surface: parsed.surface, tool: parsed.tool, toolArgsJson: JSON.stringify(parsed.toolArgs) },
+      args: {
+        surface: parsed.surface,
+        tool: parsed.tool,
+        toolArgsJson: JSON.stringify(parsed.toolArgs),
+      },
     };
   }
   return {
@@ -408,7 +456,8 @@ export function parseSurfaceAction(action: MockAction): ParseResult {
   }
   if (action.tool === 'http.request') {
     const method = (args.method ?? 'GET').trim().toUpperCase();
-    if (!HTTP_METHODS.includes(method as HttpMethod)) return malformed(`unsupported method ${method}`);
+    if (!HTTP_METHODS.includes(method as HttpMethod))
+      return malformed(`unsupported method ${method}`);
     const path = typeof args.path === 'string' ? args.path.trim() : '';
     if (!path) return malformed('missing path');
     const headersParsed = parseJsonObject(args.headersJson, 'headersJson');
@@ -433,7 +482,15 @@ export function parseSurfaceAction(action: MockAction): ParseResult {
     }
     return {
       ok: true,
-      action: { kind: 'http.request', surface, method: method as HttpMethod, path, headers, body, bodyJson },
+      action: {
+        kind: 'http.request',
+        surface,
+        method: method as HttpMethod,
+        path,
+        headers,
+        body,
+        bodyJson,
+      },
     };
   }
   return malformed(`unknown surface verb ${action.tool}`);
@@ -512,15 +569,19 @@ export function actionIntent(parsed: ParsedSurfaceAction): ActionIntent {
   if (parsed.kind === 'http.request') {
     // RPC APIs can accept mutations over GET. Treat an operation carrying an
     // explicit mutation verb as a write even when its transport method lies.
-    if (operationTokens(parsed.path).some((token) => HTTP_MUTATION_WORDS.has(token))) return 'write';
-    if (parsed.method !== 'GET' && parsed.method !== 'HEAD' && parsed.method !== 'POST') return 'write';
+    if (operationTokens(parsed.path).some((token) => HTTP_MUTATION_WORDS.has(token)))
+      return 'write';
+    if (parsed.method !== 'GET' && parsed.method !== 'HEAD' && parsed.method !== 'POST')
+      return 'write';
     // And they can take POST, or a body, for a read: the operation decides. The
     // body's parameters may travel in the query, so they are read as a query is.
     // An escape hides a word from the raw text and not from the provider, so a
     // JSON body is read as it parses as well as as it was written.
     if (isRpcRead(parsed.path)) {
       const body = `${parsed.body ?? ''} ${parsed.bodyJson ? JSON.stringify(parsed.bodyJson) : ''}`;
-      return operationTokens(body).some((token) => HTTP_MUTATION_WORDS.has(token)) ? 'write' : 'read';
+      return operationTokens(body).some((token) => HTTP_MUTATION_WORDS.has(token))
+        ? 'write'
+        : 'read';
     }
     if (parsed.method === 'POST') return 'write';
     return parsed.body !== undefined && parsed.body.trim() !== '' ? 'write' : 'read';
@@ -569,9 +630,7 @@ function isDestinationKey(key: string): boolean {
 function isThreadKey(key: string): boolean {
   const normalised = semanticKey(key);
   return (
-    normalised.includes('thread') ||
-    normalised.includes('reply') ||
-    normalised.includes('parent')
+    normalised.includes('thread') || normalised.includes('reply') || normalised.includes('parent')
   );
 }
 
@@ -609,7 +668,11 @@ export function messageTarget(parsed: ParsedSurfaceAction): string | undefined {
   if (!channel) return undefined;
   const record = parsed.kind === 'mcp.call' ? parsed.toolArgs : parsed.bodyJson;
   const thread = Object.entries(record ?? {}).find(
-    ([key, value]) => isThreadKey(key) && semanticKey(key) !== 'replybroadcast' && typeof value === 'string' && value.trim() !== '',
+    ([key, value]) =>
+      isThreadKey(key) &&
+      semanticKey(key) !== 'replybroadcast' &&
+      typeof value === 'string' &&
+      value.trim() !== '',
   )?.[1];
   return typeof thread === 'string' ? `${channel.trim()}/${thread.trim()}` : channel.trim();
 }
@@ -625,12 +688,18 @@ function targetsOnlyChannel(parsed: ParsedSurfaceAction, expected: string): bool
   );
 }
 
-/** Whether an action asks the provider to place a message inside an existing thread. */
-function hasThreadTarget(parsed: ParsedSurfaceAction): boolean {
+/**
+ * Whether every thread an action names is a thread inside its channel: a
+ * provider timestamp or id as a string, the broadcast flag aside. Anything
+ * else in a thread field is not a place a reader can see.
+ */
+function threadTargetsAreTimestamps(parsed: ParsedSurfaceAction): boolean {
   const record = parsed.kind === 'mcp.call' ? parsed.toolArgs : parsed.bodyJson;
   if (!record) return false;
-  return Object.entries(record).some(([key, value]) => {
-    return isThreadKey(key) && value !== undefined && value !== null && value !== '' && value !== false;
+  return Object.entries(record).every(([key, value]) => {
+    if (!isThreadKey(key) || value === undefined || value === null || value === false) return true;
+    if (semanticKey(key) === 'replybroadcast') return typeof value === 'boolean';
+    return typeof value === 'string' && value.trim() !== '';
   });
 }
 
@@ -653,14 +722,14 @@ function isMcpChatPost(parsed: ParsedMcpCall): boolean {
  * Returns:
  *   The held reason, or undefined when the action may execute.
  */
-export function heldReason(parsed: ParsedSurfaceAction, surface: SurfaceRecord): string | undefined {
+export function heldReason(
+  parsed: ParsedSurfaceAction,
+  surface: SurfaceRecord,
+): string | undefined {
   if (actionIntent(parsed) === 'read') return undefined;
   if (surface.class === 'social') return HELD_PUBLIC_POST;
   if (surface.class === 'chat') {
-    if (
-      !surface.managerDmChannelId ||
-      !targetsOnlyChannel(parsed, surface.managerDmChannelId)
-    ) {
+    if (!surface.managerDmChannelId || !targetsOnlyChannel(parsed, surface.managerDmChannelId)) {
       return HELD_PUBLIC_POST;
     }
   }
@@ -688,9 +757,15 @@ export const BOSS_MESSAGE_SCOPE = 'boss:message';
 export function isManagerDm(parsed: ParsedSurfaceAction, surface: SurfaceRecord): boolean {
   if (surface.class !== 'chat' || !surface.managerDmChannelId) return false;
   if (actionIntent(parsed) !== 'write') return false;
-  if (hasThreadTarget(parsed)) return false;
-  const posts = parsed.kind === 'http.request' ? isChatPost(parsed, surface) : isMcpChatPost(parsed);
-  return posts && targetsOnlyChannel(parsed, surface.managerDmChannelId);
+  // A thread inside the manager DM has the DM's audience, since the channel is
+  // the one-to-one the probe opened with the manager (M finding 3); so does an
+  // edit of a message there, which Slack allows only on the app's own posts.
+  if (!threadTargetsAreTimestamps(parsed)) return false;
+  const writes =
+    parsed.kind === 'http.request'
+      ? isChatPost(parsed, surface) || isChatUpdate(parsed, surface)
+      : isMcpChatPost(parsed);
+  return writes && targetsOnlyChannel(parsed, surface.managerDmChannelId);
 }
 
 /**
@@ -711,8 +786,12 @@ export function isMessage(parsed: ParsedSurfaceAction, surface: SurfaceRecord): 
   if (parsed.kind === 'mcp.call') return isMcpChatPost(parsed);
   if (isChatPost(parsed, surface)) return true;
   const path = parsed.path.split(/[?#]/, 1)[0]!.replace(/\/+$/, '');
-  return surface.class === 'kanban' && parsed.method === 'POST' && /(?:^|\/)comments?$/i.test(path) &&
-    parsed.body !== undefined;
+  return (
+    surface.class === 'kanban' &&
+    parsed.method === 'POST' &&
+    /(?:^|\/)comments?$/i.test(path) &&
+    parsed.body !== undefined
+  );
 }
 
 /** Why a public chat reply escapes the source channel or thread, if it does. */
@@ -722,7 +801,8 @@ export function replyTargetRefusal(
   target: ReplyTarget | undefined,
 ): string | undefined {
   if (!target || surface.class !== 'chat' || isManagerDm(parsed, surface)) return undefined;
-  const isReply = parsed.kind === 'http.request' ? isChatPost(parsed, surface) : isMcpChatPost(parsed);
+  const isReply =
+    parsed.kind === 'http.request' ? isChatPost(parsed, surface) : isMcpChatPost(parsed);
   if (!isReply) return undefined;
   const record = parsed.kind === 'mcp.call' ? parsed.toolArgs : parsed.bodyJson;
   if (!record || !targetsOnlyChannel(parsed, target.channel)) return REPLY_TARGET_REFUSED;
@@ -736,11 +816,60 @@ export function replyTargetRefusal(
     ([key]) => isThreadKey(key) && semanticKey(key) !== 'replybroadcast',
   );
   return threadTargets.length > 0 &&
-    threadTargets.every(([, value]) =>
-      typeof value === 'string' && value.trim() === target.threadTs,
+    threadTargets.every(
+      ([, value]) => typeof value === 'string' && value.trim() === target.threadTs,
     )
     ? undefined
     : REPLY_TARGET_REFUSED;
+}
+
+/** The one message an apply may edit: Day0's own decided request in the manager DM. */
+export interface RequestEdit {
+  /** The manager DM's channel id. */
+  readonly channel: string;
+  /** The request message's provider timestamp. */
+  readonly ts: string;
+}
+
+/**
+ * Why a chat message edit may not be sent, if it may not (M finding 3).
+ *
+ * Day0 edits one message: its own decision request in the manager DM, once
+ * decided, from the manager channel. Any other edit, a plan's above all,
+ * would rewrite what a person has read or is deciding, so an edit is refused
+ * unless it names exactly the request its caller closes.
+ *
+ * @param allowed - The request the caller closes, when it closes one.
+ */
+export function messageEditRefusal(
+  parsed: ParsedSurfaceAction,
+  surface: SurfaceRecord,
+  allowed: RequestEdit | undefined,
+): string | undefined {
+  if (parsed.kind !== 'http.request' || surface.class !== 'chat') return undefined;
+  if (requestOperation(parsed, surface) !== 'chat.update') return undefined;
+  if (!allowed || !isChatUpdate(parsed, surface)) return MESSAGE_EDIT_REFUSED;
+  const ts = parsed.bodyJson?.ts;
+  return targetsOnlyChannel(parsed, allowed.channel) &&
+    typeof ts === 'string' &&
+    ts.trim() === allowed.ts
+    ? undefined
+    : MESSAGE_EDIT_REFUSED;
+}
+
+/**
+ * The operation a request names as the allowlist and the transport read it:
+ * its path resolved under the surface's endpoint, so a spelling the URL parser
+ * rewrites (a tab, a newline, extra slashes) names what is sent.
+ */
+function requestOperation(parsed: ParsedHttpRequest, surface: SurfaceRecord): string | undefined {
+  const endpoint = surface.endpoint ?? '';
+  try {
+    return operationUnderBase(resolveRequestUrl(endpoint, parsed.path), endpoint);
+  } catch {
+    // A path that does not resolve is not sent: the allowlist check refuses it.
+    return undefined;
+  }
 }
 
 /**
@@ -802,6 +931,23 @@ export function grantRefusal(
 }
 
 /**
+ * A session restore repeats a run's login controls and the controls its login
+ * ended on, and nothing else: the recipe is built from the run's landed rows,
+ * so this is the check that holds when a recorded restore or a later reader
+ * carries any other click.
+ */
+function replayedClickRefusal(parsed: ParsedSurfaceAction): string | undefined {
+  if (parsed.kind !== 'mcp.call' || parsed.tool !== 'browser_click') return undefined;
+  const element = parsed.toolArgs.element;
+  const name = typeof element === 'string' ? element.trim() : '';
+  if (name === '') return `${REPLAY_NOT_INTERSTITIAL} (unnamed element)`;
+  if (SIGN_IN_CONTROL.test(name) || NEXT_CONTROL.test(name) || isInterstitialControl(name)) {
+    return undefined;
+  }
+  return `${REPLAY_NOT_INTERSTITIAL} (${name})`;
+}
+
+/**
  * Why a replayed browser call may not be sent now, if it may not.
  *
  * A new browser is signed in again by repeating calls the run already landed,
@@ -836,6 +982,8 @@ export function replayAuthorityRefusal(
   const revoked = live.revokedScopes ?? new Set<string>();
   const scope = requiredScope(parsed);
   if (revoked.has(scope)) return `${NO_GRANT} (${scope})`;
+  const click = replayedClickRefusal(parsed);
+  if (click) return click;
   switch (authority) {
     case 'manager':
       return needsStandingGrant(parsed, surface)
@@ -872,7 +1020,10 @@ export function mockVerbRefusal(tool: string): string {
  * Returns:
  *   A refusal reason, or undefined when the verb matches the path.
  */
-export function pathRefusal(parsed: ParsedSurfaceAction, surface: SurfaceRecord): string | undefined {
+export function pathRefusal(
+  parsed: ParsedSurfaceAction,
+  surface: SurfaceRecord,
+): string | undefined {
   const mismatch =
     parsed.kind === 'mcp.call'
       ? surface.path !== 'mcp' && surface.path !== 'browser-driven'
@@ -956,26 +1107,145 @@ export function mcpEndpointRefusal(surface: SurfaceRecord): string | undefined {
     : 'surface endpoint must be an HTTPS URL without userinfo';
 }
 
+/** A path segment that stands for one value: `{id}`, `:id` or `<id>`. */
+const TEMPLATE_SEGMENT = /^(?:\{([^/{}]+)\}|:([A-Za-z_][\w-]*)|<([^/<>]+)>)$/;
+
+/** An allowlist entry that names its verb: `GET issues/{id}`. */
+const VERBED_ENTRY = /^(GET|HEAD|POST|PUT|PATCH|DELETE) (\S+)$/;
+
+/**
+ * Write one path under a documented API's base the way the allowlist keeps
+ * it: each segment that stands for a value as `{name}`, whichever of the
+ * three spellings the page used or however a URL encoded it, and every other
+ * segment as the request would send it.
+ *
+ * @param operation - A path under the base, without its query.
+ */
+export function canonicalOperation(operation: string): string {
+  return operation
+    .split('/')
+    .map((segment: string): string => {
+      let decoded = segment;
+      try {
+        decoded = decodeURIComponent(segment);
+      } catch {
+        // Not percent-encoded text, so not an encoded template either.
+        return segment;
+      }
+      const template = TEMPLATE_SEGMENT.exec(decoded);
+      return template ? `{${template[1] ?? template[2] ?? template[3]}}` : segment;
+    })
+    .join('/');
+}
+
+/**
+ * The allowlist entry for one documented operation of an API that is not
+ * RPC-shaped: the verb and the path, so admitting `GET issues` never admits
+ * `DELETE issues`.
+ *
+ * @param method - The documented verb.
+ * @param operation - The path under the base, in `canonicalOperation` form.
+ */
+export function allowlistEntry(method: HttpMethod, operation: string): string {
+  return `${method} ${operation}`;
+}
+
+/**
+ * Whether one request segment may stand in for a `{name}` segment: not empty,
+ * and not a path in disguise. An encoded slash or backslash would reach a
+ * server that decodes it as a deeper path the entry never documented, so
+ * `issues/{id}` would admit `issues/7%2Fdelete`; a proxy and a server that
+ * each decode once reach the same path through `7%252Fdelete`, so the value
+ * is decoded to a fixpoint (the passes `resolveRequestUrl` makes) and a
+ * slash, a backslash or a percent sign left after them is refused.
+ */
+function templateValue(segment: string): boolean {
+  if (segment === '') return false;
+  let decoded = segment;
+  for (let pass = 0; pass < 3; pass += 1) {
+    try {
+      const next = decodeURIComponent(decoded);
+      if (next === decoded) break;
+      decoded = next;
+    } catch {
+      // Not decodable, so not a value a server would read the same way.
+      return false;
+    }
+  }
+  return !/[/\\%]/.test(decoded);
+}
+
+/** Whether a path matches an entry's path, a `{name}` segment standing for any one value segment. */
+function pathMatches(pattern: string, operation: string): boolean {
+  const wanted = pattern.split('/');
+  const given = operation.split('/');
+  return (
+    wanted.length === given.length &&
+    wanted.every((segment: string, index: number): boolean =>
+      /^\{[^/{}]+\}$/.test(segment) ? templateValue(given[index]!) : segment === given[index],
+    )
+  );
+}
+
+/**
+ * Why a request's verb and path are outside a documented API's allowlist, or
+ * undefined when an entry admits them. The gate and the HTTP rung both ask
+ * this, so the operation the manager approved is the one the transport sends.
+ *
+ * An entry names its verb and path (`GET issues/{id}`), a `{name}` segment
+ * matching any one segment. An entry with no verb is an RPC method
+ * (`chat.postMessage`), where the path is the operation whatever verb
+ * carries it; a bare REST path admits nothing, so an entry written before
+ * the verb was kept never admits a verb the page did not document.
+ *
+ * @param allowlist - The surface's probed allowlist.
+ * @param method - The request's verb.
+ * @param operation - The request's path under the base, without its query.
+ */
+export function operationRefusal(
+  allowlist: readonly string[] | undefined,
+  method: HttpMethod,
+  operation: string,
+): string | undefined {
+  const admitted = (allowlist ?? []).some((entry: string): boolean => {
+    const verbed = VERBED_ENTRY.exec(entry);
+    if (!verbed) return rpcMethod(entry) !== undefined && entry === operation;
+    return verbed[1] === method && pathMatches(verbed[2], operation);
+  });
+  if (admitted) return undefined;
+  return rpcMethod(operation) !== undefined
+    ? `${TOOL_NOT_ALLOWED} (${operation})`
+    : `${TOOL_NOT_ALLOWED} (${method} ${operation})`;
+}
+
+/** The path of a resolved request under its surface's base, as the allowlist names operations. */
+export function operationUnderBase(target: URL, endpoint: string): string {
+  const base = new URL(endpoint);
+  if (!base.pathname.endsWith('/')) base.pathname = `${base.pathname}/`;
+  return target.pathname.slice(base.pathname.length).replace(/^\/+/, '');
+}
+
 /** Why an operation is outside the surface's probed allowlist, if it is. */
 export function toolRefusal(
   parsed: ParsedSurfaceAction,
   surface: SurfaceRecord,
 ): string | undefined {
-  let operation = parsed.kind === 'mcp.call' ? parsed.tool : '';
-  if (parsed.kind === 'http.request') {
-    let target: URL;
-    try {
-      target = resolveRequestUrl(surface.endpoint ?? '', parsed.path);
-    } catch (error) {
-      return error instanceof Error ? error.message : String(error);
-    }
-    const base = new URL(surface.endpoint ?? '');
-    if (!base.pathname.endsWith('/')) base.pathname = `${base.pathname}/`;
-    operation = target.pathname.slice(base.pathname.length).replace(/^\/+/, '');
+  if (parsed.kind === 'mcp.call') {
+    return surface.toolAllowlist?.includes(parsed.tool)
+      ? undefined
+      : `${TOOL_NOT_ALLOWED} (${parsed.tool})`;
   }
-  return surface.toolAllowlist?.includes(operation)
-    ? undefined
-    : `${TOOL_NOT_ALLOWED} (${operation})`;
+  let target: URL;
+  try {
+    target = resolveRequestUrl(surface.endpoint ?? '', parsed.path);
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+  return operationRefusal(
+    surface.toolAllowlist,
+    parsed.method,
+    operationUnderBase(target, surface.endpoint ?? ''),
+  );
 }
 
 /** How the gate will treat one row of a run. */
@@ -1012,13 +1282,13 @@ export function normaliseActionVerdict(row: {
 }): ActionVerdict {
   if (row.disposition === 'auto') return { disposition: 'auto' };
   if (row.disposition === 'held') return { disposition: 'held', reason: row.reason ?? HELD_WRITE };
-  if (row.disposition === 'refused') return { disposition: 'refused', reason: row.reason ?? 'refused' };
+  if (row.disposition === 'refused')
+    return { disposition: 'refused', reason: row.reason ?? 'refused' };
   if (row.held === true) return { disposition: 'refused', reason: row.reason ?? 'refused' };
   return { disposition: 'held', reason: row.reason ?? HELD_WRITE };
 }
 
-/** What kind of change an applicable action makes, which decides its disposition and its held reason. */
-export type ActionClass = 'read' | 'manager-dm' | 'public-post' | 'mutation' | 'write';
+export type { ActionClass } from './types';
 
 /**
  * Classify an applicable action by what it changes.
@@ -1082,7 +1352,9 @@ export function refusalFor(
   surfaces: readonly SurfaceRecord[],
   grants: ReadonlySet<string>,
   now: number,
-): { refused: true; reason: string } | { refused: false; parsed: ParsedSurfaceAction; surface: SurfaceRecord } {
+):
+  | { refused: true; reason: string }
+  | { refused: false; parsed: ParsedSurfaceAction; surface: SurfaceRecord } {
   if (!isSurfaceTool(action.tool)) {
     const mock = (MOCK_TOOLS as readonly string[]).includes(action.tool);
     return { refused: true, reason: mock ? mockVerbRefusal(action.tool) : UNKNOWN_TOOL };
@@ -1095,6 +1367,8 @@ export function refusalFor(
   const reason =
     pathRefusal(parsed.action, surface) ??
     toolRefusal(parsed.action, surface) ??
+    // No plan's row is the edit that closes a decided request.
+    messageEditRefusal(parsed.action, surface, undefined) ??
     (needsStandingGrant(parsed.action, surface)
       ? grantRefusal(parsed.action, surface, grants)
       : undefined) ??
@@ -1426,7 +1700,10 @@ export type ProvenanceResult =
   | { ok: false; reason: string };
 
 /**
- * Whether an HTTP request posts a chat message.
+ * Whether an HTTP request posts a chat message, by the operation the request
+ * resolves to on the surface's endpoint, however its path is spelled. The
+ * summary reads the same predicate, so a held post the policy read as a chat
+ * post is described as one, channel and text included.
  *
  * Args:
  *   parsed: A parsed HTTP request.
@@ -1435,12 +1712,24 @@ export type ProvenanceResult =
  * Returns:
  *   True for a write to a chat surface that carries message text.
  */
-function isChatPost(parsed: ParsedHttpRequest, surface: SurfaceRecord): boolean {
+export function isChatPost(parsed: ParsedHttpRequest, surface: SurfaceRecord): boolean {
   return (
     parsed.method === 'POST' &&
     surface.class === 'chat' &&
-    /^\/*chat\.postMessage$/.test(parsed.path) &&
+    requestOperation(parsed, surface) === 'chat.postMessage' &&
     typeof parsed.bodyJson?.text === 'string'
+  );
+}
+
+/** Whether a request rewrites the text of one existing chat message, named by its timestamp. */
+function isChatUpdate(parsed: ParsedHttpRequest, surface: SurfaceRecord): boolean {
+  return (
+    parsed.method === 'POST' &&
+    surface.class === 'chat' &&
+    requestOperation(parsed, surface) === 'chat.update' &&
+    typeof parsed.bodyJson?.text === 'string' &&
+    typeof parsed.bodyJson.ts === 'string' &&
+    parsed.bodyJson.ts.trim() !== ''
   );
 }
 
@@ -1506,7 +1795,9 @@ export function provenanceRefusal(
   if (parsed.body !== undefined && containsProvenanceTrailer(parsed.body)) {
     return TRAILER_REFUSED;
   }
-  if (!isChatPost(parsed, surface) || !parsed.bodyJson) return undefined;
+  if (!(isChatPost(parsed, surface) || isChatUpdate(parsed, surface)) || !parsed.bodyJson) {
+    return undefined;
+  }
   return parsed.bodyJson.username !== undefined ||
     parsed.bodyJson.icon_emoji !== undefined ||
     parsed.bodyJson.icon_url !== undefined
@@ -1546,7 +1837,9 @@ export function sharedWriteWithoutAttribution(
   if (isAuditComment(parsed)) return false;
   if (parsed.kind === 'mcp.call' && isMcpChatPost(parsed)) return false;
   if (isTicketCreate(parsed, surface)) return false;
-  if (parsed.kind === 'http.request') return !isChatPost(parsed, surface);
+  if (parsed.kind === 'http.request') {
+    return !(isChatPost(parsed, surface) || isChatUpdate(parsed, surface));
+  }
   if (targetIssue(parsed) === undefined) return true;
   return !hasLandedAuditComment(parsed, index, earlier, ledger);
 }
@@ -1616,6 +1909,15 @@ export function applyProvenance(
       action: { ...parsed, toolArgs: { ...parsed.toolArgs, body: `${body}\n\n${trailer}` } },
     };
   }
+  if (isChatUpdate(parsed, surface) && parsed.bodyJson) {
+    if (!shared) return { ok: true, action: parsed };
+    // An edit takes no name or icon of its own, so it carries the trailer alone.
+    const edited: JsonObject = {
+      ...parsed.bodyJson,
+      text: `${String(parsed.bodyJson.text)}\n\n${trailer}`,
+    };
+    return { ok: true, action: { ...parsed, bodyJson: edited, body: JSON.stringify(edited) } };
+  }
   if (!isChatPost(parsed, surface)) return { ok: true, action: parsed };
   const bodyJson = parsed.bodyJson;
   if (!bodyJson) return { ok: true, action: parsed };
@@ -1640,7 +1942,10 @@ export function applyProvenance(
  * Returns:
  *   A refusal reason, or undefined when the surface is connected.
  */
-export function surfaceRefusal(surface: SurfaceRecord | undefined, now: number): string | undefined {
+export function surfaceRefusal(
+  surface: SurfaceRecord | undefined,
+  now: number,
+): string | undefined {
   if (!surface) return UNKNOWN_SURFACE;
   const verdict = verdictFor(surface, now);
   if (verdict !== 'connected') return `${SURFACE_NOT_CONNECTED} (${verdict})`;
@@ -1754,7 +2059,9 @@ export function describeAction(action: MockAction): string {
   if (action.tool === 'http.request') {
     const parsed = parseSurfaceAction(action);
     const headers =
-      parsed.ok && parsed.action.kind === 'http.request' ? compact(parsed.action.headers) : compact(args.headersJson ?? '');
+      parsed.ok && parsed.action.kind === 'http.request'
+        ? compact(parsed.action.headers)
+        : compact(args.headersJson ?? '');
     const body = args.body === undefined ? '(no body)' : compact(args.body, 160);
     return `http.request ${args.surface ?? '?'} · ${(args.method ?? 'GET').toUpperCase()} ${args.path ?? '?'} · headers ${headers} · body ${body}`;
   }

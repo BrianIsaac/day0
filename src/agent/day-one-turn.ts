@@ -114,7 +114,8 @@ async function* withEarnedClose(
       yield* kept;
       return;
     }
-    const question = DAY_ONE_TOPIC_SPECS[Math.min(replies, DAY_ONE_TOPIC_SPECS.length - 1)].question;
+    const question =
+      DAY_ONE_TOPIC_SPECS[Math.min(replies, DAY_ONE_TOPIC_SPECS.length - 1)].question;
     // The model's own last text part takes the question, so it reads on from
     // what was said; a turn with no words gets a part of its own.
     const lastTextEnd = kept.findLastIndex((chunk) => chunk.type === 'text-end');
@@ -122,7 +123,11 @@ async function* withEarnedClose(
     const ending = kept[lastTextEnd];
     if (ending?.type === 'text-end') {
       yield* kept.slice(0, lastTextEnd);
-      yield { type: 'text-delta', id: ending.id, delta: said.trim() ? `\n\n${question}` : question };
+      yield {
+        type: 'text-delta',
+        id: ending.id,
+        delta: said.trim() ? `\n\n${question}` : question,
+      };
       yield* kept.slice(lastTextEnd);
       return;
     }

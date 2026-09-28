@@ -2,7 +2,6 @@ import { Agent } from '@mastra/core/agent';
 import { tool } from 'ai';
 import { z } from 'zod';
 import {
-  MODEL_CALL_TIMEOUT_MS,
   MODEL_CONFIG,
   MODEL_PROVIDER_MAX_RETRIES,
   modelCallOptions,
@@ -130,9 +129,9 @@ export async function runBaselineAgent(args: {
     maxRetries: MODEL_PROVIDER_MAX_RETRIES,
     tools,
   });
-  const result = await withModelRetry('baselineAgent', async () =>
+  const result = await withModelRetry('baselineAgent', async (signal) =>
     ordinary.generate(candidatePrompt(args.candidate, args.snapshot), {
-      abortSignal: AbortSignal.timeout(MODEL_CALL_TIMEOUT_MS),
+      abortSignal: signal,
       maxSteps: 10,
       ...modelCallOptions(),
       toolChoice: 'auto',

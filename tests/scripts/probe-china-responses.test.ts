@@ -11,12 +11,17 @@ function exercise(scenario: string) {
   const executable = (name: string, body: string) =>
     writeFileSync(join(directory, name), body, { mode: 0o755 });
   executable('getent', '#!/bin/sh\necho "127.0.0.1 STREAM local"\n');
-  executable('openssl', `#!/bin/sh
+  executable(
+    'openssl',
+    `#!/bin/sh
 if [ "$1" = s_client ] && [ "$SCENARIO" = tls ]; then exec sleep 3; fi
 exit 0
-`);
+`,
+  );
   const shellEnvironment = join(directory, 'bash-env');
-  writeFileSync(shellEnvironment, `
+  writeFileSync(
+    shellEnvironment,
+    `
 if [ "$SCENARIO" = cleanup-legacy ]; then unset BASHPID; fi
 kill() {
   if [ "$1" = "\${deadline_pid:-}" ]; then
@@ -25,8 +30,11 @@ kill() {
   fi
   builtin kill "$@"
 }
-`);
-  executable('curl', `#!/usr/bin/env python3
+`,
+  );
+  executable(
+    'curl',
+    `#!/usr/bin/env python3
 import json, os, sys
 args=sys.argv[1:]
 def arg(k): return args[args.index(k)+1] if k in args else ''
@@ -51,26 +59,33 @@ if '--data-binary' in args:
 if arg('-o'):
  with open(arg('-o'),'w') as f: json.dump(body,f)
 print(code,end='')
-`);
+`,
+  );
   const start = Date.now();
   try {
-    const result = spawnSync('bash', [script, '--model', 'test-model', '--timeout', '1', '--no-reference', '--no-catalogue'], {
-      cwd: directory,
-      env: {
-        ...process.env,
-        PATH: `${directory}:${process.env.PATH}`,
-        TMPDIR: directory,
-        FEATHERLESS_API_KEY: scenario === 'tls' ? '' : 'synthetic',
-        SCENARIO: scenario,
-        ...(scenario.startsWith('cleanup') ? { BASH_ENV: shellEnvironment } : {}),
+    const result = spawnSync(
+      'bash',
+      [script, '--model', 'test-model', '--timeout', '1', '--no-reference', '--no-catalogue'],
+      {
+        cwd: directory,
+        env: {
+          ...process.env,
+          PATH: `${directory}:${process.env.PATH}`,
+          TMPDIR: directory,
+          FEATHERLESS_API_KEY: scenario === 'tls' ? '' : 'synthetic',
+          SCENARIO: scenario,
+          ...(scenario.startsWith('cleanup') ? { BASH_ENV: shellEnvironment } : {}),
+        },
+        encoding: 'utf8',
+        timeout: 10_000,
       },
-      encoding: 'utf8',
-      timeout: 10_000,
-    });
+    );
     return {
       ...result,
       elapsed: Date.now() - start,
-      remainingProbeDirectories: readdirSync(directory).filter((name) => name.startsWith('day0-probe.')),
+      remainingProbeDirectories: readdirSync(directory).filter((name) =>
+        name.startsWith('day0-probe.'),
+      ),
     };
   } finally {
     rmSync(directory, { recursive: true, force: true });
@@ -80,33 +95,42 @@ print(code,end='')
 // Each case runs the probe script under bash with its own one-second network
 // timeouts and a ten-second cap on the process, so the default five-second
 // test timeout is below what the case itself allows on a loaded machine.
-describe.skipIf(!hasHostTools('bash', 'python3'))('arrival probe response paths (needs bash and python3)', { timeout: 30_000 }, () => {
-  it('bounds certificate inspection when TCP connects but TLS stalls', () => {
-    const result = exercise('tls');
-    expect(result.stdout).toContain('Summary');
-    expect(result.elapsed).toBeLessThan(2500);
-  });
-  it('keeps timed-out JSON-format checks advisory', () => {
-    const result = exercise('advisory');
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain('tier 1:');
-    expect(result.stdout).toMatch(/note\s+response_format json_schema\s+no HTTP response/);
-  });
-  it('still fails timed-out required completion checks', () => {
-    const result = exercise('required');
-    expect(result.status).toBe(2);
-    expect(result.stdout).toContain('tier 3:');
-  });
-  it('reports the token-field mismatch after a successful fallback', () => {
-    const result = exercise('fallback');
-    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-    expect(result.stdout).toContain('server rejected max_completion_tokens; retried with max_tokens');
-  });
-  it.each(['cleanup', 'cleanup-legacy'])('only lets the owning process clean up probe files (%s)', (scenario) => {
-    const result = exercise(scenario);
-    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-    expect(result.stdout).toContain('Summary');
-    expect(result.stdout).toContain('tier 1:');
-    expect(result.remainingProbeDirectories).toEqual([]);
-  });
-});
+describe.skipIf(!hasHostTools('bash', 'python3'))(
+  'arrival probe response paths (needs bash and python3)',
+  { timeout: 30_000 },
+  () => {
+    it('bounds certificate inspection when TCP connects but TLS stalls', () => {
+      const result = exercise('tls');
+      expect(result.stdout).toContain('Summary');
+      expect(result.elapsed).toBeLessThan(2500);
+    });
+    it('keeps timed-out JSON-format checks advisory', () => {
+      const result = exercise('advisory');
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain('tier 1:');
+      expect(result.stdout).toMatch(/note\s+response_format json_schema\s+no HTTP response/);
+    });
+    it('still fails timed-out required completion checks', () => {
+      const result = exercise('required');
+      expect(result.status).toBe(2);
+      expect(result.stdout).toContain('tier 3:');
+    });
+    it('reports the token-field mismatch after a successful fallback', () => {
+      const result = exercise('fallback');
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(result.stdout).toContain(
+        'server rejected max_completion_tokens; retried with max_tokens',
+      );
+    });
+    it.each(['cleanup', 'cleanup-legacy'])(
+      'only lets the owning process clean up probe files (%s)',
+      (scenario) => {
+        const result = exercise(scenario);
+        expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+        expect(result.stdout).toContain('Summary');
+        expect(result.stdout).toContain('tier 1:');
+        expect(result.remainingProbeDirectories).toEqual([]);
+      },
+    );
+  },
+);

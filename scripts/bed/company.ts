@@ -805,7 +805,8 @@ function errorText(error: unknown): string {
  *
  * A deployment takes no Slack mention written before its agent was deployed,
  * so the asks are posted by a person during the sitting, once the employees
- * exist, and an ask left from an earlier sitting is never read. The full
+ * exist, and an ask left from an earlier sitting is never read, unless the
+ * deployment was stopped or restored and resumes from its last poll. The full
  * sitting posts every ask of the file; a named set posts only the asks whose
  * row names it, which for one-each is the single ask that is revenue
  * operations' task. None of this is a gap before the sitting.
@@ -828,7 +829,8 @@ function reportAsksToPost(
     );
   }
   const unread =
-    'a deployment takes no mention written before its agent, so an ask left from an earlier sitting is never read and needs no deleting';
+    'a deployment takes no mention written before its agent, so an ask left from an earlier sitting is never read and needs no deleting, ' +
+    "unless the deployment was stopped or restored from a snapshot: it resumes from its last poll and reads every mention posted since, so delete later sittings' asks before you start or restore it";
   if (set === undefined) {
     report.line(
       'note',

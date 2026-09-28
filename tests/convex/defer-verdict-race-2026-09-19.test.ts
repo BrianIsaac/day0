@@ -125,7 +125,11 @@ async function seedPriya(
       createdAt: 1,
       body: {
         proposedFunction: 'RevOps analyst',
-        proposedBoundaries: { willDo: ['pipeline reporting'], willNotDo: [], escalationTriggers: [] },
+        proposedBoundaries: {
+          willDo: ['pipeline reporting'],
+          willNotDo: [],
+          escalationTriggers: [],
+        },
         approvalChain: { boss: 'boss@day0.local' },
       },
     });
@@ -217,7 +221,11 @@ async function insertRow(
   );
 }
 
-async function connectTile(harness: Harness, tileId: Id<'surfaces'>, verifiedAt: number): Promise<void> {
+async function connectTile(
+  harness: Harness,
+  tileId: Id<'surfaces'>,
+  verifiedAt: number,
+): Promise<void> {
   await expect(
     harness.mutation(internal.surfaces.recordConnected, {
       surfaceId: tileId,
@@ -255,7 +263,7 @@ async function pendingJobs(harness: Harness): Promise<Array<{ name: string; args
 
 const deferOnTile = { decision: 'defer', reason: 'awaiting-connection', missingSurface: TILE };
 
-describe('a connection that lands between an evaluation\'s read and its verdict', (): void => {
+describe("a connection that lands between an evaluation's read and its verdict", (): void => {
   it('leaves REVOPS-27 re-evaluated, not deferred against a connected tile', async (): Promise<void> => {
     useRealModeWithBrowser();
     vi.useFakeTimers();
@@ -664,7 +672,7 @@ describe('the other verdicts that wait on something', (): void => {
 });
 
 describe('Check for new work and a defer that is already satisfied', (): void => {
-  it('re-admits the run\'s stranded REVOPS-27 and leaves REVOPS-29 waiting on the absent CRM', async (): Promise<void> => {
+  it("re-admits the run's stranded REVOPS-27 and leaves REVOPS-29 waiting on the absent CRM", async (): Promise<void> => {
     useRealModeWithBrowser();
     vi.useFakeTimers();
     const harness = convexTest(contractSchema(), allConvexModules());
@@ -688,7 +696,11 @@ describe('Check for new work and a defer that is already satisfied', (): void =>
     const waiting = await insertRow(harness, agentId, 'REVOPS-29', {
       title: 'Reconcile Northstar CRM ownership for Aster Works',
       state: 'deferred',
-      verdict: { decision: 'defer', reason: 'awaiting-connection', missingSurface: 'northstar-crm' },
+      verdict: {
+        decision: 'defer',
+        reason: 'awaiting-connection',
+        missingSurface: 'northstar-crm',
+      },
     });
 
     await harness.withIdentity(OWNER).mutation(api.workLoop.checkForNewWork, { agentId });
@@ -747,7 +759,11 @@ describe('Check for new work and a defer that is already satisfied', (): void =>
     for (let index = 0; index < 100; index += 1) {
       await insertRow(harness, agentId, `REVOPS-${100 + index}`, {
         state: 'deferred',
-        verdict: { decision: 'defer', reason: 'awaiting-connection', missingSurface: 'northstar-crm' },
+        verdict: {
+          decision: 'defer',
+          reason: 'awaiting-connection',
+          missingSurface: 'northstar-crm',
+        },
       });
     }
     const stranded = await insertRow(harness, agentId, 'REVOPS-27', {

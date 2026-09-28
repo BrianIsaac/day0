@@ -103,9 +103,9 @@ describe('rejecting a proposed skill', (): void => {
       state: 'cancelled',
       skipReason: 'skill proposal "update-linear-ticket" rejected by the manager',
     });
-    const cancelled = (await harness.run(async (ctx) => await ctx.db.query('events').collect())).filter(
-      (event) => event.type === 'work.cancelled',
-    );
+    const cancelled = (
+      await harness.run(async (ctx) => await ctx.db.query('events').collect())
+    ).filter((event) => event.type === 'work.cancelled');
     expect(cancelled.map((event) => event.payload)).toEqual([
       {
         workItemId,
@@ -192,19 +192,25 @@ describe('retiring a registered skill that predates shapes', (): void => {
     const { agentId } = await seedAgentAndWork(harness, 'linear');
     const legacy = await seedRegistered(harness, agentId, { name: 'linear-action-revops-7' });
 
-    await expect(harness.mutation(internal.skills.retireUnshaped, { skillId: legacy })).resolves.toEqual({
+    await expect(
+      harness.mutation(internal.skills.retireUnshaped, { skillId: legacy }),
+    ).resolves.toEqual({
       retired: true,
     });
     const row = await harness.run(async (ctx) => await ctx.db.get(legacy));
     expect(row).toMatchObject({ state: 'rejected', name: 'linear-action-revops-7' });
     expect(row?.body).toContain('74%');
-    await expect(harness.query(internal.skills.registeredInternal, { agentId })).resolves.toEqual([]);
+    await expect(harness.query(internal.skills.registeredInternal, { agentId })).resolves.toEqual(
+      [],
+    );
     const events = await harness.run(async (ctx) => await ctx.db.query('events').collect());
     expect(events.find((event) => event.type === 'skill.retired')?.payload).toMatchObject({
       skillId: legacy,
       name: 'linear-action-revops-7',
     });
-    await expect(harness.mutation(internal.skills.retireUnshaped, { skillId: legacy })).resolves.toEqual({
+    await expect(
+      harness.mutation(internal.skills.retireUnshaped, { skillId: legacy }),
+    ).resolves.toEqual({
       retired: false,
       reason: 'already retired',
     });
@@ -218,18 +224,24 @@ describe('retiring a registered skill that predates shapes', (): void => {
       surfaceClass: 'kanban',
       operation: 'comment-and-close',
     });
-    const builtin = await seedRegistered(harness, agentId, { name: 'see-docs', sourceType: 'builtin' });
-    const proposed = await seedRegistered(harness, agentId, { name: 'slack-action-c0b', state: 'proposed' });
+    const builtin = await seedRegistered(harness, agentId, {
+      name: 'see-docs',
+      sourceType: 'builtin',
+    });
+    const proposed = await seedRegistered(harness, agentId, {
+      name: 'slack-action-c0b',
+      state: 'proposed',
+    });
 
-    await expect(harness.mutation(internal.skills.retireUnshaped, { skillId: shaped })).rejects.toThrow(
-      'is the reusable procedure for kanban/comment-and-close',
-    );
-    await expect(harness.mutation(internal.skills.retireUnshaped, { skillId: builtin })).rejects.toThrow(
-      'a builtin skill is installed, not authored',
-    );
-    await expect(harness.mutation(internal.skills.retireUnshaped, { skillId: proposed })).rejects.toThrow(
-      'skill state is proposed; only a registered skill is retired',
-    );
+    await expect(
+      harness.mutation(internal.skills.retireUnshaped, { skillId: shaped }),
+    ).rejects.toThrow('is the reusable procedure for kanban/comment-and-close');
+    await expect(
+      harness.mutation(internal.skills.retireUnshaped, { skillId: builtin }),
+    ).rejects.toThrow('a builtin skill is installed, not authored');
+    await expect(
+      harness.mutation(internal.skills.retireUnshaped, { skillId: proposed }),
+    ).rejects.toThrow('skill state is proposed; only a registered skill is retired');
     const states = await harness.run(async (ctx) =>
       (await ctx.db.query('skills').collect()).map((row) => [row.name, row.state]),
     );
@@ -664,48 +676,6 @@ describe('skills that target a surface', (): void => {
         { scope: 'linear:read', source: 'skill' },
         { scope: 'linear:write', source: 'skill' },
       ]),
-    );
-  });
-});
-
-describe('moving the sandbox id off its old field by hand', (): void => {
-  it('moves one page at a time until the cursor says done, and a second pass moves nothing', async (): Promise<void> => {
-    const harness = convexTest({ schema, modules: allConvexModules(), transactionLimits: true });
-    await harness.run(async (ctx) => {
-      const agentId = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
-        name: 'Priya',
-        userId: OWNER.subject,
-        state: 'active',
-        createdAt: 1,
-      });
-      for (let index = 0; index < 150; index += 1) {
-        await ctx.db.insert('skills', {
-          agentId,
-          name: `skill-${index}`,
-          description: 'A skill.',
-          body: '',
-          sourceType: 'agent-authored',
-          state: 'registered',
-          createdAt: 1,
-          daytonaSandboxId: `sandbox-${index}`,
-        });
-      }
-    });
-
-    const first = await harness.mutation(internal.skills.migrateSandboxIdField, { cursor: null });
-    expect(first).toMatchObject({ read: 100, moved: 100, isDone: false });
-    const second = await harness.mutation(internal.skills.migrateSandboxIdField, {
-      cursor: first.cursor,
-    });
-    expect(second).toMatchObject({ read: 50, moved: 50, isDone: true });
-    const again = await harness.mutation(internal.skills.migrateSandboxIdField, { cursor: null });
-    expect(again).toMatchObject({ read: 100, moved: 0 });
-
-    const skills = await harness.run(async (ctx) => await ctx.db.query('skills').collect());
-    expect(skills.every((skill) => skill.daytonaSandboxId === undefined)).toBe(true);
-    expect(skills.map((skill) => skill.sandboxId)).toEqual(
-      skills.map((skill) => `sandbox-${skill.name.slice('skill-'.length)}`),
     );
   });
 });

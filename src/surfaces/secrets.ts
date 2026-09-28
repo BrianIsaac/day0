@@ -36,6 +36,46 @@ export function hasPlaceholder(template: string): boolean {
   return PLACEHOLDER.test(template);
 }
 
+/** `{{secret}}`, or its qualified form `{{secret:<slug>}}`. */
+const SECRET_PLACEHOLDER = /\{\{\s*secret(?:[:.][A-Za-z0-9_-]+)?\s*\}\}/;
+
+/** Whether a template names the credential, bare or qualified. */
+function namesSecret(template: string): boolean {
+  return SECRET_PLACEHOLDER.test(template);
+}
+
+/** The parts of an `http.request` a placeholder could sit in. */
+export interface HttpRequestParts {
+  readonly path: string;
+  readonly headers: Readonly<Record<string, string>>;
+  readonly body?: string;
+}
+
+/**
+ * Why an `http.request` may not carry the credential where it asks to, or
+ * undefined when every placeholder sits in a header value.
+ *
+ * A header is how an API takes its key; a body or a path is content the
+ * system stores or logs, and a skill's body can be steered by what a
+ * colleague wrote in a ticket, so `{"body":"key: {{secret}}"}` would post the
+ * key as a comment while the manager's preview showed only the placeholder.
+ * So the HTTP rung, like the browser rung, puts the credential only where a
+ * credential goes.
+ *
+ * @param request - The request as the skill wrote it, before substitution.
+ */
+export function httpSecretPlacementRefusal(request: HttpRequestParts): string | undefined {
+  const misplaced = [
+    ...(namesSecret(request.path) ? ['the path'] : []),
+    ...Object.keys(request.headers)
+      .filter((name: string): boolean => namesSecret(name))
+      .map((name: string): string => `the header name ${name}`),
+    ...(request.body !== undefined && namesSecret(request.body) ? ['the body'] : []),
+  ];
+  if (misplaced.length === 0) return undefined;
+  return `{{secret}} goes only in a header value, never in ${misplaced.join(', ')}, so the credential was not sent`;
+}
+
 /**
  * Replace `{{secret}}` with the surface's credential value.
  *

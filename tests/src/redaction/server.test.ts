@@ -255,22 +255,38 @@ httpd.shutdown()
 
   it('refuses a connection past the bound with 503 and Retry-After', () => {
     const output = withServer(`
-import json, socket, threading, urllib.error, urllib.request
+import json, socket, threading, time, urllib.error, urllib.request
 server.Handler.redactor = type('Loaded', (), {'device': 'cpu'})()
 httpd = server.BoundedServer(('127.0.0.1', 0), server.Handler, limit=1)
 threading.Thread(target=httpd.serve_forever, daemon=True).start()
 port = httpd.server_address[1]
 held = socket.create_connection(('127.0.0.1', port))
 held.sendall(b'GET /healthz HTTP/1.1\\r\\nHost: x\\r\\n')
-threading.Event().wait(0.2)
+# Wait until the server has given the held connection the one slot, however
+# long a loaded machine takes to schedule its accepting thread.
+deadline = time.monotonic() + 5
+while httpd.slots.acquire(blocking=False):
+    httpd.slots.release()
+    if time.monotonic() > deadline:
+        raise SystemExit('the server never took the held connection')
+    time.sleep(0.01)
 try:
     urllib.request.urlopen(f'http://127.0.0.1:{port}/healthz', timeout=5)
     result = None
 except urllib.error.HTTPError as error:
     result = [error.code, error.headers.get('Retry-After'), json.loads(error.read())]
-print(json.dumps(result))
 held.close()
+# The held connection's handler thread is a daemon: it must have answered the
+# close and given its slot back before the interpreter exits, or its line on
+# stderr races the interpreter's shutdown, which aborts the process.
+deadline = time.monotonic() + 5
+while not httpd.slots.acquire(blocking=False):
+    if time.monotonic() > deadline:
+        raise SystemExit('the held connection never gave its slot back')
+    time.sleep(0.01)
+httpd.slots.release()
 httpd.shutdown()
+print(json.dumps(result))
 `);
     expect(JSON.parse(output)).toEqual([503, '1', { error: 'busy: too many connections' }]);
   });

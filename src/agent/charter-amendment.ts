@@ -55,9 +55,7 @@ export type CharterChange =
   /** `index` equal to the list length appends; an empty `who` removes. */
   | { kind: 'edit-adjacent-role'; index: number; role: AdjacentRole }
   /** `index` equal to the list length appends; an empty `name` removes. */
-  | { kind: 'edit-collaborator'; index: number; collaborator: NamedCollaborator }
-  /** Who approves, as the manager named them. */
-  | { kind: 'set-approval-chain'; boss: string };
+  | { kind: 'edit-collaborator'; index: number; collaborator: NamedCollaborator };
 
 const INTRO_PATHS: readonly IntroPath[] = ['manager', 'self', 'tbd'];
 
@@ -359,15 +357,6 @@ function applyOne(charter: Charter, change: CharterChange, now: Date): AppliedAm
             collaboratorOf(change.collaborator),
             'named collaborator',
           ),
-        },
-        systemsAdded: added,
-        systemsRemoved: removed,
-      };
-    case 'set-approval-chain':
-      return {
-        charter: {
-          ...charter,
-          approvalChain: { boss: requireText(change.boss, 'who approves'), confidence: 'high' },
         },
         systemsAdded: added,
         systemsRemoved: removed,

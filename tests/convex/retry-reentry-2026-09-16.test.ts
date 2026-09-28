@@ -78,10 +78,14 @@ vi.mock('../../src/lib/mastra', () => ({
   }): Promise<T> => {
     recorded.model.push({ agent: args.agent.name, user: args.user });
     if (args.agent.name.endsWith('-dependent') && recorded.closingReply) {
-      return args.schema.parse((await import('./fakes/executor-reply')).asCurrentExecutorReply(recorded.closingReply)) as T;
+      return args.schema.parse(
+        (await import('./fakes/executor-reply')).asCurrentExecutorReply(recorded.closingReply),
+      ) as T;
     }
     if (args.agent.name.endsWith('-initial') && recorded.initialReply) {
-      return args.schema.parse((await import('./fakes/executor-reply')).asCurrentExecutorReply(recorded.initialReply)) as T;
+      return args.schema.parse(
+        (await import('./fakes/executor-reply')).asCurrentExecutorReply(recorded.initialReply),
+      ) as T;
     }
     throw new Error(`unscripted agent ${args.agent.name}`);
   },
@@ -90,7 +94,8 @@ vi.mock('../../src/lib/mastra', () => ({
 
 vi.mock('../../src/surfaces/credentials', () => ({
   decryptCredentialRef: { name: 'credentials:decrypt' },
-  decryptCredential: async (_ctx: unknown, credentialId: string): Promise<string> => `plain-${credentialId}`,
+  decryptCredential: async (_ctx: unknown, credentialId: string): Promise<string> =>
+    `plain-${credentialId}`,
 }));
 
 vi.mock('../../src/surfaces/mcp', async (importOriginal) => {
@@ -103,7 +108,16 @@ vi.mock('../../src/surfaces/mcp', async (importOriginal) => {
     createMastraMcpClient: (options: McpClientOptions): McpClientLike => ({
       listTools: async () =>
         Object.fromEntries(
-          ['get_issue', 'list_issues', 'save_comment', 'save_issue', 'browser_navigate', 'browser_fill_form', 'browser_click', 'browser_snapshot'].map((tool) => [
+          [
+            'get_issue',
+            'list_issues',
+            'save_comment',
+            'save_issue',
+            'browser_navigate',
+            'browser_fill_form',
+            'browser_click',
+            'browser_snapshot',
+          ].map((tool) => [
             `${options.serverName}_${tool}`,
             {
               execute: async (args: unknown): Promise<unknown> => {
@@ -112,11 +126,15 @@ vi.mock('../../src/surfaces/mcp', async (importOriginal) => {
                   const id = recorded.commentIds.shift() ?? SECOND_COMMENT_ID;
                   return text(JSON.stringify({ id }));
                 }
-                if (tool === 'save_issue') return text(JSON.stringify({ id: 'lin-5', state: { name: 'Done' } }));
+                if (tool === 'save_issue')
+                  return text(JSON.stringify({ id: 'lin-5', state: { name: 'Done' } }));
                 if (tool === 'list_issues') {
-                  return text('REVOPS-5 Add the close-summary audit note (In Progress); REVOPS-6 Reconcile Northstar CRM ownership (Backlog); REVOPS-7 Refresh the Looker pipeline tile (Backlog)');
+                  return text(
+                    'REVOPS-5 Add the close-summary audit note (In Progress); REVOPS-6 Reconcile Northstar CRM ownership (Backlog); REVOPS-7 Refresh the Looker pipeline tile (Backlog)',
+                  );
                 }
-                if (tool === 'browser_navigate') return text('- Page URL: http://looker-tile:8080/');
+                if (tool === 'browser_navigate')
+                  return text('- Page URL: http://looker-tile:8080/');
                 if (tool === 'browser_snapshot') return text(TILE_SNAPSHOT);
                 // The re-read before the first write on the ticket reads a record.
                 if (tool === 'get_issue') {
@@ -143,15 +161,28 @@ const OWNER = { subject: 'owner' };
 const CREDENTIAL_KEY = randomBytes(32).toString('base64');
 
 /** An agent with the run's three surfaces, autonomy on, and REVOPS-5 at the apply of its first phase one. */
-async function seedAtFirstApply(harness: Harness, phaseOne: typeof run3FirstPhaseOne = run3FirstPhaseOne): Promise<{ workItemId: Id<'workItems'>; runId: Id<'events'> }> {
+async function seedAtFirstApply(
+  harness: Harness,
+  phaseOne: typeof run3FirstPhaseOne = run3FirstPhaseOne,
+): Promise<{ workItemId: Id<'workItems'>; runId: Id<'events'> }> {
   return await harness.run(async (ctx) => {
     const agentId = await ctx.db.insert('agents', {
-      bossEmail: 'boss@day0.local', name: 'Priya', userId: 'owner', state: 'active', autonomousActions: true, createdAt: 1,
+      bossEmail: 'boss@day0.local',
+      name: 'Priya',
+      userId: 'owner',
+      state: 'active',
+      autonomousActions: true,
+      createdAt: 1,
     });
     await ctx.db.insert('charters', {
-      agentId, version: 'v1', approved: true, approvedAt: 1, createdAt: 1,
+      agentId,
+      version: 'v1',
+      approved: true,
+      approvedAt: 1,
+      createdAt: 1,
       body: {
-        proposedFunction: 'Move routine Q3 close revenue operations work from Linear tickets with a clear audit trail.',
+        proposedFunction:
+          'Move routine Q3 close revenue operations work from Linear tickets with a clear audit trail.',
         proposedBoundaries: {
           willDo: ['Handle Q3 close tickets in Linear with an audit comment on each.'],
           willNotDo: ['Post to public channels without approval.'],
@@ -161,22 +192,52 @@ async function seedAtFirstApply(harness: Harness, phaseOne: typeof run3FirstPhas
       },
     });
     const skillId = await ctx.db.insert('skills', {
-      agentId, name: 'kanban-comment-and-close',
-      description: 'Record an audit comment on a Linear ticket from the read-back and close it when the plan says so.',
+      agentId,
+      name: 'kanban-comment-and-close',
+      description:
+        'Record an audit comment on a Linear ticket from the read-back and close it when the plan says so.',
       body: '# Kanban comment and close\nRead the evidence from the connected surfaces, then comment on linear with save_comment and move the issue with save_issue when the plan says so.',
-      requiredScopes: ['boss:message', 'linear:write'], targetSurface: 'linear', sourceType: 'agent-authored',
-      state: 'registered', createdAt: 1, registeredAt: 1,
+      requiredScopes: ['boss:message', 'linear:write'],
+      targetSurface: 'linear',
+      sourceType: 'agent-authored',
+      state: 'registered',
+      createdAt: 1,
+      registeredAt: 1,
     });
-    for (const scope of ['boss:message', 'linear:read', 'linear:write', 'slack:read', 'looker-pipeline-tile:read', 'looker-pipeline-tile:write']) {
+    for (const scope of [
+      'boss:message',
+      'linear:read',
+      'linear:write',
+      'slack:read',
+      'looker-pipeline-tile:read',
+      'looker-pipeline-tile:write',
+    ]) {
       await ctx.db.insert('permissionGrants', { agentId, scope, createdAt: 1 });
     }
     const live = {
-      credentialLanded: true, lastVerifiedAt: Date.now(), whereFound: [], createdAt: 1,
-      discoveryEvidence: [{ kind: 'documentation', ref: 'onboarding.md', quote: 'Linear is the formal work queue', current: true, firstSeenAt: 1, lastSeenAt: 1 }],
+      credentialLanded: true,
+      lastVerifiedAt: Date.now(),
+      whereFound: [],
+      createdAt: 1,
+      discoveryEvidence: [
+        {
+          kind: 'documentation',
+          ref: 'onboarding.md',
+          quote: 'Linear is the formal work queue',
+          current: true,
+          firstSeenAt: 1,
+          lastSeenAt: 1,
+        },
+      ],
     };
     await ctx.db.insert('surfaces', {
-      agentId, slug: 'linear', displayName: 'Linear', class: 'kanban', verdict: 'connected',
-      endpoint: 'https://mcp.linear.app/mcp', path: 'mcp',
+      agentId,
+      slug: 'linear',
+      displayName: 'Linear',
+      class: 'kanban',
+      verdict: 'connected',
+      endpoint: 'https://mcp.linear.app/mcp',
+      path: 'mcp',
       toolAllowlist: ['get_issue', 'list_issues', 'save_comment', 'save_issue'],
       toolArguments: [
         { tool: 'get_issue', arguments: ['id'] },
@@ -184,32 +245,62 @@ async function seedAtFirstApply(harness: Harness, phaseOne: typeof run3FirstPhas
         { tool: 'save_comment', arguments: ['issueId', 'body', 'id', 'parentId'] },
         { tool: 'save_issue', arguments: ['id', 'state', 'title', 'description'] },
       ],
-      credentialId: 'cred-linear', ...live,
+      credentialId: 'cred-linear',
+      ...live,
     } as never);
     await ctx.db.insert('surfaces', {
-      agentId, slug: 'slack', displayName: 'Slack', class: 'chat', verdict: 'connected',
-      endpoint: 'https://slack.com/api/', path: 'documented-api', toolAllowlist: ['chat.postMessage'],
-      credentialId: 'cred-slack', managerDmChannelId: 'D0MANAGER', managerUserId: 'UMANAGER', ...live,
+      agentId,
+      slug: 'slack',
+      displayName: 'Slack',
+      class: 'chat',
+      verdict: 'connected',
+      endpoint: 'https://slack.com/api/',
+      path: 'documented-api',
+      toolAllowlist: ['chat.postMessage'],
+      credentialId: 'cred-slack',
+      managerDmChannelId: 'D0MANAGER',
+      managerUserId: 'UMANAGER',
+      ...live,
     } as never);
     await ctx.db.insert('surfaces', {
-      agentId, slug: 'looker-pipeline-tile', displayName: 'Looker pipeline tile', class: 'analytics', verdict: 'connected',
-      endpoint: 'http://looker-tile:8080/', path: 'browser-driven',
+      agentId,
+      slug: 'looker-pipeline-tile',
+      displayName: 'Looker pipeline tile',
+      class: 'analytics',
+      verdict: 'connected',
+      endpoint: 'http://looker-tile:8080/',
+      path: 'browser-driven',
       toolAllowlist: ['browser_navigate', 'browser_fill_form', 'browser_click', 'browser_snapshot'],
-      credentialId: 'cred-looker', ...live,
+      credentialId: 'cred-looker',
+      ...live,
     } as never);
     const workItemId = await ctx.db.insert('workItems', {
-      agentId, sourceCategory: 'ticket-queue', sourceSystem: 'linear', externalId: 'REVOPS-5', title: 'Add the close-summary audit note',
-      contentSummary: 'Add the close-summary audit note to REVOPS-5 per the Q3 close checklist.', contentRefs: ['ticket://REVOPS-5'], priority: 'Medium',
-      state: 'executing', skillId, plan: run3AuditNotePlan,
+      agentId,
+      sourceCategory: 'ticket-queue',
+      sourceSystem: 'linear',
+      externalId: 'REVOPS-5',
+      title: 'Add the close-summary audit note',
+      contentSummary: 'Add the close-summary audit note to REVOPS-5 per the Q3 close checklist.',
+      contentRefs: ['ticket://REVOPS-5'],
+      priority: 'Medium',
+      state: 'executing',
+      skillId,
+      plan: run3AuditNotePlan,
       verdict: { decision: 'claim', value: 60, risk: 30, requiredPermissions: ['linear:read'] },
-      observedAt: 1, createdAt: 1,
+      observedAt: 1,
+      createdAt: 1,
     });
     const runId = await ctx.db.insert('events', {
-      agentId, type: 'work.execution-claimed', payload: { workItemId }, createdAt: Date.now(),
+      agentId,
+      type: 'work.execution-claimed',
+      payload: { workItemId },
+      createdAt: Date.now(),
     });
     // Phase one held nothing: with autonomy on every row is automatic, and the apply is scheduled.
     await ctx.db.patch(workItemId, {
-      executionRunId: runId, pendingRunId: runId, applyPhase: 'auto',
+      executionRunId: runId,
+      pendingRunId: runId,
+      applyPhase: 'auto',
       approvedIndexes: phaseOne.actions.map((_, index) => index),
       output: phaseOne,
     });
@@ -229,7 +320,11 @@ async function readItem(harness: Harness, workItemId: Id<'workItems'>): Promise<
  * The scheduler runs on the faked clock: each round starts what is due now and
  * waits for it, so nothing is left to the real clock (P11-1).
  */
-async function settle(harness: Harness, workItemId: Id<'workItems'>, states: readonly string[]): Promise<Doc<'workItems'>> {
+async function settle(
+  harness: Harness,
+  workItemId: Id<'workItems'>,
+  states: readonly string[],
+): Promise<Doc<'workItems'>> {
   for (let round = 0; round < 40; round += 1) {
     vi.advanceTimersByTime(0);
     await harness.finishInProgressScheduledFunctions();
@@ -239,7 +334,8 @@ async function settle(harness: Harness, workItemId: Id<'workItems'>, states: rea
   throw new Error(`the item did not settle in ${states.join(', ')}`);
 }
 
-const ledger = (row: Doc<'workItems'>): AppliedAction[] => (row.output as { applied: AppliedAction[] }).applied;
+const ledger = (row: Doc<'workItems'>): AppliedAction[] =>
+  (row.output as { applied: AppliedAction[] }).applied;
 
 /**
  * The plan conditions the Done on the manager's approval, so the closing
@@ -248,30 +344,48 @@ const ledger = (row: Doc<'workItems'>): AppliedAction[] => (row.output as { appl
  * item completes.
  */
 /** The Done lands on the manager's note alone: no held row, the item completes, and the hold event records why. */
-async function landedOnNote(harness: Harness, workItemId: Id<'workItems'>): Promise<Doc<'workItems'>> {
+async function landedOnNote(
+  harness: Harness,
+  workItemId: Id<'workItems'>,
+): Promise<Doc<'workItems'>> {
   const done = await settle(harness, workItemId, ['actions-pending', 'failed', 'completed']);
   expect(done.state).toBe('completed');
   expect((done.actionVerdicts ?? []).map((verdict) => verdict.disposition)).not.toContain('held');
   const events = await harness.run(async (ctx) => await ctx.db.query('events').collect());
-  const applying = events.filter((event) => event.type === 'work.actions-auto-applying' && (event.payload as { dependentPhase?: boolean }).dependentPhase);
-  expect(applying.map((event) => (event.payload as { transitionDirectedByNote?: boolean }).transitionDirectedByNote)).toEqual([true]);
+  const applying = events.filter(
+    (event) =>
+      event.type === 'work.actions-auto-applying' &&
+      (event.payload as { dependentPhase?: boolean }).dependentPhase,
+  );
+  expect(
+    applying.map(
+      (event) => (event.payload as { transitionDirectedByNote?: boolean }).transitionDirectedByNote,
+    ),
+  ).toEqual([true]);
   return done;
 }
 
-async function approveHeldDone(harness: Harness, workItemId: Id<'workItems'>): Promise<Doc<'workItems'>> {
+async function approveHeldDone(
+  harness: Harness,
+  workItemId: Id<'workItems'>,
+): Promise<Doc<'workItems'>> {
   const held = await settle(harness, workItemId, ['actions-pending', 'failed', 'completed']);
   expect(held.state).toBe('actions-pending');
   const verdicts = held.actionVerdicts ?? [];
   const doneIndex = verdicts.findIndex((verdict) => verdict.disposition === 'held');
   expect(verdicts[doneIndex]?.reason).toBe(HELD_WITHHELD_TRANSITION);
   await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
-    workItemId, pendingRunId: held.pendingRunId!, approvedIndexes: [doneIndex],
+    workItemId,
+    pendingRunId: held.pendingRunId!,
+    approvedIndexes: [doneIndex],
   });
   await harness.action(internal.workActions.applyApprovedActions, { workItemId });
   return await settle(harness, workItemId, ['failed', 'completed']);
 }
 const savedComments = (): Array<{ issueId: string; body: string; id?: string }> =>
-  recorded.mcp.filter((call) => call.tool === 'save_comment').map((call) => call.args as { issueId: string; body: string; id?: string });
+  recorded.mcp
+    .filter((call) => call.tool === 'save_comment')
+    .map((call) => call.args as { issueId: string; body: string; id?: string });
 
 /** The first run as the third run recorded it: the comment lands in phase one, the closing phase blocks the Done. */
 async function firstRun(t: Harness): Promise<{ workItemId: Id<'workItems'> }> {
@@ -284,7 +398,11 @@ async function firstRun(t: Harness): Promise<{ workItemId: Id<'workItems'> }> {
   expect(failed.skipReason).toContain('1 approved plan step(s) remained blocked: step 5');
   expect(savedComments()).toHaveLength(1);
   expect(savedComments()[0]!.body).toContain(RUN_3_FIRST_COMMENT);
-  expect(ledger(failed)[5]).toMatchObject({ ok: true, providerId: FIRST_COMMENT_ID, authority: 'autonomous' });
+  expect(ledger(failed)[5]).toMatchObject({
+    ok: true,
+    providerId: FIRST_COMMENT_ID,
+    authority: 'autonomous',
+  });
   recorded.model.length = 0;
   return { workItemId };
 }
@@ -316,23 +434,40 @@ describe('the 16 September run 3 REVOPS-5 retry, re-entering phase one after a l
     recorded.initialReply = run3RetryPhaseOne;
     recorded.closingReply = run3RetryClosing;
     // The retry resumes at plan-approved and the server runs the plan again.
-    await t.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId, feedback: RUN_3_RETRY_NOTE });
+    await t
+      .withIdentity(OWNER)
+      .mutation(api.work.retryFailed, { workItemId, feedback: RUN_3_RETRY_NOTE });
     // The note directs the Done in so many words, so the hold the plan puts on it is the manager's word already given.
     const done = await landedOnNote(t, workItemId);
     expect(done.skipReason).toBeUndefined();
 
     // Exactly one comment ever reached Linear; the Done landed after it, on the manager's note.
-    expect(recorded.model.map((call) => call.agent.split('-').pop())).toEqual(['initial', 'dependent']);
-    expect(savedComments().map((comment) => comment.body.split('\n')[0])).toEqual([RUN_3_FIRST_COMMENT.split('\n')[0]]);
-    expect(recorded.mcp.filter((call) => call.tool === 'save_issue').map((call) => call.args)).toEqual([{ id: 'REVOPS-5', state: 'Done' }]);
+    expect(recorded.model.map((call) => call.agent.split('-').pop())).toEqual([
+      'initial',
+      'dependent',
+    ]);
+    expect(savedComments().map((comment) => comment.body.split('\n')[0])).toEqual([
+      RUN_3_FIRST_COMMENT.split('\n')[0],
+    ]);
+    expect(
+      recorded.mcp.filter((call) => call.tool === 'save_issue').map((call) => call.args),
+    ).toEqual([{ id: 'REVOPS-5', state: 'Done' }]);
     const rows = ledger(done);
     const reused = rows[rows.length - 2]!;
     expect(reused).toMatchObject({ ok: true, providerId: FIRST_COMMENT_ID });
     expect(reused.reason).toContain(`reused landed comment ${FIRST_COMMENT_ID}`);
     expect(rows[rows.length - 1]).toMatchObject({ ok: true, authority: 'autonomous' });
     // The transition step rests on the note, recorded on the row; the ledger steps carry no basis once persisted.
-    expect((done.output as { planStepOutcomes: Array<{ status: string; basis?: string }> }).planStepOutcomes.map((row) => [row.status, row.basis])).toEqual([
-      ['satisfied', undefined], ['satisfied', undefined], ['satisfied', undefined], ['satisfied', undefined], ['satisfied', 'manager-feedback'],
+    expect(
+      (
+        done.output as { planStepOutcomes: Array<{ status: string; basis?: string }> }
+      ).planStepOutcomes.map((row) => [row.status, row.basis]),
+    ).toEqual([
+      ['satisfied', undefined],
+      ['satisfied', undefined],
+      ['satisfied', undefined],
+      ['satisfied', undefined],
+      ['satisfied', 'manager-feedback'],
     ]);
     // Provider reconciliation for this row lists the real comment once, under the reused row, and the Done once.
     const reconciled = providerReconciliationEntries(done.output);
@@ -340,14 +475,34 @@ describe('the 16 September run 3 REVOPS-5 retry, re-entering phase one after a l
     expect(reconciled.filter((entry) => entry.providerId === 'lin-5')).toHaveLength(1);
     // The next retry's list: both runs' browser writes, the comment once (the reused row carries its provider id), the Done.
     const listed = landedWritesOf(done.output);
-    expect(listed.map((write) => write.applied.providerId ?? write.action.args?.tool)).toEqual(['browser_fill_form', 'browser_click', FIRST_COMMENT_ID, 'browser_fill_form', 'browser_click', 'lin-5']);
+    expect(listed.map((write) => write.applied.providerId ?? write.action.args?.tool)).toEqual([
+      'browser_fill_form',
+      'browser_click',
+      FIRST_COMMENT_ID,
+      'browser_fill_form',
+      'browser_click',
+      'lin-5',
+    ]);
     expect(listed.filter((write) => write.applied.providerId === FIRST_COMMENT_ID)).toHaveLength(1);
 
     // The retry's phase one signed in and read again: an earlier run's browser
     // writes are not "already landed" for a new session, whatever their payload.
-    const retryCalls = recorded.mcp.slice(recorded.mcp.findIndex((call) => call.tool === 'save_comment') + 1).map((call) => call.tool);
+    const retryCalls = recorded.mcp
+      .slice(recorded.mcp.findIndex((call) => call.tool === 'save_comment') + 1)
+      .map((call) => call.tool);
     // The click is followed by the snapshot that reads where it left the page (P6-16).
-    expect(retryCalls).toEqual(['browser_navigate', 'browser_snapshot', 'browser_fill_form', 'browser_snapshot', 'browser_click', 'browser_snapshot', 'browser_snapshot', 'list_issues', 'get_issue', 'save_issue']);
+    expect(retryCalls).toEqual([
+      'browser_navigate',
+      'browser_snapshot',
+      'browser_fill_form',
+      'browser_snapshot',
+      'browser_click',
+      'browser_snapshot',
+      'browser_snapshot',
+      'list_issues',
+      'get_issue',
+      'save_issue',
+    ]);
     expect(rows.slice(0, 5).map((row) => row.reason ?? '')).toEqual(['', '', '', '', '']);
 
     // The retry went back through phase one, then authored the closing set: both prompts name the landed comment.
@@ -365,25 +520,45 @@ describe('the 16 September run 3 REVOPS-5 retry, re-entering phase one after a l
     const secret = ['xoxb', '2847561930', '5529104736', 'aBcDeFgHiJkLmNoPqRsTuVwX'].join('-');
     await t.run(async (ctx) => {
       const aiko = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local', name: 'Aiko', userId: 'owner', state: 'active', autonomousActions: true, createdAt: 1,
+        bossEmail: 'boss@day0.local',
+        name: 'Aiko',
+        userId: 'owner',
+        state: 'active',
+        autonomousActions: true,
+        createdAt: 1,
       });
       await ctx.db.insert('workItems', {
-        agentId: aiko, sourceCategory: 'ticket-queue', sourceSystem: 'linear', externalId: 'REVOPS-27',
-        externalClaimKey: 'linear:REVOPS-27', title: `Refresh the pipeline coverage tile ${secret}`,
-        contentSummary: 'Refresh the tile.', contentRefs: [], state: 'discovered', observedAt: 1, createdAt: 1,
+        agentId: aiko,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'REVOPS-27',
+        externalClaimKey: 'linear:REVOPS-27',
+        title: `Refresh the pipeline coverage tile ${secret}`,
+        contentSummary: 'Refresh the tile.',
+        contentRefs: [],
+        state: 'discovered',
+        observedAt: 1,
+        createdAt: 1,
       });
     });
 
     await t.withIdentity(OWNER).mutation(api.work.reconcileFailed, { workItemId, confirmed: true });
     recorded.initialReply = run3RetryPhaseOne;
     recorded.closingReply = run3RetryClosing;
-    await t.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId, feedback: RUN_3_RETRY_NOTE });
+    await t
+      .withIdentity(OWNER)
+      .mutation(api.work.retryFailed, { workItemId, feedback: RUN_3_RETRY_NOTE });
     await landedOnNote(t, workItemId);
 
-    expect(recorded.model.map((call) => call.agent.split('-').pop())).toEqual(['initial', 'dependent']);
+    expect(recorded.model.map((call) => call.agent.split('-').pop())).toEqual([
+      'initial',
+      'dependent',
+    ]);
     for (const call of recorded.model) {
       expect(call.user).toContain('--- External items other work items hold (1) ---');
-      expect(call.user).toContain('linear · REVOPS-27 · Aiko · "Refresh the pipeline coverage tile');
+      expect(call.user).toContain(
+        'linear · REVOPS-27 · Aiko · "Refresh the pipeline coverage tile',
+      );
       expect(call.user).toContain('(discovered, not claimed yet) · nothing landed yet');
       expect(call.user).not.toContain(secret);
       // The item being worked is never listed as held elsewhere.
@@ -398,14 +573,22 @@ describe('the 16 September run 3 REVOPS-5 retry, re-entering phase one after a l
     await t.withIdentity(OWNER).mutation(api.work.reconcileFailed, { workItemId, confirmed: true });
     recorded.initialReply = run3RetryPhaseOne;
     recorded.closingReply = run3ObedientClosing(FIRST_COMMENT_ID);
-    await t.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId, feedback: RUN_3_RETRY_NOTE });
+    await t
+      .withIdentity(OWNER)
+      .mutation(api.work.retryFailed, { workItemId, feedback: RUN_3_RETRY_NOTE });
     const done = await landedOnNote(t, workItemId);
     expect(done.skipReason).toBeUndefined();
 
     expect(savedComments()).toHaveLength(1);
-    expect(recorded.mcp.filter((call) => call.tool === 'save_issue').map((call) => call.args)).toEqual([{ id: 'REVOPS-5', state: 'Done' }]);
+    expect(
+      recorded.mcp.filter((call) => call.tool === 'save_issue').map((call) => call.args),
+    ).toEqual([{ id: 'REVOPS-5', state: 'Done' }]);
     const rows = ledger(done);
-    expect(rows[rows.length - 1]).toMatchObject({ ok: true, authority: 'autonomous', providerId: 'lin-5' });
+    expect(rows[rows.length - 1]).toMatchObject({
+      ok: true,
+      authority: 'autonomous',
+      providerId: 'lin-5',
+    });
   });
 
   it('posts the closing audit comment after a fixed-payload comment phase one landed on the same ticket: two comments the plan asked for', async (): Promise<void> => {
@@ -427,14 +610,16 @@ describe('the 16 September run 3 REVOPS-5 retry, re-entering phase one after a l
     expect(rows[rows.length - 2]!.reason ?? '').not.toContain('reused');
   });
 
-  it('lets a rewrite with id through when the manager\'s note asks for a correction', async (): Promise<void> => {
+  it("lets a rewrite with id through when the manager's note asks for a correction", async (): Promise<void> => {
     const t = convexTest(contractSchema(), allConvexModules());
     const { workItemId } = await firstRun(t);
 
     await t.withIdentity(OWNER).mutation(api.work.reconcileFailed, { workItemId, confirmed: true });
     recorded.initialReply = run3RetryPhaseOne;
     recorded.closingReply = run3CorrectionClosing(FIRST_COMMENT_ID);
-    await t.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId, feedback: RUN_3_CORRECTION_NOTE });
+    await t
+      .withIdentity(OWNER)
+      .mutation(api.work.retryFailed, { workItemId, feedback: RUN_3_CORRECTION_NOTE });
     // The note asks for the correction and then directs the Done in so many words, so both land on the note.
     const done = await landedOnNote(t, workItemId);
     expect(done.skipReason).toBeUndefined();

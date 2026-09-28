@@ -11,7 +11,13 @@ import { dependentActionCap } from '../../src/work/execute-skill';
 import { CLOSING_SET_CAP, type ExecutionOutput, type ExecutionPlan } from '../../src/work/types';
 import { allConvexModules } from './all-modules';
 import { contractSchema } from './contract-schema';
-import { auditRetryPlan, auditPrerequisites, auditPrerequisiteLedger, auditClosing, closingTransportFailure } from '../fixtures/closing-retry-2026-09-16';
+import {
+  auditRetryPlan,
+  auditPrerequisites,
+  auditPrerequisiteLedger,
+  auditClosing,
+  closingTransportFailure,
+} from '../fixtures/closing-retry-2026-09-16';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 /**
@@ -80,9 +86,27 @@ const cleanPlan = {
 /** The obligations judgement for the clean plan: the tile is written then read back, Linear and Slack are only written, the Done is promised. */
 const cleanPlanObligations = {
   steps: [
-    { step: 1, kind: 'write', reads: [], writes: ['looker-pipeline-tile'], reason: 'the sign-in, the fill and the save' },
-    { step: 2, kind: 'read', reads: ['looker-pipeline-tile'], writes: [], reason: 'the snapshot reads the figure and the audit line back' },
-    { step: 3, kind: 'write', reads: [], writes: ['linear', 'slack'], reason: 'the comment, the Done and the DM report the read-back' },
+    {
+      step: 1,
+      kind: 'write',
+      reads: [],
+      writes: ['looker-pipeline-tile'],
+      reason: 'the sign-in, the fill and the save',
+    },
+    {
+      step: 2,
+      kind: 'read',
+      reads: ['looker-pipeline-tile'],
+      writes: [],
+      reason: 'the snapshot reads the figure and the audit line back',
+    },
+    {
+      step: 3,
+      kind: 'write',
+      reads: [],
+      writes: ['linear', 'slack'],
+      reason: 'the comment, the Done and the DM report the read-back',
+    },
   ],
   transition: 'promised',
   transitionStep: 3,
@@ -194,7 +218,10 @@ vi.mock('../../src/lib/mastra', () => ({
         recorded.planCalls += 1;
         return {
           ...(recorded.planCalls === 1 ? gatedPlan : cleanPlan),
-          stepObligations: null, transition: null, transitionStep: null, appliedCorrections: null,
+          stepObligations: null,
+          transition: null,
+          transitionStep: null,
+          appliedCorrections: null,
         } as T;
       }
       if (name === 'day0-plan-obligations') return cleanPlanObligations as T;
@@ -514,12 +541,19 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
   it('runs phase one again when a prerequisite did not land', async () => {
     const t = convexTest(contractSchema(), allConvexModules());
     const { workItemId } = await seed(t);
-    await t.run(async ctx => {
+    await t.run(async (ctx) => {
       await ctx.db.patch(workItemId, {
-        state: 'failed', plan: cleanPlan, skipReason: 'snapshot failed',
+        state: 'failed',
+        plan: cleanPlan,
+        skipReason: 'snapshot failed',
         output: {
-          ...phaseOne, actions: [...phaseOne.actions, ...closing.actions],
-          applied: phaseOne.actions.map(action => ({ tool: action.tool, ok: false, reason: 'snapshot failed' })),
+          ...phaseOne,
+          actions: [...phaseOne.actions, ...closing.actions],
+          applied: phaseOne.actions.map((action) => ({
+            tool: action.tool,
+            ok: false,
+            reason: 'snapshot failed',
+          })),
           planStepOutcomes: closing.planStepOutcomes,
         },
       });
@@ -528,76 +562,137 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
     // The retry resumes at plan-approved; the server runs the plan and its apply.
     await t.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId });
     for (let round = 0; round < 20; round += 1) {
-      await new Promise(resolve => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
       await t.finishInProgressScheduledFunctions();
     }
-    expect(recorded.model.some(call => call.agent.endsWith('-initial'))).toBe(true);
-    expect(recorded.model.some(call => call.agent.endsWith('-dependent'))).toBe(false);
+    expect(recorded.model.some((call) => call.agent.endsWith('-initial'))).toBe(true);
+    expect(recorded.model.some((call) => call.agent.endsWith('-dependent'))).toBe(false);
   });
 
-  it.each([[false, false], [true, false], [true, true]])('resumes the 16 September closing failure; comment landed: %s, omitted: %s', async (commentLanded, omitComment) => {
-    // The retry below also schedules the server's run of the plan; this replay
-    // drives each phase itself, so the scheduler's jobs never fire.
-    vi.useFakeTimers();
-    const t = convexTest(contractSchema(), allConvexModules());
-    const { workItemId } = await seed(t);
-    recorded.closingReply = omitComment ? { ...auditClosing, actions: auditClosing.actions.slice(1) } : auditClosing;
-    await t.run(async ctx => {
-      // The carried ledger read the issue list, so the surface allows it; the resume reads it again.
-      const linear = (await ctx.db.query('surfaces').collect()).find((surface) => surface.slug === 'linear')!;
-      await ctx.db.patch(linear._id, { toolAllowlist: [...(linear.toolAllowlist ?? []), 'list_issues'] });
-      await ctx.db.patch(workItemId, {
-        externalId: 'REVOPS-5', title: 'Audit note', contentRefs: ['ticket://REVOPS-5'],
-        state: 'failed', plan: auditRetryPlan,
-        skipReason: closingTransportFailure,
-        output: {
-          draft: '', notes: '', needsDependentPhase: false,
-          actions: [...auditPrerequisites, ...auditClosing.actions],
-          applied: [...auditPrerequisiteLedger,
-            commentLanded
-              ? { tool: 'mcp.call', ok: true, effect: 'comment-91', idempotencyKey: 'previous-run:5' }
-              : { tool: 'mcp.call', ok: false, reason: closingTransportFailure },
-            { tool: 'mcp.call', ok: false, reason: commentLanded ? closingTransportFailure : 'status change without audit comment' }],
-          planStepOutcomes: auditClosing.planStepOutcomes,
-        },
+  it.each([
+    [false, false],
+    [true, false],
+    [true, true],
+  ])(
+    'resumes the 16 September closing failure; comment landed: %s, omitted: %s',
+    async (commentLanded, omitComment) => {
+      // The retry below also schedules the server's run of the plan; this replay
+      // drives each phase itself, so the scheduler's jobs never fire.
+      vi.useFakeTimers();
+      const t = convexTest(contractSchema(), allConvexModules());
+      const { workItemId } = await seed(t);
+      recorded.closingReply = omitComment
+        ? { ...auditClosing, actions: auditClosing.actions.slice(1) }
+        : auditClosing;
+      await t.run(async (ctx) => {
+        // The carried ledger read the issue list, so the surface allows it; the resume reads it again.
+        const linear = (await ctx.db.query('surfaces').collect()).find(
+          (surface) => surface.slug === 'linear',
+        )!;
+        await ctx.db.patch(linear._id, {
+          toolAllowlist: [...(linear.toolAllowlist ?? []), 'list_issues'],
+        });
+        await ctx.db.patch(workItemId, {
+          externalId: 'REVOPS-5',
+          title: 'Audit note',
+          contentRefs: ['ticket://REVOPS-5'],
+          state: 'failed',
+          plan: auditRetryPlan,
+          skipReason: closingTransportFailure,
+          output: {
+            draft: '',
+            notes: '',
+            needsDependentPhase: false,
+            actions: [...auditPrerequisites, ...auditClosing.actions],
+            applied: [
+              ...auditPrerequisiteLedger,
+              commentLanded
+                ? {
+                    tool: 'mcp.call',
+                    ok: true,
+                    effect: 'comment-91',
+                    idempotencyKey: 'previous-run:5',
+                  }
+                : { tool: 'mcp.call', ok: false, reason: closingTransportFailure },
+              {
+                tool: 'mcp.call',
+                ok: false,
+                reason: commentLanded
+                  ? closingTransportFailure
+                  : 'status change without audit comment',
+              },
+            ],
+            planStepOutcomes: auditClosing.planStepOutcomes,
+          },
+        });
       });
-    });
-    await t.withIdentity(OWNER).mutation(api.work.reconcileFailed, { workItemId, confirmed: true });
-    await t.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId, feedback: 'Retry the closing note from the recorded read-back.' });
-    await t.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
-    const resumed = await readItem(t, workItemId);
-    expect(resumed.output).toMatchObject({ phase: 'dependent-authoring', initialFailure: closingTransportFailure });
-    // The sign-in rows are carried; the tile read and the issue list are read again under the new run.
-    expect(ledger(resumed).slice(0, 3)).toEqual(auditPrerequisiteLedger.slice(0, 3));
-    for (const index of [3, 4]) {
-      expect(ledger(resumed)[index]).toMatchObject({
-        ok: true,
-        idempotencyKey: `${workItemId}:${resumed.executionRunId}:${index}`,
-        refreshed: { previous: { effect: auditPrerequisiteLedger[index]!.effect, idempotencyKey: `previous-run:${index}` } },
+      await t
+        .withIdentity(OWNER)
+        .mutation(api.work.reconcileFailed, { workItemId, confirmed: true });
+      await t.withIdentity(OWNER).mutation(api.work.retryFailed, {
+        workItemId,
+        feedback: 'Retry the closing note from the recorded read-back.',
       });
-    }
-    expect(recorded.mcp.map(call => call.tool)).toEqual(['browser_navigate', 'browser_snapshot', 'list_issues']);
-    recorded.mcp.length = 0;
-    expect(recorded.model).toEqual([]);
-    await t.action(internal.workActions.authorDependentActions, { workItemId, runId: resumed.executionRunId! });
-    await t.action(internal.workActions.applyApprovedActions, { workItemId });
-    const held = await readItem(t, workItemId);
-    await t.withIdentity(OWNER).mutation(api.work.approveActions, {
-      workItemId, pendingRunId: held.pendingRunId!, approvedIndexes: omitComment ? [0] : [0, 1],
-    });
-    await t.action(internal.workActions.applyApprovedActions, { workItemId });
-    const completed = await readItem(t, workItemId);
-    expect(completed.state).toBe('completed');
-    // The retry reads the ticket again before its first write on it (Q11).
-    expect(recorded.mcp.map(call => call.tool)).toEqual(commentLanded ? ['get_issue', 'save_issue'] : ['get_issue', 'save_comment', 'save_issue']);
-    if (commentLanded && !omitComment) {
-      expect(ledger(completed)[6]).toMatchObject({ ok: true, effect: 'comment-91', reason: expect.stringContaining('already landed') });
-      expect(ledger(completed)[6]!.idempotencyKey).toBe(`${workItemId}:${resumed.executionRunId}:6`);
-    }
-    expect(recorded.model).toHaveLength(1);
-    expect(recorded.model[0]!.user).toContain('Retry the closing note');
-    expect(recorded.model[0]!.user).toContain(closingTransportFailure);
-  });
+      await t.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+      const resumed = await readItem(t, workItemId);
+      expect(resumed.output).toMatchObject({
+        phase: 'dependent-authoring',
+        initialFailure: closingTransportFailure,
+      });
+      // The sign-in rows are carried; the tile read and the issue list are read again under the new run.
+      expect(ledger(resumed).slice(0, 3)).toEqual(auditPrerequisiteLedger.slice(0, 3));
+      for (const index of [3, 4]) {
+        expect(ledger(resumed)[index]).toMatchObject({
+          ok: true,
+          idempotencyKey: `${workItemId}:${resumed.executionRunId}:${index}`,
+          refreshed: {
+            previous: {
+              effect: auditPrerequisiteLedger[index]!.effect,
+              idempotencyKey: `previous-run:${index}`,
+            },
+          },
+        });
+      }
+      expect(recorded.mcp.map((call) => call.tool)).toEqual([
+        'browser_navigate',
+        'browser_snapshot',
+        'list_issues',
+      ]);
+      recorded.mcp.length = 0;
+      expect(recorded.model).toEqual([]);
+      await t.action(internal.workActions.authorDependentActions, {
+        workItemId,
+        runId: resumed.executionRunId!,
+      });
+      await t.action(internal.workActions.applyApprovedActions, { workItemId });
+      const held = await readItem(t, workItemId);
+      await t.withIdentity(OWNER).mutation(api.work.approveActions, {
+        workItemId,
+        pendingRunId: held.pendingRunId!,
+        approvedIndexes: omitComment ? [0] : [0, 1],
+      });
+      await t.action(internal.workActions.applyApprovedActions, { workItemId });
+      const completed = await readItem(t, workItemId);
+      expect(completed.state).toBe('completed');
+      // The retry reads the ticket again before its first write on it (Q11).
+      expect(recorded.mcp.map((call) => call.tool)).toEqual(
+        commentLanded ? ['get_issue', 'save_issue'] : ['get_issue', 'save_comment', 'save_issue'],
+      );
+      if (commentLanded && !omitComment) {
+        expect(ledger(completed)[6]).toMatchObject({
+          ok: true,
+          effect: 'comment-91',
+          reason: expect.stringContaining('already landed'),
+        });
+        expect(ledger(completed)[6]!.idempotencyKey).toBe(
+          `${workItemId}:${resumed.executionRunId}:6`,
+        );
+      }
+      expect(recorded.model).toHaveLength(1);
+      expect(recorded.model[0]!.user).toContain('Retry the closing note');
+      expect(recorded.model[0]!.user).toContain(closingTransportFailure);
+    },
+  );
 
   it('records the audit correction and keeps a prewritten Done out of phase one under autonomy', async () => {
     const t = convexTest(contractSchema(), allConvexModules());
@@ -620,8 +715,8 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
     await new Promise((resolve) => setTimeout(resolve, 0));
     await t.finishInProgressScheduledFunctions();
     expect(recorded.mcp.filter((call) => call.tool === 'save_issue')).toEqual([]);
-    const events = await t.run(ctx => ctx.db.query('events').collect());
-    expect(events.filter(event => event.type === 'audit.corrected')).toMatchObject([
+    const events = await t.run((ctx) => ctx.db.query('events').collect());
+    expect(events.filter((event) => event.type === 'audit.corrected')).toMatchObject([
       { payload: { workItemId, removedIndices: [1, 2], reason: 'prewritten closing actions' } },
     ]);
     expect(recorded.model.filter((call) => call.agent.endsWith('-initial'))).toHaveLength(2);
@@ -646,11 +741,15 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
     await t.finishInProgressScheduledFunctions();
     // The comment the key repair revealed never reaches Linear: the audit
     // removes it as prewritten and the run goes on to its closing phase.
-    expect(recorded.mcp.filter((call) => call.tool === 'save_comment').map((call) => (call.args as { body?: string }).body)).not.toContain('Checked and finished.');
+    expect(
+      recorded.mcp
+        .filter((call) => call.tool === 'save_comment')
+        .map((call) => (call.args as { body?: string }).body),
+    ).not.toContain('Checked and finished.');
     const row = await readItem(t, workItemId);
     expect(row.skipReason ?? '').not.toContain('repaired action set failed the audit');
-    const events = await t.run(ctx => ctx.db.query('events').collect());
-    expect(events.filter(event => event.type === 'audit.corrected')).toMatchObject([
+    const events = await t.run((ctx) => ctx.db.query('events').collect());
+    expect(events.filter((event) => event.type === 'audit.corrected')).toMatchObject([
       { payload: { workItemId, removedIndices: [1], reason: 'prewritten closing actions' } },
     ]);
   }, 30_000);
@@ -845,6 +944,13 @@ describe('the 14 September sequence, replayed through the real gate', (): void =
       recorded.model.map((call) =>
         call.agent.replace(/^day0-skill-.*-(initial|dependent|argument-repair)$/, '$1'),
       ),
-    ).toEqual(['day0-plan', 'day0-plan', 'day0-plan-obligations', 'initial', 'argument-repair', 'dependent']);
+    ).toEqual([
+      'day0-plan',
+      'day0-plan',
+      'day0-plan-obligations',
+      'initial',
+      'argument-repair',
+      'dependent',
+    ]);
   }, 30_000);
 });

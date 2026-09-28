@@ -6,6 +6,8 @@ import { countProviderRequest } from './model-call-telemetry';
 import {
   classifyStructuredFailure,
   createFallbackMemo,
+  ModelRefusalError,
+  ModelReplyCutError,
   providerEndpointLabel,
   StructuredContractError,
 } from './structured-fallback';
@@ -63,7 +65,11 @@ function resolveApiKey(): string {
 
 export function openai(): OpenAI {
   if (!client) {
-    client = new OpenAI({ apiKey: resolveApiKey(), baseURL: env.OPENAI_BASE_URL, fetch: countingFetch });
+    client = new OpenAI({
+      apiKey: resolveApiKey(),
+      baseURL: env.OPENAI_BASE_URL,
+      fetch: countingFetch,
+    });
   }
   return client;
 }
@@ -350,7 +356,7 @@ async function runJsonCompletion<TParsed>(
       { role: 'user', content: args.user },
     ],
   });
-  const raw = res.choices[0]?.message?.content?.trim() ?? '';
+  const raw = completionText(res, `jsonComplete(${mode})`);
   if (!raw) throw new JsonParseError(mode, raw, 'empty content');
 
   const payload = mode === 'native' ? raw : (extractJsonPayload(raw) ?? raw);
@@ -394,7 +400,9 @@ function rawModelSettings(args: Pick<TextCompleteArgs, 'maxTokens' | 'reasoningE
   return {
     ...(maxTokens === undefined
       ? {}
-      : hosted ? { max_completion_tokens: maxTokens } : { max_tokens: maxTokens }),
+      : hosted
+        ? { max_completion_tokens: maxTokens }
+        : { max_tokens: maxTokens }),
     ...(reasoningEffort === undefined ? {} : { reasoning_effort: reasoningEffort }),
   };
 }
@@ -408,5 +416,31 @@ export async function textComplete(args: TextCompleteArgs): Promise<string> {
       { role: 'user', content: args.user },
     ],
   });
-  return res.choices[0]?.message?.content?.trim() ?? '';
+  return completionText(res, 'textComplete');
+}
+
+/**
+ * The text of a chat completion, refused by its cause when the reply cannot
+ * be used (E-79): cut at the output limit (a reasoning model can spend the
+ * whole budget before it writes), refused by the provider, or carrying no
+ * choice at all. None of these is the model breaking the JSON contract, and
+ * none is reported as one, so the structured ladder does not demote on it.
+ *
+ * @param agentName - Who asked, for the error.
+ * @throws ModelReplyCutError for a `length` finish.
+ * @throws ModelRefusalError for a `content_filter` finish or a refusal.
+ * @throws Error for a reply with no choices, which is the provider's failure.
+ */
+function completionText(res: OpenAI.Chat.Completions.ChatCompletion, agentName: string): string {
+  const choice = res.choices[0];
+  if (choice === undefined) {
+    throw new Error(`${agentName}: the model provider answered with no choices`);
+  }
+  const text = choice.message?.content?.trim() ?? '';
+  if (choice.finish_reason === 'length') throw new ModelReplyCutError(agentName, text);
+  const refusal = choice.message?.refusal ?? '';
+  if (choice.finish_reason === 'content_filter' || refusal !== '') {
+    throw new ModelRefusalError(agentName, refusal || text);
+  }
+  return text;
 }

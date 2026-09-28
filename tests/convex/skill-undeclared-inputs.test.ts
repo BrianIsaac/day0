@@ -75,7 +75,8 @@ async function seedApprovedSkill(harness: Harness): Promise<Id<'skills'>> {
     return await ctx.db.insert('skills', {
       agentId,
       name: 'kanban-comment-and-close',
-      description: 'Ticket comment-and-close on a kanban surface, parameterised from each work item and its runbook.',
+      description:
+        'Ticket comment-and-close on a kanban surface, parameterised from each work item and its runbook.',
       body: '',
       rationale: 'No registered skill covers ticket comment-and-close on a kanban surface.',
       sourceType: 'agent-authored',
@@ -115,14 +116,19 @@ describe('an authored body that uses a placeholder it never declared (live run 1
     useSurfaceMode('mock');
     const harness = convexTest(schema, allConvexModules());
     const skillId = await seedApprovedSkill(harness);
-    recorded.outputs.push({ body: UNDECLARED_BODY_2026_09_19, smokeTest: UNDECLARED_SMOKE_TEST_2026_09_19 });
+    recorded.outputs.push({
+      body: UNDECLARED_BODY_2026_09_19,
+      smokeTest: UNDECLARED_SMOKE_TEST_2026_09_19,
+    });
 
     const result = await harness
       .withIdentity(OWNER)
       .action(api.skillActions.authorAndRegisterSkill, { skillId });
 
     expect(result.ok).toBe(false);
-    expect(result.reason).toContain('SKILL.md uses `<closing-state-name>` without declaring it under `## Inputs`');
+    expect(result.reason).toContain(
+      'SKILL.md uses `<closing-state-name>` without declaring it under `## Inputs`',
+    );
     expect(recorded.sandboxRuns).toBe(0);
   });
 
@@ -130,7 +136,10 @@ describe('an authored body that uses a placeholder it never declared (live run 1
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
     const skillId = await seedApprovedSkill(harness);
-    recorded.outputs.push({ body: UNDECLARED_BODY_2026_09_19, smokeTest: UNDECLARED_SMOKE_TEST_2026_09_19 });
+    recorded.outputs.push({
+      body: UNDECLARED_BODY_2026_09_19,
+      smokeTest: UNDECLARED_SMOKE_TEST_2026_09_19,
+    });
 
     await expect(
       harness.withIdentity(OWNER).action(api.skillActions.authorAndRegisterSkill, { skillId }),
@@ -140,13 +149,22 @@ describe('an authored body that uses a placeholder it never declared (live run 1
     const registered = await readSkill(harness, skillId);
     expect(registered.state).toBe('registered');
     expect(undeclaredSkillInputs(registered.body)).toEqual([]);
-    expect(declaredSkillInputs(registered.body)).toEqual(expect.arrayContaining(UNDECLARED_NAMES_2026_09_19));
+    expect(declaredSkillInputs(registered.body)).toEqual(
+      expect.arrayContaining(UNDECLARED_NAMES_2026_09_19),
+    );
     // Declared where the author declared the rest, and nothing else of the body moved.
-    const inputs = registered.body.slice(registered.body.indexOf('## Inputs'), registered.body.indexOf('## Procedure'));
+    const inputs = registered.body.slice(
+      registered.body.indexOf('## Inputs'),
+      registered.body.indexOf('## Procedure'),
+    );
     expect(inputs).toContain('`<closing-state-name>`');
     expect(inputs).toContain('`<reply-text>`');
-    expect(registered.body.replace(/\n- `<(?:closing-state-name|reply-text)>`[^\n]*/g, '')).toBe(UNDECLARED_BODY_2026_09_19);
-    expect(registered.verificationLog).toContain('SKILL.md used `<closing-state-name>` and `<reply-text>` without declaring them');
+    expect(registered.body.replace(/\n- `<(?:closing-state-name|reply-text)>`[^\n]*/g, '')).toBe(
+      UNDECLARED_BODY_2026_09_19,
+    );
+    expect(registered.verificationLog).toContain(
+      'SKILL.md used `<closing-state-name>` and `<reply-text>` without declaring them',
+    );
     expect(registered.verificationLog).toContain('ran in the local sandbox');
   });
 });

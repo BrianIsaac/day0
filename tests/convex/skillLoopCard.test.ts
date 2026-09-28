@@ -36,11 +36,14 @@ afterEach((): void => {
  * mutation to the proposal and pins the proposal to that card.
  */
 describe('the skill loop fires from the mock action item', (): void => {
-  it('proposes the chat skill for a freshly deployed agent\'s Slack ask, pinned to that item', async (): Promise<void> => {
+  it("proposes the chat skill for a freshly deployed agent's Slack ask, pinned to that item", async (): Promise<void> => {
     useSurfaceMode('mock');
     const harness = convexTest(schema, allConvexModules());
     const owner = harness.withIdentity(OWNER);
-    const agentId = await owner.mutation(api.agents.deploy, { bossEmail: 'boss@day0.local', name: 'Priya' });
+    const agentId = await owner.mutation(api.agents.deploy, {
+      bossEmail: 'boss@day0.local',
+      name: 'Priya',
+    });
     const workItemId = await harness.run(async (ctx) => {
       await ctx.db.insert('charters', {
         agentId,
@@ -51,7 +54,9 @@ describe('the skill loop fires from the mock action item', (): void => {
         body: {
           proposedFunction: 'Revenue operations analyst',
           proposedBoundaries: {
-            willDo: ['Answer revenue operations questions in Slack and keep the standup summary current.'],
+            willDo: [
+              'Answer revenue operations questions in Slack and keep the standup summary current.',
+            ],
             willNotDo: ['Public brand replies.'],
             escalationTriggers: [],
           },
@@ -64,7 +69,8 @@ describe('the skill loop fires from the mock action item', (): void => {
         sourceSystem: 'slack',
         externalId: 'slack-revops-asks-1',
         title: 'Question in #revops-asks about the standup summary',
-        contentSummary: 'Which revenue operations coverage figure are we quoting in the Friday standup summary this week? Please reply in the thread.',
+        contentSummary:
+          'Which revenue operations coverage figure are we quoting in the Friday standup summary this week? Please reply in the thread.',
         contentRefs: ['slack://revops-asks/1'],
         priority: 'P1',
         requesterLabel: 'Sales lead',
@@ -80,10 +86,13 @@ describe('the skill loop fires from the mock action item', (): void => {
 
     const item = await harness.run(async (ctx) => await ctx.db.get(workItemId));
     expect(item?.state).toBe('needs-skill');
-    expect(item?.verdict).toMatchObject({ decision: 'needs-skill', suggestedSkillName: 'chat-thread-reply' });
-    const proposed = (await harness.run(async (ctx) => await ctx.db.query('skills').collect())).filter(
-      (skill) => skill.state === 'proposed',
-    );
+    expect(item?.verdict).toMatchObject({
+      decision: 'needs-skill',
+      suggestedSkillName: 'chat-thread-reply',
+    });
+    const proposed = (
+      await harness.run(async (ctx) => await ctx.db.query('skills').collect())
+    ).filter((skill) => skill.state === 'proposed');
     expect(proposed).toHaveLength(1);
     expect(proposed[0]).toMatchObject({
       name: 'chat-thread-reply',

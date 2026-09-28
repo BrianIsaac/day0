@@ -7,6 +7,7 @@ import { v, type GenericId } from 'convex/values';
 import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { internalAction, type ActionCtx } from './_generated/server';
+import { forEachStoredPage, namesSystem } from './orientationActions';
 import { SURFACE_MODE, type SurfaceMode } from '../src/lib/surface-mode';
 import { log } from '../src/lib/logger';
 import { safeFailureMessage } from '../src/surfaces/redact';
@@ -23,12 +24,27 @@ import type { McpConnection } from '../src/surfaces/mcp';
 import { browserComponentRefusal } from '../src/surfaces/browser';
 import { documentedChannelNames } from '../src/surfaces/slack-policy';
 import {
+  ChatReadRefused,
+  chatReaderFor,
+  MAX_HISTORY_PAGES,
+  type ChatChannel,
+  type ChatMessage,
+  type ChatReader,
+} from '../src/surfaces/chat-reader';
+import { slackApiBaseUrl } from '../src/surfaces/slack-endpoint';
+import { toSurfaceRecord } from '../src/surfaces/records';
+import {
   approvedChannelNames,
   approvedLinearScope,
   emptyScopeReason,
   isEmptyScope,
 } from '../src/surfaces/intake-scope';
-import { extractDocumentedSystemOrder, orderSurfaceWaterfall } from '../src/surfaces/waterfall';
+import {
+  extractDocumentedSystemOrder,
+  orderSurfaceWaterfall,
+  waterfallEntry,
+  type WaterfallPage,
+} from '../src/surfaces/waterfall';
 import type { WorkCandidate } from '../src/work/types';
 import {
   DO_NOT_AUTOMATE_LABEL,
@@ -42,7 +58,16 @@ import {
   type PersonIdentity,
   type TicketSnapshot,
 } from '../src/work/ticket-ownership';
-import { parseDecisionReply, type DecisionReply } from '../src/work/manager-channel';
+import {
+  heldReplyCodes,
+  NOTHING_OPEN,
+  parseDecisionReply,
+  readsManagerDm,
+  type DecisionReply,
+  type OpenDecisions,
+} from '../src/work/manager-channel';
+import { accessEnded, accessEndedReason } from '../src/work/surface-access';
+import { agentZone } from '../src/lib/zone';
 
 const PROVIDER_TIMEOUT_MS = 10_000;
 /**
@@ -52,14 +77,6 @@ const PROVIDER_TIMEOUT_MS = 10_000;
  */
 const SWEEP_WAIT_BUDGET_MS = 6 * 60_000;
 const MAX_MCP_PAGES = 5;
-/**
- * A bound on the channel list walk, not a budget: the walk stops as soon as
- * every approved channel is found, and a workspace with more public channels
- * than this (10,000 at 200 a page) is refused with the reason rather than read
- * in part.
- */
-const MAX_SLACK_CHANNEL_PAGES = 50;
-const MAX_SLACK_HISTORY_PAGES = 5;
 const PAGE_SIZE = 100;
 
 type CredentialId = GenericId<'credentials'>;
@@ -98,10 +115,20 @@ interface IntakeRecord {
   polledAt?: number;
 }
 
+/** A listed item as intake reads it: the candidate and, when the provider says, when it was asked. */
+export interface IntakeCandidate extends WorkCandidate {
+  /** When the item was raised, by the provider's clock (a Linear issue's `createdAt`). */
+  askedAt?: number;
+}
+
 interface IntakeSeed extends Omit<WorkCandidate, 'observedAt'> {
   agentId: Id<'agents'>;
   /** The ticket as this listing showed it, kept for the re-read before apply. */
   tracker?: TicketSnapshot;
+  /** When the item was raised, by the provider's clock; a chat ask's is its message `ts`. */
+  askedAt?: number;
+  /** When intake read it: the poll's start. */
+  observedAt: number;
 }
 
 interface IntakeDecisionReply {
@@ -111,12 +138,29 @@ interface IntakeDecisionReply {
   reply: DecisionReply;
 }
 
+/** What intake reads of an employee's documentation. */
+export interface IntakeDocumentation {
+  /** The systems the documentation orders, from its systems table. */
+  readonly order: string[];
+  /** The pages that name one of the systems intake polls, whole. */
+  readonly pages: Doc<'docPages'>[];
+}
+
 export interface IntakeRuntime {
   listSurfaces(): Promise<Doc<'surfaces'>[]>;
   /** The chat rows alone, for the poll that runs once a minute. */
   listChatSurfaces(): Promise<Doc<'surfaces'>[]>;
   getAgent(agentId: Id<'agents'>): Promise<Doc<'agents'> | null>;
-  listPages(agentId: Id<'agents'>): Promise<Doc<'docPages'>[]>;
+  /**
+   * The employee's documentation as intake reads it, a bounded page at a time
+   * (D D3): the systems order its systems table gives, and whole only the
+   * pages that name one of `systems`, which a card with no approved scope
+   * reads its queue from; every other page counts only for the order.
+   */
+  intakeDocumentation(
+    agentId: Id<'agents'>,
+    systems: readonly string[],
+  ): Promise<IntakeDocumentation>;
   /** The scopes the employee holds now: granted and not revoked. */
   grantedScopes(agentId: Id<'agents'>): Promise<string[]>;
   /** The rows waiting to be evaluated for the employee, and the bound intake keeps (N7). */
@@ -138,8 +182,16 @@ export interface IntakeRuntime {
   /** Bring the row of a ticket intake refused up to the listing, and withdraw it if it waits. */
   withdraw(candidate: IntakeSeed & { leftQueue: string }): Promise<void>;
   resolveDecision(reply: IntakeDecisionReply): Promise<void>;
-  /** Decision requests that landed on this surface and are still undecided. */
-  listOpenDecisionRequests(surfaceId: Id<'surfaces'>): Promise<Array<{ ts: string }>>;
+  /** What the surface's manager DM has open; nothing open leaves it unread (Q13). */
+  openDecisions(surfaceId: Id<'surfaces'>): Promise<OpenDecisions>;
+  /** Close a delivered request whose thread the provider says is gone, and send it again. */
+  closeDecisionThread(record: { surfaceId: Id<'surfaces'>; decisionId: string }): Promise<void>;
+  /** Tell the manager, once, that a reply could not be read as a decision. */
+  noticeUnreadableReply(record: {
+    surfaceId: Id<'surfaces'>;
+    userId: string;
+    messageTs: string;
+  }): Promise<void>;
   /** Keep the bot id intake read for a row connected before the probe stored one. */
   recordBotIdentity(record: {
     surfaceId: Id<'surfaces'>;
@@ -172,7 +224,11 @@ export interface IntakeSweepResult {
   surfaces: number;
 }
 
-export type DecisionSweepResult = Omit<IntakeSweepResult, 'candidates'>;
+/** What one decision poll did, per chat surface. */
+export interface DecisionSweepResult extends Omit<IntakeSweepResult, 'candidates'> {
+  /** Surfaces whose DM was left unread because nothing was open (Q13's back-off). */
+  idle: number;
+}
 
 /** The Linear bounds intake reads: the approved scope, or the page scan's for older rows. */
 interface LinearScope {
@@ -186,25 +242,14 @@ interface McpPage {
   nextCursor?: string;
 }
 
-interface SlackChannel {
-  id: string;
-  name: string;
-}
-
-interface SlackMessage {
-  text: string;
-  ts: string;
-  user?: string;
-  /** The posting app's bot id; the only author mark on a post sent under a customised name. */
-  botId?: string;
-  appId?: string;
-  /** The parent message when the mention itself sits inside a thread. */
-  threadTs?: string;
-}
-
 interface ChatPollResult {
   candidates: WorkCandidate[];
+  /** The replies read as a decision whose every read succeeded, to resolve now. */
   decisionReplies: Array<Omit<IntakeDecisionReply, 'surfaceId'>>;
+  /** The manager's messages after an open request that read as no decision. */
+  unreadableReplies: Array<{ userId: string; messageTs: string }>;
+  /** Open requests whose thread the provider says does not exist, by code. */
+  missingThreads: string[];
   /** Reads that failed after their retries, by what was read; the checkpoint holds while any did. */
   unread: Array<{ what: string; error: unknown }>;
 }
@@ -757,7 +802,7 @@ export function linearCandidate(
   issue: Record<string, unknown>,
   surface: Doc<'surfaces'>,
   observedAt: number,
-): WorkCandidate | undefined {
+): IntakeCandidate | undefined {
   const id = typeof issue.id === 'string' ? issue.id : undefined;
   const title = typeof issue.title === 'string' ? issue.title.trim() : '';
   const url = typeof issue.url === 'string' ? issue.url : undefined;
@@ -784,6 +829,7 @@ export function linearCandidate(
   const alias = [issue.uuid, issue.identifier].find(
     (name): name is string => typeof name === 'string' && name.trim() !== '' && name !== id,
   );
+  const createdAt = typeof issue.createdAt === 'string' ? Date.parse(issue.createdAt) : NaN;
   return {
     sourceCategory: 'ticket-queue',
     sourceSystem: surface.slug,
@@ -793,6 +839,7 @@ export function linearCandidate(
     contentSummary: description.slice(0, 4_000),
     contentRefs: [url],
     observedAt: new Date(observedAt),
+    ...(Number.isNaN(createdAt) ? {} : { askedAt: createdAt }),
     priority,
     requesterLabel: requester ?? owner,
     ...(owner === undefined ? {} : { owner }),
@@ -898,13 +945,13 @@ export function hasKanbanIntakeReader(surface: Doc<'surfaces'>): boolean {
 
 /** A ticket intake refused on this poll, and why it left the queue. */
 interface WithdrawnTicket {
-  readonly candidate: WorkCandidate;
+  readonly candidate: IntakeCandidate;
   readonly leftQueue: string;
 }
 
 /** What one Linear poll found. */
 interface LinearPoll {
-  readonly candidates: readonly WorkCandidate[];
+  readonly candidates: readonly IntakeCandidate[];
   readonly withdrawn: readonly WithdrawnTicket[];
   /** Each listed ticket as the ownership rule read it, by external id. */
   readonly trackers: ReadonlyMap<string, TicketSnapshot>;
@@ -1117,179 +1164,7 @@ async function pollLinear(
   }
 }
 
-/**
- * Call one allowlisted Slack read method and enforce Slack's in-band errors.
- *
- * Args:
- *   fetcher: HTTP implementation.
- *   credential: Decrypted Slack bot token.
- *   method: Allowed Slack Web API read method.
- *   query: Query parameters.
- *
- * Returns:
- *   Successful response object.
- */
-async function slackGet(
-  fetcher: IntakeFetcher,
-  credential: string,
-  method: 'auth.test' | 'conversations.list' | 'conversations.history' | 'conversations.replies',
-  query: Record<string, string>,
-): Promise<Record<string, unknown>> {
-  const url = new URL(`https://slack.com/api/${method}`);
-  for (const [name, value] of Object.entries(query)) url.searchParams.set(name, value);
-  const response = await fetcher(url, {
-    method: 'GET',
-    redirect: 'error',
-    headers: { Authorization: `Bearer ${credential}` },
-  });
-  const payload = asRecord(await response.json()) ?? {};
-  if (!response.ok || payload.ok !== true) {
-    const error =
-      typeof payload.error === 'string' ? payload.error : `Slack returned HTTP ${response.status}.`;
-    if (response.status === 429 || error === 'ratelimited') {
-      throw new TransientProviderError(`Slack ${method} was rate limited (${error}).`, {
-        status: response.status,
-      });
-    }
-    throw new Error(error);
-  }
-  return payload;
-}
-
-/**
- * Read a Slack pagination cursor from a Web API response.
- *
- * Args:
- *   payload: Successful Slack response.
- *
- * Returns:
- *   A non-empty cursor, or undefined.
- */
-function slackCursor(payload: Record<string, unknown>): string | undefined {
-  const metadata = asRecord(payload.response_metadata);
-  const cursor = metadata?.next_cursor;
-  return typeof cursor === 'string' && cursor.trim() ? cursor.trim() : undefined;
-}
-
-/**
- * Resolve documented Slack names to channel ids with bounded pagination.
- *
- * Args:
- *   fetcher: HTTP implementation.
- *   credential: Decrypted bot token.
- *   names: Documented channel names without hashes.
- *
- * Returns:
- *   Exactly the visible documented channels.
- *
- * Raises:
- *   Error: If one or more documented channels are not visible to the app.
- */
-async function resolveSlackChannels(
-  fetcher: IntakeFetcher,
-  credential: string,
-  names: readonly string[],
-): Promise<SlackChannel[]> {
-  const wanted = new Set(names.map((name: string): string => name.toLowerCase()));
-  const found = new Map<string, SlackChannel>();
-  const cursors = new Set<string>();
-  let cursor: string | undefined;
-  for (let pageIndex = 0; pageIndex < MAX_SLACK_CHANNEL_PAGES; pageIndex += 1) {
-    const payload = await slackGet(fetcher, credential, 'conversations.list', {
-      exclude_archived: 'true',
-      limit: '200',
-      types: 'public_channel',
-      ...(cursor ? { cursor } : {}),
-    });
-    const channels = Array.isArray(payload.channels) ? payload.channels : [];
-    for (const item of channels) {
-      const channel = asRecord(item);
-      if (typeof channel?.id !== 'string' || typeof channel.name !== 'string') continue;
-      const name = channel.name.toLowerCase();
-      if (wanted.has(name)) found.set(name, { id: channel.id, name });
-    }
-    if (found.size === wanted.size) break;
-    cursor = slackCursor(payload);
-    if (!cursor) break;
-    if (cursors.has(cursor)) {
-      throw new Error('Slack conversations.list repeated a cursor before the channel list ended.');
-    }
-    if (pageIndex === MAX_SLACK_CHANNEL_PAGES - 1) {
-      throw new Error(
-        `Slack conversations.list did not end within ${MAX_SLACK_CHANNEL_PAGES} pages of public channels.`,
-      );
-    }
-    cursors.add(cursor);
-  }
-  const missing = [...wanted].filter((name: string): boolean => !found.has(name));
-  if (missing.length > 0) {
-    throw new Error(
-      `Slack channels are not visible: ${missing.map((name: string): string => `#${name}`).join(', ')}.`,
-    );
-  }
-  return names.map((name: string): SlackChannel => found.get(name.toLowerCase())!);
-}
-
-/**
- * Read bounded channel history newer than the last completed poll.
- *
- * Args:
- *   fetcher: HTTP implementation.
- *   credential: Decrypted bot token.
- *   channelId: Provider channel id.
- *   lastPolledAt: Previous completed checkpoint.
- *
- * Returns:
- *   Slack message identity and text fields.
- */
-async function slackHistory(
-  fetcher: IntakeFetcher,
-  credential: string,
-  channelId: string,
-  lastPolledAt?: number,
-  thread?: { ts: string },
-): Promise<SlackMessage[]> {
-  const messages: SlackMessage[] = [];
-  const cursors = new Set<string>();
-  let cursor: string | undefined;
-  const method = thread ? 'conversations.replies' : 'conversations.history';
-  for (let pageIndex = 0; pageIndex < MAX_SLACK_HISTORY_PAGES; pageIndex += 1) {
-    const payload = await slackGet(fetcher, credential, method, {
-      channel: channelId,
-      ...(thread ? { ts: thread.ts } : {}),
-      inclusive: 'true',
-      limit: '200',
-      ...(lastPolledAt !== undefined ? { oldest: String(lastPolledAt / 1_000) } : {}),
-      ...(cursor ? { cursor } : {}),
-    });
-    const rows = Array.isArray(payload.messages) ? payload.messages : [];
-    for (const item of rows) {
-      const row = asRecord(item);
-      if (typeof row?.ts !== 'string' || typeof row.text !== 'string') continue;
-      messages.push({
-        ts: row.ts,
-        text: row.text,
-        user: typeof row.user === 'string' ? row.user : undefined,
-        botId: typeof row.bot_id === 'string' ? row.bot_id : undefined,
-        appId: typeof row.app_id === 'string' ? row.app_id : undefined,
-        threadTs: typeof row.thread_ts === 'string' ? row.thread_ts : undefined,
-      });
-    }
-    const nextCursor = slackCursor(payload);
-    if (!nextCursor) break;
-    if (cursors.has(nextCursor)) {
-      throw new Error(`Slack ${method} repeated a cursor before pagination completed.`);
-    }
-    if (pageIndex === MAX_SLACK_HISTORY_PAGES - 1) {
-      throw new Error(`Slack ${method} pagination did not complete within the page limit.`);
-    }
-    cursors.add(nextCursor);
-    cursor = nextCursor;
-  }
-  return messages;
-}
-
-function mcpMessagePage(value: unknown): { messages: SlackMessage[]; nextCursor?: string } {
+function mcpMessagePage(value: unknown): { messages: ChatMessage[]; nextCursor?: string } {
   const decoded = decodeMcpPayload(value);
   const record = asRecord(decoded) ?? {};
   const data = asRecord(record.data);
@@ -1299,7 +1174,7 @@ function mcpMessagePage(value: unknown): { messages: SlackMessage[]; nextCursor?
     : Array.isArray(container.items)
       ? container.items
       : [];
-  const messages = rows.flatMap((item): SlackMessage[] => {
+  const messages = rows.flatMap((item): ChatMessage[] => {
     const row = asRecord(item);
     if (typeof row?.ts !== 'string' || typeof row.text !== 'string') return [];
     return [
@@ -1319,13 +1194,57 @@ function mcpMessagePage(value: unknown): { messages: SlackMessage[]; nextCursor?
   };
 }
 
+/** Slack's answer for a thread whose parent message is not in the channel. */
+const SLACK_THREAD_NOT_FOUND = 'thread_not_found';
+
+/** What reads of the manager DM found, keyed by message ts so a message read twice counts once. */
+interface ManagerMessages {
+  /** The messages read as approve or reject. */
+  readonly replies: Map<string, ChatPollResult['decisionReplies'][number]>;
+  /** The manager's own messages read as neither. */
+  readonly unreadable: Map<string, ChatPollResult['unreadableReplies'][number]>;
+}
+
+/** An empty read of the manager DM. */
+function managerMessages(): ManagerMessages {
+  return { replies: new Map(), unreadable: new Map() };
+}
+
+/**
+ * Sort the messages of one DM read into replies read as a decision and the
+ * manager's messages read as none. Day0's own posts are neither.
+ *
+ * @param found - The reads so far, added to.
+ * @param surface - The chat surface, for the bot's and the manager's ids.
+ * @param messages - The messages this read returned.
+ * @param skipTs - A thread's parent, which is Day0's request, not a reply.
+ */
+function collectManagerMessages(
+  found: ManagerMessages,
+  surface: Doc<'surfaces'>,
+  messages: readonly ChatMessage[],
+  skipTs?: string,
+): void {
+  for (const message of messages) {
+    if (message.ts === skipTs) continue;
+    if (!message.user || message.user === surface.providerIdentityId) continue;
+    const reply = parseDecisionReply(message.text);
+    if (reply) {
+      found.replies.set(message.ts, { userId: message.user, messageTs: message.ts, reply });
+    } else if (message.user === surface.managerUserId) {
+      found.unreadable.set(message.ts, { userId: message.user, messageTs: message.ts });
+    }
+  }
+}
+
 /** Read the manager DM through a generic chat MCP connection's discovered history tool. */
 async function pollMcpManagerReplies(
   surface: Doc<'surfaces'>,
   credential: string,
   makeClient: (endpoint: URL, credential: string) => McpIntakeClient,
-): Promise<ChatPollResult['decisionReplies']> {
-  if (!surface.managerDmChannelId || !surface.managerUserId) return [];
+): Promise<ManagerMessages> {
+  const found = managerMessages();
+  if (!surface.managerDmChannelId || !surface.managerUserId) return found;
   const historyTool = surface.toolAllowlist?.find((tool) =>
     /(?:^|[._-])(?:conversations?[._-])?history$/i.test(tool),
   );
@@ -1351,10 +1270,9 @@ async function pollMcpManagerReplies(
     if (!channelName) throw new Error('Chat history tool has no channel argument.');
     const tool = await client.toolFromDefinition({ serverName: 'surface', definition });
     if (!tool.execute) throw new Error('Chat history tool is not executable.');
-    const replies: ChatPollResult['decisionReplies'] = [];
     const seenCursors = new Set<string>();
     let cursor: string | undefined;
-    for (let pageIndex = 0; pageIndex < MAX_SLACK_HISTORY_PAGES; pageIndex += 1) {
+    for (let pageIndex = 0; pageIndex < MAX_HISTORY_PAGES; pageIndex += 1) {
       const args: Record<string, unknown> = { [channelName]: surface.managerDmChannelId };
       const limitName = discoveredArgument(properties, ['limit', 'first', 'pageSize']);
       if (limitName) args[limitName] = PAGE_SIZE;
@@ -1373,22 +1291,18 @@ async function pollMcpManagerReplies(
       const page = mcpMessagePage(
         await tool.execute(args, { abortSignal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS) }),
       );
-      for (const message of page.messages) {
-        if (!message.user || message.user === surface.providerIdentityId) continue;
-        const reply = parseDecisionReply(message.text);
-        if (reply) replies.push({ userId: message.user, messageTs: message.ts, reply });
-      }
+      collectManagerMessages(found, surface, page.messages);
       if (!page.nextCursor) break;
       if (seenCursors.has(page.nextCursor)) {
         throw new Error('Chat history repeated a cursor before pagination completed.');
       }
-      if (pageIndex === MAX_SLACK_HISTORY_PAGES - 1) {
+      if (pageIndex === MAX_HISTORY_PAGES - 1) {
         throw new Error('Chat history pagination did not complete within the page limit.');
       }
       seenCursors.add(page.nextCursor);
       cursor = page.nextCursor;
     }
-    return replies;
+    return found;
   } finally {
     await client.disconnect();
   }
@@ -1407,8 +1321,8 @@ async function pollMcpManagerReplies(
  *   Normalised event-stream candidate.
  */
 export function slackCandidate(
-  message: SlackMessage,
-  channel: SlackChannel,
+  message: ChatMessage,
+  channel: ChatChannel,
   surface: Doc<'surfaces'>,
   observedAt: number,
 ): WorkCandidate {
@@ -1451,7 +1365,7 @@ export function slackCandidate(
  *   True when the message is the app's own.
  */
 function postedByConnectedApp(
-  message: SlackMessage,
+  message: ChatMessage,
   surface: Doc<'surfaces'>,
   botId: string,
 ): boolean {
@@ -1474,8 +1388,7 @@ const NO_APP_IDENTITY = 'Slack probe stored no app identity; probe the surface a
  *
  * Args:
  *   surface: Connected Slack surface.
- *   credential: Decrypted bot token.
- *   fetcher: HTTP implementation.
+ *   reader: The surface's chat reader.
  *   remember: Persists an identity read here against the row's probe generation.
  *
  * Returns:
@@ -1486,24 +1399,24 @@ const NO_APP_IDENTITY = 'Slack probe stored no app identity; probe the surface a
  */
 async function connectedBotId(
   surface: Doc<'surfaces'>,
-  credential: string,
-  fetcher: IntakeFetcher,
+  reader: ChatReader,
   remember: (providerBotId: string, generation: number) => Promise<void>,
 ): Promise<string> {
   if (surface.providerBotId) return surface.providerBotId;
   if (!surface.toolAllowlist?.includes('auth.test') || surface.probeGeneration === undefined) {
     throw new Error(NO_APP_IDENTITY);
   }
-  const auth = await slackGet(fetcher, credential, 'auth.test', {});
-  if (auth.user_id !== surface.providerIdentityId) throw new Error(NO_APP_IDENTITY);
-  if (typeof auth.bot_id !== 'string' || !auth.bot_id) throw new Error(NO_APP_IDENTITY);
-  await remember(auth.bot_id, surface.probeGeneration);
-  return auth.bot_id;
+  const identity = await reader.identity();
+  if (identity.userId !== surface.providerIdentityId) throw new Error(NO_APP_IDENTITY);
+  if (!identity.botId) throw new Error(NO_APP_IDENTITY);
+  await remember(identity.botId, surface.probeGeneration);
+  return identity.botId;
 }
 
 /** What one chat poll reads: the manager's decision replies, the channels' asks, or both. */
 interface ChatPollScope {
-  readonly decisions: boolean;
+  /** What the manager DM has open, when this poll reads decisions; absent, it reads none. */
+  readonly decisions?: OpenDecisions;
   readonly work: boolean;
   /**
    * When the agent was deployed, in epoch milliseconds. A mention written
@@ -1516,25 +1429,24 @@ interface ChatPollScope {
 }
 
 /**
- * Poll documented Slack channels for exact mentions of the connected bot.
+ * Poll a chat surface's approved channels for exact mentions of the connected
+ * bot, and its manager DM for decision replies, through the surface's chat
+ * reader (B's contract, A6: one reader per rung, no bespoke adapter here).
  *
  * Args:
- *   surface: Connected Slack surface with probe identity metadata.
- *   pages: Policy pages visible to the agent.
- *   credential: Decrypted bot token.
+ *   surface: Connected chat surface with probe identity metadata.
+ *   reader: The surface's chat reader.
+ *   pages: Policy pages visible to the agent, for a card with no approved scope.
  *   observedAt: Poll start used for candidate timestamps.
- *   fetcher: Injectable HTTP implementation.
  *
  * Returns:
- *   Normalised mention candidates.
+ *   Normalised mention candidates, and the manager's replies.
  */
-async function pollSlack(
+async function pollChatReader(
   surface: Doc<'surfaces'>,
+  reader: ChatReader,
   pages: readonly Doc<'docPages'>[],
-  credential: string,
   observedAt: number,
-  fetcher: IntakeFetcher,
-  listOpenRequests: () => Promise<Array<{ ts: string }>>,
   include: ChatPollScope,
   rememberBotId: (providerBotId: string, generation: number) => Promise<void>,
 ): Promise<ChatPollResult> {
@@ -1551,26 +1463,21 @@ async function pollSlack(
   if (include.work) {
     if (!surface.providerIdentityId) throw new Error('Slack probe stored no bot identity.');
     if (!surface.providerWorkspaceId) throw new Error('Slack probe stored no workspace identity.');
-    const botId = await connectedBotId(surface, credential, fetcher, rememberBotId);
+    const botId = await connectedBotId(surface, reader, rememberBotId);
     const names = surface.intakeScope
       ? approvedChannelNames(surface.intakeScope)
       : slackChannelsFromPages(pages);
     if (names.length === 0) throw new Error('Slack policy names no intake channels.');
-    const channels = await resolveSlackChannels(fetcher, credential, names);
+    const channels = await reader.listChannels(names);
     const mention = `<@${surface.providerIdentityId}>`;
     const since = include.mentionsSince;
     const sinceTs = since === undefined ? undefined : String(since / 1_000);
     for (const channel of channels) {
       // One channel that still fails after its retries costs that channel's
       // read, not the rest of the poll: its mentions are read again next time.
-      let messages: SlackMessage[];
+      let messages: ChatMessage[];
       try {
-        messages = await slackHistory(
-          fetcher,
-          credential,
-          channel.id,
-          surface.lastPolledAt ?? since,
-        );
+        messages = await reader.readSince(channel.id, surface.lastPolledAt ?? since);
       } catch (error) {
         // A refusal (`not_in_channel`, `invalid_auth`, the page limit) is not
         // waited out by reading again, so it fails the poll as it always did.
@@ -1591,36 +1498,48 @@ async function pollSlack(
       }
     }
   }
-  const decisionReplies = new Map<string, ChatPollResult['decisionReplies'][number]>();
-  const collect = (messages: SlackMessage[], skipTs?: string): void => {
-    for (const message of messages) {
-      if (message.ts === skipTs) continue;
-      if (!message.user || message.user === surface.providerIdentityId) continue;
-      const reply = parseDecisionReply(message.text);
-      if (reply)
-        decisionReplies.set(message.ts, { userId: message.user, messageTs: message.ts, reply });
-    }
-  };
-  if (include.decisions && surface.managerDmChannelId && surface.managerUserId) {
+  const found = managerMessages();
+  const missingThreads: string[] = [];
+  const unreadThreads: string[] = [];
+  const open = include.decisions;
+  if (open && surface.managerDmChannelId && surface.managerUserId) {
     const dm = surface.managerDmChannelId;
-    // Replies stay all or nothing: a DM answer taken while an earlier answer in
-    // its thread went unread could decide the request the wrong way. The DM is
-    // read even when nothing is open, because the resolver answers a late or
-    // unknown code with a notice.
-    collect(await slackHistory(fetcher, credential, dm, surface.lastPolledAt));
+    // The top-level read is the poll: when it fails nothing is resolved and
+    // the checkpoint holds.
+    collectManagerMessages(found, surface, await reader.readSince(dm, surface.lastPolledAt));
     // `conversations.history` lists only top-level messages. A manager who answers in
     // the thread under the request is answering all the same, so each open request's
-    // thread is read too, when the probe allowlisted the replies method.
+    // thread is read too, when the probe allowlisted the replies method. A thread
+    // that cannot be read holds only the replies to its own request (Q13).
     if (surface.toolAllowlist?.includes('conversations.replies')) {
-      for (const request of await listOpenRequests()) {
-        collect(
-          await slackHistory(fetcher, credential, dm, surface.lastPolledAt, { ts: request.ts }),
-          request.ts,
-        );
+      for (const request of open.requests) {
+        if (request.ts === undefined) continue;
+        try {
+          collectManagerMessages(
+            found,
+            surface,
+            await reader.readThread(dm, request.ts, surface.lastPolledAt),
+            request.ts,
+          );
+        } catch (error) {
+          if (error instanceof ChatReadRefused && error.code === SLACK_THREAD_NOT_FOUND) {
+            missingThreads.push(request.decisionId);
+            continue;
+          }
+          unreadThreads.push(request.decisionId);
+          unread.push({ what: `the thread of decision ${request.decisionId}`, error });
+        }
       }
     }
   }
-  return { candidates, decisionReplies: [...decisionReplies.values()], unread };
+  const held = heldReplyCodes(open ?? NOTHING_OPEN, unreadThreads);
+  return {
+    candidates,
+    decisionReplies: [...found.replies.values()].filter((reply) => !held.has(reply.reply.id)),
+    unreadableReplies: open && open.requests.length > 0 ? [...found.unreadable.values()] : [],
+    missingThreads,
+    unread,
+  };
 }
 
 /**
@@ -1647,35 +1566,34 @@ async function pollChat(
   observedAt: number,
   fetcher: IntakeFetcher,
   makeClient: (endpoint: URL, credential: string) => McpIntakeClient,
-  listOpenRequests: () => Promise<Array<{ ts: string }>>,
   include: ChatPollScope,
   rememberBotId: (providerBotId: string, generation: number) => Promise<void>,
 ): Promise<ChatPollResult> {
   const polled = await (async (): Promise<ChatPollResult> => {
-    if (surface.path === 'documented-api') {
-      return await pollSlack(
-        surface,
-        pages,
-        credential,
-        observedAt,
-        fetcher,
-        listOpenRequests,
-        include,
-        rememberBotId,
-      );
-    }
+    // The MCP rung reads the manager DM through its own history tool; the
+    // chat reader has no MCP rung yet, and switching would stop MCP decisions.
     if (surface.path === 'mcp') {
+      const found = include.decisions
+        ? await pollMcpManagerReplies(surface, credential, makeClient)
+        : managerMessages();
       return {
         candidates: [],
-        decisionReplies: include.decisions
-          ? await pollMcpManagerReplies(surface, credential, makeClient)
-          : [],
+        decisionReplies: [...found.replies.values()],
+        unreadableReplies:
+          include.decisions && include.decisions.requests.length > 0
+            ? [...found.unreadable.values()]
+            : [],
+        missingThreads: [],
         unread: [],
       };
     }
-    throw new Error(
-      `Connected chat surface path ${surface.path ?? 'unknown'} has no intake reader.`,
-    );
+    const chosen = chatReaderFor(toSurfaceRecord(surface), {
+      credential,
+      fetch: fetcher,
+      slackApiBase: slackApiBaseUrl(),
+    });
+    if (!chosen.ok) throw new Error(chosen.reason);
+    return await pollChatReader(surface, chosen.reader, pages, observedAt, include, rememberBotId);
   })();
   // Providers list newest first. Replies must resolve in the order the manager sent
   // them, so the first answer decides and a later change of mind is the duplicate.
@@ -1698,21 +1616,26 @@ async function pollChat(
 async function seedCandidate(
   runtime: IntakeRuntime,
   agentId: Id<'agents'>,
-  candidate: WorkCandidate,
+  candidate: IntakeCandidate,
   trackers: ReadonlyMap<string, TicketSnapshot> = new Map(),
 ): Promise<void> {
   await runtime.seed(seedOf(agentId, candidate, trackers));
 }
 
-/** The seed a candidate makes for one agent, with the ticket as it was listed. */
+/**
+ * The seed a candidate makes for one agent, with the ticket as it was listed,
+ * when it was raised and when this poll read it.
+ */
 function seedOf(
   agentId: Id<'agents'>,
-  candidate: WorkCandidate,
+  candidate: IntakeCandidate,
   trackers: ReadonlyMap<string, TicketSnapshot>,
 ): IntakeSeed {
   const tracker = trackers.get(candidate.externalId);
   return {
     ...(tracker ? { tracker } : {}),
+    ...(candidate.askedAt === undefined ? {} : { askedAt: candidate.askedAt }),
+    observedAt: candidate.observedAt.getTime(),
     agentId,
     sourceCategory: candidate.sourceCategory,
     sourceSystem: candidate.sourceSystem,
@@ -1878,12 +1801,15 @@ export async function runIntakeSweep(
     if (!agentSurfaces.some(inScope)) continue;
     const agent = await runtime.getAgent(agentId);
     if (!agent) continue;
-    let pages: Doc<'docPages'>[];
+    let documentation: IntakeDocumentation;
     let scopes: string[];
     let queue: { waiting: number; limit: number };
     try {
-      [pages, scopes, queue] = await Promise.all([
-        runtime.listPages(agentId),
+      [documentation, scopes, queue] = await Promise.all([
+        runtime.intakeDocumentation(
+          agentId,
+          agentSurfaces.filter(inScope).map((surface) => surface.displayName),
+        ),
         runtime.grantedScopes(agentId),
         runtime.waitingWork(agentId),
       ]);
@@ -1902,12 +1828,7 @@ export async function runIntakeSweep(
     }
     const granted = new Set(scopes);
     let waiting = queue.waiting;
-    const documentedNames = extractDocumentedSystemOrder(
-      pages.map((page: Doc<'docPages'>): { title: string; content: string } => ({
-        title: page.title,
-        content: page.markdown,
-      })),
-    );
+    const { order: documentedNames, pages } = documentation;
     const ordered = orderSurfaceWaterfall(agentSurfaces, documentedNames);
     for (const [index, surface] of ordered.entries()) {
       if (!inScope(surface)) continue;
@@ -1917,6 +1838,16 @@ export async function runIntakeSweep(
           surfaceId: surface._id,
           waterfallPosition,
           skipReason: disconnectedReason(surface),
+        });
+        skipped += 1;
+        continue;
+      }
+      // The end date is the boundary, not the hourly sweep that ends the row.
+      if (surface.expiresAt !== undefined && accessEnded(surface, now())) {
+        await runtime.recordIntake({
+          surfaceId: surface._id,
+          waterfallPosition,
+          skipReason: accessEndedReason(surface.expiresAt, agentZone(agent)),
         });
         skipped += 1;
         continue;
@@ -2006,8 +1937,7 @@ export async function runIntakeSweep(
                 pollStartedAt,
                 fetcher,
                 makeMcpClient,
-                () => runtime.listOpenDecisionRequests(surface._id),
-                { decisions: false, work: true, mentionsSince: agent.createdAt },
+                { work: true, mentionsSince: agent.createdAt },
                 rememberBotId(runtime, surface._id),
               )
             : undefined;
@@ -2099,16 +2029,18 @@ export async function runDecisionSweep(
   dependencies: IntakeDependencies = {},
 ): Promise<DecisionSweepResult> {
   const mode = dependencies.mode ?? SURFACE_MODE;
-  if (mode !== 'real') return { mode, polled: 0, skipped: 0, surfaces: 0 };
+  if (mode !== 'real') return { mode, polled: 0, idle: 0, skipped: 0, surfaces: 0 };
   const now = dependencies.now ?? Date.now;
   const fetcher = providerFetcher(dependencies, now);
   const makeMcpClient = dependencies.makeMcpClient ?? createMcpClient;
   const surfaces = await runtime.listChatSurfaces();
   let polled = 0;
+  let idle = 0;
   let skipped = 0;
   for (const surface of surfaces) {
     if (
       surface.verdict !== 'connected' ||
+      accessEnded(surface, now()) ||
       !surface.credentialId ||
       !surface.managerDmChannelId ||
       !surface.managerUserId
@@ -2124,6 +2056,15 @@ export async function runDecisionSweep(
     const pollStartedAt = now();
     let credential = '';
     try {
+      const open = await runtime.openDecisions(surface._id);
+      if (!readsManagerDm(open)) {
+        // Nothing asked, nothing just decided: the DM is not read and no
+        // credential is touched (Q13). The checkpoint moves on, because a
+        // message in this window can answer nothing.
+        await runtime.recordDecisionPoll({ surfaceId: surface._id, polledAt: pollStartedAt });
+        idle += 1;
+        continue;
+      }
       credential = await runtime.decrypt(surface.credentialId);
       const checkpointed = {
         ...surface,
@@ -2136,15 +2077,34 @@ export async function runDecisionSweep(
         pollStartedAt,
         fetcher,
         makeMcpClient,
-        () => runtime.listOpenDecisionRequests(surface._id),
-        { decisions: true, work: false },
+        { decisions: open, work: false },
         rememberBotId(runtime, surface._id),
       );
+      // One message at a time, each tied to its request by its code; a reply
+      // to a request whose thread could not be read waits for the next poll.
       for (const reply of chat.decisionReplies) {
         await runtime.resolveDecision({ surfaceId: surface._id, ...reply });
       }
-      await runtime.recordDecisionPoll({ surfaceId: surface._id, polledAt: pollStartedAt });
-      polled += 1;
+      for (const decisionId of chat.missingThreads) {
+        await runtime.closeDecisionThread({ surfaceId: surface._id, decisionId });
+      }
+      for (const message of chat.unreadableReplies) {
+        await runtime.noticeUnreadableReply({ surfaceId: surface._id, ...message });
+      }
+      if (chat.unread.length > 0) {
+        // The checkpoint holds, so the unread thread is read again next time;
+        // the replies resolved now are recognised by their ts when re-read.
+        await runtime.recordDecisionPoll({
+          surfaceId: surface._id,
+          failure: `decision poll read in part; read again next time: ${chat.unread
+            .map(({ what, error }) => `${what} (${safeIntakeError(error, credential)})`)
+            .join('; ')}`,
+        });
+        skipped += 1;
+      } else {
+        await runtime.recordDecisionPoll({ surfaceId: surface._id, polledAt: pollStartedAt });
+        polled += 1;
+      }
     } catch (error) {
       // The checkpoint stays where it was, so the window this run could not
       // read is re-read by the next one, and the reason lands on the surface
@@ -2157,7 +2117,35 @@ export async function runDecisionSweep(
       credential = '';
     }
   }
-  return { mode, polled, skipped, surfaces: surfaces.length };
+  return { mode, polled, idle, skipped, surfaces: surfaces.length };
+}
+
+/**
+ * Read an employee's documentation as intake needs it, one bounded page read
+ * at a time (D D3): every page for the systems order, which keeps of a page
+ * only its title and its systems table, and whole only the pages that name
+ * one of the systems intake polls.
+ *
+ * @param agentId - The employee.
+ * @param systems - The display names of the systems this poll reads.
+ */
+export async function readIntakeDocumentation(
+  ctx: Pick<ActionCtx, 'runQuery'>,
+  agentId: Id<'agents'>,
+  systems: readonly string[],
+): Promise<IntakeDocumentation> {
+  const sources: Doc<'docSources'>[] = await ctx.runQuery(
+    internal.docSources.sourcesForAgentInternal,
+    { agentId },
+  );
+  const entries: WaterfallPage[] = [];
+  const pages: Doc<'docPages'>[] = [];
+  await forEachStoredPage(ctx, sources, (page): void => {
+    entries.push(waterfallEntry({ title: page.title, content: page.markdown }));
+    const text = `${page.title}\n${page.markdown}`;
+    if (systems.some((system): boolean => namesSystem(text, system))) pages.push(page);
+  });
+  return { order: extractDocumentedSystemOrder(entries), pages };
 }
 
 /** Create the Convex runtime boundary used by the scheduled action. */
@@ -2169,8 +2157,10 @@ function convexRuntime(ctx: ActionCtx): IntakeRuntime {
       await ctx.runQuery(internal.orientationData.chatSurfacesForIntake, {}),
     getAgent: async (agentId: Id<'agents'>): Promise<Doc<'agents'> | null> =>
       await ctx.runQuery(internal.agents.getInternal, { agentId }),
-    listPages: async (agentId: Id<'agents'>): Promise<Doc<'docPages'>[]> =>
-      await ctx.runQuery(internal.orientationData.pagesForAgent, { agentId }),
+    intakeDocumentation: async (
+      agentId: Id<'agents'>,
+      systems: readonly string[],
+    ): Promise<IntakeDocumentation> => await readIntakeDocumentation(ctx, agentId, systems),
     waitingWork: async (agentId: Id<'agents'>): Promise<{ waiting: number; limit: number }> =>
       await ctx.runQuery(internal.workLoop.waitingWork, { agentId }),
     seededItems: async (
@@ -2206,8 +2196,14 @@ function convexRuntime(ctx: ActionCtx): IntakeRuntime {
     resolveDecision: async (reply: IntakeDecisionReply): Promise<void> => {
       await ctx.runMutation(internal.work.resolveChannelDecision, reply);
     },
-    listOpenDecisionRequests: async (surfaceId: Id<'surfaces'>): Promise<Array<{ ts: string }>> =>
-      await ctx.runQuery(internal.work.openDecisionRequests, { surfaceId }),
+    openDecisions: async (surfaceId: Id<'surfaces'>): Promise<OpenDecisions> =>
+      await ctx.runQuery(internal.work.openDecisions, { surfaceId }),
+    closeDecisionThread: async (record): Promise<void> => {
+      await ctx.runMutation(internal.work.closeDecisionThread, record);
+    },
+    noticeUnreadableReply: async (record): Promise<void> => {
+      await ctx.runMutation(internal.work.noticeUnreadableReply, record);
+    },
     recordBotIdentity: async (record): Promise<void> => {
       await ctx.runMutation(internal.intakeIdentity.recordBotIdentity, record);
     },

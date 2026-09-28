@@ -10,7 +10,10 @@ describe('surface connection verdict', (): void => {
       verdictFor({ verdict: 'connected', credentialLanded: true, lastVerifiedAt: now }, now),
     ).toBe('connected');
     expect(
-      verdictFor({ verdict: 'connected', credentialLanded: true, lastVerifiedAt: liveAfter - 1 }, now),
+      verdictFor(
+        { verdict: 'connected', credentialLanded: true, lastVerifiedAt: liveAfter - 1 },
+        now,
+      ),
     ).toBe('listed-dead');
     expect(verdictFor({ verdict: 'connected', credentialLanded: true }, now)).toBe('listed-dead');
     expect(
@@ -23,7 +26,10 @@ describe('surface connection verdict', (): void => {
       verdictFor({ verdict: 'connected', credentialLanded: true, lastVerifiedAt: liveAfter }, now),
     ).toBe('connected');
     expect(
-      verdictFor({ verdict: 'connected', credentialLanded: true, lastVerifiedAt: liveAfter + 1 }, now),
+      verdictFor(
+        { verdict: 'connected', credentialLanded: true, lastVerifiedAt: liveAfter + 1 },
+        now,
+      ),
     ).toBe('connected');
   });
 
@@ -37,7 +43,10 @@ describe('surface connection verdict', (): void => {
 
   it('reads a stale probe on an approved surface as dead', (): void => {
     expect(
-      verdictFor({ verdict: 'approved', credentialLanded: true, lastVerifiedAt: liveAfter - 1 }, now),
+      verdictFor(
+        { verdict: 'approved', credentialLanded: true, lastVerifiedAt: liveAfter - 1 },
+        now,
+      ),
     ).toBe('listed-dead');
     expect(
       verdictFor({ verdict: 'approved', credentialLanded: true, lastVerifiedAt: now }, now),

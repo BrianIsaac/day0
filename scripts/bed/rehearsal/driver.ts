@@ -28,7 +28,7 @@ export interface Dashboard {
   openSurfaces(): Promise<void>;
   /** Type a credential into a card's landing form and submit it. */
   landCredential(slug: string, value: string): Promise<void>;
-  /** Approve a proposed card as the manager and as IT. */
+  /** Approve a proposed card with its one approval and wait until it is no longer proposed. */
   approveCard(slug: string): Promise<void>;
   /** Approve a proposed skill by name. */
   approveSkill(name: string): Promise<void>;
@@ -56,6 +56,10 @@ export const COMPLETE_LINE = 'conversation complete';
 export const ASK_AGAIN = 'Ask again';
 /** The control a skipped card offers in place of Retry, for a skip the manager may waive. */
 export const TAKE_IT_ANYWAY = 'Take it anyway';
+/** The one control that approves a proposed surface card (Q10). */
+export const APPROVE_CARD = 'Approve';
+/** How long an approved card may take to leave `proposed` on the page. */
+const APPROVAL_WAIT_MS = 30_000;
 /** How many failed turns one wait asks again before the 1:1 is judged stuck. */
 const MAX_ASK_AGAIN = 3;
 
@@ -205,14 +209,13 @@ export class PlaywrightDashboard implements Dashboard {
 
   async approveCard(slug: string): Promise<void> {
     const card = this.card(slug);
-    await card.getByRole('button', { name: 'Approve as manager' }).click();
-    await card.getByText('Manager approved').waitFor();
-    await card.getByRole('button', { name: 'Approve as IT' }).click();
-    await card
-      .getByText('IT approved')
-      .waitFor({ timeout: 10_000 })
-      // The badge is copy, not state: the orientation wait that follows reads the approval from the backend.
-      .catch(() => undefined);
+    await card.getByRole('button', { name: APPROVE_CARD, exact: true }).click();
+    const approved = this.page.locator(`article#surface-${slug}:not([data-verdict="proposed"])`);
+    const refused = card.getByRole('alert');
+    await approved.or(refused).first().waitFor({ timeout: APPROVAL_WAIT_MS });
+    if (await refused.isVisible()) {
+      throw new Error(`the ${slug} card was not approved: ${(await refused.textContent()) ?? ''}`);
+    }
   }
 
   private workCard(title: string): Locator {

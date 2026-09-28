@@ -3,8 +3,11 @@
  * workspace (the company bed and its rehearsal): one GraphQL client with a
  * single transient retry, and the comment reads and deletes both of them use.
  * Every call is a named GraphQL document with its ids as variables, so the key
- * never travels in a query string and a test can read the exact request.
+ * never travels in a query string and a test can read the exact request. A
+ * failure is classed by the product's own transport helper.
  */
+
+import { retryAfterMs, transportFailureKind } from '../../src/lib/transport-error';
 
 const ENDPOINT = 'https://api.linear.app/graphql';
 /** How long one Linear call may take before it counts as a timeout. */
@@ -112,22 +115,20 @@ export async function retryOnce<T>(
   }
 }
 
-/** Milliseconds a `Retry-After` header asks for: delta seconds or an HTTP date. */
-function retryAfterMs(header: string | null, now: number): number | undefined {
-  const value = header?.trim();
-  if (!value) return undefined;
-  if (/^\d+$/.test(value)) return Number(value) * 1_000;
-  const at = Date.parse(value);
-  return Number.isNaN(at) ? undefined : Math.max(0, at - now);
-}
-
 /** Milliseconds until the rate-limit window Linear names (UTC epoch milliseconds) ends. */
 function resetMs(header: string | null, now: number): number | undefined {
   const at = Number(header?.trim() || Number.NaN);
   return Number.isFinite(at) ? Math.max(0, at - now) : undefined;
 }
 
-/** The failure a rejected fetch or body read stands for; anything else is not Linear's. */
+/**
+ * The failure a rejected fetch or body read stands for.
+ *
+ * Our own timeout is a timeout; a caller's abort is the caller's and is
+ * thrown as it came; a connection nobody answered or one cut off mid-answer
+ * is a transient, as `transportFailureKind` reads the error chain. Anything
+ * else, a refused certificate among them, is not Linear's and is thrown as it came.
+ */
 function transportFailure(error: unknown): unknown {
   if (error instanceof Error && error.name === 'TimeoutError') {
     return new LinearRequestError(
@@ -136,15 +137,15 @@ function transportFailure(error: unknown): unknown {
       true,
     );
   }
-  if (error instanceof TypeError && error.message === 'fetch failed') {
-    const cause = (error as { cause?: { message?: string } }).cause?.message;
-    return new LinearRequestError(
-      `Linear could not be reached${cause ? ` (${cause})` : ''}.`,
-      'a network failure',
-      true,
-    );
-  }
-  return error;
+  if (error instanceof Error && error.name === 'AbortError') return error;
+  const kind = transportFailureKind(error);
+  if (kind === undefined) return error;
+  const cause = error instanceof Error && error.cause instanceof Error ? error.cause.message : '';
+  return new LinearRequestError(
+    `Linear could not be reached${cause ? ` (${cause})` : ''}.`,
+    kind === 'refused' ? 'a network failure' : 'a dropped connection',
+    true,
+  );
 }
 
 /** A GraphQL client over one API key and an injectable fetch. */

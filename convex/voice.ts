@@ -10,6 +10,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { assertOwnsAgent, assertOwnsVoiceSession } from './ownership';
 import { commitCharterAndWorkspace, workspaceFileValidator } from './charters';
+import { appendEvent } from './eventLog';
 
 /**
  * Voice + chat session lifecycle. The agent itself asks the boss
@@ -143,7 +144,7 @@ export const start = mutation({
       startedAt: Date.now(),
     });
     await ctx.db.patch(args.agentId, { state: 'day-one-in-progress' });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: args.agentId,
       type: 'voice.started',
       payload: { sessionId: id, mode: args.mode },
@@ -191,7 +192,7 @@ export const recordAnswer = mutation({
     const row = await assertOwnsVoiceSession(ctx, args.sessionId);
     const next = { ...((row.answers as Record<string, string>) ?? {}), [args.topic]: args.answer };
     await ctx.db.patch(args.sessionId, { answers: next });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'voice.answer-recorded',
       payload: { topic: args.topic },
@@ -288,7 +289,7 @@ async function claimSession(
     if (heldFor < CLAIM_LEASE_MS) {
       return { outcome: 'in-progress', sessionId: session._id };
     }
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: session.agentId,
       type: 'voice.finalisation-reclaimed',
       payload: { sessionId: session._id, heldForMs: heldFor, claimedBy },
@@ -527,7 +528,7 @@ export const finaliseSession = internalMutation({
       finalisationFailedAt: undefined,
     });
     await ctx.db.patch(session.agentId, { state: 'charter-pending' });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: session.agentId,
       type: 'voice.completed',
       payload: { sessionId: session._id, charterId, via: session.claimedBy ?? 'unknown' },
@@ -575,7 +576,7 @@ export const releaseFinalisation = internalMutation({
       finalisationError: reason,
       finalisationFailedAt: Date.now(),
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: session.agentId,
       type: 'voice.finalisation-failed',
       payload: { sessionId: args.sessionId, reason, retryScheduled },
@@ -587,7 +588,7 @@ export const releaseFinalisation = internalMutation({
         sessionId: args.sessionId,
       });
     } else {
-      await ctx.db.insert('events', {
+      await appendEvent(ctx, {
         agentId: session.agentId,
         type: 'voice.finalisation-abandoned',
         payload: {

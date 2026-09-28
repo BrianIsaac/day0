@@ -77,12 +77,41 @@ No approved API or MCP server is recorded for Northstar CRM.
 Probe marker: page title `Pipeline coverage`
 ```
 
+- When the page needs a login, also name one element the page shows only once you are signed in,
+  and write the account name beside the login's credential. day0 then signs in with the
+  credential when it checks the connection, and looks for that element: a password that was
+  rotated, or a login page that was redesigned, leaves the system unconnected with a card that
+  says so, instead of being found by the first piece of work.
+
+<!-- example: probe-signed-in -->
+
+```markdown
+- Probe marker: page title `Sign in - Looker`.
+- Probe marker: after sign-in, element `Pipeline coverage`.
+- Dashboard login (Looker tile): `pipeline-tile-local` (username `revops`)
+```
+
+- The element is named as the page names it to a screen reader: a heading, a field or a button's
+  label. Any element with that name will do. It must be on the page the login lands on: day0
+  presses nothing after `Sign in`, so an element behind a "stay signed in" question or a menu is
+  not found.
+- day0 types the account name into the field labelled for it (`Username`, `User name`, `Email`)
+  and the credential only into the field labelled for it (`Password`, `Passcode`, `Access code`,
+  `API key`, `Token`), then presses the page's `Sign in` (or `Log in`) control. A login that asks
+  for the account on one page and the password on the next is followed through its `Next`
+  control. Nothing else on the page is clicked.
+- A page with only a title marker is checked by its title. day0 does not sign in to it, so a
+  rotated password is found by the first piece of work that signs in.
+- A single sign-on or a second factor cannot be completed by day0; a page that sends the login to
+  another address is left unconnected.
+
 ## A documented API that is not Slack
 
 When a system is reached through its own HTTP API rather than an MCP server or Slack, the page
 names the API's base address in a sentence that names the system, the operations the employee may
-call, and the header the key goes in. day0 checks the key with one documented read before the
-connection is used, and the operations you list are the only ones the employee may call.
+call, the one read day0 checks the key with, and the header the key goes in. day0 checks the key
+with that read before the connection is used, and the operations you list are the only ones the
+employee may call.
 
 <!-- example: api-operations -->
 
@@ -95,24 +124,37 @@ The Tracker API base is https://tracker.example.com/api/v2/.
 - `POST /comments` adds a comment to an issue.
 - `GET /issues/{id}` reads one issue.
 - Send the key as `X-Api-Key: {{secret}}`.
+- Probe read: `GET /me`
 ```
 
 - An operation is a verb (`GET`, `HEAD`, `POST`, `PUT`, `PATCH` or `DELETE`) and a path in
   backticks, written from the base (`GET /issues`) or as a full address under it
   (`GET https://tracker.example.com/api/v2/projects`). A query string is ignored.
-- Paths are matched exactly. An operation whose path has a placeholder segment (`{id}`, `:id` or
-  `<id>`) is left out, because no real request would ever match it: `GET /issues/{id}` in the
-  example above is not callable. Until placeholders are supported, document a per-record read
-  with the id in the query (`GET /issues?id=`) if the API offers one.
+- The verb is part of the operation. Documenting `GET /issues` lets the employee list issues and
+  nothing else at that path: a `DELETE /issues` or a `PATCH /issues` is refused. Document each
+  verb the employee may use.
+- A path segment that stands for a value is written `{id}` (`:id` and `<id>` are read the same
+  way). It matches any one segment of a request: `GET /issues/{id}` admits `GET /issues/ENG-12`,
+  but not `GET /issues/ENG-12/comments`, which needs its own line. A placeholder must be a whole
+  segment; `/issues/{id}.json` matches nothing.
 - The key's header is the first header in backticks that carries `{{secret}}`
   (`X-Api-Key: {{secret}}`, `Authorization: Token {{secret}}`), or an `Authorization` header
-  with a scheme (`Authorization: Bearer`). A page that shows neither gets a bearer token.
-- day0 checks the key with the first documented `GET` that only reads, never one that changes
-  anything, and does not follow a redirect. A page with no operation, or no read among them,
-  leaves the system unconnected with a card that says so; that is day0's limitation, not
-  evidence that the system is unavailable.
+  with a scheme (`Authorization: Bearer`). A page that shows neither gets a bearer token. The key
+  goes only in a header: a request that puts `{{secret}}` in its body or its path is refused, so
+  a key can never be posted as a comment.
+- The probe read is the one request day0 sends, with the key, when it checks the connection:
+  on approval and every hour after. Write it on its own line, `Probe read:` and a `GET` in
+  backticks, and pick a request that changes nothing, such as the API's "who am I" call. It must
+  be a plain path under the base with no `{id}` segment. day0 never guesses one from your list,
+  because a `GET` can change things (`GET /auth/logout`); a page with no probe read leaves the
+  system unconnected with a card that says so. The probe read is also callable by the employee.
+- day0 does not follow a redirect with the key, and a page with no operation leaves the system
+  unconnected; both are day0's limitation, not evidence that the system is unavailable.
 - The base address follows the same rule as an MCP endpoint: public `https`, or a host the
-  operator lists in `DAY0_PRIVATE_HOSTS`.
+  operator lists in `DAY0_PRIVATE_HOSTS`. The address is checked again on every request, not only
+  when the connection is checked, so a name that later points somewhere private is refused.
+- A rate limit (`429`) or a server error when the key is checked is tried again later, after the
+  wait the API asks for; it never marks the system unavailable on its own.
 - Only the system's own pages are read for its operations. An operation written on another
   system's page is not admitted for this one.
 - A chat system is the exception. day0 reads chat over a documented API only through Slack's Web
@@ -164,8 +206,10 @@ state on these lines. Values go in backticks, channels start with `#`.
   names.
 - Reflowing the line or adding a channel to it keeps an approved card connected. So does
   renaming or moving the page within the team's directory, or anywhere when the new page states
-  the whole approved queue. Removing an approved value from its page returns the card to the
-  manager for approval, even when another team's page names the same value.
+  every value of an approved queue of two or more. A one-value queue moves only within the team's
+  directory, since any page naming that value would state it whole. Removing an approved value
+  from its page returns the card to the manager for approval, even when another team's page names
+  the same value.
 - A card is tied to one team's handbook by the employee's role: keep each team's pages under a
   directory named for the team, with its handbook at the top.
 

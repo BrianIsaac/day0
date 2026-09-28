@@ -123,7 +123,7 @@ describe('orientation data boundary', (): void => {
     });
   });
 
-  it('re-probes connected rows and dead rows that still hold a credential and both approvals', async (): Promise<void> => {
+  it('re-probes connected rows and dead rows that still hold a credential and the approval', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await harness.run(
       async (ctx): Promise<Id<'agents'>> =>
@@ -156,7 +156,6 @@ describe('orientation data boundary', (): void => {
         verdict: 'listed-dead',
         credentialId,
         managerApprovedAt: 1,
-        itApprovedAt: 2,
       });
       // Dead but rejected since (no stamps): not retried.
       await ctx.db.patch(bySlug.asana._id, { verdict: 'listed-dead', credentialId });
@@ -164,12 +163,75 @@ describe('orientation data boundary', (): void => {
       await ctx.db.patch(bySlug.slack._id, {
         verdict: 'ungranted',
         managerApprovedAt: 1,
-        itApprovedAt: 2,
       });
     });
     const candidates = await harness.query(internal.orientationData.reprobeCandidates, {});
     expect(candidates.map((surface): string => surface.slug).sort()).toEqual(['jira', 'linear']);
     expect(isReprobeCandidate({ ...bySlug.slack, verdict: 'approved' })).toBe(false);
+  });
+
+  it('re-probes a chat surface the manager lookup left ungranted, and no other ungranted row (Q6)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await harness.run(
+      async (ctx): Promise<Id<'agents'>> =>
+        await ctx.db.insert('agents', {
+          bossEmail: 'boss@day0.local',
+          name: 're-probe lookup test',
+          userId: 'owner',
+          state: 'active',
+          createdAt: 1,
+        }),
+    );
+    await harness.mutation(internal.surfaces.seedFromCharter, {
+      agentId,
+      namedSystems: [
+        { name: 'Slack', class: 'chat', whereMentioned: 'Slack.' },
+        { name: 'Teams', class: 'chat', whereMentioned: 'Teams.' },
+        { name: 'Jira', class: 'kanban', whereMentioned: 'Jira.' },
+      ],
+    });
+    const surfaces = await harness.query(internal.orientationData.surfacesForAgent, { agentId });
+    const bySlug = Object.fromEntries(
+      surfaces.map((surface): [string, Doc<'surfaces'>] => [surface.slug, surface]),
+    );
+    const credentialId = '10000credentials' as GenericId<'credentials'>;
+    const approved = { credentialId, managerApprovedAt: 1 };
+    await harness.run(async (ctx): Promise<void> => {
+      // The account behind the manager email was deactivated: the token works.
+      await ctx.db.patch(bySlug.slack._id, {
+        verdict: 'ungranted',
+        reason: 'the manager email boss@day0.local resolves to a deactivated Slack user.',
+        ...approved,
+      });
+      // The credential itself was refused: a new one is what heals it.
+      await ctx.db.patch(bySlug.teams._id, {
+        verdict: 'ungranted',
+        reason: 'Teams refused the credential (invalid_auth).',
+        ...approved,
+      });
+      // A kanban row never holds a manager lookup, whatever its text says.
+      await ctx.db.patch(bySlug.jira._id, {
+        verdict: 'ungranted',
+        reason: 'returned no manager identity',
+        ...approved,
+      });
+    });
+    const candidates = await harness.query(internal.orientationData.reprobeCandidates, {});
+    expect(candidates.map((surface): string => surface.slug)).toEqual(['slack']);
+    const slack = { ...bySlug.slack, ...approved, verdict: 'ungranted' as const };
+    expect(
+      isReprobeCandidate({
+        ...slack,
+        reason: 'the agent has no manager email, so the manager DM cannot be derived.',
+      }),
+    ).toBe(true);
+    expect(
+      isReprobeCandidate({
+        ...slack,
+        reason: 'the manager email boss@day0.local resolves to a deactivated Slack user.',
+        managerApprovedAt: undefined,
+      }),
+    ).toBe(false);
   });
 
   it('returns all agent surfaces to the deployment-local intake sweep', async (): Promise<void> => {

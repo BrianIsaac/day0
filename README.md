@@ -41,7 +41,7 @@ Three things to know before the rest of this file. Each is repeated where it app
 
 The container images for the backend, the model service, the sandbox, the redactor and the components are pinned by digest in `docker-compose.yml`; the package versions are in `package.json` and the [Stack](#stack) table. Provider-side processing and retention of anything sent to a hosted model or workspace follow your own account terms with that provider.
 
-Who receives what. On the hosted demo, the sign-in email goes to Clerk, the pages are served by Vercel, every row is stored in Convex's cloud, the chat and the mock office's content go to the model provider the deployment names, and a voice 1:1, when used, goes to ElevenLabs with the manager's email address. In real mode on your machine, the documentation you link and the text the agent reads from your systems go to the model provider you configure (to nobody on the local model route), and orientation looks a documented system up by name in the public MCP Registry (`registry.modelcontextprotocol.io`) when its documentation mentions an MCP server; a skill's smoke test runs on Daytona instead of the bundled sandbox only when a `DAYTONA_API_KEY` is set. Every third-party work Day0 adapts, runs, downloads or depends on is credited, with its licence and holder, in [`NOTICE`](NOTICE).
+Who receives what. On the hosted demo, the sign-in email goes to Clerk, the pages are served by Vercel, every row is stored in Convex's cloud, the chat and the mock office's content go to the model provider the deployment names, a skill the agent writes is smoke-tested on Daytona, and a voice 1:1, when used, goes to ElevenLabs with the manager's email address. In real mode on your machine, the documentation you link and the text the agent reads from your systems go to the model provider you configure (to nobody on the local model route), and orientation looks a documented system up by name in the public MCP Registry (`registry.modelcontextprotocol.io`) when its documentation mentions an MCP server; a skill's smoke test runs on Daytona instead of the bundled sandbox only when a `DAYTONA_API_KEY` is set, and a voice 1:1, when used with ElevenLabs keys set, goes to ElevenLabs with the manager's email address, as on the hosted demo. Every third-party work Day0 adapts, runs or downloads is credited, with its licence and holder, in [`NOTICE`](NOTICE), and so is every direct dependency and each transitive one whose licence asks something of a redistributor.
 
 **AI-assisted development.** The code, tests and documentation in this repository were written with AI coding agents, under human direction and review, and the commit history is the record of that work. The design, the evaluation method and every claim in this file were decided and checked by the maintainers.
 
@@ -415,7 +415,7 @@ Every service in `docker-compose.yml` sits behind a profile, and the profiles ar
 
 ## Real mode
 
-Both local ways are real mode: link your documentation and connect the systems it names through approval cards; those systems still need authorised access. Real mode is local-only. Day0 reads the documentation you point it at, proposes a connection to each system that documentation records, and - once you approve a card - acts on those systems for real: a comment on your ticket, a message in your channel, a form filled in on a web UI it drives through a browser. The **seeded mock office** the hosted demo works in - fixtures for the systems, the tickets and the messages, with nothing the agent does leaving your machine - is the other setting of the same variable, kept for the evaluation harness and documented under [Evaluation and the mock office](#evaluation-and-the-mock-office).
+Both local ways are real mode: link your documentation and connect the systems it names through approval cards; those systems still need authorised access. Real mode is local-only. Day0 reads the documentation you point it at, proposes a connection to each system that documentation records, and - once you approve a card - acts on those systems for real: a comment on your ticket, a message in your channel, a form filled in on a web UI it drives through a browser. The **seeded mock office** the hosted demo works in - fixtures for the systems, the tickets and the messages, where nothing the agent does reaches a real system, though its model calls still go to the provider configured - is the other setting of the same variable, kept for the evaluation harness and documented under [Evaluation and the mock office](#evaluation-and-the-mock-office).
 
 It is deliberately restricted to local no-auth development. `DAY0_SURFACE_MODE=real` throws unless `NEXT_PUBLIC_DEV_NO_AUTH=true`, `NODE_ENV=development` and nothing names Vercel, so the mode that can touch live systems cannot be reached on a hosted deployment at all (`src/lib/surface-mode.ts`).
 
@@ -426,7 +426,7 @@ Real mode adds optional components, and each one is a Compose profile. `real` is
 | Profile | Component | You need it when |
 |---|---|---|
 | `docs-notion` | Notion's own MCP server, run inside your network | your documentation is in Notion. A folder, a git repository or a list of URLs needs no component |
-| `browser` | Playwright MCP, day0's browser floor | a system your documentation records has a web UI and no API |
+| `browser` | Playwright MCP, day0's browser floor | a system your documentation records has a web UI and no API. Its page must carry a probe marker, or the card is not connected: the title the page shows (`` Probe marker: page title `Sign in - Looker` ``), and for a page behind a login an element it shows once signed in (`` Probe marker: after sign-in, element `Pipeline coverage` ``), which makes the probe sign in with the credential. See [Writing documentation day0 acts on](docs/running/documentation.md#saying-how-a-system-is-reached) |
 | `demo` | a synthetic Looker-style pipeline tile with a login | you want a web-UI-only system to drive without pointing day0 at a real one |
 | `sandbox` | the networkless skill sandbox | always, unless you have a `DAYTONA_API_KEY` |
 | `redactor` | the span model that redacts documentation and the ledger | always in real mode: documentation sync refuses to store a page without it, provider outcomes record that only the exact-value and structural layers ran, and `pnpm check:setup` fails a real-mode installation where it is missing or not running |
@@ -434,7 +434,7 @@ Real mode adds optional components, and each one is a Compose profile. `real` is
 What each is for, and what it never sees, is in [`docs/running/components.md`](docs/running/components.md).
 
 On Linux x86-64 with Python 3.12, the redactor's first CPU start downloads about
-251 MB of pinned wheels and 1.16 GB of weights and tokenizer files, plus the
+251 MB of pinned wheels and 1.16 GB of weights and tokeniser files, plus the
 container image if it is not cached. These downloads need network access; inference
 runs locally without an account. CUDA wheels require additional space; their download
 size has not been verified here. Detection can miss secrets, and structural-only
@@ -486,7 +486,7 @@ Then, in the browser:
    ![The real-mode documentation page after sync, showing a seven-page team folder and a six-page Notion source, both marked synced](.github/images/documentation-sources.webp)
 
 2. **Deploy an agent**, then **hold the Day-1 1:1** and approve the charter it writes. Voice needs ElevenLabs; chat needs nothing and runs the identical seven topics. The agent will ask about tools and reading that the documentation already answers - answer anyway; the charter records what you said.
-3. **Approve the connection cards** on the Surfaces tab. Orientation proposes one card per system the documentation and the charter name, each with the evidence it was proposed from and the credential it found, and each needs *both* the manager and IT approval buttons - in a single-user run that is you twice. A Slack card with no `DAY0_PUBLIC_URL` offers a field to land a shared bot token instead of provisioning an app; paste the token there *before* approving, because the probe runs the moment the second approval lands. A system with no approved path stays `absent`, and work that needs it defers at the connection gate instead of guessing.
+3. **Approve the connection cards** on the Surfaces tab. Orientation proposes one card per system the documentation and the charter name, each with the evidence it was proposed from and the credential it found, and each takes one approval, the manager's Approve button. A Slack card with no `DAY0_PUBLIC_URL` offers a field to land a shared bot token instead of provisioning an app; paste the token there *before* approving, because the probe runs the moment the approval lands. A system with no approved path stays `absent`, and work that needs it defers at the connection gate instead of guessing.
 
    ![The Surfaces tab reporting four connections, with the connected Linear and Slack cards side by side and their approved connection ladders](.github/images/connection-cards.webp)
 
@@ -502,13 +502,13 @@ Then, in the browser:
 
    ![The retry after a manager's written rejection reason, with revised close-summary and Done actions held while the ledger records the manager-provided evidence](.github/images/revision-from-feedback.webp)
 
-5. **Read the ledger.** The Supervision card counts what you approved, rejected and revoked. The same trail as JSON is one action, which removes every credential value stored for the owner before it answers, and because every per-agent function checks the caller, the CLI has to present the local owner's identity to run it:
+5. **Read the ledger.** The Supervision card counts what you approved, rejected and revoked. The same trail as JSON is one command, which writes the agent's whole trace to one file a page at a time (one call cannot return it whole: the export action answers with the head and where the pages start), with every credential value stored for the owner and the personal data the export's redaction policy names removed:
 
    ```bash
-   npx convex run exportActions:exportForAgent '{"agentId":"<id>"}' --identity '{"subject":"dev-no-auth|local-boss"}'
+   pnpm export:trace <id> --out trace.json
    ```
 
-   Without `--identity` the call is refused as not authenticated - that is the no-auth boundary, not a broken export. The agent id is the last segment of the dashboard URL.
+   Every per-agent function checks the caller, so the command presents the local owner's identity (`dev-no-auth|local-boss`; `--identity` names another). The agent id is the last segment of the dashboard URL, and `pnpm metrics:recompute trace.json` recomputes the card from the file.
 
    ![A clean revocation evidence composite: Linear write is revoked, the in-flight comment is refused for no grant, and supervision records one blocked action with complete audit coverage](.github/images/revocation-supervision.webp)
 
@@ -592,7 +592,7 @@ These are the real-mode forms. A mock deployment, the seeded office `pnpm setup:
 2. **The functions, the migrations, the stamp.** `npx convex dev --once` pushes the functions before the env, so a push the new schema refuses leaves the old functions serving with the env they had. A volume nothing was ever pushed to (a first run that stopped before its push) has no tables, and takes the env first as a new one does, since the auth config is read from the deployment's env at the push. `npx convex run migrations:runPending` then runs every migration the release ships, a bounded page per transaction, resuming where an interrupted run stopped; `npx convex run migrations:status` says how far each has got. `migrations:recordRelease` stamps the release as soon as they finish, and refuses while any is unfinished, so migrated rows never carry the release before theirs whatever fails after.
 3. **The env, then the restart.** `pnpm sync:env`, then `pnpm convex:restart` once everything before it succeeded.
 
-A schema change existing rows do not fit ships as two releases: the first declares both shapes and migrates, the second removes the old declaration. The migrations in `convex/migrations.ts` say what the release after theirs may remove: `agents.posture`, `agents.docSourceIds` and its read, `skills.daytonaSandboxId`, `skills.supervisedRunsCompleted` and `surfaces.credentialRef`. `npx convex run skills:requeueStranded` is an earlier one-off that no migration runs; the sandbox-id move it sat beside is now the `skills-sandbox-id` migration.
+A schema change existing rows do not fit ships as two releases: the first declares both shapes and migrates, the second removes the old declaration. The migrations in `convex/migrations.ts` say what the release after theirs may remove. v0.6.0 removed `agents.posture`, `agents.docSourceIds` and its read, `skills.daytonaSandboxId`, `skills.supervisedRunsCompleted` and `surfaces.credentialRef`, whose migrations shipped in v0.4.0; the upgrade refuses to push while any of those migrations is unfinished on the deployment, before anything changes. `npx convex run skills:requeueStranded` is an earlier one-off that no migration runs.
 
 The demo bed and the hosted deployment take the same upgrade. `pnpm demo:bed up` checks the release of the restored snapshot before it changes anything, then pushes the functions, runs the migrations and stamps the release before it pushes the env, and a snapshot records the commit, the release and the backend image beside its checksum. On Convex cloud: read the stamp (`npx convex data deploymentVersions --prod --limit 1`), `npx convex deploy`, `npx convex run migrations:runPending --prod` until nothing is pending, `npx convex run migrations:recordRelease --prod '{"release":"<version>"}'`, then deploy the app.
 
@@ -665,6 +665,7 @@ Copy `.env.example` to `.env.local` and fill in:
 | `DAY0_CREDENTIAL_KEY` | Encrypts every stored credential. Written by `pnpm dev:no-auth-key` and pushed to the deployment; `pnpm sync:env` refuses real mode without it |
 | `DAY0_NOTION_MCP_AUTH_TOKEN` | Authenticates the private hop to the bundled Notion component. Written by `pnpm dev:no-auth-key`; `--profile docs-notion` refuses to start without it |
 | `DAY0_BROWSER_MCP_URL` | The switch that tells day0 it has a browser component. `http://playwright-mcp:8931/mcp` for the bundled one, paired with `--profile browser`. Unset means this deployment has no browser, and every browser action is refused with `BROWSER_DRIVER_ABSENT` |
+| `PLAYWRIGHT_ALLOWED_ORIGINS` | The origins the bundled browser component may open at all, semicolon-separated (`http://looker-tile:8080;http://host.docker.internal:3000` by default). It is one list for the whole deployment, a floor under day0's own check that every browser action stays on its card's documented page: add the origin of each web UI a card will drive, and nothing else |
 | `DAY0_REDACTOR_URL` | The redaction component as the backend reaches it: `http://redactor:8000` for the bundled one, paired with `pnpm redactor:up`. Unset means no component: a documentation sync refuses to persist, and a provider outcome is recorded as `structural-only` |
 | `DAY0_PUBLIC_URL` | The https origin a provider redirects a finished OAuth install back to. Needed only to provision a dedicated Slack app; unset, Slack is connected with a shared bot token instead |
 
@@ -786,7 +787,7 @@ It resolves values the way the running app does, which matters more than it soun
    - Chat: `POST /api/voice/chat` streams the configured model until the `dayOneComplete` tool fires; the client posts the transcript to `POST /api/onboarding/synthesise`.
 3. **Charter synthesis** — `synthesiseFromTranscript` extracts 7 answers, calls `synthesiseCharter()`, persists the charter, writes seven workspace files. State → `charter-pending`.
 4. **Approval** — the card lists the rules the draft derived from the transcript, each with its quote; the boss strikes any of them, then approves. `api.charters.approve` applies the strikes to the clauses, flips state to `active` and triggers `postCharterApproval` (real mode declares the named systems and runs orientation, mock mode seeds the generated work items; no web-research call and no search key). Afterwards `api.charters.amend` writes each change as a new version that supersedes the last and schedules `work.reevaluatePending` for the parked work; `work.setPlan` asks each of the charter's open questions once, at the first plan that touches it, and `api.work.approvePlan` takes the answers with the approval.
-5. **Work loop** — `WorkQueue` reactively triggers `evaluateWorkItem` for each `discovered` item; its first criterion is one scope judgement (`src/work/scope.ts`), and a skipped or deferred item returns to `discovered` when the policy it was judged under changes (a charter amendment, a changed documentation page, a surface connecting) or when the manager retries it with the quality-fit filter or the scope rule waived. Claimed items get a plan (`draftPlan`, grounded in the ticket record or the chat thread when the surface can read it), the boss approves (`api.work.approvePlan`), then `executeApprovedPlan` runs the skill and dispatches mock-environment actions (`spreadsheet.appendRow`, `slack.postMessage`, `twitter.reply`, `ticket.update`). Slack posts schedule a coworker reply 3.5–6 s later. In real mode, linked documentation feeds orientation, two-approval connection cards and the exact-action gate; approved actions reach connected systems through `mcp.call`, `http.request` and allowlisted `browser_*` operations. See [Real mode](#real-mode). In real mode a held write with a wrong argument name is repaired once against the probed names before it is held, a run that lands nothing and leaves nothing to decide ends `failed` with a `stopped:` reason and no DM, a run that landed work leaves a manager note that is sent at once or in the hourly digest, and held rows across items can be approved in one batch, each still under its own run and idempotency keys. **Those three queue calls are made from the agent page**, so the queue steps forward only while a browser has it open; each call, once made, finishes on the backend whether or not the tab survives it. Close the tab mid-queue and nothing is lost, but nothing moves either until you open it again.
+5. **Work loop** — `WorkQueue` reactively triggers `evaluateWorkItem` for each `discovered` item; its first criterion is one scope judgement (`src/work/scope.ts`), and a skipped or deferred item returns to `discovered` when the policy it was judged under changes (a charter amendment, a changed documentation page, a surface connecting) or when the manager retries it with the quality-fit filter or the scope rule waived. Claimed items get a plan (`draftPlan`, grounded in the ticket record or the chat thread when the surface can read it), the boss approves (`api.work.approvePlan`), then `executeApprovedPlan` runs the skill and dispatches mock-environment actions (`spreadsheet.appendRow`, `slack.postMessage`, `twitter.reply`, `ticket.update`). Slack posts schedule a coworker reply 3.5–6 s later. In real mode, linked documentation feeds orientation, connection cards the manager approves and the exact-action gate; approved actions reach connected systems through `mcp.call`, `http.request` and allowlisted `browser_*` operations. See [Real mode](#real-mode). In real mode a held write with a wrong argument name is repaired once against the probed names before it is held, a run that lands nothing and leaves nothing to decide ends `failed` with a `stopped:` reason and no DM, a run that landed work leaves a manager note that is sent at once or in the hourly digest, and held rows across items can be approved in one batch, each still under its own run and idempotency keys. **Those three queue calls are made from the agent page**, so the queue steps forward only while a browser has it open; each call, once made, finishes on the backend whether or not the tab survives it. Close the tab mid-queue and nothing is lost, but nothing moves either until you open it again.
 6. **Skill creation** - when the evaluator returns `needs-skill`, `internal.skills.propose` creates a proposed skill. On approve, `authorAndRegisterSkill` runs the configured model (`gpt-5.6-terra` by default) to author `SKILL.md` + `smoke.py`, runs the smoke test in a sandbox, and registers the skill on success. The sandbox is Daytona where `DAYTONA_API_KEY` is set and the [bundled local one](#the-local-skill-sandbox) otherwise; success means exit 0 **and** one distinct stdout line per representative input set (two), whichever ran. In real mode the author writes only `run()` and `CASES`, its two input sets, and the sandbox runs a harness around them (`src/work/smoke-harness.ts`) that calls `run()` once per case and prints the lines itself. It holds what `run()` returned against the skill it stands for: every action is `mcp.call` or `http.request` on a surface the author was shown as connected, with a tool that surface allows and `SKILL.md` names; at least two cases emit actions and one acts on the skill's target surface; each case's action arguments carry a value that case supplied, including the record and the reply target when the case gives them; and the action arguments, not only the outputs, differ between cases. It is still a check of the author's mimic and not of a provider's answer; the author's `assert` statements are never compiled, so no assertion it writes about its own output can fail the check. Before any sandbox runs, a static gate refuses a body or smoke test that repeats the identifiers, figures or quoted phrases of the work item that proposed the skill; the reason lands on the row for the retry. An input the body uses without declaring it is refused as well in mock mode; real mode declares it for the author, as read from the candidate or its runbook, and the verification log says so. A skill whose sandbox said no, or that no sandbox ran at all, stops before `registered` and is **not callable**; the skills panel lists it under "not registered · not callable" with a retry.
 7. **Reset** — `api.reset.deleteMyData` deletes each agent and its rows from 23 explicitly enumerated related tables, a list `tests/convex/reset.test.ts` checks against the schema. Owner-level documentation locations and stored credentials remain unless the reset request sets `alsoUnlinkDocumentation`, which unlinks every documentation source and revokes every credential the owner holds, deleting its ciphertext; the credential rows stay, value-free, as the audit trail of what was held.
 
@@ -874,7 +875,7 @@ It resolves values the way the running app does, which matters more than it soun
 
 ## Schema (`convex/schema.ts`)
 
-The schema contains 32 tables: 24 carry per-agent or agent-owned runtime state, five hold owner-level documentation and credential state, one is the transient lease on the verification sandbox, and two are the deployment's own record of the migrations it has run and the release its rows are at.
+The schema contains 34 tables: 24 carry per-agent or agent-owned runtime state, one keeps the owner's record of the employees it retired, six hold owner-level documentation and credential state, one is the transient lease on the verification sandbox, and two are the deployment's own record of the migrations it has run and the release its rows are at.
 
 | Table | Purpose |
 |---|---|
@@ -886,11 +887,13 @@ The schema contains 32 tables: 24 carry per-agent or agent-owned runtime state, 
 | `docSources` | Linked MCP, folder, git and URL documentation locations with sync/discovery status |
 | `docSyncRuns` | Fenced source generations, safe continuation cursors and page/redaction totals |
 | `docPages` | Normalised, credential-redacted pages keyed by source and stable reference |
+| `docPageListings` | The listing of its source that last named each page, which a finishing sync prunes by |
 | `docSystemDiscoveries` | Current and retired evidence-backed system candidates derived from each source |
 | `surfaces` | Per-agent system connection cards, approvals, paths, probe results, tool catalogues and intake checkpoints |
 | `voiceSessions` | Day-1 1:1 sessions (`elevenlabs` / `gemini-live` / `chat`) |
 | `workItems` | Work items in the twelve-state lifecycle, including exact-action decisions, provider reconciliation, the manager's feedback, waivers and answers, and the re-evaluation stamp |
 | `externalClaims` | One live claim per provider item across employees, released on cancellation and retaken before a retry resumes |
+| `retirements` | One row per employee a real-mode retire deleted, under its owner: what went, what was revoked, and the claims and rejections its colleagues still meet |
 | `managerDecisionNotices` | Idempotent received/unknown acknowledgements for parsed manager-channel replies |
 | `decisionBatches` | One channel code per set of held action decisions open at once, naming each member's item, code and run |
 | `managerNotes` | What the gate tells the manager about a finished run, sent per run or claimed by the hourly digest |
@@ -953,7 +956,7 @@ The contracts a third party calls, reuses or extends are documented in [`docs/ru
 - **The surface record and the action shapes.** The `surfaces` row (verdict, path ladder, approvals, credential reference, tool allowlist), the mock verbs, the real verbs `mcp.call` and `http.request`, the allowlisted `browser_*` operations, and the idempotency key.
 - **The exact-action policy, the adapter interface and the ledger row.** Dispositions, scopes and authorities; what an adapter implements; what an applied action records and what the export returns.
 
-The optional components, what each is for and what it never sees, are in [`docs/running/components.md`](docs/running/components.md). The environment contract is `.env.example`, and [Environment](#environment) explains each variable.
+The optional components, what each is for and what it never sees, are in [`docs/running/components.md`](docs/running/components.md). The environment contract is `.env.example`, and [Environment](#environment) explains each variable. For whoever writes your company's documentation, [`docs/running/documentation.md`](docs/running/documentation.md) is the author guide to the page shapes day0 reads and acts on (which pages it reads, how a system is named and reached, the probe marker, how to write a credential, a team's channels), with every example run by a test.
 
 ## Evaluation
 
@@ -982,7 +985,7 @@ Every figure this README quotes comes from a file in this repository or from a r
 | The controlled comparison table: task pass, procedure adherence, prohibited-free, out-of-scope, supervision, per bed | `evaluation/results/2026-09-02T08-35-22Z-v2-qwen8b/`, `2026-09-02T13-59-20Z-v3-terra/`, `2026-09-02T14-28-33Z-v3-sol/` and `2026-09-12T07-54-47Z-v5-glm53flash/`, each with `semifinal.json`, `semifinal.md` and `SHA256SUMS` (the harness's earlier file names, which these recorded directories keep) | `pnpm eval:comparison` with the bed's model in `.env.local`; `pnpm eval:comparison -- --regrade <path>` re-scores a directory with no model call while its run's mock backend is kept; these directories' backends were not retained, so they cannot be re-scored from a clone |
 | The revocation trials: 19 attempts, 15 blocked, 4 landed by design, 0 unexpected, 66 ms median and 151 ms maximum to block, 0 provider calls, 5 of 5 switch-off attempts blocked | `evaluation/results/revocation-2026-09-02T12-17-54Z/trials.md`; the GLM row in `evaluation/results/2026-09-12T07-54-47Z-v5-glm53flash/revocation/` | `pnpm eval:revocation` |
 | The exact-action gate matrix | `evaluation/gate/` | `pnpm eval:gate`, which calls no model |
-| The recorded run's supervision figures: charter approved 1 min 07 s after deployment, 2 approved and 0 rejected, 48 s median decision latency, no revocation in the run and so no action blocked after one, audit trail 26 of 26 | The Supervision card of a recorded 17 September 2026 real-mode run of the same route, on `GLM 5.3 Flash` through Featherless, as `metrics:forAgent` computes it from that run's event ledger. That run's backend export is not in this repository | Run [either local way](#local-dev); read the card, or export the ledger with the `exportActions:exportForAgent` command in [Read the ledger](#real-mode) |
+| The recorded run's supervision figures: charter approved 1 min 07 s after deployment, 2 approved and 0 rejected, 48 s median decision latency, no revocation in the run and so no action blocked after one, audit trail 26 of 26 | The Supervision card of a recorded 17 September 2026 real-mode run of the same route, on `GLM 5.3 Flash` through Featherless, as `metrics:forAgent` computes it from that run's event ledger. That run's backend export is not in this repository | Run [either local way](#local-dev); read the card, or export the ledger with `pnpm export:trace` as in [Read the ledger](#real-mode) |
 | This README's documented run: 5 min 8 s, 7 and 1, 2 min 7 s, 1, 41 of 41 | [The numbers this run ended on](#the-numbers-this-run-ended-on), the route's documented run on `gpt-5.6-terra` at an earlier commit, paced for screenshots | The same |
 
 The two real-mode runs are single observations of the same route a fortnight apart, on different commits, different models and different human pacing; the README run exercised a rejection and a revocation and the recorded run did not, so its blocked-after-revocation figure has no value. Neither is a distribution, and the table above names which number comes from which. Earlier result directories are audit history and are not quoted anywhere.
@@ -1009,7 +1012,10 @@ It wants Node 22+, pnpm, a self-hosted backend in **mock** mode and the local sa
 pnpm install
 
 # .env.local: self-hosted URL/admin key, no-auth keys, model settings,
-# DAY0_SURFACE_MODE=mock, and no DAYTONA_API_KEY. For bundled qwen3:8b:
+# DAY0_SURFACE_MODE=mock, and no DAYTONA_API_KEY. Name the deployment an
+# evaluation bed, or the harness refuses every call:
+# DAY0_EVALUATION_BED=comparison
+# For bundled qwen3:8b:
 # OPENAI_MODEL=qwen3:8b
 # OLLAMA_CONTEXT_LENGTH=16384
 pnpm convex:up
@@ -1029,13 +1035,13 @@ pnpm eval:comparison -- --regrade evaluation/results/<timestamp>/comparison.json
 pnpm eval:comparison -- --arms day0 --runs 1 --tasks EVAL-WRITE-01                # a subset
 ```
 
-`pnpm eval:revocation` runs the permissions half separately - a grant revoked while an action is queued, and the block recorded - and writes `evaluation/results/revocation-<timestamp>/`. `npx convex run exportActions:exportForAgent '{"agentId":"<id>"}' --identity '{"subject":"dev-no-auth|local-boss"}'` exports one agent's whole event trail as JSON, which is the same ledger the Supervision card counts; the identity flag is what lets the CLI pass the per-agent ownership check in no-auth mode.
+`pnpm eval:revocation` runs the permissions half separately - a grant revoked while an action is queued, and the block recorded - on a real-mode deployment that also names itself a bed (`DAY0_EVALUATION_BED` in `.env.local`, then `pnpm sync:env`), and writes `evaluation/results/revocation-<timestamp>/`. `pnpm export:trace <id> --out trace.json` exports one agent's whole trace as JSON, a page at a time, which is the same ledger the Supervision card counts; it presents the local owner's identity so the per-agent ownership check passes in no-auth mode.
 
 The frozen evidence directories this README quotes, and their numbers, are listed on the [evaluation page](evaluation/README.md). They were written before 27 September 2026 and keep the file names the harness wrote then, `semifinal.json` and `semifinal.md`; a new run writes `comparison.json` and `comparison.md`. Earlier directories are kept as superseded audit history and are not used for any conclusion.
 
 ## Evaluation and the mock office
 
-Mock mode is the seeded office: team docs, a spreadsheet, chat channels, a ticket queue and a social feed, fixtures shipped in this repository and seeded per agent, so a run is reproducible on a stranger's laptop and nothing the agent does leaves your machine. It is what the [controlled comparison](evaluation/README.md) and its frozen beds ran on, and the workspace the [hosted demo](#live-demo) deploys agents into. It is not one of the ways to run Day0 on your own systems - both local ways are [real mode](#real-mode) - and it is documented here as what it is for: a bed for the harness, and the office the hosted demo shows. In it the model calls, the sandbox, the state machine and the approval gates are still real.
+Mock mode is the seeded office: team docs, a spreadsheet, chat channels, a ticket queue and a social feed, fixtures shipped in this repository and seeded per agent, so a run is reproducible on a stranger's laptop and nothing the agent does reaches a real system; the model calls still go to the provider you configure. It is what the [controlled comparison](evaluation/README.md) and its frozen beds ran on, and the workspace the [hosted demo](#live-demo) deploys agents into. It is not one of the ways to run Day0 on your own systems - both local ways are [real mode](#real-mode) - and it is documented here as what it is for: a bed for the harness, and the office the hosted demo shows. In it the model calls, the sandbox, the state machine and the approval gates are still real.
 
 Its command is the same setup in mock mode, with the same choice of where the model runs:
 
@@ -1141,7 +1147,7 @@ Day0 从更早的一步开始。它在空白状态下部署，之后形成的一
 
 后端、模型服务、沙箱、redactor 与各组件的容器镜像在 `docker-compose.yml` 中按 digest 固定；软件包版本见 `package.json` 与[技术栈](#stack)表。发送给托管模型或 workspace 的内容，其服务商侧处理与保留遵循你与该服务商的账户条款。
 
-谁会收到什么。在托管演示中，登录邮箱发送给 Clerk，页面由 Vercel 提供，所有数据行存储在 Convex 云端，聊天内容与 mock office 的内容发送给该 deployment 指定的模型服务商；使用语音一对一时，通话连同经理的邮箱地址发送给 ElevenLabs。在你本机运行的 real mode 中，你链接的文档以及 Agent 从你的系统读取的文本发送给你配置的模型服务商（本地模型路线则不发送给任何人）；当某个已记录系统的文档提到 MCP server 时，orientation 会按系统名在公开的 MCP Registry（`registry.modelcontextprotocol.io`）中查询；只有设置了 `DAYTONA_API_KEY` 时，技能的冒烟测试才会在 Daytona 而不是随附沙箱上运行。Day0 改编、运行、下载或依赖的每一项第三方作品，连同其许可与权利人，都列在 [`NOTICE`](NOTICE) 中。
+谁会收到什么。在托管演示中，登录邮箱发送给 Clerk，页面由 Vercel 提供，所有数据行存储在 Convex 云端，聊天内容与 mock office 的内容发送给该 deployment 指定的模型服务商，Agent 编写的技能在 Daytona 上做冒烟测试；使用语音一对一时，通话连同经理的邮箱地址发送给 ElevenLabs。在你本机运行的 real mode 中，你链接的文档以及 Agent 从你的系统读取的文本发送给你配置的模型服务商（本地模型路线则不发送给任何人）；当某个已记录系统的文档提到 MCP server 时，orientation 会按系统名在公开的 MCP Registry（`registry.modelcontextprotocol.io`）中查询；只有设置了 `DAYTONA_API_KEY` 时，技能的冒烟测试才会在 Daytona 而不是随附沙箱上运行；设置了 ElevenLabs key 并使用语音一对一时，与托管演示一样，通话连同经理的邮箱地址发送给 ElevenLabs。Day0 改编、运行或下载的每一项第三方作品，连同其许可与权利人，都列在 [`NOTICE`](NOTICE) 中；每个直接依赖，以及许可对再分发者有要求的每个传递依赖，也都列在其中。
 
 **AI 辅助开发。** 本仓库中的代码、测试和文档是在人工指导与审查下、借助 AI 编码代理编写的，提交历史即为这项工作的记录。设计、评测方法以及本文件中的每一项主张均由维护者决定并核对。
 
@@ -1470,7 +1476,7 @@ pnpm convex:down                 # the backend; the data volume stays
 
 ### 真实模式
 
-两种本地方式都是 real mode：链接你的文档，并通过审批卡片连接文档中记录的系统；这些系统仍然需要经过授权的访问。real mode 只限本机。此时 day0 会读取你指定的文档，为文档记录的每个系统提出连接申请；在你批准卡片之后，它会真正操作这些系统：在你的工单上留言、在你的频道里发消息、通过浏览器在 Web UI 上填写表单。托管演示所使用的 **seeded mock office**（系统、工单和消息都是 fixture，Agent 的任何操作都不会离开本机）是同一个变量的另一个取值，为评测 harness 保留，见[评测与 mock office](#评测与-mock-office)。
+两种本地方式都是 real mode：链接你的文档，并通过审批卡片连接文档中记录的系统；这些系统仍然需要经过授权的访问。real mode 只限本机。此时 day0 会读取你指定的文档，为文档记录的每个系统提出连接申请；在你批准卡片之后，它会真正操作这些系统：在你的工单上留言、在你的频道里发消息、通过浏览器在 Web UI 上填写表单。托管演示所使用的 **seeded mock office**（系统、工单和消息都是 fixture，Agent 的任何操作都不会触及真实系统，但模型调用仍会发送给所配置的服务商）是同一个变量的另一个取值，为评测 harness 保留，见[评测与 mock office](#评测与-mock-office)。
 
 该模式被刻意限制在本机无认证开发环境中。除非同一进程中 `NEXT_PUBLIC_DEV_NO_AUTH=true`、`NODE_ENV=development` 且不存在任何 Vercel 变量，否则 `DAY0_SURFACE_MODE=real` 会直接抛错（`src/lib/surface-mode.ts`），因此可以操作真实系统的模式无法在托管部署上启用。
 
@@ -1528,7 +1534,7 @@ npx convex run surfaces:setAccessDays '{"surfaceId":"<_id>","days":90}' --identi
    ![The real-mode documentation page after sync, showing a seven-page team folder and a six-page Notion source, both marked synced](.github/images/documentation-sources.webp)
 
 2. **部署一个 Agent**，然后**完成 Day-1 一对一**并批准它起草的章程。语音模式需要 ElevenLabs；文字模式无需任何账户，走完全相同的七个主题。Agent 会询问文档已经回答过的工具和阅读材料问题，照常回答即可；章程记录的是你的回答。
-3. **在 Surfaces 标签页批准连接卡片。** orientation 会为文档与章程中出现的每个系统生成一张卡片，附带提出该卡片的证据以及找到的凭据；每张卡片都需要 manager 和 IT *两个*批准按钮，在单用户运行中就是你点两次。未设置 `DAY0_PUBLIC_URL` 时，Slack 卡片会提供一个字段用于填入共享 bot token 以替代注册应用；请在批准*之前*粘贴 token，因为第二次批准落地的瞬间就会运行探测。没有已批准访问路径的系统保持 `absent`，需要它的工作会在连接关口 defer，而不是猜测。
+3. **在 Surfaces 标签页批准连接卡片。** orientation 会为文档与章程中出现的每个系统生成一张卡片，附带提出该卡片的证据以及找到的凭据；每张卡片只需一次批准，即 manager 的 Approve 按钮。未设置 `DAY0_PUBLIC_URL` 时，Slack 卡片会提供一个字段用于填入共享 bot token 以替代注册应用；请在批准*之前*粘贴 token，因为批准落地的瞬间就会运行探测。没有已批准访问路径的系统保持 `absent`，需要它的工作会在连接关口 defer，而不是猜测。
 
    ![The Surfaces tab reporting four connections, with the connected Linear and Slack cards side by side and their approved connection ladders](.github/images/connection-cards.webp)
 
@@ -1544,13 +1550,13 @@ npx convex run surfaces:setAccessDays '{"surfaceId":"<_id>","days":90}' --identi
 
    ![The retry after a manager's written rejection reason, with revised close-summary and Done actions held while the ledger records the manager-provided evidence](.github/images/revision-from-feedback.webp)
 
-5. **查看审计轨迹。** Supervision 卡片统计批准、拒绝与撤销的数量。同一条轨迹可以用一条 action 导出为 JSON，导出前会移除为该 owner 存储的所有凭据值；由于每个按 Agent 划分的函数都会校验调用者，CLI 必须以本机 owner 的身份运行：
+5. **查看审计轨迹。** Supervision 卡片统计批准、拒绝与撤销的数量。同一条轨迹可以用一条命令导出为 JSON：它逐页把该 Agent 的完整轨迹写入一个文件（一次调用无法返回全部：导出 action 只返回头部及各页的起点），导出前会移除为该 owner 存储的所有凭据值，以及导出脱敏策略列出的个人数据：
 
    ```bash
-   npx convex run exportActions:exportForAgent '{"agentId":"<id>"}' --identity '{"subject":"dev-no-auth|local-boss"}'
+   pnpm export:trace <id> --out trace.json
    ```
 
-   不带 `--identity` 时调用会以未认证被拒绝，这是无认证边界在起作用，而不是导出损坏。Agent id 是 dashboard URL 的最后一段。
+   每个按 Agent 划分的函数都会校验调用者，因此该命令以本机 owner 的身份运行（`dev-no-auth|local-boss`；`--identity` 可指定其他身份）。Agent id 是 dashboard URL 的最后一段，`pnpm metrics:recompute trace.json` 可从该文件重新计算卡片。
 
    ![A clean revocation evidence composite: Linear write is revoked, the in-flight comment is refused for no grant, and supervision records one blocked action with complete audit coverage](.github/images/revocation-supervision.webp)
 
@@ -1635,7 +1641,7 @@ pnpm convex:down --profile docs-notion --profile browser --profile demo
 2. **functions、迁移、记录版本。** `npx convex dev --once` 先于 env 推送 functions，因此新 schema 拒绝的 push 会让旧 functions 连同原有 env 继续服务。从未推送过任何内容的数据卷（首次运行在推送前停止）没有任何表，会像新数据卷一样先推送 env，因为 auth config 在推送时读取 deployment 的 env。随后 `npx convex run migrations:runPending` 运行本版本附带的全部迁移，每个事务处理有界的一页，中断后从停下处继续；`npx convex run migrations:status` 显示各迁移的进度。迁移一完成，`migrations:recordRelease` 就记录版本；只要还有迁移未完成它就拒绝，因此无论之后哪一步失败，已迁移的数据都不会仍标着上一个版本。
 3. **env，然后重启。** `pnpm sync:env`，此前各步都成功后 `pnpm convex:restart`。
 
-现有数据不符合的 schema 变更分两个版本发布：第一个同时声明新旧两种结构并迁移，第二个删除旧声明。`convex/migrations.ts` 中的迁移注明了下一版本可以删除的内容：`agents.posture`、`agents.docSourceIds` 及其读取、`skills.daytonaSandboxId`、`skills.supervisedRunsCompleted` 和 `surfaces.credentialRef`。`npx convex run skills:requeueStranded` 是更早的一次性命令，不由任何迁移运行；与它并列的 sandbox id 迁移现在是 `skills-sandbox-id` 迁移。
+现有数据不符合的 schema 变更分两个版本发布：第一个同时声明新旧两种结构并迁移，第二个删除旧声明。`convex/migrations.ts` 中的迁移注明了下一版本可以删除的内容。v0.6.0 删除了 `agents.posture`、`agents.docSourceIds` 及其读取、`skills.daytonaSandboxId`、`skills.supervisedRunsCompleted` 和 `surfaces.credentialRef`，它们的迁移随 v0.4.0 发布；只要部署上这些迁移中任何一个尚未完成，升级就会在做任何改动之前拒绝推送。`npx convex run skills:requeueStranded` 是更早的一次性命令，不由任何迁移运行。
 
 演示环境和托管 deployment 走同样的升级。`pnpm demo:bed up` 在改动任何内容之前检查恢复出的快照的版本，然后推送 functions、运行迁移并记录版本，最后才推送 env；快照在校验和旁边记录 commit、版本和 backend 镜像。在 Convex cloud 上：读取版本（`npx convex data deploymentVersions --prod --limit 1`），`npx convex deploy`，反复运行 `npx convex run migrations:runPending --prod` 直到没有待运行的迁移，`npx convex run migrations:recordRelease --prod '{"release":"<version>"}'`，然后部署应用。
 
@@ -1652,7 +1658,7 @@ pnpm convex:down --profile docs-notion --profile browser --profile demo
 - **surface 记录与 action 形状。** `surfaces` 行（verdict、path ladder、审批、凭据引用、工具 allowlist）、mock 动词、真实动词 `mcp.call` 与 `http.request`、allowlist 中的 `browser_*` 操作，以及幂等键。
 - **exact-action policy、adapter 接口与 ledger 行。** disposition、scope 与 authority；adapter 需要实现什么；一次已应用的 action 记录什么，导出返回什么。
 
-各可选组件的用途及其访问边界见 [`docs/running/components.md`](docs/running/components.md)。环境变量契约是 `.env.example`，[环境变量](#environment)一节解释每个变量。
+各可选组件的用途及其访问边界见 [`docs/running/components.md`](docs/running/components.md)。环境变量契约是 `.env.example`，[环境变量](#environment)一节解释每个变量。为公司编写文档的人可阅读 [`docs/running/documentation.md`](docs/running/documentation.md)：这是 day0 读取并据以行动的页面写法指南（读取哪些页面、如何命名和访问一个系统、探测标记、如何书写凭据、团队的频道），其中每个示例都由测试运行。
 
 ### 评测
 
@@ -1681,7 +1687,7 @@ Day0 通过一项受控比较来衡量：同一模型、同一非零 temperature
 | 受控比较表：各评测环境的 task pass、流程遵循、无禁止操作、超范围处理、写操作监督 | `evaluation/results/2026-09-02T08-35-22Z-v2-qwen8b/`、`2026-09-02T13-59-20Z-v3-terra/`、`2026-09-02T14-28-33Z-v3-sol/` 与 `2026-09-12T07-54-47Z-v5-glm53flash/`，各含 `semifinal.json`、`semifinal.md` 与 `SHA256SUMS`（harness 早期的文件名，这些已记录的目录保留原名） | 在 `.env.local` 中设置该环境的模型后运行 `pnpm eval:comparison`；`pnpm eval:comparison -- --regrade <path>` 在保留该次运行 mock 后端的前提下不调用模型重新评分；这些目录的后端未保留，无法从克隆重新评分 |
 | 撤权试验：19 次尝试、15 次阻断、4 次按既定设计落地、0 次意外，阻断中位 66 ms、最大 151 ms，0 次 provider 调用，5/5 次关闭开关后的尝试被阻断 | `evaluation/results/revocation-2026-09-02T12-17-54Z/trials.md`；GLM 一行见 `evaluation/results/2026-09-12T07-54-47Z-v5-glm53flash/revocation/` | `pnpm eval:revocation` |
 | exact-action gate 矩阵 | `evaluation/gate/` | `pnpm eval:gate`，不调用模型 |
-| 录制运行的监督数字：部署后 1 分 07 秒章程获批、批准 2 次与拒绝 0 次、决策中位 48 秒、本次运行未撤权因而没有撤权后阻断、审计轨迹 26/26 | 同一路径在 2026 年 9 月 17 日录制的一次 real-mode 运行的 Supervision 卡片，模型为经 Featherless 的 `GLM 5.3 Flash`，由 `metrics:forAgent` 从该次运行的事件 ledger 计算。该次运行的后端导出不在本仓库中 | 运行[任一本地方式](#local-dev)；读取卡片，或按[读取 ledger](#真实模式)中的 `exportActions:exportForAgent` 命令导出 ledger |
+| 录制运行的监督数字：部署后 1 分 07 秒章程获批、批准 2 次与拒绝 0 次、决策中位 48 秒、本次运行未撤权因而没有撤权后阻断、审计轨迹 26/26 | 同一路径在 2026 年 9 月 17 日录制的一次 real-mode 运行的 Supervision 卡片，模型为经 Featherless 的 `GLM 5.3 Flash`，由 `metrics:forAgent` 从该次运行的事件 ledger 计算。该次运行的后端导出不在本仓库中 | 运行[任一本地方式](#local-dev)；读取卡片，或按[读取 ledger](#真实模式)中的 `pnpm export:trace` 导出 ledger |
 | 本文件记录的运行：5 分 8 秒、7 与 1、2 分 7 秒、1、41/41 | [本次运行最终的数字](#本次运行最终的数字)，同一路径在更早 commit 上以 `gpt-5.6-terra` 完成的文档化运行，节奏为截图而放慢 | 同上 |
 
 两次 real-mode 运行是同一路径相隔两周的单次观察，commit、模型与人工节奏均不同；README 运行经历了一次驳回与一次撤权，录制运行没有，因此其撤权后阻断一项没有数值。两者都不是分布，上表说明了每个数字出自哪一次。更早的结果目录仅为审计历史，任何地方都不再引用。
@@ -1707,7 +1713,10 @@ Day0 通过一项受控比较来衡量：同一模型、同一非零 temperature
 pnpm install
 
 # .env.local: self-hosted URL/admin key, no-auth keys, model settings,
-# DAY0_SURFACE_MODE=mock, and no DAYTONA_API_KEY. For bundled qwen3:8b:
+# DAY0_SURFACE_MODE=mock, and no DAYTONA_API_KEY. Name the deployment an
+# evaluation bed, or the harness refuses every call:
+# DAY0_EVALUATION_BED=comparison
+# For bundled qwen3:8b:
 # OPENAI_MODEL=qwen3:8b
 # OLLAMA_CONTEXT_LENGTH=16384
 pnpm convex:up
@@ -1727,13 +1736,13 @@ pnpm eval:comparison -- --regrade evaluation/results/<timestamp>/comparison.json
 pnpm eval:comparison -- --arms day0 --runs 1 --tasks EVAL-WRITE-01                # a subset
 ```
 
-`pnpm eval:revocation` 单独运行权限部分：在 action 排队期间撤销授权，并记录该阻断，结果写入 `evaluation/results/revocation-<timestamp>/`。`npx convex run exportActions:exportForAgent '{"agentId":"<id>"}' --identity '{"subject":"dev-no-auth|local-boss"}'` 导出单个 Agent 的完整事件轨迹，与 Supervision 卡片统计的是同一条轨迹；`--identity` 让 CLI 在无认证模式下通过按 Agent 划分的所有权校验。
+`pnpm eval:revocation` 单独运行权限部分：在 action 排队期间撤销授权，并记录该阻断；它运行在同样声明自己是评测环境的真实模式 deployment 上（在 `.env.local` 中设置 `DAY0_EVALUATION_BED`，然后 `pnpm sync:env`），结果写入 `evaluation/results/revocation-<timestamp>/`。`pnpm export:trace <id> --out trace.json` 逐页导出单个 Agent 的完整轨迹为 JSON，与 Supervision 卡片统计的是同一条轨迹；它以本机 owner 的身份运行，从而在无认证模式下通过按 Agent 划分的所有权校验。
 
 本文件引用的冻结证据目录及其数字列在[评测页面](evaluation/README.md)。这些目录写于 2026 年 9 月 27 日之前，保留 harness 当时写出的文件名 `semifinal.json` 与 `semifinal.md`；新的运行写出 `comparison.json` 与 `comparison.md`。更早的目录仅保留为 superseded audit history，不用于任何结论。
 
 ### 评测与 mock office
 
-mock mode 是预置的 office：团队文档、表格、聊天频道、工单队列和社交信息流，都是随本仓库提供、按 Agent 单独写入的 fixture，因此一次运行可以在陌生人的笔记本上复现，Agent 的任何操作都不会离开你的机器。[受控比较](evaluation/README.md)及其冻结的评测环境运行于其上，[托管演示](#在线演示)也把 Agent 部署到其中。它不是在你自己的系统上运行 Day0 的方式之一（两种本地方式都是 [real mode](#真实模式)），这里按其用途说明：评测 harness 的评测环境，以及托管演示展示的 office。在其中，模型调用、沙箱、状态机和审批门仍然是真实运行的。
+mock mode 是预置的 office：团队文档、表格、聊天频道、工单队列和社交信息流，都是随本仓库提供、按 Agent 单独写入的 fixture，因此一次运行可以在陌生人的笔记本上复现，Agent 的任何操作都不会触及真实系统；模型调用仍会发送给你配置的服务商。[受控比较](evaluation/README.md)及其冻结的评测环境运行于其上，[托管演示](#在线演示)也把 Agent 部署到其中。它不是在你自己的系统上运行 Day0 的方式之一（两种本地方式都是 [real mode](#真实模式)），这里按其用途说明：评测 harness 的评测环境，以及托管演示展示的 office。在其中，模型调用、沙箱、状态机和审批门仍然是真实运行的。
 
 它的命令是同一个 setup 的 mock mode，模型在哪里运行的选择也相同：
 
@@ -1802,7 +1811,7 @@ pnpm dev
 
 The pixel-art agent faces are not original to this project. They are from the public [**Singapore Codex Pets**](https://singapore-pet-share.vercel.app/) community gallery, which is built on the MIT-licensed [`portons/codex-pet-share`](https://github.com/portons/codex-pet-share) template. The gallery states no licence for its images. They are used here as demo art with this credit; the product knows each one only by its number (`Face 1` to `Face 29`) and names no person it depicts. Anyone reusing them beyond linking to the source should credit it.
 
-The redaction model is GLiNER (`urchade/gliner_multi_pii-v1`, Apache-2.0; Urchade Zaratiana, Nadi Tomeh, Pierre Holat and Thierry Charnois, "GLiNER: Generalist Model for Named Entity Recognition using Bidirectional Transformer", NAACL 2024) on Microsoft's `mdeberta-v3-base` (MIT). The local model route runs Qwen3 (Apache-2.0, Alibaba Cloud) through Ollama (MIT). The components run Notion's MCP server (MIT, Notion Labs) and Microsoft's Playwright MCP (Apache-2.0). The backend is Convex's self-hosted backend (FSL-1.1-ALv2, Convex, Inc.). [`NOTICE`](NOTICE) lists every one of these and every package dependency with its licence and holder, and carries the notices and licence texts their licences require; `scripts/notice.ts` generates it and the gate fails when it is stale.
+The redaction model is GLiNER (`urchade/gliner_multi_pii-v1`, Apache-2.0; Urchade Zaratiana, Nadi Tomeh, Pierre Holat and Thierry Charnois, "GLiNER: Generalist Model for Named Entity Recognition using Bidirectional Transformer", NAACL 2024) on Microsoft's `mdeberta-v3-base` (MIT). The local model route runs Qwen3 (Apache-2.0, Alibaba Cloud) through Ollama (MIT). The components run Notion's MCP server (MIT, Notion Labs) and Microsoft's Playwright MCP (Apache-2.0). The backend is Convex's self-hosted backend (FSL-1.1-ALv2, Convex, Inc.). [`NOTICE`](NOTICE) lists every one of these, every direct package dependency and each transitive one whose licence asks something of a redistributor, with its licence and holder, and carries the notices and licence texts their licences require; `scripts/notice.ts` generates it and the gate fails when it is stale.
 
 ## Licence
 

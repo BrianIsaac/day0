@@ -39,10 +39,15 @@ const charter: Charter = {
   version: '0.0',
   source: 'test',
   whyThisHire: 'Keep the Q3 close moving.',
-  proposedFunction: 'Move routine Q3 close revenue operations work from Linear tickets with a clear audit trail.',
+  proposedFunction:
+    'Move routine Q3 close revenue operations work from Linear tickets with a clear audit trail.',
   evidence: [],
   shortTermGoals: { day30: 'Learn', day60: 'Own', day90: 'Improve' },
-  proposedBoundaries: { willDo: ['Handle Q3 close tickets in Linear.'], willNotDo: [], escalationTriggers: [] },
+  proposedBoundaries: {
+    willDo: ['Handle Q3 close tickets in Linear.'],
+    willNotDo: [],
+    escalationTriggers: [],
+  },
   namedCollaborators: [],
   namedSystems: [],
   priorityReading: [],
@@ -73,9 +78,34 @@ const mockEnv = {
 
 const live = { verdict: 'connected' as const, credentialLanded: true, lastVerifiedAt: 1 };
 const surfaces: SurfaceRecord[] = [
-  { slug: 'linear', displayName: 'Linear', class: 'kanban', path: 'mcp', endpoint: 'https://mcp.linear.app/mcp', toolAllowlist: ['get_issue', 'list_issues', 'save_comment', 'save_issue'], ...live },
-  { slug: 'slack', displayName: 'Slack', class: 'chat', path: 'documented-api', endpoint: 'https://slack.com/api/', toolAllowlist: ['chat.postMessage'], managerDmChannelId: 'D0MANAGER', ...live },
-  { slug: 'looker-pipeline-tile', displayName: 'Looker pipeline tile', class: 'analytics', path: 'browser-driven', endpoint: 'http://looker-tile:8080/', toolAllowlist: ['browser_navigate', 'browser_fill_form', 'browser_click', 'browser_snapshot'], ...live },
+  {
+    slug: 'linear',
+    displayName: 'Linear',
+    class: 'kanban',
+    path: 'mcp',
+    endpoint: 'https://mcp.linear.app/mcp',
+    toolAllowlist: ['get_issue', 'list_issues', 'save_comment', 'save_issue'],
+    ...live,
+  },
+  {
+    slug: 'slack',
+    displayName: 'Slack',
+    class: 'chat',
+    path: 'documented-api',
+    endpoint: 'https://slack.com/api/',
+    toolAllowlist: ['chat.postMessage'],
+    managerDmChannelId: 'D0MANAGER',
+    ...live,
+  },
+  {
+    slug: 'looker-pipeline-tile',
+    displayName: 'Looker pipeline tile',
+    class: 'analytics',
+    path: 'browser-driven',
+    endpoint: 'http://looker-tile:8080/',
+    toolAllowlist: ['browser_navigate', 'browser_fill_form', 'browser_click', 'browser_snapshot'],
+    ...live,
+  },
 ];
 
 const phaseOne = {
@@ -93,9 +123,14 @@ const honest = {
     {
       tool: 'http.request' as const,
       args: {
-        surface: 'slack', method: 'POST' as const, path: '/chat.postMessage',
+        surface: 'slack',
+        method: 'POST' as const,
+        path: '/chat.postMessage',
         headersJson: JSON.stringify({ Authorization: 'Bearer {{secret}}' }),
-        body: JSON.stringify({ channel: 'D0MANAGER', text: 'Starting the REVOPS-5 audit note: check 1 from the tile read-back, check 3 from the Linear issue list; the audit comment follows in the closing phase.' }),
+        body: JSON.stringify({
+          channel: 'D0MANAGER',
+          text: 'Starting the REVOPS-5 audit note: check 1 from the tile read-back, check 3 from the Linear issue list; the audit comment follows in the closing phase.',
+        }),
       },
     },
   ],
@@ -122,9 +157,13 @@ describe('phase-one messages under the evidence check', (): void => {
     recorded.outputs.push(phaseOne, honest);
     const output = await run();
     expect(recorded.users).toHaveLength(2);
-    expect(recorded.users[1]).toContain(`action 6 (slack POST /chat.postMessage) says "${REVOPS_5_DM_2_CLAIM}"`);
+    expect(recorded.users[1]).toContain(
+      `action 6 (slack POST /chat.postMessage) says "${REVOPS_5_DM_2_CLAIM}"`,
+    );
     expect(recorded.users[1]).not.toContain('action 5 (slack POST /chat.postMessage)');
-    expect(recorded.users[1]).toContain('asserted a fact the ledger, the documentation and the manager\'s feedback do not carry');
+    expect(recorded.users[1]).toContain(
+      "asserted a fact the ledger, the documentation and the manager's feedback do not carry",
+    );
     expect(output.actions).toEqual(honest.actions);
   });
 
@@ -144,7 +183,10 @@ describe('phase-one messages under the evidence check', (): void => {
       tool: 'http.request' as const,
       args: {
         ...auditNotePrerequisites[6]!.args,
-        body: JSON.stringify({ channel: 'D0MANAGER', text: `${REVOPS_5_DM_2_CLAIM}\n\nAgain: ${REVOPS_5_DM_2_CLAIM}` }),
+        body: JSON.stringify({
+          channel: 'D0MANAGER',
+          text: `${REVOPS_5_DM_2_CLAIM}\n\nAgain: ${REVOPS_5_DM_2_CLAIM}`,
+        }),
       },
     };
     const doubled = { ...phaseOne, actions: [...auditNotePrerequisites.slice(0, 6), twice] };
@@ -152,7 +194,12 @@ describe('phase-one messages under the evidence check', (): void => {
     const audits: Array<{ indices: number[]; reason: string }> = [];
     const output = await runSkill({
       skill: { name: 'kanban-comment-and-close', description: 'Audit note.', body: '# Skill' },
-      plan: auditNotePlan, candidate, charter, mockEnv, mode: 'real', surfaces,
+      plan: auditNotePlan,
+      candidate,
+      charter,
+      mockEnv,
+      mode: 'real',
+      surfaces,
       onAuditCorrection: (indices, reason) => void audits.push({ indices, reason }),
     });
     expect(output.withheldActions).toHaveLength(1);

@@ -90,13 +90,28 @@ describe('a failed Linear call, classified', (): void => {
         throw timedOut();
       }),
     ).toMatchObject({ transient: true, reason: 'a timeout' });
+    // The transport's own words decide, through the product's one classifier (C-29).
     expect(
       await failure(async () => {
-        throw new TypeError('fetch failed');
+        throw new TypeError('fetch failed', {
+          cause: Object.assign(new Error('getaddrinfo EAI_AGAIN api.linear.app'), {
+            code: 'EAI_AGAIN',
+          }),
+        });
       }),
     ).toMatchObject({
       transient: true,
       reason: 'a network failure',
+    });
+    expect(
+      await failure(async () => {
+        throw new TypeError('fetch failed', {
+          cause: Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }),
+        });
+      }),
+    ).toMatchObject({
+      transient: true,
+      reason: 'a dropped connection',
     });
     expect(
       await failure(async () => new Response('<html>502 Bad Gateway</html>', { status: 502 })),
@@ -162,6 +177,26 @@ describe('a failed Linear call, classified', (): void => {
     ).toMatchObject({
       transient: false,
     });
+  });
+});
+
+describe('a failure that is not a transport the classifier knows', (): void => {
+  it('leaves a bare fetch failure as it came, since a refused certificate says the same (C-29)', async (): Promise<void> => {
+    const certificate = new TypeError('fetch failed', {
+      cause: Object.assign(new Error('unable to verify the first certificate'), {
+        code: 'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+      }),
+    });
+    const error: unknown = await readComments(
+      new LinearClient('k', (async (): Promise<Response> => {
+        throw certificate;
+      }) as typeof fetch),
+      'i7',
+    ).then(
+      () => undefined,
+      (caught: unknown) => caught,
+    );
+    expect(error).toBe(certificate);
   });
 });
 

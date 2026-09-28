@@ -13,11 +13,17 @@ import {
 import { spanModelFromEnv } from '../src/redaction/client';
 import {
   candidateRecordRead,
+  unreadCandidateRecord,
   redactGroundingRead,
   draftExecutionPlan,
   type CandidateRecord,
+  type PlanDraftedWithout,
   type DraftPlanArgs,
 } from '../src/work/plan';
+import type { ObligationEvent } from '../src/work/plan-obligations';
+import { accessEnded } from '../src/work/surface-access';
+import { log } from '../src/lib/logger';
+import type { ClosingAuthoring, ModelCallStage } from '../src/events/contract';
 import {
   ClosingGateRefusal,
   DEFERRALS_KEPT,
@@ -62,6 +68,7 @@ import {
 import { judgeManagerQuestion } from '../src/work/question-judgement';
 import { replyTargetFor } from '../src/work/reply-target';
 import type { Doc, Id } from './_generated/dataModel';
+import { logEvent } from './eventLog';
 import { asAgentId } from '../src/lib/ids';
 import {
   applySurfaceActions,
@@ -94,7 +101,12 @@ import { ownerKnownValues, scrubKnownValues } from '../src/redaction/known-value
 import { createMastraMcpClient, interpretToolResult, type McpToolLike } from '../src/surfaces/mcp';
 import { toSurfaceRecord } from '../src/surfaces/records';
 import { ledgerRunIds } from '../src/surfaces/browser-session';
-import { carriedReadIndexes, rereadStopReason, withRereads, type FailedReread } from '../src/surfaces/rereads';
+import {
+  carriedReadIndexes,
+  rereadStopReason,
+  withRereads,
+  type FailedReread,
+} from '../src/surfaces/rereads';
 import { verdictFor } from '../src/surfaces/verdict';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { observeModelCalls, type ModelCallReport } from '../src/lib/model-call-telemetry';
@@ -110,11 +122,14 @@ import {
 } from '../src/work/skill-shape';
 import { autonomousActionsOn } from '../src/work/autonomy';
 import { liveManagerFeedback } from '../src/work/manager-feedback';
+import { scrubbedCorrectionEntries, type PlannerCorrection } from '../src/work/corrections';
 import {
-  scrubbedCorrectionEntries,
-  type PlannerCorrection,
-} from '../src/work/corrections';
-import { droppedReadRefusal, gateRefusalStop, landedWork, WITHHELD_ON_STOP, withRefusedReadsDropped } from '../src/work/stop';
+  droppedReadRefusal,
+  gateRefusalStop,
+  landedWork,
+  WITHHELD_ON_STOP,
+  withRefusedReadsDropped,
+} from '../src/work/stop';
 import { resumedClosingLedger, type ClosingResume } from '../src/work/closing-resume';
 import {
   landedWritesOf,
@@ -135,7 +150,11 @@ import {
   type PersonIdentity,
 } from '../src/work/ticket-ownership';
 import type { GroundingRead } from '../src/work/evidence-claims';
-import { carriedDeclaredReads, groundingReadSurfaces, noteReleasesRead } from '../src/work/promised-reads';
+import {
+  carriedDeclaredReads,
+  groundingReadSurfaces,
+  noteReleasesRead,
+} from '../src/work/promised-reads';
 import { actionIdempotencyKey } from '../src/work/idempotency';
 import { ledgerPhases, providerReconciliationEntries } from '../src/work/reconciliation';
 import { redactTokenShapes, safeFailureMessage } from '../src/surfaces/redact';
@@ -197,10 +216,7 @@ interface SkillMatchCandidate {
 }
 
 function tokens(value: string): string[] {
-  return value
-    .toLowerCase()
-    .split(/\W+/)
-    .filter(Boolean);
+  return value.toLowerCase().split(/\W+/).filter(Boolean);
 }
 
 function declaredSurfaces(skill: MatchableSkill): Set<string> {
@@ -324,7 +340,9 @@ function buildLookups(args: {
     },
     countOpenClaims: async () => {
       return args.internalCaller
-        ? await args.ctx.runQuery(internal.work.countOpenForAgentInternal, { agentId: args.agentId })
+        ? await args.ctx.runQuery(internal.work.countOpenForAgentInternal, {
+            agentId: args.agentId,
+          })
         : await args.ctx.runQuery(api.work.countOpenForAgent, { agentId: args.agentId });
     },
     findMatchingSkill: async (candidate, charter, shape) => {
@@ -335,20 +353,38 @@ function buildLookups(args: {
   };
 }
 
-/** The loop steps whose model calls go on the item's events. */
-type ModelCallStage = 'evaluation' | 'draft' | 'execution' | 'closing';
+/** The loop steps whose model calls go on the item's events; authoring records its own. */
+type LoopModelCallStage = Exclude<ModelCallStage, 'authoring'>;
 
 /**
- * Which authoring of the closing set a closing-stage call belongs to. One run
- * can author the set up to four times (P8-10), and each re-sends the whole
- * prompt, so the ledger says which one each call was.
+ * Log one event the plan's obligation settlement recorded, against its work item.
+ *
+ * @param ctx - The drafting action's context.
+ * @param item - The employee and the work item the plan is for.
+ * @param event - What the settlement recorded.
  */
-type ClosingAuthoring =
-  | 'first'
-  | 'post-apply-round'
-  | 'after-carried-reads'
-  | 'holder-changed'
-  | 'hold-repair';
+async function logObligationEvent(
+  ctx: ActionCtx,
+  item: { agentId: Id<'agents'>; workItemId: Id<'workItems'> },
+  event: ObligationEvent,
+): Promise<void> {
+  const { agentId, workItemId } = item;
+  switch (event.type) {
+    case 'plan.obligations-judged':
+      await logEvent(ctx, { agentId, type: event.type, payload: { workItemId, ...event.payload } });
+      return;
+    case 'plan.obligations-failed-open':
+      await logEvent(ctx, { agentId, type: event.type, payload: { workItemId, ...event.payload } });
+      return;
+    case 'plan.obligations-disagreed':
+      await logEvent(ctx, { agentId, type: event.type, payload: { workItemId, ...event.payload } });
+      return;
+    default: {
+      const unhandled: never = event;
+      throw new Error(`unhandled obligation event ${String(unhandled)}`);
+    }
+  }
+}
 
 /**
  * Run one loop step with each of its model calls recorded on the item's
@@ -373,14 +409,14 @@ async function recordingModelCalls<T>(
   step: {
     agentId: Id<'agents'>;
     workItemId: Id<'workItems'>;
-    stage: ModelCallStage;
+    stage: LoopModelCallStage;
     closingAuthoring?: ClosingAuthoring;
   },
   fn: () => Promise<T>,
 ): Promise<T> {
   if (SURFACE_MODE !== 'real') return await fn();
   return await observeModelCalls(async (report: ModelCallReport): Promise<void> => {
-    await ctx.runMutation(internal.events.log, {
+    await logEvent(ctx, {
       agentId: step.agentId,
       type: 'work.model-call',
       payload: {
@@ -438,12 +474,14 @@ async function evaluateWorkItemHandler(
   if (item.state !== 'discovered') {
     return { decision: `noop-state=${item.state}` };
   }
+  let claimedAt: number | undefined;
   if (SURFACE_MODE === 'real') {
     const claim = await ctx.runMutation(internal.work.claimLoopStep, {
       workItemId: args.workItemId,
       step: 'evaluation',
     });
     if (!claim.claimed) return { decision: `noop-${claim.reason}` };
+    claimedAt = claim.claimedAt;
   }
   const charterRow = internalCaller
     ? await ctx.runQuery(internal.charters.latestInternal, { agentId })
@@ -501,45 +539,47 @@ async function evaluateWorkItemHandler(
     surfaceConfig.mode === 'real' && item.scopeAdmission?.charterId === charterRow._id;
   let scopeAdmission: { basis: string; namedBy?: string; overruled?: string[] } | undefined;
   const step = { agentId, workItemId: args.workItemId, stage: 'evaluation' } as const;
-  const verdict = await recordingModelCalls(ctx, step, () => evaluateCandidate(
-    candidate,
-    {
-      agentId: asAgentId(agentId),
-      charter,
-      agentsMd: agentsMd ?? '',
-      bossLabel: charter.approvalChain.boss,
-      autonomousActions: autonomousActionsOn(agent),
-      surfaceMode: surfaceConfig.mode,
-      surfaces,
-      qualityFitWaived: item.qualityFitWaivedAt !== undefined,
-      scopeWaived: item.scopeWaivedAt !== undefined,
-      scopeHeld,
-    },
-    lookups,
-    {
-      onScopeJudgement: (judgement): void => {
-        // Only a reading of the charter is kept: the model's own in-scope
-        // judgement, or the skip readings a named source set aside. A waiver
-        // is already on the row, a held judgement is the one already kept,
-        // and an unavailable judgement admitted nothing.
-        const judged =
-          judgement.admitted &&
-          (judgement.overruled !== undefined || judgement.basis === 'charter-judgement');
-        if (surfaceConfig.mode === 'real' && judged) {
-          scopeAdmission = {
-            basis: judgement.basis,
-            ...(judgement.namedBy !== undefined ? { namedBy: judgement.namedBy } : {}),
-            ...(judgement.overruled !== undefined ? { overruled: judgement.overruled } : {}),
-          };
-        }
+  const verdict = await recordingModelCalls(ctx, step, () =>
+    evaluateCandidate(
+      candidate,
+      {
+        agentId: asAgentId(agentId),
+        charter,
+        agentsMd: agentsMd ?? '',
+        bossLabel: agent.bossEmail,
+        autonomousActions: autonomousActionsOn(agent),
+        surfaceMode: surfaceConfig.mode,
+        surfaces,
+        qualityFitWaived: item.qualityFitWaivedAt !== undefined,
+        scopeWaived: item.scopeWaivedAt !== undefined,
+        scopeHeld,
       },
-    },
-  ));
+      lookups,
+      {
+        onScopeJudgement: (judgement): void => {
+          // Only a reading of the charter is kept: the model's own in-scope
+          // judgement, or the skip readings a named source set aside. A waiver
+          // is already on the row, a held judgement is the one already kept,
+          // and an unavailable judgement admitted nothing.
+          const judged =
+            judgement.admitted &&
+            (judgement.overruled !== undefined || judgement.basis === 'charter-judgement');
+          if (surfaceConfig.mode === 'real' && judged) {
+            scopeAdmission = {
+              basis: judgement.basis,
+              ...(judgement.namedBy !== undefined ? { namedBy: judgement.namedBy } : {}),
+              ...(judgement.overruled !== undefined ? { overruled: judgement.overruled } : {}),
+            };
+          }
+        },
+      },
+    ),
+  );
   if (isScopeUnavailable(verdict)) {
-    await ctx.runMutation(internal.events.log, {
-      agentId,
-      type: 'work.scope-judgement-unavailable',
-      payload: { workItemId: args.workItemId, cause: verdict.cause },
+    await ctx.runMutation(internal.work.recordScopeJudgementUnavailable, {
+      workItemId: args.workItemId,
+      cause: verdict.cause,
+      ...(claimedAt !== undefined ? { claimedAt } : {}),
     });
     return { decision: SCOPE_JUDGEMENT_UNAVAILABLE };
   }
@@ -553,6 +593,7 @@ async function evaluateWorkItemHandler(
   const storedVerdict: { decision: string } = await ctx.runMutation(internal.work.setVerdict, {
     workItemId: args.workItemId,
     verdict,
+    charterId: charterRow._id,
   });
 
   // For needs-skill, propose a new skill row immediately.
@@ -655,7 +696,7 @@ async function draftPlanHandler(
   const candidate = rowToCandidate(item);
   const grounding = await planGrounding(ctx, agentId, internalCaller);
   const knownValues = await knownValuesForAgent(ctx, agent);
-  const record =
+  const grounded =
     SURFACE_MODE === 'real' && agent
       ? await readCandidateRecord(ctx, {
           workItemId: args.workItemId,
@@ -667,34 +708,38 @@ async function draftPlanHandler(
           knownValues,
         })
       : undefined;
-  const corrections = SURFACE_MODE === 'real' ? await plannerCorrections(ctx, item, knownValues) : undefined;
+  const record = grounded?.record;
+  const corrections =
+    SURFACE_MODE === 'real' ? await plannerCorrections(ctx, item, knownValues) : undefined;
   const step = { agentId, workItemId: args.workItemId, stage: 'draft' } as const;
-  const plan = await draftOrFail(ctx, args.workItemId, () => recordingModelCalls(ctx, step, () => draftExecutionPlan({
-    candidate,
-    charter: charterRow.body as Charter,
-    autonomousActions: autonomousActionsOn(agent),
-    surfaceMode: SURFACE_MODE,
-    ...grounding,
-    ...(record ? { record } : {}),
-    ...(corrections && corrections.entries.length > 0
-      ? {
-          corrections: corrections.entries,
-          ...(corrections.redaction ? { correctionsRedaction: corrections.redaction } : {}),
-        }
-      : {}),
-    onObligationEvent: async (event) => {
-      await ctx.runMutation(internal.events.log, {
-        agentId,
-        type: event.type,
-        payload: { workItemId: args.workItemId, ...event.payload },
-      });
-    },
-  })));
+  const plan = await draftOrFail(ctx, args.workItemId, () =>
+    recordingModelCalls(ctx, step, () =>
+      draftExecutionPlan({
+        candidate,
+        charter: charterRow.body as Charter,
+        autonomousActions: autonomousActionsOn(agent),
+        surfaceMode: SURFACE_MODE,
+        ...grounding,
+        ...(record ? { record } : {}),
+        ...(corrections && corrections.entries.length > 0
+          ? {
+              corrections: corrections.entries,
+              ...(corrections.redaction ? { correctionsRedaction: corrections.redaction } : {}),
+            }
+          : {}),
+        onObligationEvent: async (event) =>
+          await logObligationEvent(ctx, { agentId, workItemId: args.workItemId }, event),
+      }),
+    ),
+  );
   if (plan === undefined) return { ok: false, reason: 'the plan draft failed on this item' };
   const stored = await ctx.runMutation(internal.work.setPlan, {
     workItemId: args.workItemId,
     plan,
+    ...(grounded?.draftedWithout ? { draftedWithout: grounded.draftedWithout } : {}),
   });
+  // Its system connected while it was drafting, so it is being drafted again.
+  if (stored.redrafting) return { ok: true };
   if (!stored.stored) {
     return { ok: false, reason: 'another draft stored a plan for this work item first' };
   }
@@ -819,7 +864,10 @@ async function executeApprovedPlanHandler(
     // The carried reads were taken before the retry; the closing set is
     // authored from what they read now, or not at all.
     const reread = await refreshCarriedReads(ctx, {
-      workItemId: args.workItemId, agentId, runId: claim.runId, resume,
+      workItemId: args.workItemId,
+      agentId,
+      runId: claim.runId,
+      resume,
     });
     if (!reread.ok) {
       await ctx.runMutation(internal.work.setFailed, {
@@ -832,25 +880,29 @@ async function executeApprovedPlanHandler(
       return { ok: false, reason: reread.failed.reason };
     }
     const prepared = await ctx.runMutation(internal.work.prepareDependentPhase, {
-      workItemId: args.workItemId, runId: claim.runId, output: withLandedWrites(reread.output, landedWrites),
+      workItemId: args.workItemId,
+      runId: claim.runId,
+      output: withLandedWrites(reread.output, landedWrites),
     });
     return { ok: prepared.prepared, reason: 'resuming closing actions from the previous ledger' };
   }
   const step = { agentId, workItemId: args.workItemId, stage: 'execution' } as const;
-  return await recordingModelCalls(ctx, step, () => holdDay0Actions(ctx, {
-    workItemId: args.workItemId,
-    item,
-    agentId,
-    runId: claim.runId,
-    skill: pickedSkill,
-    plan,
-    candidate,
-    charter,
-    internalCaller,
-    managerFeedback: liveManagerFeedback(item.managerFeedback),
-    managerAnswers: managerAnswersOf(item),
-    landedWrites,
-  }));
+  return await recordingModelCalls(ctx, step, () =>
+    holdDay0Actions(ctx, {
+      workItemId: args.workItemId,
+      item,
+      agentId,
+      runId: claim.runId,
+      skill: pickedSkill,
+      plan,
+      candidate,
+      charter,
+      internalCaller,
+      managerFeedback: liveManagerFeedback(item.managerFeedback),
+      managerAnswers: managerAnswersOf(item),
+      landedWrites,
+    }),
+  );
 }
 
 /**
@@ -900,7 +952,12 @@ async function refreshCarriedReads(
       ctx,
       SURFACE_MODE,
       surfaces,
-      { agentId: args.agentId, agentName: agent.name, workItemId: args.workItemId, runId: args.runId },
+      {
+        agentId: args.agentId,
+        agentName: agent.name,
+        workItemId: args.workItemId,
+        runId: args.runId,
+      },
       actions,
       {
         deps: realAdapterDeps(
@@ -912,22 +969,34 @@ async function refreshCarriedReads(
         approvedIndexes: reread,
         priorLedger: applied.map((row, index) => (reread.has(index) ? undefined : row)),
         resumedRunIds: ledgerRunIds(applied),
-        authorityByIndex: new Map(indexes.flatMap((index) => {
-          const authority = applied[index]?.authority;
-          return authority ? [[index, authority] as const] : [];
-        })),
+        authorityByIndex: new Map(
+          indexes.flatMap((index) => {
+            const authority = applied[index]?.authority;
+            return authority ? [[index, authority] as const] : [];
+          }),
+        ),
         autoPhase: true,
         autonomousActions: autonomousActionsOn(agent),
       },
     );
-    const refreshed = withRereads({ actions, applied }, scrubKnownValues(rows, knownValues), indexes, Date.now());
-    return refreshed.ok ? { ok: true, output: { ...args.resume, applied: refreshed.applied } } : refreshed;
+    const refreshed = withRereads(
+      { actions, applied },
+      scrubKnownValues(rows, knownValues),
+      indexes,
+      Date.now(),
+    );
+    return refreshed.ok
+      ? { ok: true, output: { ...args.resume, applied: refreshed.applied } }
+      : refreshed;
   } catch (error) {
     const surfaceNames = [...new Set(indexes.map((index) => String(actions[index]!.args.surface)))];
     return {
       ok: false,
       failed: {
-        reason: rereadStopReason(surfaceNames.join(', '), error instanceof Error ? error.message : String(error)),
+        reason: rereadStopReason(
+          surfaceNames.join(', '),
+          error instanceof Error ? error.message : String(error),
+        ),
         at: Date.now(),
         actions: indexes.map((index) => actions[index]!),
         applied: [],
@@ -937,7 +1006,10 @@ async function refreshCarriedReads(
 }
 
 /** An output with the writes earlier runs landed on it, when there are any. */
-function withLandedWrites<T extends object>(output: T, landedWrites: readonly LandedWrite[]): T & { landedWrites?: LandedWrite[] } {
+function withLandedWrites<T extends object>(
+  output: T,
+  landedWrites: readonly LandedWrite[],
+): T & { landedWrites?: LandedWrite[] } {
   return landedWrites.length > 0 ? { ...output, landedWrites: [...landedWrites] } : output;
 }
 
@@ -997,9 +1069,10 @@ async function holdDay0Actions(
   },
 ): Promise<{ ok: boolean; reason?: string; additionalModelCalls?: number }> {
   let additionalModelCalls = 0;
-  const result = (
-    value: { ok: boolean; reason?: string },
-  ): { ok: boolean; reason?: string; additionalModelCalls?: number } =>
+  const result = (value: {
+    ok: boolean;
+    reason?: string;
+  }): { ok: boolean; reason?: string; additionalModelCalls?: number } =>
     additionalModelCalls > 0 ? { ...value, additionalModelCalls } : value;
   try {
     const agent = await ctx.runQuery(internal.agents.getInternal, { agentId: args.agentId });
@@ -1039,8 +1112,9 @@ async function holdDay0Actions(
         additionalModelCalls += 1;
       },
       onAuditCorrection: async (removedIndices, reason) => {
-        await ctx.runMutation(internal.events.log, {
-          agentId: args.agentId, type: 'audit.corrected',
+        await logEvent(ctx, {
+          agentId: args.agentId,
+          type: 'audit.corrected',
           payload: { workItemId: args.workItemId, runId: args.runId, removedIndices, reason },
         });
       },
@@ -1079,9 +1153,21 @@ async function holdDay0Actions(
           })
         : auditedOutput;
     await recordConditionalWritesWithheld(
-      ctx, { agentId: args.agentId, workItemId: args.workItemId, runId: args.runId, phase: stagedOutput.needsDependentPhase ? 'prerequisite' : 'single' }, auditedOutput, stagedOutput,
+      ctx,
+      {
+        agentId: args.agentId,
+        workItemId: args.workItemId,
+        runId: args.runId,
+        phase: stagedOutput.needsDependentPhase ? 'prerequisite' : 'single',
+      },
+      auditedOutput,
+      stagedOutput,
     );
-    if (stagedOutput.openQuestion && stagedOutput.actions.length === 0 && !stagedOutput.needsDependentPhase) {
+    if (
+      stagedOutput.openQuestion &&
+      stagedOutput.actions.length === 0 &&
+      !stagedOutput.needsDependentPhase
+    ) {
       // Every action waited on the answer to a question an earlier run asked:
       // nothing is left to apply, and the run ends on the question.
       const reason = openQuestionStopReason(stagedOutput.openQuestion);
@@ -1137,6 +1223,20 @@ async function holdDay0Actions(
     });
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
+    // A failure that is not about the item (a rate limit, an outage, a
+    // timeout) goes through the resume ladder before the run stops, as a
+    // draft's does; one about the item stops it now (`draftOrFail`'s rule).
+    if (SURFACE_MODE === 'real' && itemBoundModelFailure(err) === undefined) {
+      const resumed = await ctx.runMutation(internal.work.resumeExecution, {
+        workItemId: args.workItemId,
+        runId: args.runId,
+        reason: safeFailureMessage(err, '', 'the execution failed'),
+      });
+      if (resumed.outcome === 'resumed') {
+        return result({ ok: false, reason: `execution will be tried again: ${reason}` });
+      }
+      if (resumed.outcome === 'stopped') return result({ ok: false, reason });
+    }
     await ctx.runMutation(internal.work.setFailed, {
       workItemId: args.workItemId,
       reason,
@@ -1167,19 +1267,30 @@ async function auditRepairedPayloads<T extends ExecutionOutput>(
   surfaces: readonly SurfaceRecord[],
 ): Promise<T> {
   const prewrittenIndices: number[] = [];
-  const issues = deferralAudit(output, args.candidate, {
-    mode: SURFACE_MODE, plan: args.plan, surfaces, skillBody: args.skill.body, now: Date.now(),
-  }, prewrittenIndices);
+  const issues = deferralAudit(
+    output,
+    args.candidate,
+    {
+      mode: SURFACE_MODE,
+      plan: args.plan,
+      surfaces,
+      skillBody: args.skill.body,
+      now: Date.now(),
+    },
+    prewrittenIndices,
+  );
   const record = async (removedIndices: number[], reason: string): Promise<void> => {
-    await ctx.runMutation(internal.events.log, {
-      agentId: args.agentId, type: 'audit.corrected',
+    await logEvent(ctx, {
+      agentId: args.agentId,
+      type: 'audit.corrected',
       payload: { workItemId: args.workItemId, runId: args.runId, removedIndices, reason },
     });
   };
   let corrected: T = output;
   if (prewrittenIndices.length > 0) {
     const removed = new Set(prewrittenIndices);
-    const reindex = (index: number): number => index - prewrittenIndices.filter((removedIndex) => removedIndex < index).length;
+    const reindex = (index: number): number =>
+      index - prewrittenIndices.filter((removedIndex) => removedIndex < index).length;
     corrected = {
       ...removePrewrittenClosingActions(output, prewrittenIndices),
       ...(output.argumentRepairs
@@ -1332,7 +1443,9 @@ const CONDITIONAL_WRITES_WITHHELD = 'work.conditional-writes-withheld';
 
 /** An action by its tool, surface and verb, with no payload. */
 function actionName(action: MockAction): string {
-  const verb = action.args.tool ?? `${String(action.args.method ?? '')} ${String(action.args.path ?? '')}`.trim();
+  const verb =
+    action.args.tool ??
+    `${String(action.args.method ?? '')} ${String(action.args.path ?? '')}`.trim();
   return `${action.tool} ${String(action.args.surface ?? '')} · ${String(verb)}`;
 }
 
@@ -1482,7 +1595,8 @@ export async function withOpenQuestionHeld<T extends QuestionableOutput>(
     open.withheld.map(({ index, step }) => ({ index, reason: withheldForAnswerReason(step) })),
     "for the manager's answer",
   );
-  const reindex = (index: number): number => index - [...removed].filter((removedIndex) => removedIndex < index).length;
+  const reindex = (index: number): number =>
+    index - [...removed].filter((removedIndex) => removedIndex < index).length;
   return {
     ...withheld,
     ...(output.argumentRepairs
@@ -1507,13 +1621,18 @@ export async function withOpenQuestionHeld<T extends QuestionableOutput>(
  */
 async function recordConditionalWritesWithheld(
   ctx: ActionCtx,
-  run: { agentId: Id<'agents'>; workItemId: Id<'workItems'>; runId: Id<'events'>; phase: 'single' | 'prerequisite' | 'closing' },
+  run: {
+    agentId: Id<'agents'>;
+    workItemId: Id<'workItems'>;
+    runId: Id<'events'>;
+    phase: 'single' | 'prerequisite' | 'closing';
+  },
   before: QuestionableOutput,
   after: QuestionableOutput,
 ): Promise<void> {
   if (after === before || !after.openQuestion) return;
   const kept = new Set(after.actions);
-  await ctx.runMutation(internal.events.log, {
+  await logEvent(ctx, {
     agentId: run.agentId,
     type: CONDITIONAL_WRITES_WITHHELD,
     payload: {
@@ -1521,13 +1640,18 @@ async function recordConditionalWritesWithheld(
       runId: run.runId,
       phase: run.phase,
       steps: after.openQuestion.steps,
-      withheld: before.actions.filter((action) => !kept.has(action)).map((action) => actionName(action)),
+      withheld: before.actions
+        .filter((action) => !kept.has(action))
+        .map((action) => actionName(action)),
     },
   });
 }
 
 /** The reason a run ends on when it, or the phase before it, left a question to the manager open. */
-function openQuestionStop(output: { openQuestion?: ExecutionOutput['openQuestion']; initial?: { openQuestion?: ExecutionOutput['openQuestion'] } }): string | undefined {
+function openQuestionStop(output: {
+  openQuestion?: ExecutionOutput['openQuestion'];
+  initial?: { openQuestion?: ExecutionOutput['openQuestion'] };
+}): string | undefined {
   const open = output.openQuestion ?? output.initial?.openQuestion;
   return open ? openQuestionStopReason(open) : undefined;
 }
@@ -1612,13 +1736,19 @@ export interface PlanStepOutcomeCheck {
  */
 export function unmetDeclaredReads(args: PlanStepOutcomeCheck): DeclaredRead[] {
   const reads = successfulReadSurfaces(args.initialActions, args.initialLedger);
-  for (const surface of groundingReadSurfaces(args.candidate?.externalId, args.groundingReads)) reads.add(surface);
+  for (const surface of groundingReadSurfaces(args.candidate?.externalId, args.groundingReads))
+    reads.add(surface);
   const note = args.retryNote?.trim();
   return declaredReads(args.plan, args.surfaces).filter((read): boolean => {
     if (reads.has(read.surface.slug.toLowerCase())) return false;
     const outcome = args.outcomes.find((row) => row.step === read.step);
     if (!outcome) return true;
-    if (note && outcome.basis === 'manager-feedback' && outcome.evidence.trim() !== '' && noteReleasesRead(note, read)) {
+    if (
+      note &&
+      outcome.basis === 'manager-feedback' &&
+      outcome.evidence.trim() !== '' &&
+      noteReleasesRead(note, read)
+    ) {
       return false;
     }
     return outcome.status === 'satisfied' || outcome.evidence.trim() === '';
@@ -1677,7 +1807,12 @@ async function applyCarriedReads(
     ctx,
     SURFACE_MODE,
     args.surfaces,
-    { agentId: args.agent._id, agentName: args.agent.name, workItemId: args.workItemId, runId: args.runId },
+    {
+      agentId: args.agent._id,
+      agentName: args.agent.name,
+      workItemId: args.workItemId,
+      runId: args.runId,
+    },
     actions,
     {
       deps: realAdapterDeps(
@@ -1694,7 +1829,7 @@ async function applyCarriedReads(
     },
   );
   const applied = scrubKnownValues(rows, args.knownValues);
-  await ctx.runMutation(internal.events.log, {
+  await logEvent(ctx, {
     agentId: args.agent._id,
     type: CARRIED_READS_APPLIED,
     payload: {
@@ -1751,8 +1886,15 @@ export function dependentTransitionRefusal(args: {
 function flattenedDependentOutput(
   output: DependentPendingOutput,
   applied: AppliedAction[],
-): ExecutionOutput & { applied: AppliedAction[]; planStepOutcomes: PlanStepOutcome[]; prerequisiteCount: number } {
-  const withheldActions = [...(output.initial.withheldActions ?? []), ...(output.withheldActions ?? [])];
+): ExecutionOutput & {
+  applied: AppliedAction[];
+  planStepOutcomes: PlanStepOutcome[];
+  prerequisiteCount: number;
+} {
+  const withheldActions = [
+    ...(output.initial.withheldActions ?? []),
+    ...(output.withheldActions ?? []),
+  ];
   return {
     draft: output.draft,
     notes: output.notes,
@@ -1780,10 +1922,11 @@ function flattenedDependentOutput(
       : {}),
     applied: [...output.initial.applied, ...applied],
     planStepOutcomes: output.planStepOutcomes,
-    prerequisiteCount: output.initial.closingRound?.prerequisiteCount ?? output.initial.actions.length,
+    prerequisiteCount:
+      output.initial.closingRound?.prerequisiteCount ?? output.initial.actions.length,
     ...(output.initial.landedWrites ? { landedWrites: output.initial.landedWrites } : {}),
     ...(withheldActions.length > 0 ? { withheldActions } : {}),
-    ...(output.openQuestion ?? output.initial.openQuestion
+    ...((output.openQuestion ?? output.initial.openQuestion)
       ? { openQuestion: output.openQuestion ?? output.initial.openQuestion }
       : {}),
     // Kept on the finished row, so a retry that resumes at the closing phase
@@ -1802,9 +1945,15 @@ function flattenedDependentOutput(
  * Returns:
  *   The asker's thread or channel; undefined for any other item and in mock mode.
  */
-function askReplyOf(item: Pick<Doc<'workItems'>, 'sourceSystem' | 'replyTarget'> | null | undefined): AskReplyTarget | undefined {
+function askReplyOf(
+  item: Pick<Doc<'workItems'>, 'sourceSystem' | 'replyTarget'> | null | undefined,
+): AskReplyTarget | undefined {
   if (SURFACE_MODE !== 'real' || !item?.replyTarget) return undefined;
-  return { surface: item.sourceSystem, channel: item.replyTarget.channel, ...(item.replyTarget.threadTs ? { threadTs: item.replyTarget.threadTs } : {}) };
+  return {
+    surface: item.sourceSystem,
+    channel: item.replyTarget.channel,
+    ...(item.replyTarget.threadTs ? { threadTs: item.replyTarget.threadTs } : {}),
+  };
 }
 
 /**
@@ -1832,7 +1981,12 @@ export function replyStillOwed(
 ): boolean {
   const reply = run.reply;
   if (reply === undefined) return false;
-  if (!outcomes.some((outcome) => outcome.status === 'blocked' && isReplyStep(outcome, run.plan, reply))) return false;
+  if (
+    !outcomes.some(
+      (outcome) => outcome.status === 'blocked' && isReplyStep(outcome, run.plan, reply),
+    )
+  )
+    return false;
   return !run.actions.some((action, index) => {
     const row = run.applied[index];
     return row?.ok === true && row.held !== true && answersTheAsker(action, reply);
@@ -2024,7 +2178,10 @@ export function blockedPlanReason(
     // judged here with it.
     const everyActionLanded = run.actions.every(
       (_action, index) =>
-        landed(index) || withheldByClaim(run.applied[index]) || withheldWithClaimedWrite(run.applied[index]) || refusedRead(index),
+        landed(index) ||
+        withheldByClaim(run.applied[index]) ||
+        withheldWithClaimedWrite(run.applied[index]) ||
+        refusedRead(index),
     );
     // A step the executor left out because its target has a work item of its
     // own is accounted for as the withheld write would have been: the holder
@@ -2050,7 +2207,12 @@ export function blockedPlanReason(
     });
     const primaryEffectLanded =
       run.plan.expectedOutputType !== 'ticket-update' || ticketEffectLanded;
-    if (everyActionLanded && primaryEffectLanded && !replyOwed && (!closePromised || transitionLanded)) {
+    if (
+      everyActionLanded &&
+      primaryEffectLanded &&
+      !replyOwed &&
+      (!closePromised || transitionLanded)
+    ) {
       return undefined;
     }
   }
@@ -2175,7 +2337,10 @@ export function withLeftStepsSaid(
 ): { actions: ExecutionOutput['actions']; said: string[] } {
   const owed = [
     ...outcomes.flatMap((outcome) => {
-      const item = outcome.status === 'blocked' ? heldItemOfBlockedStep(outcome, plan, heldElsewhere) : undefined;
+      const item =
+        outcome.status === 'blocked'
+          ? heldItemOfBlockedStep(outcome, plan, heldElsewhere)
+          : undefined;
       return item ? [item] : [];
     }),
     ...withheldFor,
@@ -2184,13 +2349,20 @@ export function withLeftStepsSaid(
   // The manager DM reports on the work; it is not where the person who asked reads.
   const toTheAsker = actions.filter((action) => {
     const parsed = parseSurfaceAction(action);
-    const surface = parsed.ok ? surfaces.find((row) => row.slug === parsed.action.surface) : undefined;
+    const surface = parsed.ok
+      ? surfaces.find((row) => row.slug === parsed.action.surface)
+      : undefined;
     return !(parsed.ok && surface && isManagerDm(parsed.action, surface));
   });
-  const findings = heldItemReplyFindings(toTheAsker, heldElsewhere, surfaces, owed).filter((finding) =>
-    owed.includes(finding.item),
+  const findings = heldItemReplyFindings(toTheAsker, heldElsewhere, surfaces, owed).filter(
+    (finding) => owed.includes(finding.item),
   );
-  const answered = withHeldItemsSaid(toTheAsker, findings, surfaces, replyTarget) as ExecutionOutput['actions'];
+  const answered = withHeldItemsSaid(
+    toTheAsker,
+    findings,
+    surfaces,
+    replyTarget,
+  ) as ExecutionOutput['actions'];
   const next = actions.map((action) => {
     const at = toTheAsker.indexOf(action);
     return at === -1 ? action : answered[at]!;
@@ -2269,7 +2441,11 @@ export const authorDependentActions = internalAction({
       let carriedReadsOwed = true;
       const carriedBy = (candidateOutput: DependentExecutionOutput): MockAction[] =>
         carriedReadsOwed
-          ? carriedDeclaredReads(unmetDeclaredReads(readCheck(candidateOutput)), candidateOutput.actions, surfaces)
+          ? carriedDeclaredReads(
+              unmetDeclaredReads(readCheck(candidateOutput)),
+              candidateOutput.actions,
+              surfaces,
+            )
           : [];
       const closingGate = (candidateOutput: DependentExecutionOutput): string[] => {
         const issues: string[] = [];
@@ -2277,7 +2453,8 @@ export const authorDependentActions = internalAction({
           validatePlanStepOutcomes(readCheck(candidateOutput));
         } catch (error) {
           const reason = error instanceof Error ? error.message : String(error);
-          const carried = carriedBy(candidateOutput).length > 0 &&
+          const carried =
+            carriedBy(candidateOutput).length > 0 &&
             unmetDeclaredReads(readCheck(candidateOutput)).map(missingReadReason).includes(reason);
           if (!carried) issues.push(reason);
         }
@@ -2290,46 +2467,56 @@ export const authorDependentActions = internalAction({
         if (transitionRefusal) issues.push(transitionRefusal);
         return issues;
       };
-      const step = { agentId: item.agentId, workItemId: args.workItemId, stage: 'closing' } as const;
+      const step = {
+        agentId: item.agentId,
+        workItemId: args.workItemId,
+        stage: 'closing',
+      } as const;
       // Read before every authoring, and the list the last authoring was
       // given is the one the set keeps: the finish uses the holders the set
       // was authored under, whatever becomes of them while it waits.
       let heldElsewhere: HeldExternalItem[] = [];
-      const authorClosingSet = async (authoring: ClosingAuthoring): Promise<DependentExecutionOutput> => {
+      const authorClosingSet = async (
+        authoring: ClosingAuthoring,
+      ): Promise<DependentExecutionOutput> => {
         heldElsewhere = await itemsHeldElsewhere(ctx, agent, args.workItemId, knownValues);
         return await authorUnder(heldElsewhere, authoring);
       };
       const authorUnder = (
         held: HeldExternalItem[],
         authoring: ClosingAuthoring,
-      ): Promise<DependentExecutionOutput> => recordingModelCalls(ctx, { ...step, closingAuthoring: authoring }, () => runDependentSkill({
-        skill: { name: skill.name, description: skill.description, body: skill.body },
-        plan,
-        candidate: rowToCandidate(item),
-        charter: charterRow.body as Charter,
-        mockEnv,
-        surfaces,
-        mode: 'real',
-        autonomousActions: autonomousActionsOn(agent),
-        managerFeedback: feedback,
-        managerAnswers: managerAnswersOf(item),
-        appliedCorrections,
-        groundingReads,
-        initialOutput: prerequisites,
-        initialLedger: prerequisites.applied,
-        initialFailure: prerequisites.initialFailure,
-        resumedClosing: prerequisites.resumedClosing,
-        refusedClosing: prerequisites.refusedClosing,
-        landedWrites: prerequisites.landedWrites,
-        heldElsewhere: held,
-        closingGate,
-        onAuditCorrection: async (removedIndices, reason) => {
-          await ctx.runMutation(internal.events.log, {
-            agentId: item.agentId, type: 'audit.corrected',
-            payload: { workItemId: args.workItemId, runId: args.runId, removedIndices, reason },
-          });
-        },
-      }));
+      ): Promise<DependentExecutionOutput> =>
+        recordingModelCalls(ctx, { ...step, closingAuthoring: authoring }, () =>
+          runDependentSkill({
+            skill: { name: skill.name, description: skill.description, body: skill.body },
+            plan,
+            candidate: rowToCandidate(item),
+            charter: charterRow.body as Charter,
+            mockEnv,
+            surfaces,
+            mode: 'real',
+            autonomousActions: autonomousActionsOn(agent),
+            managerFeedback: feedback,
+            managerAnswers: managerAnswersOf(item),
+            appliedCorrections,
+            groundingReads,
+            initialOutput: prerequisites,
+            initialLedger: prerequisites.applied,
+            initialFailure: prerequisites.initialFailure,
+            resumedClosing: prerequisites.resumedClosing,
+            refusedClosing: prerequisites.refusedClosing,
+            landedWrites: prerequisites.landedWrites,
+            heldElsewhere: held,
+            closingGate,
+            onAuditCorrection: async (removedIndices, reason) => {
+              await logEvent(ctx, {
+                agentId: item.agentId,
+                type: 'audit.corrected',
+                payload: { workItemId: args.workItemId, runId: args.runId, removedIndices, reason },
+              });
+            },
+          }),
+        );
       let output = await authorClosingSet(initial.closingRound ? 'post-apply-round' : 'first');
       const cap = dependentActionCap(initial);
       // A set over the cap is refused below as it stands: nothing in it is applied first.
@@ -2338,7 +2525,13 @@ export const authorDependentActions = internalAction({
       if (carriedReads.length > 0) {
         authored = output;
         initial = await applyCarriedReads(ctx, {
-          workItemId: args.workItemId, runId: args.runId, agent, surfaces, knownValues, initial, reads: carriedReads,
+          workItemId: args.workItemId,
+          runId: args.runId,
+          agent,
+          surfaces,
+          knownValues,
+          initial,
+          reads: carriedReads,
         });
         prerequisites = initial;
         output = await authorClosingSet('after-carried-reads');
@@ -2355,10 +2548,15 @@ export const authorDependentActions = internalAction({
         const taken = newlyHeldWrites(output.actions, heldElsewhere, heldNow, surfaces);
         if (taken.length > 0) {
           authored = output;
-          await ctx.runMutation(internal.events.log, {
+          await logEvent(ctx, {
             agentId: item.agentId,
             type: CLOSING_REAUTHORED,
-            payload: { workItemId: args.workItemId, runId: args.runId, reason: HOLDER_CHANGED, heldNow: taken.map((held) => held.externalId) },
+            payload: {
+              workItemId: args.workItemId,
+              runId: args.runId,
+              reason: HOLDER_CHANGED,
+              heldNow: taken.map((held) => held.externalId),
+            },
           });
           heldElsewhere = heldNow;
           droppedWritesTo = taken;
@@ -2367,33 +2565,56 @@ export const authorDependentActions = internalAction({
       }
       authored = output;
       if (output.actions.length > cap) {
-        throw new Error(
-          `dependent phase emitted ${output.actions.length} actions; cap is ${cap}`,
-        );
+        throw new Error(`dependent phase emitted ${output.actions.length} actions; cap is ${cap}`);
       }
       // The gate the executor's one repair answered to, checked once more on
       // the set that came back.
       const gate = closingGate(output);
       if (gate.length > 0) throw new ClosingGateRefusal(gate, output);
-      const repaired = await recordingModelCalls(ctx, { ...step, closingAuthoring: 'hold-repair' }, () => repairedForHold(output, {
-        surfaces,
-        skill: { name: skill.name },
-        candidate: rowToCandidate(item),
-        onAdditionalModelCall: (): void => {},
-      }));
+      const repaired = await recordingModelCalls(
+        ctx,
+        { ...step, closingAuthoring: 'hold-repair' },
+        () =>
+          repairedForHold(output, {
+            surfaces,
+            skill: { name: skill.name },
+            candidate: rowToCandidate(item),
+            onAdditionalModelCall: (): void => {},
+          }),
+      );
       const leftSaid = withLeftStepsSaid(
-        repaired.actions, repaired.planStepOutcomes, plan, heldElsewhere, surfaces, item.replyTarget,
+        repaired.actions,
+        repaired.planStepOutcomes,
+        plan,
+        heldElsewhere,
+        surfaces,
+        item.replyTarget,
         // Whose work a withheld write is, and a write the set before this one made and this one dropped.
-        [...heldItemsOfWithheldRows(prerequisites.actions, prerequisites.applied, heldElsewhere, surfaces), ...droppedWritesTo],
+        [
+          ...heldItemsOfWithheldRows(
+            prerequisites.actions,
+            prerequisites.applied,
+            heldElsewhere,
+            surfaces,
+          ),
+          ...droppedWritesTo,
+        ],
       );
       const held = leftSaid.said.length > 0 ? { ...repaired, actions: leftSaid.actions } : repaired;
       authored = held;
       const repairedTransitionRefusal = dependentTransitionRefusal({
-        plan, actions: held.actions, planStepOutcomes: held.planStepOutcomes, initialFailure,
+        plan,
+        actions: held.actions,
+        planStepOutcomes: held.planStepOutcomes,
+        initialFailure,
       });
-      if (repairedTransitionRefusal) throw new ClosingGateRefusal([repairedTransitionRefusal], held);
+      if (repairedTransitionRefusal)
+        throw new ClosingGateRefusal([repairedTransitionRefusal], held);
       const leftToHolders = held.planStepOutcomes.flatMap((outcome) => {
-        const holder = outcome.status === 'blocked' ? heldItemOfBlockedStep(outcome, plan, heldElsewhere) : undefined;
+        const holder =
+          outcome.status === 'blocked'
+            ? heldItemOfBlockedStep(outcome, plan, heldElsewhere)
+            : undefined;
         // Kept on the row, so the holder's title passes the structural redaction the prompt rows pass.
         return holder ? [{ ...holder, title: redactTokenShapes(holder.title) }] : [];
       });
@@ -2403,7 +2624,12 @@ export const authorDependentActions = internalAction({
         actionIndexOffset: initial.actions.length,
         initial,
         ...(leftToHolders.length > 0
-          ? { leftToHolders: leftToHolders.filter((holder, at) => leftToHolders.findIndex((row) => row.externalId === holder.externalId) === at) }
+          ? {
+              leftToHolders: leftToHolders.filter(
+                (holder, at) =>
+                  leftToHolders.findIndex((row) => row.externalId === holder.externalId) === at,
+              ),
+            }
           : {}),
         authoredUnder: heldElsewhere.map((listed) => ({
           externalId: listed.externalId,
@@ -2445,9 +2671,15 @@ export const authorDependentActions = internalAction({
         return { ok: false, reason: stop };
       }
       if (leftSaid.said.length > 0) {
-        await ctx.runMutation(internal.events.log, {
-          agentId: item.agentId, type: 'audit.corrected',
-          payload: { workItemId: args.workItemId, runId: args.runId, removedIndices: [], reason: `${HELD_ITEM_REPLY_COMPLETED}: ${leftSaid.said.join(' ')}` },
+        await logEvent(ctx, {
+          agentId: item.agentId,
+          type: 'audit.corrected',
+          payload: {
+            workItemId: args.workItemId,
+            runId: args.runId,
+            removedIndices: [],
+            reason: `${HELD_ITEM_REPLY_COMPLETED}: ${leftSaid.said.join(' ')}`,
+          },
         });
       }
       // A question this run put to the manager, here, in phase one or in an
@@ -2460,14 +2692,20 @@ export const authorDependentActions = internalAction({
         askedEarlier: (initial.landedWrites ?? []).map((write) => write.action),
       });
       await recordConditionalWritesWithheld(
-        ctx, { agentId: item.agentId, workItemId: args.workItemId, runId: args.runId, phase: 'closing' }, dependent, gated,
+        ctx,
+        { agentId: item.agentId, workItemId: args.workItemId, runId: args.runId, phase: 'closing' },
+        dependent,
+        gated,
       );
       if (gated.actions.length === 0) {
         const finalOutput = flattenedDependentOutput(gated, []);
-        const failure = (initial.resumedClosing ? undefined : initial.initialFailure) ??
+        const failure =
+          (initial.resumedClosing ? undefined : initial.initialFailure) ??
           scrubKnownValues(openQuestionStop(gated), knownValues) ??
           blockedPlanReason(output.planStepOutcomes);
-        const reason = failure ? (gateRefusalStop(finalOutput.actions, finalOutput.applied) ?? failure) : undefined;
+        const reason = failure
+          ? (gateRefusalStop(finalOutput.actions, finalOutput.applied) ?? failure)
+          : undefined;
         if (reason) {
           await ctx.runMutation(internal.work.setFailed, {
             workItemId: args.workItemId,
@@ -2511,7 +2749,9 @@ export const authorDependentActions = internalAction({
         workItemId: args.workItemId,
         runId: args.runId,
         reason,
-        ...(initial ? { output: scrubKnownValues(withRefusedClosing(initial, refused, reason), knownValues) } : {}),
+        ...(initial
+          ? { output: scrubKnownValues(withRefusedClosing(initial, refused, reason), knownValues) }
+          : {}),
         ...(gateRefusal ? { stopped: true } : {}),
       });
       return { ok: false, reason };
@@ -2561,8 +2801,14 @@ function priorPhasesLedger(
   const carried = (dependent ? output.initial.landedWrites : output.landedWrites) ?? [];
   if (carried.length === 0) return dependent ? output.initial : undefined;
   return {
-    actions: [...carried.map((write) => write.action), ...(dependent ? output.initial.actions : [])],
-    applied: [...carried.map((write) => write.applied), ...(dependent ? output.initial.applied : [])],
+    actions: [
+      ...carried.map((write) => write.action),
+      ...(dependent ? output.initial.actions : []),
+    ],
+    applied: [
+      ...carried.map((write) => write.applied),
+      ...(dependent ? output.initial.applied : []),
+    ],
   };
 }
 
@@ -2587,16 +2833,22 @@ async function reusedRows(
   run: { workItemId: Id<'workItems'>; runId: Id<'events'>; actionIndexOffset: number },
 ): Promise<Array<AppliedAction | undefined>> {
   const dependent = isDependentPendingOutput(output);
-  const earlier: LandedWrite[] = (dependent ? output.initial.landedWrites : output.landedWrites) ?? [];
+  const earlier: LandedWrite[] =
+    (dependent ? output.initial.landedWrites : output.landedWrites) ?? [];
   const resumed = dependent && output.initial.resumedClosing;
   if (earlier.length === 0 && !resumed) return output.actions.map(() => undefined);
   const item = await ctx.runQuery(internal.work.getInternal, { workItemId: run.workItemId });
   const options = { surfaces, managerFeedback: liveManagerFeedback(item?.managerFeedback) };
   const fromResume = resumed
-    ? resumedClosingLedger(output.actions, {
-        actions: [...output.initial.actions, ...(output.initial.previousClosing?.actions ?? [])],
-        applied: [...output.initial.applied, ...(output.initial.previousClosing?.applied ?? [])],
-      }, run, options)
+    ? resumedClosingLedger(
+        output.actions,
+        {
+          actions: [...output.initial.actions, ...(output.initial.previousClosing?.actions ?? [])],
+          applied: [...output.initial.applied, ...(output.initial.previousClosing?.applied ?? [])],
+        },
+        run,
+        options,
+      )
     : output.actions.map(() => undefined);
   const fromEarlier = reusedLedger(output.actions, earlier, run, {
     ...options,
@@ -2967,7 +3219,9 @@ export const applyApprovedActions = internalAction({
           : 0;
       const browserMcpUrl = process.env.DAY0_BROWSER_MCP_URL;
       const resumedLedger = await reusedRows(ctx, output, surfaces, {
-        workItemId: args.workItemId, runId: claim.runId, actionIndexOffset,
+        workItemId: args.workItemId,
+        runId: claim.runId,
+        actionIndexOffset,
       });
       const priorLedger = output.actions.map((_, index) => {
         const entry = claim.phase === 'approved' ? output.applied?.[index] : undefined;
@@ -3134,7 +3388,9 @@ async function itemsHeldElsewhere(
   knownValues?: readonly string[],
 ): Promise<HeldExternalItem[]> {
   if (SURFACE_MODE !== 'real') return [];
-  const held: HeldExternalItem[] = await ctx.runQuery(internal.work.itemsHeldElsewhere, { workItemId });
+  const held: HeldExternalItem[] = await ctx.runQuery(internal.work.itemsHeldElsewhere, {
+    workItemId,
+  });
   if (held.length === 0) return held;
   return scrubKnownValues(held, knownValues ?? (await knownValuesForAgent(ctx, agent)));
 }
@@ -3155,7 +3411,11 @@ async function itemsHeldElsewhere(
 function heldByAnotherWorkItem(
   ctx: ActionCtx,
   workItemId: Id<'workItems'>,
-  closing?: { actions: readonly MockAction[]; surfaces: readonly SurfaceRecord[]; authoredUnder: readonly ListedHeldItem[] },
+  closing?: {
+    actions: readonly MockAction[];
+    surfaces: readonly SurfaceRecord[];
+    authoredUnder: readonly ListedHeldItem[];
+  },
 ): ClaimHold {
   // A closing set whose executor was not told of a holder wrote its messages
   // as if the write would land. Read once, before the first action goes out
@@ -3168,15 +3428,23 @@ function heldByAnotherWorkItem(
     if (!closing) return undefined;
     for (const action of closing.actions) {
       const parsed = parseSurfaceAction(action);
-      const surface = parsed.ok ? closing.surfaces.find((row) => row.slug === parsed.action.surface) : undefined;
+      const surface = parsed.ok
+        ? closing.surfaces.find((row) => row.slug === parsed.action.surface)
+        : undefined;
       if (!parsed.ok || !surface) continue;
       const targets = writeTargetIds(parsed.action, surface);
       if (targets.length === 0 || listedHeldItem(closing.authoredUnder, targets, surface)) continue;
-      const holder = await ctx.runQuery(internal.work.writeClaimHolder, { workItemId, surfaceSlug: surface.slug, targets });
+      const holder = await ctx.runQuery(internal.work.writeClaimHolder, {
+        workItemId,
+        surfaceSlug: surface.slug,
+        targets,
+      });
       if (!holder) continue;
       return withheldWithClaimedWriteReason(
         withheldByClaimReason(
-          surface.path === 'browser-driven' ? { ...holder, target: `the page field "${holder.target}" on ${surface.slug}` } : holder,
+          surface.path === 'browser-driven'
+            ? { ...holder, target: `the page field "${holder.target}" on ${surface.slug}` }
+            : holder,
         ),
       );
     }
@@ -3207,7 +3475,9 @@ function heldByAnotherWorkItem(
     });
     if (!holder) return earlier;
     const reason = withheldByClaimReason(
-      browserDriven ? { ...holder, target: `the page field "${holder.target}" on ${surface.slug}` } : holder,
+      browserDriven
+        ? { ...holder, target: `the page field "${holder.target}" on ${surface.slug}` }
+        : holder,
     );
     if (browserDriven) withheldPages.set(surface.slug, reason);
     return reason;
@@ -3230,10 +3500,16 @@ async function claimPlannedWriteTargets(
   workItemId: Id<'workItems'>,
   plan: Pick<ExecutionPlan, 'obligations'>,
   surfaces: readonly SurfaceRecord[],
-  mockEnv: { howToGuides: ReadonlyArray<{ body: string }>; teamDocs: ReadonlyArray<{ body: string }> },
+  mockEnv: {
+    howToGuides: ReadonlyArray<{ body: string }>;
+    teamDocs: ReadonlyArray<{ body: string }>;
+  },
 ): Promise<void> {
   if (SURFACE_MODE !== 'real') return;
-  const targets = plannedWriteTargets(plan.obligations, surfaces, [...mockEnv.howToGuides, ...mockEnv.teamDocs]);
+  const targets = plannedWriteTargets(plan.obligations, surfaces, [
+    ...mockEnv.howToGuides,
+    ...mockEnv.teamDocs,
+  ]);
   if (targets.length === 0) return;
   await ctx.runMutation(internal.work.takeWriteTargetClaims, { workItemId, targets });
 }
@@ -3268,7 +3544,10 @@ function realAdapterDeps(
  * environment reads nothing from outside the repository and its adapters
  * never see a decrypted value.
  */
-async function knownValuesForAgent(ctx: ActionCtx, agent: Doc<'agents'>): Promise<readonly string[]> {
+async function knownValuesForAgent(
+  ctx: ActionCtx,
+  agent: Doc<'agents'>,
+): Promise<readonly string[]> {
   if (SURFACE_MODE !== 'real' || !agent.userId) return [];
   return await ownerKnownValues(ctx, agent.userId);
 }
@@ -3333,6 +3612,7 @@ function authorityBeforeTransport(
     if (!authority.agentExists) return 'agent not found';
     const surface = authority.surface;
     if (!surface) return UNKNOWN_SURFACE;
+    if (authority.accessEnded) return authority.accessEnded;
     if (surfaceAuthorityShape(surface) !== surfaceAuthorityShape(claimedSurface)) {
       return 'surface authority changed before transport';
     }
@@ -3373,16 +3653,6 @@ function authorityBeforeTransport(
   };
 }
 
-/**
- * Load the agent's surfaces as the executors read them.
- *
- * Args:
- *   ctx: Convex action context.
- *   agentId: The agent.
- *
- * Returns:
- *   Executor-facing surface records.
- */
 /**
  * Load what a real-mode plan is drawn from: the agent's surfaces with their
  * verdicts and the same documentation the executor cites.
@@ -3443,14 +3713,17 @@ async function itemGroundingReads(
  * One standing-authority read through the same registry, rules and adapter as
  * an executed action, keyed on an event minted for it so the ledger row is on
  * the timeline. A failed read, including a provider error body, becomes
- * "unavailable" with the reason; nothing here stops the plan.
+ * "unavailable" with the reason; nothing here stops the plan, but the plan
+ * is stored as drafted without the record (P7-18).
  *
  * Args:
  *   ctx: Convex action context.
  *   args: The work item, agent, candidate and surfaces.
  *
  * Returns:
- *   The record or its unavailability, or undefined when there is no record to read.
+ *   The record or its unavailability (its system not connected, or the read
+ *   failed) with what the plan was then drafted without, or nothing when
+ *   there is no record to read.
  */
 async function readCandidateRecord(
   ctx: ActionCtx,
@@ -3464,18 +3737,39 @@ async function readCandidateRecord(
     /** The owner's stored values, resolved once by the calling action. */
     knownValues: readonly string[];
   },
-): Promise<CandidateRecord | undefined> {
-  const read = candidateRecordRead(args.candidate, args.surfaces, Date.now());
-  if (!read) return undefined;
+): Promise<{ record?: CandidateRecord; draftedWithout?: PlanDraftedWithout }> {
+  const now = Date.now();
+  const read = candidateRecordRead(args.candidate, args.surfaces, now);
+  if (!read) {
+    const record = unreadCandidateRecord(args.candidate, args.surfaces, now);
+    return record
+      ? {
+          record,
+          draftedWithout: {
+            surfaceSlug: record.surface,
+            subject: record.subject,
+            cause: 'not-connected',
+          },
+        }
+      : {};
+  }
+  const readFailed = (
+    unavailable: string,
+  ): {
+    record: CandidateRecord;
+    draftedWithout: PlanDraftedWithout;
+  } => ({
+    record: { surface: read.surface, tool: read.tool, subject: read.subject, unavailable },
+    draftedWithout: { surfaceSlug: read.surface, subject: read.subject, cause: 'read-failed' },
+  });
   try {
     const eventId = await ctx.runMutation(internal.work.beginPlanGroundingRead, {
       workItemId: args.workItemId,
       action: read.action,
     });
-    const grantRows: Doc<'permissionGrants'>[] = await ctx.runQuery(
-      internal.agents.grantedScopes,
-      { agentId: args.agentId },
-    );
+    const grantRows: Doc<'permissionGrants'>[] = await ctx.runQuery(internal.agents.grantedScopes, {
+      agentId: args.agentId,
+    });
     const browserMcpUrl = process.env.DAY0_BROWSER_MCP_URL;
     const [rawApplied] = await applySurfaceActions(
       ctx,
@@ -3506,12 +3800,11 @@ async function readCandidateRecord(
     await ctx.runMutation(internal.work.finishPlanGroundingRead, { eventId, applied });
     const { surface, tool, subject } = read;
     if (!applied || !applied.ok || applied.held) {
-      return { surface, tool, subject, unavailable: applied?.reason ?? 'the read did not land' };
+      return readFailed(applied?.reason ?? 'the read did not land');
     }
-    return { surface, tool, subject, text: applied.effect ?? `(empty ${subject})` };
+    return { record: { surface, tool, subject, text: applied.effect ?? `(empty ${subject})` } };
   } catch (error) {
-    const { surface, tool, subject } = read;
-    return { surface, tool, subject, unavailable: error instanceof Error ? error.message : String(error) };
+    return readFailed(error instanceof Error ? error.message : String(error));
   }
 }
 
@@ -3533,14 +3826,20 @@ async function plannerCorrections(
   item: Doc<'workItems'>,
   knownValues: readonly string[],
 ): Promise<{ entries: PlannerCorrection[]; redaction?: 'structural-only' }> {
-  const selected: Doc<'corrections'>[] = await ctx.runQuery(internal.corrections.selectedForCandidate, {
-    agentId: item.agentId,
-    sourceCategory: item.sourceCategory,
-    sourceSystem: item.sourceSystem,
-    workItemId: item._id,
-  });
+  const selected: Doc<'corrections'>[] = await ctx.runQuery(
+    internal.corrections.selectedForCandidate,
+    {
+      agentId: item.agentId,
+      sourceCategory: item.sourceCategory,
+      sourceSystem: item.sourceSystem,
+      workItemId: item._id,
+    },
+  );
   if (selected.length === 0) return { entries: [] };
-  return await scrubbedCorrectionEntries(selected, { model: spanModelFromEnv(), known: knownValues });
+  return await scrubbedCorrectionEntries(selected, {
+    model: spanModelFromEnv(),
+    known: knownValues,
+  });
 }
 
 /**
@@ -3584,7 +3883,7 @@ async function executorCorrections(
     known: args.knownValues ?? (await knownValuesForAgent(ctx, args.agent)),
   });
   if (scrubbed.redaction) {
-    await ctx.runMutation(internal.events.log, {
+    await logEvent(ctx, {
       agentId: args.item.agentId,
       type: 'work.corrections-redaction-limited',
       payload: {
@@ -3597,11 +3896,72 @@ async function executorCorrections(
   return scrubbed.entries;
 }
 
+/**
+ * Load the agent's surfaces as the executors read them, with an access whose
+ * end date has passed resolved as not connected (`endedAccessView`).
+ *
+ * Args:
+ *   ctx: Convex action context.
+ *   agentId: The agent.
+ *
+ * Returns:
+ *   Executor-facing surface records.
+ */
 async function loadSurfaces(ctx: ActionCtx, agentId: Id<'agents'>): Promise<SurfaceRecord[]> {
   const rows: Doc<'surfaces'>[] = await ctx.runQuery(internal.orientationData.surfacesForAgent, {
     agentId,
   });
-  return rows.map((row) => toSurfaceRecord(row));
+  const now = Date.now();
+  return rows.map((row) => toSurfaceRecord(accessEnded(row, now) ? endedAccessView(row) : row));
+}
+
+/**
+ * A surface whose access end date has passed, as the hourly sweep will leave
+ * it (`surfaces.recordExpired`): approved, no credential landed, unverified.
+ * The end date is the boundary (Q5, wave 2 review M21), so nothing the loop
+ * resolves reads or writes through it in the hour before the sweep runs.
+ */
+function endedAccessView(row: Doc<'surfaces'>): Doc<'surfaces'> {
+  return { ...row, verdict: 'approved', credentialLanded: false, lastVerifiedAt: undefined };
+}
+
+/**
+ * Hold the tickets a phase's landed writes went to, when no work item holds
+ * them (P8-2; `work.claimLandedTicketWrites`). Real mode only.
+ *
+ * @param actions - The phase's actions.
+ * @param applied - Their ledger rows, by index.
+ * @param surfaces - The agent's surfaces.
+ */
+async function claimLandedTicketWrites(
+  ctx: ActionCtx,
+  workItemId: Id<'workItems'>,
+  actions: readonly MockAction[],
+  applied: readonly AppliedAction[],
+  surfaces: readonly SurfaceRecord[],
+): Promise<void> {
+  if (SURFACE_MODE !== 'real') return;
+  const writes = actions.flatMap((action, index) => {
+    const row = applied[index];
+    if (!row?.ok || row.held) return [];
+    const parsed = parseSurfaceAction(action);
+    if (!parsed.ok) return [];
+    const surface = surfaces.find((candidate) => candidate.slug === parsed.action.surface);
+    if (surface?.class !== 'kanban' || surface.path === 'browser-driven') return [];
+    const targets = writeTargetIds(parsed.action, surface);
+    return targets.length > 0 ? [{ surfaceSlug: surface.slug, targets }] : [];
+  });
+  if (writes.length === 0) return;
+  try {
+    await ctx.runMutation(internal.work.claimLandedTicketWrites, { workItemId, writes });
+  } catch (error) {
+    // The writes landed; the run's outcome is recorded whatever happens to
+    // the claim, which only keeps a colleague from repeating them.
+    log.warn('landed ticket writes not claimed', {
+      workItemId,
+      reason: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 /** What `finishRun` needs from the apply claim. */
@@ -3644,13 +4004,17 @@ async function finishRun(
   knownValues: readonly string[] = [],
   surfaces: readonly SurfaceRecord[] = [],
 ): Promise<{ ok: boolean; reason?: string }> {
+  await claimLandedTicketWrites(ctx, workItemId, rawOutput.actions ?? [], rawApplied, surfaces);
   // The whole persisted record passes the exact-value layer once more here:
   // the adapters already applied it to provider text, and this covers every
   // other string the dashboard renders from the run, whatever wrote it.
   const output = scrubKnownValues(rawOutput, knownValues);
   // A read the gate refused is dropped with its ledger line and is no failure
   // of the run; a refused write still is.
-  const applied = scrubKnownValues(withRefusedReadsDropped(rawOutput.actions ?? [], rawApplied), knownValues);
+  const applied = scrubKnownValues(
+    withRefusedReadsDropped(rawOutput.actions ?? [], rawApplied),
+    knownValues,
+  );
   const failures = applied.filter((action: AppliedAction): boolean => !action.ok && !action.held);
   const reason =
     applied.length === 0
@@ -3687,7 +4051,9 @@ async function finishRun(
       };
     }
     const finalOutput = flattenedDependentOutput(output, settled);
-    const item: Doc<'workItems'> | null = await ctx.runQuery(internal.work.getInternal, { workItemId });
+    const item: Doc<'workItems'> | null = await ctx.runQuery(internal.work.getInternal, {
+      workItemId,
+    });
     const round = reason ? undefined : closingRoundOwed(output, settled, item);
     if (round && item) {
       const prepared = await ctx.runMutation(internal.work.prepareDependentPhase, {
@@ -3697,9 +4063,12 @@ async function finishRun(
         output: closingRoundPrerequisites(output, finalOutput, round),
       });
       if (!prepared.prepared) {
-        return { ok: false, reason: 'the run moved on before its closing set could be authored once more' };
+        return {
+          ok: false,
+          reason: 'the run moved on before its closing set could be authored once more',
+        };
       }
-      await ctx.runMutation(internal.events.log, {
+      await logEvent(ctx, {
         agentId: item.agentId,
         type: CLOSING_REAUTHORED,
         payload: {
@@ -3711,7 +4080,10 @@ async function finishRun(
           ),
         },
       });
-      return { ok: true, reason: `closing actions applied; the closing set is authored once more (${round})` };
+      return {
+        ok: true,
+        reason: `closing actions applied; the closing set is authored once more (${round})`,
+      };
     }
     const finalReason =
       (output.initial.resumedClosing ? undefined : output.initial.initialFailure) ??
@@ -3726,9 +4098,12 @@ async function finishRun(
         // row's line does. A set kept before they were recorded reads them now.
         heldElsewhere:
           output.leftToHolders ??
-          (SURFACE_MODE === 'real' && output.planStepOutcomes.some((outcome) => outcome.status === 'blocked')
+          (SURFACE_MODE === 'real' &&
+          output.planStepOutcomes.some((outcome) => outcome.status === 'blocked')
             ? scrubKnownValues(
-                (await ctx.runQuery(internal.work.itemsHeldElsewhere, { workItemId })) as HeldExternalItem[],
+                (await ctx.runQuery(internal.work.itemsHeldElsewhere, {
+                  workItemId,
+                })) as HeldExternalItem[],
                 knownValues,
               )
             : undefined),

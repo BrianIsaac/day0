@@ -9,11 +9,7 @@ import type { Id, Doc } from '@convex/_generated/dataModel';
  * render it, so it has no real-mode copy to show. */
 export const EMPTY_SPREADSHEETS = 'no spreadsheets seeded';
 
-export function SpreadsheetTab({
-  agentId,
-}: {
-  agentId: Id<'agents'>;
-}) {
+export function SpreadsheetTab({ agentId }: { agentId: Id<'agents'> }) {
   const sheets = useQuery(api.mock.listSpreadsheets, { agentId });
   // Nothing picked yet falls through to the first sheet and its first tab, so
   // the selection is derived rather than back-filled once the query lands.
@@ -30,16 +26,14 @@ export function SpreadsheetTab({
   const activeTab = pickedTab ?? sheet?.tabs[0]?.name ?? null;
   const rows: Doc<'mockSpreadsheetRows'>[] = useMemo(() => detail?.rows ?? [], [detail]);
 
-  const activeRows = useMemo(
-    () => rows.filter((r) => r.tabName === activeTab),
-    [rows, activeTab],
-  );
+  const activeRows = useMemo(() => rows.filter((r) => r.tabName === activeTab), [rows, activeTab]);
   const activeTabSpec = useMemo(
     () => sheet?.tabs.find((t) => t.name === activeTab),
     [sheet, activeTab],
   );
 
-  if (!sheets) return <div className="text-xs text-[var(--color-muted)]">loading spreadsheets…</div>;
+  if (!sheets)
+    return <div className="text-xs text-[var(--color-muted)]">loading spreadsheets…</div>;
   if (sheets.length === 0)
     return <div className="text-xs text-[var(--color-muted)]">{EMPTY_SPREADSHEETS}</div>;
 
@@ -126,9 +120,7 @@ export function SpreadsheetTab({
                 <tr
                   key={r._id}
                   className={`border-t border-[var(--color-border)] hover:bg-[var(--color-bg)] ${
-                    r.addedBy?.includes('Day0')
-                      ? 'bg-[var(--color-accent)]/5'
-                      : ''
+                    r.addedBy?.includes('Day0') ? 'bg-[var(--color-accent)]/5' : ''
                   }`}
                 >
                   <td className="px-3 py-1.5 text-[var(--color-muted)] font-mono">{i + 1}</td>

@@ -27,7 +27,11 @@ describe('question keys', (): void => {
 describe('content words', (): void => {
   it('keeps the words that name things and drops the words every question carries', (): void => {
     expect(contentWords('Whether Northstar CRM access will be granted.')).toEqual(['northstar']);
-    expect(contentWords('Who owns the Looker pipeline tile.')).toEqual(['looker', 'pipeline', 'tile']);
+    expect(contentWords('Who owns the Looker pipeline tile.')).toEqual([
+      'looker',
+      'pipeline',
+      'tile',
+    ]);
   });
 
   it('says which words a plan or candidate shares with a question', (): void => {
@@ -38,7 +42,10 @@ describe('content words', (): void => {
       ),
     ).toEqual(['looker', 'pipeline', 'tile']);
     expect(
-      sharedContentWords('Whether Northstar CRM access will be granted.', 'Read the ticket, draft a reply.'),
+      sharedContentWords(
+        'Whether Northstar CRM access will be granted.',
+        'Read the ticket, draft a reply.',
+      ),
     ).toEqual([]);
   });
 });
@@ -54,7 +61,8 @@ describe('what the manager is asked', (): void => {
   });
 
   it('reads the notes field first and keeps a legacy row after it, once', (): void => {
-    const later = 'Evidence check: 2 clauses in this draft quoted my own words back as if they were yours, so I dropped them. Which of this is actually what you told me?';
+    const later =
+      'Evidence check: 2 clauses in this draft quoted my own words back as if they were yours, so I dropped them. Which of this is actually what you told me?';
     expect(
       synthesisNotes({ openQuestions: RECORDED_QUESTIONS_2026_09_16, synthesisNotes: [later] }),
     ).toEqual([later, SYNTHESIS_SELF_CHECK_NOTE_2026_09_16]);

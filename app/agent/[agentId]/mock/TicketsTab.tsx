@@ -15,11 +15,7 @@ const STATUS_TONE: Record<string, string> = {
  * render it, so it has no real-mode copy to show. */
 export const EMPTY_TICKETS = 'no tickets seeded';
 
-export function TicketsTab({
-  agentId,
-}: {
-  agentId: Id<'agents'>;
-}) {
+export function TicketsTab({ agentId }: { agentId: Id<'agents'> }) {
   const tickets = useQuery(api.mock.listTickets, { agentId });
 
   if (!tickets) return <div className="text-xs text-[var(--color-muted)]">loading…</div>;
@@ -32,9 +28,7 @@ export function TicketsTab({
         <div key={t._id} className="border border-[var(--color-border)] rounded-md p-3">
           <div className="flex items-center gap-2 mb-1">
             <span className="font-mono text-[10px] text-[var(--color-muted)]">{t.slug}</span>
-            <span
-              className={`text-[10px] px-1.5 py-0.5 rounded ${STATUS_TONE[t.status] ?? ''}`}
-            >
+            <span className={`text-[10px] px-1.5 py-0.5 rounded ${STATUS_TONE[t.status] ?? ''}`}>
               {t.status}
             </span>
             {t.priority ? (

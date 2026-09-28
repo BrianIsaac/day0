@@ -91,10 +91,7 @@ function row(agentId: Id<'agents'>, externalId: string, now: number) {
 async function scheduledSteps(harness: Harness): Promise<Array<[string, string]>> {
   return (
     await harness.run(async (ctx) => await ctx.db.system.query('_scheduled_functions').collect())
-  ).map((job): [string, string] => [
-    job.name,
-    (job.args[0] as { workItemId: string }).workItemId,
-  ]);
+  ).map((job): [string, string] => [job.name, (job.args[0] as { workItemId: string }).workItemId]);
 }
 
 describe('the stalled-step sweep', (): void => {
@@ -240,12 +237,13 @@ describe('the stalled-step sweep', (): void => {
     const harness = sweepHarness();
     const agentId = await seedAgent(harness, false);
     const now = Date.now();
-    const workItemId = await harness.run(async (ctx) =>
-      await ctx.db.insert('workItems', {
-        ...row(agentId, 'REVOPS-44', now),
-        state: 'plan-pending',
-        plan: PLAN,
-      }),
+    const workItemId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('workItems', {
+          ...row(agentId, 'REVOPS-44', now),
+          state: 'plan-pending',
+          plan: PLAN,
+        }),
     );
 
     await harness.mutation(internal.work.resumeStalledSteps, {});
@@ -259,15 +257,19 @@ describe('the stalled-step sweep', (): void => {
     const harness = sweepHarness();
     const agentId = await seedAgent(harness, true);
     const now = Date.now();
-    const workItemId = await harness.run(async (ctx) =>
-      await ctx.db.insert('workItems', {
-        ...row(agentId, 'REVOPS-45', now),
-        state: 'plan-pending',
-        plan: PLAN,
-      }),
+    const workItemId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('workItems', {
+          ...row(agentId, 'REVOPS-45', now),
+          state: 'plan-pending',
+          plan: PLAN,
+        }),
     );
 
-    const decision = await harness.mutation(internal.work.decidePlan, { workItemId, recovery: true });
+    const decision = await harness.mutation(internal.work.decidePlan, {
+      workItemId,
+      recovery: true,
+    });
 
     expect(decision).toEqual({ approved: true });
     expect(await scheduledSteps(harness)).toContainEqual([
@@ -322,9 +324,7 @@ describe('the stalled-step sweep', (): void => {
 
     await harness.mutation(internal.work.resumeStalledSteps, {});
 
-    expect(await scheduledSteps(harness)).toEqual([
-      ['work:setFailed', ids.stuck],
-    ]);
+    expect(await scheduledSteps(harness)).toEqual([['work:setFailed', ids.stuck]]);
     await harness.mutation(internal.work.setFailed, {
       workItemId: ids.live,
       runId: ids.liveRun,
@@ -400,10 +400,7 @@ describe('the stalled-step sweep', (): void => {
 
     await harness.mutation(internal.work.resumeStalledSteps, {});
 
-    expect(await scheduledSteps(harness)).toContainEqual([
-      'workActions:draftPlanInternal',
-      stale,
-    ]);
+    expect(await scheduledSteps(harness)).toContainEqual(['workActions:draftPlanInternal', stale]);
   });
 
   it('does nothing in mock mode', async (): Promise<void> => {
@@ -462,7 +459,6 @@ describe('the cron targets, run by the names they are scheduled under', (): void
           verdict: 'connected',
           whereFound: [],
           managerApprovedAt: 1,
-          itApprovedAt: 1,
           credentialLanded: true,
           createdAt: 1,
         }),
@@ -481,6 +477,7 @@ describe('the cron targets, run by the names they are scheduled under', (): void
     await expect(runCron(harness, 'poll manager decision replies')).resolves.toEqual({
       mode: 'real',
       polled: 0,
+      idle: 0,
       skipped: 0,
       surfaces: 0,
     });

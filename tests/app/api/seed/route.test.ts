@@ -7,6 +7,8 @@ vi.mock('@clerk/nextjs/server', () => ({
 let cookieValue: string | undefined;
 const seeded: unknown[] = [];
 const dialled: string[] = [];
+/** What the deployment's seeding throws, when a test needs it to. */
+let seedFailure: Error | undefined;
 
 vi.mock('next/headers', () => ({
   cookies: async (): Promise<{ get: () => { value: string } | undefined }> => ({
@@ -22,6 +24,7 @@ vi.mock('convex/browser', () => ({
     }
     setAuth(): void {}
     async action(_reference: unknown, args: unknown): Promise<{ seeded: true }> {
+      if (seedFailure) throw seedFailure;
       seeded.push(args);
       return { seeded: true };
     }
@@ -58,6 +61,7 @@ beforeEach(async (): Promise<void> => {
   cookieValue = undefined;
   seeded.length = 0;
   dialled.length = 0;
+  seedFailure = undefined;
 });
 
 afterEach((): void => {
@@ -119,6 +123,18 @@ describe('the seed route', (): void => {
     await unlock();
     await seed(JSON_FROM_APP, JSON.stringify({ agentId: 'agent-1' }));
     expect(dialled).toEqual(['http://127.0.0.1:3210']);
+  });
+
+  it('answers a seeding the deployment refused or failed with a fixed reason, never its error text (C-34)', async (): Promise<void> => {
+    await unlock();
+    seedFailure = new Error('[CONVEX A(seed:seedDemo)] Server Error Uncaught Error: forbidden');
+    const refused = await seed(JSON_FROM_APP, JSON.stringify({ agentId: 'agent-1' }));
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toEqual({ error: 'that agent is not yours to seed' });
+    seedFailure = new Error('[CONVEX A(seed:seedDemo)] Server Error at /srv/convex/seed.ts:42');
+    const failed = await seed(JSON_FROM_APP, JSON.stringify({ agentId: 'agent-1' }));
+    expect(failed.status).toBe(500);
+    expect(await failed.json()).toEqual({ error: 'demo seeding failed' });
   });
 
   it('answers a signed-out caller outside no-auth mode with a 401 and seeds nothing', async (): Promise<void> => {

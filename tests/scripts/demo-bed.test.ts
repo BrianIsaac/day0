@@ -1,5 +1,13 @@
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -135,8 +143,9 @@ describe('command line', (): void => {
       'day0-final',
     );
     expect(() => parseDemoBedArguments(['up'], {})).toThrow('COMPOSE_PROJECT_NAME');
-    expect(() => parseDemoBedArguments(['snapshot', '--project', 'day0'], {}))
-      .toThrow('snapshot does not take --project');
+    expect(() => parseDemoBedArguments(['snapshot', '--project', 'day0'], {})).toThrow(
+      'snapshot does not take --project',
+    );
   });
 
   it('drops the separator pnpm inserts and reads the flags each subcommand takes', (): void => {
@@ -248,18 +257,26 @@ describe('the protected volumes and projects', (): void => {
     const docker = join(bin, 'docker');
     writeFileSync(docker, '#!/bin/sh\nprintf "%s\\n" "$*" >> "$DOCKER_CALL_LOG"\n');
     chmodSync(docker, 0o755);
-    writeFileSync(join(scratch, '.env.local'),
-      'COMPOSE_PROJECT_NAME=day0-p11r-test\nCOMPOSE_FILE=alternate.yml\n');
+    writeFileSync(
+      join(scratch, '.env.local'),
+      'COMPOSE_PROJECT_NAME=day0-p11r-test\nCOMPOSE_FILE=alternate.yml\n',
+    );
     writeFileSync(join(scratch, 'docker-compose.yml'), COMPOSE_FILE);
     try {
-      const result = spawnSync(join(ROOT, 'node_modules/.bin/tsx'), [
-        join(ROOT, 'scripts/demo-bed.ts'), 'down', '--project', 'day0-p11r-test',
-      ], {
-        cwd: scratch,
-        env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, DOCKER_CALL_LOG: calls,
-          COMPOSE_FILE: 'alternate.yml' },
-        encoding: 'utf8',
-      });
+      const result = spawnSync(
+        join(ROOT, 'node_modules/.bin/tsx'),
+        [join(ROOT, 'scripts/demo-bed.ts'), 'down', '--project', 'day0-p11r-test'],
+        {
+          cwd: scratch,
+          env: {
+            ...process.env,
+            PATH: `${bin}:${process.env.PATH}`,
+            DOCKER_CALL_LOG: calls,
+            COMPOSE_FILE: 'alternate.yml',
+          },
+          encoding: 'utf8',
+        },
+      );
       expect(result.status).toBe(0);
       expect(readFileSync(calls, 'utf8')).toContain('-f docker-compose.yml');
     } finally {
@@ -286,7 +303,9 @@ describe('the protected volumes and projects', (): void => {
         encoding: 'utf8',
       });
       expect([1, 2], args.join(' ')).toContain(result.status);
-      expect(result.stderr, args.join(' ')).toMatch(/protected|only ever read|file names project|COMPOSE_PROJECT_NAME=|snapshot does not take --project/);
+      expect(result.stderr, args.join(' ')).toMatch(
+        /protected|only ever read|file names project|COMPOSE_PROJECT_NAME=|snapshot does not take --project/,
+      );
       expect(existsSync(calls), args.join(' ')).toBe(false);
     };
     try {
@@ -345,13 +364,20 @@ describe('the protected volumes and projects', (): void => {
     expect(() => assertNotProtected('day0-redactor-warm')).not.toThrow();
   });
 
-  it('guards every volume down --volumes would remove, the redactor pair included', (): void => {
-    expect(projectVolumeNames('day0-p11-abc123')).toEqual([
+  it('guards every volume down --volumes would remove: each the compose file declares', (): void => {
+    const compose = readFileSync(join(ROOT, 'docker-compose.yml'), 'utf8');
+    expect(projectVolumeNames('day0-p11-abc123', compose)).toEqual([
       'day0-p11-abc123_convex_data',
-      'day0-p11-abc123_sandbox_socket',
       'day0-p11-abc123_model_data',
+      'day0-p11-abc123_notion_npm_cache',
+      'day0-p11-abc123_sandbox_socket',
       'day0-p11-abc123_redactor_venv',
       'day0-p11-abc123_redactor_models',
+      'day0-p11-abc123_redactor_tmp',
+    ]);
+    expect(projectVolumeNames('day0-p11-abc123', 'volumes:\n  one:\n  two:\n')).toEqual([
+      'day0-p11-abc123_one',
+      'day0-p11-abc123_two',
     ]);
     for (const name of [...PROTECTED_PROJECTS, ...READ_ONLY_PROJECTS]) {
       expect(() => projectVolumeNames(name)).toThrow();
@@ -371,14 +397,22 @@ describe('snapshot and restore run through a throwaway container', (): void => {
     writeFileSync(join(scratch, '.env.local'), 'COMPOSE_PROJECT_NAME=day0-p11r-test\n');
     writeFileSync(join(scratch, 'snapshot.tar.gz'), 'test');
     try {
-      const result = spawnSync(join(ROOT, 'node_modules/.bin/tsx'), [
-        join(ROOT, 'scripts/demo-bed.ts'), 'restore', '--project', 'day0-p11r-test',
-        '--snapshot', 'snapshot.tar.gz',
-      ], {
-        cwd: scratch,
-        env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, DOCKER_CALL_LOG: calls },
-        encoding: 'utf8',
-      });
+      const result = spawnSync(
+        join(ROOT, 'node_modules/.bin/tsx'),
+        [
+          join(ROOT, 'scripts/demo-bed.ts'),
+          'restore',
+          '--project',
+          'day0-p11r-test',
+          '--snapshot',
+          'snapshot.tar.gz',
+        ],
+        {
+          cwd: scratch,
+          env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, DOCKER_CALL_LOG: calls },
+          encoding: 'utf8',
+        },
+      );
       expect(result.status).toBe(1);
       expect(result.stderr).toContain('checksum sidecar');
       expect(existsSync(calls)).toBe(false);
@@ -394,29 +428,44 @@ describe('snapshot and restore run through a throwaway container', (): void => {
     const target = join(scratch, '.demo-bed', 'snapshots', 'race.tar.gz');
     mkdirSync(bin);
     const docker = join(bin, 'docker');
-    writeFileSync(docker, [
-      '#!/bin/sh',
-      'if [ "$1" = volume ] && [ "$2" = inspect ]; then exit 0; fi',
-      'if [ "$1" = ps ]; then',
-      '  if [ -f "$DOCKER_RACE_COUNT" ]; then printf "trial-backend-1\\n"; else touch "$DOCKER_RACE_COUNT"; fi',
-      '  exit 0',
-      'fi',
-      'if [ "$1" = run ]; then printf "tar" > "$DOCKER_RACE_TARGET"; exit 0; fi',
-      'exit 99',
-      '',
-    ].join('\n'));
+    writeFileSync(
+      docker,
+      [
+        '#!/bin/sh',
+        'if [ "$1" = volume ] && [ "$2" = inspect ]; then exit 0; fi',
+        'if [ "$1" = ps ]; then',
+        '  if [ -f "$DOCKER_RACE_COUNT" ]; then printf "trial-backend-1\\n"; else touch "$DOCKER_RACE_COUNT"; fi',
+        '  exit 0',
+        'fi',
+        'if [ "$1" = run ]; then printf "tar" > "$DOCKER_RACE_TARGET"; exit 0; fi',
+        'exit 99',
+        '',
+      ].join('\n'),
+    );
     chmodSync(docker, 0o755);
     writeFileSync(join(scratch, 'docker-compose.yml'), COMPOSE_FILE);
     try {
-      const result = spawnSync(join(ROOT, 'node_modules/.bin/tsx'), [
-        join(ROOT, 'scripts/demo-bed.ts'), 'snapshot', '--from-volume',
-        'day0-p11r-test_convex_data', '--snapshot', target,
-      ], {
-        cwd: scratch,
-        env: { ...process.env, PATH: `${bin}:${process.env.PATH}`,
-          DOCKER_RACE_COUNT: count, DOCKER_RACE_TARGET: target },
-        encoding: 'utf8',
-      });
+      const result = spawnSync(
+        join(ROOT, 'node_modules/.bin/tsx'),
+        [
+          join(ROOT, 'scripts/demo-bed.ts'),
+          'snapshot',
+          '--from-volume',
+          'day0-p11r-test_convex_data',
+          '--snapshot',
+          target,
+        ],
+        {
+          cwd: scratch,
+          env: {
+            ...process.env,
+            PATH: `${bin}:${process.env.PATH}`,
+            DOCKER_RACE_COUNT: count,
+            DOCKER_RACE_TARGET: target,
+          },
+          encoding: 'utf8',
+        },
+      );
       expect(result.status).toBe(1);
       expect(result.stderr).toContain('started while the snapshot ran');
       expect(existsSync(target)).toBe(false);
@@ -466,13 +515,24 @@ describe('snapshot and restore run through a throwaway container', (): void => {
     writeFileSync(docker, '#!/bin/sh\nprintf "%s\\n" "$*" >> "$DOCKER_CALL_LOG"\nexit 99\n');
     chmodSync(docker, 0o755);
     try {
-      const result = spawnSync('pnpm', ['exec', 'tsx', 'scripts/demo-bed.ts', 'snapshot',
-        '--from-volume', 'day0-demo-7c65e7_convex_data', '--snapshot',
-        join(scratch, 'docker', 'volumes', 'recorded', '_data', 'snapshot.tar.gz')], {
-        cwd: ROOT,
-        env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, DOCKER_CALL_LOG: calls },
-        encoding: 'utf8',
-      });
+      const result = spawnSync(
+        'pnpm',
+        [
+          'exec',
+          'tsx',
+          'scripts/demo-bed.ts',
+          'snapshot',
+          '--from-volume',
+          'day0-demo-7c65e7_convex_data',
+          '--snapshot',
+          join(scratch, 'docker', 'volumes', 'recorded', '_data', 'snapshot.tar.gz'),
+        ],
+        {
+          cwd: ROOT,
+          env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, DOCKER_CALL_LOG: calls },
+          encoding: 'utf8',
+        },
+      );
       expect(result.status).toBe(1);
       expect(result.stderr).toContain('snapshot output');
       expect(existsSync(calls)).toBe(false);
@@ -556,8 +616,9 @@ describe('the env file', (): void => {
     { CONVEX_SELF_HOSTED_URL: 'http://127.0.0.1:3210' },
     { NEXT_PUBLIC_CONVEX_URL: 'http://127.0.0.1:3210' },
   ])('refuses a bed contract pointing outside the selected project: %j', (values) => {
-    expect(() => bedEnvDefaults('day0-sweep-e6771f', BED_PROFILES, values,
-      bedPorts({ CONVEX_PORT: '44510' }))).toThrow();
+    expect(() =>
+      bedEnvDefaults('day0-sweep-e6771f', BED_PROFILES, values, bedPorts({ CONVEX_PORT: '44510' })),
+    ).toThrow();
   });
 
   it('replaces a value in place and appends a missing one, keeping the trailing newline', (): void => {
@@ -585,8 +646,12 @@ describe('the env file', (): void => {
     ].join('\n');
     const updates = { NEXT_PUBLIC_CONVEX_SITE_URL: 'http://127.0.0.1:47311' };
     const after = upsertEnvText(before, updates);
-    expect(after).toBe(before.replaceAll('NEXT_PUBLIC_CONVEX_SITE_URL=http://127.0.0.1:3211',
-      'NEXT_PUBLIC_CONVEX_SITE_URL=http://127.0.0.1:47311'));
+    expect(after).toBe(
+      before.replaceAll(
+        'NEXT_PUBLIC_CONVEX_SITE_URL=http://127.0.0.1:3211',
+        'NEXT_PUBLIC_CONVEX_SITE_URL=http://127.0.0.1:47311',
+      ),
+    );
     expect(upsertEnvText(after, updates)).toBe(after);
   });
 
@@ -614,6 +679,19 @@ describe('the env file', (): void => {
     expect(derived.DAY0_TEST_SLACK_AUTHORIZE_URL).toBe('http://127.0.0.1:44090/oauth/v2/authorize');
   });
 
+  it('names a bed that runs the offline rung an evaluation bed, and keeps a name the file gives', (): void => {
+    const ports = bedPorts({});
+    expect(bedEnvDefaults('day0-a7-abc123', BED_PROFILES, {}, ports).DAY0_EVALUATION_BED).toBe(
+      'day0-a7-abc123',
+    );
+    expect(
+      bedEnvDefaults('day0-a7-abc123', BED_PROFILES, { DAY0_EVALUATION_BED: 'kept' }, ports),
+    ).not.toHaveProperty('DAY0_EVALUATION_BED');
+    expect(bedEnvDefaults('day0-a7-abc123', ['real'], {}, ports)).not.toHaveProperty(
+      'DAY0_EVALUATION_BED',
+    );
+  });
+
   it('leaves a correct Slack seam alone and refuses an unsafe address', (): void => {
     const ports = bedPorts({});
     expect(bedEnvDefaults('day0-a7-abc123', ['real'], {}, ports)).not.toHaveProperty(
@@ -627,8 +705,14 @@ describe('the env file', (): void => {
         ports,
       ),
     ).not.toHaveProperty('DAY0_TEST_SLACK_API_URL');
-    expect(() => bedEnvDefaults('day0-a7-abc123', BED_PROFILES,
-      { DAY0_TEST_SLACK_API_URL: 'https://slack.com/api/' }, ports)).toThrow('DAY0_TEST_SLACK_API_URL');
+    expect(() =>
+      bedEnvDefaults(
+        'day0-a7-abc123',
+        BED_PROFILES,
+        { DAY0_TEST_SLACK_API_URL: 'https://slack.com/api/' },
+        ports,
+      ),
+    ).toThrow('DAY0_TEST_SLACK_API_URL');
   });
 
   it('points the deployment at this redactor and refuses a different address', (): void => {
@@ -643,15 +727,19 @@ describe('the env file', (): void => {
     expect(
       bedEnvDefaults('day0-a7-abc123', BED_PROFILES, { DAY0_REDACTOR_URL: REDACTOR_URL }, ports),
     ).not.toHaveProperty('DAY0_REDACTOR_URL');
-    expect(() => bedEnvDefaults('day0-a7-abc123', BED_PROFILES,
-      { DAY0_REDACTOR_URL: 'http://r:1' }, ports)).toThrow(REDACTOR_URL);
+    expect(() =>
+      bedEnvDefaults('day0-a7-abc123', BED_PROFILES, { DAY0_REDACTOR_URL: 'http://r:1' }, ports),
+    ).toThrow(REDACTOR_URL);
   });
 
   it('puts back the public URLs the Convex CLI rewrites to container ports during a push', (): void => {
     const ports = bedPorts({ CONVEX_PORT: '47210', CONVEX_SITE_PROXY_PORT: '47211' });
     expect(
       publicUrlCorrections(
-        { NEXT_PUBLIC_CONVEX_URL: 'http://127.0.0.1:47210', NEXT_PUBLIC_CONVEX_SITE_URL: 'http://127.0.0.1:3211' },
+        {
+          NEXT_PUBLIC_CONVEX_URL: 'http://127.0.0.1:47210',
+          NEXT_PUBLIC_CONVEX_SITE_URL: 'http://127.0.0.1:3211',
+        },
         ports,
       ),
     ).toEqual({ NEXT_PUBLIC_CONVEX_SITE_URL: 'http://127.0.0.1:47211' });
@@ -661,7 +749,10 @@ describe('the env file', (): void => {
     });
     expect(
       publicUrlCorrections(
-        { NEXT_PUBLIC_CONVEX_URL: 'http://127.0.0.1:47210', NEXT_PUBLIC_CONVEX_SITE_URL: 'http://127.0.0.1:47211' },
+        {
+          NEXT_PUBLIC_CONVEX_URL: 'http://127.0.0.1:47210',
+          NEXT_PUBLIC_CONVEX_SITE_URL: 'http://127.0.0.1:47211',
+        },
         ports,
       ),
     ).toEqual({});
@@ -771,13 +862,18 @@ describe('the warm redactor volumes', (): void => {
     expect(() =>
       warmRedactorPlan({
         project: 'day0-p11-abc123',
-        volumes: [...WARM, 'day0-other_redactor_venv', 'day0-other_redactor_models', 'x_redactor_venv'],
+        volumes: [
+          ...WARM,
+          'day0-other_redactor_venv',
+          'day0-other_redactor_models',
+          'x_redactor_venv',
+        ],
         image: IMAGE,
       }),
     ).toThrow(/--warm-from[\s\S]*day0-other, day0-redactor-warm/);
-    expect(() => warmRedactorPlan({ project: 'day0-p11-abc123', volumes: [], image: IMAGE })).toThrow(
-      'none on this machine',
-    );
+    expect(() =>
+      warmRedactorPlan({ project: 'day0-p11-abc123', volumes: [], image: IMAGE }),
+    ).toThrow('none on this machine');
   });
 
   it('refuses a warm project without both volumes, its own project, and a protected one', (): void => {
@@ -816,12 +912,14 @@ describe('the warm redactor volumes', (): void => {
   });
 
   it('refuses a protected warm source even when this bed already has its own volumes', (): void => {
-    expect(() => warmRedactorPlan({
-      project: 'day0-p11r-a18',
-      warmFrom: 'day0',
-      volumes: ['day0-p11r-a18_redactor_venv', 'day0-p11r-a18_redactor_models'],
-      image: IMAGE,
-    })).toThrow('protected');
+    expect(() =>
+      warmRedactorPlan({
+        project: 'day0-p11r-a18',
+        warmFrom: 'day0',
+        volumes: ['day0-p11r-a18_redactor_venv', 'day0-p11r-a18_redactor_models'],
+        image: IMAGE,
+      }),
+    ).toThrow('protected');
   });
 
   it('refuses a protected warm source before Docker is asked for volumes', (): void => {
@@ -835,13 +933,22 @@ describe('the warm redactor volumes', (): void => {
     writeFileSync(join(scratch, '.env.local'), 'COMPOSE_PROJECT_NAME=day0-p11r-test\n');
     writeFileSync(join(scratch, 'docker-compose.yml'), COMPOSE_FILE);
     try {
-      const result = spawnSync(join(ROOT, 'node_modules/.bin/tsx'),
-        [join(ROOT, 'scripts/demo-bed.ts'), 'up', '--project', 'day0-p11r-test',
-          '--warm-from', 'day0'], {
+      const result = spawnSync(
+        join(ROOT, 'node_modules/.bin/tsx'),
+        [
+          join(ROOT, 'scripts/demo-bed.ts'),
+          'up',
+          '--project',
+          'day0-p11r-test',
+          '--warm-from',
+          'day0',
+        ],
+        {
           cwd: scratch,
           env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, DOCKER_CALL_LOG: calls },
           encoding: 'utf8',
-        });
+        },
+      );
       expect(result.status).toBe(1);
       expect(result.stderr).toContain('protected');
       expect(existsSync(calls)).toBe(false);
@@ -852,17 +959,23 @@ describe('the warm redactor volumes', (): void => {
 
   it('refuses a venv the start script would empty and rebuild at the venue', (): void => {
     expect(redactorVenvRefusal('cpu', 'day0-redactor-warm_redactor_venv')).toBeUndefined();
-    expect(redactorVenvRefusal('cuda', 'day0-redactor-warm_redactor_venv')).toMatch(/CUDA[\s\S]*CPU/);
+    expect(redactorVenvRefusal('cuda', 'day0-redactor-warm_redactor_venv')).toMatch(
+      /CUDA[\s\S]*CPU/,
+    );
     expect(redactorVenvRefusal('none', 'day0-p11-abc123_redactor_venv')).toContain('first start');
     expect(redactorVenvRefusal('unknown', 'day0-redactor-warm_redactor_venv')).toContain('rebuild');
   });
 });
 
 describe('the offline rung refuses without the redactor', (): void => {
-  const ready = { project: 'day0-p11-abc123', services: RUNG_SERVICES, values: RUNG_VALUES,
+  const ready = {
+    project: 'day0-p11-abc123',
+    services: RUNG_SERVICES,
+    values: RUNG_VALUES,
     deploymentSlackUrl: 'http://fake-slack:8090/api/',
     deploymentRedactorUrl: 'http://redactor:8000',
-    ports: bedPorts(RUNG_VALUES) };
+    ports: bedPorts(RUNG_VALUES),
+  };
 
   it('runs when the doubles, the redactor and the seam are all there', (): void => {
     expect(offlineRungRefusal(ready)).toBeUndefined();
@@ -893,43 +1006,73 @@ describe('the offline rung refuses without the redactor', (): void => {
   });
 
   it('names the fix when the backend has no redactor address to sync with', (): void => {
-    const refusal = offlineRungRefusal({ ...ready, values: { ...RUNG_VALUES, DAY0_REDACTOR_URL: '' } });
+    const refusal = offlineRungRefusal({
+      ...ready,
+      values: { ...RUNG_VALUES, DAY0_REDACTOR_URL: '' },
+    });
     expect(refusal).toContain('DAY0_REDACTOR_URL');
     expect(refusal).toContain(REDACTOR_URL);
   });
 
   it('refuses a healthy redactor that the backend does not actually address', (): void => {
-    expect(offlineRungRefusal({ ...ready, values: {
-      ...RUNG_VALUES, DAY0_REDACTOR_URL: 'http://other-redactor:8000',
-    } })).toContain(REDACTOR_URL);
-    expect(offlineRungRefusal({ ...ready, deploymentRedactorUrl: 'http://other-redactor:8000' }))
-      .toContain(REDACTOR_URL);
+    expect(
+      offlineRungRefusal({
+        ...ready,
+        values: {
+          ...RUNG_VALUES,
+          DAY0_REDACTOR_URL: 'http://other-redactor:8000',
+        },
+      }),
+    ).toContain(REDACTOR_URL);
+    expect(
+      offlineRungRefusal({ ...ready, deploymentRedactorUrl: 'http://other-redactor:8000' }),
+    ).toContain(REDACTOR_URL);
   });
 
   it('refuses a live Slack route in either the file or the restored deployment', (): void => {
     const live = 'https://slack.com/api/';
-    expect(offlineRungRefusal({ ...ready, values: {
-      ...RUNG_VALUES, DAY0_TEST_SLACK_API_URL: live,
-    } })).toContain('DAY0_TEST_SLACK_API_URL');
-    expect(offlineRungRefusal({ ...ready, deploymentSlackUrl: live })).toContain('DAY0_TEST_SLACK_API_URL');
-    expect(offlineRungRefusal({ ...ready, deploymentSlackUrl: '' })).toContain('DAY0_TEST_SLACK_API_URL');
+    expect(
+      offlineRungRefusal({
+        ...ready,
+        values: {
+          ...RUNG_VALUES,
+          DAY0_TEST_SLACK_API_URL: live,
+        },
+      }),
+    ).toContain('DAY0_TEST_SLACK_API_URL');
+    expect(offlineRungRefusal({ ...ready, deploymentSlackUrl: live })).toContain(
+      'DAY0_TEST_SLACK_API_URL',
+    );
+    expect(offlineRungRefusal({ ...ready, deploymentSlackUrl: '' })).toContain(
+      'DAY0_TEST_SLACK_API_URL',
+    );
   });
 
   it('still refuses a missing double or mock mode, as before', (): void => {
-    expect(offlineRungRefusal({ ...ready, services: RUNG_SERVICES.filter((r) => r.service !== 'fake-slack') }))
-      .toContain('fake-slack is not running');
-    expect(offlineRungRefusal({ ...ready, values: { ...RUNG_VALUES, DAY0_SURFACE_MODE: 'mock' } }))
-      .toContain('DAY0_SURFACE_MODE must be real');
+    expect(
+      offlineRungRefusal({
+        ...ready,
+        services: RUNG_SERVICES.filter((r) => r.service !== 'fake-slack'),
+      }),
+    ).toContain('fake-slack is not running');
+    expect(
+      offlineRungRefusal({ ...ready, values: { ...RUNG_VALUES, DAY0_SURFACE_MODE: 'mock' } }),
+    ).toContain('DAY0_SURFACE_MODE must be real');
   });
 
   it("refuses when the file addresses a port that is not this project's backend", (): void => {
-    const drifted = offlineRungRefusal({ ...ready, values: { ...RUNG_VALUES, CONVEX_PORT: '3210' },
-      ports: bedPorts({ CONVEX_PORT: '3210' }) });
+    const drifted = offlineRungRefusal({
+      ...ready,
+      values: { ...RUNG_VALUES, CONVEX_PORT: '3210' },
+      ports: bedPorts({ CONVEX_PORT: '3210' }),
+    });
     expect(drifted).toContain('47210');
     expect(drifted).toContain('3210');
     expect(drifted).toContain('whatever listens');
-    const unpublished = offlineRungRefusal({ ...ready, services: [
-      { ...RUNNING('backend'), ports: '' }, ...RUNG_SERVICES.slice(1)] });
+    const unpublished = offlineRungRefusal({
+      ...ready,
+      services: [{ ...RUNNING('backend'), ports: '' }, ...RUNG_SERVICES.slice(1)],
+    });
     expect(unpublished).toContain('publish');
   });
 
@@ -948,27 +1091,47 @@ describe('the offline rung refuses without the redactor', (): void => {
 
 describe('the evidence directory', (): void => {
   it('names the four files the driver writes, sorted as sha256sum lists them', (): void => {
-    expect(RUNG_OUTPUT_FILES).toEqual(['commands.txt', 'trace-agent.json', 'trials.json', 'trials.md']);
+    expect(RUNG_OUTPUT_FILES).toEqual([
+      'commands.txt',
+      'trace-agent.json',
+      'trials.json',
+      'trials.md',
+    ]);
   });
 
-  it.skipIf(!hasHostTool('sha256sum'))('writes SHA256SUMS in the format sha256sum -c reads (needs sha256sum)', (): void => {
-    const directory = mkdtempSync(join(tmpdir(), 'day0-p11-sums-'));
-    try {
-      const digests = RUNG_OUTPUT_FILES.map((name) => {
-        writeFileSync(join(directory, name), `${name}\n`, 'utf8');
-        return { name, digest: spawnSync('sha256sum', [join(directory, name)], { encoding: 'utf8' })
-          .stdout.split(/\s+/)[0] };
-      });
-      const text = sha256SumsText([...digests].reverse());
-      expect(text.split('\n').filter(Boolean).map((line) => line.split('  ')[1])).toEqual(RUNG_OUTPUT_FILES);
-      expect(text.endsWith('\n')).toBe(true);
-      writeFileSync(join(directory, 'SHA256SUMS'), text, 'utf8');
-      const check = spawnSync('sha256sum', ['-c', '--strict', 'SHA256SUMS'], { cwd: directory, encoding: 'utf8' });
-      expect(check.status, check.stdout + check.stderr).toBe(0);
-    } finally {
-      rmSync(directory, { recursive: true, force: true });
-    }
-  });
+  it.skipIf(!hasHostTool('sha256sum'))(
+    'writes SHA256SUMS in the format sha256sum -c reads (needs sha256sum)',
+    (): void => {
+      const directory = mkdtempSync(join(tmpdir(), 'day0-p11-sums-'));
+      try {
+        const digests = RUNG_OUTPUT_FILES.map((name) => {
+          writeFileSync(join(directory, name), `${name}\n`, 'utf8');
+          return {
+            name,
+            digest: spawnSync('sha256sum', [join(directory, name)], {
+              encoding: 'utf8',
+            }).stdout.split(/\s+/)[0],
+          };
+        });
+        const text = sha256SumsText([...digests].reverse());
+        expect(
+          text
+            .split('\n')
+            .filter(Boolean)
+            .map((line) => line.split('  ')[1]),
+        ).toEqual(RUNG_OUTPUT_FILES);
+        expect(text.endsWith('\n')).toBe(true);
+        writeFileSync(join(directory, 'SHA256SUMS'), text, 'utf8');
+        const check = spawnSync('sha256sum', ['-c', '--strict', 'SHA256SUMS'], {
+          cwd: directory,
+          encoding: 'utf8',
+        });
+        expect(check.status, check.stdout + check.stderr).toBe(0);
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
 
   it('never writes into a results directory that already exists', (): void => {
     expect(rungOutputRefusal('evaluation/results/revocation-2026-09-02T12-17-54Z', true)).toContain(
@@ -1007,8 +1170,9 @@ describe('reading docker and the probes', (): void => {
 
   it('does not mistake a non-loopback or ambiguous publication for the loopback backend', (): void => {
     expect(publishedHostPort('192.0.2.10:47210->3210/tcp', 3210)).toBeUndefined();
-    expect(publishedHostPort('127.0.0.1:47210->3210/tcp, 127.0.0.1:47220->3210/tcp', 3210))
-      .toBeUndefined();
+    expect(
+      publishedHostPort('127.0.0.1:47210->3210/tcp, 127.0.0.1:47220->3210/tcp', 3210),
+    ).toBeUndefined();
     expect(publishedHostPort('127.0.0.1:47210->3210/udp', 3210)).toBeUndefined();
   });
 
@@ -1051,14 +1215,24 @@ describe('the pre-flight verdict', (): void => {
       }
       expect(warm.reason).toContain('deployment');
     }
-    expect(demoTiers({ ...base, deploymentModelSettings: {
-      OPENAI_MAX_OUTPUT_TOKENS: '32768', OPENAI_REASONING_EFFORT: 'low',
-    } })[2].go).toBe(true);
+    expect(
+      demoTiers({
+        ...base,
+        deploymentModelSettings: {
+          OPENAI_MAX_OUTPUT_TOKENS: '32768',
+          OPENAI_REASONING_EFFORT: 'low',
+        },
+      })[2].go,
+    ).toBe(true);
   });
 
   it('does not offer a live rung when the host probe passes but the backend dials OpenAI', () => {
-    const tiers = demoTiers({ ...READY, deploymentModelSettings: undefined,
-      modelBaseUrl: 'http://127.0.0.1:44312/v1', rungModelRoute: 'https://api.openai.com/v1' });
+    const tiers = demoTiers({
+      ...READY,
+      deploymentModelSettings: undefined,
+      modelBaseUrl: 'http://127.0.0.1:44312/v1',
+      rungModelRoute: 'https://api.openai.com/v1',
+    });
     expect(tiers[2].go).toBe(false);
   });
 

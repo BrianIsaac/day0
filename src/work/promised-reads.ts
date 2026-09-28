@@ -29,7 +29,10 @@ import type { MockAction } from './types';
  * Returns:
  *   Lower-cased surface slugs.
  */
-export function groundingReadSurfaces(externalId: string | undefined, reads: readonly GroundingRead[] = []): Set<string> {
+export function groundingReadSurfaces(
+  externalId: string | undefined,
+  reads: readonly GroundingRead[] = [],
+): Set<string> {
   const surfaces = new Set<string>();
   if (!externalId) return surfaces;
   for (const { action, applied } of reads) {
@@ -49,7 +52,8 @@ const UNNEEDED = String.raw`(?:is|are)?\s*(?:not\s+needed|not\s+required|not\s+n
 /** A removal that is itself negated: "do not skip the Slack read". */
 const KEPT = /\b(?:not|never|don't|dont|cannot|can't)\s+(?:skip|omit|drop|remove|leave|take)\b/i;
 /** A sentence that reports the read as missing, or asks for it: "no Slack read was made, do it now". */
-const DEMANDED = /\bthere\s+(?:was|were)\s+no\b|\b(?:was|were)\s+(?:not\s+)?(?:made|done|taken)\b|\b(?:again|first|missing|forgot|forgotten|do\s+it|make\s+it)\b|\?\s*$/i;
+const DEMANDED =
+  /\bthere\s+(?:was|were)\s+no\b|\b(?:was|were)\s+(?:not\s+)?(?:made|done|taken)\b|\b(?:again|first|missing|forgot|forgotten|do\s+it|make\s+it)\b|\?\s*$/i;
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -78,15 +82,29 @@ function escapeRegExp(value: string): string {
  *   True when the note removes the read.
  */
 export function noteReleasesRead(note: string, read: DeclaredRead): boolean {
-  const names = [...new Set([read.surface.displayName, read.surface.slug].map((name) => name.trim()).filter(Boolean))]
-    .map(escapeRegExp);
+  const names = [
+    ...new Set(
+      [read.surface.displayName, read.surface.slug].map((name) => name.trim()).filter(Boolean),
+    ),
+  ].map(escapeRegExp);
   const named = `(?:(?:${names.join('|')})(?![A-Za-z0-9])|step\\s+${read.step}(?![0-9]))`;
-  const before = new RegExp(`\\b${REMOVING}\\b(?:(?!\\b(?:and|but|then|or)\\b)[^,:;.!?\\n]){0,40}?(?<![A-Za-z0-9])${named}`, 'i');
+  const before = new RegExp(
+    `\\b${REMOVING}\\b(?:(?!\\b(?:and|but|then|or)\\b)[^,:;.!?\\n]){0,40}?(?<![A-Za-z0-9])${named}`,
+    'i',
+  );
   const adjacent = new RegExp(`\\bno\\s+(?:more\\s+)?${named}`, 'i');
-  const after = new RegExp(`(?<![A-Za-z0-9])${named}(?:\\s+(?:call|read|step|check|lookup))?\\s+${UNNEEDED}`, 'i');
+  const after = new RegExp(
+    `(?<![A-Za-z0-9])${named}(?:\\s+(?:call|read|step|check|lookup))?\\s+${UNNEEDED}`,
+    'i',
+  );
   return note
     .split(/(?<=[.!?;])\s+|\n+/)
-    .some((sentence) => !KEPT.test(sentence) && !DEMANDED.test(sentence) && (before.test(sentence) || adjacent.test(sentence) || after.test(sentence)));
+    .some(
+      (sentence) =>
+        !KEPT.test(sentence) &&
+        !DEMANDED.test(sentence) &&
+        (before.test(sentence) || adjacent.test(sentence) || after.test(sentence)),
+    );
 }
 
 /**
@@ -121,7 +139,8 @@ export function carriedDeclaredReads(
     if (!parsed.ok || actionIntent(parsed.action) !== 'read') return false;
     const slug = parsed.action.surface.toLowerCase();
     if (!wanted.has(slug)) return false;
-    if (surfaces.find((row) => row.slug.toLowerCase() === slug)?.path === 'browser-driven') return false;
+    if (surfaces.find((row) => row.slug.toLowerCase() === slug)?.path === 'browser-driven')
+      return false;
     covered.add(slug);
     return true;
   });

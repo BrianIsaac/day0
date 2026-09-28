@@ -11,7 +11,12 @@ import type { McpClientLike, McpClientOptions } from '../../src/surfaces/mcp';
 import type { AppliedAction } from '../../src/surfaces/types';
 import { STOPPED_PREFIX } from '../../src/work/stop';
 import type { MockAction } from '../../src/work/types';
-import { MANAGER_DM, slackClosing, slackPlan, TileDriver } from '../fixtures/browser-phase-split-2026-09-16';
+import {
+  MANAGER_DM,
+  slackClosing,
+  slackPlan,
+  TileDriver,
+} from '../fixtures/browser-phase-split-2026-09-16';
 import { collectLedgerObservations } from '../../convex/metrics';
 import { allConvexModules } from './all-modules';
 import { contractSchema } from './contract-schema';
@@ -72,17 +77,43 @@ vi.mock('../../src/lib/mastra', async () => {
   // What the recorded retry did: quote the last figure its ledger shows.
   const figureReply = (user: string): unknown => {
     const section = user.slice(user.indexOf('--- Applied prerequisite ledger ---'));
-    const figure = [...section.matchAll(/visible figure (\d+%)/g)].map((match) => match[1]).at(-1) ?? 'no figure';
+    const figure =
+      [...section.matchAll(/visible figure (\d+%)/g)].map((match) => match[1]).at(-1) ??
+      'no figure';
     return {
       draft: `The Looker pipeline tile reads ${figure}.`,
       notes: '',
-      actions: [threadReply(`Coverage check (ref C0BSF04TZ19:1787746453.202809): the Looker pipeline tile currently shows ${figure}.`)],
+      actions: [
+        threadReply(
+          `Coverage check (ref C0BSF04TZ19:1787746453.202809): the Looker pipeline tile currently shows ${figure}.`,
+        ),
+      ],
       procedureTrails: [],
       planStepOutcomes: [
-        { step: 1, status: 'satisfied', basis: 'ledger', evidence: `The ledger's tile read shows visible figure ${figure}.` },
-        { step: 2, status: 'satisfied', basis: 'ledger', evidence: `The tile read shows ${figure}; the conditional refresh is decided on that read.` },
-        { step: 3, status: 'satisfied', basis: 'ledger', evidence: 'Action 0 in this response: the thread reply quoting the figure.' },
-        { step: 4, status: 'satisfied', basis: 'ledger', evidence: 'This response records the outcome.' },
+        {
+          step: 1,
+          status: 'satisfied',
+          basis: 'ledger',
+          evidence: `The ledger's tile read shows visible figure ${figure}.`,
+        },
+        {
+          step: 2,
+          status: 'satisfied',
+          basis: 'ledger',
+          evidence: `The tile read shows ${figure}; the conditional refresh is decided on that read.`,
+        },
+        {
+          step: 3,
+          status: 'satisfied',
+          basis: 'ledger',
+          evidence: 'Action 0 in this response: the thread reply quoting the figure.',
+        },
+        {
+          step: 4,
+          status: 'satisfied',
+          basis: 'ledger',
+          evidence: 'This response records the outcome.',
+        },
       ],
     };
   };
@@ -99,7 +130,8 @@ vi.mock('../../src/lib/mastra', async () => {
       const reply = ((): unknown => {
         if (args.agent.name.endsWith('-initial')) {
           return {
-            draft: 'Opening the Looker tile, signing in and reading the visible figure before deciding on the refresh.',
+            draft:
+              'Opening the Looker tile, signing in and reading the visible figure before deciding on the refresh.',
             notes: '',
             needsDependentPhase: true,
             deferredActions: [],
@@ -108,12 +140,15 @@ vi.mock('../../src/lib/mastra', async () => {
           };
         }
         if (args.agent.name.endsWith('-dependent')) {
-          if (!args.user.includes('Previous closing attempt failure')) return fixture.slackClosingReply;
+          if (!args.user.includes('Previous closing attempt failure'))
+            return fixture.slackClosingReply;
           return recorded.resumedClosing ?? figureReply(args.user);
         }
         throw new Error(`unscripted agent ${args.agent.name}`);
       })();
-      return args.schema.parse((await import('./fakes/executor-reply')).asCurrentExecutorReply(reply)) as T;
+      return args.schema.parse(
+        (await import('./fakes/executor-reply')).asCurrentExecutorReply(reply),
+      ) as T;
     },
     agentText: async (): Promise<string> => '',
   };
@@ -147,7 +182,10 @@ const OWNER = { subject: 'owner' };
 /** The tile's container, stopped and started by the test. */
 let tileDown = false;
 
-async function seed(harness: Harness, item: Record<string, unknown> = {}): Promise<Id<'workItems'>> {
+async function seed(
+  harness: Harness,
+  item: Record<string, unknown> = {},
+): Promise<Id<'workItems'>> {
   return await harness.run(async (ctx) => {
     const agentId = await ctx.db.insert('agents', {
       bossEmail: 'boss@day0.local',
@@ -166,7 +204,10 @@ async function seed(harness: Harness, item: Record<string, unknown> = {}): Promi
       body: {
         proposedFunction: 'Own routine revenue operations work for the RevOps team.',
         proposedBoundaries: {
-          willDo: ['Keep the Looker pipeline tile at the approved figure.', 'Answer RevOps asks in Slack.'],
+          willDo: [
+            'Keep the Looker pipeline tile at the approved figure.',
+            'Answer RevOps asks in Slack.',
+          ],
           willNotDo: ['Post to public channels without approval.'],
           escalationTriggers: ['Unclear ownership'],
         },
@@ -176,7 +217,8 @@ async function seed(harness: Harness, item: Record<string, unknown> = {}): Promi
     await ctx.db.insert('skills', {
       agentId,
       name: 'chat-thread-reply',
-      description: 'Reply in the Slack thread a request came from, after doing the work it asks for.',
+      description:
+        'Reply in the Slack thread a request came from, after doing the work it asks for.',
       body: [
         '# Reply in the Slack thread',
         'Do the work the ask names on its connected surfaces, then reply in the thread with slack chat.postMessage and DM the manager when something needs them.',
@@ -188,7 +230,13 @@ async function seed(harness: Harness, item: Record<string, unknown> = {}): Promi
       createdAt: 1,
       registeredAt: 1,
     });
-    for (const scope of ['boss:message', 'slack:read', 'slack:write', 'looker:read', 'looker:write']) {
+    for (const scope of [
+      'boss:message',
+      'slack:read',
+      'slack:write',
+      'looker:read',
+      'looker:write',
+    ]) {
       await ctx.db.insert('permissionGrants', { agentId, scope, createdAt: 1 });
     }
     const live = {
@@ -219,7 +267,10 @@ async function seed(harness: Harness, item: Record<string, unknown> = {}): Promi
       toolArguments: [
         { arguments: ['url'], tool: 'browser_navigate' },
         { arguments: ['boxes', 'depth', 'filename', 'target'], tool: 'browser_snapshot' },
-        { arguments: ['button', 'doubleClick', 'element', 'modifiers', 'target'], tool: 'browser_click' },
+        {
+          arguments: ['button', 'doubleClick', 'element', 'modifiers', 'target'],
+          tool: 'browser_click',
+        },
         { arguments: ['fields'], tool: 'browser_fill_form' },
       ],
       credentialId: 'cred-looker',
@@ -255,7 +306,12 @@ async function seed(harness: Harness, item: Record<string, unknown> = {}): Promi
       replyTarget: { channel: REPLY_CHANNEL, channelName: 'revops-asks', threadTs: REPLY_THREAD },
       state: 'plan-approved',
       plan: slackPlan,
-      verdict: { decision: 'claim', value: 60, risk: 40, requiredPermissions: ['boss:message', 'slack:read'] },
+      verdict: {
+        decision: 'claim',
+        value: 60,
+        risk: 40,
+        requiredPermissions: ['boss:message', 'slack:read'],
+      },
       observedAt: 1,
       createdAt: 1,
       ...item,
@@ -281,7 +337,10 @@ function saveSeventyFour(): void {
 }
 
 /** Phase one lands at 68%; the closing set then fails because the tile's container is down. */
-async function failAtClosingWithTheTileDown(t: Harness, workItemId: Id<'workItems'>): Promise<Id<'events'>> {
+async function failAtClosingWithTheTileDown(
+  t: Harness,
+  workItemId: Id<'workItems'>,
+): Promise<Id<'events'>> {
   await t.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
   await t.action(internal.workActions.applyApprovedActions, { workItemId });
   const authoring = await readItem(t, workItemId);
@@ -356,7 +415,9 @@ describe('evidence is read again when a retry resumes at the closing phase', ():
       },
     });
     expect(reread.effect).toContain('visible figure 74%');
-    expect(reread.sessionRestore?.steps.map((step) => [step.ok, step.idempotencyKey, step.replayOf])).toEqual(
+    expect(
+      reread.sessionRestore?.steps.map((step) => [step.ok, step.idempotencyKey, step.replayOf]),
+    ).toEqual(
       [0, 1, 2].map((index) => [
         true,
         `${workItemId}:${secondRun}:3.session-${index}`,
@@ -388,7 +449,9 @@ describe('evidence is read again when a retry resumes at the closing phase', ():
     expect(byKey(`${workItemId}:${firstRun}:3`)[0]!.entry.effect).toContain('visible figure 68%');
     expect(byKey(`${workItemId}:${secondRun}:3`)).toHaveLength(1);
     expect(byKey(`${workItemId}:${secondRun}:3`)[0]!.entry.effect).toContain('visible figure 74%');
-    expect(observed.filter((row) => row.sessionRestoreOf === `${workItemId}:${secondRun}:3`)).toHaveLength(3);
+    expect(
+      observed.filter((row) => row.sessionRestoreOf === `${workItemId}:${secondRun}:3`),
+    ).toHaveLength(3);
   }, 30_000);
 
   // The 17 September ledger: the first attempt's closing snapshot landed on
@@ -430,7 +493,9 @@ describe('evidence is read again when a retry resumes at the closing phase', ():
 
     await t.action(internal.workActions.authorDependentActions, { workItemId, runId: secondRun });
     const prompt = ledgerSection(recorded.model.at(-1)!.user);
-    expect(prompt).toMatch(/visible figure 68%[^\n]* · read before the retry; row 4 is the current reading/);
+    expect(prompt).toMatch(
+      /visible figure 68%[^\n]* · read before the retry; row 4 is the current reading/,
+    );
     expect(prompt).toMatch(/visible figure 74%[^\n]* · re-read on resume at /);
     await t.action(internal.workActions.applyApprovedActions, { workItemId });
     const [reply] = repliesInThread();
@@ -438,45 +503,67 @@ describe('evidence is read again when a retry resumes at the closing phase', ():
     expect(reply).not.toContain('68%');
   }, 30_000);
 
-  it.skipIf(RECORDING_EXPORT === '' || !hasHostTool('unzip'))('replays the failed Slack item directly from the 17 September export (needs TEST_RECORDING_EXPORT and unzip)', async (): Promise<void> => {
-    const lines = execFileSync('unzip', ['-p', RECORDING_EXPORT, 'events/documents.jsonl'], {
-      encoding: 'utf8',
-    }).trim().split('\n');
-    const failed = lines.map((line) => JSON.parse(line) as {
-      type: string;
-      payload?: { workItemId?: string; output?: { actions: MockAction[]; applied: AppliedAction[] } };
-    }).find((event) => event.type === 'work.failed' && event.payload?.workItemId === RECORDED_ITEM);
-    expect(failed?.payload?.output).toBeDefined();
+  it.skipIf(RECORDING_EXPORT === '' || !hasHostTool('unzip'))(
+    'replays the failed Slack item directly from the 17 September export (needs TEST_RECORDING_EXPORT and unzip)',
+    async (): Promise<void> => {
+      const lines = execFileSync('unzip', ['-p', RECORDING_EXPORT, 'events/documents.jsonl'], {
+        encoding: 'utf8',
+      })
+        .trim()
+        .split('\n');
+      const failed = lines
+        .map(
+          (line) =>
+            JSON.parse(line) as {
+              type: string;
+              payload?: {
+                workItemId?: string;
+                output?: { actions: MockAction[]; applied: AppliedAction[] };
+              };
+            },
+        )
+        .find(
+          (event) => event.type === 'work.failed' && event.payload?.workItemId === RECORDED_ITEM,
+        );
+      expect(failed?.payload?.output).toBeDefined();
 
-    const t = convexTest(contractSchema(), allConvexModules());
-    const workItemId = await seed(t);
-    const exported = failed!.payload!.output!;
-    expect(exported.actions.slice(4)).toEqual(slackClosing);
-    expect(exported.applied[7]).toMatchObject({ ok: true, authority: 'autonomous' });
-    await t.run(async (ctx) => {
-      await ctx.db.patch(workItemId, {
-        state: 'failed',
-        skipReason: FIRST_FAILURE_2026_09_17,
-        output: {
-          ...exported,
-          applied: exported.applied.map((row) => ({
-            ...row,
-            idempotencyKey: row.idempotencyKey.replace(RECORDED_ITEM, workItemId),
-          })),
-        },
+      const t = convexTest(contractSchema(), allConvexModules());
+      const workItemId = await seed(t);
+      const exported = failed!.payload!.output!;
+      expect(exported.actions.slice(4)).toEqual(slackClosing);
+      expect(exported.applied[7]).toMatchObject({ ok: true, authority: 'autonomous' });
+      await t.run(async (ctx) => {
+        await ctx.db.patch(workItemId, {
+          state: 'failed',
+          skipReason: FIRST_FAILURE_2026_09_17,
+          output: {
+            ...exported,
+            applied: exported.applied.map((row) => ({
+              ...row,
+              idempotencyKey: row.idempotencyKey.replace(RECORDED_ITEM, workItemId),
+            })),
+          },
+        });
       });
-    });
-    saveSeventyFour();
+      saveSeventyFour();
 
-    const resumed = await retryAtClosing(t, workItemId);
-    const reread = ledger(resumed)[4]!;
-    expect(reread).toMatchObject({ ok: true, refreshed: { previous: { effect: expect.stringContaining('about:blank') } } });
-    expect(reread.effect).toContain('visible figure 74%');
-    await t.action(internal.workActions.authorDependentActions, { workItemId, runId: resumed.executionRunId! });
-    await t.action(internal.workActions.applyApprovedActions, { workItemId });
-    expect(repliesInThread()).toEqual([expect.stringContaining('currently shows 74%')]);
-    expect(repliesInThread()[0]).not.toContain('68%');
-  }, 30_000);
+      const resumed = await retryAtClosing(t, workItemId);
+      const reread = ledger(resumed)[4]!;
+      expect(reread).toMatchObject({
+        ok: true,
+        refreshed: { previous: { effect: expect.stringContaining('about:blank') } },
+      });
+      expect(reread.effect).toContain('visible figure 74%');
+      await t.action(internal.workActions.authorDependentActions, {
+        workItemId,
+        runId: resumed.executionRunId!,
+      });
+      await t.action(internal.workActions.applyApprovedActions, { workItemId });
+      expect(repliesInThread()).toEqual([expect.stringContaining('currently shows 74%')]);
+      expect(repliesInThread()[0]).not.toContain('68%');
+    },
+    30_000,
+  );
 
   it('records a refreshed read under the authority of the carried read', async (): Promise<void> => {
     const t = convexTest(contractSchema(), allConvexModules());
@@ -526,7 +613,11 @@ describe('evidence is read again when a retry resumes at the closing phase', ():
     expect(recorded.http.length).toBe(postsBefore);
     expect(recorded.driver!.calls.length).toBe(callsBefore);
     // The row keeps the resumable ledger, so Retry resumes at the closing phase again.
-    expect(stopped.output).toMatchObject({ phase: 'dependent-authoring', resumedClosing: true, applied: carried.applied });
+    expect(stopped.output).toMatchObject({
+      phase: 'dependent-authoring',
+      resumedClosing: true,
+      applied: carried.applied,
+    });
     expect(before.skipReason).not.toBe(stopped.skipReason);
   }, 30_000);
 
@@ -545,7 +636,8 @@ describe('evidence is read again when a retry resumes at the closing phase', ():
     expect(stopped.state).toBe('failed');
     const events = await t.run(async (ctx) => await ctx.db.query('events').collect());
     const observed = collectLedgerObservations(events, [stopped]);
-    const key = (stopped.output as { failedReread: { applied: AppliedAction[] } }).failedReread.applied[0]!.idempotencyKey;
+    const key = (stopped.output as { failedReread: { applied: AppliedAction[] } }).failedReread
+      .applied[0]!.idempotencyKey;
     expect(key).toMatch(new RegExp(`^${workItemId}:[^:]+:3$`));
     expect(observed.filter((row) => row.entry.idempotencyKey === key)).toHaveLength(1);
     expect(observed.filter((row) => row.sessionRestoreOf === key)).toHaveLength(3);
@@ -568,7 +660,11 @@ describe('evidence is read again when a retry resumes at the closing phase', ():
         method: 'POST',
         path: '/chat.postMessage',
         headersJson: JSON.stringify({ Authorization: 'Bearer {{secret}}' }),
-        body: JSON.stringify({ channel: REPLY_CHANNEL, thread_ts: REPLY_THREAD, text: 'The tile reads 74%.' }),
+        body: JSON.stringify({
+          channel: REPLY_CHANNEL,
+          thread_ts: REPLY_THREAD,
+          text: 'The tile reads 74%.',
+        }),
       },
     } satisfies MockAction;
     await t.run(async (ctx) => {
@@ -581,18 +677,28 @@ describe('evidence is read again when a retry resumes at the closing phase', ():
           needsDependentPhase: false,
           actions: [navigate, signIn, clickSignIn, fill, save, snapshot, reply],
           applied: [
-            ...[0, 1, 2, 3, 4].map((index): AppliedAction => ({
-              tool: 'mcp.call', ok: true, authority: 'autonomous', effect: 'landed on looker', idempotencyKey: key(index),
-            })),
+            ...[0, 1, 2, 3, 4].map(
+              (index): AppliedAction => ({
+                tool: 'mcp.call',
+                ok: true,
+                authority: 'autonomous',
+                effect: 'landed on looker',
+                idempotencyKey: key(index),
+              }),
+            ),
             {
-              tool: 'mcp.call', ok: true, authority: 'autonomous',
-              effect: 'browser_snapshot on looker · visible figure 74% · Last updated by revops at 2026-09-16 21:07:34 UTC',
+              tool: 'mcp.call',
+              ok: true,
+              authority: 'autonomous',
+              effect:
+                'browser_snapshot on looker · visible figure 74% · Last updated by revops at 2026-09-16 21:07:34 UTC',
               idempotencyKey: key(5),
             },
             { tool: 'http.request', ok: false, reason: 'HTTP 500', idempotencyKey: key(6) },
           ],
           planStepOutcomes: fixture.slackClosingReply.planStepOutcomes.map((outcome) => ({
-            ...outcome, evidence: 'Ledger rows 0-5: signed in, refreshed to 74% and read back.',
+            ...outcome,
+            evidence: 'Ledger rows 0-5: signed in, refreshed to 74% and read back.',
           })),
           prerequisiteCount: 6,
           procedureTrails: [],
@@ -605,7 +711,12 @@ describe('evidence is read again when a retry resumes at the closing phase', ():
     const resumed = await retryAtClosing(t, workItemId);
     const secondRun = resumed.executionRunId!;
     expect(ledger(resumed).map((row) => row.idempotencyKey)).toEqual([
-      key(0), key(1), key(2), key(3), key(4), `${workItemId}:${secondRun}:5`,
+      key(0),
+      key(1),
+      key(2),
+      key(3),
+      key(4),
+      `${workItemId}:${secondRun}:5`,
     ]);
     const sent = recorded.driver!.calls.map((call) => [call.tool, JSON.stringify(call.args)]);
     expect(sent.map(([tool]) => tool).filter((tool) => tool !== 'browser_snapshot')).toEqual([
@@ -613,7 +724,9 @@ describe('evidence is read again when a retry resumes at the closing phase', ():
       'browser_fill_form',
       'browser_click',
     ]);
-    expect(sent.some(([, args]) => args!.includes('Pipeline coverage') || args!.includes('Save'))).toBe(false);
+    expect(
+      sent.some(([, args]) => args!.includes('Pipeline coverage') || args!.includes('Save')),
+    ).toBe(false);
     expect(recorded.driver!.tile).toEqual(tileBefore);
     expect(recorded.http).toEqual([]);
   }, 30_000);
@@ -621,7 +734,7 @@ describe('evidence is read again when a retry resumes at the closing phase', ():
   // Phase one opened the tile and signed in but took no snapshot, so there
   // is no read to take again; the resumed closing set's first call on the
   // tile is signed in from the first attempt's ledger, under the new run.
-  it('signs the resumed closing set in from the first attempt\'s sign-in', async (): Promise<void> => {
+  it("signs the resumed closing set in from the first attempt's sign-in", async (): Promise<void> => {
     const t = convexTest(contractSchema(), allConvexModules());
     const fixture = await import('../fixtures/browser-phase-split-2026-09-16');
     const [navigate, signIn, clickSignIn] = fixture.slackPhaseOne;
@@ -632,7 +745,8 @@ describe('evidence is read again when a retry resumes at the closing phase', ():
     const refused = (index: number): AppliedAction => ({
       tool: 'mcp.call',
       ok: false,
-      reason: 'browser session could not be re-established: browser_navigate net::ERR_CONNECTION_REFUSED',
+      reason:
+        'browser session could not be re-established: browser_navigate net::ERR_CONNECTION_REFUSED',
       idempotencyKey: key(index),
     });
     await t.run(async (ctx) => {
@@ -645,19 +759,23 @@ describe('evidence is read again when a retry resumes at the closing phase', ():
           needsDependentPhase: false,
           actions: [navigate, signIn, clickSignIn, fill, save, readBack],
           applied: [
-            ...[0, 1, 2].map((index): AppliedAction => ({
-              tool: 'mcp.call',
-              ok: true,
-              authority: 'autonomous',
-              effect: 'landed on looker',
-              idempotencyKey: key(index),
-            })),
+            ...[0, 1, 2].map(
+              (index): AppliedAction => ({
+                tool: 'mcp.call',
+                ok: true,
+                authority: 'autonomous',
+                effect: 'landed on looker',
+                idempotencyKey: key(index),
+              }),
+            ),
             refused(3),
             refused(4),
             refused(5),
           ],
           planStepOutcomes: fixture.slackClosingReply.planStepOutcomes.map((outcome) =>
-            outcome.step <= 2 ? { ...outcome, evidence: 'Ledger rows 0-2: the tile opened and the sign-in landed.' } : outcome,
+            outcome.step <= 2
+              ? { ...outcome, evidence: 'Ledger rows 0-2: the tile opened and the sign-in landed.' }
+              : outcome,
           ),
           prerequisiteCount: 3,
           procedureTrails: [],
@@ -668,7 +786,9 @@ describe('evidence is read again when a retry resumes at the closing phase', ():
       ...fixture.slackClosingReply,
       actions: [fill, save, readBack],
       planStepOutcomes: fixture.slackClosingReply.planStepOutcomes.map((outcome) =>
-        outcome.step === 3 ? { ...outcome, status: 'blocked', evidence: 'The reply waits for the read-back.' } : outcome,
+        outcome.step === 3
+          ? { ...outcome, status: 'blocked', evidence: 'The reply waits for the read-back.' }
+          : outcome,
       ),
     };
 
@@ -679,7 +799,9 @@ describe('evidence is read again when a retry resumes at the closing phase', ():
 
     const closing = ledger(await readItem(t, workItemId)).slice(3);
     expect(closing.map((row) => row.ok)).toEqual([true, true, true]);
-    expect(closing[0]!.sessionRestore?.steps.map((step) => [step.idempotencyKey, step.replayOf])).toEqual(
+    expect(
+      closing[0]!.sessionRestore?.steps.map((step) => [step.idempotencyKey, step.replayOf]),
+    ).toEqual(
       [0, 1, 2].map((index) => [`${workItemId}:${secondRun}:3.session-${index}`, key(index)]),
     );
     expect(closing[2]!.effect).toContain('visible figure 74%');
@@ -699,7 +821,9 @@ describe('evidence is read again when a retry resumes at the closing phase', ():
       ...fixture.slackClosingReply,
       actions: [fill, save, readBack],
       planStepOutcomes: fixture.slackClosingReply.planStepOutcomes.map((outcome) =>
-        outcome.step === 3 ? { ...outcome, status: 'blocked', evidence: 'The reply waits for the read-back.' } : outcome,
+        outcome.step === 3
+          ? { ...outcome, status: 'blocked', evidence: 'The reply waits for the read-back.' }
+          : outcome,
       ),
     };
 

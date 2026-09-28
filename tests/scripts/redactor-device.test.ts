@@ -20,7 +20,9 @@ const START_SCRIPT = readFileSync(join(ROOT, 'redactor/start.sh'), 'utf8');
 describe('the stamp the start script keeps', (): void => {
   it('digests the two requirements files the way sha256sum does', (): void => {
     const digests = requirementsDigests(ROOT);
-    const expected = createHash('sha256').update(readFileSync(REQUIREMENTS_FILES.cpu)).digest('hex');
+    const expected = createHash('sha256')
+      .update(readFileSync(REQUIREMENTS_FILES.cpu))
+      .digest('hex');
     expect(digests.cpu).toBe(expected);
     expect(digests.cuda).not.toBe(digests.cpu);
     expect(digests.cpu).toMatch(/^[0-9a-f]{64}$/);

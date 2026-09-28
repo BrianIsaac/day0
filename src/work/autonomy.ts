@@ -96,7 +96,9 @@ export function autonomyTurnedOnAfterDraft(
   changes: readonly AutonomyChange[],
 ): number | undefined {
   if (planDraftedAt === undefined || !appliedAutonomously) return undefined;
-  const first = [...changes].sort((a, b) => a.at - b.at).find((change) => change.at > planDraftedAt);
+  const first = [...changes]
+    .sort((a, b) => a.at - b.at)
+    .find((change) => change.at > planDraftedAt);
   return first?.on ? first.at : undefined;
 }
 
@@ -111,8 +113,14 @@ export function autonomyTurnedOnAfterDraft(
  * Returns:
  *   One sentence, read between the plan as drafted and the ledger.
  */
-export function autonomyTurnedOnAfterDraftNote(clock: string, autonomous: number, landed: number): string {
+export function autonomyTurnedOnAfterDraftNote(
+  clock: string,
+  autonomous: number,
+  landed: number,
+): string {
   const applied =
-    autonomous >= landed ? 'its actions were applied under it' : `${autonomous} of its ${landed} actions were applied under it`;
+    autonomous >= landed
+      ? 'its actions were applied under it'
+      : `${autonomous} of its ${landed} actions were applied under it`;
   return `Autonomous actions were turned on at ${clock}, after this plan was drafted; ${applied}.`;
 }

@@ -5,11 +5,7 @@ import { assertOwnsAgent, assertOwnsAgentAction } from './ownership';
 import { grantScopeInTransaction } from './agents';
 import { assertRealMode } from '../src/lib/surface-mode';
 import type { Doc, Id } from './_generated/dataModel';
-import {
-  browserComponent,
-  browserComponentRefusal,
-  withBrowserComponentState,
-} from '../src/surfaces/browser';
+import { browserComponentRefusal, withBrowserComponentState } from '../src/surfaces/browser';
 import {
   documentedSystemIdentity,
   sameDocumentedSystem,
@@ -19,11 +15,18 @@ import {
 } from '../src/docs/system-discovery';
 import { sameSurfaceSystem, surfaceIdentity } from '../src/surfaces/identity';
 import { surfaceSlug } from '../src/surfaces/slug';
-import { reevaluatePendingInTransaction, resendDecisionsAfterManagerChange } from './work';
+import {
+  redraftPlansDraftedWithout,
+  reevaluatePendingInTransaction,
+  resendDecisionsAfterManagerChange,
+} from './work';
 import schema from './schema';
 import { scheduleNextStep } from './workLoop';
 import { intakeScopeValues } from '../src/surfaces/intake-scope';
 import { isManagerLookupFailure } from '../src/surfaces/manager-lookup';
+import { appendEvent, eventsOfType } from './eventLog';
+import { isEventOf, type EventOf, type EventType } from '../src/events/contract';
+import { agentZone, expiryNoticeDay, expiryNoticeDue } from '../src/lib/zone';
 
 const surfaceVerdict = v.union(
   v.literal('declared'),
@@ -122,7 +125,7 @@ async function recordCharterMatchAmbiguity(
     now: number;
   },
 ): Promise<void> {
-  await ctx.db.insert('events', {
+  await appendEvent(ctx, {
     agentId: args.agentId,
     type: 'surface.charter-match-ambiguous',
     payload: {
@@ -330,10 +333,11 @@ export async function retireCharterSystem(
     const evidence = surface.discoveryEvidence ?? [];
     if (!evidence.some((item): boolean => item.kind === 'charter' && item.current)) continue;
     await ctx.db.patch(surface._id, {
-      discoveryEvidence: evidence.map((item): DiscoveryEvidence =>
-        item.kind === 'charter' && item.current
-          ? { ...item, current: false, lastSeenAt: args.now }
-          : item,
+      discoveryEvidence: evidence.map(
+        (item): DiscoveryEvidence =>
+          item.kind === 'charter' && item.current
+            ? { ...item, current: false, lastSeenAt: args.now }
+            : item,
       ),
     });
     retired += 1;
@@ -381,7 +385,8 @@ export async function reconcileDocumentedSystems(
       );
     const direct = bySlug.get(system.slug);
     const matches = surfaces.filter(sameIdentity);
-    const existing = direct && sameIdentity(direct) ? direct : matches.length === 1 ? matches[0] : undefined;
+    const existing =
+      direct && sameIdentity(direct) ? direct : matches.length === 1 ? matches[0] : undefined;
     const host = stableSlug(identity.hosts[0] ?? '');
     const slug = existing?.slug ?? (direct ? `${system.slug}-${host || 'system'}` : system.slug);
     const prior = resolved.get(slug);
@@ -499,9 +504,8 @@ const credentialKind = v.union(v.literal('value'), v.literal('location'), v.lite
  *
  * A work-bearing card carries the queues its employee will read; they are
  * approved with the rest of the card and replaced only by a new proposal.
- * The access length the card shows is the request's; its clock starts when
- * the card is approved (Q5), so nothing here sets an end date, and
- * `expiresInDays` is the orientation's copy of the same draft value.
+ * A proposal names no access length and sets no end date: the approval
+ * starts Q5's 90 days and the manager is the only other source (Q5, U3 D2 (b)).
  */
 export const propose = internalMutation({
   args: {
@@ -515,7 +519,6 @@ export const propose = internalMutation({
     credentialId: v.optional(v.id('credentials')),
     credentialKind: v.optional(credentialKind),
     credentialLocation: v.optional(v.string()),
-    expiresInDays: v.number(),
     intakeScope: schema.tables.surfaces.validator.fields.intakeScope,
   },
   handler: async (ctx, args): Promise<boolean> => {
@@ -540,18 +543,18 @@ export const propose = internalMutation({
       credentialId: args.credentialId,
       credentialKind: args.credentialId ? args.credentialKind : undefined,
       credentialLocation: args.credentialLocation,
-      credentialRef: undefined,
       expiresAt: undefined,
+      accessSetBy: undefined,
       reason: undefined,
       intakeScope: args.intakeScope,
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: surface.agentId,
       type: 'surface.proposed',
       payload: { surfaceId: surface._id, path: args.path },
       createdAt: now,
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: surface.agentId,
       type: 'surface.oriented',
       payload: { surfaceId: surface._id, verdict: 'proposed' },
@@ -577,7 +580,7 @@ export const markAbsent = internalMutation({
       whereFound: args.whereFound,
       reason: `No approved surface found after searching: ${args.searched.join(', ')}`,
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: surface.agentId,
       type: 'surface.oriented',
       payload: { surfaceId: surface._id, verdict: 'absent', searched: args.searched },
@@ -596,13 +599,31 @@ export const markAbsent = internalMutation({
  * only the surface id crosses the scheduler boundary.
  */
 export const scheduleOrientation = internalMutation({
-  args: { surfaceId: v.id('surfaces') },
+  args: { surfaceId: v.id('surfaces'), byManager: v.optional(v.boolean()) },
   handler: async (ctx, args): Promise<boolean> => {
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) return false;
-    return await scheduleOrientationFor(ctx, surface);
+    const placed = await scheduleOrientationFor(ctx, surface);
+    if (placed && args.byManager === true) await recordReoriented(ctx, surface);
+    return placed;
   },
 });
+
+/**
+ * Record that the manager's re-run placed orientation for a surface, in the
+ * transaction that placed it; charter approval's run writes nothing here.
+ */
+export async function recordReoriented(
+  ctx: MutationCtx,
+  surface: Pick<Doc<'surfaces'>, '_id' | 'agentId'>,
+): Promise<void> {
+  await appendEvent(ctx, {
+    agentId: surface.agentId,
+    type: 'surface.reoriented',
+    payload: { surfaceId: surface._id },
+    createdAt: Date.now(),
+  });
+}
 
 /**
  * Schedule orientation for one declared surface unless a job is already on it.
@@ -623,11 +644,9 @@ export async function scheduleOrientationFor(
     const job = await ctx.db.system.get(surface.orientationJobId);
     if (job && (job.state.kind === 'pending' || job.state.kind === 'inProgress')) return false;
   }
-  const orientationJobId = await ctx.scheduler.runAfter(
-    0,
-    internal.orientationActions.orientOne,
-    { surfaceId: surface._id },
-  );
+  const orientationJobId = await ctx.scheduler.runAfter(0, internal.orientationActions.orientOne, {
+    surfaceId: surface._id,
+  });
   await ctx.db.patch(surface._id, { orientationJobId });
   return true;
 }
@@ -637,7 +656,7 @@ export async function scheduleOrientationFor(
  *
  * Orientation leaves such a system declared and the card lists it under the
  * others; this is the manager's click that orients that one surface. The
- * card it files still needs the manager and IT to approve it. Nothing is
+ * card it files still needs the manager's approval. Nothing is
  * stored on the row: a rejected or failed card goes back to waiting, one
  * click from a card again, and a pending job for the surface is replaced
  * so the request is not swallowed by a run that would skip it.
@@ -665,7 +684,7 @@ export const requestProposal = mutation({
       { surfaceId: surface._id, requested: true },
     );
     await ctx.db.patch(surface._id, { orientationJobId });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: surface.agentId,
       type: 'surface.proposal-requested',
       payload: { surfaceId: surface._id, slug: surface.slug },
@@ -689,7 +708,7 @@ export const recordOrientationFailure = internalMutation({
     if (!surface || surface.verdict !== 'declared') return false;
     const reason = `orientation failed: ${args.reason}`.slice(0, 400);
     await ctx.db.patch(surface._id, { reason });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: surface.agentId,
       type: 'surface.orientation-failed',
       payload: { surfaceId: surface._id, reason },
@@ -731,12 +750,11 @@ export const attachCredential = internalMutation({
   handler: async (ctx, args): Promise<void> => {
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) throw new Error('Surface not found.');
-    const approved = surface.managerApprovedAt !== undefined && surface.itApprovedAt !== undefined;
+    const approved = surface.managerApprovedAt !== undefined;
     await ctx.db.patch(surface._id, {
       credentialId: args.credentialId,
       credentialKind: args.credentialKind,
       credentialLocation: args.credentialLocation,
-      credentialRef: undefined,
       credentialLanded: false,
       verdict:
         approved && (surface.verdict === 'ungranted' || surface.verdict === 'listed-dead')
@@ -785,7 +803,7 @@ export const recordProvisionedApp = internalMutation({
         stateExpiresAt: args.stateExpiresAt,
       },
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: surface.agentId,
       type: 'surface.app-provisioned',
       payload: { surfaceId: surface._id, appId: args.appId, appName: args.appName },
@@ -863,7 +881,7 @@ export const recordInstallFailure = internalMutation({
     await ctx.db.patch(surface._id, {
       provisioning: { ...surface.provisioning, lastError: args.reason },
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: surface.agentId,
       type: 'surface.install-failed',
       payload: { surfaceId: surface._id, reason: args.reason },
@@ -899,7 +917,6 @@ export const recordInstalledApp = internalMutation({
     await ctx.db.patch(surface._id, {
       credentialId: args.credentialId,
       credentialKind: 'oauth',
-      credentialRef: undefined,
       credentialLanded: false,
       reason: undefined,
       verdict:
@@ -921,7 +938,7 @@ export const recordInstalledApp = internalMutation({
       if (credential && !credential.revokedAt) {
         await ctx.db.patch(retired, { revokedAt: args.now });
       }
-      await ctx.db.insert('events', {
+      await appendEvent(ctx, {
         agentId: surface.agentId,
         type: 'surface.shared-credential-retired',
         payload: {
@@ -932,7 +949,7 @@ export const recordInstalledApp = internalMutation({
         createdAt: args.now,
       });
     }
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: surface.agentId,
       type: 'surface.app-installed',
       payload: { surfaceId: surface._id, appId: surface.provisioning?.appId },
@@ -942,27 +959,103 @@ export const recordInstalledApp = internalMutation({
   },
 });
 
-/** Reserve the next probe generation for an approved connection candidate. */
+/**
+ * How long a probe holds its card against a routine re-probe (E-88): its one
+ * retry's wait (at most the provider backoff's 30 s), two 30 s provider calls
+ * and a browser sign-in, with room to spare. A probe that dies without
+ * recording its result frees the card when the lease lapses.
+ */
+export const PROBE_LEASE_MS = 2 * 60_000;
+
+/** The verdicts a probe may run on; a row that leaves them is no longer a probe's to call. */
+export const PROBEABLE_VERDICTS: ReadonlyArray<Doc<'surfaces'>['verdict']> = [
+  'approved',
+  'connected',
+  'ungranted',
+  'listed-dead',
+];
+
+/** Why `beginProbe` reserved no generation. */
+export type ProbeRefusal = 'not-probeable' | 'access-ended' | 'in-flight';
+
+/** A probe generation `beginProbe` reserved, with the row as it now stands. */
+export interface ProbeReserved {
+  readonly reserved: true;
+  readonly surface: Doc<'surfaces'>;
+  readonly generation: number;
+}
+
+/** A probe `beginProbe` did not reserve because the card cannot be probed now. */
+export interface ProbeRefused {
+  readonly reserved: false;
+  readonly refusal: Exclude<ProbeRefusal, 'in-flight'>;
+}
+
+/**
+ * A routine probe `beginProbe` did not reserve because another probe of the
+ * card is in flight: the card's verdict, and when the lease on it ends, so a
+ * re-ask no sweep would repeat can be asked again then.
+ */
+export interface ProbeInFlight {
+  readonly reserved: false;
+  readonly refusal: 'in-flight';
+  readonly verdict: Doc<'surfaces'>['verdict'];
+  readonly leaseEndsAt: number;
+}
+
+/** What `beginProbe` answers. */
+export type ProbeReservation = ProbeReserved | ProbeRefused | ProbeInFlight;
+
+/** Whether the probe of a card's current generation began within the lease. */
+function probeInFlight(surface: Doc<'surfaces'>, now: number): boolean {
+  return surface.probeStartedAt !== undefined && now - surface.probeStartedAt < PROBE_LEASE_MS;
+}
+
+/**
+ * Reserve the next probe generation for an approved connection candidate.
+ *
+ * Internal; the probe's first write. The new generation fences every result
+ * an older probe may still write, and its start is stamped so a routine
+ * re-probe (the hourly sweep, a rate limit's re-ask) asked for while it runs
+ * is not made: two such probes within the lease cost one provider round-trip
+ * (E-88). A probe a person's action asks for (the card's Probe, a landed
+ * credential, an approval, a renewal, a tool approval, a manager change)
+ * supersedes the one in flight, whose answer may be about what just changed.
+ * A card whose end date has passed is ended here, not probed.
+ */
 export const beginProbe = internalMutation({
-  args: { surfaceId: v.id('surfaces') },
-  handler: async (ctx, args): Promise<{ surface: Doc<'surfaces'>; generation: number } | null> => {
+  args: { surfaceId: v.id('surfaces'), routine: v.optional(v.boolean()) },
+  handler: async (ctx, args): Promise<ProbeReservation> => {
     const surface = await ctx.db.get(args.surfaceId);
-    if (
-      !surface ||
-      !['approved', 'connected', 'ungranted', 'listed-dead'].includes(surface.verdict)
-    ) {
-      return null;
+    if (!surface || !PROBEABLE_VERDICTS.includes(surface.verdict)) {
+      return { reserved: false, refusal: 'not-probeable' };
     }
     // A probe that found the provider working would otherwise reconnect an
     // access whose end date has passed; only the manager's renewal does that.
     const now = Date.now();
     if (accessEndDatePassed(surface, now)) {
       if (surface.reason !== 'expired') await endAccessInTransaction(ctx, surface, now);
-      return null;
+      return { reserved: false, refusal: 'access-ended' };
     }
-    const generation = (surface.probeGeneration ?? 0) + 1;
-    await ctx.db.patch(surface._id, { probeGeneration: generation });
-    return { surface: { ...surface, probeGeneration: generation }, generation };
+    if (
+      args.routine === true &&
+      surface.probeStartedAt !== undefined &&
+      probeInFlight(surface, now)
+    ) {
+      return {
+        reserved: false,
+        refusal: 'in-flight',
+        verdict: surface.verdict,
+        leaseEndsAt: surface.probeStartedAt + PROBE_LEASE_MS,
+      };
+    }
+    const started = { probeGeneration: (surface.probeGeneration ?? 0) + 1, probeStartedAt: now };
+    await ctx.db.patch(surface._id, started);
+    return {
+      reserved: true,
+      surface: { ...surface, ...started },
+      generation: started.probeGeneration,
+    };
   },
 });
 
@@ -979,22 +1072,41 @@ export const recordProbeFailure = internalMutation({
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) throw new Error('Surface not found.');
     if (surface.probeGeneration !== args.generation) return false;
-    if (!['approved', 'connected', 'ungranted', 'listed-dead'].includes(surface.verdict)) {
+    if (!PROBEABLE_VERDICTS.includes(surface.verdict)) {
+      await ctx.db.patch(surface._id, { probeStartedAt: undefined });
       return false;
     }
+    // A probe that began before the end date and failed after it leaves the
+    // access ended, not dead: the renewal reads `expired` (wave 2 review M20).
+    if (await endedBeforeProbeLanded(ctx, surface)) return false;
+    // The last resolved manager stays: a failed lookup is the usual way a
+    // manager leaves, and the connecting probe after it can only say the
+    // manager changed (Q6) by comparing with who the row resolved before.
+    // Nothing reads it off a row that is not connected.
     await ctx.db.patch(surface._id, {
       verdict: args.verdict,
       reason: args.reason,
       credentialLanded: false,
       toolAllowlist: undefined,
+      // A card connected before the approved list existed keeps its list as
+      // the approved one, so the connection after this failure is frozen
+      // against what the manager saw and not against whatever the provider
+      // lists then (wave 3.5 review M1).
+      ...(surface.approvedToolAllowlist === undefined && surface.toolAllowlist !== undefined
+        ? {
+            approvedToolAllowlist: surface.toolAllowlist,
+            toolAllowlistApprovedAt: surface.lastVerifiedAt ?? surface.createdAt,
+          }
+        : {}),
+      withheldTools: undefined,
       toolArguments: undefined,
       managerDmChannelId: undefined,
-      managerUserId: undefined,
       managerName: undefined,
       providerIdentityId: undefined,
       providerWorkspaceId: undefined,
       channelsNotJoined: undefined,
       lastVerifiedAt: undefined,
+      probeStartedAt: undefined,
       probeAttempts: withProbeAttempt(surface, {
         path: surface.path ?? 'unknown',
         endpoint: surface.endpoint,
@@ -1003,7 +1115,7 @@ export const recordProbeFailure = internalMutation({
         attemptedAt: args.attemptedAt ?? Date.now(),
       }),
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: surface.agentId,
       type: 'surface.probe-failed',
       payload: { surfaceId: surface._id, verdict: args.verdict, reason: args.reason },
@@ -1019,6 +1131,8 @@ export const recordProbeFailure = internalMutation({
  * Written before the wait, so the card and the trail show the retry while it
  * is pending and keep it after the second call connects. The verdict is left
  * alone: one failed call establishes nothing about the enterprise's system.
+ * A provider that rate-limited the retry as well ends the probe here
+ * (`endsProbe`), leaving the verdict, so the card is free for the next probe.
  *
  * Returns:
  *   False when a newer probe has taken over, or the row is no longer approved,
@@ -1031,15 +1145,18 @@ export const recordProbeRetry = internalMutation({
     reason: v.string(),
     retryAfterMs: v.number(),
     attemptedAt: v.number(),
+    endsProbe: v.optional(v.boolean()),
   },
   handler: async (ctx, args): Promise<boolean> => {
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) throw new Error('Surface not found.');
     if (surface.probeGeneration !== args.generation) return false;
-    if (!['approved', 'connected', 'ungranted', 'listed-dead'].includes(surface.verdict)) {
+    if (!PROBEABLE_VERDICTS.includes(surface.verdict)) {
+      await ctx.db.patch(surface._id, { probeStartedAt: undefined });
       return false;
     }
     await ctx.db.patch(surface._id, {
+      ...(args.endsProbe === true ? { probeStartedAt: undefined } : {}),
       probeAttempts: withProbeAttempt(surface, {
         path: surface.path ?? 'unknown',
         endpoint: surface.endpoint,
@@ -1049,7 +1166,7 @@ export const recordProbeRetry = internalMutation({
         retryAfterMs: args.retryAfterMs,
       }),
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: surface.agentId,
       type: 'surface.probe-retried',
       payload: {
@@ -1093,11 +1210,12 @@ export const demoteAfterProbeFailure = internalMutation({
       surface.probeGeneration !== args.generation ||
       !['approved', 'ungranted', 'listed-dead'].includes(surface.verdict) ||
       surface.managerApprovedAt === undefined ||
-      surface.itApprovedAt === undefined ||
       isManagerLookupFailure(args.reason)
     ) {
       return null;
     }
+    // Past the end date there is no rung to fall to: the access ended.
+    if (await endedBeforeProbeLanded(ctx, surface)) return null;
     const candidates = (surface.pathCandidates ?? []).slice(0, MAX_LADDER_PATHS);
     const currentIndex = candidates.findIndex(
       (candidate): boolean =>
@@ -1118,7 +1236,12 @@ export const demoteAfterProbeFailure = internalMutation({
       reason: reason.slice(0, 500),
       credentialLanded: false,
       probeGeneration: generation,
+      // The same probe goes on to the next rung under the new generation.
+      probeStartedAt: Date.now(),
       toolAllowlist: undefined,
+      withheldTools: undefined,
+      approvedToolAllowlist: undefined,
+      toolAllowlistApprovedAt: undefined,
       toolArguments: undefined,
       managerDmChannelId: undefined,
       managerUserId: undefined,
@@ -1136,7 +1259,7 @@ export const demoteAfterProbeFailure = internalMutation({
       }),
     };
     await ctx.db.patch(surface._id, patch);
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: surface.agentId,
       type: 'surface.probe-demoted',
       payload: {
@@ -1190,16 +1313,14 @@ async function requeueDeferredWork(
     const verdict = item.verdict as DeferredSurfaceVerdict | undefined;
     if (!verdict || !shouldRequeue(verdict)) continue;
     await ctx.db.patch(item._id, { state: 'discovered', verdict: undefined });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: surface.agentId,
       type: 'work.requeued',
       payload: {
         workItemId: item._id,
         surfaceId: surface._id,
         slug: surface.slug,
-        ...(verdict.missingSurface
-          ? { previousMissingSurface: verdict.missingSurface }
-          : {}),
+        ...(verdict.missingSurface ? { previousMissingSurface: verdict.missingSurface } : {}),
       },
       createdAt: now,
     });
@@ -1219,8 +1340,7 @@ async function requeueWorkAwaitingAlias(
   return await requeueDeferredWork(
     ctx,
     surface,
-    (verdict) =>
-      verdict.reason === 'awaiting-connection' && verdict.missingSurface === aliasSlug,
+    (verdict) => verdict.reason === 'awaiting-connection' && verdict.missingSurface === aliasSlug,
     now,
   );
 }
@@ -1255,36 +1375,50 @@ interface ProbedTools {
   readonly allowlist: string[];
   readonly toolArguments: Array<{ tool: string; arguments: string[] }>;
   readonly withheld: string[];
+  /** The list the approval covers, which the row keeps. */
+  readonly approved: string[];
 }
 
 /**
- * Keep a surface's tool list to the one its connecting probe found.
+ * Keep a surface's tool list to the one its approval covers.
  *
- * The probe that first connects the approved row fixes the list the approval
- * covers. Any later probe that stores a list (the hourly one, one after a
- * page names another Slack method, or the one a renewal of an ended access
- * schedules) keeps only the tools of that list it still finds and withholds
- * any other, so no probe widens what an employee may call. A rejection or a
- * failed probe clears the list, and the next connection starts from its own
- * probe.
+ * The probe that first connects the approved row fixes the approved list.
+ * Any later probe (the hourly one, one after a page names another Slack
+ * method, one after a failed probe, or the one a renewal of an ended access
+ * schedules) keeps only the approved tools it still finds and withholds any
+ * other, so no probe widens what an employee may call; a tool a narrower
+ * probe dropped comes back when a probe finds it again. Only the manager's
+ * explicit approval widens the list (`approveTools`); a rejection or a
+ * demotion to another route clears it, and the next connection starts from
+ * its own probe.
  *
  * @param surface - The row before this probe's write.
  * @param probed - What the probe found.
- * @returns The tools to store, their arguments, and the tools withheld.
+ * @returns The tools to store, their arguments, the tools withheld, and the
+ *   approved list the row carries after this probe.
  */
 function frozenTools(
   surface: Doc<'surfaces'>,
   probed: { toolAllowlist: string[]; toolArguments: Array<{ tool: string; arguments: string[] }> },
 ): ProbedTools {
-  if (surface.toolAllowlist === undefined) {
-    return { allowlist: probed.toolAllowlist, toolArguments: probed.toolArguments, withheld: [] };
+  // A row connected before the approved list existed keeps the list it
+  // holds until the `surfaces-approved-tools` migration copies it across.
+  const approvedList = surface.approvedToolAllowlist ?? surface.toolAllowlist;
+  if (approvedList === undefined) {
+    return {
+      allowlist: probed.toolAllowlist,
+      toolArguments: probed.toolArguments,
+      withheld: [],
+      approved: probed.toolAllowlist,
+    };
   }
-  const approved = new Set(surface.toolAllowlist);
+  const approved = new Set(approvedList);
   const allowlist = probed.toolAllowlist.filter((tool: string): boolean => approved.has(tool));
   return {
     allowlist,
     toolArguments: probed.toolArguments.filter((entry): boolean => approved.has(entry.tool)),
     withheld: probed.toolAllowlist.filter((tool: string): boolean => !approved.has(tool)),
+    approved: approvedList,
   };
 }
 
@@ -1303,7 +1437,7 @@ function frozenTools(
  * here: a row still being evaluated from a read taken before this write is
  * caught where its verdict lands (`applyVerdict`), under this write's key.
  * No probe widens a stored tool list, a renewal's included (`frozenTools`);
- * the connected event names any tool it withheld. A probe that resolves a
+ * the row and the connected event name any tool it withheld. A probe that resolves a
  * different manager than the row held writes `manager.changed` (Q6), so the
  * ledger shows who the approver became and when, and any open request
  * delivered to another DM is sent again to this one.
@@ -1326,22 +1460,34 @@ export const recordConnected = internalMutation({
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) throw new Error('Surface not found.');
     if (surface.probeGeneration !== args.generation) return false;
-    if (!['approved', 'connected', 'ungranted', 'listed-dead'].includes(surface.verdict)) {
+    if (!PROBEABLE_VERDICTS.includes(surface.verdict)) {
+      await ctx.db.patch(surface._id, { probeStartedAt: undefined });
       return false;
     }
+    // A probe in flight across the end date never reconnects the access, and
+    // never re-grants its read scope (wave 2 review D4 (a), M20).
+    if (await endedBeforeProbeLanded(ctx, surface)) return false;
     const transitioned = surface.verdict !== 'connected';
-    const managerChanged =
-      surface.managerUserId !== undefined &&
+    const previousManager = surface.managerUserId;
+    const managerChange =
+      previousManager !== undefined &&
       args.managerUserId !== undefined &&
-      surface.managerUserId !== args.managerUserId;
+      previousManager !== args.managerUserId
+        ? { previousManagerUserId: previousManager, managerUserId: args.managerUserId }
+        : undefined;
     const tools = frozenTools(surface, args);
     await ctx.db.patch(surface._id, {
       verdict: 'connected',
       reason: undefined,
       credentialLanded: true,
       lastVerifiedAt: args.verifiedAt,
+      probeStartedAt: undefined,
       toolAllowlist: tools.allowlist,
       toolArguments: tools.toolArguments,
+      withheldTools: tools.withheld.length > 0 ? tools.withheld : undefined,
+      ...(surface.approvedToolAllowlist === undefined
+        ? { approvedToolAllowlist: tools.approved, toolAllowlistApprovedAt: args.verifiedAt }
+        : {}),
       managerDmChannelId: args.managerDmChannelId,
       managerUserId: args.managerUserId,
       managerName: args.managerName,
@@ -1356,7 +1502,7 @@ export const recordConnected = internalMutation({
       // connection; the next poll writes a fresh one if it skips for a new reason.
       intakeSkipReason: undefined,
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: surface.agentId,
       type: 'surface.connected',
       payload:
@@ -1365,20 +1511,18 @@ export const recordConnected = internalMutation({
           : { surfaceId: surface._id },
       createdAt: args.verifiedAt,
     });
-    if (managerChanged) {
-      await ctx.db.insert('events', {
+    if (managerChange) {
+      await appendEvent(ctx, {
         agentId: surface.agentId,
         type: 'manager.changed',
-        payload: {
-          surfaceId: surface._id,
-          via: 'probe',
-          previousManagerUserId: surface.managerUserId,
-          managerUserId: args.managerUserId,
-        },
+        payload: { surfaceId: surface._id, via: 'probe', ...managerChange },
         createdAt: args.verifiedAt,
       });
     }
     await resendDecisionsAfterManagerChange(ctx, surface, args.managerDmChannelId);
+    // On every connection, not only a change of stored verdict: a surface the
+    // planner read as dead may never have been stored as anything but connected.
+    await redraftPlansDraftedWithout(ctx, surface, args.verifiedAt);
     if (transitioned) {
       const readScope = `${surface.slug}:read`;
       if (!(await readRevokedSinceApproval(ctx, surface, readScope))) {
@@ -1403,19 +1547,16 @@ export const recordConnected = internalMutation({
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
 
-/** Q5's access length, in days, for an approved card that names none. */
+/** Q5's access length at approval, in days; only the manager sets another (`setAccessDays`). */
 export const SURFACE_ACCESS_DEFAULT_DAYS = 90;
 
-/** The longest access a card or the manager can set, in days. */
+/** The longest access the manager can set, in days. */
 export const SURFACE_ACCESS_MAX_DAYS = 365;
-
-/** How long before the end date the manager is told it is coming (Q5). */
-export const EXPIRY_NOTICE_MS = 7 * DAY_MS;
 
 /** Surfaces one page of the access-clock migration reads. */
 const ACCESS_BACKFILL_BATCH = 100;
 
-/** The verdicts of a surface both approvals reached, whose access runs on a clock. */
+/** The verdicts of an approved surface, whose access runs on a clock. */
 const ACCESS_VERDICTS: ReadonlyArray<Doc<'surfaces'>['verdict']> = [
   'approved',
   'connected',
@@ -1424,27 +1565,7 @@ const ACCESS_VERDICTS: ReadonlyArray<Doc<'surfaces'>['verdict']> = [
 ];
 
 /** Who set an access end date: the approval that started it, the manager, or the upgrade. */
-type AccessSetBy = 'approval' | 'manager' | 'upgrade';
-
-/**
- * The access length an approved card carries, in whole days.
- *
- * Args:
- *   request: The proposal's stored request, which the card renders.
- *
- * Returns:
- *   The request's length capped at a year, or Q5's default when it names none.
- */
-function approvedAccessDays(request: unknown): number {
-  const days =
-    typeof request === 'object' && request !== null && 'expiresInDays' in request
-      ? request.expiresInDays
-      : undefined;
-  if (typeof days !== 'number' || !Number.isInteger(days) || days < 1) {
-    return SURFACE_ACCESS_DEFAULT_DAYS;
-  }
-  return Math.min(days, SURFACE_ACCESS_MAX_DAYS);
-}
+type AccessSetBy = NonNullable<Doc<'surfaces'>['accessSetBy']>;
 
 /** Whether an approved surface's access end date has passed; renewal moves the date. */
 function accessEndDatePassed(surface: Doc<'surfaces'>, now: number): boolean {
@@ -1473,10 +1594,15 @@ async function endAccessInTransaction(
     reason: 'expired',
     credentialLanded: false,
     lastVerifiedAt: undefined,
+    // The end of access ends the probe in flight: whatever it finds lands on
+    // no generation, so neither it nor a renewal after it can reconnect the
+    // card on an answer taken before the end (wave 2 review M20, m9).
+    probeGeneration: (surface.probeGeneration ?? 0) + 1,
+    probeStartedAt: undefined,
   });
   // The end date is on the event so the upgrade can tell this release's end
   // of a proposal-started clock from an end the older code recorded.
-  await ctx.db.insert('events', {
+  await appendEvent(ctx, {
     agentId: surface.agentId,
     type: 'surface.expired',
     payload: { surfaceId: surface._id, expiresAt: surface.expiresAt },
@@ -1485,16 +1611,35 @@ async function endAccessInTransaction(
 }
 
 /**
+ * Refuse a probe result that lands on or after the access end date.
+ *
+ * `beginProbe` refuses a probe that starts after the date; one reserved
+ * before it can land after it. The access is ended here if the sweep has not
+ * ended it yet, so the refusal leaves the row as the sweep would.
+ *
+ * Args:
+ *   ctx: Mutation context of the probe's result.
+ *   surface: The surface the probe reserved.
+ *
+ * Returns:
+ *   True when the end date has passed and the result must not be written.
+ */
+async function endedBeforeProbeLanded(
+  ctx: MutationCtx,
+  surface: Doc<'surfaces'>,
+): Promise<boolean> {
+  const now = Date.now();
+  if (!accessEndDatePassed(surface, now)) return false;
+  if (surface.reason !== 'expired') await endAccessInTransaction(ctx, surface, now);
+  return true;
+}
+
+/**
  * Whether this release's code ended the surface's access, rather than the code
  * before it: the latest `surface.expired` event for it carries the end date.
  */
 async function endedByThisRelease(ctx: MutationCtx, surface: Doc<'surfaces'>): Promise<boolean> {
-  for await (const event of ctx.db
-    .query('events')
-    .withIndex('by_agent_type', (index) =>
-      index.eq('agentId', surface.agentId).eq('type', 'surface.expired'),
-    )
-    .order('desc')) {
+  for await (const event of eventsOfType(ctx, surface.agentId, 'surface.expired').order('desc')) {
     const payload = event.payload as { surfaceId?: unknown; expiresAt?: unknown } | undefined;
     if (payload?.surfaceId === surface._id) return typeof payload.expiresAt === 'number';
   }
@@ -1513,7 +1658,7 @@ async function logAccessSet(
   entry: { by: AccessSetBy; days: number; expiresAt: number; at: number } & Record<string, unknown>,
 ): Promise<void> {
   const { at, ...payload } = entry;
-  await ctx.db.insert('events', {
+  await appendEvent(ctx, {
     agentId: surface.agentId,
     type: 'surface.access-set',
     payload: { surfaceId: surface._id, ...payload },
@@ -1536,13 +1681,10 @@ async function logAccessSet(
 async function surfaceEventExists(
   ctx: MutationCtx,
   surface: Doc<'surfaces'>,
-  type: string,
+  type: EventType,
   expiresAt?: number,
 ): Promise<boolean> {
-  for await (const event of ctx.db
-    .query('events')
-    .withIndex('by_agent_type', (index) => index.eq('agentId', surface.agentId).eq('type', type))
-    .order('desc')) {
+  for await (const event of eventsOfType(ctx, surface.agentId, type).order('desc')) {
     const payload = event.payload as { surfaceId?: unknown; expiresAt?: unknown } | undefined;
     if (
       payload?.surfaceId === surface._id &&
@@ -1564,14 +1706,14 @@ async function surfaceEventExists(
  *
  * Returns:
  *   True when no grant of the scope is active and one was revoked at or
- *   after the later approval stamp.
+ *   after the manager's approval.
  */
 async function readRevokedSinceApproval(
   ctx: MutationCtx,
   surface: Doc<'surfaces'>,
   readScope: string,
 ): Promise<boolean> {
-  const approvedAt = Math.max(surface.managerApprovedAt ?? 0, surface.itApprovedAt ?? 0);
+  const approvedAt = surface.managerApprovedAt ?? 0;
   const grants = await ctx.db
     .query('permissionGrants')
     .withIndex('by_agent_scope', (index) =>
@@ -1623,7 +1765,11 @@ export const setAccessDays = mutation({
     const now = Date.now();
     const expiresAt = now + args.days * DAY_MS;
     const renewed = surface.reason === 'expired';
-    await ctx.db.patch(surface._id, { expiresAt, ...(renewed ? { reason: undefined } : {}) });
+    await ctx.db.patch(surface._id, {
+      expiresAt,
+      accessSetBy: 'manager',
+      ...(renewed ? { reason: undefined } : {}),
+    });
     await logAccessSet(ctx, surface, {
       by: 'manager',
       days: args.days,
@@ -1643,8 +1789,10 @@ export const setAccessDays = mutation({
 /**
  * Tell the manager, once per end date, that a surface's access ends within a week.
  *
- * Internal; the hourly re-probe sweep's. Writes one `surface.expiring` event
- * per end date, so a date the manager moves is noticed again.
+ * Internal; the hourly re-probe sweep's. The week is counted in the agent's
+ * zone (N12): the notice is due from the start of the day a week before the
+ * end date there, and the event names that day. Writes one `surface.expiring`
+ * event per end date, so a date the manager moves is noticed again.
  *
  * Returns:
  *   Whether a notice was written.
@@ -1657,17 +1805,23 @@ export const recordExpiryNotice = internalMutation({
       !surface ||
       !ACCESS_VERDICTS.includes(surface.verdict) ||
       surface.reason === 'expired' ||
-      surface.expiresAt === undefined ||
-      surface.expiresAt <= args.now ||
-      surface.expiresAt - args.now > EXPIRY_NOTICE_MS
+      surface.expiresAt === undefined
     ) {
       return false;
     }
+    const agent = await ctx.db.get(surface.agentId);
+    if (!agent) return false;
+    const zone = agentZone(agent);
+    if (!expiryNoticeDue(args.now, surface.expiresAt, zone)) return false;
     if (await surfaceEventExists(ctx, surface, 'surface.expiring', surface.expiresAt)) return false;
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: surface.agentId,
       type: 'surface.expiring',
-      payload: { surfaceId: surface._id, expiresAt: surface.expiresAt },
+      payload: {
+        surfaceId: surface._id,
+        expiresAt: surface.expiresAt,
+        noticeDay: expiryNoticeDay(surface.expiresAt, zone),
+      },
       createdAt: args.now,
     });
     return true;
@@ -1706,7 +1860,11 @@ export async function restartAccessClocksPage(
     const ended = surface.reason === 'expired';
     if (ended && !(await endedByThisRelease(ctx, surface))) continue;
     const expiresAt = now + SURFACE_ACCESS_DEFAULT_DAYS * DAY_MS;
-    await ctx.db.patch(surface._id, { expiresAt, ...(ended ? { reason: undefined } : {}) });
+    await ctx.db.patch(surface._id, {
+      expiresAt,
+      accessSetBy: 'upgrade',
+      ...(ended ? { reason: undefined } : {}),
+    });
     await logAccessSet(ctx, surface, {
       by: 'upgrade',
       days: SURFACE_ACCESS_DEFAULT_DAYS,
@@ -1728,6 +1886,177 @@ export async function restartAccessClocksPage(
     cursor: page.continueCursor,
     isDone: page.isDone,
   };
+}
+
+/**
+ * One page of the `surfaces-access-set-by` migration: give every card with an
+ * access end date the setter its newest `surface.access-set` event names, or
+ * `upgrade` when it has none (a date the proposal-started clock left and no
+ * event recorded). Run by `migrations:runPending`.
+ *
+ * @param cursor - Where the previous page stopped, or null for the first.
+ * @returns What the page read and changed, and where the next one starts.
+ */
+export async function backfillAccessSetByPage(
+  ctx: MutationCtx,
+  cursor: string | null,
+): Promise<{ read: number; changed: number; cursor: string; isDone: boolean }> {
+  const page = await ctx.db.query('surfaces').paginate({ cursor, numItems: ACCESS_BACKFILL_BATCH });
+  let changed = 0;
+  for (const surface of page.page) {
+    if (surface.expiresAt === undefined || surface.accessSetBy !== undefined) continue;
+    await ctx.db.patch(surface._id, {
+      accessSetBy: (await latestAccessSetter(ctx, surface)) ?? 'upgrade',
+    });
+    changed += 1;
+  }
+  return {
+    read: page.page.length,
+    changed,
+    cursor: page.continueCursor,
+    isDone: page.isDone,
+  };
+}
+
+/** Surfaces one page of the withheld-tools backfill reads; each may walk its agent's events. */
+const WITHHELD_BACKFILL_BATCH = 20;
+
+/**
+ * The newest `surface.connected` events of one agent a backfill walks for a
+ * card's own: the hourly re-probe writes one per connected card an hour, so a
+ * connected card's newest is among the agent's last few hundred. A card whose
+ * event is further back is left as withholding nothing.
+ */
+const CONNECTED_EVENT_WALK = 200;
+
+/** A `surface.connected` event as the contract types it. */
+type SurfaceConnectedEvent = Doc<'events'> & EventOf<'surface.connected'>;
+
+/**
+ * The newest `surface.connected` event of one card among its agent's last
+ * `CONNECTED_EVENT_WALK`, or undefined when none is that near: the card then
+ * reads as never connected.
+ *
+ * @param ctx - A migration's context.
+ * @param surface - The card.
+ */
+export async function newestConnectedEvent(
+  ctx: Pick<MutationCtx, 'db'>,
+  surface: Doc<'surfaces'>,
+): Promise<SurfaceConnectedEvent | undefined> {
+  const events = await eventsOfType(ctx, surface.agentId, 'surface.connected')
+    .order('desc')
+    .take(CONNECTED_EVENT_WALK);
+  for (const event of events) {
+    if (isEventOf(event, 'surface.connected') && event.payload.surfaceId === surface._id) {
+      return event;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * One page of the `surfaces-withheld-tools` migration (K D2 (b)). A connected
+ * card's withheld tools were carried only on its newest `surface.connected`
+ * event; they are copied onto the row, less any tool the manager approved
+ * since, so the card reads the row however busy the feed is. Run by
+ * `migrations:runPending`.
+ *
+ * @param cursor - Where the previous page stopped, or null for the first.
+ * @returns What the page read and changed, and where the next one starts.
+ */
+export async function backfillWithheldToolsPage(
+  ctx: MutationCtx,
+  cursor: string | null,
+): Promise<{ read: number; changed: number; cursor: string; isDone: boolean }> {
+  const page = await ctx.db
+    .query('surfaces')
+    .paginate({ cursor, numItems: WITHHELD_BACKFILL_BATCH });
+  let changed = 0;
+  for (const surface of page.page) {
+    if (surface.verdict !== 'connected' || surface.withheldTools !== undefined) continue;
+    const offered: readonly string[] =
+      (await newestConnectedEvent(ctx, surface))?.payload.withheldTools ?? [];
+    const approved = new Set(surface.approvedToolAllowlist ?? []);
+    const withheld = offered.filter((tool) => !approved.has(tool));
+    if (withheld.length === 0) continue;
+    await ctx.db.patch(surface._id, { withheldTools: withheld });
+    changed += 1;
+  }
+  return {
+    read: page.page.length,
+    changed,
+    cursor: page.continueCursor,
+    isDone: page.isDone,
+  };
+}
+
+/**
+ * One page of the `surfaces-single-approval` migration (Q10, N10). The IT
+ * approval is gone, so a proposed card an older release left with the
+ * manager's stamp alone is approved, as the manager's approval now does it,
+ * its access running from the upgrade (`accessSetBy: 'upgrade'`); and no card
+ * keeps an IT stamp, so the release after this one can remove the
+ * declaration. A card whose approval would now be refused (a documented queue
+ * it reads changed, or its browser component is absent) stays proposed
+ * without the stamp and says why, so the manager approves it once it can be.
+ * Run by `migrations:runPending`.
+ *
+ * @param cursor - Where the previous page stopped, or null for the first.
+ * @param now - The upgrade's moment, from which an approved card's access runs.
+ * @returns What the page read and changed, and where the next one starts.
+ */
+export async function singleApprovalPage(
+  ctx: MutationCtx,
+  cursor: string | null,
+  now: number,
+): Promise<{ read: number; changed: number; cursor: string; isDone: boolean }> {
+  const page = await ctx.db.query('surfaces').paginate({ cursor, numItems: ACCESS_BACKFILL_BATCH });
+  let changed = 0;
+  for (const surface of page.page) {
+    const approvedAt = surface.verdict === 'proposed' ? surface.managerApprovedAt : undefined;
+    if (approvedAt === undefined && surface.itApprovedAt === undefined) continue;
+    if (surface.itApprovedAt !== undefined) {
+      await ctx.db.patch(surface._id, { itApprovedAt: undefined });
+    }
+    if (approvedAt !== undefined) {
+      const queue = await intakeQueueRefusal(ctx, surface);
+      if (queue === undefined && browserRefusal(surface) === undefined) {
+        await approveInTransaction(ctx, surface, { approvedAt, now, by: 'upgrade' });
+      } else {
+        // A browser card refused for its absent driver stores nothing: the card
+        // reads the component live, so it offers Approve again once the driver
+        // runs. A stored absence would block it for good (wave 3.5 review M12).
+        await ctx.db.patch(surface._id, {
+          managerApprovedAt: undefined,
+          ...(queue === undefined ? {} : { reason: queue }),
+        });
+      }
+    }
+    changed += 1;
+  }
+  return {
+    read: page.page.length,
+    changed,
+    cursor: page.continueCursor,
+    isDone: page.isDone,
+  };
+}
+
+/** Who set a surface's end date last, by its newest `surface.access-set` event. */
+async function latestAccessSetter(
+  ctx: MutationCtx,
+  surface: Doc<'surfaces'>,
+): Promise<AccessSetBy | undefined> {
+  for await (const event of eventsOfType(ctx, surface.agentId, 'surface.access-set').order(
+    'desc',
+  )) {
+    if (!isEventOf(event, 'surface.access-set') || event.payload.surfaceId !== surface._id)
+      continue;
+    const by: unknown = event.payload.by;
+    return by === 'approval' || by === 'manager' || by === 'upgrade' ? by : undefined;
+  }
+  return undefined;
 }
 
 /** Record this poll's waterfall position and visible skip outcome. */
@@ -1753,69 +2082,130 @@ export const recordIntake = internalMutation({
 });
 
 /**
- * Record manager or IT approval; both are required for `approved`.
+ * Why a proposed card cannot be approved now, or undefined when it can.
  *
- * Only a proposed surface can be approved: an absent, declared or already
- * approved surface has nothing to approve, and a rejected surface must be
- * re-proposed from evidence before either stamp can be placed again. The
- * second stamp starts the access clock at the card's length (Q5).
+ * Every documented intake queue the card reads must still read as quoted,
+ * and a browser-driven card needs the component that drives it.
+ */
+async function approvalRefusal(
+  ctx: MutationCtx,
+  surface: Doc<'surfaces'>,
+): Promise<string | undefined> {
+  return (await intakeQueueRefusal(ctx, surface)) ?? browserRefusal(surface);
+}
+
+/** Why a browser-driven card cannot be approved on this deployment now: its driver is not configured or not listening. */
+function browserRefusal(surface: Doc<'surfaces'>): string | undefined {
+  return surface.path === 'browser-driven'
+    ? browserComponentRefusal(process.env.DAY0_BROWSER_MCP_URL)
+    : undefined;
+}
+
+/**
+ * Why a proposed card's documented intake queues no longer support its
+ * approval, or undefined when every queue still reads as quoted.
+ */
+async function intakeQueueRefusal(
+  ctx: MutationCtx,
+  surface: Doc<'surfaces'>,
+): Promise<string | undefined> {
+  for (const value of surface.intakeScope ? intakeScopeValues(surface.intakeScope) : []) {
+    if (!value.sourceId) continue;
+    const page = await ctx.db
+      .query('docPages')
+      .withIndex('by_source_ref', (index) =>
+        index.eq('sourceId', value.sourceId as Id<'docSources'>).eq('ref', value.ref),
+      )
+      .unique();
+    if (!page?.markdown.split(/\r?\n/).some((line) => line.trim() === value.quote)) {
+      return 'A documented intake queue changed; reject this card and re-run orientation before approval.';
+    }
+  }
+  return undefined;
+}
+
+/** One approval to apply: when the manager gave it, when access starts, and who set the end date. */
+interface Approval {
+  /** When the manager approved: now at the card, the older release's stamp at the upgrade. */
+  readonly approvedAt: number;
+  /** When the access clock starts. */
+  readonly now: number;
+  /** `approval` for the card's button, `upgrade` for a card an older release left half approved. */
+  readonly by: Extract<AccessSetBy, 'approval' | 'upgrade'>;
+}
+
+/**
+ * Approve a proposed card in the caller's transaction (Q10): the manager's
+ * stamp, the verdict, an access end date Q5's 90 days from `now` (the
+ * manager moves it with `setAccessDays`), the `surface.access-set` and
+ * `surface.approved` events, and a probe at once.
+ */
+async function approveInTransaction(
+  ctx: MutationCtx,
+  surface: Doc<'surfaces'>,
+  approval: Approval,
+): Promise<void> {
+  const expiresAt = approval.now + SURFACE_ACCESS_DEFAULT_DAYS * DAY_MS;
+  await ctx.db.patch(surface._id, {
+    verdict: 'approved',
+    managerApprovedAt: approval.approvedAt,
+    expiresAt,
+    accessSetBy: approval.by,
+  });
+  await logAccessSet(ctx, surface, {
+    by: approval.by,
+    days: SURFACE_ACCESS_DEFAULT_DAYS,
+    expiresAt,
+    at: approval.now,
+  });
+  await appendEvent(ctx, {
+    agentId: surface.agentId,
+    type: 'surface.approved',
+    payload: { surfaceId: surface._id },
+    createdAt: approval.now,
+  });
+  await ctx.scheduler.runAfter(0, internal.surfaceActions.probeInternal, {
+    surfaceId: surface._id,
+  });
+}
+
+/**
+ * Approve a proposed card: the manager's one approval (Q10).
+ *
+ * Public, owner-guarded, real mode only; the card's Approve button. Only a
+ * proposed card can be approved: an absent, declared or already approved card
+ * has nothing to approve, and a rejected one is re-proposed from evidence
+ * first. Writes `managerApprovedAt`, the verdict `approved`, an access end
+ * date Q5's 90 days from now (`accessSetBy: 'approval'`),
+ * `surface.access-set` and `surface.approved`, and schedules the probe.
+ *
+ * @throws ConvexError when the card is not proposed, a documented intake
+ *   queue it reads changed, or its browser-driven path has no component.
  */
 export const approve = mutation({
-  args: { surfaceId: v.id('surfaces'), role: v.union(v.literal('manager'), v.literal('it')) },
+  args: { surfaceId: v.id('surfaces') },
   handler: async (ctx, args): Promise<void> => {
     assertRealMode('Surface approval');
     const surface = await ctx.db.get(args.surfaceId);
-    if (!surface) throw new Error('Surface not found.');
+    if (!surface) throw new ConvexError('Surface not found.');
     await assertOwnsAgent(ctx, surface.agentId);
     if (surface.verdict !== 'proposed') {
-      throw new Error(`Only a proposed surface can be approved; this one is ${surface.verdict}.`);
+      throw new ConvexError(
+        `Only a proposed surface can be approved; this one is ${surface.verdict}.`,
+      );
     }
-    for (const value of surface.intakeScope ? intakeScopeValues(surface.intakeScope) : []) {
-      if (!value.sourceId) continue;
-      const page = await ctx.db.query('docPages')
-        .withIndex('by_source_ref', (index) =>
-          index.eq('sourceId', value.sourceId as Id<'docSources'>).eq('ref', value.ref))
-        .unique();
-      if (!page?.markdown.split(/\r?\n/).some((line) => line.trim() === value.quote)) {
-        throw new Error('A documented intake queue changed; reject this card and re-run orientation before approval.');
-      }
-    }
-    if (surface.path === 'browser-driven') {
-      const component = browserComponent(process.env.DAY0_BROWSER_MCP_URL);
-      if (!component.present) throw new Error(component.reason);
-    }
+    const refusal = await approvalRefusal(ctx, surface);
+    if (refusal !== undefined) throw new ConvexError(refusal);
     const now = Date.now();
-    const patch = args.role === 'manager' ? { managerApprovedAt: now } : { itApprovedAt: now };
-    const both =
-      (args.role === 'manager' || surface.managerApprovedAt !== undefined) &&
-      (args.role === 'it' || surface.itApprovedAt !== undefined);
-    if (!both) {
-      await ctx.db.patch(surface._id, { ...patch, verdict: 'proposed' });
-      return;
-    }
-    // Q5: the access clock starts here, at the second approval, never at proposal.
-    const days = approvedAccessDays(surface.request);
-    const expiresAt = now + days * DAY_MS;
-    await ctx.db.patch(surface._id, { ...patch, verdict: 'approved', expiresAt });
-    await logAccessSet(ctx, surface, { by: 'approval', days, expiresAt, at: now });
-    await ctx.db.insert('events', {
-      agentId: surface.agentId,
-      type: 'surface.approved',
-      payload: { surfaceId: surface._id },
-      createdAt: now,
-    });
-    await ctx.scheduler.runAfter(0, internal.surfaceActions.probeInternal, {
-      surfaceId: surface._id,
-    });
+    await approveInTransaction(ctx, surface, { approvedAt: now, now, by: 'approval' });
   },
 });
 
 /**
  * Reject a proposed or approved surface and return it to `declared`.
  *
- * Both approval stamps and every connection detail are cleared, so a later
- * re-proposal starts from evidence again and a single approval can never
- * complete it on the strength of a stamp placed before the rejection.
+ * The approval and every connection detail are cleared, so a later
+ * re-proposal starts from evidence again and waits for a new approval.
  */
 export const reject = mutation({
   args: { surfaceId: v.id('surfaces'), reason: v.string() },
@@ -1833,15 +2223,16 @@ export const reject = mutation({
     await ctx.db.patch(surface._id, {
       verdict: 'declared',
       reason: args.reason,
+      // The rejection ends any probe in flight with its generation.
+      probeGeneration: (surface.probeGeneration ?? 0) + 1,
+      probeStartedAt: undefined,
       request: undefined,
       managerApprovedAt: undefined,
-      itApprovedAt: undefined,
       endpoint: undefined,
       path: undefined,
       fallbackPath: undefined,
       pathCandidates: undefined,
       probeAttempts: undefined,
-      credentialRef: undefined,
       credentialId: undefined,
       credentialKind: undefined,
       credentialLocation: undefined,
@@ -1849,6 +2240,9 @@ export const reject = mutation({
       managerUserId: undefined,
       managerName: undefined,
       toolAllowlist: undefined,
+      withheldTools: undefined,
+      approvedToolAllowlist: undefined,
+      toolAllowlistApprovedAt: undefined,
       toolArguments: undefined,
       providerIdentityId: undefined,
       providerWorkspaceId: undefined,
@@ -1865,14 +2259,86 @@ export const reject = mutation({
       credentialLanded: false,
       lastVerifiedAt: undefined,
       expiresAt: undefined,
+      accessSetBy: undefined,
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: surface.agentId,
       type: 'surface.rejected',
       payload: { surfaceId: surface._id, reason: args.reason },
       createdAt: now,
     });
     await requeueWorkAfterRejection(ctx, surface, now);
+  },
+});
+
+/** The most tools one approved list names; a provider's catalogue is a few dozen. */
+const APPROVED_TOOLS_LIMIT = 200;
+
+/**
+ * Approve the tools a connected surface may call, by the manager's explicit
+ * act: the one way an approved list widens (U10 D2 (b), wave 2 review M2).
+ *
+ * Public, owner-guarded, real mode only; the card's re-approval control. The
+ * list replaces the approved one, is recorded as `surface.tools-approved`
+ * with what it added and removed. A tool taken off leaves the stored list at
+ * once; the surface is probed at once so the tools the provider offers from
+ * the new list reach the row, and no tool the provider does not offer is
+ * ever stored.
+ *
+ * @throws ConvexError when the surface is not connected, or the list is
+ *   empty, repeats a tool or passes the limit.
+ */
+export const approveTools = mutation({
+  args: { surfaceId: v.id('surfaces'), tools: v.array(v.string()) },
+  handler: async (ctx, args): Promise<{ approved: string[] }> => {
+    assertRealMode('Approving surface tools');
+    const surface = await ctx.db.get(args.surfaceId);
+    if (!surface) throw new ConvexError('Surface not found.');
+    await assertOwnsAgent(ctx, surface.agentId);
+    if (surface.verdict !== 'connected') {
+      throw new ConvexError(
+        `Tools are approved on a connected card; this one is ${surface.verdict}.`,
+      );
+    }
+    const tools = args.tools.map((tool) => tool.trim());
+    if (tools.length === 0 || tools.some((tool) => tool === '')) {
+      throw new ConvexError('Name at least one tool, and no empty one.');
+    }
+    if (new Set(tools).size !== tools.length) {
+      throw new ConvexError('Name each tool once.');
+    }
+    if (tools.length > APPROVED_TOOLS_LIMIT) {
+      throw new ConvexError(`Approve at most ${APPROVED_TOOLS_LIMIT} tools on one card.`);
+    }
+    const before = new Set(surface.approvedToolAllowlist ?? surface.toolAllowlist ?? []);
+    const approved = new Set(tools);
+    const now = Date.now();
+    // A tool the manager took off is uncallable at once; one added waits for
+    // the probe, so only a tool the provider offers is ever stored. A withheld
+    // tool the manager approved is no longer withheld, only not probed yet.
+    const stillWithheld = (surface.withheldTools ?? []).filter((tool) => !approved.has(tool));
+    await ctx.db.patch(surface._id, {
+      approvedToolAllowlist: tools,
+      toolAllowlistApprovedAt: now,
+      toolAllowlist: (surface.toolAllowlist ?? []).filter((tool) => approved.has(tool)),
+      toolArguments: (surface.toolArguments ?? []).filter((entry) => approved.has(entry.tool)),
+      withheldTools: stillWithheld.length > 0 ? stillWithheld : undefined,
+    });
+    await appendEvent(ctx, {
+      agentId: surface.agentId,
+      type: 'surface.tools-approved',
+      payload: {
+        surfaceId: surface._id,
+        tools,
+        added: tools.filter((tool) => !before.has(tool)),
+        removed: [...before].filter((tool) => !tools.includes(tool)),
+      },
+      createdAt: now,
+    });
+    await ctx.scheduler.runAfter(0, internal.surfaceActions.probeInternal, {
+      surfaceId: surface._id,
+    });
+    return { approved: tools };
   },
 });
 
@@ -1902,6 +2368,9 @@ export const reorient = action({
   handler: async (ctx, args): Promise<{ scheduled: number }> => {
     await assertOwnsAgentAction(ctx, args.agentId);
     assertRealMode('Surface orientation');
-    return await ctx.runAction(internal.orientationActions.run, { agentId: args.agentId });
+    return await ctx.runAction(internal.orientationActions.run, {
+      agentId: args.agentId,
+      byManager: true,
+    });
   },
 });

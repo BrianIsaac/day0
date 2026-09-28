@@ -42,7 +42,8 @@ import {
   type OwnerMetrics,
 } from '../convex/metrics';
 import { exportEntries, exportRows } from './convex-export';
-import { isAgentTrace, type AgentTrace, type TraceManifest } from '../src/export/trace';
+import { readAgentTrace, type AgentTrace, type TraceManifest } from '../src/export/trace';
+import { isEventType, type EventType } from '../src/events/contract';
 
 const USAGE =
   'Usage: pnpm metrics:recompute <trace.json>... | <export.zip|export-directory> [--owner <subject>] [--expect <file.json>] [--json]';
@@ -51,7 +52,7 @@ const METRIC_TABLES = ['agents', 'events', 'workItems', 'charters'] as const;
 const TIMELINE_TABLES = ['docSources', 'docSyncRuns'] as const;
 
 /** The events the timeline names: the run's milestones, as page 12 quotes them. */
-const TIMELINE_EVENTS = new Set([
+const TIMELINE_EVENTS: ReadonlySet<EventType> = new Set<EventType>([
   'agent.deployed',
   'charter.drafted',
   'charter.approved',
@@ -184,7 +185,7 @@ function timelineOf(
   const named = records
     .flatMap((record) =>
       record.events
-        .filter((event) => TIMELINE_EVENTS.has(event.type))
+        .filter((event) => isEventType(event.type) && TIMELINE_EVENTS.has(event.type))
         .map((event) => ({ event, employee: record.agent.name })),
     )
     .sort((left, right) => byWriteOrder(left.event, right.event));
@@ -263,8 +264,8 @@ export function recomputeFromTraces(
 /**
  * Read the command line's inputs: one or more trace files, or one snapshot export.
  *
- * Raises:
- *   Error: A JSON file is not a trace of this version, or traces and a snapshot are mixed.
+ * @throws Error when a JSON file is not a trace of a version this reads, or
+ *   traces and a snapshot are mixed.
  */
 export function recompute(
   paths: readonly string[],
@@ -277,13 +278,13 @@ export function recompute(
   }
   return recomputeFromTraces(
     traces.map((path) => {
-      const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
-      if (!isAgentTrace(parsed)) {
+      const trace = readAgentTrace(JSON.parse(readFileSync(path, 'utf8')));
+      if (trace === undefined) {
         throw new Error(
-          `${path} is not a day0 trace (version 2); export it with scripts/export-trace.ts`,
+          `${path} is not a day0 trace (version 2 or 3); export it with pnpm export:trace`,
         );
       }
-      return parsed;
+      return trace;
     }),
     options,
   );

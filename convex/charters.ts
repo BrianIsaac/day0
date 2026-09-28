@@ -26,6 +26,8 @@ import {
 import { identityFromCharter, toolsFromCharter } from '../src/agent/charter-workspace';
 import { SYSTEM_CLASSES } from '../src/agent/system-classes';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
+import { appendEvent } from './eventLog';
+import { questionKey } from '../src/agent/manager-questions';
 
 /**
  * Charter CRUD + binary-plus-edit approval mutation. Every public
@@ -73,7 +75,7 @@ export async function commitCharterAndWorkspace(
       content: file.content,
     });
   }
-  await ctx.db.insert('events', {
+  await appendEvent(ctx, {
     agentId: args.agentId,
     type: 'charter.drafted',
     payload: { charterId, version: args.version },
@@ -160,10 +162,11 @@ export async function renderWorkspaceFromCharter(
   agentId: Id<'agents'>,
   charter: Charter,
 ): Promise<void> {
+  const agent = await ctx.db.get(agentId);
   await writeFileImpl(ctx, {
     agentId,
     fileName: 'IDENTITY.md',
-    content: identityFromCharter(charter),
+    content: identityFromCharter(charter, agent?.bossEmail),
   });
   await writeFileImpl(ctx, { agentId, fileName: 'TOOLS.md', content: toolsFromCharter(charter) });
 }
@@ -258,7 +261,7 @@ export const approve = mutation({
       });
     }
     await ctx.db.patch(charter.agentId, { state: 'active' });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: charter.agentId,
       type: 'charter.approved',
       payload: {
@@ -335,7 +338,6 @@ export const charterChangeValidator = v.union(
       introPath: v.union(v.literal('manager'), v.literal('self'), v.literal('tbd')),
     }),
   }),
-  v.object({ kind: v.literal('set-approval-chain'), boss: v.string() }),
 );
 
 /** Who sent an amendment. */
@@ -399,7 +401,7 @@ export async function amendCharterInTransaction(
     createdAt: now,
   });
   await renderWorkspaceFromCharter(ctx, args.agentId, after);
-  await ctx.db.insert('events', {
+  await appendEvent(ctx, {
     agentId: args.agentId,
     type: 'charter.amended',
     payload: {
@@ -474,6 +476,7 @@ export const amend = mutation({
         via: 'dashboard',
         reason: args.reason,
       });
+      await recordCardAnswers(ctx, args.agentId, args.changes, result.charterId);
       return { charterId: result.charterId, version: result.version };
     } catch (error: unknown) {
       // A refused change is the card's to show; in production the backend
@@ -483,6 +486,56 @@ export const amend = mutation({
     }
   },
 });
+
+/**
+ * Record each question the charter card answered as one reorientation the
+ * manager settled (U12, A9): the question a plan asked, if one did, takes the
+ * answer, so the plan's approval card no longer asks it and it is counted
+ * once; one `charter.question-answered` event per answer either way. Only the
+ * card comes here: a plan-approval answer amends through
+ * `answerQuestionInTransaction`, which records its own.
+ *
+ * @param changes - The card's changes, of which the answers are recorded.
+ * @param charterId - The version the answers landed in.
+ */
+async function recordCardAnswers(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+  changes: readonly CharterChange[],
+  charterId: Id<'charters'>,
+): Promise<void> {
+  for (const change of changes) {
+    if (change.kind !== 'answer-question') continue;
+    const asked = await ctx.db
+      .query('managerQuestions')
+      .withIndex('by_agent_key', (q) =>
+        q.eq('agentId', agentId).eq('key', questionKey(change.question)),
+      )
+      .first();
+    const now = Date.now();
+    if (asked && !asked.answer) {
+      await ctx.db.patch(asked._id, {
+        answer: {
+          text: change.answer.replace(/\s+/g, ' ').trim(),
+          answeredAt: now,
+          via: 'dashboard',
+          amendedCharterId: charterId,
+        },
+      });
+    }
+    await appendEvent(ctx, {
+      agentId,
+      type: 'charter.question-answered',
+      payload: {
+        ...(asked ? { questionId: asked._id } : {}),
+        via: 'dashboard',
+        amended: true,
+        charterId,
+      },
+      createdAt: now,
+    });
+  }
+}
 
 /**
  * Reject only the current unapproved draft. An earlier approved charter stays
@@ -513,7 +566,7 @@ export const requestChanges = mutation({
     }
     await ctx.db.delete(args.charterId);
     await ctx.db.patch(agentId, { state: approvedCharterRemains ? 'active' : 'deployed' });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId,
       type: 'charter.request_changes',
       payload: { charterId: args.charterId, notes: args.notes ?? '' },

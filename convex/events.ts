@@ -1,10 +1,10 @@
 import { v } from 'convex/values';
 import type { PaginationOptions, PaginationResult } from 'convex/server';
-import { internalMutation, internalQuery, query, type QueryCtx } from './_generated/server';
+import { internalQuery, query, type QueryCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent } from './ownership';
 import { isEvaluationAgent } from './metrics';
-import { AGENT_RETIRED_EVENT } from './reset';
+import { ownerRetirements } from './retirements';
 import { redactTokenShapes } from '../src/surfaces/redact';
 import { agentZone, dayKey } from '../src/lib/zone';
 import {
@@ -20,6 +20,8 @@ import {
   type TraceSection,
 } from '../src/export/trace';
 import { WORK_LISTED_EVENT } from './work';
+import { EVENT_TYPES } from '../src/events/contract';
+import { eventsOfType } from './eventLog';
 
 /**
  * Events feed — append-only, drives the live UI ticker. The reading side
@@ -36,6 +38,19 @@ const TICKER_HIDDEN_TYPES = new Set([WORK_LISTED_EVENT]);
 /** The most events one ticker read walks to fill its window. */
 const TICKER_SCAN_LIMIT = 500;
 
+/** The ticker's window when the caller names none. */
+const TICKER_DEFAULT_WINDOW = 50;
+
+/**
+ * The window a ticker read fills: the caller's, whole, between one and the
+ * scan bound, since the limit comes from the client and one read may not
+ * walk more than `TICKER_SCAN_LIMIT` events whatever it asks (review m17).
+ */
+function tickerWindow(limit: number | undefined): number {
+  if (limit === undefined || Number.isNaN(limit)) return TICKER_DEFAULT_WINDOW;
+  return Math.min(Math.max(1, Math.floor(limit)), TICKER_SCAN_LIMIT);
+}
+
 /**
  * The newest events of one agent for the dashboard ticker, newest first,
  * intake listings left out. Public; owner-guarded; reads at most
@@ -45,7 +60,7 @@ export const recent = query({
   args: { agentId: v.id('agents'), limit: v.optional(v.number()) },
   handler: async (ctx, args): Promise<Doc<'events'>[]> => {
     await assertOwnsAgent(ctx, args.agentId);
-    const limit = args.limit ?? 50;
+    const limit = tickerWindow(args.limit);
     const shown: Doc<'events'>[] = [];
     let scanned = 0;
     for await (const event of ctx.db
@@ -54,7 +69,7 @@ export const recent = query({
       .order('desc')) {
       scanned += 1;
       if (!TICKER_HIDDEN_TYPES.has(event.type)) shown.push(event);
-      if (shown.length >= limit || scanned >= Math.max(limit, TICKER_SCAN_LIMIT)) break;
+      if (shown.length >= limit || scanned >= TICKER_SCAN_LIMIT) break;
     }
     return shown;
   },
@@ -72,12 +87,7 @@ export const autonomyChanges = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<Array<{ at: number; on: boolean }>> => {
     await assertOwnsAgent(ctx, args.agentId);
-    const events = await ctx.db
-      .query('events')
-      .withIndex('by_agent_type', (q) =>
-        q.eq('agentId', args.agentId).eq('type', 'agent.autonomy-changed'),
-      )
-      .collect();
+    const events = await eventsOfType(ctx, args.agentId, 'agent.autonomy-changed').collect();
     return events.map((event) => ({
       at: event.createdAt,
       on: (event.payload as { to?: unknown } | undefined)?.to === true,
@@ -87,17 +97,27 @@ export const autonomyChanges = query({
 
 /**
  * Keys an export never carries: those that identify a person rather than
- * describe an action, and a surface's live install claim (a single-use
- * state nonce and the URL that spends it).
+ * describe an action (a ticket's author, requester and branch, which carries
+ * its assignee's handle; the charter's manager and named colleagues; a
+ * manager change's previous manager as well as the new one), and a
+ * surface's live install claim (a single-use state nonce and the URL that
+ * spends it). The export's policy keeps names as working material in text
+ * (U12 D1 (c)); a key whose whole value is a name has none to keep.
  */
 const PERSONAL_KEYS = new Set([
   'assigneeEmail',
+  'boss',
   'bossEmail',
+  'createdBy',
   'email',
+  'gitBranchName',
   'managerEmail',
   'managerName',
   'managerUserId',
+  'namedCollaborators',
+  'previousManagerUserId',
   'provisioning',
+  'requester',
 ]);
 
 /**
@@ -123,37 +143,29 @@ export function redactForExport(value: unknown): unknown {
   return value;
 }
 
-/** The most of the owner's retirements the owner section lists, newest first. */
-const RETIREMENT_LIMIT = 1_000;
+/** A retirement row without its owner key, the one field the export never carries. */
+function withoutOwner(row: Doc<'retirements'>): Omit<Doc<'retirements'>, 'userId'> {
+  return Object.fromEntries(Object.entries(row).filter(([key]) => key !== 'userId')) as Omit<
+    Doc<'retirements'>,
+    'userId'
+  >;
+}
 
-/** The most tombstones, of any owner, one owner section walks. */
-const RETIREMENT_SCAN_LIMIT = 10_000;
-
-/** The owner's retired employees, from the tombstone events their retire left. */
-async function ownerRetirements(
+/**
+ * The owner's retired employees, newest first, each its `retirements` row
+ * redacted for export: what the retire deleted and revoked, and the claims
+ * and rejections its colleagues still meet (N1's owner-keyed tombstone). The
+ * row's owner key is the owner's identity subject and never leaves; the
+ * trace's agent names the owner once, as the recompute needs it.
+ */
+async function retiredEmployees(
   ctx: QueryCtx,
   owner: string | undefined,
 ): Promise<TraceRetirement[]> {
   if (owner === undefined) return [];
-  // U14 D1 (a): the next schema step's owner-keyed `retirements` table replaces this walk.
-  const retired: TraceRetirement[] = [];
-  let scanned = 0;
-  for await (const event of ctx.db
-    .query('events')
-    .withIndex('by_type', (q) => q.eq('type', AGENT_RETIRED_EVENT))
-    .order('desc')) {
-    scanned += 1;
-    const payload = event.payload as Record<string, unknown> | undefined;
-    if (payload?.userId === owner) {
-      retired.push({
-        agentId: event.agentId,
-        retiredAt: typeof payload.retiredAt === 'number' ? payload.retiredAt : event.createdAt,
-        payload: redactForExport(payload) as Record<string, unknown>,
-      });
-    }
-    if (retired.length >= RETIREMENT_LIMIT || scanned >= RETIREMENT_SCAN_LIMIT) break;
-  }
-  return retired;
+  return (await ownerRetirements(ctx, owner)).map(
+    (row): TraceRetirement => redactForExport(withoutOwner(row)) as TraceRetirement,
+  );
 }
 
 /**
@@ -174,7 +186,7 @@ export const exportHead = internalQuery({
         .query('surfaces')
         .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
         .take(TRACE_PAGE_ROWS),
-      ownerRetirements(ctx, agent.userId),
+      retiredEmployees(ctx, agent.userId),
     ]);
     const credentials = await Promise.all(
       [
@@ -193,6 +205,7 @@ export const exportHead = internalQuery({
         release: stamp?.release ?? null,
         commit: stamp?.commit ?? null,
         pageRows: TRACE_PAGE_ROWS,
+        eventTypes: EVENT_TYPES,
       },
       agent: {
         id: agent._id,
@@ -256,6 +269,16 @@ const SECTION_PAGES: Readonly<
       .query('surfaces')
       .withIndex('by_agent', (q) => q.eq('agentId', agentId))
       .paginate(options),
+  managerNotes: async (ctx, agentId, options) =>
+    await ctx.db
+      .query('managerNotes')
+      .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+      .paginate(options),
+  decisionNotices: async (ctx, agentId, options) =>
+    await ctx.db
+      .query('managerDecisionNotices')
+      .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+      .paginate(options),
   events: async (ctx, agentId, options) =>
     await ctx.db
       .query('events')
@@ -289,17 +312,5 @@ export const exportPage = internalQuery({
           ? { section: following, cursor: null }
           : null,
     };
-  },
-});
-
-export const log = internalMutation({
-  args: { agentId: v.id('agents'), type: v.string(), payload: v.optional(v.any()) },
-  handler: async (ctx, args) => {
-    await ctx.db.insert('events', {
-      agentId: args.agentId,
-      type: args.type,
-      payload: args.payload ?? {},
-      createdAt: Date.now(),
-    });
   },
 });

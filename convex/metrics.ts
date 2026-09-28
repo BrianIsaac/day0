@@ -13,6 +13,7 @@ import { droppedReadRefusal } from '../src/work/stop';
 import { ledgerPhases } from '../src/work/reconciliation';
 import type { MockAction } from '../src/work/types';
 import { assertOwnsAgent, getCaller } from './ownership';
+import { isEventOf, isEventType, type EventType } from '../src/events/contract';
 
 type UnknownRecord = Record<string, unknown>;
 type DecisionVia = 'dashboard' | 'channel';
@@ -254,7 +255,7 @@ export function collectLedgerObservations(
     if (workItemId && payload?.output !== undefined) {
       add(workItemId, ledgerEntries(payload.output), event.createdAt);
     }
-    if (workItemId && payload && event.type === 'work.provider-reconciled') {
+    if (workItemId && payload && isEventOf(event, 'work.provider-reconciled')) {
       add(workItemId, reconciledRows(payload), event.createdAt);
     }
   }
@@ -306,13 +307,13 @@ function decisionResult(event: Doc<'events'>):
   const workItemId = asString(payload?.workItemId);
   const via = payload?.decidedVia;
   if (!workItemId || (via !== 'dashboard' && via !== 'channel')) return undefined;
-  if (event.type === 'work.plan-approved') {
+  if (isEventOf(event, 'work.plan-approved')) {
     return { workItemId, kind: 'plan', outcome: 'approved', via, partial: false, cancelled: false };
   }
-  if (event.type === 'work.cancelled') {
+  if (isEventOf(event, 'work.cancelled')) {
     return { workItemId, kind: 'plan', outcome: 'rejected', via, partial: false, cancelled: true };
   }
-  if (event.type === 'work.actions-rejected') {
+  if (isEventOf(event, 'work.actions-rejected')) {
     return {
       workItemId,
       kind: 'actions',
@@ -322,7 +323,7 @@ function decisionResult(event: Doc<'events'>):
       cancelled: false,
     };
   }
-  if (event.type !== 'work.actions-approved') return undefined;
+  if (!isEventOf(event, 'work.actions-approved')) return undefined;
   if (!payload) return undefined;
   // Approving none of the held actions lets none of them land: a rejection.
   const approvedAny = asIndexes(payload.approvedIndexes).length > 0;
@@ -380,7 +381,7 @@ function decisionTotals(
   };
   for (const event of [...events].sort(byWriteOrder)) {
     const payload = asRecord(event.payload);
-    if (event.type === 'work.decision-requesting') {
+    if (isEventOf(event, 'work.decision-requesting')) {
       const workItemId = asString(payload?.workItemId);
       const kind = payload?.kind;
       if (!workItemId || (kind !== 'plan' && kind !== 'actions')) continue;
@@ -396,6 +397,21 @@ function decisionTotals(
       if (decisionId) requestIds.add(decisionId);
       const key = `${workItemId}:${kind}`;
       pending.set(key, [...(pending.get(key) ?? []), event]);
+      continue;
+    }
+    if (isEventOf(event, 'work.plan-redrafting')) {
+      // A re-draft withdraws the plan ask that was open: the manager is not
+      // asked to decide it, so it is neither a request nor the start of the
+      // wait the re-drafted plan's ask begins (wave 3.5 review M21).
+      const workItemId = asString(payload?.workItemId);
+      if (!workItemId) continue;
+      const key = `${workItemId}:plan`;
+      for (const withdrawn of pending.get(key) ?? []) {
+        totals.requested -= 1;
+        const withdrawnId = asString(asRecord(withdrawn.payload)?.decisionId);
+        if (withdrawnId) requestIds.delete(withdrawnId);
+      }
+      pending.delete(key);
       continue;
     }
     const result = decisionResult(event);
@@ -475,14 +491,21 @@ function eventActionKey(
 type AutomaticKind = 'read' | 'manager-message' | 'write';
 
 /**
- * Classify an automatic row by its action. A row whose action the output did
- * not keep is counted as a write, so the split never makes the agent look
- * more supervised than the ledger can show.
+ * Classify an automatic row: by the class the send recorded on it, so a
+ * later export reproduces the split whatever became of the surface's manager
+ * DM (review M16); a row sent before the class was recorded, by its action
+ * against the surface as it stands. A row whose action the output did not
+ * keep is counted as a write, so the split never makes the agent look more
+ * supervised than the ledger can show.
  */
 function automaticKind(
   observation: LedgerObservation,
   surfaces: readonly SurfaceRecord[],
 ): AutomaticKind {
+  const recorded = asString(observation.entry.actionClass);
+  if (recorded === 'manager-dm') return 'manager-message';
+  if (recorded === 'read') return 'read';
+  if (recorded !== undefined) return 'write';
   if (!observation.action) return 'write';
   const parsed = parseSurfaceAction(observation.action as unknown as MockAction);
   if (!parsed.ok) return 'write';
@@ -506,13 +529,16 @@ function actionMetrics(
   for (const event of [...events].sort(byWriteOrder)) {
     const payload = asRecord(event.payload);
     if (!payload) continue;
-    if (event.type === 'work.dependent-authoring') {
+    if (isEventOf(event, 'work.dependent-authoring')) {
       const run = asString(payload.runId);
       const offset = payload.prerequisiteActionCount;
       if (run) closingOffsets.set(run, Number.isInteger(offset) ? (offset as number) : 0);
       continue;
     }
-    if (event.type === 'work.actions-auto-applying' || event.type === 'work.actions-pending') {
+    if (
+      isEventOf(event, 'work.actions-auto-applying') ||
+      isEventOf(event, 'work.actions-pending')
+    ) {
       for (const index of asIndexes(payload.heldIndexes))
         held.add(eventActionKey(payload, index, closingOffsets));
       for (const index of asIndexes(payload.refusedIndexes))
@@ -534,7 +560,7 @@ function actionMetrics(
       if (workItemId) lastPending.set(workItemId, { payload, at: event.createdAt });
       continue;
     }
-    if (event.type === 'work.actions-approved') {
+    if (isEventOf(event, 'work.actions-approved')) {
       // The decision's indexes are the held set's: key them in the run and
       // phase that set was held under, whatever id the approval carries.
       const workItemId = asString(payload.workItemId);
@@ -550,7 +576,7 @@ function actionMetrics(
         rejected.add(eventActionKey(heldUnder, index, closingOffsets));
       continue;
     }
-    if (event.type !== 'work.actions-rejected') continue;
+    if (!isEventOf(event, 'work.actions-rejected')) continue;
     const workItemId = asString(payload.workItemId);
     const pending = workItemId ? lastPending.get(workItemId) : undefined;
     if (!pending) continue;
@@ -580,7 +606,7 @@ function actionMetrics(
   }
 
   const revocations = events.flatMap((event) => {
-    if (event.type !== 'permission.revoked') return [];
+    if (!isEventOf(event, 'permission.revoked')) return [];
     const scope = asString(asRecord(event.payload)?.scope);
     return scope ? [{ scope, at: event.createdAt }] : [];
   });
@@ -626,7 +652,7 @@ function actionMetrics(
 }
 
 /** The work events that end an item's run: every terminal transition writes one. */
-export const TERMINAL_WORK_EVENTS: ReadonlySet<string> = new Set([
+export const TERMINAL_WORK_EVENTS: ReadonlySet<EventType> = new Set<EventType>([
   'work.completed',
   'work.failed',
   'work.cancelled',
@@ -656,7 +682,7 @@ function pilotTotals(
   const firstItemOfSkill = new Map<string, string>();
   const runs = new Set<string>();
   let reused = 0;
-  const firstEnd = new Map<string, number>();
+  const standingEnd = new Map<string, number>();
   const firstCompletion = new Map<string, number>();
   const discoveredAt = new Map<string, number>();
   let answered = 0;
@@ -664,7 +690,7 @@ function pilotTotals(
   for (const event of ordered) {
     const payload = asRecord(event.payload);
     const workItemId = asString(payload?.workItemId);
-    if (event.type === 'work.execution-claimed' && workItemId) {
+    if (isEventOf(event, 'work.execution-claimed') && workItemId) {
       const skillId = asString(payload?.skillId);
       if (!skillId || runs.has(`${workItemId}:${skillId}`)) continue;
       runs.add(`${workItemId}:${skillId}`);
@@ -680,18 +706,24 @@ function pilotTotals(
       if (reuse) reused += 1;
       continue;
     }
-    if (event.type === 'work.discovered' && workItemId && !discoveredAt.has(workItemId)) {
+    if (isEventOf(event, 'work.discovered') && workItemId && !discoveredAt.has(workItemId)) {
       discoveredAt.set(workItemId, event.createdAt);
       continue;
     }
-    if (TERMINAL_WORK_EVENTS.has(event.type) && workItemId) {
-      if (!firstEnd.has(workItemId)) firstEnd.set(workItemId, event.createdAt);
-      if (event.type === 'work.completed' && !firstCompletion.has(workItemId)) {
+    // An end the manager's Retry took back (a skip overruled with "Take it
+    // anyway") did not end the item; its next end is the one that stands.
+    if (isEventOf(event, 'work.retry') && workItemId) {
+      standingEnd.delete(workItemId);
+      continue;
+    }
+    if (isEventType(event.type) && TERMINAL_WORK_EVENTS.has(event.type) && workItemId) {
+      if (!standingEnd.has(workItemId)) standingEnd.set(workItemId, event.createdAt);
+      if (isEventOf(event, 'work.completed') && !firstCompletion.has(workItemId)) {
         firstCompletion.set(workItemId, event.createdAt);
       }
       continue;
     }
-    if (event.type === 'charter.question-answered') {
+    if (isEventOf(event, 'charter.question-answered')) {
       answered += 1;
       if (payload?.amended === true) amended += 1;
     }
@@ -711,7 +743,7 @@ function pilotTotals(
   return {
     runs: runs.size,
     reused,
-    toEnd: durations(firstEnd),
+    toEnd: durations(standingEnd),
     toCompletion: durations(firstCompletion),
     answered,
     amended,
@@ -772,16 +804,18 @@ function agentFigures(
   surfaces: readonly Doc<'surfaces'>[],
 ): { metrics: AgentMetrics; decisions: DecisionTotals; pilot: PilotTotals } {
   const deployedAt = events
-    .filter((event) => event.type === 'agent.deployed')
+    .filter((event) => isEventOf(event, 'agent.deployed'))
     .map((event) => event.createdAt)
     .sort((left, right) => left - right)[0];
-  const draftedEvents = events.filter((event) => event.type === 'charter.drafted');
+  const draftedEvents = events.filter((event) => isEventOf(event, 'charter.drafted'));
   const firstDraftedAt = [
     ...draftedEvents.map((event) => event.createdAt),
     ...charters.map((charter) => charter.createdAt),
   ].sort((left, right) => left - right)[0];
   const firstApprovedAt = [
-    ...events.filter((event) => event.type === 'charter.approved').map((event) => event.createdAt),
+    ...events
+      .filter((event) => isEventOf(event, 'charter.approved'))
+      .map((event) => event.createdAt),
     ...charters.flatMap((charter) =>
       charter.approvedAt === undefined ? [] : [charter.approvedAt],
     ),
@@ -807,23 +841,23 @@ function agentFigures(
       timeToFirstDraftedMs: timeFromDeploy(firstDraftedAt),
       timeToFirstApprovedMs: timeFromDeploy(firstApprovedAt),
       revisions: Math.max(0, Math.max(draftedEvents.length, charters.length) - 1),
-      requestChanges: events.filter((event) => event.type === 'charter.request_changes').length,
+      requestChanges: events.filter((event) => isEventOf(event, 'charter.request_changes')).length,
     },
     decisions: summariseDecisions(decisions),
     actions: actionMetrics(events, ledger, surfaces.map(toSurfaceRecord)),
     surfaces: {
-      approved: events.filter((event) => event.type === 'surface.approved').length,
-      rejected: events.filter((event) => event.type === 'surface.rejected').length,
+      approved: events.filter((event) => isEventOf(event, 'surface.approved')).length,
+      rejected: events.filter((event) => isEventOf(event, 'surface.rejected')).length,
       absent: events.filter(
         (event) =>
-          event.type === 'surface.oriented' && asRecord(event.payload)?.verdict === 'absent',
+          isEventOf(event, 'surface.oriented') && asRecord(event.payload)?.verdict === 'absent',
       ).length,
     },
     skills: {
-      approved: events.filter((event) => event.type === 'skill.approved').length,
-      rejected: events.filter((event) => event.type === 'skill.rejected').length,
+      approved: events.filter((event) => isEventOf(event, 'skill.approved')).length,
+      rejected: events.filter((event) => isEventOf(event, 'skill.rejected')).length,
     },
-    autonomyChanges: events.filter((event) => event.type === 'agent.autonomy-changed').length,
+    autonomyChanges: events.filter((event) => isEventOf(event, 'agent.autonomy-changed')).length,
     auditTrail: {
       complete,
       total: landed.length,

@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { SYSTEM_CLASSES } from '../agent/system-classes';
+import { droppedScriptSuffix } from '../lib/short-hash';
+import { surfaceSlug } from '../surfaces/slug';
 
 export interface DiscoveryPage {
   ref: string;
@@ -343,8 +345,21 @@ const TRANSPORT_DESCRIPTION =
   /\b(?:approved transport|transport is|integration endpoint|mcp endpoint|web api over|reached (?:through|via|over)|web ui only)\b/i;
 const DOCUMENTED_URL = /https?:\/\/[^\s`<>"'\])}]+/gi;
 
-/** The one slug rule for a system name or a documented host, everywhere it is keyed. */
+/**
+ * The one slug rule for a system name or a documented host, everywhere it is keyed.
+ *
+ * A name with letters or digits the ASCII slug drops (`飞书`, `Café`) keys by
+ * the digest slug `surfaceSlug` gives it, so a documented Chinese system
+ * meets the charter's row for it (`system-<digest>`) instead of keying as
+ * nothing and being dropped (U15 finding 2). An ASCII name or a host keys as
+ * before; a value with no letter or digit at all is the empty slug.
+ */
 export function stableSlug(value: string): string {
+  return droppedScriptSuffix(value) === '' ? asciiSlug(value) : surfaceSlug(value);
+}
+
+/** The slug of a value's ASCII letters and digits alone: the rule before scripts were kept. */
+function asciiSlug(value: string): string {
   return value
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
@@ -398,6 +413,16 @@ function documentedEndpoints(values: readonly string[]): string[] {
   return [...endpoints].sort();
 }
 
+/**
+ * The identity a documented or named system is matched by: its slugs, its
+ * transport name key, and the endpoints and hosts its quotes document.
+ *
+ * A name with letters the ASCII slug drops keys by the digest-carrying slug
+ * `surfaceSlug` gives it as well, so a Chinese name has a slug of its own on
+ * both sides of a match: a row an earlier build keyed as `system` is still
+ * found by its display name, and two different Chinese names never meet
+ * (review m50).
+ */
 export function documentedSystemIdentity(args: {
   name: string;
   quotes?: readonly string[];
@@ -405,7 +430,7 @@ export function documentedSystemIdentity(args: {
 }): DocumentedSystemIdentity {
   const endpoints = documentedEndpoints([...(args.quotes ?? []), ...(args.endpoints ?? [])]);
   return {
-    slugs: [stableSlug(args.name)].filter(Boolean),
+    slugs: [...new Set([asciiSlug(args.name), stableSlug(args.name)].filter(Boolean))],
     nameKeys: [transportNameKey(args.name)].filter(Boolean),
     endpoints,
     hosts: [...new Set(endpoints.map((endpoint) => new URL(endpoint).host.toLowerCase()))].sort(),

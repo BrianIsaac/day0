@@ -34,19 +34,25 @@ export const DEFAULT_BROWSER_MCP_URL = 'http://playwright-mcp:8931/mcp';
  * Tools the floor may use, whatever else the driver exposes.
  *
  * Enough to read a page and to complete a form a person would complete: the
- * work item this exists for is "refresh the tile", which is a write. What is
- * deliberately absent is everything that turns a browser into a general
- * runtime or a file mover - `browser_evaluate`, `browser_run_code_unsafe`,
- * `browser_file_upload`, `browser_tabs`, `browser_network_requests`,
- * `browser_take_screenshot`. Playwright MCP has no read-only flag of its own
- * (upstream issue #885), so this list is the enforcement.
+ * work item this exists for is "refresh the tile", which is a write. A page
+ * that renders after the call returns is waited for (`browser_wait_for`, a
+ * read), and a confirmation the page raises is answered
+ * (`browser_handle_dialog`, a write: accepting "Delete this?" is the delete).
+ * What is deliberately absent is everything that turns a browser into a
+ * general runtime or a file mover - `browser_evaluate`,
+ * `browser_run_code_unsafe`, `browser_file_upload`, `browser_tabs`,
+ * `browser_network_requests`, `browser_take_screenshot`. Playwright MCP has no
+ * read-only flag of its own (upstream issue #885), so this list is the
+ * enforcement.
  */
 export const BROWSER_TOOLS = [
   'browser_navigate',
   'browser_snapshot',
+  'browser_wait_for',
   'browser_click',
   'browser_type',
   'browser_fill_form',
+  'browser_handle_dialog',
 ] as const;
 
 /** Tools whose arguments name a destination the origin bound applies to. */
@@ -381,9 +387,14 @@ const SECRET_PLACEHOLDER = /\{\{\s*secret(?:[:.][A-Za-z0-9_-]+)?\s*\}\}/;
  * A user name or e-mail box is not one: it shows what is typed into it, so the
  * credential would sit on the page in clear text. The accessibility snapshot
  * does not say an input is `type=password`, so the field's name is what marks
- * it, and `credentialSlots` also requires the page to offer a text box.
+ * it, and `credentialSlots` also requires the page to offer a text box. The
+ * sign-in replay and the probe read the same names, so a fill the apply would
+ * refuse is never taken for a sign-in.
  */
-const CREDENTIAL_FIELD = /^(?:password|passcode|access code|secret|api key|token)$/i;
+export const CREDENTIAL_FIELD = /^(?:password|passcode|access code|secret|api key|token)$/i;
+
+/** The names a login form gives the field the account is named in, beside the credential. */
+export const LOGIN_NAME_FIELD = /^(?:user ?name|e-?mail(?: address)?)$/i;
 
 /** Whether any string anywhere in a tool-argument tree names the credential. */
 export function carriesSecretPlaceholder(value: unknown): boolean {
@@ -441,10 +452,45 @@ export function unknownPlaceholderRefusal(toolArgs: unknown): string | undefined
   return `unknown placeholder {{${found.name}}} in ${found.path || 'the arguments'}: a value was left unfilled, so the call was not sent`;
 }
 
-/** Whether a field or element description names a credential field. */
-function isCredentialField(description: unknown): boolean {
+/**
+ * Whether a field or element description names a credential field, role words
+ * aside: "Password field" and "Password" are the same field.
+ */
+export function isCredentialField(description: unknown): boolean {
   return (
     typeof description === 'string' && CREDENTIAL_FIELD.test(normaliseDescription(description))
+  );
+}
+
+/** The names a login form gives the control that submits it. */
+export const SIGN_IN_CONTROL = /^(?:sign[ -]?in|log[ -]?(?:in|on))$/i;
+
+/** The name a two-page login gives the control between the account and the credential. */
+export const NEXT_CONTROL = /^next$/i;
+
+/**
+ * The names of the controls a login ends on before the page a run opens: a
+ * cookie banner, a "stay signed in" question, a notice to dismiss, a
+ * continue. A click on one of these changes nothing on the system, so a
+ * session restore may repeat it; a click on anything else is the run's own
+ * work and is never sent again without a fresh approval. A bare "Yes", "OK"
+ * or "Accept" stays out: each confirms whatever question the page asked.
+ */
+export const INTERSTITIAL_CONTROL =
+  /^(?:(?:accept|allow|reject|decline|agree to)(?: all)?(?: (?:the )?cookies)|(?:accept|allow) all|(?:yes, |no, )?(?:stay|keep me|remain) (?:signed|logged) in|dismiss|close|skip|not now|got it|remind me later|maybe later|no thanks|continue(?: as .+)?)$/i;
+
+/**
+ * Whether a click's element name is a control a login ends on, so a session
+ * restore may repeat the click.
+ */
+export function isInterstitialControl(name: string): boolean {
+  return INTERSTITIAL_CONTROL.test(name.trim().replace(/\s+/g, ' '));
+}
+
+/** Whether a field or element description names the account field of a login form. */
+export function isLoginNameField(description: unknown): boolean {
+  return (
+    typeof description === 'string' && LOGIN_NAME_FIELD.test(normaliseDescription(description))
   );
 }
 
@@ -827,6 +873,78 @@ export function browserPageTitle(result: string): string | undefined {
 export function browserTitleMarker(markdown: string): string | undefined {
   const match = /\bProbe marker:\s*page title\s+`([^`\r\n]+)`/i.exec(markdown);
   return match?.[1]?.trim() || undefined;
+}
+
+/**
+ * Read the element a signed-in page shows, from the line
+ * `Probe marker: after sign-in, element \`<name>\``: the probe signs in with the
+ * credential and looks for it, so a rotated password or a redesigned login is
+ * found by the probe rather than by the first write.
+ */
+export function browserSignedInMarker(markdown: string): string | undefined {
+  const match = /\bProbe marker:\s*after sign[ -]?in,?\s*element\s+`([^`\r\n]+)`/i.exec(markdown);
+  return match?.[1]?.trim() || undefined;
+}
+
+/**
+ * Read the account name a login is documented with, from the parenthesis a
+ * credential line carries: `` `<value>` (username `revops`) ``. The account
+ * name is not a secret, so the stored page keeps it.
+ */
+export function documentedUsername(markdown: string): string | undefined {
+  const match = /\(\s*user ?name\s+`([^`\r\n]+)`\s*\)/i.exec(markdown);
+  return match?.[1]?.trim() || undefined;
+}
+
+/**
+ * Whether a snapshot shows an element with this accessible name, whatever its
+ * role and however many share it: the probe asks whether the signed-in page
+ * is there, not which control to press.
+ *
+ * @param snapshot - The text a `browser_snapshot` call returned.
+ * @param name - The element the documentation names, compared ignoring case and spacing.
+ */
+export function pageShowsElement(snapshot: string, name: string): boolean {
+  const wanted = name.replace(/\s+/g, ' ').trim().toLowerCase();
+  return (
+    wanted !== '' &&
+    parseSnapshotRefs(snapshot).some(
+      (element: SnapshotElement): boolean =>
+        element.name.replace(/\s+/g, ' ').trim().toLowerCase() === wanted,
+    )
+  );
+}
+
+/** The controls of the login form one page shows, each only when the page offers exactly one. */
+export interface LoginForm {
+  readonly account?: SnapshotElement;
+  readonly credential?: SnapshotElement;
+  readonly submit?: SnapshotElement;
+  readonly next?: SnapshotElement;
+}
+
+/**
+ * Find a login form's controls in one driver snapshot, by the names the apply
+ * and the sign-in replay read: a text box for the account, a text box for the
+ * credential, and the control that submits the form or moves to its second
+ * page. A name two controls share is none of them.
+ *
+ * @param snapshot - The text a `browser_snapshot` call returned.
+ */
+export function loginForm(snapshot: string): LoginForm {
+  const elements = parseSnapshotRefs(snapshot);
+  const only = (pick: (element: SnapshotElement) => boolean): SnapshotElement | undefined => {
+    const found = elements.filter(pick);
+    return found.length === 1 ? found[0] : undefined;
+  };
+  const control = (element: SnapshotElement): boolean =>
+    element.role === 'button' || element.role === 'link';
+  return {
+    account: only((e) => e.role === 'textbox' && isLoginNameField(e.name)),
+    credential: only((e) => e.role === 'textbox' && isCredentialField(e.name)),
+    submit: only((e) => control(e) && SIGN_IN_CONTROL.test(e.name.trim())),
+    next: only((e) => control(e) && NEXT_CONTROL.test(e.name.trim())),
+  };
 }
 
 /**

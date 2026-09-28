@@ -257,8 +257,10 @@ pinned wheels and the verified snapshot.
 
 **What day0 uses it for.** Documentation pages at sync, HTTP and MCP provider
 outcomes (effect, reason and id), and the ticket record the planner reads go
-through the component. Other metadata, prompts and export use the synchronous
-structural floor; export is not a complete personal-data scrub. Before any of
+through the component. Other metadata and prompts use the synchronous
+structural floor; the export uses it with its policy row's personal-data
+grammar (an e-mail anywhere, a phone, a birth date or an address where it is
+unmistakable or labelled); even so, export is not a complete personal-data scrub. Before any of
 that, every boundary removes the exact values day0 itself stores for the owner:
 the action that persists a page, an outcome, a grounding record or a run's
 output first decrypts the owner's credential list in memory (bounded, never

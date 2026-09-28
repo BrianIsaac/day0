@@ -177,7 +177,9 @@ function report(gpu: boolean): void {
   if (SERVICE === 'redactor') {
     console.log('The first start installs the pinned wheels and fetches the model into their');
     console.log('volumes, which takes minutes; the healthcheck turns healthy once the model is');
-    console.log('loaded and verified against redactor/models.sha256. `pnpm check:setup` reports it.');
+    console.log(
+      'loaded and verified against redactor/models.sha256. `pnpm check:setup` reports it.',
+    );
     return;
   }
   console.log('Pull a model to serve, if you have not already:');

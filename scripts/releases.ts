@@ -13,6 +13,7 @@
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { compareReleases, NEWEST_MIGRATION_RELEASE, releaseParts } from '../src/lib/release';
 
 /**
  * The release a deployment that holds rows but no stamp is taken to be at:
@@ -44,10 +45,28 @@ export function changelogReleases(changelog: string): string[] {
   return [...new Set(newestFirst)].reverse();
 }
 
-/** The checkout's own release and the releases its CHANGELOG records, or why they cannot be read. */
+/** What the upgrade knows of the checkout it runs from. */
+export interface CheckoutReleases {
+  /** The checkout's own release, from `package.json`. */
+  readonly release: string;
+  /** Every release its `CHANGELOG.md` records, oldest first. */
+  readonly releases: readonly string[];
+  /** The newest release a migration in this tree names (`src/lib/release.ts`). */
+  readonly newestMigrationRelease: string;
+}
+
+/**
+ * The checkout's own release, the releases its CHANGELOG records and the
+ * newest release its migrations name, or why they cannot be read.
+ *
+ * @param cwd - The checkout.
+ * @param newestMigrationRelease - The newest release a shipped migration
+ *   names; this tree's unless a disposable checkout names its own.
+ */
 export function checkoutReleases(
   cwd: string,
-): { release: string; releases: string[] } | { reason: string } {
+  newestMigrationRelease: string = NEWEST_MIGRATION_RELEASE,
+): CheckoutReleases | { reason: string } {
   const changelogPath = join(cwd, 'CHANGELOG.md');
   let release: unknown;
   try {
@@ -60,7 +79,49 @@ export function checkoutReleases(
     return { reason: 'package.json names no version' };
   }
   if (!existsSync(changelogPath)) return { reason: 'there is no CHANGELOG.md in this checkout' };
-  return { release, releases: changelogReleases(readFileSync(changelogPath, 'utf8')) };
+  return {
+    release,
+    releases: changelogReleases(readFileSync(changelogPath, 'utf8')),
+    newestMigrationRelease,
+  };
+}
+
+/**
+ * Why this checkout may not be pushed over any deployment, new or kept, or
+ * undefined when it may: its release must be one its CHANGELOG records and
+ * no older than the newest release its migrations name. A tree before its
+ * release commit (staging between a tag and the next) names the release
+ * before its migrations, so the stamp that follows them would be refused;
+ * refusing here leaves the deployment untouched and names both files a bed
+ * from such a tree sets in its own checkout.
+ *
+ * @param checkout - The checkout's releases.
+ */
+export function checkoutRefusal(checkout: CheckoutReleases): string | undefined {
+  const { release, releases, newestMigrationRelease } = checkout;
+  if (releaseParts(release) === undefined) {
+    return (
+      `this checkout's release (${release}, from package.json) is not shaped as X.Y.Z, ` +
+      'so the deployment could not be stamped with it.'
+    );
+  }
+  if (compareReleases(release, newestMigrationRelease) < 0) {
+    return (
+      `this checkout's release (${release}, from package.json) is older than ` +
+      `${newestMigrationRelease}, the newest release its migrations name, so the deployment ` +
+      'could not be stamped once they ran. This is a tree before its release commit: set ' +
+      `package.json's version to ${newestMigrationRelease} and add a "## v${newestMigrationRelease}" ` +
+      'heading to CHANGELOG.md in this checkout (a bed from staging sets both in its own ' +
+      'checkout), then run again.'
+    );
+  }
+  if (!releases.includes(release)) {
+    return (
+      `this checkout's release (${release}, from package.json) has no heading in CHANGELOG.md, so ` +
+      'the upgrade cannot tell which release comes before it.'
+    );
+  }
+  return undefined;
 }
 
 /** The Convex CLI arguments that list the deployment's tables. */
@@ -119,23 +180,23 @@ export function parseReleaseStamp(stdout: string): ReleaseStamp | undefined {
  * @param input.fresh - Whether the data volume is new.
  * @param input.checkout - This checkout's release.
  * @param input.releases - Every release, oldest first.
+ * @param input.newestMigrationRelease - The newest release a shipped migration names.
  */
 export function upgradeVerdict(input: {
   stored: string | undefined;
   fresh: boolean;
   checkout: string;
   releases: readonly string[];
+  newestMigrationRelease: string;
 }): UpgradeVerdict {
   const { checkout, releases } = input;
+  const refusal = checkoutRefusal({
+    release: checkout,
+    releases,
+    newestMigrationRelease: input.newestMigrationRelease,
+  });
+  if (refusal !== undefined) return { allowed: false, reason: refusal };
   const at = releases.indexOf(checkout);
-  if (at < 0) {
-    return {
-      allowed: false,
-      reason:
-        `this checkout's release (${checkout}, from package.json) has no heading in CHANGELOG.md, so ` +
-        'the upgrade cannot tell which release comes before it.',
-    };
-  }
   if (input.fresh)
     return { allowed: true, from: undefined, note: `a new volume, starting at ${checkout}` };
   const stored = input.stored ?? LAST_UNVERSIONED_RELEASE;
@@ -172,6 +233,118 @@ export function upgradeVerdict(input: {
       `${skipped.join(', ')}. Releases are upgraded one at a time so each runs its own ` +
       `migrations: check out v${skipped[0]}, upgrade, then come back to this checkout.`,
   };
+}
+
+/** The table the upgrade's migrations keep their progress in. */
+export const MIGRATIONS_TABLE = 'migrations';
+
+/** A schema declaration a widen-migrate-narrow cycle retires, with the migration that clears it. */
+export interface RetiredDeclaration {
+  /** The field, as `table.field`. */
+  readonly declaration: string;
+  /** The migration that clears it from every row. */
+  readonly migration: string;
+  /** The release that ships the migration. */
+  readonly release: string;
+}
+
+/**
+ * The declarations this checkout's schema no longer carries, each with the
+ * migration that cleared it from every row (decision N10: a
+ * widen-migrate-narrow cycle ships as two releases). Convex checks every
+ * stored row against the schema at a push, so a row still carrying one of
+ * these would refuse the push halfway; the upgrade refuses before anything is
+ * pushed instead, until the release that shipped the migration has run it.
+ */
+export const RETIRED_DECLARATIONS: readonly RetiredDeclaration[] = [
+  { declaration: 'agents.docSourceIds', migration: 'agents-inclusion-list', release: '0.4.0' },
+  { declaration: 'agents.posture', migration: 'agents-posture', release: '0.4.0' },
+  { declaration: 'skills.daytonaSandboxId', migration: 'skills-sandbox-id', release: '0.4.0' },
+  {
+    declaration: 'skills.supervisedRunsCompleted',
+    migration: 'skills-supervised-runs',
+    release: '0.4.0',
+  },
+  { declaration: 'surfaces.credentialRef', migration: 'surfaces-credential-ref', release: '0.4.0' },
+];
+
+/**
+ * The declarations this checkout still carries and ships the clearing
+ * migration of: the release after it removes each one, and moves its row
+ * into `RETIRED_DECLARATIONS` as it does (N10). The release check does not
+ * read these: the schema still declares the field, so a row that carries it
+ * pushes, and its migration runs after the push. Listed now so the removal is
+ * one move, which the migration tests hold to the schema and the migrations.
+ */
+export const RETIRING_DECLARATIONS: readonly RetiredDeclaration[] = [
+  {
+    declaration: 'surfaces.itApprovedAt',
+    migration: 'surfaces-single-approval',
+    release: '0.6.0',
+  },
+];
+
+/** The most migration rows the check reads; one per migration any release shipped. */
+const MIGRATION_ROWS_READ = 1_000;
+
+/** The Convex CLI arguments that print every migration's row as JSON lines. */
+export const MIGRATION_ROWS_ARGUMENTS: readonly string[] = [
+  'convex',
+  'data',
+  MIGRATIONS_TABLE,
+  '--limit',
+  String(MIGRATION_ROWS_READ),
+  '--format',
+  'jsonl',
+];
+
+/**
+ * The retired declarations whose clearing migration the deployment has not
+ * finished, from the migration rows the CLI printed.
+ *
+ * @param stdout - The rows as JSON lines, or nothing when the table is absent.
+ * @param candidates - The declarations to check, all of them by default.
+ * @returns The declarations a row may still carry.
+ * @throws Error when a line is not a migration row.
+ */
+export function unclearedDeclarations(
+  stdout: string,
+  candidates: typeof RETIRED_DECLARATIONS = RETIRED_DECLARATIONS,
+): typeof RETIRED_DECLARATIONS {
+  const finished = new Set<string>();
+  for (const line of stdout.split('\n')) {
+    if (line.trim() === '') continue;
+    let row: { name?: unknown; completedAt?: unknown };
+    try {
+      row = JSON.parse(line) as { name?: unknown; completedAt?: unknown };
+    } catch {
+      throw new Error(`a migrations row is not JSON: ${line.trim().slice(0, 80)}`);
+    }
+    if (typeof row.name === 'string' && typeof row.completedAt === 'number') finished.add(row.name);
+  }
+  return candidates.filter((retired) => !finished.has(retired.migration));
+}
+
+/**
+ * The retired declarations a deployment's rows may still carry by their
+ * stamp: those whose clearing release is after the stamp, or unknown to this
+ * checkout, or every one on a volume with no stamp. A stamp at or after the
+ * clearing release means the release check of that release saw its
+ * migrations finish, or the volume was created then and never held the field.
+ *
+ * @param stored - The stamped release, or undefined when there is none.
+ * @param releases - Every release, oldest first.
+ */
+function declarationsToCheck(
+  stored: string | undefined,
+  releases: readonly string[],
+): typeof RETIRED_DECLARATIONS {
+  if (stored === undefined) return RETIRED_DECLARATIONS;
+  const at = releases.indexOf(stored);
+  return RETIRED_DECLARATIONS.filter((retired) => {
+    const cleared = releases.indexOf(retired.release);
+    return at < 0 || cleared < 0 || at < cleared;
+  });
 }
 
 /** The Convex CLI arguments that run every migration still pending (`convex/migrations.ts`). */
@@ -251,17 +424,20 @@ export interface CliResult {
 
 /**
  * Read the deployment's release stamp through the Convex CLI and decide
- * whether this checkout may be pushed over its rows. A deployment with no
- * tables has had nothing pushed, so it is new whatever its volume; one that
- * cannot be read is refused.
+ * whether this checkout may be pushed over its rows. The checkout itself is
+ * judged first (`checkoutRefusal`), before the deployment is so much as
+ * read. A deployment with no tables has had nothing pushed, so it is new
+ * whatever its volume; one that cannot be read is refused.
  *
  * @param npx - Runs `npx` with the given arguments against the deployment.
- * @param checkout - This checkout's release and the releases it records.
+ * @param checkout - This checkout's releases.
  */
 export function readReleaseVerdict(
   npx: (args: readonly string[]) => CliResult,
-  checkout: { release: string; releases: readonly string[] },
+  checkout: CheckoutReleases,
 ): UpgradeVerdict {
+  const checkoutOnly = checkoutRefusal(checkout);
+  if (checkoutOnly !== undefined) return { allowed: false, reason: checkoutOnly };
   const refused = (what: string, result: CliResult): UpgradeVerdict => ({
     allowed: false,
     reason: `${what}: ${firstLineOf(result.stderr) || firstLineOf(result.stdout) || `exit ${result.status ?? 'unknown'}`}`,
@@ -279,12 +455,42 @@ export function readReleaseVerdict(
       return { allowed: false, reason: error instanceof Error ? error.message : String(error) };
     }
   }
-  return upgradeVerdict({
+  const verdict = upgradeVerdict({
     stored,
     fresh,
     checkout: checkout.release,
     releases: checkout.releases,
+    newestMigrationRelease: checkout.newestMigrationRelease,
   });
+  if (!verdict.allowed || fresh) return verdict;
+  const candidates = declarationsToCheck(stored, checkout.releases);
+  if (candidates.length === 0) return verdict;
+  // A volume with rows but no migrations table never ran a migration.
+  let rows = '';
+  if (tables.stdout.split('\n').some((line) => line.trim() === MIGRATIONS_TABLE)) {
+    const read = npx(MIGRATION_ROWS_ARGUMENTS);
+    if (read.status !== 0) return refused("the deployment's migrations could not be read", read);
+    rows = read.stdout;
+  }
+  let uncleared: typeof RETIRED_DECLARATIONS;
+  try {
+    uncleared = unclearedDeclarations(rows, candidates);
+  } catch (error) {
+    return {
+      allowed: false,
+      reason: `the deployment's migrations could not be read: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+  if (uncleared.length === 0) return verdict;
+  return {
+    allowed: false,
+    reason:
+      `rows may still carry ${uncleared.map((retired) => retired.declaration).join(', ')}, which ` +
+      `this checkout no longer declares: the migrations that clear them ` +
+      `(${uncleared.map((retired) => retired.migration).join(', ')}) have not finished here. ` +
+      `Check out v${uncleared[0].release} or a later release that still declares them, run the ` +
+      'upgrade to its end, then come back to this checkout.',
+  };
 }
 
 /** The first non-empty line of some output. */

@@ -2,7 +2,7 @@
 
 import type { Id } from '../../../convex/_generated/dataModel';
 import { managerFeedbackLabel, type ManagerFeedbackKind } from '../../../src/work/manager-feedback';
-import { clockTime, clockTimeWithSeconds } from './time';
+import { clockTime, clockTimeWithSeconds, useAgentZone } from './time';
 
 /**
  * The manager's corrections on the employee's dashboard: what was kept, from
@@ -44,7 +44,9 @@ function appliedToText(
   retired: boolean,
 ): string {
   if (appliedTo.length === 0) {
-    return retired ? 'never applied' : 'not applied yet: it reaches the next plan for work of the same kind';
+    return retired
+      ? 'never applied'
+      : 'not applied yet: it reaches the next plan for work of the same kind';
   }
   const named = appliedTo.map((id) => {
     const title = titles.get(id);
@@ -74,6 +76,7 @@ export function KeptCorrectionsPanel({
   titles: ReadonlyMap<string, string>;
   onRetire: (correctionId: Id<'corrections'>) => Promise<unknown>;
 }) {
+  const zone = useAgentZone();
   if (corrections.length === 0) {
     return (
       <p className="text-xs text-[var(--color-muted)]">
@@ -93,17 +96,21 @@ export function KeptCorrectionsPanel({
             className={`p-2 rounded-md border border-[var(--color-border)] text-xs ${retired ? 'opacity-60' : ''}`}
           >
             <p className="text-[10px] text-[var(--color-muted)] mb-0.5">
-              <span className="uppercase tracking-wider">{managerFeedbackLabel(correction)}</span> · from “
-              {correction.itemTitle}” ·{' '}
-              <span title={clockTimeWithSeconds(correction.createdAt)}>{clockTime(correction.createdAt)}</span>
+              <span className="uppercase tracking-wider">{managerFeedbackLabel(correction)}</span> ·
+              from “{correction.itemTitle}” ·{' '}
+              <span title={clockTimeWithSeconds(correction.createdAt, zone)}>
+                {clockTime(correction.createdAt, zone)}
+              </span>
             </p>
-            <p className="text-[var(--color-fg)] whitespace-pre-wrap break-words">{correction.text}</p>
+            <p className="text-[var(--color-fg)] whitespace-pre-wrap break-words">
+              {correction.text}
+            </p>
             <p className="mt-0.5 text-[10px] text-[var(--color-muted)]">
               {appliedToText(correction.appliedTo, titles, retired)}
             </p>
             {correction.retiredAt !== undefined ? (
               <p className="mt-1 text-[10px] text-[var(--color-muted)]">
-                retired {clockTime(correction.retiredAt)}: no later plan reads it
+                retired {clockTime(correction.retiredAt, zone)}: no later plan reads it
               </p>
             ) : (
               <button
@@ -141,6 +148,7 @@ export function AppliedCorrectionsLine({
   workItemId: Id<'workItems'>;
   redaction?: 'structural-only';
 }) {
+  const zone = useAgentZone();
   const applied = ids.flatMap((id) => corrections.filter((correction) => correction._id === id));
   if (applied.length === 0) return null;
   return (
@@ -155,7 +163,9 @@ export function AppliedCorrectionsLine({
         return (
           <p key={correction._id} className="text-[var(--color-fg)]">
             Applies the manager&apos;s correction from {source} (
-            <span title={clockTimeWithSeconds(correction.createdAt)}>{clockTime(correction.createdAt)}</span>
+            <span title={clockTimeWithSeconds(correction.createdAt, zone)}>
+              {clockTime(correction.createdAt, zone)}
+            </span>
             ): ‘{correction.text}’
           </p>
         );

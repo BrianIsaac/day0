@@ -116,7 +116,7 @@ async function seedSlackSurface(
       path: 'documented-api',
       endpoint: 'https://slack.com/api/',
       request: { credential: { found: 'none', method: 'oauth', label: 'Slack bot token' } },
-      ...(approved ? { managerApprovedAt: 2, itApprovedAt: 3 } : {}),
+      ...(approved ? { managerApprovedAt: 2 } : {}),
       ...(sharedCredentialId
         ? { credentialId: sharedCredentialId, credentialKind: 'value' as const }
         : {}),
@@ -172,7 +172,8 @@ describe('registering a dedicated app', (): void => {
           body: String(init?.body ?? ''),
           authorization: headers.Authorization,
         });
-        if (String(input).endsWith('/auth.revoke')) return slackResponse({ ok: true, revoked: true });
+        if (String(input).endsWith('/auth.revoke'))
+          return slackResponse({ ok: true, revoked: true });
         return slackResponse({
           ok: true,
           app_id: 'A123',
@@ -241,30 +242,36 @@ describe('registering a dedicated app', (): void => {
     const { surfaceId } = await seedSlackSurface(harness);
 
     await expect(
-      harness.withIdentity({ subject: 'owner' }).action(liveApi.slackProvisionActions.provisionApp, {
-        surfaceId,
-        configurationToken: CONFIG_TOKEN,
-      }),
+      harness
+        .withIdentity({ subject: 'owner' })
+        .action(liveApi.slackProvisionActions.provisionApp, {
+          surfaceId,
+          configurationToken: CONFIG_TOKEN,
+        }),
     ).rejects.toThrow('invalid_auth');
 
-    const credentials = await harness.run(async (ctx) => await ctx.db.query('credentials').collect());
+    const credentials = await harness.run(
+      async (ctx) => await ctx.db.query('credentials').collect(),
+    );
     expect(credentials).toHaveLength(1);
     expect(credentials[0].revokedAt).toBeGreaterThan(0);
     const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
     expect(surface?.provisioning).toBeUndefined();
   });
 
-  it('refuses a surface that has not been approved twice', async (): Promise<void> => {
+  it('refuses a surface that has not been approved', async (): Promise<void> => {
     vi.stubGlobal('fetch', vi.fn());
     const { api: liveApi } = await import('../../convex/_generated/api');
     const harness = convexTest(schema, allConvexModules());
     const { surfaceId } = await seedSlackSurface(harness, { approved: false });
     await expect(
-      harness.withIdentity({ subject: 'owner' }).action(liveApi.slackProvisionActions.provisionApp, {
-        surfaceId,
-        configurationToken: CONFIG_TOKEN,
-      }),
-    ).rejects.toThrow('needs both approvals');
+      harness
+        .withIdentity({ subject: 'owner' })
+        .action(liveApi.slackProvisionActions.provisionApp, {
+          surfaceId,
+          configurationToken: CONFIG_TOKEN,
+        }),
+    ).rejects.toThrow('needs its approval');
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
@@ -292,10 +299,12 @@ describe('registering a dedicated app', (): void => {
     });
 
     await expect(
-      harness.withIdentity({ subject: 'owner' }).action(liveApi.slackProvisionActions.provisionApp, {
-        surfaceId,
-        configurationToken: CONFIG_TOKEN,
-      }),
+      harness
+        .withIdentity({ subject: 'owner' })
+        .action(liveApi.slackProvisionActions.provisionApp, {
+          surfaceId,
+          configurationToken: CONFIG_TOKEN,
+        }),
     ).rejects.toThrow('already has a connected dedicated identity');
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
@@ -323,10 +332,12 @@ describe('registering a dedicated app', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const { surfaceId } = await seedSlackSurface(harness);
     await expect(
-      harness.withIdentity({ subject: 'owner' }).action(liveApi.slackProvisionActions.provisionApp, {
-        surfaceId,
-        configurationToken: CONFIG_TOKEN,
-      }),
+      harness
+        .withIdentity({ subject: 'owner' })
+        .action(liveApi.slackProvisionActions.provisionApp, {
+          surfaceId,
+          configurationToken: CONFIG_TOKEN,
+        }),
     ).rejects.toThrow('DAY0_PUBLIC_URL');
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
@@ -338,13 +349,16 @@ describe('registering a dedicated app', (): void => {
     const { surfaceId } = await seedSlackSurface(harness);
     await harness.run(async (ctx): Promise<void> => {
       const page = await ctx.db.query('docPages').first();
-      if (page) await ctx.db.patch(page._id, { markdown: '# Slack automation policy\n\nNo template.' });
+      if (page)
+        await ctx.db.patch(page._id, { markdown: '# Slack automation policy\n\nNo template.' });
     });
     await expect(
-      harness.withIdentity({ subject: 'owner' }).action(liveApi.slackProvisionActions.provisionApp, {
-        surfaceId,
-        configurationToken: CONFIG_TOKEN,
-      }),
+      harness
+        .withIdentity({ subject: 'owner' })
+        .action(liveApi.slackProvisionActions.provisionApp, {
+          surfaceId,
+          configurationToken: CONFIG_TOKEN,
+        }),
     ).rejects.toThrow('no app manifest template');
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
@@ -447,7 +461,10 @@ describe('completing the install', (): void => {
         state: forged,
         code: 'the-code',
       }),
-    ).resolves.toEqual({ ok: false, reason: 'That install link is not one this deployment issued.' });
+    ).resolves.toEqual({
+      ok: false,
+      reason: 'That install link is not one this deployment issued.',
+    });
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
@@ -546,7 +563,7 @@ describe('completing the install', (): void => {
   });
 });
 
-describe('the administrator\'s one action (P7-3, P3-17)', (): void => {
+describe("the administrator's one action (P7-3, P3-17)", (): void => {
   /** A Slack that answers each method as the case needs. */
   function slack(answers: Record<string, () => Response>): string[] {
     const called: string[] = [];

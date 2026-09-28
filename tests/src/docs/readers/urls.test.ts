@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Id } from '../../../../convex/_generated/dataModel';
-import { htmlPageTitle, parseUrlLocator, UrlsReader } from '../../../../src/docs/readers/urls';
+import {
+  htmlPageTitle,
+  pageAccess,
+  parseUrlLocator,
+  UrlsReader,
+} from '../../../../src/docs/readers/urls';
 import type { DocSourceRecord } from '../../../../src/docs/types';
 import { PROVIDER_BACKOFF } from '../../../../src/lib/transport-error';
 
@@ -55,7 +60,7 @@ describe('URL documentation reader', (): void => {
     };
     const first = await new UrlsReader().listPageBatch(source, undefined, undefined, 1);
     expect(first.pages.map((page) => page.title)).toEqual(['One']);
-    expect(first.nextCursor).toBe('1');
+    expect(first.nextCursor).toMatch(/^1@[0-9a-z]{7}$/);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
@@ -84,6 +89,100 @@ describe('URL documentation reader', (): void => {
     const [page] = await reader.listPages(source);
     expect(page?.title).toBe('Rate limited once');
     expect(waits).toEqual([4_000]);
+  });
+
+  it('names a page that fails and reads the rest of the batch (P5-11)', async (): Promise<void> => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request): Promise<Response> => {
+        const url = String(input);
+        if (url.endsWith('/gone')) return new Response('missing', { status: 404 });
+        if (url.endsWith('/huge')) {
+          return new Response('x', { headers: { 'content-length': String(3 * 1024 * 1024) } });
+        }
+        if (url.startsWith('https://down.example')) {
+          throw new TypeError('fetch failed', {
+            cause: Object.assign(new Error('getaddrinfo ENOTFOUND down.example'), {
+              code: 'ENOTFOUND',
+            }),
+          });
+        }
+        return new Response('# Kept', { headers: { 'content-type': 'text/markdown' } });
+      }),
+    );
+    const source: DocSourceRecord = {
+      _id: 'source-urls' as Id<'docSources'>,
+      label: 'Pages',
+      kind: 'urls',
+      locator: [
+        'https://example.com/gone',
+        'https://example.com/kept',
+        'https://example.com/huge',
+        'https://down.example/page',
+      ].join('\n'),
+    };
+    const batch = await new UrlsReader({
+      ...PROVIDER_BACKOFF,
+      sleep: async () => undefined,
+    }).listPageBatch(source, undefined, undefined, 25);
+    expect(batch.pages.map((page) => page.ref)).toEqual(['https://example.com/kept']);
+    expect(batch.unread).toEqual([
+      { ref: 'https://example.com/gone', reason: 'https://example.com/gone returned HTTP 404.' },
+      { ref: 'https://example.com/huge', reason: 'https://example.com/huge exceeds 2 MiB.' },
+      {
+        ref: 'https://down.example/page',
+        reason: 'fetch failed (getaddrinfo ENOTFOUND down.example)',
+      },
+    ]);
+    expect(batch.nextCursor).toBeUndefined();
+  });
+
+  it('sends a wiki’s reader secret to its own site only, and follows no redirect off it (E-74)', async (): Promise<void> => {
+    const seen: Array<{ url: string; authorization: string | null }> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+        const url = String(input);
+        seen.push({ url, authorization: new Headers(init?.headers).get('authorization') });
+        if (url.endsWith('/moved')) {
+          return new Response(null, { status: 302, headers: { location: '/wiki/moved-here' } });
+        }
+        if (url.endsWith('/away')) {
+          return new Response(null, {
+            status: 302,
+            headers: { location: 'https://collector.example/steal' },
+          });
+        }
+        return new Response('# Page', { headers: { 'content-type': 'text/markdown' } });
+      }),
+    );
+    const source: DocSourceRecord = {
+      _id: 'source-urls' as Id<'docSources'>,
+      label: 'Wiki',
+      kind: 'urls',
+      locator: 'https://wiki.example/wiki/moved\nhttps://wiki.example/wiki/away',
+    };
+    const batch = await new UrlsReader().listPageBatch(source, 'wiki-token', undefined, 25);
+    expect(batch.pages.map((page) => page.ref)).toEqual(['https://wiki.example/wiki/moved']);
+    expect(batch.unread).toEqual([
+      {
+        ref: 'https://wiki.example/wiki/away',
+        reason:
+          'https://wiki.example/wiki/away redirects to https://collector.example; a page read with a secret is not followed off its site.',
+      },
+    ]);
+    expect(seen).toEqual([
+      { url: 'https://wiki.example/wiki/moved', authorization: 'Bearer wiki-token' },
+      { url: 'https://wiki.example/wiki/moved-here', authorization: 'Bearer wiki-token' },
+      { url: 'https://wiki.example/wiki/away', authorization: 'Bearer wiki-token' },
+    ]);
+  });
+
+  it('refuses to read with a secret a list that spans more than one https site', (): void => {
+    expect(() =>
+      pageAccess([new URL('https://wiki.example/a'), new URL('https://other.example/b')], 'value'),
+    ).toThrow('one https site');
+    expect(pageAccess([new URL('http://wiki.example/a')], undefined)).toEqual({});
   });
 
   it('extracts a plain fallback-safe HTML title', (): void => {

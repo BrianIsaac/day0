@@ -43,27 +43,44 @@ describe('the shape of the skill a candidate needs', (): void => {
       contentSummary: 'Report the current coverage figure. Do not change anything.',
     });
     expect(skillShapeFor(readOnly, [linear, tile], 'real')).toEqual({
-      surfaceClass: 'analytics', operation: 'read',
+      surfaceClass: 'analytics',
+      operation: 'read',
     });
-    expect(skillShapeFor(candidate({
-      sourceSystem: 'close-tracker', title: 'Read the Close tracker',
-      contentSummary: 'List the rows. Do not write to the spreadsheet.',
-    }), [sheet], 'real')).toEqual({ surfaceClass: 'spreadsheet', operation: 'read' });
+    expect(
+      skillShapeFor(
+        candidate({
+          sourceSystem: 'close-tracker',
+          title: 'Read the Close tracker',
+          contentSummary: 'List the rows. Do not write to the spreadsheet.',
+        }),
+        [sheet],
+        'real',
+      ),
+    ).toEqual({ surfaceClass: 'spreadsheet', operation: 'read' });
   });
 
   it('keeps the write procedure when a read-only boundary sits beside a requested write', () => {
     const readThenWrite = candidate({
       sourceSystem: 'close-tracker',
       title: 'Check the Close tracker and append the weekly row',
-      contentSummary: 'Read the current figure and append a new row with it. Do not change existing rows.',
+      contentSummary:
+        'Read the current figure and append a new row with it. Do not change existing rows.',
     });
     expect(skillShapeFor(readThenWrite, [sheet], 'real')).toEqual({
-      surfaceClass: 'spreadsheet', operation: 'append-row',
+      surfaceClass: 'spreadsheet',
+      operation: 'append-row',
     });
-    expect(skillShapeFor(candidate({
-      title: 'Review the Looker pipeline tile',
-      contentSummary: 'Refresh the figure to 74%; do not modify anything else on the dashboard.',
-    }), [linear, tile], 'real')).toEqual({ surfaceClass: 'analytics', operation: 'refresh-value' });
+    expect(
+      skillShapeFor(
+        candidate({
+          title: 'Review the Looker pipeline tile',
+          contentSummary:
+            'Refresh the figure to 74%; do not modify anything else on the dashboard.',
+        }),
+        [linear, tile],
+        'real',
+      ),
+    ).toEqual({ surfaceClass: 'analytics', operation: 'refresh-value' });
   });
 
   it('maps every mock source system to its surface class and documented operation', (): void => {

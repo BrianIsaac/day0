@@ -231,6 +231,9 @@ export function correctionSurfaces(
   sourceSystem: string,
   plan: Pick<ExecutionPlan, 'obligations'> | undefined,
 ): string[] {
-  const touched = (plan?.obligations?.steps ?? []).flatMap((step) => [...step.reads, ...step.writes]);
+  const touched = (plan?.obligations?.steps ?? []).flatMap((step) => [
+    ...step.reads,
+    ...step.writes,
+  ]);
   return [...new Set([surfaceSlug(sourceSystem), ...touched])];
 }

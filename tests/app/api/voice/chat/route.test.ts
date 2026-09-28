@@ -261,12 +261,17 @@ it('cancels a stalled provider at the 60-second route deadline', async () => {
     return deadline.signal;
   });
   let providerSignal: AbortSignal | null | undefined;
-  vi.stubGlobal('fetch', vi.fn((_input: unknown, init?: RequestInit) => {
-    providerSignal = init?.signal;
-    return new Promise<Response>((_resolve, reject) => {
-      providerSignal?.addEventListener('abort', () => reject(providerSignal?.reason), { once: true });
-    });
-  }));
+  vi.stubGlobal(
+    'fetch',
+    vi.fn((_input: unknown, init?: RequestInit) => {
+      providerSignal = init?.signal;
+      return new Promise<Response>((_resolve, reject) => {
+        providerSignal?.addEventListener('abort', () => reject(providerSignal?.reason), {
+          once: true,
+        });
+      });
+    }),
+  );
   try {
     const response = await POST(day1Request({ messages: [] }));
     const body = response.text();
@@ -361,9 +366,12 @@ describe('an empty model turn', (): void => {
     const chunks = chunksOf(body);
     expect(chunks.filter((c) => c.type === 'start')).toHaveLength(1);
     expect(chunks.filter((c) => c.type === 'finish')).toHaveLength(1);
-    expect(chunks.filter((c) => c.type === 'text-delta').map((c) => c.delta).join('')).toBe(
-      'Welcome aboard. Why this hire?',
-    );
+    expect(
+      chunks
+        .filter((c) => c.type === 'text-delta')
+        .map((c) => c.delta)
+        .join(''),
+    ).toBe('Welcome aboard. Why this hire?');
   });
 
   it('counts a turn of whitespace as empty', async (): Promise<void> => {
@@ -373,9 +381,12 @@ describe('an empty model turn', (): void => {
     const body = await (await POST(day1Request({ messages: historyOf(2) }))).text();
 
     expect(sent).toHaveLength(2);
-    expect(chunksOf(body).filter((c) => c.type === 'text-delta').map((c) => c.delta).join('')).toBe(
-      'Noted. Who should I meet?',
-    );
+    expect(
+      chunksOf(body)
+        .filter((c) => c.type === 'text-delta')
+        .map((c) => c.delta)
+        .join(''),
+    ).toBe('Noted. Who should I meet?');
   });
 
   it('is asked again once only: a second empty turn is what the chat room gets', async (): Promise<void> => {
@@ -403,8 +414,7 @@ describe('an empty model turn', (): void => {
 });
 
 describe('closing the 1:1', (): void => {
-  const closed = (body: string): boolean =>
-    chunksOf(body).some((c) => c.type.startsWith('tool-'));
+  const closed = (body: string): boolean => chunksOf(body).some((c) => c.type.startsWith('tool-'));
   const said = (body: string): string =>
     chunksOf(body)
       .filter((c) => c.type === 'text-delta')
@@ -481,13 +491,18 @@ describe('closing the 1:1', (): void => {
 
     expect(closed(body)).toBe(false);
     expect(said(body)).toMatch(/^Week one is the tracker, then\.\s*7\/7/);
-    expect(chunksOf(body).map((c) => c.type).slice(-2)).toEqual(['finish-step', 'finish']);
+    expect(
+      chunksOf(body)
+        .map((c) => c.type)
+        .slice(-2),
+    ).toEqual(['finish-step', 'finish']);
   });
 
   it('honours a close that only quotes a question back', async (): Promise<void> => {
     const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
     stubProvider([
-      () => closingCompletion('Noted "who owns the Looker tile?" as open.', 'Drafting the charter.'),
+      () =>
+        closingCompletion('Noted "who owns the Looker tile?" as open.', 'Drafting the charter.'),
     ]);
 
     const body = await (await POST(day1Request({ messages: historyOf(7) }))).text();
@@ -536,18 +551,21 @@ it('does not ask again once the 60-second deadline has cut a reply', async () =>
     choices: [{ index: 0, delta: { role: 'assistant', content: 'Under' }, finish_reason: null }],
   })}\n\n`;
   let calls = 0;
-  vi.stubGlobal('fetch', vi.fn(async (_input: unknown, init?: RequestInit) => {
-    calls += 1;
-    const stalled = new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.enqueue(new TextEncoder().encode(first));
-        init?.signal?.addEventListener('abort', () => controller.error(init.signal?.reason), {
-          once: true,
-        });
-      },
-    });
-    return new Response(stalled, { headers: { 'content-type': 'text/event-stream' } });
-  }));
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (_input: unknown, init?: RequestInit) => {
+      calls += 1;
+      const stalled = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(first));
+          init?.signal?.addEventListener('abort', () => controller.error(init.signal?.reason), {
+            once: true,
+          });
+        },
+      });
+      return new Response(stalled, { headers: { 'content-type': 'text/event-stream' } });
+    }),
+  );
   try {
     const response = await POST(day1Request({ messages: historyOf(3) }));
     const body = response.text();

@@ -15,7 +15,8 @@ import rehearsal from '../../fixtures/work/demo-rehearsal-2-2026-09-19.json';
 const surfaces = rehearsal.surfaces as unknown as SurfaceRecord[];
 const priya = rehearsal.workItems.priyaCompleted;
 const mateo = rehearsal.workItems.mateoCompleted;
-const sent = (agentId: string): string => rehearsal.managerNotes.find((note) => note.agentId === agentId)!.text;
+const sent = (agentId: string): string =>
+  rehearsal.managerNotes.find((note) => note.agentId === agentId)!.text;
 
 describe('the completion DM the rehearsal sent', (): void => {
   it('quoted the driver and counted five where the card counted seven', (): void => {
@@ -28,7 +29,9 @@ describe('the completion DM the rehearsal sent', (): void => {
 describe('the completion DM, from the same rows', (): void => {
   it('says what was opened, what was set to what and what was saved, and what it counts', (): void => {
     const text = landedNoteText({
-      agentName: 'Priya', title: priya.title, outcome: 'completed',
+      agentName: 'Priya',
+      title: priya.title,
+      outcome: 'completed',
       rows: landedNoteRows(priya.output, surfaces, priya.replyTarget),
     });
     expect(text).toBe(
@@ -45,10 +48,12 @@ describe('the completion DM, from the same rows', (): void => {
     );
   });
 
-  it('never carries the driver\'s echo or a provider\'s raw JSON', (): void => {
+  it("never carries the driver's echo or a provider's raw JSON", (): void => {
     for (const item of [priya, mateo, rehearsal.workItems.aikoCompleted]) {
       const text = landedNoteText({
-        agentName: 'x', title: item.title, outcome: 'completed',
+        agentName: 'x',
+        title: item.title,
+        outcome: 'completed',
         rows: landedNoteRows(item.output, surfaces, undefined),
       });
       expect(text).not.toMatch(/Playwright|```|await page|\{"|###/);
@@ -59,23 +64,48 @@ describe('the completion DM, from the same rows', (): void => {
     const token = ['xoxb', '2847561930', '5529104736', 'aBcDeFgHiJkLmNoPqRsTuVwX'].join('-');
     const output = {
       actions: [
-        { tool: 'mcp.call', args: { surface: 'looker-pipeline-tile', tool: 'browser_fill_form', toolArgsJson: JSON.stringify({ fields: [{ name: 'Password', value: 'hunter2-literal' }] }) } },
-        { tool: 'mcp.call', args: { surface: 'looker-pipeline-tile', tool: 'browser_navigate', toolArgsJson: JSON.stringify({ url: `http://looker-tile:8080/?t=${token}` }) } },
+        {
+          tool: 'mcp.call',
+          args: {
+            surface: 'looker-pipeline-tile',
+            tool: 'browser_fill_form',
+            toolArgsJson: JSON.stringify({
+              fields: [{ name: 'Password', value: 'hunter2-literal' }],
+            }),
+          },
+        },
+        {
+          tool: 'mcp.call',
+          args: {
+            surface: 'looker-pipeline-tile',
+            tool: 'browser_navigate',
+            toolArgsJson: JSON.stringify({ url: `http://looker-tile:8080/?t=${token}` }),
+          },
+        },
       ],
-      applied: [{ tool: 'mcp.call', ok: true }, { tool: 'mcp.call', ok: true }],
+      applied: [
+        { tool: 'mcp.call', ok: true },
+        { tool: 'mcp.call', ok: true },
+      ],
     };
-    const text = landedNoteRows(output, surfaces, undefined).map((row) => row.line).join('\n');
+    const text = landedNoteRows(output, surfaces, undefined)
+      .map((row) => row.line)
+      .join('\n');
     expect(text).toContain('Set Password to "[credential]"');
     expect(text).not.toContain('hunter2');
     expect(text).not.toContain(token);
   });
 
-  it('counts what the card counts: Mateo\'s two reads and two writes', (): void => {
+  it("counts what the card counts: Mateo's two reads and two writes", (): void => {
     const text = landedNoteText({
-      agentName: 'Mateo', title: mateo.title, outcome: 'completed',
+      agentName: 'Mateo',
+      title: mateo.title,
+      outcome: 'completed',
       rows: landedNoteRows(mateo.output, surfaces, undefined),
     });
-    expect(text.split('\n')[0]).toBe('Mateo finished “Post the September close status note”: 4 actions landed (2 writes, 2 reads).');
+    expect(text.split('\n')[0]).toBe(
+      'Mateo finished “Post the September close status note”: 4 actions landed (2 writes, 2 reads).',
+    );
     expect(text).toContain('- Move FIN-1 to Done on Linear');
     expect(text.split('\n')).toHaveLength(5);
   });
@@ -83,10 +113,14 @@ describe('the completion DM, from the same rows', (): void => {
   it('keeps the plain count when every landed row is a write', (): void => {
     const aiko = rehearsal.workItems.aikoCompleted;
     const text = landedNoteText({
-      agentName: 'Aiko', title: aiko.title, outcome: 'completed',
+      agentName: 'Aiko',
+      title: aiko.title,
+      outcome: 'completed',
       rows: landedNoteRows(aiko.output, surfaces, undefined),
     });
-    expect(text.split('\n')[0]).toBe('Aiko finished “Exception: SH-4471 held at Port Klang, Meridian Freight, no revised ETA”: 2 changes landed.');
+    expect(text.split('\n')[0]).toBe(
+      'Aiko finished “Exception: SH-4471 held at Port Klang, Meridian Freight, no revised ETA”: 2 changes landed.',
+    );
   });
 
   it('leaves the manager DM out of the work, and counts only writes on a stop that owes reconciliation', (): void => {
@@ -94,7 +128,10 @@ describe('the completion DM, from the same rows', (): void => {
     const rows = landedNoteRows(stopped.output, surfaces, undefined);
     expect(rows).toEqual([]);
     const text = landedNoteText({
-      agentName: 'Priya', title: priya.title, outcome: 'failed', reason: 'the reply was refused',
+      agentName: 'Priya',
+      title: priya.title,
+      outcome: 'failed',
+      reason: 'the reply was refused',
       rows: landedNoteRows(priya.output, surfaces, priya.replyTarget),
     });
     expect(text.split('\n')[0]).toBe(

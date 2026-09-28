@@ -15,7 +15,7 @@ import {
   type Finding,
   type RedactOptions,
 } from '../redaction/redact';
-import { explicitlyAssignedCredential, guardReason } from '../redaction/guard';
+import { explicitlyAssignedCredential, guardReason, QUOTE_PAIRS } from '../redaction/guard';
 import type { ModelSpan, SpanModel } from '../redaction/client';
 import { PROVIDER_LABELS } from '../redaction/structural';
 
@@ -23,6 +23,12 @@ export interface RedactedCredential {
   label: string;
   plaintext: string;
   explicitlyAssigned?: boolean;
+  /**
+   * True when the page gave the value between an author's quote pair and the
+   * quote is what makes it a value rather than prose, so the re-checks take
+   * the phrase whole.
+   */
+  quoted?: boolean;
 }
 
 export interface RedactedMarkdown {
@@ -300,13 +306,21 @@ export async function redactCredentials(
   ] as const) {
     for (const finding of findings) {
       if (finding.kind !== 'secret') continue;
+      const quotedHere = quotedByAuthor(context, finding.start, finding.end);
       const assigned =
         explicitlyAssignedCredential(context, finding.start, finding.end) &&
         guardReason(finding.value) !== undefined &&
-        guardReason(finding.value, { assigned: true }) === undefined;
+        guardReason(finding.value, { assigned: true, quoted: quotedHere }) === undefined;
+      // Kept only where the quote is what lets the guard take the value, as
+      // `explicitlyAssigned` is kept only where the assignment is.
+      const quoted =
+        quotedHere &&
+        guardReason(finding.value, { assigned: true }) !== undefined &&
+        guardReason(finding.value, { assigned: true, quoted: true }) === undefined;
       const existing = credentials.find((row) => row.plaintext === finding.value);
       if (existing) {
         if (assigned) existing.explicitlyAssigned = true;
+        if (quoted) existing.quoted = true;
         continue;
       }
       // A stored value met in its escaped or encoded form is the same
@@ -317,59 +331,25 @@ export async function redactCredentials(
         label: labels.get(finding.value) ?? finding.label,
         plaintext: finding.value,
         ...(assigned ? { explicitlyAssigned: true } : {}),
+        ...(quoted ? { quoted: true } : {}),
       });
     }
   }
   return { markdown: bodyResult.text, title: safeTitle, credentials };
 }
 
-/** What joins a page's ref to one of several credentials found on it. */
-const CREDENTIAL_REF_SEPARATOR = '#credential=';
-
 /**
- * Build a deterministic source reference for every credential on a page.
+ * Whether a found value sits between one of the author's quote pairs, the
+ * marks right against it on either side.
  *
- * The ref changes when the page's count of values does, from the page ref to
- * a label-qualified one and back; `credentials.store` carries a value it
- * already holds for the page to its new ref rather than storing it again.
- *
- * @param pageRef - Stable provider page reference.
- * @param credential - Extracted credential metadata.
- * @param total - Number of distinct credentials found on the page.
- * @param index - Stable zero-based position when the page contains several values.
- * @returns The page ref for the common single-value case, or a
- *   label-qualified ref when a page contains more than one value.
+ * @param text - The text the value was found in.
+ * @param start - Where the value starts.
+ * @param end - Where it ends.
  */
-export function credentialSourceRef(
-  pageRef: string,
-  credential: RedactedCredential,
-  total: number,
-  index = 0,
-): string {
-  return total === 1
-    ? pageRef
-    : `${pageRef}${CREDENTIAL_REF_SEPARATOR}${index + 1}-${encodeURIComponent(credential.label)}`;
-}
-
-/**
- * The page a credential's source ref belongs to: the inverse of
- * `credentialSourceRef` on its page part.
- *
- * @param ref - A credential source ref.
- * @returns The page ref the credential was found on.
- */
-export function credentialPageRef(ref: string): string {
-  const at = ref.lastIndexOf(CREDENTIAL_REF_SEPARATOR);
-  return at === -1 ? ref : ref.slice(0, at);
-}
-
-/**
- * The bounds of every credential source ref one page can produce, for an
- * index range; the range may also hold refs of other pages, which
- * `credentialPageRef` tells apart.
- *
- * @param pageRef - Stable provider page reference.
- */
-export function credentialRefRange(pageRef: string): { from: string; to: string } {
-  return { from: pageRef, to: `${pageRef}${CREDENTIAL_REF_SEPARATOR}\uffff` };
+function quotedByAuthor(text: string, start: number, end: number): boolean {
+  return QUOTE_PAIRS.some(
+    ([open, close]) =>
+      text.slice(Math.max(0, start - open.length), start) === open &&
+      text.slice(end, end + close.length) === close,
+  );
 }

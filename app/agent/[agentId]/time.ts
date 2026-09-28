@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
 import { deploymentZone, formatStamp } from '@/lib/zone';
 
 /**
@@ -21,6 +21,21 @@ import { deploymentZone, formatStamp } from '@/lib/zone';
  * two things to reconcile. It carries the wall-clock time as a tooltip, in the
  * same zone as every other stamp on the page.
  */
+
+/**
+ * The agent's zone for everything the dashboard stamps. The page provides it
+ * from the agent row, so a stamp deep in a card reads the same day as the
+ * header without the zone being handed down through every component.
+ */
+export const AgentZoneContext = createContext<string | undefined>(undefined);
+
+/**
+ * The zone the page's stamps are in: the agent's, or undefined outside an
+ * agent's page, where a stamp is in the viewer's zone.
+ */
+export function useAgentZone(): string | undefined {
+  return useContext(AgentZoneContext);
+}
 
 /**
  * An instant with its date and time, in the agent's zone when given and the

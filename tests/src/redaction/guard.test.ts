@@ -3,6 +3,7 @@ import {
   QUOTE_PAIRS,
   guardReason,
   guardSecretSpan,
+  sampleValueReason,
   splitUserPasswordPair,
 } from '../../../src/redaction/guard';
 import { NEVER_REDACT } from '../../../src/redaction/policy';
@@ -487,6 +488,9 @@ describe('provider-format samples a model marks', (): void => {
     expect(guardSecretSpan(text, spanOf(text, 'lin_api_XXXXXXXXXXXX'), 'api-key')).toBeUndefined();
     expect(guardSecretSpan(text, spanOf(text, 'xoxb-0123abcd0123abcd'), 'api-key')).toBeUndefined();
     expect(guardReason('lin_api_XXXXXXXXXXXX', { assigned: true })).toBe('sample value');
+    expect(guardReason('lin_api_0123456789abcdef', { assigned: true })).toBe('sample value');
+    expect(sampleValueReason('ghp_abcdefghijklmnop')).toBe('sample value');
+    expect(sampleValueReason('xoxb-1234567890-abcdefghij')).toBeUndefined();
     const issued = 'token: lin_api_Zq8rT2vLm4Xw9KpB7nHc';
     expect(
       guardSecretSpan(issued, spanOf(issued, 'lin_api_Zq8rT2vLm4Xw9KpB7nHc'), 'api-key'),

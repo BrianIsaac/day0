@@ -13,7 +13,13 @@ import * as credentialsModule from '../../convex/credentials';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { OWNER_KNOWN_VALUE_CAP } from '../../src/redaction/known-values';
-import { decrypt as decryptCredential, openOwnedCredential } from '../../src/lib/credential-crypto';
+import {
+  credentialKeyId,
+  credentialValueFingerprint,
+  decrypt as decryptCredential,
+  openOwnedCredential,
+} from '../../src/lib/credential-crypto';
+import { credentialSourceRef } from '../../src/docs/credential-ref';
 import { FAKE_BOT_TOKEN, startFakeSlack } from '../fake-slack/spawn';
 import { temporaryDirectories } from '../setup/temporary-directories';
 
@@ -60,6 +66,16 @@ afterEach((): void => {
   vi.unstubAllEnvs();
   restoreSurfaceMode();
 });
+
+/**
+ * The source ref the sync gives a value on a page under the key the test
+ * stubbed for the deployment.
+ */
+function valueRef(pageRef: string, value: string, userId: string): string {
+  const key = process.env.DAY0_CREDENTIAL_KEY;
+  if (key === undefined) throw new Error('The test stubs no DAY0_CREDENTIAL_KEY.');
+  return credentialSourceRef(pageRef, credentialValueFingerprint(value, key, userId));
+}
 
 /** Seed one owner source the page-derived credentials hang off. */
 async function seedSource(
@@ -224,6 +240,8 @@ describe('credential contract', (): void => {
     expect(await rows(harness)).toEqual([
       expect.not.objectContaining({ status: expect.anything(), revokedAt: expect.anything() }),
     ]);
+    // Revived, it no longer ages towards the prune of superseded rows (C2 D2 (a)).
+    expect((await rows(harness))[0]).not.toHaveProperty('supersededAt');
 
     // A revoke the owner made survives the same blink.
     await harness.withIdentity({ subject: 'owner' }).mutation(api.credentials.revoke, {
@@ -247,9 +265,20 @@ describe('credential contract', (): void => {
     });
     const sealed = await harness.run(async (ctx) => await ctx.db.get(credentialId));
     const key = process.env.DAY0_CREDENTIAL_KEY ?? '';
-    const material = { ciphertext: sealed?.ciphertext ?? '', iv: sealed?.iv ?? '' };
+    const material = {
+      ciphertext: sealed?.ciphertext ?? '',
+      iv: sealed?.iv ?? '',
+      keyId: sealed?.keyId ?? '',
+    };
+    expect(material.keyId).toBe(credentialKeyId(key));
     expect(() => decryptCredential(material, key)).toThrow();
-    expect(openOwnedCredential(material, key, 'owner')).toBe(SECRET);
+    expect(
+      openOwnedCredential(
+        { ...material, userId: 'owner' },
+        { current: key },
+        { allowUnbound: false },
+      ),
+    ).toBe(SECRET);
     await expect(harness.action(internal.credentials.decrypt, { credentialId })).resolves.toBe(
       SECRET,
     );
@@ -285,6 +314,7 @@ describe('credential contract', (): void => {
       label: 'linear service token',
       ciphertext: sealed?.ciphertext ?? '',
       iv: sealed?.iv ?? '',
+      keyId: sealed?.keyId ?? '',
       source,
       rotated: false,
     });
@@ -315,6 +345,7 @@ describe('credential contract', (): void => {
       label: 'linear service token',
       ciphertext: Buffer.from('sealed-under-another-key-0123456789').toString('base64'),
       iv: Buffer.alloc(12, 1).toString('base64'),
+      keyId: '0000000000000000',
       source,
       rotated: false,
     });
@@ -374,7 +405,7 @@ describe('credential contract', (): void => {
     }
   });
 
-  it('refuses decrypt without the deployment key, with the wrong key and for a deleted row', async (): Promise<void> => {
+  it('refuses decrypt without the deployment key, with the wrong key, with a malformed key named as such and for a deleted row', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const credentialId = await harness.action(internal.credentials.store, {
       userId: 'owner',
@@ -389,7 +420,7 @@ describe('credential contract', (): void => {
     );
     vi.stubEnv('DAY0_CREDENTIAL_KEY', 'not-a-key');
     await expect(harness.action(internal.credentials.decrypt, { credentialId })).rejects.toThrow(
-      'decryption failed',
+      'must be a base64-encoded 32-byte key',
     );
     vi.stubEnv('DAY0_CREDENTIAL_KEY', '');
     await expect(harness.action(internal.credentials.decrypt, { credentialId })).rejects.toThrow(
@@ -565,7 +596,12 @@ describe('a page whose count of values changes (P10-1)', (): void => {
         const stored = await rows(harness);
         expect(stored).toHaveLength(2);
         const kept = stored.find((row) => row._id === first?._id);
-        expect(kept).toMatchObject({ source: { sourceId, ref: 'runbook.md' } });
+        expect(kept).toMatchObject({
+          source: {
+            sourceId,
+            ref: valueRef('runbook.md', linear, 'owner'),
+          },
+        });
         expect(kept).not.toHaveProperty('status');
         await expect(
           harness.action(internal.credentials.decrypt, {
@@ -576,6 +612,136 @@ describe('a page whose count of values changes (P10-1)', (): void => {
         vi.useRealTimers();
       }
     });
+  });
+});
+
+describe('the rows of one page, read by label for orientation', (): void => {
+  const pageRef = 'runbook.md';
+
+  /** Insert one page-derived row directly, with no value, under a ref and label. */
+  async function pageRow(
+    harness: TestConvex<typeof schema>,
+    row: {
+      userId?: string;
+      sourceId: Id<'docSources'>;
+      ref: string;
+      label: string;
+      revokedAt?: number;
+      status?: 'suspect' | 'superseded';
+    },
+  ): Promise<Id<'credentials'>> {
+    return await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('credentials', {
+          userId: row.userId ?? 'owner',
+          kind: 'value',
+          label: row.label,
+          source: { sourceId: row.sourceId, ref: row.ref },
+          createdAt: 1,
+          ...(row.revokedAt !== undefined ? { revokedAt: row.revokedAt } : {}),
+          ...(row.status !== undefined ? { status: row.status } : {}),
+        }),
+    );
+  }
+
+  it("binds by label over the page's live rows, oldest first, whatever shape of ref each carries", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await seedSource(harness, 'owner');
+    const otherSourceId = await seedSource(harness, 'owner');
+    const label = 'linear service token';
+    const legacy = await pageRow(harness, { sourceId, ref: `${pageRef}#credential=1-x`, label });
+    const keyed = await pageRow(harness, {
+      sourceId,
+      ref: `${pageRef}#credential=${'a'.repeat(32)}`,
+      label: '  Linear Service Token ',
+    });
+    const pageOnly = await pageRow(harness, { sourceId, ref: pageRef, label });
+    await pageRow(harness, {
+      sourceId,
+      ref: `${pageRef}#credential=${'b'.repeat(32)}`,
+      label,
+      revokedAt: 5,
+    });
+    for (const status of ['suspect', 'superseded'] as const) {
+      await pageRow(harness, { sourceId, ref: `${pageRef}#credential=${status}`, label, status });
+    }
+    await pageRow(harness, {
+      sourceId,
+      ref: `${pageRef}#credential=${'c'.repeat(32)}`,
+      label: 'slack bot token',
+    });
+    // A page whose ref extends this one's sorts inside its index range.
+    await pageRow(harness, {
+      sourceId,
+      ref: `${pageRef} copy#credential=${'d'.repeat(32)}`,
+      label,
+    });
+    await pageRow(harness, { sourceId: otherSourceId, ref: pageRef, label });
+    await pageRow(harness, { userId: 'someone else', sourceId, ref: pageRef, label });
+
+    const bound = await harness.query(internal.credentials.pageRowsByLabel, {
+      userId: 'owner',
+      sourceId,
+      pageRef,
+      label: 'Linear service token',
+    });
+    expect(bound.map((row) => row._id)).toEqual([legacy, keyed, pageOnly]);
+  });
+
+  it('reads every row of a page past the old 64-row read, where rows used to be left out unnoticed', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await seedSource(harness, 'owner');
+    for (let index = 0; index < 100; index += 1) {
+      await pageRow(harness, {
+        sourceId,
+        ref: `${pageRef}#credential=${index.toString(16).padStart(32, '0')}`,
+        label: 'swapped token',
+        status: 'superseded',
+      });
+    }
+    const live = await pageRow(harness, {
+      sourceId,
+      ref: `${pageRef}#credential=${'f'.repeat(32)}`,
+      label: 'swapped token',
+    });
+    await expect(
+      harness.query(internal.credentials.pageRowsForStore, { userId: 'owner', sourceId, pageRef }),
+    ).resolves.toHaveLength(101);
+    await expect(
+      harness.query(internal.credentials.pageRowsByLabel, {
+        userId: 'owner',
+        sourceId,
+        pageRef,
+        label: 'swapped token',
+      }),
+    ).resolves.toEqual([expect.objectContaining({ _id: live })]);
+  });
+
+  it('refuses a page with more rows than one read returns, rather than leaving some out', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await seedSource(harness, 'owner');
+    await harness.run(async (ctx) => {
+      for (let index = 0; index <= 512; index += 1) {
+        await ctx.db.insert('credentials', {
+          userId: 'owner',
+          kind: 'value',
+          label: 'swapped token',
+          source: {
+            sourceId,
+            ref: `${pageRef}#credential=${index.toString(16).padStart(32, '0')}`,
+          },
+          createdAt: 1,
+          status: 'superseded',
+        });
+      }
+    });
+    await expect(
+      harness.query(internal.credentials.pageRowsForStore, { userId: 'owner', sourceId, pageRef }),
+    ).rejects.toThrow('A documentation page holds more than 512 stored credentials');
+  });
+
+  it('is internal', (): void => {
+    expect(credentialsModule.pageRowsByLabel.isInternal).toBe(true);
   });
 });
 
@@ -637,6 +803,7 @@ describe('credential persistence after unlink', () => {
         source: { sourceId, ref: 'page' },
         ciphertext: 'late-ciphertext',
         iv: 'late-iv',
+        keyId: '0000000000000000',
         rotated: true,
       };
       if (existing) await harness.mutation(internal.credentials.persistEncrypted, args);

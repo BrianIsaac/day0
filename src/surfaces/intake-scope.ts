@@ -8,8 +8,8 @@ import { structuralSystemCandidates } from '../docs/system-discovery';
  * some team's project and channels. The candidates are read per page, each
  * with the line that states it; orientation picks the ones that belong to
  * the employee's role by their numbers, so every kept value, page and line
- * is the candidate's own; and the manager and IT approve the result with
- * the card. Intake then reads the approved values and nothing else, so a
+ * is the candidate's own; and the manager approves the result with the
+ * card. Intake then reads the approved values and nothing else, so a
  * later page edit never widens what an employee reads.
  */
 
@@ -423,8 +423,22 @@ const ROLE_STOP_WORDS: ReadonlySet<string> = new Set([
   'employee',
 ]);
 
-/** The top directory of a page reference, or the reference itself at the top. */
+/**
+ * The team a page reference files the page under: its top directory, or the
+ * reference itself at the top. A URL is read by its host and the first
+ * segment of its path, so the pages of one wiki are not all one team
+ * (adversarial pass on review M15).
+ */
 function scopeRoot(ref: string): string {
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(ref)) {
+    try {
+      const url = new URL(ref);
+      const [first = ''] = url.pathname.split('/').filter(Boolean);
+      return `${url.host}/${first}`;
+    } catch {
+      // Not a URL after all: read the reference as the path it spells.
+    }
+  }
   return ref.includes('/') ? ref.split('/')[0]! : ref;
 }
 
@@ -652,7 +666,7 @@ export interface RestatedScope<V extends ScopeValue = ScopeValue> {
  * A value stands while its own page still states it for the same field,
  * through the same grammar orientation read it by (a "do not use" line
  * states nothing), or, when its page is gone, while a page of the same team
- * (or one stating the whole scope) does. So renaming or moving the page,
+ * (or one stating the whole of a scope of two or more values) does. So renaming or moving the page,
  * reflowing the line, fixing a typo beside the value or adding a channel to
  * the line changes nothing intake reads, and the value is re-pointed at the
  * line that states it now; a value its page stopped stating has drifted,
@@ -695,6 +709,11 @@ export function restatedScope<V extends ScopeValue>(
       statedOn.set(ref, (statedOn.get(ref) ?? 0) + 1);
     }
   }
+  // A page naming every value of a one-value scope is any page naming that
+  // value, which says nothing about whose scope it is (review M15): only a
+  // scope of two or more values can be recognised whole on another page.
+  const statesWholeScope = (ref: string): boolean =>
+    entries.length > 1 && statedOn.get(ref) === entries.length;
   const drift: V[] = [];
   const restate = (value: V): V => {
     if (sourceId !== undefined && value.sourceId !== sourceId) return value;
@@ -716,8 +735,7 @@ export function restatedScope<V extends ScopeValue>(
       : [...lines]
           .filter(
             (candidate): boolean =>
-              scopeRoot(candidate.ref) === scopeRoot(value.ref) ||
-              statedOn.get(candidate.ref) === entries.length,
+              scopeRoot(candidate.ref) === scopeRoot(value.ref) || statesWholeScope(candidate.ref),
           )
           .sort(
             (left, right): number => (statedOn.get(right.ref) ?? 0) - (statedOn.get(left.ref) ?? 0),
@@ -740,41 +758,11 @@ export function restatedScope<V extends ScopeValue>(
 }
 
 /**
- * The approved values whose page line is no longer on their page.
- *
- * Intake keeps reading what was approved; this is what the card shows so a
- * changed page is re-proposed and approved rather than silently followed.
- * It compares lines because the card reads the scope as stored: a sync that
- * finds the value still stated re-points the stored line (`restatedScope`),
- * after which this finds nothing.
- *
- * Args:
- *   scope: The approved scope.
- *   pages: The employee's current pages.
- *
- * Returns:
- *   Each value whose page is gone or no longer carries its quoted line.
- */
-export function scopeDrift(scope: IntakeScope, pages: readonly ScopePage[]): ScopeValue[] {
-  const values = intakeScopeValues(scope);
-  return values.filter((value): boolean => {
-    const page = pages.find(
-      (candidate): boolean =>
-        candidate.ref === value.ref &&
-        (value.sourceId === undefined ||
-          candidate.sourceId === undefined ||
-          candidate.sourceId === value.sourceId),
-    );
-    return !page?.markdown.split(/\r?\n/).some((line): boolean => line.trim() === value.quote);
-  });
-}
-
-/**
  * Say which approved values' page lines have changed, and what to do.
  *
  * Args:
  *   scope: The approved scope.
- *   drift: The values `scopeDrift` found, in scope order.
+ *   drift: The values `restatedScope` found drifted, in scope order.
  *
  * Returns:
  *   One message for the card, or undefined when nothing has changed.

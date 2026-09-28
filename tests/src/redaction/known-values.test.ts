@@ -4,12 +4,12 @@ import { randomBytes } from 'node:crypto';
 import { getFunctionName } from 'convex/server';
 import { convexTest } from 'convex-test';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { api } from '../../../convex/_generated/api';
+import { api, internal } from '../../../convex/_generated/api';
 import type { ActionCtx } from '../../../convex/_generated/server';
 import type { Doc, Id } from '../../../convex/_generated/dataModel';
 import schema from '../../../convex/schema';
 import { persistPageBatch } from '../../../convex/docSyncActions';
-import { encrypt } from '../../../src/lib/credential-crypto';
+import { credentialValueFingerprint, encrypt } from '../../../src/lib/credential-crypto';
 import { RedactorUnavailableError, type SpanModel } from '../../../src/redaction/client';
 import { ownerValuesRef, scrubKnownValues } from '../../../src/redaction/known-values';
 import { redactText } from '../../../src/redaction/redact';
@@ -20,7 +20,13 @@ import { redactGroundingRead } from '../../../src/work/plan';
 import type { DocPage } from '../../../src/docs/types';
 import type { MockAction } from '../../../src/work/types';
 import { allConvexModules } from '../../convex/all-modules';
-import { RecordedSpanModel, ScriptedSpanModel, StalledSpanModel, UnreachableSpanModel, serveSpanModel } from '../../fixtures/redaction-double';
+import {
+  RecordedSpanModel,
+  ScriptedSpanModel,
+  StalledSpanModel,
+  UnreachableSpanModel,
+  serveSpanModel,
+} from '../../fixtures/redaction-double';
 import { assembleTrace } from '../../../src/export/trace';
 
 /**
@@ -67,7 +73,11 @@ const slack: SurfaceRecord = {
 };
 const comment: MockAction = {
   tool: 'mcp.call',
-  args: { surface: 'linear', tool: 'save_comment', toolArgsJson: JSON.stringify({ issueId: 'iss-1', body: 'Note.' }) },
+  args: {
+    surface: 'linear',
+    tool: 'save_comment',
+    toolArgsJson: JSON.stringify({ issueId: 'iss-1', body: 'Note.' }),
+  },
 };
 const post: MockAction = {
   tool: 'http.request',
@@ -96,7 +106,9 @@ function expectedFlag(state: SidecarState): 'structural-only' | undefined {
 
 function mcpClient(text: string): (options: McpClientOptions) => McpClientLike {
   return (): McpClientLike => ({
-    listTools: async () => ({ linear_save_comment: { execute: async (): Promise<unknown> => text } }),
+    listTools: async () => ({
+      linear_save_comment: { execute: async (): Promise<unknown> => text },
+    }),
     disconnect: async (): Promise<void> => undefined,
   });
 }
@@ -106,8 +118,16 @@ function docSyncCtx(known: string[]): { ctx: ActionCtx; actions: unknown[]; muta
   const actions: unknown[] = [];
   const mutations: unknown[] = [];
   const fake = {
-    runAction: async (reference: unknown, args: unknown): Promise<unknown> => {
-      if (getFunctionName(reference as never) === getFunctionName(ownerValuesRef)) return known;
+    runAction: async (
+      reference: unknown,
+      args: { plaintext: string; userId: string },
+    ): Promise<unknown> => {
+      const name = getFunctionName(reference as never);
+      if (name === getFunctionName(ownerValuesRef)) return known;
+      // The sync keys each credential's ref by the value's fingerprint before it stores it.
+      if (name === getFunctionName(internal.credentialCryptoActions.fingerprint)) {
+        return credentialValueFingerprint(args.plaintext, KEY, args.userId);
+      }
       actions.push(args);
       return `credential-${actions.length}` as Id<'credentials'>;
     },
@@ -132,135 +152,166 @@ const source: Doc<'docSources'> = {
   updatedAt: 1,
 };
 
-describe.each(STATES)('an unrelated stored password with the redaction component %s', (state: SidecarState): void => {
-  it('never reaches a Linear outcome, and the row is flagged only when the model did not run', async (): Promise<void> => {
-    const adapter = new McpAdapter([linear], {
-      decrypt: async (): Promise<string> => 'lin-transport-secret',
-      createClient: mcpClient(`Comment saved. Reminder from the ticket: the tile password is ${STORED}.`),
-      now: (): number => now,
-      spanModel: modelFor(state),
-      knownValues: [STORED],
-    });
-    const result = await adapter.apply(ctx, run, comment, 0, 'k');
-    expect(result.ok).toBe(true);
-    expect(result.effect).not.toContain(STORED);
-    expect(result.effect).toContain('<redacted>');
-    expect(result.redaction).toBe(expectedFlag(state));
-  });
-
-  it('never reaches a Slack provider identifier', async (): Promise<void> => {
-    const adapter = new HttpAdapter([slack], {
-      decrypt: async (): Promise<string> => 'xoxb-transport-secret',
-      fetch: async (): Promise<Response> => Response.json({ ok: true, ts: STORED, message: { text: `echo ${STORED}` } }),
-      now: (): number => now,
-      spanModel: modelFor(state),
-      knownValues: [STORED],
-    });
-    const result = await adapter.apply(ctx, run, post, 0, 'k');
-    expect(result.ok).toBe(true);
-    expect(result.providerId).toBe('<redacted>');
-    expect(result.effect).not.toContain(STORED);
-    expect(result.redaction).toBe(expectedFlag(state));
-  });
-
-  it('never reaches a synced page: removed when the model runs, nothing persisted when it does not', async (): Promise<void> => {
-    const { ctx: fake, actions, mutations } = docSyncCtx([STORED]);
-    const page: DocPage = {
-      sourceId: source._id,
-      ref: 'tile.md',
-      title: 'Tile runbook',
-      markdown: `# Tile runbook\n\nThe tile password is ${STORED}; ask Priya.\n`,
-      updatedAt: 1,
-    };
-    const persist = persistPageBatch(fake, source, [page], [], modelFor(state));
-    if (state === 'up') {
-      await expect(persist).resolves.toMatchObject({ pages: 1, redactions: 1 });
-      expect(JSON.stringify(mutations)).toContain('<credential: ');
-      expect(JSON.stringify(actions)).toContain(STORED);
-    } else {
-      await expect(persist).rejects.toBeInstanceOf(RedactorUnavailableError);
-      expect(mutations).toEqual([]);
-    }
-    expect(JSON.stringify(mutations)).not.toContain(STORED);
-  });
-
-  it('never reaches a grounding record', async (): Promise<void> => {
-    const applied: AppliedAction = {
-      tool: 'mcp.call',
-      ok: true,
-      effect: `get_issue on linear · {"description":"Refresh the tile with ${JSON.stringify(STORED).slice(1, -1)}"}`,
-      providerId: STORED,
-      idempotencyKey: 'k',
-    };
-    const result = await redactGroundingRead(applied, modelFor(state), [STORED]);
-    expect(result.effect).not.toContain(STORED);
-    expect(result.providerId).toBe('<redacted>');
-    expect(result.redaction).toBe(expectedFlag(state));
-  });
-
-  describe('the export', (): void => {
-    let served: { url: string; close: () => Promise<void> } | undefined;
-    beforeAll(async (): Promise<void> => {
-      if (state === 'up') served = await serveSpanModel();
-    });
-    afterAll(async (): Promise<void> => {
-      await served?.close();
-    });
-    beforeEach((): void => {
-      vi.stubEnv('DAY0_CREDENTIAL_KEY', KEY);
-      vi.stubEnv('DAY0_REDACTOR_URL', state === 'up' ? served?.url ?? '' : 'http://127.0.0.1:1');
-    });
-    afterEach((): void => {
-      vi.unstubAllEnvs();
-    });
-
-    it('never reaches the export, whichever half asked', async (): Promise<void> => {
-      const harness = convexTest(schema, allConvexModules());
-      const agentId = await harness.run(async (db): Promise<Id<'agents'>> => {
-        const id = await db.db.insert('agents', { bossEmail: 'boss@day0.local', name: 'Priya', userId: 'owner', state: 'active', createdAt: 1 });
-        await db.db.insert('credentials', {
-          userId: 'owner',
-          kind: 'value',
-          label: 'Looker tile password',
-          source: 'entered',
-          createdAt: 1,
-          ...encrypt(STORED, KEY),
-        });
-        await db.db.insert('events', {
-          agentId: id,
-          type: 'work.completed',
-          payload: { effect: `Commented: the tile password is ${STORED}`, nested: [{ url: `https://x?p=${encodeURIComponent(STORED)}` }] },
-          createdAt: 2,
-        });
-        return id;
+describe.each(STATES)(
+  'an unrelated stored password with the redaction component %s',
+  (state: SidecarState): void => {
+    it('never reaches a Linear outcome, and the row is flagged only when the model did not run', async (): Promise<void> => {
+      const adapter = new McpAdapter([linear], {
+        decrypt: async (): Promise<string> => 'lin-transport-secret',
+        createClient: mcpClient(
+          `Comment saved. Reminder from the ticket: the tile password is ${STORED}.`,
+        ),
+        now: (): number => now,
+        spanModel: modelFor(state),
+        knownValues: [STORED],
       });
-      const owner = harness.withIdentity({ subject: 'owner' });
-      const trace = await assembleTrace(agentId, {
-        head: async () => await owner.action(api.exportActions.exportForAgent, { agentId }),
-        page: async ({ page }) => await owner.action(api.exportActions.exportPage, { agentId, ...page }),
-      });
-      const serialised = JSON.stringify(trace);
-      expect(serialised).not.toContain(STORED);
-      expect(serialised).not.toContain(encodeURIComponent(STORED));
-      expect(serialised).toContain('<redacted>');
-      expect(trace.credentialNames).toEqual([]);
-      await expect(
-        harness.withIdentity({ subject: 'intruder' }).action(api.exportActions.exportForAgent, { agentId }),
-      ).rejects.toThrow('forbidden');
-      await expect(harness.action(api.exportActions.exportForAgent, { agentId })).rejects.toThrow();
+      const result = await adapter.apply(ctx, run, comment, 0, 'k');
+      expect(result.ok).toBe(true);
+      expect(result.effect).not.toContain(STORED);
+      expect(result.effect).toContain('<redacted>');
+      expect(result.redaction).toBe(expectedFlag(state));
     });
-  });
-});
+
+    it('never reaches a Slack provider identifier', async (): Promise<void> => {
+      const adapter = new HttpAdapter([slack], {
+        decrypt: async (): Promise<string> => 'xoxb-transport-secret',
+        fetch: async (): Promise<Response> =>
+          Response.json({ ok: true, ts: STORED, message: { text: `echo ${STORED}` } }),
+        now: (): number => now,
+        spanModel: modelFor(state),
+        knownValues: [STORED],
+      });
+      const result = await adapter.apply(ctx, run, post, 0, 'k');
+      expect(result.ok).toBe(true);
+      expect(result.providerId).toBe('<redacted>');
+      expect(result.effect).not.toContain(STORED);
+      expect(result.redaction).toBe(expectedFlag(state));
+    });
+
+    it('never reaches a synced page: removed when the model runs, nothing persisted when it does not', async (): Promise<void> => {
+      const { ctx: fake, actions, mutations } = docSyncCtx([STORED]);
+      const page: DocPage = {
+        sourceId: source._id,
+        ref: 'tile.md',
+        title: 'Tile runbook',
+        markdown: `# Tile runbook\n\nThe tile password is ${STORED}; ask Priya.\n`,
+        updatedAt: 1,
+      };
+      const persist = persistPageBatch(fake, source, [page], [], modelFor(state));
+      if (state === 'up') {
+        await expect(persist).resolves.toMatchObject({ pages: 1, redactions: 1 });
+        expect(JSON.stringify(mutations)).toContain('<credential: ');
+        expect(JSON.stringify(actions)).toContain(STORED);
+      } else {
+        await expect(persist).rejects.toBeInstanceOf(RedactorUnavailableError);
+        expect(mutations).toEqual([]);
+      }
+      expect(JSON.stringify(mutations)).not.toContain(STORED);
+    });
+
+    it('never reaches a grounding record', async (): Promise<void> => {
+      const applied: AppliedAction = {
+        tool: 'mcp.call',
+        ok: true,
+        effect: `get_issue on linear · {"description":"Refresh the tile with ${JSON.stringify(STORED).slice(1, -1)}"}`,
+        providerId: STORED,
+        idempotencyKey: 'k',
+      };
+      const result = await redactGroundingRead(applied, modelFor(state), [STORED]);
+      expect(result.effect).not.toContain(STORED);
+      expect(result.providerId).toBe('<redacted>');
+      expect(result.redaction).toBe(expectedFlag(state));
+    });
+
+    describe('the export', (): void => {
+      let served: { url: string; close: () => Promise<void> } | undefined;
+      beforeAll(async (): Promise<void> => {
+        if (state === 'up') served = await serveSpanModel();
+      });
+      afterAll(async (): Promise<void> => {
+        await served?.close();
+      });
+      beforeEach((): void => {
+        vi.stubEnv('DAY0_CREDENTIAL_KEY', KEY);
+        vi.stubEnv(
+          'DAY0_REDACTOR_URL',
+          state === 'up' ? (served?.url ?? '') : 'http://127.0.0.1:1',
+        );
+      });
+      afterEach((): void => {
+        vi.unstubAllEnvs();
+      });
+
+      it('never reaches the export, whichever half asked', async (): Promise<void> => {
+        const harness = convexTest(schema, allConvexModules());
+        const agentId = await harness.run(async (db): Promise<Id<'agents'>> => {
+          const id = await db.db.insert('agents', {
+            bossEmail: 'boss@day0.local',
+            name: 'Priya',
+            userId: 'owner',
+            state: 'active',
+            createdAt: 1,
+          });
+          await db.db.insert('credentials', {
+            userId: 'owner',
+            kind: 'value',
+            label: 'Looker tile password',
+            source: 'entered',
+            createdAt: 1,
+            ...encrypt(STORED, KEY),
+          });
+          await db.db.insert('events', {
+            agentId: id,
+            type: 'work.completed',
+            payload: {
+              effect: `Commented: the tile password is ${STORED}`,
+              nested: [{ url: `https://x?p=${encodeURIComponent(STORED)}` }],
+            },
+            createdAt: 2,
+          });
+          return id;
+        });
+        const owner = harness.withIdentity({ subject: 'owner' });
+        const trace = await assembleTrace(agentId, {
+          head: async () => await owner.action(api.exportActions.exportForAgent, { agentId }),
+          page: async ({ page }) =>
+            await owner.action(api.exportActions.exportPage, { agentId, ...page }),
+        });
+        const serialised = JSON.stringify(trace);
+        expect(serialised).not.toContain(STORED);
+        expect(serialised).not.toContain(encodeURIComponent(STORED));
+        expect(serialised).toContain('<redacted>');
+        expect(trace.credentialNames).toEqual([]);
+        await expect(
+          harness
+            .withIdentity({ subject: 'intruder' })
+            .action(api.exportActions.exportForAgent, { agentId }),
+        ).rejects.toThrow('forbidden');
+        await expect(
+          harness.action(api.exportActions.exportForAgent, { agentId }),
+        ).rejects.toThrow();
+      });
+    });
+  },
+);
 
 describe('the exact-value layer inside redactText', (): void => {
   it('turns a known value into a removal span on the original text, in every representation, and masks it from the model', async (): Promise<void> => {
     const value = 'opaque+value/with=chars';
     const text = `raw ${value} · json ${JSON.stringify(value).slice(1, -1)} · url ${encodeURIComponent(value)} · the password is hunter2`;
     const model = new ScriptedSpanModel((): never[] => []);
-    const result = await redactText(text, 'outcome', { known: [value], model, onUnavailable: 'structural' });
-    expect(result.text).toBe('raw <redacted> · json <redacted> · url <redacted> · the password is hunter2');
+    const result = await redactText(text, 'outcome', {
+      known: [value],
+      model,
+      onUnavailable: 'structural',
+    });
+    expect(result.text).toBe(
+      'raw <redacted> · json <redacted> · url <redacted> · the password is hunter2',
+    );
     expect(result.degraded).toBeUndefined();
-    expect(result.findings.filter((finding) => finding.label === 'known credential')).toHaveLength(3);
+    expect(result.findings.filter((finding) => finding.label === 'known credential')).toHaveLength(
+      3,
+    );
     expect(model.calls).toHaveLength(1);
     expect(model.calls[0]!.text).not.toContain(value);
     expect(model.calls[0]!.text).toHaveLength(text.length);
@@ -284,7 +335,10 @@ describe('scrubKnownValues', (): void => {
     const shape = {
       count: 2,
       ok: true,
-      rows: [{ effect: `set ${value}`, nested: { reason: `${encodeURIComponent('a b/' + value)}` } }, null],
+      rows: [
+        { effect: `set ${value}`, nested: { reason: `${encodeURIComponent('a b/' + value)}` } },
+        null,
+      ],
       untouched: 'plain',
     };
     expect(scrubKnownValues(shape, [value, 'a b/' + value])).toEqual({

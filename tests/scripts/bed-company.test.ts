@@ -549,11 +549,15 @@ describe('the command line', (): void => {
       scripts: Record<string, string>;
     };
     expect(Object.keys(manifest.scripts).filter((name) => name.startsWith('bed:'))).toEqual([]);
-    const help = spawnSync(join(ROOT, 'node_modules/.bin/tsx'), ['scripts/bed/company.ts', '--help'], {
-      encoding: 'utf8',
-      env: { NODE_ENV: 'test', PATH: process.env.PATH ?? '' },
-      timeout: 60_000,
-    });
+    const help = spawnSync(
+      join(ROOT, 'node_modules/.bin/tsx'),
+      ['scripts/bed/company.ts', '--help'],
+      {
+        encoding: 'utf8',
+        env: { NODE_ENV: 'test', PATH: process.env.PATH ?? '' },
+        timeout: 60_000,
+      },
+    );
     expect(help.status).toBe(0);
     expect(help.stdout).toContain('Usage: pnpm exec tsx scripts/bed/company.ts <verb>');
     expect(help.stdout).not.toContain('bed:company');
@@ -1790,7 +1794,7 @@ describe('check', (): void => {
       'note #ops-requests: once the employees are deployed, post "please refresh the pipeline tile to the standup figure" as yourself, mentioning the bot (type @ and pick it)',
     );
     expect(printed).toContain(
-      "note the full sitting posts all three of slack-asks.md's asks; a deployment takes no mention written before its agent, so an ask left from an earlier sitting is never read and needs no deleting",
+      "note the full sitting posts all three of slack-asks.md's asks; a deployment takes no mention written before its agent, so an ask left from an earlier sitting is never read and needs no deleting, unless the deployment was stopped or restored from a snapshot: it resumes from its last poll and reads every mention posted since, so delete later sittings' asks before you start or restore it",
     );
   });
 

@@ -16,7 +16,11 @@ describe('GLM evidence disclosure', () => {
   });
   it('indexes the bed and both pilots as audit history', () => {
     const index = readFileSync('evaluation/README.md', 'utf8');
-    for (const directory of [bed.split('/').at(-1)!, '2026-09-11T19-24-41Z', '2026-09-11T19-56-20Z']) {
+    for (const directory of [
+      bed.split('/').at(-1)!,
+      '2026-09-11T19-24-41Z',
+      '2026-09-11T19-56-20Z',
+    ]) {
       expect(index).toContain(directory);
     }
     expect(index).toContain('baseline-only');

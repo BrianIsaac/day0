@@ -107,7 +107,11 @@ describe('waiting for the folder documentation sync', (): void => {
     const time = clock();
     await expect(
       waitForDocumentationSync(
-        async () => ({ status: 'credential-not-landed', pageCount: 4, lastError: 'credential missing' }),
+        async () => ({
+          status: 'credential-not-landed',
+          pageCount: 4,
+          lastError: 'credential missing',
+        }),
         time,
       ),
     ).rejects.toThrow('credential missing');
@@ -137,16 +141,18 @@ describe('reading a trial row while the driver waits for its outcome', (): void 
         'evaluation',
         'rev-scope-07',
       ),
-    ).toThrow(
-      `rev-scope-07 ended skipped, not deferred awaiting-permission: ${RUN_REASON}`,
-    );
+    ).toThrow(`rev-scope-07 ended skipped, not deferred awaiting-permission: ${RUN_REASON}`);
   });
 
   it('takes the deferral the revoked scope causes as the evaluation trial’s outcome', (): void => {
     const row = {
       _id: 'a',
       state: 'deferred',
-      verdict: { decision: 'defer', reason: 'awaiting-permission', missingPermissions: ['slack:read'] },
+      verdict: {
+        decision: 'defer',
+        reason: 'awaiting-permission',
+        missingPermissions: ['slack:read'],
+      },
     };
     expect(settledTrialRow(row, 'evaluation', 'rev-scope-01')).toBe(row);
   });
@@ -162,11 +168,15 @@ describe('reading a trial row while the driver waits for its outcome', (): void 
         'evaluation',
         'rev-scope-01',
       ),
-    ).toThrow('rev-scope-01 ended deferred, not deferred awaiting-permission: awaiting-connection (slack)');
+    ).toThrow(
+      'rev-scope-01 ended deferred, not deferred awaiting-permission: awaiting-connection (slack)',
+    );
   });
 
   it('keeps waiting on an evaluation row no verdict has reached yet', (): void => {
-    expect(settledTrialRow({ _id: 'a', state: 'discovered' }, 'evaluation', 'rev-scope-01')).toBeUndefined();
+    expect(
+      settledTrialRow({ _id: 'a', state: 'discovered' }, 'evaluation', 'rev-scope-01'),
+    ).toBeUndefined();
   });
 
   it('stops on an evaluation row parked at the capacity limit', (): void => {
@@ -175,7 +185,10 @@ describe('reading a trial row while the driver waits for its outcome', (): void 
         {
           _id: 'a',
           state: 'discovered',
-          verdict: { decision: 'queue', reason: 'WIP cap reached: supervised cold-start limit is 1' },
+          verdict: {
+            decision: 'queue',
+            reason: 'WIP cap reached: supervised cold-start limit is 1',
+          },
         },
         'evaluation',
         'rev-scope-01',
@@ -187,20 +200,33 @@ describe('reading a trial row while the driver waits for its outcome', (): void 
     'stops on an evaluation row that went on to %s, which the revoked scope should have prevented',
     (state: string): void => {
       expect((): unknown =>
-        settledTrialRow({ _id: 'a', state, verdict: { decision: 'claim' } }, 'evaluation', 'rev-scope-01'),
+        settledTrialRow(
+          { _id: 'a', state, verdict: { decision: 'claim' } },
+          'evaluation',
+          'rev-scope-01',
+        ),
       ).toThrow(`rev-scope-01 ended ${state}, not deferred awaiting-permission`);
     },
   );
 
-  it.each(['completed', 'failed'])('takes %s as an apply trial’s outcome', (state: string): void => {
-    const row = { _id: 'a', state, skipReason: 'no grant (slack:read)' };
-    expect(settledTrialRow(row, 'apply', 'rev-scope-03')).toBe(row);
-  });
+  it.each(['completed', 'failed'])(
+    'takes %s as an apply trial’s outcome',
+    (state: string): void => {
+      const row = { _id: 'a', state, skipReason: 'no grant (slack:read)' };
+      expect(settledTrialRow(row, 'apply', 'rev-scope-03')).toBe(row);
+    },
+  );
 
   it('keeps waiting on an apply row that is executing, or approved and not yet applied', (): void => {
-    expect(settledTrialRow({ _id: 'a', state: 'executing' }, 'apply', 'rev-switch-01')).toBeUndefined();
     expect(
-      settledTrialRow({ _id: 'a', state: 'actions-pending', approvedIndexes: [0] }, 'apply', 'rev-scope-02'),
+      settledTrialRow({ _id: 'a', state: 'executing' }, 'apply', 'rev-switch-01'),
+    ).toBeUndefined();
+    expect(
+      settledTrialRow(
+        { _id: 'a', state: 'actions-pending', approvedIndexes: [0] },
+        'apply',
+        'rev-scope-02',
+      ),
     ).toBeUndefined();
   });
 
@@ -214,7 +240,11 @@ describe('reading a trial row while the driver waits for its outcome', (): void 
     'stops on an apply row that ended %s',
     (state: string): void => {
       expect((): unknown =>
-        settledTrialRow({ _id: 'a', state, skipReason: 'rejected by the manager' }, 'apply', 'rev-scope-05'),
+        settledTrialRow(
+          { _id: 'a', state, skipReason: 'rejected by the manager' },
+          'apply',
+          'rev-scope-05',
+        ),
       ).toThrow(`rev-scope-05 ended ${state}, not completed or failed: rejected by the manager`);
     },
   );

@@ -21,9 +21,9 @@ import type { MockSurfaceSnapshot } from '../work/types';
 
 export const WORK_GEN_SYSTEM = [
   'You generate 3 day-one work items for a newly-deployed autonomous agent.',
-  'The boss has just approved the agent\'s charter; three realistic inbox-style requests now land in the agent\'s queue — the kind of work a competent new hire would face on their first week.',
+  "The boss has just approved the agent's charter; three realistic inbox-style requests now land in the agent's queue — the kind of work a competent new hire would face on their first week.",
   '',
-  'You will be given (a) the charter and (b) a snapshot of the agent\'s actual mock work environment with real slugs/IDs. Use ONLY surface identifiers that appear in the snapshot — never invent slugs the env doesn\'t have. Each work item\'s contentRefs must reference real rows the executor can later mutate.',
+  "You will be given (a) the charter and (b) a snapshot of the agent's actual mock work environment with real slugs/IDs. Use ONLY surface identifiers that appear in the snapshot — never invent slugs the env doesn't have. Each work item's contentRefs must reference real rows the executor can later mutate.",
   '',
   'Generate exactly 3 items, in this order, with this purpose:',
   '',
@@ -31,14 +31,14 @@ export const WORK_GEN_SYSTEM = [
   '',
   '2. Action item — sourceSystem MUST be one of "spreadsheet" / "ticket" / "social" / "slack" — pick whichever surface best fits the charter\'s role. The task requires a write action (append a row, update a ticket, post a reply, post a message) on a surface that exists in the snapshot. This will trigger the propose-new-skill flow.',
   '',
-  '3. Out-of-scope item — sourceSystem can be anything. A task that is plausibly forwarded by a colleague but lies outside the role described in the charter. Make the mismatch clear from the charter\'s runtime willDo and willNotDo clauses without assuming a particular team or profession. The evaluator should skip this. May or may not reference an existing surface.',
+  "3. Out-of-scope item — sourceSystem can be anything. A task that is plausibly forwarded by a colleague but lies outside the role described in the charter. Make the mismatch clear from the charter's runtime willDo and willNotDo clauses without assuming a particular team or profession. The evaluator should skip this. May or may not reference an existing surface.",
   '',
   'Discipline:',
   '  - Each contentSummary is 2-3 sentences and includes a direct quoted request from a named person (the named collaborators in the charter, or "Manager" for the boss).',
   '  - contentRefs must use slugs/IDs that appear verbatim in the snapshot. Format: "channel://<slug>", "channel://<slug>#thread-<key>", "ticket://<slug>", "twitter://<slug>", "mock-spreadsheet://<slug>", "docs-fixture/<slug>". If the surface doesn\'t exist in the snapshot, do not invent a contentRef for it.',
   '  - externalIds are unique stable strings derived from the surface and topic (e.g. "docs-<slug>", "sheet-<slug>", "tweet-<slug>", "ticket-<slug>").',
   '  - Vary priorities: ideally one P1, one P2, one low.',
-  '  - requesterLabel is a person\'s name or role; never the agent itself.',
+  "  - requesterLabel is a person's name or role; never the agent itself.",
   '  - Titles are 8-14 words.',
   '  - sourceCategory is one of "ticket-queue", "inbox", or "social-mention".',
 ].join('\n');

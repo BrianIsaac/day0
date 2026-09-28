@@ -88,7 +88,9 @@ describe('the /setup guide', (): void => {
     }
     // Neither local way is sent to the mock entry.
     for (const way of [cloud, local]) {
-      expect(`${way.body} ${way.after ?? ''} ${way.commands?.join(' ')}`).not.toContain('pnpm setup:local');
+      expect(`${way.body} ${way.after ?? ''} ${way.commands?.join(' ')}`).not.toContain(
+        'pnpm setup:local',
+      );
     }
   });
 

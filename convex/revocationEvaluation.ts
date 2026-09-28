@@ -1,9 +1,11 @@
-import { v } from 'convex/values';
+import { ConvexError, v } from 'convex/values';
 import { internalMutation, internalQuery, mutation, query } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, assertOwnsWorkItem } from './ownership';
 import { assertRealMode } from '../src/lib/surface-mode';
 import type { AppliedAction } from '../src/surfaces/types';
+import { appendEvent } from './eventLog';
+import { evaluationBedName, evaluationBedRefusal } from '../src/evaluation/bed-flag';
 
 const trialKind = v.union(
   v.literal('queued-read'),
@@ -40,7 +42,9 @@ const TRIAL_EXTERNAL_ID_PREFIX = 'EVAL-';
  * Returns:
  *   True for a trial row.
  */
-export function isRevocationTrialRow(row: Pick<Doc<'workItems'>, 'sourceSystem' | 'externalId'>): boolean {
+export function isRevocationTrialRow(
+  row: Pick<Doc<'workItems'>, 'sourceSystem' | 'externalId'>,
+): boolean {
   return (
     row.sourceSystem === 'slack' &&
     row.externalId.startsWith(TRIAL_EXTERNAL_ID_PREFIX) &&
@@ -48,8 +52,18 @@ export function isRevocationTrialRow(row: Pick<Doc<'workItems'>, 'sourceSystem' 
   );
 }
 
-function requireEvaluationAgent(agent: Doc<'agents'>): void {
+/**
+ * Refuse a revocation-evaluation call outside real mode, on a deployment that
+ * names no evaluation bed, or for any agent but the trial's isolated one.
+ *
+ * @throws ConvexError naming the flag when the deployment is not a bed (N9).
+ */
+export function requireEvaluationAgent(
+  agent: Pick<Doc<'agents'>, 'bossEmail'>,
+  what = 'revocation evaluation',
+): void {
   assertRealMode('Revocation evaluation');
+  if (evaluationBedName() === undefined) throw new ConvexError(evaluationBedRefusal(what));
   if (!agent.bossEmail.startsWith('eval-revocation-') || !agent.bossEmail.endsWith('@day0.local')) {
     throw new Error('revocation evaluation accepts only its isolated evaluation agent');
   }
@@ -64,7 +78,7 @@ export const installSurfaceCards = internalMutation({
   handler: async (ctx, args): Promise<{ slack: Id<'surfaces'>; tile: Id<'surfaces'> }> => {
     const agent = await ctx.db.get(args.agentId);
     if (!agent) throw new Error('agent not found');
-    requireEvaluationAgent(agent);
+    requireEvaluationAgent(agent, 'revocationEvaluation.installSurfaceCards');
     const existing = await ctx.db
       .query('surfaces')
       .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
@@ -93,9 +107,7 @@ export const installSurfaceCards = internalMutation({
       whereFound: effectiveSlackEvidence,
       path: 'documented-api' as const,
       fallbackPath: 'escalate' as const,
-      pathCandidates: [
-        { path: 'documented-api' as const, endpoint: 'https://slack.com/api/' },
-      ],
+      pathCandidates: [{ path: 'documented-api' as const, endpoint: 'https://slack.com/api/' }],
       endpoint: 'https://slack.com/api/',
       credentialId: args.slackCredentialId,
       credentialKind: 'oauth' as const,
@@ -114,12 +126,12 @@ export const installSurfaceCards = internalMutation({
         credential: { found: 'value' as const, method: 'bot-token' },
         blastRadius: 'The isolated fake workspace only.',
         costBand: 'none',
-        expiresInDays: 1,
         rollback: 'Revoke the scope and disconnect the fake surface.',
         openQuestions: [],
       },
     };
-    const slack = existingSlack?._id ??
+    const slack =
+      existingSlack?._id ??
       (await ctx.db.insert('surfaces', {
         agentId: args.agentId,
         slug: 'slack',
@@ -143,9 +155,7 @@ export const installSurfaceCards = internalMutation({
       whereFound: effectiveTileEvidence,
       path: 'browser-driven' as const,
       fallbackPath: 'escalate' as const,
-      pathCandidates: [
-        { path: 'browser-driven' as const, endpoint: 'http://looker-tile:8080/' },
-      ],
+      pathCandidates: [{ path: 'browser-driven' as const, endpoint: 'http://looker-tile:8080/' }],
       endpoint: 'http://looker-tile:8080/',
       credentialLanded: false,
       request: {
@@ -162,12 +172,12 @@ export const installSurfaceCards = internalMutation({
         credential: { found: 'value' as const, method: 'unknown' },
         blastRadius: 'One synthetic coverage figure.',
         costBand: 'none',
-        expiresInDays: 1,
         rollback: 'Re-run the form with the prior synthetic figure.',
         openQuestions: [],
       },
     };
-    const tile = existingTile?._id ??
+    const tile =
+      existingTile?._id ??
       (await ctx.db.insert('surfaces', {
         agentId: args.agentId,
         slug: 'looker-pipeline-tile',
@@ -176,7 +186,7 @@ export const installSurfaceCards = internalMutation({
       }));
     if (existingTile) await ctx.db.patch(existingTile._id, tileFields);
     for (const surfaceId of [slack, tile]) {
-      await ctx.db.insert('events', {
+      await appendEvent(ctx, {
         agentId: args.agentId,
         type: 'surface.proposed',
         payload: { surfaceId, source: 'revocation-evaluation-folder-fixture' },
@@ -255,14 +265,19 @@ export const seedTrial = mutation({
   },
   handler: async (ctx, args): Promise<{ workItemId: Id<'workItems'>; runId?: Id<'events'> }> => {
     const agent = await assertOwnsAgent(ctx, args.agentId);
-    requireEvaluationAgent(agent);
+    requireEvaluationAgent(agent, 'revocationEvaluation.seedTrial');
     if (!TRIAL_ID.test(args.trialId)) {
       throw new Error('invalid revocation evaluation trial id');
     }
+    // A trial belongs to the evaluation agent that ran it; the driver follows
+    // it by the work item id this returns, so the id is unique per agent.
     const existing = await ctx.db
       .query('workItems')
-      .withIndex('by_extId', (q) =>
-        q.eq('sourceSystem', 'slack').eq('externalId', `${TRIAL_EXTERNAL_ID_PREFIX}${args.trialId}`),
+      .withIndex('by_agent_extId', (q) =>
+        q
+          .eq('agentId', args.agentId)
+          .eq('sourceSystem', 'slack')
+          .eq('externalId', `${TRIAL_EXTERNAL_ID_PREFIX}${args.trialId}`),
       )
       .first();
     if (existing) throw new Error(`trial ${args.trialId} already exists`);
@@ -281,7 +296,7 @@ export const seedTrial = mutation({
       observedAt: now,
       createdAt: now,
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: args.agentId,
       type: 'work.discovered',
       payload: {
@@ -294,7 +309,7 @@ export const seedTrial = mutation({
     });
     if (args.kind === 'queued-read') return { workItemId };
 
-    const runId = await ctx.db.insert('events', {
+    const runId = await appendEvent(ctx, {
       agentId: args.agentId,
       type: 'work.execution-claimed',
       payload: {
@@ -331,7 +346,7 @@ export const seedTrial = mutation({
             applyPhase: 'auto',
           }),
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: args.agentId,
       type: held ? 'work.actions-pending' : 'work.actions-auto-applying',
       payload: {
@@ -358,7 +373,7 @@ export const trialState = query({
     const row = await assertOwnsWorkItem(ctx, args.workItemId);
     const agent = await ctx.db.get(row.agentId);
     if (!agent) throw new Error('agent not found');
-    requireEvaluationAgent(agent);
+    requireEvaluationAgent(agent, 'revocationEvaluation.trialState');
     return row;
   },
 });
@@ -371,7 +386,7 @@ export const actionContext = internalQuery({
     if (!row) throw new Error('work item not found');
     const agent = await ctx.db.get(row.agentId);
     if (!agent) throw new Error('agent not found');
-    requireEvaluationAgent(agent);
+    requireEvaluationAgent(agent, 'revocationEvaluation.actionContext');
     if (row.state !== 'executing' || !row.pendingRunId || row.applyPhase !== 'auto') {
       throw new Error('evaluation work item is not staged for automatic apply');
     }
@@ -403,8 +418,8 @@ export const markTransportReady = internalMutation({
     if (!row) throw new Error('work item not found');
     const agent = await ctx.db.get(row.agentId);
     if (!agent) throw new Error('agent not found');
-    requireEvaluationAgent(agent);
-    await ctx.db.insert('events', {
+    requireEvaluationAgent(agent, 'revocationEvaluation.markTransportReady');
+    await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'evaluation.transport-ready',
       payload: { workItemId: row._id, checkpoint: args.checkpoint, scope: args.scope },
@@ -425,7 +440,7 @@ export const containmentReached = internalQuery({
     if (!row) return false;
     const agent = await ctx.db.get(row.agentId);
     if (!agent) return false;
-    requireEvaluationAgent(agent);
+    requireEvaluationAgent(agent, 'revocationEvaluation.containmentReached');
     if (args.checkpoint === 'autonomy-off') return agent.autonomousActions !== true;
     const grants = await ctx.db
       .query('permissionGrants')
@@ -446,7 +461,7 @@ export const recordOutcome = internalMutation({
     if (!row || !row.pendingRunId) throw new Error('evaluation work item is not running');
     const agent = await ctx.db.get(row.agentId);
     if (!agent) throw new Error('agent not found');
-    requireEvaluationAgent(agent);
+    requireEvaluationAgent(agent, 'revocationEvaluation.recordOutcome');
     const applied = args.applied as AppliedAction[];
     const output = { ...(row.output as Record<string, unknown>), applied };
     const failure = applied.find((entry) => !entry.ok && !entry.held);
@@ -460,7 +475,7 @@ export const recordOutcome = internalMutation({
       approvedIndexes: undefined,
       applyPhase: undefined,
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: row.agentId,
       type: failure ? 'work.failed' : 'work.completed',
       payload: {

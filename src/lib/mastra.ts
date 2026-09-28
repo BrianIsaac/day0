@@ -57,8 +57,70 @@ export const MODEL_CONFIG = Object.assign(
 
 /** Shared sampling setting for the shipped agent and the evaluation control. */
 export const MODEL_TEMPERATURE = 0.4;
+/**
+ * The most one model call may take, from its first attempt to its last, the
+ * structured ladder's rungs and repairs included: a deadline armed once when
+ * the call starts and shared by every attempt (U9 step 20, P7-18). Per
+ * attempt, five attempts and the SDK's retries inside each let one call run
+ * for a quarter of an hour, past the ten minutes a Node action is given, and
+ * an action killed mid-call reported nothing.
+ */
 export const MODEL_CALL_TIMEOUT_MS = 300_000;
 export const MODEL_PROVIDER_MAX_RETRIES = 2;
+
+/** When one model call must be done by, armed once at its entry. */
+interface ModelCallDeadline {
+  readonly at: number;
+}
+
+/** A deadline for a call starting now. */
+function armDeadline(): ModelCallDeadline {
+  return { at: Date.now() + MODEL_CALL_TIMEOUT_MS };
+}
+
+/** What is left of a call's budget, in milliseconds. */
+function remainingMs(deadline: ModelCallDeadline): number {
+  return deadline.at - Date.now();
+}
+
+/** The error a call that spent its budget ends with, named as the telemetry reads a timeout. */
+function budgetSpent(label: string, cause?: unknown): Error {
+  const error = new Error(
+    `${label}: the model call reached its ${MODEL_CALL_TIMEOUT_MS}ms budget`,
+    cause === undefined ? undefined : { cause },
+  );
+  error.name = 'TimeoutError';
+  return error;
+}
+
+/**
+ * Run one attempt within what is left of the call's budget: its signal aborts
+ * at the deadline, and the attempt is ended then as timed out even if the
+ * request it makes does not honour the signal.
+ *
+ * @throws Error named `TimeoutError` when the budget is spent.
+ */
+async function withinDeadline<T>(
+  deadline: ModelCallDeadline,
+  label: string,
+  attempt: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const left = remainingMs(deadline);
+  if (left <= 0) throw budgetSpent(label);
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const spent = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(budgetSpent(label));
+    }, left);
+  });
+  try {
+    return await Promise.race([attempt(controller.signal), spent]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export interface ModelCallSettings {
   maxOutputTokens?: number;
@@ -75,10 +137,6 @@ export function modelCallOptions(overrides: ModelCallSettings = {}) {
     },
     ...(reasoningEffort === undefined ? {} : { providerOptions: { openai: { reasoningEffort } } }),
   };
-}
-
-function modelAbortSignal(): AbortSignal {
-  return AbortSignal.timeout(MODEL_CALL_TIMEOUT_MS);
 }
 
 export const MODEL_RETRY_POLICY = {
@@ -114,7 +172,8 @@ function isTransientApiError(err: unknown): boolean {
 
 async function withRetry<T>(
   call: { label: string; agent: string; structured?: StructuredCallFacts },
-  fn: () => Promise<T>,
+  fn: (signal: AbortSignal) => Promise<T>,
+  deadline: ModelCallDeadline,
 ): Promise<T> {
   const startedAt = Date.now();
   // The counter spans every attempt, so one report says how many requests
@@ -124,7 +183,7 @@ async function withRetry<T>(
     let lastErr: unknown;
     for (let attempt = 0; attempt < MODEL_RETRY_POLICY.maxAttempts; attempt++) {
       try {
-        const value = await fn();
+        const value = await withinDeadline(deadline, call.label, fn);
         await reportModelCall({
           agent: call.agent,
           attempts: attempt + 1,
@@ -136,7 +195,16 @@ async function withRetry<T>(
         return value;
       } catch (err) {
         lastErr = err;
-        if (!isTransientApiError(err) || attempt === MODEL_RETRY_POLICY.maxAttempts - 1) {
+        const delay = Math.min(
+          MODEL_RETRY_POLICY.baseDelayMs * 2 ** attempt,
+          MODEL_RETRY_POLICY.maxDelayMs,
+        );
+        // No attempt starts that the budget cannot hold, backoff included.
+        if (
+          !isTransientApiError(err) ||
+          attempt === MODEL_RETRY_POLICY.maxAttempts - 1 ||
+          delay >= remainingMs(deadline)
+        ) {
           await reportModelCall({
             agent: call.agent,
             attempts: attempt + 1,
@@ -148,10 +216,6 @@ async function withRetry<T>(
           });
           throw err;
         }
-        const delay = Math.min(
-          MODEL_RETRY_POLICY.baseDelayMs * 2 ** attempt,
-          MODEL_RETRY_POLICY.maxDelayMs,
-        );
         console.warn(
           `[mastra] ${call.label} attempt ${attempt + 1} hit transient error; retrying in ${delay}ms`,
         );
@@ -162,9 +226,16 @@ async function withRetry<T>(
   });
 }
 
-/** Apply the same transient provider retry policy to any Mastra generation shape. */
-export async function withModelRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
-  return await withRetry({ label, agent: label }, fn);
+/**
+ * Apply the same transient provider retry policy, within one call budget, to
+ * any Mastra generation shape. The call is handed the signal that aborts it
+ * at the budget's end.
+ */
+export async function withModelRetry<T>(
+  label: string,
+  fn: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  return await withRetry({ label, agent: label }, fn, armDeadline());
 }
 
 export function makeAgent(name: string, instructions: string): Agent {
@@ -322,9 +393,11 @@ export function providerWarningTexts(warnings: unknown): string[] {
  * cannot tell a refusal from a coincidence.
  */
 export async function agentJsonWithMode<T>(args: AgentJsonArgs): Promise<AgentJsonResult<T>> {
+  // One budget for the whole call: both rungs of the ladder and every repair.
+  const deadline = armDeadline();
   const pinned = pinnedStructuredMode(args.mode);
   if (pinned) {
-    const generated = await generateObject<T>(args, pinned);
+    const generated = await generateObject<T>(args, pinned, deadline);
     return {
       value: generated.value,
       mode: pinned,
@@ -336,7 +409,7 @@ export async function agentJsonWithMode<T>(args: AgentJsonArgs): Promise<AgentJs
   const key = structuredModeKey(args.agent.name);
   const endpoint = providerEndpointLabel(env.OPENAI_BASE_URL);
   if (structuredModeMemo.begin(key) === 'prompt') {
-    const generated = await generateObject<T>(args, 'prompt');
+    const generated = await generateObject<T>(args, 'prompt', deadline);
     return {
       value: generated.value,
       mode: 'prompt',
@@ -347,7 +420,7 @@ export async function agentJsonWithMode<T>(args: AgentJsonArgs): Promise<AgentJs
 
   let native: GeneratedObject<T>;
   try {
-    native = await generateObject<T>(args, 'native');
+    native = await generateObject<T>(args, 'native', deadline);
   } catch (err) {
     const failure = classifyStructuredFailure(err);
     if (failure.verdict === 'unrelated') {
@@ -363,7 +436,7 @@ export async function agentJsonWithMode<T>(args: AgentJsonArgs): Promise<AgentJs
     }
     let generated: GeneratedObject<T>;
     try {
-      generated = await generateObject<T>(args, 'prompt', {
+      generated = await generateObject<T>(args, 'prompt', deadline, {
         fellBack: true,
         demotes: failure.provesRefusal,
       });
@@ -436,6 +509,7 @@ export async function agentJson<T>(args: AgentJsonArgs): Promise<T> {
 async function generateObject<T>(
   args: AgentJsonArgs,
   mode: StructuredMode,
+  deadline: ModelCallDeadline,
   fallback: Omit<StructuredCallFacts, 'mode'> = {},
 ): Promise<GeneratedObject<T>> {
   const startedAt = new Date().toISOString();
@@ -463,7 +537,8 @@ async function generateObject<T>(
             agent: args.agent.name,
             structured: { mode, ...fallback },
           },
-          () => generateObjectOnce<T>({ ...args, user }, mode),
+          (signal) => generateObjectOnce<T>({ ...args, user }, mode, signal),
+          deadline,
         );
         if (diagnostics.firstReplyValid === null) diagnostics.firstReplyValid = true;
         diagnostics.outcome = 'valid';
@@ -494,18 +569,11 @@ async function generateObject<T>(
 async function generateObjectOnce<T>(
   args: AgentJsonArgs,
   mode: StructuredMode,
+  signal: AbortSignal,
 ): Promise<GeneratedObject<T>> {
-  const signal = modelAbortSignal();
-  const startedAt = Date.now();
-  const timedOut = (): boolean => signal.aborted || Date.now() - startedAt >= MODEL_CALL_TIMEOUT_MS;
-  const timeoutError = (cause?: unknown): Error => {
-    const error = new Error(
-      `agentJson(${args.agent.name}): ${mode} model call reached the ${MODEL_CALL_TIMEOUT_MS}ms timeout`,
-      cause === undefined ? undefined : { cause },
-    );
-    error.name = 'TimeoutError';
-    return error;
-  };
+  const timedOut = (): boolean => signal.aborted;
+  const timeoutError = (cause?: unknown): Error =>
+    budgetSpent(`agentJson(${args.agent.name}): ${mode}`, cause);
   let response;
   try {
     response = await args.agent.generate(args.user, {
@@ -599,23 +667,27 @@ function asModerationRefusal(agentName: string, err: unknown): unknown {
 export async function agentText(
   args: { agent: Agent; user: string } & ModelCallSettings,
 ): Promise<string> {
-  return withRetry({ label: `agentText(${args.agent.name})`, agent: args.agent.name }, async () => {
-    let response;
-    try {
-      response = await args.agent.generate(args.user, {
-        abortSignal: modelAbortSignal(),
-        ...modelCallOptions(args),
-      });
-    } catch (err) {
-      throw asModerationRefusal(args.agent.name, err);
-    }
-    countModelUsage(response);
-    const text = replyText(response);
-    assertCompleteReply(
-      args.agent.name,
-      (response as { finishReason?: unknown }).finishReason,
-      text,
-    );
-    return text;
-  });
+  return withRetry(
+    { label: `agentText(${args.agent.name})`, agent: args.agent.name },
+    async (signal) => {
+      let response;
+      try {
+        response = await args.agent.generate(args.user, {
+          abortSignal: signal,
+          ...modelCallOptions(args),
+        });
+      } catch (err) {
+        throw asModerationRefusal(args.agent.name, err);
+      }
+      countModelUsage(response);
+      const text = replyText(response);
+      assertCompleteReply(
+        args.agent.name,
+        (response as { finishReason?: unknown }).finishReason,
+        text,
+      );
+      return text;
+    },
+    armDeadline(),
+  );
 }

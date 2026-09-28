@@ -33,11 +33,11 @@ The entry points a reader is most likely to want:
 | `work:approvePlan`, `work:approveActions`, `work:approveActionsBatch`, `work:rejectActions` | mutation | The manager's decisions on a plan and on held actions, one run at a time or as one batch across runs |
 | `work:retryFailed`, `work:cancelPlan`, `work:reconcileFailed` | mutation | Send a finished or failed run back with a note, cancel a plan with a reason, reconcile what a failed run left behind |
 | `skills:approve`, `skills:reject` | mutation | The manager's decision on a proposed skill |
-| `surfaces:approve` | mutation | One of the two approvals a connection card needs, by `role`: `manager` or `it` |
+| `surfaces:approve` | mutation | The manager's one approval a connection card needs before its probe runs, by `surfaceId` |
 | `agents:revokeScope`, `agents:setAutonomousActions` | mutation | Revoke a grant; turn the autonomy switch |
 | `metrics:forAgent` | query | The Supervision card's numbers, derived from the event ledger |
 | `metrics:forOwner` | query | Every employee's Supervision numbers and the company row: decisions and their waits pooled for the one manager, each employee's time to an approved charter quoted and never summed, evaluation agents and baseline arms left out |
-| `exportActions:exportForAgent` | action | The whole event trail and ledger as JSON, credential values removed |
+| `exportActions:exportForAgent`, `exportActions:exportPage` | action | The head of an agent's redacted trace and where its pages start, then one page at a time; `pnpm export:trace` calls both and writes the whole trace to one file |
 | `reset:deleteMyData` | mutation | Deletes the caller's agents and their rows in the enumerated tables |
 
 Names are `module:function`; confirm the current argument shape with `function-spec` rather than from this table, which is a guide to where to look.
@@ -91,7 +91,7 @@ absent                                        (no approved path in the documenta
 
 **Path.** The connection ladder is `SURFACE_PATHS` in `src/surfaces/types.ts`: `mcp`, `documented-api`, `browser-driven`, `escalate`. Orientation writes the chosen `path`, a `fallbackPath` and the `pathCandidates` it considered, each with the endpoint the documentation records; the probe records each attempt's outcome in `probeAttempts`.
 
-**Approvals and credential.** `managerApprovedAt` and `itApprovedAt` are the two approvals a card needs before its probe runs. The credential is a reference, `credentialId`, into the owner-level `credentials` table, with `credentialKind` (`value`, `location` or `oauth`) and `credentialLanded`; the row never holds a credential value.
+**Approvals and credential.** `managerApprovedAt` is the one approval a card needs before its probe runs (Q10); `itApprovedAt` is no longer written or read, and its declaration leaves in the release after 0.6.0. The credential is a reference, `credentialId`, into the owner-level `credentials` table, with `credentialKind` (`value`, `location` or `oauth`) and `credentialLanded`; the row never holds a credential value.
 
 **Tool catalogue.** `toolAllowlist` is the list of tools the probe discovered and admitted, and `toolArguments` the argument names it probed per tool. The policy refuses any action naming a tool outside the allowlist, and the executor is shown the probed argument names so a held write is repaired once against them before it is held.
 
@@ -170,7 +170,7 @@ An applied action is recorded as an `AppliedAction` (`src/surfaces/types.ts`):
 | `redaction` | `structural-only` when the redaction component was not available |
 | `repair` | the one argument-name repair made before the hold, if any |
 
-Rows live on the work item's `output.applied` and in the `work.completed` event, and `convex/metrics.ts` de-duplicates them by idempotency key to derive the Supervision card. A browser call replayed to sign in again is a row of its own, nested under the row that needed the page: it counts toward the audit trail and never as an automatic action. `pnpm metrics:recompute <export.zip>` recomputes `metrics:forOwner` from a Convex snapshot export (`npx convex export`) with the same functions, for one owner (`--owner`, the local no-auth subject by default), and with `--expect <file.json>` fails on any figure that differs from the file. `exportActions:exportForAgent` returns the agent, its events, its ledger and the names of the credentials it held, with owner addresses dropped, token shapes scrubbed and every credential value the owner stored removed before the JSON leaves the backend. The internal query it wraps, `events:exportForAgent`, is not callable from outside.
+Rows live on the work item's `output.applied` and in the `work.completed` event, and `convex/metrics.ts` de-duplicates them by idempotency key to derive the Supervision card. A browser call replayed to sign in again is a row of its own, nested under the row that needed the page: it counts toward the audit trail and never as an automatic action. `pnpm metrics:recompute <export.zip>` recomputes `metrics:forOwner` from a Convex snapshot export (`npx convex export`) with the same functions, for one owner (`--owner`, the local no-auth subject by default), and with `--expect <file.json>` fails on any figure that differs from the file. `exportActions:exportForAgent` returns the head of an agent's trace (its manifest, the agent, the owner's retired employees and the names of the credentials it held) and where its pages start; `exportActions:exportPage` returns one page at a time, and `pnpm export:trace` calls both and writes the whole trace to one file. Before any of it leaves the backend, the keys that name a person are dropped, token shapes are scrubbed, the personal data the export's policy row names is redacted, and every credential value the owner stored is removed. The internal queries they wrap, `events:exportHead` and `events:exportPage`, are not callable from outside.
 
 ## Permission grants
 

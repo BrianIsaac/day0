@@ -40,7 +40,9 @@ afterEach((): void => {
   resetStructuredModeMemo();
 });
 
-async function collect<T>(fn: () => Promise<T>): Promise<{ reports: ModelCallReport[]; result: T }> {
+async function collect<T>(
+  fn: () => Promise<T>,
+): Promise<{ reports: ModelCallReport[]; result: T }> {
   const reports: ModelCallReport[] = [];
   const result = await observeModelCalls((report: ModelCallReport): void => {
     reports.push(report);
@@ -61,7 +63,9 @@ describe('model-call telemetry from the retry wrapper', (): void => {
     });
     const agent = { name: 'day0-scope-judgement', generate } as unknown as Agent;
 
-    const { reports, result } = await collect(() => agentJson({ agent, user: SECRET_PROMPT, schema: {} }));
+    const { reports, result } = await collect(() =>
+      agentJson({ agent, user: SECRET_PROMPT, schema: {} }),
+    );
 
     expect(result).toEqual({ ok: true });
     expect(reports).toEqual([
@@ -145,7 +149,9 @@ describe('model-call telemetry from the retry wrapper', (): void => {
     );
     const agent = { name: 'day0-skill-runtime', generate } as unknown as Agent;
 
-    const pending = collect(() => agentJson({ agent, user: SECRET_PROMPT, schema: {} }).catch((err: unknown) => err));
+    const pending = collect(() =>
+      agentJson({ agent, user: SECRET_PROMPT, schema: {} }).catch((err: unknown) => err),
+    );
     await vi.advanceTimersByTimeAsync(MODEL_CALL_TIMEOUT_MS);
     const { reports, result } = await pending;
 
@@ -163,17 +169,22 @@ describe('model-call telemetry from the retry wrapper', (): void => {
     ]);
   });
 
-  it('distinguishes a retry followed by a 300-second timeout from one slow request', async (): Promise<void> => {
+  it('ends a retry followed by a slow request at the call budget, not a fresh one per attempt (U9 step 20)', async (): Promise<void> => {
     vi.useFakeTimers();
     const warning = vi.spyOn(console, 'warn').mockImplementation((): void => {});
     let calls = 0;
-    const pending = collect(() => withModelRetry('timeout-after-retry', async () => {
-      countProviderRequest();
-      if (calls++ === 0) throw { statusCode: 503, message: 'busy' };
-      await new Promise((_resolve, reject) => {
-        setTimeout(() => reject(Object.assign(new Error('request timed out'), { name: 'TimeoutError' })), MODEL_CALL_TIMEOUT_MS);
-      });
-    }).catch(() => undefined));
+    const pending = collect(() =>
+      withModelRetry('timeout-after-retry', async () => {
+        countProviderRequest();
+        if (calls++ === 0) throw { statusCode: 503, message: 'busy' };
+        await new Promise((_resolve, reject) => {
+          setTimeout(
+            () => reject(Object.assign(new Error('request timed out'), { name: 'TimeoutError' })),
+            MODEL_CALL_TIMEOUT_MS,
+          );
+        });
+      }).catch(() => undefined),
+    );
     await vi.advanceTimersByTimeAsync(2_000);
     await vi.advanceTimersByTimeAsync(MODEL_CALL_TIMEOUT_MS);
     const { reports } = await pending;
@@ -181,10 +192,40 @@ describe('model-call telemetry from the retry wrapper', (): void => {
       attempts: 2,
       retries: 1,
       providerCalls: 2,
-      durationMs: MODEL_CALL_TIMEOUT_MS + 2_000,
+      // The second attempt had what the first and its backoff left, not a fresh budget.
+      durationMs: MODEL_CALL_TIMEOUT_MS,
       outcome: 'timed-out',
     });
     expect(warning).toHaveBeenCalledTimes(1);
+  });
+
+  it('never lets a call outlive its budget, however many slow attempts it makes (P7-18)', async (): Promise<void> => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'warn').mockImplementation((): void => {});
+    // Each attempt is refused as busy after 100 s, so five of them and their
+    // backoffs would take more than eight minutes, and the SDK's own retries
+    // inside each would take longer still.
+    const generate = vi.fn(
+      (): Promise<{ object: unknown }> =>
+        new Promise((_resolve, reject) => {
+          setTimeout(() => reject({ statusCode: 503, message: 'busy' }), 100_000);
+        }),
+    );
+    const agent = { name: 'day0-skill-runtime', generate } as unknown as Agent;
+    const pending = collect(() =>
+      agentJson({ agent, user: SECRET_PROMPT, schema: {} }).catch((err: unknown) => err),
+    );
+    await vi.advanceTimersByTimeAsync(MODEL_CALL_TIMEOUT_MS);
+    const { reports, result } = await pending;
+    expect((result as Error).name).toBe('TimeoutError');
+    expect(generate).toHaveBeenCalledTimes(3);
+    expect(reports).toEqual([
+      expect.objectContaining({
+        attempts: 3,
+        durationMs: MODEL_CALL_TIMEOUT_MS,
+        outcome: 'timed-out',
+      }),
+    ]);
   });
 
   it('reports a text call too, and nothing when no observer is installed', async (): Promise<void> => {
@@ -198,7 +239,7 @@ describe('model-call telemetry from the retry wrapper', (): void => {
     await expect(agentText({ agent, user: 'unobserved' })).resolves.toBe('done');
   });
 
-  it('keeps concurrent steps\' reports apart', async (): Promise<void> => {
+  it("keeps concurrent steps' reports apart", async (): Promise<void> => {
     const generate = vi.fn().mockResolvedValue({ text: 'done' });
     const agent = { name: 'day0-good-habits', generate } as unknown as Agent;
     const seen: Record<string, number> = { a: 0, b: 0 };
@@ -242,7 +283,7 @@ describe('model-call telemetry from the retry wrapper', (): void => {
     expect(reports[0]).toMatchObject({ attempts: 1, retries: 0, providerCalls: 3 });
   });
 
-  it('counts each attempt\'s provider requests into the one report', async (): Promise<void> => {
+  it("counts each attempt's provider requests into the one report", async (): Promise<void> => {
     vi.useFakeTimers();
     const generate = vi
       .fn()
@@ -268,25 +309,37 @@ describe('model-call telemetry from the retry wrapper', (): void => {
   it('keeps provider request counts separate for overlapping calls', async (): Promise<void> => {
     let releaseFirst = (): void => {};
     let releaseSecond = (): void => {};
-    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
-    const secondGate = new Promise<void>((resolve) => { releaseSecond = resolve; });
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const secondGate = new Promise<void>((resolve) => {
+      releaseSecond = resolve;
+    });
     let firstStarted = (): void => {};
     let secondStarted = (): void => {};
-    const firstReady = new Promise<void>((resolve) => { firstStarted = resolve; });
-    const secondReady = new Promise<void>((resolve) => { secondStarted = resolve; });
-    const first = collect(() => withModelRetry('first', async () => {
-      countProviderRequest();
-      firstStarted();
-      await firstGate;
-      countProviderRequest();
-    }));
-    const second = collect(() => withModelRetry('second', async () => {
-      countProviderRequest();
-      secondStarted();
-      await secondGate;
-      countProviderRequest();
-      countProviderRequest();
-    }));
+    const firstReady = new Promise<void>((resolve) => {
+      firstStarted = resolve;
+    });
+    const secondReady = new Promise<void>((resolve) => {
+      secondStarted = resolve;
+    });
+    const first = collect(() =>
+      withModelRetry('first', async () => {
+        countProviderRequest();
+        firstStarted();
+        await firstGate;
+        countProviderRequest();
+      }),
+    );
+    const second = collect(() =>
+      withModelRetry('second', async () => {
+        countProviderRequest();
+        secondStarted();
+        await secondGate;
+        countProviderRequest();
+        countProviderRequest();
+      }),
+    );
     await Promise.all([firstReady, secondReady]);
     releaseSecond();
     releaseFirst();
@@ -297,13 +350,18 @@ describe('model-call telemetry from the retry wrapper', (): void => {
 
   it('does not leak a provider error body or prompt secret to reports or warning logs', async (): Promise<void> => {
     const warning = vi.spyOn(console, 'warn').mockImplementation((): void => {});
-    const providerError = Object.assign(new Error(`provider rejected ${secretToken}; ${SECRET_PROMPT}`), {
-      name: `Injected${secretToken}`,
-      statusCode: 400,
-    });
-    const { reports } = await collect(() => withModelRetry('privacy-check', async () => {
-      throw providerError;
-    }).catch(() => undefined));
+    const providerError = Object.assign(
+      new Error(`provider rejected ${secretToken}; ${SECRET_PROMPT}`),
+      {
+        name: `Injected${secretToken}`,
+        statusCode: 400,
+      },
+    );
+    const { reports } = await collect(() =>
+      withModelRetry('privacy-check', async () => {
+        throw providerError;
+      }).catch(() => undefined),
+    );
     expect(JSON.stringify(reports)).not.toContain(secretToken);
     expect(reports[0]?.errorName).toBe('Error');
 
@@ -311,36 +369,56 @@ describe('model-call telemetry from the retry wrapper', (): void => {
       statusCode: 503,
     });
     let called = 0;
-    await collect(() => withModelRetry('privacy-retry', async () => {
-      if (called++ === 0) throw retryError;
-      return 'ok';
-    }));
-    const warnings = warning.mock.calls.flat().map((value) =>
-      value instanceof Error ? `${value.name}: ${value.message}` : String(value),
-    ).join('\n');
+    await collect(() =>
+      withModelRetry('privacy-retry', async () => {
+        if (called++ === 0) throw retryError;
+        return 'ok';
+      }),
+    );
+    const warnings = warning.mock.calls
+      .flat()
+      .map((value) => (value instanceof Error ? `${value.name}: ${value.message}` : String(value)))
+      .join('\n');
     expect(warnings).not.toContain(secretToken);
     expect(warnings).not.toContain(SECRET_PROMPT);
   });
 
   it('counts requests across separately evaluated copies of the telemetry module', async (): Promise<void> => {
-    const pending = collect(() => withModelRetry('cross-module', async () => {
-      vi.resetModules();
-      const fresh = await import('../../../src/lib/model-call-telemetry');
-      fresh.countProviderRequest();
-    }));
+    const pending = collect(() =>
+      withModelRetry('cross-module', async () => {
+        vi.resetModules();
+        const fresh = await import('../../../src/lib/model-call-telemetry');
+        fresh.countProviderRequest();
+      }),
+    );
     const { reports } = await pending;
     expect(reports[0]?.providerCalls).toBe(1);
   });
 
   it('does not carry an observer into a later call after its scope finishes', async (): Promise<void> => {
     const seen: ModelCallReport[] = [];
-    await observeModelCalls((report) => { seen.push(report); }, async () => {
-      vi.resetModules();
-      const fresh = await import('../../../src/lib/model-call-telemetry');
-      await fresh.reportModelCall({ agent: 'inside', attempts: 1, startedAt: Date.now(), providerCalls: 0 });
-    });
+    await observeModelCalls(
+      (report) => {
+        seen.push(report);
+      },
+      async () => {
+        vi.resetModules();
+        const fresh = await import('../../../src/lib/model-call-telemetry');
+        await fresh.reportModelCall({
+          agent: 'inside',
+          attempts: 1,
+          startedAt: Date.now(),
+          providerCalls: 0,
+        });
+      },
+    );
     const fresh = await import('../../../src/lib/model-call-telemetry');
-    await fresh.reportModelCall({ agent: 'outside', attempts: 1, startedAt: Date.now(), providerCalls: 0 });
+    await fresh.reportModelCall({
+      agent: 'outside',
+      attempts: 1,
+      startedAt: Date.now(),
+      providerCalls: 0,
+    });
     expect(seen.map((report) => report.agent)).toEqual(['inside']);
   });
 
@@ -349,14 +427,22 @@ describe('model-call telemetry from the retry wrapper', (): void => {
     const globals = globalThis as { [key: symbol]: unknown };
     const original = globals[key];
     try {
-      await observeModelCalls(() => {}, async () => {
-        globals[key] = new AsyncLocalStorage();
-        vi.resetModules();
-        const fresh = await import('../../../src/lib/model-call-telemetry');
-        await expect(fresh.reportModelCall({ agent: 'lost-observer', attempts: 1, startedAt: Date.now(), providerCalls: 0 })).rejects.toThrow(
-          'model-call observer missing',
-        );
-      });
+      await observeModelCalls(
+        () => {},
+        async () => {
+          globals[key] = new AsyncLocalStorage();
+          vi.resetModules();
+          const fresh = await import('../../../src/lib/model-call-telemetry');
+          await expect(
+            fresh.reportModelCall({
+              agent: 'lost-observer',
+              attempts: 1,
+              startedAt: Date.now(),
+              providerCalls: 0,
+            }),
+          ).rejects.toThrow('model-call observer missing');
+        },
+      );
     } finally {
       globals[key] = original;
       vi.resetModules();
@@ -365,9 +451,14 @@ describe('model-call telemetry from the retry wrapper', (): void => {
 
   it('does not print a failing observer error body', async (): Promise<void> => {
     const warning = vi.spyOn(console, 'log').mockImplementation((): void => {});
-    await expect(observeModelCalls(async () => {
-      throw new Error(`ledger rejected ${secretToken}`);
-    }, () => withModelRetry('observer-failure', async () => 'ok'))).resolves.toBe('ok');
+    await expect(
+      observeModelCalls(
+        async () => {
+          throw new Error(`ledger rejected ${secretToken}`);
+        },
+        () => withModelRetry('observer-failure', async () => 'ok'),
+      ),
+    ).resolves.toBe('ok');
     const output = warning.mock.calls.flat().map(String).join('\n');
     expect(output).not.toContain(secretToken);
     expect(output).toContain('observer failed');
@@ -375,12 +466,16 @@ describe('model-call telemetry from the retry wrapper', (): void => {
 
   it('does not log a provider response body from structured output fallback', async (): Promise<void> => {
     const output = vi.spyOn(console, 'log').mockImplementation((): void => {});
-    const providerError = Object.assign(new Error(`provider response: ${secretToken}`), { statusCode: 401 });
+    const providerError = Object.assign(new Error(`provider response: ${secretToken}`), {
+      statusCode: 401,
+    });
     const agent = {
       name: 'day0-plan',
       generate: vi.fn().mockRejectedValue(providerError),
     } as unknown as Agent;
-    await collect(() => agentJson({ agent, user: SECRET_PROMPT, schema: {} }).catch(() => undefined));
+    await collect(() =>
+      agentJson({ agent, user: SECRET_PROMPT, schema: {} }).catch(() => undefined),
+    );
     expect(output.mock.calls.flat().join('\n')).not.toContain(secretToken);
     expect(output.mock.calls.flat().join('\n')).not.toContain(SECRET_PROMPT);
   });

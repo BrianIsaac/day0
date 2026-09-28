@@ -35,7 +35,10 @@ const ROOT = fileURLToPath(new URL('../../', import.meta.url));
  */
 
 const SLUG = 'looker-pipeline-tile';
-const RUNBOOK = readFileSync(join(ROOT, 'bed/company/folder/revops/runbooks/how-to-refresh-the-tile.md'), 'utf8');
+const RUNBOOK = readFileSync(
+  join(ROOT, 'bed/company/folder/revops/runbooks/how-to-refresh-the-tile.md'),
+  'utf8',
+);
 
 const recorded = vi.hoisted(() => ({
   driver: undefined as undefined | import('../fixtures/browser-phase-split-2026-09-16').TileDriver,
@@ -49,7 +52,12 @@ const tile = (tool: string, toolArgs: Record<string, unknown>): MockAction => ({
 /** The sequence every one of the four items emitted, from the `#revops-asks` ask's row. */
 const TILE_SEQUENCE: MockAction[] = [
   tile('browser_navigate', { url: 'http://looker-tile:8080/' }),
-  tile('browser_fill_form', { fields: [{ name: 'Username', value: 'revops' }, { name: 'Password', value: '{{secret}}' }] }),
+  tile('browser_fill_form', {
+    fields: [
+      { name: 'Username', value: 'revops' },
+      { name: 'Password', value: '{{secret}}' },
+    ],
+  }),
   tile('browser_click', { element: 'Sign in' }),
   tile('browser_fill_form', { fields: [{ name: 'Pipeline coverage', value: '74%' }] }),
   tile('browser_click', { element: 'Save' }),
@@ -60,7 +68,11 @@ vi.mock('../../src/lib/mastra', () => ({
   MODEL_CONFIG: 'openai/mock',
   MODEL_PROVIDER_MAX_RETRIES: 2,
   makeAgent: (name: string): { name: string } => ({ name }),
-  agentJson: async <T>(args: { agent: { name: string }; user: string; schema: { parse(value: unknown): unknown } }): Promise<T> => {
+  agentJson: async <T>(args: {
+    agent: { name: string };
+    user: string;
+    schema: { parse(value: unknown): unknown };
+  }): Promise<T> => {
     if (args.agent.name.endsWith('-dependent')) {
       return args.schema.parse({
         draft: 'The tile was read back in the same session.',
@@ -69,12 +81,25 @@ vi.mock('../../src/lib/mastra', () => ({
         actions: [],
         procedureTrails: [],
         planStepOutcomes: [
-          { step: 1, status: 'satisfied', basis: 'ledger', evidence: 'ledger rows 0 to 4: the documented sequence ran on the tile', charterClause: null },
-          { step: 2, status: 'satisfied', basis: 'ledger', evidence: 'ledger row 5: the snapshot with the visible figure', charterClause: null },
+          {
+            step: 1,
+            status: 'satisfied',
+            basis: 'ledger',
+            evidence: 'ledger rows 0 to 4: the documented sequence ran on the tile',
+            charterClause: null,
+          },
+          {
+            step: 2,
+            status: 'satisfied',
+            basis: 'ledger',
+            evidence: 'ledger row 5: the snapshot with the visible figure',
+            charterClause: null,
+          },
         ],
       }) as T;
     }
-    if (!args.agent.name.endsWith('-initial')) throw new Error(`unscripted agent ${args.agent.name}`);
+    if (!args.agent.name.endsWith('-initial'))
+      throw new Error(`unscripted agent ${args.agent.name}`);
     recorded.prompts.set(args.agent.name, args.user);
     return args.schema.parse({
       draft: 'Signing in to the tile, entering 74%, saving and reading it back.',
@@ -91,7 +116,8 @@ vi.mock('../../src/lib/mastra', () => ({
 
 vi.mock('../../src/surfaces/credentials', () => ({
   decryptCredentialRef: { name: 'credentials:decrypt' },
-  decryptCredential: async (_ctx: unknown, credentialId: string): Promise<string> => `plain-${credentialId}`,
+  decryptCredential: async (_ctx: unknown, credentialId: string): Promise<string> =>
+    `plain-${credentialId}`,
 }));
 
 vi.mock('../../src/surfaces/mcp', async (importOriginal) => {
@@ -110,7 +136,10 @@ const OWNER = { subject: 'owner' };
 
 const planWith = (tileStep: 'write' | 'conditional-write'): ExecutionPlan => ({
   summary: 'Work the Looker pipeline tile per the runbook and read it back.',
-  steps: ['Run the documented sequence on looker-pipeline-tile in one browser session.', 'Read back the snapshot and quote the figure and the audit line.'],
+  steps: [
+    'Run the documented sequence on looker-pipeline-tile in one browser session.',
+    'Read back the snapshot and quote the figure and the audit line.',
+  ],
   expectedOutputType: 'message',
   riskNotes: '',
   reversibility: 'Re-enter the previous figure.',
@@ -126,24 +155,46 @@ const planWith = (tileStep: 'write' | 'conditional-write'): ExecutionPlan => ({
   },
 });
 
-interface Seeded { agentId: Id<'agents'>; revops27: Id<'workItems'>; ask: Id<'workItems'>; revops28: Id<'workItems'> }
+interface Seeded {
+  agentId: Id<'agents'>;
+  revops27: Id<'workItems'>;
+  ask: Id<'workItems'>;
+  revops28: Id<'workItems'>;
+}
 
 async function seed(harness: Harness): Promise<Seeded> {
   return await harness.run(async (ctx) => {
     const agentId = await ctx.db.insert('agents', {
-      bossEmail: 'boss@day0.local', name: 'Priya', userId: 'owner', state: 'active', autonomousActions: true, createdAt: 1,
+      bossEmail: 'boss@day0.local',
+      name: 'Priya',
+      userId: 'owner',
+      state: 'active',
+      autonomousActions: true,
+      createdAt: 1,
     });
     await ctx.db.insert('charters', {
-      agentId, version: 'v1', approved: true, approvedAt: 1, createdAt: 1,
+      agentId,
+      version: 'v1',
+      approved: true,
+      approvedAt: 1,
+      createdAt: 1,
       body: {
         proposedFunction: 'Own routine revenue operations work for the RevOps team.',
-        proposedBoundaries: { willDo: ['Keep the Looker pipeline tile at the approved figure.'], willNotDo: [], escalationTriggers: [] },
+        proposedBoundaries: {
+          willDo: ['Keep the Looker pipeline tile at the approved figure.'],
+          willNotDo: [],
+          escalationTriggers: [],
+        },
         approvalChain: { boss: 'boss@day0.local' },
       },
     });
     await ctx.db.insert('mockDocs', {
-      agentId, slug: 'revops-runbooks-how-to-refresh-the-tile-md', title: 'How to refresh the Looker pipeline tile',
-      category: 'how-to-guide', body: RUNBOOK, updatedAt: 1,
+      agentId,
+      slug: 'revops-runbooks-how-to-refresh-the-tile-md',
+      title: 'How to refresh the Looker pipeline tile',
+      category: 'how-to-guide',
+      body: RUNBOOK,
+      updatedAt: 1,
     } as never);
     // The three shaped skills the run registered for these items.
     for (const [surfaceClass, operation, targetSurface] of [
@@ -152,49 +203,110 @@ async function seed(harness: Harness): Promise<Seeded> {
       ['kanban', 'comment-and-close', 'linear'],
     ] as const) {
       await ctx.db.insert('skills', {
-        agentId, name: `${surfaceClass}-${operation}`, surfaceClass, operation,
+        agentId,
+        name: `${surfaceClass}-${operation}`,
+        surfaceClass,
+        operation,
         description: 'Do the work the item names on its connected surfaces.',
         body: `# ${surfaceClass}-${operation}\nOn ${SLUG}: browser_navigate, browser_fill_form the login with {{secret}}, browser_click Sign in, browser_fill_form Pipeline coverage, browser_click Save, browser_snapshot.`,
-        requiredScopes: ['boss:message', `${SLUG}:read`, `${SLUG}:write`], targetSurface,
-        sourceType: 'agent-authored', state: 'registered', createdAt: 1, registeredAt: 1,
+        requiredScopes: ['boss:message', `${SLUG}:read`, `${SLUG}:write`],
+        targetSurface,
+        sourceType: 'agent-authored',
+        state: 'registered',
+        createdAt: 1,
+        registeredAt: 1,
       } as never);
     }
-    for (const scope of ['boss:message', 'slack:read', 'slack:write', 'linear:read', 'linear:write', 'docs:read', `${SLUG}:read`, `${SLUG}:write`]) {
+    for (const scope of [
+      'boss:message',
+      'slack:read',
+      'slack:write',
+      'linear:read',
+      'linear:write',
+      'docs:read',
+      `${SLUG}:read`,
+      `${SLUG}:write`,
+    ]) {
       await ctx.db.insert('permissionGrants', { agentId, scope, createdAt: 1 });
     }
     await ctx.db.insert('surfaces', {
-      agentId, slug: SLUG, displayName: 'Looker pipeline tile', class: 'analytics', verdict: 'connected',
-      endpoint: 'http://looker-tile:8080/', path: 'browser-driven',
-      toolAllowlist: ['browser_navigate', 'browser_snapshot', 'browser_click', 'browser_type', 'browser_fill_form'],
+      agentId,
+      slug: SLUG,
+      displayName: 'Looker pipeline tile',
+      class: 'analytics',
+      verdict: 'connected',
+      endpoint: 'http://looker-tile:8080/',
+      path: 'browser-driven',
+      toolAllowlist: [
+        'browser_navigate',
+        'browser_snapshot',
+        'browser_click',
+        'browser_type',
+        'browser_fill_form',
+      ],
       toolArguments: [
         { arguments: ['url'], tool: 'browser_navigate' },
         { arguments: ['boxes', 'depth', 'filename', 'target'], tool: 'browser_snapshot' },
-        { arguments: ['button', 'doubleClick', 'element', 'modifiers', 'target'], tool: 'browser_click' },
+        {
+          arguments: ['button', 'doubleClick', 'element', 'modifiers', 'target'],
+          tool: 'browser_click',
+        },
         { arguments: ['element', 'slowly', 'submit', 'target', 'text'], tool: 'browser_type' },
         { arguments: ['fields'], tool: 'browser_fill_form' },
       ],
-      credentialId: 'cred-looker', credentialKind: 'value', credentialLanded: true, lastVerifiedAt: Date.now(), whereFound: [], createdAt: 1,
-      discoveryEvidence: [{ kind: 'documentation', ref: 'systems/looker-pipeline-tile.md', quote: 'The Looker pipeline tile holds the single pipeline coverage figure', current: true, firstSeenAt: 1, lastSeenAt: 1 }],
+      credentialId: 'cred-looker',
+      credentialKind: 'value',
+      credentialLanded: true,
+      lastVerifiedAt: Date.now(),
+      whereFound: [],
+      createdAt: 1,
+      discoveryEvidence: [
+        {
+          kind: 'documentation',
+          ref: 'systems/looker-pipeline-tile.md',
+          quote: 'The Looker pipeline tile holds the single pipeline coverage figure',
+          current: true,
+          firstSeenAt: 1,
+          lastSeenAt: 1,
+        },
+      ],
     } as never);
     const item = async (fields: Record<string, unknown>): Promise<Id<'workItems'>> =>
       await ctx.db.insert('workItems', {
-        agentId, contentRefs: [], state: 'plan-approved', observedAt: 1, createdAt: 1,
+        agentId,
+        contentRefs: [],
+        state: 'plan-approved',
+        observedAt: 1,
+        createdAt: 1,
         verdict: { decision: 'claim', value: 60, risk: 30, requiredPermissions: ['boss:message'] },
         ...fields,
       } as never);
     const revops27 = await item({
-      sourceCategory: 'ticket-queue', sourceSystem: 'linear', externalId: 'REVOPS-27', title: 'Refresh the Looker pipeline tile',
-      contentSummary: 'Update the pipeline coverage figure on the Looker pipeline tile to the figure in the Friday standup coverage summary.',
+      sourceCategory: 'ticket-queue',
+      sourceSystem: 'linear',
+      externalId: 'REVOPS-27',
+      title: 'Refresh the Looker pipeline tile',
+      contentSummary:
+        'Update the pipeline coverage figure on the Looker pipeline tile to the figure in the Friday standup coverage summary.',
       plan: planWith('write'),
     });
     const ask = await item({
-      sourceCategory: 'event-stream', sourceSystem: 'slack', externalId: 'C0BSF04TZ19:1789761481.815889', title: 'Slack mention in #revops-asks',
-      contentSummary: '<@U0BTFK6FLNL> can you confirm pipeline coverage for the three Friday standup deals before the Q3 close summary goes out?',
-      replyTarget: { channel: 'C0BSF04TZ19', threadTs: '1789761481.815889' }, plan: planWith('write'),
+      sourceCategory: 'event-stream',
+      sourceSystem: 'slack',
+      externalId: 'C0BSF04TZ19:1789761481.815889',
+      title: 'Slack mention in #revops-asks',
+      contentSummary:
+        '<@U0BTFK6FLNL> can you confirm pipeline coverage for the three Friday standup deals before the Q3 close summary goes out?',
+      replyTarget: { channel: 'C0BSF04TZ19', threadTs: '1789761481.815889' },
+      plan: planWith('write'),
     });
     const revops28 = await item({
-      sourceCategory: 'ticket-queue', sourceSystem: 'linear', externalId: 'REVOPS-28', title: 'Add the Q3 close-summary audit note',
-      contentSummary: 'Summarise the Q3 close checks as a comment on this ticket, then move it to Done after manager approval.',
+      sourceCategory: 'ticket-queue',
+      sourceSystem: 'linear',
+      externalId: 'REVOPS-28',
+      title: 'Add the Q3 close-summary audit note',
+      contentSummary:
+        'Summarise the Q3 close checks as a comment on this ticket, then move it to Done after manager approval.',
       plan: planWith('conditional-write'),
     });
     return { agentId, revops27, ask, revops28 };
@@ -206,10 +318,17 @@ async function readItem(harness: Harness, workItemId: Id<'workItems'>): Promise<
   if (!row) throw new Error('work item missing');
   return row;
 }
-const ledger = (row: Doc<'workItems'>): AppliedAction[] => ((row.output ?? {}) as { applied?: AppliedAction[] }).applied ?? [];
-const saves = (): number => recorded.driver!.calls.filter((call) => call.tool === 'browser_click' && call.args.element === 'Save').length;
+const ledger = (row: Doc<'workItems'>): AppliedAction[] =>
+  ((row.output ?? {}) as { applied?: AppliedAction[] }).applied ?? [];
+const saves = (): number =>
+  recorded.driver!.calls.filter(
+    (call) => call.tool === 'browser_click' && call.args.element === 'Save',
+  ).length;
 const fieldFills = (): number =>
-  recorded.driver!.calls.filter((call) => call.tool === 'browser_fill_form' && JSON.stringify(call.args).includes('Pipeline coverage')).length;
+  recorded.driver!.calls.filter(
+    (call) =>
+      call.tool === 'browser_fill_form' && JSON.stringify(call.args).includes('Pipeline coverage'),
+  ).length;
 const promptOf = (externalId: string): string =>
   [...recorded.prompts.entries()].find(([name]) => name.includes(externalId))?.[1] ?? '';
 
@@ -256,7 +375,9 @@ describe('one work item writes a documented page field (finding M, 19 September 
     for (const index of [3, 4]) {
       expect(askRows[index]).toMatchObject({ ok: true, held: true });
       expect(askRows[index]!.authority).toBeUndefined();
-      expect(askRows[index]!.reason).toContain(`withheld for another work item's claim: the page field "pipeline coverage" on ${SLUG} is held by this employee's work item "Refresh the Looker pipeline tile"`);
+      expect(askRows[index]!.reason).toContain(
+        `withheld for another work item's claim: the page field "pipeline coverage" on ${SLUG} is held by this employee's work item "Refresh the Looker pipeline tile"`,
+      );
     }
     // It still read the tile, in its own signed-in session.
     expect(askRows[5]).toMatchObject({ ok: true });
@@ -268,8 +389,12 @@ describe('one work item writes a documented page field (finding M, 19 September 
     expect(holderRows.every((row) => row.ok && !row.held)).toBe(true);
 
     // The ask was told before it authored; the holder was told nothing about its own field.
-    expect(promptOf('c0bsf04tz19')).toContain(`${SLUG} · page field "Pipeline coverage" · this employee · "Refresh the Looker pipeline tile"`);
-    expect(promptOf('c0bsf04tz19')).toContain('A page field listed here is filled and saved by its holder alone');
+    expect(promptOf('c0bsf04tz19')).toContain(
+      `${SLUG} · page field "Pipeline coverage" · this employee · "Refresh the Looker pipeline tile"`,
+    );
+    expect(promptOf('c0bsf04tz19')).toContain(
+      'A page field listed here is filled and saved by its holder alone',
+    );
     expect(promptOf('revops-27')).not.toContain('page field');
   }, 30_000);
 
@@ -297,7 +422,8 @@ describe('one work item writes a documented page field (finding M, 19 September 
     const fields = claims.filter((claim) => claim.writeTarget !== undefined);
     expect(fields).toHaveLength(1);
     expect(fields[0]).toMatchObject({
-      key: 'http://looker-tile:8080|pipeline coverage', workItemId: revops27,
+      key: 'http://looker-tile:8080|pipeline coverage',
+      workItemId: revops27,
       writeTarget: { surface: SLUG, field: 'Pipeline coverage' },
     });
     expect(fields[0]!.settledAt).toBeTypeOf('number');
@@ -317,9 +443,19 @@ describe('one work item writes a documented page field (finding M, 19 September 
     const later = await t.run(async (ctx) => {
       const old = await ctx.db.get(revops27);
       return await ctx.db.insert('workItems', {
-        agentId, sourceCategory: 'ticket-queue', sourceSystem: 'linear', externalId: 'REVOPS-41', title: 'Refresh the Looker pipeline tile',
-        contentSummary: 'Update the pipeline coverage figure on the Looker pipeline tile to the corrected standup figure.', contentRefs: [], state: 'plan-approved',
-        plan: old!.plan, verdict: old!.verdict, observedAt: Date.now(), createdAt: Date.now(),
+        agentId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'REVOPS-41',
+        title: 'Refresh the Looker pipeline tile',
+        contentSummary:
+          'Update the pipeline coverage figure on the Looker pipeline tile to the corrected standup figure.',
+        contentRefs: [],
+        state: 'plan-approved',
+        plan: old!.plan,
+        verdict: old!.verdict,
+        observedAt: Date.now(),
+        createdAt: Date.now(),
       } as never);
     });
     await author(t, later);
@@ -333,7 +469,9 @@ describe('one work item writes a documented page field (finding M, 19 September 
     expect(saves()).toBe(2);
 
     const claims = await t.run(async (ctx) => await ctx.db.query('externalClaims').collect());
-    const live = claims.filter((claim) => claim.writeTarget !== undefined && claim.releasedAt === undefined);
+    const live = claims.filter(
+      (claim) => claim.writeTarget !== undefined && claim.releasedAt === undefined,
+    );
     expect(live.map((claim) => claim.workItemId)).toEqual([later]);
   }, 30_000);
 
@@ -342,32 +480,66 @@ describe('one work item writes a documented page field (finding M, 19 September 
     const { revops27 } = await seed(t);
     const colleagueItem = await t.run(async (ctx) => {
       const holder = await ctx.db.get(revops27);
-      const surface = await ctx.db.query('surfaces').withIndex('by_agent_slug', (q) => q.eq('agentId', holder!.agentId).eq('slug', SLUG)).first();
+      const surface = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent_slug', (q) => q.eq('agentId', holder!.agentId).eq('slug', SLUG))
+        .first();
       const card: Record<string, unknown> = { ...surface! };
       delete card._id;
       delete card._creationTime;
-      const agentId = await ctx.db.insert('agents', { bossEmail: 'boss@day0.local', name: 'Mateo', userId: 'owner', state: 'active', createdAt: 1 });
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'Mateo',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
       await ctx.db.insert('surfaces', { ...card, agentId, slug: 'looker' } as never);
       const item: Record<string, unknown> = { ...holder! };
       delete item._id;
       delete item._creationTime;
-      return await ctx.db.insert('workItems', { ...item, agentId, externalId: 'FIN-9', title: 'Quote pipeline coverage in the close pack' } as never);
+      return await ctx.db.insert('workItems', {
+        ...item,
+        agentId,
+        externalId: 'FIN-9',
+        title: 'Quote pipeline coverage in the close pack',
+      } as never);
     });
 
-    expect(await t.mutation(internal.work.takeWriteTargetClaims, {
-      workItemId: revops27, targets: [{ surfaceSlug: SLUG, field: 'Pipeline coverage' }],
-    })).toEqual(['http://looker-tile:8080|pipeline coverage']);
+    expect(
+      await t.mutation(internal.work.takeWriteTargetClaims, {
+        workItemId: revops27,
+        targets: [{ surfaceSlug: SLUG, field: 'Pipeline coverage' }],
+      }),
+    ).toEqual(['http://looker-tile:8080|pipeline coverage']);
     // The colleague asks for the same field through its own card and is given nothing.
-    expect(await t.mutation(internal.work.takeWriteTargetClaims, {
-      workItemId: colleagueItem, targets: [{ surfaceSlug: 'looker', field: 'pipeline coverage' }],
-    })).toEqual([]);
-    expect(await t.query(internal.work.writeClaimHolder, {
-      workItemId: colleagueItem, surfaceSlug: 'looker', targets: ['pipeline coverage'],
-    })).toMatchObject({ holderName: 'Priya', sameEmployee: false, title: 'Refresh the Looker pipeline tile' });
+    expect(
+      await t.mutation(internal.work.takeWriteTargetClaims, {
+        workItemId: colleagueItem,
+        targets: [{ surfaceSlug: 'looker', field: 'pipeline coverage' }],
+      }),
+    ).toEqual([]);
+    expect(
+      await t.query(internal.work.writeClaimHolder, {
+        workItemId: colleagueItem,
+        surfaceSlug: 'looker',
+        targets: ['pipeline coverage'],
+      }),
+    ).toMatchObject({
+      holderName: 'Priya',
+      sameEmployee: false,
+      title: 'Refresh the Looker pipeline tile',
+    });
     // The claim is taken as execution begins, and that is when the colleague's prompt lists it.
     await t.run(async (ctx) => await ctx.db.patch(revops27, { state: 'executing' }));
     expect(await t.query(internal.work.itemsHeldElsewhere, { workItemId: colleagueItem })).toEqual([
-      expect.objectContaining({ externalId: 'Pipeline coverage', sourceSystem: SLUG, holderName: 'Priya', sameEmployee: false, pageField: true }),
+      expect.objectContaining({
+        externalId: 'Pipeline coverage',
+        sourceSystem: SLUG,
+        holderName: 'Priya',
+        sameEmployee: false,
+        pageField: true,
+      }),
     ]);
   });
 
@@ -376,9 +548,12 @@ describe('one work item writes a documented page field (finding M, 19 September 
     useSurfaceMode('mock');
     const t = convexTest(contractSchema(), allConvexModules());
     const { revops27 } = await seed(t);
-    expect(await t.mutation(internal.work.takeWriteTargetClaims, {
-      workItemId: revops27, targets: [{ surfaceSlug: SLUG, field: 'Pipeline coverage' }],
-    })).toEqual([]);
+    expect(
+      await t.mutation(internal.work.takeWriteTargetClaims, {
+        workItemId: revops27,
+        targets: [{ surfaceSlug: SLUG, field: 'Pipeline coverage' }],
+      }),
+    ).toEqual([]);
     expect(await t.run(async (ctx) => await ctx.db.query('externalClaims').collect())).toEqual([]);
   });
 });

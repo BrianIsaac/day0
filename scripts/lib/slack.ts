@@ -2,7 +2,11 @@
  * Day0's own Slack Web API calls, for the scripts that set up and put back a
  * workspace (the company bed and its rehearsal): verify the bot token, read a
  * conversation, and delete the bot's own messages, each with one transient retry.
+ * A failure is classed by the product's own transport helper, so a script and
+ * a sync read the same answer the same way.
  */
+
+import { retryAfterMs, transportFailureKind } from '../../src/lib/transport-error';
 
 const API = 'https://slack.com/api/';
 export const SLACK_TIMEOUT_MS = 30_000;
@@ -50,14 +54,14 @@ function seconds(ms: number): number {
   return Math.ceil(ms / 1_000);
 }
 
-function retryAfterMs(header: string | null, now: number): number | undefined {
-  const value = header?.trim();
-  if (!value) return undefined;
-  if (/^\d+$/.test(value)) return Number(value) * 1_000;
-  const at = Date.parse(value);
-  return Number.isNaN(at) ? undefined : Math.max(0, at - now);
-}
-
+/**
+ * The failure a rejected fetch or body read stands for.
+ *
+ * Our own timeout is a timeout; a caller's abort is the caller's and is
+ * thrown as it came; a connection nobody answered or one cut off mid-answer
+ * is a transient, as `transportFailureKind` reads the error chain. Anything
+ * else, a refused certificate among them, is not Slack's and is thrown as it came.
+ */
 function transportFailure(error: unknown): unknown {
   if (error instanceof Error && error.name === 'TimeoutError') {
     return new SlackRequestError(
@@ -66,7 +70,15 @@ function transportFailure(error: unknown): unknown {
       true,
     );
   }
-  return error;
+  if (error instanceof Error && error.name === 'AbortError') return error;
+  const kind = transportFailureKind(error);
+  if (kind === undefined) return error;
+  const cause = error instanceof Error && error.cause instanceof Error ? error.cause.message : '';
+  return new SlackRequestError(
+    `Slack could not be reached${cause ? ` (${cause})` : ''}.`,
+    kind === 'refused' ? 'a network failure' : 'a dropped connection',
+    true,
+  );
 }
 
 export async function retrySlackOnce<T>(

@@ -107,6 +107,18 @@ describe('docker-compose.yml redactor', (): void => {
     expect(envValue(volumes, 'TMPDIR')).toBe(envValue(redactor, 'TMPDIR'));
   });
 
+  it("is taken down with its root step, whose exited container would otherwise hold the redactor's volumes", (): void => {
+    const scripts = (
+      JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
+        scripts: Record<string, string>;
+      }
+    ).scripts;
+    expect(scripts['redactor:down']!.split(/\s+/).slice(-2)).toEqual([
+      'redactor',
+      'redactor-volumes',
+    ]);
+  });
+
   it('passes a Hugging Face and a PyPI mirror through when the operator sets one', (): void => {
     // An empty value in the container would break both clients, so unset falls back.
     expect(redactor.environment).toEqual(

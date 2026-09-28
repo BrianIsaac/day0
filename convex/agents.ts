@@ -12,7 +12,12 @@ import { internal } from './_generated/api';
 import { assertOwnsAgent, getCaller, getCallerOrThrow } from './ownership';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 import { AUTONOMY_CHANGE_REASON, autonomousActionsOn } from '../src/work/autonomy';
-import { OPEN_WORK_STATES, PARKED_WORK_STATES, queuedAtCap, wakeQueuedWork } from './workLoop';
+import {
+  holdsLiveStepClaim,
+  OPEN_WORK_STATES,
+  PARKED_WORK_STATES,
+  wakeQueuedWork,
+} from './workLoop';
 import { holdsLiveAuthoringClaim } from '../src/lib/skill-authoring';
 import {
   providerReconciliationEntries,
@@ -27,6 +32,7 @@ import {
   type ManagerNotificationMode,
 } from '../src/work/manager-notes';
 import { agentZone, canonicalZone, deploymentZone } from '../src/lib/zone';
+import { appendEvent } from './eventLog';
 
 export const PERMISSION_GRANT_SOURCES = ['deploy', 'manager', 'skill', 'surface'] as const;
 export type PermissionGrantSource = (typeof PERMISSION_GRANT_SOURCES)[number];
@@ -285,7 +291,10 @@ function stoppedRowNeedsManager(row: Doc<'workItems'>): boolean {
  * part of the three waiting on the manager.
  *
  * Open rows hold a work-in-progress slot. Parked rows hold none: deferred,
- * waiting on a skill, or queued at the cap. Stopped rows are failed ones
+ * waiting on a skill, or waiting in `discovered` for a free slot, whether a
+ * verdict queued them at the cap or none has been reached yet (U3 D5); a
+ * row whose evaluation is running holds the slot it runs in and is not
+ * parked. Stopped rows are failed ones
  * whose card still offers the manager a move. Reads the state index once per
  * counted state, so completed, skipped and cancelled work, however much of
  * it there is, is never read.
@@ -330,7 +339,9 @@ async function workCounts(
   const now = Date.now();
   return {
     openCount: openRows.length,
-    parkedCount: parkedRows.length + discovered.filter(queuedAtCap).length,
+    parkedCount:
+      parkedRows.length +
+      discovered.filter((row) => !holdsLiveStepClaim(row, 'evaluation', now)).length,
     stoppedCount: stoppedRows.length,
     needsYou:
       openRows.filter((row) => NEEDS_MANAGER_STATES.has(row.state)).length +
@@ -467,7 +478,7 @@ export const deploy = mutation({
       mode: SURFACE_MODE,
       createdAt: Date.now(),
     });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId,
       type: 'agent.deployed',
       payload: { bossEmail: args.bossEmail, arm: args.arm ?? 'day0', zone, mode: SURFACE_MODE },
@@ -492,7 +503,7 @@ export const deploy = mutation({
         source: 'deploy',
         createdAt,
       });
-      await ctx.db.insert('events', {
+      await appendEvent(ctx, {
         agentId,
         type: 'permission.granted',
         payload: { scope, source: 'deploy' },
@@ -510,7 +521,7 @@ const MAX_EMAIL_LENGTH = 254;
 /** One `@`, a dotted domain and no spaces: enough to refuse a typo, not a validator. */
 const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-/** The verdicts a surface keeps while its approvals and credential stand. */
+/** The verdicts a surface keeps while its approval and credential stand. */
 const MANAGER_REPROBE_VERDICTS: ReadonlyArray<Doc<'surfaces'>['verdict']> = [
   'connected',
   'ungranted',
@@ -529,7 +540,6 @@ function reprobedForManagerChange(surface: Doc<'surfaces'>): boolean {
     surface.class === 'chat' &&
     surface.credentialId !== undefined &&
     surface.managerApprovedAt !== undefined &&
-    surface.itApprovedAt !== undefined &&
     MANAGER_REPROBE_VERDICTS.includes(surface.verdict) &&
     (surface.verdict === 'connected' || isManagerLookupFailure(surface.reason))
   );
@@ -565,7 +575,7 @@ export const setBossEmail = mutation({
     }
     const now = Date.now();
     await ctx.db.patch(agent._id, { bossEmail });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: agent._id,
       type: 'manager.changed',
       payload: { via: 'dashboard', bossEmail },
@@ -623,7 +633,7 @@ export const revokeScope = mutation({
     const revokedAt = Date.now();
     for (const grant of active) await ctx.db.patch(grant._id, { revokedAt });
     const reason = args.reason?.replace(/\s+/g, ' ').trim().slice(0, 200);
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: args.agentId,
       type: 'permission.revoked',
       payload: {
@@ -756,7 +766,7 @@ export async function grantScopeInTransaction(
   if (existing) return { added: false };
   const createdAt = Date.now();
   await ctx.db.insert('permissionGrants', { agentId, scope, source, createdAt });
-  await ctx.db.insert('events', {
+  await appendEvent(ctx, {
     agentId,
     type: 'permission.granted',
     payload: { scope, source },
@@ -789,7 +799,7 @@ export const setManagerNotifications = mutation({
     const from = managerNotificationMode(agent);
     if (from === args.mode) return { ok: true, managerNotifications: from, changed: false };
     await ctx.db.patch(args.agentId, { managerNotifications: args.mode });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: args.agentId,
       type: 'agent.notifications-changed',
       payload: { from, to: args.mode, reason: NOTIFICATIONS_CHANGE_REASON },
@@ -823,7 +833,7 @@ export const setZone = mutation({
     const from = agentZone(agent);
     if (agent.zone === zone) return { zone, changed: false };
     await ctx.db.patch(args.agentId, { zone });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: args.agentId,
       type: 'agent.zone-changed',
       payload: { from, to: zone },
@@ -854,7 +864,7 @@ export const setAutonomousActions = mutation({
     const from = autonomousActionsOn(agent);
     if (from === args.on) return { ok: true, autonomousActions: from, changed: false };
     await ctx.db.patch(args.agentId, { autonomousActions: args.on });
-    await ctx.db.insert('events', {
+    await appendEvent(ctx, {
       agentId: args.agentId,
       type: 'agent.autonomy-changed',
       payload: { from, to: args.on, reason: AUTONOMY_CHANGE_REASON },

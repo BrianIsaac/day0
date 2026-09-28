@@ -7,14 +7,7 @@ import {
   notionPageTemplate,
   type NotionPageName,
 } from '../../fixtures/notion-pages';
-import {
-  credentialMarker,
-  credentialPageRef,
-  credentialRefRange,
-  credentialSourceRef,
-  redactCredentials,
-  textWindows,
-} from '../../../src/docs/redaction';
+import { credentialMarker, redactCredentials, textWindows } from '../../../src/docs/redaction';
 import {
   RedactorUnavailableError,
   type ModelSpan,
@@ -153,6 +146,20 @@ describe('documentation credential redaction', (): void => {
     ]);
   });
 
+  it('marks a value its author quoted, and takes a quoted phrase as an assigned value (pre-tag D2 (a))', async (): Promise<void> => {
+    const phrase = await redactCredentials('# Warehouse\n\nPassword: “Open Sesame”', 'Warehouse', {
+      model: new ScriptedSpanModel(() => []),
+    });
+    expect(phrase.credentials).toEqual([
+      {
+        label: 'warehouse password',
+        plaintext: 'Open Sesame',
+        explicitlyAssigned: true,
+        quoted: true,
+      },
+    ]);
+  });
+
   it('leaves prose, names, counts, dates, placeholders and locations alone', async (): Promise<void> => {
     const body = [
       'Notion tokens start with ntn_ and the ntn_prefix convention is documented.',
@@ -213,33 +220,6 @@ describe('documentation credential redaction', (): void => {
         (await redactCredentials(notionPageTemplate(name), name, options)).credentials.length,
       );
     expect(counts).toEqual([0, 0, 0, 0, 1]);
-  });
-
-  it('builds stable source refs for one and for several credentials on a page', (): void => {
-    const first = { label: 'linear service token', plaintext: 'a' };
-    const second = { label: 'linear service token', plaintext: 'b' };
-    expect(credentialSourceRef('page', first, 1)).toBe('page');
-    expect(credentialSourceRef('page', first, 2, 0)).toBe(
-      'page#credential=1-linear%20service%20token',
-    );
-    expect(credentialSourceRef('page', second, 2, 1)).toBe(
-      'page#credential=2-linear%20service%20token',
-    );
-  });
-
-  it('reads the page back from every source ref a page can give, and bounds them for an index range', (): void => {
-    const value = { label: 'linear service token', plaintext: 'a' };
-    const { from, to } = credentialRefRange('guides/page.md#intro');
-    for (const [total, index] of [
-      [1, 0],
-      [2, 0],
-      [3, 2],
-    ] as const) {
-      const ref = credentialSourceRef('guides/page.md#intro', value, total, index);
-      expect(credentialPageRef(ref)).toBe('guides/page.md#intro');
-      expect(ref >= from && ref <= to).toBe(true);
-    }
-    expect(credentialPageRef('guides/page.md.bak')).toBe('guides/page.md.bak');
   });
 });
 

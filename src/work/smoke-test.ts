@@ -41,7 +41,10 @@ export function unwrapMarkdownFence(source: string): { source: string; unwrapped
 
 const MAX_QUOTED_LINE = 160;
 
-function quotedLine(source: string, offset: number): { line: number; column: number; text: string } {
+function quotedLine(
+  source: string,
+  offset: number,
+): { line: number; column: number; text: string } {
   const before = source.slice(0, offset);
   const lineStart = before.lastIndexOf('\n') + 1;
   const lineEnd = source.indexOf('\n', offset);
@@ -66,7 +69,10 @@ function quotedLine(source: string, offset: number): { line: number; column: num
  *   The reason, or undefined when the source parses and carries the
  *   landmarks its mode needs.
  */
-export function smokeTestPreflightReason(source: string, mode: SurfaceMode = 'mock'): string | undefined {
+export function smokeTestPreflightReason(
+  source: string,
+  mode: SurfaceMode = 'mock',
+): string | undefined {
   const tree = pythonParser.parse(source);
   const cursor = tree.cursor();
   do {

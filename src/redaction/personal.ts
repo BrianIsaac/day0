@@ -1,0 +1,139 @@
+/**
+ * The personal data a grammar can find without the model: an e-mail
+ * address, a phone number written with its country code or after a phone
+ * label, a date after a birth label, and an address after an address label.
+ *
+ * Each form is unmistakable or labelled, never a guess: a bare number or a
+ * bare date is left alone, because tickets and ledgers are full of both
+ * (amounts, timestamps, ids, due dates). What a context does with each kind
+ * is the policy's (`ENTITY_POLICY`); this module only finds them. The model
+ * finds the rest where a context runs it.
+ */
+import type { EntityKind } from './policy';
+
+/** The kinds this grammar finds. */
+export type PersonalKind = Extract<EntityKind, 'email' | 'phone' | 'date-of-birth' | 'address'>;
+
+/** One span of personal data in a text. */
+export interface PersonalSpan {
+  readonly start: number;
+  readonly end: number;
+  readonly kind: PersonalKind;
+}
+
+/** An e-mail address in any script (`张三@example.com`, `jane@bücher.de`), not glued to a longer token on either side. */
+const EMAIL =
+  /(?<![\p{L}\p{N}._%+-])[\p{L}\p{N}._%+-]+@[\p{L}\p{N}](?:[\p{L}\p{N}-]*[\p{L}\p{N}])?(?:\.[\p{L}\p{N}](?:[\p{L}\p{N}-]*[\p{L}\p{N}])?)*\.\p{L}{2,}(?![\p{L}\p{N}-])/gu;
+
+/**
+ * Markdown emphasis a label may sit in (`**Phone:**`, `*DOB:*`), on either
+ * side of the label and again after its colon.
+ */
+const EMPHASIS = '[*_]{0,3}';
+
+/** The colon after a label, in either width, or the full stop after an abbreviation (`Tel.`). */
+const LABEL_END = `${EMPHASIS}\\s*[:：.]?${EMPHASIS}\\s*`;
+
+/** A number written with its country code: `+65 9123 4567`, `+1 (415) 555-0100`. */
+const INTERNATIONAL_PHONE = /(?<![\w+])\+\d{1,3}(?:[ .-]?\(?\d{1,4}\)?){2,6}(?![\w])/g;
+
+/** A signed calendar date (`+2026-09-28`), which only looks like a country code. */
+const SIGNED_DATE = /^\+\d{4}-\d{1,2}-\d{1,2}$/;
+
+/**
+ * What marks a signed number as a figure rather than a phone: a currency code
+ * or a percent sign after it (`+1.234.567 EUR`, `+12 345 678 SGD`). A signed
+ * number with nothing beside it stays a phone, since a missed phone leaves
+ * the export and a redacted figure does not.
+ */
+const FIGURE_AFTER =
+  /^\s*(?:%|(?:AED|AUD|BRL|CAD|CHF|CNY|DKK|EUR|GBP|HKD|IDR|INR|JPY|KRW|MXN|MYR|NOK|NZD|PHP|RMB|SEK|SGD|THB|TWD|USD|VND|ZAR)\b)/;
+
+/**
+ * A value that opens with an endpoint, an e-mail, an IP address, a host name
+ * or `localhost`, which an address label may name (`Address:
+ * https://mcp.linear.app/mcp (prod)`, `Address: api.linear.app`).
+ */
+const NETWORK_ADDRESS =
+  /^(?:[a-z][a-z0-9+.-]*:\/\/\S*|[^\s@]+@[^\s@]+|\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?|\[[0-9a-f:]+\](?::\d+)?|localhost(?::\d+)?|[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*\.[a-z]{2,}(?::\d+)?(?:\/\S*)?)(?:\s|$)/i;
+
+/** A number after a phone label, in either language: `Tel: 6123 4567`, `**Phone:** 9123 4567`, `手机号：13800138000`. */
+const LABELLED_PHONE = new RegExp(
+  `(?:\\b(?:phone|tel|telephone|mobile|cell|whatsapp)(?:\\s*(?:no\\.?|number))?|(?:电话|手机|联系电话)(?:号码|号)?)${LABEL_END}(\\+?\\(?\\d[\\d ().-]{5,}\\d)`,
+  'gi',
+);
+
+/** A calendar date after a phone label is a date someone wrote on the wrong line, not a number to call. */
+const CALENDAR_DATE = /^\d{4}[-/.]\d{1,2}[-/.]\d{1,2}$/;
+
+/** The shortest and longest digit counts a phone number carries (E.164 caps it at 15). */
+const PHONE_DIGITS = { min: 7, max: 15 } as const;
+
+const MONTH =
+  '(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)';
+
+/** A calendar date in the shapes people write one (`1990-03-12`, `1990/03/12`, `12/03/1990`, `12-Mar-1990`, `12 March 1990`, `March 12, 1990`, `1990年3月12日`). */
+const DATE = `(?:\\d{4}[-/.]\\d{1,2}[-/.]\\d{1,2}|\\d{1,2}[/.-]\\d{1,2}[/.-]\\d{2,4}|\\d{1,2}[-. ]${MONTH}\\.?[-. ]\\d{4}|${MONTH}\\.?\\s+\\d{1,2},?\\s+\\d{4}|\\d{4}年\\d{1,2}月\\d{1,2}日)`;
+
+/** A date after a birth label: `Date of birth: 12 March 1990`, `**DOB:** 12/03/1990`, `D.O.B.: 12/03/1990`, `出生年月日：1990年3月12日`. */
+const LABELLED_BIRTH_DATE = new RegExp(
+  `(?:\\b(?:date of birth|birth ?date|d\\.?o\\.?b\\.?|born(?: on)?|birthday)|出生年月日|出生日期|生日)${LABEL_END}(${DATE})`,
+  'gi',
+);
+
+/**
+ * The rest of the line after an address label: a qualified one anywhere
+ * (`home address: ...`), a bare `Address:` only where it opens a line, a list
+ * item or a field after a separator (`Name: Jane Tan, Address: 1 Raffles
+ * Place`), so an e-mail, IP or endpoint address named mid-sentence (`The IP
+ * address: ...`) is never taken for one; a line that names one after a bare
+ * label is left to the e-mail rule or to nothing (`NETWORK_ADDRESS`).
+ */
+const LABELLED_ADDRESS = new RegExp(
+  `(?:\\b(?:home|postal|mailing|residential|street|billing|delivery|shipping) address|(?:^|\\n|[,;|][ \\t]*)[ \\t]*(?:[-*][ \\t]+)?${EMPHASIS}address|地址|住址)${EMPHASIS}[ \\t]*[:：]${EMPHASIS}[ \\t]*([^\\n]*[^\\s])`,
+  'gim',
+);
+
+/** The span of a regex's first group within its match. */
+function groupSpan(match: RegExpMatchArray): { start: number; end: number } {
+  const group = match[1]!;
+  const start = match.index! + match[0].lastIndexOf(group);
+  return { start, end: start + group.length };
+}
+
+/** Whether a candidate phone carries as many digits as a phone number does. */
+function phoneLength(value: string): boolean {
+  const digits = value.replace(/\D/g, '').length;
+  return digits >= PHONE_DIGITS.min && digits <= PHONE_DIGITS.max;
+}
+
+/**
+ * Every span of personal data the grammar finds, in text order, unmerged.
+ *
+ * @param text - Untrusted text.
+ */
+export function personalDataSpans(text: string): PersonalSpan[] {
+  const spans: PersonalSpan[] = [];
+  for (const match of text.matchAll(EMAIL)) {
+    spans.push({ start: match.index, end: match.index + match[0].length, kind: 'email' });
+  }
+  for (const match of text.matchAll(INTERNATIONAL_PHONE)) {
+    const end = match.index + match[0].length;
+    const figure = SIGNED_DATE.test(match[0]) || FIGURE_AFTER.test(text.slice(end, end + 8));
+    if (phoneLength(match[0]) && !figure) {
+      spans.push({ start: match.index, end: match.index + match[0].length, kind: 'phone' });
+    }
+  }
+  for (const match of text.matchAll(LABELLED_PHONE)) {
+    if (phoneLength(match[1]!) && !CALENDAR_DATE.test(match[1]!)) {
+      spans.push({ ...groupSpan(match), kind: 'phone' });
+    }
+  }
+  for (const match of text.matchAll(LABELLED_BIRTH_DATE)) {
+    spans.push({ ...groupSpan(match), kind: 'date-of-birth' });
+  }
+  for (const match of text.matchAll(LABELLED_ADDRESS)) {
+    if (!NETWORK_ADDRESS.test(match[1]!)) spans.push({ ...groupSpan(match), kind: 'address' });
+  }
+  return spans.sort((left, right) => left.start - right.start);
+}

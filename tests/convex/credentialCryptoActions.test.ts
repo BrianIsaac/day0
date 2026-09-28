@@ -19,6 +19,7 @@ import { ScriptedSpanModel } from '../fixtures/redaction-double';
 import {
   CREDENTIAL_KEY_CHANGED_MESSAGE,
   credentialOwnerBinding,
+  credentialValueFingerprint,
   encrypt,
 } from '../../src/lib/credential-crypto';
 import {
@@ -148,6 +149,49 @@ describe('the owner known-value source', (): void => {
     ).resolves.toEqual([]);
   });
 
+  it('carries a quoted phrase a page assigned into the exact layer, and leaves the same phrase unquoted out (pre-tag D2 (a))', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const pageRow = async (label: string, plaintext: string, quoted: boolean): Promise<void> => {
+      await harness.run(async (ctx) => {
+        const sourceId = await ctx.db.insert('docSources', {
+          userId: 'owner',
+          label: 'Handbook',
+          kind: 'folder',
+          locator: '.',
+          status: 'synced',
+          createdAt: 1,
+          updatedAt: 1,
+        });
+        await ctx.db.insert('credentials', {
+          userId: 'owner',
+          kind: 'value',
+          label,
+          explicitlyAssigned: true,
+          ...(quoted ? { quoted: true } : {}),
+          source: { sourceId, ref: `${label}.md` },
+          createdAt: 1,
+          ...encrypt(plaintext, KEY),
+        });
+      });
+    };
+    await pageRow('warehouse password', 'Open Sesame', true);
+    await pageRow('ops note', 'Close The Quarter', false);
+
+    const values = await harness.action(internal.credentialCryptoActions.ownerValues, {
+      userId: 'owner',
+    });
+
+    expect(values).toEqual(['Open Sesame']);
+    expect(
+      cryptoActions.storedCredentialGuardReason({
+        ...encrypt('Open Sesame', KEY),
+        label: 'warehouse password',
+        explicitlyAssigned: true,
+        quoted: true,
+      }),
+    ).toBeUndefined();
+  });
+
   it('fails closed with a named reason above the cap, before decrypting anything', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     await harness.run(async (ctx) => {
@@ -178,7 +222,9 @@ describe('the owner known-value source', (): void => {
 
 describe('the public API surface and decryption', (): void => {
   it('has no public query in a module that can reach a decrypted value', (): void => {
-    const modules = readdirSync(join(ROOT, 'convex')).filter((name: string): boolean => name.endsWith('.ts'));
+    const modules = readdirSync(join(ROOT, 'convex')).filter((name: string): boolean =>
+      name.endsWith('.ts'),
+    );
     const reaches =
       /credential-crypto|credentialCryptoActions|ownerKnownValues|ownerValuesRef|credentials\.decrypt|DAY0_CREDENTIAL_KEY|ciphertext/;
     // Each exported definition is one chunk; a public query's chunk is its handler.
@@ -530,9 +576,13 @@ describe('associated data on the owner-bound paths', (): void => {
     await expect(
       harness.action(internal.credentialCryptoActions.open, { ...sealed, userId: 'neighbour' }),
     ).rejects.toThrow(CREDENTIAL_KEY_CHANGED_MESSAGE);
-    await expect(harness.action(internal.credentialCryptoActions.open, sealed)).rejects.toThrow(
-      CREDENTIAL_KEY_CHANGED_MESSAGE,
-    );
+    await expect(
+      harness.action(internal.credentialCryptoActions.open, {
+        ...sealed,
+        userId: 'owner',
+        keyId: '0000000000000000',
+      }),
+    ).rejects.toThrow(CREDENTIAL_KEY_CHANGED_MESSAGE);
   });
 
   it('opens an owner-bound row for exact removal and skips ciphertext copied from another owner', async (): Promise<void> => {
@@ -568,16 +618,16 @@ describe('associated data on the owner-bound paths', (): void => {
     expect(JSON.stringify(lines)).not.toContain('neighbour-bound-value');
   });
 
-  it('logs how many rows the key could not open instead of shrinking exact removal silently', async (): Promise<void> => {
+  it('logs each row the key could not open, by id, instead of shrinking exact removal silently', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     await insertRow(harness, { userId: 'owner', label: 'Current', plaintext: 'current-value' });
-    await insertRow(harness, {
+    const rotatedOne = await insertRow(harness, {
       userId: 'owner',
       label: 'Rotated one',
       plaintext: 'rotated-one',
       key: OTHER_KEY,
     });
-    await insertRow(harness, {
+    const rotatedTwo = await insertRow(harness, {
       userId: 'owner',
       label: 'Rotated two',
       plaintext: 'rotated-two',
@@ -596,10 +646,22 @@ describe('associated data on the owner-bound paths', (): void => {
       expect.objectContaining({
         level: 'warn',
         skipped: 2,
+        credentialIds: [rotatedOne, rotatedTwo],
         reason: CREDENTIAL_KEY_CHANGED_MESSAGE,
       }),
     );
     expect(JSON.stringify(lines)).not.toMatch(/rotated-one|rotated-two/);
+  });
+
+  it('gives the one "the credential key changed" message as the guard reason for a row the key cannot open (U14 carried item 1)', (): void => {
+    const sealed = encrypt('chat:write', OTHER_KEY, credentialOwnerBinding('owner'));
+    expect(
+      cryptoActions.storedCredentialGuardReason({
+        ...sealed,
+        userId: 'owner',
+        label: 'slack credential',
+      }),
+    ).toBe(CREDENTIAL_KEY_CHANGED_MESSAGE);
   });
 
   it('reads the guard reason of a row bound to its owner', (): void => {
@@ -611,5 +673,42 @@ describe('associated data on the owner-bound paths', (): void => {
         label: 'slack credential',
       }),
     ).toBe('permission scope');
+  });
+});
+
+describe('the value fingerprint action', (): void => {
+  it('fingerprints a value for its owner under the current key, the same each time and never the value itself', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const value = 'fingerprint-contract-0123456789abcdef';
+    const first = await harness.action(internal.credentialCryptoActions.fingerprint, {
+      plaintext: value,
+      userId: 'owner',
+    });
+    expect(first).toBe(credentialValueFingerprint(value, KEY, 'owner'));
+    expect(first).not.toContain(value);
+    await expect(
+      harness.action(internal.credentialCryptoActions.fingerprint, {
+        plaintext: value,
+        userId: 'owner',
+      }),
+    ).resolves.toBe(first);
+    await expect(
+      harness.action(internal.credentialCryptoActions.fingerprint, {
+        plaintext: value,
+        userId: 'another owner',
+      }),
+    ).resolves.not.toBe(first);
+  });
+
+  it('is internal, and refuses on a deployment with no key rather than keying a ref by nothing', async (): Promise<void> => {
+    expect(cryptoActions.fingerprint.isInternal).toBe(true);
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', '');
+    const harness = convexTest(schema, allConvexModules());
+    await expect(
+      harness.action(internal.credentialCryptoActions.fingerprint, {
+        plaintext: 'value',
+        userId: 'owner',
+      }),
+    ).rejects.toThrow('DAY0_CREDENTIAL_KEY is not configured.');
   });
 });
