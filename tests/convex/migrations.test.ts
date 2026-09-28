@@ -1029,21 +1029,44 @@ describe('the release stamp', (): void => {
 
     await runAll(harness);
     await expect(
-      harness.mutation(internal.migrations.recordRelease, { release: '0.3.0', commit: 'abc1234' }),
-    ).resolves.toEqual({ release: '0.3.0', previous: null });
+      harness.mutation(internal.migrations.recordRelease, { release: '0.6.0', commit: 'abc1234' }),
+    ).resolves.toEqual({ release: '0.6.0', previous: null });
     await expect(
-      harness.mutation(internal.migrations.recordRelease, { release: '0.3.0', commit: 'abc1234' }),
-    ).resolves.toEqual({ release: '0.3.0', previous: '0.3.0' });
+      harness.mutation(internal.migrations.recordRelease, { release: '0.6.0', commit: 'abc1234' }),
+    ).resolves.toEqual({ release: '0.6.0', previous: '0.6.0' });
     await expect(
-      harness.mutation(internal.migrations.recordRelease, { release: '0.4.0', commit: 'def5678' }),
-    ).resolves.toEqual({ release: '0.4.0', previous: '0.3.0' });
+      harness.mutation(internal.migrations.recordRelease, { release: '0.10.0', commit: 'def5678' }),
+    ).resolves.toEqual({ release: '0.10.0', previous: '0.6.0' });
 
     const status = await harness.query(internal.migrations.status, {});
     expect(status.pending).toEqual([]);
-    expect(status.release).toMatchObject({ release: '0.4.0', commit: 'def5678' });
+    expect(status.release).toMatchObject({ release: '0.10.0', commit: 'def5678' });
     expect(
       await harness.run(async (ctx) => (await ctx.db.query('deploymentVersions').collect()).length),
     ).toBe(2);
+  });
+});
+
+describe('the release a stamp may name', (): void => {
+  it('refuses a release older than the newest one a shipped migration names, and a malformed one', async (): Promise<void> => {
+    const harness = limitedHarness();
+    await runAll(harness);
+    const newest = Object.values(MIGRATIONS)
+      .map((migration) => migration.release)
+      .sort((a, b) => a.localeCompare(b, 'en', { numeric: true }))
+      .at(-1)!;
+    // A deployment set up from a tree whose package still says the release
+    // before its migrations would otherwise read as a release that lacks them.
+    for (const release of ['0.5.0', '0.3.0', 'v0.6.0', '0.6', 'latest']) {
+      await expect(
+        harness.mutation(internal.migrations.recordRelease, { release }),
+        release,
+      ).rejects.toThrow(newest);
+    }
+    expect(await harness.query(internal.migrations.status, {})).toMatchObject({ release: null });
+    await expect(
+      harness.mutation(internal.migrations.recordRelease, { release: newest }),
+    ).resolves.toMatchObject({ release: newest });
   });
 });
 
