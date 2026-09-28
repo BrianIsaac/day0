@@ -709,7 +709,11 @@ export const propose = internalMutation({
   },
 });
 
-/** Public, owner-guarded: approves a proposed skill and schedules its authoring. */
+/**
+ * Public, owner-guarded: approves a proposed skill whose target surface is
+ * connected, grants its required scopes and records the approval. Nothing is
+ * scheduled here; the dashboard starts the authoring once this returns.
+ */
 export const approve = mutation({
   args: { skillId: v.id('skills') },
   handler: async (ctx, args) => {

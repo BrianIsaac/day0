@@ -426,7 +426,12 @@ export const getInternal = internalQuery({
   },
 });
 
-/** Public: creates an employee for the caller with its deployment grants and workspace, in the caller's zone. */
+/**
+ * Public, signed in: creates an employee for the caller in the caller's zone
+ * with its deployment grants, records both, and schedules the mirror of the
+ * caller's already-synced documentation sources to it. The workspace is
+ * written later, when the charter is committed.
+ */
 export const deploy = mutation({
   args: {
     bossEmail: v.string(),
