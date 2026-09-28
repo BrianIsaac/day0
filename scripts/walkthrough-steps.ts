@@ -71,13 +71,28 @@ function fail(message: string): never {
   throw new WalkthroughSourceError(`README "One full run": ${message}`);
 }
 
-/** The lines under one README heading, up to the next heading of any level. */
-function section(readme: string, heading: string): string[] {
+/**
+ * The lines under one README heading, up to the next heading of any level, which must be `next`
+ * when one is named: a heading anywhere else would end the section early and drop what follows.
+ */
+function section(readme: string, heading: string, next?: string): string[] {
   const lines = readme.split('\n');
   const start = lines.indexOf(heading);
   if (start === -1) fail(`no "${heading}" heading`);
   const end = lines.findIndex((line, index) => index > start && /^#{1,6} /.test(line));
+  if (next !== undefined && lines[end] !== next) {
+    fail(`"${lines[end] ?? 'the end of the file'}" interrupts the steps before "${next}"`);
+  }
   return lines.slice(start + 1, end === -1 ? undefined : end);
+}
+
+/** Text the page shows as it stands (a title, a caption, alt text, a lead): markup is refused. */
+export function plainText(text: string): string {
+  const spans = parseInline(text);
+  if (spans.some((span) => span.code || span.strong)) {
+    fail(`markup where the page shows plain text: "${text}"`);
+  }
+  return text;
 }
 
 /** `3 September 2026` as `2026-09-03`. */
@@ -144,9 +159,7 @@ function parseSteps(lines: readonly string[], runOn: string): ParsedStep[] {
       const { body, elapsedSeconds } = splitElapsed(lead[3]!);
       steps.push({
         number,
-        title: parseInline(lead[2]!)
-          .map((span) => span.text)
-          .join(''),
+        title: plainText(lead[2]!),
         body: parseInline(body),
         elapsedSeconds,
       });
@@ -158,12 +171,12 @@ function parseSteps(lines: readonly string[], runOn: string): ParsedStep[] {
           `step ${current.number}'s capture "${image[2]}" is not ${CAPTURE_SOURCE}/${expected}*`,
         );
       }
-      steps[steps.length - 1] = { ...current, file, alt: image[1]! };
+      steps[steps.length - 1] = { ...current, file, alt: plainText(image[1]!) };
     } else if (caption && current?.file !== undefined && current.caption === undefined) {
       const dated = /^(.+?) Captured locally on (\d{1,2} [A-Z][a-z]+ \d{4})\.$/.exec(caption[1]!);
       if (!dated) fail(`step ${current.number}'s caption does not end with the day it was taken`);
       if (isoDay(dated[2]!) !== runOn) fail(`step ${current.number} was captured on another day`);
-      steps[steps.length - 1] = { ...current, caption: dated[1]! };
+      steps[steps.length - 1] = { ...current, caption: plainText(dated[1]!) };
     } else if (line.trim() !== '' && steps.length > 0) {
       fail(`unrecognised line after step ${steps.length}: "${line.trim()}"`);
     }
@@ -184,7 +197,10 @@ function parseDeviations(lines: readonly string[]): RunDeviation[] {
   return items.map((line) => {
     const item = /^- \*\*([^*]+)\*\*(?: (.+))?$/.exec(line);
     if (!item) fail(`unrecognised deviation "${line}"`);
-    return { lead: item[1]!, body: item[2] === undefined ? [] : parseInline(item[2]) };
+    return {
+      lead: plainText(item[1]!),
+      body: item[2] === undefined ? [] : parseInline(item[2]),
+    };
   });
 }
 
@@ -198,7 +214,7 @@ export function parseRecordedRun(
   readme: string,
   measure: (file: string) => CaptureSize,
 ): RecordedRun {
-  const run = section(readme, RUN_HEADING);
+  const run = section(readme, RUN_HEADING, DEVIATIONS_HEADING);
   const runOn = runDay(run);
   const firstStep = run.findIndex((line) => /^1\. /.test(line));
   const steps = parseSteps(firstStep === -1 ? [] : run.slice(firstStep), runOn);

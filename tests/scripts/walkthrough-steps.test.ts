@@ -203,6 +203,30 @@ describe('what the parser refuses rather than shows wrong', () => {
       '   > A quote the page would drop.\n\n   *The whole sign-in and save sequence',
       /unrecognised line after step 9/,
     ],
+    [
+      'a heading that would end the steps early',
+      '9. **A web-only system arrives',
+      '### An interruption\n\n9. **A web-only system arrives',
+      /"### An interruption" interrupts the steps/,
+    ],
+    [
+      'markup in a caption',
+      '*A plan waiting for a decision.',
+      '*A plan waiting for a `decision`.',
+      /markup where the page shows plain text/,
+    ],
+    [
+      'markup in a title',
+      '8. **Approve a plan before anything executes.**',
+      '8. **Approve a [plan](#x) before anything executes.**',
+      /unrecognised markup "\["/,
+    ],
+    [
+      'markup in alt text',
+      '![A held execution plan',
+      '![A held `execution` plan',
+      /markup where the page shows plain text/,
+    ],
   ])('refuses %s', (_, from, to, message) => {
     expect(() => parseRecordedRun(edited(from, to), measured)).toThrow(message);
     expect(() => parseRecordedRun(edited(from, to), measured)).toThrow(WalkthroughSourceError);
