@@ -887,7 +887,7 @@ describe('the access line and its renewal (Q5, U3 D5)', (): void => {
     );
     expect(ended).toContain('Access ended <time');
     expect(ended).toContain(
-      ' · restarted by the upgrade. Nothing is read or sent through this card until you renew it.',
+      ' · set by the upgrade. Nothing is read or sent through this card until you renew it.',
     );
     expect(ended).toMatch(/>Renew access<\/button>/);
   });

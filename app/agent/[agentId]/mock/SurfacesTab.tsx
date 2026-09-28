@@ -617,7 +617,7 @@ const ACCESS_VERDICTS: ReadonlySet<string> = new Set([
 const ACCESS_SET_BY_WORDS: Readonly<Record<NonNullable<Doc<'surfaces'>['accessSetBy']>, string>> = {
   approval: 'set when you approved the card',
   manager: 'set by you',
-  upgrade: 'restarted by the upgrade',
+  upgrade: 'set by the upgrade',
 };
 
 /** A surface as the access row reads it. */
