@@ -97,7 +97,7 @@ import {
   EVALUATION_ATTEMPTS_SPENT,
   MAX_EVALUATION_ATTEMPTS,
 } from '../../../src/work/queue-order';
-import { LiveStatus, refusalText, returnFocus, useChange, type ChangeOutcome } from './live-status';
+import { LiveStatus, returnFocus, useChange, type ChangeOutcome } from './live-status';
 import { agentZone, isTimeZone } from '../../../src/lib/zone';
 import { draftedWithoutLine, undeliveredDecisionReason } from '../../../src/work/manager-channel';
 import { managerFeedbackLabel, type ManagerFeedback } from '../../../src/work/manager-feedback';
@@ -772,13 +772,14 @@ export function ZoneLine({
   onChange,
 }: {
   zone: string;
-  onChange: (zone: string) => Promise<unknown>;
+  /** Store the zone; the server answers with the zone it stored, in its canonical spelling. */
+  onChange: (zone: string) => Promise<{ zone: string } | void>;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(zone);
-  const [busy, setBusy] = useState(false);
-  const [outcome, setOutcome] = useState<ChangeOutcome | null>(null);
   const toggle = useRef<HTMLButtonElement>(null);
+  const change = useChange(toggle);
+  const busy = change.busy;
   const zones = useMemo((): string[] => knownZones(), []);
   const valid = isTimeZone(draft.trim());
   const close = (): void => {
@@ -787,21 +788,13 @@ export function ZoneLine({
   };
   const save = (): void => {
     const next = draft.trim();
-    setBusy(true);
-    setOutcome(null);
-    // The chain ends in its own catch, which says the refusal in the live region.
-    void onChange(next)
-      .then(() => {
-        setOutcome({
-          tone: 'done',
-          text: `The employee's day is now ${next}; every time on this page is in it.`,
-        });
-        close();
-      })
-      .catch((err: unknown) =>
-        setOutcome({ tone: 'refused', text: refusalText(err, 'The zone was not changed.') }),
-      )
-      .finally(() => setBusy(false));
+    change.run(() => onChange(next), {
+      // The stored zone, not the typed one: the server settles the spelling (m10).
+      done: (stored) =>
+        `The employee's day is now ${stored?.zone ?? next}; every time on this page is in it.`,
+      refused: 'The zone was not changed.',
+      after: () => setEditing(false),
+    });
   };
   return (
     <div className="mt-1 text-xs text-[var(--color-muted)]">
@@ -817,7 +810,7 @@ export function ZoneLine({
           aria-controls="zone-editor"
           onClick={() => {
             setDraft(zone);
-            setOutcome(null);
+            change.clear();
             setEditing(!editing);
           }}
           className="min-h-11 px-2 rounded border border-[var(--color-border)] text-[var(--color-fg)] hover:border-[var(--color-accent)]"
@@ -881,7 +874,7 @@ export function ZoneLine({
           </p>
         </form>
       ) : null}
-      <LiveStatus outcome={outcome} />
+      <LiveStatus outcome={change.outcome} />
     </div>
   );
 }

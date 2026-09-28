@@ -49,6 +49,7 @@ import {
   AmendCharterPanel,
   AutonomyControl,
   CheckForNewWork,
+  ZoneLine,
   EventTicker,
   WorkQueue,
   NotificationModeControl,
@@ -3592,5 +3593,28 @@ describe('the manager DM setting waits for a manager channel (N7)', (): void => 
       <DashboardHeader agent={agent} charter={approved} managerChannel={true} />,
     );
     expect(withChannel).toContain('Manager DMs');
+  });
+});
+
+describe("the zone line's confirmation (wave 3.5 review m10)", (): void => {
+  it('says the zone the server stored, in its spelling, not the one typed, and gives focus back to Change zone', async (): Promise<void> => {
+    const view = mount(<ZoneLine zone="UTC" onChange={async () => ({ zone: 'Asia/Singapore' })} />);
+    await press(view.container, 'Change zone');
+    const field = view.container.querySelector<HTMLInputElement>('#agent-zone');
+    if (!field) throw new Error('no zone field');
+    typeInto(field, 'asia/singapore');
+    const save = [...view.container.querySelectorAll('button')].find(
+      (candidate) => candidate.textContent === 'Save',
+    );
+    save?.focus();
+    await act(async (): Promise<void> => {
+      save?.click();
+    });
+    await settle();
+    expect(said(view.container)).toEqual([
+      "The employee's day is now Asia/Singapore; every time on this page is in it.",
+    ]);
+    expect(focusedName()).toBe('Change zone');
+    view.unmount();
   });
 });
