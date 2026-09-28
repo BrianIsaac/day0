@@ -24,7 +24,6 @@ import {
 import { DEV_BOSS_EMAIL, DEV_BOSS_FIRST_NAME, DEV_NO_AUTH } from '@/lib/dev-auth';
 import { deploymentZone } from '@/lib/zone';
 import { CompanySupervision } from './CompanySupervision';
-import { CursorToggle } from './CursorToggle';
 import { PageMotion } from './PageMotion';
 import { errorMessage } from '@/lib/errors';
 
@@ -40,7 +39,6 @@ type RosterRow = FunctionReturnType<typeof api.agents.rosterForUser>[number];
 export default function LandingPage() {
   return (
     <main className="min-h-[calc(100vh-3.25rem)] flex flex-col">
-      <CursorToggle />
       {DEV_NO_AUTH ? (
         <SignedInDashboard boss={{ email: DEV_BOSS_EMAIL, firstName: DEV_BOSS_FIRST_NAME }} />
       ) : (

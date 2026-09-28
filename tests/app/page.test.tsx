@@ -167,10 +167,6 @@ vi.mock('next/navigation', () => ({
   useRouter: (): { push: () => void } => ({ push: (): void => undefined }),
 }));
 
-vi.mock('../../app/CursorToggle', () => ({
-  CursorToggle: (): null => null,
-}));
-
 import LandingPage from '../../app/page';
 
 describe('signed-out landing page', (): void => {

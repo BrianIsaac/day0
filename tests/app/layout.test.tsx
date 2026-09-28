@@ -6,7 +6,6 @@ vi.mock('../../app/Providers', () => ({
   Providers: ({ children }: { children: React.ReactNode }) => children,
 }));
 vi.mock('../../app/HeaderAccount', () => ({ HeaderAccount: () => null }));
-vi.mock('../../app/WhipCursor', () => ({ WhipCursor: () => null }));
 
 /** What the backend's `config.surfaceMode` query answers; undefined while it has not. */
 const backend = vi.hoisted((): { mode: 'mock' | 'real' | undefined } => ({ mode: undefined }));
