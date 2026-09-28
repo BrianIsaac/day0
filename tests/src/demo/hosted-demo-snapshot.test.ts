@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   HOSTED_DEMO_SNAPSHOT,
+  dayLabel,
   type HostedDemoSnapshot,
   recordingProvenanceLine,
 } from '../../../src/demo/hosted-demo-snapshot';
@@ -72,6 +73,11 @@ describe('the committed hosted-demo snapshot', (): void => {
     expect(recordingProvenanceLine(HOSTED_DEMO_SNAPSHOT.recording)).toBe(
       'Exported from the hosted deployment on 12 September 2026 (build 3ed8779, live since 13 August 2026); the run it shows took place before that and is told in offsets. The product has moved on since.',
     );
+  });
+
+  it('prints a day in British English, whatever zone the machine is in', (): void => {
+    expect(dayLabel('2026-09-03')).toBe('3 September 2026');
+    expect(dayLabel('2026-12-31')).toBe('31 December 2026');
   });
 
   it('tells the recording in offsets, never on a wall clock', (): void => {

@@ -35,7 +35,7 @@ export interface RecordingMeta {
 }
 
 /** A `YYYY-MM-DD` day as the pages print it, in British English: `12 September 2026`. */
-function dayLabel(day: string): string {
+export function dayLabel(day: string): string {
   return new Date(`${day}T00:00:00Z`).toLocaleDateString('en-GB', {
     day: 'numeric',
     month: 'long',
