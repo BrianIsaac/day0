@@ -3273,11 +3273,75 @@ async function openRequestsOn(ctx: QueryCtx, surface: Doc<'surfaces'>): Promise<
 
 /**
  * Undecided batches of one manager channel read, newest first, for the ones
- * with open members. A batch whose members were decided one by one is never
- * marked decided, so the read is bounded; an open batch is among the newest,
- * since it is no older than the open requests it names.
+ * with open members. A batch is marked decided by a reply to its code or by
+ * the decision of its last open member (`settleBatchesHolding`), so the
+ * undecided ones are those still waiting; the bound holds the read to the
+ * newest, where an open batch is, since it is no older than the requests it
+ * names.
  */
 const OPEN_BATCH_SCAN = 200;
+
+/**
+ * Whether a batch member is still open: its item parked on the run the
+ * request showed, under the code the request carried, undecided. The same
+ * test a reply to the batch's code applies before it decides a member.
+ */
+function batchMemberOpen(
+  item: Doc<'workItems'> | null,
+  member: Doc<'decisionBatches'>['members'][number],
+): boolean {
+  const decision = item?.decision;
+  return (
+    item !== null &&
+    decision !== undefined &&
+    decision.id === member.decisionId &&
+    decision.decidedAt === undefined &&
+    item.state === 'actions-pending' &&
+    item.pendingRunId === member.pendingRunId
+  );
+}
+
+/** Whether no member of a batch is open any more. */
+async function batchSettled(
+  ctx: Pick<QueryCtx, 'db'>,
+  batch: Doc<'decisionBatches'>,
+): Promise<boolean> {
+  for (const member of batch.members) {
+    if (batchMemberOpen(await ctx.db.get(member.workItemId), member)) return false;
+  }
+  return true;
+}
+
+/**
+ * Mark decided every undecided batch on a just-decided item's channel that
+ * holds its decision and has no member left open, in the decision's own
+ * transaction (S2 D6). A batch decided member by member has no one outcome
+ * and no reply that decided it, so only the time is stamped; a later reply to
+ * its code is answered as already decided.
+ *
+ * @param item - The item as the decision left it.
+ */
+async function settleBatchesHolding(ctx: MutationCtx, item: Doc<'workItems'>): Promise<void> {
+  const decision = item.decision;
+  if (!decision?.surfaceSlug || !decision.channel) return;
+  const { surfaceSlug, channel } = decision;
+  const batches = await ctx.db
+    .query('decisionBatches')
+    .withIndex('by_agent_channel_decided', (q) =>
+      q
+        .eq('agentId', item.agentId)
+        .eq('surfaceSlug', surfaceSlug)
+        .eq('channel', channel)
+        .eq('decidedAt', undefined),
+    )
+    .order('desc')
+    .take(OPEN_BATCH_SCAN);
+  const now = Date.now();
+  for (const batch of batches) {
+    if (!batch.members.some((member) => member.decisionId === decision.id)) continue;
+    if (await batchSettled(ctx, batch)) await ctx.db.patch(batch._id, { decidedAt: now });
+  }
+}
 
 /**
  * What one manager chat channel has open, for the decision poll (Q13).
@@ -5644,6 +5708,8 @@ async function approveActionsInTransaction(
     applyPhase: 'approved',
     ...decidedPatch(row, 'actions', via, 'approved', messageTs),
   });
+  const approved = await ctx.db.get(args.workItemId);
+  if (approved) await settleBatchesHolding(ctx, approved);
   await appendEvent(ctx, {
     agentId: row.agentId,
     type: 'work.actions-approved',
@@ -5762,6 +5828,8 @@ async function rejectActionsInTransaction(
     applyClaimedAt: undefined,
     ...decidedPatch(row, 'actions', via, 'rejected', messageTs),
   });
+  const rejected = await ctx.db.get(args.workItemId);
+  if (rejected) await settleBatchesHolding(ctx, rejected);
   if (feedback)
     await keepCorrectionInTransaction(ctx, row, 'rejection', feedback, args.pendingRunId);
   await releaseItemClaim(ctx, args.workItemId, now);

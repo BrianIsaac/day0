@@ -417,6 +417,38 @@ describe('batched decisions', (): void => {
     return { agentId: ids.agentId, surfaceId, first: ids, second };
   }
 
+  it('marks a batch decided once its last member is decided one at a time, so it leaves the open read (S2 D6)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, surfaceId, first, second } = await batchOnChannel(harness);
+    const batch = async (): Promise<Doc<'decisionBatches'> | null> =>
+      await harness.run(
+        async (ctx) =>
+          await ctx.db
+            .query('decisionBatches')
+            .withIndex('by_agent_id', (q) => q.eq('agentId', agentId).eq('id', 'bq2wxy'))
+            .unique(),
+      );
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId: second.workItemId,
+      pendingRunId: second.runId,
+      approvedIndexes: [0],
+    });
+    // One member is still open, so the batch is too.
+    expect((await batch())?.decidedAt).toBeUndefined();
+    await harness.withIdentity(OWNER).mutation(api.work.rejectActions, {
+      workItemId: first.workItemId,
+      pendingRunId: first.runId,
+      reason: 'not this week',
+    });
+    // Decided member by member: no single outcome, and no reply decided it.
+    expect(await batch()).toMatchObject({ decidedAt: expect.any(Number) });
+    expect((await batch())?.outcome).toBeUndefined();
+    expect((await batch())?.decidedTs).toBeUndefined();
+    const open = await harness.query(internal.work.openDecisions, { surfaceId });
+    expect(open.batches).toEqual([]);
+  });
+
   it('decides every open member of a batch code from one channel reply, and names what it left', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
