@@ -730,7 +730,7 @@ Override `CONVEX_CLOUD_ORIGIN` or `CONVEX_SITE_ORIGIN` only with an address that
 | Phone on your LAN, Clerk mode | yes | `next dev -H 0.0.0.0`; `CONVEX_BIND_ADDR=0.0.0.0`; `NEXT_PUBLIC_CONVEX_URL=http://<laptop-lan-ip>:3210`; `CONVEX_BROWSER_ORIGIN` to match if you want the Convex dashboard usable from the phone too |
 | Phone anywhere, Clerk mode, public tunnel | yes | tunnel Next as above, and use a **Convex cloud** deployment. A tunnel to `:3000` does not carry the browser's Convex traffic, and exposing a self-hosted backend publicly hands out an unauthenticated database |
 
-Widening `CONVEX_BIND_ADDR` publishes a backend with no authentication of its own to your network. It is not what holds no-auth mode shut - that is the local key - but it is still a database on a LAN port, so put it back to `127.0.0.1` afterwards.
+Widening `CONVEX_BIND_ADDR` publishes the backend's function API and its site proxy (host ports 3210 and 3211), which have no authentication of their own, to your network. It is not what holds no-auth mode shut - that is the local key - but every row and every function is reachable on those ports, so put it back to `127.0.0.1` afterwards.
 
 ## ElevenLabs agent setup
 
