@@ -16,9 +16,18 @@ import {
 } from '../../convex/docSources';
 import { DOCS_NOTION_LOCATOR } from '../../src/docs/components';
 import { finishingCursor } from '../../src/docs/finishing';
+import { listingCursor } from '../../src/docs/readers/batch';
 import { allConvexModules } from './all-modules';
 import { mirroredDocSlug } from '../../src/docs/types';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+
+/**
+ * A cursor a resume can check: an offset bound to the listing it continues,
+ * as the folder and URL readers write one. A provider's own cursor, or a bare
+ * offset, starts the next sync from page one (D D5).
+ */
+const AFTER_PAGE_1 = listingCursor(1, ['page.md', 'fresh.md']);
+const AFTER_25 = listingCursor(25, ['page.md']);
 
 afterEach((): void => {
   vi.useRealTimers();
@@ -841,7 +850,7 @@ describe('documentation sources in real mode', (): void => {
     await harness.mutation(internal.docSources.recordSyncBatch, {
       sourceId,
       runId: first,
-      nextCursor: 'after-page-1',
+      nextCursor: AFTER_PAGE_1,
       refs: ['page.md'],
       credentialRefs: [],
       pageCount: 0,
@@ -864,7 +873,7 @@ describe('documentation sources in real mode', (): void => {
       updatedAt: 2,
     });
     await finishGeneration(harness, sourceId, resumed, {
-      currentCursor: 'after-page-1',
+      currentCursor: AFTER_PAGE_1,
       refs: ['fresh.md', 'gone.md'],
       credentialRefs: [],
       pageCount: 1,
@@ -1132,7 +1141,7 @@ describe('documentation sources in real mode', (): void => {
       harness.mutation(internal.docSources.recordSyncBatch, {
         sourceId,
         runId,
-        nextCursor: '25',
+        nextCursor: AFTER_25,
         refs: [],
         credentialRefs: [],
         pageCount: 25,
@@ -1159,7 +1168,7 @@ describe('documentation sources in real mode', (): void => {
     );
     await expect(
       harness.query(internal.docSources.syncContext, { sourceId, runId: replacementRunId }),
-    ).resolves.toMatchObject({ run: { cursor: '25', pageCount: 25, state: 'running' } });
+    ).resolves.toMatchObject({ run: { cursor: AFTER_25, pageCount: 25, state: 'running' } });
   });
 
   it('starts a sync from page one for a new secret, and after a resume that got no further (step 17)', async (): Promise<void> => {
@@ -1178,7 +1187,7 @@ describe('documentation sources in real mode', (): void => {
     await harness.mutation(internal.docSources.recordSyncBatch, {
       sourceId,
       runId: first,
-      nextCursor: '25',
+      nextCursor: AFTER_25,
       refs: ['page.md'],
       credentialRefs: [],
       pageCount: 25,
@@ -1202,7 +1211,7 @@ describe('documentation sources in real mode', (): void => {
     await harness.mutation(internal.docSources.recordSyncBatch, {
       sourceId,
       runId: second,
-      nextCursor: '25',
+      nextCursor: AFTER_25,
       refs: ['page.md'],
       credentialRefs: [],
       pageCount: 25,
@@ -1210,7 +1219,7 @@ describe('documentation sources in real mode', (): void => {
     });
     await failAt(second);
     const resumed = await harness.mutation(internal.docSources.beginSync, { sourceId });
-    expect(await context(resumed)).toMatchObject({ cursor: '25', pageCount: 25 });
+    expect(await context(resumed)).toMatchObject({ cursor: AFTER_25, pageCount: 25 });
     await failAt(resumed);
 
     // The resume failed where it started: the provider may no longer take the cursor.
@@ -2032,11 +2041,11 @@ describe('the documentation store under the transaction limits (step 49)', (): v
     expect(left.sort()).toEqual(stored.slice(0, 10).sort());
   }, 120_000);
 
-  it('keeps the pages a run begun before 0.6.0 recorded in its refs when it is resumed after the upgrade', async (): Promise<void> => {
+  it('reads a source from page one after a run begun before 0.6.0, whose bare offset names no listing, and removes nothing at the start (D D5)', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     const harness = limitedHarness();
-    const { sourceId, legacyRun } = await harness.run(async (ctx) => {
+    const sourceId = await harness.run(async (ctx) => {
       const sourceId = await ctx.db.insert('docSources', {
         userId: 'owner',
         label: 'Folder',
@@ -2057,7 +2066,7 @@ describe('the documentation store under the transaction limits (step 49)', (): v
         });
         await ctx.db.insert('docPageListings', { sourceId, ref, seenBy: 0 });
       }
-      const legacyRun = await ctx.db.insert('docSyncRuns', {
+      await ctx.db.insert('docSyncRuns', {
         sourceId,
         cursor: '25',
         refs: ['read-before.md'],
@@ -2069,23 +2078,13 @@ describe('the documentation store under the transaction limits (step 49)', (): v
         createdAt: Date.now(),
         completedAt: Date.now(),
       });
-      return { sourceId, legacyRun };
+      return sourceId;
     });
-    const resumed = await harness.mutation(internal.docSources.beginSync, { sourceId });
-    const run = await harness.run(async (ctx) => await ctx.db.get(resumed));
-    expect(run).toMatchObject({ cursor: '25', refs: ['read-before.md'], pagesListed: 1 });
-    expect(run?.listing).toBe(
-      (await harness.run(async (ctx) => await ctx.db.get(legacyRun)))?.listing,
-    );
-
-    await finishGeneration(harness, sourceId, resumed, {
-      currentCursor: '25',
-      refs: [],
-      credentialRefs: [],
-      pageCount: 0,
-      redactionCount: 0,
-    });
-    const left = await harness.run(async (ctx) =>
+    const fresh = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    const run = await harness.run(async (ctx) => await ctx.db.get(fresh));
+    expect(run).toMatchObject({ pagesListed: 0, pageCount: 0 });
+    expect(run?.cursor).toBeUndefined();
+    const stored = await harness.run(async (ctx) =>
       (
         await ctx.db
           .query('docPages')
@@ -2093,9 +2092,7 @@ describe('the documentation store under the transaction limits (step 49)', (): v
           .collect()
       ).map((page) => page.ref),
     );
-    expect(left).toEqual(['read-before.md']);
-    const completed = await harness.run(async (ctx) => await ctx.db.get(resumed));
-    expect(completed?.summary).toMatchObject({ pagesKept: 1, pagesRemoved: 1 });
+    expect(stored.sort()).toEqual(['gone.md', 'read-before.md']);
   });
 
   it('keeps the mirror of a page a run begun before 0.6.0 named, while the listing migration has not reached the page', async (): Promise<void> => {

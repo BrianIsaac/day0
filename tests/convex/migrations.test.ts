@@ -18,6 +18,7 @@ import {
   sealForOwner,
 } from '../../src/lib/credential-crypto';
 import { credentialSourceRef } from '../../src/docs/credential-ref';
+import { listingCursor } from '../../src/docs/readers/batch';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 
@@ -1626,6 +1627,8 @@ describe('the value-keyed credential refs (C step 1, P5-12, P7-15)', (): void =>
   });
 
   it("carries a moved row's ref into a sync that ended short, so the sync that takes it over keeps the row", async (): Promise<void> => {
+    // A cursor a resume can check (D D5): the offset bound to the listing it continues.
+    const PAGE_2 = listingCursor(1, ['runbook.md', 'policy.md']);
     vi.stubEnv('DAY0_CREDENTIAL_KEY', KEY);
     const harness = limitedHarness();
     const sourceId = await source(harness, 'owner');
@@ -1655,7 +1658,7 @@ describe('the value-keyed credential refs (C step 1, P5-12, P7-15)', (): void =>
         endedShort: await ctx.db.insert('docSyncRuns', {
           ...run,
           state: 'error',
-          cursor: 'page-2',
+          cursor: PAGE_2,
           completedAt: Date.now(),
         }),
       };
@@ -1675,7 +1678,7 @@ describe('the value-keyed credential refs (C step 1, P5-12, P7-15)', (): void =>
       harness.mutation(internal.docSources.finishSync, {
         sourceId,
         runId,
-        currentCursor: 'page-2',
+        currentCursor: PAGE_2,
         refs: [],
         credentialRefs: [],
         pageCount: 0,
