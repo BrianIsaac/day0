@@ -269,17 +269,21 @@ describe('documentation credential redaction', (): void => {
     expect(credentialPageRef(ref)).toBe('page');
   });
 
-  it('reads the page back from a value-keyed ref and from both earlier shapes, and bounds them for an index range (D8)', (): void => {
+  it('reads the page back from a value-keyed ref and from both earlier shapes, and bounds those extending the page ref for an index range (D8)', (): void => {
     const pageRef = 'guides/page.md#intro';
     const { from, to } = credentialRefRange(pageRef);
     for (const ref of [
       credentialSourceRef(pageRef, '0123456789abcdef0123456789abcdef'),
       credentialSourceRef(pageRef, 'ffffffffffffffffffffffffffffffff'),
-      pageRef,
       `${pageRef}#credential=3-linear%20service%20token`,
     ]) {
       expect(credentialPageRef(ref)).toBe(pageRef);
       expect(ref >= from && ref <= to).toBe(true);
+    }
+    expect(credentialPageRef(pageRef)).toBe(pageRef);
+    // Another page whose ref starts with this one sorts outside the range.
+    for (const other of [pageRef, `${pageRef} copy`, `${pageRef} copy#credential=1-x`]) {
+      expect(other >= from && other <= to).toBe(false);
     }
     expect(credentialPageRef('guides/page.md.bak')).toBe('guides/page.md.bak');
   });

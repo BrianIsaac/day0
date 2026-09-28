@@ -410,12 +410,17 @@ export function credentialPageRef(ref: string): string {
 }
 
 /**
- * The bounds of every credential source ref one page can produce, for an
- * index range; the range may also hold refs of other pages, which
+ * The index bounds of every credential ref of one page that extends the page
+ * ref: its value-keyed refs, and the position-and-label refs stored before
+ * them. The page-only ref stored before them is the page ref itself. Only a
+ * page whose own ref carries the separator can share the range, which
  * `credentialPageRef` tells apart.
  *
  * @param pageRef - Stable provider page reference.
  */
 export function credentialRefRange(pageRef: string): { from: string; to: string } {
-  return { from: pageRef, to: `${pageRef}${CREDENTIAL_REF_SEPARATOR}\uffff` };
+  return {
+    from: `${pageRef}${CREDENTIAL_REF_SEPARATOR}`,
+    to: `${pageRef}${CREDENTIAL_REF_SEPARATOR}\uffff`,
+  };
 }

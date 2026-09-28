@@ -414,27 +414,39 @@ async function pageRows(
   page: { userId: string; sourceId: Id<'docSources'>; pageRef: string },
 ): Promise<Doc<'credentials'>[]> {
   const { from, to } = credentialRefRange(page.pageRef);
-  // The range also holds refs of pages whose ref extends this one (`page!x`),
-  // so the bound counts only this page's own rows.
   const rows: Doc<'credentials'>[] = [];
-  for await (const row of ctx.db
-    .query('credentials')
-    .withIndex('by_user_source_ref', (index) =>
-      index
-        .eq('userId', page.userId)
-        .eq('source.sourceId', page.sourceId)
-        .gte('source.ref', from)
-        .lte('source.ref', to),
-    )) {
-    if (typeof row.source === 'string' || credentialPageRef(row.source.ref) !== page.pageRef) {
-      continue;
+  // The page-only ref and the refs extending it, each an exact index range, so
+  // no other page's rows are read.
+  for (const query of [
+    ctx.db
+      .query('credentials')
+      .withIndex('by_user_source_ref', (index) =>
+        index
+          .eq('userId', page.userId)
+          .eq('source.sourceId', page.sourceId)
+          .eq('source.ref', page.pageRef),
+      ),
+    ctx.db
+      .query('credentials')
+      .withIndex('by_user_source_ref', (index) =>
+        index
+          .eq('userId', page.userId)
+          .eq('source.sourceId', page.sourceId)
+          .gte('source.ref', from)
+          .lte('source.ref', to),
+      ),
+  ]) {
+    for await (const row of query) {
+      if (typeof row.source === 'string' || credentialPageRef(row.source.ref) !== page.pageRef) {
+        continue;
+      }
+      if (rows.length === PAGE_ROW_LIMIT) {
+        throw new Error(
+          `A documentation page holds more than ${PAGE_ROW_LIMIT} stored credentials; it cannot be read whole.`,
+        );
+      }
+      rows.push(row);
     }
-    if (rows.length === PAGE_ROW_LIMIT) {
-      throw new Error(
-        `A documentation page holds more than ${PAGE_ROW_LIMIT} stored credentials; it cannot be read whole.`,
-      );
-    }
-    rows.push(row);
   }
   return rows;
 }
