@@ -92,6 +92,7 @@ import {
 } from './time';
 import { eventLabel } from './event-labels';
 import { ROOM_HEIGHT } from './room-frame';
+import { useArrival } from '../../arrival';
 import {
   compareWaitingRows,
   EVALUATION_ATTEMPTS_SPENT,
@@ -222,6 +223,7 @@ export function AgentDashboard({ agentId }: Props) {
   // The draft the manager sent back, until the page shows what follows it.
   const [sentBack, setSentBack] = useState<Id<'charters'> | null>(null);
   const onboarding = useRef<HTMLDivElement>(null);
+  const arriving = useArrival(agent !== undefined && agent !== null);
   // Ticks, so an authoring claim stops being described as live the moment it
   // stops being honoured rather than on the next thing the boss happens to do.
   const now = useNow();
@@ -335,7 +337,7 @@ export function AgentDashboard({ agentId }: Props) {
         <LiveStatus outcome={pageOutcome} />
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
-          <div className="lg:col-span-2 space-y-4">
+          <div data-cards={arriving ? '' : undefined} className="lg:col-span-2 space-y-4">
             {showOnboarding ? (
               <div
                 ref={onboarding}
@@ -387,7 +389,7 @@ export function AgentDashboard({ agentId }: Props) {
             />
           </div>
 
-          <div className="space-y-4">
+          <div data-cards={arriving ? '' : undefined} className="space-y-4">
             <WorkspacePanel workspace={workspace ?? {}} />
             <RegisteredSkillsPanel
               skills={registeredSkills ?? []}
@@ -2642,6 +2644,8 @@ export function WorkQueue({
 
   const items = useMemo(() => sortedForQueue(workItems), [workItems]);
   const queue = useRef<HTMLElement>(null);
+  // The items are the Work tab's rows (v4 section 1.3): a tier after the columns' cards.
+  const arriving = useArrival(!loading && items.length > 0);
 
   // One in-flight call per (step, item). Strict Mode runs every effect twice
   // on mount, and a subscription update re-runs them before the first call has
@@ -2703,7 +2707,7 @@ export function WorkQueue({
           {charterApproved ? 'no work seeded yet' : 'work queue lights up after charter approval'}
         </p>
       ) : (
-        <div className="space-y-3">
+        <div data-cards={arriving ? 'rows' : undefined} className="space-y-3">
           <PendingDecisionsPanel
             members={pendingDecisionMembers(items)}
             surfaces={surfaces}

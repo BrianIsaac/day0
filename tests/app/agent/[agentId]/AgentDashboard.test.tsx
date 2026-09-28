@@ -106,6 +106,7 @@ import {
   withheldBeforeFirstWrite,
 } from '../../../../src/work/ticket-ownership';
 import { AgentZoneContext } from '../../../../app/agent/[agentId]/time';
+import { ARRIVAL_MS } from '../../../../app/arrival';
 import { DECISION_REQUEST_RECOVERY_MS } from '../../../../src/work/manager-channel';
 import {
   HELD_BEFORE_AUTONOMY_NOTE,
@@ -3758,6 +3759,68 @@ describe('the page in the layout (N29, UX 11)', (): void => {
     await settle();
     expect(view.container.textContent).toContain('Work queue');
     expect(view.container.querySelector('main')).toBeNull();
+    view.unmount();
+  });
+});
+
+describe('the cards arriving on first render (v4 section 1.3)', (): void => {
+  const agentRow = {
+    _id: 'agent-1',
+    _creationTime: 1,
+    bossEmail: 'boss@day0.local',
+    name: 'Priya',
+    userId: 'owner',
+    state: 'active',
+    createdAt: 1,
+  };
+  const workItem = (id: string, state: string) => ({
+    _id: id,
+    _creationTime: 1,
+    agentId: 'agent-1',
+    sourceCategory: 'ticket-queue',
+    sourceSystem: 'linear',
+    externalId: id,
+    title: `Item ${id}`,
+    contentSummary: 'Triage it.',
+    contentRefs: [],
+    state,
+    observedAt: 1,
+    createdAt: 1,
+  });
+
+  beforeEach((): void => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  });
+
+  afterEach((): void => {
+    vi.useRealTimers();
+    backend.queries = {};
+    document.body.replaceChildren();
+  });
+
+  /** The arrival marks in the rendered page, in document order. */
+  const marks = (root: ParentNode): (string | null)[] =>
+    [...root.querySelectorAll('[data-cards]')].map((group) => group.getAttribute('data-cards'));
+
+  it('marks both columns, then the queue’s rows as the second tier, for the arrival only', async (): Promise<void> => {
+    backend.queries = {
+      'agents:get': agentRow,
+      'work:listForAgent': [workItem('w-1', 'discovered'), workItem('w-2', 'completed')],
+    };
+    const view = mount(<AgentDashboard agentId={'agent-1' as Id<'agents'>} />);
+    await settle();
+    expect(marks(view.container)).toEqual(['', 'rows', '']);
+    act((): void => {
+      vi.advanceTimersByTime(ARRIVAL_MS);
+    });
+    expect(marks(view.container)).toEqual([]);
+    view.unmount();
+  });
+
+  it('marks nothing while the employee is still loading', async (): Promise<void> => {
+    const view = mount(<AgentDashboard agentId={'agent-1' as Id<'agents'>} />);
+    await settle();
+    expect(marks(view.container)).toEqual([]);
     view.unmount();
   });
 });
