@@ -44,6 +44,22 @@ describe('the hosted-demo notice (N6)', () => {
     ]);
   });
 
+  it('says what each recipient receives in the README’s own words', () => {
+    const hosted = readmeHostedSentence();
+    const plain = notice.replace(/\u2019/g, "'");
+    for (const pairing of [
+      'sign-in email goes to Clerk',
+      'pages are served by Vercel',
+      "stored in Convex's cloud",
+      "mock office's content go to the model provider the deployment names",
+      'smoke-tested on Daytona',
+      'goes to ElevenLabs with',
+    ]) {
+      expect(hosted).toContain(pairing);
+      expect(plain).toContain(pairing);
+    }
+  });
+
   it('says the voice provider receives the email address, as the README does', () => {
     expect(readmeHostedSentence()).toContain("ElevenLabs with the manager's email address");
     expect(notice).toContain('ElevenLabs with your email address');

@@ -11,11 +11,11 @@ export const HOSTED_DEMO_NOTICE = {
   heading: 'Before you sign in: what the hosted demo collects',
   paragraphs: [
     'The hosted office is a seeded mock: nothing your employee does reaches a real system.',
-    "To run it, your sign-in email goes to Clerk, the pages are served by Vercel, and every row, your employee's included, is stored in Convex's cloud. Your one-to-one and the mock office's content go to the model provider the deployment names, a skill your employee writes is smoke-tested on Daytona, and a voice one-to-one, when you choose one, goes to ElevenLabs with your email address.",
+    'To run it, your sign-in email goes to Clerk, the pages are served by Vercel, and every row, your employee’s included, is stored in Convex’s cloud. Your one-to-one and the mock office’s content go to the model provider the deployment names, a skill your employee writes is smoke-tested on Daytona, and a voice one-to-one, when you choose one, goes to ElevenLabs with your email address.',
   ],
   /** The closing sentence, whose middle links the README's disclosures. */
   link: {
-    before: "The README's disclosures say ",
+    before: 'The README’s disclosures say ',
     label: 'who receives what, in full',
     after: '.',
     href: `${REPOSITORY_URL}#disclosures`,
