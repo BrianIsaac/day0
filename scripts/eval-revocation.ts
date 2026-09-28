@@ -20,6 +20,7 @@ import { mintDevNoAuthToken } from '../src/lib/dev-auth-token';
 import { assembleTrace } from '../src/export/trace';
 import { REDACTOR_TIMEOUT_MS } from '../src/redaction/policy';
 import { MODEL } from '../src/lib/openai';
+import { refuseUnlessBed } from '../src/evaluation/bed-flag';
 import { BASE_PROFILE } from './compose';
 import { BED_PROFILES } from './demo-bed';
 
@@ -340,6 +341,7 @@ export async function runRevocationEvaluation(options: CliOptions): Promise<Revo
   if (mode.mode !== 'real')
     throw new Error(`revocation evaluation requires real mode, got ${mode.mode}`);
   const backend = await client.query(api.config.modelSettings, {});
+  refuseUnlessBed(backend.evaluationBed, 'pnpm eval:revocation');
   if (backend.model !== MODEL) {
     throw new Error(`backend model ${backend.model} differs from driver model ${MODEL}`);
   }

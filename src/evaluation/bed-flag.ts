@@ -36,3 +36,15 @@ export function evaluationBedRefusal(what: string): string {
     `On a bed, set ${EVALUATION_BED_FLAG}=<bed name> in .env.local and run \`pnpm sync:env\` first.`
   );
 }
+
+/**
+ * Stop a harness script before its first write when the deployment it drives
+ * names no bed, rather than at whichever mutation is gated first.
+ *
+ * @param bed - The bed the deployment reports (`config.modelSettings`), or null.
+ * @param what - The command refused, as its user typed it.
+ * @throws Error carrying the refusal when the deployment names no bed.
+ */
+export function refuseUnlessBed(bed: string | null, what: string): void {
+  if (bed === null) throw new Error(evaluationBedRefusal(what));
+}

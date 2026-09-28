@@ -3,6 +3,7 @@ import {
   EVALUATION_BED_FLAG,
   evaluationBedName,
   evaluationBedRefusal,
+  refuseUnlessBed,
 } from '../../../src/evaluation/bed-flag';
 
 describe('evaluationBedName', () => {
@@ -22,6 +23,18 @@ describe('evaluationBedRefusal', () => {
     expect(evaluationBedRefusal('evaluation.seedTasks')).toBe(
       'evaluation.seedTasks runs only on an evaluation bed: this deployment does not set ' +
         'DAY0_EVALUATION_BED. On a bed, set DAY0_EVALUATION_BED=<bed name> in .env.local and run `pnpm sync:env` first.',
+    );
+  });
+});
+
+describe('refuseUnlessBed', () => {
+  it('lets a harness go on against a deployment that names a bed', () => {
+    expect(() => refuseUnlessBed('comparison', 'pnpm eval:comparison')).not.toThrow();
+  });
+
+  it('stops a harness before its first call against a deployment that names none', () => {
+    expect(() => refuseUnlessBed(null, 'pnpm eval:comparison')).toThrow(
+      'pnpm eval:comparison runs only on an evaluation bed',
     );
   });
 });
