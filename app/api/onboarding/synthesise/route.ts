@@ -3,6 +3,7 @@ import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { establishConvexCaller } from '@/lib/convex-caller';
 import { crossOriginRefusal, readJsonBody } from '@/lib/json-request';
+import { log } from '@/lib/logger';
 
 interface Body {
   agentId: string;
@@ -50,9 +51,10 @@ export async function POST(req: Request): Promise<NextResponse> {
         : undefined,
     });
     return NextResponse.json(result);
-  } catch (err) {
-    const message = (err as Error).message ?? 'unknown error';
-    console.error(`[onboarding synthesise] failed: ${message}`);
+  } catch (err: unknown) {
+    // The deployment's error text is for the log, not the page (C-34).
+    const message = err instanceof Error ? err.message : String(err);
+    log.warn('charter synthesis failed', { reason: message });
     // A caller asking to end a call that is not its own gets a refusal it can
     // read, rather than an opaque 500 that looks like a server fault.
     if (message.includes('finalisation denied') || message.includes('forbidden')) {

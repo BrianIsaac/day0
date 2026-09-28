@@ -7,6 +7,8 @@ vi.mock('@clerk/nextjs/server', () => ({
 let cookieValue: string | undefined;
 const synthesised: unknown[] = [];
 const dialled: string[] = [];
+/** What the deployment's synthesis rejects with, when a test needs it to. */
+let synthesisFailure: { readonly value: unknown } | undefined;
 
 vi.mock('next/headers', () => ({
   cookies: async (): Promise<{ get: () => { value: string } | undefined }> => ({
@@ -22,6 +24,7 @@ vi.mock('convex/browser', () => ({
     }
     setAuth(): void {}
     async action(_reference: unknown, args: unknown): Promise<{ charterId: string }> {
+      if (synthesisFailure) throw synthesisFailure.value;
       synthesised.push(args);
       return { charterId: 'charter-1' };
     }
@@ -67,6 +70,7 @@ beforeEach(async (): Promise<void> => {
   cookieValue = undefined;
   synthesised.length = 0;
   dialled.length = 0;
+  synthesisFailure = undefined;
 });
 
 afterEach((): void => {
@@ -135,6 +139,30 @@ describe('the charter synthesis route', (): void => {
     const response = await synthesise(request({ origin: APP, 'content-type': 'application/json' }));
     expect(response.status).toBe(200);
     expect(dialled).toEqual(['http://backend:3210']);
+  });
+
+  it("answers a failed synthesis with a fixed reason, never the deployment's text", async (): Promise<void> => {
+    await unlock();
+    synthesisFailure = {
+      value: new Error('[CONVEX A(onboarding:synthesiseFromTranscript)] Uncaught Error: forbidden'),
+    };
+    const refused = await synthesise(request(JSON_FROM_APP));
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toEqual({
+      error: 'that voice session does not belong to this agent',
+    });
+    synthesisFailure = { value: new Error('Server Error at /srv/convex/onboarding.ts:88') };
+    const failed = await synthesise(request(JSON_FROM_APP));
+    expect(failed.status).toBe(500);
+    expect(await failed.json()).toEqual({ error: 'charter synthesis failed' });
+  });
+
+  it('answers a rejection that is not an Error with the same fixed reason', async (): Promise<void> => {
+    await unlock();
+    synthesisFailure = { value: null };
+    const failed = await synthesise(request(JSON_FROM_APP));
+    expect(failed.status).toBe(500);
+    expect(await failed.json()).toEqual({ error: 'charter synthesis failed' });
   });
 
   it('answers a signed-out caller outside no-auth mode with a 401 and synthesises nothing', async (): Promise<void> => {
