@@ -98,7 +98,7 @@ import {
   EVALUATION_ATTEMPTS_SPENT,
   MAX_EVALUATION_ATTEMPTS,
 } from '../../../src/work/queue-order';
-import { LiveStatus, refusalText, type ChangeOutcome } from './live-status';
+import { LiveStatus, refusalText, useChange, type ChangeOutcome } from './live-status';
 import { agentZone, isTimeZone } from '../../../src/lib/zone';
 import { draftedWithoutLine, undeliveredDecisionReason } from '../../../src/work/manager-channel';
 import { managerFeedbackLabel, type ManagerFeedback } from '../../../src/work/manager-feedback';
@@ -424,7 +424,7 @@ export function AutonomyConfirm({
           type="button"
           disabled={busy}
           onClick={onConfirm}
-          className="px-3 py-1 rounded-md bg-[var(--color-warn)] text-[var(--color-bg)] font-medium disabled:opacity-60"
+          className="min-h-11 px-3 rounded-md bg-[var(--color-warn)] text-[var(--color-bg)] font-medium disabled:opacity-60"
         >
           Turn on
         </button>
@@ -433,7 +433,7 @@ export function AutonomyConfirm({
           autoFocus
           disabled={busy}
           onClick={onCancel}
-          className="px-3 py-1 rounded-md border border-[var(--color-border)] disabled:opacity-60"
+          className="min-h-11 px-3 rounded-md border border-[var(--color-border)] disabled:opacity-60"
         >
           Cancel
         </button>
@@ -465,54 +465,69 @@ export function AutonomyControl({
   tone: string;
   onChange: (on: boolean) => Promise<unknown>;
 }) {
-  const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const toggle = useRef<HTMLButtonElement>(null);
+  const change = useChange(toggle);
+  const describedBy = useId();
 
   function persist(next: boolean): void {
-    setBusy(true);
-    setError(null);
-    onChange(next)
-      .then(() => setConfirming(false))
-      .catch((err: unknown) => setError(errorMessage(err)))
-      .finally(() => setBusy(false));
+    change.run(() => onChange(next), {
+      done: next
+        ? 'Autonomous actions are on: the employee acts on connected systems without asking.'
+        : 'Autonomous actions are off: every action but reads and the DM to you waits for your approval.',
+      refused: 'The switch was not changed.',
+      after: () => setConfirming(false),
+    });
   }
 
   return (
     <div className="relative">
       <div
-        className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium ${tone}`}
+        className={`flex items-center gap-2 pl-3 pr-1 rounded-full text-xs font-medium ${tone}`}
         title={AUTONOMY_TITLES[on ? 'on' : 'off']}
       >
         <span>Active · {autonomyLabel(on)}</span>
         <span className="text-[10px] font-normal opacity-80">Autonomous actions</span>
+        <span id={describedBy} className="sr-only">
+          {AUTONOMY_TITLES[on ? 'on' : 'off']}
+        </span>
         <button
+          ref={toggle}
           type="button"
           role="switch"
           aria-checked={on}
           aria-label="Autonomous actions"
-          disabled={busy}
+          aria-describedby={describedBy}
+          disabled={change.busy}
           onClick={() => {
             if (on) persist(false);
             else setConfirming(true);
           }}
-          className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors disabled:cursor-wait ${
-            on ? 'bg-[var(--color-warn)]' : 'bg-[var(--color-muted)]/40'
-          }`}
+          className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-full disabled:cursor-wait"
         >
           <span
-            className={`inline-block h-3 w-3 rounded-full bg-[var(--color-bg)] transition-transform ${
-              on ? 'translate-x-3.5' : 'translate-x-0.5'
+            aria-hidden="true"
+            className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${
+              on ? 'bg-[var(--color-warn)]' : 'bg-[var(--color-muted)]/40'
             }`}
-          />
+          >
+            <span
+              className={`inline-block h-3 w-3 rounded-full bg-[var(--color-bg)] transition-transform ${
+                on ? 'translate-x-3.5' : 'translate-x-0.5'
+              }`}
+            />
+          </span>
         </button>
-        {error ? <span className="text-[10px] text-[var(--color-danger)]">{error}</span> : null}
       </div>
+      <LiveStatus outcome={change.outcome} />
       {confirming && !on ? (
         <AutonomyConfirm
-          busy={busy}
+          busy={change.busy}
           onConfirm={() => persist(true)}
-          onCancel={() => setConfirming(false)}
+          onCancel={() => {
+            setConfirming(false);
+            toggle.current?.focus();
+          }}
         />
       ) : null}
     </div>
@@ -531,38 +546,47 @@ export function NotificationModeControl({
   mode: ManagerNotificationMode;
   onChange: (mode: ManagerNotificationMode) => Promise<unknown>;
 }) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const change = useChange();
+  const id = useId();
   return (
-    <label
-      className="flex items-center gap-1.5 px-3 py-1 rounded-full border border-[var(--color-border)] text-[10px] text-[var(--color-muted)]"
-      title="Decision requests go to your manager channel at once whenever one is connected. This sets how you hear that work landed or a run stopped."
-    >
-      <span>Manager DMs</span>
-      <select
-        aria-label="Manager DMs"
-        value={mode}
-        disabled={busy}
-        onChange={(event) => {
-          const next = event.target.value as ManagerNotificationMode;
-          setBusy(true);
-          setError(null);
-          onChange(next)
-            .catch((err: unknown) => setError(errorMessage(err)))
-            .finally(() => setBusy(false));
-        }}
-        className="bg-transparent text-xs text-[var(--color-fg)] disabled:cursor-wait"
+    <div>
+      <div
+        className="flex items-center gap-1.5 pl-3 pr-1 rounded-full border border-[var(--color-border)] text-[10px] text-[var(--color-muted)]"
+        title={NOTIFICATION_MODE_HINT}
       >
-        {(Object.keys(NOTIFICATION_MODE_LABELS) as ManagerNotificationMode[]).map((option) => (
-          <option key={option} value={option}>
-            {NOTIFICATION_MODE_LABELS[option]}
-          </option>
-        ))}
-      </select>
-      {error ? <span className="text-[var(--color-danger)]">{error}</span> : null}
-    </label>
+        <label htmlFor={`${id}-mode`}>Manager DMs</label>
+        <select
+          id={`${id}-mode`}
+          aria-describedby={`${id}-hint`}
+          value={mode}
+          disabled={change.busy}
+          onChange={(event) => {
+            const next = event.target.value as ManagerNotificationMode;
+            change.run(() => onChange(next), {
+              done: `Manager DMs: ${NOTIFICATION_MODE_LABELS[next]}.`,
+              refused: 'The manager DM setting was not changed.',
+            });
+          }}
+          className="min-h-11 bg-transparent text-xs text-[var(--color-fg)] disabled:cursor-wait"
+        >
+          {(Object.keys(NOTIFICATION_MODE_LABELS) as ManagerNotificationMode[]).map((option) => (
+            <option key={option} value={option}>
+              {NOTIFICATION_MODE_LABELS[option]}
+            </option>
+          ))}
+        </select>
+        <span id={`${id}-hint`} className="sr-only">
+          {NOTIFICATION_MODE_HINT}
+        </span>
+      </div>
+      <LiveStatus outcome={change.outcome} />
+    </div>
   );
 }
+
+/** What the manager DM setting does, beside the control and for its hover. */
+const NOTIFICATION_MODE_HINT =
+  'Decision requests go to your manager channel at once whenever one is connected. This sets how you hear that work landed or a run stopped.';
 
 /**
  * Who the agent reports to, and the control that changes it (Q6).
@@ -584,23 +608,19 @@ export function ManagerLine({
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(bossEmail);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const toggle = useRef<HTMLButtonElement>(null);
+  const change = useChange(toggle);
+  const close = (): void => {
+    setEditing(false);
+    toggle.current?.focus();
+  };
   const save = (): void => {
-    setBusy(true);
-    setError(null);
-    onChange(draft)
-      .then(() => setEditing(false))
-      .catch((err: unknown) =>
-        setError(
-          err instanceof ConvexError
-            ? String(err.data)
-            : err instanceof Error
-              ? err.message
-              : String(err),
-        ),
-      )
-      .finally(() => setBusy(false));
+    const next = draft.trim();
+    change.run(() => onChange(next), {
+      done: `The employee now reports to ${next}.`,
+      refused: 'The manager was not changed.',
+      after: () => setEditing(false),
+    });
   };
   return (
     <div>
@@ -618,27 +638,35 @@ export function ManagerLine({
           <input
             id="manager-email"
             type="email"
+            autoFocus
             value={draft}
-            disabled={busy}
+            disabled={change.busy}
             onChange={(event) => setDraft(event.target.value)}
-            className="font-mono text-sm px-2 py-1 rounded border border-[var(--color-border)] bg-transparent"
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                event.preventDefault();
+                setDraft(bossEmail);
+                close();
+              }
+            }}
+            className="min-h-11 min-w-0 font-mono text-sm px-2 rounded border border-[var(--color-border)] bg-transparent"
           />
           <button
             type="submit"
-            disabled={busy || draft.trim() === ''}
-            className="text-xs px-2 py-1 rounded bg-[var(--color-accent)] text-[var(--color-bg)] disabled:opacity-50"
+            disabled={change.busy || draft.trim() === ''}
+            className="min-h-11 text-xs px-3 rounded bg-[var(--color-accent)] text-[var(--color-bg)] disabled:opacity-50"
           >
-            Save
+            {change.busy ? 'Saving…' : 'Save'}
           </button>
           <button
             type="button"
-            disabled={busy}
+            disabled={change.busy}
             onClick={() => {
-              setEditing(false);
               setDraft(bossEmail);
-              setError(null);
+              change.clear();
+              close();
             }}
-            className="text-xs px-2 py-1 rounded border border-[var(--color-border)]"
+            className="min-h-11 text-xs px-3 rounded border border-[var(--color-border)]"
           >
             Cancel
           </button>
@@ -646,14 +674,16 @@ export function ManagerLine({
       ) : (
         <h1 className="text-2xl font-semibold tracking-tight">
           Agent reporting to{' '}
-          <span className="font-mono text-[var(--color-accent)]">{bossEmail}</span>{' '}
+          <span className="font-mono break-all text-[var(--color-accent)]">{bossEmail}</span>{' '}
           <button
+            ref={toggle}
             type="button"
             onClick={() => {
               setDraft(bossEmail);
+              change.clear();
               setEditing(true);
             }}
-            className="align-middle text-xs font-normal px-2 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-muted)]"
+            className="min-h-11 align-middle text-xs font-normal px-3 rounded border border-[var(--color-border)] text-[var(--color-muted)]"
           >
             Change manager
           </button>
@@ -671,7 +701,7 @@ export function ManagerLine({
           credential still works; change the manager to someone the workspace knows.
         </p>
       ) : null}
-      {error ? <p className="mt-1 text-xs text-[var(--color-danger)]">{error}</p> : null}
+      <LiveStatus outcome={change.outcome} />
     </div>
   );
 }
