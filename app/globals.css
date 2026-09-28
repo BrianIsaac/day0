@@ -996,6 +996,35 @@ body {
   }
 }
 
+/* A screen too short to pin a frame (`SHORT_SCREEN`): the script lays each frame inline above its
+   copy; without the script the one frame it shows stops pinning, so the copy can be read. */
+@media (max-width: 767px) and (max-height: 699px), (max-height: 559px) {
+  [data-short='inline'] > [data-pin-side] {
+    position: static;
+  }
+}
+
+/* The walkthrough keeps its pin on a short screen: the capture is capped, scaled inside its
+   frame (`object-contain`), and the ledger keeps two lines, so the band leaves the reader about
+   half the screen on a short phone and fits the window on a phone on its side. */
+@media (max-width: 767px) and (max-height: 699px) {
+  [data-run] [data-pin-stack] {
+    max-height: 25svh;
+  }
+}
+
+@media (max-height: 559px) {
+  [data-run] [data-pin-stack] {
+    max-height: calc(100svh - 204px);
+  }
+}
+
+@media (max-width: 767px) and (max-height: 699px), (max-height: 559px) {
+  [data-run] [data-ledger] {
+    height: 44px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   [data-pin-stack] > [data-frame] {
     transform: none;

@@ -15,16 +15,19 @@ export interface BrowserDoubles {
   pendingFrames(): number;
 }
 
-/** Install the doubles; `reduce` answers the reduced-motion query. */
-export function installBrowserDoubles(reduce = false): BrowserDoubles {
+/**
+ * Install the doubles; `reduce` answers the reduced-motion query and `short` every other one
+ * (the landing's short-screen query).
+ */
+export function installBrowserDoubles(reduce = false, short = false): BrowserDoubles {
   const observed: { callback: IntersectionObserverCallback; target: Element }[] = [];
   const resizers = new Set<() => void>();
   let frames: { id: number; run: FrameRequestCallback }[] = [];
   let nextFrame = 1;
   vi.stubGlobal(
     'matchMedia',
-    (): Partial<MediaQueryList> => ({
-      matches: reduce,
+    (query: string): Partial<MediaQueryList> => ({
+      matches: query.includes('prefers-reduced-motion') ? reduce : short,
       addEventListener: (): void => undefined,
       removeEventListener: (): void => undefined,
     }),

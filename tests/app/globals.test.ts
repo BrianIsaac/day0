@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { SHORT_SCREEN } from '../../app/marketing/PinnedSequence';
 
 const CSS = readFileSync(new URL('../../app/globals.css', import.meta.url), 'utf8');
 
@@ -85,6 +86,14 @@ describe('the public-page motion', () => {
     expect(rule).toMatch(/transform:\s*none/);
     expect(rule).toMatch(/transition:\s*opacity 200ms/);
     expect(rule).not.toMatch(/transition:[^;]*transform/);
+  });
+
+  it('unpins the landing band on the short screen the script lays the frames inline on (M8)', () => {
+    const [short] = blocks(`@media ${SHORT_SCREEN}`);
+    expect(short).toBeDefined();
+    expect(rulesFor(short ?? '', "[data-short='inline'] > [data-pin-side]")[0]).toMatch(
+      /position:\s*static/,
+    );
   });
 
   it('draws the orbit traffic at rest under reduced motion, never leaving the packets invisible (m18)', () => {

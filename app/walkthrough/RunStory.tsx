@@ -64,6 +64,7 @@ function Ledger({ steps, active }: { steps: readonly RunStep[]; active: number }
   return (
     <ol
       aria-label={WALKTHROUGH.ledgerLabel}
+      data-ledger=""
       className="mt-3 flex h-[72px] flex-col justify-end gap-1.5 overflow-hidden [mask-image:linear-gradient(to_bottom,transparent,black_28px)] md:h-[150px]"
     >
       {steps.slice(0, active + 1).map((step, index) => (
@@ -126,7 +127,8 @@ function StepCopy({ step, total }: { step: RunStep; total: number }) {
  * the progress line and the ledger stay pinned beside them (above them on a phone). The step
  * being read comes from `useInReadingBand`, L's geometry tracker, so the frame, the clock and
  * the ledger are always the copy's. Without script the first capture shows and every step's
- * copy reads in full.
+ * copy reads in full. On a short screen the frame keeps its pin with its capture capped and
+ * scaled inside it, and the ledger shows its last two lines (the wave 5 review's D3 (a)).
  */
 export function RunStory({ run }: { run: RecordedRun }) {
   const root = useRef<HTMLDivElement>(null);
@@ -136,6 +138,7 @@ export function RunStory({ run }: { run: RecordedRun }) {
       ref={root}
       data-pin=""
       data-active={active + 1}
+      data-run=""
       className="grid grid-cols-[minmax(0,1fr)] items-start md:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)] md:gap-14"
     >
       <div data-pin-side="">

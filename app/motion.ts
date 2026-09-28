@@ -1,13 +1,23 @@
-import { useEffect, useState, useSyncExternalStore, type RefObject } from 'react';
+import { useCallback, useEffect, useState, useSyncExternalStore, type RefObject } from 'react';
 import { measurePin, pickReadingStep } from './reading-line';
 
 const REDUCE = '(prefers-reduced-motion: reduce)';
-const readReduce = (): boolean => window.matchMedia(REDUCE).matches;
 
-function subscribeReduce(onChange: () => void): () => void {
-  const query = window.matchMedia(REDUCE);
-  query.addEventListener('change', onChange);
-  return () => query.removeEventListener('change', onChange);
+/**
+ * Whether a media query matches, re-read when it changes, so the script and the stylesheet read
+ * the same answer. `server` is the answer before hydration, when there is no window to ask.
+ */
+export function useMediaQuery(query: string, server: boolean): boolean {
+  const subscribe = useCallback(
+    (onChange: () => void): (() => void) => {
+      const list = window.matchMedia(query);
+      list.addEventListener('change', onChange);
+      return () => list.removeEventListener('change', onChange);
+    },
+    [query],
+  );
+  const read = useCallback((): boolean => window.matchMedia(query).matches, [query]);
+  return useSyncExternalStore(subscribe, read, () => server);
 }
 
 /**
@@ -15,7 +25,7 @@ function subscribeReduce(onChange: () => void): () => void {
  * animates what the stylesheet has settled. `true` on the server: nothing animates before this.
  */
 export function useReducedMotion(): boolean {
-  return useSyncExternalStore(subscribeReduce, readReduce, () => true);
+  return useMediaQuery(REDUCE, true);
 }
 
 /** `edge` is visible and never animates; `pending` waits hidden; `seen` arrives now. */

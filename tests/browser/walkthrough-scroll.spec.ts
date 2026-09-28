@@ -7,7 +7,7 @@ import { SPEEDS, atRest, readStop, type ReaderStop } from './pinned-scroll';
 /**
  * The walkthrough's pinned device frame, proved the way UX round four proved its prototype
  * (`scroll-assert.mjs`, 288 walkthrough stops): the page scrolled to each of the sixteen steps
- * at three speeds, at 1440 and 390 wide, down and then up. At each reader's stop, after 700 ms at
+ * at three speeds, at 1440 and 390 wide and on a 375 by 667 phone, down and then up. At each reader's stop, after 700 ms at
  * rest, exactly one capture is visible and it is the step's, the tracker's active step is the
  * step, on the way there the active step only moved in the direction of travel, and the frame's
  * clock reads the step's README time (or says it is untimed where the README states none).
@@ -19,6 +19,8 @@ import { SPEEDS, atRest, readStop, type ReaderStop } from './pinned-scroll';
 const WIDTHS = [
   { tag: '1440', width: 1440, height: 900, mobile: false, stops: ['centred', 'beside'] },
   { tag: '390', width: 390, height: 844, mobile: true, stops: ['under'] },
+  // A short phone keeps the pin with the capture capped (the wave 5 review's D3 (a)).
+  { tag: '375x667', width: 375, height: 667, mobile: true, stops: ['under'] },
 ] as const;
 const STEPS = RECORDED_RUN.steps.map((step) => step.number);
 const UNTIMED = `timed from step ${RECORDED_RUN.steps.find((step) => step.elapsedSeconds !== null)?.number}`;
