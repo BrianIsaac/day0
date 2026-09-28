@@ -167,7 +167,10 @@ describe('the dedicated-app procedure on the card', (): void => {
 
   it('says nothing for a system whose docs describe no install procedure', (): void => {
     expect(
-      presentProvisioning({ credential: { found: 'value', method: 'api-key' }, hasPublicUrl: true }),
+      presentProvisioning({
+        credential: { found: 'value', method: 'api-key' },
+        hasPublicUrl: true,
+      }),
     ).toMatchObject({ offerProvisioning: false, stage: 'not-applicable' });
   });
 
@@ -245,7 +248,7 @@ describe('the dedicated-app procedure on the card', (): void => {
     });
   });
 
-  it('shows an installed token as the app\'s own, with no landing field', (): void => {
+  it("shows an installed token as the app's own, with no landing field", (): void => {
     expect(
       presentSurfaceCredential({
         credentialId: 'cred1',
