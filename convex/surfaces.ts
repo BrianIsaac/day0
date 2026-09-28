@@ -718,27 +718,6 @@ export const recordOrientationFailure = internalMutation({
   },
 });
 
-/** Set a surface verdict from a server-side probe or lifecycle action. */
-export const setStatus = internalMutation({
-  args: {
-    surfaceId: v.id('surfaces'),
-    verdict: surfaceVerdict,
-    reason: v.optional(v.string()),
-    credentialLanded: v.optional(v.boolean()),
-    lastVerifiedAt: v.optional(v.number()),
-  },
-  handler: async (ctx, args): Promise<void> => {
-    const surface = await ctx.db.get(args.surfaceId);
-    if (!surface) throw new Error('Surface not found.');
-    await ctx.db.patch(surface._id, {
-      verdict: args.verdict,
-      reason: args.reason,
-      credentialLanded: args.credentialLanded ?? surface.credentialLanded,
-      lastVerifiedAt: args.lastVerifiedAt ?? surface.lastVerifiedAt,
-    });
-  },
-});
-
 /** Attach an encrypted credential reference without exposing its value. */
 export const attachCredential = internalMutation({
   args: {
