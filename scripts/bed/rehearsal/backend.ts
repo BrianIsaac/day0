@@ -26,7 +26,6 @@ export interface SurfaceRow {
   verdict: string;
   credentialLanded: boolean;
   managerApprovedAt?: number;
-  itApprovedAt?: number;
   reason?: string;
   credentialId?: string;
   credentialKind?: string;
