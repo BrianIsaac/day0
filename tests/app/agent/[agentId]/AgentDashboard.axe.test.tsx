@@ -274,6 +274,11 @@ describe('the dashboard against the accessibility floor (N14, step 45)', (): voi
       expect(view.container.textContent).toContain('Enterprise context');
     }, CHUNK_WAIT);
     expect(await axeViolations(view.container, ['region'])).toEqual([]);
+    // Every disclosure open: the drafts, logs and payloads inside are checked
+    // too, and every scroll region among them has a name of its own.
+    for (const disclosure of view.container.querySelectorAll('details')) disclosure.open = true;
+    await settle();
+    expect(await axeViolations(view.container, ['region'])).toEqual([]);
     view.unmount();
   }, 30_000);
 

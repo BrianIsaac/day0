@@ -2283,7 +2283,7 @@ describe('what Retry does to an unregistered skill', (): void => {
     it('keeps its line breaks, in a box bounded in height that scrolls, still wrapping a line with no spaces', (): void => {
       const markup = panel([{ ...refused, verificationLog: log } as unknown as Doc<'skills'>]);
       const block =
-        /<div tabindex="0" role="region" aria-label="Verification log" class="([^"]*)" data-skill-log="multiline">([^<]*)<\/div>/.exec(
+        /<div tabindex="0" role="region" aria-label="Verification log: refresh-the-tile" class="([^"]*)" data-skill-log="multiline">([^<]*)<\/div>/.exec(
           markup,
         );
       // A scroll box is reachable from the keyboard and named, as axe's

@@ -2269,6 +2269,7 @@ export function RegisteredSkillsPanel({
                         it, which the lease has since released; and no run at
                         all, where the log is this skill's own verdict. */}
                     <SkillStatusLine
+                      skill={s.name}
                       text={
                         holdsLiveAuthoringClaim(s, now)
                           ? 'authoring now · a run holds this skill'
@@ -2344,7 +2345,7 @@ const RETRY_AUTHORS_HINT = 'Author this skill again, with the reason it stopped,
  * text cannot be read, and one left unbounded makes the card as tall as the
  * traceback. `break-words` still wraps a caret line, so Retry stays inside.
  */
-function SkillStatusLine({ text }: { text: string }) {
+function SkillStatusLine({ skill, text }: { skill: string; text: string }) {
   if (!text.includes('\n')) {
     return <div className="text-[var(--color-muted)] text-xs break-words">{text}</div>;
   }
@@ -2352,7 +2353,7 @@ function SkillStatusLine({ text }: { text: string }) {
     <div
       tabIndex={0}
       role="region"
-      aria-label="Verification log"
+      aria-label={`Verification log: ${skill}`}
       className="mt-0.5 text-[var(--color-muted)] text-[11px] leading-snug font-mono whitespace-pre-wrap break-words max-h-40 overflow-y-auto rounded border border-[var(--color-border)] bg-[var(--color-bg)] p-2"
       data-skill-log="multiline"
     >
@@ -2422,7 +2423,7 @@ function SkillInputs({ body, surfaceMode }: { body: string; surfaceMode?: 'mock'
 export function RefusedDraftDetails({
   skill,
 }: {
-  skill: Pick<Doc<'skills'>, 'refusedBody' | 'refusedSmokeTest'>;
+  skill: Pick<Doc<'skills'>, 'refusedBody' | 'refusedSmokeTest'> & { name?: string };
 }) {
   const body = skill.refusedBody?.trim() ?? '';
   const smokeTest = skill.refusedSmokeTest?.trim() ?? '';
@@ -2443,7 +2444,7 @@ export function RefusedDraftDetails({
             <pre
               tabIndex={0}
               role="region"
-              aria-label={`Refused ${file.name}`}
+              aria-label={`Refused ${file.name}${skill.name ? `: ${skill.name}` : ''}`}
               className="text-[10px] text-[var(--color-muted)] whitespace-pre-wrap max-h-48 overflow-auto bg-[var(--color-bg)] p-2 rounded border border-[var(--color-border)]"
             >
               {file.content}
@@ -2978,7 +2979,7 @@ function PhaseLabel({ phase }: { phase?: 'prerequisite' | 'closing' }) {
  * was applied for a single-phase run, after the prerequisite ledger for a run
  * whose closing phase authored it from real results.
  */
-export function DraftDetails({ output }: { output: RunOutput }) {
+export function DraftDetails({ output, title }: { output: RunOutput; title?: string }) {
   const closingPhase = output.initial !== undefined || output.planStepOutcomes !== undefined;
   return (
     <details className="mt-2 text-xs">
@@ -2990,7 +2991,7 @@ export function DraftDetails({ output }: { output: RunOutput }) {
       <pre
         tabIndex={0}
         role="region"
-        aria-label="Draft the agent wrote"
+        aria-label={title ? `Draft the agent wrote: ${title}` : 'Draft the agent wrote'}
         className="mt-2 p-2 max-h-72 overflow-y-auto rounded bg-[var(--color-bg)] border border-[var(--color-border)] whitespace-pre-wrap break-words text-[var(--color-fg)]"
       >
         {output.draft}
@@ -4772,7 +4773,7 @@ export function WorkItemCard({
         ]}
       />
 
-      {output ? <DraftDetails output={output} /> : null}
+      {output ? <DraftDetails output={output} title={item.title} /> : null}
 
       {refusedActions.length > 0 ? (
         <div className="mt-2 p-2 rounded-md bg-[var(--color-warn)]/10 border border-[var(--color-warn)]/30 text-xs">
