@@ -255,7 +255,13 @@ function populated(): Record<string, unknown> {
 
 afterEach((): void => {
   backend.queries = {};
+  // A test that failed before its unmount leaves its tree, and a second
+  // <main> would fail the next test's landmark rules.
+  document.body.replaceChildren();
 });
+
+/** The environment panel is its own chunk; under a full suite it can take seconds to arrive. */
+const CHUNK_WAIT = { timeout: 15_000 };
 
 describe('the dashboard against the accessibility floor (N14, step 45)', (): void => {
   it('has no axe violation at the WCAG 2.2 AA tags and best practice with every panel populated', async (): Promise<void> => {
@@ -266,10 +272,10 @@ describe('the dashboard against the accessibility floor (N14, step 45)', (): voi
     // The environment panel is its own chunk: wait for it, so its tabs are checked too.
     await vi.waitFor((): void => {
       expect(view.container.textContent).toContain('Enterprise context');
-    });
+    }, CHUNK_WAIT);
     expect(await axeViolations(view.container, ['region'])).toEqual([]);
     view.unmount();
-  });
+  }, 30_000);
 
   it('has no axe violation while every query is still loading', async (): Promise<void> => {
     backend.queries = { 'agents:get': populated()['agents:get'] };
@@ -307,12 +313,12 @@ describe("the dashboard's pointer targets (N14: 44 by 44 CSS pixels)", (): void 
     await settle();
     await vi.waitFor((): void => {
       expect(view.container.textContent).toContain('Enterprise context');
-    });
+    }, CHUNK_WAIT);
     for (const summary of view.container.querySelectorAll('details')) summary.open = true;
     await settle();
     expect(underTarget(view.container)).toEqual([]);
     view.unmount();
-  });
+  }, 30_000);
 });
 
 describe('the axe check itself', (): void => {
