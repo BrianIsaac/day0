@@ -1124,13 +1124,25 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
   const provisionApp = useAction(api.slackProvisionActions.provisionApp);
   const installRedirectConfigured = useQuery(api.surfaces.installRedirectConfigured, {});
   const componentStatus = useQuery(api.config.components, {});
-  const [operation, setOperation] = useState<Operation | null>(null);
+  // One change per card at a time, and each card's own: a card's refusal or
+  // pending state outlives a change made on another card meanwhile.
+  const [operations, setOperations] = useState<Readonly<Record<string, Operation>>>({});
   // Where focus goes when the control that made a change leaves with it (the
   // Approve buttons become the card's verdict): the card, set per change.
   const cardFocus = useRef<HTMLElement | null>(null);
   const change = useChange(cardFocus);
-  const reorienting = change.busy && operation === null;
+  const [reorienting, setReorienting] = useState(false);
   const [reorientError, setReorientError] = useState<string | null>(null);
+
+  /** Set one card's operation, or clear it with `undefined`. */
+  function putOperation(surfaceId: string, next: Operation | undefined): void {
+    setOperations((current) => {
+      const rest = Object.fromEntries(
+        Object.entries(current).filter(([id]): boolean => id !== surfaceId),
+      );
+      return next ? { ...rest, [surfaceId]: next } : rest;
+    });
+  }
 
   /**
    * One change to one card: the card shows it in flight and keeps its refusal
@@ -1142,14 +1154,14 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
     call: () => Promise<Result>,
     words: { done: string | ((result: Result) => string); refused: string },
   ): void {
-    setOperation({ kind, surfaceId: surface._id });
+    putOperation(surface._id, { kind, surfaceId: surface._id });
     cardFocus.current = document.getElementById(`surface-${surface.slug}`);
     change.run(
       async (): Promise<Result> => {
         try {
           return await call();
         } catch (failure) {
-          setOperation({
+          putOperation(surface._id, {
             kind,
             surfaceId: surface._id,
             error: refusalText(failure, words.refused),
@@ -1157,20 +1169,13 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
           throw failure;
         }
       },
-      {
-        ...words,
-        // Only this card's own state is cleared: another card's change may
-        // still be in flight.
-        after: () =>
-          setOperation((current) =>
-            current?.surfaceId === surface._id && current.kind === kind ? null : current,
-          ),
-      },
+      { ...words, after: () => putOperation(surface._id, undefined) },
     );
   }
 
   function onReorient(): void {
     setReorientError(null);
+    setReorienting(true);
     change.run(
       async (): Promise<void> => {
         try {
@@ -1178,6 +1183,8 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
         } catch (failure) {
           setReorientError(refusalText(failure, 'Orientation did not run again.'));
           throw failure;
+        } finally {
+          setReorienting(false);
         }
       },
       {
@@ -1192,7 +1199,9 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
   if (surfaces.length === 0)
     return <p className="text-xs text-[var(--color-muted)]">{EMPTY_SURFACES}</p>;
   const declared = cardSurfaces.filter((surface): boolean => surface.verdict === 'declared');
-  const proposeOperation = operation?.kind === 'propose' ? operation : undefined;
+  const proposeOperation = Object.values(operations).find(
+    (entry): boolean => entry.kind === 'propose',
+  );
 
   return (
     <div className="space-y-3">
@@ -1210,7 +1219,7 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
           <button
             type="button"
             onClick={onReorient}
-            disabled={change.busy}
+            disabled={reorienting}
             className="min-h-11 rounded border px-3 text-xs disabled:opacity-50"
           >
             {reorienting ? 'Re-running orientation...' : 'Re-run orientation'}
@@ -1255,7 +1264,7 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
             surface.channelsNotJoined,
             provisioning?.appName,
           );
-          const currentOperation = operation?.surfaceId === surface._id ? operation : undefined;
+          const currentOperation = operations[surface._id];
           const decision =
             currentOperation?.kind === 'approve' || currentOperation?.kind === 'reject'
               ? { kind: currentOperation.kind, error: currentOperation.error }

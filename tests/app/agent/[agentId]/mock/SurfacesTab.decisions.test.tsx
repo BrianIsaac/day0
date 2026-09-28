@@ -14,6 +14,10 @@ const tab = vi.hoisted(() => ({
   /** What a mutation or action answers, by function name, and what it rejects with. */
   results: {} as Record<string, unknown>,
   refusals: {} as Record<string, string>,
+  /** Calls held open until the test releases them, by function name. */
+  held: {} as Record<string, Promise<void>>,
+  /** A second proposed card beside Linear, when set. */
+  second: false,
 }));
 
 vi.mock('convex/react', () => {
@@ -21,6 +25,7 @@ vi.mock('convex/react', () => {
     (reference: unknown): (() => Promise<unknown>) =>
     async (): Promise<unknown> => {
       const name = getFunctionName(reference as never);
+      await tab.held[name];
       if (tab.refusals[name] !== undefined) throw new Error(tab.refusals[name]);
       return tab.results[name];
     };
@@ -30,7 +35,20 @@ vi.mock('convex/react', () => {
     useQuery: (reference: unknown): unknown => {
       const name = getFunctionName(reference as never);
       if (name === 'surfaces:listForAgent') {
+        const notion = {
+          _id: 'surface-notion',
+          agentId: 'agent-1',
+          slug: 'notion',
+          displayName: 'Notion',
+          class: 'docs',
+          verdict: 'proposed',
+          path: 'mcp',
+          whereFound: [],
+          credentialLanded: false,
+          createdAt: 1,
+        };
         return [
+          ...(tab.second ? [notion] : []),
           {
             _id: 'surface-linear',
             agentId: 'agent-1',
@@ -61,6 +79,8 @@ afterEach((): void => {
   tab.verdict = 'proposed';
   tab.results = {};
   tab.refusals = {};
+  tab.held = {};
+  tab.second = false;
 });
 
 describe('a decision on a surface card', (): void => {
@@ -103,5 +123,36 @@ describe('a decision on a surface card', (): void => {
       probeOutcomeText('Linear', { verdict: 'skipped', reason: 'the card is not approved.' }),
     ).toBe('The probe of Linear did not run: the card is not approved.');
     expect(probeOutcomeText('Linear', { verdict: 'connected' })).toBe('Probed Linear: connected.');
+  });
+
+  it("keeps one card's approval in flight when another card's rejection settles first", async (): Promise<void> => {
+    tab.second = true;
+    let release = (): void => undefined;
+    tab.held = {
+      'surfaces:approve': new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+    };
+    const view = mount(<SurfacesTab agentId={'agent-1' as Id<'agents'>} />);
+    const card = (slug: string): HTMLElement => {
+      const found = view.container.querySelector<HTMLElement>(`#surface-${slug}`);
+      if (!found) throw new Error(`no card ${slug}`);
+      return found;
+    };
+    const approveLinear = [...card('linear').querySelectorAll('button')].find(
+      (candidate) => candidate.textContent === 'Approve',
+    );
+    await act(async (): Promise<void> => {
+      approveLinear?.click();
+    });
+    await press(card('notion'), 'Reject');
+
+    expect(card('linear').textContent).toContain('Approving...');
+    await act(async (): Promise<void> => {
+      release();
+    });
+    await settle();
+    expect(card('linear').textContent).not.toContain('Approving...');
+    view.unmount();
   });
 });
