@@ -31,7 +31,9 @@ function halves(): { english: string; chinese: string } {
  *   The criterion names, in the order `evaluateCandidate` applies them.
  */
 function documentedCriteria(): string[] {
-  const sequence = /Same criterion sequence(?::| \u2014) ([^.]+)\./.exec(EVALUATE.replace(/\n \*/g, ''));
+  const sequence = /Same criterion sequence(?::| \u2014) ([^.]+)\./.exec(
+    EVALUATE.replace(/\n \*/g, ''),
+  );
   expect(sequence).not.toBeNull();
   return sequence![1]!
     .split(',')
