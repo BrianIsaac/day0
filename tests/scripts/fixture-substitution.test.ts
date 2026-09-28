@@ -5,8 +5,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   applySubstitutions,
   isExcluded,
+  MANAGER_BRANCH_PREFIX_PLACEHOLDER,
   MANAGER_DM_PLACEHOLDER,
   MANAGER_NAME_PLACEHOLDER,
+  OPERATOR_LINEAR_BRANCH_PREFIX,
   substitute,
 } from '../../scripts/fixture-substitution';
 
@@ -35,6 +37,19 @@ describe('the fixture substitution rule (N15)', (): void => {
     expect(substitute("real_name: 'Brian Isaac'")).toBe("real_name: 'Sam Ortiz'");
     expect(substitute("name: 'brian.isaac'")).toBe("name: 'sam.ortiz'");
     expect(substitute("real_name: 'Brian I'")).toBe("real_name: 'Sam O'");
+  });
+
+  it("replaces the operator's Linear branch prefix and a lower-case name prefix anywhere under tests/", (): void => {
+    const effect = `{\\"gitBranchName\\":\\"${OPERATOR_LINEAR_BRANCH_PREFIX}fin-1-confirm-the-close\\"}`;
+    expect(substitute(effect, 'tests/fixtures/work/log.ts')).toBe(
+      `{\\"gitBranchName\\":\\"${MANAGER_BRANCH_PREFIX_PLACEHOLDER}fin-1-confirm-the-close\\"}`,
+    );
+    expect(
+      substitute(`branch: '${OPERATOR_LINEAR_BRANCH_PREFIX}fin-2'`, 'tests/convex/x.test.ts'),
+    ).toBe("branch: 'sam/fin-2'");
+    expect(substitute("branch: 'brian/revops-5'", 'tests/convex/x.test.ts')).toBe(
+      "branch: 'sam/revops-5'",
+    );
   });
 
   it('never touches the redaction corpus, whose recorded spans are keyed by offset, nor its own test', (): void => {

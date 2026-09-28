@@ -13,6 +13,7 @@
 import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { escapeRegExp } from '../src/lib/regex';
 
 /** One replacement, applied in order to every covered file's text. */
 export interface Substitution {
@@ -34,6 +35,15 @@ export const MANAGER_NAME_PLACEHOLDER = 'Sam';
 const MANAGER_FULL_NAME_PLACEHOLDER = 'Sam Ortiz';
 const MANAGER_HANDLE_PLACEHOLDER = 'sam.ortiz';
 
+/** The git branch prefix a recording carries in place of the operator's. */
+export const MANAGER_BRANCH_PREFIX_PLACEHOLDER = 'sam/';
+
+/**
+ * The branch prefix Linear builds from the operator's account name, which a
+ * `list_issues` effect carries in every issue's `gitBranchName`.
+ */
+export const OPERATOR_LINEAR_BRANCH_PREFIX = 'isaacbikjk/';
+
 /**
  * The rules, most specific first so a full name is replaced whole before the
  * first name alone is. `Brain` and `brain` are the misspellings one recorded
@@ -47,6 +57,16 @@ export const SUBSTITUTIONS: readonly Substitution[] = [
     replacement: MANAGER_FULL_NAME_PLACEHOLDER,
   },
   { name: 'manager handle', pattern: /\bbrian\.isaac\b/g, replacement: MANAGER_HANDLE_PLACEHOLDER },
+  {
+    name: "manager's Linear branch prefix",
+    pattern: new RegExp(`\\b${escapeRegExp(OPERATOR_LINEAR_BRANCH_PREFIX)}`, 'g'),
+    replacement: MANAGER_BRANCH_PREFIX_PLACEHOLDER,
+  },
+  {
+    name: 'manager branch prefix',
+    pattern: /\bbrian\//g,
+    replacement: MANAGER_BRANCH_PREFIX_PLACEHOLDER,
+  },
   { name: 'manager initialled name', pattern: /\bBrian I\b/g, replacement: 'Sam O' },
   { name: 'manager first name', pattern: /\bBrian\b/g, replacement: MANAGER_NAME_PLACEHOLDER },
   {
