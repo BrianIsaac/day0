@@ -1,8 +1,8 @@
 /**
- * The Slack mention's first attempt on the 17 September recording, as its
- * `work.failed` payload in the export records it
- * (`docs/plans/progress/recording-run-2026-09-17/export/events/documents.jsonl`,
- * item `n57d5ekg1grzcgk9atf2698mgn8ehqq9`): phase one signed in and read the
+ * The Slack mention's first attempt on the 17 September recording (GLM 5.3
+ * Flash via Featherless, real mode), as its `work.failed` payload in the
+ * run's export records it; the export is a private recording kept outside
+ * the tree. Phase one signed in and read the
  * tile at 68%, the closing fill and Save found nothing on a blank page, the
  * closing snapshot read `about:blank`, and the DM went out saying the refresh
  * had been applied. The retry resumed at the closing phase from this ledger

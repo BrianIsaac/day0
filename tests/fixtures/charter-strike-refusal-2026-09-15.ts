@@ -1,7 +1,9 @@
 import type { Charter } from '../../src/agent/charter';
 
 /**
- * The 15 September draft on which the card offered a strike approval refused.
+ * The 15 September draft on which the card offered a strike approval refused,
+ * as the run's private recording kept it (GLM 5.3 Flash via Featherless,
+ * real mode); the name is the placeholder decision N15 sets.
  *
  * Constraint 2 is a derived candidate-property rule whose one word,
  * "ownership", sits inside the second will-not-do clause. As recorded the

@@ -1,6 +1,6 @@
 /**
- * The Day-1 1:1 as the 14 September run-through held it, reconstructed from
- * the run record (`docs/plans/progress/runthrough-goai-final-2026-09-14-handover.md`):
+ * The Day-1 1:1 as the 14 September run-through held it (GLM 5.3 Flash via
+ * Featherless, real mode), reconstructed from the run's private record:
  * the runbook's seven-answer script with the tools answer that said tickets
  * "have an owner and a priority". Speaker labels are the chat room's.
  */

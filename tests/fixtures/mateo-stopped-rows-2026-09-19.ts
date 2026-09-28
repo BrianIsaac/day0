@@ -1,6 +1,7 @@
 /**
- * The 19 Sep third full run's two stopped rows of Mateo's (findings R and S),
- * as `findings/mateo-stopped-rows-0744.jsonl` kept them. `FIN_1_ITEM` is the
+ * The 19 Sep third full run's two stopped rows of Mateo's (findings R and S;
+ * GLM 5.3 Flash via Featherless, real mode, autonomy on), as the run's
+ * private findings file kept them. `FIN_1_ITEM` is the
  * ticket's own item: `list_issues` landed, then `POST /conversations.list`, a
  * Slack read, was refused as an unattributable write and the run stopped.
  * `FINANCE_CLOSE_ASK` is the `#finance-close` ask: its executor obeyed the

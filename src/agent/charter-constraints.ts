@@ -67,7 +67,7 @@ function escapeRegExp(value: string): string {
  * each clause and evidence rows carry it in `source`, so a suffix in the
  * clause text is noise the reader sees twice. GLM 5.3 Flash wrote
  * "(from manager 1:1 day-1)" on every clause of one 16 September draft. A
- * bracket that merely mentions the 1:1 ("(the Monday 1:1 with Brian)") is
+ * bracket that merely mentions the 1:1 ("(the Monday 1:1 with Sam)") is
  * clause text and stays.
  */
 const PROVENANCE_SUFFIX =

@@ -3,13 +3,14 @@ import type { ExecutionPlan, MockAction, PlanStepOutcome } from '../../../src/wo
 
 /**
  * Priya's `#revops-asks` ask from the fourth full internal run of 19 September
- * (main 0ba9479, real mode, autonomy on): the work item, its approved plan with
+ * (main 0ba9479, GLM 5.3 Flash via Featherless, real mode, autonomy on): the
+ * work item, its approved plan with
  * the declared obligations, the four phase-one actions with their ledger, and
  * the closing set (fill, Save, snapshot, manager DM) with the ledger the apply
  * wrote and the closing phase's plan-step accounting. The item ended
  * `completed` with no reply in its thread (finding W). Every string is the
- * run's own, read from `findings/priya-revops-asks-completed-no-reply.jsonl`;
- * each ledger `effect` is cut at 300 characters and the snapshot row's
+ * run's own, read from its private findings file; each ledger `effect` is
+ * cut at 300 characters and the snapshot row's
  * `sessionRestore` is left out.
  */
 

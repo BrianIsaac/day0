@@ -4,8 +4,8 @@ import type { MockAction } from '../../../src/work/types';
 /**
  * The 16 September third run's REVOPS-5 retry: the manager's note, the
  * ledger the retry's phase one landed, and the audit comment the closing
- * phase posted, verbatim from the fix brief
- * (`docs/research/briefs/retry-reentry-and-audit-note-2026-09-16-brief.md`).
+ * phase posted, verbatim from the run's private recording (GLM 5.3 Flash via
+ * Featherless, real mode, autonomy on).
  * Check 3's own evidence shows both sibling tickets in Backlog, yet the
  * closing line names only check 2, mirroring the manager's note.
  */

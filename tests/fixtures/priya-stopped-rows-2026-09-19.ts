@@ -1,6 +1,7 @@
 /**
- * The 19 Sep fourth full run's stopped row of Priya's (finding U), as
- * `findings/priya-stopped-rows-0951.jsonl` kept it: the `#ops-requests` ask.
+ * The 19 Sep fourth full run's stopped row of Priya's (finding U; GLM 5.3
+ * Flash via Featherless, real mode, autonomy on), as the run's private
+ * findings file kept it: the `#ops-requests` ask.
  * Eight actions landed (the tile sign-in, the fill, Save, the audit-line
  * snapshot, `list_issues`, the thread reply); the ninth, the closing set's
  * read-back `GET /conversations.replies` with its parameters in a JSON body,

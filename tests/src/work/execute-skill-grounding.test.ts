@@ -1,4 +1,6 @@
-import readmePlans from '../../fixtures/work/readme-loop-plans.json';
+import readmeLoop from '../../fixtures/work/readme-loop-plans.json';
+
+const readmePlans = readmeLoop.plans;
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Charter } from '../../../src/agent/charter';
 import type { MockSurfaceSnapshot, WorkCandidate } from '../../../src/work/types';

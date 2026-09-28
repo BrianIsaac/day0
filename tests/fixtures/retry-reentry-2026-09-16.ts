@@ -16,10 +16,9 @@ import {
  * reads, and its closing phase posted a second audit comment with a new
  * body before the Done.
  *
- * The plan is the bed's own text, as the review brief records it
- * (`docs/research/briefs/retry-reentry-review-2026-09-16-brief.md`): the
- * summary, the reversibility note and every step verbatim, em dashes and
- * angle-bracket placeholders included.
+ * The plan is the bed's own text, verbatim from the run's private
+ * recording: the summary, the reversibility note and every step, em dashes
+ * and angle-bracket placeholders included.
  */
 
 const call = (surface: string, tool: string, args: Record<string, unknown>): MockAction => ({

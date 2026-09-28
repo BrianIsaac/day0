@@ -8,9 +8,8 @@ import type { ExecutionPlan, MockAction, PlanObligations, PlanStepOutcome } from
  * the three earlier rounds covered, and REVOPS-5 stopped with nothing landed.
  *
  * The plans are the bed's own words: every step and summary below is
- * verbatim from the run 4 export quoted in the review brief
- * (`docs/research/briefs/plan-obligations-review-2026-09-16-brief.md`),
- * including the REVOPS-5 stop reason and the deferral it names. The ledger
+ * verbatim from the run 4 export, a private recording kept outside the
+ * tree, including the REVOPS-5 stop reason and the deferral it names. The ledger
  * effects follow the run handover (74%, audit line 10:29:13 UTC). The
  * declared obligations are what the judgement returns for each plan; the
  * tests script the judgement with them. The closing sets and the phase-one

@@ -1,5 +1,5 @@
 {
-  "source": "demo rehearsal 2, 19 Sep 2026, bed day0-reh2-a4637a: export.zip and findings/*.jsonl, rows verbatim",
+  "source": "demo rehearsal 2, 19 Sep 2026, bed day0-reh2-a4637a, GLM 5.3 Flash via Featherless, real mode: rows verbatim from the run's private export and findings files, kept outside the tree",
   "agents": {
     "j578dhkwnnds0zw43fpy548fr98eqjbt": "Aiko",
     "j57989cmmzw48hyh3wkv32tzp58eqx09": "Mateo",
