@@ -1712,7 +1712,7 @@ export type ProvenanceResult =
  * Returns:
  *   True for a write to a chat surface that carries message text.
  */
-function isChatPost(parsed: ParsedHttpRequest, surface: SurfaceRecord): boolean {
+export function isChatPost(parsed: ParsedHttpRequest, surface: SurfaceRecord): boolean {
   return (
     parsed.method === 'POST' &&
     surface.class === 'chat' &&

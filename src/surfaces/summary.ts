@@ -5,6 +5,7 @@ import {
   targetChannel,
   type JsonObject,
   type ParsedSurfaceAction,
+  isChatPost,
 } from './policy';
 import { isSlackApiEndpoint } from './slack-endpoint';
 import type { SurfaceRecord } from './types';
@@ -307,12 +308,7 @@ function describeHttpRequest(
   const name = surfaceName(parsed.surface, surfaces);
   const body = parsed.bodyJson;
   const text = body ? firstString(body, ['text']) : undefined;
-  const isChatPost =
-    parsed.method === 'POST' &&
-    /^\/*chat\.postMessage$/.test(parsed.path) &&
-    surface?.class === 'chat' &&
-    text !== undefined;
-  if (isChatPost) {
+  if (surface !== undefined && text !== undefined && isChatPost(parsed, surface)) {
     const channel = targetChannel(parsed);
     const quoted = `: ${quote(text, context.textLimit)}`;
     const extraFields = Object.keys(body ?? {}).filter(
