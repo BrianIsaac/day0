@@ -2,6 +2,7 @@
 
 import { Chat } from '@ai-sdk/react';
 import type { ChatTransport, UIMessage, UIMessageChunk } from 'ai';
+import { act } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -427,5 +428,40 @@ describe('the chat room for a screen reader, and a 1:1 that could not start (ste
     expect(liveRegions(view.container)).toEqual([]);
     expect(focusedName()).not.toBe('Ask again');
     view.unmount();
+  });
+});
+
+describe('the turns arriving in the 1:1 (v3 section 5.2)', (): void => {
+  /** The text of each turn the log marks as arriving, in order. */
+  const arriving = (root: ParentNode): string[] =>
+    [...root.querySelectorAll('[role="log"] [data-arrive]')].map(
+      (bubble) => bubble.textContent ?? '',
+    );
+
+  it('rises in only the two newest turns, and moves the mark on as the next one lands', async (): Promise<void> => {
+    room.messages = [
+      turn('0', 'user', said(INIT_PROMPT)),
+      turn('1', 'assistant', said('Why this hire?')),
+      turn('2', 'user', said('To close the books faster.')),
+      turn('3', 'assistant', said('Who signs off a close?')),
+    ];
+    const view = mount(<ChatRoom agentId={'agent-1' as Id<'agents'>} bossLabel="Sam" />);
+    await settle();
+    expect(arriving(view.container)).toEqual([
+      'You: To close the books faster.',
+      'Employee: Who signs off a close?',
+    ]);
+
+    room.messages = [...room.messages, turn('4', 'user', said('The controller.'))];
+    act((): void =>
+      view.root.render(<ChatRoom agentId={'agent-1' as Id<'agents'>} bossLabel="Sam" />),
+    );
+    await settle();
+    expect(arriving(view.container)).toEqual([
+      'Employee: Who signs off a close?',
+      'You: The controller.',
+    ]);
+    view.unmount();
+    room.messages = [];
   });
 });
