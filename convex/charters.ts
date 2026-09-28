@@ -346,8 +346,6 @@ export const charterChangeValidator = v.union(
   }),
 );
 
-/** Who sent an amendment. */
-
 /**
  * Amend the agent's approved charter: one new version, one event, the
  * workspace re-rendered, orientation for an added system, and a

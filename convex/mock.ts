@@ -324,7 +324,11 @@ export const ensureChannel = internalMutation({
   },
 });
 
-/** Internal: posts a message into a mock channel or thread and schedules the colleague's reply. */
+/**
+ * Internal: posts a message into a mock channel or thread, or reports that the
+ * channel does not exist. The colleague's reply is scheduled by the mock
+ * adapter that calls this (`src/surfaces/mock.ts`), not here.
+ */
 export const postSlackMessage = internalMutation({
   args: {
     agentId: v.id('agents'),

@@ -34,6 +34,8 @@ describe('the suite environment', (): void => {
         PORT: '4999',
         PATH: '/usr/bin',
         HOME: '/home/someone',
+        GOOGLE_API_KEY: 'a key the product no longer reads',
+        GEMINI_LIVE_MODEL: 'a model the product no longer reads',
         NODE_ENV: 'test',
         TZ: 'UTC',
       }),

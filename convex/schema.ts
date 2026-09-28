@@ -966,7 +966,7 @@ export default defineSchema({
       v.object({
         text: v.string(),
         answeredAt: v.number(),
-        via: v.union(v.literal('dashboard'), v.literal('plan-approval'), v.literal('channel')),
+        via: v.union(v.literal('dashboard'), v.literal('plan-approval')),
         amendedCharterId: v.optional(v.id('charters')),
       }),
     ),

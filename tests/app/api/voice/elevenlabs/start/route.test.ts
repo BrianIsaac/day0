@@ -28,6 +28,7 @@ async function loadStart(
 }
 
 afterEach((): void => {
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   vi.resetModules();
@@ -51,5 +52,38 @@ describe('the ElevenLabs start route (C-34)', (): void => {
     expect(body).toContain('the voice service could not be reached');
     expect(body).not.toContain('ECONNREFUSED');
     expect(body).not.toContain('secret');
+  });
+
+  it('answers a refused signed URL with fixed text on the page and sends the provider body to the log (N26)', async (): Promise<void> => {
+    const providerBody =
+      '{"detail":{"status":"invalid_api_key","message":"Invalid API key xi-key-not-for-the-page"}}';
+    const logged: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown): void => {
+      logged.push(String(line));
+    });
+    const start = await loadStart(
+      async () => new Response(providerBody, { status: 401, statusText: 'Unauthorized' }),
+    );
+
+    const response = await start.get();
+
+    expect(response.status).toBe(200);
+    const page = await response.json();
+    expect(page).toEqual({
+      configured: true,
+      agentId: 'agent_voice',
+      signedUrl: null,
+      public: true,
+      warning: 'ElevenLabs refused a signed URL for this agent',
+    });
+    const entries = logged.map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(entries).toContainEqual(
+      expect.objectContaining({
+        level: 'warn',
+        status: 401,
+        statusText: 'Unauthorized',
+        body: providerBody,
+      }),
+    );
   });
 });

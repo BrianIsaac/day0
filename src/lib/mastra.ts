@@ -1,6 +1,7 @@
 import { schemaRepairPrompt, type StructuredOutputDiagnostics } from './structured-repair';
 import { Agent } from '@mastra/core/agent';
 import type { MastraModelConfig } from '@mastra/core/llm';
+import { z } from 'zod';
 import { env } from '../env';
 import { languageModel, MODEL, modelProviderClient } from './openai';
 import { log } from './logger';
@@ -286,6 +287,9 @@ export class StructuredOutputMissingError extends StructuredContractError {
  * failure.
  */
 export class StructuredOutputInvalidError extends StructuredContractError {
+  /** The schema's own words for what the reply broke, one per distinct issue, for the card. */
+  readonly issues: readonly string[];
+
   constructor(
     readonly agentName: string,
     readonly mode: StructuredMode,
@@ -293,7 +297,20 @@ export class StructuredOutputInvalidError extends StructuredContractError {
   ) {
     super(`agentJson(${agentName}): ${mode} reply did not satisfy the schema`, { cause });
     this.name = 'StructuredOutputInvalidError';
+    this.issues = schemaIssueMessages(cause);
   }
+}
+
+/**
+ * The messages of the issues behind a schema violation. Mastra raises the
+ * violation with the schema's own `safeParse` error as its cause, so a
+ * schema's custom message (the plan's step bound) reaches the card as written;
+ * a violation with no parse error behind it has none to give.
+ */
+function schemaIssueMessages(violation: unknown): readonly string[] {
+  const parsed = violation instanceof Error ? violation.cause : undefined;
+  if (!(parsed instanceof z.ZodError)) return [];
+  return [...new Set(parsed.issues.map((issue): string => issue.message))];
 }
 
 /**

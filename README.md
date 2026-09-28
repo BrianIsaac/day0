@@ -417,7 +417,7 @@ Every service in `docker-compose.yml` sits behind a profile, and the profiles ar
 
 Both local ways are real mode: link your documentation and connect the systems it names through approval cards; those systems still need authorised access. Real mode is local-only. Day0 reads the documentation you point it at, proposes a connection to each system that documentation records, and - once you approve a card - acts on those systems for real: a comment on your ticket, a message in your channel, a form filled in on a web UI it drives through a browser. The **seeded mock office** the hosted demo works in - fixtures for the systems, the tickets and the messages, where nothing the agent does reaches a real system, though its model calls still go to the provider configured - is the other setting of the same variable, kept for the evaluation harness and documented under [Evaluation and the mock office](#evaluation-and-the-mock-office).
 
-It is deliberately restricted to local no-auth development. `DAY0_SURFACE_MODE=real` throws unless `NEXT_PUBLIC_DEV_NO_AUTH=true`, `NODE_ENV=development` and nothing names Vercel, so the mode that can touch live systems cannot be reached on a hosted deployment at all (`src/lib/surface-mode.ts`).
+It is deliberately restricted to a machine whose callers are known. `DAY0_SURFACE_MODE=real` throws unless the deployment is local no-auth development (`NEXT_PUBLIC_DEV_NO_AUTH=true` under `NODE_ENV=development`), or `DAY0_PROFILE=customer-local` with the customer's OIDC issuer configured (`DAY0_OIDC_ISSUER` and `DAY0_OIDC_AUDIENCE`); either way it throws when a Vercel marker is set, so the mode that can touch live systems cannot be reached on the hosted demo's platform at all (`src/lib/surface-mode.ts`).
 
 ### The components you need
 
@@ -730,7 +730,7 @@ Override `CONVEX_CLOUD_ORIGIN` or `CONVEX_SITE_ORIGIN` only with an address that
 | Phone on your LAN, Clerk mode | yes | `next dev -H 0.0.0.0`; `CONVEX_BIND_ADDR=0.0.0.0`; `NEXT_PUBLIC_CONVEX_URL=http://<laptop-lan-ip>:3210`; `CONVEX_BROWSER_ORIGIN` to match if you want the Convex dashboard usable from the phone too |
 | Phone anywhere, Clerk mode, public tunnel | yes | tunnel Next as above, and use a **Convex cloud** deployment. A tunnel to `:3000` does not carry the browser's Convex traffic, and exposing a self-hosted backend publicly hands out an unauthenticated database |
 
-Widening `CONVEX_BIND_ADDR` publishes the backend's function API and its site proxy (host ports 3210 and 3211), which have no authentication of their own, to your network. It is not what holds no-auth mode shut - that is the local key - but every row and every function is reachable on those ports, so put it back to `127.0.0.1` afterwards.
+Widening `CONVEX_BIND_ADDR` publishes the backend's function API and its site proxy (host ports 3210 and 3211 by default, `CONVEX_PORT` and `CONVEX_SITE_PROXY_PORT`), which have no authentication of their own, to your network. It is not what holds no-auth mode shut - that is the local key - but every row and every function is reachable on those ports, so put it back to `127.0.0.1` afterwards.
 
 ## ElevenLabs agent setup
 
@@ -977,7 +977,7 @@ The self-hosted 8B arms exercise the OpenAI-compatible chat-completions route, w
 
 **Caveat (27 September 2026, decision N16).** These figures were graded before five task-set mechanisms were fixed and are not re-graded, so some passes may have been met by fixed text rather than the agent's own reasoning: a requester label shown only to Day0 was one of its own task's reason words; the fixed Day-1 transcript, given only to Day0, carried out-of-scope reason words and the citation titles; three product strings meet reason words on Day0's skips and deferrals; five tasks left `slack.postMessage` off their prohibited tools, so an extra post passed on them; and two documentation tasks carried their own citation or required words in text both arms see. No published number changes; the fixes land for the next bed, and the [evaluation page](evaluation/README.md#evidence-status) states each one.
 
-Every figure this README quotes comes from a file in this repository or from a run of the product, and each has a command behind it: a re-grade of the retained state for the frozen beds, which calls no model and changes no published number, or a fresh run for the rest. The commands and their setup are in [Evaluation quick start](#evaluation-quick-start) below.
+Every figure this README quotes comes from a file in this repository or from a run of the product, and each has a command behind it, a fresh run or a re-grade of a run's retained state that calls no model, except the four frozen comparison beds, whose backends were not retained and whose figures stand as recorded. The commands and their setup are in [Evaluation quick start](#evaluation-quick-start) below.
 
 | Figure | Where it comes from | Regenerate with |
 |---|---|---|
@@ -1477,7 +1477,7 @@ pnpm convex:down                 # the backend; the data volume stays
 
 两种本地方式都是 real mode：链接你的文档，并通过审批卡片连接文档中记录的系统；这些系统仍然需要经过授权的访问。real mode 只限本机。此时 day0 会读取你指定的文档，为文档记录的每个系统提出连接申请；在你批准卡片之后，它会真正操作这些系统：在你的工单上留言、在你的频道里发消息、通过浏览器在 Web UI 上填写表单。托管演示所使用的 **seeded mock office**（系统、工单和消息都是 fixture，Agent 的任何操作都不会触及真实系统，但模型调用仍会发送给所配置的服务商）是同一个变量的另一个取值，为评测 harness 保留，见[评测与 mock office](#评测与-mock-office)。
 
-该模式被刻意限制在本机无认证开发环境中。除非同一进程中 `NEXT_PUBLIC_DEV_NO_AUTH=true`、`NODE_ENV=development` 且不存在任何 Vercel 变量，否则 `DAY0_SURFACE_MODE=real` 会直接抛错（`src/lib/surface-mode.ts`），因此可以操作真实系统的模式无法在托管部署上启用。
+该模式被刻意限制在调用者已知的机器上。除非部署是本机无认证开发环境（`NODE_ENV=development` 下的 `NEXT_PUBLIC_DEV_NO_AUTH=true`），或设置了 `DAY0_PROFILE=customer-local` 并配置了客户的 OIDC issuer（`DAY0_OIDC_ISSUER` 与 `DAY0_OIDC_AUDIENCE`），否则 `DAY0_SURFACE_MODE=real` 会直接抛错；两种情况下只要存在 Vercel 变量都会抛错（`src/lib/surface-mode.ts`），因此可以操作真实系统的模式无法在托管演示所在的平台上启用。
 
 当环境中存在 `NEXT_PUBLIC_DEV_NO_AUTH=true` 时，`pnpm build` 会拒绝生产构建。构建前必须取消该值；如果它进入 Vercel 配置，构建失败是预期的安全保护。
 
@@ -1679,7 +1679,7 @@ Day0 通过一项受控比较来衡量：同一模型、同一非零 temperature
 
 **注意（2026 年 9 月 27 日，决定 N16）。** 上述数字在五项任务集机制修正之前评分，且未重新评分，因此部分通过可能由固定文本而非 Agent 自身的推理满足：仅向 Day0 显示的请求方标签本身是该任务的原因词；仅提供给 Day0 的固定 Day-1 记录含超范围原因词与引用标题；三个产品字符串命中 Day0 跳过与延后时的原因词；五项任务未把 `slack.postMessage` 列为禁止工具，多发一条消息也能通过；两项文档任务在两个 arm 都能看到的文本中自带引用或必需词。已发布的数字均不改变；修正将用于下一个评测环境，[评测页面](evaluation/README.md#evidence-status)逐项说明。
 
-本文件引用的每个数字都来自本仓库中的某个文件或产品的一次运行，并且都有对应的再生成命令。命令及其准备步骤见下文[评测快速开始](#评测快速开始)。
+本文件引用的每个数字都来自本仓库中的某个文件或产品的一次运行，并且都有对应的再生成命令（重新运行，或对某次运行保留的状态重新评分、不调用模型），四个冻结的比较评测环境除外：它们的后端未保留，数字按记录保留。命令及其准备步骤见下文[评测快速开始](#评测快速开始)。
 
 | 数字 | 来源 | 再生成方式 |
 |---|---|---|

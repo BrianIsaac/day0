@@ -2,11 +2,12 @@ import type { DependentExecutionOutput, ExecutionOutput, ExecutionPlan, WorkCand
 
 /**
  * Aiko's LOG-1 (SH-4471) and LOG-3 (SH-4480) from the fourth full internal
- * run of 19 September (main 0ba9479, real mode, autonomy off), and LOG-1 from
+ * run of 19 September (main 0ba9479, GLM 5.3 Flash via Featherless, real
+ * mode, autonomy off), and LOG-1 from
  * the second sitting of the same day, which stopped where the fourth did not.
  * Every string is the runs' own, read from the fourth run's findings row and
- * the two exports; only the manager's DM channel id is replaced, `observedAt`
- * is rebuilt as a date and the plan's correction ids are left to the test,
+ * the two exports; only the identifiers the substitution rule names are
+ * replaced (`tests/fixtures/README.md`), `observedAt` is rebuilt as a date and the plan's correction ids are left to the test,
  * which inserts the rows they name.
  */
 

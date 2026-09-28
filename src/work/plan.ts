@@ -442,10 +442,23 @@ export function planPreconditionAudit(
   return { flagged, issues };
 }
 
-/** The planner's reply, validated: one to eight steps with the summary, output type and risk notes. */
+/** The most steps a plan may carry; a longer one is refused with its reason, never cut (N28). */
+const PLAN_MAX_STEPS = 8;
+
+/**
+ * The planner's reply, validated: one to eight steps with the summary, output
+ * type and risk notes. The step bound's messages are what the card shows when
+ * a reply breaks it.
+ */
 export const planSchema = z.object({
   summary: z.string(),
-  steps: z.array(z.string()).min(1).max(8),
+  steps: z
+    .array(z.string())
+    .min(1, { error: 'the plan had no steps; the least is one' })
+    .max(PLAN_MAX_STEPS, {
+      error: (issue): string =>
+        `the plan had ${Array.isArray(issue.input) ? issue.input.length : 'too many'} steps; the most is ${PLAN_MAX_STEPS}`,
+    }),
   expectedOutputType: z.enum([
     'message',
     'doc-update',
@@ -987,14 +1000,4 @@ async function withObligations(
   if (settled.obligations) return { ...plan, obligations: settled.obligations };
   const failedOpen = settled.events.find((event) => event.type === 'plan.obligations-failed-open');
   return failedOpen ? { ...plan, obligationsFailedOpen: failedOpen.payload.reason } : plan;
-}
-
-/** Render a plan as the one paragraph a decision request carries. */
-export function renderPlanSummary(plan: ExecutionPlan): string {
-  const stepsRendered = plan.steps.map((s, i) => `${i + 1}. ${s}`).join(' ');
-  return [
-    `${plan.summary} (~${plan.estimatedMinutes}m)`,
-    `Steps: ${stepsRendered}`,
-    `Reversibility: ${plan.reversibility}.`,
-  ].join(' | ');
 }

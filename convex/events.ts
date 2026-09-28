@@ -24,10 +24,11 @@ import { EVENT_TYPES } from '../src/events/contract';
 import { eventsOfType } from './eventLog';
 
 /**
- * Events feed - inserted by the internal log mutation only, and patched in place
- * by the server when a later phase completes a row (`work.ts`); drives the live
- * UI ticker. The reading side
- * enforces per-account ownership; the writing side is internal-only.
+ * Events feed - inserted only through `eventLog.ts` (`appendEvent` in a
+ * mutation's own transaction, or the internal `log` from an action), and
+ * patched in place by the server when a later phase completes a row
+ * (`work.ts`); drives the live UI ticker. The reading side enforces
+ * per-account ownership; the writing side is internal-only.
  */
 
 /**

@@ -112,7 +112,11 @@ import { retiredClaimOn, retiredHolderName } from './retirements';
 import { isEventOf, type WorkActionsAutoApplyingPayload } from '../src/events/contract';
 import { redactTokenShapes } from '../src/surfaces/redact';
 
-/** How long an approved set may wait for its apply to start before the recovery timer reschedules it. */
+/**
+ * How long an apply may go unfinished before the recovery timer acts on it: an
+ * approved set whose apply never claimed is rescheduled, and one whose apply
+ * claimed has this phase's outcomes recorded unknown and is never replayed.
+ */
 export const APPLY_RECOVERY_MS = 6 * 60 * 1000;
 /**
  * How long a closing phase's authoring may hold its claim before its switch

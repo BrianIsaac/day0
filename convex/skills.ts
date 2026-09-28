@@ -709,13 +709,17 @@ export const propose = internalMutation({
   },
 });
 
-/** Public, owner-guarded: approves a proposed skill and schedules its authoring. */
+/**
+ * Public, owner-guarded: approves a proposed skill whose target surface is
+ * connected, grants its required scopes and records the approval. Nothing is
+ * scheduled here; the dashboard starts the authoring once this returns.
+ */
 export const approve = mutation({
   args: { skillId: v.id('skills') },
   handler: async (ctx, args) => {
     const row = await assertOwnsSkill(ctx, args.skillId);
     if (row.state !== 'proposed') {
-      throw new Error(`skill state is ${row.state}; expected proposed`);
+      throw new Error(`cannot approve "${row.name}": it is ${row.state}, not proposed`);
     }
     // A skill may only target a connected surface. The sandbox stays offline,
     // so approval is the first point at which the target is checked, and the

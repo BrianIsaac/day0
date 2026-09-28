@@ -519,6 +519,17 @@ describe('skills that target a surface', (): void => {
     ).resolves.toEqual({ ok: true });
   });
 
+  it('refuses a second approval, naming the skill and the state it is in', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedAgentAndWork(harness, 'tickets');
+    const skillId = await propose(harness, agentId, workItemId);
+    await harness.withIdentity(OWNER).mutation(api.skills.approve, { skillId });
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.skills.approve, { skillId }),
+    ).rejects.toThrow('cannot approve "update-linear-ticket": it is approved, not proposed');
+  });
+
   it('targets an unlisted real source so approval cannot bypass connection', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());

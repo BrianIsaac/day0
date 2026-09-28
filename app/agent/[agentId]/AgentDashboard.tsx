@@ -92,6 +92,7 @@ import {
   useNow,
 } from './time';
 import { eventLabel } from './event-labels';
+import { ROOM_HEIGHT } from './room-frame';
 import {
   compareWaitingRows,
   EVALUATION_ATTEMPTS_SPENT,
@@ -116,6 +117,7 @@ import type { AgentMetrics } from '@/metrics/types';
 import { formatAuditTrail, formatMetricDuration } from '../../metric-format';
 import { PILOT_FIGURES, readsAndMessages } from '../../CompanySupervision';
 import { errorMessage } from '@/lib/errors';
+import { plainErrorMessage } from '@/lib/plain-error';
 
 interface Props {
   agentId: Id<'agents'>;
@@ -148,7 +150,7 @@ function PanelLoading({ label, frame }: { label: string; frame: string }): React
 }
 
 /** The frames the three panels occupy, as their own markup sizes them. */
-const ROOM_FRAME = 'min-h-[28rem] rounded-xl border border-[var(--color-border)]';
+const ROOM_FRAME = `${ROOM_HEIGHT} rounded-xl border border-[var(--color-border)]`;
 const ENVIRONMENT_FRAME = 'min-h-[30rem] rounded-xl border border-[var(--color-border)]';
 
 /*
@@ -1162,8 +1164,12 @@ export function CharterCard({
 
   async function toggleStrike(index: number, struck: boolean): Promise<void> {
     setStrikeError(null);
-    const result = await setConstraintStruck({ charterId: charter._id, index, struck });
-    if (!result.ok) setStrikeError(result.reason);
+    try {
+      const result = await setConstraintStruck({ charterId: charter._id, index, struck });
+      if (!result.ok) setStrikeError(result.reason);
+    } catch (failure: unknown) {
+      setStrikeError(plainErrorMessage(errorMessage(failure)));
+    }
   }
 
   async function sendAmendment(change: CharterChange): Promise<boolean> {
@@ -1733,7 +1739,8 @@ function BoundaryList({ label, items }: { label: string; items: string[] }) {
   );
 }
 
-function ProposedSkillsPanel({
+/** The skills the agent proposed and the manager has not decided, each with Approve and Reject. */
+export function ProposedSkillsPanel({
   skills,
   surfaces,
   onAuthoringAttempt,
@@ -1785,26 +1792,22 @@ function ProposedSkillsPanel({
                   disabled={Boolean(refusal)}
                   title={refusal}
                   onClick={() => {
-                    // The chain ends in its own catch, which files the attempt on the row.
                     onAuthoringAttempt(null);
-                    void approve({ skillId: s._id })
-                      .then(() => author({ skillId: s._id }))
-                      .then((result) => {
-                        if (!result.ok) {
-                          onAuthoringAttempt({
-                            skillId: s._id,
-                            name: s.name,
-                            reason: result.reason ?? 'authoring did not finish',
-                          });
-                        }
-                      })
-                      .catch((err: unknown) => {
-                        onAuthoringAttempt({
-                          skillId: s._id,
-                          name: s.name,
-                          reason: errorMessage(err),
-                        });
-                      });
+                    const file = (reason: string): void =>
+                      onAuthoringAttempt({ skillId: s._id, name: s.name, reason });
+                    // Discarded because each step's rejection is handled here and
+                    // filed as the attempt on the row. The approval's refusals name
+                    // the approve themselves (`cannot approve "<skill>": ...`).
+                    void approve({ skillId: s._id }).then(
+                      () =>
+                        author({ skillId: s._id }).then(
+                          (result) => {
+                            if (!result.ok) file(result.reason ?? 'authoring did not finish');
+                          },
+                          (err: unknown) => file(plainErrorMessage(errorMessage(err))),
+                        ),
+                      (err: unknown) => file(plainErrorMessage(errorMessage(err))),
+                    );
                   }}
                   className="px-3 py-1.5 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] hover:bg-[var(--color-ok)]/30 text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-[var(--color-ok)]/20"
                 >
@@ -1890,7 +1893,7 @@ export function RegisteredSkillsPanel({
         onAuthoringAttempt({ skillId, name, reason: result.reason ?? 'retry did not succeed' });
       }
     } catch (err) {
-      onAuthoringAttempt({ skillId, name, reason: errorMessage(err) });
+      onAuthoringAttempt({ skillId, name, reason: plainErrorMessage(errorMessage(err)) });
     } finally {
       setRetrying(null);
     }
@@ -1910,7 +1913,7 @@ export function RegisteredSkillsPanel({
         });
       }
     } catch (err) {
-      onAuthoringAttempt({ skillId, name, reason: errorMessage(err) });
+      onAuthoringAttempt({ skillId, name, reason: plainErrorMessage(errorMessage(err)) });
     } finally {
       setRetrying(null);
     }
@@ -2337,8 +2340,11 @@ export function WorkQueue({
     if (inFlight.current.has(key)) return;
     inFlight.current.add(key);
     call()
-      // A failed step is recorded on the row by the backend and read from
-      // there; the promise here only holds the in-flight key.
+      // A step that fails on the row records the failure there, where the card
+      // reads it. A refusal before the row is touched (the item gone, the
+      // charter not approved, an ownership refusal, a claim another call
+      // already holds) leaves nothing on the row and is dropped here; the
+      // promise only holds the in-flight key.
       .catch((): void => undefined)
       .finally(() => inFlight.current.delete(key));
   }, []);

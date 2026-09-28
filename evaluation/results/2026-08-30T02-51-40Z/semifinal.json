@@ -1922,7 +1922,7 @@
     }
   ],
   "regradedFrom": {
-    "path": "/tmp/claude-1000/-home-brian-isaac--local-share-briain-cockpit/41fd92fd-39fd-4624-a03b-94be1dc246b2/scratchpad/day0-eval-local/evaluation/results/2026-08-30T02-36-05Z/semifinal.json",
+    "path": "evaluation/results/2026-08-30T02-36-05Z/semifinal.json",
     "commit": "96acdb4ebff00ce840afa64b89499acd67de3e87",
     "gradedAtCommit": "87c0d4527f93d9f8a38a376f90d140e33a455871",
     "generatedAt": "2026-08-30T02:51:27.026Z",

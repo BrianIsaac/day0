@@ -1,3 +1,7 @@
+/** @vitest-environment jsdom */
+
+import { act } from 'react';
+import { createRoot } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { getFunctionName } from 'convex/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -5,11 +9,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const state = vi.hoisted(() => ({
   sources: [] as Array<Record<string, unknown>>,
   mode: 'real' as 'real' | 'mock',
+  /** Mutations that reject, by function name, with the text they reject with. */
+  refusals: {} as Record<string, string>,
 }));
 
 vi.mock('convex/react', () => ({
   useAction: (): (() => void) => (): void => undefined,
-  useMutation: (): (() => void) => (): void => undefined,
+  useMutation:
+    (reference: unknown): (() => Promise<void>) =>
+    async (): Promise<void> => {
+      const refusal = state.refusals[getFunctionName(reference as never)];
+      if (refusal !== undefined) throw new Error(refusal);
+    },
   useQuery: (reference: unknown): unknown => {
     const name = getFunctionName(reference as never);
     if (name === 'config:surfaceMode')
@@ -32,6 +43,7 @@ import {
 beforeEach((): void => {
   state.sources = [];
   state.mode = 'real';
+  state.refusals = {};
 });
 
 it('keeps the hosted mock documentation page unchanged', (): void => {
@@ -161,5 +173,43 @@ describe('the author guide', (): void => {
     );
     expect(markup).toContain(`href="${AUTHOR_GUIDE_URL}"`);
     expect(markup).toContain('the documentation author guide');
+  });
+});
+
+describe('a source action the backend refuses', (): void => {
+  const source = {
+    _id: 'source-1',
+    label: 'RevOps handbook',
+    kind: 'folder',
+    locator: '.',
+    status: 'synced',
+    pageCount: 2,
+  };
+
+  it.each([
+    ['Re-sync', 'docSources:resync'],
+    ['Unlink', 'docSources:unlink'],
+  ])('shows why %s was refused on the page', async (label, name): Promise<void> => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    state.sources = [source];
+    state.refusals = {
+      [name]: `[CONVEX M(${name})] [Request ID: 1] Server Error\nUncaught Error: Documentation source not found.\n    at handler (../convex/docSources.ts:1:1)`,
+    };
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    act((): void => root.render(<DocumentationPage />));
+
+    const button = [...container.querySelectorAll('button')].find(
+      (candidate) => candidate.textContent === label,
+    );
+    await act(async (): Promise<void> => {
+      button?.click();
+    });
+
+    expect(container.textContent).toContain('Documentation source not found.');
+    expect(container.textContent).not.toContain('Request ID');
+    act((): void => root.unmount());
+    container.remove();
   });
 });

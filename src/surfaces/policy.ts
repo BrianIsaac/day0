@@ -981,7 +981,8 @@ function replayedClickRefusal(parsed: ParsedSurfaceAction): string | undefined {
  * with - never under the authority of the phase that needs the page. A
  * `manager` row keeps the approved-phase rule (a read needs its grant, a
  * write rests on the approval); an `autonomous` row needs the toggle on now;
- * a `standing` row, or one that recorded no authority, needs its grant now.
+ * a `standing` row, or one that recorded no authority, needs its grant now;
+ * a row carrying an authority no release wrote is refused whatever it holds.
  * A scope the manager revoked blocks all three: a replay is a new request to
  * the system, and a revocation promises that nothing more needing the scope
  * is sent.
@@ -1024,8 +1025,7 @@ export function replayAuthorityRefusal(
     default: {
       // A persisted row may carry an authority no release wrote; it is refused, never sent.
       const unhandled: never = authority;
-      void unhandled;
-      return grantRefusal(parsed, surface, live.grants, false, revoked);
+      return `${NO_GRANT} (unknown authority ${String(unhandled)})`;
     }
   }
 }
