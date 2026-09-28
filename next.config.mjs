@@ -24,6 +24,10 @@ const nextConfig = {
       bodySizeLimit: '4mb',
     },
   },
+  // The walkthrough moved from `/demo` (N29); the README and older links keep working.
+  async redirects() {
+    return [{ source: '/demo', destination: '/walkthrough', permanent: true }];
+  },
   async headers() {
     return [{ source: '/:path*', headers: securityHeaders }];
   },

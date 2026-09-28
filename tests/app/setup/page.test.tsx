@@ -77,7 +77,7 @@ describe('the /setup guide', (): void => {
       expect(html).toContain(`href="${link.href}"`);
       expect(text).toContain(link.label);
     }
-    expect(hosted.links?.map((link) => link.href)).toEqual(['/sign-in', '/demo']);
+    expect(hosted.links?.map((link) => link.href)).toEqual(['/sign-in', '/walkthrough']);
     expect(cloud.commands).toContain('./setup.sh --route featherless');
     expect(cloud.body).toContain('--route key');
     expect(cloud.body).toContain('--route endpoint');
@@ -204,7 +204,8 @@ describe('the /setup guide', (): void => {
 
   it('links the detailed README sections, the demo and the source', (): void => {
     for (const section of DETAILED_SECTIONS) expect(html).toContain(`href="${section.href}"`);
-    expect(html).toContain('href="/demo"');
+    expect(html).toContain('href="/walkthrough"');
+    expect(html).not.toContain('href="/demo"');
     expect(html).toContain('>Source<');
   });
 

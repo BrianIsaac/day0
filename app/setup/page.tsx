@@ -490,7 +490,10 @@ export default function SetupPage() {
         <footer className="lg:col-start-2 mt-14 pt-6 border-t border-[var(--color-border)] space-y-2">
           <p className="text-sm text-[var(--color-muted)]">
             Only wanted to see it work?{' '}
-            <Link href="/demo" className="text-[var(--color-accent)] underline underline-offset-4">
+            <Link
+              href="/walkthrough"
+              className="text-[var(--color-accent)] underline underline-offset-4"
+            >
               Watch the recorded walkthrough
             </Link>{' '}
             instead - it is a recording, and it needs nothing installed.

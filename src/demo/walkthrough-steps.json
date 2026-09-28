@@ -1,0 +1,360 @@
+{
+  "runOn": "2026-09-03",
+  "steps": [
+    {
+      "number": 1,
+      "title": "Link the documentation, before deploying anything.",
+      "body": [
+        {
+          "text": "The folder source read the seven runbook, systems and onboarding pages mounted read-only at "
+        },
+        { "text": "DAY0_DOCS_HOST_DIR", "code": true },
+        {
+          "text": ". The Notion source read six pages through the bundled Notion component. Both reported "
+        },
+        { "text": "synced", "code": true },
+        { "text": " within half a minute. No role, no scope and no tool list existed yet." }
+      ],
+      "elapsedSeconds": null,
+      "caption": "Both documentation sources synced before the agent existed.",
+      "capture": {
+        "src": "/walkthrough/full-run-01-documentation-synced.webp",
+        "width": 978,
+        "height": 314,
+        "alt": "The real-mode documentation page after sync, showing a seven-page team folder and a six-page Notion source, both marked synced"
+      }
+    },
+    {
+      "number": 2,
+      "title": "Deploy the agent and hold the Day-1 one-to-one.",
+      "body": [
+        {
+          "text": "Chat was the only mode available, since this deployment carries no ElevenLabs credentials. The agent opened the conversation itself and worked through the seven topics in order: why the hire was made, the role and its 30/60/90 days, who to talk to, what to read, which tools carry the work, what to pick up first, and what is still open. The manager answered in plain sentences. The conversation completed 4 min 34 s after deploy."
+        }
+      ],
+      "elapsedSeconds": null,
+      "caption": "The opening exchange of the Day-1 one-to-one, in chat.",
+      "capture": {
+        "src": "/walkthrough/full-run-02-day-one-chat.webp",
+        "width": 810,
+        "height": 452,
+        "alt": "The Day-1 chat exchange, with the agent opening the 1:1 by asking why it was hired and what the team needs made easier"
+      }
+    },
+    {
+      "number": 3,
+      "title": "Approve the charter it drafted.",
+      "body": [
+        {
+          "text": "From that conversation alone the agent wrote its own purpose, proposed function, 30/60/90-day outcomes, boundaries, collaborators and open questions. The manager read it and pressed Approve. Time to first approved charter: "
+        },
+        { "text": "5 min 8 s", "strong": true },
+        { "text": "." }
+      ],
+      "elapsedSeconds": null,
+      "caption": "The charter the agent wrote, after approval.",
+      "capture": {
+        "src": "/walkthrough/full-run-03-charter-approved.webp",
+        "width": 810,
+        "height": 342,
+        "alt": "The approved charter card, showing why this hire, the proposed RevOps coordinator function and the 30/60/90-day outcomes"
+      }
+    },
+    {
+      "number": 4,
+      "title": "Orientation proposes one card per system.",
+      "body": [
+        {
+          "text": "About two minutes after the charter was approved, and with nothing pressed, the agent produced exactly four connection cards from the documentation and the charter together: Linear over its MCP endpoint, Slack over its documented API, the Looker tile as browser-driven, and Northstar CRM with no approved path. Each card carries the sentences it was proposed from, including the manager’s own words from the one-to-one."
+        }
+      ],
+      "elapsedSeconds": 432,
+      "caption": "Two of the four cards orientation proposed, each with the ladder it intends to use.",
+      "capture": {
+        "src": "/walkthrough/full-run-04-cards-proposed.webp",
+        "width": 1180,
+        "height": 152,
+        "alt": "The Surfaces tab after orientation, showing the Linear and Slack cards proposed with their approved connection ladders"
+      }
+    },
+    {
+      "number": 5,
+      "title": "Land the Slack token, then approve each card twice.",
+      "body": [
+        {
+          "text": "This deployment has no public address, so no Slack app can be registered; the card offers a field for a shared bot token instead, and it was pasted there before either approval. Each of the three cards then took the manager button and the IT button. All three probes connected within seconds. Northstar CRM stayed "
+        },
+        { "text": "absent", "code": true },
+        { "text": ", because the documentation records no approved way in." }
+      ],
+      "elapsedSeconds": 545,
+      "caption": "Three systems connected, one left absent by the documentation.",
+      "capture": {
+        "src": "/walkthrough/full-run-05-connected-statuses.webp",
+        "width": 1180,
+        "height": 143,
+        "alt": "Connection status headers showing Linear, Slack and the Looker pipeline tile connected and Northstar CRM absent"
+      }
+    },
+    {
+      "number": 6,
+      "title": "Intake fills the queue on its own.",
+      "body": [
+        {
+          "text": "The five-minute intake cron read the connected systems and returned four candidates: a Slack mention in "
+        },
+        { "text": "#revops-asks", "code": true },
+        {
+          "text": ", an urgent Linear ticket asking for a close-summary audit note, a medium Linear ticket asking for a tile refresh, and a Northstar ticket that deferred at the connection gate rather than guessing. The first three matched no registered skill and returned "
+        },
+        { "text": "needs-skill", "code": true },
+        { "text": "." }
+      ],
+      "elapsedSeconds": 805,
+      "caption": "What the agent found to do, and why it could not start yet.",
+      "capture": {
+        "src": "/walkthrough/full-run-06-work-queue.webp",
+        "width": 810,
+        "height": 530,
+        "alt": "The real-mode work queue after intake, showing three needs-skill items and one deferred on an absent connection"
+      }
+    },
+    {
+      "number": 7,
+      "title": "Approve the three skills it proposes.",
+      "body": [
+        {
+          "text": "Each proposal names the scopes it needs and the candidate that prompted it. The manager approved all three; the agent authored each one and verified it by running a smoke test in the local sandbox. All three registered within a minute and a half."
+        }
+      ],
+      "elapsedSeconds": 965,
+      "caption": "Three skills the agent wrote for itself, after sandbox verification.",
+      "capture": {
+        "src": "/walkthrough/full-run-07-skills-registered.webp",
+        "width": 640,
+        "height": 518,
+        "alt": "The skills panel showing the built-in documentation skill and three agent-authored Linear and Slack skills registered"
+      }
+    },
+    {
+      "number": 8,
+      "title": "Approve a plan before anything executes.",
+      "body": [
+        {
+          "text": "Under the cold-start cap the agent takes one item at a time. It drafted a four-step plan for the audit note: read the ticket, draft the comment, submit the comment and the state change only after literal approval, then verify what came back. The manager approved the plan."
+        }
+      ],
+      "elapsedSeconds": 1034,
+      "caption": "A plan waiting for a decision. Nothing has executed.",
+      "capture": {
+        "src": "/walkthrough/full-run-08-plan-held.webp",
+        "width": 778,
+        "height": 378,
+        "alt": "A held execution plan for the close-summary audit note, with its four steps and the approve control"
+      }
+    },
+    {
+      "number": 9,
+      "title": "A web-only system arrives as one held browser batch.",
+      "body": [
+        {
+          "text": "The Slack ask needed the pipeline figure, and the documentation says that tile has a web UI and no API. The agent produced the documented sequence as six browser actions held together, because they cannot be split across isolated browser sessions. Nothing had reached a surface."
+        }
+      ],
+      "elapsedSeconds": 1235,
+      "caption": "The whole sign-in and save sequence, held as one decision.",
+      "capture": {
+        "src": "/walkthrough/full-run-09-browser-batch-held.webp",
+        "width": 754,
+        "height": 404,
+        "alt": "Six browser operations held together as one batch, with the batch decision controls"
+      }
+    },
+    {
+      "number": 10,
+      "title": "Approve it whole, and the tile reads itself back.",
+      "body": [
+        {
+          "text": "The manager pressed Approve all. The six actions applied in about a second, and the last one read the page back: the visible figure and the audit line the runbook asks for as evidence. Every plan step was marked satisfied from the applied ledger, not from the agent’s own account of itself."
+        }
+      ],
+      "elapsedSeconds": 1271,
+      "caption": "The applied sequence and the read-back that evidences it.",
+      "capture": {
+        "src": "/walkthrough/full-run-10-batch-applied.webp",
+        "width": 754,
+        "height": 378,
+        "alt": "The applied browser batch with its read-back of the visible figure and audit line, above the plan execution ledger"
+      }
+    },
+    {
+      "number": 11,
+      "title": "The public reply is held separately, and lands when approved.",
+      "body": [
+        {
+          "text": "The charter says not to post publicly during cold start, so the reply into the ask’s thread arrived as its own decision after the read-back. The manager approved it and it landed in "
+        },
+        { "text": "#revops-asks", "code": true },
+        { "text": " with the provenance trailer." }
+      ],
+      "elapsedSeconds": 1381,
+      "caption": "The public reply, held for a decision before it is sent.",
+      "capture": {
+        "src": "/walkthrough/full-run-11-public-reply-held.webp",
+        "width": 754,
+        "height": 154,
+        "alt": "A held public Slack reply quoting the pipeline figure and the tile audit line, with its approval controls"
+      }
+    },
+    {
+      "number": 12,
+      "title": "Reject a comment that is too thin, with a reason.",
+      "body": [
+        {
+          "text": "The audit note’s first run ended honestly: it read the ticket, found no completed-check evidence, and asked in the DM rather than inventing any. The manager sent it back with the three checks as a note. The comment that came back was still not enough, so the manager rejected the run with a written reason. The reason is kept and travels to the retry."
+        }
+      ],
+      "elapsedSeconds": 1756,
+      "caption": "The held comment and state change, and the reason they were rejected.",
+      "capture": {
+        "src": "/walkthrough/full-run-12-rejection-with-reason.webp",
+        "width": 754,
+        "height": 200,
+        "alt": "Two held Linear actions above the manager’s written rejection reason"
+      }
+    },
+    {
+      "number": 13,
+      "title": "Confirm the provider state, retry, and the revision lands.",
+      "body": [
+        {
+          "text": "Because a DM had already landed, the retry was fenced behind a reconciliation checklist until the manager confirmed what was really at the provider. The revision then quoted the figure and the three checks, and proposed the state change with it. Approved together, both writes landed on the ticket."
+        }
+      ],
+      "elapsedSeconds": 2124,
+      "caption": "The revision after the rejection, applied to the ticket.",
+      "capture": {
+        "src": "/walkthrough/full-run-13-revision-landed.webp",
+        "width": 778,
+        "height": 258,
+        "alt": "The completed audit-note item with the Linear comment and Done transition recorded in its ledger"
+      }
+    },
+    {
+      "number": 14,
+      "title": "Turn autonomous actions on.",
+      "body": [
+        {
+          "text": "The switch is in the header and asks for a confirmation that says plainly what changes. Skills and connections still need approval either way."
+        }
+      ],
+      "elapsedSeconds": 2362,
+      "caption": "The switch asks before it changes what applies without asking.",
+      "capture": {
+        "src": "/walkthrough/full-run-14-autonomy-confirm.webp",
+        "width": 554,
+        "height": 299,
+        "alt": "The confirmation dialog for turning on autonomous actions"
+      }
+    },
+    {
+      "number": 15,
+      "title": "The same work now applies without a decision.",
+      "body": [
+        {
+          "text": "One item was retried under the switch. It ran the documented browser sequence, read the tile back, wrote the audit comment and moved the ticket to Done: nine actions, all applied with autonomous authority, no prompt, in about forty seconds."
+        }
+      ],
+      "elapsedSeconds": 2425,
+      "caption": "Under the switch, the same shape of work applies on its own.",
+      "capture": {
+        "src": "/walkthrough/full-run-15-autonomous-batch.webp",
+        "width": 754,
+        "height": 282,
+        "alt": "Nine actions applied autonomously, including the browser sequence, the Linear comment and the state change"
+      }
+    },
+    {
+      "number": 16,
+      "title": "Revoke a scope mid-run, and the next write is refused.",
+      "body": [
+        { "text": "linear:write", "code": true },
+        {
+          "text": " was revoked from the Permissions panel seventeen seconds into a run that was already executing. When that run reached its Linear write, the write did not reach the work environment: "
+        },
+        { "text": "no grant (linear:write)", "code": true },
+        {
+          "text": ". The block is counted, and the browser actions the run had already applied were left as they were."
+        }
+      ],
+      "elapsedSeconds": 2925,
+      "caption": "The refusal, and the numbers the run ended on.",
+      "capture": {
+        "src": "/walkthrough/full-run-16-refusal-and-supervision.webp",
+        "width": 1168,
+        "height": 242,
+        "alt": "The refused Linear write after revocation, beside the supervision metrics for the run"
+      }
+    }
+  ],
+  "deviations": [
+    {
+      "lead": "The manager email is not in the setup list, and Slack needs it.",
+      "body": [
+        { "text": "On the first attempt the Slack probe failed with " },
+        {
+          "text": "the manager email boss@day0.local is not a member of this Slack workspace",
+          "code": true
+        },
+        { "text": ". Real mode resolves the manager’s DM from " },
+        { "text": "NEXT_PUBLIC_DEMO_BOSS_EMAIL", "code": true },
+        { "text": ", which the setup block above does not mention and " },
+        { "text": ".env.example", "code": true },
+        {
+          "text": " leaves empty. The run recorded here was started again after setting it. If your Slack workspace is real, set it to the address you use there."
+        }
+      ]
+    },
+    {
+      "lead": "The one-to-one asked one question the answers did not cover.",
+      "body": [
+        {
+          "text": "After the collaborators topic it asked for the names behind the three roles. The manager repeated that introductions go through them; the conversation then continued through the remaining topics as normal."
+        }
+      ]
+    },
+    {
+      "lead": "The queue chose its own order.",
+      "body": [
+        {
+          "text": "The cold-start cap runs one item at a time, and the agent took the audit note and the Slack ask before the tile refresh. Nothing in the walkthrough depends on that order."
+        }
+      ]
+    },
+    {
+      "lead": "The tile refresh was carried by the Slack ask.",
+      "body": [
+        {
+          "text": "The Slack ask needed the figure, so its plan included the documented refresh, and the tile was already current when the tile ticket ran. That run reported honestly that its own ledger held no browser evidence, held a comment saying so, and proposed no state change. It reached Done later, under the switch, in step 15."
+        }
+      ]
+    },
+    {
+      "lead": "A run that ends with a question has no rejection to make.",
+      "body": [
+        {
+          "text": "The audit note’s first run held nothing, so there was nothing to reject at that point. Sending the finished run back with a note is the control that answers it."
+        }
+      ]
+    },
+    {
+      "lead": "Reconciliation is asked for more often than the walkthrough implies.",
+      "body": [
+        {
+          "text": "Any retry after something landed at a provider asks for the checklist first, not only the one after a rejection."
+        }
+      ]
+    },
+    { "lead": "The switch confirms on the way on, not on the way off.", "body": [] }
+  ]
+}
