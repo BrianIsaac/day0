@@ -120,7 +120,11 @@ export interface EvaluationEvidence {
     intentionalArmDifferences?: IntentionalArmDifferences;
   };
   regradedFrom?: {
-    /** The source run's evidence, from its checkout root (`evaluation/results/<run>/<file>.json`). */
+    /**
+     * The source run's evidence: from its checkout root
+     * (`evaluation/results/<run>/<file>.json`) when it sat under one, else
+     * relative to where the re-grade ran, else its file name alone.
+     */
     path: string;
     /** Commit whose product execution and retained backend state produced the source run. */
     commit: string;

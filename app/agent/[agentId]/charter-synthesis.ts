@@ -10,7 +10,8 @@ export interface CharterSynthesisRequest {
 }
 
 /**
- * Post a finished 1:1 for charter synthesis, once, without waiting on it.
+ * Post a finished 1:1 for charter synthesis without waiting on it. Each room
+ * latches its own call, so the post goes once per 1:1.
  *
  * A failed post shows as the charter card staying at its draft, where the
  * manager retries (P10-3 names the retry as its own step). That holds for a
