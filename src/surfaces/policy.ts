@@ -680,14 +680,18 @@ function targetsOnlyChannel(parsed: ParsedSurfaceAction, expected: string): bool
   );
 }
 
-/** Whether an action asks the provider to place a message inside an existing thread. */
-function hasThreadTarget(parsed: ParsedSurfaceAction): boolean {
+/**
+ * Whether every thread an action names is a thread inside its channel: a
+ * provider timestamp or id as a string, the broadcast flag aside. Anything
+ * else in a thread field is not a place a reader can see.
+ */
+function threadTargetsAreTimestamps(parsed: ParsedSurfaceAction): boolean {
   const record = parsed.kind === 'mcp.call' ? parsed.toolArgs : parsed.bodyJson;
   if (!record) return false;
-  return Object.entries(record).some(([key, value]) => {
-    return (
-      isThreadKey(key) && value !== undefined && value !== null && value !== '' && value !== false
-    );
+  return Object.entries(record).every(([key, value]) => {
+    if (!isThreadKey(key) || value === undefined || value === null || value === false) return true;
+    if (semanticKey(key) === 'replybroadcast') return typeof value === 'boolean';
+    return typeof value === 'string' && value.trim() !== '';
   });
 }
 
@@ -745,10 +749,15 @@ export const BOSS_MESSAGE_SCOPE = 'boss:message';
 export function isManagerDm(parsed: ParsedSurfaceAction, surface: SurfaceRecord): boolean {
   if (surface.class !== 'chat' || !surface.managerDmChannelId) return false;
   if (actionIntent(parsed) !== 'write') return false;
-  if (hasThreadTarget(parsed)) return false;
-  const posts =
-    parsed.kind === 'http.request' ? isChatPost(parsed, surface) : isMcpChatPost(parsed);
-  return posts && targetsOnlyChannel(parsed, surface.managerDmChannelId);
+  // A thread inside the manager DM has the DM's audience, since the channel is
+  // the one-to-one the probe opened with the manager (M finding 3); so does an
+  // edit of a message there, which Slack allows only on the app's own posts.
+  if (!threadTargetsAreTimestamps(parsed)) return false;
+  const writes =
+    parsed.kind === 'http.request'
+      ? isChatPost(parsed, surface) || isChatUpdate(parsed, surface)
+      : isMcpChatPost(parsed);
+  return writes && targetsOnlyChannel(parsed, surface.managerDmChannelId);
 }
 
 /**
@@ -1622,6 +1631,18 @@ function isChatPost(parsed: ParsedHttpRequest, surface: SurfaceRecord): boolean 
   );
 }
 
+/** Whether a request rewrites the text of one existing chat message, named by its timestamp. */
+function isChatUpdate(parsed: ParsedHttpRequest, surface: SurfaceRecord): boolean {
+  return (
+    parsed.method === 'POST' &&
+    surface.class === 'chat' &&
+    /^\/*chat\.update$/.test(parsed.path) &&
+    typeof parsed.bodyJson?.text === 'string' &&
+    typeof parsed.bodyJson.ts === 'string' &&
+    parsed.bodyJson.ts.trim() !== ''
+  );
+}
+
 /**
  * Whether an MCP call files a new ticket with words of its own.
  *
@@ -1684,7 +1705,9 @@ export function provenanceRefusal(
   if (parsed.body !== undefined && containsProvenanceTrailer(parsed.body)) {
     return TRAILER_REFUSED;
   }
-  if (!isChatPost(parsed, surface) || !parsed.bodyJson) return undefined;
+  if (!(isChatPost(parsed, surface) || isChatUpdate(parsed, surface)) || !parsed.bodyJson) {
+    return undefined;
+  }
   return parsed.bodyJson.username !== undefined ||
     parsed.bodyJson.icon_emoji !== undefined ||
     parsed.bodyJson.icon_url !== undefined
@@ -1724,7 +1747,9 @@ export function sharedWriteWithoutAttribution(
   if (isAuditComment(parsed)) return false;
   if (parsed.kind === 'mcp.call' && isMcpChatPost(parsed)) return false;
   if (isTicketCreate(parsed, surface)) return false;
-  if (parsed.kind === 'http.request') return !isChatPost(parsed, surface);
+  if (parsed.kind === 'http.request') {
+    return !(isChatPost(parsed, surface) || isChatUpdate(parsed, surface));
+  }
   if (targetIssue(parsed) === undefined) return true;
   return !hasLandedAuditComment(parsed, index, earlier, ledger);
 }
@@ -1793,6 +1818,15 @@ export function applyProvenance(
       ok: true,
       action: { ...parsed, toolArgs: { ...parsed.toolArgs, body: `${body}\n\n${trailer}` } },
     };
+  }
+  if (isChatUpdate(parsed, surface) && parsed.bodyJson) {
+    if (!shared) return { ok: true, action: parsed };
+    // An edit takes no name or icon of its own, so it carries the trailer alone.
+    const edited: JsonObject = {
+      ...parsed.bodyJson,
+      text: `${String(parsed.bodyJson.text)}\n\n${trailer}`,
+    };
+    return { ok: true, action: { ...parsed, bodyJson: edited, body: JSON.stringify(edited) } };
   }
   if (!isChatPost(parsed, surface)) return { ok: true, action: parsed };
   const bodyJson = parsed.bodyJson;
