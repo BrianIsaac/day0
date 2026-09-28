@@ -523,6 +523,34 @@ describe('the dashboard ticker', (): void => {
       .query(api.events.recent, { agentId, limit: 2 });
     expect(recent.map((event) => event.type)).toEqual(['work.completed', 'work.discovered']);
   });
+
+  it('walks no more than its scan bound however large a window the caller asks for', async (): Promise<void> => {
+    const { api } = await import('../../convex/_generated/api');
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await harness.run(async (ctx): Promise<Id<'agents'>> => {
+      const id = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'Priya',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      for (let index = 0; index < 520; index += 1) {
+        await ctx.db.insert('events', {
+          agentId: id,
+          type: 'work.completed',
+          payload: {},
+          createdAt: index,
+        });
+      }
+      return id;
+    });
+    const owner = harness.withIdentity({ subject: 'owner' });
+    for (const limit of [20_000, Number.POSITIVE_INFINITY]) {
+      expect(await owner.query(api.events.recent, { agentId, limit })).toHaveLength(500);
+    }
+    expect(await owner.query(api.events.recent, { agentId, limit: 0 })).toHaveLength(1);
+  });
 });
 
 describe('export redaction', (): void => {
