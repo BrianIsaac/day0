@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { loadEvaluationTasks } from '../../../evaluation/graders';
-import { EVALUATION_SCOPES, MOCK_OFFICE_SYSTEMS } from '../../../src/evaluation/scopes';
+import { EVALUATION_SCOPES } from '../../../src/evaluation/scopes';
+import { MOCK_OFFICE_SYSTEMS } from '../../fixtures/mock-office';
 
 const systems = new Set<string>(MOCK_OFFICE_SYSTEMS);
 

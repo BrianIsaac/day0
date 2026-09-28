@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import { loadEvaluationTasks } from '../../../evaluation/graders';
-import { MOCK_OFFICE_SYSTEMS } from '../../../src/evaluation/scopes';
+import { MOCK_OFFICE_SYSTEMS } from '../../fixtures/mock-office';
 
 describe('day0 onboarding fixture', (): void => {
   it('states boundaries generically rather than naming the systems the out-of-scope tasks probe', async (): Promise<void> => {
