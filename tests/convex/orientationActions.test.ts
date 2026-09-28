@@ -1718,6 +1718,44 @@ describe('orientation run', (): void => {
     });
   });
 
+  it("reads a value-keyed row's quote into the guard, so a quoted phrase the page assigned binds and the same phrase unquoted does not (S)", async (): Promise<void> => {
+    const key = randomBytes(32).toString('base64');
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', key);
+    stubRegistry();
+    model.pathFor = (): DraftPath => 'mcp';
+    const orientWith = async (quoted: boolean): Promise<Doc<'surfaces'>> => {
+      const harness = convexTest(schema, allConvexModules());
+      const { agentId, sourceId } = await seedOrientation(
+        harness,
+        { 'linear-automation.md': notionFixture('linear-automation') },
+        [{ name: 'Linear', class: 'kanban' }],
+      );
+      await harness.run(
+        async (ctx) =>
+          await ctx.db.insert('credentials', {
+            userId: 'owner',
+            kind: 'value',
+            label: 'linear service token',
+            explicitlyAssigned: true,
+            ...(quoted ? { quoted: true } : {}),
+            source: {
+              sourceId,
+              ref: credentialSourceRef(
+                'linear-automation.md',
+                credentialValueFingerprint('Open Sesame', key, 'owner'),
+              ),
+            },
+            createdAt: 1,
+            ...sealForOwner('Open Sesame', { current: key }, 'owner'),
+          }),
+      );
+      await orientDeclared(harness, agentId);
+      return (await surfacesBySlug(harness, agentId)).linear;
+    };
+    expect((await orientWith(true)).credentialId).toEqual(expect.any(String));
+    expect((await orientWith(false)).credentialId).toBeUndefined();
+  });
+
   it('leaves the credential unresolved, and says so, when no stored row matches the marker', async (): Promise<void> => {
     stubRegistry();
     model.pathFor = (): DraftPath => 'mcp';
