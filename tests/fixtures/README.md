@@ -8,8 +8,9 @@ edits them (decision N15, 27 September 2026).
 The Slack team, channel and user ids (`T0BSQSQG0UU`, `C0C2P932A2H`,
 `C0C2U2UJUTU`, `U0BTFK6FLNL`, `U0BTFHN6MKJ` and their kin), the Linear
 workspace `day00` with its issue, project, team and creator uuids, and the
-Notion page ids in these files are the addresses of workspaces the operator
-created for Day0's own runs. They hold no customer, no colleague and no
+Notion page ids under `tests/` (these recordings and the tests that replay
+them) are the addresses of workspaces the operator created for Day0's own
+runs. They hold no customer, no colleague and no
 credential: every account, ticket, message and figure in them is invented,
 and the workspaces are the ones the README's real-mode walkthrough and the
 company bed (`bed/company/`) describe. They are kept as recorded because a
@@ -24,21 +25,32 @@ Two things are replaced in every recording, by `pnpm fixtures:substitute`
 - the manager's Slack DM channel id, which becomes `D0MANAGER`;
 - the operator's name as manager or requester, which becomes `Sam`
   (`Sam Ortiz`, `sam.ortiz`, and `sam/` as a git branch prefix, where a
-  recording carried the full name, a handle or a branch), under decision
-  N6: the product carries no real person's name.
+  recording carried the full name, a handle, a branch, or the branch prefix
+  Linear builds from the operator's account name), under decision N6: the
+  product carries no real person's name.
 
-`pnpm fixtures:substitute --check` fails naming any file the rule would still
-change, and `tests/scripts/fixture-substitution.test.ts` runs that check over
-the tracked tree. The redaction corpus (`redaction/`) is the one exclusion: its
-span model recording is keyed by character offset and cannot be retaken
-without the redactor component, so its sample person keeps the name it was
-recorded with.
+The rule runs over every text file under `tests/`, not only this directory;
+the lower-case first-name rule runs under `tests/fixtures/` only, because its
+word is an English one elsewhere. `pnpm fixtures:substitute --check` fails
+naming any file the rule would still change, and
+`tests/scripts/fixture-substitution.test.ts` runs that check over the tracked
+tree. Two paths are excluded: the redaction corpus (`redaction/`), whose span
+model recording is keyed by character offset and cannot be retaken without
+the redactor component, so its sample person keeps the name it was recorded
+with; and the rule's own test, which carries the names it replaces by design.
+
+The evaluation results under `evaluation/results/` are outside the rule's
+root: they are frozen evidence, and no rule rewrites them. They carry no
+machine path either; a re-grade records its source from the checkout root
+(`evaluation/results/<run>/<file>.json`), and a test holds every committed
+result to that.
 
 ## Provenance
 
-Every recorded fixture says in its header which run it comes from, on which
-date, with which model, and whether its strings are verbatim or
-reconstructed. The runs' exports and findings files are private recordings
+Every recorded fixture's file name carries the date of the run it comes from.
+Where a fixture has a header (a JSON recording cannot carry one), the header
+says which run it is, whether its strings are verbatim or reconstructed, and
+the model where the run's record names it. The runs' exports and findings files are private recordings
 kept outside the tree; no header cites a path a reader of this repository
 cannot open. Where a fixture was reconstructed from a run record rather than
 read from an export, the header says so.

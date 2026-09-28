@@ -7,7 +7,8 @@ import type { ExecutionPlan, MockAction, WorkCandidate } from '../../../src/work
  * read that grounded the plan and the phase-one response whose manager DM
  * the evidence check withheld for a sentence the ticket carries word for
  * word. Every string is the run's own, read from the export; only the
- * manager's DM channel id is replaced.
+ * identifiers the substitution rule names are replaced
+ * (`tests/fixtures/README.md`).
  */
 
 const call = (surface: string, tool: string, args: Record<string, unknown>): MockAction => ({

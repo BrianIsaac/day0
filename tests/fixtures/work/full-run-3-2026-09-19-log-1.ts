@@ -4,12 +4,14 @@ import type { ExecutionPlan, LandedWrite, MockAction, RefusedClosing, WorkCandid
 
 /**
  * Aiko's LOG-1 (SH-4471) and Mateo's FIN-1 from the third full internal run
- * of 19 September (main dbdc8aa, real mode, autonomy off): the work items,
+ * of 19 September (main dbdc8aa, GLM 5.3 Flash via Featherless, real mode,
+ * autonomy off for Aiko and on for Mateo): the work items,
  * their approved plans with the declared obligations, the standing read that
  * grounded LOG-1's plan, the manager's retry notes, and the closing sets the
  * promised-read gate refused. Every string is the run's own, read from the
- * rows in the run's findings and its export; only the manager's DM channel
- * id is replaced and `observedAt` is rebuilt as a date.
+ * rows in the run's findings and its export; only the identifiers the
+ * substitution rule names are replaced (`tests/fixtures/README.md`) and
+ * `observedAt` is rebuilt as a date.
  */
 
 /** The gate's sentence on all three LOG-1 refusals. */
