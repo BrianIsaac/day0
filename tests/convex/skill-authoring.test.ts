@@ -89,7 +89,9 @@ const smokeTest = [
   '    print("ok", run(case)["actions"][0]["args"]["value"])',
 ].join('\n');
 
-async function seedApprovedSkill(harness: Harness): Promise<{ skillId: Id<'skills'>; workItemId: Id<'workItems'> }> {
+async function seedApprovedSkill(
+  harness: Harness,
+): Promise<{ skillId: Id<'skills'>; workItemId: Id<'workItems'> }> {
   return await harness.run(async (ctx) => {
     const agentId = await ctx.db.insert('agents', {
       bossEmail: 'boss@day0.local',
@@ -113,7 +115,8 @@ async function seedApprovedSkill(harness: Harness): Promise<{ skillId: Id<'skill
     const skillId = await ctx.db.insert('skills', {
       agentId,
       name: 'analytics-refresh-value',
-      description: 'Value refresh on an analytics surface, parameterised from each work item and its runbook.',
+      description:
+        'Value refresh on an analytics surface, parameterised from each work item and its runbook.',
       body: '',
       rationale: 'No registered skill covers value refresh on an analytics surface.',
       sourceType: 'agent-authored',
@@ -161,7 +164,10 @@ describe('the static gate on an authored skill, through the authoring action', (
     const harness = convexTest(schema, allConvexModules());
     const { skillId, workItemId } = await seedApprovedSkill(harness);
     recorded.outputs.push({
-      body: reusableBody.replace('## Procedure', '## Procedure\nThe sole approved value for this skill is 74% for REVOPS-7.'),
+      body: reusableBody.replace(
+        '## Procedure',
+        '## Procedure\nThe sole approved value for this skill is 74% for REVOPS-7.',
+      ),
       smokeTest,
     });
 
@@ -188,7 +194,9 @@ describe('the static gate on an authored skill, through the authoring action', (
     expect(recorded.users).toHaveLength(2);
     expect(recorded.users[1]).toContain('Previous authoring attempt failed before registration');
     expect(recorded.users[1]).toContain("carries the first work item's value `74%`");
-    expect(recorded.users[1]).toContain('Shape: value refresh on an analytics surface (analytics-refresh-value).');
+    expect(recorded.users[1]).toContain(
+      'Shape: value refresh on an analytics surface (analytics-refresh-value).',
+    );
     expect(recorded.sandboxRuns).toBe(1);
     const registered = await readSkill(harness, skillId);
     expect(registered.state).toBe('registered');
@@ -229,7 +237,9 @@ describe('the static gate on an authored skill, through the authoring action', (
     expect(registered.refusedSmokeTest).toBeUndefined();
 
     const retryPrompt = recorded.users[1]!;
-    expect(retryPrompt).toContain('SKILL.md uses `<audit-channel>` without declaring it under `## Inputs`');
+    expect(retryPrompt).toContain(
+      'SKILL.md uses `<audit-channel>` without declaring it under `## Inputs`',
+    );
     expect(retryPrompt).toContain('--- Required correction ---');
     // The row keeps the draft whole; the prompt carries it bounded for the model's window.
     const stored = failed.refusedBody!;
@@ -316,7 +326,10 @@ describe('the static gate on an authored skill, through the authoring action', (
   it('refuses a smoke test whose representative input is the first work item', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { skillId } = await seedApprovedSkill(harness);
-    recorded.outputs.push({ body: reusableBody, smokeTest: smokeTest.replace('"OPS-3"', '"REVOPS-7"') });
+    recorded.outputs.push({
+      body: reusableBody,
+      smokeTest: smokeTest.replace('"OPS-3"', '"REVOPS-7"'),
+    });
 
     const result = await harness
       .withIdentity(OWNER)
@@ -365,19 +378,36 @@ describe('a sandbox that says no in mock mode, recorded as the recorded runs rec
     const { skillId } = await seedApprovedSkill(harness);
     const stderr = `Traceback (most recent call last):\n  File "smoke.py", line 4, in <module>\n${'    assert False\n'.repeat(40)}AssertionError\n`;
     recorded.outputs.push({ body: reusableBody, smokeTest });
-    recorded.sandbox = { backend: 'local', sandboxId: 'local:run-mock', stdout: 'ok 61%\n', stderr, ok: false, failureReason: 'smoke test exited 1', skipped: false };
+    recorded.sandbox = {
+      backend: 'local',
+      sandboxId: 'local:run-mock',
+      stdout: 'ok 61%\n',
+      stderr,
+      ok: false,
+      failureReason: 'smoke test exited 1',
+      skipped: false,
+    };
 
     await expect(
       harness.withIdentity(OWNER).action(api.skillActions.authorAndRegisterSkill, { skillId }),
-    ).resolves.toEqual({ ok: false, reason: 'skill authored but verification failed - smoke test exited 1' });
+    ).resolves.toEqual({
+      ok: false,
+      reason: 'skill authored but verification failed - smoke test exited 1',
+    });
     const log = `ran in the local sandbox (local:run-mock)\n\nstdout:\nok 61%\n\n\nstderr:\n${stderr}\nok: false`;
     const row = await readSkill(harness, skillId);
-    expect(row.verificationLog).toBe(`verification in the local sandbox failed - smoke test exited 1. ${log.slice(0, 400)}`);
+    expect(row.verificationLog).toBe(
+      `verification in the local sandbox failed - smoke test exited 1. ${log.slice(0, 400)}`,
+    );
     expect(row.body).toBe(reusableBody);
     expect(row.refusedBody).toBeUndefined();
     expect(row.refusedSmokeTest).toBeUndefined();
     const events = await harness.run(async (ctx) => await ctx.db.query('events').collect());
-    expect(events.filter((event) => event.type.startsWith('skill.')).map((event) => [event.type, (event.payload as { reason?: string }).reason])).toEqual([
+    expect(
+      events
+        .filter((event) => event.type.startsWith('skill.'))
+        .map((event) => [event.type, (event.payload as { reason?: string }).reason]),
+    ).toEqual([
       ['skill.authoring-claimed', undefined],
       ['skill.authoring', undefined],
       ['skill.failed', 'skill authored but verification failed - smoke test exited 1'],
@@ -498,21 +528,35 @@ describe('real-mode authoring, where the harness is the smoke test', (): void =>
       skipped: false,
     };
 
-    const failed = await harness.withIdentity(OWNER).action(api.skillActions.authorAndRegisterSkill, { skillId });
-    expect(failed).toEqual({ ok: false, reason: 'skill authored but verification failed - smoke test exited 1' });
+    const failed = await harness
+      .withIdentity(OWNER)
+      .action(api.skillActions.authorAndRegisterSkill, { skillId });
+    expect(failed).toEqual({
+      ok: false,
+      reason: 'skill authored but verification failed - smoke test exited 1',
+    });
     const row = await readSkill(harness, skillId);
     expect(row.state).toBe('failed');
     expect(row.refusedBody).toBe(reusableBody);
     expect(row.refusedSmokeTest).toBe(`${casesSmokeTest}\nNOTE = "<redacted>"`);
     // The whole traceback with its line breaks, not the first 400 characters of the log.
-    expect(row.verificationLog).toContain('smoke harness: run() raised KeyError on case 2\n  File "authored_smoke.py", line 2, in run\n');
+    expect(row.verificationLog).toContain(
+      'smoke harness: run() raised KeyError on case 2\n  File "authored_smoke.py", line 2, in run\n',
+    );
     expect(row.verificationLog).toContain("KeyError: 'record-id'");
     // Nothing a parked Retry reads: the next run authors again rather than re-running a program that failed.
     expect(row.pendingSmokeTest).toBeUndefined();
     expect(await everythingKept(harness, skillId)).not.toContain(token);
 
     recorded.outputs.push({ body: reusableBody, smokeTest: casesSmokeTest });
-    recorded.sandbox = { backend: 'local', sandboxId: 'local:run-retry', stdout: 'case 1\ncase 2\n', stderr: '', ok: true, skipped: false };
+    recorded.sandbox = {
+      backend: 'local',
+      sandboxId: 'local:run-retry',
+      stdout: 'case 1\ncase 2\n',
+      stderr: '',
+      ok: true,
+      skipped: false,
+    };
     await expect(
       harness.withIdentity(OWNER).action(api.skillActions.authorAndRegisterSkill, { skillId }),
     ).resolves.toEqual({ ok: true });
@@ -530,13 +574,20 @@ describe('real-mode authoring, where the harness is the smoke test', (): void =>
     const harness = convexTest(schema, allConvexModules());
     const { skillId } = await seedApprovedSkill(harness);
     recorded.outputs.push({
-      body: reusableBody.replace('comment on `<record-id>`', 'comment on `<record-id>` in {{channel}}'),
+      body: reusableBody.replace(
+        'comment on `<record-id>`',
+        'comment on `<record-id>` in {{channel}}',
+      ),
       smokeTest: casesSmokeTest.replace('"OPS-9"', '"{{ticket}}"'),
     });
 
-    const refused = await harness.withIdentity(OWNER).action(api.skillActions.authorAndRegisterSkill, { skillId });
+    const refused = await harness
+      .withIdentity(OWNER)
+      .action(api.skillActions.authorAndRegisterSkill, { skillId });
     expect(refused.ok).toBe(false);
-    expect(refused.reason).toContain('SKILL.md uses `{{channel}}`; `{{secret}}` is the only double-brace placeholder');
+    expect(refused.reason).toContain(
+      'SKILL.md uses `{{channel}}`; `{{secret}}` is the only double-brace placeholder',
+    );
     expect(refused.reason).toContain('smoke.py uses `{{ticket}}`');
     expect(refused.reason).not.toContain('`{{secret}}`; `{{secret}}`');
     expect(recorded.sandboxRuns).toBe(0);
@@ -549,13 +600,20 @@ describe('real-mode authoring, where the harness is the smoke test', (): void =>
     const harness = convexTest(schema, allConvexModules());
     const { skillId } = await seedApprovedSkill(harness);
     recorded.outputs.push({
-      body: reusableBody.replace('comment on `<record-id>`', 'comment on `<record-id>` in `<closing-state>` with bearer `<tile-api-token>`'),
+      body: reusableBody.replace(
+        'comment on `<record-id>`',
+        'comment on `<record-id>` in `<closing-state>` with bearer `<tile-api-token>`',
+      ),
       smokeTest: casesSmokeTest,
     });
 
-    const refused = await harness.withIdentity(OWNER).action(api.skillActions.authorAndRegisterSkill, { skillId });
+    const refused = await harness
+      .withIdentity(OWNER)
+      .action(api.skillActions.authorAndRegisterSkill, { skillId });
     expect(refused.ok).toBe(false);
-    expect(refused.reason).toContain('SKILL.md uses `<tile-api-token>` as an input; a credential is never an input');
+    expect(refused.reason).toContain(
+      'SKILL.md uses `<tile-api-token>` as an input; a credential is never an input',
+    );
     expect(refused.reason).not.toContain('`<closing-state>`');
     expect(refused.reason).not.toContain('without declaring it under');
     expect(recorded.sandboxRuns).toBe(0);
@@ -572,7 +630,9 @@ describe('real-mode authoring, where the harness is the smoke test', (): void =>
       smokeTest: casesSmokeTest.replace('"OPS-3"', '"REVOPS-7"'),
     });
 
-    const refused = await harness.withIdentity(OWNER).action(api.skillActions.authorAndRegisterSkill, { skillId });
+    const refused = await harness
+      .withIdentity(OWNER)
+      .action(api.skillActions.authorAndRegisterSkill, { skillId });
     expect(refused.ok).toBe(false);
     expect(refused.reason).toContain("smoke.py carries the first work item's value `REVOPS-7`");
     expect(recorded.sandboxRuns).toBe(0);
