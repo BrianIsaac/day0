@@ -2833,7 +2833,7 @@ export function RepairNote({
   const stands = repair.repaired === false;
   return (
     <details className="mt-0.5">
-      <summary className="text-[10px] text-[var(--color-warn)] cursor-pointer select-none">
+      <summary className="min-h-11 py-3 text-[10px] text-[var(--color-warn)] cursor-pointer select-none">
         {stands
           ? 'argument names refused by the probed schema · the one repair produced nothing usable · first attempt stands'
           : 'arguments re-authored once before the hold · this payload is the second attempt'}
@@ -2902,7 +2902,7 @@ export function SessionRestoreNote({ restore }: { restore: SessionRestoreRow | u
   return (
     <details className="mt-0.5">
       <summary
-        className={`text-[10px] cursor-pointer select-none ${
+        className={`min-h-11 py-3 text-[10px] cursor-pointer select-none ${
           failed ? 'text-[var(--color-warn)]' : 'text-[var(--color-muted)]'
         }`}
       >
@@ -2959,10 +2959,17 @@ export function DraftDetails({ output }: { output: RunOutput }) {
   const closingPhase = output.initial !== undefined || output.planStepOutcomes !== undefined;
   return (
     <details className="mt-2 text-xs">
-      <summary className="cursor-pointer text-[var(--color-accent)]">
+      <summary className="min-h-11 py-3 cursor-pointer text-[var(--color-accent)]">
         Draft the agent wrote ({output.draft.length} chars)
       </summary>
-      <pre className="mt-2 p-2 rounded bg-[var(--color-bg)] border border-[var(--color-border)] whitespace-pre-wrap text-[var(--color-fg)]">
+      {/* Bounded and wrapped like the other long texts on the card (P9-2), and
+          reachable from the keyboard once it scrolls. */}
+      <pre
+        tabIndex={0}
+        role="region"
+        aria-label="Draft the agent wrote"
+        className="mt-2 p-2 max-h-72 overflow-y-auto rounded bg-[var(--color-bg)] border border-[var(--color-border)] whitespace-pre-wrap break-words text-[var(--color-fg)]"
+      >
         {output.draft}
       </pre>
       {output.notes ? (
@@ -2977,7 +2984,6 @@ export function DraftDetails({ output }: { output: RunOutput }) {
   );
 }
 
-/** The approved plan's result-aware accounting, including promised work that could not run. */
 /**
  * The manager's written word on the item, in every state.
  *
@@ -3050,7 +3056,7 @@ export function RefusedClosingDetails({ refused }: { refused: RefusedClosingRow 
   if (!refused || refused.actions.length === 0) return null;
   return (
     <details className="mt-2 text-xs">
-      <summary className="cursor-pointer text-[var(--color-muted)] hover:text-[var(--color-accent)]">
+      <summary className={SUMMARY}>
         Refused closing set · {refused.actions.length}{' '}
         {refused.actions.length === 1 ? 'action' : 'actions'} · never sent
       </summary>
@@ -3108,7 +3114,7 @@ export function WithheldActionsDetails({
   const forAnswer = waiting.length > 0;
   return (
     <details className="mt-2 text-xs">
-      <summary className="cursor-pointer text-[var(--color-muted)] hover:text-[var(--color-accent)]">
+      <summary className={SUMMARY}>
         {forAnswer ? 'Waiting on your answer' : 'Withheld by the evidence check'} ·{' '}
         {withheld.length} {withheld.length === 1 ? 'action' : 'actions'} · never sent
       </summary>

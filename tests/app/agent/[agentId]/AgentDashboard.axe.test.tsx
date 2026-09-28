@@ -280,6 +280,41 @@ describe('the dashboard against the accessibility floor (N14, step 45)', (): voi
   });
 });
 
+/**
+ * The controls of a rendered tree whose own box, or the label wrapping them,
+ * is not at least 44 px tall by class: jsdom lays nothing out, so the class is
+ * what can be read here, and the browser job measures the public pages.
+ */
+function underTarget(root: Element): string[] {
+  const tall = /(^|\s)(min-h-11|h-11|py-3)(\s|$)/;
+  return [...root.querySelectorAll('button, input, select, textarea, summary')]
+    .filter((control) => (control as HTMLInputElement).type !== 'hidden')
+    .filter(
+      (control) =>
+        !tall.test(control.getAttribute('class') ?? '') &&
+        !tall.test(control.closest('label')?.getAttribute('class') ?? ''),
+    )
+    .map(
+      (control) =>
+        `${control.tagName.toLowerCase()} "${(control.getAttribute('aria-label') ?? control.textContent ?? '').trim().slice(0, 60)}"`,
+    );
+}
+
+describe("the dashboard's pointer targets (N14: 44 by 44 CSS pixels)", (): void => {
+  it('gives every control of the populated dashboard a 44 px target, the environment panel included', async (): Promise<void> => {
+    backend.queries = populated();
+    const view = mount(<AgentDashboard agentId={agentId} />);
+    await settle();
+    await vi.waitFor((): void => {
+      expect(view.container.textContent).toContain('Enterprise context');
+    });
+    for (const summary of view.container.querySelectorAll('details')) summary.open = true;
+    await settle();
+    expect(underTarget(view.container)).toEqual([]);
+    view.unmount();
+  });
+});
+
 describe('the axe check itself', (): void => {
   it('finds what it is there to find: an unnamed button and an unlabelled field', async (): Promise<void> => {
     const view = mount(
