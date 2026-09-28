@@ -31,11 +31,11 @@ describe('elapsedLabel', () => {
 
 describe('firstTimedStep', () => {
   it('is the first step the README gives an elapsed time for', () => {
-    expect(firstTimedStep(RECORDED_RUN)?.number).toBe(4);
+    expect(firstTimedStep(RECORDED_RUN)?.number).toBe(2);
   });
 
   it('is absent for a run with no stated times', () => {
-    expect(firstTimedStep({ ...RECORDED_RUN, steps: RECORDED_RUN.steps.slice(0, 3) })).toBe(
+    expect(firstTimedStep({ ...RECORDED_RUN, steps: RECORDED_RUN.steps.slice(0, 1) })).toBe(
       undefined,
     );
   });

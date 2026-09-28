@@ -31,7 +31,7 @@ describe('what the walkthrough tells a visitor it is', () => {
       expect(text.indexOf(notice)).toBeGreaterThan(-1);
       expect(text.indexOf(notice)).toBeLessThan(firstStep);
     }
-    expect(WALKTHROUGH.clock(RECORDED_RUN)).toContain('from step 4 on');
+    expect(WALKTHROUGH.clock(RECORDED_RUN)).toContain('from step 2 on');
     expect(text).toContain(WALKTHROUGH.bed);
   });
 
@@ -107,7 +107,7 @@ describe('the run', () => {
   it('reads as the first step without script: one ledger line and the clock caption', () => {
     const ledger = /<ol aria-label="The record so far"[^>]*>(.*?)<\/ol>/.exec(html)?.[1] ?? '';
     expect(ledger.match(/<li/g)).toHaveLength(1);
-    expect(text).toContain('timed from step 4');
+    expect(text).toContain('timed from step 2');
   });
 
   it('marks the pinned sequence for the tracker L built, starting at the first step', () => {
