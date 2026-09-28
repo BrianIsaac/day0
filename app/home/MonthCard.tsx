@@ -51,7 +51,7 @@ export function MonthCard({
         <h2 className="text-sm font-semibold">{monthName(month)}, supervised from here</h2>
         <span className="text-xs text-[var(--color-muted)]">counts from this account’s ledger</span>
       </div>
-      <div className="grid gap-6 p-5 md:grid-cols-2 md:items-start">
+      <div className="grid gap-6 p-5 md:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] md:items-start">
         <MonthGrid
           month={month}
           today={today}
@@ -63,7 +63,7 @@ export function MonthCard({
         ) : null}
       </div>
       <p className="px-5 pb-4 text-xs text-[var(--color-muted)]">
-        Counts from this account’s ledger, recomputable from the export. Not rates.
+        Recomputable from the export. Not rates.
         {partial ? ' A busy month counts its first hundred landings per employee here.' : ''}
       </p>
     </section>

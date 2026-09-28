@@ -366,7 +366,7 @@ describe('the company home', (): void => {
     const page = render(roster);
     expect(page).toContain('aria-label="Days of September"');
     const today = /<li aria-current="date"[^>]*>([\s\S]*?)<\/li>/.exec(page)?.[1] ?? '';
-    expect(readAs(today).trim()).toBe('26 1 landed · 3 waiting');
+    expect(readAs(today).trim()).toBe('26 1 landed 3 waiting');
     expect(readAs(page)).toContain('Decisions 2 approved, 0 rejected');
   });
 

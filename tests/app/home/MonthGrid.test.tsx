@@ -31,9 +31,9 @@ describe('MonthGrid', (): void => {
   });
 
   it('says what landed on each day and what waits today', (): void => {
-    expect(text(2).replace(/\s+/g, ' ')).toBe('3 11 landed');
-    expect(text(16).replace(/\s+/g, ' ')).toBe('17 2 landed');
-    expect(text(25).replace(/\s+/g, ' ')).toBe('26 1 landed · 3 waiting');
+    expect(text(2).replace(/\s+/g, ' ')).toBe('3 11 landed 11');
+    expect(text(16).replace(/\s+/g, ' ')).toBe('17 2 landed 2');
+    expect(text(25).replace(/\s+/g, ' ')).toBe('26 1 landed 3 waiting 1 3');
     expect(text(0)).toBe('1');
   });
 
@@ -46,7 +46,27 @@ describe('MonthGrid', (): void => {
     expect(days[0][1]).not.toContain('text-[var(--color-muted)]');
   });
 
-  it('keeps the notes for a screen reader and out of a phone’s narrow cells', (): void => {
+  it('keeps the words for a screen reader on a phone and prints the counts in the narrow cells', (): void => {
     expect(days[2][2]).toMatch(/<span class="[^"]*max-sm:sr-only[^"]*">11 landed<\/span>/);
+    expect(days[2][2]).toMatch(/<span aria-hidden="true" class="[^"]*sm:hidden[^"]*">11<\/span>/);
+    const waitingCount =
+      /<span aria-hidden="true" class="([^"]*)">3<\/span>/.exec(days[25][2])?.[1] ?? '';
+    expect(waitingCount).toContain('sm:hidden');
+    expect(waitingCount).toContain('text-[var(--color-warn)]');
+    expect(html).toMatch(
+      /<p class="[^"]*sm:hidden[^"]*">Under each day, what landed; today’s amber number is what waits on you.<\/p>/,
+    );
+  });
+
+  it('lays the days under Monday-first weekday initials, the first on its own weekday', (): void => {
+    expect(html).toMatch(
+      /<div aria-hidden="true" class="[^"]*grid-cols-7[^"]*">(<span[^>]*>[MTWFS]<\/span>){7}<\/div>/,
+    );
+    expect(days[0][1]).toContain('grid-column-start:2');
+    expect(days[1][1]).not.toContain('grid-column-start');
+    const june = renderToStaticMarkup(
+      <MonthGrid month="2026-06" today="2026-06-01" landed={new Map()} waitingToday={0} />,
+    );
+    expect(june).not.toContain('grid-column-start');
   });
 });

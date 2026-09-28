@@ -43,9 +43,9 @@ describe('MonthCard', (): void => {
         now={NOW}
       />,
     );
-    expect(dayText(html, 3)).toBe('3 11 landed');
-    expect(dayText(html, 17)).toBe('17 2 landed');
-    expect(dayText(html, 26)).toBe('26 3 waiting');
+    expect(dayText(html, 3)).toBe('3 11 landed 11');
+    expect(dayText(html, 17)).toBe('17 2 landed 2');
+    expect(dayText(html, 26)).toBe('26 3 waiting 3');
   });
 
   it('shows the figures once there are any, and says when a busy month was counted in part', (): void => {
