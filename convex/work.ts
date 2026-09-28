@@ -3312,6 +3312,35 @@ async function batchSettled(
   return true;
 }
 
+/** Batches one page of the `decision-batches-settled` migration reads. */
+const BATCH_SETTLE_PAGE = 100;
+
+/**
+ * One page of the `decision-batches-settled` migration (S2 D6): an undecided
+ * batch none of whose members is open any more, left so by decisions made one
+ * member at a time before the decide paths settled it, is marked decided now.
+ * Run by `migrations:runPending`.
+ *
+ * @param cursor - Where the previous page stopped, or null for the first.
+ * @returns What the page read and changed, and where the next one starts.
+ */
+export async function settleDecisionBatchesPage(
+  ctx: MutationCtx,
+  cursor: string | null,
+): Promise<{ read: number; changed: number; cursor: string; isDone: boolean }> {
+  const page = await ctx.db
+    .query('decisionBatches')
+    .paginate({ cursor, numItems: BATCH_SETTLE_PAGE });
+  const now = Date.now();
+  let changed = 0;
+  for (const batch of page.page) {
+    if (batch.decidedAt !== undefined || !(await batchSettled(ctx, batch))) continue;
+    await ctx.db.patch(batch._id, { decidedAt: now });
+    changed += 1;
+  }
+  return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
+}
+
 /**
  * Mark decided every undecided batch on a just-decided item's channel that
  * holds its decision and has no member left open, in the decision's own

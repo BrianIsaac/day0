@@ -157,13 +157,14 @@ describe('the upgrade migrations', (): void => {
     });
   });
 
-  it('runs the second schema step’s migrations on the runner, each at 0.6.0, and records each finished', async (): Promise<void> => {
+  it('runs the second schema step’s migrations and the batch settling on the runner, each at 0.6.0, and records each finished', async (): Promise<void> => {
     const secondStep = [
       'surfaces-withheld-tools',
       'work-evaluation-unavailable-cause',
       'sync-runs-unread',
       'doc-page-listings',
       'credentials-superseded-at',
+      'decision-batches-settled',
     ];
     expect(MIGRATION_NAMES.slice(-secondStep.length)).toEqual(secondStep);
     const harness = limitedHarness();
@@ -1067,6 +1068,80 @@ describe('the release a stamp may name', (): void => {
     await expect(
       harness.mutation(internal.migrations.recordRelease, { release: newest }),
     ).resolves.toMatchObject({ release: newest });
+  });
+});
+
+describe('the decision batches decided one member at a time before 0.6.0 (S2 D6)', (): void => {
+  it('marks a batch with no open member decided, and leaves one a member still waits on', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const agentId = await agent(harness, { userId: 'owner' });
+    const [settledId, openId] = await harness.run(async (ctx) => {
+      const pendingRunId = await ctx.db.insert('events', {
+        agentId,
+        type: 'work.execution-claimed',
+        payload: {},
+        createdAt: 1,
+      });
+      const item = async (
+        externalId: string,
+        decided: boolean,
+      ): Promise<{
+        workItemId: Id<'workItems'>;
+        decisionId: string;
+        pendingRunId: Id<'events'>;
+      }> => ({
+        workItemId: await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId,
+          title: externalId,
+          contentSummary: externalId,
+          contentRefs: [],
+          state: 'actions-pending',
+          pendingRunId,
+          observedAt: 1,
+          createdAt: 1,
+          decision: {
+            id: externalId.toLowerCase(),
+            kind: 'actions',
+            surfaceSlug: 'slack',
+            surfaceName: 'Slack',
+            channel: 'D0MANAGER',
+            requestedAt: 1,
+            ...(decided ? { decidedAt: 2, outcome: 'approved' as const } : {}),
+          },
+        }),
+        decisionId: externalId.toLowerCase(),
+        pendingRunId,
+      });
+      const batch = async (id: string, members: unknown[]): Promise<Id<'decisionBatches'>> =>
+        await ctx.db.insert('decisionBatches', {
+          agentId,
+          id,
+          surfaceSlug: 'slack',
+          channel: 'D0MANAGER',
+          members: members as Doc<'decisionBatches'>['members'],
+          requestedAt: 1,
+        });
+      return [
+        await batch('settled', [await item('A-1', true), await item('A-2', true)]),
+        await batch('waiting', [await item('B-1', true), await item('B-2', false)]),
+      ];
+    });
+    await runAll(harness);
+    const [settled, open] = await harness.run(async (ctx) => [
+      await ctx.db.get(settledId),
+      await ctx.db.get(openId),
+    ]);
+    expect(settled?.decidedAt).toEqual(expect.any(Number));
+    expect(settled?.outcome).toBeUndefined();
+    expect(open?.decidedAt).toBeUndefined();
+    const status = await harness.query(internal.migrations.status, {});
+    expect(status.migrations.find((row) => row.name === 'decision-batches-settled')).toMatchObject({
+      read: 2,
+      changed: 1,
+    });
   });
 });
 
