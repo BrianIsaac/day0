@@ -155,6 +155,37 @@ describe('the question record', (): void => {
       }),
     ).rejects.toThrow(/via|validat/i);
   });
+
+  it('refuses an answer said to arrive through a channel, which no path writes (D8)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, charterId } = await seedApprovedAgent(harness);
+    const workItemId = await seedClaimed(harness, agentId, 'Refresh the Looker tile');
+    const record = (via: string): Doc<'managerQuestions'> =>
+      ({
+        agentId,
+        key: 'who owns the looker pipeline tile',
+        question: 'Who owns the Looker pipeline tile.',
+        context: {
+          touchedBy: 'plan',
+          text: 'Refresh the Looker pipeline tile.',
+          words: ['looker'],
+        },
+        askedAt: 4,
+        workItemId,
+        charterId,
+        answer: { text: 'Priya.', answeredAt: 5, via },
+      }) as unknown as Doc<'managerQuestions'>;
+    await expect(
+      harness.run(async (ctx) => {
+        await ctx.db.insert('managerQuestions', record('channel'));
+      }),
+    ).rejects.toThrow(/via|validat/i);
+    const kept = await harness.run(async (ctx) => {
+      const id = await ctx.db.insert('managerQuestions', record('dashboard'));
+      return (await ctx.db.get(id))?.answer?.via;
+    });
+    expect(kept).toBe('dashboard');
+  });
 });
 
 describe('asking open questions at plan approval', (): void => {

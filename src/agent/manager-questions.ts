@@ -13,8 +13,8 @@ import type { Charter } from './charter';
 /** Which side of the plan approval touched the question. */
 export type QuestionTouchedBy = 'plan' | 'candidate';
 
-/** How an answer arrived. */
-export type AnswerVia = 'dashboard' | 'plan-approval' | 'channel';
+/** How an answer arrived: typed on the dashboard, or given with a plan approval. */
+export type AnswerVia = 'dashboard' | 'plan-approval';
 
 export interface ManagerQuestionContext {
   touchedBy: QuestionTouchedBy;
