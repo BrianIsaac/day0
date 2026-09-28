@@ -168,3 +168,75 @@ describe('the office light-up (v3 section 5, v4 section 1.3)', () => {
     );
   });
 });
+
+describe('the product-surface moments (v3 section 5.2, v4 section 2)', () => {
+  const noPreference = blocks('@media (prefers-reduced-motion: no-preference)').join('\n');
+  const reduce = blocks('@media (prefers-reduced-motion: reduce)').join('\n');
+
+  /** Each moment's selector, and what its animation must say: the drawn duration and curve. */
+  const moments: readonly (readonly [string, RegExp])[] = [
+    ['[data-arrive]', /day0-rise-in 240ms var\(--ease-arrive\)/],
+    ['[data-just] [data-strike]', /day0-strike 400ms var\(--ease-arrive\) 150ms/],
+    ['[data-just] [data-struck-mark]', /day0-settle 220ms var\(--ease-arrive\) 350ms/],
+    ['.roll > .from', /day0-roll-out 220ms var\(--ease-move\) 700ms/],
+    ['.roll > .to', /day0-roll-in 220ms var\(--ease-move\) 700ms/],
+    ['.chip-swap > .from', /day0-fade-out 200ms ease-out/],
+    ['.chip-swap > .to', /day0-fade-in 220ms var\(--ease-arrive\) 100ms/],
+    ['[data-land]', /day0-settle 260ms var\(--ease-arrive\) 200ms/],
+    [
+      '[data-land] li',
+      /day0-rise-in 240ms var\(--ease-arrive\)[\s\S]*var\(--i, 0\) \* 70ms \+ 350ms/,
+    ],
+    [
+      '.rail[data-advanced] .rail-step.now::after',
+      /day0-rail-slide 280ms var\(--ease-move\) 150ms/,
+    ],
+    [
+      '.rail[data-advanced] .rail-step.done:has(+ .now)::before',
+      /day0-dot-fill 240ms var\(--ease-arrive\)/,
+    ],
+    ['[data-dialog]', /day0-dialog-in 200ms var\(--ease-arrive\)/],
+    ['[data-dialog-backdrop]', /day0-fade-in 200ms ease-out/],
+  ];
+
+  it.each(moments)(
+    'plays %s at its drawn timing, and only when motion is welcome',
+    (selector, timing) => {
+      const everywhere = rulesFor(CSS, selector).filter((rule) => rule.includes('animation'));
+      expect(everywhere, selector).toHaveLength(1);
+      expect(rulesFor(noPreference, selector).filter((rule) => rule.includes('animation'))).toEqual(
+        everywhere,
+      );
+      expect(everywhere[0]).toMatch(timing);
+    },
+  );
+
+  it('starts the rows inside a card 200 ms after the page, as the Work tab draws them', () => {
+    expect(rulesFor(noPreference, "[data-cards='rows']")[0]).toMatch(/--arrive-after:\s*200ms/);
+  });
+
+  it('shows only the new value of a rolled count or a swapped chip under reduced motion', () => {
+    expect(reduce).toMatch(/\.roll > \.from,\s*\.chip-swap > \.from\s*\{\s*display:\s*none;/);
+  });
+
+  it('moves only transform and opacity, the strike line colour apart', () => {
+    for (const name of [
+      'settle',
+      'fade-in',
+      'fade-out',
+      'roll-out',
+      'roll-in',
+      'rail-slide',
+      'dot-fill',
+      'dialog-in',
+    ]) {
+      const [frames] = blocks(`@keyframes day0-${name} `);
+      const properties = [...(frames ?? '').matchAll(/([a-z-]+):/g)].map((match) => match[1]);
+      expect(properties.length, name).toBeGreaterThan(0);
+      expect(
+        properties.filter((property) => property !== 'opacity' && property !== 'transform'),
+        name,
+      ).toEqual([]);
+    }
+  });
+});

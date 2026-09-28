@@ -1109,3 +1109,189 @@ body {
     }
   }
 }
+
+/* ---------------------------------------------------------------------------------------------
+   Motion on the product surfaces (UX round three section 5.2, round four section 2, step 4).
+   One state change each, played once, in the public block's vocabulary: the arrive and move
+   curves, transform and opacity, the transform rule above. The strike's line colour is the one
+   repaint, a single line of text. Under reduced motion every rule resolves to the settled state:
+   a rolled count or a swapped chip shows only its new value.
+
+   The drawn delays counted from a page arriving; here a change happens in place, so each
+   sequence starts at the change and keeps its drawn order and gaps (the chip swap, then the
+   landed ledger settling, then its lines). The count roll keeps its drawn 700 ms, so it follows
+   the card that caused it.
+
+   Attributes and classes the markup sets:
+   [data-cards]          as above, on a product page's columns for its first second only
+                         (`useArrival`), so a later reorder never replays an arrival.
+   [data-cards='rows']   a second tier inside a card: its rows start 200 ms after the page.
+   [data-arrive]         a chat turn among the two newest: it rises in as it arrives.
+   [data-just]           a charter rule struck while the page was open: its [data-strike] line
+                         draws through, then its [data-struck-mark] (an inline block, so it can
+                         move) settles in.
+   .roll                 a count that changed: `.from` rolls up and out as `.to` rolls in.
+   .chip-swap            a state chip that changed: `.from` fades out as `.to` fades in, in one cell.
+   [data-land]           a work item's landed ledger, first shown while the page was open: it
+                         settles, then its lines rise, `--i` apart.
+   .rail[data-advanced]  the first-week rail, just moved on: the fill slides into `.now` and the
+                         dot before it fills. Drawn in round two; no rail is rendered yet.
+   [data-dialog]         a dialog or popover: it scales in from 0.96 at its own transform origin;
+                         [data-dialog-backdrop] fades behind it.
+   --------------------------------------------------------------------------------------------- */
+
+@keyframes day0-settle {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+}
+
+@keyframes day0-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes day0-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes day0-roll-out {
+  to {
+    opacity: 0;
+    transform: translateY(-100%);
+  }
+}
+
+@keyframes day0-roll-in {
+  from {
+    opacity: 0;
+    transform: translateY(100%);
+  }
+}
+
+@keyframes day0-rail-slide {
+  from {
+    transform: translateX(-100%);
+  }
+}
+
+@keyframes day0-dot-fill {
+  from {
+    opacity: 0.4;
+    transform: scale(0.4);
+  }
+}
+
+@keyframes day0-dialog-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
+.roll,
+.chip-swap {
+  display: inline-grid;
+}
+
+.roll {
+  overflow: hidden;
+}
+
+.roll > *,
+.chip-swap > * {
+  grid-area: 1 / 1;
+}
+
+.chip-swap > * {
+  justify-self: start;
+}
+
+[data-struck-mark] {
+  display: inline-block;
+}
+
+.rail-step {
+  position: relative;
+  isolation: isolate;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  [data-cards='rows'] {
+    --arrive-after: 200ms;
+  }
+
+  [data-arrive] {
+    animation: day0-rise-in 240ms var(--ease-arrive) both;
+  }
+
+  [data-just] [data-strike] {
+    animation: day0-strike 400ms var(--ease-arrive) 150ms both;
+  }
+
+  [data-just] [data-struck-mark] {
+    animation: day0-settle 220ms var(--ease-arrive) 350ms both;
+  }
+
+  .roll > .from {
+    animation: day0-roll-out 220ms var(--ease-move) 700ms both;
+  }
+
+  .roll > .to {
+    animation: day0-roll-in 220ms var(--ease-move) 700ms both;
+  }
+
+  .chip-swap > .from {
+    animation: day0-fade-out 200ms ease-out both;
+  }
+
+  .chip-swap > .to {
+    animation: day0-fade-in 220ms var(--ease-arrive) 100ms both;
+  }
+
+  [data-land] {
+    animation: day0-settle 260ms var(--ease-arrive) 200ms both;
+  }
+
+  [data-land] li {
+    animation: day0-rise-in 240ms var(--ease-arrive) both;
+    animation-delay: calc(var(--i, 0) * 70ms + 350ms);
+  }
+
+  .rail[data-advanced] .rail-step.now {
+    overflow: hidden;
+    background: transparent;
+  }
+
+  .rail[data-advanced] .rail-step.now::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background: color-mix(in oklab, var(--color-accent) 12%, transparent);
+    animation: day0-rail-slide 280ms var(--ease-move) 150ms both;
+  }
+
+  .rail[data-advanced] .rail-step.done:has(+ .now)::before {
+    animation: day0-dot-fill 240ms var(--ease-arrive) 60ms both;
+  }
+
+  [data-dialog] {
+    animation: day0-dialog-in 200ms var(--ease-arrive) both;
+  }
+
+  [data-dialog-backdrop] {
+    animation: day0-fade-in 200ms ease-out both;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .roll > .from,
+  .chip-swap > .from {
+    display: none;
+  }
+}
