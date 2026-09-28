@@ -85,8 +85,8 @@ export const charterForOrientation = internalQuery({
  * Decide whether a surface belongs in the hourly provider re-probe.
  *
  * A connected surface is re-verified so liveness stays fresh. A surface the
- * last probe left `listed-dead` is retried as long as it still holds both
- * approvals and a credential, so a transient provider failure heals on the
+ * last probe left `listed-dead` is retried as long as it still holds its
+ * approval and a credential, so a transient provider failure heals on the
  * next hour instead of waiting for a human to press Probe. So is a chat
  * surface left `ungranted` by the manager lookup (Q6): the credential works
  * and the person changed, so a reactivated account heals on the hour too.
@@ -106,12 +106,7 @@ export function isReprobeCandidate(surface: Doc<'surfaces'>): boolean {
     (surface.verdict === 'ungranted' &&
       surface.class === 'chat' &&
       isManagerLookupFailure(surface.reason));
-  return (
-    retriable &&
-    surface.credentialId !== undefined &&
-    surface.managerApprovedAt !== undefined &&
-    surface.itApprovedAt !== undefined
-  );
+  return retriable && surface.credentialId !== undefined && surface.managerApprovedAt !== undefined;
 }
 
 /**

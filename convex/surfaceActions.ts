@@ -1549,10 +1549,10 @@ const SLACK_BOT_TOKEN = /^xoxb-[A-Za-z0-9-]+$/;
  * @param plaintext - The trimmed value typed into the card; never echoed.
  */
 export function credentialLandingRefusal(
-  surface: Pick<Doc<'surfaces'>, 'managerApprovedAt' | 'itApprovedAt' | 'endpoint'>,
+  surface: Pick<Doc<'surfaces'>, 'managerApprovedAt' | 'endpoint'>,
   plaintext: string,
 ): string | undefined {
-  if (surface.managerApprovedAt === undefined || surface.itApprovedAt === undefined) {
+  if (surface.managerApprovedAt === undefined) {
     return 'Approve the card before landing its credential; nothing was stored.';
   }
   if (isSlackApiEndpoint(surface.endpoint) && !SLACK_BOT_TOKEN.test(plaintext)) {
@@ -1624,7 +1624,7 @@ export const landCredential = action({
  * hourly re-probes by surface.
  *
  * Connected surfaces are re-verified; a surface the last probe left
- * `listed-dead` with its credential and approvals intact is retried, so a
+ * `listed-dead` with its credential and approval intact is retried, so a
  * transient provider failure does not stay dead until a human clicks Probe.
  * The re-probe neither extends nor ends access (Q5): the end date does.
  */

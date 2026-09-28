@@ -382,8 +382,7 @@ export async function runRevocationEvaluation(options: CliOptions): Promise<Revo
     throw new Error('the Slack and tile evaluation cards were not both proposed');
   }
   for (const surface of proposed) {
-    await client.mutation(api.surfaces.approve, { surfaceId: surface._id, role: 'manager' });
-    await client.mutation(api.surfaces.approve, { surfaceId: surface._id, role: 'it' });
+    await client.mutation(api.surfaces.approve, { surfaceId: surface._id });
   }
   const connected = await waitFor('fake Slack and tile probes', async () => {
     const surfaces = await client.query(api.surfaces.listForAgent, { agentId });

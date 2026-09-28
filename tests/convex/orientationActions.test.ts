@@ -2493,21 +2493,10 @@ describe('each employee reads its own role', (): void => {
     ).toEqual([{ surfaceId: before['looker-pipeline-tile']._id, slug: 'looker-pipeline-tile' }]);
 
     vi.stubEnv('DAY0_BROWSER_MCP_URL', 'http://playwright-mcp:8931/mcp');
-    await owner.mutation(api.surfaces.approve, {
-      surfaceId: after['looker-pipeline-tile']._id,
-      role: 'manager',
-    });
-    expect((await surfacesBySlug(harness, agents.finance!))['looker-pipeline-tile']).toMatchObject({
-      verdict: 'proposed',
-      managerApprovedAt: expect.any(Number),
-    });
-    await owner.mutation(api.surfaces.approve, {
-      surfaceId: after['looker-pipeline-tile']._id,
-      role: 'it',
-    });
+    await owner.mutation(api.surfaces.approve, { surfaceId: after['looker-pipeline-tile']._id });
     expect((await surfacesBySlug(harness, agents.finance!))['looker-pipeline-tile']).toMatchObject({
       verdict: 'approved',
-      itApprovedAt: expect.any(Number),
+      managerApprovedAt: expect.any(Number),
     });
 
     // Rejected, the card goes back under the row, one click from a card again.

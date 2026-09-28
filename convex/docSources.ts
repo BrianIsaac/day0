@@ -1273,11 +1273,7 @@ export const applyRestatedScope = internalMutation({
       await ctx.db.patch(surface._id, { intakeScope: args.restated });
       return 'repointed';
     }
-    if (
-      surface.verdict === 'proposed' &&
-      surface.managerApprovedAt === undefined &&
-      surface.itApprovedAt === undefined
-    ) {
+    if (surface.verdict === 'proposed' && surface.managerApprovedAt === undefined) {
       return 'unchanged';
     }
     await ctx.db.patch(surface._id, {
@@ -1285,7 +1281,6 @@ export const applyRestatedScope = internalMutation({
       reason:
         'A documented intake queue changed. Reject this card and re-run orientation before approval.',
       managerApprovedAt: undefined,
-      itApprovedAt: undefined,
       probeGeneration: (surface.probeGeneration ?? 0) + 1,
       toolAllowlist: undefined,
       approvedToolAllowlist: undefined,

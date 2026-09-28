@@ -1500,7 +1500,7 @@ describe('agents.setBossEmail', (): void => {
     'the manager email old@day0.local is not a member of this Slack workspace (users_not_found).';
 
   /**
-   * Seed one surface for the agent with both approvals and a credential.
+   * Seed one surface for the agent with its approval and a credential.
    *
    * Args:
    *   harness: Convex test harness.
@@ -1536,7 +1536,6 @@ describe('agents.setBossEmail', (): void => {
         credentialId,
         credentialLanded: fields.verdict === 'connected',
         managerApprovedAt: 10,
-        itApprovedAt: 11,
         createdAt: 1,
       });
     });

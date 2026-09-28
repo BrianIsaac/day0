@@ -266,8 +266,8 @@ export async function runProvisionApp(
   if (surface.class !== 'chat') {
     throw new Error('Only a chat surface provisions a dedicated app for this employee.');
   }
-  if (surface.managerApprovedAt === undefined || surface.itApprovedAt === undefined) {
-    throw new Error('The connection needs both approvals before an app is registered for it.');
+  if (surface.managerApprovedAt === undefined) {
+    throw new Error('The connection needs its approval before an app is registered for it.');
   }
   if (
     surface.verdict === 'connected' &&
