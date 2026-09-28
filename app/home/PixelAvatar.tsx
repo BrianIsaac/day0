@@ -1,7 +1,13 @@
-import type { Doc } from '@convex/_generated/dataModel';
 import type { AgentAvatarPet } from '@/agent/avatar-pets';
+import { EMPLOYEE_STATE_LABEL, type EmployeeState } from './employee-state';
 
-/** An employee's face in its state-toned frame, with the state dot. */
+/**
+ * An employee's face in its state-toned frame, with the state dot.
+ *
+ * The hover title names the employee and its state and nothing else: the
+ * face is known by its number only (N6). The frame is hidden from assistive
+ * technology because every place that draws it prints the name beside it.
+ */
 export function AgentPixelAvatar({
   avatar,
   state,
@@ -10,7 +16,7 @@ export function AgentPixelAvatar({
   compact = false,
 }: {
   avatar: AgentAvatarPet;
-  state: Doc<'agents'>['state'];
+  state: EmployeeState;
   label: string;
   size?: 'md' | 'lg';
   compact?: boolean;
@@ -23,14 +29,14 @@ export function AgentPixelAvatar({
       className={`relative grid shrink-0 place-items-center overflow-hidden rounded-sm border p-1 ${tone.border} ${tone.bg} ${
         compact ? 'shadow-[0_0_0_2px_var(--color-bg)]' : ''
       }`}
-      title={label}
+      title={`${label}, ${EMPLOYEE_STATE_LABEL[state].toLowerCase()}`}
+      aria-hidden="true"
     >
       <div className={`${sizeClass} overflow-hidden rounded-sm bg-[var(--color-bg)]`}>
         <PixelAvatarSprite avatar={avatar} className="h-full w-full" />
       </div>
       <span
         className={`absolute bottom-1 right-1 h-2.5 w-2.5 rounded-[1px] border border-[var(--color-card)] ${tone.dot}`}
-        aria-label={state}
       />
     </div>
   );
@@ -56,7 +62,7 @@ export function PixelAvatarSprite({
   );
 }
 
-function agentStateTone(state: Doc<'agents'>['state']) {
+function agentStateTone(state: EmployeeState) {
   if (state === 'active') {
     return {
       bg: 'bg-[var(--color-ok)]/10',
