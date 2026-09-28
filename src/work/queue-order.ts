@@ -1,17 +1,27 @@
 /**
  * The order the work loop serves the waiting queue, and the limits it parks
- * a row by, for every reader outside the loop: the dashboard lists the queue
- * in the order the loop will take it (U3 D5) and says why a row waits.
- *
- * `convex/workLoop.ts` holds the same rule for its own reads;
- * `tests/src/work/queue-order.test.ts` holds the two to one answer until the
- * loop imports it from here.
+ * a row by: the one rule the loop (`convex/workLoop.ts`) runs and every reader
+ * outside it shows, so the dashboard lists the queue in the order the loop
+ * will take it (U3 D5) and says why a row waits.
  */
 
-/** How many evaluations of one row may begin without a verdict before the loop parks it. */
+/**
+ * How many evaluations of one row may begin without a verdict. A row whose
+ * evaluation dies after its claim (an action killed at the time limit, a
+ * throw) keeps the claim until the lease passes, then ranks behind every
+ * unattempted row; after this many it is parked, so one dying evaluation at a
+ * cap of one never holds the queue (wave 2 review M23).
+ */
 export const MAX_EVALUATION_ATTEMPTS = 3;
 
-/** The deferral reason of a row parked after `MAX_EVALUATION_ATTEMPTS`; the manager's Retry takes it back. */
+/**
+ * The deferral reason of a row parked after `MAX_EVALUATION_ATTEMPTS`
+ * evaluations died; the manager's Retry takes it back. A row whose last
+ * evaluation found the scope judgement unreachable is parked as
+ * `scope-judgement-unavailable` instead, which the charter trigger and Check
+ * for new work re-admit, because half an hour of provider outage is three
+ * attempts (E-70 D2).
+ */
 export const EVALUATION_ATTEMPTS_SPENT = 'evaluation-attempts-spent';
 
 /**

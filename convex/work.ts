@@ -22,7 +22,6 @@ import {
 import {
   AWAITING_CHARTER,
   claimLoopStepInTransaction,
-  EVALUATION_ATTEMPTS_SPENT,
   EXECUTION_STALL_MS,
   isManagerChannel,
   OPEN_WORK_STATES,
@@ -32,6 +31,7 @@ import {
   STEP_LEASE_MS,
   type StepClaim,
 } from './workLoop';
+import { EVALUATION_ATTEMPTS_SPENT } from '../src/work/queue-order';
 import { actionIdempotencyKey } from '../src/work/idempotency';
 import {
   HELD_NOT_APPROVED,

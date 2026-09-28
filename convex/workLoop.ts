@@ -12,6 +12,11 @@ import {
   SCOPE_JUDGEMENT_UNAVAILABLE,
 } from '../src/work/types';
 import { normaliseActionVerdict } from '../src/surfaces/policy';
+import {
+  compareWaitingRows,
+  EVALUATION_ATTEMPTS_SPENT,
+  MAX_EVALUATION_ATTEMPTS,
+} from '../src/work/queue-order';
 
 import { appendEvent } from './eventLog';
 
@@ -48,25 +53,6 @@ export const EXECUTION_STALL_MS = STEP_LEASE_MS + 2 * 60 * 1000;
  * stops for the manager's Retry instead.
  */
 export const MAX_DRAFT_RESUMES = 3;
-
-/**
- * How many evaluations of one row may begin without a verdict. A row whose
- * evaluation dies after its claim (an action killed at the time limit, a
- * throw) keeps the claim until the lease passes, then ranks behind every
- * unattempted row; after this many it is parked, so one dying evaluation at a
- * cap of one never holds the queue (wave 2 review M23).
- */
-export const MAX_EVALUATION_ATTEMPTS = 3;
-
-/**
- * The deferral reason of a row parked after `MAX_EVALUATION_ATTEMPTS`
- * evaluations died; the manager's Retry takes it back. A row whose last
- * evaluation found the scope judgement unreachable is parked as
- * `scope-judgement-unavailable` instead, which the charter trigger and Check
- * for new work re-admit, because half an hour of provider outage is three
- * attempts (E-70 D2).
- */
-export const EVALUATION_ATTEMPTS_SPENT = 'evaluation-attempts-spent';
 
 /** The event each restart of a dead draft writes; the cap is counted from it. */
 const DRAFT_RESUMED = 'work.draft-resumed';
@@ -166,11 +152,6 @@ export async function claimLoopStepInTransaction(
   return { claimed: true, claimedAt: now };
 }
 
-/** Whether an earlier verdict queued the row at the work-in-progress cap; it waits in `discovered` like any unevaluated row. */
-export function queuedAtCap(row: Pick<Doc<'workItems'>, 'verdict'>): boolean {
-  return (row.verdict as { decision?: unknown } | undefined)?.decision === 'queue';
-}
-
 /** The states that hold one of the employee's work-in-progress slots. */
 export const OPEN_WORK_STATES = [
   'claimed',
@@ -182,8 +163,9 @@ export const OPEN_WORK_STATES = [
 
 /**
  * The states that park a row outside the slots until something it waits on
- * arrives: a connection or a grant, or a skill. A row queued at the cap is
- * parked too, but in `discovered` (see `queuedAtCap`).
+ * arrives: a connection or a grant, or a skill. A row an earlier verdict
+ * queued at the work-in-progress cap is parked too, but in `discovered`, where
+ * it waits like any unevaluated row.
  */
 export const PARKED_WORK_STATES = ['deferred', 'needs-skill'] as const satisfies ReadonlyArray<
   Doc<'workItems'>['state']
@@ -288,24 +270,6 @@ export async function openSlotCount(
 }
 
 /**
- * The rank a provider priority gives a waiting row; lower is served first.
- *
- * Args:
- *   priority: The provider's priority label, as intake stored it.
- *
- * Returns:
- *   0 for urgent, 1 high, 2 medium, 3 low, 4 for none or a label it does not know.
- */
-export function queueRank(priority: string | undefined): number {
-  const lower = (priority ?? '').toLowerCase();
-  if (/\b(?:p0|urgent)\b|production-down/.test(lower)) return 0;
-  if (/\b(?:p1|high)\b/.test(lower)) return 1;
-  if (/\b(?:p2|medium)\b/.test(lower)) return 2;
-  if (/\b(?:p3|low)\b/.test(lower)) return 3;
-  return 4;
-}
-
-/**
  * Discovered rows read at most to fill the window: the revocation driver's
  * retained trial rows (a hundred ids at most) are passed over, not counted.
  */
@@ -392,20 +356,10 @@ function nextWaitingRow(
   waiting: readonly Doc<'workItems'>[],
   now: number,
 ): Doc<'workItems'> | undefined {
-  const order = (row: Doc<'workItems'>): [number, number] => [
-    (row.evaluationAttempts ?? 0) > 0 ? 1 : 0,
-    queueRank(row.priority),
-  ];
   let next: Doc<'workItems'> | undefined;
   for (const row of waiting) {
     if (holdsLiveStepClaim(row, 'evaluation', now)) continue;
-    if (next === undefined) {
-      next = row;
-      continue;
-    }
-    const [attempted, rank] = order(row);
-    const [nextAttempted, nextRank] = order(next);
-    if (attempted < nextAttempted || (attempted === nextAttempted && rank < nextRank)) next = row;
+    if (next === undefined || compareWaitingRows(row, next) < 0) next = row;
   }
   return next;
 }

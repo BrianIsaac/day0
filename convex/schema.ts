@@ -729,7 +729,7 @@ export default defineSchema({
     /**
      * Real mode: how many evaluations of this row began since it last had a
      * verdict. A row whose evaluation keeps dying ranks behind unattempted
-     * rows and is parked after `MAX_EVALUATION_ATTEMPTS` (`convex/workLoop.ts`),
+     * rows and is parked after `MAX_EVALUATION_ATTEMPTS` (`src/work/queue-order.ts`),
      * so it cannot hold the queue at a cap of one. Cleared by a verdict and by
      * every re-admission.
      */
