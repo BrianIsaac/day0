@@ -79,6 +79,7 @@ import {
   SessionRestoreNote,
   WorkItemCard,
   CHIP_SWAP_MS,
+  connectedManagerChannel,
   LANDING_MS,
   sortedForQueue,
   phasedLedger,
@@ -1968,6 +1969,51 @@ describe('what Retry does to an unregistered skill', (): void => {
     ]);
   });
 
+  /** What a production deployment sends for a plain `Error` thrown in the action: the envelope alone. */
+  const REDACTED_AUTHORING =
+    '[CONVEX A(skillActions:authorAndRegisterSkill)] [Request ID: 7f3a] Server Error';
+
+  it('files a Retry the production backend redacted as a sentence, never the envelope', async (): Promise<void> => {
+    backend.refusals = { 'skillActions:authorAndRegisterSkill': REDACTED_AUTHORING };
+    const attempts: unknown[] = [];
+    const view = mount(
+      <RegisteredSkillsPanel
+        skills={[]}
+        unregistered={[refused]}
+        authoringFailure={null}
+        onAuthoringAttempt={(attempt) => void attempts.push(attempt)}
+      />,
+    );
+    await press(view.container, 'Retry refresh-the-tile');
+    expect(attempts).toEqual([
+      null,
+      { skillId: 'skill-2', name: 'refresh-the-tile', reason: 'authoring did not finish' },
+    ]);
+    view.unmount();
+    backend.refusals = {};
+  });
+
+  it('files an approved authoring the production backend redacted as a sentence, never the envelope', async (): Promise<void> => {
+    const proposed = { ...base, state: 'proposed', requiredScopes: [] } as unknown as Doc<'skills'>;
+    backend.refusals = { 'skillActions:authorAndRegisterSkill': REDACTED_AUTHORING };
+    const attempts: unknown[] = [];
+    const view = mount(
+      <ProposedSkillsPanel
+        skills={[proposed]}
+        surfaces={[]}
+        onAuthoringAttempt={(attempt) => void attempts.push(attempt)}
+      />,
+    );
+    await press(view.container, 'Approve · author and verify');
+    await settle();
+    expect(attempts).toEqual([
+      null,
+      { skillId: 'skill-1', name: 'refresh-the-tile', reason: 'authoring did not finish' },
+    ]);
+    view.unmount();
+    backend.refusals = {};
+  });
+
   it("says a refused Approve in the panel's live region in the words written for a person, and files no authoring attempt", async (): Promise<void> => {
     const proposed = { ...base, state: 'proposed', requiredScopes: [] } as unknown as Doc<'skills'>;
     backend.refusals = {
@@ -3688,6 +3734,26 @@ describe('the manager DM setting waits for a manager channel (N7)', (): void => 
       <DashboardHeader agent={agent} charter={approved} managerChannel={true} />,
     );
     expect(withChannel).toContain('Manager DMs');
+  });
+
+  it('counts a manager channel only while it is connected and knows the manager (m1)', (): void => {
+    const now = Date.UTC(2026, 8, 29, 9);
+    const live = {
+      slug: 'slack',
+      displayName: 'Slack',
+      class: 'chat',
+      verdict: 'connected',
+      credentialLanded: true,
+      lastVerifiedAt: now - 60_000,
+      managerDmChannelId: 'D0MANAGER',
+      managerUserId: 'UMANAGER',
+    } as unknown as SurfaceRecord;
+    expect(connectedManagerChannel([live], now)).toBe(live);
+    // Past the six-hour liveness window the row still names the channel, but nothing can be sent.
+    const lapsed = { ...live, lastVerifiedAt: now - 7 * 60 * 60 * 1_000 } as SurfaceRecord;
+    expect(connectedManagerChannel([lapsed], now)).toBeUndefined();
+    const noManager = { ...live, managerUserId: undefined } as SurfaceRecord;
+    expect(connectedManagerChannel([noManager], now)).toBeUndefined();
   });
 });
 
