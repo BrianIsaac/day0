@@ -64,6 +64,8 @@ describe('what the walkthrough tells a visitor it is', () => {
         `aria-label="${WALKTHROUGH.fullSize(step.number)}"`,
       );
       expect(link).not.toContain('target=');
+      // The frame clips what lies outside it, so the focus ring is drawn inside the link.
+      expect(link).toContain('focus-visible:outline-offset-[-3px]');
     }
     expect(html.match(/<a href="\/walkthrough\/full-run-[^"]*\.webp"/g)).toHaveLength(4);
   });

@@ -57,7 +57,7 @@ function DeviceFrame({ run, active }: { run: RecordedRun; active: number }) {
                 <a
                   href={shot.capture.src}
                   aria-label={WALKTHROUGH.fullSize(shot.number)}
-                  className="block h-full cursor-zoom-in"
+                  className="block h-full cursor-zoom-in focus-visible:outline-offset-[-3px]"
                 >
                   {capture}
                 </a>
