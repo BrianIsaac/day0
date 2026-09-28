@@ -2340,8 +2340,11 @@ export function WorkQueue({
     if (inFlight.current.has(key)) return;
     inFlight.current.add(key);
     call()
-      // A failed step is recorded on the row by the backend and read from
-      // there; the promise here only holds the in-flight key.
+      // A step that fails on the row records the failure there, where the card
+      // reads it. A refusal before the row is touched (the item gone, the
+      // charter not approved, an ownership refusal) or a stale-state no-op
+      // leaves nothing on the row and is dropped here; the promise only holds
+      // the in-flight key.
       .catch((): void => undefined)
       .finally(() => inFlight.current.delete(key));
   }, []);
