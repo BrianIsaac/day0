@@ -473,7 +473,7 @@ describe('orientation evidence selection', (): void => {
       {
         sourceId: 'source-1',
         ref: 'onboarding.md',
-        quote: '- Keep formal status and audit comments on the originating Linear issue.',
+        quote: '| Linear | The formal work queue and audit trail.',
         url: undefined,
       },
     ]);
@@ -485,7 +485,7 @@ describe('orientation evidence selection', (): void => {
     expect(northstar.map((item): [string, string] => [item.ref, item.quote])).toEqual([
       [
         'onboarding.md',
-        '| Northstar CRM | Internal account and opportunity records used during close. No approved connection surface is recorded. | Business Systems owner |',
+        '| Northstar CRM | Account and opportunity records. No approved connection surface is recorded. | Business Systems owner |',
       ],
       ['northstar.md', '# Northstar CRM'],
     ]);

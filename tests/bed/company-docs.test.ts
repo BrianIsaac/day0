@@ -158,6 +158,21 @@ describe('the company bed pages', (): void => {
     expect(drifted, 'tests/fixtures/company-bed/ is stale: copy the page over').toEqual([]);
   });
 
+  it('is the source of the handbook twins under tests/fixtures/notion-pages, byte for byte', (): void => {
+    const twins: Record<string, string> = {
+      'onboarding.md': 'folder/onboarding.md',
+      'looker-pipeline-tile.md': 'folder/systems/looker-pipeline-tile.md',
+      'northstar-crm.md': 'folder/systems/northstar-crm.md',
+      'linear-automation.md': 'notion/linear-automation.md',
+    };
+    const drifted = Object.entries(twins).filter(
+      ([twin, bedPath]) =>
+        readFileSync(join(BED, bedPath), 'utf8') !==
+        readFileSync(resolve('tests', 'fixtures', 'notion-pages', twin), 'utf8'),
+    );
+    expect(drifted, 'tests/fixtures/notion-pages/ is stale: copy the bed page over').toEqual([]);
+  });
+
   it('says on every page that the company is synthetic, and names no employee', (): void => {
     for (const bedPage of [...folderPages, ...notionPages]) {
       expect(bedPage.markdown, bedPage.ref).toMatch(/Kestrel Supply Co\. is a synthetic company/);
