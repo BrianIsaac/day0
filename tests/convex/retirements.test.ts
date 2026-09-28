@@ -156,7 +156,31 @@ describe('firstRetiredRejection', (): void => {
 });
 
 describe('the read limit', (): void => {
-  it('is one thousand, past which the read refuses rather than skipping a boundary', (): void => {
-    expect(RETIREMENT_READ_LIMIT).toBe(1_000);
+  it('refuses an owner with more retirements than it reads, rather than skipping a boundary', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'retired',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      for (let index = 0; index <= RETIREMENT_READ_LIMIT; index += 1) {
+        await ctx.db.insert('retirements', {
+          userId: 'owner',
+          agentId,
+          retiredAt: index,
+          rowCounts: {},
+          revokedCredentials: 0,
+          keptCredentials: 0,
+          claims: [],
+          rejections: [],
+        });
+      }
+    });
+    await expect(harness.run(async (ctx) => await ownerRetirements(ctx, 'owner'))).rejects.toThrow(
+      `more than ${RETIREMENT_READ_LIMIT} retired employees`,
+    );
   });
 });

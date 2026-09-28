@@ -403,7 +403,7 @@ describe('resuming after a closing gate refusal', () => {
     ).toMatchObject({ resumedClosing: true });
   });
 
-  it('treats a closing write still waiting on approval as not landed, so the retry resumes at closing rather than skipping it', () => {
+  it('treats a closing write marked as waiting on approval as not landed, whichever writer marks it, so the retry resumes at closing', () => {
     const prerequisites = [action('looker', 'browser_snapshot'), action('linear', 'list_issues')];
     const waiting = { tool: 'mcp.call', ok: true, awaitingApproval: true, idempotencyKey: 'k' };
     expect(

@@ -426,7 +426,9 @@ describe('the 16 September run 3 retry comment: numbered checks and a not-confir
   it('reads evidence that is only a dash, "pending", "to be confirmed" or "awaiting" as unmet', (): void => {
     for (const evidenceLine of [
       ' - ',
+      ' — ',
       '-',
+      '—',
       'pending',
       'To be confirmed with the team.',
       'Awaiting REVOPS-7.',

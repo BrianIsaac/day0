@@ -2,7 +2,7 @@ import { describe, expect, expectTypeOf, it } from 'vitest';
 import { SYSTEM_CLASSES, type SystemClass } from '../../../src/agent/system-classes';
 
 describe('the system classes', (): void => {
-  it('name the eight classes orientation and the ladder know, with the two catch-alls last', (): void => {
+  it('name the eight classes orientation and the ladder know, each once, with the catch-all last', (): void => {
     expect(SYSTEM_CLASSES).toEqual([
       'kanban',
       'chat',
@@ -14,6 +14,7 @@ describe('the system classes', (): void => {
       'other',
     ]);
     expect(new Set(SYSTEM_CLASSES).size).toBe(SYSTEM_CLASSES.length);
+    expect(SYSTEM_CLASSES[SYSTEM_CLASSES.length - 1]).toBe('other');
   });
 
   it('type a class as one of the tuple, not any string', (): void => {

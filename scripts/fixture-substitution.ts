@@ -14,12 +14,14 @@ import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-/** One replacement, applied in order to every fixture's text. */
+/** One replacement, applied in order to every covered file's text. */
 export interface Substitution {
   /** What the rule replaces, for the check's report. */
   readonly name: string;
   readonly pattern: RegExp;
   readonly replacement: string;
+  /** A rule that runs under `tests/fixtures/` only, because its word is an English one elsewhere. */
+  readonly fixturesOnly?: boolean;
 }
 
 /** The manager DM channel id every recording carries in place of the real one. */
@@ -52,7 +54,12 @@ export const SUBSTITUTIONS: readonly Substitution[] = [
     pattern: /\bBrain\b/g,
     replacement: MANAGER_NAME_PLACEHOLDER,
   },
-  { name: 'manager first name, lower case', pattern: /\b(?:brian|brain)\b/g, replacement: 'sam' },
+  {
+    name: 'manager first name, lower case',
+    pattern: /\b(?:brian|brain)\b/g,
+    replacement: 'sam',
+    fixturesOnly: true,
+  },
 ];
 
 /**
@@ -70,10 +77,15 @@ export const EXCLUDED_PATHS: readonly string[] = [
 /** The directory the rule covers, relative to the repository root. */
 export const FIXTURE_ROOT = 'tests';
 
-/** Apply every rule to one text. */
-export function substitute(text: string): string {
+/** The extensions the rule reads as text; anything else under `tests/` is left alone. */
+const TEXT_EXTENSIONS = new Set(['.ts', '.tsx', '.json', '.md', '.txt', '.jsonl', '.csv', '.mts']);
+
+/** Apply every rule to one text; a fixtures-only rule runs when the path is under the fixtures. */
+export function substitute(text: string, relativePath = 'tests/fixtures/'): string {
+  const inFixtures = relativePath.split(sep).join('/').startsWith('tests/fixtures/');
   return SUBSTITUTIONS.reduce(
-    (current, rule) => current.replace(rule.pattern, rule.replacement),
+    (current, rule) =>
+      rule.fixturesOnly && !inFixtures ? current : current.replace(rule.pattern, rule.replacement),
     text,
   );
 }
@@ -97,7 +109,8 @@ export function coveredFiles(repositoryRoot: string): string[] {
         continue;
       }
       const relativePath = relative(repositoryRoot, path);
-      if (!isExcluded(relativePath)) found.push(relativePath);
+      const extension = entry.slice(entry.lastIndexOf('.'));
+      if (!isExcluded(relativePath) && TEXT_EXTENSIONS.has(extension)) found.push(relativePath);
     }
   };
   walk(join(repositoryRoot, FIXTURE_ROOT));
@@ -121,7 +134,7 @@ export function applySubstitutions(
   for (const relativePath of coveredFiles(repositoryRoot)) {
     const path = join(repositoryRoot, relativePath);
     const before = readFileSync(path, 'utf8');
-    const after = substitute(before);
+    const after = substitute(before, relativePath);
     if (after === before) continue;
     changed.push(relativePath);
     if (!options.check) writeFileSync(path, after);

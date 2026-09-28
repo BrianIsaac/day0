@@ -22,6 +22,9 @@ describe('the fixture substitution rule (N15)', (): void => {
     expect(substitute("boss: 'Brian'")).toBe(`boss: '${MANAGER_NAME_PLACEHOLDER}'`);
     expect(substitute('route it to Brain.')).toBe(`route it to ${MANAGER_NAME_PLACEHOLDER}.`);
     expect(substitute('your boss, brain')).toBe('your boss, sam');
+    expect(substitute('the brain of the run', 'tests/convex/x.test.ts')).toBe(
+      'the brain of the run',
+    );
     expect(substitute('https://github.com/BrianIsaac/day0')).toBe(
       'https://github.com/BrianIsaac/day0',
     );
