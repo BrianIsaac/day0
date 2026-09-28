@@ -453,7 +453,8 @@ async function recordingModelCalls<T>(
  *
  * Returns:
  *   The stored decision, `scope-judgement-unavailable` when the row was left
- *   parked, or a `noop-` reason when the step was not this run's.
+ *   parked, or a `noop-` reason when the step was not this run's or the row
+ *   is gone.
  */
 async function evaluateWorkItemHandler(
   ctx: ActionCtx,
@@ -463,7 +464,9 @@ async function evaluateWorkItemHandler(
   const item: Doc<'workItems'> | null = internalCaller
     ? await ctx.runQuery(internal.work.getInternal, { workItemId: args.workItemId })
     : await ctx.runQuery(api.work.get, { workItemId: args.workItemId });
-  if (!item) throw new Error('workItem not found');
+  // A reset between the schedule and the run deletes the row: the step is no
+  // longer anyone's, as draftPlan and the apply recovery read it (P4-7).
+  if (!item) return { decision: 'noop-missing' };
   const agentId = item.agentId;
   // Race-tolerance: the dashboard's auto-progress useEffect can fire
   // evaluateWorkItem after the item already moved past `discovered`

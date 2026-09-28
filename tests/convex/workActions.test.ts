@@ -8767,3 +8767,21 @@ describe('an execution failure on its way to the card (step 42, C-10)', (): void
     expect(failed).toMatchObject({ at: 5, actions: [read, read], applied: [] });
   });
 });
+
+describe('a scheduled step whose row a reset deleted (step 47, P4-7)', (): void => {
+  it('ends the evaluation as a no-op instead of throwing into the backend log', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'real');
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.delete(workItemId);
+    });
+
+    await expect(
+      harness.action(internal.workActions.evaluateWorkItemInternal, { workItemId }),
+    ).resolves.toEqual({ decision: 'noop-missing' });
+    await expect(
+      harness.action(internal.workActions.draftPlanInternal, { workItemId }),
+    ).resolves.toMatchObject({ ok: false });
+  });
+});
