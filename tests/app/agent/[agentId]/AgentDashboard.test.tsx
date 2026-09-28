@@ -41,12 +41,15 @@ import { declareUndeclaredInputs } from '../../../../src/work/skill-inputs';
 import type { Doc, Id } from '../../../../convex/_generated/dataModel';
 import type { AgentMetrics } from '../../../../src/metrics/types';
 import type { MockAction } from '../../../../src/work/types';
+import { PILOT_FIGURES } from '../../../../app/CompanySupervision';
 import type { SurfaceRecord } from '../../../../src/surfaces/types';
 import {
   ActionPayload,
   AmendCharterPanel,
   AutonomyControl,
   CheckForNewWork,
+  EventTicker,
+  WorkQueue,
   NotificationModeControl,
   PendingDecisionsPanel,
   CharterCard,
@@ -2474,56 +2477,59 @@ describe('what an outage leaves on the card (P7-18)', (): void => {
   });
 });
 
+/** A populated supervision card's figures, the P6-9 fixture. */
+const dashboardMetrics = (): AgentMetrics =>
+  ({
+    charter: {
+      timeToFirstDraftedMs: 1,
+      timeToFirstApprovedMs: 2,
+      requestChanges: 0,
+    },
+    decisions: {
+      requested: 0,
+      approved: 2,
+      rejected: 1,
+      partiallyApproved: 0,
+      cancelled: 0,
+      medianLatencyMs: 60_000,
+      p90LatencyMs: 60_000,
+      byVia: {
+        dashboard: { decided: 3, medianLatencyMs: 60_000, p90LatencyMs: 60_000 },
+        channel: { decided: 0, medianLatencyMs: null, p90LatencyMs: null },
+      },
+    },
+    actions: {
+      autoApplied: 0,
+      automatic: { reads: 0, managerMessages: 0, writes: 0 },
+      sessionRestores: 0,
+      held: 3,
+      approved: 2,
+      rejected: 1,
+      refused: 0,
+      blockedAfterRevocation: null,
+      firstBlockAfterRevocationMs: null,
+    },
+    surfaces: { approved: 0, rejected: 0, absent: 0 },
+    skills: { approved: 0, rejected: 0 },
+    autonomyChanges: 0,
+    auditTrail: { complete: 3, total: 3, fraction: 1 },
+    pilot: {
+      skillReuse: { runs: 3, reused: 1, rate: 1 / 3 },
+      cycleTime: {
+        ended: 3,
+        medianToEndMs: 60_000,
+        completed: 2,
+        medianToCompletionMs: 120_000,
+        p90ToCompletionMs: 180_000,
+      },
+      reorientation: { answered: 1, amended: 1, rate: 1 },
+      hoursSaved: { estimatedItems: 0, hours: null },
+      retrieval: { tokens: null, recall: null },
+    },
+  }) as unknown as AgentMetrics;
+
 describe('dashboard decisions on the supervision card (P6-9)', (): void => {
-  const metrics = (): AgentMetrics =>
-    ({
-      charter: {
-        timeToFirstDraftedMs: 1,
-        timeToFirstApprovedMs: 2,
-        requestChanges: 0,
-      },
-      decisions: {
-        requested: 0,
-        approved: 2,
-        rejected: 1,
-        partiallyApproved: 0,
-        cancelled: 0,
-        medianLatencyMs: 60_000,
-        p90LatencyMs: 60_000,
-        byVia: {
-          dashboard: { decided: 3, medianLatencyMs: 60_000, p90LatencyMs: 60_000 },
-          channel: { decided: 0, medianLatencyMs: null, p90LatencyMs: null },
-        },
-      },
-      actions: {
-        autoApplied: 0,
-        automatic: { reads: 0, managerMessages: 0, writes: 0 },
-        sessionRestores: 0,
-        held: 3,
-        approved: 2,
-        rejected: 1,
-        refused: 0,
-        blockedAfterRevocation: null,
-        firstBlockAfterRevocationMs: null,
-      },
-      surfaces: { approved: 0, rejected: 0, absent: 0 },
-      skills: { approved: 0, rejected: 0 },
-      autonomyChanges: 0,
-      auditTrail: { complete: 3, total: 3, fraction: 1 },
-      pilot: {
-        skillReuse: { runs: 3, reused: 1, rate: 1 / 3 },
-        cycleTime: {
-          ended: 3,
-          medianToEndMs: 60_000,
-          completed: 2,
-          medianToCompletionMs: 120_000,
-          p90ToCompletionMs: 180_000,
-        },
-        reorientation: { answered: 1, amended: 1, rate: 1 },
-        hoursSaved: { estimatedItems: 0, hours: null },
-        retrieval: { tokens: null, recall: null },
-      },
-    }) as unknown as AgentMetrics;
+  const metrics = dashboardMetrics;
 
   it('counts decisions made on the dashboard when nothing was asked on a chat surface', (): void => {
     const markup = renderToStaticMarkup(<MetricsCard metrics={metrics()} />);
@@ -3506,5 +3512,51 @@ describe('revoking and granting a permission from the card (step 45, P6-7)', ():
     expect(said(view.container)).toEqual(['slack:write is not a scope this employee can hold.']);
     expect(focusedName()).toBe('Re-grant slack:write');
     view.unmount();
+  });
+});
+
+describe('loading is not the same as empty (P3-13)', (): void => {
+  it('says the feed is loading, then that it has no events, then lists them', (): void => {
+    expect(renderToStaticMarkup(<EventTicker events={undefined} titles={new Map()} />)).toContain(
+      'loading the feed…',
+    );
+    expect(renderToStaticMarkup(<EventTicker events={[]} titles={new Map()} />)).toContain(
+      'no events yet',
+    );
+  });
+
+  it('says the queue and the skills are loading rather than empty', (): void => {
+    const queue = renderToStaticMarkup(
+      <WorkQueue
+        agentId={'a1' as Id<'agents'>}
+        workItems={[]}
+        openQuestions={[]}
+        surfaces={[]}
+        registeredSkillCount={0}
+        charterApproved={true}
+        autonomousActions={false}
+        surfaceMode="real"
+        loading={true}
+      />,
+    );
+    expect(queue).toContain('loading the work queue…');
+    expect(queue).not.toContain('no work seeded yet');
+    const skills = renderToStaticMarkup(
+      <RegisteredSkillsPanel
+        skills={[]}
+        unregistered={[]}
+        authoringFailure={null}
+        onAuthoringAttempt={() => undefined}
+        loading={true}
+      />,
+    );
+    expect(skills).toContain('loading skills…');
+    expect(skills).not.toContain('none yet');
+  });
+
+  it('puts every pilot figure definition in the page, not only in a hover', (): void => {
+    const markup = renderToStaticMarkup(<MetricsCard metrics={dashboardMetrics()} />);
+    for (const figure of PILOT_FIGURES) expect(markup).toContain(figure.definition);
+    expect(markup).toContain('What each pilot figure counts');
   });
 });

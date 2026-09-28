@@ -375,6 +375,7 @@ export function AgentDashboard({ agentId }: Props) {
               surfaceMode={surfaceConfig?.mode}
               corrections={corrections}
               autonomyChanges={autonomyChanges ?? []}
+              loading={workItems === undefined}
             />
           </div>
 
@@ -388,6 +389,7 @@ export function AgentDashboard({ agentId }: Props) {
               onAuthoringAttempt={setLastAttempt}
               surfaceMode={surfaceConfig?.mode}
               focusRef={skillsCard}
+              loading={registeredSkills === undefined}
             />
             {surfaceConfig?.mode === 'real' ? (
               <Card title={keptCorrectionsTitle(corrections)}>
@@ -400,7 +402,7 @@ export function AgentDashboard({ agentId }: Props) {
             ) : null}
             {surfaceConfig?.mode === 'real' ? <PermissionsCard agentId={agentId} /> : null}
             <MetricsCard metrics={metrics} />
-            <EventTicker events={events ?? []} titles={itemTitles} />
+            <EventTicker events={events} titles={itemTitles} />
           </div>
         </div>
 
@@ -2083,8 +2085,11 @@ export function RegisteredSkillsPanel({
   onAuthoringAttempt,
   surfaceMode,
   focusRef,
+  loading = false,
 }: {
   skills: Doc<'skills'>[];
+  /** The registered skills' query has not answered yet. */
+  loading?: boolean;
   /**
    * Authored but never registered: `authoring` (a run is holding it now, or no
    * sandbox ran), `failed` (the sandbox said no), and `verified` (registration
@@ -2168,7 +2173,9 @@ export function RegisteredSkillsPanel({
           </p>
         ) : null}
       </div>
-      {skills.length === 0 ? (
+      {loading ? (
+        <p className="text-xs text-[var(--color-muted)]">loading skills…</p>
+      ) : skills.length === 0 ? (
         <p className="text-xs text-[var(--color-muted)]">none yet</p>
       ) : (
         <ul className="space-y-2 text-sm">
@@ -2571,9 +2578,12 @@ export function WorkQueue({
   surfaceMode,
   corrections = [],
   autonomyChanges = [],
+  loading = false,
 }: {
   agentId: Id<'agents'>;
   workItems: Doc<'workItems'>[];
+  /** The queue's query has not answered yet, which is not the same as an empty queue. */
+  loading?: boolean;
   /** The charter's open questions still waiting on the manager, asked at a plan. */
   openQuestions: Doc<'managerQuestions'>[];
   surfaces: SurfaceRecord[];
@@ -2656,7 +2666,9 @@ export function WorkQueue({
       focusRef={queue}
     >
       {surfaceMode === 'real' && charterApproved ? <CheckForNewWork agentId={agentId} /> : null}
-      {items.length === 0 ? (
+      {loading ? (
+        <p className="text-xs text-[var(--color-muted)]">loading the work queue…</p>
+      ) : items.length === 0 ? (
         <p className="text-xs text-[var(--color-muted)]">
           {charterApproved ? 'no work seeded yet' : 'work queue lights up after charter approval'}
         </p>
@@ -5246,6 +5258,17 @@ export function MetricsCard({ metrics }: { metrics: AgentMetrics | undefined }) 
               </div>
             ))}
           </dl>
+          <details className="mt-1 text-[10px] text-[var(--color-muted)]">
+            <summary className={SUMMARY}>What each pilot figure counts</summary>
+            <dl className="space-y-1">
+              {PILOT_FIGURES.map((figure) => (
+                <div key={figure.label}>
+                  <dt className="inline text-[var(--color-fg)]">{figure.label}: </dt>
+                  <dd className="inline">{figure.definition}</dd>
+                </div>
+              ))}
+            </dl>
+          </details>
         </div>
       ) : null}
     </Card>
@@ -5270,43 +5293,51 @@ export function eventItemTitle(
   return typeof workItemId === 'string' ? titles.get(workItemId) : undefined;
 }
 
-function EventTicker({
+export function EventTicker({
   events,
   titles,
 }: {
-  events: Doc<'events'>[];
+  /** The newest events, or undefined while the query loads. */
+  events: Doc<'events'>[] | undefined;
   titles: ReadonlyMap<string, string>;
 }) {
   const now = useNow();
   const zone = useAgentZone();
   return (
     <Card title="Live event feed">
-      {/* Focusable, so a keyboard reaches the events below the fold. */}
-      <ul
-        tabIndex={0}
-        aria-label="Live event feed, newest first"
-        className="space-y-1 text-[10px] font-mono max-h-72 overflow-y-auto"
-      >
-        {events.map((e) => {
-          const title = eventItemTitle(e, titles);
-          return (
-            <li key={e._id} className="flex gap-2 text-[var(--color-muted)]">
-              {/* Was a UTC clock beside the Slack panel's local one: the same
+      {events === undefined ? (
+        <p className="text-xs text-[var(--color-muted)]">loading the feed…</p>
+      ) : events.length === 0 ? (
+        <p className="text-xs text-[var(--color-muted)]">no events yet</p>
+      ) : (
+        // Focusable, so a keyboard reaches the events below the fold.
+        <ul
+          tabIndex={0}
+          aria-label="Live event feed, newest first"
+          className="space-y-1 text-[10px] font-mono max-h-72 overflow-y-auto"
+        >
+          {events.map((e) => {
+            const title = eventItemTitle(e, titles);
+            return (
+              <li key={e._id} className="flex gap-2 text-[var(--color-muted)]">
+                {/* Was a UTC clock beside the Slack panel's local one: the same
                   event stamped eight hours apart on one page. */}
-              <span
-                className="shrink-0 tabular-nums"
-                title={clockTimeWithSeconds(e.createdAt, zone)}
-              >
-                {relativeTime(e.createdAt, now)}
-              </span>
-              <span className="min-w-0 break-words">
-                <span className="text-[var(--color-accent)]">{eventLabel(e)}</span>
-                {title ? <span className="text-[var(--color-fg)]"> · {title}</span> : null}
-              </span>
-            </li>
-          );
-        })}
-      </ul>
+                <time
+                  dateTime={new Date(e.createdAt).toISOString()}
+                  className="shrink-0 tabular-nums"
+                  title={clockTimeWithSeconds(e.createdAt, zone)}
+                >
+                  {relativeTime(e.createdAt, now)}
+                </time>
+                <span className="min-w-0 break-words">
+                  <span className="text-[var(--color-accent)]">{eventLabel(e)}</span>
+                  {title ? <span className="text-[var(--color-fg)]"> · {title}</span> : null}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </Card>
   );
 }
