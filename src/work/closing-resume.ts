@@ -28,7 +28,10 @@ export interface ClosingResume extends ExecutionOutput {
   refusedClosing?: RefusedClosing;
 }
 
-type Surface = { slug: string; displayName: string };
+interface Surface {
+  slug: string;
+  displayName: string;
+}
 
 function isRead(action: ExecutionOutput['actions'][number]): boolean {
   const parsed = parseSurfaceAction(action);

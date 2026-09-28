@@ -71,7 +71,12 @@ export const orientationSchema = z.object({
 
 type OrientationDraft = z.infer<typeof orientationSchema>;
 type OrientationPath = OrientationDraft['path'];
-type Evidence = { sourceId: string; ref: string; quote: string; url?: string };
+interface Evidence {
+  sourceId: string;
+  ref: string;
+  quote: string;
+  url?: string;
+}
 type CredentialId = GenericId<'credentials'>;
 
 /** The stored row an orientation run attaches to a surface. */
@@ -137,13 +142,16 @@ export interface SurfacePathCandidate {
   path: Exclude<OrientationPath, 'escalate'>;
   endpoint: string;
 }
-type RegistryRemote = { type?: unknown; url?: unknown };
-type RegistryServer = {
+interface RegistryRemote {
+  type?: unknown;
+  url?: unknown;
+}
+interface RegistryServer {
   description?: unknown;
   name?: unknown;
   remotes?: unknown;
   title?: unknown;
-};
+}
 
 const orientationAgent = makeAgent(
   'surface-orientation',

@@ -34,12 +34,12 @@ import type { SurfaceDiscoveryEvidence } from '@/docs/system-discovery';
 import { clockTime, useAgentZone, useNow } from '../time';
 import { LiveStatus, refusalText, type ChangeOutcome } from '../live-status';
 
-type SurfaceEvidence = {
+interface SurfaceEvidence {
   sourceId?: string;
   ref?: string;
   quote?: string;
   url?: string;
-};
+}
 
 /** The one control that approves a proposed card (Q10); the rehearsal driver clicks it by name. */
 export const APPROVE_CARD = 'Approve';
@@ -48,7 +48,7 @@ export const LOADING_SURFACES = 'Loading discovered systems, connection status a
 export const EMPTY_SURFACES =
   'No systems have been discovered yet. After charter approval, orientation maps systems from the linked documentation and shows their connection status here.';
 
-type ConnectRequestBody = {
+interface ConnectRequestBody {
   target?: {
     reasoning?: string;
     fallbackPath?: string;
@@ -63,13 +63,13 @@ type ConnectRequestBody = {
   costBand?: string;
   rollback?: string;
   openQuestions?: string[];
-};
+}
 
-type Operation = {
+interface Operation {
   error?: string;
   kind: 'approve' | 'landing' | 'probe' | 'propose' | 'provision' | 'reject';
   surfaceId: string;
-};
+}
 
 export interface ProvisioningRowProps {
   error?: string;
@@ -545,14 +545,14 @@ export function EvidenceQuote({ quote }: { quote?: string }): React.ReactNode {
   );
 }
 
-type SurfaceProbeAttempt = {
+interface SurfaceProbeAttempt {
   path: string;
   endpoint?: string;
   outcome: 'demoted' | 'ungranted' | 'listed-dead' | 'retried';
   reason: string;
   attemptedAt: number;
   retryAfterMs?: number;
-};
+}
 
 export interface SurfaceLadderProps {
   candidates?: Array<{ path: string; endpoint: string }>;

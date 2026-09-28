@@ -1137,13 +1137,13 @@ export interface ReevaluatePendingResult {
   continued: boolean;
 }
 
-type ParkedVerdict = {
+interface ParkedVerdict {
   decision?: string;
   reason?: string;
   missingSurface?: string;
   missingPermissions?: string[];
   claimedBy?: { claimId?: string };
-};
+}
 
 interface SurfaceTrigger {
   surface: Doc<'surfaces'>;
