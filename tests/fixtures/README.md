@@ -41,19 +41,20 @@ with; and the rule's own test, which carries the names it replaces by design.
 
 The evaluation results under `evaluation/results/` are outside the rule's
 root: they are frozen evidence, and no rule rewrites them. They carry no
-machine path either; a re-grade records its source from the checkout root
+machine path either (the three that did were made relative by hand, once); a re-grade records its source from the checkout root
 (`evaluation/results/<run>/<file>.json`), and a test holds every committed
 result to that.
 
 ## Provenance
 
-Every recorded fixture's file name carries the date of the run it comes from.
-Where a fixture has a header (a JSON recording cannot carry one), the header
-says which run it is, whether its strings are verbatim or reconstructed, and
-the model where the run's record names it. The runs' exports and findings files are private recordings
-kept outside the tree; no header cites a path a reader of this repository
-cannot open. Where a fixture was reconstructed from a run record rather than
-read from an export, the header says so.
+A recording named for a day (`*-2026-09-19.ts`) carries the day of the run
+or the export it comes from. Where a fixture states its provenance, in a
+header or, for a JSON recording, in a `provenance` or `source` key, it says
+which run it is, whether its strings are verbatim or reconstructed, and the
+model where the run's record names it. The runs' exports and findings files
+are private recordings kept outside the tree; no header cites a path a reader
+of this repository cannot open. Where a fixture was reconstructed from a run
+record rather than read from an export, the header says so.
 
 ## The handbook twins
 
