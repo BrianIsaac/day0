@@ -6805,6 +6805,8 @@ const needsYouEntryValidator = v.union(
 const needsYouValidator = v.object({
   entries: v.array(needsYouEntryValidator),
   total: v.number(),
+  /** How many entries each employee has, all of them counted, not only the ones returned. */
+  waitingByEmployee: v.array(v.object({ agentId: v.id('agents'), waiting: v.number() })),
 });
 
 /** One thing waiting on the manager. */
@@ -7092,14 +7094,15 @@ async function needsYouOfEmployee(
  * home (N7). Evaluation agents and the baseline arm are left out, as on the
  * roster. An anonymous caller gets an empty inbox. Writes nothing.
  *
- * @returns At most `NEEDS_YOU_LIMIT` entries and how many there are in all.
+ * @returns At most `NEEDS_YOU_LIMIT` entries, how many there are in all, and
+ *   how many wait on each employee.
  */
 export const needsYou = query({
   args: {},
   returns: needsYouValidator,
   handler: async (ctx): Promise<Infer<typeof needsYouValidator>> => {
     const caller = await getCaller(ctx);
-    if (!caller?.ownerKey) return { entries: [], total: 0 };
+    if (!caller?.ownerKey) return { entries: [], total: 0, waitingByEmployee: [] };
     const employees = (
       await ctx.db
         .query('agents')
@@ -7110,14 +7113,22 @@ export const needsYou = query({
       .filter((agent) => !isEvaluationAgent(agent))
       .slice(0, NEEDS_YOU_EMPLOYEE_LIMIT);
     const now = Date.now();
-    const entries = (
-      await Promise.all(employees.map(async (agent) => await needsYouOfEmployee(ctx, agent, now)))
-    )
+    const perEmployee = await Promise.all(
+      employees.map(async (agent) => await needsYouOfEmployee(ctx, agent, now)),
+    );
+    const entries = perEmployee
       .flat()
       .sort(
         (left, right) =>
           left.waitingSince - right.waitingSince || left.key.localeCompare(right.key),
       );
-    return { entries: entries.slice(0, NEEDS_YOU_LIMIT), total: entries.length };
+    return {
+      entries: entries.slice(0, NEEDS_YOU_LIMIT),
+      total: entries.length,
+      waitingByEmployee: employees.map((agent, index) => ({
+        agentId: agent._id,
+        waiting: perEmployee[index]?.length ?? 0,
+      })),
+    };
   },
 });

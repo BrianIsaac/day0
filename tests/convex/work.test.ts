@@ -6672,6 +6672,10 @@ describe('work.needsYou', (): void => {
     expect(stopped.waitingSince).toBe(failedAt);
     expect(surface).toMatchObject({ waitingSince: surfaceAt, surfaceId, agentId: aiko });
     expect(inbox.entries.every((entry) => !entry.waitingAtLeast)).toBe(true);
+    expect(inbox.waitingByEmployee).toEqual([
+      { agentId: aiko, waiting: 2 },
+      { agentId: mira, waiting: 5 },
+    ]);
   });
 
   it('shows the owner only their own employees and an anonymous caller nothing', async (): Promise<void> => {
@@ -6688,7 +6692,11 @@ describe('work.needsYou', (): void => {
 
     expect(owner.entries.map((entry) => entry.subject)).toEqual(['Mine']);
     expect(stranger.entries.map((entry) => entry.subject)).toEqual(['Theirs']);
-    await expect(harness.query(api.work.needsYou, {})).resolves.toEqual({ entries: [], total: 0 });
+    await expect(harness.query(api.work.needsYou, {})).resolves.toEqual({
+      entries: [],
+      total: 0,
+      waitingByEmployee: [],
+    });
   });
 
   it('leaves evaluation agents out, as the roster does', async (): Promise<void> => {
@@ -6701,6 +6709,7 @@ describe('work.needsYou', (): void => {
     await expect(harness.withIdentity(OWNER).query(api.work.needsYou, {})).resolves.toEqual({
       entries: [],
       total: 0,
+      waitingByEmployee: [],
     });
   });
 
@@ -6733,6 +6742,7 @@ describe('work.needsYou', (): void => {
 
     expect(inbox.total).toBe(55);
     expect(inbox.entries).toHaveLength(50);
+    expect(inbox.waitingByEmployee).toEqual([{ agentId: mira, waiting: 55 }]);
     expect(inbox.entries[0].subject).toBe('Plan 0');
     expect(inbox.entries.at(-1)?.subject).toBe('Plan 49');
   });
