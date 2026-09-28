@@ -2088,6 +2088,28 @@ describe('the browser floor in orientation', (): void => {
     );
   });
 
+  it('admits a login page that documents only the element it shows once signed in', async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = (): DraftPath => 'browser-driven';
+    const harness = convexTest(schema, orientationModules());
+    const { agentId } = await seedOrientation(
+      harness,
+      {
+        'reports.md':
+          '# Forecast reports\n\nForecast reports use the browser at https://reports.example.test/forecast. There is no API or MCP server.\n\n- Probe marker: after sign-in, element `Pipeline coverage`.',
+      },
+      [{ name: 'Forecast reports', class: 'analytics' }],
+    );
+    await orientDeclared(harness, agentId);
+    const reports = (await surfacesBySlug(harness, agentId))['forecast-reports'];
+    // The probe accepts either marker, so orientation offers the rung on either.
+    expect(reports).toMatchObject({
+      verdict: 'proposed',
+      path: 'browser-driven',
+      endpoint: 'https://reports.example.test/forecast',
+    });
+  });
+
   it('escalates a web UI whose page title marker is not documented', async (): Promise<void> => {
     stubRegistry();
     model.pathFor = (): DraftPath => 'browser-driven';
@@ -2103,11 +2125,14 @@ describe('the browser floor in orientation', (): void => {
     await orientDeclared(harness, agentId);
     const reports = (await surfacesBySlug(harness, agentId))['forecast-reports'];
     // The probe refuses a browser rung with no documented marker, so the rung
-    // is not put in front of two approvers as though it could connect.
+    // is not put in front of the manager as though it could connect.
     expect(reports).toMatchObject({ verdict: 'proposed', path: 'escalate' });
     expect(reports).not.toHaveProperty('pathCandidates');
     expect(reports.request?.openQuestions).toContainEqual(
-      expect.stringContaining('Document the page title Day0 should see at'),
+      expect.stringContaining('Document a probe marker for https://reports.example.test/forecast'),
+    );
+    expect(reports.request?.openQuestions).toContainEqual(
+      expect.stringContaining('"Probe marker: after sign-in, element"'),
     );
   });
 

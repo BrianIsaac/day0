@@ -10,7 +10,7 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { containsTokenShape, redactTokenShapes, safeFailureMessage } from '../src/surfaces/redact';
 import { storedCredentialGuardReason } from './credentialCryptoActions';
-import { browserTitleMarker } from '../src/surfaces/browser';
+import { browserSignedInMarker, browserTitleMarker } from '../src/surfaces/browser';
 import { awaitsManagerProposal, charterNamesWorkSystems } from '../src/surfaces/charter-cards';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { approvedMcpEndpoint, McpAddressRefusal } from '../src/surfaces/mcp-address';
@@ -813,9 +813,10 @@ export function connectionLadder(
   // The browser rung used to need a stored web login, which was literal
   // evidence. Dropping it for the public floor left the model's own draft path
   // deciding whether a rung is admitted, which is the one thing the model does
-  // not decide here. The documented page-title marker restores an evidence
-  // condition, and it is the condition the browser probe already refuses
-  // without - so both approvers now ratify only rungs that can actually run.
+  // not decide here. A documented probe marker (the page title, or the element
+  // a signed-in page shows) restores an evidence condition, and it is the
+  // condition the browser probe already refuses without - so the manager
+  // ratifies only rungs that can actually run.
   if (endpoints.webUi && hasProbeMarker && (draftPath === 'browser-driven' || hasLoginCredential)) {
     candidates.push({ path: 'browser-driven', endpoint: endpoints.webUi });
   }
@@ -1543,7 +1544,9 @@ export async function orientSurface(
       ? validatedDraftCredential(draft.credential, credentialPages)
       : extractedCredential;
   const hasBrowserLogin = isBrowserLoginCredential(credential);
-  const hasProbeMarker = browserTitleMarker(relevantText) !== undefined;
+  const hasProbeMarker =
+    browserTitleMarker(relevantText) !== undefined ||
+    browserSignedInMarker(relevantText) !== undefined;
   const pathCandidates = connectionLadder(draft.path, endpoints, hasBrowserLogin, hasProbeMarker);
   const selected: { path: OrientationPath; endpoint?: string } = pathCandidates[0] ?? {
     path: 'escalate',
@@ -1567,7 +1570,7 @@ export async function orientSurface(
   }
   if (endpoints.webUi && !hasProbeMarker && draft.path === 'browser-driven') {
     openQuestions.push(
-      `Document the page title Day0 should see at ${endpoints.webUi}, as "Probe marker: page title" followed by the title in backticks, before approving browser-driven access.`,
+      `Document a probe marker for ${endpoints.webUi} before approving browser-driven access: the page title Day0 should see, as "Probe marker: page title" followed by the title in backticks, or, for a page behind a login, an element it shows once signed in, as "Probe marker: after sign-in, element" followed by its name in backticks.`,
     );
   }
   if (endpoints.insecure) {
