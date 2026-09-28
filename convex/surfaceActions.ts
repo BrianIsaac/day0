@@ -573,6 +573,9 @@ async function probeCall(
       `Day0 browser component does not expose ${tool}, which signing in needs.`,
     );
   }
+  const refused = new Day0ProbeLimitation(
+    `The browser driver refused ${tool} while Day0 was signing in, so the credential was not checked. This is not evidence that the system is unavailable.`,
+  );
   let result: { isError: boolean; text: string };
   try {
     result = await client.callTool(tool, args);
@@ -580,13 +583,9 @@ async function probeCall(
     // The client throws the driver's own refusal (`onToolError: 'throw'`);
     // the driver answered, so this is the same refusal as an `isError` result.
     if (!isServerToolError(error)) throw error;
-    result = { isError: true, text: '' };
+    throw refused;
   }
-  if (result.isError) {
-    throw new Day0ProbeLimitation(
-      `The browser driver refused ${tool} while Day0 was signing in, so the credential was not checked. This is not evidence that the system is unavailable.`,
-    );
-  }
+  if (result.isError) throw refused;
   return result.text;
 }
 

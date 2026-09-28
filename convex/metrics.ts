@@ -403,7 +403,9 @@ function decisionTotals(
       // A re-draft withdraws the plan ask that was open: the manager is not
       // asked to decide it, so it is neither a request nor the start of the
       // wait the re-drafted plan's ask begins (wave 3.5 review M21).
-      const key = `${asString(payload?.workItemId)}:plan`;
+      const workItemId = asString(payload?.workItemId);
+      if (!workItemId) continue;
+      const key = `${workItemId}:plan`;
       for (const withdrawn of pending.get(key) ?? []) {
         totals.requested -= 1;
         const withdrawnId = asString(asRecord(withdrawn.payload)?.decisionId);

@@ -143,6 +143,14 @@ export function redactForExport(value: unknown): unknown {
   return value;
 }
 
+/** A retirement row without its owner key, the one field the export never carries. */
+function withoutOwner(row: Doc<'retirements'>): Omit<Doc<'retirements'>, 'userId'> {
+  return Object.fromEntries(Object.entries(row).filter(([key]) => key !== 'userId')) as Omit<
+    Doc<'retirements'>,
+    'userId'
+  >;
+}
+
 /**
  * The owner's retired employees, newest first, each its `retirements` row
  * redacted for export: what the retire deleted and revoked, and the claims
@@ -155,11 +163,9 @@ async function retiredEmployees(
   owner: string | undefined,
 ): Promise<TraceRetirement[]> {
   if (owner === undefined) return [];
-  return (await ownerRetirements(ctx, owner)).map((row): TraceRetirement => {
-    const { userId: subject, ...rest } = row;
-    void subject;
-    return redactForExport(rest) as TraceRetirement;
-  });
+  return (await ownerRetirements(ctx, owner)).map(
+    (row): TraceRetirement => redactForExport(withoutOwner(row)) as TraceRetirement,
+  );
 }
 
 /**

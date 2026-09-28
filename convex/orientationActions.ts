@@ -157,6 +157,18 @@ const orientationAgent = makeAgent(
   ].join('\n'),
 );
 
+/** Any letter or digit of any script, inside a character class. */
+const LETTER_OR_DIGIT = '\\p{L}\\p{N}';
+
+/**
+ * A letter or digit of a script that separates its words with spaces, which
+ * is what bounds a name: `nonlinear` does not name Linear. The scripts that
+ * write without separators (Han, kana, Hangul) do not bound it, so 账务系统
+ * is named by 账务系统的 API 基址 and a Latin name by the Chinese text around it
+ * (wave 3.5 review X1).
+ */
+const SPACED_SCRIPT_CHARACTER = `(?![\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}\\p{Script=Hangul}])[${LETTER_OR_DIGIT}]`;
+
 /**
  * Build a whole-word matcher for a system name.
  *
@@ -180,18 +192,6 @@ export function systemNamePattern(system: string): RegExp {
   const body = words.length > 0 ? words.join(`[^${LETTER_OR_DIGIT}]*`) : '(?!)';
   return new RegExp(`(?<!${SPACED_SCRIPT_CHARACTER})${body}(?!${SPACED_SCRIPT_CHARACTER})`, 'iu');
 }
-
-/** Any letter or digit of any script, inside a character class. */
-const LETTER_OR_DIGIT = '\\p{L}\\p{N}';
-
-/**
- * A letter or digit of a script that separates its words with spaces, which
- * is what bounds a name: `nonlinear` does not name Linear. The scripts that
- * write without separators (Han, kana, Hangul) do not bound it, so 账务系统
- * is named by 账务系统的 API 基址 and a Latin name by the Chinese text around it
- * (wave 3.5 review X1).
- */
-const SPACED_SCRIPT_CHARACTER = `(?![\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}\\p{Script=Hangul}])[${LETTER_OR_DIGIT}]`;
 
 /**
  * Decide whether text names a system as a whole word or phrase.
