@@ -18,6 +18,7 @@ import {
   evaluationTaskTiming,
   isFatalEvaluationInfrastructureError,
   parseCliOptions,
+  recordedSourcePath,
   selectEvaluationTasks,
 } from '../../scripts/eval-comparison';
 
@@ -605,7 +606,7 @@ describe('read-only evidence re-grading', (): void => {
     expect(calls).toEqual(['config:surfaceMode', 'evaluation:snapshot']);
     expect(evidence.experiment).toBe(RECORDED_COMPARISON_EXPERIMENT);
     expect(evidence.regradedFrom).toEqual({
-      path: sourcePath,
+      path: 'original.json',
       commit: 'run-commit',
       gradedAtCommit: 'grader-commit',
       generatedAt: '2026-08-30T02:14:46.000Z',
@@ -732,5 +733,23 @@ describe('the terminal time of a task', (): void => {
     });
     expect(terminalTimestamp(snapshot([rejection('skill-1')]), cancelled)).toBe(7_000);
     expect(terminalTimestamp(snapshot([rejection('skill-2')]), cancelled)).toBeNull();
+  });
+});
+
+describe('the re-graded source path a result records', (): void => {
+  it('keeps the path from its checkout root, never the machine directory the checkout sat in', (): void => {
+    expect(
+      recordedSourcePath(
+        '/tmp/scratchpad/day0-eval/evaluation/results/2026-08-30T02-14-46Z/semifinal.json',
+      ),
+    ).toBe('evaluation/results/2026-08-30T02-14-46Z/semifinal.json');
+    expect(recordedSourcePath('/home/someone/worktrees/day0/evaluation/results/x/a.json')).toBe(
+      'evaluation/results/x/a.json',
+    );
+  });
+
+  it('keeps a path under the working directory relative to it, and only the file name otherwise', (): void => {
+    expect(recordedSourcePath('bed-results/run.json')).toBe('bed-results/run.json');
+    expect(recordedSourcePath('/tmp/day0-regrade-abc/original.json')).toBe('original.json');
   });
 });
