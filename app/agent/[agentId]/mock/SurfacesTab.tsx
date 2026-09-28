@@ -16,7 +16,6 @@ import {
   type SurfaceCredentialFinding,
   type SurfaceProvisioning,
 } from '@/surfaces/credential-presentation';
-import { plainErrorMessage } from '@/lib/plain-error';
 import { presentBrowserComponent } from '@/surfaces/browser';
 import { pageLinkFromQuote } from '@/surfaces/evidence';
 import { extractDocumentedSystemOrder, orderSurfaceWaterfall } from '@/surfaces/waterfall';
@@ -32,8 +31,7 @@ import {
 } from '@/surfaces/intake-scope';
 import type { SurfaceDiscoveryEvidence } from '@/docs/system-discovery';
 import { clockTime, useAgentZone, useNow } from '../time';
-import { LiveStatus, refusalText, type ChangeOutcome } from '../live-status';
-import { errorMessage } from '@/lib/errors';
+import { LiveStatus, refusalText, useChange, type ChangeOutcome } from '../live-status';
 
 interface SurfaceEvidence {
   sourceId?: string;
@@ -329,6 +327,27 @@ export interface ApprovalRowProps {
 }
 
 /**
+ * What a manual probe came to, in the manager's words; a probe that did not
+ * run says why rather than passing for a check (P6-7).
+ *
+ * Args:
+ *   system: The surface's display name.
+ *   outcome: The probe's answer.
+ *
+ * Returns:
+ *   One sentence for the tab's live region.
+ */
+export function probeOutcomeText(
+  system: string,
+  outcome: { verdict: string; reason?: string },
+): string {
+  if (outcome.verdict === 'skipped') {
+    return `The probe of ${system} did not run${outcome.reason ? `: ${outcome.reason.replace(/\.$/, '')}` : ''}.`;
+  }
+  return `Probed ${system}: ${outcome.verdict}${outcome.reason ? `, ${outcome.reason.replace(/\.$/, '')}` : ''}.`;
+}
+
+/**
  * The proposed card's one approval (Q10): Approve, Reject, the refusal of the
  * last decision, and the line that says the probe follows.
  *
@@ -346,7 +365,7 @@ export function ApprovalRow(props: ApprovalRowProps): React.ReactNode {
           type="button"
           disabled={props.blocked || props.pending !== undefined}
           onClick={props.onApprove}
-          className="rounded border px-2 py-1 text-xs disabled:opacity-50"
+          className="min-h-11 rounded border px-3 text-xs disabled:opacity-50"
         >
           {props.pending === 'approve' ? 'Approving...' : APPROVE_CARD}
         </button>
@@ -354,7 +373,7 @@ export function ApprovalRow(props: ApprovalRowProps): React.ReactNode {
           type="button"
           disabled={props.pending !== undefined}
           onClick={props.onReject}
-          className="text-xs text-[var(--color-danger)] disabled:opacity-50"
+          className="min-h-11 px-3 text-xs text-[var(--color-danger)] disabled:opacity-50"
         >
           Reject
         </button>
@@ -1105,98 +1124,59 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
   const provisionApp = useAction(api.slackProvisionActions.provisionApp);
   const installRedirectConfigured = useQuery(api.surfaces.installRedirectConfigured, {});
   const componentStatus = useQuery(api.config.components, {});
-  const [reorienting, setReorienting] = useState(false);
-  const [reorientError, setReorientError] = useState<string | null>(null);
   const [operation, setOperation] = useState<Operation | null>(null);
+  // Where focus goes when the control that made a change leaves with it (the
+  // Approve buttons become the card's verdict): the card, set per change.
+  const cardFocus = useRef<HTMLElement | null>(null);
+  const change = useChange(cardFocus);
+  const reorienting = change.busy && operation === null;
+  const [reorientError, setReorientError] = useState<string | null>(null);
 
-  async function onReorient(): Promise<void> {
-    setReorienting(true);
+  /**
+   * One change to one card: the card shows it in flight and keeps its refusal
+   * beside the control, and the tab's live region says what it came to.
+   */
+  function operate<Result>(
+    kind: Operation['kind'],
+    surface: { readonly _id: Id<'surfaces'>; readonly slug: string },
+    call: () => Promise<Result>,
+    words: { done: string | ((result: Result) => string); refused: string },
+  ): void {
+    setOperation({ kind, surfaceId: surface._id });
+    cardFocus.current = document.getElementById(`surface-${surface.slug}`);
+    change.run(
+      async (): Promise<Result> => {
+        try {
+          return await call();
+        } catch (failure) {
+          setOperation({
+            kind,
+            surfaceId: surface._id,
+            error: refusalText(failure, words.refused),
+          });
+          throw failure;
+        }
+      },
+      { ...words, after: () => setOperation(null) },
+    );
+  }
+
+  function onReorient(): void {
     setReorientError(null);
-    try {
-      await reorient({ agentId });
-    } catch (failure) {
-      setReorientError(plainErrorMessage(errorMessage(failure)));
-    } finally {
-      setReorienting(false);
-    }
-  }
-
-  async function onDecide(surfaceId: Id<'surfaces'>, kind: 'approve' | 'reject'): Promise<void> {
-    setOperation({ kind, surfaceId });
-    try {
-      if (kind === 'approve') await approve({ surfaceId });
-      else await reject({ surfaceId, reason: 'Rejected by the operator.' });
-      setOperation(null);
-    } catch (failure) {
-      setOperation({
-        kind,
-        surfaceId,
-        error: refusalText(
-          failure,
-          kind === 'approve' ? 'The card was not approved.' : 'The card was not rejected.',
-        ),
-      });
-    }
-  }
-
-  async function onProbe(surfaceId: Id<'surfaces'>): Promise<void> {
-    setOperation({ kind: 'probe', surfaceId });
-    try {
-      await probe({ surfaceId });
-      setOperation(null);
-    } catch (failure) {
-      setOperation({
-        kind: 'probe',
-        surfaceId,
-        error: plainErrorMessage(errorMessage(failure)),
-      });
-    }
-  }
-
-  async function onPropose(surfaceId: Id<'surfaces'>): Promise<void> {
-    setOperation({ kind: 'propose', surfaceId });
-    try {
-      await requestProposal({ surfaceId });
-      setOperation(null);
-    } catch (failure) {
-      setOperation({
-        kind: 'propose',
-        surfaceId,
-        error: plainErrorMessage(errorMessage(failure)),
-      });
-    }
-  }
-
-  async function onProvision(surfaceId: Id<'surfaces'>, configurationToken: string): Promise<void> {
-    setOperation({ kind: 'provision', surfaceId });
-    try {
-      await provisionApp({ surfaceId, configurationToken });
-      setOperation(null);
-    } catch (failure) {
-      setOperation({
-        kind: 'provision',
-        surfaceId,
-        error: plainErrorMessage(errorMessage(failure)),
-      });
-    }
-  }
-
-  async function onLand(
-    surfaceId: Id<'surfaces'>,
-    label: string,
-    plaintext: string,
-  ): Promise<void> {
-    setOperation({ kind: 'landing', surfaceId });
-    try {
-      await landCredential({ surfaceId, label, plaintext });
-      setOperation(null);
-    } catch (failure) {
-      setOperation({
-        kind: 'landing',
-        surfaceId,
-        error: plainErrorMessage(errorMessage(failure)),
-      });
-    }
+    change.run(
+      async (): Promise<void> => {
+        try {
+          await reorient({ agentId });
+        } catch (failure) {
+          setReorientError(refusalText(failure, 'Orientation did not run again.'));
+          throw failure;
+        }
+      },
+      {
+        done: 'Orientation is running again for the declared systems; their cards update here.',
+        refused: 'Orientation did not run again.',
+      },
+    );
   }
 
   if (!surfaces || !pages || !credentialRows || charter === undefined)
@@ -1208,6 +1188,11 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
 
   return (
     <div className="space-y-3">
+      {/* What each change came to, said once for the tab; the card shows its
+          own state and keeps a refusal beside the control that met it. */}
+      <div className="sr-only">
+        <LiveStatus outcome={change.outcome} />
+      </div>
       {declared.length > 0 ? (
         <div className="flex flex-wrap items-center gap-2 text-xs">
           <span className="text-[var(--color-muted)]">
@@ -1215,14 +1200,17 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
             proposal yet.
           </span>
           <button
-            onClick={(): void => void onReorient()}
-            disabled={reorienting}
-            className="rounded border px-2 py-1 text-xs disabled:opacity-50"
+            type="button"
+            onClick={onReorient}
+            disabled={change.busy}
+            className="min-h-11 rounded border px-3 text-xs disabled:opacity-50"
           >
             {reorienting ? 'Re-running orientation...' : 'Re-run orientation'}
           </button>
           {reorientError ? (
-            <span className="text-[var(--color-danger)]">{reorientError}</span>
+            <span role="alert" className="text-[var(--color-danger)]">
+              {reorientError}
+            </span>
           ) : null}
         </div>
       ) : null}
@@ -1283,11 +1271,15 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
             <article
               id={`surface-${surface.slug}`}
               key={surface._id}
+              tabIndex={-1}
+              aria-labelledby={`surface-${surface.slug}-name`}
               data-verdict={surface.verdict}
               className="rounded-lg border border-[var(--color-border)] p-4"
             >
               <div className="flex items-center justify-between gap-2">
-                <h3 className="font-medium">{surface.displayName}</h3>
+                <h3 id={`surface-${surface.slug}-name`} className="font-medium">
+                  {surface.displayName}
+                </h3>
                 <span className="text-[10px] uppercase text-[var(--color-accent)]">
                   {surface.verdict}
                 </span>
@@ -1385,10 +1377,17 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
                   error={
                     currentOperation?.kind === 'provision' ? currentOperation.error : undefined
                   }
-                  onProvision={(configurationToken: string): void => {
-                    // onProvision ends in its own catch, which shows the refusal on the row.
-                    void onProvision(surface._id, configurationToken);
-                  }}
+                  onProvision={(configurationToken: string): void =>
+                    operate(
+                      'provision',
+                      surface,
+                      () => provisionApp({ surfaceId: surface._id, configurationToken }),
+                      {
+                        done: `The app for ${surface.displayName} is registered; install it from the link on the card.`,
+                        refused: 'The app was not registered.',
+                      },
+                    )
+                  }
                   presentation={provisioningPresentation}
                   provisioning={currentOperation?.kind === 'provision' && !currentOperation.error}
                   surfaceSlug={surface.slug}
@@ -1399,14 +1398,22 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
                   credentialLabel={presentation.label ?? `${surface.displayName} credential`}
                   error={currentOperation?.kind === 'landing' ? currentOperation.error : undefined}
                   landing={currentOperation?.kind === 'landing' && !currentOperation.error}
-                  onLand={(plaintext: string): void => {
-                    // onLand ends in its own catch, which shows the refusal on the row.
-                    void onLand(
-                      surface._id,
-                      presentation.label ?? `${surface.displayName} credential`,
-                      plaintext,
-                    );
-                  }}
+                  onLand={(plaintext: string): void =>
+                    operate(
+                      'landing',
+                      surface,
+                      () =>
+                        landCredential({
+                          surfaceId: surface._id,
+                          label: presentation.label ?? `${surface.displayName} credential`,
+                          plaintext,
+                        }),
+                      {
+                        done: `The credential for ${surface.displayName} is stored; Day0 checks the connection now.`,
+                        refused: 'The credential was not stored.',
+                      },
+                    )
+                  }
                   presentation={presentation}
                   status={credentialStatusLine(summary)}
                 />
@@ -1457,29 +1464,44 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
                   pending={decision && !decision.error ? decision.kind : undefined}
                   blocked={browserFloor.absent}
                   error={decision?.error}
-                  onApprove={(): void => {
-                    // onDecide ends in its own catch, which shows the refusal on the card.
-                    void onDecide(surface._id, 'approve');
-                  }}
-                  onReject={(): void => {
-                    // onDecide ends in its own catch, which shows the refusal on the card.
-                    void onDecide(surface._id, 'reject');
-                  }}
+                  onApprove={(): void =>
+                    operate('approve', surface, () => approve({ surfaceId: surface._id }), {
+                      done: `Approved ${surface.displayName}: the probe runs now.`,
+                      refused: 'The card was not approved.',
+                    })
+                  }
+                  onReject={(): void =>
+                    operate(
+                      'reject',
+                      surface,
+                      () => reject({ surfaceId: surface._id, reason: 'Rejected by the operator.' }),
+                      {
+                        done: `Rejected ${surface.displayName}: it goes back to declared.`,
+                        refused: 'The card was not rejected.',
+                      },
+                    )
+                  }
                 />
               ) : null}
               {canProbe ? (
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   <button
-                    onClick={(): void => void onProbe(surface._id)}
+                    type="button"
+                    onClick={(): void =>
+                      operate('probe', surface, () => probe({ surfaceId: surface._id }), {
+                        done: (outcome) => probeOutcomeText(surface.displayName, outcome),
+                        refused: 'The probe did not run.',
+                      })
+                    }
                     disabled={currentOperation?.kind === 'probe' && !currentOperation.error}
-                    className="rounded border px-2 py-1 text-xs disabled:opacity-50"
+                    className="min-h-11 rounded border px-3 text-xs disabled:opacity-50"
                   >
                     {currentOperation?.kind === 'probe' && !currentOperation.error
                       ? 'Probing...'
                       : 'Probe'}
                   </button>
                   {currentOperation?.kind === 'probe' && currentOperation.error ? (
-                    <span className="text-xs text-[var(--color-danger)]">
+                    <span role="alert" className="text-xs text-[var(--color-danger)]">
                       {currentOperation.error}
                     </span>
                   ) : null}
@@ -1496,8 +1518,16 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
             : undefined
         }
         onPropose={(surfaceId: string): void => {
-          // onPropose ends in its own catch, which shows the refusal on the row.
-          void onPropose(surfaceId as Id<'surfaces'>);
+          const system = awaitingProposal.find((row) => row._id === surfaceId);
+          operate(
+            'propose',
+            { _id: surfaceId as Id<'surfaces'>, slug: system?.slug ?? surfaceId },
+            () => requestProposal({ surfaceId: surfaceId as Id<'surfaces'> }),
+            {
+              done: `Proposal requested for ${system?.displayName ?? 'the system'}; its card appears once it is drafted.`,
+              refused: 'The proposal was not requested.',
+            },
+          );
         }}
         proposing={
           proposeOperation && !proposeOperation.error ? proposeOperation.surfaceId : undefined
