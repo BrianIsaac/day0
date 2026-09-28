@@ -6,7 +6,12 @@ import type { NeedsYouInbox } from '../../../app/home/types';
 const NOW = Date.UTC(2026, 8, 26, 6, 45);
 const minutes = (n: number): number => NOW - n * 60_000;
 
-const base = { agentId: 'synthetic-mira', employeeName: 'Mira', waitingAtLeast: false };
+const base = {
+  agentId: 'synthetic-mira',
+  employeeName: 'Mira',
+  zone: 'Asia/Singapore',
+  waitingAtLeast: false,
+};
 
 /** The prototype's three entries and the four other kinds, as `work.needsYou` returns them. */
 const inbox = {
@@ -116,7 +121,7 @@ describe('NeedsYouList', (): void => {
     const positions = order.map((phrase) => text.indexOf(phrase));
     expect(positions).toEqual([...positions].sort((a, b) => a - b));
     expect(text).toContain('waiting 6 min');
-    expect(text).toContain('held since 26 Sep 2026, 06:39');
+    expect(text).toContain('held since 26 Sep 2026, 14:39');
     expect(text).toContain('waiting over 3 days');
   });
 

@@ -50,7 +50,7 @@ const waiting = new Map([
 /** The roster as a manager reads it at desktop: the stacked labels hidden, tags stripped. */
 const readAs = (markup: string): string =>
   markup
-    .replace(/<span class="[^"]*sm:hidden[^"]*">[^<]*<\/span>/g, '')
+    .replace(/<span aria-hidden="true" class="[^"]*sm:hidden[^"]*">[^<]*<\/span>/g, '')
     .replace(/<[^>]+>/g, ' ')
     .replace(/\s+/g, ' ');
 
@@ -58,7 +58,9 @@ describe('EmployeeRoster', (): void => {
   const html = renderToStaticMarkup(<EmployeeRoster employees={roster} waiting={waiting} />);
 
   it('is a table with a header per column, one row per employee', (): void => {
-    const headers = [...html.matchAll(/<th scope="col"[^>]*>([^<]*)</g)].map((match) => match[1]);
+    const headers = [...html.matchAll(/<th scope="col" role="columnheader"[^>]*>([^<]*)</g)].map(
+      (match) => match[1],
+    );
     expect(headers).toEqual([
       'Employee',
       'State',
@@ -69,19 +71,22 @@ describe('EmployeeRoster', (): void => {
       'Landed this month',
     ]);
     expect(html.match(/<tr\b/g)).toHaveLength(3);
-    expect(html).toContain('<th scope="row"');
+    expect(html).toContain('<th scope="row" role="rowheader"');
+    expect(html.match(/<td role="cell"/g)).toHaveLength(12);
   });
 
   it('stacks at a phone’s width: every row a two-column grid with each cell labelled', (): void => {
-    expect(html).toMatch(/<table class="[^"]*max-sm:block/);
-    expect(html).toMatch(/<thead class="[^"]*max-sm:sr-only/);
-    expect(html).toMatch(/<tbody class="[^"]*max-sm:block/);
-    const rows = [...html.matchAll(/<tbody[\s\S]*?<\/tbody>/g)][0][0].match(/<tr class="[^"]*"/g);
+    expect(html).toMatch(/<table role="table" class="[^"]*max-sm:block/);
+    expect(html).toMatch(/<thead role="rowgroup" class="[^"]*max-sm:sr-only/);
+    expect(html).toMatch(/<tbody role="rowgroup" class="[^"]*max-sm:block/);
+    const rows = [...html.matchAll(/<tbody[\s\S]*?<\/tbody>/g)][0][0].match(
+      /<tr role="row" class="[^"]*"/g,
+    );
     expect(rows).toHaveLength(2);
     for (const row of rows ?? []) expect(row).toContain('max-sm:grid max-sm:grid-cols-2');
-    const labels = [...html.matchAll(/<span class="[^"]*sm:hidden[^"]*">([^<]*)</g)].map(
-      (match) => match[1],
-    );
+    const labels = [
+      ...html.matchAll(/<span aria-hidden="true" class="[^"]*sm:hidden[^"]*">([^<]*)</g),
+    ].map((match) => match[1]);
     expect(labels.slice(0, 6)).toEqual([
       'State',
       'Role',
@@ -119,7 +124,7 @@ describe('EmployeeRoster', (): void => {
     const text = readAs(
       renderToStaticMarkup(<EmployeeRoster employees={roster} waiting={undefined} />),
     );
-    expect(text).toContain('asks first … 1');
+    expect(text).toContain('asks first loading 1');
   });
 
   it('sets no type below the 12 px floor', (): void => {

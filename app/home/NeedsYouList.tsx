@@ -96,7 +96,7 @@ function NeedsYouItem({ entry, now }: { entry: NeedsYouEntry; now: number }) {
           <p className="mt-1 flex flex-wrap gap-x-3 text-xs text-[var(--color-muted)]">
             <span>{waitingFor(entry.waitingSince, now, entry.waitingAtLeast)}</span>
             {held && !entry.waitingAtLeast ? (
-              <span>held since {clockTime(entry.waitingSince)}</span>
+              <span>held since {clockTime(entry.waitingSince, entry.zone)}</span>
             ) : null}
           </p>
         </div>

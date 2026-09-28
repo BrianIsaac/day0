@@ -60,16 +60,20 @@ export function EmployeeRoster({
         </span>
       </div>
       {staffed ? (
-        <table className="w-full text-left text-sm max-sm:block">
-          <thead className="max-sm:sr-only">
-            <tr className="border-b border-[var(--color-border)] text-xs text-[var(--color-muted)]">
-              <th scope="col" className="px-5 py-2.5 font-medium">
+        <table role="table" className="w-full text-left text-sm max-sm:block">
+          <thead role="rowgroup" className="max-sm:sr-only">
+            <tr
+              role="row"
+              className="border-b border-[var(--color-border)] text-xs text-[var(--color-muted)]"
+            >
+              <th scope="col" role="columnheader" className="px-5 py-2.5 font-medium">
                 Employee
               </th>
               {COLUMNS.map((column) => (
                 <th
                   key={column}
                   scope="col"
+                  role="columnheader"
                   className={`px-3 py-2.5 font-medium last:pr-5 ${NUMERIC.has(column) ? 'sm:text-right' : ''}`}
                 >
                   {column}
@@ -77,7 +81,7 @@ export function EmployeeRoster({
               ))}
             </tr>
           </thead>
-          <tbody className="max-sm:block">
+          <tbody role="rowgroup" className="max-sm:block">
             {employees.map((employee) => (
               <RosterRowView
                 key={employee.agentId}
@@ -109,9 +113,13 @@ function Cell({
 }) {
   return (
     <td
+      role="cell"
       className={`px-3 py-3 align-top last:pr-5 max-sm:p-0 ${NUMERIC.has(column) ? 'tabular-nums sm:text-right' : ''} ${className}`}
     >
-      <span className="mb-1 block text-xs text-[var(--color-muted)] sm:hidden">{column}</span>
+      {/* The header carries the same word for assistive technology; this copy is visual only. */}
+      <span aria-hidden="true" className="mb-1 block text-xs text-[var(--color-muted)] sm:hidden">
+        {column}
+      </span>
       {children}
     </td>
   );
@@ -139,9 +147,13 @@ function RosterRowView({
   ];
   const landed = employee.landedThisMonth.days.reduce((sum, day) => sum + day.landed, 0);
   return (
-    <tr className="border-b border-[var(--color-border)] last:border-b-0 max-sm:grid max-sm:grid-cols-2 max-sm:gap-x-4 max-sm:gap-y-3 max-sm:px-5 max-sm:py-4">
+    <tr
+      role="row"
+      className="border-b border-[var(--color-border)] last:border-b-0 max-sm:grid max-sm:grid-cols-2 max-sm:gap-x-4 max-sm:gap-y-3 max-sm:px-5 max-sm:py-4"
+    >
       <th
         scope="row"
+        role="rowheader"
         className="px-5 py-3 text-left align-top font-semibold max-sm:col-span-2 max-sm:p-0"
       >
         <Link
@@ -176,7 +188,7 @@ function RosterRowView({
             {waitingOnManager}
           </span>
         ) : (
-          <span aria-label="loading">…</span>
+          <span className="text-[var(--color-muted)]">loading</span>
         )}
       </Cell>
       <Cell column="In progress">

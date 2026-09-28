@@ -218,7 +218,8 @@ const boss = { email: 'boss@example.invalid', firstName: 'Boss' };
 /** The page as the manager reads it at desktop: stacked labels out, tags stripped. */
 const readAs = (markup: string): string =>
   markup
-    .replace(/<span class="[^"]*(?:\bsm|\blg):hidden[^"]*">[^<]*<\/span>/g, '')
+    .replace(/<span aria-hidden="true" class="[^"]*\bsm:hidden[^"]*">[^<]*<\/span>/g, '')
+    .replace(/<span aria-hidden="true" class="[^"]*\blg:hidden[^"]*">[\s\S]*?<\/span><\/span>/g, '')
     .replace(/<[^>]+>/g, ' ')
     .replace(/\s+/g, ' ');
 
