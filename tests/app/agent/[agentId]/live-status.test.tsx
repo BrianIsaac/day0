@@ -198,3 +198,53 @@ describe('a change that names where focus goes once it lands', (): void => {
     container.remove();
   });
 });
+
+describe('two changes that overlap on one control', (): void => {
+  it('stays busy until both settle and says only the latest outcome', async (): Promise<void> => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const gates: Array<() => void> = [];
+    const wait = (): Promise<void> => new Promise<void>((resolve) => void gates.push(resolve));
+    function Pair() {
+      const change = useChange();
+      return (
+        <div>
+          <button
+            type="button"
+            onClick={(): void => change.run(wait, { done: 'First done.', refused: 'No.' })}
+          >
+            First
+          </button>
+          <button
+            type="button"
+            onClick={(): void => change.run(wait, { done: 'Second done.', refused: 'No.' })}
+          >
+            Second
+          </button>
+          <p data-busy={String(change.busy)} />
+          <LiveStatus outcome={change.outcome} />
+        </div>
+      );
+    }
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    act((): void => root.render(<Pair />));
+    const [first, second] = [...container.querySelectorAll('button')];
+    await act(async (): Promise<void> => {
+      first?.click();
+      second?.click();
+    });
+    await act(async (): Promise<void> => {
+      gates[1]?.();
+    });
+    expect(container.querySelector('[data-busy]')?.getAttribute('data-busy')).toBe('true');
+    expect(container.querySelector('[role="status"]')?.textContent).toBe('Second done.');
+    await act(async (): Promise<void> => {
+      gates[0]?.();
+    });
+    expect(container.querySelector('[data-busy]')?.getAttribute('data-busy')).toBe('false');
+    expect(container.querySelector('[role="status"]')?.textContent).toBe('Second done.');
+    act((): void => root.unmount());
+    container.remove();
+  });
+});

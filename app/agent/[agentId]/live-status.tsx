@@ -92,37 +92,47 @@ export function returnFocus(origin: HTMLElement | null, fallback: HTMLElement | 
  *   The busy flag, the outcome for `LiveStatus`, and `run`.
  */
 export function useChange(fallback?: RefObject<HTMLElement | null>): Change {
-  const [busy, setBusy] = useState(false);
+  const [pending, setPending] = useState(0);
   const [outcome, setOutcome] = useState<ChangeOutcome | null>(null);
   const [settled, setSettled] = useState(0);
   const origin = useRef<HTMLElement | null>(null);
   const landed = useRef<(() => HTMLElement | null) | undefined>(undefined);
+  // Two changes can overlap on one hook (a card's decision while the tab
+  // re-orients): the control stays busy until both settle, and only the
+  // latest says its outcome and moves focus.
+  const latest = useRef(0);
   const run = useCallback(
     <Result,>(call: () => Promise<Result> | Result, words: ChangeWords<Result>): void => {
+      const id = ++latest.current;
       origin.current =
         document.activeElement instanceof HTMLElement ? document.activeElement : null;
       landed.current = undefined;
-      setBusy(true);
+      setPending((count) => count + 1);
       setOutcome(null);
-      // The chain ends in its own catch, which says the refusal in the live
-      // region; nothing is left for a caller to handle.
+      // The chain ends in its own handler for a refusal, which says it in the
+      // live region; a throw from the caller's own `done` or `after` is a
+      // defect in the page and is left to the window's unhandled-rejection
+      // report rather than said as the backend's refusal.
       void Promise.resolve()
         .then(call)
         .then(
           (result: Result): void => {
+            words.after?.(result);
+            if (id !== latest.current) return;
             setOutcome({
               tone: 'done',
               text: typeof words.done === 'function' ? words.done(result) : words.done,
             });
-            words.after?.(result);
             landed.current = words.focus;
           },
-          (err: unknown): void =>
-            setOutcome({ tone: 'refused', text: refusalText(err, words.refused) }),
+          (err: unknown): void => {
+            if (id !== latest.current) return;
+            setOutcome({ tone: 'refused', text: refusalText(err, words.refused) });
+          },
         )
         .finally((): void => {
-          setBusy(false);
-          setSettled((count) => count + 1);
+          setPending((count) => count - 1);
+          if (id === latest.current) setSettled((count) => count + 1);
         });
     },
     [],
@@ -139,7 +149,7 @@ export function useChange(fallback?: RefObject<HTMLElement | null>): Change {
     if (target) target.focus();
     else returnFocus(from, fallback?.current ?? null);
   }, [settled, fallback]);
-  return { busy, outcome, run, clear };
+  return { busy: pending > 0, outcome, run, clear };
 }
 
 /**
