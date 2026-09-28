@@ -59,8 +59,16 @@ describe('RunClock', () => {
     render(545);
     render(432);
     act((): void => doubles.flushFrames(0));
+    act((): void => doubles.flushFrames(300));
+    expect(container.textContent).not.toBe('+09:05');
+    expect(container.textContent).not.toBe('+07:12');
     act((): void => doubles.flushFrames(700));
     expect(container.textContent).toBe('+07:12');
+  });
+
+  it('asks for no frame at all when the time it shows is already the step’s', () => {
+    render(432);
+    expect(doubles.pendingFrames()).toBe(0);
   });
 
   it('lands at once under reduced motion', () => {

@@ -21,6 +21,7 @@ function useTicking(target: number): number {
       return;
     }
     const origin = from.current;
+    if (origin === target) return;
     let start: number | undefined;
     let frame = requestAnimationFrame(function tick(now: number): void {
       start ??= now;
