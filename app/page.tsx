@@ -1,6 +1,13 @@
 'use client';
 
-import { Fragment, useEffect, useState, type CSSProperties, type FormEvent, type ReactNode } from 'react';
+import {
+  Fragment,
+  useEffect,
+  useState,
+  type CSSProperties,
+  type FormEvent,
+  type ReactNode,
+} from 'react';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQuery } from 'convex/react';
 import type { FunctionReturnType } from 'convex/server';
@@ -15,6 +22,7 @@ import {
   type AgentAvatarPet,
 } from '@/agent/avatar-pets';
 import { DEV_BOSS_EMAIL, DEV_BOSS_FIRST_NAME, DEV_NO_AUTH } from '@/lib/dev-auth';
+import { deploymentZone } from '@/lib/zone';
 import { CompanySupervision } from './CompanySupervision';
 import { CursorToggle } from './CursorToggle';
 import { PageMotion } from './PageMotion';
@@ -410,6 +418,9 @@ function SignedInDashboard({ boss }: { boss: Boss }) {
         // explicit list would freeze inheritance at deploy time, so a location
         // linked later would never reach this agent.
         excludedDocSourceIds: excludedSourceIds.length > 0 ? excludedSourceIds : undefined,
+        // The manager's own zone is the employee's day (N12): every stamp on
+        // its dashboard and every day boundary the server draws follow it.
+        zone: deploymentZone(),
       });
       fetch('/api/seed', {
         method: 'POST',

@@ -12,7 +12,12 @@ import { internal } from './_generated/api';
 import { assertOwnsAgent, getCaller, getCallerOrThrow } from './ownership';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 import { AUTONOMY_CHANGE_REASON, autonomousActionsOn } from '../src/work/autonomy';
-import { OPEN_WORK_STATES, PARKED_WORK_STATES, queuedAtCap, wakeQueuedWork } from './workLoop';
+import {
+  holdsLiveStepClaim,
+  OPEN_WORK_STATES,
+  PARKED_WORK_STATES,
+  wakeQueuedWork,
+} from './workLoop';
 import { holdsLiveAuthoringClaim } from '../src/lib/skill-authoring';
 import {
   providerReconciliationEntries,
@@ -286,7 +291,10 @@ function stoppedRowNeedsManager(row: Doc<'workItems'>): boolean {
  * part of the three waiting on the manager.
  *
  * Open rows hold a work-in-progress slot. Parked rows hold none: deferred,
- * waiting on a skill, or queued at the cap. Stopped rows are failed ones
+ * waiting on a skill, or waiting in `discovered` for a free slot, whether a
+ * verdict queued them at the cap or none has been reached yet (U3 D5); a
+ * row whose evaluation is running holds the slot it runs in and is not
+ * parked. Stopped rows are failed ones
  * whose card still offers the manager a move. Reads the state index once per
  * counted state, so completed, skipped and cancelled work, however much of
  * it there is, is never read.
@@ -331,7 +339,9 @@ async function workCounts(
   const now = Date.now();
   return {
     openCount: openRows.length,
-    parkedCount: parkedRows.length + discovered.filter(queuedAtCap).length,
+    parkedCount:
+      parkedRows.length +
+      discovered.filter((row) => !holdsLiveStepClaim(row, 'evaluation', now)).length,
     stoppedCount: stoppedRows.length,
     needsYou:
       openRows.filter((row) => NEEDS_MANAGER_STATES.has(row.state)).length +

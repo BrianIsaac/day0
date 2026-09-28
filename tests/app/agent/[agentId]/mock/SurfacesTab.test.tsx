@@ -58,7 +58,9 @@ vi.mock('convex/react', () => ({
 
 import type { Id } from '../../../../../convex/_generated/dataModel';
 import {
+  AccessRow,
   CredentialRow,
+  credentialStatusLine,
   EMPTY_SURFACES,
   DiscoveryProvenance,
   EvidenceQuote,
@@ -67,9 +69,14 @@ import {
   ProvisioningRow,
   SurfaceLadder,
   SurfacesTab,
+  ToolsRow,
+  withheldToolsBySurface,
+  type AccessSurface,
   type CredentialRowProps,
   type ProvisioningRowProps,
+  type ToolsSurface,
 } from '../../../../../app/agent/[agentId]/mock/SurfacesTab';
+import { AgentZoneContext } from '../../../../../app/agent/[agentId]/time';
 import { companyPage } from '../../../../fixtures/company-bed';
 import {
   presentProvisioning,
@@ -526,10 +533,12 @@ describe('SurfacesTab and what each employee reads', (): void => {
     const slack = renderToStaticMarkup(
       <IntakeScopeRow
         drift={[]}
-        scope={{ channels: [
-          scopeValue('finance-close', '- Channels: #finance-close, #ops-requests'),
-          scopeValue('ops-requests', '- Channels: #finance-close, #ops-requests'),
-        ] }}
+        scope={{
+          channels: [
+            scopeValue('finance-close', '- Channels: #finance-close, #ops-requests'),
+            scopeValue('ops-requests', '- Channels: #finance-close, #ops-requests'),
+          ],
+        }}
         sourceLabels={new Map()}
         surfaceClass="chat"
         system="Slack"
@@ -582,8 +591,13 @@ describe('SurfacesTab and what each employee reads', (): void => {
         drift={[]}
         scope={{
           team: scopeValue('REVOPS', '- Team: `REVOPS`'),
-          project: scopeValue('Q3 close', 'Linear, team `REVOPS`, project `Q3 close`: an odd ` tick'),
-          notes: ['Dropped pick 4: team `FIN` was not kept; intake reads one team, and `REVOPS` was picked first.'],
+          project: scopeValue(
+            'Q3 close',
+            'Linear, team `REVOPS`, project `Q3 close`: an odd ` tick',
+          ),
+          notes: [
+            'Dropped pick 4: team `FIN` was not kept; intake reads one team, and `REVOPS` was picked first.',
+          ],
         }}
         sourceLabels={new Map()}
         surfaceClass="kanban"
@@ -692,10 +706,9 @@ describe('SurfacesTab and what each employee reads', (): void => {
     state.pages = [
       {
         ...financePages[0],
-        markdown: FINANCE.markdown.replace(
-          '- Project: `September close`',
-          '- Project: `October close`',
-        ),
+        // The handbook states the project twice (lines 10 and 32); the card
+        // judges by value, so the page has stopped stating it only once both go.
+        markdown: FINANCE.markdown.replaceAll('`September close`', '`October close`'),
       },
     ];
     state.surfaces = [
@@ -715,6 +728,32 @@ describe('SurfacesTab and what each employee reads', (): void => {
     expect(markup).toContain(
       'Changed since this card was proposed: project September close is no longer stated on finance/handbook.md. Intake still reads only what was approved; reject the card and re-run orientation to propose the page as it reads now.',
     );
+  });
+
+  it('keeps a value the page still states on another line: a reworded line is not drift (U8 D2)', (): void => {
+    state.pages = [
+      {
+        ...financePages[0],
+        markdown: FINANCE.markdown.replace(
+          '- Project: `September close`',
+          '- Project: `October close`',
+        ),
+      },
+    ];
+    state.surfaces = [
+      card({
+        slug: 'linear',
+        displayName: 'Linear',
+        class: 'kanban',
+        path: 'mcp',
+        verdict: 'connected',
+        intakeScope: {
+          team: scopeValue('FIN', '- Team: `FIN`'),
+          project: scopeValue('September close', '- Project: `September close`'),
+        },
+      }),
+    ];
+    expect(render()).not.toContain('Changed since this card was proposed');
   });
 
   it("lists the documented systems this role's charter does not name under the cards, each with Propose", (): void => {
@@ -768,5 +807,176 @@ describe('SurfacesTab and what each employee reads', (): void => {
     expect(markup).toContain('id="surface-looker-pipeline-tile"');
     expect(markup).toContain('1 declared system has no proposal yet.');
     expect(markup).not.toContain('<details');
+  });
+});
+
+describe('the access line and its renewal (Q5, U3 D5)', (): void => {
+  const AT = Date.UTC(2026, 8, 27, 16, 5, 9);
+  const DAY = 24 * 60 * 60 * 1000;
+  const surface = (patch: Partial<AccessSurface>): AccessSurface => ({
+    _id: 'surface-linear' as Id<'surfaces'>,
+    displayName: 'Linear',
+    verdict: 'connected',
+    expiresAt: AT,
+    accessSetBy: 'approval',
+    ...patch,
+  });
+  const renderAccess = (row: AccessSurface, now: number): string =>
+    renderToStaticMarkup(
+      <AgentZoneContext value="Asia/Singapore">
+        <AccessRow surface={row} now={now} onSetDays={async () => ({ expiresAt: AT })} />
+      </AgentZoneContext>,
+    ).replace(/&#x27;/g, "'");
+
+  it("shows the end date in the employee's day, who set it, and the control that changes it", (): void => {
+    const markup = renderAccess(surface({}), AT - 30 * DAY);
+    expect(markup).toContain(
+      'Access ends <time dateTime="2026-09-27T16:05:09.000Z">28 Sep 2026, 00:05</time>',
+    );
+    expect(markup).toContain(' · set when you approved the card.');
+    expect(markup).toMatch(/<button[^>]*aria-expanded="false"[^>]*>Change the end date<\/button>/);
+    expect(markup).toContain('role="status"');
+    expect(markup).not.toContain('set by the model');
+  });
+
+  it('warns within a week of the end, and offers the renewal once access has ended', (): void => {
+    expect(renderAccess(surface({ accessSetBy: 'manager' }), AT - 2 * DAY)).toContain(
+      ' · set by you. That is within a week; renew it to keep the connection.',
+    );
+    const ended = renderAccess(
+      surface({ verdict: 'approved', reason: 'expired', accessSetBy: 'upgrade' }),
+      AT + DAY,
+    );
+    expect(ended).toContain('Access ended <time');
+    expect(ended).toContain(
+      ' · restarted by the upgrade. Nothing is read or sent through this card until you renew it.',
+    );
+    expect(ended).toMatch(/>Renew access<\/button>/);
+  });
+
+  it('says access ended once the date has passed, before the sweep marks it and whatever reason a later failure left', (): void => {
+    const markup = renderAccess(
+      surface({
+        verdict: 'ungranted',
+        reason: 'BROWSER_DRIVER_ABSENT: the browser is not running',
+      }),
+      AT + 60_000,
+    );
+    expect(markup).toContain('Access ended <time');
+    expect(markup).toMatch(/>Renew access<\/button>/);
+    expect(markup).not.toContain('within a week');
+  });
+
+  it('is absent before the card is approved, when access has not started', (): void => {
+    expect(renderAccess(surface({ verdict: 'proposed', expiresAt: undefined }), AT)).toBe('');
+    expect(renderAccess(surface({ verdict: 'declared' }), AT)).toBe('');
+  });
+});
+
+describe('the scopes line and the re-approval of a narrowed card (Q10, U10 D2 (b) and D3)', (): void => {
+  const agentId = 'agent-1' as Id<'agents'>;
+  const tools = (patch: Partial<ToolsSurface>): ToolsSurface => ({
+    _id: 'surface-linear' as Id<'surfaces'>,
+    displayName: 'Linear',
+    verdict: 'connected',
+    toolAllowlist: ['list_issues', 'save_comment'],
+    approvedToolAllowlist: ['list_issues', 'save_comment', 'delete_issue'],
+    ...patch,
+  });
+
+  it('prints the tools the card calls, the approved ones the provider no longer offers and those withheld', (): void => {
+    const markup = renderToStaticMarkup(
+      <ToolsRow surface={tools({})} withheld={['get_user']} onApprove={async () => undefined} />,
+    );
+    expect(markup).toContain('Scopes: </span>list_issues, save_comment</p>');
+    expect(markup).toContain(
+      'Approved, not offered by the provider at the last check: delete_issue',
+    );
+    expect(markup).toContain('Withheld, outside your approval: get_user.');
+    expect(markup).toMatch(
+      /<button[^>]*aria-expanded="false"[^>]*>Change approved tools<\/button>/,
+    );
+    expect(markup).toContain('role="status"');
+  });
+
+  it('says nothing is withheld only when the page knows, and nothing for a card not connected', (): void => {
+    const unknown = renderToStaticMarkup(
+      <ToolsRow surface={tools({})} onApprove={async () => undefined} />,
+    );
+    expect(unknown).not.toContain('Withheld');
+    expect(
+      renderToStaticMarkup(
+        <ToolsRow surface={tools({ verdict: 'proposed' })} onApprove={async () => undefined} />,
+      ),
+    ).toBe('');
+  });
+
+  it("reads each surface's withheld tools from its newest connection only", (): void => {
+    const found = withheldToolsBySurface([
+      { type: 'surface.connected', payload: { surfaceId: 's1' } },
+      { type: 'work.completed', payload: { workItemId: 'w1' } },
+      { type: 'surface.connected', payload: { surfaceId: 's1', withheldTools: ['old_tool'] } },
+      { type: 'surface.connected', payload: { surfaceId: 's2', withheldTools: ['get_user'] } },
+    ]);
+    expect(found.get('s1')).toEqual([]);
+    expect(found.get('s2')).toEqual(['get_user']);
+    expect(found.has('s3')).toBe(false);
+  });
+
+  it('labels the scopes a proposal asks for as requested, and the access as starting at approval', (): void => {
+    state.surfaces = [
+      {
+        _id: 'surface-linear',
+        agentId,
+        slug: 'linear',
+        displayName: 'Linear',
+        class: 'kanban',
+        verdict: 'proposed',
+        path: 'mcp',
+        whereFound: [],
+        credentialLanded: false,
+        request: { scopeRequested: ['read:issues'], costBand: 'free', expiresInDays: 30 },
+      },
+    ];
+    try {
+      const markup = renderToStaticMarkup(<SurfacesTab agentId={agentId} />);
+      expect(markup).toContain('Scopes requested</dt><dd>read:issues</dd>');
+      expect(markup).toContain('Cost</dt><dd>free</dd>');
+      expect(markup).toContain('starts when you approve; the end date shows on this card');
+      expect(markup).not.toContain('Cost / expiry');
+      expect(markup).not.toContain('30 days');
+    } finally {
+      state.surfaces = undefined;
+    }
+  });
+});
+
+describe("the stored credential's status (U19 D5)", (): void => {
+  it('says what the store says of a credential that is not simply live, with its reason', (): void => {
+    expect(
+      credentialStatusLine({
+        status: 'superseded',
+        statusReason: 'No longer detected in synced documentation.',
+      }),
+    ).toBe('Superseded: No longer detected in synced documentation.');
+    expect(credentialStatusLine({ status: 'suspect', statusReason: 'rotated on the page' })).toBe(
+      'Suspect: rotated on the page.',
+    );
+    expect(credentialStatusLine({ revokedAt: 5, statusReason: undefined })).toBe('Revoked.');
+    expect(credentialStatusLine({})).toBeUndefined();
+    expect(credentialStatusLine(undefined)).toBeUndefined();
+  });
+
+  it('is printed on the credential row beside the page-derived credential', (): void => {
+    const markup = renderCredentialRow(
+      {
+        canLand: false,
+        kind: 'masked',
+        label: 'linear service token',
+        text: 'located in Revenue operations / Linear automation (masked)',
+      },
+      { status: 'Superseded: No longer detected in synced documentation.' },
+    );
+    expect(markup).toContain('Status: Superseded: No longer detected in synced documentation.');
   });
 });

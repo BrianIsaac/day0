@@ -6,7 +6,7 @@ import {
   QUALITY_FIT_SKIP_PREFIX,
 } from '@/work/types';
 import Link from 'next/link';
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useState, useEffect, useId, useMemo, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useAction } from 'convex/react';
 import { ConvexError } from 'convex/values';
 import { api } from '../../../convex/_generated/api';
@@ -21,7 +21,11 @@ import {
   type KeptCorrection,
 } from './corrections-panel';
 import { holdsLiveAuthoringClaim } from '../../../src/lib/skill-authoring';
-import { declaredSkillInputs, impliedSkillInputs, systemDeclaredInputs } from '../../../src/work/skill-inputs';
+import {
+  declaredSkillInputs,
+  impliedSkillInputs,
+  systemDeclaredInputs,
+} from '../../../src/work/skill-inputs';
 import {
   type ActionVerdict,
   describeAction,
@@ -75,11 +79,36 @@ import type {
   MockAction,
   PlanObligations,
 } from '../../../src/work/types';
-import { isWithheldForAnswer, planObligations, transitionWithheld } from '../../../src/work/obligations';
-import { clockTime, clockTimeWithSeconds, relativeTime, useNow } from './time';
+import {
+  isOpenQuestionStop,
+  isWithheldForAnswer,
+  planObligations,
+  transitionWithheld,
+} from '../../../src/work/obligations';
+import {
+  AgentZoneContext,
+  clockTime,
+  clockTimeWithSeconds,
+  relativeTime,
+  useAgentZone,
+  useNow,
+} from './time';
+import { eventLabel } from './event-labels';
+import {
+  compareWaitingRows,
+  EVALUATION_ATTEMPTS_SPENT,
+  MAX_EVALUATION_ATTEMPTS,
+} from '../../../src/work/queue-order';
+import { LiveStatus, refusalText, type ChangeOutcome } from './live-status';
+import { agentZone, isTimeZone } from '../../../src/lib/zone';
 import { undeliveredDecisionReason } from '../../../src/work/manager-channel';
 import { managerFeedbackLabel, type ManagerFeedback } from '../../../src/work/manager-feedback';
-import { GATE_REFUSAL_STOP, isGateRefusalStop, isStopped, stopDetail } from '../../../src/work/stop';
+import {
+  GATE_REFUSAL_STOP,
+  isGateRefusalStop,
+  isStopped,
+  stopDetail,
+} from '../../../src/work/stop';
 import {
   managerNotificationMode,
   NOTIFICATION_MODE_LABELS,
@@ -87,6 +116,7 @@ import {
 } from '../../../src/work/manager-notes';
 import type { AgentMetrics } from '../../../convex/metrics';
 import { formatAuditTrail, formatMetricDuration } from '../../metric-format';
+import { PILOT_FIGURES, readsAndMessages } from '../../CompanySupervision';
 
 interface Props {
   agentId: Id<'agents'>;
@@ -139,6 +169,7 @@ export function AgentDashboard({ agentId }: Props) {
     surfaceConfig?.mode === 'real' ? { agentId } : 'skip',
   );
   const retireCorrection = useMutation(api.corrections.retire);
+  const unavailableCauses = useMemo(() => scopeUnavailableCauses(events ?? []), [events]);
   const itemTitles = useMemo(
     (): Map<string, string> => new Map((workItems ?? []).map((item) => [item._id, item.title])),
     [workItems],
@@ -175,17 +206,17 @@ export function AgentDashboard({ agentId }: Props) {
       : null;
 
   // Sync local mode with server state. Two cases:
-  //   1. Reload mid-session — route back into the room they were in
+  //   1. Reload mid-session: route back into the room they were in
   //      (uses the voiceSession row to figure out which).
-  //   2. Request Changes on the charter — agent.state flips back to
+  //   2. Request Changes on the charter: agent.state flips back to
   //      `deployed` AND a prior voiceSession exists. Reset to picker.
   // The `voiceSession` guard is critical: without it, the moment a fresh
   // user picks a mode (state is still `deployed`, mode flips off `pick`)
   // this effect would race the user's click and snap them back to picker.
   //
   // This resync stays an effect on purpose. Deriving `mode` cannot express
-  // case 2 — the boss's own pick has to be discarded when the server moves
-  // underneath it — and resetting via a subtree `key` would remount
+  // case 2 (the boss's own pick has to be discarded when the server moves
+  // underneath it), and resetting via a subtree `key` would remount
   // `ChatRoom`, whose mount effect opens a voice session, so every state
   // transition would start a duplicate 1:1.
   useEffect(() => {
@@ -195,11 +226,7 @@ export function AgentDashboard({ agentId }: Props) {
       setMode('pick');
       return;
     }
-    if (
-      agent.state === 'day-one-in-progress' &&
-      mode === 'pick' &&
-      voiceSession
-    ) {
+    if (agent.state === 'day-one-in-progress' && mode === 'pick' && voiceSession) {
       setMode(voiceSession.mode === 'chat' ? 'chat' : 'voice');
     }
   }, [agent, voiceSession, mode]);
@@ -213,96 +240,99 @@ export function AgentDashboard({ agentId }: Props) {
   }
 
   // A drafted charter ends the 1:1, whatever the agent row still says. The
-  // room stayed open under the charter it had just produced — badge reading
-  // "streaming", footer reading "drafting your charter…" — because both were
+  // room stayed open under the charter it had just produced (badge reading
+  // "streaming", footer reading "drafting your charter…") because both were
   // keyed to a state the chat route never moved on.
   const showOnboarding =
     !charter && (agent.state === 'deployed' || agent.state === 'day-one-in-progress');
 
   return (
-    <main className="min-h-screen px-6 py-8 max-w-7xl mx-auto">
-      <DashboardHeader
-        agent={agent}
-        charter={charter ?? null}
-        managerLookupFailure={
-          (surfaceRows ?? []).find(
-            (row) => row.class === 'chat' && isManagerLookupFailure(row.reason),
-          )?.reason
-        }
-      />
+    <AgentZoneContext value={agentZone(agent)}>
+      <main className="min-h-screen px-6 py-8 max-w-7xl mx-auto">
+        <DashboardHeader
+          agent={agent}
+          charter={charter ?? null}
+          managerLookupFailure={
+            (surfaceRows ?? []).find(
+              (row) => row.class === 'chat' && isManagerLookupFailure(row.reason),
+            )?.reason
+          }
+        />
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
-        <div className="lg:col-span-2 space-y-4">
-          {showOnboarding ? (
-            mode === 'pick' ? (
-              <ModePicker onPick={(m) => setMode(m)} />
-            ) : mode === 'voice' ? (
-              <VoiceRoom
-                agentId={agentId}
-                bossLabel={agent.bossEmail}
-                onSwitchMode={() => setMode('chat')}
-              />
-            ) : (
-              <ChatRoom
-                agentId={agentId}
-                bossLabel={agent.bossEmail}
-                onSwitchMode={() => setMode('voice')}
-              />
-            )
-          ) : null}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+          <div className="lg:col-span-2 space-y-4">
+            {showOnboarding ? (
+              mode === 'pick' ? (
+                <ModePicker onPick={(m) => setMode(m)} />
+              ) : mode === 'voice' ? (
+                <VoiceRoom
+                  agentId={agentId}
+                  bossLabel={agent.bossEmail}
+                  onSwitchMode={() => setMode('chat')}
+                />
+              ) : (
+                <ChatRoom
+                  agentId={agentId}
+                  bossLabel={agent.bossEmail}
+                  onSwitchMode={() => setMode('voice')}
+                />
+              )
+            ) : null}
 
-          {charter ? <CharterCard charter={charter} /> : null}
+            {charter ? <CharterCard charter={charter} manager={agent.bossEmail} /> : null}
 
-          <ProposedSkillsPanel
-            agentId={agentId}
-            skills={proposedSkills ?? []}
-            surfaces={surfaces}
-            onAuthoringAttempt={setLastAttempt}
-          />
+            <ProposedSkillsPanel
+              agentId={agentId}
+              skills={proposedSkills ?? []}
+              surfaces={surfaces}
+              onAuthoringAttempt={setLastAttempt}
+            />
 
-          <WorkQueue
-            agentId={agentId}
-            workItems={workItems ?? []}
-            openQuestions={openQuestions ?? []}
-            surfaces={surfaces}
-            registeredSkillCount={(registeredSkills ?? []).length}
-            charterApproved={!!charter?.approved}
-            autonomousActions={agent ? autonomousActionsOn(agent) : false}
-            surfaceMode={surfaceConfig?.mode}
-            corrections={corrections}
-            autonomyChanges={autonomyChanges ?? []}
-          />
+            <WorkQueue
+              agentId={agentId}
+              workItems={workItems ?? []}
+              openQuestions={openQuestions ?? []}
+              surfaces={surfaces}
+              registeredSkillCount={(registeredSkills ?? []).length}
+              charterApproved={!!charter?.approved}
+              autonomousActions={agent ? autonomousActionsOn(agent) : false}
+              surfaceMode={surfaceConfig?.mode}
+              corrections={corrections}
+              autonomyChanges={autonomyChanges ?? []}
+              unavailableCauses={unavailableCauses}
+            />
+          </div>
+
+          <div className="space-y-4">
+            <WorkspacePanel workspace={workspace ?? {}} />
+            <RegisteredSkillsPanel
+              skills={registeredSkills ?? []}
+              unregistered={[...(unverifiedSkills ?? []), ...(failedSkills ?? [])]}
+              authoringFailure={authoringFailure}
+              onAuthoringAttempt={setLastAttempt}
+              surfaceMode={surfaceConfig?.mode}
+            />
+            {surfaceConfig?.mode === 'real' ? (
+              <Card title={keptCorrectionsTitle(corrections)}>
+                <KeptCorrectionsPanel
+                  corrections={corrections}
+                  titles={itemTitles}
+                  onRetire={(correctionId) => retireCorrection({ correctionId })}
+                />
+              </Card>
+            ) : null}
+            {surfaceConfig?.mode === 'real' ? <PermissionsCard agentId={agentId} /> : null}
+            <MetricsCard metrics={metrics} />
+            <EventTicker events={events ?? []} titles={itemTitles} />
+          </div>
         </div>
 
-        <div className="space-y-4">
-          <WorkspacePanel workspace={workspace ?? {}} />
-          <RegisteredSkillsPanel
-            skills={registeredSkills ?? []}
-            unregistered={[...(unverifiedSkills ?? []), ...(failedSkills ?? [])]}
-            authoringFailure={authoringFailure}
-            onAuthoringAttempt={setLastAttempt}
-            surfaceMode={surfaceConfig?.mode}
-          />
-          {surfaceConfig?.mode === 'real' ? (
-            <Card title={keptCorrectionsTitle(corrections)}>
-              <KeptCorrectionsPanel
-                corrections={corrections}
-                titles={itemTitles}
-                onRetire={(correctionId) => retireCorrection({ correctionId })}
-              />
-            </Card>
-          ) : null}
-          {surfaceConfig?.mode === 'real' ? <PermissionsCard agentId={agentId} /> : null}
-          <MetricsCard metrics={metrics} />
-          <EventTicker events={events ?? []} />
-        </div>
-      </div>
-
-      {/* Full width, and not half of two thirds of the page. Five work
+        {/* Full width, and not half of two thirds of the page. Five work
           surfaces, a channel list and a conversation do not fit in 400px, and
           this panel is the whole of what the agent's work is done against. */}
-      <MockEnvironment agentId={agentId} />
-    </main>
+        <MockEnvironment agentId={agentId} />
+      </main>
+    </AgentZoneContext>
   );
 }
 
@@ -442,7 +472,11 @@ export function AutonomyControl({
         {error ? <span className="text-[10px] text-[var(--color-danger)]">{error}</span> : null}
       </div>
       {confirming && !on ? (
-        <AutonomyConfirm busy={busy} onConfirm={() => persist(true)} onCancel={() => setConfirming(false)} />
+        <AutonomyConfirm
+          busy={busy}
+          onConfirm={() => persist(true)}
+          onCancel={() => setConfirming(false)}
+        />
       ) : null}
     </div>
   );
@@ -574,7 +608,8 @@ export function ManagerLine({
         </form>
       ) : (
         <h1 className="text-2xl font-semibold tracking-tight">
-          Agent reporting to <span className="font-mono text-[var(--color-accent)]">{bossEmail}</span>{' '}
+          Agent reporting to{' '}
+          <span className="font-mono text-[var(--color-accent)]">{bossEmail}</span>{' '}
           <button
             type="button"
             onClick={() => {
@@ -589,8 +624,8 @@ export function ManagerLine({
       )}
       {editing ? (
         <p className="mt-1 text-xs text-[var(--color-muted)]">
-          Decisions waiting in the previous manager&apos;s DM are sent again to the new one once
-          the chat surface finds them.
+          Decisions waiting in the previous manager&apos;s DM are sent again to the new one once the
+          chat surface finds them.
         </p>
       ) : null}
       {lookupFailure && !editing ? (
@@ -600,6 +635,141 @@ export function ManagerLine({
         </p>
       ) : null}
       {error ? <p className="mt-1 text-xs text-[var(--color-danger)]">{error}</p> : null}
+    </div>
+  );
+}
+
+/** The zones the browser knows, UTC first, for the zone field's suggestions. */
+function knownZones(): string[] {
+  const listed =
+    typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf('timeZone') : [];
+  return ['UTC', ...listed.filter((zone) => zone !== 'UTC')];
+}
+
+/**
+ * The employee's day (N12): the zone every time on this page is printed in,
+ * and the control that changes it (`agents.setZone`).
+ *
+ * The line says the zone once so a stamp never needs its own; changing it
+ * moves every stamp here and every day boundary the server draws (the daily
+ * cap, the expiry notice, the digest's "since yesterday"). The outcome is
+ * announced in the line's live region and focus returns to the control.
+ */
+export function ZoneLine({
+  zone,
+  onChange,
+}: {
+  zone: string;
+  onChange: (zone: string) => Promise<unknown>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(zone);
+  const [busy, setBusy] = useState(false);
+  const [outcome, setOutcome] = useState<ChangeOutcome | null>(null);
+  const toggle = useRef<HTMLButtonElement>(null);
+  const zones = useMemo((): string[] => knownZones(), []);
+  const valid = isTimeZone(draft.trim());
+  const close = (): void => {
+    setEditing(false);
+    toggle.current?.focus();
+  };
+  const save = (): void => {
+    const next = draft.trim();
+    setBusy(true);
+    setOutcome(null);
+    // The chain ends in its own catch, which says the refusal in the live region.
+    void onChange(next)
+      .then(() => {
+        setOutcome({
+          tone: 'done',
+          text: `The employee's day is now ${next}; every time on this page is in it.`,
+        });
+        close();
+      })
+      .catch((err: unknown) =>
+        setOutcome({ tone: 'refused', text: refusalText(err, 'The zone was not changed.') }),
+      )
+      .finally(() => setBusy(false));
+  };
+  return (
+    <div className="mt-1 text-xs text-[var(--color-muted)]">
+      <p className="flex flex-wrap items-center gap-x-2">
+        <span>
+          Times on this page are in <span className="text-[var(--color-fg)]">{zone}</span>, the
+          employee&apos;s day.
+        </span>
+        <button
+          ref={toggle}
+          type="button"
+          aria-expanded={editing}
+          aria-controls="zone-editor"
+          onClick={() => {
+            setDraft(zone);
+            setOutcome(null);
+            setEditing(!editing);
+          }}
+          className="min-h-11 px-2 rounded border border-[var(--color-border)] text-[var(--color-fg)] hover:border-[var(--color-accent)]"
+        >
+          Change zone
+        </button>
+      </p>
+      {editing ? (
+        <form
+          id="zone-editor"
+          className="mt-1 flex flex-wrap items-center gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (valid) save();
+          }}
+        >
+          <label htmlFor="agent-zone" className="text-[var(--color-fg)]">
+            Zone
+          </label>
+          <input
+            id="agent-zone"
+            list="agent-zone-options"
+            autoFocus
+            value={draft}
+            disabled={busy}
+            aria-invalid={!valid}
+            aria-describedby="agent-zone-hint"
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                event.preventDefault();
+                close();
+              }
+            }}
+            className="min-h-11 min-w-0 flex-1 font-mono px-2 rounded border border-[var(--color-border)] bg-transparent text-[var(--color-fg)]"
+          />
+          <datalist id="agent-zone-options">
+            {zones.map((option) => (
+              <option key={option} value={option} />
+            ))}
+          </datalist>
+          <button
+            type="submit"
+            disabled={busy || !valid || draft.trim() === zone}
+            className="min-h-11 px-3 rounded bg-[var(--color-accent)] text-[var(--color-bg)] font-medium disabled:opacity-50"
+          >
+            {busy ? 'Saving…' : 'Save'}
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={close}
+            className="min-h-11 px-3 rounded border border-[var(--color-border)] text-[var(--color-fg)]"
+          >
+            Cancel
+          </button>
+          <p id="agent-zone-hint" className="basis-full">
+            {valid
+              ? 'A zone name such as Europe/London or Asia/Singapore.'
+              : `${draft.trim() || 'An empty name'} is not a zone this browser knows; pick one from the list.`}
+          </p>
+        </form>
+      ) : null}
+      <LiveStatus outcome={outcome} />
     </div>
   );
 }
@@ -619,8 +789,12 @@ export function DashboardHeader({
   const setBossEmail = useMutation(api.agents.setBossEmail);
   const setAutonomousActions = useMutation(api.agents.setAutonomousActions);
   const setManagerNotifications = useMutation(api.agents.setManagerNotifications);
+  const setZone = useMutation(api.agents.setZone);
   const stateLabel: Record<Doc<'agents'>['state'], { text: string; tone: string }> = {
-    deployed: { text: 'Deployed · awaiting Day-1 1:1', tone: 'bg-[var(--color-warn)]/15 text-[var(--color-warn)]' },
+    deployed: {
+      text: 'Deployed · awaiting Day-1 1:1',
+      tone: 'bg-[var(--color-warn)]/15 text-[var(--color-warn)]',
+    },
     'day-one-in-progress': {
       text: 'Day-1 1:1 in progress',
       tone: 'bg-[var(--color-accent)]/15 text-[var(--color-accent)]',
@@ -629,7 +803,10 @@ export function DashboardHeader({
       text: 'Charter drafted · awaiting boss approval',
       tone: 'bg-[var(--color-warn)]/15 text-[var(--color-warn)]',
     },
-    active: { text: `Active · ${SUPERVISED_LABEL}`, tone: 'bg-[var(--color-ok)]/15 text-[var(--color-ok)]' },
+    active: {
+      text: `Active · ${SUPERVISED_LABEL}`,
+      tone: 'bg-[var(--color-ok)]/15 text-[var(--color-ok)]',
+    },
   };
   // A charter on the page is the more recent fact: a pill reading "Day-1 1:1
   // in progress" above a drafted charter is wrong however the row got there.
@@ -641,18 +818,20 @@ export function DashboardHeader({
   const s = stateLabel[displayState];
   return (
     <header className="mb-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-xs uppercase tracking-[0.2em] text-[var(--color-accent)] mb-1">
-            Day0
-          </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs uppercase tracking-[0.2em] text-[var(--color-accent)] mb-1">Day0</p>
           <ManagerLine
             bossEmail={agent.bossEmail}
             lookupFailure={managerLookupFailure}
             onChange={(bossEmail) => setBossEmail({ agentId: agent._id, bossEmail })}
           />
+          <ZoneLine
+            zone={agentZone(agent)}
+            onChange={(zone) => setZone({ agentId: agent._id, zone })}
+          />
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <span className="px-2 py-1 rounded-full border border-[var(--color-border)] text-[10px]">
             {surfaceConfig?.label || 'loading'}
           </span>
@@ -696,9 +875,7 @@ function Card({
     ok: 'border-[var(--color-ok)]/40',
   }[tone ?? 'default'];
   return (
-    <section
-      className={`bg-[var(--color-card)] border ${border} rounded-xl p-4`}
-    >
+    <section className={`bg-[var(--color-card)] border ${border} rounded-xl p-4`}>
       <h2 className="text-sm font-semibold tracking-tight text-[var(--color-fg)] mb-3">{title}</h2>
       {children}
     </section>
@@ -706,7 +883,7 @@ function Card({
 }
 
 function ModePicker({ onPick }: { onPick: (mode: 'voice' | 'chat') => void }) {
-  // null while the probe is in flight — voice stays clickable so the
+  // null while the probe is in flight; voice stays clickable so the
   // picker doesn't flicker on a configured deployment.
   const [voiceConfigured, setVoiceConfigured] = useState<boolean | null>(null);
 
@@ -727,7 +904,7 @@ function ModePicker({ onPick }: { onPick: (mode: 'voice' | 'chat') => void }) {
 
   const voiceOff = voiceConfigured === false;
   return (
-    <Card title="Day-1 1:1 — voice or chat?" tone="accent">
+    <Card title="Day-1 1:1: voice or chat?" tone="accent">
       <p className="text-sm text-[var(--color-muted)] mb-4">
         I&apos;d like a few minutes to understand the role you brought me on for. Voice is faster
         (~5 min); chat is fine if you&apos;d rather type.
@@ -758,7 +935,7 @@ function ModePicker({ onPick }: { onPick: (mode: 'voice' | 'chat') => void }) {
       </div>
       {voiceOff ? (
         <p className="text-xs text-[var(--color-muted)] mt-3">
-          Voice is off on this deployment — no ElevenLabs credentials. Chat runs the identical
+          Voice is off on this deployment: no ElevenLabs credentials. Chat runs the identical
           seven-topic 1:1.
         </p>
       ) : null}
@@ -825,91 +1002,95 @@ export function ConstraintList({
   return (
     <div className="text-xs">
       <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">
-        {approved ? 'Rules this charter enforces' : 'These words will limit the work. Confirm or strike each one.'}
+        {approved
+          ? 'Rules this charter enforces'
+          : 'These words will limit the work. Confirm or strike each one.'}
       </div>
       <ul className="space-y-1.5">
         {constraints.map((constraint, index) => {
           const preview =
             !constraint.struck && onStrike && previewStrike ? previewStrike(index) : undefined;
           return (
-          <li
-            key={index}
-            className={`flex items-start gap-2 p-2 rounded-md border ${
-              constraint.struck
-                ? 'border-[var(--color-border)] text-[var(--color-muted)]'
-                : 'border-[var(--color-warn)]/40'
-            }`}
-          >
-            <div className="flex-1 min-w-0">
-              <p className={constraint.struck ? 'line-through' : 'text-[var(--color-fg)]'}>
-                {/* A derived rule's quote is the clause itself, not a sentence
+            <li
+              key={index}
+              className={`flex items-start gap-2 p-2 rounded-md border ${
+                constraint.struck
+                  ? 'border-[var(--color-border)] text-[var(--color-muted)]'
+                  : 'border-[var(--color-warn)]/40'
+              }`}
+            >
+              <div className="flex-1 min-w-0">
+                <p className={constraint.struck ? 'line-through' : 'text-[var(--color-fg)]'}>
+                  {/* A derived rule's quote is the clause itself, not a sentence
                     the manager said, so it is not printed as a quotation. */}
-                {constraint.origin === 'derived' ? (
-                  constraint.quote
-                ) : (
-                  <>&ldquo;{constraint.quote}&rdquo;</>
-                )}
-              </p>
-              <p className="text-[10px] text-[var(--color-muted)] mt-0.5">
-                {CONSTRAINT_KIND_LABEL[constraint.kind]}
-                {constraint.wording.length > 0 ? (
-                  <>
-                    {' · in the charter as '}
-                    {constraint.wording.map((phrase, i) => (
-                      <span key={i}>
-                        {i > 0 ? ', ' : ''}
-                        <span className="font-mono text-[var(--color-fg)]">{phrase}</span>
-                      </span>
-                    ))}
-                  </>
-                ) : (
-                  ' · not verified: no clause carries these words, so striking it changes nothing'
-                )}
-                {constraint.origin === 'derived'
-                  ? " · found by checking the clauses (the charter's wording, not a sentence of yours)"
-                  : ''}
-                {constraint.origin === 'manager' ? ' · added by you' : ''}
-                {constraint.struck ? ' · struck' : ''}
-              </p>
-              {preview?.refusal ? (
-                <p className="text-[10px] text-[var(--color-warn)] mt-0.5">
-                  cannot be struck: {preview.refusal}
+                  {constraint.origin === 'derived' ? (
+                    constraint.quote
+                  ) : (
+                    <>&ldquo;{constraint.quote}&rdquo;</>
+                  )}
                 </p>
-              ) : preview && preview.removedClauses.length > 0 ? (
                 <p className="text-[10px] text-[var(--color-muted)] mt-0.5">
-                  {preview.removedClauses.length === 1 ? 'strikes the clause: ' : 'strikes the clauses: '}
-                  {quotedClauses(preview.removedClauses)}
+                  {CONSTRAINT_KIND_LABEL[constraint.kind]}
+                  {constraint.wording.length > 0 ? (
+                    <>
+                      {' · in the charter as '}
+                      {constraint.wording.map((phrase, i) => (
+                        <span key={i}>
+                          {i > 0 ? ', ' : ''}
+                          <span className="font-mono text-[var(--color-fg)]">{phrase}</span>
+                        </span>
+                      ))}
+                    </>
+                  ) : (
+                    ' · not verified: no clause carries these words, so striking it changes nothing'
+                  )}
+                  {constraint.origin === 'derived'
+                    ? " · found by checking the clauses (the charter's wording, not a sentence of yours)"
+                    : ''}
+                  {constraint.origin === 'manager' ? ' · added by you' : ''}
+                  {constraint.struck ? ' · struck' : ''}
                 </p>
+                {preview?.refusal ? (
+                  <p className="text-[10px] text-[var(--color-warn)] mt-0.5">
+                    cannot be struck: {preview.refusal}
+                  </p>
+                ) : preview && preview.removedClauses.length > 0 ? (
+                  <p className="text-[10px] text-[var(--color-muted)] mt-0.5">
+                    {preview.removedClauses.length === 1
+                      ? 'strikes the clause: '
+                      : 'strikes the clauses: '}
+                    {quotedClauses(preview.removedClauses)}
+                  </p>
+                ) : null}
+                {preview && !preview.refusal
+                  ? preview.rewrittenClauses.map((pair, i) => (
+                      <p key={i} className="text-[10px] text-[var(--color-muted)] mt-0.5">
+                        {'rewrites the clause: '}
+                        {quotedClauses([pair.from])}
+                        {' to '}
+                        {quotedClauses([pair.to])}
+                      </p>
+                    ))
+                  : null}
+              </div>
+              {!constraint.struck && onStrike ? (
+                <button
+                  onClick={() => onStrike(index)}
+                  disabled={preview?.refusal !== undefined}
+                  title={preview?.refusal}
+                  className="shrink-0 px-2 py-1 rounded-md text-[10px] border border-[var(--color-border)] hover:border-[var(--color-warn)] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-[var(--color-border)]"
+                >
+                  Strike
+                </button>
+              ) : constraint.struck && onRestore ? (
+                <button
+                  onClick={() => onRestore(index)}
+                  className="shrink-0 px-2 py-1 rounded-md text-[10px] border border-[var(--color-border)] hover:border-[var(--color-ok)]"
+                >
+                  Restore
+                </button>
               ) : null}
-              {preview && !preview.refusal
-                ? preview.rewrittenClauses.map((pair, i) => (
-                    <p key={i} className="text-[10px] text-[var(--color-muted)] mt-0.5">
-                      {'rewrites the clause: '}
-                      {quotedClauses([pair.from])}
-                      {' to '}
-                      {quotedClauses([pair.to])}
-                    </p>
-                  ))
-                : null}
-            </div>
-            {!constraint.struck && onStrike ? (
-              <button
-                onClick={() => onStrike(index)}
-                disabled={preview?.refusal !== undefined}
-                title={preview?.refusal}
-                className="shrink-0 px-2 py-1 rounded-md text-[10px] border border-[var(--color-border)] hover:border-[var(--color-warn)] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-[var(--color-border)]"
-              >
-                Strike
-              </button>
-            ) : constraint.struck && onRestore ? (
-              <button
-                onClick={() => onRestore(index)}
-                className="shrink-0 px-2 py-1 rounded-md text-[10px] border border-[var(--color-border)] hover:border-[var(--color-ok)]"
-              >
-                Restore
-              </button>
-            ) : null}
-          </li>
+            </li>
           );
         })}
       </ul>
@@ -917,7 +1098,21 @@ export function ConstraintList({
   );
 }
 
-export function CharterCard({ charter }: { charter: Doc<'charters'> }) {
+/**
+ * The charter as drafted or approved, with its rules, its notes and, once
+ * approved, the amendment panel.
+ *
+ * The manager it names is the agent row's, the one the header changes
+ * (U9 D3 (b)): the charter has no approval chain of its own to edit here.
+ */
+export function CharterCard({
+  charter,
+  manager,
+}: {
+  charter: Doc<'charters'>;
+  /** The agent row's manager, who approves this employee's work. */
+  manager?: string;
+}) {
   const approve = useMutation(api.charters.approve);
   const requestChanges = useMutation(api.charters.requestChanges);
   const setConstraintStruck = useMutation(api.charters.setConstraintStruck);
@@ -973,14 +1168,21 @@ export function CharterCard({ charter }: { charter: Doc<'charters'> }) {
   }
 
   return (
-    <Card title={`Charter v${charter.version}${charter.approved ? ' · approved' : ' · awaiting approval'}`} tone={charter.approved ? 'ok' : 'warn'}>
+    <Card
+      title={`Charter v${charter.version}${charter.approved ? ' · approved' : ' · awaiting approval'}`}
+      tone={charter.approved ? 'ok' : 'warn'}
+    >
       <div className="space-y-3 text-sm">
         <div>
-          <span className="text-[var(--color-muted)] text-xs uppercase tracking-wider">Why this hire</span>
+          <span className="text-[var(--color-muted)] text-xs uppercase tracking-wider">
+            Why this hire
+          </span>
           <p className="text-[var(--color-fg)]">{body.whyThisHire}</p>
         </div>
         <div>
-          <span className="text-[var(--color-muted)] text-xs uppercase tracking-wider">Proposed function</span>
+          <span className="text-[var(--color-muted)] text-xs uppercase tracking-wider">
+            Proposed function
+          </span>
           <p className="text-[var(--color-fg)]">{body.proposedFunction}</p>
         </div>
         <div className="grid grid-cols-3 gap-3 text-xs">
@@ -993,9 +1195,18 @@ export function CharterCard({ charter }: { charter: Doc<'charters'> }) {
             Boundaries · collaborators · open questions
           </summary>
           <div className="mt-2 space-y-2 pl-3 border-l border-[var(--color-border)]">
+            <BoundaryList
+              label="Reports to"
+              items={
+                manager ? [`${manager}, the manager named in the header; change it there`] : []
+              }
+            />
             <BoundaryList label="Will do" items={body.proposedBoundaries.willDo} />
             <BoundaryList label="Will NOT do" items={body.proposedBoundaries.willNotDo} />
-            <BoundaryList label="Escalation triggers" items={body.proposedBoundaries.escalationTriggers} />
+            <BoundaryList
+              label="Escalation triggers"
+              items={body.proposedBoundaries.escalationTriggers}
+            />
             <BoundaryList
               label="Systems named in the 1:1"
               items={(body.namedSystems ?? []).map(
@@ -1004,7 +1215,7 @@ export function CharterCard({ charter }: { charter: Doc<'charters'> }) {
             />
             <BoundaryList
               label="Collaborators"
-              items={body.namedCollaborators.map((c) => `${c.name} — ${c.topic}`)}
+              items={body.namedCollaborators.map((c) => `${c.name} - ${c.topic}`)}
             />
             <BoundaryList
               label="Adjacent roles (work in their lane is out of scope)"
@@ -1091,7 +1302,11 @@ function EditableLine({
   return (
     <div className="flex items-center gap-1">
       <input className={AMEND_INPUT} value={draft} onChange={(e) => setDraft(e.target.value)} />
-      <button className={AMEND_BUTTON} disabled={!changed || !draft.trim()} onClick={() => onSave(draft)}>
+      <button
+        className={AMEND_BUTTON}
+        disabled={!changed || !draft.trim()}
+        onClick={() => onSave(draft)}
+      >
         Save
       </button>
       {onRemove ? (
@@ -1136,7 +1351,8 @@ function AddLine({
 }
 
 /** A sentence that forbids: the manager's "never", "don't", "no …" and the like. */
-const PROHIBITION = /^\s*no\b|\b(?:never|not|don['\u2019]t|doesn['\u2019]t|won['\u2019]t|mustn['\u2019]t|avoid|stop|without|forbidden|off-limits)\b/i;
+const PROHIBITION =
+  /^\s*no\b|\b(?:never|not|don['\u2019]t|doesn['\u2019]t|won['\u2019]t|mustn['\u2019]t|avoid|stop|without|forbidden|off-limits)\b/i;
 
 /**
  * The clause list a new rule goes under until the manager picks one.
@@ -1167,6 +1383,7 @@ export function AmendCharterPanel({
 }) {
   const versions = useQuery(api.charters.listForAgent, { agentId: charter.agentId });
   const now = useNow();
+  const zone = useAgentZone();
   const [rule, setRule] = useState<{
     quote: string;
     kind: CharterConstraint['kind'];
@@ -1174,7 +1391,11 @@ export function AmendCharterPanel({
     clause?: ListClauseField;
   }>({ quote: '', kind: 'candidate-property' });
   const ruleClause = rule.clause ?? defaultRuleClause(rule.quote);
-  const [system, setSystem] = useState<{ name: string; class: SystemClass; whereMentioned: string }>({
+  const [system, setSystem] = useState<{
+    name: string;
+    class: SystemClass;
+    whereMentioned: string;
+  }>({
     name: '',
     class: 'other',
     whereMentioned: '',
@@ -1189,7 +1410,9 @@ export function AmendCharterPanel({
       <div className="mt-2 space-y-3 pl-3 border-l border-[var(--color-border)]">
         {error ? <p className="text-[var(--color-warn)]">{error}</p> : null}
         <div>
-          <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">Proposed function</div>
+          <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">
+            Proposed function
+          </div>
           <EditableLine
             key={body.proposedFunction}
             text={body.proposedFunction}
@@ -1214,7 +1437,12 @@ export function AmendCharterPanel({
                 placeholder={`Add to ${CLAUSE_LIST_LABEL[field].toLowerCase()}`}
                 label="Add"
                 onAdd={(text) =>
-                  onAmend({ kind: 'edit-clause', field, index: body.proposedBoundaries[field].length, text })
+                  onAmend({
+                    kind: 'edit-clause',
+                    field,
+                    index: body.proposedBoundaries[field].length,
+                    text,
+                  })
                 }
               />
             </div>
@@ -1222,7 +1450,9 @@ export function AmendCharterPanel({
         ))}
         {openQuestions.length > 0 || answered.length > 0 ? (
           <div>
-            <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">Open questions</div>
+            <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">
+              Open questions
+            </div>
             <div className="space-y-1.5">
               {openQuestions.map((question) => (
                 <div key={question}>
@@ -1236,14 +1466,16 @@ export function AmendCharterPanel({
               ))}
               {answered.map((entry) => (
                 <p key={entry.question} className="text-[var(--color-muted)]">
-                  {entry.question} <span className="text-[var(--color-fg)]">— {entry.answer}</span>
+                  {entry.question} <span className="text-[var(--color-fg)]">- {entry.answer}</span>
                 </p>
               ))}
             </div>
           </div>
         ) : null}
         <div>
-          <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">Add a rule</div>
+          <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">
+            Add a rule
+          </div>
           <div className="flex flex-wrap items-center gap-1">
             <input
               className={AMEND_INPUT}
@@ -1254,7 +1486,9 @@ export function AmendCharterPanel({
             <select
               className={AMEND_INPUT}
               value={rule.kind}
-              onChange={(e) => setRule({ ...rule, kind: e.target.value as CharterConstraint['kind'] })}
+              onChange={(e) =>
+                setRule({ ...rule, kind: e.target.value as CharterConstraint['kind'] })
+              }
             >
               <option value="candidate-property">what work qualifies</option>
               <option value="system-boundary">where I may act</option>
@@ -1329,7 +1563,9 @@ export function AmendCharterPanel({
           </div>
         </div>
         <div>
-          <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">Systems named</div>
+          <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">
+            Systems named
+          </div>
           <div className="space-y-1">
             {(body.namedSystems ?? []).map((named) => (
               <div key={named.name} className="flex items-center gap-1">
@@ -1384,7 +1620,9 @@ export function AmendCharterPanel({
         </div>
         {versions && versions.length > 1 ? (
           <div>
-            <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">Versions</div>
+            <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">
+              Versions
+            </div>
             <ul className="space-y-0.5 text-[var(--color-muted)]">
               {versions.map((row) => (
                 <li key={row._id}>
@@ -1392,7 +1630,9 @@ export function AmendCharterPanel({
                   {row._id === charter._id ? ' · current' : ''}
                   {row.supersedes ? ' · amendment' : ' · from the 1:1'}
                   {' · '}
-                  <span title={clockTimeWithSeconds(row.createdAt)}>{relativeTime(row.createdAt, now)}</span>
+                  <span title={clockTimeWithSeconds(row.createdAt, zone)}>
+                    {relativeTime(row.createdAt, now)}
+                  </span>
                 </li>
               ))}
             </ul>
@@ -1406,7 +1646,9 @@ export function AmendCharterPanel({
 function Goal({ label, text }: { label: string; text: string }) {
   return (
     <div className="bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg p-2">
-      <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">{label}</div>
+      <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">
+        {label}
+      </div>
       <div className="text-[var(--color-fg)] leading-snug">{text}</div>
     </div>
   );
@@ -1420,7 +1662,9 @@ function SynthesisNotes({ notes }: { notes: string[] }) {
   if (notes.length === 0) return null;
   return (
     <div className="text-xs">
-      <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">Notes from drafting</div>
+      <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">
+        Notes from drafting
+      </div>
       <ul className="space-y-0.5">
         {notes.map((note) => (
           <li key={note} className="text-[var(--color-muted)]">
@@ -1436,7 +1680,9 @@ function BoundaryList({ label, items }: { label: string; items: string[] }) {
   if (items.length === 0) return null;
   return (
     <div>
-      <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">{label}</div>
+      <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">
+        {label}
+      </div>
       <ul className="space-y-0.5">
         {items.map((it, i) => (
           <li key={i} className="text-[var(--color-fg)]">
@@ -1479,60 +1725,61 @@ function ProposedSkillsPanel({
             now,
           );
           return (
-          <div
-            key={s._id}
-            className="border border-[var(--color-border)] rounded-lg p-3 text-sm"
-          >
-            <div className="flex items-center justify-between mb-1">
-              <span className="font-medium text-[var(--color-fg)]">{s.name}</span>
-              <span className="text-[10px] text-[var(--color-muted)]">requires: {(s.requiredScopes ?? []).join(', ')}</span>
-            </div>
-            <p className="text-[var(--color-muted)] text-xs mb-2">{s.rationale ?? s.description}</p>
-            {refusal ? (
-              <p className="text-[10px] text-[var(--color-warn)] mb-2">
-                Cannot approve yet: {refusal}{' '}
-                <a href="#surfaces" className="underline">
-                  Surfaces tab
-                </a>
+            <div key={s._id} className="border border-[var(--color-border)] rounded-lg p-3 text-sm">
+              <div className="flex items-center justify-between mb-1">
+                <span className="font-medium text-[var(--color-fg)]">{s.name}</span>
+                <span className="text-[10px] text-[var(--color-muted)]">
+                  requires: {(s.requiredScopes ?? []).join(', ')}
+                </span>
+              </div>
+              <p className="text-[var(--color-muted)] text-xs mb-2">
+                {s.rationale ?? s.description}
               </p>
-            ) : null}
-            <div className="flex gap-2">
-              <button
-                disabled={Boolean(refusal)}
-                title={refusal}
-                onClick={async () => {
-                  await approve({ skillId: s._id });
-                  void agentId;
-                  onAuthoringAttempt(null);
-                  try {
-                    const result = await author({ skillId: s._id });
-                    if (!result.ok) {
+              {refusal ? (
+                <p className="text-[10px] text-[var(--color-warn)] mb-2">
+                  Cannot approve yet: {refusal}{' '}
+                  <a href="#surfaces" className="underline">
+                    Surfaces tab
+                  </a>
+                </p>
+              ) : null}
+              <div className="flex gap-2">
+                <button
+                  disabled={Boolean(refusal)}
+                  title={refusal}
+                  onClick={async () => {
+                    await approve({ skillId: s._id });
+                    void agentId;
+                    onAuthoringAttempt(null);
+                    try {
+                      const result = await author({ skillId: s._id });
+                      if (!result.ok) {
+                        onAuthoringAttempt({
+                          skillId: s._id,
+                          name: s.name,
+                          reason: result.reason ?? 'authoring did not finish',
+                        });
+                      }
+                    } catch (err) {
                       onAuthoringAttempt({
                         skillId: s._id,
                         name: s.name,
-                        reason: result.reason ?? 'authoring did not finish',
+                        reason: (err as Error).message,
                       });
                     }
-                  } catch (err) {
-                    onAuthoringAttempt({
-                      skillId: s._id,
-                      name: s.name,
-                      reason: (err as Error).message,
-                    });
-                  }
-                }}
-                className="px-3 py-1.5 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] hover:bg-[var(--color-ok)]/30 text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-[var(--color-ok)]/20"
-              >
-                Approve · author and verify
-              </button>
-              <button
-                onClick={() => reject({ skillId: s._id })}
-                className="px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:border-[var(--color-danger)] text-xs"
-              >
-                Reject
-              </button>
+                  }}
+                  className="px-3 py-1.5 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] hover:bg-[var(--color-ok)]/30 text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-[var(--color-ok)]/20"
+                >
+                  Approve · author and verify
+                </button>
+                <button
+                  onClick={() => reject({ skillId: s._id })}
+                  className="px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:border-[var(--color-danger)] text-xs"
+                >
+                  Reject
+                </button>
+              </div>
             </div>
-          </div>
           );
         })}
       </div>
@@ -1634,7 +1881,7 @@ export function RegisteredSkillsPanel({
     <Card title={`Skills · ${skills.length} registered`}>
       {authoringFailure ? (
         <p className="mb-3 p-2 rounded-md bg-[var(--color-danger)]/10 border border-[var(--color-danger)]/30 text-xs text-[var(--color-danger)]">
-          Authoring did not finish — {authoringFailure}
+          Authoring did not finish: {authoringFailure}
         </p>
       ) : null}
       {skills.length === 0 ? (
@@ -1655,7 +1902,9 @@ export function RegisteredSkillsPanel({
               <div className="flex-1 min-w-0">
                 <div className="font-medium text-[var(--color-fg)] break-words">{s.name}</div>
                 <div className="text-[var(--color-muted)] text-xs break-words">{s.description}</div>
-                {s.sourceType === 'agent-authored' ? <SkillInputs body={s.body} surfaceMode={surfaceMode} /> : null}
+                {s.sourceType === 'agent-authored' ? (
+                  <SkillInputs body={s.body} surfaceMode={surfaceMode} />
+                ) : null}
               </div>
               {s.sourceType === 'agent-authored' ? (
                 <button
@@ -1802,16 +2051,17 @@ function SkillInputs({ body, surfaceMode }: { body: string; surfaceMode?: 'mock'
       {added.size > 0 ? (
         <span>
           {' '}
-          · The author used the input{plural ? 's' : ''} marked &quot;added by Day0&quot; without declaring{' '}
-          {plural ? 'them' : 'it'}, so Day0 declared {plural ? 'them' : 'it'}: the executor reads{' '}
-          {plural ? 'them' : 'it'} from the candidate or its runbook at run time.
+          · The author used the input{plural ? 's' : ''} marked &quot;added by Day0&quot; without
+          declaring {plural ? 'them' : 'it'}, so Day0 declared {plural ? 'them' : 'it'}: the
+          executor reads {plural ? 'them' : 'it'} from the candidate or its runbook at run time.
         </span>
       ) : null}
       {bound.size > 0 ? (
         <span>
           {' '}
-          · This skill was registered before Day0 taught the input marked &quot;bound by Day0&quot;: the executor binds
-          it from the Reply target, so the reply goes to the chat surface the ask came from.
+          · This skill was registered before Day0 taught the input marked &quot;bound by Day0&quot;:
+          the executor binds it from the Reply target, so the reply goes to the chat surface the ask
+          came from.
         </span>
       ) : null}
     </div>
@@ -1952,7 +2202,20 @@ function WorkspacePanel({ workspace }: { workspace: Record<string, string> }) {
 // gives and which the roster counts as needing them. A failed or stopped run
 // waits on the manager's Retry, so it sits above the skipped rows, which wait
 // on nobody.
-const QUEUE_ORDER = ['actions-pending', 'plan-pending', 'needs-skill', 'deferred', 'discovered', 'claimed', 'plan-approved', 'executing', 'completed', 'failed', 'skipped', 'cancelled'];
+const QUEUE_ORDER = [
+  'actions-pending',
+  'plan-pending',
+  'needs-skill',
+  'deferred',
+  'discovered',
+  'claimed',
+  'plan-approved',
+  'executing',
+  'completed',
+  'failed',
+  'skipped',
+  'cancelled',
+];
 
 /**
  * The work queue in the order the page lists it.
@@ -1963,8 +2226,22 @@ const QUEUE_ORDER = ['actions-pending', 'plan-pending', 'needs-skill', 'deferred
  * Returns:
  *   A sorted copy; rows of one state keep their order.
  */
-export function sortedForQueue<T extends { state: string }>(workItems: readonly T[]): T[] {
-  return [...workItems].sort((a, b) => QUEUE_ORDER.indexOf(a.state) - QUEUE_ORDER.indexOf(b.state));
+export function sortedForQueue<
+  T extends {
+    state: string;
+    _creationTime?: number;
+    priority?: string;
+    evaluationAttempts?: number;
+  },
+>(workItems: readonly T[]): T[] {
+  // The rows waiting for a free slot are listed in the order the loop takes
+  // them, so the top of the queue is the next one evaluated (U3 D5).
+  const waiting = (row: T) => ({ ...row, _creationTime: row._creationTime ?? 0 });
+  return [...workItems].sort(
+    (a, b) =>
+      QUEUE_ORDER.indexOf(a.state) - QUEUE_ORDER.indexOf(b.state) ||
+      (a.state === 'discovered' ? compareWaitingRows(waiting(a), waiting(b)) : 0),
+  );
 }
 
 export function WorkQueue({
@@ -1978,6 +2255,7 @@ export function WorkQueue({
   surfaceMode,
   corrections = [],
   autonomyChanges = [],
+  unavailableCauses = new Map(),
 }: {
   agentId: Id<'agents'>;
   workItems: Doc<'workItems'>[];
@@ -1994,6 +2272,8 @@ export function WorkQueue({
   corrections?: KeptCorrection[];
   /** The employee's flips of the autonomous-actions switch, oldest first. */
   autonomyChanges?: readonly AutonomyChange[];
+  /** The newest cause each waiting item's scope check gave, by item id (`scopeUnavailableCauses`). */
+  unavailableCauses?: ReadonlyMap<string, string>;
 }) {
   const evaluate = useAction(api.workActions.evaluateWorkItem);
   const draftPlan = useAction(api.workActions.draftPlan);
@@ -2012,20 +2292,17 @@ export function WorkQueue({
   // One in-flight call per (step, item). Strict Mode runs every effect twice
   // on mount, and a subscription update re-runs them before the first call has
   // moved the row, so without this the same item is handed to the same action
-  // several times over. The backend refuses the duplicates — `claimForExecution`
-  // is the authority — but a refusal is not a reason to keep asking.
+  // several times over. The backend refuses the duplicates (`claimForExecution`
+  // is the authority), but a refusal is not a reason to keep asking.
   const inFlight = useRef(new Set<string>());
-  const once = useCallback(
-    (step: string, id: string, call: () => Promise<unknown>) => {
-      const key = `${step}:${id}`;
-      if (inFlight.current.has(key)) return;
-      inFlight.current.add(key);
-      call()
-        .catch(() => {})
-        .finally(() => inFlight.current.delete(key));
-    },
-    [],
-  );
+  const once = useCallback((step: string, id: string, call: () => Promise<unknown>) => {
+    const key = `${step}:${id}`;
+    if (inFlight.current.has(key)) return;
+    inFlight.current.add(key);
+    call()
+      .catch(() => {})
+      .finally(() => inFlight.current.delete(key));
+  }, []);
 
   // Auto-progression, mock mode only: once charter is approved, evaluate every
   // discovered item; once a verdict comes back, draft a plan if claim, etc.
@@ -2061,9 +2338,7 @@ export function WorkQueue({
       {surfaceMode === 'real' && charterApproved ? <CheckForNewWork agentId={agentId} /> : null}
       {items.length === 0 ? (
         <p className="text-xs text-[var(--color-muted)]">
-          {charterApproved
-            ? 'no work seeded yet'
-            : 'work queue lights up after charter approval'}
+          {charterApproved ? 'no work seeded yet' : 'work queue lights up after charter approval'}
         </p>
       ) : (
         <div className="space-y-3">
@@ -2102,6 +2377,8 @@ export function WorkQueue({
                   : Promise.reject(new Error('The pending run is missing. Refresh the work queue.'))
               }
               onResendDecision={() => resendDecision({ workItemId: item._id })}
+              unavailableCause={unavailableCauses.get(item._id)}
+              servedByLoop={surfaceMode === 'real'}
             />
           ))}
         </div>
@@ -2116,8 +2393,10 @@ function stateColor(state: string): string {
   if (state === 'plan-pending' || state === 'needs-skill' || state === 'actions-pending') {
     return 'bg-[var(--color-warn)]/15 text-[var(--color-warn)]';
   }
-  if (state === 'failed' || state === 'cancelled') return 'bg-[var(--color-danger)]/15 text-[var(--color-danger)]';
-  if (state === 'skipped' || state === 'deferred') return 'bg-[var(--color-muted)]/15 text-[var(--color-muted)]';
+  if (state === 'failed' || state === 'cancelled')
+    return 'bg-[var(--color-danger)]/15 text-[var(--color-danger)]';
+  if (state === 'skipped' || state === 'deferred')
+    return 'bg-[var(--color-muted)]/15 text-[var(--color-muted)]';
   return 'bg-[var(--color-accent)]/15 text-[var(--color-accent)]';
 }
 
@@ -2243,7 +2522,8 @@ function replayedRows(keys: readonly string[]): string | undefined {
   if (indexes.length === 0) return undefined;
   if (indexes.length === 1) return `row ${indexes[0]}`;
   const contiguous = indexes.every(
-    (index: number, position: number): boolean => position === 0 || index === indexes[position - 1]! + 1,
+    (index: number, position: number): boolean =>
+      position === 0 || index === indexes[position - 1]! + 1,
   );
   if (contiguous) return `rows ${indexes[0]} to ${indexes.at(-1)}`;
   return `rows ${indexes.slice(0, -1).join(', ')} and ${indexes.at(-1)}`;
@@ -2261,7 +2541,9 @@ export function SessionRestoreNote({ restore }: { restore: SessionRestoreRow | u
     const tool = String(step.action?.args.tool ?? '');
     return REPLAYED_CALL_WORDS[tool] ?? (tool || 'call');
   });
-  const replayOf = restore.steps.flatMap((step): string[] => (step.replayOf ? [step.replayOf] : []));
+  const replayOf = restore.steps.flatMap((step): string[] =>
+    step.replayOf ? [step.replayOf] : [],
+  );
   const rows = replayedRows(replayOf);
   const opened = restore.steps.some((step) => !step.replayOf);
   const source = rows
@@ -2367,18 +2649,22 @@ export function DraftDetails({ output }: { output: RunOutput }) {
  * completed with it.
  */
 export function ManagerFeedbackNote({ feedback }: { feedback: ManagerFeedback }) {
+  const zone = useAgentZone();
   return (
     <div className="mt-2 p-2 rounded-md bg-[var(--color-accent)]/10 border border-[var(--color-accent)]/30 text-xs">
       <p className="text-[var(--color-accent)] font-medium mb-0.5">
         {managerFeedbackLabel(feedback)}
-        <span className="ml-1 font-normal text-[10px] text-[var(--color-muted)]" title={clockTimeWithSeconds(feedback.at)}>
-          {clockTimeWithSeconds(feedback.at)}
+        <span
+          className="ml-1 font-normal text-[10px] text-[var(--color-muted)]"
+          title={clockTimeWithSeconds(feedback.at, zone)}
+        >
+          {clockTimeWithSeconds(feedback.at, zone)}
         </span>
       </p>
       <p className="text-[var(--color-fg)] whitespace-pre-wrap break-words">{feedback.reason}</p>
       {feedback.addressedAt !== undefined ? (
         <p className="mt-0.5 text-[10px] text-[var(--color-muted)]">
-          addressed by the run that completed {clockTimeWithSeconds(feedback.addressedAt)}
+          addressed by the run that completed {clockTimeWithSeconds(feedback.addressedAt, zone)}
         </p>
       ) : null}
     </div>
@@ -2393,7 +2679,9 @@ export function ManagerFeedbackNote({ feedback }: { feedback: ManagerFeedback })
  * theirs to give and the manager's to read without opening the refused set.
  */
 export function RefusedBlockedSteps({ refused }: { refused: RefusedClosingRow | undefined }) {
-  const blocked = (refused?.planStepOutcomes ?? []).filter((outcome) => outcome.status !== 'satisfied');
+  const blocked = (refused?.planStepOutcomes ?? []).filter(
+    (outcome) => outcome.status !== 'satisfied',
+  );
   if (blocked.length === 0) return null;
   const unverified = blocked.some((outcome) => outcome.status === 'not-verifiable');
   return (
@@ -2404,7 +2692,9 @@ export function RefusedBlockedSteps({ refused }: { refused: RefusedClosingRow | 
       </p>
       <ol className="space-y-0.5 text-[var(--color-muted)] break-words">
         {blocked.map((outcome) => (
-          <li key={outcome.step}>{`Step ${outcome.step} · ${outcome.status} - ${outcome.evidence}`}</li>
+          <li
+            key={outcome.step}
+          >{`Step ${outcome.step} · ${outcome.status} - ${outcome.evidence}`}</li>
         ))}
       </ol>
     </div>
@@ -2460,14 +2750,20 @@ export function RefusedClosingDetails({ refused }: { refused: RefusedClosingRow 
  * response went on, and the row keeps each with the reason it was turned
  * away so the manager can read what the agent wrote against why.
  */
-export function WithheldActionsDetails({ withheld }: { withheld: WithheldActionRow[] | undefined }) {
+export function WithheldActionsDetails({
+  withheld,
+}: {
+  withheld: WithheldActionRow[] | undefined;
+}) {
   if (!withheld || withheld.length === 0) return null;
   const waiting = withheld.filter((row) => isWithheldForAnswer(row.reason));
   if (waiting.length > 0 && waiting.length < withheld.length) {
     return (
       <>
         <WithheldActionsDetails withheld={waiting} />
-        <WithheldActionsDetails withheld={withheld.filter((row) => !isWithheldForAnswer(row.reason))} />
+        <WithheldActionsDetails
+          withheld={withheld.filter((row) => !isWithheldForAnswer(row.reason))}
+        />
       </>
     );
   }
@@ -2475,8 +2771,8 @@ export function WithheldActionsDetails({ withheld }: { withheld: WithheldActionR
   return (
     <details className="mt-2 text-xs">
       <summary className="cursor-pointer text-[var(--color-muted)] hover:text-[var(--color-accent)]">
-        {forAnswer ? 'Waiting on your answer' : 'Withheld by the evidence check'} · {withheld.length}{' '}
-        {withheld.length === 1 ? 'action' : 'actions'} · never sent
+        {forAnswer ? 'Waiting on your answer' : 'Withheld by the evidence check'} ·{' '}
+        {withheld.length} {withheld.length === 1 ? 'action' : 'actions'} · never sent
       </summary>
       <ul className="mt-1 space-y-1">
         {withheld.map((row, index) => (
@@ -2531,11 +2827,11 @@ const TRANSITION_LABELS: Record<string, string> = {
 function disagreementOutcome(steps: string[], obligations: PlanObligationsRow): string {
   const plan = { steps, obligations: obligations as unknown as PlanObligations };
   if (!planObligations(plan)) {
-    return 'These obligations no longer line up with the plan\'s steps, so the gates read neither and hold nothing on their account.';
+    return "These obligations no longer line up with the plan's steps, so the gates read neither and hold nothing on their account.";
   }
   return transitionWithheld(plan)
     ? 'One of the two readings leaves the state change to you, so a state change the run makes is held for your decision whatever the autonomy switch says; a retry note from you that names the state is that decision.'
-    : 'Neither reading leaves the state change to you, so it is not held on that account: the run follows the judgement\'s reading, and a state change it makes goes through the autonomy switch like any other write.';
+    : "Neither reading leaves the state change to you, so it is not held on that account: the run follows the judgement's reading, and a state change it makes goes through the autonomy switch like any other write.";
 }
 
 /**
@@ -2561,8 +2857,8 @@ export function PlanObligationsLine({
     if (!failedOpen) return null;
     return (
       <p className="mt-2 text-[10px] text-[var(--color-warn)]">
-        Obligations not settled: {failedOpen}. The closing gates verify no read or ticket state change for
-        this plan; the closing phase still authors from the ledger.
+        Obligations not settled: {failedOpen}. The closing gates verify no read or ticket state
+        change for this plan; the closing phase still authors from the ledger.
       </p>
     );
   }
@@ -2575,7 +2871,7 @@ export function PlanObligationsLine({
     <div className="mt-2 text-[10px] text-[var(--color-muted)]">
       <p>
         <span className="uppercase tracking-wider">Declared obligations</span>
-        {obligations.basis === 'judgement' ? ' · judged' : ' · the planner\'s own, unchecked'}
+        {obligations.basis === 'judgement' ? ' · judged' : " · the planner's own, unchecked"}
         {' · '}
         ticket state {transition}
         {step}
@@ -2583,13 +2879,15 @@ export function PlanObligationsLine({
       </p>
       {obligations.plannerTransition ? (
         <p className="text-[var(--color-warn)]">
-          The planner declared the ticket state {TRANSITION_LABELS[obligations.plannerTransition] ?? obligations.plannerTransition};
-          the judgement read it as {transition}. {disagreementOutcome(steps, obligations)}
+          The planner declared the ticket state{' '}
+          {TRANSITION_LABELS[obligations.plannerTransition] ?? obligations.plannerTransition}; the
+          judgement read it as {transition}. {disagreementOutcome(steps, obligations)}
         </p>
       ) : null}
       {obligations.failedOpen ? (
         <p className="text-[var(--color-warn)]">
-          The obligations judgement could not be reached ({obligations.failedOpen}); the planner&apos;s declaration stands unchecked.
+          The obligations judgement could not be reached ({obligations.failedOpen}); the
+          planner&apos;s declaration stands unchecked.
         </p>
       ) : null}
     </div>
@@ -2656,7 +2954,9 @@ export function cancelledReason(item: {
   if (item.skipReason) return item.skipReason;
   if (item.verdict?.decision === 'needs-skill') {
     const name = item.verdict.suggestedSkillName;
-    return name ? `skill proposal "${name}" rejected by the manager` : 'skill proposal rejected by the manager';
+    return name
+      ? `skill proposal "${name}" rejected by the manager`
+      : 'skill proposal rejected by the manager';
   }
   if (item.plan) return 'plan cancelled by the manager';
   return 'cancelled by the manager';
@@ -2679,7 +2979,10 @@ export function colleagueHolding(
     | { reason?: unknown; claimedBy?: { agentId?: unknown; name?: unknown } }
     | undefined;
   const holder = verdict?.claimedBy;
-  if (typeof verdict?.reason !== 'string' || !verdict.reason.startsWith(CLAIMED_BY_COLLEAGUE_SKIP_PREFIX)) {
+  if (
+    typeof verdict?.reason !== 'string' ||
+    !verdict.reason.startsWith(CLAIMED_BY_COLLEAGUE_SKIP_PREFIX)
+  ) {
     return undefined;
   }
   if (typeof holder?.agentId !== 'string' || typeof holder.name !== 'string') return undefined;
@@ -2701,7 +3004,9 @@ const LEDGER_ROW_LENGTH = 180;
  * A retried item returns to `discovered`, so the manager's Retry reaches the
  * evaluator through this same pick.
  */
-export function nextItemToEvaluate(items: readonly Doc<'workItems'>[]): Doc<'workItems'> | undefined {
+export function nextItemToEvaluate(
+  items: readonly Doc<'workItems'>[],
+): Doc<'workItems'> | undefined {
   return items.find((item) => item.state === 'discovered');
 }
 
@@ -2780,6 +3085,9 @@ export function cancelPlanRequest(
   return { workItemId, ...(reason?.trim() ? { reason } : {}) };
 }
 
+/** How the reason of a run the re-read before its first write stopped begins (`withheldBeforeFirstWrite`). */
+export const TICKET_REREAD_STOP = 'withheld before the first write: ';
+
 /**
  * The row-level reason a failed item's card shows.
  *
@@ -2818,11 +3126,24 @@ export function failedItemReason(item: {
         ? `stopped at the closing gate; the prerequisites landed, so confirm them below and Retry resumes there: ${stopDetail(item.skipReason)}`
         : `stopped at the closing gate, the prerequisites landed and Retry resumes there: ${stopDetail(item.skipReason)}`;
     }
+    const detail = stopDetail(item.skipReason);
+    const questionOpen = Boolean(item.output?.openQuestion || item.output?.initial?.openQuestion);
     // The run asked its question and withheld the writes that wait on the answer.
-    if (item.output?.openQuestion || item.output?.initial?.openQuestion) {
+    if (questionOpen && isOpenQuestionStop(detail)) {
       return unconfirmed
-        ? `stopped with a question open for you, and the writes that wait on it were never sent; confirm what landed below, then answer it with Retry with a note: ${stopDetail(item.skipReason)}`
-        : `stopped with a question open for you, and the writes that wait on it were never sent; answer it with Retry with a note: ${stopDetail(item.skipReason)}`;
+        ? `stopped with a question open for you, and the writes that wait on it were never sent; confirm what landed below, then answer it with Retry with a note: ${detail}`
+        : `stopped with a question open for you, and the writes that wait on it were never sent; answer it with Retry with a note: ${detail}`;
+    }
+    // Stopped for something else while a question is open: a note on this
+    // Retry answers nothing (wave 1.5 review D2 (b)), and a stop at the
+    // re-read before the first write is read as the re-read (m1, O1).
+    if (questionOpen) {
+      const retry = detail.startsWith(TICKET_REREAD_STOP)
+        ? 'retry once the ticket is back, then answer the question when it is asked again'
+        : 'retry, then answer the question when it is asked again';
+      return unconfirmed
+        ? `stopped before its question could be answered, and a note does not answer it on this stop; confirm what landed below, then ${retry}: ${detail}`
+        : `stopped before its question could be answered, and a note does not answer it on this stop; ${retry}: ${detail}`;
     }
     if (unconfirmed) {
       return `stopped after a write landed or may have; confirm the provider below before Retry: ${stopDetail(item.skipReason)}`;
@@ -2846,8 +3167,7 @@ export function decisionAttribution(
     | undefined,
 ): string | undefined {
   if (!decision?.decidedAt || !decision.outcome || !decision.decidedVia) return undefined;
-  const source =
-    decision.decidedVia === 'channel' ? decision.surfaceName : 'the day0 dashboard';
+  const source = decision.decidedVia === 'channel' ? decision.surfaceName : 'the day0 dashboard';
   return `${decision.outcome} from ${source}`;
 }
 
@@ -2869,8 +3189,9 @@ export function pendingVerdicts(
   verdicts: Doc<'workItems'>['actionVerdicts'] | undefined,
   count: number,
 ): ActionVerdict[] {
-  return Array.from({ length: count }, (_, index): ActionVerdict =>
-    normaliseActionVerdict(verdicts?.[index] ?? {}),
+  return Array.from(
+    { length: count },
+    (_, index): ActionVerdict => normaliseActionVerdict(verdicts?.[index] ?? {}),
   );
 }
 
@@ -2929,7 +3250,10 @@ export function PendingActions({
   // "Approve all" button is disabled while a refused row exists so it never
   // promises what the gate will not deliver.
   const refusedIndexes = useMemo(
-    () => new Set(verdicts.flatMap((verdict, index) => (verdict.disposition === 'refused' ? [index] : []))),
+    () =>
+      new Set(
+        verdicts.flatMap((verdict, index) => (verdict.disposition === 'refused' ? [index] : [])),
+      ),
     [verdicts],
   );
   const heldIndexes = useMemo(
@@ -2937,7 +3261,10 @@ export function PendingActions({
     [verdicts],
   );
   const shown = useMemo(
-    () => actions.map((action, index) => ({ action, index })).filter(({ index }) => verdicts[index]?.disposition !== 'auto'),
+    () =>
+      actions
+        .map((action, index) => ({ action, index }))
+        .filter(({ index }) => verdicts[index]?.disposition !== 'auto'),
     [actions, verdicts],
   );
   const [selected, setSelected] = useState<Set<number>>(() => new Set(heldIndexes));
@@ -3006,7 +3333,10 @@ export function PendingActions({
                   <p className="text-xs text-[var(--color-fg)] break-words">
                     {summariseAction(action, surfaces, { replyTarget })}
                     {refused ? (
-                      <span className="text-[var(--color-warn)]"> · refused · {verdict.reason}</span>
+                      <span className="text-[var(--color-warn)]">
+                        {' '}
+                        · refused · {verdict.reason}
+                      </span>
                     ) : verdict?.disposition === 'held' ? (
                       <span className="text-[var(--color-muted)]"> · {verdict.reason}</span>
                     ) : null}
@@ -3020,7 +3350,9 @@ export function PendingActions({
                   <RepairNote repair={repairs?.find((attempt) => attempt.index === index)} />
                   <div className="flex items-center gap-2 mt-0.5">
                     {!refused && !on ? (
-                      <span className="text-[10px] text-[var(--color-muted)]">held · will not be sent</span>
+                      <span className="text-[10px] text-[var(--color-muted)]">
+                        held · will not be sent
+                      </span>
                     ) : null}
                     {refused ? null : on ? (
                       <button
@@ -3096,10 +3428,13 @@ export function PendingActions({
 export interface PlanApproval {
   answers: Array<{ questionId: Id<'managerQuestions'>; text: string }>;
   note?: string;
+  /** N11: "this would have taken me about N minutes", when the manager gave it. */
+  manualEstimateMinutes?: number;
 }
 
 /**
- * What the approval form sends: the item, the answers given and the note.
+ * What the approval form sends: the item, the answers given, the note and the
+ * manager's estimate.
  *
  * Args:
  *   workItemId: The plan-pending item.
@@ -3111,12 +3446,40 @@ export interface PlanApproval {
 export function planApprovalRequest(
   workItemId: Id<'workItems'>,
   decision: PlanApproval,
-): { workItemId: Id<'workItems'>; answers?: PlanApproval['answers']; note?: string } {
+): {
+  workItemId: Id<'workItems'>;
+  answers?: PlanApproval['answers'];
+  note?: string;
+  manualEstimateMinutes?: number;
+} {
   return {
     workItemId,
     ...(decision.answers.length > 0 ? { answers: decision.answers } : {}),
     ...(decision.note ? { note: decision.note } : {}),
+    ...(decision.manualEstimateMinutes !== undefined
+      ? { manualEstimateMinutes: decision.manualEstimateMinutes }
+      : {}),
   };
+}
+
+/**
+ * The minutes the manager typed into the plan card's estimate, read as the
+ * server takes it: a whole number of minutes from 1, or nothing when the field
+ * is empty.
+ *
+ * Args:
+ *   typed: The field as typed.
+ *
+ * Returns:
+ *   The minutes, undefined for an empty field, or null for text the server
+ *   would refuse.
+ */
+export function typedEstimateMinutes(typed: string): number | undefined | null {
+  const text = typed.trim();
+  if (text === '') return undefined;
+  if (!/^\d+$/.test(text)) return null;
+  const minutes = Number(text);
+  return minutes >= 1 ? minutes : null;
 }
 
 /**
@@ -3133,18 +3496,24 @@ export function PlanApprovalForm({
   questions,
   onApprove,
   onCancel,
+  busy = false,
 }: {
   riskNotes: string;
   questions: Doc<'managerQuestions'>[];
   onApprove: (decision: PlanApproval) => void;
   /** Cancels the plan with the manager's reason, empty when none was written. */
   onCancel: (reason: string) => void;
+  /** Whether a decision on this plan is in flight. */
+  busy?: boolean;
 }) {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [note, setNote] = useState('');
   const [cancelReason, setCancelReason] = useState('');
+  const [estimate, setEstimate] = useState('');
   const open = questions.filter((question) => !question.answer);
   const planNote = riskNotes.trim();
+  const minutes = typedEstimateMinutes(estimate);
+  const estimateId = useId();
   function decision(): PlanApproval {
     return {
       answers: open.flatMap((question) => {
@@ -3152,6 +3521,7 @@ export function PlanApprovalForm({
         return text ? [{ questionId: question._id, text }] : [];
       }),
       ...(note.trim() ? { note: note.trim() } : {}),
+      ...(typeof minutes === 'number' ? { manualEstimateMinutes: minutes } : {}),
     };
   }
   return (
@@ -3159,7 +3529,9 @@ export function PlanApprovalForm({
       {open.length > 0 ? (
         <div className="p-2 rounded-md border border-[var(--color-warn)]/30 bg-[var(--color-warn)]/10">
           <p className="text-[var(--color-warn)] font-medium mb-1">
-            {open.length === 1 ? 'A question for you before this plan runs' : `${open.length} questions for you before this plan runs`}
+            {open.length === 1
+              ? 'A question for you before this plan runs'
+              : `${open.length} questions for you before this plan runs`}
           </p>
           <ul className="space-y-1.5">
             {open.map((question) => (
@@ -3167,7 +3539,9 @@ export function PlanApprovalForm({
                 <p className="text-[var(--color-fg)]">{question.question}</p>
                 <p className="text-[10px] text-[var(--color-muted)]">
                   from the charter · touched by the {question.context.touchedBy}
-                  {question.context.words.length > 0 ? `: ${question.context.words.join(', ')}` : ''}
+                  {question.context.words.length > 0
+                    ? `: ${question.context.words.join(', ')}`
+                    : ''}
                 </p>
                 <input
                   type="text"
@@ -3186,7 +3560,9 @@ export function PlanApprovalForm({
       ) : null}
       {planNote ? (
         <div className="p-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)]">
-          <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)] mb-0.5">Planner&apos;s note</p>
+          <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)] mb-0.5">
+            Planner&apos;s note
+          </p>
           <p className="text-[var(--color-fg)]">{planNote}</p>
           <input
             type="text"
@@ -3206,16 +3582,43 @@ export function PlanApprovalForm({
         aria-label="reason for cancelling the plan"
         className="w-full px-2 py-1 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs"
       />
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[var(--color-fg)]">
+        <label htmlFor={estimateId}>This would have taken me about</label>
+        <input
+          id={estimateId}
+          type="number"
+          inputMode="numeric"
+          min={1}
+          step={1}
+          value={estimate}
+          disabled={busy}
+          onChange={(event) => setEstimate(event.target.value)}
+          aria-describedby={`${estimateId}-hint`}
+          aria-invalid={minutes === null}
+          className="min-h-11 w-20 px-2 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs"
+        />
+        <span>minutes</span>
+        <span
+          id={`${estimateId}-hint`}
+          className="basis-full text-[10px] text-[var(--color-muted)]"
+        >
+          {minutes === null
+            ? 'A whole number of minutes, or leave it empty.'
+            : 'Optional. Summed over finished work as hours saved, a gauge for you, never a headline.'}
+        </span>
+      </div>
       <div className="flex gap-2">
         <button
           onClick={() => onApprove(decision())}
-          className="px-3 py-1 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] text-xs"
+          disabled={busy || minutes === null}
+          className="px-3 py-1 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] text-xs disabled:opacity-50"
         >
           {open.length > 0 || planNote ? 'Approve plan with answers' : 'Approve plan'}
         </button>
         <button
           onClick={() => onCancel(cancelReason.trim())}
-          className="px-3 py-1 rounded-md border border-[var(--color-border)] text-xs"
+          disabled={busy}
+          className="px-3 py-1 rounded-md border border-[var(--color-border)] text-xs disabled:opacity-50"
         >
           Cancel
         </button>
@@ -3243,14 +3646,22 @@ export interface PendingDecisionMember {
  * Returns:
  *   One member per item whose run is parked with rows awaiting the manager.
  */
-export function pendingDecisionMembers(items: readonly Doc<'workItems'>[]): PendingDecisionMember[] {
+export function pendingDecisionMembers(
+  items: readonly Doc<'workItems'>[],
+): PendingDecisionMember[] {
   return items.flatMap((item): PendingDecisionMember[] => {
-    if (item.state !== 'actions-pending' || !item.pendingRunId || item.approvedIndexes !== undefined) {
+    if (
+      item.state !== 'actions-pending' ||
+      !item.pendingRunId ||
+      item.approvedIndexes !== undefined
+    ) {
       return [];
     }
     const actions = ((item.output ?? {}) as RunOutput).actions ?? [];
     const verdicts = pendingVerdicts(item.actionVerdicts, actions.length);
-    const heldIndexes = verdicts.flatMap((verdict, index) => (verdict.disposition === 'held' ? [index] : []));
+    const heldIndexes = verdicts.flatMap((verdict, index) =>
+      verdict.disposition === 'held' ? [index] : [],
+    );
     if (heldIndexes.length === 0) return [];
     return [
       {
@@ -3282,7 +3693,11 @@ export function PendingDecisionsPanel({
   members: PendingDecisionMember[];
   surfaces: SurfaceRecord[];
   onApproveBatch: (
-    members: Array<{ workItemId: Id<'workItems'>; pendingRunId: Id<'events'>; approvedIndexes: number[] }>,
+    members: Array<{
+      workItemId: Id<'workItems'>;
+      pendingRunId: Id<'events'>;
+      approvedIndexes: number[];
+    }>,
   ) => Promise<unknown>;
 }) {
   const [busy, setBusy] = useState(false);
@@ -3301,8 +3716,8 @@ export function PendingDecisionsPanel({
             <p className="text-[var(--color-fg)] font-medium">{member.title}</p>
             {member.refused > 0 ? (
               <p className="text-[10px] text-[var(--color-muted)]">
-                {member.refused} {member.refused === 1 ? 'row is' : 'rows are'} refused by the gate; decide this
-                one on its card.
+                {member.refused} {member.refused === 1 ? 'row is' : 'rows are'} refused by the gate;
+                decide this one on its card.
               </p>
             ) : null}
             <ul className="ml-3 space-y-0.5">
@@ -3344,12 +3759,95 @@ export function PendingDecisionsPanel({
           {eligible.length === 1 ? 'item' : 'items'}
         </button>
         <span className="text-[10px] text-[var(--color-muted)]">
-          Each item is approved exactly as shown; if one has moved on, nothing is approved and the list refreshes.
+          Each item is approved exactly as shown; if one has moved on, nothing is approved and the
+          list refreshes.
         </span>
       </div>
       {error ? <p className="mt-1 text-[10px] text-[var(--color-danger)]">{error}</p> : null}
     </div>
   );
+}
+
+/**
+ * The newest cause each item's scope check gave for not reaching the model,
+ * from the events the page has read (`work.scope-judgement-unavailable`).
+ *
+ * Args:
+ *   events: Recent events, newest first.
+ *
+ * Returns:
+ *   The cause by work item id; an item whose event is older than the window is absent.
+ */
+export function scopeUnavailableCauses(
+  events: ReadonlyArray<Pick<Doc<'events'>, 'type' | 'payload'>>,
+): ReadonlyMap<string, string> {
+  const causes = new Map<string, string>();
+  for (const event of events) {
+    if (event.type !== 'work.scope-judgement-unavailable') continue;
+    const payload = (event.payload ?? {}) as { workItemId?: unknown; cause?: unknown };
+    if (typeof payload.workItemId !== 'string' || causes.has(payload.workItemId)) continue;
+    if (typeof payload.cause === 'string' && payload.cause.trim() !== '') {
+      causes.set(payload.workItemId, payload.cause);
+    }
+  }
+  return causes;
+}
+
+/** What the waiting line reads of a row. */
+type WaitingItem = Pick<
+  Doc<'workItems'>,
+  'state' | 'verdict' | 'evaluationClaimedAt' | 'evaluationAttempts' | 'evaluationUnavailableAt'
+>;
+
+/**
+ * Why a row that holds no slot is waiting, in the manager's words: for a
+ * free slot, for the scope check to reach the model again (E-70 D3), or for
+ * the manager's Retry after its evaluations kept dying (S D3).
+ *
+ * Args:
+ *   item: The row.
+ *   cause: The newest reason its scope check gave, when the page has it.
+ *   zone: The agent's zone, for the time.
+ *
+ * Returns:
+ *   One sentence, or undefined for a row that is not waiting on the loop.
+ */
+export function waitingLine(
+  item: WaitingItem,
+  cause: string | undefined,
+  zone: string | undefined,
+): string | undefined {
+  const verdict = item.verdict as
+    | { decision?: unknown; reason?: unknown; attempts?: unknown }
+    | undefined;
+  const attempts =
+    typeof verdict?.attempts === 'number' ? verdict.attempts : (item.evaluationAttempts ?? 0);
+  const because = cause ? ` (${cause})` : '';
+  const unavailableAt =
+    item.evaluationUnavailableAt !== undefined
+      ? clockTime(item.evaluationUnavailableAt, zone)
+      : undefined;
+  if (item.state === 'deferred' && verdict?.reason === EVALUATION_ATTEMPTS_SPENT) {
+    return `Parked: ${attempts} evaluations of this item stopped without a verdict, so it no longer takes a slot. Retry sends it back to be evaluated.`;
+  }
+  if (item.state === 'deferred' && verdict?.reason === 'scope-judgement-unavailable') {
+    return `Waiting: the scope check could not reach the model${unavailableAt ? ` at ${unavailableAt}` : ''}${because}, ${attempts} times. Check for new work asks it again; nothing runs until it answers.`;
+  }
+  // A row back in `discovered` waits for a free slot whatever it was judged
+  // before: Retry and a re-admission leave the old verdict on the row. Only a
+  // verdict that queued it at the cap says something else, on its own line.
+  if (item.state !== 'discovered' || verdict?.decision === 'queue') return undefined;
+  if (
+    item.evaluationUnavailableAt !== undefined &&
+    item.evaluationUnavailableAt >= (item.evaluationClaimedAt ?? 0)
+  ) {
+    return `Waiting: the scope check could not reach the model at ${unavailableAt}${because}. Day0 tries again after ten minutes; nothing runs until it answers.`;
+  }
+  if (item.evaluationClaimedAt !== undefined) {
+    const attempt = attempts > 1 ? `, attempt ${attempts} of ${MAX_EVALUATION_ATTEMPTS}` : '';
+    return `Evaluation started ${clockTime(item.evaluationClaimedAt, zone)}${attempt}; if it does not answer, the item waits for the next free slot.`;
+  }
+  return 'Waiting for a free slot: Day0 evaluates the most urgent item first, then the oldest, as work finishes.';
 }
 
 export function WorkItemCard({
@@ -3366,6 +3864,8 @@ export function WorkItemCard({
   onApproveActions,
   onRejectActions,
   onResendDecision,
+  unavailableCause,
+  servedByLoop = false,
 }: {
   item: Doc<'workItems'>;
   surfaces: SurfaceRecord[];
@@ -3376,15 +3876,39 @@ export function WorkItemCard({
   corrections?: readonly KeptCorrection[];
   /** The employee's flips of the autonomous-actions switch, for a plan drafted before one. */
   autonomyChanges?: readonly AutonomyChange[];
-  onApprovePlan: (decision: PlanApproval) => void;
-  onCancelPlan: (reason: string) => void;
-  onRetryFailed: (feedback?: string) => void;
+  onApprovePlan: (decision: PlanApproval) => Promise<unknown> | void;
+  onCancelPlan: (reason: string) => Promise<unknown> | void;
+  onRetryFailed: (feedback?: string) => Promise<unknown> | void;
   onReconcileFailed: (confirmed: boolean) => Promise<unknown>;
   onApproveActions: (approvedIndexes: number[]) => Promise<unknown>;
   onRejectActions: (reason: string) => Promise<unknown>;
   onResendDecision: () => Promise<unknown>;
+  /** The newest cause the item's scope check gave for not reaching the model, when the page has it. */
+  unavailableCause?: string;
+  /** Whether the server's loop serves the queue (real mode); the mock page evaluates on its own. */
+  servedByLoop?: boolean;
 }) {
   const now = useNow();
+  const zone = useAgentZone();
+  const [outcome, setOutcome] = useState<ChangeOutcome | null>(null);
+  const [deciding, setDeciding] = useState(false);
+  const cardRef = useRef<HTMLDivElement>(null);
+  // A decision moves the row, and the control that made it goes with it, so
+  // the outcome is said in the card's own live region and focus comes back to
+  // the card rather than falling to the page.
+  const decide = (call: () => Promise<unknown> | void, done: string, refused: string): void => {
+    setDeciding(true);
+    setOutcome(null);
+    // The chain ends in its own catch, which says the refusal in the live region.
+    void Promise.resolve()
+      .then(call)
+      .then(() => {
+        setOutcome({ tone: 'done', text: done });
+        cardRef.current?.focus();
+      })
+      .catch((err: unknown) => setOutcome({ tone: 'refused', text: refusalText(err, refused) }))
+      .finally(() => setDeciding(false));
+  };
   const verdict = item.verdict as
     | {
         decision: string;
@@ -3415,29 +3939,35 @@ export function WorkItemCard({
   // A row Day0's own gate refused was never sent: it is listed apart from a
   // row the provider failed, whose outcome someone may have to check.
   const unlandedActions = appliedActions.filter((a) => !a.ok && !a.held);
-  const refusedActions = unlandedActions.filter((a) => isSurfaceTool(a.tool) && isGateRefusal(a.reason));
+  const refusedActions = unlandedActions.filter(
+    (a) => isSurfaceTool(a.tool) && isGateRefusal(a.reason),
+  );
   // A row whose response was lost, or one an interrupted apply could not
   // account for, may have landed: it is not listed as never reaching anything.
   const unknownActions = unlandedActions.filter(
-    (a) => !refusedActions.includes(a) && (a.outcomeUnknown === true || a.reason === OUTCOME_UNKNOWN_REASON),
+    (a) =>
+      !refusedActions.includes(a) &&
+      (a.outcomeUnknown === true || a.reason === OUTCOME_UNKNOWN_REASON),
   );
   const failedActions = unlandedActions.filter(
     (a) => !refusedActions.includes(a) && !unknownActions.includes(a),
   );
   const landedActions = appliedActions.filter((a) => a.ok && !a.held);
   const landedAutonomously = landedActions.filter((a) => a.authority === 'autonomous').length;
-  const autonomyTurnedOnAt = autonomyTurnedOnAfterDraft(item.planPendingAt, landedAutonomously > 0, autonomyChanges);
-  const reconciliationEntries = item.providerReconciliation?.entries ??
-    providerReconciliationEntries(output);
-  const needsProviderReconciliation = retryRequiresProviderReconciliation(
-    output,
-    item.skipReason,
+  const autonomyTurnedOnAt = autonomyTurnedOnAfterDraft(
+    item.planPendingAt,
+    landedAutonomously > 0,
+    autonomyChanges,
   );
+  const reconciliationEntries =
+    item.providerReconciliation?.entries ?? providerReconciliationEntries(output);
+  const needsProviderReconciliation = retryRequiresProviderReconciliation(output, item.skipReason);
   const retryBlocked = needsProviderReconciliation && !item.providerReconciliation;
   // The quality-fit filter's skip is the agent's judgement, not the manager's;
   // Retry hands the item back with that filter waived.
   const skipVerdictReason =
-    item.state === 'skipped' && typeof (verdict as { reason?: unknown } | undefined)?.reason === 'string'
+    item.state === 'skipped' &&
+    typeof (verdict as { reason?: unknown } | undefined)?.reason === 'string'
       ? (verdict as { reason: string }).reason
       : undefined;
   const qualityFitSkipped = skipVerdictReason?.startsWith(QUALITY_FIT_SKIP_PREFIX) === true;
@@ -3456,7 +3986,10 @@ export function WorkItemCard({
   // row comes back by itself if they let it go, so there is no Retry here.
   const heldByColleague = colleagueHolding(item);
   const noteToken = retryNoteToken(item);
-  const [typedRetryNote, setTypedRetryNote] = useState<TypedRetryNote>({ text: '', token: noteToken });
+  const [typedRetryNote, setTypedRetryNote] = useState<TypedRetryNote>({
+    text: '',
+    token: noteToken,
+  });
   const retryNote = liveRetryNote(typedRetryNote, noteToken);
   const sendingBack = item.state === 'completed' && retryNote.trim() !== '';
   // A plan the manager cancelled: Retry drafts a new one, never runs this one.
@@ -3504,8 +4037,18 @@ export function WorkItemCard({
   // A failed item whose run landed nothing and left nothing to decide is
   // shown as stopped: Retry stands, and the badge says no harm was done.
   const shownState = item.state === 'failed' && isStopped(item.skipReason) ? 'stopped' : item.state;
+  // A row whose evaluations kept dying waits for this Retry and nothing else (S D3).
+  const parkedForRetry =
+    item.state === 'deferred' &&
+    (verdict as { reason?: unknown } | undefined)?.reason === EVALUATION_ATTEMPTS_SPENT;
+  const waiting = servedByLoop ? waitingLine(item, unavailableCause, zone) : undefined;
   return (
-    <div className="border border-[var(--color-border)] rounded-lg p-3">
+    <div
+      ref={cardRef}
+      tabIndex={-1}
+      aria-labelledby={`work-item-${item._id}`}
+      className="border border-[var(--color-border)] rounded-lg p-3"
+    >
       <div className="flex items-start justify-between mb-2">
         <div className="flex-1">
           <div className="flex items-center gap-2 mb-1">
@@ -3521,8 +4064,12 @@ export function WorkItemCard({
               <span className="text-[10px] text-[var(--color-warn)]">{item.priority}</span>
             ) : null}
           </div>
-          <h3 className="text-sm font-medium text-[var(--color-fg)]">{item.title}</h3>
-          <p className="text-xs text-[var(--color-muted)] mt-1 line-clamp-2">{item.contentSummary}</p>
+          <h3 id={`work-item-${item._id}`} className="text-sm font-medium text-[var(--color-fg)]">
+            {item.title}
+          </h3>
+          <p className="text-xs text-[var(--color-muted)] mt-1 line-clamp-2">
+            {item.contentSummary}
+          </p>
         </div>
       </div>
 
@@ -3561,7 +4108,9 @@ export function WorkItemCard({
         </p>
       ) : null}
 
-      {item.state === 'cancelled' ? (
+      {waiting ? (
+        <p className="mt-2 text-xs text-[var(--color-fg)]">{waiting}</p>
+      ) : item.state === 'cancelled' ? (
         <div className="mt-2 text-xs">
           <span className="text-[var(--color-muted)]">cancelled:</span>{' '}
           <span className="text-[var(--color-fg)]">
@@ -3602,7 +4151,7 @@ export function WorkItemCard({
           ) : (
             <span className="text-[var(--color-fg)]">
               {verdict.decision}
-              {verdict.reason ? ` — ${verdict.reason}` : ''}
+              {verdict.reason ? ` - ${verdict.reason}` : ''}
             </span>
           )}
         </div>
@@ -3610,7 +4159,9 @@ export function WorkItemCard({
 
       {plan ? (
         <div className="mt-3 p-2 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs">
-          <div className="font-medium text-[var(--color-fg)] mb-1">Plan ({plan.estimatedMinutes}m, {plan.reversibility})</div>
+          <div className="font-medium text-[var(--color-fg)] mb-1">
+            Plan ({plan.estimatedMinutes}m, {plan.reversibility})
+          </div>
           <div className="text-[var(--color-muted)] mb-2">{plan.summary}</div>
           <ol className="list-decimal pl-5 space-y-0.5 text-[var(--color-fg)]">
             {plan.steps.map((s, i) => (
@@ -3623,17 +4174,29 @@ export function WorkItemCard({
             workItemId={item._id}
             redaction={plan.correctionsRedaction}
           />
-          <PlanObligationsLine steps={plan.steps} obligations={plan.obligations} failedOpen={plan.obligationsFailedOpen} />
+          <PlanObligationsLine
+            steps={plan.steps}
+            obligations={plan.obligations}
+            failedOpen={plan.obligationsFailedOpen}
+          />
           {autonomyTurnedOnAt !== undefined ? (
             <p className="mt-2 text-[var(--color-ok)]">
-              <time dateTime={new Date(autonomyTurnedOnAt).toISOString()} title={clockTimeWithSeconds(autonomyTurnedOnAt)}>
-                {autonomyTurnedOnAfterDraftNote(clockTime(autonomyTurnedOnAt), landedAutonomously, landedActions.length)}
+              <time
+                dateTime={new Date(autonomyTurnedOnAt).toISOString()}
+                title={clockTimeWithSeconds(autonomyTurnedOnAt, zone)}
+              >
+                {autonomyTurnedOnAfterDraftNote(
+                  clockTime(autonomyTurnedOnAt, zone),
+                  landedAutonomously,
+                  landedActions.length,
+                )}
               </time>
             </p>
           ) : null}
           {item.state === 'plan-pending' && item.planRejectedAt !== undefined ? (
             <p className="mt-2 text-[var(--color-warn)]">
-              This plan was redrafted after you rejected an earlier plan. It waits for your approval even while autonomous actions are on.
+              This plan was redrafted after you rejected an earlier plan. It waits for your approval
+              even while autonomous actions are on.
             </p>
           ) : null}
           {item.state === 'plan-pending' ? (
@@ -3641,17 +4204,33 @@ export function WorkItemCard({
               key={item._id}
               riskNotes={plan.riskNotes ?? ''}
               questions={questions}
-              onApprove={onApprovePlan}
-              onCancel={onCancelPlan}
+              busy={deciding}
+              onApprove={(decision) =>
+                decide(
+                  () => onApprovePlan(decision),
+                  `Plan approved: ${item.title}.`,
+                  'The plan was not approved.',
+                )
+              }
+              onCancel={(reason) =>
+                decide(
+                  () => onCancelPlan(reason),
+                  `Plan cancelled: ${item.title}.`,
+                  'The plan was not cancelled.',
+                )
+              }
             />
           ) : null}
-          {item.state !== 'plan-pending' && item.managerAnswers && item.managerAnswers.length > 0 ? (
+          {item.state !== 'plan-pending' &&
+          item.managerAnswers &&
+          item.managerAnswers.length > 0 ? (
             <div className="mt-2 text-[var(--color-muted)]">
               <p className="text-[10px] uppercase tracking-wider mb-0.5">Answered at approval</p>
               <ul className="space-y-0.5">
                 {item.managerAnswers.map((entry) => (
                   <li key={`${entry.question}:${entry.answeredAt}`}>
-                    {entry.question} <span className="text-[var(--color-fg)]">- {entry.answer}</span>
+                    {entry.question}{' '}
+                    <span className="text-[var(--color-fg)]">- {entry.answer}</span>
                   </li>
                 ))}
               </ul>
@@ -3746,7 +4325,9 @@ export function WorkItemCard({
                 <span className="font-mono text-[10px]">{a.tool}</span> - {a.reason ?? 'held'}
                 <PhaseLabel phase={a.phase} />
                 {a.effect ? (
-                  <code className="block font-mono text-[10px] whitespace-pre-wrap break-words">{a.effect}</code>
+                  <code className="block font-mono text-[10px] whitespace-pre-wrap break-words">
+                    {a.effect}
+                  </code>
                 ) : null}
                 <RepairNote repair={a.repair} />
                 <SessionRestoreNote restore={a.sessionRestore} />
@@ -3815,8 +4396,8 @@ export function WorkItemCard({
       {unknownActions.length > 0 ? (
         <div className="mt-2 p-2 rounded-md bg-[var(--color-warn)]/10 border border-[var(--color-warn)]/30 text-xs">
           <p className="text-[var(--color-warn)] font-medium mb-1">
-            {unknownActions.length} {unknownActions.length === 1 ? 'action' : 'actions'} with an unknown
-            outcome · may have landed
+            {unknownActions.length} {unknownActions.length === 1 ? 'action' : 'actions'} with an
+            unknown outcome · may have landed
           </p>
           <ul className="space-y-0.5 text-[var(--color-warn)]">
             {unknownActions.map((a, i) => (
@@ -3829,7 +4410,11 @@ export function WorkItemCard({
         </div>
       ) : null}
 
-      {item.state === 'failed' || item.state === 'completed' || skipWaivable || item.state === 'cancelled' ? (
+      {item.state === 'failed' ||
+      item.state === 'completed' ||
+      skipWaivable ||
+      parkedForRetry ||
+      item.state === 'cancelled' ? (
         <div className="mt-2">
           {/* The per-action box above already names every action that failed, so
               the row-level reason only earns its space for the other failures:
@@ -3856,7 +4441,9 @@ export function WorkItemCard({
             <input
               type="text"
               value={retryNote}
-              onChange={(event) => setTypedRetryNote({ text: event.target.value, token: noteToken })}
+              onChange={(event) =>
+                setTypedRetryNote({ text: event.target.value, token: noteToken })
+              }
               placeholder={
                 item.state === 'completed'
                   ? 'note for the retry: say what to change or answer what the agent asked'
@@ -3869,8 +4456,16 @@ export function WorkItemCard({
             />
           ) : null}
           <button
-            onClick={() => onRetryFailed(retryNote)}
-            disabled={retryBlocked || (item.state === 'completed' && !sendingBack)}
+            onClick={() =>
+              decide(
+                () => onRetryFailed(retryNote),
+                takeAnywayNote
+                  ? `Taken: ${item.title} goes back to be evaluated.`
+                  : `Sent back: ${item.title}.`,
+                'The item was not sent back.',
+              )
+            }
+            disabled={deciding || retryBlocked || (item.state === 'completed' && !sendingBack)}
             title={takeAnywayNote}
             className="px-3 py-1 rounded-md bg-[var(--color-warn)]/20 text-[var(--color-warn)] text-xs font-medium hover:bg-[var(--color-warn)]/30 disabled:opacity-50 disabled:cursor-not-allowed"
           >
@@ -3905,6 +4500,7 @@ export function WorkItemCard({
           ) : null}
         </div>
       ) : null}
+      <LiveStatus outcome={outcome} />
     </div>
   );
 }
@@ -3918,6 +4514,7 @@ export function ProviderReconciliationControl({
   reconciliation?: { actor: string; confirmedAt: number };
   onConfirm: (confirmed: boolean) => Promise<unknown>;
 }) {
+  const zone = useAgentZone();
   const [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -3971,8 +4568,11 @@ export function ProviderReconciliationControl({
       {reconciliation ? (
         <p className="mt-1 text-[var(--color-muted)]">
           Verified by <span className="font-mono">{reconciliation.actor}</span> at{' '}
-          <time dateTime={new Date(reconciliation.confirmedAt).toISOString()}>
-            {new Date(reconciliation.confirmedAt).toISOString()}
+          <time
+            dateTime={new Date(reconciliation.confirmedAt).toISOString()}
+            title={clockTimeWithSeconds(reconciliation.confirmedAt, zone)}
+          >
+            {clockTime(reconciliation.confirmedAt, zone)}
           </time>
           . Retry is enabled.
         </p>
@@ -4047,8 +4647,7 @@ export function PermissionRows({
               <div className="min-w-0">
                 <p className="font-mono text-[var(--color-fg)] truncate">{row.scope}</p>
                 <p className="text-[10px] text-[var(--color-muted)]">
-                  {row.active ? 'granted' : 'revoked'} - from{' '}
-                  {PERMISSION_SOURCE_LABEL[row.source]}
+                  {row.active ? 'granted' : 'revoked'} - from {PERMISSION_SOURCE_LABEL[row.source]}
                 </p>
               </div>
               {row.active ? (
@@ -4076,7 +4675,8 @@ export function PermissionRows({
                 <p className="text-[10px] text-[var(--color-fg)] mb-2">
                   Revoke {row.scope}? Day0 will stop queued and in-flight work that still needs this
                   standing scope at its final authority check. Actions already approved by you keep
-                  their exact approval; a provider call past its final authority check may still finish.
+                  their exact approval; a provider call past its final authority check may still
+                  finish.
                 </p>
                 <div className="flex gap-2">
                   <button
@@ -4105,7 +4705,17 @@ export function PermissionRows({
   );
 }
 
-function PermissionsCard({ agentId }: { agentId: Id<'agents'> }) {
+/**
+ * What revoking a grant does, including the manager channel's own scope:
+ * the DM to the manager is authorised by `boss:message` (or the chat
+ * surface's write scope, which is never standing), and every new item needs
+ * a way to reach the manager, so its evaluation waits for the grant (U3 D5).
+ */
+export const PERMISSIONS_NOTE =
+  "Reads and manager messages stop when their grant is revoked. A literal write you approve remains authorised by that exact approval. boss:message is the manager channel's own scope: revoking it makes the channel one-way, so Day0 stops messaging you there and decisions wait on this dashboard, and new work waits until you grant it again.";
+
+/** The employee's grants, each with its revoke or re-grant, under what revoking does. Real mode only. */
+export function PermissionsCard({ agentId }: { agentId: Id<'agents'> }) {
   const scopes = useQuery(api.agents.permissionScopes, { agentId });
   const revokeScope = useMutation(api.agents.revokeScope);
   const grantScopes = useMutation(api.agents.grantScopes);
@@ -4137,8 +4747,7 @@ function PermissionsCard({ agentId }: { agentId: Id<'agents'> }) {
   return (
     <Card title="Permissions">
       <p className="text-[10px] text-[var(--color-muted)] mb-3 leading-relaxed">
-        Reads and manager messages stop when their grant is revoked. A literal write you approve
-        remains authorised by that exact approval.
+        {PERMISSIONS_NOTE}
       </p>
       {scopes === undefined ? (
         <p className="text-xs text-[var(--color-muted)]">loading permissions…</p>
@@ -4214,78 +4823,101 @@ export function MetricsCard({ metrics }: { metrics: AgentMetrics | undefined }) 
         ))}
       </dl>
       {metrics ? (
-        <p className="mt-3 pt-2 border-t border-[var(--color-border)] text-[10px] text-[var(--color-muted)] leading-relaxed">
-          {metrics.decisions.requested} asked on a chat surface - {metrics.decisions.partiallyApproved}{' '}
-          partial - {metrics.actions.autoApplied} actions automatic - {metrics.actions.held} held -{' '}
-          {metrics.actions.refused} refused
-          {metrics.actions.sessionRestores > 0
-            ? ` - ${metrics.actions.sessionRestores} browser ${metrics.actions.sessionRestores === 1 ? 'call' : 'calls'} replayed to sign in again`
-            : null}
-        </p>
+        <div className="mt-3 pt-2 border-t border-[var(--color-border)] text-[10px] text-[var(--color-muted)] leading-relaxed">
+          <p>
+            {metrics.decisions.requested} asked on a chat surface -{' '}
+            {metrics.decisions.partiallyApproved} partial - {metrics.actions.automatic.writes}{' '}
+            automatic {metrics.actions.automatic.writes === 1 ? 'change' : 'changes'} -{' '}
+            {metrics.actions.held} held - {metrics.actions.refused} refused
+            {metrics.actions.sessionRestores > 0
+              ? ` - ${metrics.actions.sessionRestores} browser ${metrics.actions.sessionRestores === 1 ? 'call' : 'calls'} replayed to sign in again`
+              : null}
+          </p>
+          <p>Also applied on their own: {readsAndMessages(metrics.actions.automatic)}.</p>
+        </div>
+      ) : null}
+      {metrics ? (
+        <div className="mt-3 pt-2 border-t border-[var(--color-border)]">
+          <h3 className="mb-1.5 text-[10px] font-normal uppercase tracking-wider text-[var(--color-muted)]">
+            Pilot figures
+          </h3>
+          <dl className="space-y-1.5">
+            {PILOT_FIGURES.map((figure) => (
+              <div
+                key={figure.label}
+                title={figure.definition}
+                className="flex items-start justify-between gap-3 text-xs"
+              >
+                <dt className="basis-1/2 shrink-0 text-[var(--color-muted)] leading-tight">
+                  {figure.label.toLowerCase()}
+                  <span className="block text-[10px]">{figure.unit}</span>
+                </dt>
+                <dd className="min-w-0 font-mono text-[var(--color-fg)] text-right break-words">
+                  {figure.value(metrics.pilot)}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </div>
       ) : null}
     </Card>
   );
 }
 
-/** A model call's report as the feed reads it: the stage, and how it ended. */
-function modelCallLabel(payload: unknown): string {
-  const report = (payload ?? {}) as {
-    stage?: unknown;
-    outcome?: unknown;
-    attempts?: unknown;
-    statusCode?: unknown;
-  };
-  const stage = typeof report.stage === 'string' ? ` · ${report.stage}` : '';
-  const outcome = typeof report.outcome === 'string' ? report.outcome : 'unknown';
-  const attempts =
-    outcome !== 'ok' && typeof report.attempts === 'number' && report.attempts > 1
-      ? ` after ${report.attempts} attempts`
-      : '';
-  const status = typeof report.statusCode === 'number' ? ` (HTTP ${report.statusCode})` : '';
-  return `model call${stage} · ${outcome}${attempts}${status}`;
+/**
+ * The work item an event is about, by its title, when the page lists it.
+ *
+ * Args:
+ *   event: The stored event.
+ *   titles: The employee's work item titles by id.
+ *
+ * Returns:
+ *   The title, or undefined for an event about no listed item.
+ */
+export function eventItemTitle(
+  event: Pick<Doc<'events'>, 'payload'>,
+  titles: ReadonlyMap<string, string>,
+): string | undefined {
+  const workItemId = (event.payload as { workItemId?: unknown } | null | undefined)?.workItemId;
+  return typeof workItemId === 'string' ? titles.get(workItemId) : undefined;
 }
 
-export function eventLabel(event: Pick<Doc<'events'>, 'type' | 'payload'>): string {
-  if (event.type === 'work.failed' && (event.payload as { stopped?: unknown })?.stopped === true) {
-    return 'work.failed · stopped';
-  }
-  if (event.type === 'work.model-call') return modelCallLabel(event.payload);
-  if (event.type === 'work.scope-judgement-unavailable') {
-    const cause = (event.payload as { cause?: unknown } | undefined)?.cause;
-    return `scope judgement unavailable${typeof cause === 'string' ? ` (${cause})` : ''} · the item waits and is judged again`;
-  }
-  if (event.type === 'charter.seeding-failed') {
-    const payload = (event.payload ?? {}) as { reason?: unknown; retrying?: unknown };
-    const reason = typeof payload.reason === 'string' ? `: ${payload.reason}` : '';
-    return `seeding the approved charter failed${reason}${payload.retrying === true ? ' · trying again' : ' · gave up'}`;
-  }
-  if (event.type === 'work.draft-resumed') {
-    const attempt = (event.payload as { attempt?: unknown } | undefined)?.attempt;
-    return `plan draft restarted after it died${typeof attempt === 'number' ? ` (restart ${attempt})` : ''}`;
-  }
-  if (event.type !== 'surface.charter-match-ambiguous') return event.type;
-  const candidateSlugs = (event.payload as { candidateSlugs?: unknown }).candidateSlugs;
-  if (!Array.isArray(candidateSlugs) || !candidateSlugs.every((slug) => typeof slug === 'string')) {
-    return event.type;
-  }
-  return `${event.type}: ${candidateSlugs.join(', ')}`;
-}
-
-function EventTicker({ events }: { events: Doc<'events'>[] }) {
+function EventTicker({
+  events,
+  titles,
+}: {
+  events: Doc<'events'>[];
+  titles: ReadonlyMap<string, string>;
+}) {
   const now = useNow();
+  const zone = useAgentZone();
   return (
     <Card title="Live event feed">
-      <ul className="space-y-1 text-[10px] font-mono max-h-72 overflow-y-auto">
-        {events.map((e) => (
-          <li key={e._id} className="flex gap-2 text-[var(--color-muted)]">
-            {/* Was a UTC clock beside the Slack panel's local one — the same
-                event stamped eight hours apart on one page. */}
-            <span className="shrink-0 tabular-nums" title={clockTimeWithSeconds(e.createdAt)}>
-              {relativeTime(e.createdAt, now)}
-            </span>
-            <span className="text-[var(--color-accent)]">{eventLabel(e)}</span>
-          </li>
-        ))}
+      {/* Focusable, so a keyboard reaches the events below the fold. */}
+      <ul
+        tabIndex={0}
+        aria-label="Live event feed, newest first"
+        className="space-y-1 text-[10px] font-mono max-h-72 overflow-y-auto"
+      >
+        {events.map((e) => {
+          const title = eventItemTitle(e, titles);
+          return (
+            <li key={e._id} className="flex gap-2 text-[var(--color-muted)]">
+              {/* Was a UTC clock beside the Slack panel's local one: the same
+                  event stamped eight hours apart on one page. */}
+              <span
+                className="shrink-0 tabular-nums"
+                title={clockTimeWithSeconds(e.createdAt, zone)}
+              >
+                {relativeTime(e.createdAt, now)}
+              </span>
+              <span className="min-w-0 break-words">
+                <span className="text-[var(--color-accent)]">{eventLabel(e)}</span>
+                {title ? <span className="text-[var(--color-fg)]"> · {title}</span> : null}
+              </span>
+            </li>
+          );
+        })}
       </ul>
     </Card>
   );
