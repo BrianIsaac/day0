@@ -242,6 +242,8 @@ function harness(options: HarnessOptions = {}): Harness {
     portFree: async (port: number): Promise<boolean> => !(options.busyPorts ?? []).includes(port),
     waitForBackend: async (): Promise<string | undefined> =>
       options.backendUp === false ? undefined : '2026-09-01',
+    // The disposable checkout is at 0.3.0, so its migrations name that release.
+    newestMigrationRelease: '0.3.0',
   };
   return { io, commands, output, directory };
 }
