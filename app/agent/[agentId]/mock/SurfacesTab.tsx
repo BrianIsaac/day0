@@ -259,7 +259,7 @@ export function UnnamedSystemsRow(props: UnnamedSystemsRowProps): React.ReactNod
   if (props.systems.length === 0) return null;
   return (
     <details className="rounded-lg border border-[var(--color-border)] p-3 text-xs">
-      <summary className="cursor-pointer text-[var(--color-muted)]">
+      <summary className="min-h-11 py-3 cursor-pointer text-[var(--color-muted)]">
         {`Documented in the company, not named in this role's charter (${props.systems.length})`}
       </summary>
       <p className="mt-2 text-[var(--color-muted)]">
@@ -300,7 +300,7 @@ export function UnnamedSystemsRow(props: UnnamedSystemsRowProps): React.ReactNod
               <button
                 onClick={(): void => props.onPropose(system._id)}
                 disabled={proposing}
-                className="rounded border px-2 py-1 text-xs disabled:opacity-50"
+                className="min-h-11 rounded border px-3 text-xs disabled:opacity-50"
               >
                 {proposing ? 'Proposing...' : 'Propose'}
               </button>
@@ -445,12 +445,12 @@ export function ProvisioningRow(props: ProvisioningRowProps): React.ReactNode {
             autoComplete="new-password"
             required
             placeholder="Paste the app configuration token"
-            className="min-w-48 flex-1 rounded border bg-transparent px-2 py-1"
+            className="min-h-11 min-w-48 flex-1 rounded border bg-transparent px-2"
           />
           <button
             type="submit"
             disabled={props.provisioning}
-            className="rounded border px-2 py-1 disabled:opacity-50"
+            className="min-h-11 rounded border px-3 disabled:opacity-50"
           >
             {props.provisioning ? 'Registering the app...' : PROVISION_LABEL}
           </button>
@@ -537,12 +537,12 @@ export function CredentialRow(props: CredentialRowProps): React.ReactNode {
             autoComplete="new-password"
             required
             placeholder="Enter credential"
-            className="min-w-48 flex-1 rounded border bg-transparent px-2 py-1"
+            className="min-h-11 min-w-48 flex-1 rounded border bg-transparent px-2"
           />
           <button
             type="submit"
             disabled={props.landing}
-            className="rounded border px-2 py-1 disabled:opacity-50"
+            className="min-h-11 rounded border px-3 disabled:opacity-50"
           >
             {props.landing ? 'Landing...' : (props.presentation.landingLabel ?? 'Land credential')}
           </button>
