@@ -98,7 +98,7 @@ import {
   EVALUATION_ATTEMPTS_SPENT,
   MAX_EVALUATION_ATTEMPTS,
 } from '../../../src/work/queue-order';
-import { LiveStatus, refusalText, useChange, type ChangeOutcome } from './live-status';
+import { LiveStatus, refusalText, returnFocus, useChange, type ChangeOutcome } from './live-status';
 import { agentZone, isTimeZone } from '../../../src/lib/zone';
 import { draftedWithoutLine, undeliveredDecisionReason } from '../../../src/work/manager-channel';
 import { managerFeedbackLabel, type ManagerFeedback } from '../../../src/work/manager-feedback';
@@ -131,7 +131,8 @@ interface Props {
 interface AuthoringAttempt {
   skillId: Id<'skills'>;
   name: string;
-  reason: string;
+  /** Why it did not finish; absent when the attempt registered the skill. */
+  reason?: string;
 }
 
 /**
@@ -241,13 +242,19 @@ export function AgentDashboard({ agentId }: Props) {
   // died is none of them: it is left on the row by a run that never came back,
   // so it is exactly the case the verdict is describing and must not hide it.
   const authoringFailure =
-    lastAttempt &&
+    lastAttempt?.reason !== undefined &&
     attemptedSkill &&
     !holdsLiveAuthoringClaim(attemptedSkill, now) &&
     attemptedSkill.state !== 'registered' &&
     attemptedSkill.state !== 'rejected'
       ? `${lastAttempt.name}: ${lastAttempt.reason}`
       : null;
+  // A registration the manager started is said once the row says it too.
+  const authoringRegistered =
+    lastAttempt && lastAttempt.reason === undefined && attemptedSkill?.state === 'registered'
+      ? lastAttempt.name
+      : null;
+  const skillsCard = useRef<HTMLElement>(null);
 
   // Sync local mode with server state. Two cases:
   //   1. Reload mid-session: route back into the room they were in
@@ -355,6 +362,7 @@ export function AgentDashboard({ agentId }: Props) {
               skills={proposedSkills ?? []}
               surfaces={surfaces}
               onAuthoringAttempt={setLastAttempt}
+              fallback={skillsCard}
             />
 
             <WorkQueue
@@ -377,8 +385,10 @@ export function AgentDashboard({ agentId }: Props) {
               skills={registeredSkills ?? []}
               unregistered={[...(unverifiedSkills ?? []), ...(failedSkills ?? [])]}
               authoringFailure={authoringFailure}
+              registered={authoringRegistered}
               onAuthoringAttempt={setLastAttempt}
               surfaceMode={surfaceConfig?.mode}
+              focusRef={skillsCard}
             />
             {surfaceConfig?.mode === 'real' ? (
               <Card title={keptCorrectionsTitle(corrections)}>
@@ -1938,21 +1948,48 @@ export function ProposedSkillsPanel({
   skills,
   surfaces,
   onAuthoringAttempt,
+  fallback,
 }: {
   skills: Doc<'skills'>[];
   /** The agent's surfaces in real mode; a skill targeting one that is not
    *  connected cannot be approved yet, and the button says why. */
   surfaces: SurfaceRecord[];
-  /** Approving moves the row out of this panel, so its verdict has to be
-   *  reported somewhere that survives the unmount. `null` opens an attempt and
-   *  retires whatever the last one said. */
+  /** Approving moves the row out of this panel, so the authoring's verdict has
+   *  to be reported somewhere that survives the unmount. `null` opens an
+   *  attempt and retires whatever the last one said. */
   onAuthoringAttempt: (attempt: AuthoringAttempt | null) => void;
+  /** Where focus goes when the decided row leaves the panel: the Skills card it moves to. */
+  fallback?: React.RefObject<HTMLElement | null>;
 }) {
   const approve = useMutation(api.skills.approve);
   const reject = useMutation(api.skills.reject);
   const author = useAction(api.skillActions.authorAndRegisterSkill);
   const now = useNow();
-  if (skills.length === 0) return null;
+  const change = useChange(fallback);
+
+  // The approval is the manager's decision and is said here; the authoring it
+  // starts runs for minutes and files its verdict with the Skills card.
+  function onApprove(skill: Doc<'skills'>): void {
+    const file = (reason?: string): void =>
+      onAuthoringAttempt({ skillId: skill._id, name: skill.name, ...(reason ? { reason } : {}) });
+    change.run(() => approve({ skillId: skill._id }), {
+      done: `Approved ${skill.name}: the employee is authoring it now, and the Skills card says when it is callable.`,
+      refused: `${skill.name} was not approved.`,
+      after: () => {
+        onAuthoringAttempt(null);
+        // Discarded because both outcomes are handled here and filed as the
+        // attempt the Skills card shows in its live region.
+        void author({ skillId: skill._id }).then(
+          (result) => file(result.ok ? undefined : (result.reason ?? 'authoring did not finish')),
+          (err: unknown) => file(plainErrorMessage(errorMessage(err))),
+        );
+      },
+    });
+  }
+
+  // The panel keeps its live region when the last row leaves it, so the
+  // outcome of that decision is still said.
+  if (skills.length === 0) return <LiveStatus outcome={change.outcome} />;
   return (
     <Card title="Proposed skills · awaiting your call" tone="warn">
       <div className="space-y-3">
@@ -1964,8 +2001,8 @@ export function ProposedSkillsPanel({
           );
           return (
             <div key={s._id} className="border border-[var(--color-border)] rounded-lg p-3 text-sm">
-              <div className="flex items-center justify-between mb-1">
-                <span className="font-medium text-[var(--color-fg)]">{s.name}</span>
+              <div className="flex flex-wrap items-center justify-between gap-x-2 mb-1">
+                <span className="font-medium text-[var(--color-fg)] break-words">{s.name}</span>
                 <span className="text-[10px] text-[var(--color-muted)]">
                   requires: {(s.requiredScopes ?? []).join(', ')}
                 </span>
@@ -1981,35 +2018,27 @@ export function ProposedSkillsPanel({
                   </a>
                 </p>
               ) : null}
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <button
-                  disabled={Boolean(refusal)}
+                  type="button"
+                  disabled={Boolean(refusal) || change.busy}
                   title={refusal}
-                  onClick={() => {
-                    onAuthoringAttempt(null);
-                    const file = (reason: string): void =>
-                      onAuthoringAttempt({ skillId: s._id, name: s.name, reason });
-                    // Discarded because each step's rejection is handled here and
-                    // filed as the attempt on the row. The approval's refusals name
-                    // the approve themselves (`cannot approve "<skill>": ...`).
-                    void approve({ skillId: s._id }).then(
-                      () =>
-                        author({ skillId: s._id }).then(
-                          (result) => {
-                            if (!result.ok) file(result.reason ?? 'authoring did not finish');
-                          },
-                          (err: unknown) => file(plainErrorMessage(errorMessage(err))),
-                        ),
-                      (err: unknown) => file(plainErrorMessage(errorMessage(err))),
-                    );
-                  }}
-                  className="px-3 py-1.5 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] hover:bg-[var(--color-ok)]/30 text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-[var(--color-ok)]/20"
+                  onClick={() => onApprove(s)}
+                  className="min-h-11 px-3 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] hover:bg-[var(--color-ok)]/30 text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-[var(--color-ok)]/20"
                 >
                   Approve · author and verify
                 </button>
                 <button
-                  onClick={() => reject({ skillId: s._id })}
-                  className="px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:border-[var(--color-danger)] text-xs"
+                  type="button"
+                  disabled={change.busy}
+                  aria-label={`Reject ${s.name}`}
+                  onClick={() =>
+                    change.run(() => reject({ skillId: s._id }), {
+                      done: `Rejected ${s.name}: the employee will not author it.`,
+                      refused: `${s.name} was not rejected.`,
+                    })
+                  }
+                  className="min-h-11 px-3 rounded-md border border-[var(--color-border)] hover:border-[var(--color-danger)] text-xs disabled:opacity-50"
                 >
                   Reject
                 </button>
@@ -2017,6 +2046,7 @@ export function ProposedSkillsPanel({
             </div>
           );
         })}
+        <LiveStatus outcome={change.outcome} />
       </div>
     </Card>
   );
@@ -2050,8 +2080,10 @@ export function RegisteredSkillsPanel({
   skills,
   unregistered,
   authoringFailure,
+  registered = null,
   onAuthoringAttempt,
   surfaceMode,
+  focusRef,
 }: {
   skills: Doc<'skills'>[];
   /**
@@ -2068,24 +2100,46 @@ export function RegisteredSkillsPanel({
    * it from sitting above a row that says something else.
    */
   authoringFailure: string | null;
+  /** The skill the manager's last attempt registered, said once its row is registered. */
+  registered?: string | null;
   /** Retries report here too, so the notice is never older than the last try. */
   onAuthoringAttempt: (attempt: AuthoringAttempt | null) => void;
   /** Real mode lists the inputs the executor binds for a skill that predates them. */
   surfaceMode?: 'mock' | 'real';
+  /** Makes the card the place focus goes when a decided skill leaves the proposed panel. */
+  focusRef?: React.Ref<HTMLElement>;
 }) {
   const author = useAction(api.skillActions.authorAndRegisterSkill);
   const requestRevision = useMutation(api.skills.requestRevision);
   const [retrying, setRetrying] = useState<Id<'skills'> | null>(null);
+  const [returnTo, setReturnTo] = useState<HTMLElement | null>(null);
   const now = useNow();
+  const describedBy = useId();
 
-  async function onRetry(skillId: Id<'skills'>, name: string) {
+  // A retry or a revision authors for minutes, so its verdict is filed as the
+  // attempt (said in the card's live region) rather than awaited by a hook.
+  async function reauthor(
+    skillId: Id<'skills'>,
+    name: string,
+    revise: boolean,
+    origin: HTMLElement,
+  ): Promise<void> {
     setRetrying(skillId);
+    setReturnTo(origin);
     onAuthoringAttempt(null);
     try {
+      if (revise) await requestRevision({ skillId });
       const result = await author({ skillId });
-      if (!result.ok) {
-        onAuthoringAttempt({ skillId, name, reason: result.reason ?? 'retry did not succeed' });
-      }
+      onAuthoringAttempt(
+        result.ok
+          ? { skillId, name }
+          : {
+              skillId,
+              name,
+              reason:
+                result.reason ?? (revise ? 'revision did not succeed' : 'retry did not succeed'),
+            },
+      );
     } catch (err) {
       onAuthoringAttempt({ skillId, name, reason: plainErrorMessage(errorMessage(err)) });
     } finally {
@@ -2093,33 +2147,28 @@ export function RegisteredSkillsPanel({
     }
   }
 
-  async function onRevise(skillId: Id<'skills'>, name: string) {
-    setRetrying(skillId);
-    onAuthoringAttempt(null);
-    try {
-      await requestRevision({ skillId });
-      const result = await author({ skillId });
-      if (!result.ok) {
-        onAuthoringAttempt({
-          skillId,
-          name,
-          reason: result.reason ?? 'revision did not succeed',
-        });
-      }
-    } catch (err) {
-      onAuthoringAttempt({ skillId, name, reason: plainErrorMessage(errorMessage(err)) });
-    } finally {
-      setRetrying(null);
-    }
-  }
+  // The button is disabled while its run holds it, so focus comes back to it
+  // once it is enabled again, unless the manager has moved on.
+  useEffect(() => {
+    if (retrying !== null || returnTo === null) return;
+    returnFocus(returnTo, null);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the focus return happens once per settled run
+    setReturnTo(null);
+  }, [retrying, returnTo]);
 
   return (
-    <Card title={`Skills · ${skills.length} registered`}>
-      {authoringFailure ? (
-        <p className="mb-3 p-2 rounded-md bg-[var(--color-danger)]/10 border border-[var(--color-danger)]/30 text-xs text-[var(--color-danger)]">
-          Authoring did not finish: {authoringFailure}
-        </p>
-      ) : null}
+    <Card title={`Skills · ${skills.length} registered`} focusRef={focusRef}>
+      <div role="status" aria-live="polite" aria-atomic="true">
+        {authoringFailure ? (
+          <p className="mb-3 p-2 rounded-md bg-[var(--color-danger)]/10 border border-[var(--color-danger)]/30 text-xs text-[var(--color-danger)]">
+            Authoring did not finish: {authoringFailure}
+          </p>
+        ) : registered ? (
+          <p className="mb-3 text-xs text-[var(--color-ok)]">
+            {registered} is registered: it passed the check and is callable.
+          </p>
+        ) : null}
+      </div>
       {skills.length === 0 ? (
         <p className="text-xs text-[var(--color-muted)]">none yet</p>
       ) : (
@@ -2144,10 +2193,13 @@ export function RegisteredSkillsPanel({
               </div>
               {s.sourceType === 'agent-authored' ? (
                 <button
-                  onClick={() => onRevise(s._id, s.name)}
+                  type="button"
+                  onClick={(event) => void reauthor(s._id, s.name, true, event.currentTarget)}
                   disabled={retrying === s._id}
-                  title="Discard this body and author the skill again, then verify it - open only before its first execution"
-                  className="px-2.5 py-1 rounded-md border border-[var(--color-border)] hover:border-[var(--color-warn)] text-xs disabled:opacity-50 shrink-0"
+                  title={REVISE_HINT}
+                  aria-label={`Revise ${s.name}`}
+                  aria-describedby={`${describedBy}-revise`}
+                  className="min-h-11 px-3 rounded-md border border-[var(--color-border)] hover:border-[var(--color-warn)] text-xs disabled:opacity-50 shrink-0"
                 >
                   {retrying === s._id ? 'Revising…' : 'Revise'}
                 </button>
@@ -2156,6 +2208,11 @@ export function RegisteredSkillsPanel({
           ))}
         </ul>
       )}
+      {skills.some((skill) => skill.sourceType === 'agent-authored') ? (
+        <p id={`${describedBy}-revise`} className="mt-2 text-[10px] text-[var(--color-muted)]">
+          {REVISE_HINT}
+        </p>
+      ) : null}
 
       {unregistered.length > 0 ? (
         <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
@@ -2189,17 +2246,22 @@ export function RegisteredSkillsPanel({
                       }
                     />
                     <SkillInputs body={s.body || s.refusedBody || ''} />
+                    <p
+                      id={`${describedBy}-${s._id}`}
+                      className="text-[10px] text-[var(--color-muted)]"
+                    >
+                      {retryVerifiesSavedDraft(s) ? RETRY_CHECKS_HINT : RETRY_AUTHORS_HINT}
+                    </p>
                     <RefusedDraftDetails skill={s} />
                   </div>
                   <button
-                    onClick={() => onRetry(s._id, s.name)}
+                    type="button"
+                    onClick={(event) => void reauthor(s._id, s.name, false, event.currentTarget)}
                     disabled={retrying === s._id}
-                    title={
-                      retryVerifiesSavedDraft(s)
-                        ? 'Run the body and smoke test this skill already has through the sandbox check - no new authoring call'
-                        : 'Author this skill again, with the reason it stopped, then verify it'
-                    }
-                    className="px-2.5 py-1 rounded-md bg-[var(--color-warn)]/20 text-[var(--color-warn)] text-xs font-medium hover:bg-[var(--color-warn)]/30 disabled:opacity-50 shrink-0"
+                    title={retryVerifiesSavedDraft(s) ? RETRY_CHECKS_HINT : RETRY_AUTHORS_HINT}
+                    aria-label={`Retry ${s.name}`}
+                    aria-describedby={`${describedBy}-${s._id}`}
+                    className="min-h-11 px-3 rounded-md bg-[var(--color-warn)]/20 text-[var(--color-warn)] text-xs font-medium hover:bg-[var(--color-warn)]/30 disabled:opacity-50 shrink-0"
                   >
                     {retrying === s._id ? 'Retrying…' : 'Retry'}
                   </button>
@@ -2229,6 +2291,15 @@ export function RegisteredSkillsPanel({
     </Card>
   );
 }
+
+/** What Revise does, beside the registered list and for its hover. */
+const REVISE_HINT =
+  'Discard this body and author the skill again, then verify it - open only before its first execution, while the item it was proposed for still waits for it';
+/** What Retry does for a row whose draft is kept. */
+const RETRY_CHECKS_HINT =
+  'Run the body and smoke test this skill already has through the sandbox check - no new authoring call';
+/** What Retry does for every other row. */
+const RETRY_AUTHORS_HINT = 'Author this skill again, with the reason it stopped, then verify it';
 
 /**
  * What an unregistered skill's row says under its name.

@@ -1886,24 +1886,125 @@ describe('what Retry does to an unregistered skill', (): void => {
     ]);
   });
 
-  it('files a refused Approve in the words written for a person, the transport envelope stripped', async (): Promise<void> => {
+  it("says a refused Approve in the panel's live region in the words written for a person, and files no authoring attempt", async (): Promise<void> => {
     const proposed = { ...base, state: 'proposed', requiredScopes: [] } as unknown as Doc<'skills'>;
-    const attempts = await clickAndRecord(
-      'Approve · author and verify',
-      'skills:approve',
+    backend.refusals = {
+      'skills:approve': `[CONVEX M(skills:approve)] [Request ID: 1] Server Error\nUncaught Error: cannot approve "refresh-the-tile": it is approved, not proposed\n    at handler (../convex/skills.ts:1:1)`,
+    };
+    const attempts: unknown[] = [];
+    const view = mount(
+      <ProposedSkillsPanel
+        skills={[proposed]}
+        surfaces={[]}
+        onAuthoringAttempt={(attempt) => void attempts.push(attempt)}
+      />,
+    );
+    await press(view.container, 'Approve · author and verify');
+
+    expect(said(view.container)).toEqual([
       'cannot approve "refresh-the-tile": it is approved, not proposed',
-      (record) => (
-        <ProposedSkillsPanel skills={[proposed]} surfaces={[]} onAuthoringAttempt={record} />
+    ]);
+    expect(attempts).toEqual([]);
+    expect(focusedName()).toBe('Approve · author and verify');
+    view.unmount();
+    backend.refusals = {};
+  });
+
+  it('says an approval, then files what the authoring it started came to', async (): Promise<void> => {
+    const proposed = { ...base, state: 'proposed', requiredScopes: [] } as unknown as Doc<'skills'>;
+    backend.results = { 'skillActions:authorAndRegisterSkill': { ok: true } };
+    const attempts: unknown[] = [];
+    const view = mount(
+      <ProposedSkillsPanel
+        skills={[proposed]}
+        surfaces={[]}
+        onAuthoringAttempt={(attempt) => void attempts.push(attempt)}
+      />,
+    );
+    await press(view.container, 'Approve · author and verify');
+
+    expect(said(view.container)).toEqual([
+      'Approved refresh-the-tile: the employee is authoring it now, and the Skills card says when it is callable.',
+    ]);
+    expect(attempts).toEqual([null, { skillId: 'skill-1', name: 'refresh-the-tile' }]);
+    view.unmount();
+    backend.results = {};
+  });
+
+  it('rejects a proposed skill with an outcome said in the panel (the wave 4 Reject ruling)', async (): Promise<void> => {
+    const proposed = { ...base, state: 'proposed', requiredScopes: [] } as unknown as Doc<'skills'>;
+    backend.refusals = {
+      'skills:reject': `[CONVEX M(skills:reject)] [Request ID: 1] Server Error\nUncaught Error: cannot reject "refresh-the-tile": it is registered\n    at handler (../convex/skills.ts:1:1)`,
+    };
+    const refused = mount(
+      <ProposedSkillsPanel skills={[proposed]} surfaces={[]} onAuthoringAttempt={noop} />,
+    );
+    await press(refused.container, 'Reject refresh-the-tile');
+    expect(said(refused.container)).toEqual(['cannot reject "refresh-the-tile": it is registered']);
+    expect(focusedName()).toBe('Reject refresh-the-tile');
+    refused.unmount();
+    backend.refusals = {};
+
+    const rejected = mount(
+      <ProposedSkillsPanel skills={[proposed]} surfaces={[]} onAuthoringAttempt={noop} />,
+    );
+    await press(rejected.container, 'Reject refresh-the-tile');
+    expect(said(rejected.container)).toEqual([
+      'Rejected refresh-the-tile: the employee will not author it.',
+    ]);
+    // The row leaves when the query answers; the panel keeps its live region.
+    act((): void =>
+      rejected.root.render(
+        <ProposedSkillsPanel skills={[]} surfaces={[]} onAuthoringAttempt={noop} />,
       ),
     );
-    expect(attempts).toEqual([
-      null,
-      {
-        skillId: 'skill-1',
-        name: 'refresh-the-tile',
-        reason: 'cannot approve "refresh-the-tile": it is approved, not proposed',
-      },
+    expect(said(rejected.container)).toEqual([
+      'Rejected refresh-the-tile: the employee will not author it.',
     ]);
+    rejected.unmount();
+  });
+
+  it('files a registered Retry as the attempt and gives focus back to Retry once its run lets go', async (): Promise<void> => {
+    backend.results = { 'skillActions:authorAndRegisterSkill': { ok: true } };
+    const attempts: unknown[] = [];
+    const view = mount(
+      <RegisteredSkillsPanel
+        skills={[]}
+        unregistered={[refused]}
+        authoringFailure={null}
+        onAuthoringAttempt={(attempt) => void attempts.push(attempt)}
+      />,
+    );
+    await press(view.container, 'Retry refresh-the-tile');
+    expect(attempts).toEqual([null, { skillId: 'skill-2', name: 'refresh-the-tile' }]);
+    expect(focusedName()).toBe('Retry refresh-the-tile');
+    view.unmount();
+    backend.results = {};
+  });
+
+  it('says a registration and an authoring failure in the Skills card live region, and gives each control a 44 px target', (): void => {
+    const done = renderToStaticMarkup(
+      <RegisteredSkillsPanel
+        skills={[]}
+        unregistered={[refused]}
+        authoringFailure={null}
+        registered="refresh-the-tile"
+        onAuthoringAttempt={noop}
+      />,
+    );
+    expect(done).toMatch(
+      /<div role="status" aria-live="polite" aria-atomic="true"><p[^>]*>refresh-the-tile is registered: it passed the check and is callable\.<\/p><\/div>/,
+    );
+    expect(done).toMatch(/<button[^>]*class="min-h-11 [^"]*"[^>]*>Retry<\/button>/);
+    const failed = renderToStaticMarkup(
+      <RegisteredSkillsPanel
+        skills={[]}
+        unregistered={[]}
+        authoringFailure="refresh-the-tile: the sandbox component is not running"
+        onAuthoringAttempt={noop}
+      />,
+    );
+    expect(failed).toMatch(/<div role="status"[^>]*><p[^>]*>Authoring did not finish: /);
   });
 
   it('offers a refused skill a fresh authoring call', (): void => {
