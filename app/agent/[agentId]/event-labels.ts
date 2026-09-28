@@ -227,8 +227,7 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'surface.expired': 'access ended: the card needs renewing',
   'surface.access-set': (payload) => {
     const days = counted(payload.days, 'day');
-    if (payload.by === 'upgrade')
-      return `access clock restarted by the upgrade${days ? `: ${days}` : ''}`;
+    if (payload.by === 'upgrade') return `access set by the upgrade${days ? `: ${days}` : ''}`;
     if (payload.by === 'approval') return `access started at approval${days ? `: ${days}` : ''}`;
     return `${payload.renewed === true ? 'access renewed' : 'access length set'} by the manager${days ? `: ${days}` : ''}`;
   },

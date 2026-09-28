@@ -99,6 +99,12 @@ describe('the live feed labels', (): void => {
         payload: { surfaceId: 's1', by: 'manager', days: 30, expiresAt: 1, renewed: true },
       }),
     ).toBe('access renewed by the manager: 30 days');
+    expect(
+      eventLabel({
+        type: 'surface.access-set',
+        payload: { surfaceId: 's1', by: 'upgrade', days: 90, expiresAt: 1 },
+      }),
+    ).toBe('access set by the upgrade: 90 days');
   });
 
   it('says whether a failed run stopped, and names the slugs of an ambiguous charter match', (): void => {
