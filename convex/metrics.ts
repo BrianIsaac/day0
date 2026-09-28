@@ -399,6 +399,19 @@ function decisionTotals(
       pending.set(key, [...(pending.get(key) ?? []), event]);
       continue;
     }
+    if (isEventOf(event, 'work.plan-redrafting')) {
+      // A re-draft withdraws the plan ask that was open: the manager is not
+      // asked to decide it, so it is neither a request nor the start of the
+      // wait the re-drafted plan's ask begins (wave 3.5 review M21).
+      const key = `${asString(payload?.workItemId)}:plan`;
+      for (const withdrawn of pending.get(key) ?? []) {
+        totals.requested -= 1;
+        const withdrawnId = asString(asRecord(withdrawn.payload)?.decisionId);
+        if (withdrawnId) requestIds.delete(withdrawnId);
+      }
+      pending.delete(key);
+      continue;
+    }
     const result = decisionResult(event);
     if (!result) continue;
     countDecision(totals, result.outcome, result.partial, result.cancelled);
