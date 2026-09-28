@@ -1738,7 +1738,8 @@ function BoundaryList({ label, items }: { label: string; items: string[] }) {
   );
 }
 
-function ProposedSkillsPanel({
+/** The skills the agent proposed and the manager has not decided, each with Approve and Reject. */
+export function ProposedSkillsPanel({
   skills,
   surfaces,
   onAuthoringAttempt,
@@ -1790,26 +1791,23 @@ function ProposedSkillsPanel({
                   disabled={Boolean(refusal)}
                   title={refusal}
                   onClick={() => {
-                    // The chain ends in its own catch, which files the attempt on the row.
                     onAuthoringAttempt(null);
-                    void approve({ skillId: s._id })
-                      .then(() => author({ skillId: s._id }))
-                      .then((result) => {
-                        if (!result.ok) {
-                          onAuthoringAttempt({
-                            skillId: s._id,
-                            name: s.name,
-                            reason: result.reason ?? 'authoring did not finish',
-                          });
-                        }
-                      })
-                      .catch((err: unknown) => {
-                        onAuthoringAttempt({
-                          skillId: s._id,
-                          name: s.name,
-                          reason: errorMessage(err),
-                        });
-                      });
+                    const file = (reason: string): void =>
+                      onAuthoringAttempt({ skillId: s._id, name: s.name, reason });
+                    // Discarded because each step's rejection is handled here and
+                    // filed as the attempt on the row: a refused approval says so,
+                    // an authoring failure reads as one.
+                    void approve({ skillId: s._id }).then(
+                      () =>
+                        author({ skillId: s._id }).then(
+                          (result) => {
+                            if (!result.ok) file(result.reason ?? 'authoring did not finish');
+                          },
+                          (err: unknown) => file(plainErrorMessage(errorMessage(err))),
+                        ),
+                      (err: unknown) =>
+                        file(`not approved: ${plainErrorMessage(errorMessage(err))}`),
+                    );
                   }}
                   className="px-3 py-1.5 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] hover:bg-[var(--color-ok)]/30 text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-[var(--color-ok)]/20"
                 >
@@ -1895,7 +1893,7 @@ export function RegisteredSkillsPanel({
         onAuthoringAttempt({ skillId, name, reason: result.reason ?? 'retry did not succeed' });
       }
     } catch (err) {
-      onAuthoringAttempt({ skillId, name, reason: errorMessage(err) });
+      onAuthoringAttempt({ skillId, name, reason: plainErrorMessage(errorMessage(err)) });
     } finally {
       setRetrying(null);
     }
@@ -1915,7 +1913,7 @@ export function RegisteredSkillsPanel({
         });
       }
     } catch (err) {
-      onAuthoringAttempt({ skillId, name, reason: errorMessage(err) });
+      onAuthoringAttempt({ skillId, name, reason: plainErrorMessage(errorMessage(err)) });
     } finally {
       setRetrying(null);
     }

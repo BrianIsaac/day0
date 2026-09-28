@@ -52,6 +52,7 @@ import {
   RefusedBlockedSteps,
   RefusedClosingDetails,
   RefusedDraftDetails,
+  ProposedSkillsPanel,
   RegisteredSkillsPanel,
   WithheldActionsDetails,
   retryVerifiesSavedDraft,
@@ -1743,6 +1744,42 @@ describe('the refused skill draft', (): void => {
   });
 });
 
+/**
+ * Render a panel in a document, have the named backend call refuse with the
+ * transport's envelope around a message, click the named button and return the
+ * attempts the panel filed.
+ */
+async function clickAndRecord(
+  label: string,
+  refusedCall: string,
+  message: string,
+  panel: (record: (attempt: unknown) => void) => React.ReactNode,
+): Promise<unknown[]> {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  backend.refusals = {
+    [refusedCall]: `[CONVEX A(${refusedCall})] [Request ID: 1] Server Error\nUncaught Error: ${message}\n    at handler (../convex/x.ts:1:1)`,
+  };
+  const attempts: unknown[] = [];
+  const container = document.createElement('div');
+  document.body.append(container);
+  const root = createRoot(container);
+  try {
+    act((): void => root.render(panel((attempt): void => void attempts.push(attempt))));
+    const button = [...container.querySelectorAll('button')].find(
+      (candidate) => candidate.textContent === label,
+    );
+    expect(button).toBeDefined();
+    await act(async (): Promise<void> => {
+      button?.click();
+    });
+    return attempts;
+  } finally {
+    act((): void => root.unmount());
+    container.remove();
+    backend.refusals = {};
+  }
+}
+
 describe('what Retry does to an unregistered skill', (): void => {
   const noop = (): void => undefined;
   const base = {
@@ -1786,6 +1823,50 @@ describe('what Retry does to an unregistered skill', (): void => {
     const markup = panel([parked]);
     expect(markup).toContain('title="Run the body and smoke test this skill already has');
     expect(markup).not.toContain('Author this skill again');
+  });
+
+  it('files a refused Retry as the attempt, in the words written for a person', async (): Promise<void> => {
+    const attempts = await clickAndRecord(
+      'Retry',
+      'skillActions:authorAndRegisterSkill',
+      'The sandbox component is not running.',
+      (record) => (
+        <RegisteredSkillsPanel
+          skills={[]}
+          unregistered={[refused]}
+          authoringFailure={null}
+          onAuthoringAttempt={record}
+        />
+      ),
+    );
+    expect(attempts).toEqual([
+      null,
+      {
+        skillId: 'skill-2',
+        name: 'refresh-the-tile',
+        reason: 'The sandbox component is not running.',
+      },
+    ]);
+  });
+
+  it('files a refused Approve as not approved, in the words written for a person', async (): Promise<void> => {
+    const proposed = { ...base, state: 'proposed', requiredScopes: [] } as unknown as Doc<'skills'>;
+    const attempts = await clickAndRecord(
+      'Approve · author and verify',
+      'skills:approve',
+      'skill state is approved; expected proposed',
+      (record) => (
+        <ProposedSkillsPanel skills={[proposed]} surfaces={[]} onAuthoringAttempt={record} />
+      ),
+    );
+    expect(attempts).toEqual([
+      null,
+      {
+        skillId: 'skill-1',
+        name: 'refresh-the-tile',
+        reason: 'not approved: skill state is approved; expected proposed',
+      },
+    ]);
   });
 
   it('offers a refused skill a fresh authoring call', (): void => {
