@@ -1822,19 +1822,24 @@ export function AmendCharterPanel({
                 htmlFor={`${ruleId}-system`}
                 className="basis-full text-[10px] text-[var(--color-muted)]"
               >
-                Add a system: its name, its kind and where it is used
+                System name
               </label>
               <input
                 id={`${ruleId}-system`}
                 className={AMEND_INPUT}
-                aria-label="System name"
                 value={system.name}
                 disabled={busy}
                 onChange={(e) => setSystem({ ...system, name: e.target.value })}
               />
+              <label
+                htmlFor={`${ruleId}-system-kind`}
+                className="basis-full text-[10px] text-[var(--color-muted)]"
+              >
+                Its kind
+              </label>
               <select
+                id={`${ruleId}-system-kind`}
                 className={AMEND_INPUT}
-                aria-label="System kind"
                 disabled={busy}
                 value={system.class}
                 onChange={(e) => setSystem({ ...system, class: e.target.value as SystemClass })}
@@ -1845,9 +1850,15 @@ export function AmendCharterPanel({
                   </option>
                 ))}
               </select>
+              <label
+                htmlFor={`${ruleId}-system-where`}
+                className="basis-full text-[10px] text-[var(--color-muted)]"
+              >
+                Where it is used, in your words
+              </label>
               <input
+                id={`${ruleId}-system-where`}
                 className={AMEND_INPUT}
-                aria-label="Where it is used, in your words"
                 value={system.whereMentioned}
                 disabled={busy}
                 onChange={(e) => setSystem({ ...system, whereMentioned: e.target.value })}
@@ -3956,7 +3967,6 @@ export function PlanApprovalForm({
             value={note}
             disabled={busy}
             onChange={(event) => setNote(event.target.value)}
-            aria-label="answer to the planner's note"
             className="min-h-11 w-full px-2 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs"
           />
         </div>
@@ -3974,7 +3984,6 @@ export function PlanApprovalForm({
           value={cancelReason}
           disabled={busy}
           onChange={(event) => setCancelReason(event.target.value)}
-          aria-label="reason for cancelling the plan"
           className="min-h-11 w-full px-2 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs"
         />
       </div>
@@ -4866,7 +4875,6 @@ export function WorkItemCard({
                 onChange={(event) =>
                   setTypedRetryNote({ text: event.target.value, token: noteToken })
                 }
-                aria-label="note for the retry"
                 className="min-h-11 w-full mb-1.5 px-2 rounded-md border border-[var(--color-border)] bg-transparent text-xs"
               />
             </>

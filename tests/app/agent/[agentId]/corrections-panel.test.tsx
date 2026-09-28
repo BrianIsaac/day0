@@ -202,7 +202,11 @@ describe('cancelling a plan with a reason, and retrying it', (): void => {
     const markup = renderToStaticMarkup(
       <PlanApprovalForm riskNotes="" questions={[]} onApprove={noop} onCancel={noop} />,
     );
-    expect(markup).toContain('aria-label="reason for cancelling the plan"');
+    // The field is named by its visible label, which an aria-label would override.
+    expect(markup).toMatch(
+      /<label for="[^"]*-cancel"[^>]*>Reason, if you cancel \(optional\)<\/label>/,
+    );
+    expect(markup).not.toContain('aria-label="reason for cancelling the plan"');
     expect(markup).toContain('>Cancel<');
     const workItemId = 'w5' as Id<'workItems'>;
     expect(cancelPlanRequest(workItemId, 'Comment instead.')).toEqual({
@@ -253,7 +257,10 @@ describe('cancelling a plan with a reason, and retrying it', (): void => {
     expect(markup).toContain('>Retry<');
     expect(markup).toContain('the plan comes back to you before anything runs');
     expect(markup).not.toContain('even while autonomous actions are on');
-    expect(markup).toContain('aria-label="note for the retry"');
+    expect(markup).toMatch(
+      /<label for="retry-note-[^"]*"[^>]*>Note for the new plan \(optional\)<\/label>/,
+    );
+    expect(markup).not.toContain('aria-label="note for the retry"');
     expect(markup).toContain('Plan cancel reason');
   });
 

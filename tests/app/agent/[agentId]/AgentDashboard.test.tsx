@@ -292,7 +292,10 @@ describe('a question at plan approval', (): void => {
     expect(markup).toContain('aria-label="answer: Who owns the Looker pipeline tile."');
     expect(markup).toContain('Planner');
     expect(markup).toContain('which figure to enter if the deck and the sheet disagree');
-    expect(markup).toContain('aria-label="answer to the planner');
+    expect(markup).toMatch(
+      /<label for="[^"]*-note"[^>]*>Your answer to the note, for this run \(optional\)<\/label>/,
+    );
+    expect(markup).not.toContain('aria-label="answer to the planner');
     expect(markup).toContain('Approve plan with answers');
     expect(markup).toContain('Cancel');
   });
@@ -1057,7 +1060,7 @@ describe('sending a finished item back', (): void => {
 
   it('offers a finished item the note and Retry only, keeping the reconciliation checklist for a note in progress', (): void => {
     const markup = render(item('completed'));
-    expect(markup).toContain('note for the retry');
+    expect(markup).toContain('Note for the retry: say what to change');
     expect(markup).toContain('Retry with a note sends this finished work back');
     expect(markup).not.toContain('Provider reconciliation required');
     expect(markup).not.toContain(
