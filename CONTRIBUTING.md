@@ -57,6 +57,10 @@ The company bed's tools are maintainers' tooling rather than product commands, s
 
 `PLAYWRIGHT_ALLOWED_ORIGINS` in `.env.local` is the list of origins the browser component (`--profile browser`) may open, separated by `;`; the default is the demo tile and the app on this host.
 
+## The code standard
+
+[`docs/standards/typescript.md`](docs/standards/typescript.md) is the code document: module boundaries, naming, types, error handling, promises, tests, docstrings and comments, each rule a reviewer can check on a diff, and a checklist at the end. This file is the process document; where the two overlap they agree, and the standard is the more specific. A review names the section of the standard a change does not meet.
+
 ## The gate
 
 Every commit passes four commands, in this order, and the CI workflow in `.github/workflows/gate.yml` runs the same four on every push and pull request:

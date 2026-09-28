@@ -1,4 +1,6 @@
 import { execFileSync, spawnSync } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
@@ -50,6 +52,21 @@ describe('.gitignore', (): void => {
       ]) {
         expect(ignored(path)).toBe(false);
       }
+    },
+  );
+
+  // N27: the engineering standard is public so CONTRIBUTING's pointer resolves;
+  // the rest of docs/ stays out (N21).
+  it.skipIf(!IN_WORK_TREE)(
+    'tracks the TypeScript standard CONTRIBUTING points at, and still ignores the rest of docs/ (needs git)',
+    (): void => {
+      const contributing = readFileSync(join(ROOT, 'CONTRIBUTING.md'), 'utf8');
+      expect(contributing).toContain('](docs/standards/typescript.md)');
+      expect(existsSync(join(ROOT, 'docs/standards/typescript.md'))).toBe(true);
+      expect(ignored('docs/standards/typescript.md')).toBe(false);
+      expect(tracked('docs/standards/typescript.md')).toEqual(['docs/standards/typescript.md']);
+      expect(ignored('docs/plans/engineering-plan.md')).toBe(true);
+      expect(ignored('docs/research/typescript-code-hygiene.md')).toBe(true);
     },
   );
 });
