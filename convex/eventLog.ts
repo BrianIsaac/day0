@@ -1,8 +1,18 @@
 import { v } from 'convex/values';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
-import { internalMutation, type ActionCtx, type MutationCtx } from './_generated/server';
-import { EVENT_TYPES, type LoggedEvent, type NewEvent } from '../src/events/contract';
+import {
+  internalMutation,
+  type ActionCtx,
+  type MutationCtx,
+  type QueryCtx,
+} from './_generated/server';
+import {
+  EVENT_TYPES,
+  type EventType,
+  type LoggedEvent,
+  type NewEvent,
+} from '../src/events/contract';
 
 /*
  * The two ways an event reaches the ledger, both typed by the event contract
@@ -25,6 +35,37 @@ export async function appendEvent(
   event: NewEvent,
 ): Promise<Id<'events'>> {
   return await ctx.db.insert('events', event);
+}
+
+/**
+ * A lower bound on the creation time of the events `eventsOfType` reads:
+ * strictly after an instant, or from it on.
+ */
+export type CreatedBound = { readonly after: number } | { readonly from: number };
+
+/**
+ * The index read of one agent's events of one type, for the caller to order,
+ * bound and collect. The type is one the contract lists, so a misspelt type is
+ * a typecheck failure rather than a read that finds nothing (S D4).
+ *
+ * @param ctx - A query's or a mutation's context.
+ * @param agentId - The agent whose events are read.
+ * @param type - The event type.
+ * @param created - An optional lower bound on the events' creation time.
+ */
+export function eventsOfType(
+  ctx: Pick<QueryCtx, 'db'>,
+  agentId: Id<'agents'>,
+  type: EventType,
+  created?: CreatedBound,
+) {
+  return ctx.db.query('events').withIndex('by_agent_type', (index) => {
+    const ofType = index.eq('agentId', agentId).eq('type', type);
+    if (created === undefined) return ofType;
+    return 'after' in created
+      ? ofType.gt('_creationTime', created.after)
+      : ofType.gte('_creationTime', created.from);
+  });
 }
 
 /**
