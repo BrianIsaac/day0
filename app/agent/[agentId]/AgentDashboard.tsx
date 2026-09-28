@@ -219,7 +219,8 @@ export function AgentDashboard({ agentId }: Props) {
   // What a change said once the control that made it left the page with its
   // card (a charter sent back), and where focus goes after it.
   const [pageOutcome, setPageOutcome] = useState<ChangeOutcome | null>(null);
-  const [focusOnboarding, setFocusOnboarding] = useState(false);
+  // The draft the manager sent back, until the page shows what follows it.
+  const [sentBack, setSentBack] = useState<Id<'charters'> | null>(null);
   const onboarding = useRef<HTMLDivElement>(null);
   // Ticks, so an authoring claim stops being described as live the moment it
   // stops being honoured rather than on the next thing the boss happens to do.
@@ -283,12 +284,23 @@ export function AgentDashboard({ agentId }: Props) {
 
   const onboardingShown =
     !!agent && !charter && (agent.state === 'deployed' || agent.state === 'day-one-in-progress');
+  const charterId = charter?._id;
+  // What follows a draft sent back is the 1:1 again, or, when an approved
+  // charter stands beneath the draft, that charter: only the first reopens
+  // anything, so only then does the page say so and take focus. A charter
+  // drafted later retires the sentence.
   useEffect(() => {
-    if (!focusOnboarding || !onboardingShown) return;
-    onboarding.current?.focus();
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- the focus move happens once, when the 1:1 is back on the page after a charter is sent back
-    setFocusOnboarding(false);
-  }, [focusOnboarding, onboardingShown]);
+    if (sentBack !== null && onboardingShown) {
+      onboarding.current?.focus();
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- said once, when the 1:1 is back on the page after a draft was sent back
+      setPageOutcome({ tone: 'done', text: ONBOARDING_REOPENED });
+      setSentBack(null);
+    } else if (sentBack !== null && charterId !== undefined && charterId !== sentBack) {
+      setSentBack(null);
+    } else if (sentBack === null && charterId !== undefined) {
+      setPageOutcome(null);
+    }
+  }, [sentBack, onboardingShown, charterId]);
 
   if (!agent) {
     return (
@@ -350,14 +362,7 @@ export function AgentDashboard({ agentId }: Props) {
             ) : null}
 
             {charter ? (
-              <CharterCard
-                charter={charter}
-                manager={agent.bossEmail}
-                onSentBack={(text) => {
-                  setPageOutcome({ tone: 'done', text });
-                  setFocusOnboarding(true);
-                }}
-              />
+              <CharterCard charter={charter} manager={agent.bossEmail} onSentBack={setSentBack} />
             ) : null}
 
             <ProposedSkillsPanel
@@ -1243,8 +1248,8 @@ export function CharterCard({
   charter: Doc<'charters'>;
   /** The agent row's manager, who approves this employee's work. */
   manager?: string;
-  /** Said on the page once the draft is sent back and this card goes. */
-  onSentBack?: (text: string) => void;
+  /** Told which draft was sent back, so the page can say what follows it. */
+  onSentBack?: (charterId: Id<'charters'>) => void;
 }) {
   const approve = useMutation(api.charters.approve);
   const requestChanges = useMutation(api.charters.requestChanges);
@@ -1300,13 +1305,13 @@ export function CharterCard({
     );
   }
 
-  // Sending the draft back deletes it, and this card with it, so the outcome
-  // is said on the page, which also takes focus.
+  // Sending the draft back deletes it, and this card with it when no approved
+  // charter stands beneath it; the page says what follows and takes focus.
   function onRequestChanges(): void {
     change.run(() => requestChanges({ charterId: charter._id }), {
       done: SENT_BACK,
       refused: 'The charter was not sent back.',
-      after: () => onSentBack?.(SENT_BACK),
+      after: () => onSentBack?.(charter._id),
     });
   }
 
@@ -1433,9 +1438,12 @@ const AMEND_BUTTON =
 const SUMMARY =
   'min-h-11 py-3 cursor-pointer text-[var(--color-muted)] hover:text-[var(--color-accent)]';
 
-/** What the page says once the manager sends a draft charter back. */
-const SENT_BACK =
-  'Charter sent back: the 1:1 opens again so the employee can redraft it from what you tell it.';
+/** What the card says once the manager sends its draft back. */
+const SENT_BACK = 'Charter sent back: this draft is withdrawn.';
+
+/** What the page says when sending the draft back reopened the 1:1. */
+const ONBOARDING_REOPENED =
+  'The 1:1 is open again, so the employee can redraft the charter from what you tell it.';
 
 /**
  * One line of text the manager can rewrite or remove; Save sends the

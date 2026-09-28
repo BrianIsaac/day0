@@ -46,6 +46,7 @@ import { PILOT_FIGURES } from '../../../../app/CompanySupervision';
 import type { SurfaceRecord } from '../../../../src/surfaces/types';
 import {
   ActionPayload,
+  AgentDashboard,
   AmendCharterPanel,
   AutonomyControl,
   CheckForNewWork,
@@ -3129,14 +3130,13 @@ describe('the charter card says what each change came to (step 45, K D6)', (): v
     view.unmount();
   });
 
-  it('hands the sent-back sentence to the page, since the card goes with the draft', async (): Promise<void> => {
+  it('says the draft is withdrawn and tells the page which draft went', async (): Promise<void> => {
     const page: string[] = [];
-    const view = mount(<CharterCard charter={draft} onSentBack={(text) => page.push(text)} />);
+    const view = mount(<CharterCard charter={draft} onSentBack={(id) => page.push(id)} />);
     await press(view.container, 'Request changes');
     expect(backend.calls.map((entry) => entry.name)).toEqual(['charters:requestChanges']);
-    expect(page).toEqual([
-      'Charter sent back: the 1:1 opens again so the employee can redraft it from what you tell it.',
-    ]);
+    expect(said(view.container)).toEqual(['Charter sent back: this draft is withdrawn.']);
+    expect(page).toEqual(['charter-1']);
     view.unmount();
   });
 
@@ -3618,6 +3618,71 @@ describe("the zone line's confirmation (wave 3.5 review m10)", (): void => {
       "The employee's day is now Asia/Singapore; every time on this page is in it.",
     ]);
     expect(focusedName()).toBe('Change zone');
+    view.unmount();
+  });
+});
+
+describe('the page after a draft charter is sent back (step 45)', (): void => {
+  const agent = (state: string) => ({
+    _id: 'agent-1',
+    _creationTime: 1,
+    bossEmail: 'boss@day0.local',
+    name: 'Priya',
+    userId: 'owner',
+    state,
+    createdAt: 1,
+  });
+  const draft = {
+    _id: 'charter-2',
+    _creationTime: 2,
+    agentId: 'agent-1',
+    version: '0.2',
+    approved: false,
+    createdAt: 2,
+    body: {
+      whyThisHire: 'Close week.',
+      proposedFunction: 'Own routine revenue operations work.',
+      shortTermGoals: { day30: 'a', day60: 'b', day90: 'c' },
+      proposedBoundaries: { willDo: [], willNotDo: [], escalationTriggers: [] },
+      namedCollaborators: [],
+      priorityReading: [],
+      openQuestions: [],
+    },
+  };
+
+  afterEach((): void => {
+    backend.queries = {};
+    document.body.replaceChildren();
+  });
+
+  it('says the 1:1 is open again and gives it focus when the send-back reopened it', async (): Promise<void> => {
+    backend.queries = { 'agents:get': agent('charter-pending'), 'charters:latest': draft };
+    const view = mount(<AgentDashboard agentId={'agent-1' as Id<'agents'>} />);
+    await press(view.container, 'Request changes');
+    backend.queries = { 'agents:get': agent('deployed'), 'charters:latest': null };
+    act((): void => view.root.render(<AgentDashboard agentId={'agent-1' as Id<'agents'>} />));
+    await settle();
+
+    expect(said(view.container)).toContain(
+      'The 1:1 is open again, so the employee can redraft the charter from what you tell it.',
+    );
+    expect(focusedName()).toBe('The 1:1 that drafts the charter');
+    view.unmount();
+  });
+
+  it('says nothing reopened and moves no focus when an approved charter stands beneath the draft', async (): Promise<void> => {
+    backend.queries = { 'agents:get': agent('active'), 'charters:latest': draft };
+    const view = mount(<AgentDashboard agentId={'agent-1' as Id<'agents'>} />);
+    await press(view.container, 'Request changes');
+    backend.queries = {
+      'agents:get': agent('active'),
+      'charters:latest': { ...draft, _id: 'charter-1', version: '0.1', approved: true },
+    };
+    act((): void => view.root.render(<AgentDashboard agentId={'agent-1' as Id<'agents'>} />));
+    await settle();
+
+    expect(said(view.container).join(' ')).not.toContain('The 1:1 is open again');
+    expect(focusedName()).not.toBe('The 1:1 that drafts the charter');
     view.unmount();
   });
 });
