@@ -49,102 +49,106 @@ export default function WalkthroughPage() {
   const run = RECORDED_RUN;
   return (
     <PageMotion className="flex flex-1 flex-col">
-      <section className="pb-6 pt-9 md:pt-[72px]">
-        <div className={WRAP}>
-          <h1
-            data-rise=""
-            style={rise(0)}
-            className="max-w-[22ch] text-[clamp(2rem,4vw,3rem)] font-semibold leading-[1.1] tracking-[-0.025em] text-balance"
-          >
-            {WALKTHROUGH.heading}
-          </h1>
-          <p
-            data-rise=""
-            style={rise(1)}
-            className="mt-5 max-w-[62ch] text-lg leading-relaxed text-[var(--color-muted)]"
-          >
-            {WALKTHROUGH.lede(run)}
-          </p>
-          <div
-            data-rise=""
-            style={rise(2)}
-            role="note"
-            className="mt-5 grid max-w-[62ch] gap-1.5 text-sm leading-relaxed text-[var(--color-muted)]"
-          >
-            <p>{WALKTHROUGH.readOnly}</p>
-            <p>{WALKTHROUGH.clock(run)}</p>
-            <p>{walkthroughProvenanceLine(run)}</p>
-          </div>
-        </div>
-      </section>
-
-      <section id="run" aria-labelledby="run-heading" className="pb-11 pt-6 md:pb-16">
-        <div className={WRAP}>
-          <h2 id="run-heading" className="sr-only">
-            {WALKTHROUGH.storyHeading}
-          </h2>
-          <RunStory run={run} />
-        </div>
-      </section>
-
-      <Section id="numbers">
-        <div className="grid grid-cols-1 items-start gap-10 md:grid-cols-2 md:gap-12">
-          <div>
-            <h2 data-rise="" className={H2}>
-              {WALKTHROUGH.numbers.heading}
-            </h2>
+      <main className="flex flex-1 flex-col">
+        <section className="pb-6 pt-9 md:pt-[72px]">
+          <div className={WRAP}>
+            <h1
+              data-rise=""
+              style={rise(0)}
+              className="max-w-[22ch] text-[clamp(2rem,4vw,3rem)] font-semibold leading-[1.1] tracking-[-0.025em] text-balance"
+            >
+              {WALKTHROUGH.heading}
+            </h1>
             <p
               data-rise=""
               style={rise(1)}
-              className="mb-6 mt-3 text-[17px] leading-relaxed text-[var(--color-muted)]"
+              className="mt-5 max-w-[62ch] text-lg leading-relaxed text-[var(--color-muted)]"
             >
-              {WALKTHROUGH.numbers.lede}
+              {WALKTHROUGH.lede(run)}
             </p>
-            <EvidenceTable />
-          </div>
-          <div id="deviations">
-            <h2 data-rise="" className={H2}>
-              {WALKTHROUGH.deviationsHeading}
-            </h2>
-            <ul className="mt-6 grid gap-3 pl-[18px] [list-style:disc] marker:text-[var(--color-border)]">
-              {run.deviations.map((deviation) => (
-                <li key={deviation.lead} className="leading-relaxed text-[var(--color-muted)]">
-                  <strong className="font-semibold text-[var(--color-fg)]">{deviation.lead}</strong>{' '}
-                  <RunParagraph text={deviation.body} />
-                </li>
-              ))}
-            </ul>
-          </div>
-        </div>
-      </Section>
-
-      <Section id="try">
-        <h2 data-rise="" className={H2}>
-          {WALKTHROUGH.tryHeading}
-        </h2>
-        <div className="mt-8 grid grid-cols-1 gap-10 md:grid-cols-2 md:gap-12">
-          <div className={WAY}>
-            <h3 className="text-base font-semibold">{WALKTHROUGH.hosted.title}</h3>
-            <p className="leading-relaxed text-[var(--color-muted)]">{WALKTHROUGH.hosted.body}</p>
-            <HostedDemoNotice />
-            <Link href="/sign-in" className={`${PRIMARY} max-md:w-full`}>
-              {HERO.tryDemo}
-            </Link>
-          </div>
-          <div className={WAY}>
-            <h3 className="text-base font-semibold">{WALKTHROUGH.local.title}</h3>
-            <p className="leading-relaxed text-[var(--color-muted)]">{WALKTHROUGH.local.body}</p>
-            <div className="flex w-full flex-wrap gap-3">
-              <Link href="/setup" className={`${SECONDARY} max-md:w-full`}>
-                {HERO.setUp}
-              </Link>
-              <Link href="/" className={`${QUIET} max-md:w-full`}>
-                {WALKTHROUGH.local.back}
-              </Link>
+            <div
+              data-rise=""
+              style={rise(2)}
+              role="note"
+              className="mt-5 grid max-w-[62ch] gap-1.5 text-sm leading-relaxed text-[var(--color-muted)]"
+            >
+              <p>{WALKTHROUGH.readOnly}</p>
+              <p>{WALKTHROUGH.clock(run)}</p>
+              <p>{walkthroughProvenanceLine(run)}</p>
             </div>
           </div>
-        </div>
-      </Section>
+        </section>
+
+        <section id="run" aria-labelledby="run-heading" className="pb-11 pt-6 md:pb-16">
+          <div className={WRAP}>
+            <h2 id="run-heading" className="sr-only">
+              {WALKTHROUGH.storyHeading}
+            </h2>
+            <RunStory run={run} />
+          </div>
+        </section>
+
+        <Section id="numbers">
+          <div className="grid grid-cols-1 items-start gap-10 md:grid-cols-2 md:gap-12">
+            <div>
+              <h2 data-rise="" className={H2}>
+                {WALKTHROUGH.numbers.heading}
+              </h2>
+              <p
+                data-rise=""
+                style={rise(1)}
+                className="mb-6 mt-3 text-[17px] leading-relaxed text-[var(--color-muted)]"
+              >
+                {WALKTHROUGH.numbers.lede}
+              </p>
+              <EvidenceTable />
+            </div>
+            <div id="deviations">
+              <h2 data-rise="" className={H2}>
+                {WALKTHROUGH.deviationsHeading}
+              </h2>
+              <ul className="mt-6 grid gap-3 pl-[18px] [list-style:disc] marker:text-[var(--color-border)]">
+                {run.deviations.map((deviation) => (
+                  <li key={deviation.lead} className="leading-relaxed text-[var(--color-muted)]">
+                    <strong className="font-semibold text-[var(--color-fg)]">
+                      {deviation.lead}
+                    </strong>{' '}
+                    <RunParagraph text={deviation.body} />
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </Section>
+
+        <Section id="try">
+          <h2 data-rise="" className={H2}>
+            {WALKTHROUGH.tryHeading}
+          </h2>
+          <div className="mt-8 grid grid-cols-1 gap-10 md:grid-cols-2 md:gap-12">
+            <div className={WAY}>
+              <h3 className="text-base font-semibold">{WALKTHROUGH.hosted.title}</h3>
+              <p className="leading-relaxed text-[var(--color-muted)]">{WALKTHROUGH.hosted.body}</p>
+              <HostedDemoNotice />
+              <Link href="/sign-in" className={`${PRIMARY} max-md:w-full`}>
+                {HERO.tryDemo}
+              </Link>
+            </div>
+            <div className={WAY}>
+              <h3 className="text-base font-semibold">{WALKTHROUGH.local.title}</h3>
+              <p className="leading-relaxed text-[var(--color-muted)]">{WALKTHROUGH.local.body}</p>
+              <div className="flex w-full flex-wrap gap-3">
+                <Link href="/setup" className={`${SECONDARY} max-md:w-full`}>
+                  {HERO.setUp}
+                </Link>
+                <Link href="/" className={`${QUIET} max-md:w-full`}>
+                  {WALKTHROUGH.local.back}
+                </Link>
+              </div>
+            </div>
+          </div>
+        </Section>
+      </main>
     </PageMotion>
   );
 }
