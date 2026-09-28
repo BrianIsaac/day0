@@ -345,8 +345,21 @@ const TRANSPORT_DESCRIPTION =
   /\b(?:approved transport|transport is|integration endpoint|mcp endpoint|web api over|reached (?:through|via|over)|web ui only)\b/i;
 const DOCUMENTED_URL = /https?:\/\/[^\s`<>"'\])}]+/gi;
 
-/** The one slug rule for a system name or a documented host, everywhere it is keyed. */
+/**
+ * The one slug rule for a system name or a documented host, everywhere it is keyed.
+ *
+ * A name with letters or digits the ASCII slug drops (`飞书`, `Café`) keys by
+ * the digest slug `surfaceSlug` gives it, so a documented Chinese system
+ * meets the charter's row for it (`system-<digest>`) instead of keying as
+ * nothing and being dropped (U15 finding 2). An ASCII name or a host keys as
+ * before; a value with no letter or digit at all is the empty slug.
+ */
 export function stableSlug(value: string): string {
+  return droppedScriptSuffix(value) === '' ? asciiSlug(value) : surfaceSlug(value);
+}
+
+/** The slug of a value's ASCII letters and digits alone: the rule before scripts were kept. */
+function asciiSlug(value: string): string {
   return value
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
@@ -416,10 +429,8 @@ export function documentedSystemIdentity(args: {
   endpoints?: readonly string[];
 }): DocumentedSystemIdentity {
   const endpoints = documentedEndpoints([...(args.quotes ?? []), ...(args.endpoints ?? [])]);
-  const ascii = stableSlug(args.name);
-  const scripted = droppedScriptSuffix(args.name) === '' ? undefined : surfaceSlug(args.name);
   return {
-    slugs: [...new Set([ascii, scripted].filter((slug): slug is string => !!slug))],
+    slugs: [...new Set([asciiSlug(args.name), stableSlug(args.name)].filter(Boolean))],
     nameKeys: [transportNameKey(args.name)].filter(Boolean),
     endpoints,
     hosts: [...new Set(endpoints.map((endpoint) => new URL(endpoint).host.toLowerCase()))].sort(),

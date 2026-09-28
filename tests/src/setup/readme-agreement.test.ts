@@ -122,7 +122,9 @@ describe('what the company bed stores once both sources are linked', (): void =>
     // A reader who checks `npx convex data credentials` against this sentence
     // finds a fourth row: linking an MCP source stores the secret typed into
     // the form, under the source's label.
-    expect(DOC_SOURCES).toContain('label: `${input.label} connection secret`');
+    expect(DOC_SOURCES).toContain(
+      "`${source.label} ${source.kind === 'mcp' ? 'connection secret' : 'reader secret'}`",
+    );
     const { english, chinese } = halves();
     for (const half of [english, chinese]) {
       expect(half).not.toContain('are the only credentials stored');

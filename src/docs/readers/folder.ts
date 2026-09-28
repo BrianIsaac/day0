@@ -1,6 +1,14 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import type { DocPage, DocPageBatch, DocSourceReader, DocSourceRecord } from '../types';
+import type { DocPage, DocSourceRecord } from '../types';
+import {
+  listingCursor,
+  offsetInListing,
+  splitPageReads,
+  unreadReason,
+  type DocumentationReader,
+  type ReadPageBatch,
+} from './batch';
 
 /** An opening or closing code fence: three or more backticks or tildes. */
 const CODE_FENCE = /^\s{0,3}(`{3,}|~{3,})/;
@@ -78,25 +86,11 @@ async function markdownFiles(directory: string): Promise<string[]> {
 }
 
 /**
- * Parse an offset cursor emitted by a filesystem-backed reader.
- *
- * Args:
- *   cursor: Optional decimal offset.
- *
- * Returns:
- *   Non-negative page offset.
- *
- * Raises:
- *   Error: If the cursor is not a canonical non-negative integer.
- */
-export function offsetFromCursor(cursor?: string): number {
-  if (cursor === undefined) return 0;
-  if (!/^(0|[1-9][0-9]*)$/.test(cursor)) throw new Error('Documentation cursor is invalid.');
-  return Number(cursor);
-}
-
-/**
  * Read one bounded batch of Markdown files.
+ *
+ * A file listed but not readable (removed since the listing, no permission)
+ * is named as unread and the batch goes on, so one file never fails the
+ * source (P5-11).
  *
  * Args:
  *   source: Source metadata stored by Convex.
@@ -105,35 +99,42 @@ export function offsetFromCursor(cursor?: string): number {
  *   limit: Maximum pages to read.
  *
  * Returns:
- *   Normalised pages and the next safe offset.
+ *   Normalised pages, the files that could not be read, and the next safe offset.
  */
 export async function readMarkdownDirectoryBatch(
   source: DocSourceRecord,
   directory: string,
   cursor: string | undefined,
   limit: number,
-): Promise<DocPageBatch> {
+): Promise<ReadPageBatch> {
   const files = await markdownFiles(directory);
-  const offset = offsetFromCursor(cursor);
+  const refs = files.map((path: string): string => relative(directory, path).split(sep).join('/'));
+  const offset = offsetInListing(cursor, refs);
   const selected = files.slice(offset, offset + limit);
-  const pages = await Promise.all(
-    selected.map(async (path): Promise<DocPage> => {
-      const [markdown, details] = await Promise.all([readFile(path, 'utf8'), stat(path)]);
+  const reads = await Promise.all(
+    selected.map(async (path) => {
       const ref = relative(directory, path).split(sep).join('/');
-      const fallback = basename(path, '.md').replaceAll('-', ' ');
-      return {
-        sourceId: source._id,
-        ref,
-        title: markdownPageTitle(markdown, fallback),
-        markdown,
-        updatedAt: details.mtimeMs,
-      };
+      try {
+        const [markdown, details] = await Promise.all([readFile(path, 'utf8'), stat(path)]);
+        const fallback = basename(path, '.md').replaceAll('-', ' ');
+        return {
+          sourceId: source._id,
+          ref,
+          title: markdownPageTitle(markdown, fallback),
+          markdown,
+          updatedAt: details.mtimeMs,
+        } satisfies DocPage;
+      } catch (error) {
+        // Every failure here is this one file's: the listing already succeeded.
+        // The host's own path to the documentation is not the author's to see.
+        return { ref, reason: unreadReason(error).replaceAll(`${directory}${sep}`, '') };
+      }
     }),
   );
-  const nextOffset = offset + pages.length;
+  const nextOffset = offset + selected.length;
   return {
-    pages,
-    nextCursor: nextOffset < files.length ? String(nextOffset) : undefined,
+    ...splitPageReads(reads),
+    nextCursor: nextOffset < files.length ? listingCursor(nextOffset, refs) : undefined,
   };
 }
 
@@ -156,7 +157,7 @@ export async function readMarkdownDirectory(
 }
 
 /** Reader for Markdown mounted below `DAY0_DOCS_ROOT`. */
-export class FolderReader implements DocSourceReader {
+export class FolderReader implements DocumentationReader {
   readonly root: string;
 
   /**
@@ -194,14 +195,14 @@ export class FolderReader implements DocSourceReader {
    *   limit: Maximum pages to read.
    *
    * Returns:
-   *   Bounded page batch and continuation cursor.
+   *   Bounded page batch, its unread files and continuation cursor.
    */
   async listPageBatch(
     source: DocSourceRecord,
     _secret: string | undefined,
     cursor: string | undefined,
     limit: number,
-  ): Promise<DocPageBatch> {
+  ): Promise<ReadPageBatch> {
     void _secret;
     return await readMarkdownDirectoryBatch(
       source,

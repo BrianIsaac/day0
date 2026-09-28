@@ -423,8 +423,22 @@ const ROLE_STOP_WORDS: ReadonlySet<string> = new Set([
   'employee',
 ]);
 
-/** The top directory of a page reference, or the reference itself at the top. */
+/**
+ * The team a page reference files the page under: its top directory, or the
+ * reference itself at the top. A URL is read by its host and the first
+ * segment of its path, so the pages of one wiki are not all one team
+ * (adversarial pass on review M15).
+ */
 function scopeRoot(ref: string): string {
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(ref)) {
+    try {
+      const url = new URL(ref);
+      const [first = ''] = url.pathname.split('/').filter(Boolean);
+      return `${url.host}/${first}`;
+    } catch {
+      // Not a URL after all: read the reference as the path it spells.
+    }
+  }
   return ref.includes('/') ? ref.split('/')[0]! : ref;
 }
 
@@ -652,7 +666,7 @@ export interface RestatedScope<V extends ScopeValue = ScopeValue> {
  * A value stands while its own page still states it for the same field,
  * through the same grammar orientation read it by (a "do not use" line
  * states nothing), or, when its page is gone, while a page of the same team
- * (or one stating the whole scope) does. So renaming or moving the page,
+ * (or one stating the whole of a scope of two or more values) does. So renaming or moving the page,
  * reflowing the line, fixing a typo beside the value or adding a channel to
  * the line changes nothing intake reads, and the value is re-pointed at the
  * line that states it now; a value its page stopped stating has drifted,
@@ -695,6 +709,11 @@ export function restatedScope<V extends ScopeValue>(
       statedOn.set(ref, (statedOn.get(ref) ?? 0) + 1);
     }
   }
+  // A page naming every value of a one-value scope is any page naming that
+  // value, which says nothing about whose scope it is (review M15): only a
+  // scope of two or more values can be recognised whole on another page.
+  const statesWholeScope = (ref: string): boolean =>
+    entries.length > 1 && statedOn.get(ref) === entries.length;
   const drift: V[] = [];
   const restate = (value: V): V => {
     if (sourceId !== undefined && value.sourceId !== sourceId) return value;
@@ -716,8 +735,7 @@ export function restatedScope<V extends ScopeValue>(
       : [...lines]
           .filter(
             (candidate): boolean =>
-              scopeRoot(candidate.ref) === scopeRoot(value.ref) ||
-              statedOn.get(candidate.ref) === entries.length,
+              scopeRoot(candidate.ref) === scopeRoot(value.ref) || statesWholeScope(candidate.ref),
           )
           .sort(
             (left, right): number => (statedOn.get(right.ref) ?? 0) - (statedOn.get(left.ref) ?? 0),

@@ -9,6 +9,7 @@ import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, it, vi } 
 import { serveSpanModel } from '../fixtures/redaction-double';
 import { internal } from '../../convex/_generated/api';
 import { FolderReader } from '../../src/docs/readers/folder';
+import { UrlsReader } from '../../src/docs/readers/urls';
 import { RedactorUnavailableError } from '../../src/redaction/client';
 import type { ActionCtx } from '../../convex/_generated/server';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
@@ -22,6 +23,7 @@ import {
   safeSyncError,
 } from '../../convex/docSyncActions';
 import type { DocPage } from '../../src/docs/types';
+import { FINISHING_CURSOR } from '../../convex/docSources';
 import { encrypt, openOwnedCredential as openSpy } from '../../src/lib/credential-crypto';
 import { ownerValuesRef } from '../../src/redaction/known-values';
 import { temporaryDirectories } from '../setup/temporary-directories';
@@ -51,6 +53,16 @@ vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
   agentJson: schemaChecked(() => ({ systems: [] })),
 }));
+
+/**
+ * Run the scheduled continuations due now, without firing the timeouts of
+ * the redaction calls in flight: `vi.runAllTimers` would fire every
+ * `AbortSignal.timeout` at once and cut the in-process redactor off, which
+ * the whole file's order hid.
+ */
+function drainScheduled(): void {
+  vi.advanceTimersByTime(0);
+}
 
 /** Build a token-shaped value at runtime so no fixture stores one verbatim. */
 function token(parts: string[], separator: string, suffix: string): string {
@@ -116,6 +128,27 @@ describe('documentation sync action helpers', (): void => {
       'team-doc',
     );
     expect(SYNC_BATCH_SIZE).toBe(25);
+  });
+
+  it('reads a procedures directory from the path segments of the page, never its query or file name (review m33)', (): void => {
+    const page = { title: 'Refund policy', markdown: '# Refund policy' };
+    for (const ref of [
+      'https://wiki.example/view?p=/how-to/refunds',
+      'https://wiki.example/view#/runbooks/refunds',
+      'https://wiki.example/pages/refunds?from=/playbooks/',
+      'revops/how-to.md',
+      'notes/my-runbooks/refunds.md',
+    ]) {
+      expect(categoryForPage({ ...page, ref }), ref).toBe('team-doc');
+    }
+    for (const ref of [
+      'https://wiki.example/runbooks/refunds',
+      'https://wiki.example/space/How-To/refunds?version=2',
+      'https://wiki.example/how-to/',
+      'finance/playbooks/refunds.md',
+    ]) {
+      expect(categoryForPage({ ...page, ref }), ref).toBe('how-to-guide');
+    }
   });
 
   it('redacts explicit and recognisable credential values from errors', (): void => {
@@ -191,6 +224,7 @@ describe('documentation sync action helpers', (): void => {
       credentialRefs: pages.map((page: DocPage): string => page.ref),
       pages: pages.length,
       redactions: values.length,
+      unread: [],
     });
     expect(actionCalls).toHaveLength(values.length);
     for (const value of values) {
@@ -270,12 +304,14 @@ describe('documentation sync batching', (): void => {
     const pending = await scheduled(harness);
     expect(pending).toHaveLength(1);
     expect(pending[0].name).toBe('docSyncActions:syncBatch');
-    expect(pending[0].args).toEqual([{ sourceId, runId: expect.any(String), cursor: '25' }]);
+    expect(pending[0].args).toEqual([
+      { sourceId, runId: expect.any(String), cursor: expect.stringMatching(/^25@[0-9a-z]{7}$/) },
+    ]);
     expect(JSON.stringify(pending)).not.toContain(value);
     await expect(
       harness.query(internal.docSources.syncReport, { sourceId }),
     ).resolves.toMatchObject({ status: 'linking', running: true, pageCount: 25 });
-    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    await harness.finishAllScheduledFunctions(drainScheduled);
     await expect(
       harness.query(internal.docSources.syncReport, { sourceId }),
     ).resolves.toMatchObject({
@@ -289,7 +325,12 @@ describe('documentation sync batching', (): void => {
     expect(runs[0]).toMatchObject({ state: 'completed', pageCount: 60, refs: expect.any(Array) });
     expect(runs[0].refs).toHaveLength(60);
     expect(JSON.stringify(runs)).not.toContain(value);
-    const pages = await harness.query(internal.docSources.pagesForSourceInternal, { sourceId });
+    const pages = (
+      await harness.query(internal.docSources.pagesForSourceInternal, {
+        sourceId,
+        paginationOpts: { numItems: 100, cursor: null },
+      })
+    ).page;
     expect(pages).toHaveLength(60);
     expect(JSON.stringify(pages)).not.toContain(value);
     expect(pages.find((page) => page.ref === 'page-30.md')?.markdown).toContain(
@@ -319,7 +360,7 @@ describe('documentation sync batching', (): void => {
     const stale = (await scheduled(harness))[0].args as Array<{ runId: Id<'docSyncRuns'> }>;
     const second = await harness.action(internal.docSyncActions.syncSource, { sourceId });
     expect(second).toMatchObject({ ok: true, pages: 25, complete: false });
-    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    await harness.finishAllScheduledFunctions(drainScheduled);
     const runs = await harness.run(async (ctx) => await ctx.db.query('docSyncRuns').collect());
     expect(runs.map((run) => run.state).sort()).toEqual(['completed', 'superseded']);
     expect(runs.find((run) => run._id === stale[0].runId)?.state).toBe('superseded');
@@ -341,7 +382,7 @@ describe('documentation sync batching', (): void => {
     });
     await harness.action(internal.docSyncActions.syncSource, { sourceId });
     await rm(join(root, 'many'), { recursive: true, force: true });
-    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    await harness.finishAllScheduledFunctions(drainScheduled);
     await expect(
       harness.query(internal.docSources.syncReport, { sourceId }),
     ).resolves.toMatchObject({ status: 'error', running: false, pageCount: 25 });
@@ -366,7 +407,7 @@ describe('documentation sync batching', (): void => {
         cause: Object.assign(new Error('read ETIMEDOUT'), { code: 'ETIMEDOUT' }),
       }),
     );
-    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    await harness.finishAllScheduledFunctions(drainScheduled);
     const source = await harness.query(internal.docSources.getInternal, { sourceId });
     expect(source?.lastError).toBe(
       'The documentation read was interrupted (read ETIMEDOUT); this is transient, and the next attempt reads it again.',
@@ -393,6 +434,343 @@ describe('documentation sync batching', (): void => {
     expect(source?.lastError).toBe(
       'redaction component unreachable at redactor:8000: read ECONNRESET',
     );
+  });
+
+  it('keeps a page it cannot store at its last version, with its credential, and completes the sync (P5-11)', async (): Promise<void> => {
+    const root = temporary('day0-sync-unread-');
+    await mkdir(join(root, 'few'));
+    const value = token(['lin', 'api'], '_', 'unread-contract-0123456789abcdef');
+    await writeFile(join(root, 'few', 'handbook.md'), '# Handbook\n\nFirst.\n', 'utf8');
+    await writeFile(
+      join(root, 'few', 'tile.md'),
+      `# Tile runbook\n\nService token: ${value}\n`,
+      'utf8',
+    );
+    vi.stubEnv('DAY0_DOCS_ROOT', root);
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await harness.mutation(internal.docSources.createSource, {
+      userId: 'owner',
+      label: 'Few',
+      kind: 'folder',
+      locator: 'few',
+    });
+    await harness.action(internal.docSyncActions.syncSource, { sourceId });
+    const before = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('docPages')
+          .withIndex('by_source_ref', (index) =>
+            index.eq('sourceId', sourceId).eq('ref', 'tile.md'),
+          )
+          .unique(),
+    );
+    expect(before?.markdown).toContain('<credential: linear service token, stored>');
+
+    // The runbook grows past what Day0 stores; the handbook changes as usual.
+    await writeFile(
+      join(root, 'few', 'tile.md'),
+      `# Tile runbook\n\nService token: ${value}\n\n${'Step.\n'.repeat(160_000)}`,
+      'utf8',
+    );
+    await writeFile(join(root, 'few', 'handbook.md'), '# Handbook\n\nSecond.\n', 'utf8');
+    await expect(
+      harness.action(internal.docSyncActions.syncSource, { sourceId }),
+    ).resolves.toMatchObject({ ok: true, pages: 1, complete: true });
+
+    const after = await harness.run(async (ctx) => ({
+      pages: await ctx.db
+        .query('docPages')
+        .withIndex('by_source', (index) => index.eq('sourceId', sourceId))
+        .collect(),
+      credentials: await ctx.db.query('credentials').collect(),
+      runs: await ctx.db.query('docSyncRuns').order('desc').collect(),
+      source: await ctx.db.get(sourceId),
+    }));
+    expect(after.pages.find((page) => page.ref === 'tile.md')).toMatchObject({
+      markdown: before?.markdown,
+      updatedAt: before?.updatedAt,
+    });
+    expect(after.pages.find((page) => page.ref === 'handbook.md')?.markdown).toContain('Second.');
+    expect(after.credentials).toHaveLength(1);
+    expect(after.credentials[0].status).toBeUndefined();
+    expect(after.runs[0]).toMatchObject({ state: 'completed' });
+    expect(after.runs[0].reason).toMatch(
+      /^1 page could not be read this sync and keeps its last stored version\n- tile\.md: The page is \d+ KiB, larger than the 768 KiB Day0 stores\.$/,
+    );
+    expect(after.source).toMatchObject({ status: 'synced' });
+    expect(after.source?.lastError).toMatch(
+      /^1 page could not be read this sync and keeps its last stored version: tile\.md: The page is \d+ KiB, larger than the 768 KiB Day0 stores\. The next sync reads them again\.$/,
+    );
+    expect(JSON.stringify(after)).not.toContain(value);
+  });
+
+  it('resumes a sync that failed at page 300 of 500 at page 300, not page one (step 17)', async (): Promise<void> => {
+    const root = temporary('day0-sync-resume-');
+    await mkdir(join(root, 'many'));
+    for (let index = 1; index <= 500; index += 1) {
+      await writeFile(
+        join(root, 'many', `page-${String(index).padStart(3, '0')}.md`),
+        `# Page ${index}\n\nBody ${index}\n`,
+        'utf8',
+      );
+    }
+    vi.stubEnv('DAY0_DOCS_ROOT', root);
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await harness.mutation(internal.docSources.createSource, {
+      userId: 'owner',
+      label: 'Many',
+      kind: 'folder',
+      locator: 'many',
+    });
+    const read = FolderReader.prototype.listPageBatch;
+    let cutOff = false;
+    const reads = vi
+      .spyOn(FolderReader.prototype, 'listPageBatch')
+      .mockImplementation(async function (this: FolderReader, ...args) {
+        if (args[2]?.startsWith('300@') && !cutOff) {
+          cutOff = true;
+          throw new Error('fetch failed', {
+            cause: Object.assign(new Error('read ETIMEDOUT'), { code: 'ETIMEDOUT' }),
+          });
+        }
+        return await read.apply(this, args);
+      });
+    await harness.action(internal.docSyncActions.syncSource, { sourceId });
+    await harness.finishAllScheduledFunctions(drainScheduled);
+    await expect(
+      harness.query(internal.docSources.syncReport, { sourceId }),
+    ).resolves.toMatchObject({ status: 'error', pageCount: 300 });
+
+    reads.mockClear();
+    await harness.action(internal.docSyncActions.syncSource, { sourceId });
+    await harness.finishAllScheduledFunctions(drainScheduled);
+
+    expect(reads.mock.calls.map((call) => call[2]?.split('@')[0])).toEqual([
+      '300',
+      '325',
+      '350',
+      '375',
+      '400',
+      '425',
+      '450',
+      '475',
+    ]);
+    await expect(
+      harness.query(internal.docSources.syncReport, { sourceId }),
+    ).resolves.toMatchObject({ status: 'synced', running: false, pageCount: 500 });
+    const [completed, failed] = await harness.run(
+      async (ctx) => await ctx.db.query('docSyncRuns').order('desc').collect(),
+    );
+    expect(completed).toMatchObject({ state: 'completed', pageCount: 500 });
+    expect(new Set(completed.refs).size).toBe(500);
+    expect(failed).toMatchObject({
+      state: 'error',
+      cursor: expect.stringMatching(/^300@[0-9a-z]{7}$/),
+      pageCount: 300,
+    });
+    expect(failed.reason).toBe(
+      'The documentation read was interrupted (read ETIMEDOUT); this is transient, and the next attempt reads it again. A newer sync of the source took over from its cursor after 300 pages.',
+    );
+  }, 60_000);
+
+  it('reads the source again from page one when its listing changed under a resumed cursor (adversarial pass, step 17)', async (): Promise<void> => {
+    const root = temporary('day0-sync-listing-');
+    await mkdir(join(root, 'many'));
+    const name = (index: number): string => `page-${String(index).padStart(3, '0')}.md`;
+    for (let index = 1; index <= 100; index += 1) {
+      await writeFile(join(root, 'many', name(index)), `# Page ${index}\n`, 'utf8');
+    }
+    vi.stubEnv('DAY0_DOCS_ROOT', root);
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await harness.mutation(internal.docSources.createSource, {
+      userId: 'owner',
+      label: 'Many',
+      kind: 'folder',
+      locator: 'many',
+    });
+    const read = FolderReader.prototype.listPageBatch;
+    let cutOff = false;
+    vi.spyOn(FolderReader.prototype, 'listPageBatch').mockImplementation(async function (
+      this: FolderReader,
+      ...args
+    ) {
+      if (args[2]?.split('@')[0] === '50' && !cutOff) {
+        cutOff = true;
+        throw new Error('fetch failed', {
+          cause: Object.assign(new Error('read ETIMEDOUT'), { code: 'ETIMEDOUT' }),
+        });
+      }
+      return await read.apply(this, args);
+    });
+    await harness.action(internal.docSyncActions.syncSource, { sourceId });
+    await harness.finishAllScheduledFunctions(drainScheduled);
+
+    // A page before the cursor goes: the page that was 51st is now 50th.
+    await rm(join(root, 'many', name(10)));
+    await harness.action(internal.docSyncActions.syncSource, { sourceId });
+    await harness.finishAllScheduledFunctions(drainScheduled);
+
+    const state = await harness.run(async (ctx) => ({
+      pages: await ctx.db
+        .query('docPages')
+        .withIndex('by_source', (index) => index.eq('sourceId', sourceId))
+        .collect(),
+      runs: await ctx.db.query('docSyncRuns').order('desc').collect(),
+    }));
+    expect(state.pages.map((page) => page.ref).sort()).toEqual(
+      Array.from({ length: 100 }, (_value, index) => name(index + 1)).filter(
+        (ref) => ref !== name(10),
+      ),
+    );
+    expect(state.runs[0]).toMatchObject({ state: 'completed', pageCount: 99 });
+    expect(state.runs[1]).toMatchObject({ state: 'superseded' });
+    expect(state.runs[1].reason).toContain('the listing changed under its cursor');
+  });
+
+  it('stops a source whose reader secret was revoked as a credential to land, and reads nothing (E-74)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await harness.run(async (ctx) => {
+      const credentialId = await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'value',
+        label: 'Wiki reader secret',
+        source: 'entered',
+        createdAt: 1,
+        revokedAt: 2,
+      });
+      return await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'Wiki',
+        kind: 'urls',
+        locator: 'https://wiki.example/one',
+        credentialId,
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+    });
+    const reads = vi.spyOn(UrlsReader.prototype, 'listPageBatch');
+    await harness.action(internal.docSyncActions.syncSource, { sourceId });
+    expect(reads).not.toHaveBeenCalled();
+    expect(await harness.run(async (ctx) => await ctx.db.get(sourceId))).toMatchObject({
+      status: 'credential-not-landed',
+    });
+  });
+
+  it('words a failure while finishing as the error it is, not as a credential to land (adversarial pass)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, runId } = await harness.run(async (ctx) => {
+      const credentialId = await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'value',
+        label: 'Notion connection secret',
+        source: 'entered',
+        createdAt: 1,
+        ...encrypt('connection-contract-value', process.env.DAY0_CREDENTIAL_KEY ?? ''),
+      });
+      const sourceId = await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'Notion',
+        kind: 'mcp',
+        serverKind: 'notion',
+        locator: 'http://notion-mcp:3000/mcp',
+        credentialId,
+        status: 'linking',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const runId = await ctx.db.insert('docSyncRuns', {
+        sourceId,
+        cursor: FINISHING_CURSOR,
+        refs: [],
+        credentialRefs: [],
+        pageCount: 0,
+        redactionCount: 0,
+        state: 'running',
+        createdAt: 1,
+      });
+      await ctx.db.patch(sourceId, { activeSyncId: runId });
+      // More page-derived credentials than one source may hold: the finish refuses.
+      for (let index = 0; index < 1_001; index += 1) {
+        await ctx.db.insert('credentials', {
+          userId: 'owner',
+          kind: 'value',
+          label: `value ${index}`,
+          source: { sourceId, ref: `page-${index}` },
+          ciphertext: 'sealed',
+          iv: 'iv',
+          createdAt: 1,
+        });
+      }
+      return { sourceId, runId };
+    });
+    await harness.action(internal.docSyncActions.syncBatch, {
+      sourceId,
+      runId,
+      cursor: FINISHING_CURSOR,
+    });
+    expect(await harness.run(async (ctx) => await ctx.db.get(sourceId))).toMatchObject({
+      status: 'error',
+      lastError: expect.stringContaining('Source exceeds 1,000 credentials.'),
+    });
+  });
+
+  it('reads a private wiki with the reader secret it was linked with, and keeps the secret out of every stored reason (E-74)', async (): Promise<void> => {
+    const secret = 'wiki-reader-contract-0123456789';
+    const key = process.env.DAY0_CREDENTIAL_KEY ?? '';
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await harness.run(async (ctx) => {
+      const credentialId = await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'value',
+        label: 'Wiki reader secret',
+        source: 'entered',
+        createdAt: 1,
+        ...encrypt(secret, key),
+      });
+      return await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'Wiki',
+        kind: 'urls',
+        locator: 'https://wiki.example/one\nhttps://wiki.example/two',
+        credentialId,
+        status: 'linking',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+    });
+    const seen: Array<string | null> = [];
+    // The in-process redactor is reached through fetch too; only the wiki is faked.
+    const realFetch = globalThis.fetch;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+        if (!String(input).startsWith('https://wiki.example/')) return await realFetch(input, init);
+        seen.push(new Headers(init?.headers).get('authorization'));
+        if (String(input).endsWith('/two')) {
+          // A failure that echoes the secret across where a 200-character cut once fell.
+          throw new Error(`${'refused by the wiki gateway; '.repeat(6)}token ${secret} rejected`);
+        }
+        return new Response('# One', { headers: { 'content-type': 'text/markdown' } });
+      }),
+    );
+    try {
+      await expect(
+        harness.action(internal.docSyncActions.syncSource, { sourceId }),
+      ).resolves.toMatchObject({ ok: true, pages: 1, complete: true });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(seen).toEqual([`Bearer ${secret}`, `Bearer ${secret}`]);
+    const stored = await harness.run(async (ctx) => ({
+      source: await ctx.db.get(sourceId),
+      runs: await ctx.db.query('docSyncRuns').collect(),
+    }));
+    expect(stored.source).toMatchObject({ status: 'synced' });
+    expect(stored.source?.lastError).toContain('https://wiki.example/two: refused by the wiki');
+    expect(stored.runs[0].reason).toContain('<redacted>');
+    expect(JSON.stringify(stored)).not.toContain(secret);
+    expect(JSON.stringify(stored)).not.toContain(secret.slice(0, 12));
   });
 
   it('decrypts the owner list once per batch, not once per page, and keeps its values out of every page', async (): Promise<void> => {
@@ -438,7 +816,12 @@ describe('documentation sync batching', (): void => {
     // One open per stored row for the whole batch: the list is resolved
     // once and handed to every page.
     expect(vi.mocked(openSpy)).toHaveBeenCalledTimes(stored.length);
-    const pages = await harness.query(internal.docSources.pagesForSourceInternal, { sourceId });
+    const pages = (
+      await harness.query(internal.docSources.pagesForSourceInternal, {
+        sourceId,
+        paginationOpts: { numItems: 100, cursor: null },
+      })
+    ).page;
     expect(pages).toHaveLength(3);
     for (const value of stored) expect(JSON.stringify(pages)).not.toContain(value);
     expect(pages.every((page) => page.markdown.includes('<credential: '))).toBe(true);

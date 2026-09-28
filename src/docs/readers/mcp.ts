@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { DocPage, DocPageBatch, DocSourceReader, DocSourceRecord } from '../types';
+import type { DocPage, DocSourceRecord } from '../types';
 import {
   assertDocsComponentReachable,
   componentFor,
@@ -20,7 +20,16 @@ import {
   withBackoff,
   type BackoffPolicy,
 } from '../../lib/transport-error';
-import { markdownPageTitle, offsetFromCursor } from './folder';
+import { markdownPageTitle } from './folder';
+import {
+  listingCursor,
+  offsetInListing,
+  readProviderPage,
+  splitPageReads,
+  type DocumentationReader,
+  type ReadPageBatch,
+  type UnreadPage,
+} from './batch';
 
 const SERVER_NAME = 'docs';
 
@@ -571,7 +580,7 @@ function continuationCursor(value: unknown, more?: boolean): string | undefined 
 }
 
 /** Reader for credential-bound MCP documentation locations. */
-export class McpReader implements DocSourceReader {
+export class McpReader implements DocumentationReader {
   /**
    * Create an MCP reader with injectable client and reachability boundaries.
    *
@@ -602,6 +611,9 @@ export class McpReader implements DocSourceReader {
     const seen = new Set<string>();
     do {
       const batch = await this.listPageBatch(source, secret, cursor, 25);
+      if (batch.unread.length > 0) {
+        throw new Error(`${batch.unread[0].ref}: ${batch.unread[0].reason}`);
+      }
       pages.push(...batch.pages);
       cursor = batch.nextCursor;
       if (cursor && seen.has(cursor)) throw new Error('Documentation MCP repeated its cursor.');
@@ -620,14 +632,14 @@ export class McpReader implements DocSourceReader {
    *   limit: Maximum pages to retrieve.
    *
    * Returns:
-   *   Bounded page batch and continuation cursor.
+   *   Bounded page batch, the listed pages that could not be read, and continuation cursor.
    */
   async listPageBatch(
     source: DocSourceRecord,
     secret: string | undefined,
     cursor: string | undefined,
     limit: number,
-  ): Promise<DocPageBatch> {
+  ): Promise<ReadPageBatch> {
     if (!secret) throw new Error('Documentation credential is unavailable.');
     // A source that day0 bundles a component for says so plainly when the
     // component is not running, rather than letting a transport error reach
@@ -650,7 +662,7 @@ export class McpReader implements DocSourceReader {
     secret: string,
     cursor: string | undefined,
     limit: number,
-  ): Promise<DocPageBatch> {
+  ): Promise<ReadPageBatch> {
     const client = this.clientFactory(connectionConfig(source, secret));
     try {
       if (source.serverKind === 'notion') {
@@ -674,7 +686,7 @@ export class McpReader implements DocSourceReader {
     source: DocSourceRecord,
     cursor: string | undefined,
     limit: number,
-  ): Promise<DocPageBatch> {
+  ): Promise<ReadPageBatch> {
     const tools = await client.listTools();
     const search = requiredTool(tools, 'search_files');
     const read = requiredTool(tools, 'read_file_content');
@@ -690,35 +702,42 @@ export class McpReader implements DocSourceReader {
       ),
     );
     const files = pageList(searchResult, 'files', 'Google Drive');
-    const pages: DocPage[] = [];
+    const reads: Array<DocPage | UnreadPage> = [];
     for (const value of files) {
       const file = listedItem(value, 'Google Drive');
-      if (typeof file.id !== 'string')
+      const fileId = file.id;
+      if (typeof fileId !== 'string') {
         throw new Error(unrecognisedReply('Google Drive', 'a file id'));
-      const content = providerPayload(
-        await read.execute!({ fileId: file.id, includeComments: false }, {}),
-      );
-      if (typeof content.fileContent !== 'string') {
-        throw new Error('Google Drive file content is unavailable.');
       }
-      pages.push({
-        sourceId: source._id,
-        ref: file.id,
-        title: typeof file.title === 'string' ? file.title : `Google Drive file ${file.id}`,
-        url: typeof file.viewUrl === 'string' ? file.viewUrl : undefined,
-        markdown: content.fileContent,
-        updatedAt:
-          typeof file.modifiedTime === 'string' && Number.isFinite(Date.parse(file.modifiedTime))
-            ? Date.parse(file.modifiedTime)
-            : Date.now(),
-      });
+      reads.push(
+        await readProviderPage(fileId, async (): Promise<DocPage> => {
+          const content = providerPayload(
+            await read.execute!({ fileId, includeComments: false }, {}),
+          );
+          if (typeof content.fileContent !== 'string') {
+            throw new Error('Google Drive file content is unavailable.');
+          }
+          return {
+            sourceId: source._id,
+            ref: fileId,
+            title: typeof file.title === 'string' ? file.title : `Google Drive file ${fileId}`,
+            url: typeof file.viewUrl === 'string' ? file.viewUrl : undefined,
+            markdown: content.fileContent,
+            updatedAt:
+              typeof file.modifiedTime === 'string' &&
+              Number.isFinite(Date.parse(file.modifiedTime))
+                ? Date.parse(file.modifiedTime)
+                : Date.now(),
+          };
+        }),
+      );
     }
     const nextCursor = continuationCursor(searchResult.nextPageToken);
     // A search Drive could not finish, with no token to go on from, is not the end of the corpus.
     if (nextCursor === undefined && searchResult.incompleteSearch === true) {
       throw new Error(DRIVE_INCOMPLETE_SEARCH_REASON);
     }
-    return { pages, nextCursor };
+    return { ...splitPageReads(reads), nextCursor };
   }
 
   /** Read one Atlassian CQL page and retrieve each Confluence page as Markdown. */
@@ -727,7 +746,7 @@ export class McpReader implements DocSourceReader {
     source: DocSourceRecord,
     cursor: string | undefined,
     limit: number,
-  ): Promise<DocPageBatch> {
+  ): Promise<ReadPageBatch> {
     const tools = await client.listTools();
     const accessible = requiredTool(tools, 'getAccessibleAtlassianResources');
     const search = requiredTool(tools, 'searchConfluenceUsingCql');
@@ -762,7 +781,7 @@ export class McpReader implements DocSourceReader {
       ),
     );
     const results = pageList(searchResult, 'results', 'Confluence');
-    const pages: DocPage[] = [];
+    const reads: Array<DocPage | UnreadPage> = [];
     for (const value of results) {
       const result = listedItem(value, 'Confluence');
       const content =
@@ -771,37 +790,41 @@ export class McpReader implements DocSourceReader {
           : result;
       const pageId = typeof content.id === 'string' ? content.id : undefined;
       if (!pageId) throw new Error(unrecognisedReply('Confluence', 'a page id'));
-      const retrieved = providerValue(
-        await retrieve.execute!({ cloudId, pageId, contentFormat: 'markdown' }, {}),
+      reads.push(
+        await readProviderPage(pageId, async (): Promise<DocPage> => {
+          const retrieved = providerValue(
+            await retrieve.execute!({ cloudId, pageId, contentFormat: 'markdown' }, {}),
+          );
+          const markdown =
+            typeof retrieved === 'string'
+              ? retrieved
+              : (nestedString(retrieved, ['markdown']) ??
+                nestedString(retrieved, ['body']) ??
+                nestedString(retrieved, ['body', 'value']));
+          if (!markdown) throw new Error('Confluence page Markdown is unavailable.');
+          const title =
+            typeof content.title === 'string'
+              ? content.title
+              : typeof result.title === 'string'
+                ? result.title
+                : `Confluence page ${pageId}`;
+          const modified =
+            typeof result.lastModified === 'string'
+              ? result.lastModified
+              : nestedString(retrieved, ['version', 'createdAt']);
+          return {
+            sourceId: source._id,
+            ref: pageId,
+            title,
+            url: typeof result.url === 'string' ? result.url : undefined,
+            markdown: unwrapWholePageFence(markdown),
+            updatedAt:
+              modified && Number.isFinite(Date.parse(modified)) ? Date.parse(modified) : Date.now(),
+          };
+        }),
       );
-      const markdown =
-        typeof retrieved === 'string'
-          ? retrieved
-          : (nestedString(retrieved, ['markdown']) ??
-            nestedString(retrieved, ['body']) ??
-            nestedString(retrieved, ['body', 'value']));
-      if (!markdown) throw new Error('Confluence page Markdown is unavailable.');
-      const title =
-        typeof content.title === 'string'
-          ? content.title
-          : typeof result.title === 'string'
-            ? result.title
-            : `Confluence page ${pageId}`;
-      const modified =
-        typeof result.lastModified === 'string'
-          ? result.lastModified
-          : nestedString(retrieved, ['version', 'createdAt']);
-      pages.push({
-        sourceId: source._id,
-        ref: pageId,
-        title,
-        url: typeof result.url === 'string' ? result.url : undefined,
-        markdown: unwrapWholePageFence(markdown),
-        updatedAt:
-          modified && Number.isFinite(Date.parse(modified)) ? Date.parse(modified) : Date.now(),
-      });
     }
-    return { pages, nextCursor: atlassianCursor(searchResult) };
+    return { ...splitPageReads(reads), nextCursor: atlassianCursor(searchResult) };
   }
 
   /** Read one Notion search page and its Markdown bodies. */
@@ -810,7 +833,7 @@ export class McpReader implements DocSourceReader {
     source: DocSourceRecord,
     cursor: string | undefined,
     limit: number,
-  ): Promise<DocPageBatch> {
+  ): Promise<ReadPageBatch> {
     const tools = await client.listTools();
     const search = requiredTool(tools, 'API-post-search');
     const retrieve = requiredTool(tools, 'API-retrieve-page-markdown');
@@ -825,33 +848,37 @@ export class McpReader implements DocSourceReader {
       ),
     );
     const results = pageList(searchResult, 'results', 'Notion');
-    const pages: DocPage[] = [];
+    const reads: Array<DocPage | UnreadPage> = [];
     for (const value of results) {
       const result = listedItem(value, 'Notion');
-      if (typeof result.id !== 'string') throw new Error(unrecognisedReply('Notion', 'a page id'));
-      const retrieved = providerPayload(
-        await retrieve.execute!({ page_id: result.id, include_transcript: false }, {}),
+      const pageId = result.id;
+      if (typeof pageId !== 'string') throw new Error(unrecognisedReply('Notion', 'a page id'));
+      reads.push(
+        await readProviderPage(pageId, async (): Promise<DocPage> => {
+          const retrieved = providerPayload(
+            await retrieve.execute!({ page_id: pageId, include_transcript: false }, {}),
+          );
+          if (typeof retrieved.markdown !== 'string') {
+            throw new Error('Notion page Markdown is unavailable.');
+          }
+          if (retrieved.truncated === true) throw new Error('Notion page Markdown was truncated.');
+          return {
+            sourceId: source._id,
+            ref: pageId,
+            title: notionPageTitle(result),
+            url: typeof result.url === 'string' ? result.url : undefined,
+            markdown: unwrapWholePageFence(retrieved.markdown),
+            updatedAt:
+              typeof result.last_edited_time === 'string' &&
+              Number.isFinite(Date.parse(result.last_edited_time))
+                ? Date.parse(result.last_edited_time)
+                : Date.now(),
+          };
+        }),
       );
-      if (typeof retrieved.markdown !== 'string') {
-        throw new Error('Notion page Markdown is unavailable.');
-      }
-      if (retrieved.truncated === true) throw new Error('Notion page Markdown was truncated.');
-      const markdown = unwrapWholePageFence(retrieved.markdown);
-      pages.push({
-        sourceId: source._id,
-        ref: result.id,
-        title: notionPageTitle(result),
-        url: typeof result.url === 'string' ? result.url : undefined,
-        markdown,
-        updatedAt:
-          typeof result.last_edited_time === 'string' &&
-          Number.isFinite(Date.parse(result.last_edited_time))
-            ? Date.parse(result.last_edited_time)
-            : Date.now(),
-      });
     }
     return {
-      pages,
+      ...splitPageReads(reads),
       nextCursor:
         searchResult.has_more === false
           ? undefined
@@ -865,31 +892,36 @@ export class McpReader implements DocSourceReader {
     source: DocSourceRecord,
     cursor: string | undefined,
     limit: number,
-  ): Promise<DocPageBatch> {
+  ): Promise<ReadPageBatch> {
     const resources = (await client.resources.list())[SERVER_NAME] ?? [];
     if (resources.length === 0) {
       throw new Error('MCP server exposes no resources; escalate this documentation source.');
     }
-    const offset = offsetFromCursor(cursor);
+    const listing = resources.map((resource): string => resource.uri);
+    const offset = offsetInListing(cursor, listing);
     const selected = resources.slice(offset, offset + limit);
-    const pages: DocPage[] = [];
+    const reads: Array<DocPage | UnreadPage> = [];
     for (const resource of selected) {
-      const result = await client.resources.read(SERVER_NAME, resource.uri);
-      const markdown = resourceMarkdown(result.contents);
-      const fallback = resource.title || resource.name || resource.uri;
-      pages.push({
-        sourceId: source._id,
-        ref: resource.uri,
-        title: resource.title || resource.name || markdownPageTitle(markdown, fallback),
-        url: /^https?:\/\//.test(resource.uri) ? resource.uri : undefined,
-        markdown,
-        updatedAt: Date.now(),
-      });
+      reads.push(
+        await readProviderPage(resource.uri, async (): Promise<DocPage> => {
+          const result = await client.resources.read(SERVER_NAME, resource.uri);
+          const markdown = resourceMarkdown(result.contents);
+          const fallback = resource.title || resource.name || resource.uri;
+          return {
+            sourceId: source._id,
+            ref: resource.uri,
+            title: resource.title || resource.name || markdownPageTitle(markdown, fallback),
+            url: /^https?:\/\//.test(resource.uri) ? resource.uri : undefined,
+            markdown,
+            updatedAt: Date.now(),
+          };
+        }),
+      );
     }
-    const nextOffset = offset + pages.length;
+    const nextOffset = offset + selected.length;
     return {
-      pages,
-      nextCursor: nextOffset < resources.length ? String(nextOffset) : undefined,
+      ...splitPageReads(reads),
+      nextCursor: nextOffset < resources.length ? listingCursor(nextOffset, listing) : undefined,
     };
   }
 }

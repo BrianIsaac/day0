@@ -206,8 +206,10 @@ state on these lines. Values go in backticks, channels start with `#`.
   names.
 - Reflowing the line or adding a channel to it keeps an approved card connected. So does
   renaming or moving the page within the team's directory, or anywhere when the new page states
-  the whole approved queue. Removing an approved value from its page returns the card to the
-  manager for approval, even when another team's page names the same value.
+  every value of an approved queue of two or more. A one-value queue moves only within the team's
+  directory, since any page naming that value would state it whole. Removing an approved value
+  from its page returns the card to the manager for approval, even when another team's page names
+  the same value.
 - A card is tied to one team's handbook by the employee's role: keep each team's pages under a
   directory named for the team, with its handbook at the top.
 

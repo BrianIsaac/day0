@@ -675,10 +675,12 @@ describe('URL attribution', (): void => {
     expect(isCredentialSafeEndpoint('http://playwright-mcp:8931/mcp')).toBe(true);
     expect(isCredentialSafeEndpoint('http://api.example.com/v1')).toBe(false);
     expect(isCredentialSafeEndpoint('not a url')).toBe(false);
+    // A plaintext public MCP or API address is not a web UI either: the browser
+    // rung would send the login over the same plaintext hop (review m28).
     expect(documentedEndpoints(['http://api.example.com/v1'])).toEqual({
       mcp: undefined,
       api: undefined,
-      webUi: 'http://api.example.com/v1',
+      webUi: undefined,
       insecure: 'http://api.example.com/v1',
     });
     expect(
@@ -686,9 +688,44 @@ describe('URL attribution', (): void => {
     ).toEqual({
       mcp: undefined,
       api: 'https://api.example.com/v1',
-      webUi: 'http://mcp.evil.example/mcp',
+      webUi: undefined,
       insecure: 'http://mcp.evil.example/mcp',
     });
+    expect(
+      documentedEndpoints([
+        'http://mcp.evil.example/mcp',
+        'http://mcp.evil.example/login',
+        'https://app.example.com/login',
+      ]).webUi,
+    ).toBe('https://app.example.com/login');
+  });
+
+  it('holds a documented API to the probe address rule the MCP rung is held to (review m27)', (): void => {
+    const unlisted = documentedEndpoints(
+      ['https://tracker.corp.internal/api/v2/', 'https://tracker.corp.internal/login'],
+      privateHostAllowlist(''),
+    );
+    expect(unlisted.api).toBeUndefined();
+    expect(unlisted.refusedApi?.endpoint).toBe('https://tracker.corp.internal/api/v2/');
+    expect(unlisted.refusedApi?.reason).toContain('DAY0_PRIVATE_HOSTS');
+    expect(unlisted.webUi).toBeUndefined();
+    expect(
+      documentedEndpoints(
+        ['https://tracker.corp.internal/api/v2/'],
+        privateHostAllowlist('tracker.corp.internal'),
+      ),
+    ).toEqual({
+      mcp: undefined,
+      api: 'https://tracker.corp.internal/api/v2/',
+      webUi: undefined,
+      insecure: undefined,
+      refusedMcp: undefined,
+      refusedApi: undefined,
+    });
+    // Listed but plaintext: the documented-API probe sends its key over https only.
+    expect(
+      documentedEndpoints(['http://tracker:8080/api/v2'], privateHostAllowlist('tracker')).api,
+    ).toBeUndefined();
   });
 
   it('admits a private MCP endpoint only when DAY0_PRIVATE_HOSTS lists its host', (): void => {
@@ -724,6 +761,22 @@ describe('URL attribution', (): void => {
         privateHostAllowlist('playwright-mcp'),
       ).mcp,
     ).toBeUndefined();
+  });
+
+  it('judges an address without its fragment, and keeps a written-in login off the browser rung (adversarial pass)', (): void => {
+    expect(
+      documentedEndpoints(['https://app.acme.com/api#auth', 'https://app.acme.com/login']),
+    ).toMatchObject({ api: 'https://app.acme.com/api', webUi: 'https://app.acme.com/login' });
+    expect(
+      documentedEndpoints(['https://user:pw@api.acme.com/', 'https://app.acme.com/login']).webUi,
+    ).toBe('https://app.acme.com/login');
+    expect(documentedEndpoints(['https://user:pw@wiki.acme.com/start']).webUi).toBeUndefined();
+    const refused = documentedEndpoints(
+      ['https://tracker.corp.internal/api/v2/'],
+      privateHostAllowlist(''),
+    ).refusedApi;
+    expect(refused?.reason).toContain('The approved API endpoint');
+    expect(refused?.reason).not.toMatch(/\bMCP\b/);
   });
 
   it('reads the allowlist from the environment when none is passed', (): void => {
@@ -983,6 +1036,168 @@ describe('orientation run', (): void => {
     }
   });
 
+  it('re-opens a system the charter does not name with a reason that stays true, and orients nothing (review m34)', async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = (): DraftPath => 'documented-api';
+    const harness = convexTest(schema, orientationModules());
+    const { agentId, sourceId } = await seedOrientation(
+      harness,
+      {
+        'netledger.md':
+          '# NetLedger\n\nNetLedger has a documented API at https://api.netledger.example/v2.',
+      },
+      [{ name: 'Linear', class: 'kanban' }],
+    );
+    const netledgerId = await harness.run(async (ctx): Promise<Id<'surfaces'>> => {
+      await ctx.db.insert('charters', {
+        agentId,
+        version: '0.0',
+        body: { version: '0.0', namedSystems: [{ name: 'Linear', class: 'kanban' }] },
+        approved: true,
+        approvedAt: 3,
+        createdAt: 3,
+      });
+      return await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'netledger',
+        displayName: 'NetLedger',
+        class: 'other',
+        verdict: 'absent',
+        whereFound: [],
+        credentialLanded: false,
+        createdAt: 1,
+        reason: 'No approved surface found after searching: NetLedger, other',
+      });
+    });
+
+    await expect(
+      harness.action(internal.orientationActions.reorientAbsent, { sourceId }),
+    ).resolves.toEqual({ reopened: 1 });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const netledger = await harness.run(async (ctx) => await ctx.db.get(netledgerId));
+    const waiting =
+      'A linked page now records NetLedger. The charter does not name it, so it waits for the manager to propose it.';
+    expect(netledger).toMatchObject({ verdict: 'declared', reason: waiting });
+    expect(netledger?.orientationJobId).toBeUndefined();
+    const reopened = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent_type', (index) =>
+            index.eq('agentId', agentId).eq('type', 'surface.reopened'),
+          )
+          .collect(),
+    );
+    expect(reopened.map((event) => event.payload)).toEqual([
+      { surfaceId: netledgerId, reason: waiting },
+    ]);
+  });
+
+  it('re-opens an absent system from a corpus larger than one read, a page at a time (review m30)', async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = (): DraftPath => 'documented-api';
+    const harness = convexTest({
+      schema,
+      modules: orientationModules(),
+      transactionLimits: true,
+    });
+    const { agentId, sourceId } = await seedOrientation(harness, {}, [
+      { name: 'NetLedger', class: 'other' },
+    ]);
+    const body = `# Runbook\n\n${'Follow the documented steps in order.\n'.repeat(14_000)}`;
+    for (let start = 0; start < 40; start += 4) {
+      await harness.run(async (ctx): Promise<void> => {
+        for (let index = start; index < start + 4; index += 1) {
+          await ctx.db.insert('docPages', {
+            sourceId,
+            ref: `runbooks/page-${index}.md`,
+            title: `Page ${index}`,
+            markdown: body,
+            updatedAt: 1,
+          });
+        }
+      });
+    }
+    const netledgerId = await harness.run(async (ctx): Promise<Id<'surfaces'>> => {
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'systems/netledger.md',
+        title: 'NetLedger',
+        markdown:
+          '# NetLedger\n\nNetLedger has a documented API at https://api.netledger.example/v2.',
+        updatedAt: 1,
+      });
+      const surface = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent', (index) => index.eq('agentId', agentId))
+        .first();
+      await ctx.db.patch(surface!._id, { verdict: 'absent' });
+      return surface!._id;
+    });
+
+    await expect(
+      harness.action(internal.orientationActions.reorientAbsent, { sourceId }),
+    ).resolves.toEqual({ reopened: 1 });
+    expect((await harness.run(async (ctx) => await ctx.db.get(netledgerId)))?.verdict).toBe(
+      'declared',
+    );
+  });
+
+  it('re-opens a system another source names once the sync removed the only page denying it (adversarial pass on m30)', async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = (): DraftPath => 'escalate';
+    const harness = convexTest(schema, orientationModules());
+    const { agentId, sourceId: named } = await seedOrientation(
+      harness,
+      { 'billing.md': '# Billing\n\nFoo is where finance keeps the invoices.' },
+      [{ name: 'Foo', class: 'other' }],
+    );
+    const { denying, fooId } = await harness.run(async (ctx) => {
+      const denying = await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'Policies',
+        kind: 'folder',
+        locator: 'policies',
+        status: 'synced',
+        createdAt: 2,
+        updatedAt: 2,
+      });
+      await ctx.db.insert('docPages', {
+        sourceId: denying,
+        ref: 'foo.md',
+        title: 'Foo',
+        markdown: '# Foo\n\nNo approved API or MCP server is recorded for Foo.',
+        updatedAt: 1,
+      });
+      const foo = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent', (index) => index.eq('agentId', agentId))
+        .first();
+      await ctx.db.patch(foo!._id, { verdict: 'absent' });
+      return { denying, fooId: foo!._id };
+    });
+    void named;
+    // The policy source's sync removes its denial page.
+    await harness.run(async (ctx) => {
+      const page = await ctx.db
+        .query('docPages')
+        .withIndex('by_source', (index) => index.eq('sourceId', denying))
+        .first();
+      await ctx.db.delete(page!._id);
+    });
+    await expect(
+      harness.action(internal.orientationActions.reorientAbsent, { sourceId: denying }),
+    ).resolves.toEqual({ reopened: 0 });
+    await expect(
+      harness.action(internal.orientationActions.reorientAbsent, {
+        sourceId: denying,
+        pagesRemoved: 1,
+      }),
+    ).resolves.toEqual({ reopened: 1 });
+    expect((await harness.run(async (ctx) => await ctx.db.get(fooId)))?.verdict).toBe('declared');
+  });
+
   it('leaves an absent system absent while its page still denies a surface', async (): Promise<void> => {
     stubRegistry();
     model.pathFor = (): DraftPath => 'escalate';
@@ -1078,6 +1293,47 @@ describe('orientation run', (): void => {
     expect((ledger.request as { openQuestions: string[] }).openQuestions.join(' ')).toContain(
       'plaintext http on a public host',
     );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('proposes a private documented API only when DAY0_PRIVATE_HOSTS lists its host (review m27)', async (): Promise<void> => {
+    const fetchMock = stubRegistry();
+    model.pathFor = (): DraftPath => 'documented-api';
+    const page = {
+      'tracker.md':
+        '# Tracker\n\nTracker has a documented API at https://tracker.corp.internal/api/v2/.',
+    };
+    vi.stubEnv('DAY0_PRIVATE_HOSTS', '');
+    try {
+      const harness = convexTest(schema, orientationModules());
+      const { agentId } = await seedOrientation(harness, page, [
+        { name: 'Tracker', class: 'other' },
+      ]);
+      await expect(orientDeclared(harness, agentId)).resolves.toEqual({ proposed: 1, absent: 0 });
+      const tracker = (await surfacesBySlug(harness, agentId)).tracker;
+      expect(tracker).toMatchObject({ verdict: 'proposed', path: 'escalate' });
+      expect(tracker.endpoint).toBeUndefined();
+      expect((tracker.request as { openQuestions: string[] }).openQuestions.join(' ')).toContain(
+        'The documented API https://tracker.corp.internal/api/v2/ was not admitted',
+      );
+
+      vi.stubEnv('DAY0_PRIVATE_HOSTS', 'tracker.corp.internal');
+      const listedHarness = convexTest(schema, orientationModules());
+      const listed = await seedOrientation(listedHarness, page, [
+        { name: 'Tracker', class: 'other' },
+      ]);
+      await expect(orientDeclared(listedHarness, listed.agentId)).resolves.toEqual({
+        proposed: 1,
+        absent: 0,
+      });
+      expect((await surfacesBySlug(listedHarness, listed.agentId)).tracker).toMatchObject({
+        verdict: 'proposed',
+        path: 'documented-api',
+        endpoint: 'https://tracker.corp.internal/api/v2/',
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

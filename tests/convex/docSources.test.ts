@@ -1,9 +1,17 @@
+import { randomBytes } from 'node:crypto';
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
-import { STALE_SYNC_MS, agentReadsSource, validateLinkInput } from '../../convex/docSources';
+import {
+  FINISHING_CURSOR,
+  RUN_HISTORY_MS,
+  STALE_SYNC_MS,
+  agentReadsSource,
+  validateLinkInput,
+  validateReaderSecret,
+} from '../../convex/docSources';
 import { DOCS_NOTION_LOCATOR } from '../../src/docs/components';
 import { allConvexModules } from './all-modules';
 import { mirroredDocSlug } from '../../src/docs/types';
@@ -95,6 +103,43 @@ async function rowsForSource(
       mirrors: mirrors.length,
       source: (await ctx.db.get(sourceId)) !== null,
     };
+  });
+}
+
+/** The first page of a paged read, as the tests read a small table. */
+const FIRST_PAGE = { paginationOpts: { numItems: 100, cursor: null } };
+
+/**
+ * Record a generation's last batch and finish it the way the sync action does:
+ * the stale pages and mirrors are pruned, the intake scopes re-read, and the
+ * generation completed. The test must run on fake timers, since the finish
+ * schedules discovery and re-orientation.
+ *
+ * Returns:
+ *   What the finishing sync step reported.
+ */
+async function finishGeneration(
+  harness: TestConvex<typeof schema>,
+  sourceId: Id<'docSources'>,
+  runId: Id<'docSyncRuns'>,
+  last: {
+    currentCursor?: string;
+    refs: string[];
+    credentialRefs: string[];
+    pageCount: number;
+    redactionCount: number;
+  },
+): Promise<unknown> {
+  await harness.mutation(internal.docSources.recordSyncBatch, {
+    sourceId,
+    runId,
+    nextCursor: FINISHING_CURSOR,
+    ...last,
+  });
+  return await harness.action(internal.docSyncActions.syncBatch, {
+    sourceId,
+    runId,
+    cursor: FINISHING_CURSOR,
   });
 }
 
@@ -243,7 +288,9 @@ describe('documentation sources in mock mode', (): void => {
     useSurfaceMode('mock');
     const harness = convexTest(schema, allConvexModules());
     await seedSyncedSource(harness);
-    await expect(harness.query(internal.docSources.listSyncable, {})).resolves.toEqual([]);
+    await expect(
+      harness.query(internal.docSources.listSyncable, FIRST_PAGE),
+    ).resolves.toMatchObject({ page: [], isDone: true });
   });
 });
 
@@ -364,6 +411,118 @@ describe('documentation sources in real mode', (): void => {
     await expect(owner.query(api.docSources.listMine, {})).resolves.toEqual([]);
   });
 
+  it('stores a private repository’s reader secret as a credential, never in the locator (E-74)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', randomBytes(32).toString('base64'));
+    const secret = ['ghp', 'readerContractValue0123456789'].join('_');
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity({ subject: 'owner' });
+    const sourceId = await owner.action(api.docSources.link, {
+      label: 'Runbooks',
+      kind: 'git',
+      locator: 'https://github.com/team/private-docs#main',
+      credential: secret,
+    });
+    const { source, credential } = await harness.run(async (ctx) => {
+      const source = await ctx.db.get(sourceId);
+      return {
+        source,
+        credential: source?.credentialId ? await ctx.db.get(source.credentialId) : null,
+      };
+    });
+    expect(source).toMatchObject({
+      kind: 'git',
+      locator: 'https://github.com/team/private-docs#main',
+      credentialId: credential?._id,
+    });
+    expect(credential).toMatchObject({ label: 'Runbooks reader secret', source: 'entered' });
+    expect(JSON.stringify({ source, credential })).not.toContain(secret);
+    await expect(
+      harness.action(internal.credentials.decrypt, { credentialId: credential!._id }),
+    ).resolves.toBe(secret);
+    vi.unstubAllEnvs();
+  });
+
+  it('rotates a URL source’s reader secret, reads again from page one, and refuses one that would leave its site (E-74)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', randomBytes(32).toString('base64'));
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity({ subject: 'owner' });
+    const sourceId = await owner.action(api.docSources.link, {
+      label: 'Wiki',
+      kind: 'urls',
+      locator: 'https://wiki.example/a\nhttps://wiki.example/b',
+      credential: 'first-reader-value',
+    });
+    const first = (await harness.run(async (ctx) => await ctx.db.get(sourceId)))?.credentialId;
+    await owner.action(api.docSources.rotateCredential, {
+      sourceId,
+      credential: 'second-reader-value',
+    });
+    const { source, old, scheduled } = await harness.run(async (ctx) => ({
+      source: await ctx.db.get(sourceId),
+      old: first ? await ctx.db.get(first) : null,
+      scheduled: await ctx.db.system.query('_scheduled_functions').collect(),
+    }));
+    expect(source?.credentialId).not.toBe(first);
+    expect(old?.revokedAt).toEqual(expect.any(Number));
+    expect(scheduled.map((job) => job.args[0])).toContainEqual({ sourceId, fresh: true });
+    await expect(
+      owner.action(api.docSources.rotateCredential, { sourceId, credential: 'bad\nvalue' }),
+    ).rejects.toThrow('line break');
+    const folder = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('docSources', {
+          userId: 'owner',
+          label: 'Folder',
+          kind: 'folder',
+          locator: '.',
+          status: 'synced',
+          createdAt: 1,
+          updatedAt: 1,
+        }),
+    );
+    await expect(
+      owner.action(api.docSources.rotateCredential, { sourceId: folder, credential: 'value' }),
+    ).rejects.toThrow('Documentation source not found.');
+    vi.unstubAllEnvs();
+  });
+
+  it('refuses a reader secret a source cannot keep to one https site, and a folder’s (E-74)', (): void => {
+    const folder = validateLinkInput({ label: 'Folder', kind: 'folder', locator: '.' });
+    expect(() => validateReaderSecret(folder, 'value')).toThrow('takes no secret');
+    const twoSites = validateLinkInput({
+      label: 'Wiki',
+      kind: 'urls',
+      locator: 'https://wiki.example/a\nhttps://other.example/b',
+    });
+    expect(() => validateReaderSecret(twoSites, 'value')).toThrow('one https site');
+    const plaintext = validateLinkInput({
+      label: 'Wiki',
+      kind: 'urls',
+      locator: 'http://wiki.example/a',
+    });
+    expect(() => validateReaderSecret(plaintext, 'value')).toThrow('one https site');
+    const oneSite = validateLinkInput({
+      label: 'Wiki',
+      kind: 'urls',
+      locator: 'https://wiki.example/a\nhttps://wiki.example/b',
+    });
+    expect(() => validateReaderSecret(oneSite, 'value')).not.toThrow();
+    expect(() => validateReaderSecret(oneSite, undefined)).not.toThrow();
+    expect(() => validateReaderSecret(oneSite, '')).toThrow('cannot be empty');
+    expect(() => validateReaderSecret(oneSite, 'first\nsecond')).toThrow('line break');
+    const mcp = validateLinkInput({
+      label: 'Notion',
+      kind: 'mcp',
+      serverKind: 'generic',
+      locator: 'https://mcp.example/mcp',
+    });
+    expect(() => validateReaderSecret(mcp, undefined)).toThrow('Connection secret is required');
+  });
+
   it('persists only a credential id on an authenticated source', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
@@ -399,13 +558,12 @@ describe('documentation sources in real mode', (): void => {
 
   it('unlinks stored pages and per-agent mirrors together', async (): Promise<void> => {
     useSurfaceMode('real');
+    vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
     const { sourceId } = await seedSyncedSource(harness);
     const owner = harness.withIdentity({ subject: 'owner' });
-    await expect(owner.mutation(api.docSources.unlink, { sourceId })).resolves.toEqual({
-      pages: 1,
-      mirrors: 1,
-    });
+    await expect(owner.mutation(api.docSources.unlink, { sourceId })).resolves.toBeNull();
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
     await expect(rowsForSource(harness, sourceId)).resolves.toEqual({
       pages: 0,
       mirrors: 0,
@@ -539,13 +697,14 @@ describe('documentation sources in real mode', (): void => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
     const { sourceId } = await seedSyncedSource(harness);
-    await expect(harness.query(internal.docSources.listSyncable, {})).resolves.toMatchObject([
-      { _id: sourceId },
-    ]);
+    await expect(
+      harness.query(internal.docSources.listSyncable, FIRST_PAGE),
+    ).resolves.toMatchObject({ page: [{ _id: sourceId }] });
   });
 
   it('keeps stale pages through continuations and deletes them only on the fenced final batch', async (): Promise<void> => {
     useSurfaceMode('real');
+    vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
     const { sourceId } = await seedSyncedSource(harness);
     const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
@@ -578,18 +737,19 @@ describe('documentation sources in real mode', (): void => {
       updatedAt: 2,
     });
     await expect(
-      harness.mutation(internal.docSources.finishSync, {
-        sourceId,
-        runId,
+      finishGeneration(harness, sourceId, runId, {
         currentCursor: 'page-25',
         refs: ['new-two.md'],
         credentialRefs: [],
         pageCount: 1,
         redactionCount: 0,
       }),
-    ).resolves.toMatchObject({ completed: true, pages: 2, redactions: 1 });
-    const pages = await harness.query(internal.docSources.pagesForSourceInternal, { sourceId });
-    expect(pages.map((page) => page.ref).sort()).toEqual(['new-one.md', 'new-two.md']);
+    ).resolves.toMatchObject({ ok: true, complete: true, pages: 2, redactions: 1 });
+    const pages = await harness.query(internal.docSources.pagesForSourceInternal, {
+      sourceId,
+      ...FIRST_PAGE,
+    });
+    expect(pages.page.map((page) => page.ref).sort()).toEqual(['new-one.md', 'new-two.md']);
     const source = await harness.query(internal.docSources.getInternal, { sourceId });
     expect(source).toMatchObject({ status: 'synced' });
     expect(source).not.toHaveProperty('activeSyncId');
@@ -621,6 +781,7 @@ describe('documentation sources in real mode', (): void => {
 
   it('records on each run why it ended short, and what a completed one changed (U8 D1 (b))', async (): Promise<void> => {
     useSurfaceMode('real');
+    vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
     const { sourceId } = await seedSyncedSource(harness);
     const superseded = await harness.mutation(internal.docSources.beginSync, { sourceId });
@@ -640,9 +801,7 @@ describe('documentation sources in real mode', (): void => {
       markdown: '# Fresh',
       updatedAt: 2,
     });
-    await harness.mutation(internal.docSources.finishSync, {
-      sourceId,
-      runId: completed,
+    await finishGeneration(harness, sourceId, completed, {
       refs: ['fresh.md'],
       credentialRefs: [],
       pageCount: 1,
@@ -667,6 +826,7 @@ describe('documentation sources in real mode', (): void => {
 
   it('deletes a mirror an earlier slug rule keyed, once the sync has mirrored the page under its own (review M20)', async (): Promise<void> => {
     useSurfaceMode('real');
+    vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
     const { sourceId, agentId } = await seedSyncedSource(harness);
     await harness.run(async (ctx) => {
@@ -700,9 +860,7 @@ describe('documentation sources in real mode', (): void => {
       sourceId,
       sourceRef: 'Café.md',
     });
-    await harness.mutation(internal.docSources.finishSync, {
-      sourceId,
-      runId,
+    await finishGeneration(harness, sourceId, runId, {
       refs: ['Café.md'],
       credentialRefs: [],
       pageCount: 1,
@@ -718,8 +876,44 @@ describe('documentation sources in real mode', (): void => {
     expect(mirrors.map((mirror) => mirror.slug)).toEqual([mirroredDocSlug(sourceId, 'Café.md')]);
   });
 
+  it('keeps an old-slug mirror while it is the only copy of a listed page the sync could not read (adversarial pass)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, agentId } = await seedSyncedSource(harness);
+    const oldSlug = `source-${String(sourceId).slice(-10).toLowerCase()}-caf-md`;
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('mockDocs', {
+        agentId,
+        slug: oldSlug,
+        title: 'Café, as v0.4.0 keyed it',
+        body: '# Café',
+        category: 'team-doc',
+        sourceId,
+        sourceRef: 'Café.md',
+        updatedAt: 1,
+      });
+    });
+    const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    await finishGeneration(harness, sourceId, runId, {
+      refs: ['page.md', 'Café.md'],
+      credentialRefs: [],
+      pageCount: 1,
+      redactionCount: 0,
+    });
+    const mirrors = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('mockDocs')
+          .withIndex('by_source', (index) => index.eq('sourceId', sourceId))
+          .collect(),
+    );
+    expect(mirrors.map((mirror) => mirror.slug)).toContain(oldSlug);
+  });
+
   it('returns a connected card to proposal when its approved queue line changes', async (): Promise<void> => {
     useSurfaceMode('real');
+    vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
     const { sourceId, agentId } = await seedSyncedSource(harness);
     // The page as an earlier sync left it.
@@ -769,9 +963,7 @@ describe('documentation sources in real mode', (): void => {
       markdown: '- Channels: #ops-requests',
       updatedAt: 3,
     });
-    await harness.mutation(internal.docSources.finishSync, {
-      sourceId,
-      runId,
+    await finishGeneration(harness, sourceId, runId, {
       refs: ['page.md'],
       credentialRefs: [],
       pageCount: 1,
@@ -792,6 +984,7 @@ describe('documentation sources in real mode', (): void => {
 
   it('keeps a connected card connected when its queue page is renamed or the line is reflowed, and re-points its quote', async (): Promise<void> => {
     useSurfaceMode('real');
+    vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
     const { sourceId, agentId } = await seedSyncedSource(harness);
     const surfaceId = await harness.run(
@@ -809,12 +1002,14 @@ describe('documentation sources in real mode', (): void => {
           itApprovedAt: 3,
           probeGeneration: 4,
           managerDmChannelId: 'D1',
+          // The team's handbook is renamed within the team's directory; a
+          // one-value scope follows a gone page only there (review M15).
           intakeScope: {
             channels: [
               {
                 value: 'finance-close',
                 sourceId,
-                ref: 'page.md',
+                ref: 'finance/handbook.md',
                 quote: '- Channels: #finance-close',
               },
             ],
@@ -830,9 +1025,7 @@ describe('documentation sources in real mode', (): void => {
       markdown: '- Channels:  #finance-close,  #ops-requests',
       updatedAt: 3,
     });
-    await harness.mutation(internal.docSources.finishSync, {
-      sourceId,
-      runId,
+    await finishGeneration(harness, sourceId, runId, {
       refs: ['finance/team.md'],
       credentialRefs: [],
       pageCount: 1,
@@ -862,7 +1055,9 @@ describe('documentation sources in real mode', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const { sourceId } = await seedSyncedSource(harness);
     const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
-    await expect(harness.query(internal.docSources.listSyncable, {})).resolves.toEqual([]);
+    await expect(
+      harness.query(internal.docSources.listSyncable, FIRST_PAGE),
+    ).resolves.toMatchObject({ page: [] });
     vi.setSystemTime(new Date('2026-08-26T10:25:00Z'));
     await expect(
       harness.mutation(internal.docSources.recordSyncBatch, {
@@ -876,10 +1071,12 @@ describe('documentation sources in real mode', (): void => {
       }),
     ).resolves.toBe(true);
     vi.setSystemTime(new Date('2026-08-26T10:40:00Z'));
-    await expect(harness.query(internal.docSources.listSyncable, {})).resolves.toEqual([]);
+    await expect(
+      harness.query(internal.docSources.listSyncable, FIRST_PAGE),
+    ).resolves.toMatchObject({ page: [] });
     vi.setSystemTime(new Date(Date.parse('2026-08-26T10:25:00Z') + STALE_SYNC_MS + 1));
-    const stale = await harness.query(internal.docSources.listSyncable, {});
-    expect(stale.map((source) => source._id)).toEqual([sourceId]);
+    const stale = await harness.query(internal.docSources.listSyncable, FIRST_PAGE);
+    expect(stale.page.map((source) => source._id)).toEqual([sourceId]);
     const replacementRunId = await harness.mutation(internal.docSources.beginSync, { sourceId });
     expect(replacementRunId).not.toBe(runId);
     await expect(
@@ -887,6 +1084,70 @@ describe('documentation sources in real mode', (): void => {
     ).resolves.toBeNull();
     const dead = await harness.run(async (ctx) => await ctx.db.get(runId));
     expect(dead?.state).toBe('superseded');
+    // The action the runtime killed read 25 pages; the new run reads on from there (step 17).
+    expect(dead?.reason).toBe(
+      'a newer sync of the source took over from its cursor after 25 pages',
+    );
+    await expect(
+      harness.query(internal.docSources.syncContext, { sourceId, runId: replacementRunId }),
+    ).resolves.toMatchObject({ run: { cursor: '25', pageCount: 25, state: 'running' } });
+  });
+
+  it('starts a sync from page one for a new secret, and after a resume that got no further (step 17)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId } = await seedSyncedSource(harness);
+    const failAt = async (runId: Id<'docSyncRuns'>): Promise<void> => {
+      await harness.mutation(internal.docSources.failSync, {
+        sourceId,
+        runId,
+        status: 'error',
+        reason: 'The documentation read was interrupted (timeout).',
+      });
+    };
+    const first = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    await harness.mutation(internal.docSources.recordSyncBatch, {
+      sourceId,
+      runId: first,
+      nextCursor: '25',
+      refs: ['page.md'],
+      credentialRefs: [],
+      pageCount: 25,
+      redactionCount: 0,
+    });
+    await failAt(first);
+    const context = async (runId: Id<'docSyncRuns'>) =>
+      (await harness.query(internal.docSources.syncContext, { sourceId, runId }))?.run;
+
+    const rotated = await harness.mutation(internal.docSources.beginSync, {
+      sourceId,
+      fresh: true,
+    });
+    expect(await context(rotated)).toMatchObject({ refs: [], pageCount: 0 });
+    expect((await context(rotated))?.cursor).toBeUndefined();
+    await failAt(rotated);
+
+    // The fresh run failed before its first batch: nothing to carry.
+    const second = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    expect((await context(second))?.cursor).toBeUndefined();
+    await harness.mutation(internal.docSources.recordSyncBatch, {
+      sourceId,
+      runId: second,
+      nextCursor: '25',
+      refs: ['page.md'],
+      credentialRefs: [],
+      pageCount: 25,
+      redactionCount: 0,
+    });
+    await failAt(second);
+    const resumed = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    expect(await context(resumed)).toMatchObject({ cursor: '25', pageCount: 25 });
+    await failAt(resumed);
+
+    // The resume failed where it started: the provider may no longer take the cursor.
+    const restarted = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    expect(await context(restarted)).toMatchObject({ refs: [], pageCount: 0 });
+    expect((await context(restarted))?.cursor).toBeUndefined();
   });
 });
 
@@ -1022,5 +1283,438 @@ describe('the sync generation fence on pages (step 14)', (): void => {
       harness.mutation(internal.docSources.upsertPage, { ...page, syncRunId: current }),
     ).rejects.toThrow('superseded by a newer one');
     await expect(rowsForSource(harness, sourceId)).resolves.toMatchObject({ pages: 2 });
+  });
+});
+
+describe('the documentation store under the transaction limits (step 49)', (): void => {
+  /** A page body of about half a mebibyte: forty of them outgrow one transaction's reads. */
+  const LARGE_BODY = `# Runbook\n\n${'Follow the documented steps in order.\n'.repeat(14_000)}`;
+  const LARGE_PAGES = 40;
+
+  /** A harness that enforces Convex's per-transaction limits. */
+  function limitedHarness(): TestConvex<typeof schema> {
+    return convexTest({ schema, modules: allConvexModules(), transactionLimits: true });
+  }
+
+  /**
+   * Seed a synced source whose pages and one employee's mirrors are each far
+   * more than one transaction may read, with a completed run that lists them,
+   * an approved chat scope quoting `handbook.md`, and a documented system.
+   */
+  async function largeSource(harness: TestConvex<typeof schema>): Promise<{
+    sourceId: Id<'docSources'>;
+    agentId: Id<'agents'>;
+    surfaceId: Id<'surfaces'>;
+  }> {
+    const { sourceId, agentId } = await harness.run(async (ctx) => {
+      const sourceId = await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'Large handbook',
+        kind: 'folder',
+        locator: '.',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'large source test',
+        userId: 'owner',
+        state: 'deployed',
+        createdAt: 1,
+      });
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'handbook.md',
+        title: 'Handbook',
+        markdown: '# Handbook\n\n- Channels: #finance-close',
+        updatedAt: 1,
+      });
+      return { sourceId, agentId };
+    });
+    const refs = ['handbook.md'];
+    for (let start = 0; start < LARGE_PAGES; start += 4) {
+      await harness.run(async (ctx) => {
+        for (let index = start; index < start + 4; index += 1) {
+          const ref = `runbooks/page-${index}.md`;
+          await ctx.db.insert('docPages', {
+            sourceId,
+            ref,
+            title: `Page ${index}`,
+            markdown: LARGE_BODY,
+            updatedAt: 1,
+          });
+          await ctx.db.insert('mockDocs', {
+            agentId,
+            slug: mirroredDocSlug(sourceId, ref),
+            title: `Page ${index}`,
+            body: LARGE_BODY,
+            category: 'how-to-guide',
+            sourceId,
+            sourceRef: ref,
+            updatedAt: 1,
+          });
+        }
+      });
+      for (let index = start; index < start + 4; index += 1) refs.push(`runbooks/page-${index}.md`);
+    }
+    const surfaceId = await harness.run(async (ctx): Promise<Id<'surfaces'>> => {
+      const runId = await ctx.db.insert('docSyncRuns', {
+        sourceId,
+        refs,
+        credentialRefs: [],
+        pageCount: refs.length,
+        redactionCount: 0,
+        state: 'completed',
+        createdAt: 1,
+        completedAt: 1,
+        summary: {
+          pagesKept: refs.length,
+          pagesRemoved: 0,
+          mirrorsRemoved: 0,
+          credentialsSuperseded: 0,
+          surfacesToReapprove: 0,
+        },
+      });
+      await ctx.db.patch(sourceId, { lastCompletedSyncId: runId });
+      return await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'slack',
+        displayName: 'Slack',
+        class: 'chat',
+        verdict: 'connected',
+        credentialLanded: true,
+        whereFound: [{ sourceId, ref: 'runbooks/page-3.md', quote: '# Runbook' }],
+        createdAt: 1,
+        managerApprovedAt: 2,
+        itApprovedAt: 3,
+        intakeScope: {
+          channels: [
+            {
+              value: 'finance-close',
+              sourceId,
+              ref: 'handbook.md',
+              quote: '- Channels: #finance-close',
+            },
+          ],
+        },
+      });
+    });
+    return { sourceId, agentId, surfaceId };
+  }
+
+  it('counts a large source’s pages from its run record, not by reading them', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = limitedHarness();
+    const { sourceId } = await largeSource(harness);
+    await expect(
+      harness.withIdentity({ subject: 'owner' }).query(api.docSources.listMine, {}),
+    ).resolves.toMatchObject([{ _id: sourceId, pageCount: LARGE_PAGES + 1 }]);
+    await expect(
+      harness.query(internal.docSources.syncReport, { sourceId }),
+    ).resolves.toMatchObject({ status: 'synced', pageCount: LARGE_PAGES + 1 });
+  });
+
+  it('sends the surface cards the pages they read, not every page body', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = limitedHarness();
+    const { agentId } = await largeSource(harness);
+    const pages = await harness
+      .withIdentity({ subject: 'owner' })
+      .query(api.docSources.pagesForAgent, { agentId });
+    expect(pages.map((page) => page.ref)).toEqual(['handbook.md', 'runbooks/page-3.md']);
+    expect(pages[0]).toMatchObject({ sourceLabel: 'Large handbook', sourceKind: 'folder' });
+  });
+
+  it('finishes a generation whose pages and mirrors outgrow one transaction', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = limitedHarness();
+    const { sourceId, surfaceId } = await largeSource(harness);
+    const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    const listed = ['handbook.md'];
+    for (let index = 1; index < LARGE_PAGES; index += 1) listed.push(`runbooks/page-${index}.md`);
+    // The handbook is renamed within the team's pages: the approved quote follows it.
+    await harness.mutation(internal.docSources.upsertPage, {
+      sourceId,
+      syncRunId: runId,
+      ref: 'handbook.md',
+      title: 'Handbook',
+      markdown: '# Handbook\n\n- Channels:  #finance-close',
+      updatedAt: 2,
+    });
+    await expect(
+      finishGeneration(harness, sourceId, runId, {
+        refs: listed,
+        credentialRefs: [],
+        pageCount: listed.length,
+        redactionCount: 0,
+      }),
+    ).resolves.toMatchObject({ ok: true, complete: true });
+    const run = await harness.run(async (ctx) => await ctx.db.get(runId));
+    expect(run).toMatchObject({ state: 'completed' });
+    expect(run?.summary).toEqual({
+      pagesKept: LARGE_PAGES,
+      pagesRemoved: 1,
+      mirrorsRemoved: 1,
+      credentialsSuperseded: 0,
+      surfacesToReapprove: 0,
+    });
+    const gone = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('docPages')
+          .withIndex('by_source_ref', (index) =>
+            index.eq('sourceId', sourceId).eq('ref', 'runbooks/page-0.md'),
+          )
+          .unique(),
+    );
+    expect(gone).toBeNull();
+    const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+    expect(surface).toMatchObject({ verdict: 'connected' });
+    expect(surface?.intakeScope?.channels?.[0].quote).toBe('- Channels:  #finance-close');
+  });
+
+  it('mirrors a large source for a new employee a page at a time', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = limitedHarness();
+    const { sourceId } = await largeSource(harness);
+    const newcomer = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('agents', {
+          bossEmail: 'boss@day0.local',
+          name: 'newcomer',
+          userId: 'owner',
+          state: 'deployed',
+          createdAt: 2,
+        }),
+    );
+    await expect(
+      harness.action(internal.docSyncActions.mirrorForAgent, { agentId: newcomer }),
+    ).resolves.toEqual({ pages: LARGE_PAGES + 1 });
+    let mirrored = 0;
+    let cursor: string | null = null;
+    for (;;) {
+      const page = await harness.run(
+        async (ctx) =>
+          await ctx.db
+            .query('mockDocs')
+            .withIndex('by_source', (index) => index.eq('sourceId', sourceId))
+            .paginate({ numItems: 4, cursor }),
+      );
+      mirrored += page.page.filter((mirror) => mirror.agentId === newcomer).length;
+      if (page.isDone) break;
+      cursor = page.continueCursor;
+    }
+    expect(mirrored).toBe(LARGE_PAGES + 1);
+  });
+
+  it('unlinks a large source, deleting its rows in scheduled pages', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = limitedHarness();
+    const { sourceId } = await largeSource(harness);
+    await harness.withIdentity({ subject: 'owner' }).mutation(api.docSources.unlink, { sourceId });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    const left = await harness.run(async (ctx) => ({
+      page: await ctx.db
+        .query('docPages')
+        .withIndex('by_source', (index) => index.eq('sourceId', sourceId))
+        .first(),
+      mirror: await ctx.db
+        .query('mockDocs')
+        .withIndex('by_source', (index) => index.eq('sourceId', sourceId))
+        .first(),
+      run: await ctx.db
+        .query('docSyncRuns')
+        .withIndex('by_source', (index) => index.eq('sourceId', sourceId))
+        .first(),
+    }));
+    expect(left).toEqual({ page: null, mirror: null, run: null });
+  });
+
+  it('lists the syncable sources a page at a time', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = limitedHarness();
+    await harness.run(async (ctx) => {
+      for (let index = 0; index < 150; index += 1) {
+        await ctx.db.insert('docSources', {
+          userId: `owner-${index}`,
+          label: `Source ${index}`,
+          kind: 'folder',
+          locator: '.',
+          status: 'synced',
+          createdAt: 1,
+          updatedAt: 1,
+        });
+      }
+    });
+    const first = await harness.query(internal.docSources.listSyncable, {
+      paginationOpts: { numItems: 100, cursor: null },
+    });
+    expect(first.page).toHaveLength(100);
+    expect(first.isDone).toBe(false);
+    const rest = await harness.query(internal.docSources.listSyncable, {
+      paginationOpts: { numItems: 100, cursor: first.continueCursor },
+    });
+    expect(rest.page).toHaveLength(50);
+    expect(rest.isDone).toBe(true);
+  });
+
+  it('leaves an unchanged page unwritten, so its readers are not woken each sync', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = limitedHarness();
+    const { sourceId } = await seedSyncedSource(harness);
+    const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    const unchanged = {
+      sourceId,
+      syncRunId: runId,
+      ref: 'page.md',
+      title: 'Page',
+      markdown: '# Page',
+    };
+    await harness.mutation(internal.docSources.upsertPage, { ...unchanged, updatedAt: 9 });
+    const page = async () =>
+      await harness.run(
+        async (ctx) =>
+          await ctx.db
+            .query('docPages')
+            .withIndex('by_source_ref', (index) =>
+              index.eq('sourceId', sourceId).eq('ref', 'page.md'),
+            )
+            .unique(),
+      );
+    expect((await page())?.updatedAt).toBe(1);
+    await harness.mutation(internal.docSources.upsertPage, {
+      ...unchanged,
+      markdown: '# Page\n\nEdited.',
+      updatedAt: 9,
+    });
+    expect(await page()).toMatchObject({ markdown: '# Page\n\nEdited.', updatedAt: 9 });
+  });
+
+  it('resumes a finish cut off part-way from the checkpoint its run recorded (adversarial pass)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = limitedHarness();
+    const { sourceId } = await seedSyncedSource(harness);
+    const listed: string[] = [];
+    await harness.run(async (ctx): Promise<void> => {
+      const insert = async (ref: string): Promise<void> => {
+        await ctx.db.insert('docPages', {
+          sourceId,
+          ref,
+          title: ref,
+          markdown: `# ${ref}`,
+          updatedAt: 1,
+        });
+      };
+      await insert('stale-first.md');
+      for (let index = 0; index < 150; index += 1) {
+        listed.push(`page-${index}.md`);
+        await insert(`page-${index}.md`);
+      }
+      await insert('stale-last.md');
+    });
+    const cutOff = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    await harness.mutation(internal.docSources.recordSyncBatch, {
+      sourceId,
+      runId: cutOff,
+      nextCursor: FINISHING_CURSOR,
+      refs: listed,
+      credentialRefs: [],
+      pageCount: listed.length,
+      redactionCount: 0,
+    });
+    // One recorded page of the finish, then the action is cut off.
+    const first = await harness.mutation(internal.docSources.prunePages, {
+      sourceId,
+      runId: cutOff,
+      checkpoint: FINISHING_CURSOR,
+      from: null,
+      record: true,
+    });
+    expect(first).toMatchObject({ removed: 2, done: false });
+    const resumed = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    const context = await harness.query(internal.docSources.syncContext, {
+      sourceId,
+      runId: resumed,
+    });
+    expect(context?.run.cursor).toBe(first?.checkpoint);
+    await harness.action(internal.docSyncActions.syncBatch, {
+      sourceId,
+      runId: resumed,
+      cursor: context?.run.cursor,
+    });
+    const run = await harness.run(async (ctx) => await ctx.db.get(resumed));
+    expect(run).toMatchObject({ state: 'completed' });
+    expect(run?.summary).toMatchObject({ pagesKept: 150, pagesRemoved: 1 });
+    const left = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('docPages')
+          .withIndex('by_source', (index) => index.eq('sourceId', sourceId))
+          .take(200),
+    );
+    expect(left.map((page) => page.ref).sort()).toEqual([...listed].sort());
+  });
+
+  it('prunes a source’s old runs, keeping what it points at and what a migration still reads', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-28T00:00:00Z'));
+    const harness = limitedHarness();
+    const { sourceId } = await seedSyncedSource(harness);
+    const old = Date.now() - RUN_HISTORY_MS - 1;
+    const runs = await harness.run(async (ctx) => {
+      const insert = async (
+        state: 'completed' | 'error' | 'superseded',
+        completedAt: number,
+      ): Promise<Id<'docSyncRuns'>> =>
+        await ctx.db.insert('docSyncRuns', {
+          sourceId,
+          refs: ['page.md'],
+          credentialRefs: [],
+          pageCount: 1,
+          redactionCount: 0,
+          state,
+          createdAt: completedAt,
+          completedAt,
+        });
+      const oldFailed = await insert('error', old);
+      const oldSuperseded = await insert('superseded', old);
+      const oldCompleted = await insert('completed', old);
+      const pointedAt = await insert('completed', old);
+      const recent = await insert('error', Date.now());
+      await ctx.db.patch(sourceId, { lastCompletedSyncId: pointedAt });
+      return { oldFailed, oldSuperseded, oldCompleted, pointedAt, recent };
+    });
+    const left = async (): Promise<Array<Id<'docSyncRuns'>>> =>
+      await harness.run(async (ctx) =>
+        (
+          await ctx.db
+            .query('docSyncRuns')
+            .withIndex('by_source', (index) => index.eq('sourceId', sourceId))
+            .collect()
+        ).map((run) => run._id),
+      );
+    await expect(harness.mutation(internal.docSources.pruneRunHistory, { sourceId })).resolves.toBe(
+      2,
+    );
+    expect(await left()).toEqual([runs.oldCompleted, runs.pointedAt, runs.recent]);
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('migrations', {
+        name: 'credentials-sync-revoke',
+        release: '0.5.0',
+        read: 0,
+        changed: 0,
+        startedAt: 1,
+        completedAt: 2,
+      });
+    });
+    await expect(harness.mutation(internal.docSources.pruneRunHistory, { sourceId })).resolves.toBe(
+      1,
+    );
+    expect(await left()).toEqual([runs.pointedAt, runs.recent]);
   });
 });

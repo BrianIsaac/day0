@@ -6,6 +6,7 @@ import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { DOCS_NOTION_LOCATOR, serverKindHelp } from '@/docs/components';
 import { plainErrorMessage } from '@/lib/plain-error';
+import { REPOSITORY_URL } from '@/setup/quickstart';
 
 type SourceKind = 'folder' | 'git' | 'urls' | 'mcp';
 type ServerKind = 'notion' | 'confluence' | 'drive' | 'generic';
@@ -27,6 +28,59 @@ export function linkFormAfterLink(): { label: string; locator: string } {
   return { label: '', locator: '' };
 }
 
+/** The author guide to the page shapes day0 reads, as the repository publishes it. */
+export const AUTHOR_GUIDE_URL = `${REPOSITORY_URL}/blob/main/docs/running/documentation.md`;
+
+/**
+ * The secret a link sends for a source kind (E-74).
+ *
+ * An MCP server's connection secret is required; a git repository or a
+ * list of wiki pages may carry the reader's own secret, sent only when one
+ * was typed; a folder takes none.
+ *
+ * @param kind - The selected source kind.
+ * @param typed - What the secret field held.
+ */
+export function credentialForLink(kind: SourceKind, typed: string): string | undefined {
+  if (kind === 'mcp') return typed;
+  return (kind === 'git' || kind === 'urls') && typed !== '' ? typed : undefined;
+}
+
+/**
+ * The optional reader secret of a private repository or a wiki behind a
+ * login: entered here, encrypted when submitted, and never written into the
+ * location itself (E-74).
+ *
+ * Args:
+ *   props: The selected source kind.
+ *
+ * Returns:
+ *   The field and its help line for a git or URL source, nothing otherwise.
+ */
+export function ReaderSecretField(props: { kind: SourceKind }): React.ReactNode {
+  if (props.kind !== 'git' && props.kind !== 'urls') return null;
+  return (
+    <div className="grid gap-1">
+      <label className="text-xs text-[var(--color-muted)]" htmlFor="reader-secret">
+        Reader secret (optional)
+      </label>
+      <input
+        id="reader-secret"
+        name="credential"
+        type="password"
+        autoComplete="new-password"
+        placeholder={props.kind === 'git' ? 'Access token, or user:token' : 'Access token'}
+        className="px-3 py-2 bg-[var(--color-bg)] border border-[var(--color-border)] rounded"
+      />
+      <p className="text-xs text-[var(--color-muted)]">
+        {props.kind === 'git'
+          ? 'For a private repository. It is encrypted when submitted, sent only to the repository host, and never displayed again.'
+          : 'For pages behind a login, all on one https site. It is encrypted when submitted, sent only to that site, and never displayed again.'}
+      </p>
+    </div>
+  );
+}
+
 /**
  * Say what this source kind will actually reach, and what has to be running.
  *
@@ -41,7 +95,10 @@ export function linkFormAfterLink(): { label: string; locator: string } {
  * Returns:
  *   The help line under the form fields.
  */
-export function SourceKindHelp(props: { kind: SourceKind; serverKind: ServerKind }): React.ReactNode {
+export function SourceKindHelp(props: {
+  kind: SourceKind;
+  serverKind: ServerKind;
+}): React.ReactNode {
   return (
     <p className="text-xs text-[var(--color-muted)]">
       {props.kind === 'mcp'
@@ -84,7 +141,7 @@ export function DocumentationPage(): React.ReactNode {
         kind,
         locator,
         serverKind: kind === 'mcp' ? serverKind : undefined,
-        credential: kind === 'mcp' ? credential : undefined,
+        credential: credentialForLink(kind, credential),
       });
       const cleared = linkFormAfterLink();
       setLabel(cleared.label);
@@ -177,13 +234,13 @@ export function DocumentationPage(): React.ReactNode {
                   ) : null}
                 </div>
                 <div className="flex flex-wrap justify-end gap-2">
-                  {source.kind === 'mcp' && rotatingSourceId === source._id ? (
+                  {source.credentialId && rotatingSourceId === source._id ? (
                     <form
                       onSubmit={(event) => void onRotate(event, source._id)}
                       className="flex gap-2"
                     >
                       <label className="sr-only" htmlFor={`rotate-${source._id}`}>
-                        New connection secret
+                        {source.kind === 'mcp' ? 'New connection secret' : 'New reader secret'}
                       </label>
                       <input
                         id={`rotate-${source._id}`}
@@ -191,7 +248,9 @@ export function DocumentationPage(): React.ReactNode {
                         type="password"
                         autoComplete="new-password"
                         required
-                        placeholder="New connection secret"
+                        placeholder={
+                          source.kind === 'mcp' ? 'New connection secret' : 'New reader secret'
+                        }
                         className="text-xs px-3 py-1.5 bg-[var(--color-bg)] border border-[var(--color-border)] rounded"
                       />
                       <button
@@ -202,7 +261,7 @@ export function DocumentationPage(): React.ReactNode {
                       </button>
                     </form>
                   ) : null}
-                  {source.kind === 'mcp' && source.credentialId ? (
+                  {source.credentialId ? (
                     <>
                       <button
                         type="button"
@@ -245,7 +304,19 @@ export function DocumentationPage(): React.ReactNode {
           </section>
 
           <section className="bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl p-5">
-            <h2 className="font-semibold mb-4">Link a documentation location</h2>
+            <h2 className="font-semibold">Link a documentation location</h2>
+            <p className="text-xs text-[var(--color-muted)] mt-1 mb-4">
+              Write pages in the shapes{' '}
+              <a
+                href={AUTHOR_GUIDE_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="underline text-[var(--color-accent)]"
+              >
+                the documentation author guide
+              </a>{' '}
+              describes, so day0 finds each system, address, credential and intake queue on them.
+            </p>
             <form onSubmit={onSubmit} className="grid gap-3">
               <select
                 value={kind}
@@ -301,6 +372,7 @@ export function DocumentationPage(): React.ReactNode {
                   />
                 </div>
               ) : null}
+              <ReaderSecretField kind={kind} />
               <SourceKindHelp kind={kind} serverKind={serverKind} />
               {error ? <p className="text-xs text-[var(--color-danger)]">{error}</p> : null}
               <button
