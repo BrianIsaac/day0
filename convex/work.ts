@@ -112,6 +112,7 @@ import { retiredClaimOn, retiredHolderName } from './retirements';
 import { isEventOf, type WorkActionsAutoApplyingPayload } from '../src/events/contract';
 import { redactTokenShapes } from '../src/surfaces/redact';
 
+/** How long an approved set may wait for its apply to start before the recovery timer reschedules it. */
 export const APPLY_RECOVERY_MS = 6 * 60 * 1000;
 /**
  * How long a closing phase's authoring may hold its claim before its switch
@@ -282,6 +283,7 @@ async function assertSameAgent(
   return { item, skill };
 }
 
+/** Public, owner-guarded: every work item of one employee. */
 export const listForAgent = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<Doc<'workItems'>[]> => {
@@ -294,6 +296,7 @@ export const listForAgent = query({
   },
 });
 
+/** Public, owner-guarded: one work item. */
 export const get = query({
   args: { workItemId: v.id('workItems') },
   handler: async (ctx, args) => {
@@ -343,6 +346,7 @@ export const getInternal = internalQuery({
   handler: async (ctx, args) => await ctx.db.get(args.workItemId),
 });
 
+/** The validator fields a seeded work item takes, shared by the seed mutations. */
 export const workItemSeedFields = {
   sourceCategory: v.string(),
   sourceSystem: v.string(),
@@ -368,6 +372,7 @@ export const workItemSeedFields = {
   observedAt: v.optional(v.number()),
 } as const;
 
+/** What seeds one work item: the employee and the candidate as intake found it. */
 export interface WorkItemSeedInput {
   agentId: Id<'agents'>;
   sourceCategory: string;
@@ -1118,6 +1123,7 @@ export const recordScopeJudgementUnavailable = internalMutation({
   },
 });
 
+/** What a re-evaluation of the parked and skipped rows takes: the employee, the trigger and its key. */
 export interface ReevaluatePendingArgs {
   agentId: Id<'agents'>;
   trigger: ReevaluationTrigger;
@@ -1130,6 +1136,7 @@ export interface ReevaluatePendingArgs {
   now?: number;
 }
 
+/** How many rows a re-evaluation examined and readmitted. */
 export interface ReevaluatePendingResult {
   readmitted: number;
   examined: number;
@@ -4217,6 +4224,7 @@ async function approvePlanInTransaction(
 /** The longest manual estimate the plan card takes: a working month. */
 const MANUAL_ESTIMATE_MAX_MINUTES = 10_000;
 
+/** Public, owner-guarded: approves an item's plan, answering any charter question the card asked, and schedules the run. */
 export const approvePlan = mutation({
   args: {
     workItemId: v.id('workItems'),
@@ -4315,6 +4323,7 @@ export const resendDecisionRequest = mutation({
   },
 });
 
+/** Public, owner-guarded: retries a failed or stopped item with the manager's optional note as approved evidence. */
 export const retryFailed = mutation({
   args: { workItemId: v.id('workItems'), feedback: v.optional(v.string()) },
   handler: async (ctx, args) => {
@@ -4443,6 +4452,7 @@ export const retryFailed = mutation({
   },
 });
 
+/** Public, owner-guarded: records whether the manager confirmed the provider state before a retry. */
 export const reconcileFailed = mutation({
   args: { workItemId: v.id('workItems'), confirmed: v.boolean() },
   handler: async (ctx, args) => {
@@ -4538,6 +4548,7 @@ export function skillRejectedReason(skillName: string): string {
   return `skill proposal "${skillName}" rejected by the manager`;
 }
 
+/** Public, owner-guarded: cancels a pending plan with the manager's reason, kept as a correction. */
 export const cancelPlan = mutation({
   args: { workItemId: v.id('workItems'), reason: v.optional(v.string()) },
   handler: async (ctx, args) => {
@@ -5023,6 +5034,7 @@ export const setCompleted = internalMutation({
   },
 });
 
+/** Internal: ends a run as failed or stopped with its reason, writes the terminal event and releases the item's claims. */
 export const setFailed = internalMutation({
   args: {
     workItemId: v.id('workItems'),
@@ -5273,6 +5285,7 @@ export const recoverUnsentManagerNote = internalMutation({
   },
 });
 
+/** Internal: marks a manager note as sent, or keeps it for the digest, after the send action returns. */
 export const recordManagerNote = internalMutation({
   args: {
     noteId: v.id('managerNotes'),
@@ -5400,6 +5413,7 @@ async function owedDecisions(ctx: QueryCtx, agentId: Id<'agents'>): Promise<Owed
     });
 }
 
+/** Internal: gathers an employee's kept notes into one digest and claims them for the send. */
 export const prepareManagerDigest = internalMutation({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args) => {
@@ -5451,6 +5465,7 @@ export const prepareManagerDigest = internalMutation({
   },
 });
 
+/** Internal: records the digest as sent or releases its notes back after a failed send. */
 export const recordManagerDigest = internalMutation({
   args: {
     agentId: v.id('agents'),
@@ -6162,6 +6177,7 @@ export function providerTsToMs(ts: string): number | null {
   return Number.isNaN(parsed) ? null : parsed;
 }
 
+/** Internal: applies a decision the manager replied with in the chat surface to the request's items. */
 export const resolveChannelDecision = internalMutation({
   args: {
     surfaceId: v.id('surfaces'),
@@ -6621,6 +6637,7 @@ export const recoverInterruptedApply = internalMutation({
   },
 });
 
+/** Internal: links a work item to the skill it proposed. */
 export const setProposedSkill = internalMutation({
   args: { workItemId: v.id('workItems'), skillId: v.id('skills') },
   handler: async (ctx, args) => {
@@ -6660,6 +6677,7 @@ async function findExistingClaimImpl(
   return { state: row.state };
 }
 
+/** Public, owner-guarded: how many of an employee's items are open, for the work-in-progress cap. */
 export const countOpenForAgent = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<number> => {
@@ -6680,6 +6698,7 @@ const existingClaimArgs = {
   externalId: v.string(),
 };
 
+/** Public, owner-guarded: the live item already holding a provider record, if any. */
 export const findExistingClaim = query({
   args: existingClaimArgs,
   handler: async (ctx, args) => {

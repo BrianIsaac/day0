@@ -16,6 +16,7 @@ export type WorkSourceCategory =
   | 'meeting-transcript'
   | 'calendar';
 
+/** What the evaluator decides for a candidate: take it, queue it, skip it, defer it, or ask for a skill first. */
 export type WorkDecision = 'claim' | 'queue' | 'skip' | 'defer' | 'needs-skill';
 
 /**
@@ -32,6 +33,7 @@ export interface ReplyTarget {
   threadTs?: string;
 }
 
+/** One piece of work as intake found it, before any evaluation. */
 export interface WorkCandidate {
   sourceCategory: WorkSourceCategory;
   sourceSystem: string;
@@ -65,6 +67,7 @@ export interface SkillShape {
   operation: string;
 }
 
+/** The evaluator's decision on a candidate with the figures or reason behind it, by decision. */
 export type WorkVerdict =
   | { decision: 'claim'; value: number; risk: number; requiredPermissions: string[] }
   | { decision: 'queue'; reason: string; openClaims: number }
@@ -78,6 +81,7 @@ export type WorkVerdict =
       suggestedSkillShape: SkillShape;
     };
 
+/** Everything the evaluator and planner read about the employee: its charter, workspace, skills, grants and surfaces. */
 export interface AgentContext {
   agentId: AgentId;
   charter: Charter;
@@ -141,6 +145,7 @@ export interface PlanObligations {
   plannerTransition?: PlanTransition;
 }
 
+/** The plan the manager approves before a run: its summary, steps, expected output and risk notes. */
 export interface ExecutionPlan {
   summary: string;
   steps: string[];
@@ -193,8 +198,10 @@ export const MOCK_ACTION_TOOLS = [
  */
 export const SURFACE_ACTION_TOOLS = ['mcp.call', 'http.request'] as const;
 
+/** Every tool an executor may emit: the mock-office verbs and the two surface verbs. */
 export const ACTION_TOOLS = [...MOCK_ACTION_TOOLS, ...SURFACE_ACTION_TOOLS] as const;
 
+/** One of the mock-office verbs. */
 export type MockActionTool = (typeof MOCK_ACTION_TOOLS)[number];
 
 /**
@@ -209,9 +216,12 @@ export interface MockWriteResult {
   reason?: string;
 }
 
+/** One of the two verbs that reach a discovered real surface. */
 export type SurfaceActionTool = (typeof SURFACE_ACTION_TOOLS)[number];
+/** Any tool an executor may emit. */
 export type ActionTool = (typeof ACTION_TOOLS)[number];
 
+/** The flat argument bag every action carries, one optional field per verb and argument. */
 export interface MockActionArgs {
   // spreadsheet.appendRow
   sheetSlug?: string;
@@ -239,6 +249,7 @@ export interface MockActionArgs {
   headersJson?: string;
 }
 
+/** One action as an executor emits it: a tool and its arguments. */
 export interface MockAction {
   tool: ActionTool;
   args: MockActionArgs;
@@ -263,6 +274,7 @@ export type RealProcedureTrailAttestation =
       dependsOnField?: string | null;
     };
 
+/** An executor's account of one runtime procedure trail, in the mock or the real shape. */
 export type ProcedureTrailAttestation =
   | MockProcedureTrailAttestation
   | RealProcedureTrailAttestation;
@@ -277,6 +289,7 @@ export interface ProcedureTrailLimitation {
   detail: string;
 }
 
+/** A closing action the executor could not emit yet, with the reason and the read it waits on. */
 export interface DeferredActionDependency {
   description: string;
   reason: string;
@@ -347,6 +360,7 @@ export interface OpenQuestion {
  */
 export type DeclaredQuestion = string | null;
 
+/** A run's output as the executor returns it and the row stores it: draft, notes, actions and their ledger. */
 export interface ExecutionOutput {
   /** Closing actions outside the parsed trail inventory; absent on older persisted outputs. */
   deferredActions?: DeferredActionDependency[] | null;
@@ -475,6 +489,7 @@ export interface DependentExecutionOutput {
   planStepOutcomes: PlanStepOutcome[];
 }
 
+/** The mock office as the executor reads it: guides, team docs, sheets, channels, tweets and tickets. */
 export interface MockSurfaceSnapshot {
   /** Available how-to-update guides - agent reads these to know action shape. */
   howToGuides: Array<{ slug: string; title: string; body: string }>;
@@ -503,8 +518,11 @@ export interface MockSurfaceSnapshot {
   }>;
 }
 
+/** How many items an employee works at once while the autonomy switch is off. */
 export const COLD_START_WIP_LIMIT = 1;
+/** How many items an employee works at once with the autonomy switch on. */
 export const AUTONOMOUS_WIP_LIMIT = 3;
+/** The value score below which the evaluator skips a candidate as not worth the work. */
 export const VALUE_THRESHOLD = 30;
 
 /** Prefix of the skip reason the quality-fit filter writes. */

@@ -1,10 +1,13 @@
 import type { SurfaceRecord } from '../../src/surfaces/types';
 import type { MockAction } from '../../src/work/types';
 
+/** The fixed clock the gate fixture is evaluated at. */
 export const GATE_FIXTURE_NOW = Date.UTC(2026, 7, 30, 9, 30, 0);
 
+/** How a gate case is expected to come out: in policy, out of policy, or on the boundary. */
 export type GatePolicyLabel = 'in-policy' | 'out-of-policy' | 'boundary';
 
+/** One gate case: the action, the surfaces and grants it meets, and the expected verdict. */
 export interface GateFixtureCase {
   id: string;
   label: GatePolicyLabel;
@@ -18,6 +21,7 @@ const connected = {
   lastVerifiedAt: GATE_FIXTURE_NOW,
 };
 
+/** The surfaces the gate fixture runs against. */
 export const GATE_SURFACES: readonly SurfaceRecord[] = [
   {
     ...connected,
@@ -90,6 +94,7 @@ export const GATE_SURFACES: readonly SurfaceRecord[] = [
   },
 ];
 
+/** The grants the gate fixture runs with. */
 export const GATE_GRANTS = new Set([
   'boss:message',
   'linear:read',
@@ -100,6 +105,7 @@ export const GATE_GRANTS = new Set([
   'looker-pipeline-tile:write',
 ]);
 
+/** The reply target the gate fixture's chat cases answer to. */
 export const GATE_REPLY_TARGET = {
   channel: 'C_REVOPS_ASKS',
   channelName: 'revops-asks',
@@ -131,6 +137,7 @@ function http(
   };
 }
 
+/** Every gate case the matrix is rendered from. */
 export const GATE_FIXTURE: readonly GateFixtureCase[] = [
   {
     id: 'granted-ticket-read',

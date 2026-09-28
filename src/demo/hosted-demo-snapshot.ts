@@ -56,6 +56,7 @@ export function recordingProvenanceLine(
   );
 }
 
+/** The recorded employee: its alias, name, state and deployment offset. */
 export interface RecordedAgent {
   id: string;
   name: string;
@@ -63,11 +64,13 @@ export interface RecordedAgent {
   deployedAt: string;
 }
 
+/** One sentence the recorded charter cites and where it came from. */
 export interface CharterEvidence {
   source: string;
   text: string;
 }
 
+/** The recorded charter as the walkthrough shows it. */
 export interface RecordedCharter {
   id: string;
   version: string;
@@ -87,6 +90,7 @@ export interface RecordedCharter {
   evidence: CharterEvidence[];
 }
 
+/** One permission scope the recorded employee held, with when it was granted. */
 export interface RecordedScope {
   scope: string;
   grantedAt: string;
@@ -94,12 +98,14 @@ export interface RecordedScope {
   grantedWithSkill: boolean;
 }
 
+/** One action from the recording: its tool, its arguments and its outcome. */
 export interface RecordedAction {
   tool: string;
   args: Record<string, string>;
   applied: boolean;
 }
 
+/** One recorded work item with its verdict, plan, output and ledger. */
 export interface RecordedWorkItem {
   id: string;
   title: string;
@@ -132,6 +138,7 @@ export interface RecordedWorkItem {
   output?: { draft: string; notes: string; actions: RecordedAction[] };
 }
 
+/** One recorded skill: its source, state and the item it was proposed for. */
 export interface RecordedSkill {
   id: string;
   name: string;
@@ -148,6 +155,7 @@ export interface RecordedSkill {
   verificationLog?: string;
 }
 
+/** One of the recorded employee's workspace files, with its purpose and an excerpt. */
 export interface RecordedWorkspaceFile {
   fileName: string;
   purpose: string;
@@ -156,6 +164,7 @@ export interface RecordedWorkspaceFile {
   excerpted: boolean;
 }
 
+/** The mock office as the recording left it: documents, channels, messages, sheets, tweets and tickets. */
 export interface RecordedOffice {
   docs: Array<{ slug: string; title: string; category: string; body: string }>;
   channels: Array<{ slug: string; displayName: string; kind: string }>;
@@ -183,6 +192,7 @@ export interface RecordedOffice {
   socialMention: { slug: string; author: string; handle: string; body: string };
 }
 
+/** One event of the recording, at its offset from deployment. */
 export interface RecordedTimelineEntry {
   at: string;
   type: string;
@@ -191,6 +201,7 @@ export interface RecordedTimelineEntry {
   detail?: string;
 }
 
+/** The whole recording the walkthrough renders. */
 export interface HostedDemoSnapshot {
   recording: RecordingMeta;
   agent: RecordedAgent;
@@ -206,4 +217,5 @@ export interface HostedDemoSnapshot {
   timeline: RecordedTimelineEntry[];
 }
 
+/** The tracked recording, typed. */
 export const HOSTED_DEMO_SNAPSHOT = snapshot as HostedDemoSnapshot;

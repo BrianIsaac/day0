@@ -3,17 +3,22 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 
+/** The localStorage key the whip cursor preference is kept under. */
 export const CURSOR_STORAGE_KEY = 'day0-cursor';
+/** The window event dispatched when the cursor preference changes. */
 export const CURSOR_CHANGE_EVENT = 'day0-cursor-change';
 
+/** Whether the whip cursor is on or off. */
 export type CursorPreference = 'off' | 'on';
 
 type CursorPreferenceTarget = Pick<Window, 'dispatchEvent' | 'localStorage'>;
 
+/** The stored cursor preference, on unless the visitor turned it off. */
 export function readCursorPreference(storage: Pick<Storage, 'getItem'>): CursorPreference {
   return storage.getItem(CURSOR_STORAGE_KEY) === 'off' ? 'off' : 'on';
 }
 
+/** Store a cursor preference and tell every listener. */
 export function setCursorPreference(
   preference: CursorPreference,
   target: CursorPreferenceTarget = window,
@@ -22,6 +27,7 @@ export function setCursorPreference(
   target.dispatchEvent(new CustomEvent(CURSOR_CHANGE_EVENT, { detail: preference }));
 }
 
+/** Flip the stored cursor preference. */
 export function toggleCursorPreference(target: CursorPreferenceTarget = window): void {
   const current = readCursorPreference(target.localStorage);
   setCursorPreference(current === 'on' ? 'off' : 'on', target);
@@ -77,6 +83,7 @@ export function handleCursorShortcut(
   return true;
 }
 
+/** The cursor preference as React state, following storage and, when asked, the Shift+C shortcut. */
 export function useCursorPreference({ keyboardShortcut = false } = {}): CursorPreference | null {
   const [preference, setPreference] = useState<CursorPreference | null>(null);
 
@@ -107,6 +114,7 @@ export function useCursorPreference({ keyboardShortcut = false } = {}): CursorPr
   return preference;
 }
 
+/** The header control that turns the whip cursor on and off. */
 export function CursorToggle() {
   const preference = useCursorPreference();
   const [headerControls, setHeaderControls] = useState<Element | null>(null);

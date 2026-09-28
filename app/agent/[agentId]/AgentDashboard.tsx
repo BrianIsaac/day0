@@ -160,6 +160,7 @@ const MockEnvironment = dynamic(
   { loading: () => <PanelLoading label="the work environment" /> },
 );
 
+/** The employee's page: the 1:1, the charter, the queue, the skills, the permissions and the office. */
 export function AgentDashboard({ agentId }: Props) {
   const agent = useQuery(api.agents.get, { agentId });
   const charter = useQuery(api.charters.latest, { agentId });
@@ -798,6 +799,7 @@ export function ZoneLine({
   );
 }
 
+/** The page header: the employee's name, state, zone, autonomy switch and manager channel control. */
 export function DashboardHeader({
   agent,
   charter,
@@ -1836,6 +1838,7 @@ export function retryVerifiesSavedDraft(
   return skill.state === 'authoring' && Boolean(skill.body) && Boolean(skill.pendingSmokeTest);
 }
 
+/** The registered skills and the ones waiting on a grant, with the author's attempts. */
 export function RegisteredSkillsPanel({
   skills,
   unregistered,
@@ -2270,6 +2273,7 @@ export function sortedForQueue<
   );
 }
 
+/** The employee's work items in the order that puts what needs the manager first. */
 export function WorkQueue({
   agentId,
   workItems,
@@ -2918,6 +2922,7 @@ export function PlanObligationsLine({
   );
 }
 
+/** The plan's steps beside what the run recorded for each. */
 export function PlanExecutionLedger({ outcomes }: { outcomes: PlanStepOutcomeRow[] }) {
   if (outcomes.length === 0) return null;
   return (
@@ -3102,6 +3107,7 @@ export function liveRetryNote(typed: TypedRetryNote, token: string): string {
   return typed.token === token ? typed.text : '';
 }
 
+/** The mutation arguments that cancel a plan with the manager's reason. */
 export function cancelPlanRequest(
   workItemId: Id<'workItems'>,
   reason?: string,
@@ -3850,6 +3856,7 @@ export function waitingLine(item: WaitingItem, zone: string | undefined): string
   return 'Waiting for a free slot: Day0 evaluates the most urgent item first, then the oldest, as work finishes.';
 }
 
+/** One work item: its verdict, plan, held actions, ledger and the controls the state allows. */
 export function WorkItemCard({
   item,
   surfaces,
@@ -4513,6 +4520,7 @@ export function WorkItemCard({
   );
 }
 
+/** The checklist a failed run shows before a retry: confirm what landed on the provider. */
 export function ProviderReconciliationControl({
   entries,
   reconciliation,
@@ -4612,6 +4620,7 @@ export function ProviderReconciliationControl({
 
 type PermissionSource = 'deploy' | 'manager' | 'skill' | 'surface';
 
+/** One permission scope as the panel shows it, with whether it is active. */
 export interface PermissionScopeView {
   scope: string;
   active: boolean;
@@ -4627,6 +4636,7 @@ const PERMISSION_SOURCE_LABEL: Record<PermissionSource, string> = {
   surface: 'surface',
 };
 
+/** The permission scopes with their revoke controls. */
 export function PermissionRows({
   scopes,
   confirmingScope,
@@ -4781,6 +4791,7 @@ function metricValue(value: string | undefined): string {
   return value ?? 'loading…';
 }
 
+/** The employee's supervision figures. */
 export function MetricsCard({ metrics }: { metrics: AgentMetrics | undefined }) {
   // A decision made on the dashboard is a decision whether or not a chat
   // surface was ever asked, so "not yet" means no decision at all (P6-9).

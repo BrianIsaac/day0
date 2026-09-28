@@ -1,14 +1,19 @@
 import { actionIntent, parseSurfaceAction } from '../surfaces/policy';
 import type { MockAction } from './types';
 
+/** The skip reason a run carries when its apply was interrupted after the claim. */
 export const INTERRUPTED_APPLY_REASON =
   'apply was interrupted after its claim; provider outcomes are unknown and must be reconciled before retry';
+/** The ledger reason for an action whose provider outcome the interrupted apply never learnt. */
 export const OUTCOME_UNKNOWN_REASON =
   'outcome unknown after interrupted apply - verify provider before retry';
 
+/** Which phase of a run a ledger entry belongs to. */
 export type ReconciliationPhase = 'single' | 'prerequisite' | 'closing';
+/** What the manager must confirm about an entry: it landed, or its outcome is unknown. */
 export type ReconciliationOutcome = 'landed' | 'outcome-unknown';
 
+/** One ledger entry the manager confirms before a retry, by phase and index. */
 export interface ReconciliationEntry {
   phase: ReconciliationPhase;
   actionIndex: number;
@@ -31,6 +36,7 @@ interface LedgerEntry {
   idempotencyKey?: unknown;
 }
 
+/** One phase's actions beside their ledger. */
 export interface LedgerPhase {
   phase: ReconciliationPhase;
   actions: MockAction[];
@@ -81,6 +87,7 @@ function landedWrite(action: MockAction | undefined, entry: LedgerEntry): boolea
   return !parsed.ok || actionIntent(parsed.action) === 'write';
 }
 
+/** The entries of a run's ledger the manager must confirm on the provider before a retry. */
 export function providerReconciliationEntries(output: unknown): ReconciliationEntry[] {
   return ledgerPhases(output).flatMap(({ phase, actions, applied }) =>
     applied.flatMap((entry, actionIndex): ReconciliationEntry[] => {
@@ -112,6 +119,7 @@ export function providerReconciliationEntries(output: unknown): ReconciliationEn
   );
 }
 
+/** Whether a retry must wait for the provider reconciliation checklist. */
 export function retryRequiresProviderReconciliation(output: unknown, skipReason?: string): boolean {
   return (
     skipReason === INTERRUPTED_APPLY_REASON || providerReconciliationEntries(output).length > 0

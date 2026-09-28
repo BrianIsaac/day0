@@ -26,47 +26,56 @@ export { identityFromCharter, toolsFromCharter } from './charter-workspace';
 
 export type CharterVersion = '0.0' | '0.1' | '0.2' | (string & { readonly _v?: 'charter' });
 
+/** How the employee reaches a named collaborator: through the manager, on its own, or not yet decided. */
 export type IntroPath = 'manager' | 'self' | 'tbd';
 
+/** One sentence the charter cites, with where it came from. */
 export interface EvidenceItem {
   text: string;
   source: string;
 }
 
+/** A person the manager named in the 1:1, what to go to them about, and how to reach them. */
 export interface NamedCollaborator {
   name: string;
   topic: string;
   introPath: IntroPath;
 }
 
+/** Who approves the employee's work, and how sure the charter is of it. */
 export interface ApprovalChain {
   boss: string;
   confidence: 'low' | 'medium' | 'high';
 }
 
+/** A neighbouring role and how the employee stays out of its lane. */
 export interface AdjacentRole {
   who: string;
   staysOutOfTheirLaneBy: string;
 }
 
+/** What the employee will and will not do, in the manager's words. */
 export interface ProposedBoundaries {
   willDo: string[];
   willNotDo: string[];
   escalationTriggers: string[];
 }
 
+/** What the employee aims to have done by day 30, 60 and 90. */
 export interface ShortTermGoals {
   day30: string;
   day60: string;
   day90: string;
 }
 
+/** A work system the manager named, classed for the surface ladder, with where it was mentioned. */
 export interface NamedSystem {
   name: string;
   class: SystemClass;
   whereMentioned: string;
 }
 
+/** The employee's charter: the role, boundaries, goals, collaborators and systems the 1:1 produced, versioned. */
 export interface Charter {
   version: CharterVersion;
   source: string;
@@ -102,6 +111,7 @@ export interface Charter {
   createdAt: string;
 }
 
+/** A question the charter left open and the manager's later answer to it. */
 export interface AnsweredQuestion {
   question: string;
   answer: string;
@@ -109,6 +119,7 @@ export interface AnsweredQuestion {
   answeredAt: string;
 }
 
+/** The seven topics the Day-1 1:1 covers, in order. */
 export const DAY_ONE_TOPICS = [
   'why-this-hire',
   'role-and-goals',
@@ -119,6 +130,7 @@ export const DAY_ONE_TOPICS = [
   'open-questions',
 ] as const;
 
+/** One of the seven Day-1 topics. */
 export type DayOneTopic = (typeof DAY_ONE_TOPICS)[number];
 
 const SYSTEM_PROMPT = [
@@ -138,6 +150,7 @@ const SYSTEM_PROMPT = [
 
 const charterAgent = makeAgent('day0-charter', SYSTEM_PROMPT);
 
+/** The charter as the model returns it, validated field by field before it becomes a `Charter`. */
 export const charterSchema = z.object({
   whyThisHire: z.string(),
   proposedFunction: z.string(),
@@ -194,6 +207,7 @@ export const charterSchema = z.object({
 
 type RawCharterPayload = z.infer<typeof charterSchema>;
 
+/** What charter synthesis takes: the answers by topic, the version to write and the clock. */
 export interface SynthesiseCharterArgs {
   answers: Record<DayOneTopic, string>;
   version: CharterVersion;
@@ -482,6 +496,7 @@ export function withoutAgentQuotedEvidence(
   };
 }
 
+/** Draft a charter from the Day-1 answers through the model, validated and versioned. */
 export async function synthesiseCharter(args: SynthesiseCharterArgs): Promise<Charter> {
   const createdAt = (args.createdAt ?? new Date()).toISOString();
   const raw = await agentJson<RawCharterPayload>({
@@ -492,6 +507,7 @@ export async function synthesiseCharter(args: SynthesiseCharterArgs): Promise<Ch
   return assemble(raw, args, createdAt);
 }
 
+/** Render a charter as the Markdown document the workspace and the card show. */
 export function renderCharter(c: Charter, date = new Date()): string {
   const isoDate = date.toISOString().slice(0, 10);
   const lines: string[] = [
@@ -574,6 +590,7 @@ function renderAdjacents(items: AdjacentRole[]): string[] {
   return items.map((a) => `  - ${a.who} — ${a.staysOutOfTheirLaneBy}`);
 }
 
+/** The one line that names the employee's role, from the charter's function or its reason for hire. */
 export function extractRole(c: Charter): string {
   return (c.proposedFunction || c.whyThisHire || 'autonomous agent').trim();
 }

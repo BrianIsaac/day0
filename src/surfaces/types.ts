@@ -3,10 +3,13 @@ import type { Id } from '../../convex/_generated/dataModel';
 import type { MockAction, MockSurfaceSnapshot } from '../work/types';
 import type { PersistedSurfaceVerdict } from './verdict';
 
+/** The deployment's surface mode: the seeded mock office, or the reader's real systems. */
 export type SurfaceMode = 'mock' | 'real';
 
+/** The ways a real system can be reached, in the order the ladder tries them. */
 export const SURFACE_PATHS = ['mcp', 'documented-api', 'browser-driven', 'escalate'] as const;
 
+/** One way of reaching a real system. */
 export type SurfacePath = (typeof SURFACE_PATHS)[number];
 
 /**
@@ -22,6 +25,7 @@ export function isSurfacePath(value: unknown): value is SurfacePath {
   return typeof value === 'string' && SURFACE_PATHS.includes(value as SurfacePath);
 }
 
+/** How a credential can be landed on a surface. */
 export const CREDENTIAL_KINDS = ['value', 'location', 'oauth'] as const;
 
 /**
@@ -68,6 +72,7 @@ export interface SurfaceRecord {
 /** @deprecated Use `SurfaceRecord`; kept so callers that pass `[]` still type-check. */
 export type SurfaceDescriptor = SurfaceRecord;
 
+/** The run an adapter acts for: the employee, its name, the item and the run id. */
 export interface AdapterRun {
   agentId: Id<'agents'>;
   /** The employee's display name, written into provenance trailers and chat identity. */
@@ -91,6 +96,7 @@ export type BeforeSurfaceTransport = (
 /** What kind of change an applicable action makes, which decides its disposition and its held reason. */
 export type ActionClass = 'read' | 'manager-dm' | 'public-post' | 'mutation' | 'write';
 
+/** What happened to one action: whether it landed, its effect, and why not when it did not. */
 export interface ActionOutcome {
   ok: boolean;
   effect?: string;
@@ -217,11 +223,13 @@ export function landedEntry(row: AppliedAction | undefined): row is AppliedActio
   return row?.ok === true && row.held !== true && row.awaitingApproval !== true;
 }
 
+/** One ledger row: the outcome of an action with the tool and the idempotency key it ran under. */
 export interface AppliedAction extends ActionOutcome {
   tool: string;
   idempotencyKey: string;
 }
 
+/** What every surface adapter provides: its tools, a read of its state and an apply of one action. */
 export interface SurfaceAdapter {
   readonly tools: readonly MockAction['tool'][];
   /**
@@ -260,6 +268,7 @@ export interface SurfaceAdapter {
   ): Promise<AppliedAction>;
 }
 
+/** What orientation files for a system it wants connected: the target, the evidence and the scope it asks for. */
 export interface ConnectRequest {
   target: {
     system: string;

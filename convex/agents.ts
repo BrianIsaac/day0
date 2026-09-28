@@ -34,7 +34,9 @@ import {
 import { agentZone, canonicalZone, deploymentZone } from '../src/lib/zone';
 import { appendEvent } from './eventLog';
 
+/** Where a permission grant came from: deployment, the manager, a skill or a surface. */
 export const PERMISSION_GRANT_SOURCES = ['deploy', 'manager', 'skill', 'surface'] as const;
+/** One source of a permission grant. */
 export type PermissionGrantSource = (typeof PERMISSION_GRANT_SOURCES)[number];
 
 const permissionGrantSource = v.union(
@@ -404,6 +406,7 @@ export const rosterForUser = query({
   },
 });
 
+/** Public, owner-guarded: one employee. */
 export const get = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args) => {
@@ -423,6 +426,7 @@ export const getInternal = internalQuery({
   },
 });
 
+/** Public: creates an employee for the caller with its deployment grants and workspace, in the caller's zone. */
 export const deploy = mutation({
   args: {
     bossEmail: v.string(),
@@ -584,6 +588,7 @@ export const setBossEmail = mutation({
   },
 });
 
+/** Public, owner-guarded: grants permission scopes to an employee as the manager. */
 export const grantScopes = mutation({
   args: { agentId: v.id('agents'), scopes: v.array(v.string()) },
   handler: async (ctx, args) => {
@@ -686,6 +691,7 @@ export const permissionScopes = query({
   },
 });
 
+/** Internal: sets an employee's lifecycle state. */
 export const setState = internalMutation({
   args: {
     agentId: v.id('agents'),
@@ -696,6 +702,7 @@ export const setState = internalMutation({
   },
 });
 
+/** Public, owner-guarded: an employee's most recent events, newest first. */
 export const recentEvents = query({
   args: { agentId: v.id('agents'), limit: v.optional(v.number()) },
   handler: async (ctx, args) => {
@@ -709,6 +716,7 @@ export const recentEvents = query({
   },
 });
 
+/** Internal: an employee's active permission grants. */
 export const grantedScopes = internalQuery({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<Doc<'permissionGrants'>[]> => {

@@ -31,6 +31,7 @@ export const MODEL = env.OPENAI_MODEL;
 /** The AI-SDK model instance shape, without depending on `@ai-sdk/provider` directly. */
 export type SdkLanguageModel = ReturnType<OpenAIProvider['languageModel']>;
 
+/** Which OpenAI API the configured provider speaks: Responses or chat completions. */
 export type ModelProviderClient = 'openai.responses' | 'openai.chat';
 
 let client: OpenAI | null = null;
@@ -65,6 +66,7 @@ function resolveApiKey(): string {
   );
 }
 
+/** The one OpenAI client, built on first use from the environment. */
 export function openai(): OpenAI {
   if (!client) {
     client = new OpenAI({
@@ -99,6 +101,7 @@ export function languageModel(modelId: string = MODEL): SdkLanguageModel {
   return env.OPENAI_BASE_URL ? resolvedProvider.chat(modelId) : resolvedProvider.responses(modelId);
 }
 
+/** Which API to speak to a base URL: Responses for OpenAI itself, chat completions elsewhere. */
 export function modelProviderClient(
   baseUrl: string | undefined = env.OPENAI_BASE_URL,
 ): ModelProviderClient {
@@ -197,6 +200,7 @@ export function extractJsonPayload(raw: string): string | null {
   return null;
 }
 
+/** What a JSON completion takes: the prompts, the parser and the call settings. */
 export interface JsonCompleteArgs<TParsed> {
   system: string;
   user: string;
@@ -214,6 +218,7 @@ export interface JsonCompleteArgs<TParsed> {
   mode?: JsonMode;
 }
 
+/** A JSON completion's value with which coercion produced it. */
 export interface JsonCompleteResult<TParsed> {
   value: TParsed;
   /** Which coercion actually produced the object. */
@@ -386,6 +391,7 @@ function finalise<TParsed>(parsed: unknown, args: JsonCompleteArgs<TParsed>): TP
   return args.coerce ? args.coerce(parsed) : (parsed as TParsed);
 }
 
+/** What a text completion takes: the prompts and the call settings. */
 export interface TextCompleteArgs {
   system: string;
   user: string;
@@ -409,6 +415,7 @@ function rawModelSettings(args: Pick<TextCompleteArgs, 'maxTokens' | 'reasoningE
   };
 }
 
+/** One plain-text chat completion. */
 export async function textComplete(args: TextCompleteArgs): Promise<string> {
   const res = await openai().chat.completions.create({
     model: args.model ?? MODEL,

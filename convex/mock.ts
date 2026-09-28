@@ -97,6 +97,7 @@ export const snapshotInternal = internalQuery({
 
 // ---------- Docs ----------
 
+/** Public, owner-guarded: the mock office's documents for one employee. */
 export const listDocs = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args) => {
@@ -108,6 +109,7 @@ export const listDocs = query({
   },
 });
 
+/** Public, owner-guarded: one mock document by slug. */
 export const getDoc = query({
   args: { agentId: v.id('agents'), slug: v.string() },
   handler: async (ctx, args) => {
@@ -168,6 +170,7 @@ export const upsertDoc = internalMutation({
 
 // ---------- Spreadsheets ----------
 
+/** Public, owner-guarded: the mock office's spreadsheets for one employee. */
 export const listSpreadsheets = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args) => {
@@ -179,6 +182,7 @@ export const listSpreadsheets = query({
   },
 });
 
+/** Public, owner-guarded: one mock spreadsheet with its rows. */
 export const getSpreadsheet = query({
   args: { agentId: v.id('agents'), slug: v.string() },
   handler: async (ctx, args) => {
@@ -198,6 +202,7 @@ export const getSpreadsheet = query({
   },
 });
 
+/** Internal: creates a mock spreadsheet for an employee unless one with that slug exists. */
 export const ensureSpreadsheet = internalMutation({
   args: {
     agentId: v.id('agents'),
@@ -228,6 +233,7 @@ export const ensureSpreadsheet = internalMutation({
   },
 });
 
+/** Internal: appends one row to a mock spreadsheet tab; the write result says whether anything changed. */
 export const appendSpreadsheetRow = internalMutation({
   args: {
     agentId: v.id('agents'),
@@ -268,6 +274,7 @@ export const appendSpreadsheetRow = internalMutation({
 
 // ---------- Slack ----------
 
+/** Public, owner-guarded: the mock Slack channels for one employee. */
 export const listChannels = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args) => {
@@ -279,6 +286,7 @@ export const listChannels = query({
   },
 });
 
+/** Public, owner-guarded: one mock channel's messages in order. */
 export const listMessages = query({
   args: { agentId: v.id('agents'), channelSlug: v.string() },
   handler: async (ctx, args): Promise<Doc<'mockSlackMessages'>[]> => {
@@ -292,6 +300,7 @@ export const listMessages = query({
   },
 });
 
+/** Internal: creates a mock Slack channel for an employee unless one with that slug exists. */
 export const ensureChannel = internalMutation({
   args: {
     agentId: v.id('agents'),
@@ -315,6 +324,7 @@ export const ensureChannel = internalMutation({
   },
 });
 
+/** Internal: posts a message into a mock channel or thread and schedules the colleague's reply. */
 export const postSlackMessage = internalMutation({
   args: {
     agentId: v.id('agents'),
@@ -354,6 +364,7 @@ export const postSlackMessage = internalMutation({
 
 // ---------- Twitter ----------
 
+/** Public, owner-guarded: the mock tweets for one employee. */
 export const listTweets = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args) => {
@@ -365,6 +376,7 @@ export const listTweets = query({
   },
 });
 
+/** Public, owner-guarded: the replies under one mock tweet. */
 export const listTweetReplies = query({
   args: { agentId: v.id('agents'), tweetSlug: v.string() },
   handler: async (ctx, args) => {
@@ -378,6 +390,7 @@ export const listTweetReplies = query({
   },
 });
 
+/** Internal: creates a mock tweet for an employee unless one with that slug exists. */
 export const ensureTweet = internalMutation({
   args: {
     agentId: v.id('agents'),
@@ -403,6 +416,7 @@ export const ensureTweet = internalMutation({
   },
 });
 
+/** Internal: replies to a mock tweet; the write result says whether anything changed. */
 export const postTweetReply = internalMutation({
   args: {
     agentId: v.id('agents'),
@@ -435,6 +449,7 @@ export const postTweetReply = internalMutation({
 
 // ---------- Tickets ----------
 
+/** Public, owner-guarded: the mock tickets for one employee. */
 export const listTickets = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args) => {
@@ -446,6 +461,7 @@ export const listTickets = query({
   },
 });
 
+/** Internal: creates a mock ticket for an employee unless one with that slug exists. */
 export const ensureTicket = internalMutation({
   args: {
     agentId: v.id('agents'),
@@ -487,6 +503,7 @@ export const ensureTicket = internalMutation({
   },
 });
 
+/** Internal: sets a mock ticket's status and appends its comment; the write result says whether anything changed. */
 export const updateTicket = internalMutation({
   args: {
     agentId: v.id('agents'),

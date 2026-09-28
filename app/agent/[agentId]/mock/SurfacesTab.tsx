@@ -45,7 +45,9 @@ interface SurfaceEvidence {
 /** The one control that approves a proposed card (Q10); the rehearsal driver clicks it by name. */
 export const APPROVE_CARD = 'Approve';
 
+/** What the tab says while the surfaces are loading. */
 export const LOADING_SURFACES = 'Loading discovered systems, connection status and evidence…';
+/** What the tab says before orientation has discovered anything. */
 export const EMPTY_SURFACES =
   'No systems have been discovered yet. After charter approval, orientation maps systems from the linked documentation and shows their connection status here.';
 
@@ -72,6 +74,7 @@ interface Operation {
   surfaceId: string;
 }
 
+/** The Slack provisioning row's inputs: the token handler, its error and the presentation. */
 export interface ProvisioningRowProps {
   error?: string;
   onProvision: (configurationToken: string) => void;
@@ -80,6 +83,7 @@ export interface ProvisioningRowProps {
   surfaceSlug: string;
 }
 
+/** Where orientation found a system: the pages it cites, by source. */
 export function DiscoveryProvenance({
   evidence,
   sourceLabels,
@@ -157,6 +161,7 @@ export function PageLine({ text }: { text: string }): React.ReactNode {
   );
 }
 
+/** The intake scope row's inputs: the scope, its drift and the re-orientation handler. */
 export interface IntakeScopeRowProps {
   drift: readonly ScopeValue[];
   scope: IntakeScope;
@@ -224,6 +229,7 @@ export function IntakeScopeRow(props: IntakeScopeRowProps): React.ReactNode {
   );
 }
 
+/** A discovered system the charter did not name, awaiting a proposal. */
 export interface UnnamedSystem {
   _id: string;
   slug: string;
@@ -232,6 +238,7 @@ export interface UnnamedSystem {
   discoveryEvidence?: SurfaceDiscoveryEvidence[];
 }
 
+/** The unnamed-systems row's inputs: the systems, the propose handler and its error. */
 export interface UnnamedSystemsRowProps {
   error?: { surfaceId: string; message: string };
   onPropose: (surfaceId: string) => void;
@@ -448,6 +455,7 @@ const credentialSummariesQuery = makeFunctionReference<
   CredentialStatus[]
 >('credentials:summaryForOwner');
 
+/** The credential row's inputs: the label, the landing handler, its state and error. */
 export interface CredentialRowProps {
   credentialLabel: string;
   error?: string;
@@ -555,6 +563,7 @@ interface SurfaceProbeAttempt {
   retryAfterMs?: number;
 }
 
+/** The connection ladder's inputs: the candidate paths, the attempts and the verdict. */
 export interface SurfaceLadderProps {
   candidates?: Array<{ path: string; endpoint: string }>;
   attempts?: SurfaceProbeAttempt[];
@@ -989,6 +998,7 @@ export function credentialStatusLine(
   return undefined;
 }
 
+/** The Surfaces tab: every discovered system with its connection state, evidence and controls. */
 export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.ReactNode {
   const surfaces = useQuery(api.surfaces.listForAgent, { agentId });
   const pages = useQuery(api.docSources.pagesForAgent, { agentId });

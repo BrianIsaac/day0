@@ -1,9 +1,12 @@
 import type { Id } from '../../convex/_generated/dataModel';
 import { droppedScriptSuffix } from '../lib/short-hash';
 
+/** How a documentation source is read: an MCP server, a folder, a git repository or a URL list. */
 export type DocSourceKind = 'mcp' | 'folder' | 'git' | 'urls';
+/** Which MCP documentation server a source speaks to. */
 export type DocServerKind = 'notion' | 'confluence' | 'drive' | 'generic';
 
+/** A linked documentation source as the readers take it. */
 export interface DocSourceRecord {
   _id: Id<'docSources'>;
   label: string;
@@ -13,6 +16,7 @@ export interface DocSourceRecord {
   credentialId?: Id<'credentials'>;
 }
 
+/** One documentation page as a reader returns it, normalised to Markdown. */
 export interface DocPage {
   sourceId: Id<'docSources'>;
   ref: string;
@@ -22,6 +26,7 @@ export interface DocPage {
   updatedAt: number;
 }
 
+/** What every documentation reader provides: one batch of pages at a time. */
 export interface DocSourceReader {
   listPageBatch(
     source: DocSourceRecord,
@@ -31,6 +36,7 @@ export interface DocSourceReader {
   ): Promise<DocPageBatch>;
 }
 
+/** One batch of pages and the cursor for the next. */
 export interface DocPageBatch {
   pages: DocPage[];
   nextCursor?: string;

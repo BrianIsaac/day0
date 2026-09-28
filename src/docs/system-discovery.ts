@@ -4,6 +4,7 @@ import { droppedScriptSuffix } from '../lib/short-hash';
 import { surfaceSlug } from '../surfaces/slug';
 import { escapeRegExp } from '../lib/regex';
 
+/** One documentation page as discovery reads it: its reference, title and Markdown. */
 export interface DiscoveryPage {
   ref: string;
   title: string;
@@ -11,6 +12,7 @@ export interface DiscoveryPage {
   markdown: string;
 }
 
+/** A system discovery found on a page, with its class and where it was mentioned. */
 export interface DiscoveredSystemCandidate {
   name: string;
   class: SystemClass;
@@ -19,6 +21,7 @@ export interface DiscoveredSystemCandidate {
   url?: string;
 }
 
+/** One piece of evidence for a discovered system: from the charter or from a page. */
 export interface SurfaceDiscoveryEvidence {
   kind: 'charter' | 'documentation';
   sourceId?: string;
@@ -30,6 +33,7 @@ export interface SurfaceDiscoveryEvidence {
   lastSeenAt: number;
 }
 
+/** The model's discovery reply, validated: the systems it names on the pages. */
 export const discoveryModelSchema = z.object({
   systems: z.array(
     z.object({
@@ -40,6 +44,7 @@ export const discoveryModelSchema = z.object({
   ),
 });
 
+/** A validated discovery reply. */
 export type DiscoveryModelResult = z.infer<typeof discoveryModelSchema>;
 
 const SYSTEM_DIRECTORY = /(?:^|\/)systems\/[^/]+(?:\.md)?$/i;
@@ -292,6 +297,7 @@ export function discoveryPrompt(pages: readonly DiscoveryPage[]): string {
   ].join('\n');
 }
 
+/** The page and quote a candidate is grounded in, with the display name it used. */
 export interface DiscoveryCandidateEvidence {
   displayName: string;
   ref: string;
@@ -299,6 +305,7 @@ export interface DiscoveryCandidateEvidence {
   url?: string;
 }
 
+/** How a documented system is known: its slugs and the keys of the names it goes by. */
 export interface DocumentedSystemIdentity {
   slugs: string[];
   nameKeys: string[];
@@ -306,6 +313,7 @@ export interface DocumentedSystemIdentity {
   hosts: string[];
 }
 
+/** A discovered system after its mentions across pages are merged, with every name and evidence. */
 export interface ConvergedSystemCandidate extends DiscoveredSystemCandidate {
   evidence: DiscoveryCandidateEvidence[];
   mergedNames: string[];
@@ -549,6 +557,7 @@ function classesCompatible(left: string, right: string): boolean {
   return left === right || left === 'other' || right === 'other';
 }
 
+/** Whether two documented identities name one system: same class and a shared slug or name key. */
 export function sameDocumentedSystem(
   leftClass: string,
   left: DocumentedSystemIdentity,

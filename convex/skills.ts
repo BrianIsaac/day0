@@ -481,6 +481,7 @@ async function surfaceForWork(
   return { sourceSystem: item.sourceSystem, targetSurface };
 }
 
+/** Public, owner-guarded: an employee's registered skills. */
 export const registered = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<Doc<'skills'>[]> => {
@@ -492,6 +493,7 @@ export const registered = query({
   },
 });
 
+/** Internal: an employee's registered skills, for a scheduled step with no caller. */
 export const registeredInternal = internalQuery({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<Doc<'skills'>[]> =>
@@ -544,6 +546,7 @@ export const verificationFailed = query({
   },
 });
 
+/** Public, owner-guarded: an employee's proposed skills awaiting the manager. */
 export const proposed = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<Doc<'skills'>[]> => {
@@ -555,6 +558,7 @@ export const proposed = query({
   },
 });
 
+/** Public, owner-guarded: one skill. */
 export const get = query({
   args: { skillId: v.id('skills') },
   handler: async (ctx, args) => {
@@ -562,6 +566,7 @@ export const get = query({
   },
 });
 
+/** Public, owner-guarded: an employee's skill by name. */
 export const findByAgentName = query({
   args: { agentId: v.id('agents'), name: v.string() },
   handler: async (ctx, args) => {
@@ -573,6 +578,7 @@ export const findByAgentName = query({
   },
 });
 
+/** Internal: registers a built-in skill for an employee at deployment. */
 export const installBuiltin = internalMutation({
   args: {
     agentId: v.id('agents'),
@@ -606,6 +612,7 @@ export const installBuiltin = internalMutation({
   },
 });
 
+/** Internal: proposes a skill for the manager, from the work that needed it. */
 export const propose = internalMutation({
   args: {
     agentId: v.id('agents'),
@@ -702,6 +709,7 @@ export const propose = internalMutation({
   },
 });
 
+/** Public, owner-guarded: approves a proposed skill and schedules its authoring. */
 export const approve = mutation({
   args: { skillId: v.id('skills') },
   handler: async (ctx, args) => {
