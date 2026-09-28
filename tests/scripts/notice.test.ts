@@ -131,6 +131,9 @@ describe('renderNotice', () => {
 
   it('names the adapted files and appends every licence text', () => {
     expect(text).toContain('- src/work/plan.ts');
+    expect(text).toContain(
+      "Protean, the maintainer's own earlier codebase, under the same holder\nand licence:",
+    );
     for (const name of LICENCE_TEXTS) expect(text).toContain(`text of ${name}`);
   });
 

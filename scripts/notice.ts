@@ -415,7 +415,8 @@ function indent(text: string): string {
 export function renderNotice(input: NoticeInput): string {
   const adapted =
     `${ADAPTED}\n\nThese files say in their header that they were lifted from, or follow,\n` +
-    `Protean, an earlier codebase:\n\n${input.proteanFiles.map((file) => `- ${file}`).join('\n')}`;
+    `Protean, the maintainer's own earlier codebase, under the same holder\nand licence:\n\n` +
+    input.proteanFiles.map((file) => `- ${file}`).join('\n');
   const sections = [
     section(1, 'Works this repository adapts', adapted),
     section(2, 'Images the compose file runs', SERVICES),

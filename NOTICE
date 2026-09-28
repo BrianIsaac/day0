@@ -21,7 +21,8 @@ Functional Source License, Version 1.1, ALv2 Future License
 (FSL-1.1-ALv2), Copyright 2026 Convex, Inc.
 
 These files say in their header that they were lifted from, or follow,
-Protean, an earlier codebase:
+Protean, the maintainer's own earlier codebase, under the same holder
+and licence:
 
 - src/agent/charter.ts
 - src/agent/day-one-prompts.ts
