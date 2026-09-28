@@ -1,4 +1,5 @@
 import type { MockAction, ReplyTarget } from '../work/types';
+import { isInterstitialControl, NEXT_CONTROL, SIGN_IN_CONTROL } from './browser';
 import { MOCK_TOOLS } from './mock';
 import type {
   ActionAuthority,
@@ -29,6 +30,10 @@ export const HELD_PUBLIC_POST = 'public post held for the manager';
 /** Why a browser read waits with the writes it shares a session with. */
 export const HELD_BROWSER_SEQUENCE =
   'held with the rest of this browser session, which runs in one browser';
+
+/** Why a session restore refuses to repeat a click that was the run's own work. */
+export const REPLAY_NOT_INTERSTITIAL =
+  'replayed click is neither a login control nor one a login ends on';
 
 export const HELD_MUTATION = 'system-of-record mutation held for the manager';
 /** Why a ticket state change waits under the switch: the approved plan said the state stays where it is. */
@@ -947,6 +952,23 @@ export function grantRefusal(
  * Returns:
  *   The refusal, or undefined when the call may be sent.
  */
+/**
+ * A session restore repeats a run's login controls and the controls its login
+ * ended on, and nothing else: the recipe is built from the run's landed rows,
+ * so this is the check that holds when a recorded restore or a later reader
+ * carries any other click.
+ */
+function replayedClickRefusal(parsed: ParsedSurfaceAction): string | undefined {
+  if (parsed.kind !== 'mcp.call' || parsed.tool !== 'browser_click') return undefined;
+  const element = parsed.toolArgs.element;
+  const name = typeof element === 'string' ? element.trim() : '';
+  if (name === '') return `${REPLAY_NOT_INTERSTITIAL} (unnamed element)`;
+  if (SIGN_IN_CONTROL.test(name) || NEXT_CONTROL.test(name) || isInterstitialControl(name)) {
+    return undefined;
+  }
+  return `${REPLAY_NOT_INTERSTITIAL} (${name})`;
+}
+
 export function replayAuthorityRefusal(
   parsed: ParsedSurfaceAction,
   surface: SurfaceRecord,
@@ -960,6 +982,8 @@ export function replayAuthorityRefusal(
   const revoked = live.revokedScopes ?? new Set<string>();
   const scope = requiredScope(parsed);
   if (revoked.has(scope)) return `${NO_GRANT} (${scope})`;
+  const click = replayedClickRefusal(parsed);
+  if (click) return click;
   switch (authority) {
     case 'manager':
       return needsStandingGrant(parsed, surface)

@@ -1,5 +1,11 @@
 import type { MockAction } from '../work/types';
-import { isCredentialField, isLoginNameField, NEXT_CONTROL, SIGN_IN_CONTROL } from './browser';
+import {
+  isCredentialField,
+  isInterstitialControl,
+  isLoginNameField,
+  NEXT_CONTROL,
+  SIGN_IN_CONTROL,
+} from './browser';
 import { parseSurfaceAction } from './policy';
 import type {
   ActionAuthority,
@@ -256,12 +262,13 @@ function lastSignIn(rows: readonly BrowserRow[]): number[] {
  * The clicks that carried a sign-in to the page the run went on to open.
  *
  * A login often ends on a cookie banner, a "stay signed in" question or a
- * menu the run clicked through before it navigated; without them the replayed
- * session stops on that page. Every landed click after the sign-in and before
- * the last navigate is one of them, with any navigate between them so each
- * click meets the page it was made on, until the run's first write of its
- * own: a click after a fill or a keystroke submits work, and replaying it
- * would send that work again without the value it was filled with.
+ * notice the run dismissed before it navigated; without them the replayed
+ * session stops on that page. Every landed click on such a control
+ * (`INTERSTITIAL_CONTROL`) after the sign-in and before the last navigate is
+ * replayed, with any navigate between them so each click meets the page it
+ * was made on, until the run's first write of its own: a fill, a keystroke
+ * or a click on any other control (an Approve, an Archive, a Save) is work,
+ * and replaying it would do that work again with nobody asked.
  */
 function clicksAfterSignIn(
   rows: readonly BrowserRow[],
@@ -271,7 +278,7 @@ function clicksAfterSignIn(
   const steps: number[] = [];
   for (let position = signedInAt + 1; position < lastNavigate; position += 1) {
     const row = rows[position]!;
-    if (row.tool === 'browser_click' || isNavigate(row)) steps.push(position);
+    if (isNavigate(row) || isInterstitialControl(clickName(row) ?? '')) steps.push(position);
     else if (!BROWSER_READS.has(row.tool)) break;
   }
   return steps;

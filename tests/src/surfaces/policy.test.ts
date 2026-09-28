@@ -27,6 +27,7 @@ import {
   MOCK_VERB_REFUSED,
   needsStandingGrant,
   NOT_AUTOMATIC,
+  REPLAY_NOT_INTERSTITIAL,
   normaliseActionVerdict,
   operationRefusal,
   parseSurfaceAction,
@@ -1787,6 +1788,27 @@ describe('a replayed browser call under the authority it first landed with', ():
         }),
       ).toBeUndefined();
     }
+  });
+
+  it('refuses a replayed click that is not a sign-in or an interstitial control, under every authority', (): void => {
+    const live = { grants: new Set(['looker:read', 'looker:write']), autonomousActions: true };
+    for (const authority of ['manager', 'autonomous', 'standing', undefined] as const) {
+      for (const element of ['Approve', 'Archive', 'Refresh tile', 'Save', 'Yes']) {
+        expect(
+          replayAuthorityRefusal(replayed('browser_click', { element }), tile, authority, live),
+          `${element} under ${authority}`,
+        ).toBe(`${REPLAY_NOT_INTERSTITIAL} (${element})`);
+      }
+      for (const element of ['Sign in', 'Next', 'Accept cookies', 'Yes, stay signed in']) {
+        expect(
+          replayAuthorityRefusal(replayed('browser_click', { element }), tile, authority, live),
+          `${element} under ${authority}`,
+        ).toBeUndefined();
+      }
+    }
+    expect(replayAuthorityRefusal(replayed('browser_click'), tile, 'manager', live)).toBe(
+      `${REPLAY_NOT_INTERSTITIAL} (unnamed element)`,
+    );
   });
 
   it('refuses under every authority once the scope is revoked', (): void => {

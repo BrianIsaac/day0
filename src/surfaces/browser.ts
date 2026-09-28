@@ -468,6 +468,25 @@ export const SIGN_IN_CONTROL = /^(?:sign[ -]?in|log[ -]?(?:in|on))$/i;
 /** The name a two-page login gives the control between the account and the credential. */
 export const NEXT_CONTROL = /^next$/i;
 
+/**
+ * The names of the controls a login ends on before the page a run opens: a
+ * cookie banner, a "stay signed in" question, a notice to dismiss, a
+ * continue. A click on one of these changes nothing on the system, so a
+ * session restore may repeat it; a click on anything else is the run's own
+ * work and is never sent again without a fresh approval. A bare "Yes", "OK"
+ * or "Accept" stays out: each confirms whatever question the page asked.
+ */
+export const INTERSTITIAL_CONTROL =
+  /^(?:(?:accept|allow|reject|decline|agree to)(?: all)?(?: (?:the )?cookies)|(?:accept|allow) all|(?:yes, |no, )?(?:stay|keep me|remain) (?:signed|logged) in|dismiss|close|skip|not now|got it|remind me later|maybe later|no thanks|continue(?: as .+)?)$/i;
+
+/**
+ * Whether a click's element name is a control a login ends on, so a session
+ * restore may repeat the click.
+ */
+export function isInterstitialControl(name: string): boolean {
+  return INTERSTITIAL_CONTROL.test(name.trim().replace(/\s+/g, ' '));
+}
+
 /** Whether a field or element description names the account field of a login form. */
 export function isLoginNameField(description: unknown): boolean {
   return (
