@@ -3459,8 +3459,8 @@ describe('revoking and granting a permission from the card (step 45, P6-7)', ():
     const markup = renderToStaticMarkup(
       <PermissionRows
         scopes={[
-          { scope: 'linear:write', active: true, source: 'deploy' },
-          { scope: 'linear-write', active: true, source: 'manager' },
+          { scope: 'linear:write', active: true, source: 'deploy', grantedAt: 1, revokedAt: null },
+          { scope: 'linear-write', active: true, source: 'manager', grantedAt: 1, revokedAt: null },
         ]}
         confirmingScope={null}
         busyScope={null}
