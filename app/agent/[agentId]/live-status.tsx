@@ -1,6 +1,7 @@
 'use client';
 
 import { ConvexError } from 'convex/values';
+import { type RefObject, useCallback, useEffect, useRef, useState } from 'react';
 import { errorMessage } from '@/lib/errors';
 import { plainErrorMessage } from '@/lib/plain-error';
 
@@ -30,6 +31,107 @@ export function refusalText(error: unknown, fallback: string): string {
   if (error instanceof ConvexError) return String(error.data);
   if (!(error instanceof Error) || error.message.trim() === '') return fallback;
   return plainErrorMessage(errorMessage(error, fallback)) || fallback;
+}
+
+/** What a change says once it settles: a sentence for each outcome. */
+export interface ChangeWords<Result> {
+  /** Said when the change lands; a function reads the call's result. */
+  readonly done: string | ((result: Result) => string);
+  /** Said when the refusal carries no words of its own. */
+  readonly refused: string;
+  /** What the control does once the change lands (close an editor, clear a field). */
+  readonly after?: (result: Result) => void;
+}
+
+/** A dashboard change in flight, what it came to, and the call that starts one. */
+export interface Change {
+  readonly busy: boolean;
+  readonly outcome: ChangeOutcome | null;
+  /** Start a change; its outcome is said in the live region and focus comes back. */
+  readonly run: <Result>(call: () => Promise<Result> | Result, words: ChangeWords<Result>) => void;
+  /** Clear what the last change said, when the control it described is closed. */
+  readonly clear: () => void;
+}
+
+/**
+ * Where focus goes once a change settles.
+ *
+ * The control the manager pressed keeps it when it is still on the page and
+ * enabled; a decision that moved its row takes the control with it, so the
+ * fallback (the card or panel it was on) takes focus instead of the page. A
+ * manager who moved focus somewhere else while the call ran is left there.
+ *
+ * Args:
+ *   origin: What held focus when the change started.
+ *   fallback: The element that stands in for a control that went away.
+ */
+export function returnFocus(origin: HTMLElement | null, fallback: HTMLElement | null): void {
+  const active = document.activeElement;
+  const lost = active === null || active === document.body || active === origin;
+  if (!lost) return;
+  const usable =
+    origin !== null &&
+    origin.isConnected &&
+    !(origin as HTMLButtonElement).disabled &&
+    origin.getAttribute('aria-disabled') !== 'true';
+  (usable ? origin : fallback)?.focus();
+}
+
+/**
+ * One dashboard change, reported the same way everywhere (N14): the control
+ * is busy while the call runs, the outcome is said in a live region, and
+ * focus comes back to the control, or to `fallback` when the control is gone.
+ *
+ * Args:
+ *   fallback: The card or panel that takes focus when the control does not
+ *     survive the change; it needs `tabIndex={-1}` and a name.
+ *
+ * Returns:
+ *   The busy flag, the outcome for `LiveStatus`, and `run`.
+ */
+export function useChange(fallback?: RefObject<HTMLElement | null>): Change {
+  const [busy, setBusy] = useState(false);
+  const [outcome, setOutcome] = useState<ChangeOutcome | null>(null);
+  const [settled, setSettled] = useState(0);
+  const origin = useRef<HTMLElement | null>(null);
+  const run = useCallback(
+    <Result,>(call: () => Promise<Result> | Result, words: ChangeWords<Result>): void => {
+      origin.current =
+        document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      setBusy(true);
+      setOutcome(null);
+      // The chain ends in its own catch, which says the refusal in the live
+      // region; nothing is left for a caller to handle.
+      void Promise.resolve()
+        .then(call)
+        .then(
+          (result: Result): void => {
+            setOutcome({
+              tone: 'done',
+              text: typeof words.done === 'function' ? words.done(result) : words.done,
+            });
+            words.after?.(result);
+          },
+          (err: unknown): void =>
+            setOutcome({ tone: 'refused', text: refusalText(err, words.refused) }),
+        )
+        .finally((): void => {
+          setBusy(false);
+          setSettled((count) => count + 1);
+        });
+    },
+    [],
+  );
+  const clear = useCallback((): void => setOutcome(null), []);
+  // After the render that re-enables the control or removes it, never before:
+  // a disabled button cannot take focus.
+  useEffect(() => {
+    if (settled === 0) return;
+    const from = origin.current;
+    origin.current = null;
+    returnFocus(from, fallback?.current ?? null);
+  }, [settled, fallback]);
+  return { busy, outcome, run, clear };
 }
 
 /**
