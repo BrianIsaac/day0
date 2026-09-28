@@ -77,6 +77,8 @@ import {
   PermissionsCard,
   eventItemTitle,
   planApprovalRequest,
+  SKIP_RETRY_NOTE,
+  TAKE_IT_ANYWAY,
   TICKET_REREAD_STOP,
   typedEstimateMinutes,
   waitingLine,
@@ -1240,9 +1242,19 @@ describe('retrying a skipped item', (): void => {
     expect(markup).not.toContain('without the quality-fit filter');
   });
 
-  it('keeps Retry off a skip that is neither the quality-fit filter nor the scope judgement', (): void => {
-    const markup = render(skipped('already-claimed: state=executing'));
-    expect(markup).not.toContain('>Retry<');
+  // P3-1 and E-47: the manager who disagrees with a skip no rule waives has a
+  // control too; Retry evaluates the item again and says it may be skipped again.
+  it('offers Retry on every skip no rule waives, saying the item is evaluated again', (): void => {
+    for (const reason of [
+      'already-claimed: state=executing',
+      'registered skill "update-linear-ticket" was tried and does not cover this item',
+      'low-value: 10',
+    ]) {
+      const markup = render(skipped(reason));
+      expect(markup).toMatch(/<button[^>]*class="min-h-11 [^"]*"[^>]*>Retry<\/button>/);
+      expect(markup).toContain(SKIP_RETRY_NOTE);
+      expect(markup).not.toContain(TAKE_IT_ANYWAY);
+    }
   });
 
   it('names the colleague who holds the item, links to their dashboard and offers no Retry', (): void => {
@@ -1266,6 +1278,10 @@ describe('retrying a skipped item', (): void => {
     );
     expect(markup).not.toContain('claimed-by-colleague:');
     expect(markup).not.toContain('>Retry<');
+    // The colleague's card is the control: cancelling there lets the item come back here.
+    expect(markup).toContain(
+      'To give it to this employee instead, cancel it on Priya&#x27;s card; it comes back here by itself once they let it go.',
+    );
   });
 });
 

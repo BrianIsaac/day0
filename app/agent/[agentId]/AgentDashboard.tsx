@@ -3310,7 +3310,6 @@ export function colleagueHolding(
   return { agentId: holder.agentId, name: holder.name };
 }
 
-/** Show a manager's full rejection while keeping later failure reasons current. */
 /** A ledger list row shows the short form of a long read result; the exact payload holds it whole. */
 export function clipLedgerRow(text: string | undefined): string | undefined {
   if (text === undefined || text.length <= LEDGER_ROW_LENGTH) return text;
@@ -3348,18 +3347,12 @@ export function retryRequest(
   return { workItemId, ...(feedback?.trim() ? { feedback } : {}) };
 }
 
-/**
- * What the plan card's Cancel sends: the item and, when the manager wrote one, the reason.
- *
- * Args:
- *   workItemId: The item whose plan is cancelled.
- *   reason: The reason as typed; a blank reason is not sent.
- *
- * Returns:
- *   The arguments for `work.cancelPlan`.
- */
 /** The skipped row's control: the manager gives the agent an item it set aside. */
 export const TAKE_IT_ANYWAY = 'Take it anyway';
+
+/** What Retry does on a skip no rule waives: the item is evaluated again from the start. */
+export const SKIP_RETRY_NOTE =
+  'Retry evaluates this item again from the start; the employee may set it aside again for the same reason.';
 
 /** A retry note as typed, with the run it was typed for. */
 export interface TypedRetryNote {
@@ -3399,7 +3392,16 @@ export function liveRetryNote(typed: TypedRetryNote, token: string): string {
   return typed.token === token ? typed.text : '';
 }
 
-/** The mutation arguments that cancel a plan with the manager's reason. */
+/**
+ * What the plan card's Cancel sends: the item and, when the manager wrote one, the reason.
+ *
+ * Args:
+ *   workItemId: The item whose plan is cancelled.
+ *   reason: The reason as typed; a blank reason is not sent.
+ *
+ * Returns:
+ *   The arguments for `work.cancelPlan`.
+ */
 export function cancelPlanRequest(
   workItemId: Id<'workItems'>,
   reason?: string,
@@ -4301,8 +4303,13 @@ export function WorkItemCard({
       ? `${TAKE_IT_ANYWAY} re-evaluates this item as in scope, on your decision; its plan still needs your approval.`
       : undefined;
   // Refused at the claim: the colleague who holds the item works it, and the
-  // row comes back by itself if they let it go, so there is no Retry here.
+  // row comes back by itself if they let it go, so the control is the
+  // colleague's card, where the manager can let it go.
   const heldByColleague = colleagueHolding(item);
+  // Every other skip (a skill tried and found not to cover it, the employee's
+  // own claim elsewhere, a low value) is re-evaluated by Retry: the manager
+  // who disagrees always has a control (P3-1).
+  const skipRetryable = item.state === 'skipped' && !skipWaivable && !heldByColleague;
   const noteToken = retryNoteToken(item);
   const [typedRetryNote, setTypedRetryNote] = useState<TypedRetryNote>({
     text: '',
@@ -4453,10 +4460,14 @@ export function WorkItemCard({
               skip · another employee holds this:{' '}
               <Link
                 href={`/agent/${heldByColleague.agentId}`}
-                className="text-[var(--color-accent)] underline"
+                className="inline-flex min-h-11 items-center text-[var(--color-accent)] underline"
               >
                 {heldByColleague.name}
               </Link>
+              <span className="block text-[10px] text-[var(--color-muted)]">
+                To give it to this employee instead, cancel it on {heldByColleague.name}&apos;s
+                card; it comes back here by itself once they let it go.
+              </span>
             </span>
           ) : (
             <span className="text-[var(--color-fg)]">
@@ -4749,6 +4760,7 @@ export function WorkItemCard({
       {item.state === 'failed' ||
       item.state === 'completed' ||
       skipWaivable ||
+      skipRetryable ||
       parkedForRetry ||
       item.state === 'cancelled' ? (
         <div className="mt-2">
@@ -4848,6 +4860,9 @@ export function WorkItemCard({
           ) : null}
           {takeAnywayNote ? (
             <p className="text-[10px] text-[var(--color-muted)] mt-1">{takeAnywayNote}</p>
+          ) : null}
+          {skipRetryable ? (
+            <p className="text-[10px] text-[var(--color-muted)] mt-1">{SKIP_RETRY_NOTE}</p>
           ) : null}
         </div>
       ) : null}
