@@ -166,9 +166,9 @@ describe('SurfacesTab credential row', (): void => {
       canLand: false,
       kind: 'masked',
       label: 'Slack shared bot token',
-      text: 'entered by IT (masked)',
+      text: 'entered on the card (masked)',
     });
-    expect(markup).toContain('Slack shared bot token - entered by IT (masked)');
+    expect(markup).toContain('Slack shared bot token - entered on the card (masked)');
     expect(markup).not.toContain('type="password"');
   });
 });
@@ -346,7 +346,7 @@ describe('SurfacesTab dedicated-app row', (): void => {
     expect(markup).toContain('type="password"');
     expect(markup).toContain('autoComplete="new-password"');
     expect(markup).not.toContain('value=');
-    expect(markup).toContain('revoked');
+    expect(markup).toContain('asks Slack to revoke it');
   });
 
   it('says why it cannot offer one without a public address', (): void => {

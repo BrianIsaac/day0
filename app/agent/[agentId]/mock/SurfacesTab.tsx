@@ -1237,6 +1237,7 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
             provisioning,
             sourceLabel: summarySourceLabel,
             summary,
+            reason: surface.reason,
           });
           const provisioningPresentation = presentProvisioning({
             credential: request?.credential,
