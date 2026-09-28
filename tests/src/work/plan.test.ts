@@ -94,7 +94,11 @@ const charter: Charter = {
   proposedFunction: 'Operations coordination',
   evidence: [],
   shortTermGoals: { day30: 'Learn', day60: 'Own', day90: 'Improve' },
-  proposedBoundaries: { willDo: ['Keep the tracker current.'], willNotDo: [], escalationTriggers: [] },
+  proposedBoundaries: {
+    willDo: ['Keep the tracker current.'],
+    willNotDo: [],
+    escalationTriggers: [],
+  },
   namedCollaborators: [],
   namedSystems: [],
   priorityReading: [],
@@ -146,9 +150,7 @@ const documents = {
       body: 'Sign in, set the coverage figure, save, then read the audit line back.',
     },
   ],
-  teamDocs: [
-    { slug: 'systems', title: 'Systems', body: 'The dashboard tile has a web UI only.' },
-  ],
+  teamDocs: [{ slug: 'systems', title: 'Systems', body: 'The dashboard tile has a web UI only.' }],
 };
 
 describe('plan drafter grounding', (): void => {
@@ -180,7 +182,9 @@ describe('plan drafter grounding', (): void => {
     expect(user).toMatch(/dashboard-tile \(Dashboard tile\).*connected.*browser-driven/);
     expect(user).toMatch(/crm \(Customer records\).*absent/);
     expect(user).toContain('--- How-to guides ---');
-    expect(user).toContain('Sign in, set the coverage figure, save, then read the audit line back.');
+    expect(user).toContain(
+      'Sign in, set the coverage figure, save, then read the audit line back.',
+    );
     expect(user).toContain('--- Team docs (read-only context) ---');
     expect(user).toContain('The dashboard tile has a web UI only.');
     expect(user.indexOf('--- Candidate ---')).toBeLessThan(user.indexOf('--- Surfaces ---'));
@@ -356,26 +360,70 @@ describe('charter adjectives are scope, not gates', (): void => {
 
   it('derives candidate properties from the charter wording', (): void => {
     const scoped = { ...charter, proposedFunction: 'Handle unblocked, customer-facing tickets.' };
-    expect(planPreconditionAudit({ steps: ['Confirm the ticket is customer-facing.'] },
-      ticket, tileRunbook, scoped).flagged).toEqual([1]);
+    expect(
+      planPreconditionAudit(
+        { steps: ['Confirm the ticket is customer-facing.'] },
+        ticket,
+        tileRunbook,
+        scoped,
+      ).flagged,
+    ).toEqual([1]);
   });
 
   it('keeps charter properties scoped to candidate clauses and respects procedure requests', (): void => {
-    const scoped = { ...charter, proposedBoundaries: { ...charter.proposedBoundaries,
-      willDo: ['Handle unblocked, customer-facing requests. Read back the visible figure and audit line.'] } };
+    const scoped = {
+      ...charter,
+      proposedBoundaries: {
+        ...charter.proposedBoundaries,
+        willDo: [
+          'Handle unblocked, customer-facing requests. Read back the visible figure and audit line.',
+        ],
+      },
+    };
     const step = { steps: ['Confirm the ticket is customer-facing.'] };
     expect(planPreconditionAudit(step, ticket, tileRunbook, scoped).flagged).toEqual([1]);
-    const asking = { ...tileRunbook, howToGuides: [{ ...tileRunbook.howToGuides[0],
-      body: 'Confirm the ticket is customer-facing before refreshing the tile.' }] };
+    const asking = {
+      ...tileRunbook,
+      howToGuides: [
+        {
+          ...tileRunbook.howToGuides[0],
+          body: 'Confirm the ticket is customer-facing before refreshing the tile.',
+        },
+      ],
+    };
     expect(planPreconditionAudit(step, ticket, asking, scoped).flagged).toEqual([]);
-    const forbidding = { ...asking, howToGuides: [{ ...asking.howToGuides[0],
-      body: 'Never confirm the ticket is customer-facing before refreshing.' }] };
+    const forbidding = {
+      ...asking,
+      howToGuides: [
+        {
+          ...asking.howToGuides[0],
+          body: 'Never confirm the ticket is customer-facing before refreshing.',
+        },
+      ],
+    };
     expect(planPreconditionAudit(step, ticket, forbidding, scoped).flagged).toEqual([1]);
-    expect(planPreconditionAudit({ steps: ['Do not confirm the ticket is customer-facing.',
-      'Read back the visible 74% and the audit line.', 'Verify the audit line.'] },
-      ticket, undefined, scoped).flagged).toEqual([]);
-    expect(planPreconditionAudit(step, { ...ticket, title: 'Refresh a customer-facing ticket' },
-      undefined, scoped).flagged).toEqual([]);
+    expect(
+      planPreconditionAudit(
+        {
+          steps: [
+            'Do not confirm the ticket is customer-facing.',
+            'Read back the visible 74% and the audit line.',
+            'Verify the audit line.',
+          ],
+        },
+        ticket,
+        undefined,
+        scoped,
+      ).flagged,
+    ).toEqual([]);
+    expect(
+      planPreconditionAudit(
+        step,
+        { ...ticket, title: 'Refresh a customer-facing ticket' },
+        undefined,
+        scoped,
+      ).flagged,
+    ).toEqual([]);
     expect(planPreconditionAudit(step, ticket, tileRunbook, charter).flagged).toEqual([]);
   });
 
@@ -412,21 +460,47 @@ describe('charter adjectives are scope, not gates', (): void => {
       ...charter,
       proposedFunction: 'Handle unblocked and customer-facing\nrequests, plus stale ones.',
     };
-    expect(planPreconditionAudit({ steps: ['Check the ticket is unblocked.'] }, ticket, undefined, scoped).flagged).toEqual([1]);
-    expect(planPreconditionAudit({ steps: ['Check the ticket is customer facing.'] }, ticket, undefined, scoped).flagged).toEqual([1]);
-    expect(planPreconditionAudit({ steps: ['Verify the tile is stale.'] }, ticket, undefined, scoped).flagged).toEqual([1]);
+    expect(
+      planPreconditionAudit(
+        { steps: ['Check the ticket is unblocked.'] },
+        ticket,
+        undefined,
+        scoped,
+      ).flagged,
+    ).toEqual([1]);
+    expect(
+      planPreconditionAudit(
+        { steps: ['Check the ticket is customer facing.'] },
+        ticket,
+        undefined,
+        scoped,
+      ).flagged,
+    ).toEqual([1]);
+    expect(
+      planPreconditionAudit({ steps: ['Verify the tile is stale.'] }, ticket, undefined, scoped)
+        .flagged,
+    ).toEqual([1]);
     const wordless = { ...charter, proposedFunction: 'Keep the close moving.' };
     expect(planPreconditionAudit(gated, ticket, undefined, wordless).flagged).toEqual([1]);
   });
 
   it('repairs a charter-derived gate through the real planner', async (): Promise<void> => {
-    const drafted = { summary: 'Refresh the tile.', steps: ['Confirm the ticket is customer-facing.',
-      'Refresh the tile.'], expectedOutputType: 'ticket-update', riskNotes: '',
-      reversibility: 'reversible', estimatedMinutes: 5 };
+    const drafted = {
+      summary: 'Refresh the tile.',
+      steps: ['Confirm the ticket is customer-facing.', 'Refresh the tile.'],
+      expectedOutputType: 'ticket-update',
+      riskNotes: '',
+      reversibility: 'reversible',
+      estimatedMinutes: 5,
+    };
     planRecorded.outputs.push(drafted, drafted);
-    const result = await draftExecutionPlan({ candidate: ticket,
+    const result = await draftExecutionPlan({
+      candidate: ticket,
       charter: { ...charter, proposedFunction: 'Handle unblocked, customer-facing tickets.' },
-      autonomousActions: false, surfaceMode: 'real', documents: tileRunbook });
+      autonomousActions: false,
+      surfaceMode: 'real',
+      documents: tileRunbook,
+    });
     expect(planRecorded.users).toHaveLength(2);
     expect(result.advisorySteps).toEqual([1]);
   });
@@ -454,7 +528,11 @@ describe('charter adjectives are scope, not gates', (): void => {
     const mentioning = {
       ...tileRunbook,
       teamDocs: [
-        { slug: 'onboarding', title: 'Onboarding', body: 'Raise unclear ownership in the manager DM.' },
+        {
+          slug: 'onboarding',
+          title: 'Onboarding',
+          body: 'Raise unclear ownership in the manager DM.',
+        },
       ],
     };
     expect(planPreconditionAudit(gated, ticket, mentioning).flagged).toEqual([1]);
@@ -499,7 +577,8 @@ describe('charter adjectives are scope, not gates', (): void => {
     const ownershipTicket: WorkCandidate = {
       ...ticket,
       title: 'Reconcile Northstar CRM ownership',
-      contentSummary: 'Inspect the CRM for the owner of the opportunity and add the owner to the issue.',
+      contentSummary:
+        'Inspect the CRM for the owner of the opportunity and add the owner to the issue.',
     };
     expect(
       planPreconditionAudit(
@@ -680,7 +759,7 @@ describe('the candidate record read before the plan', (): void => {
     replyTarget: { channel: 'C0PUBLIC', channelName: 'revops-asks', threadTs: '1787746453.202809' },
   };
 
-  it('reads a chat ask\'s thread with the documented thread tool, bounded, under the surface credential', (): void => {
+  it("reads a chat ask's thread with the documented thread tool, bounded, under the surface credential", (): void => {
     expect(candidateRecordRead(mention, [linear, slack], now)).toEqual({
       surface: 'slack',
       tool: 'conversations.replies',
@@ -696,10 +775,18 @@ describe('the candidate record read before the plan', (): void => {
       },
     });
     // A thread that was itself a reply reads from its parent, where the ask's thread lives.
-    const threaded = { ...mention, replyTarget: { ...mention.replyTarget!, threadTs: '1787746000.000100' } };
-    expect(candidateRecordRead(threaded, [slack], now)?.action.args.path).toContain('ts=1787746000.000100');
+    const threaded = {
+      ...mention,
+      replyTarget: { ...mention.replyTarget!, threadTs: '1787746000.000100' },
+    };
+    expect(candidateRecordRead(threaded, [slack], now)?.action.args.path).toContain(
+      'ts=1787746000.000100',
+    );
     // Only the history tool allowed: the channel up to the ask, same bound.
-    const historyOnly: SurfaceRecord = { ...slack, toolAllowlist: ['chat.postMessage', 'conversations.history'] };
+    const historyOnly: SurfaceRecord = {
+      ...slack,
+      toolAllowlist: ['chat.postMessage', 'conversations.history'],
+    };
     expect(candidateRecordRead(mention, [historyOnly], now)).toMatchObject({
       tool: 'conversations.history',
       subject: 'thread',
@@ -713,10 +800,16 @@ describe('the candidate record read before the plan', (): void => {
   });
 
   it('reads no thread when the chat surface documents no history tool, is not a documented API, is disconnected, or the ask has no thread', (): void => {
-    expect(candidateRecordRead(mention, [{ ...slack, toolAllowlist: ['chat.postMessage'] }], now)).toBeUndefined();
-    expect(candidateRecordRead(mention, [{ ...slack, path: 'browser-driven' }], now)).toBeUndefined();
+    expect(
+      candidateRecordRead(mention, [{ ...slack, toolAllowlist: ['chat.postMessage'] }], now),
+    ).toBeUndefined();
+    expect(
+      candidateRecordRead(mention, [{ ...slack, path: 'browser-driven' }], now),
+    ).toBeUndefined();
     expect(candidateRecordRead(mention, [{ ...slack, verdict: 'absent' }], now)).toBeUndefined();
-    expect(candidateRecordRead({ ...mention, replyTarget: undefined }, [slack], now)).toBeUndefined();
+    expect(
+      candidateRecordRead({ ...mention, replyTarget: undefined }, [slack], now),
+    ).toBeUndefined();
     expect(candidateRecordRead(mention, [linear], now)).toBeUndefined();
   });
 
@@ -739,7 +832,10 @@ describe('the candidate record read before the plan', (): void => {
     expect(user.indexOf('--- Candidate thread')).toBeLessThan(user.indexOf('--- Surfaces ---'));
     expect(
       renderCandidateRecord({
-        surface: 'slack', tool: 'conversations.replies', subject: 'thread', unavailable: 'no grant (slack:read)',
+        surface: 'slack',
+        tool: 'conversations.replies',
+        subject: 'thread',
+        unavailable: 'no grant (slack:read)',
       }).join('\n'),
     ).toContain('thread unavailable: no grant (slack:read)');
   });
@@ -752,10 +848,16 @@ describe('the candidate record read before the plan', (): void => {
         now,
       ),
     ).toBeUndefined();
-    expect(candidateRecordRead(ticket, [{ ...linear, path: 'browser-driven' }], now)).toBeUndefined();
+    expect(
+      candidateRecordRead(ticket, [{ ...linear, path: 'browser-driven' }], now),
+    ).toBeUndefined();
     expect(candidateRecordRead(ticket, [{ ...linear, verdict: 'absent' }], now)).toBeUndefined();
     expect(
-      candidateRecordRead(ticket, [{ ...linear, toolAllowlist: ['save_comment', 'list_issues'] }], now),
+      candidateRecordRead(
+        ticket,
+        [{ ...linear, toolAllowlist: ['save_comment', 'list_issues'] }],
+        now,
+      ),
     ).toBeUndefined();
     expect(
       candidateRecordRead(
@@ -827,7 +929,12 @@ describe('the candidate record read before the plan', (): void => {
     const floor = await redactCandidateRecordText(text);
     expect(floor.redaction).toBe('structural-only');
     expect(floor.text).not.toContain('lin_api_0123456789');
-    const rendered = renderCandidateRecord({ surface: 'linear', tool: 'get_issue', subject: 'record', text: read.text }).join('\n');
+    const rendered = renderCandidateRecord({
+      surface: 'linear',
+      tool: 'get_issue',
+      subject: 'record',
+      text: read.text,
+    }).join('\n');
     expect(rendered).not.toContain('Zq9!vT2#kL8mNp4rXs7wYb3e');
     expect(rendered).toContain('"identifier":"REVOPS-7"');
     const long = renderCandidateRecord({
@@ -849,25 +956,32 @@ describe('the candidate record read before the plan', (): void => {
   });
 });
 
-
 describe('serialized candidate record credentials', () => {
-  it.each(['text', 'unavailable'] as const)('redacts escaped description lines in %s', async (field) => {
-    const password = 'Zq9!vT2#kL8mNp4rXs7wYb3e';
-    const body = `get_issue on linear · ${JSON.stringify({
-      identifier: 'REVOPS-7',
-      description: `Refresh the tile.\nService password: ${password}`,
-    })}`;
-    const redacted = (await redactCandidateRecordText(body, new RecordedSpanModel())).text;
-    const record = field === 'text'
-      ? { surface: 'linear', tool: 'get_issue', subject: 'record' as const, text: redacted }
-      : { surface: 'linear', tool: 'get_issue', subject: 'record' as const, unavailable: redacted };
-    const prompt = renderCandidateRecord(record).join('\n');
-    expect(prompt).not.toContain(password);
-    expect(prompt).toContain('REVOPS-7');
-    expect(prompt).toContain('Service password: <redacted>');
-  });
+  it.each(['text', 'unavailable'] as const)(
+    'redacts escaped description lines in %s',
+    async (field) => {
+      const password = 'Zq9!vT2#kL8mNp4rXs7wYb3e';
+      const body = `get_issue on linear · ${JSON.stringify({
+        identifier: 'REVOPS-7',
+        description: `Refresh the tile.\nService password: ${password}`,
+      })}`;
+      const redacted = (await redactCandidateRecordText(body, new RecordedSpanModel())).text;
+      const record =
+        field === 'text'
+          ? { surface: 'linear', tool: 'get_issue', subject: 'record' as const, text: redacted }
+          : {
+              surface: 'linear',
+              tool: 'get_issue',
+              subject: 'record' as const,
+              unavailable: redacted,
+            };
+      const prompt = renderCandidateRecord(record).join('\n');
+      expect(prompt).not.toContain(password);
+      expect(prompt).toContain('REVOPS-7');
+      expect(prompt).toContain('Service password: <redacted>');
+    },
+  );
 });
-
 
 describe('negative precondition instructions', () => {
   it.each([
@@ -878,18 +992,24 @@ describe('negative precondition instructions', () => {
     planRecorded.users.length = 0;
     planRecorded.outputs.length = 0;
     planRecorded.outputs.push({
-      summary: 'Refresh the tile.', steps: [step, 'Read back the 74% figure and audit line.'],
-      expectedOutputType: 'ticket-update', riskNotes: '', reversibility: '', estimatedMinutes: 2,
+      summary: 'Refresh the tile.',
+      steps: [step, 'Read back the 74% figure and audit line.'],
+      expectedOutputType: 'ticket-update',
+      riskNotes: '',
+      reversibility: '',
+      estimatedMinutes: 2,
     });
     const result = await draftExecutionPlan({
-      candidate, charter, autonomousActions: false, surfaceMode: 'real',
+      candidate,
+      charter,
+      autonomousActions: false,
+      surfaceMode: 'real',
     });
     expect(result.steps[0]).toBe(step);
     expect(planRecorded.users).toHaveLength(1);
     expect(result.advisorySteps).toBeUndefined();
   });
 });
-
 
 describe('bounded plan correction failure', () => {
   it('keeps the initial plan advisory when the optional correction request fails', async () => {
@@ -898,13 +1018,22 @@ describe('bounded plan correction failure', () => {
     const initial = {
       summary: 'Refresh the tile.',
       steps: ['Confirm the ticket is owned.', 'Refresh the tile and read back the audit line.'],
-      expectedOutputType: 'ticket-update', riskNotes: '', reversibility: '', estimatedMinutes: 2,
+      expectedOutputType: 'ticket-update',
+      riskNotes: '',
+      reversibility: '',
+      estimatedMinutes: 2,
     };
     planRecorded.outputs.push(initial, new Error('Correction request unavailable'));
-    await expect(draftExecutionPlan({
-      candidate, charter, autonomousActions: false, surfaceMode: 'real',
-    })).resolves.toEqual({
-      ...initial, advisorySteps: [1],
+    await expect(
+      draftExecutionPlan({
+        candidate,
+        charter,
+        autonomousActions: false,
+        surfaceMode: 'real',
+      }),
+    ).resolves.toEqual({
+      ...initial,
+      advisorySteps: [1],
       // The judgement is unscripted here, so it fails open and the plan records why; the gates then owe nothing.
       obligationsFailedOpen: 'obligations judgement unscripted',
     });
@@ -939,12 +1068,14 @@ describe('corrections the manager gave on earlier work', (): void => {
     const user = planUserPrompt({ candidate, charter, surfaceMode: 'real', corrections });
     expect(user).toContain('--- Corrections the manager gave on earlier work ---');
     expect(user).toContain(JSON.stringify(corrections));
-    expect(user).toContain('none overrides the charter, an approval requirement, a grant, a revocation or the exact-action gate');
+    expect(user).toContain(
+      'none overrides the charter, an approval requirement, a grant, a revocation or the exact-action gate',
+    );
     expect(user.indexOf('--- Candidate ---')).toBeLessThan(user.indexOf('--- Corrections'));
     expect(user.endsWith('Draft the execution plan now.')).toBe(true);
-    expect(planUserPrompt({ candidate, charter, surfaceMode: 'real', corrections: [] })).not.toContain(
-      '--- Corrections',
-    );
+    expect(
+      planUserPrompt({ candidate, charter, surfaceMode: 'real', corrections: [] }),
+    ).not.toContain('--- Corrections');
   });
 
   it('stores the ids the planner says it applied, and only ids it was offered', async (): Promise<void> => {
@@ -969,7 +1100,9 @@ describe('corrections the manager gave on earlier work', (): void => {
       now,
     });
     expect(plan.appliedCorrections).toEqual(['c-note']);
-    expect(planRecorded.users[0]).toContain('Use the Delay notice B template and follow up in 48 hours.');
+    expect(planRecorded.users[0]).toContain(
+      'Use the Delay notice B template and follow up in 48 hours.',
+    );
   });
 
   it('records no applied corrections on a plan that was offered none', async (): Promise<void> => {
@@ -985,7 +1118,13 @@ describe('corrections the manager gave on earlier work', (): void => {
       transitionStep: null,
       appliedCorrections: ['c-note'],
     });
-    const plan = await draftExecutionPlan({ candidate, charter, autonomousActions: false, surfaceMode: 'real', now });
+    const plan = await draftExecutionPlan({
+      candidate,
+      charter,
+      autonomousActions: false,
+      surfaceMode: 'real',
+      now,
+    });
     expect(plan).not.toHaveProperty('appliedCorrections');
   });
 
