@@ -213,6 +213,12 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'surface.install-failed': (payload) => `app install failed${because(payload.reason)}`,
   'surface.shared-credential-retired': (payload) =>
     `shared credential retired${because(payload.reason)}`,
+  'credential.superseded': (payload) => {
+    const label = text(payload.label);
+    const page = text(payload.page);
+    const cards = counted(payload.surfaceIds?.length, 'card');
+    return `credential${label ? ` "${label}"` : ''} no longer in the documentation${page ? ` (${page})` : ''}${cards ? `; land one again on ${cards}` : ''}`;
+  },
   'surface.app-installed': 'app installed by the administrator',
   'surface.probe-failed': (payload) =>
     `connection check failed${payload.verdict === 'listed-dead' ? ', no route left' : ''}${because(payload.reason)}`,

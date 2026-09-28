@@ -477,6 +477,21 @@ export interface SurfaceSharedCredentialRetiredPayload extends SurfaceReason {
   readonly credentialId: Id<'credentials'>;
 }
 
+/**
+ * The payload of `credential.superseded`: a page credential the synced
+ * documentation no longer carries, as one agent's feed tells it. Never the
+ * value, and never the ref's value fingerprint: the page alone.
+ */
+export interface CredentialSupersededPayload {
+  readonly credentialId: Id<'credentials'>;
+  readonly label: string;
+  readonly sourceId: Id<'docSources'>;
+  /** The page the credential was found on. */
+  readonly page: string;
+  /** This agent's surfaces it was bound to, each sent back to landing a credential. */
+  readonly surfaceIds: readonly SurfaceId[];
+}
+
 /** The payload of `surface.app-installed`. */
 export interface SurfaceAppInstalledPayload extends SurfaceNamed {
   readonly appId?: string;
@@ -1036,6 +1051,7 @@ export interface EventPayloads {
   'surface.app-provisioned': SurfaceAppProvisionedPayload;
   'surface.install-failed': SurfaceInstallFailedPayload;
   'surface.shared-credential-retired': SurfaceSharedCredentialRetiredPayload;
+  'credential.superseded': CredentialSupersededPayload;
   'surface.app-installed': SurfaceAppInstalledPayload;
   'surface.probe-failed': SurfaceProbeFailedPayload;
   'surface.probe-retried': SurfaceProbeRetriedPayload;
@@ -1177,6 +1193,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'surface.app-provisioned',
   'surface.install-failed',
   'surface.shared-credential-retired',
+  'credential.superseded',
   'surface.app-installed',
   'surface.probe-failed',
   'surface.probe-retried',

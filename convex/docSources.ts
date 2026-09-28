@@ -34,6 +34,7 @@ import {
 } from '../src/docs/sync-record';
 import { runToResume } from '../src/docs/sync-resume';
 import { cardPageRefs } from '../src/docs/card-pages';
+import { credentialPageRef } from '../src/docs/credential-ref';
 import {
   FINISHING_CURSOR,
   finishingCursor,
@@ -1601,6 +1602,7 @@ async function supersedeCredential(
     .withIndex('by_credentialId', (index) => index.eq('credentialId', credential._id))
     .take(1_001);
   if (surfaces.length > 1_000) throw new Error('Credential exceeds 1,000 bound surfaces.');
+  await recordSuperseded(ctx, credential, surfaces);
   for (const surface of surfaces) {
     const request = surface.request as { credential?: Record<string, unknown> } | undefined;
     const location =
@@ -1640,6 +1642,38 @@ async function supersedeCredential(
       managerUserId: undefined,
       managerName: undefined,
       channelsNotJoined: undefined,
+    });
+  }
+}
+
+/**
+ * Tell every agent whose card was bound to a superseded page credential, one
+ * event each through the contract, naming the page and never the value. A
+ * credential no card was bound to reaches no agent's feed.
+ */
+async function recordSuperseded(
+  ctx: MutationCtx,
+  credential: Doc<'credentials'>,
+  surfaces: readonly Doc<'surfaces'>[],
+): Promise<void> {
+  if (typeof credential.source === 'string') return;
+  const byAgent = new Map<Id<'agents'>, Id<'surfaces'>[]>();
+  for (const surface of surfaces) {
+    byAgent.set(surface.agentId, [...(byAgent.get(surface.agentId) ?? []), surface._id]);
+  }
+  const now = Date.now();
+  for (const [agentId, surfaceIds] of byAgent) {
+    await appendEvent(ctx, {
+      agentId,
+      type: 'credential.superseded',
+      payload: {
+        credentialId: credential._id,
+        label: credential.label,
+        sourceId: credential.source.sourceId,
+        page: credentialPageRef(credential.source.ref),
+        surfaceIds,
+      },
+      createdAt: now,
     });
   }
 }

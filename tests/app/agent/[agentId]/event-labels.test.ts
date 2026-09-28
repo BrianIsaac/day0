@@ -107,6 +107,23 @@ describe('the live feed labels', (): void => {
     ).toBe('access set by the upgrade: 90 days');
   });
 
+  it('says which credential the documentation dropped and how many cards need one again', (): void => {
+    expect(
+      eventLabel({
+        type: 'credential.superseded',
+        payload: {
+          credentialId: 'c1',
+          label: 'linear service token',
+          sourceId: 'd1',
+          page: 'runbooks/linear.md',
+          surfaceIds: ['s1', 's2'],
+        },
+      }),
+    ).toBe(
+      'credential "linear service token" no longer in the documentation (runbooks/linear.md); land one again on 2 cards',
+    );
+  });
+
   it('says whether a failed run stopped, and names the slugs of an ambiguous charter match', (): void => {
     expect(
       eventLabel({

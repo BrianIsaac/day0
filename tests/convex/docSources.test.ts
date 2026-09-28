@@ -1359,6 +1359,73 @@ it('leaves a credential an earlier sync superseded alone, and counts only what t
   expect(await harness.run(async (ctx) => await ctx.db.get(credentialId))).toEqual(first);
 });
 
+it('tells each agent whose card lost a swapped-out credential, naming the page and never the value', async () => {
+  useSurfaceMode('real');
+  const harness = convexTest(schema, allConvexModules());
+  const { sourceId, agentId } = await seedSyncedSource(harness);
+  const ref = 'runbooks/linear.md#credential=0123456789abcdef0123456789abcdef';
+  const { credentialId, surfaceId } = await harness.run(async (ctx) => {
+    const credentialId = await ctx.db.insert('credentials', {
+      userId: 'owner',
+      kind: 'value',
+      label: 'linear service token',
+      source: { sourceId, ref },
+      ciphertext: 'sealed',
+      iv: 'iv',
+      createdAt: 1,
+    });
+    const surfaceId = await ctx.db.insert('surfaces', {
+      agentId,
+      slug: 'linear',
+      displayName: 'Linear',
+      class: 'kanban',
+      verdict: 'connected',
+      credentialId,
+      credentialKind: 'value',
+      credentialLanded: true,
+      whereFound: [],
+      createdAt: 1,
+    });
+    return { credentialId, surfaceId };
+  });
+  const sync = async (): Promise<void> => {
+    const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    await harness.mutation(internal.docSources.finishSync, {
+      sourceId,
+      runId,
+      refs: ['runbooks/linear.md'],
+      credentialRefs: [],
+      pageCount: 1,
+      redactionCount: 0,
+    });
+  };
+  const superseded = async (): Promise<Doc<'events'>[]> =>
+    await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent_type', (q) =>
+            q.eq('agentId', agentId).eq('type', 'credential.superseded'),
+          )
+          .collect(),
+    );
+  await sync();
+  const events = await superseded();
+  expect(events.map((event) => event.payload)).toEqual([
+    {
+      credentialId,
+      label: 'linear service token',
+      sourceId,
+      page: 'runbooks/linear.md',
+      surfaceIds: [surfaceId],
+    },
+  ]);
+  expect(JSON.stringify(events)).not.toContain('0123456789abcdef');
+  // A later sync that finds the row already superseded tells no one again.
+  await sync();
+  expect(await superseded()).toHaveLength(1);
+});
+
 describe('superseded page credentials that have aged out (C2 D2 (a))', (): void => {
   const DAY = 24 * 60 * 60 * 1000;
   const NOW = Date.UTC(2026, 9, 28);
