@@ -720,6 +720,15 @@ export interface WorkPlanDraftedPayload extends WorkItemNamed {
   readonly plan: ExecutionPlan;
 }
 
+/**
+ * The payload of `work.plan-redrafting`: a plan drafted while its system was
+ * not connected, sent back to drafting now that it is (P7-18).
+ */
+export interface WorkPlanRedraftingPayload extends WorkItemNamed {
+  readonly surfaceId: Id<'surfaces'>;
+  readonly slug: string;
+}
+
 /** The payload of `work.corrections-applied`. */
 export interface WorkCorrectionsAppliedPayload extends WorkItemNamed {
   readonly correctionIds: Id<'corrections'>[];
@@ -1119,6 +1128,7 @@ export interface EventPayloads {
   'work.check-requested': WorkCheckRequestedPayload;
   'work.plan-grounding-read': WorkPlanGroundingReadPayload;
   'work.plan-drafted': WorkPlanDraftedPayload;
+  'work.plan-redrafting': WorkPlanRedraftingPayload;
   'work.corrections-applied': WorkCorrectionsAppliedPayload;
   'work.corrections-redaction-limited': WorkCorrectionsRedactionLimitedPayload;
   'work.correction-retired': WorkCorrectionRetiredPayload;
@@ -1264,6 +1274,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'work.check-requested',
   'work.plan-grounding-read',
   'work.plan-drafted',
+  'work.plan-redrafting',
   'work.corrections-applied',
   'work.corrections-redaction-limited',
   'work.correction-retired',

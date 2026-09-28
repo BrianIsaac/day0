@@ -2811,7 +2811,9 @@ async function withAppliedCorrections(
 /**
  * Store a drafted plan and park the row for its decision. Internal; the
  * drafting action's. `draftedWithout` says the plan was drafted without its
- * ticket or thread (P7-18); a plan drafted with it clears an earlier one's.
+ * ticket or thread (P7-18); a plan drafted with it clears an earlier one's. A
+ * plan drafted while its system was down, which is connected by now, is not
+ * stored: the row goes straight back to drafting (`redrafting`).
  */
 export const setPlan = internalMutation({
   args: {
@@ -2819,10 +2821,25 @@ export const setPlan = internalMutation({
     plan: v.any(),
     draftedWithout: v.optional(planDraftedWithoutValidator),
   },
-  handler: async (ctx, args): Promise<{ stored: boolean }> => {
+  handler: async (ctx, args): Promise<{ stored: boolean; redrafting?: true }> => {
     const row = await ctx.db.get(args.workItemId);
     if (!row) throw new Error('workItem not found');
     if (row.state !== 'claimed') return { stored: false };
+    // The system the draft could not read connected while the model drafted:
+    // a connection that landed first found no plan to send back, so this does.
+    if (args.draftedWithout?.cause === 'not-connected') {
+      const source = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent_slug', (q) =>
+          q.eq('agentId', row.agentId).eq('slug', args.draftedWithout!.surfaceSlug),
+        )
+        .unique();
+      const now = Date.now();
+      if (source && verdictFor(toSurfaceRecord(source), now) === 'connected') {
+        await sendBackToDrafting(ctx, row, source, now);
+        return { stored: false, redrafting: true };
+      }
+    }
     const { plan, applied } = await withAppliedCorrections(ctx, row, args.plan);
     await ctx.db.patch(args.workItemId, {
       plan,
@@ -2855,6 +2872,70 @@ export const setPlan = internalMutation({
     return { stored: true };
   },
 });
+
+/**
+ * Plan-pending rows one connection reads for plans to draft again; an
+ * employee's parked plans are bounded by its work cap, far below this.
+ */
+const REDRAFT_SCAN = 200;
+
+/**
+ * Send back to drafting every undecided plan drafted while this surface was
+ * not connected, now that it is (P7-18): the plan is drafted again from the
+ * record it could not read, and its request gives way to the new plan's, as
+ * a Retry's re-draft does. A plan whose read failed on a connected system is
+ * left to the manager.
+ *
+ * @param surface - The surface that has just connected.
+ * @param now - When it connected.
+ */
+export async function redraftPlansDraftedWithout(
+  ctx: MutationCtx,
+  surface: Doc<'surfaces'>,
+  now: number,
+): Promise<void> {
+  const parked = await ctx.db
+    .query('workItems')
+    .withIndex('by_agent_state', (q) =>
+      q.eq('agentId', surface.agentId).eq('state', 'plan-pending'),
+    )
+    .take(REDRAFT_SCAN);
+  for (const row of parked) {
+    const without = row.planDraftedWithout;
+    if (without?.surfaceSlug !== surface.slug || without.cause !== 'not-connected') continue;
+    if (row.decision?.decidedAt !== undefined) continue;
+    await sendBackToDrafting(ctx, row, surface, now);
+  }
+}
+
+/**
+ * Send one row back to drafting because the system its plan could not read
+ * is connected now, as a Retry's re-draft resets it: no plan, no request, no
+ * answers, and the draft scheduled in the same transaction.
+ */
+async function sendBackToDrafting(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+  surface: Doc<'surfaces'>,
+  now: number,
+): Promise<void> {
+  await ctx.db.patch(row._id, {
+    state: 'claimed',
+    plan: undefined,
+    planPendingAt: undefined,
+    planDraftedWithout: undefined,
+    decision: undefined,
+    managerAnswers: undefined,
+    draftClaimedAt: undefined,
+  });
+  await appendEvent(ctx, {
+    agentId: row.agentId,
+    type: 'work.plan-redrafting',
+    payload: { workItemId: row._id, surfaceId: surface._id, slug: surface.slug },
+    createdAt: now,
+  });
+  await scheduleNextStep(ctx, { ...row, state: 'claimed', plan: undefined });
+}
 
 /**
  * Why a stored plan's obligations judgement failed open, if it did.

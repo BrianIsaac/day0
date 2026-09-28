@@ -738,6 +738,8 @@ async function draftPlanHandler(
     plan,
     ...(grounded?.draftedWithout ? { draftedWithout: grounded.draftedWithout } : {}),
   });
+  // Its system connected while it was drafting, so it is being drafted again.
+  if (stored.redrafting) return { ok: true };
   if (!stored.stored) {
     return { ok: false, reason: 'another draft stored a plan for this work item first' };
   }

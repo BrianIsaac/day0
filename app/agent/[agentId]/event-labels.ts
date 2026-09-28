@@ -317,6 +317,8 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     `checked for new work${counted(payload.surfaceIds?.length, 'surface') ? ` on ${counted(payload.surfaceIds?.length, 'surface')}` : ''}`,
   'work.plan-grounding-read': 'plan read what it rests on',
   'work.plan-drafted': 'plan drafted',
+  'work.plan-redrafting': (payload) =>
+    `plan drafted again: ${text(payload.slug) ?? 'its system'} is connected, so the ticket can be read`,
   'work.corrections-applied': (payload) =>
     `plan applies ${counted(payload.correctionIds?.length, 'kept correction') ?? 'kept corrections'}`,
   'work.corrections-redaction-limited': 'kept corrections read with limited redaction',

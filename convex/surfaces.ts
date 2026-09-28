@@ -15,7 +15,11 @@ import {
 } from '../src/docs/system-discovery';
 import { sameSurfaceSystem, surfaceIdentity } from '../src/surfaces/identity';
 import { surfaceSlug } from '../src/surfaces/slug';
-import { reevaluatePendingInTransaction, resendDecisionsAfterManagerChange } from './work';
+import {
+  redraftPlansDraftedWithout,
+  reevaluatePendingInTransaction,
+  resendDecisionsAfterManagerChange,
+} from './work';
 import schema from './schema';
 import { scheduleNextStep } from './workLoop';
 import { intakeScopeValues } from '../src/surfaces/intake-scope';
@@ -1506,6 +1510,9 @@ export const recordConnected = internalMutation({
       });
     }
     await resendDecisionsAfterManagerChange(ctx, surface, args.managerDmChannelId);
+    // On every connection, not only a change of stored verdict: a surface the
+    // planner read as dead may never have been stored as anything but connected.
+    await redraftPlansDraftedWithout(ctx, surface, args.verifiedAt);
     if (transitioned) {
       const readScope = `${surface.slug}:read`;
       if (!(await readRevokedSinceApproval(ctx, surface, readScope))) {
