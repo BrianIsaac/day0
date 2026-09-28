@@ -157,6 +157,25 @@ describe('the upgrade migrations', (): void => {
     });
   });
 
+  it('runs the second schema step’s migrations on the runner, each at 0.6.0, and records each finished', async (): Promise<void> => {
+    const secondStep = [
+      'surfaces-withheld-tools',
+      'work-evaluation-unavailable-cause',
+      'sync-runs-unread',
+      'doc-page-listings',
+      'credentials-superseded-at',
+    ];
+    expect(MIGRATION_NAMES.slice(-secondStep.length)).toEqual(secondStep);
+    const harness = limitedHarness();
+    await runAll(harness);
+    const status = await harness.query(internal.migrations.status, {});
+    expect(
+      status.migrations
+        .filter((row) => secondStep.includes(row.name))
+        .map((row) => [row.name, row.release, row.completedAt !== undefined]),
+    ).toEqual(secondStep.map((name) => [name, '0.6.0', true]));
+  });
+
   it('copies listings kept as work.listed events into ticketListings once, where the re-read finds them', async (): Promise<void> => {
     const harness = limitedHarness();
     const agentId = await agent(harness, { userId: 'owner' });
