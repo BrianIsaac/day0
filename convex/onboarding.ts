@@ -654,10 +654,10 @@ async function seedApprovedCharter(
   // rows. No hardcoded slugs in the prompt.
   const mockEnv = await ctx.runQuery(internal.mock.snapshotInternal, { agentId });
   const generated = await generateWorkItemsFromCharter(charterBody, mockEnv);
-  let workItemsGenerated = 0;
-  for (const item of generated) {
-    await ctx.runMutation(internal.work.seedItem, {
-      agentId,
+  const workItemsGenerated = await ctx.runMutation(internal.work.seedCharterDerived, {
+    agentId,
+    role,
+    items: generated.map((item) => ({
       sourceCategory: item.sourceCategory,
       sourceSystem: item.sourceSystem,
       externalId: item.externalId,
@@ -666,14 +666,7 @@ async function seedApprovedCharter(
       contentRefs: item.contentRefs,
       priority: item.priority,
       requesterLabel: item.requesterLabel,
-    });
-    workItemsGenerated += 1;
-  }
-  await logEvent(ctx, {
-    agentId,
-    type: 'work.charter-derived',
-    payload: { count: workItemsGenerated, role },
+    })),
   });
-
   return { workItemsGenerated };
 }

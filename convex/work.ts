@@ -871,6 +871,35 @@ export const seedItem = internalMutation({
 });
 
 /**
+ * Seed every item the mock generator made for an approved charter, and the
+ * `work.charter-derived` event, in one transaction. Internal; the charter's
+ * seeding calls it. All or nothing, so a retry after a failure never adds a
+ * second, different batch beside a partial first: the generator is a model
+ * call and the seed dedups on external ids only (U9 D4).
+ *
+ * @returns How many items were seeded.
+ */
+export const seedCharterDerived = internalMutation({
+  args: {
+    agentId: v.id('agents'),
+    role: v.string(),
+    items: v.array(v.object(workItemSeedFields)),
+  },
+  handler: async (ctx, args): Promise<number> => {
+    for (const item of args.items) {
+      await seedItemInTransaction(ctx, { agentId: args.agentId, ...item });
+    }
+    await appendEvent(ctx, {
+      agentId: args.agentId,
+      type: 'work.charter-derived',
+      payload: { count: args.items.length, role: args.role },
+      createdAt: Date.now(),
+    });
+    return args.items.length;
+  },
+});
+
+/**
  * Bring the row of a ticket intake refused on this poll up to the listing
  * and withdraw it when it is only waiting. Internal; called by intake. A
  * ticket with no row gets none.

@@ -17,11 +17,14 @@ vi.mock('../../src/lib/mastra', () => ({
   agentText: async (): Promise<string> => '',
 }));
 
+/** What the mocked generator adds after its three items, when a test needs a bad one. */
+const generator = vi.hoisted(() => ({ extra: [] as unknown[] }));
+
 vi.mock('../../src/agent/work-generator', () => ({
   generateWorkItemsFromCharter: async (): Promise<
     import('../../src/agent/work-generator').GeneratedWorkItem[]
-  > =>
-    ['REVOPS-1', 'REVOPS-2', 'REVOPS-3'].map((externalId, index) => ({
+  > => [
+    ...['REVOPS-1', 'REVOPS-2', 'REVOPS-3'].map((externalId, index) => ({
       sourceCategory: 'ticket-queue',
       sourceSystem: 'tickets',
       externalId,
@@ -31,9 +34,12 @@ vi.mock('../../src/agent/work-generator', () => ({
       priority: 'P2',
       requesterLabel: 'Manager',
     })),
+    ...(generator.extra as import('../../src/agent/work-generator').GeneratedWorkItem[]),
+  ],
 }));
 
 afterEach((): void => {
+  generator.extra = [];
   restoreSurfaceMode();
   vi.unstubAllGlobals();
   vi.useRealTimers();
@@ -248,6 +254,20 @@ describe('seeding an approved charter on the server (P5-6)', (): void => {
       charterId,
       reason: expect.stringContaining('Validator error'),
     });
+  });
+
+  it("seeds all of the generator's items or none, so a retry never adds a second batch beside a partial first (U9 D4)", async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, charterId } = await seedApprovedCharter(harness);
+    // A fourth item the seed refuses, after three it would take.
+    generator.extra = [{ sourceCategory: 'ticket-queue', sourceSystem: 'tickets', title: 7 }];
+    await expect(
+      harness.action(internal.onboarding.postCharterApproval, { agentId, charterId }),
+    ).resolves.toMatchObject({ failed: expect.any(String) });
+    const result = await outcome(harness, agentId);
+    expect(result.workItems).toBe(0);
+    expect(result.events).not.toContain('work.charter-derived');
   });
 
   it('seeds nothing for a charter that is no longer the approved latest', async (): Promise<void> => {
