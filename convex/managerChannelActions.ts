@@ -69,13 +69,21 @@ interface ManagerDelivery {
   grants: string[];
 }
 
+/**
+ * Deliver one message to the manager DM through the gate.
+ *
+ * @param options - The decision request it sends, when it is one, which the
+ *   gate checks is still current; and the request it answers, whose thread it
+ *   goes in.
+ */
 async function deliverManagerMessage(
   ctx: ActionCtx,
   workItemId: Id<'workItems'>,
   delivery: ManagerDelivery,
   text: string,
-  decisionId?: string,
+  options: { readonly decisionId?: string; readonly threadTs?: string } = {},
 ) {
+  const { decisionId, threadTs } = options;
   const applied = await applySurfaceActions(
     ctx,
     'real',
@@ -86,7 +94,7 @@ async function deliverManagerMessage(
       workItemId,
       runId: delivery.requestRunId,
     },
-    [managerMessageAction(delivery.surface, text)],
+    [managerMessageAction(delivery.surface, text, threadTs ? { threadTs } : {})],
     {
       deps: {
         decrypt: decryptCredential,
@@ -214,13 +222,9 @@ export const requestDecision = internalAction({
       }
     }
     try {
-      const result = await deliverManagerMessage(
-        ctx,
-        args.workItemId,
-        prepared,
-        text,
-        prepared.decisionId,
-      );
+      const result = await deliverManagerMessage(ctx, args.workItemId, prepared, text, {
+        decisionId: prepared.decisionId,
+      });
       await ctx.runMutation(internal.work.recordDecisionRequest, {
         workItemId: args.workItemId,
         decisionId: prepared.decisionId,
@@ -246,7 +250,9 @@ export const sendDecisionNotice = internalAction({
     const prepared = await ctx.runMutation(internal.work.prepareDecisionNotice, args);
     if (!prepared.prepared) return { sent: false, reason: 'notice already claimed' };
     try {
-      const result = await deliverManagerMessage(ctx, args.workItemId, prepared, prepared.text);
+      const result = await deliverManagerMessage(ctx, args.workItemId, prepared, prepared.text, {
+        threadTs: prepared.threadTs,
+      });
       await ctx.runMutation(internal.work.recordDecisionNotice, {
         ...args,
         ts: result.providerId,
@@ -267,7 +273,13 @@ export const sendManagerReplyNotice = internalAction({
     const prepared = await ctx.runMutation(internal.work.prepareManagerReplyNotice, args);
     if (!prepared.prepared) return { sent: false, reason: 'notice already claimed' };
     try {
-      const result = await deliverManagerMessage(ctx, prepared.workItemId, prepared, prepared.text);
+      const result = await deliverManagerMessage(
+        ctx,
+        prepared.workItemId,
+        prepared,
+        prepared.text,
+        { threadTs: prepared.threadTs },
+      );
       await ctx.runMutation(internal.work.recordManagerReplyNotice, {
         ...args,
         providerTs: result.providerId,

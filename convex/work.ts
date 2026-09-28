@@ -3548,6 +3548,8 @@ export const prepareDecisionNotice = internalMutation({
       surfaces: surfaceRows.map(toSurfaceRecord),
       grants: grants.filter((grant) => !grant.revokedAt).map((grant) => grant.scope),
       text: `Decision ${row.decision.id} was already ${row.decision.outcome ?? 'decided'} from ${origin}.`,
+      // The notice answers the request, so it goes in the request's thread.
+      ...(row.decision.ts ? { threadTs: row.decision.ts } : {}),
     };
   },
 });
@@ -3612,8 +3614,10 @@ export const prepareManagerReplyNotice = internalMutation({
       createdAt: Date.now(),
     });
     await ctx.db.patch(notice._id, { claimedAt: Date.now() });
+    const threadTs = await requestThreadOf(ctx, workItem, notice.decisionId);
     return {
       prepared: true as const,
+      ...(threadTs ? { threadTs } : {}),
       workItemId: notice.workItemId,
       agentId: notice.agentId,
       agentName: agent.name,
@@ -3625,6 +3629,31 @@ export const prepareManagerReplyNotice = internalMutation({
     };
   },
 });
+
+/**
+ * The provider timestamp of the request message a decision's acknowledgement
+ * answers, so it goes in that message's thread (M finding 3): the item's own
+ * request for its code, or, for a batch code, the request it was sent in,
+ * which is the one of the member that anchors the batch.
+ *
+ * @returns The timestamp, or undefined when the request left none.
+ */
+async function requestThreadOf(
+  ctx: QueryCtx,
+  workItem: Doc<'workItems'>,
+  decisionId: string,
+): Promise<string | undefined> {
+  const decision = workItem.decision;
+  if (!decision?.ts) return undefined;
+  if (decision.id === decisionId) return decision.ts;
+  const batch = await ctx.db
+    .query('decisionBatches')
+    .withIndex('by_agent_id', (q) => q.eq('agentId', workItem.agentId).eq('id', decisionId))
+    .unique();
+  return batch?.members.some((member) => member.decisionId === decision.id)
+    ? decision.ts
+    : undefined;
+}
 
 /** Store provider evidence for one manager-reply acknowledgement. */
 export const recordManagerReplyNotice = internalMutation({

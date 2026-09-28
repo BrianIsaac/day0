@@ -457,6 +457,9 @@ describe('the outbound manager-channel action', (): void => {
       `Approval ${decision.id} received. I’m starting the approved plan now.`,
     );
     expect(JSON.parse(sent[1].body).text).toContain('-- ops worker (Day0) · run ');
+    // The acknowledgement answers the request, so it sits in the request's thread (M finding 3).
+    expect(decision.ts).toBe('provider-1');
+    expect(JSON.parse(sent[1].body).thread_ts).toBe('provider-1');
     expect(await harness.run(async (ctx) => await ctx.db.get(notice._id))).toMatchObject({
       claimedAt: expect.any(Number),
       providerTs: 'provider-2',
