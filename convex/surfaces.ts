@@ -945,8 +945,8 @@ export const recordInstalledApp = internalMutation({
  */
 export const PROBE_LEASE_MS = 2 * 60_000;
 
-/** The verdicts a probe may run on. */
-const PROBEABLE_VERDICTS: ReadonlyArray<Doc<'surfaces'>['verdict']> = [
+/** The verdicts a probe may run on; a row that leaves them is no longer a probe's to call. */
+export const PROBEABLE_VERDICTS: ReadonlyArray<Doc<'surfaces'>['verdict']> = [
   'approved',
   'connected',
   'ungranted',

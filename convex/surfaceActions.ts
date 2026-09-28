@@ -8,7 +8,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { action, internalAction, type ActionCtx } from './_generated/server';
 import { assertOwnsAgentAction } from './ownership';
-import type { ProbeRefusal, ProbeReservation } from './surfaces';
+import { PROBEABLE_VERDICTS, type ProbeRefusal, type ProbeReservation } from './surfaces';
 import { relevantSystemText } from './orientationActions';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 import { createSecretMcpClient } from '../src/surfaces/mcp-client';
@@ -191,14 +191,6 @@ function probeFailureVerdict(error: unknown, safeReason: string): 'ungranted' | 
   if (ACCESS_REFUSAL.test(safeReason)) return 'ungranted';
   return 'listed-dead';
 }
-
-/** The verdicts `beginProbe` admits; a row that left them is no longer this probe's to call. */
-const PROBEABLE_VERDICTS: ReadonlyArray<Doc<'surfaces'>['verdict']> = [
-  'approved',
-  'connected',
-  'ungranted',
-  'listed-dead',
-];
 
 /** How long a probe waits before its one retry. */
 export const PROBE_RETRY_WAIT_MS = 5_000;
