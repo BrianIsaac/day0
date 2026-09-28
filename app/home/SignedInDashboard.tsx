@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useQuery } from 'convex/react';
 import Link from 'next/link';
 import { api } from '@convex/_generated/api';
@@ -34,6 +34,7 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
   const surfaceMode = useQuery(api.config.surfaceMode);
   const now = useNow();
   const [deploying, setDeploying] = useState(false);
+  const deployToggle = useRef<HTMLButtonElement>(null);
 
   const staffed = roster !== undefined && roster.length > 0;
   const showDeployForm = roster !== undefined && (!staffed || deploying);
@@ -53,6 +54,7 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
         </div>
         {staffed ? (
           <button
+            ref={deployToggle}
             type="button"
             aria-expanded={deploying}
             aria-controls="deploy-form"
@@ -72,7 +74,15 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
               docSources={docSources}
               surfaceMode={surfaceMode?.mode}
               pickerOpen={!staffed}
-              onCancel={staffed ? () => setDeploying(false) : undefined}
+              onCancel={
+                staffed
+                  ? () => {
+                      setDeploying(false);
+                      // The form and its focus go; the caret returns to the button that opened it.
+                      deployToggle.current?.focus();
+                    }
+                  : undefined
+              }
               focusOnMount={staffed}
             />
           ) : null}

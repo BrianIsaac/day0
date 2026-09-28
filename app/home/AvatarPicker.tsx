@@ -22,9 +22,10 @@ export function AvatarPicker({
   defaultOpen?: boolean;
 }) {
   const labelId = useId();
+  const creditId = useId();
   return (
     <details open={defaultOpen} className="group mb-4">
-      <summary className="mb-2 flex cursor-pointer list-none items-center justify-between gap-3 rounded-md py-1 [&::-webkit-details-marker]:hidden">
+      <summary className="mb-2 flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 rounded-md [&::-webkit-details-marker]:hidden">
         <span
           id={labelId}
           className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em] text-[var(--color-muted)]"
@@ -37,13 +38,13 @@ export function AvatarPicker({
           </span>
           Choose avatar
         </span>
-        <span className="text-xs text-[var(--color-muted)]">
+        <span id={creditId} className="text-xs text-[var(--color-muted)]">
           Singapore Codex Pets · {SINGAPORE_AI_BUILDER_AVATARS.length}
         </span>
       </summary>
       <div
         role="group"
-        aria-labelledby={labelId}
+        aria-labelledby={`${labelId} ${creditId}`}
         className="grid max-h-40 grid-cols-6 gap-1 overflow-y-auto pr-1 sm:grid-cols-10"
       >
         {SINGAPORE_AI_BUILDER_AVATARS.map((avatar) => {

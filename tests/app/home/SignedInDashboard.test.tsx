@@ -431,6 +431,7 @@ describe('Deploy another', (): void => {
     act(() => cancel.click());
     expect(host.querySelector('#deploy-form')).toBeNull();
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement).toBe(toggle);
 
     act(() => root.unmount());
     host.remove();

@@ -43,6 +43,17 @@ describe('AvatarPicker', (): void => {
     expect(closed.match(/aria-label="Face \d+"/g)).toHaveLength(29);
   });
 
+  it('names the group by its label and the gallery credit, and opens from a full-size target', (): void => {
+    const group = /<div role="group" aria-labelledby="([^"]+)"/.exec(html)?.[1] ?? '';
+    const ids = group.split(' ');
+    expect(ids).toHaveLength(2);
+    const named = ids.map(
+      (id) => new RegExp(`id="${id}"[^>]*>([\\s\\S]*?)</span>`).exec(html)?.[1],
+    );
+    expect(named.join(' ').replace(/<[^>]+>/g, '')).toContain('Singapore Codex Pets · 29');
+    expect(html).toMatch(/<summary class="[^"]*min-h-11/);
+  });
+
   it('hands the pressed face to the caller', (): void => {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     const onSelect = vi.fn();
