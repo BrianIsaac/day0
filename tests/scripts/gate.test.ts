@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { gateEnvironment, gateSteps, type GateStep } from '../../scripts/gate';
+import { buildEnvFileReach, gateEnvironment, gateSteps, type GateStep } from '../../scripts/gate';
 
 const WORKFLOW = readFileSync(new URL('../../.github/workflows/gate.yml', import.meta.url), 'utf8');
 
@@ -56,5 +56,36 @@ describe('gateEnvironment', () => {
       CI: 'true',
       TZ: 'UTC',
     });
+  });
+});
+
+describe('buildEnvFileReach', () => {
+  const build = gateSteps(WORKFLOW).at(-1)!;
+  const environment = gateEnvironment({ PATH: '/usr/bin' }, build);
+
+  it('names the keys a local env file gives the build that the runner never has', () => {
+    const reach = buildEnvFileReach(build, environment, {
+      '.env.local': [
+        'OPENAI_API_KEY=sk-local',
+        '# a comment',
+        'NEXT_PUBLIC_CONVEX_URL=http://127.0.0.1:3210',
+        'NEXT_PUBLIC_DEV_NO_AUTH=true',
+        'export CLERK_SECRET_KEY="sk_test_x"',
+      ].join('\n'),
+      '.env': 'DAY0_PROFILE=customer-local\nOPENAI_API_KEY=sk-other\n',
+    });
+    // The workflow's own values and the command's inline assignment win over
+    // any file, as Next never overrides a variable the process already has.
+    expect(reach).toEqual([
+      { key: 'CLERK_SECRET_KEY', file: '.env.local' },
+      { key: 'DAY0_PROFILE', file: '.env' },
+      { key: 'OPENAI_API_KEY', file: '.env.local' },
+    ]);
+  });
+
+  it('says nothing for a step that does not build, or with no env file', () => {
+    const test = gateSteps(WORKFLOW).find((step) => step.run === 'pnpm test')!;
+    expect(buildEnvFileReach(test, environment, { '.env.local': 'OPENAI_API_KEY=x' })).toEqual([]);
+    expect(buildEnvFileReach(build, environment, {})).toEqual([]);
   });
 });
