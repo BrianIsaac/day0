@@ -131,6 +131,9 @@ for (const viewport of WIDTHS) {
       test(`shows the step's own frame at every reader's stop, scrolled ${speed.tag}`, async ({
         page,
       }) => {
+        // The reader scrolls by the frame: the slow pass at 1440 is about 30 s of frames on its
+        // own, which the default 30 s budget cut short on every run, the product unchanged.
+        test.setTimeout(90_000);
         const errors: string[] = [];
         page.on('pageerror', (error) => {
           // The proof runs with no Clerk frontend API to reach, by design (no live service);
