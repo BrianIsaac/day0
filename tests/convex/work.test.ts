@@ -6731,6 +6731,41 @@ describe('work.needsYou', (): void => {
     expect(entry).toMatchObject({ kind: 'held', waitingAtLeast: true, waitingSince: others[0] });
   });
 
+  it('keeps the newest proposed system when an employee holds more systems than the read takes (m7)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const mira = await employee(harness, 'Mira');
+    await harness.run(async (ctx) => {
+      for (let index = 0; index < 100; index += 1) {
+        await ctx.db.insert('surfaces', {
+          agentId: mira,
+          slug: `connected-${index}`,
+          displayName: `Connected ${index}`,
+          class: 'dashboard',
+          verdict: 'connected',
+          credentialLanded: true,
+          whereFound: [],
+          createdAt: 1,
+        });
+      }
+      await ctx.db.insert('surfaces', {
+        agentId: mira,
+        slug: 'looker',
+        displayName: 'Looker',
+        class: 'dashboard',
+        verdict: 'proposed',
+        credentialLanded: false,
+        whereFound: [],
+        createdAt: 2,
+      });
+    });
+
+    const inbox = await harness.withIdentity(OWNER).query(api.work.needsYou, {});
+
+    expect(inbox.entries.map((entry) => [entry.kind, entry.subject])).toEqual([
+      ['surface', 'Looker'],
+    ]);
+  });
+
   it('returns the fifty longest waits and says how many there are', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const mira = await employee(harness, 'Mira');

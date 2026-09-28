@@ -6750,7 +6750,7 @@ const NEEDS_YOU_STATE_READ_LIMIT = 100;
  */
 const NEEDS_YOU_STOPPED_READ_LIMIT = 25;
 
-/** Bound on an employee's surfaces read for the ones proposed to the manager. */
+/** Bound on an employee's surfaces read, newest first, for the ones proposed to the manager. */
 const NEEDS_YOU_SURFACE_READ_LIMIT = 100;
 
 /** Bound on the questions read for one plan. */
@@ -6982,9 +6982,11 @@ async function waitingRowsOf(
       rowsIn('deferred'),
       rowsIn('needs-skill'),
       rowsIn('failed', NEEDS_YOU_STOPPED_READ_LIMIT),
+      // Newest first: a proposed system is a recent row, and past the bound the old ones go.
       ctx.db
         .query('surfaces')
         .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+        .order('desc')
         .take(NEEDS_YOU_SURFACE_READ_LIMIT),
     ]);
   const skillIds = [...new Set(skillRows.flatMap((row) => row.proposedSkillId ?? []))];
