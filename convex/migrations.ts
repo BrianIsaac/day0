@@ -157,7 +157,7 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
   },
   [CREDENTIAL_VALUE_REF_MIGRATION]: {
     release: SCHEMA_STEP_RELEASE,
-    does: 'rewrites each documentation credential’s ref from its place and label on the page to the page and a fingerprint of its value, so a relabelled or moved value keeps its credential and a swapped one is new; the row keeps its id and every surface bound to it. A row the key cannot open, or whose value another row of its page already holds, is logged by id, left as it was and counted as remaining',
+    does: 'rewrites each documentation credential’s ref from the page alone, or its place and label on the page, to the page and a fingerprint of its value, so a relabelled or moved value keeps its credential and a swapped one is new; the row keeps its id and every surface bound to it. A row the key cannot open, or whose value another row of its page already holds, is logged by id, left as it was and counted as remaining',
     thenRemoves:
       'nothing: a sync moves a row still on an old ref by its value, as it does after a key rotation',
   },
