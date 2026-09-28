@@ -41,7 +41,6 @@ import {
   PermissionsCard,
   eventItemTitle,
   planApprovalRequest,
-  scopeUnavailableCauses,
   TICKET_REREAD_STOP,
   typedEstimateMinutes,
   waitingLine,
@@ -2359,7 +2358,7 @@ describe("the loop's card states (U3 D5, E-70 D3, S D3)", (): void => {
       contentRefs: [],
       ...fields,
     }) as unknown as Doc<'workItems'>;
-  const render = (item: Doc<'workItems'>, servedByLoop = true, cause?: string): string =>
+  const render = (item: Doc<'workItems'>, servedByLoop = true): string =>
     renderToStaticMarkup(
       <AgentZoneContext value="Asia/Singapore">
         <WorkItemCard
@@ -2374,7 +2373,6 @@ describe("the loop's card states (U3 D5, E-70 D3, S D3)", (): void => {
           onRejectActions={async (): Promise<void> => undefined}
           onResendDecision={async (): Promise<void> => undefined}
           servedByLoop={servedByLoop}
-          unavailableCause={cause}
         />
       </AgentZoneContext>,
     );
@@ -2406,20 +2404,18 @@ describe("the loop's card states (U3 D5, E-70 D3, S D3)", (): void => {
           verdict: { decision: 'queue', reason: 'WIP cap reached' },
         } as Doc<'workItems'>,
         undefined,
-        undefined,
       ),
     ).toBeUndefined();
   });
 
-  it("gives the parked row's time in the employee's day and the cause from the latest unavailable event", (): void => {
+  it("gives the parked row's time in the employee's day and the cause the row keeps, with no event in the feed (K D2 (b))", (): void => {
     const markup = render(
       waiting({
         evaluationClaimedAt: AT - 1_000,
         evaluationUnavailableAt: AT,
+        evaluationUnavailableCause: 'timeout after 60 s',
         evaluationAttempts: 1,
       }),
-      true,
-      'timeout after 60 s',
     );
     expect(markup).toContain(
       'Waiting: the scope check could not reach the model at 28 Sep 2026, 00:05 (timeout after 60 s). Day0 tries again after ten minutes; nothing runs until it answers.',
@@ -2431,7 +2427,6 @@ describe("the loop's card states (U3 D5, E-70 D3, S D3)", (): void => {
     expect(
       waitingLine(
         { state: 'discovered', evaluationClaimedAt: AT, evaluationAttempts: 2 } as Doc<'workItems'>,
-        undefined,
         'Asia/Singapore',
       ),
     ).toBe(
@@ -2464,6 +2459,7 @@ describe("the loop's card states (U3 D5, E-70 D3, S D3)", (): void => {
       waiting({
         state: 'deferred',
         evaluationUnavailableAt: AT,
+        evaluationUnavailableCause: 'HTTP 503',
         verdict: {
           decision: 'defer',
           reason: 'scope-judgement-unavailable',
@@ -2471,27 +2467,11 @@ describe("the loop's card states (U3 D5, E-70 D3, S D3)", (): void => {
           missingPermissions: [],
         },
       }),
-      true,
-      'HTTP 503',
     );
     expect(markup).toContain(
       'Waiting: the scope check could not reach the model at 28 Sep 2026, 00:05 (HTTP 503), 3 times. Check for new work asks it again; nothing runs until it answers.',
     );
     expect(markup).not.toMatch(/>Retry<\/button>/);
-  });
-
-  it('reads the newest cause per item from the events the page has', (): void => {
-    const causes = scopeUnavailableCauses([
-      {
-        type: 'work.scope-judgement-unavailable',
-        payload: { workItemId: 'w1', cause: 'HTTP 503' },
-      },
-      { type: 'work.completed', payload: { workItemId: 'w2' } },
-      { type: 'work.scope-judgement-unavailable', payload: { workItemId: 'w1', cause: 'timeout' } },
-      { type: 'work.scope-judgement-unavailable', payload: { workItemId: 'w3' } },
-    ]);
-    expect(causes.get('w1')).toBe('HTTP 503');
-    expect(causes.has('w3')).toBe(false);
   });
 
   it("lists the waiting rows in the loop's order: unattempted, then the most urgent, then the oldest", (): void => {

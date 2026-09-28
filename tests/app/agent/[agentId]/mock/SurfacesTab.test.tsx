@@ -71,7 +71,6 @@ import {
   SurfaceLadder,
   SurfacesTab,
   ToolsRow,
-  withheldToolsBySurface,
   type AccessSurface,
   type CredentialRowProps,
   type ProvisioningRowProps,
@@ -924,7 +923,10 @@ describe('the scopes line and the re-approval of a narrowed card (Q10, U10 D2 (b
 
   it('prints the tools the card calls, the approved ones the provider no longer offers and those withheld', (): void => {
     const markup = renderToStaticMarkup(
-      <ToolsRow surface={tools({})} withheld={['get_user']} onApprove={async () => undefined} />,
+      <ToolsRow
+        surface={tools({ withheldTools: ['get_user'] })}
+        onApprove={async () => undefined}
+      />,
     );
     expect(markup).toContain('Scopes: </span>list_issues, save_comment</p>');
     expect(markup).toContain(
@@ -937,11 +939,11 @@ describe('the scopes line and the re-approval of a narrowed card (Q10, U10 D2 (b
     expect(markup).toContain('role="status"');
   });
 
-  it('says nothing is withheld only when the page knows, and nothing for a card not connected', (): void => {
-    const unknown = renderToStaticMarkup(
+  it('says nothing is withheld when the row withholds nothing, and nothing for a card not connected', (): void => {
+    const none = renderToStaticMarkup(
       <ToolsRow surface={tools({})} onApprove={async () => undefined} />,
     );
-    expect(unknown).not.toContain('Withheld');
+    expect(none).not.toContain('Withheld');
     expect(
       renderToStaticMarkup(
         <ToolsRow surface={tools({ verdict: 'proposed' })} onApprove={async () => undefined} />,
@@ -949,16 +951,29 @@ describe('the scopes line and the re-approval of a narrowed card (Q10, U10 D2 (b
     ).toBe('');
   });
 
-  it("reads each surface's withheld tools from its newest connection only", (): void => {
-    const found = withheldToolsBySurface([
-      { type: 'surface.connected', payload: { surfaceId: 's1' } },
-      { type: 'work.completed', payload: { workItemId: 'w1' } },
-      { type: 'surface.connected', payload: { surfaceId: 's1', withheldTools: ['old_tool'] } },
-      { type: 'surface.connected', payload: { surfaceId: 's2', withheldTools: ['get_user'] } },
-    ]);
-    expect(found.get('s1')).toEqual([]);
-    expect(found.get('s2')).toEqual(['get_user']);
-    expect(found.has('s3')).toBe(false);
+  it("shows a card's withheld tools from its row, with no event in the page's feed (K D2 (b))", (): void => {
+    state.surfaces = [
+      {
+        _id: 'surface-linear',
+        agentId,
+        slug: 'linear',
+        displayName: 'Linear',
+        class: 'kanban',
+        verdict: 'connected',
+        path: 'mcp',
+        whereFound: [],
+        credentialLanded: true,
+        toolAllowlist: ['list_issues'],
+        approvedToolAllowlist: ['list_issues'],
+        withheldTools: ['delete_issue'],
+      },
+    ];
+    try {
+      const markup = renderToStaticMarkup(<SurfacesTab agentId={agentId} />);
+      expect(markup).toContain('Withheld, outside your approval: delete_issue.');
+    } finally {
+      state.surfaces = undefined;
+    }
   });
 
   it('labels the scopes a proposal asks for as requested, and the access as starting at approval', (): void => {

@@ -169,7 +169,6 @@ export function AgentDashboard({ agentId }: Props) {
     surfaceConfig?.mode === 'real' ? { agentId } : 'skip',
   );
   const retireCorrection = useMutation(api.corrections.retire);
-  const unavailableCauses = useMemo(() => scopeUnavailableCauses(events ?? []), [events]);
   const itemTitles = useMemo(
     (): Map<string, string> => new Map((workItems ?? []).map((item) => [item._id, item.title])),
     [workItems],
@@ -299,7 +298,6 @@ export function AgentDashboard({ agentId }: Props) {
               surfaceMode={surfaceConfig?.mode}
               corrections={corrections}
               autonomyChanges={autonomyChanges ?? []}
-              unavailableCauses={unavailableCauses}
             />
           </div>
 
@@ -2255,7 +2253,6 @@ export function WorkQueue({
   surfaceMode,
   corrections = [],
   autonomyChanges = [],
-  unavailableCauses = new Map(),
 }: {
   agentId: Id<'agents'>;
   workItems: Doc<'workItems'>[];
@@ -2272,8 +2269,6 @@ export function WorkQueue({
   corrections?: KeptCorrection[];
   /** The employee's flips of the autonomous-actions switch, oldest first. */
   autonomyChanges?: readonly AutonomyChange[];
-  /** The newest cause each waiting item's scope check gave, by item id (`scopeUnavailableCauses`). */
-  unavailableCauses?: ReadonlyMap<string, string>;
 }) {
   const evaluate = useAction(api.workActions.evaluateWorkItem);
   const draftPlan = useAction(api.workActions.draftPlan);
@@ -2377,7 +2372,6 @@ export function WorkQueue({
                   : Promise.reject(new Error('The pending run is missing. Refresh the work queue.'))
               }
               onResendDecision={() => resendDecision({ workItemId: item._id })}
-              unavailableCause={unavailableCauses.get(item._id)}
               servedByLoop={surfaceMode === 'real'}
             />
           ))}
@@ -3768,35 +3762,15 @@ export function PendingDecisionsPanel({
   );
 }
 
-/**
- * The newest cause each item's scope check gave for not reaching the model,
- * from the events the page has read (`work.scope-judgement-unavailable`).
- *
- * Args:
- *   events: Recent events, newest first.
- *
- * Returns:
- *   The cause by work item id; an item whose event is older than the window is absent.
- */
-export function scopeUnavailableCauses(
-  events: ReadonlyArray<Pick<Doc<'events'>, 'type' | 'payload'>>,
-): ReadonlyMap<string, string> {
-  const causes = new Map<string, string>();
-  for (const event of events) {
-    if (event.type !== 'work.scope-judgement-unavailable') continue;
-    const payload = (event.payload ?? {}) as { workItemId?: unknown; cause?: unknown };
-    if (typeof payload.workItemId !== 'string' || causes.has(payload.workItemId)) continue;
-    if (typeof payload.cause === 'string' && payload.cause.trim() !== '') {
-      causes.set(payload.workItemId, payload.cause);
-    }
-  }
-  return causes;
-}
-
 /** What the waiting line reads of a row. */
 type WaitingItem = Pick<
   Doc<'workItems'>,
-  'state' | 'verdict' | 'evaluationClaimedAt' | 'evaluationAttempts' | 'evaluationUnavailableAt'
+  | 'state'
+  | 'verdict'
+  | 'evaluationClaimedAt'
+  | 'evaluationAttempts'
+  | 'evaluationUnavailableAt'
+  | 'evaluationUnavailableCause'
 >;
 
 /**
@@ -3805,23 +3779,19 @@ type WaitingItem = Pick<
  * the manager's Retry after its evaluations kept dying (S D3).
  *
  * Args:
- *   item: The row.
- *   cause: The newest reason its scope check gave, when the page has it.
+ *   item: The row, with the cause its last unreachable scope check gave.
  *   zone: The agent's zone, for the time.
  *
  * Returns:
  *   One sentence, or undefined for a row that is not waiting on the loop.
  */
-export function waitingLine(
-  item: WaitingItem,
-  cause: string | undefined,
-  zone: string | undefined,
-): string | undefined {
+export function waitingLine(item: WaitingItem, zone: string | undefined): string | undefined {
   const verdict = item.verdict as
     | { decision?: unknown; reason?: unknown; attempts?: unknown }
     | undefined;
   const attempts =
     typeof verdict?.attempts === 'number' ? verdict.attempts : (item.evaluationAttempts ?? 0);
+  const cause = item.evaluationUnavailableCause;
   const because = cause ? ` (${cause})` : '';
   const unavailableAt =
     item.evaluationUnavailableAt !== undefined
@@ -3864,7 +3834,6 @@ export function WorkItemCard({
   onApproveActions,
   onRejectActions,
   onResendDecision,
-  unavailableCause,
   servedByLoop = false,
 }: {
   item: Doc<'workItems'>;
@@ -3883,8 +3852,6 @@ export function WorkItemCard({
   onApproveActions: (approvedIndexes: number[]) => Promise<unknown>;
   onRejectActions: (reason: string) => Promise<unknown>;
   onResendDecision: () => Promise<unknown>;
-  /** The newest cause the item's scope check gave for not reaching the model, when the page has it. */
-  unavailableCause?: string;
   /** Whether the server's loop serves the queue (real mode); the mock page evaluates on its own. */
   servedByLoop?: boolean;
 }) {
@@ -4041,7 +4008,7 @@ export function WorkItemCard({
   const parkedForRetry =
     item.state === 'deferred' &&
     (verdict as { reason?: unknown } | undefined)?.reason === EVALUATION_ATTEMPTS_SPENT;
-  const waiting = servedByLoop ? waitingLine(item, unavailableCause, zone) : undefined;
+  const waiting = servedByLoop ? waitingLine(item, zone) : undefined;
   return (
     <div
       ref={cardRef}
