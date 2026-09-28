@@ -3,7 +3,7 @@
 import { act, useRef } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { useLightUpOnce } from '../../../app/home/office-light-up';
+import { LIGHT_UP_MS, useLightUpOnce } from '../../../app/home/office-light-up';
 
 /** The observer the browser would run, driven by the test. */
 class FakeObserver {
@@ -74,6 +74,28 @@ describe('useLightUpOnce', (): void => {
     act(() => FakeObserver.last?.fire(true));
     expect(office.dataset.seen).toBe('seen');
     expect(FakeObserver.last?.disconnected).toBe(true);
+  });
+
+  it('hands the office back once the sequence has played, so a later figure is not held back', (): void => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const office = mount(window.innerHeight + 400);
+      act(() => FakeObserver.last?.fire(true));
+      act((): void => {
+        vi.advanceTimersByTime(LIGHT_UP_MS - 1);
+      });
+      expect(office.dataset.seen).toBe('seen');
+      act((): void => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(office.dataset.seen).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('outlasts the longest piece of the sequence, the last room’s wash', (): void => {
+    expect(LIGHT_UP_MS).toBe(1230);
   });
 
   it('leaves an office already on screen as it is, so nothing blinks out and back', (): void => {

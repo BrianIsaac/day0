@@ -7,7 +7,15 @@ import {
 } from '@/work/types';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
-import { useState, useEffect, useId, useMemo, useRef, useCallback } from 'react';
+import {
+  useState,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useCallback,
+  type CSSProperties,
+} from 'react';
 import { useQuery, useMutation, useAction } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import type { Doc, Id } from '../../../convex/_generated/dataModel';
@@ -92,6 +100,8 @@ import {
 } from './time';
 import { eventLabel } from './event-labels';
 import { ROOM_HEIGHT } from './room-frame';
+import { useArrival } from '../../arrival';
+import { usePreviousValue } from './previous-value';
 import {
   compareWaitingRows,
   EVALUATION_ATTEMPTS_SPENT,
@@ -222,6 +232,7 @@ export function AgentDashboard({ agentId }: Props) {
   // The draft the manager sent back, until the page shows what follows it.
   const [sentBack, setSentBack] = useState<Id<'charters'> | null>(null);
   const onboarding = useRef<HTMLDivElement>(null);
+  const arriving = useArrival(agent !== undefined && agent !== null);
   // Ticks, so an authoring claim stops being described as live the moment it
   // stops being honoured rather than on the next thing the boss happens to do.
   const now = useNow();
@@ -304,9 +315,9 @@ export function AgentDashboard({ agentId }: Props) {
 
   if (!agent) {
     return (
-      <main className="min-h-screen flex items-center justify-center text-[var(--color-muted)]">
-        loading agent…
-      </main>
+      <div className="min-h-screen flex items-center justify-center text-[var(--color-muted)]">
+        loading employee…
+      </div>
     );
   }
 
@@ -318,7 +329,7 @@ export function AgentDashboard({ agentId }: Props) {
 
   return (
     <AgentZoneContext value={agentZone(agent)}>
-      <main className="min-h-screen px-6 py-8 max-w-7xl mx-auto">
+      <div className="min-h-screen px-6 py-8 max-w-7xl mx-auto">
         <DashboardHeader
           agent={agent}
           charter={charter ?? null}
@@ -335,7 +346,7 @@ export function AgentDashboard({ agentId }: Props) {
         <LiveStatus outcome={pageOutcome} />
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
-          <div className="lg:col-span-2 space-y-4">
+          <div data-cards={arriving ? '' : undefined} className="lg:col-span-2 space-y-4">
             {showOnboarding ? (
               <div
                 ref={onboarding}
@@ -387,7 +398,7 @@ export function AgentDashboard({ agentId }: Props) {
             />
           </div>
 
-          <div className="space-y-4">
+          <div data-cards={arriving ? '' : undefined} className="space-y-4">
             <WorkspacePanel workspace={workspace ?? {}} />
             <RegisteredSkillsPanel
               skills={registeredSkills ?? []}
@@ -418,7 +429,7 @@ export function AgentDashboard({ agentId }: Props) {
           surfaces, a channel list and a conversation do not fit in 400px, and
           this panel is the whole of what the agent's work is done against. */}
         <MockEnvironment agentId={agentId} />
-      </main>
+      </div>
     </AgentZoneContext>
   );
 }
@@ -426,7 +437,7 @@ export function AgentDashboard({ agentId }: Props) {
 /** What each state of the switch does, for its title. */
 const AUTONOMY_TITLES: Record<'off' | 'on', string> = {
   off: 'Supervised: reads and the DM to you apply on their own; every other action waits for your approval of the exact payload.',
-  on: 'Autonomous: the agent acts on connected systems without asking, within the connections and skills you have approved.',
+  on: 'Autonomous: the employee acts on connected systems without asking, within the connections and skills you have approved.',
 };
 
 /** Whether a key press should take the safe path out of the confirmation. */
@@ -455,17 +466,19 @@ export function AutonomyConfirm({
   busy?: boolean;
 }) {
   return (
+    // It scales in from the corner it hangs from, not its centre (v3 section 5.2).
     <div
       role="alertdialog"
       aria-modal="true"
       aria-label="Turn on autonomous actions"
+      data-dialog=""
       onKeyDown={(event) => {
         if (!cancelsAutonomyConfirm(event.key, busy)) return;
         event.preventDefault();
         event.stopPropagation();
         onCancel();
       }}
-      className="absolute left-0 sm:left-auto sm:right-0 top-full mt-2 w-80 max-w-[calc(100vw-3rem)] p-3 rounded-lg border border-[var(--color-warn)]/40 bg-[var(--color-card)] shadow-lg text-left text-xs text-[var(--color-fg)] z-10"
+      className="absolute left-0 sm:left-auto sm:right-0 top-full mt-2 origin-top-left sm:origin-top-right w-80 max-w-[calc(100vw-3rem)] p-3 rounded-lg border border-[var(--color-warn)]/40 bg-[var(--color-card)] shadow-lg text-left text-xs text-[var(--color-fg)] z-10"
     >
       <p className="font-medium text-[var(--color-warn)] mb-1">Turn on autonomous actions?</p>
       <p className="mb-3 leading-relaxed">{AUTONOMY_WARNING}</p>
@@ -683,7 +696,7 @@ export function ManagerLine({
           }}
         >
           <label className="text-2xl font-semibold tracking-tight" htmlFor="manager-email">
-            Agent reporting to
+            Employee reporting to
           </label>
           <input
             id="manager-email"
@@ -723,7 +736,7 @@ export function ManagerLine({
         </form>
       ) : (
         <h1 className="text-2xl font-semibold tracking-tight">
-          Agent reporting to{' '}
+          Employee reporting to{' '}
           <span className="font-mono break-all text-[var(--color-accent)]">{bossEmail}</span>{' '}
           <button
             ref={toggle}
@@ -1128,6 +1141,11 @@ export function ConstraintList({
   /** What striking a rule would do, computed as approval computes it. */
   previewStrike?: (index: number) => StrikePreview;
 }) {
+  // A rule struck since the list first rendered is this visit's decision, and its line draws.
+  const [struckOnArrival] = useState(
+    (): ReadonlySet<number> =>
+      new Set(constraints.flatMap((constraint, index) => (constraint.struck ? [index] : []))),
+  );
   if (constraints.length === 0) return null;
   return (
     <div className="text-xs">
@@ -1143,6 +1161,7 @@ export function ConstraintList({
           return (
             <li
               key={index}
+              data-just={constraint.struck && !struckOnArrival.has(index) ? '' : undefined}
               className={`flex items-start gap-2 p-2 rounded-md border ${
                 constraint.struck
                   ? 'border-[var(--color-border)] text-[var(--color-muted)]'
@@ -1150,7 +1169,10 @@ export function ConstraintList({
               }`}
             >
               <div className="flex-1 min-w-0">
-                <p className={constraint.struck ? 'line-through' : 'text-[var(--color-fg)]'}>
+                <p
+                  data-strike=""
+                  className={constraint.struck ? 'line-through' : 'text-[var(--color-fg)]'}
+                >
                   {/* A derived rule's quote is the clause itself, not a sentence
                     the manager said, so it is not printed as a quotation. */}
                   {constraint.origin === 'derived' ? (
@@ -1178,7 +1200,12 @@ export function ConstraintList({
                     ? " · found by checking the clauses (the charter's wording, not a sentence of yours)"
                     : ''}
                   {constraint.origin === 'manager' ? ' · added by you' : ''}
-                  {constraint.struck ? ' · struck' : ''}
+                  {constraint.struck ? (
+                    <>
+                      {' '}
+                      <span data-struck-mark="">· struck</span>
+                    </>
+                  ) : null}
                 </p>
                 {preview?.refusal ? (
                   <p className="text-[10px] text-[var(--color-warn)] mt-0.5">
@@ -2642,6 +2669,8 @@ export function WorkQueue({
 
   const items = useMemo(() => sortedForQueue(workItems), [workItems]);
   const queue = useRef<HTMLElement>(null);
+  // The items are the Work tab's rows (v4 section 1.3): a tier after the columns' cards.
+  const arriving = useArrival(!loading && items.length > 0);
 
   // One in-flight call per (step, item). Strict Mode runs every effect twice
   // on mount, and a subscription update re-runs them before the first call has
@@ -2703,7 +2732,7 @@ export function WorkQueue({
           {charterApproved ? 'no work seeded yet' : 'work queue lights up after charter approval'}
         </p>
       ) : (
-        <div className="space-y-3">
+        <div data-cards={arriving ? 'rows' : undefined} className="space-y-3">
           <PendingDecisionsPanel
             members={pendingDecisionMembers(items)}
             surfaces={surfaces}
@@ -2746,6 +2775,39 @@ export function WorkQueue({
         </div>
       )}
     </Card>
+  );
+}
+
+/** How long a state chip's swap plays: the new chip's 100 ms offset and 220 ms fade. */
+export const CHIP_SWAP_MS = 320;
+
+/** How long a landing plays: the last line's 120 ms and three 70 ms steps, then its 240 ms rise. */
+export const LANDING_MS = 570;
+
+/** The ledger lines after the fourth rise with it, so a long ledger is not waited for. */
+const LANDING_STAGGER_CAP = 3;
+
+/**
+ * A work item's state chip. When the state changes on the page, the old chip fades out as the
+ * new one fades in, in the same cell (v3 section 5.2); the first state is simply there, and
+ * under reduced motion only the new one shows.
+ */
+export function StateChip({ state }: { state: string }) {
+  const previous = usePreviousValue(state, CHIP_SWAP_MS);
+  const chip = (shown: string, place?: 'from' | 'to') => (
+    <span
+      aria-hidden={place === 'from' ? true : undefined}
+      className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded ${stateColor(shown)}${place ? ` ${place}` : ''}`}
+    >
+      {shown}
+    </span>
+  );
+  if (previous === undefined) return chip(state);
+  return (
+    <span key={state} className="chip-swap">
+      {chip(previous, 'from')}
+      {chip(state, 'to')}
+    </span>
   );
 }
 
@@ -2984,14 +3046,14 @@ export function DraftDetails({ output, title }: { output: RunOutput; title?: str
   return (
     <details className="mt-2 text-xs">
       <summary className="min-h-11 py-3 cursor-pointer text-[var(--color-accent)]">
-        Draft the agent wrote ({output.draft.length} chars)
+        Draft the employee wrote ({output.draft.length} chars)
       </summary>
       {/* Bounded and wrapped like the other long texts on the card (P9-2), and
           reachable from the keyboard once it scrolls. */}
       <pre
         tabIndex={0}
         role="region"
-        aria-label={title ? `Draft the agent wrote: ${title}` : 'Draft the agent wrote'}
+        aria-label={title ? `Draft the employee wrote: ${title}` : 'Draft the employee wrote'}
         className="mt-2 p-2 max-h-72 overflow-y-auto rounded bg-[var(--color-bg)] border border-[var(--color-border)] whitespace-pre-wrap break-words text-[var(--color-fg)]"
       >
         {output.draft}
@@ -3002,7 +3064,7 @@ export function DraftDetails({ output, title }: { output: RunOutput; title?: str
       <p className="mt-1 text-[10px] text-[var(--color-muted)]">
         {closingPhase
           ? 'The closing draft, written after the prerequisite actions were applied and from their ledger. Only the changes listed above reached the work environment.'
-          : "The agent's own words, written before anything was applied. Only the changes listed above reached the work environment."}
+          : "The employee's own words, written before anything was applied. Only the changes listed above reached the work environment."}
       </p>
     </details>
   );
@@ -4341,6 +4403,9 @@ export function WorkItemCard({
     (a) => !refusedActions.includes(a) && !unknownActions.includes(a),
   );
   const landedActions = appliedActions.filter((a) => a.ok && !a.held);
+  // A ledger that has just appeared is a landing the manager is watching (v3 section 5.2).
+  const landedBefore = usePreviousValue(landedActions.length > 0, LANDING_MS);
+  const freshLanding = landedBefore === false && landedActions.length > 0;
   const landedAutonomously = landedActions.filter((a) => a.authority === 'autonomous').length;
   const autonomyTurnedOnAt = autonomyTurnedOnAfterDraft(
     item.planPendingAt,
@@ -4438,11 +4503,7 @@ export function WorkItemCard({
       <div className="flex items-start justify-between mb-2">
         <div className="flex-1">
           <div className="flex items-center gap-2 mb-1">
-            <span
-              className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded ${stateColor(shownState)}`}
-            >
-              {shownState}
-            </span>
+            <StateChip state={shownState} />
             <span className="text-[10px] text-[var(--color-muted)]">
               {item.sourceSystem}/{item.sourceCategory}
             </span>
@@ -4703,11 +4764,21 @@ export function WorkItemCard({
       ) : null}
 
       {landedActions.length > 0 ? (
-        <div className="mt-3 p-2 rounded-md bg-[var(--color-ok)]/10 border border-[var(--color-ok)]/30 text-xs">
+        <div
+          data-land={freshLanding ? '' : undefined}
+          className="mt-3 p-2 rounded-md bg-[var(--color-ok)]/10 border border-[var(--color-ok)]/30 text-xs"
+        >
           <p className="text-[var(--color-ok)] font-medium mb-1">{landedHeadline(landedActions)}</p>
           <ul className="space-y-0.5 text-[var(--color-fg)]">
             {landedActions.map((a, i) => (
-              <li key={i}>
+              <li
+                key={i}
+                style={
+                  freshLanding
+                    ? ({ '--i': Math.min(i, LANDING_STAGGER_CAP) } as CSSProperties)
+                    : undefined
+                }
+              >
                 <span className="font-mono text-[10px] text-[var(--color-muted)]">{a.tool}</span>{' '}
                 {clipLedgerRow(a.effect) ?? '(applied)'}
                 {a.providerId ? (
@@ -4921,7 +4992,7 @@ export function WorkItemCard({
           ) : null}
           {item.state === 'completed' ? (
             <p className="text-[10px] text-[var(--color-muted)] mt-1">
-              Retry with a note sends this finished work back; the note reaches the agent as your
+              Retry with a note sends this finished work back; the note reaches the employee as your
               direction, and its writes are held again unless autonomous actions are on.
             </p>
           ) : null}
@@ -5198,7 +5269,7 @@ export function PermissionsCard({ agentId }: { agentId: Id<'agents'> }) {
           ? revokeScope({
               agentId,
               scope,
-              reason: 'Revoked by the manager from the agent dashboard.',
+              reason: "Revoked by the manager from the employee's dashboard.",
             })
           : grantScopes({ agentId, scopes: [scope] }),
       {

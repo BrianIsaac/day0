@@ -78,6 +78,8 @@ import {
   RepairNote,
   SessionRestoreNote,
   WorkItemCard,
+  CHIP_SWAP_MS,
+  LANDING_MS,
   sortedForQueue,
   phasedLedger,
   PermissionRows,
@@ -106,6 +108,7 @@ import {
   withheldBeforeFirstWrite,
 } from '../../../../src/work/ticket-ownership';
 import { AgentZoneContext } from '../../../../app/agent/[agentId]/time';
+import { ARRIVAL_MS } from '../../../../app/arrival';
 import { DECISION_REQUEST_RECOVERY_MS } from '../../../../src/work/manager-channel';
 import {
   HELD_BEFORE_AUTONOMY_NOTE,
@@ -557,6 +560,19 @@ describe('a run with two phases', (): void => {
       <DraftDetails output={{ draft: 'd', notes: '', applied: twoPhase.applied }} />,
     );
     expect(single).toContain('written before anything was applied');
+  });
+
+  it('calls the draft the employee’s, never the agent’s (N29)', (): void => {
+    const single = renderToStaticMarkup(
+      <DraftDetails
+        output={{ draft: 'd', notes: '', applied: twoPhase.applied }}
+        title="Close REVOPS-5"
+      />,
+    );
+    expect(single).toContain('Draft the employee wrote (1 chars)');
+    expect(single).toContain('aria-label="Draft the employee wrote: Close REVOPS-5"');
+    expect(single).toContain('The employee&#x27;s own words');
+    expect(single).not.toMatch(/\bagent\b/i);
   });
 });
 
@@ -1155,7 +1171,8 @@ describe('the manager line', (): void => {
     const markup = renderToStaticMarkup(
       <ManagerLine bossEmail="boss@day0.local" onChange={async () => undefined} />,
     );
-    expect(markup).toContain('Agent reporting to');
+    expect(markup).toContain('Employee reporting to');
+    expect(markup).not.toMatch(/\bagent\b/i);
     expect(markup).toContain('boss@day0.local');
     expect(markup).toContain('Change manager');
     expect(markup).not.toContain('could not find this manager');
@@ -1425,6 +1442,35 @@ describe('charter confirm-or-strike list', (): void => {
 
   it('renders nothing for a charter drafted before constraints existed', (): void => {
     expect(renderToStaticMarkup(<ConstraintList constraints={[]} approved={false} />)).toBe('');
+  });
+
+  it('draws the line through only a rule struck since the list rendered, and settles its mark', (): void => {
+    /** The quote of every row the list marks as struck just now. */
+    const just = (root: ParentNode): string[] =>
+      [...root.querySelectorAll('li[data-just]')].map(
+        (row) => row.querySelector('[data-strike]')?.textContent ?? '',
+      );
+    const list = (struck: boolean) => (
+      <ConstraintList
+        constraints={[{ ...constraints[0]!, struck }, constraints[1]!]}
+        approved={false}
+        onStrike={() => undefined}
+        onRestore={() => undefined}
+      />
+    );
+    const view = mount(list(false));
+    expect(just(view.container)).toEqual([]);
+    expect(view.container.querySelectorAll('[data-struck-mark]')).toHaveLength(1);
+
+    act((): void => view.root.render(list(true)));
+    expect(just(view.container)).toEqual(["“if it's a ticket it has an owner and a priority”"]);
+    expect(view.container.querySelector('li[data-just] [data-struck-mark]')?.textContent).toBe(
+      '· struck',
+    );
+
+    act((): void => view.root.render(list(false)));
+    expect(just(view.container)).toEqual([]);
+    view.unmount();
   });
 
   it('names the struck count on the Approve button', (): void => {
@@ -3729,6 +3775,219 @@ describe('the page after a draft charter is sent back (step 45)', (): void => {
 
     expect(said(view.container).join(' ')).not.toContain('The 1:1 is open again');
     expect(focusedName()).not.toBe('The 1:1 that drafts the charter');
+    view.unmount();
+  });
+});
+
+describe('the page in the layout (N29, UX 11)', (): void => {
+  afterEach((): void => {
+    backend.queries = {};
+    document.body.replaceChildren();
+  });
+
+  it('leaves the one main landmark to the layout, loading and loaded', async (): Promise<void> => {
+    const view = mount(<AgentDashboard agentId={'agent-1' as Id<'agents'>} />);
+    expect(view.container.textContent).toContain('loading employee…');
+    expect(view.container.querySelector('main')).toBeNull();
+    backend.queries = {
+      'agents:get': {
+        _id: 'agent-1',
+        _creationTime: 1,
+        bossEmail: 'boss@day0.local',
+        name: 'Priya',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      },
+    };
+    act((): void => view.root.render(<AgentDashboard agentId={'agent-1' as Id<'agents'>} />));
+    await settle();
+    expect(view.container.textContent).toContain('Work queue');
+    expect(view.container.querySelector('main')).toBeNull();
+    view.unmount();
+  });
+});
+
+describe('the cards arriving on first render (v4 section 1.3)', (): void => {
+  const agentRow = {
+    _id: 'agent-1',
+    _creationTime: 1,
+    bossEmail: 'boss@day0.local',
+    name: 'Priya',
+    userId: 'owner',
+    state: 'active',
+    createdAt: 1,
+  };
+  const workItem = (id: string, state: string) => ({
+    _id: id,
+    _creationTime: 1,
+    agentId: 'agent-1',
+    sourceCategory: 'ticket-queue',
+    sourceSystem: 'linear',
+    externalId: id,
+    title: `Item ${id}`,
+    contentSummary: 'Triage it.',
+    contentRefs: [],
+    state,
+    observedAt: 1,
+    createdAt: 1,
+  });
+
+  beforeEach((): void => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  });
+
+  afterEach((): void => {
+    vi.useRealTimers();
+    backend.queries = {};
+    document.body.replaceChildren();
+  });
+
+  /** The arrival marks in the rendered page, in document order. */
+  const marks = (root: ParentNode): (string | null)[] =>
+    [...root.querySelectorAll('[data-cards]')].map((group) => group.getAttribute('data-cards'));
+
+  it('marks both columns, then the queue’s rows as the second tier, for the arrival only', async (): Promise<void> => {
+    backend.queries = {
+      'agents:get': agentRow,
+      'work:listForAgent': [workItem('w-1', 'discovered'), workItem('w-2', 'completed')],
+    };
+    const view = mount(<AgentDashboard agentId={'agent-1' as Id<'agents'>} />);
+    await settle();
+    expect(marks(view.container)).toEqual(['', 'rows', '']);
+    act((): void => {
+      vi.advanceTimersByTime(ARRIVAL_MS);
+    });
+    expect(marks(view.container)).toEqual([]);
+    view.unmount();
+  });
+
+  it('marks nothing while the employee is still loading', async (): Promise<void> => {
+    const view = mount(<AgentDashboard agentId={'agent-1' as Id<'agents'>} />);
+    await settle();
+    expect(marks(view.container)).toEqual([]);
+    view.unmount();
+  });
+});
+
+describe('a work item that lands while the page is open (v3 section 5.2)', (): void => {
+  const executing = {
+    _id: 'w1',
+    _creationTime: 1,
+    agentId: 'a1',
+    state: 'executing',
+    title: 'Close REVOPS-5',
+    contentSummary: 'Add the audit note and close the ticket.',
+    sourceSystem: 'linear',
+    sourceCategory: 'ticket-queue',
+    externalId: 'REVOPS-5',
+    observedAt: 1,
+    contentRefs: [],
+  } as unknown as Doc<'workItems'>;
+  const landed = {
+    ...executing,
+    state: 'completed',
+    output: {
+      draft: 'Closed with the audit note.',
+      applied: [
+        { tool: 'linear.save_comment', ok: true, effect: 'Commented on REVOPS-5' },
+        { tool: 'linear.save_issue', ok: true, effect: 'Moved REVOPS-5 to Done' },
+      ],
+    },
+  } as unknown as Doc<'workItems'>;
+
+  afterEach((): void => {
+    document.body.replaceChildren();
+  });
+
+  /** The card for one row, as the queue renders it. */
+  const card = (item: Doc<'workItems'>) => (
+    <WorkItemCard
+      item={item}
+      surfaces={[]}
+      autonomousActions={false}
+      onApprovePlan={(): void => undefined}
+      onCancelPlan={(): void => undefined}
+      onRetryFailed={(): void => undefined}
+      onReconcileFailed={async (): Promise<void> => undefined}
+      onApproveActions={async (): Promise<void> => undefined}
+      onRejectActions={async (): Promise<void> => undefined}
+      onResendDecision={async (): Promise<void> => undefined}
+    />
+  );
+
+  it('swaps the state chip in one cell, settles the ledger and lifts its lines 70 ms apart', (): void => {
+    const view = mount(card(executing));
+    expect(view.container.querySelector('.chip-swap')).toBeNull();
+
+    act((): void => view.root.render(card(landed)));
+    const swap = view.container.querySelector('.chip-swap');
+    expect(swap?.querySelector('.from')?.textContent).toBe('executing');
+    expect(swap?.querySelector('.from')?.getAttribute('aria-hidden')).toBe('true');
+    expect(swap?.querySelector('.to')?.textContent).toBe('completed');
+    const ledger = view.container.querySelector('[data-land]');
+    expect(ledger?.textContent).toContain('Moved REVOPS-5 to Done');
+    expect(
+      [...(ledger?.querySelectorAll('li') ?? [])].map((line) =>
+        (line as HTMLElement).style.getPropertyValue('--i'),
+      ),
+    ).toEqual(['0', '1']);
+    view.unmount();
+  });
+
+  it('drops the swap and the landing mark once they have played, so a card moved later replays nothing', (): void => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const view = mount(card(executing));
+      act((): void => view.root.render(card(landed)));
+      expect(view.container.querySelector('.chip-swap')).not.toBeNull();
+      expect(view.container.querySelector('[data-land]')).not.toBeNull();
+      act((): void => {
+        vi.advanceTimersByTime(Math.max(CHIP_SWAP_MS, LANDING_MS));
+      });
+      expect(view.container.querySelector('.chip-swap')).toBeNull();
+      expect(view.container.textContent).not.toContain('executing');
+      expect(view.container.querySelector('[data-land]')).toBeNull();
+      expect(
+        [...view.container.querySelectorAll('li')].filter(
+          (line) => (line as HTMLElement).style.getPropertyValue('--i') !== '',
+        ),
+      ).toEqual([]);
+      expect(view.container.textContent).toContain('Moved REVOPS-5 to Done');
+      view.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops the stagger of the ledger lines at the fourth line', (): void => {
+    const long = {
+      ...landed,
+      output: {
+        draft: 'Closed.',
+        applied: Array.from({ length: 6 }, (_, index) => ({
+          tool: 'linear.save_comment',
+          ok: true,
+          effect: `Comment ${index}`,
+        })),
+      },
+    } as unknown as Doc<'workItems'>;
+    const view = mount(card(executing));
+    act((): void => view.root.render(card(long)));
+    expect(
+      [...view.container.querySelectorAll('[data-land] li')].map((line) =>
+        (line as HTMLElement).style.getPropertyValue('--i'),
+      ),
+    ).toEqual(['0', '1', '2', '3', '3', '3']);
+    view.unmount();
+  });
+
+  it('shows a landing that was already there as it stands, with nothing to play', (): void => {
+    const view = mount(card(landed));
+    expect(view.container.textContent).toContain('Moved REVOPS-5 to Done');
+    expect(view.container.querySelector('.chip-swap')).toBeNull();
+    expect(view.container.querySelector('[data-land]')).toBeNull();
+    expect(view.container.querySelector('li[style]')).toBeNull();
     view.unmount();
   });
 });

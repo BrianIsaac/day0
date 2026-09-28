@@ -116,3 +116,136 @@ describe('the public-page motion', () => {
     expect(CSS).not.toMatch(/WhipCursor|cursor: none/);
   });
 });
+
+describe('the office light-up (v3 section 5, v4 section 1.3)', () => {
+  const noPreference = blocks('@media (prefers-reduced-motion: no-preference)').join('\n');
+  const officeRules = CSS.slice(CSS.indexOf('The office lights up once'));
+
+  it('hides the pieces only while the office waits below the fold, and only when motion is welcome', () => {
+    expect(noPreference).toMatch(
+      /\.day0-pixel-office\[data-seen='waiting'\]\s*:is\([^)]*\.day0-pixel-room,[^)]*\.day0-office-agent\s*\)\s*\{\s*opacity: 0;/,
+    );
+    expect(CSS.match(/\[data-seen='waiting'\]/g)).toHaveLength(1);
+  });
+
+  it('lifts the rooms in 260 ms, 50 ms apart, then the rest, the figures last, in about a second', () => {
+    const [rooms] = rulesFor(noPreference, ".day0-pixel-office[data-seen='seen'] .day0-pixel-room");
+    expect(rooms).toContain('day0-office-piece-on 260ms');
+    expect(rooms).toContain('var(--i, 0) * 50ms');
+    const [figures] = rulesFor(
+      noPreference,
+      ".day0-pixel-office[data-seen='seen'] .day0-office-agent",
+    );
+    expect(figures).toMatch(/day0-office-figure-in 260ms[^;]*900ms/);
+    expect(CSS).toMatch(
+      /@keyframes day0-office-piece-on \{\s*from \{\s*opacity: 0;\s*transform: translateY\(6px\);/,
+    );
+  });
+
+  it('keeps the server and console blinking beside their arrival, after the decor rule they override', () => {
+    const [server] = rulesFor(
+      noPreference,
+      ".day0-pixel-office[data-seen='seen'] .day0-pixel-server",
+    );
+    const [console] = rulesFor(
+      noPreference,
+      ".day0-pixel-office[data-seen='seen'] .day0-pixel-console",
+    );
+    expect(server).toContain('day0-server-blink 2.4s steps(3, end) infinite');
+    expect(console).toContain('day0-console-glow 3.2s steps(3, end) infinite');
+    const decor = officeRules.indexOf('.day0-pixel-decor, .day0-pixel-desk, .day0-pixel-chair');
+    expect(decor).toBeGreaterThan(0);
+    expect(officeRules.indexOf("[data-seen='seen'] .day0-pixel-server")).toBeGreaterThan(decor);
+    expect(officeRules.indexOf("[data-seen='seen'] .day0-pixel-console")).toBeGreaterThan(decor);
+  });
+
+  it('follows the office keyframes and their reduced-motion block', () => {
+    expect(CSS.indexOf('The office lights up once')).toBeGreaterThan(
+      CSS.indexOf('@keyframes day0-agent-step'),
+    );
+    expect(CSS.indexOf('The office lights up once')).toBeGreaterThan(
+      CSS.indexOf('.day0-office-agent-roaming {\n    animation: none;'),
+    );
+  });
+});
+
+describe('the product-surface moments (v3 section 5.2, v4 section 2)', () => {
+  const noPreference = blocks('@media (prefers-reduced-motion: no-preference)').join('\n');
+  const reduce = blocks('@media (prefers-reduced-motion: reduce)').join('\n');
+
+  /** Each moment's selector, and what its animation must say: the drawn duration and curve. */
+  const moments: readonly (readonly [string, RegExp])[] = [
+    ['[data-arrive]', /day0-rise-in 240ms var\(--ease-arrive\)/],
+    ['[data-just] [data-strike]', /day0-strike 400ms var\(--ease-arrive\) 150ms/],
+    ['[data-just] [data-struck-mark]', /day0-settle 220ms var\(--ease-arrive\) 350ms/],
+    ['.roll > .from', /day0-roll-out 220ms var\(--ease-move\) both/],
+    ['.roll > .to', /day0-roll-in 220ms var\(--ease-move\) both/],
+    ['.chip-swap > .from', /day0-fade-out 200ms var\(--ease-arrive\) both/],
+    ['.chip-swap > .to', /day0-fade-in 220ms var\(--ease-arrive\) 100ms/],
+    ['[data-land]', /day0-settle 260ms var\(--ease-arrive\) both/],
+    [
+      '[data-land] li',
+      /day0-rise-in 240ms var\(--ease-arrive\)[\s\S]*var\(--i, 0\) \* 70ms \+ 120ms/,
+    ],
+    [
+      '.rail[data-advanced] .rail-step.now::after',
+      /day0-rail-slide 280ms var\(--ease-move\) 150ms/,
+    ],
+    [
+      '.rail[data-advanced] .rail-step.done:has(+ .now)::before',
+      /day0-dot-fill 240ms var\(--ease-arrive\)/,
+    ],
+    ['[data-dialog]', /day0-dialog-in 200ms var\(--ease-arrive\)/],
+    ['[data-dialog-backdrop]', /day0-fade-in 200ms var\(--ease-arrive\)/],
+  ];
+
+  it.each(moments)(
+    'plays %s at its drawn timing, and only when motion is welcome',
+    (selector, timing) => {
+      const everywhere = rulesFor(CSS, selector).filter((rule) => rule.includes('animation'));
+      expect(everywhere, selector).toHaveLength(1);
+      expect(rulesFor(noPreference, selector).filter((rule) => rule.includes('animation'))).toEqual(
+        everywhere,
+      );
+      expect(everywhere[0]).toMatch(timing);
+    },
+  );
+
+  it('stops the stagger at 150 ms on a product page and leaves the landing groups their full stagger', () => {
+    expect(rulesFor(noPreference, '[data-cards]:not([data-seen]) > :nth-child(n + 5)')[0]).toMatch(
+      /--i:\s*3;/,
+    );
+    expect(
+      noPreference.indexOf('[data-cards]:not([data-seen]) > :nth-child(n + 5)'),
+    ).toBeGreaterThan(noPreference.indexOf('[data-cards] > :nth-child(12)'));
+  });
+
+  it('starts the rows inside a card 200 ms after the page, as the Work tab draws them', () => {
+    expect(rulesFor(noPreference, "[data-cards='rows']")[0]).toMatch(/--arrive-after:\s*200ms/);
+  });
+
+  it('shows only the new value of a rolled count or a swapped chip under reduced motion', () => {
+    expect(reduce).toMatch(/\.roll > \.from,\s*\.chip-swap > \.from\s*\{\s*display:\s*none;/);
+  });
+
+  it('moves only transform and opacity, the strike line colour apart', () => {
+    for (const name of [
+      'settle',
+      'fade-in',
+      'fade-out',
+      'roll-out',
+      'roll-in',
+      'rail-slide',
+      'dot-fill',
+      'dialog-in',
+    ]) {
+      const [frames] = blocks(`@keyframes day0-${name} `);
+      const properties = [...(frames ?? '').matchAll(/([a-z-]+):/g)].map((match) => match[1]);
+      expect(properties.length, name).toBeGreaterThan(0);
+      expect(
+        properties.filter((property) => property !== 'opacity' && property !== 'transform'),
+        name,
+      ).toEqual([]);
+    }
+  });
+});

@@ -28,12 +28,6 @@ interface Debt {
   readonly targets?: readonly string[];
 }
 
-/** The layout's header link, on every page. */
-const HEADER: Debt = {
-  reason: "the layout's header link (app/layout.tsx: the landing pane, wave 5)",
-  targets: ['a "Day0"'],
-};
-
 /**
  * What each page is known to fail, named rule by rule and control by
  * control: anything else fails the job, so a new violation on a page that
@@ -41,15 +35,14 @@ const HEADER: Debt = {
  */
 const KNOWN_DEBT: Readonly<Record<(typeof PAGES)[number], readonly Debt[]>> = {
   '/': [
-    HEADER,
     {
       reason:
-        'the landing controls (app/page.tsx: the landing pane, wave 5; the whip cursor goes with N29)',
-      targets: ['button "Whip cursorOn"', 'a "Source"', 'a "Watch the recorded walkthrough"'],
+        "the landing footer's links, and the setup command block that scrolls sideways at 390 with nothing focusable in it (app/marketing: the landing pane's, done; no pane in batch 2)",
+      axe: ['scrollable-region-focusable'],
+      targets: ['a "GitHub"', 'a "Data and compliance"', 'a "Changelog"'],
     },
   ],
   '/setup': [
-    HEADER,
     {
       reason:
         "the page's code blocks scroll sideways at 390 with nothing focusable in them (pass 11 section 3b), and its links are under 44 px (app/setup/page.tsx, no pane in batch 1)",
@@ -70,7 +63,6 @@ const KNOWN_DEBT: Readonly<Record<(typeof PAGES)[number], readonly Debt[]>> = {
     },
   ],
   '/demo': [
-    HEADER,
     {
       reason:
         'the chapter links and the disclosures (app/demo: the walkthrough pane, wave 5, which moves the page to /walkthrough)',

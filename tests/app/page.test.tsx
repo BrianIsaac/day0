@@ -260,6 +260,10 @@ describe('signed-out landing page', (): void => {
     expect(html).not.toContain('View source');
   });
 
+  it('leaves the one main landmark to the layout', (): void => {
+    expect(html).not.toMatch(/<main[\s>]/);
+  });
+
   it('says the charter is drafted by the employee and approved by the manager', (): void => {
     expect(text).toContain('Drafts a charter the manager approves');
     expect(text).toContain('drafts its own work charter (like a JD) for your approval');
@@ -324,6 +328,10 @@ describe('signed-in landing', () => {
     expect(html).toContain('href="/agent/synthetic-owner-agent"');
     expect(html).toContain('href="/documentation"');
     expect(html).not.toContain('Try the demo');
+  });
+
+  it('leaves the one main landmark to the layout', (): void => {
+    expect(signedIn()).not.toMatch(/<main[\s>]/);
   });
 
   it('opens on the deploy form when the owner has nobody deployed', (): void => {

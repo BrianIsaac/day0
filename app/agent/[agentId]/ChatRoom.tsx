@@ -18,6 +18,9 @@ function textOf(message: UIMessage): string {
     .join('');
 }
 
+/** The turns that rise in as they arrive: the manager's last reply and the answer to it. */
+const ARRIVING_TURNS = 2;
+
 /**
  * The conversation proper. The priming turn wears the boss's role, so the
  * extractor would otherwise be entitled to read it as something the boss said.
@@ -298,6 +301,7 @@ export function ChatRoom({
   const [finishedByManager, setFinishedByManager] = useState(false);
   const closedByAgent = messages.some((m) => m.parts.some((p) => p.type === 'tool-dayOneComplete'));
   const done = closedByAgent || finishedByManager;
+  const transcript = withoutPrimingTurn(messages);
 
   // Fire charter synthesis once the agent emits the dayOneComplete tool or the
   // manager presses Finish; both end the 1:1 the same way.
@@ -389,8 +393,12 @@ export function ChatRoom({
         aria-busy={status === 'submitted' || status === 'streaming'}
         className="flex-1 overflow-y-auto p-4 space-y-3 text-sm"
       >
-        {withoutPrimingTurn(messages).map((m) => (
-          <MessageBubble key={m.id} message={m} />
+        {transcript.map((m, index) => (
+          <MessageBubble
+            key={m.id}
+            message={m}
+            arrive={index >= transcript.length - ARRIVING_TURNS}
+          />
         ))}
         {status === 'submitted' || status === 'streaming' ? (
           <div className="text-[var(--color-muted)] text-xs">…</div>
@@ -472,9 +480,16 @@ export function emphasisSegments(text: string): { text: string; strong: boolean 
   return segments;
 }
 
-function MessageBubble({ message }: { message: UIMessage }) {
+/**
+ * One turn of the 1:1. `arrive` marks it among the newest, which rise in as they arrive (v3
+ * section 5.2); the transcript above them stays still.
+ */
+function MessageBubble({ message, arrive }: { message: UIMessage; arrive: boolean }) {
   return (
-    <div className={message.role === 'user' ? 'text-right' : ''}>
+    <div
+      data-arrive={arrive ? '' : undefined}
+      className={message.role === 'user' ? 'text-right' : ''}
+    >
       {/* The side and the colour say who spoke to a sighted reader; this says it to everyone else. */}
       <span className="sr-only">{message.role === 'user' ? 'You: ' : 'Employee: '}</span>
       {message.parts.map((part, i) => {

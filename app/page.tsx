@@ -12,13 +12,13 @@ import { MarketingLanding } from './marketing/MarketingLanding';
  */
 export default function LandingPage() {
   return (
-    <main className="min-h-[calc(100vh-3.25rem)] flex flex-col">
+    <div className="min-h-[calc(100vh-3.25rem)] flex flex-col">
       {DEV_NO_AUTH ? (
         <SignedInDashboard boss={{ email: DEV_BOSS_EMAIL, firstName: DEV_BOSS_FIRST_NAME }} />
       ) : (
         <ClerkLanding />
       )}
-    </main>
+    </div>
   );
 }
 

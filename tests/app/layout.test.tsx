@@ -52,12 +52,12 @@ describe('the focus ring', (): void => {
   });
 });
 
-/** Render the root layout around one page. */
+/** Render the root layout around one page, which brings no landmark of its own. */
 async function renderLayout(): Promise<string> {
   const { default: Layout } = await import('../../app/layout');
   return renderToStaticMarkup(
     <Layout>
-      <main>Page</main>
+      <p>Page</p>
     </Layout>,
   );
 }
@@ -114,7 +114,34 @@ describe('the header', (): void => {
     const html = await renderLayout();
     const body = html.slice(html.indexOf('<body>') + '<body>'.length);
     expect(body).toMatch(/^<a href="#main"[^>]*>Skip to content<\/a>/);
-    expect(html).toMatch(/<div id="main" tabindex="-1"[^>]*><main>Page<\/main><\/div>/);
+    expect(html).toMatch(/<main id="main" tabindex="-1"[^>]*><p>Page<\/p><\/main>/);
+  });
+
+  it('keeps the skip link and the home link at the 44 px target floor, the skip link never shrunk to a pixel (N14)', async (): Promise<void> => {
+    const html = await renderLayout();
+    const skip = /<a href="#main"[^>]*>/.exec(html)?.[0] ?? '';
+    expect(skip).toMatch(/\bmin-h-11\b/);
+    expect(skip).not.toMatch(/\bsr-only\b/);
+    expect(skip).toMatch(/-translate-y-\[calc\(100%\+1rem\)\][^"]*\bfocus:translate-y-0\b/);
+    expect(/<a [^>]*aria-label="Day0 home"[^>]*>/.exec(html)?.[0]).toMatch(/\bmin-h-11\b/);
+  });
+
+  it('holds every page in its one main landmark, after the header', async (): Promise<void> => {
+    const html = await renderLayout();
+    expect(html.match(/<main[\s>]/g)).toHaveLength(1);
+    expect(html.indexOf('</header>')).toBeLessThan(html.indexOf('<main'));
+  });
+
+  /*
+   * N29's page transition (UX 11) is a React `<ViewTransition>` around this main. Next's vendored
+   * React has one; the React these tests render with (the installed 19.2.6) does not, so the
+   * layout cannot render it here without a stand-in. When this fails, the installed React has
+   * caught up: wrap the main as the wave 5 M handover (D1) sets out.
+   */
+  it('renders under the installed React, which has no ViewTransition yet', async (): Promise<void> => {
+    const react: Record<string, unknown> = await import('react');
+    expect(react.ViewTransition).toBeUndefined();
+    expect(await renderLayout()).not.toContain('view-transition');
   });
 
   it('colours the browser chrome with the page', async (): Promise<void> => {

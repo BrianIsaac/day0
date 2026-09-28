@@ -1,13 +1,15 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const auth = vi.hoisted(() => ({ signedIn: false }));
+const auth = vi.hoisted(() => ({ signedIn: false, pathname: '/' }));
 vi.mock('@clerk/nextjs', () => ({
   useUser: () => ({ user: auth.signedIn ? { id: 'user-1' } : null }),
 }));
+vi.mock('next/navigation', () => ({ usePathname: (): string => auth.pathname }));
 
 afterEach(() => {
   auth.signedIn = false;
+  auth.pathname = '/';
   vi.unstubAllEnvs();
   vi.resetModules();
 });
@@ -31,6 +33,21 @@ describe('the public site navigation', () => {
       ' https://github.com/BrianIsaac/day0',
     ]);
     expect(html).toContain('aria-label="Day0 on GitHub"');
+  });
+
+  it('gives every link a 44 px target inside the header (N14)', async () => {
+    const html = await render();
+    const links = [...html.matchAll(/<a [^>]*>/g)].map(([tag]) => tag);
+    expect(links).toHaveLength(4);
+    for (const link of links) expect(link).toMatch(/\b(min-h-11|size-11)\b/);
+  });
+
+  it('marks the walkthrough link as the current page only on the walkthrough', async () => {
+    expect(await render()).not.toContain('aria-current');
+    auth.pathname = '/walkthrough';
+    expect(await render()).toMatch(
+      /<a [^>]*href="\/walkthrough"[^>]*aria-current="page"|<a [^>]*aria-current="page"[^>]*href="\/walkthrough"/,
+    );
   });
 
   it('is absent for a signed-in manager, whose / is the company dashboard', async () => {

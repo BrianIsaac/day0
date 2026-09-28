@@ -35,9 +35,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en-GB">
       <body>
+        {/* Held above the window at its full 44 px, not shrunk to a pixel, so it is the same
+            target whether a keyboard has reached it or not; focus brings it down. */}
         <a
           href="#main"
-          className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-2 focus:z-50 focus:rounded-lg focus:bg-[var(--color-card)] focus:px-4 focus:py-2 focus:text-sm"
+          className="fixed left-4 top-2 z-50 inline-flex min-h-11 -translate-y-[calc(100%+1rem)] items-center rounded-lg bg-[var(--color-card)] px-4 text-sm focus:translate-y-0"
         >
           Skip to content
         </a>
@@ -47,7 +49,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <Link
                 href="/"
                 aria-label="Day0 home"
-                className="flex items-center gap-2.5 py-2 text-xs font-medium uppercase tracking-[0.2em] text-[var(--color-accent)]"
+                className="flex min-h-11 items-center gap-2.5 text-xs font-medium uppercase tracking-[0.2em] text-[var(--color-accent)]"
               >
                 <BrandMark className="size-5" />
                 <span aria-hidden="true">Day0</span>
@@ -59,9 +61,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </div>
             </div>
           </header>
-          <div id="main" tabIndex={-1} className="outline-none">
+          <main id="main" tabIndex={-1} className="outline-none">
             {children}
-          </div>
+          </main>
         </Providers>
       </body>
     </html>
