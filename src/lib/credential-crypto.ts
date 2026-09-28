@@ -252,10 +252,12 @@ function keyWithId(keyring: CredentialKeyring, keyId: string): string | undefine
  * A row with a key id was sealed bound to its owner under that key (by the
  * store or the re-seal), so it opens only with that key and only bound to its
  * own owner. A row without one was sealed before key ids existed, perhaps
- * unbound; it is tried under each key, bound and then unbound, but only while
- * `allowUnbound` holds, which is until the deployment's re-seal has bound
- * every row (decision Q15). After that an unbound value can only have been
- * put there since, and it is refused.
+ * unbound; it is tried under each key bound to its owner, and unbound only
+ * while `allowUnbound` holds, which is until the deployment's re-seal has
+ * bound every row (decision Q15). After that an unbound value can only have
+ * been put there since, and it is refused; a keyless row the re-seal skipped
+ * because its key was missing still opens bound under that key once it is
+ * restored, and is re-sealed then (wave 3.5 review M14).
  *
  * @param stored - The row's ciphertext, IV, owner and key id.
  * @param keyring - The deployment's keys.
@@ -278,14 +280,12 @@ export function openOwnedCredential(
     }
     return decrypt(sealed, key, binding);
   }
-  if (!options.allowUnbound) {
-    throw new Error(`Credential decryption failed: ${CREDENTIAL_KEY_CHANGED_MESSAGE}.`);
-  }
   const keys = [keyring.current, keyring.previous].filter(
     (key): key is string => key !== undefined,
   );
+  const bindings = options.allowUnbound ? [binding, undefined] : [binding];
   for (const key of keys) {
-    for (const associatedData of [binding, undefined]) {
+    for (const associatedData of bindings) {
       try {
         return decrypt(sealed, key, associatedData);
       } catch {
