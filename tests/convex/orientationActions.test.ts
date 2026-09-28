@@ -1,7 +1,8 @@
 /** @vitest-environment node */
 
 import { randomBytes } from 'node:crypto';
-import { encrypt } from '../../src/lib/credential-crypto';
+import { credentialValueFingerprint, encrypt, sealForOwner } from '../../src/lib/credential-crypto';
+import { credentialSourceRef } from '../../src/docs/redaction';
 import { presentSurfaceCredential } from '../../src/surfaces/credential-presentation';
 import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -359,6 +360,7 @@ const ONBOARDING_PAGE = [
 
 afterEach((): void => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   vi.useRealTimers();
   restoreSurfaceMode();
   resetFakeCredentials();
@@ -1591,7 +1593,7 @@ describe('orientation run', (): void => {
     );
   });
 
-  it('resolves a marker on a multi-value page through its label-qualified ref', async (): Promise<void> => {
+  it("binds a marker by its label over the page's value-keyed rows, whatever the value's place on the page", async (): Promise<void> => {
     stubRegistry();
     model.pathFor = (): DraftPath => 'mcp';
     const harness = convexTest(schema, orientationModules());
@@ -1603,16 +1605,24 @@ describe('orientation run', (): void => {
     seedFakeCredential({
       userId: 'owner',
       sourceId: String(sourceId),
-      ref: 'linear-automation.md#credential=1-some%20other%20secret',
+      ref: `linear-automation.md#credential=${'1'.repeat(32)}`,
       label: 'some other secret',
       plaintext: 'other',
     });
     const wanted = seedFakeCredential({
       userId: 'owner',
       sourceId: String(sourceId),
-      ref: 'linear-automation.md#credential=2-linear%20service%20token',
+      ref: `linear-automation.md#credential=${'2'.repeat(32)}`,
       label: 'linear service token',
       plaintext: 'linear',
+      explicitlyAssigned: true,
+    });
+    seedFakeCredential({
+      userId: 'owner',
+      sourceId: String(sourceId),
+      ref: `linear-automation.md copy#credential=${'3'.repeat(32)}`,
+      label: 'linear service token',
+      plaintext: 'another page',
       explicitlyAssigned: true,
     });
     await orientDeclared(harness, agentId);
@@ -1620,6 +1630,130 @@ describe('orientation run', (): void => {
       credentialId: wanted._id,
       credentialKind: 'value',
     });
+  });
+
+  it('binds a marker to the row a sync stored under its value-keyed ref, through the real store', async (): Promise<void> => {
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', randomBytes(32).toString('base64'));
+    stubRegistry();
+    model.pathFor = (): DraftPath => 'mcp';
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, sourceId } = await seedOrientation(
+      harness,
+      { 'linear-automation.md': notionFixture('linear-automation') },
+      [{ name: 'Linear', class: 'kanban' }],
+    );
+    const value = ['lin', 'api', 'orientation-contract-0123456789abcdef'].join('_');
+    const fingerprint = await harness.action(internal.credentialCryptoActions.fingerprint, {
+      plaintext: value,
+      userId: 'owner',
+    });
+    const credentialId = await harness.action(internal.credentials.store, {
+      userId: 'owner',
+      kind: 'value',
+      label: 'linear service token',
+      plaintext: value,
+      source: { sourceId, ref: credentialSourceRef('linear-automation.md', fingerprint) },
+    });
+    await orientDeclared(harness, agentId);
+    const linear = (await surfacesBySlug(harness, agentId)).linear;
+    expect(linear).toMatchObject({ credentialId, credentialKind: 'value' });
+    expect(JSON.stringify(linear)).not.toContain(value);
+  });
+
+  it('binds the same credential after the migration rewrites its ref as it bound before', async (): Promise<void> => {
+    const key = randomBytes(32).toString('base64');
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', key);
+    stubRegistry();
+    model.pathFor = (): DraftPath => 'mcp';
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, sourceId } = await seedOrientation(
+      harness,
+      { 'linear-automation.md': notionFixture('linear-automation') },
+      [{ name: 'Linear', class: 'kanban' }],
+    );
+    const value = ['lin', 'api', 'switch-contract-0123456789abcdef'].join('_');
+    // Stored by a sync before value-keyed refs: the second of two values on the page.
+    const credentialId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('credentials', {
+          userId: 'owner',
+          kind: 'value',
+          label: 'linear service token',
+          source: {
+            sourceId,
+            ref: 'linear-automation.md#credential=2-linear%20service%20token',
+          },
+          createdAt: 1,
+          ...sealForOwner(value, { current: key }, 'owner'),
+        }),
+    );
+    await orientDeclared(harness, agentId);
+    const before = (await surfacesBySlug(harness, agentId)).linear;
+    expect(before.credentialId).toBe(credentialId);
+
+    await expect(harness.action(internal.migrations.runPending, {})).resolves.toMatchObject({
+      pending: [],
+    });
+    const migrated = await harness.run(async (ctx) => await ctx.db.get(credentialId));
+    expect(migrated?.source).toEqual({
+      sourceId,
+      ref: credentialSourceRef(
+        'linear-automation.md',
+        credentialValueFingerprint(value, key, 'owner'),
+      ),
+    });
+    await harness.run(
+      async (ctx) =>
+        await ctx.db.patch(before._id, {
+          verdict: 'declared',
+          credentialId: undefined,
+          credentialKind: undefined,
+          request: undefined,
+        }),
+    );
+    await orientDeclared(harness, agentId);
+    expect((await surfacesBySlug(harness, agentId)).linear).toMatchObject({
+      credentialId,
+      credentialKind: 'value',
+    });
+  });
+
+  it("reads a value-keyed row's quote into the guard, so a quoted phrase the page assigned binds and the same phrase unquoted does not (S)", async (): Promise<void> => {
+    const key = randomBytes(32).toString('base64');
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', key);
+    stubRegistry();
+    model.pathFor = (): DraftPath => 'mcp';
+    const orientWith = async (quoted: boolean): Promise<Doc<'surfaces'>> => {
+      const harness = convexTest(schema, allConvexModules());
+      const { agentId, sourceId } = await seedOrientation(
+        harness,
+        { 'linear-automation.md': notionFixture('linear-automation') },
+        [{ name: 'Linear', class: 'kanban' }],
+      );
+      await harness.run(
+        async (ctx) =>
+          await ctx.db.insert('credentials', {
+            userId: 'owner',
+            kind: 'value',
+            label: 'linear service token',
+            explicitlyAssigned: true,
+            ...(quoted ? { quoted: true } : {}),
+            source: {
+              sourceId,
+              ref: credentialSourceRef(
+                'linear-automation.md',
+                credentialValueFingerprint('Open Sesame', key, 'owner'),
+              ),
+            },
+            createdAt: 1,
+            ...sealForOwner('Open Sesame', { current: key }, 'owner'),
+          }),
+      );
+      await orientDeclared(harness, agentId);
+      return (await surfacesBySlug(harness, agentId)).linear;
+    };
+    expect((await orientWith(true)).credentialId).toEqual(expect.any(String));
+    expect((await orientWith(false)).credentialId).toBeUndefined();
   });
 
   it('leaves the credential unresolved, and says so, when no stored row matches the marker', async (): Promise<void> => {

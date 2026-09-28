@@ -1,9 +1,10 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
   CREDENTIAL_KEY_CHANGED_MESSAGE,
   credentialKeyId,
   credentialOwnerBinding,
+  credentialValueFingerprint,
   decrypt,
   encrypt,
   openOwnedCredential,
@@ -192,5 +193,34 @@ describe('credential key ids and the keyring', (): void => {
     };
     expect(openOwnedCredential(unbound, rotating, { allowUnbound: true })).toBe('unbound value');
     expect(openOwnedCredential(bound, rotating, { allowUnbound: true })).toBe('bound value');
+  });
+});
+
+describe('credential value fingerprints', (): void => {
+  it('keys a value by what it is, the same wherever it is found, and differs for another value, owner or key', (): void => {
+    const credentialKey = key();
+    const fingerprint = credentialValueFingerprint('hunter2-value', credentialKey, 'owner-a');
+    expect(fingerprint).toMatch(/^[0-9a-f]{32}$/);
+    expect(credentialValueFingerprint('hunter2-value', credentialKey, 'owner-a')).toBe(fingerprint);
+    expect(credentialValueFingerprint('hunter3-value', credentialKey, 'owner-a')).not.toBe(
+      fingerprint,
+    );
+    expect(credentialValueFingerprint('hunter2-value', credentialKey, 'owner-b')).not.toBe(
+      fingerprint,
+    );
+    expect(credentialValueFingerprint('hunter2-value', key(), 'owner-a')).not.toBe(fingerprint);
+  });
+
+  it('is neither the key id nor a plain hash of the value, so it names no key and cannot be tested without one', (): void => {
+    const credentialKey = key();
+    const fingerprint = credentialValueFingerprint('hunter2-value', credentialKey, 'owner-a');
+    expect(fingerprint).not.toContain(credentialKeyId(credentialKey));
+    expect(createHash('sha256').update('hunter2-value').digest('hex')).not.toContain(fingerprint);
+  });
+
+  it('refuses a key that is not 32 bytes of canonical base64', (): void => {
+    expect(() => credentialValueFingerprint('value', 'not-a-key', 'owner-a')).toThrow(
+      'must be a base64-encoded 32-byte key',
+    );
   });
 });

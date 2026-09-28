@@ -152,6 +152,46 @@ export function credentialKeyId(keyBase64: string): string {
     .slice(0, KEY_ID_LENGTH);
 }
 
+/** What derives the key a value's fingerprint is taken under, apart from sealing and key ids. */
+const FINGERPRINT_DERIVATION_LABEL = 'day0-credential-ref-v1';
+
+/** Hex characters a fingerprint keeps: 128 bits, far past a collision among one page's values. */
+const FINGERPRINT_LENGTH = 32;
+
+/**
+ * A value's fingerprint under the deployment's key, for keying a page-derived
+ * credential by what it is rather than where or under which label the page
+ * states it.
+ *
+ * An HMAC under a key derived from the credential key, so a fingerprint shown
+ * in a ref or an export cannot be tested against a guessed value by anyone
+ * without the key; the owner is part of what is hashed, so one value held by
+ * two owners gives two fingerprints and a ref never says that two owners
+ * share a value. Lower-case hex, so a value-keyed ref never has the `-` every
+ * earlier position-and-label ref carries. It changes with the key: after a
+ * rotation a page's next sync moves each row to its new fingerprint by value.
+ *
+ * @param plaintext - The credential value.
+ * @param keyBase64 - Standard base64 containing exactly 32 key bytes.
+ * @param userId - The owner of the row the value is stored on.
+ * @throws Error when the key is not canonical 32-byte base64.
+ */
+export function credentialValueFingerprint(
+  plaintext: string,
+  keyBase64: string,
+  userId: string,
+): string {
+  const fingerprintKey = createHmac('sha256', decodeKey(keyBase64))
+    .update(FINGERPRINT_DERIVATION_LABEL)
+    .digest();
+  return createHmac('sha256', fingerprintKey)
+    .update(credentialOwnerBinding(userId), 'utf8')
+    .update('\0', 'utf8')
+    .update(plaintext, 'utf8')
+    .digest('hex')
+    .slice(0, FINGERPRINT_LENGTH);
+}
+
 /**
  * The keys a deployment can open stored values with: the current one, which
  * seals every new value, and during a rotation the one before it, until the

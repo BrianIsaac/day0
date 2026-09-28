@@ -7,6 +7,7 @@ import type { Id } from './_generated/dataModel';
 import {
   CREDENTIAL_KEY_CHANGED_MESSAGE,
   credentialKeyId,
+  credentialValueFingerprint,
   decrypt as decryptCredential,
   openOwnedCredential,
   sealForOwner,
@@ -14,6 +15,7 @@ import {
   type SealedCredential,
 } from '../src/lib/credential-crypto';
 import { log } from '../src/lib/logger';
+import { credentialPageRef, credentialSourceRef } from '../src/docs/redaction';
 import { assignedByLabel, guardReason } from '../src/redaction/guard';
 import {
   OWNER_KNOWN_VALUE_CAP,
@@ -61,6 +63,20 @@ export const seal = internalAction({
   args: { plaintext: v.string(), userId: v.string() },
   handler: async (_ctx, args): Promise<SealedCredential> =>
     sealForOwner(args.plaintext, credentialKeyring(), args.userId),
+});
+
+/**
+ * A value's fingerprint for its owner under the current key, which keys a
+ * page-derived credential's source ref (`credentialSourceRef`). Internal;
+ * writes nothing. The documentation sync asks for it per credential it
+ * found, since the key is read only here.
+ *
+ * @throws Error when the deployment has no credential key.
+ */
+export const fingerprint = internalAction({
+  args: { plaintext: v.string(), userId: v.string() },
+  handler: async (_ctx, args): Promise<string> =>
+    credentialValueFingerprint(args.plaintext, requireCredentialKey(), args.userId),
 });
 
 /**
@@ -291,6 +307,88 @@ async function resealOnePage(ctx: ActionCtx, cursor: string | null): Promise<Res
 export const resealPage = internalAction({
   args: { cursor: v.union(v.string(), v.null()) },
   handler: async (ctx, args): Promise<ResealPage> => await resealOnePage(ctx, args.cursor),
+});
+
+/** What one page of the ref rewrite did. */
+export interface ValueRefPage {
+  /** Rows the page read, whether or not they needed rewriting. */
+  readonly read: number;
+  /** Rows moved to their value-keyed ref. */
+  readonly changed: number;
+  /** Rows left as they were: the key could not open them, or another row holds their ref. */
+  readonly skipped: number;
+  readonly cursor: string;
+  readonly isDone: boolean;
+}
+
+/**
+ * Rewrite one page of page-derived rows to the value-keyed ref
+ * (`credentialSourceRef`), keeping each row's page part.
+ *
+ * Each value is opened as its owner and fingerprinted under the current key;
+ * the row keeps its id, label, status and every surface bound to it. A row
+ * the keyring cannot open, or whose value-keyed ref another row of its page
+ * already holds, is left as it was and logged by id; the status counts it as
+ * remaining. Plaintext never leaves this action. A page holding no such row
+ * needs no key, so a deployment that stores no value finishes without one.
+ *
+ * @param ctx - The Node action context.
+ * @param cursor - Where the previous page stopped; null for the first page.
+ * @throws Error when the page holds a value and the deployment has no key.
+ */
+async function valueRefsOnePage(ctx: ActionCtx, cursor: string | null): Promise<ValueRefPage> {
+  const batch = await ctx.runQuery(internal.credentials.valueRefBatch, { cursor });
+  const progress = { read: batch.read, cursor: batch.cursor, isDone: batch.isDone };
+  if (batch.rows.length === 0) return { ...progress, changed: 0, skipped: 0 };
+  const keyring = credentialKeyring();
+  const moves: Array<{ credentialId: Id<'credentials'>; fromRef: string; ref: string }> = [];
+  const unreadable: Id<'credentials'>[] = [];
+  for (const row of batch.rows) {
+    let plaintext: string;
+    try {
+      plaintext = openOwnedCredential(row, keyring, { allowUnbound: batch.allowUnbound });
+    } catch {
+      unreadable.push(row._id);
+      continue;
+    }
+    moves.push({
+      credentialId: row._id,
+      fromRef: row.ref,
+      ref: credentialSourceRef(
+        credentialPageRef(row.ref),
+        credentialValueFingerprint(plaintext, keyring.current, row.userId),
+      ),
+    });
+  }
+  const { changed, blocked } =
+    moves.length === 0
+      ? { changed: 0, blocked: [] }
+      : await ctx.runMutation(internal.credentials.applyValueRefs, { rows: moves });
+  if (unreadable.length > 0) {
+    log.warn('credentialCryptoActions.valueRefs: stored credentials left on their old ref', {
+      skipped: unreadable.length,
+      credentialIds: unreadable,
+      reason: CREDENTIAL_KEY_CHANGED_MESSAGE,
+    });
+  }
+  if (blocked.length > 0) {
+    log.warn('credentialCryptoActions.valueRefs: stored credentials left on their old ref', {
+      skipped: blocked.length,
+      credentialIds: blocked,
+      reason: 'another row of the page already holds the same value',
+    });
+  }
+  return { ...progress, changed, skipped: unreadable.length + blocked.length };
+}
+
+/**
+ * One page of the ref rewrite. Internal; the `credentials-value-refs`
+ * migration runs it page by page on the migration runner, which keeps the
+ * cursor.
+ */
+export const valueRefPage = internalAction({
+  args: { cursor: v.union(v.string(), v.null()) },
+  handler: async (ctx, args): Promise<ValueRefPage> => await valueRefsOnePage(ctx, args.cursor),
 });
 
 /** How long one `resealAll` call re-seals before it hands back its cursor. */
