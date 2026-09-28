@@ -195,6 +195,7 @@ export const persistEncrypted = internalMutation({
       appId: args.appId,
       lastUsedAt: args.rotated ? undefined : existing.lastUsedAt,
       status: undefined,
+      supersededAt: undefined,
       statusReason: existing.revokedAt && args.rotated ? REVOKE_STANDS_REASON : undefined,
     });
     return existing._id;
@@ -227,6 +228,7 @@ export const updateMetadata = internalMutation({
       explicitlyAssigned: args.explicitlyAssigned,
       quoted: args.quoted,
       status: undefined,
+      supersededAt: undefined,
       statusReason: row?.revokedAt && !row.status ? row.statusReason : undefined,
     });
   },
@@ -539,6 +541,7 @@ export const moveToRef = internalMutation({
       explicitlyAssigned: args.explicitlyAssigned,
       quoted: args.quoted,
       status: undefined,
+      supersededAt: undefined,
       statusReason: undefined,
     });
     return true;

@@ -937,27 +937,103 @@ export const recordInstalledApp = internalMutation({
   },
 });
 
-/** Reserve the next probe generation for an approved connection candidate. */
+/**
+ * How long a probe holds its card against a routine re-probe (E-88): its one
+ * retry's wait (at most the provider backoff's 30 s), two 30 s provider calls
+ * and a browser sign-in, with room to spare. A probe that dies without
+ * recording its result frees the card when the lease lapses.
+ */
+export const PROBE_LEASE_MS = 2 * 60_000;
+
+/** The verdicts a probe may run on; a row that leaves them is no longer a probe's to call. */
+export const PROBEABLE_VERDICTS: ReadonlyArray<Doc<'surfaces'>['verdict']> = [
+  'approved',
+  'connected',
+  'ungranted',
+  'listed-dead',
+];
+
+/** Why `beginProbe` reserved no generation. */
+export type ProbeRefusal = 'not-probeable' | 'access-ended' | 'in-flight';
+
+/** A probe generation `beginProbe` reserved, with the row as it now stands. */
+export interface ProbeReserved {
+  readonly reserved: true;
+  readonly surface: Doc<'surfaces'>;
+  readonly generation: number;
+}
+
+/** A probe `beginProbe` did not reserve because the card cannot be probed now. */
+export interface ProbeRefused {
+  readonly reserved: false;
+  readonly refusal: Exclude<ProbeRefusal, 'in-flight'>;
+}
+
+/**
+ * A routine probe `beginProbe` did not reserve because another probe of the
+ * card is in flight: the card's verdict, and when the lease on it ends, so a
+ * re-ask no sweep would repeat can be asked again then.
+ */
+export interface ProbeInFlight {
+  readonly reserved: false;
+  readonly refusal: 'in-flight';
+  readonly verdict: Doc<'surfaces'>['verdict'];
+  readonly leaseEndsAt: number;
+}
+
+/** What `beginProbe` answers. */
+export type ProbeReservation = ProbeReserved | ProbeRefused | ProbeInFlight;
+
+/** Whether the probe of a card's current generation began within the lease. */
+function probeInFlight(surface: Doc<'surfaces'>, now: number): boolean {
+  return surface.probeStartedAt !== undefined && now - surface.probeStartedAt < PROBE_LEASE_MS;
+}
+
+/**
+ * Reserve the next probe generation for an approved connection candidate.
+ *
+ * Internal; the probe's first write. The new generation fences every result
+ * an older probe may still write, and its start is stamped so a routine
+ * re-probe (the hourly sweep, a rate limit's re-ask) asked for while it runs
+ * is not made: two such probes within the lease cost one provider round-trip
+ * (E-88). A probe a person's action asks for (the card's Probe, a landed
+ * credential, an approval, a renewal, a tool approval, a manager change)
+ * supersedes the one in flight, whose answer may be about what just changed.
+ * A card whose end date has passed is ended here, not probed.
+ */
 export const beginProbe = internalMutation({
-  args: { surfaceId: v.id('surfaces') },
-  handler: async (ctx, args): Promise<{ surface: Doc<'surfaces'>; generation: number } | null> => {
+  args: { surfaceId: v.id('surfaces'), routine: v.optional(v.boolean()) },
+  handler: async (ctx, args): Promise<ProbeReservation> => {
     const surface = await ctx.db.get(args.surfaceId);
-    if (
-      !surface ||
-      !['approved', 'connected', 'ungranted', 'listed-dead'].includes(surface.verdict)
-    ) {
-      return null;
+    if (!surface || !PROBEABLE_VERDICTS.includes(surface.verdict)) {
+      return { reserved: false, refusal: 'not-probeable' };
     }
     // A probe that found the provider working would otherwise reconnect an
     // access whose end date has passed; only the manager's renewal does that.
     const now = Date.now();
     if (accessEndDatePassed(surface, now)) {
       if (surface.reason !== 'expired') await endAccessInTransaction(ctx, surface, now);
-      return null;
+      return { reserved: false, refusal: 'access-ended' };
     }
-    const generation = (surface.probeGeneration ?? 0) + 1;
-    await ctx.db.patch(surface._id, { probeGeneration: generation });
-    return { surface: { ...surface, probeGeneration: generation }, generation };
+    if (
+      args.routine === true &&
+      surface.probeStartedAt !== undefined &&
+      probeInFlight(surface, now)
+    ) {
+      return {
+        reserved: false,
+        refusal: 'in-flight',
+        verdict: surface.verdict,
+        leaseEndsAt: surface.probeStartedAt + PROBE_LEASE_MS,
+      };
+    }
+    const started = { probeGeneration: (surface.probeGeneration ?? 0) + 1, probeStartedAt: now };
+    await ctx.db.patch(surface._id, started);
+    return {
+      reserved: true,
+      surface: { ...surface, ...started },
+      generation: started.probeGeneration,
+    };
   },
 });
 
@@ -974,7 +1050,8 @@ export const recordProbeFailure = internalMutation({
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) throw new Error('Surface not found.');
     if (surface.probeGeneration !== args.generation) return false;
-    if (!['approved', 'connected', 'ungranted', 'listed-dead'].includes(surface.verdict)) {
+    if (!PROBEABLE_VERDICTS.includes(surface.verdict)) {
+      await ctx.db.patch(surface._id, { probeStartedAt: undefined });
       return false;
     }
     // A probe that began before the end date and failed after it leaves the
@@ -989,6 +1066,7 @@ export const recordProbeFailure = internalMutation({
       reason: args.reason,
       credentialLanded: false,
       toolAllowlist: undefined,
+      withheldTools: undefined,
       toolArguments: undefined,
       managerDmChannelId: undefined,
       managerName: undefined,
@@ -996,6 +1074,7 @@ export const recordProbeFailure = internalMutation({
       providerWorkspaceId: undefined,
       channelsNotJoined: undefined,
       lastVerifiedAt: undefined,
+      probeStartedAt: undefined,
       probeAttempts: withProbeAttempt(surface, {
         path: surface.path ?? 'unknown',
         endpoint: surface.endpoint,
@@ -1020,6 +1099,8 @@ export const recordProbeFailure = internalMutation({
  * Written before the wait, so the card and the trail show the retry while it
  * is pending and keep it after the second call connects. The verdict is left
  * alone: one failed call establishes nothing about the enterprise's system.
+ * A provider that rate-limited the retry as well ends the probe here
+ * (`endsProbe`), leaving the verdict, so the card is free for the next probe.
  *
  * Returns:
  *   False when a newer probe has taken over, or the row is no longer approved,
@@ -1032,15 +1113,18 @@ export const recordProbeRetry = internalMutation({
     reason: v.string(),
     retryAfterMs: v.number(),
     attemptedAt: v.number(),
+    endsProbe: v.optional(v.boolean()),
   },
   handler: async (ctx, args): Promise<boolean> => {
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) throw new Error('Surface not found.');
     if (surface.probeGeneration !== args.generation) return false;
-    if (!['approved', 'connected', 'ungranted', 'listed-dead'].includes(surface.verdict)) {
+    if (!PROBEABLE_VERDICTS.includes(surface.verdict)) {
+      await ctx.db.patch(surface._id, { probeStartedAt: undefined });
       return false;
     }
     await ctx.db.patch(surface._id, {
+      ...(args.endsProbe === true ? { probeStartedAt: undefined } : {}),
       probeAttempts: withProbeAttempt(surface, {
         path: surface.path ?? 'unknown',
         endpoint: surface.endpoint,
@@ -1120,7 +1204,10 @@ export const demoteAfterProbeFailure = internalMutation({
       reason: reason.slice(0, 500),
       credentialLanded: false,
       probeGeneration: generation,
+      // The same probe goes on to the next rung under the new generation.
+      probeStartedAt: Date.now(),
       toolAllowlist: undefined,
+      withheldTools: undefined,
       approvedToolAllowlist: undefined,
       toolAllowlistApprovedAt: undefined,
       toolArguments: undefined,
@@ -1318,7 +1405,7 @@ function frozenTools(
  * here: a row still being evaluated from a read taken before this write is
  * caught where its verdict lands (`applyVerdict`), under this write's key.
  * No probe widens a stored tool list, a renewal's included (`frozenTools`);
- * the connected event names any tool it withheld. A probe that resolves a
+ * the row and the connected event name any tool it withheld. A probe that resolves a
  * different manager than the row held writes `manager.changed` (Q6), so the
  * ledger shows who the approver became and when, and any open request
  * delivered to another DM is sent again to this one.
@@ -1341,7 +1428,8 @@ export const recordConnected = internalMutation({
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) throw new Error('Surface not found.');
     if (surface.probeGeneration !== args.generation) return false;
-    if (!['approved', 'connected', 'ungranted', 'listed-dead'].includes(surface.verdict)) {
+    if (!PROBEABLE_VERDICTS.includes(surface.verdict)) {
+      await ctx.db.patch(surface._id, { probeStartedAt: undefined });
       return false;
     }
     // A probe in flight across the end date never reconnects the access, and
@@ -1361,8 +1449,10 @@ export const recordConnected = internalMutation({
       reason: undefined,
       credentialLanded: true,
       lastVerifiedAt: args.verifiedAt,
+      probeStartedAt: undefined,
       toolAllowlist: tools.allowlist,
       toolArguments: tools.toolArguments,
+      withheldTools: tools.withheld.length > 0 ? tools.withheld : undefined,
       ...(surface.approvedToolAllowlist === undefined
         ? { approvedToolAllowlist: tools.approved, toolAllowlistApprovedAt: args.verifiedAt }
         : {}),
@@ -1469,6 +1559,11 @@ async function endAccessInTransaction(
     reason: 'expired',
     credentialLanded: false,
     lastVerifiedAt: undefined,
+    // The end of access ends the probe in flight: whatever it finds lands on
+    // no generation, so neither it nor a renewal after it can reconnect the
+    // card on an answer taken before the end (wave 2 review M20, m9).
+    probeGeneration: (surface.probeGeneration ?? 0) + 1,
+    probeStartedAt: undefined,
   });
   // The end date is on the event so the upgrade can tell this release's end
   // of a proposal-started clock from an end the older code recorded.
@@ -1796,6 +1891,66 @@ export async function backfillAccessSetByPage(
   };
 }
 
+/** Surfaces one page of the withheld-tools backfill reads; each may walk its agent's events. */
+const WITHHELD_BACKFILL_BATCH = 20;
+
+/**
+ * The newest `surface.connected` events of one agent a backfill walks for a
+ * card's own: the hourly re-probe writes one per connected card an hour, so a
+ * connected card's newest is among the agent's last few hundred. A card whose
+ * event is further back is left as withholding nothing.
+ */
+const CONNECTED_EVENT_WALK = 200;
+
+/**
+ * One page of the `surfaces-withheld-tools` migration (K D2 (b)). A connected
+ * card's withheld tools were carried only on its newest `surface.connected`
+ * event; they are copied onto the row, less any tool the manager approved
+ * since, so the card reads the row however busy the feed is. Run by
+ * `migrations:runPending`.
+ *
+ * @param cursor - Where the previous page stopped, or null for the first.
+ * @returns What the page read and changed, and where the next one starts.
+ */
+export async function backfillWithheldToolsPage(
+  ctx: MutationCtx,
+  cursor: string | null,
+): Promise<{ read: number; changed: number; cursor: string; isDone: boolean }> {
+  const page = await ctx.db
+    .query('surfaces')
+    .paginate({ cursor, numItems: WITHHELD_BACKFILL_BATCH });
+  let changed = 0;
+  for (const surface of page.page) {
+    if (surface.verdict !== 'connected' || surface.withheldTools !== undefined) continue;
+    const events = await ctx.db
+      .query('events')
+      .withIndex('by_agent_type', (index) =>
+        index.eq('agentId', surface.agentId).eq('type', 'surface.connected'),
+      )
+      .order('desc')
+      .take(CONNECTED_EVENT_WALK);
+    let offered: readonly string[] = [];
+    for (const event of events) {
+      if (!isEventOf(event, 'surface.connected') || event.payload.surfaceId !== surface._id) {
+        continue;
+      }
+      offered = event.payload.withheldTools ?? [];
+      break;
+    }
+    const approved = new Set(surface.approvedToolAllowlist ?? []);
+    const withheld = offered.filter((tool) => !approved.has(tool));
+    if (withheld.length === 0) continue;
+    await ctx.db.patch(surface._id, { withheldTools: withheld });
+    changed += 1;
+  }
+  return {
+    read: page.page.length,
+    changed,
+    cursor: page.continueCursor,
+    isDone: page.isDone,
+  };
+}
+
 /**
  * One page of the `surfaces-single-approval` migration (Q10, N10). The IT
  * approval is gone, so a proposed card an older release left with the
@@ -2009,6 +2164,9 @@ export const reject = mutation({
     await ctx.db.patch(surface._id, {
       verdict: 'declared',
       reason: args.reason,
+      // The rejection ends any probe in flight with its generation.
+      probeGeneration: (surface.probeGeneration ?? 0) + 1,
+      probeStartedAt: undefined,
       request: undefined,
       managerApprovedAt: undefined,
       endpoint: undefined,
@@ -2023,6 +2181,7 @@ export const reject = mutation({
       managerUserId: undefined,
       managerName: undefined,
       toolAllowlist: undefined,
+      withheldTools: undefined,
       approvedToolAllowlist: undefined,
       toolAllowlistApprovedAt: undefined,
       toolArguments: undefined,
@@ -2096,12 +2255,15 @@ export const approveTools = mutation({
     const approved = new Set(tools);
     const now = Date.now();
     // A tool the manager took off is uncallable at once; one added waits for
-    // the probe, so only a tool the provider offers is ever stored.
+    // the probe, so only a tool the provider offers is ever stored. A withheld
+    // tool the manager approved is no longer withheld, only not probed yet.
+    const stillWithheld = (surface.withheldTools ?? []).filter((tool) => !approved.has(tool));
     await ctx.db.patch(surface._id, {
       approvedToolAllowlist: tools,
       toolAllowlistApprovedAt: now,
       toolAllowlist: (surface.toolAllowlist ?? []).filter((tool) => approved.has(tool)),
       toolArguments: (surface.toolArguments ?? []).filter((entry) => approved.has(entry.tool)),
+      withheldTools: stillWithheld.length > 0 ? stillWithheld : undefined,
     });
     await appendEvent(ctx, {
       agentId: surface.agentId,

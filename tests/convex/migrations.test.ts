@@ -5,8 +5,8 @@ import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
-import { MIGRATION_NAMES } from '../../convex/migrations';
-import { RETIRED_DECLARATIONS } from '../../scripts/releases';
+import { MIGRATION_NAMES, MIGRATIONS } from '../../convex/migrations';
+import { RETIRED_DECLARATIONS, RETIRING_DECLARATIONS } from '../../scripts/releases';
 import { avatarById } from '../../src/agent/avatar-pets';
 import { mirroredDocSlug } from '../../src/docs/types';
 import {
@@ -155,6 +155,25 @@ describe('the upgrade migrations', (): void => {
       migrations: [],
       pending: [],
     });
+  });
+
+  it('runs the second schema step’s migrations on the runner, each at 0.6.0, and records each finished', async (): Promise<void> => {
+    const secondStep = [
+      'surfaces-withheld-tools',
+      'work-evaluation-unavailable-cause',
+      'sync-runs-unread',
+      'doc-page-listings',
+      'credentials-superseded-at',
+    ];
+    expect(MIGRATION_NAMES.slice(-secondStep.length)).toEqual(secondStep);
+    const harness = limitedHarness();
+    await runAll(harness);
+    const status = await harness.query(internal.migrations.status, {});
+    expect(
+      status.migrations
+        .filter((row) => secondStep.includes(row.name))
+        .map((row) => [row.name, row.release, row.completedAt !== undefined]),
+    ).toEqual(secondStep.map((name) => [name, '0.6.0', true]));
   });
 
   it('copies listings kept as work.listed events into ticketListings once, where the re-read finds them', async (): Promise<void> => {
@@ -434,6 +453,277 @@ describe('the access setter backfill (Q5, U3 D3 (b))', (): void => {
   });
 });
 
+describe('the withheld tools backfill (K D2 (b))', (): void => {
+  it('copies the tools each connected card’s newest connection withheld onto the row, less any the manager approved since', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const agentId = await agent(harness, { userId: 'owner' });
+    const [narrowed, approvedSince, withholdsNothing, notConnected] = await harness.run(
+      async (ctx) => {
+        const card = async (
+          slug: string,
+          verdict: Doc<'surfaces'>['verdict'],
+          approved: string[],
+        ): Promise<Id<'surfaces'>> =>
+          await ctx.db.insert('surfaces', {
+            agentId,
+            slug,
+            displayName: slug,
+            class: 'kanban',
+            verdict,
+            whereFound: [],
+            credentialLanded: verdict === 'connected',
+            approvedToolAllowlist: approved,
+            toolAllowlist: approved,
+            createdAt: 1,
+          });
+        const ids = await Promise.all([
+          card('linear', 'connected', ['list_issues']),
+          card('jira', 'connected', ['list_issues', 'delete_issue']),
+          card('asana', 'connected', ['list_tasks']),
+          card('notion', 'listed-dead', ['search']),
+        ]);
+        const connected = async (
+          surfaceId: Id<'surfaces'>,
+          at: number,
+          withheldTools?: string[],
+        ): Promise<void> => {
+          await ctx.db.insert('events', {
+            agentId,
+            type: 'surface.connected',
+            payload: { surfaceId, ...(withheldTools ? { withheldTools } : {}) },
+            createdAt: at,
+          });
+        };
+        await connected(ids[0], 10, ['old_tool']);
+        await connected(ids[0], 20, ['save_comment', 'delete_issue']);
+        await connected(ids[1], 30, ['delete_issue', 'archive_issue']);
+        await connected(ids[2], 40);
+        await connected(ids[3], 50, ['create_page']);
+        return ids;
+      },
+    );
+
+    await runAll(harness);
+
+    const withheld = await harness.run(
+      async (ctx) =>
+        await Promise.all(
+          [narrowed, approvedSince, withholdsNothing, notConnected].map(
+            async (id) => (await ctx.db.get(id))?.withheldTools ?? null,
+          ),
+        ),
+    );
+    expect(withheld).toEqual([['save_comment', 'delete_issue'], ['archive_issue'], null, null]);
+    const status = await harness.query(internal.migrations.status, {});
+    expect(status.migrations.find((row) => row.name === 'surfaces-withheld-tools')).toMatchObject({
+      release: '0.6.0',
+      read: 4,
+      changed: 2,
+      completedAt: expect.any(Number),
+    });
+  });
+});
+
+describe('the unavailable cause backfill (K D2 (b))', (): void => {
+  it('copies onto each row stamped unavailable the cause its newest unavailable event gave, and leaves every other row', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const agentId = await agent(harness, { userId: 'owner' });
+    const [stamped, noEvent, unstamped] = await harness.run(async (ctx) => {
+      const row = async (externalId: string, unavailableAt?: number): Promise<Id<'workItems'>> =>
+        await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId,
+          title: externalId,
+          contentSummary: externalId,
+          contentRefs: [],
+          state: 'discovered',
+          observedAt: 1,
+          createdAt: 1,
+          ...(unavailableAt !== undefined ? { evaluationUnavailableAt: unavailableAt } : {}),
+        });
+      const ids = await Promise.all([row('REVOPS-1', 30), row('REVOPS-2', 40), row('REVOPS-3')]);
+      const unavailable = async (
+        workItemId: Id<'workItems'>,
+        cause: string,
+        at: number,
+      ): Promise<void> => {
+        await ctx.db.insert('events', {
+          agentId,
+          type: 'work.scope-judgement-unavailable',
+          payload: { workItemId, cause },
+          createdAt: at,
+        });
+      };
+      await unavailable(ids[0], 'timeout after 60 s', 10);
+      await unavailable(ids[0], 'provider answered 503', 30);
+      await unavailable(ids[2], 'provider answered 503', 50);
+      return ids;
+    });
+
+    await runAll(harness);
+
+    const causes = await harness.run(
+      async (ctx) =>
+        await Promise.all(
+          [stamped, noEvent, unstamped].map(
+            async (id) => (await ctx.db.get(id))?.evaluationUnavailableCause ?? null,
+          ),
+        ),
+    );
+    expect(causes).toEqual(['provider answered 503', null, null]);
+    const status = await harness.query(internal.migrations.status, {});
+    expect(
+      status.migrations.find((row) => row.name === 'work-evaluation-unavailable-cause'),
+    ).toMatchObject({ release: '0.6.0', read: 3, changed: 1, completedAt: expect.any(Number) });
+  });
+});
+
+describe('the unread record move (D D1 (a))', (): void => {
+  it('moves the record each run kept below its reason onto its field, leaving the line it ended short on', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const sourceId = await source(harness, 'owner');
+    const record = [
+      '3 pages could not be read this sync and keep their last stored version',
+      '- https://wiki.example/a: HTTP 404',
+      '- b.md: truncated',
+      '- and 1 more',
+    ].join('\n');
+    const [failed, completed, clean, moved] = await harness.run(async (ctx) => {
+      const run = async (
+        state: Doc<'docSyncRuns'>['state'],
+        fields: Partial<Doc<'docSyncRuns'>>,
+      ): Promise<Id<'docSyncRuns'>> =>
+        await ctx.db.insert('docSyncRuns', {
+          sourceId,
+          refs: [],
+          credentialRefs: [],
+          pageCount: 0,
+          redactionCount: 0,
+          state,
+          createdAt: 1,
+          ...fields,
+        });
+      return await Promise.all([
+        run('error', { reason: `The documentation read was interrupted (timeout).\n${record}` }),
+        run('completed', { reason: record }),
+        run('superseded', {
+          reason: 'a newer sync of the source started before this one finished',
+        }),
+        run('completed', { unread: { count: 1, pages: [{ ref: 'c.md', reason: 'gone' }] } }),
+      ]);
+    });
+
+    await runAll(harness);
+
+    const runs = await harness.run(
+      async (ctx) =>
+        await Promise.all(
+          [failed, completed, clean, moved].map(async (id) => await ctx.db.get(id)),
+        ),
+    );
+    const listed = {
+      count: 3,
+      pages: [
+        { ref: 'https://wiki.example/a', reason: 'HTTP 404' },
+        { ref: 'b.md', reason: 'truncated' },
+      ],
+    };
+    expect(runs.map((run) => [run?.reason ?? null, run?.unread ?? null])).toEqual([
+      ['The documentation read was interrupted (timeout).', listed],
+      [null, listed],
+      ['a newer sync of the source started before this one finished', null],
+      [null, { count: 1, pages: [{ ref: 'c.md', reason: 'gone' }] }],
+    ]);
+    const status = await harness.query(internal.migrations.status, {});
+    expect(status.migrations.find((row) => row.name === 'sync-runs-unread')).toMatchObject({
+      release: '0.6.0',
+      read: 4,
+      changed: 2,
+      completedAt: expect.any(Number),
+    });
+  });
+});
+
+describe('the page listing stamp (D D2 (a))', (): void => {
+  it('gives every stored page a listing row stamped 0, and leaves a page a sync already stamped', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const sourceId = await source(harness, 'owner');
+    await harness.run(async (ctx): Promise<void> => {
+      for (const ref of ['a.md', 'b.md', 'c.md']) {
+        await ctx.db.insert('docPages', {
+          sourceId,
+          ref,
+          title: ref,
+          markdown: `# ${ref}`,
+          updatedAt: 1,
+        });
+      }
+      await ctx.db.insert('docPageListings', { sourceId, ref: 'c.md', seenBy: 4 });
+    });
+
+    await runAll(harness);
+
+    const listings = await harness.run(async (ctx) =>
+      (await ctx.db.query('docPageListings').collect()).map((row) => [row.ref, row.seenBy]).sort(),
+    );
+    expect(listings).toEqual([
+      ['a.md', 0],
+      ['b.md', 0],
+      ['c.md', 4],
+    ]);
+    const status = await harness.query(internal.migrations.status, {});
+    expect(status.migrations.find((row) => row.name === 'doc-page-listings')).toMatchObject({
+      release: '0.6.0',
+      read: 3,
+      changed: 2,
+      completedAt: expect.any(Number),
+    });
+  });
+});
+
+describe('the superseded-at stamp (C2 D2 (a))', (): void => {
+  it('stamps each row a sync superseded with the upgrade, and leaves a live, a suspect and a stamped row', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const sourceId = await source(harness, 'owner');
+    const ids = await harness.run(async (ctx) => {
+      const row = async (
+        ref: string,
+        fields: Partial<Doc<'credentials'>>,
+      ): Promise<Id<'credentials'>> =>
+        await ctx.db.insert('credentials', {
+          userId: 'owner',
+          kind: 'value',
+          label: ref,
+          source: { sourceId, ref },
+          createdAt: 1,
+          ...fields,
+        });
+      return await Promise.all([
+        row('a.md', { status: 'superseded' }),
+        row('b.md', { status: 'superseded', supersededAt: 7 }),
+        row('c.md', { status: 'suspect' }),
+        row('d.md', {}),
+      ]);
+    });
+    const before = Date.now();
+
+    await runAll(harness);
+
+    const stamps = await harness.run(
+      async (ctx) =>
+        await Promise.all(ids.map(async (id) => (await ctx.db.get(id))?.supersededAt ?? null)),
+    );
+    expect(stamps[0]).toBeGreaterThanOrEqual(before);
+    expect(stamps.slice(1)).toEqual([7, null, null]);
+    const status = await harness.query(internal.migrations.status, {});
+    expect(status.migrations.find((row) => row.name === 'credentials-superseded-at')).toMatchObject(
+      { release: '0.6.0', read: 4, changed: 1, completedAt: expect.any(Number) },
+    );
+  });
+});
+
 describe('the single approval (Q10)', (): void => {
   const UPGRADED_AT = Date.UTC(2026, 8, 28, 9);
   const DAY = 24 * 60 * 60 * 1_000;
@@ -606,6 +896,35 @@ describe('the declarations the schema step retired (N10)', (): void => {
       ).fields;
       expect(fields, declaration).not.toHaveProperty(field);
     }
+  });
+});
+
+describe('the declarations the next release retires (N10, Q D2)', (): void => {
+  /** Whether the schema still declares a `table.field`. */
+  const declared = (declaration: string): boolean => {
+    const [table, field] = declaration.split('.') as [keyof typeof schema.tables, string];
+    const fields = (
+      schema.tables[table].validator as unknown as { fields: Record<string, unknown> }
+    ).fields;
+    return field in fields;
+  };
+
+  it('ships the clearing migration of each, at its release, naming it in thenRemoves, and still declares it', (): void => {
+    for (const { declaration, migration, release } of RETIRING_DECLARATIONS) {
+      expect(MIGRATION_NAMES as readonly string[]).toContain(migration);
+      const described = MIGRATIONS[migration as (typeof MIGRATION_NAMES)[number]];
+      expect(described.release).toBe(release);
+      expect(described.thenRemoves).toContain(`the ${declaration} declaration`);
+      expect(declared(declaration), declaration).toBe(true);
+    }
+  });
+
+  it('lists every declaration a shipped migration says the next release removes', (): void => {
+    const named = MIGRATION_NAMES.flatMap((name) => {
+      const match = /the (\w+\.\w+) declaration/.exec(MIGRATIONS[name].thenRemoves);
+      return match ? [match[1]] : [];
+    });
+    expect(RETIRING_DECLARATIONS.map((row) => row.declaration).sort()).toEqual(named.sort());
   });
 });
 

@@ -357,8 +357,13 @@ describe('documentation sync batching', (): void => {
     });
     const runs = await harness.run(async (ctx) => await ctx.db.query('docSyncRuns').collect());
     expect(runs).toHaveLength(1);
-    expect(runs[0]).toMatchObject({ state: 'completed', pageCount: 60, refs: expect.any(Array) });
-    expect(runs[0].refs).toHaveLength(60);
+    expect(runs[0]).toMatchObject({ state: 'completed', pageCount: 60, pagesListed: 60 });
+    expect(runs[0]).not.toHaveProperty('refs');
+    const listings = await harness.run(
+      async (ctx) => await ctx.db.query('docPageListings').collect(),
+    );
+    expect(listings).toHaveLength(60);
+    expect(listings.every((row) => row.seenBy === runs[0].listing)).toBe(true);
     expect(JSON.stringify(runs)).not.toContain(value);
     const pages = (
       await harness.query(internal.docSources.pagesForSourceInternal, {
@@ -537,9 +542,18 @@ describe('documentation sync batching', (): void => {
       ref: valueRef('tile.md', value, 'owner'),
     });
     expect(after.runs[0]).toMatchObject({ state: 'completed' });
-    expect(after.runs[0].reason).toMatch(
-      /^1 page could not be read this sync and keeps its last stored version\n- tile\.md: The page is \d+ KiB, larger than the 768 KiB Day0 stores\.$/,
-    );
+    expect(after.runs[0].reason).toBeUndefined();
+    expect(after.runs[0].unread).toEqual({
+      count: 1,
+      pages: [
+        {
+          ref: 'tile.md',
+          reason: expect.stringMatching(
+            /^The page is \d+ KiB, larger than the 768 KiB Day0 stores\.$/,
+          ),
+        },
+      ],
+    });
     expect(after.source).toMatchObject({ status: 'synced' });
     expect(after.source?.lastError).toMatch(
       /^1 page could not be read this sync and keeps its last stored version: tile\.md: The page is \d+ KiB, larger than the 768 KiB Day0 stores\. The next sync reads them again\.$/,
@@ -695,8 +709,14 @@ describe('documentation sync batching', (): void => {
     const [completed, failed] = await harness.run(
       async (ctx) => await ctx.db.query('docSyncRuns').order('desc').collect(),
     );
-    expect(completed).toMatchObject({ state: 'completed', pageCount: 500 });
-    expect(new Set(completed.refs).size).toBe(500);
+    expect(completed).toMatchObject({ state: 'completed', pageCount: 500, pagesListed: 500 });
+    // The resumed run carries the failed run's listing, so the pages it read before stay.
+    expect(completed.listing).toBe(failed.listing);
+    const listings = await harness.run(
+      async (ctx) => await ctx.db.query('docPageListings').collect(),
+    );
+    expect(new Set(listings.map((row) => row.ref)).size).toBe(500);
+    expect(listings.every((row) => row.seenBy === completed.listing)).toBe(true);
     expect(failed).toMatchObject({
       state: 'error',
       cursor: expect.stringMatching(/^300@[0-9a-z]{7}$/),
@@ -902,7 +922,7 @@ describe('documentation sync batching', (): void => {
     }));
     expect(stored.source).toMatchObject({ status: 'synced' });
     expect(stored.source?.lastError).toContain('https://wiki.example/two: refused by the wiki');
-    expect(stored.runs[0].reason).toContain('<redacted>');
+    expect(stored.runs[0].unread?.pages[0].reason).toContain('<redacted>');
     expect(JSON.stringify(stored)).not.toContain(secret);
     expect(JSON.stringify(stored)).not.toContain(secret.slice(0, 12));
   });

@@ -34,13 +34,19 @@ import {
   CREDENTIAL_VALUE_REF_MIGRATION,
   credentialKeyCounts,
 } from './credentials';
-import { backfillAccessSetByPage, restartAccessClocksPage, singleApprovalPage } from './surfaces';
-import { keepTicketListing, WORK_LISTED_EVENT } from './work';
+import {
+  backfillAccessSetByPage,
+  backfillWithheldToolsPage,
+  restartAccessClocksPage,
+  singleApprovalPage,
+} from './surfaces';
+import { backfillUnavailableCausePage, keepTicketListing, WORK_LISTED_EVENT } from './work';
 import type { TicketSnapshot } from '../src/work/ticket-ownership';
 import { AGENT_RETIRED_EVENT } from './reset';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { avatarById } from '../src/agent/avatar-pets';
 import { mirroredDocSlug } from '../src/docs/types';
+import { legacyUnreadRecord, reasonWithoutLegacyRecord } from '../src/docs/sync-record';
 import { deploymentZone } from '../src/lib/zone';
 
 /**
@@ -65,6 +71,11 @@ export const MIGRATION_NAMES = [
   'mirrors-rekey',
   CREDENTIAL_RESEAL_MIGRATION,
   CREDENTIAL_VALUE_REF_MIGRATION,
+  'surfaces-withheld-tools',
+  'work-evaluation-unavailable-cause',
+  'sync-runs-unread',
+  'doc-page-listings',
+  'credentials-superseded-at',
 ] as const;
 
 /** One migration's name. */
@@ -103,7 +114,11 @@ const FIRST_MIGRATIONS_RELEASE = '0.4.0';
 /** The release after it, which gives every agent a zone and a mode (N12, the M2 backfill). */
 const ZONE_RELEASE = '0.5.0';
 
-/** The schema step after that: retirements, the freeze's approved list, the attempt count. */
+/**
+ * The two schema steps after that, one release: retirements, the freeze's
+ * approved list, the attempt count; then the card's own fields, the sync's
+ * record and its listing stamp.
+ */
 const SCHEMA_STEP_RELEASE = '0.6.0';
 
 /** Every migration's description, keyed by name. */
@@ -169,6 +184,33 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
     thenRemoves:
       'nothing: a sync moves a row still on an old ref by its value, as it does after a key rotation',
   },
+  'surfaces-withheld-tools': {
+    release: SCHEMA_STEP_RELEASE,
+    does: 'copies onto each connected card the tools its newest surface.connected event withheld, less any the manager approved since, so the card reads them off the row',
+    thenRemoves: 'nothing: recordConnected writes withheldTools from here on',
+  },
+  'work-evaluation-unavailable-cause': {
+    release: SCHEMA_STEP_RELEASE,
+    does: 'copies onto each row an evaluation found the scope judgement unreachable for the cause its newest work.scope-judgement-unavailable event gave, so the waiting line reads it off the row',
+    thenRemoves: 'nothing: the cause is written with evaluationUnavailableAt from here on',
+  },
+  'sync-runs-unread': {
+    release: SCHEMA_STEP_RELEASE,
+    does: 'moves the record of unread pages each sync run kept as text below its reason onto the run’s unread field, leaving the reason the line it ended short on',
+    thenRemoves:
+      'the reading of a record in the reason text (legacyUnreadRecord in unreadRecordIn)',
+  },
+  'doc-page-listings': {
+    release: SCHEMA_STEP_RELEASE,
+    does: 'gives every stored documentation page a listing row stamped 0, older than any listing a sync starts, so the next finish that does not name the page removes it and one that does restamps it',
+    thenRemoves:
+      'the reading of docSyncRuns.refs as a pre-0.6.0 run’s listing (legacyListedRefs), once no run begun before this release can be resumed; the refs declaration the release after, with a migration clearing it',
+  },
+  'credentials-superseded-at': {
+    release: SCHEMA_STEP_RELEASE,
+    does: 'stamps each credential a sync superseded before this release with the upgrade, so its source’s finish prunes it once it has stayed superseded past the keep and no surface holds it',
+    thenRemoves: 'nothing: a sync stamps supersededAt when it supersedes a row from here on',
+  },
   'surfaces-access-clock': {
     release: FIRST_MIGRATIONS_RELEASE,
     does: 'restarts an approved card’s access clock, which the old code started at proposal, at the default length from the upgrade',
@@ -192,6 +234,19 @@ const MIGRATION_PAGE = 100;
  * unread, and a migration must not skip one.
  */
 const EVENT_PAGE = 10;
+
+/**
+ * Sync runs one page of the unread-record move reads. A run of a release
+ * before 0.6.0 lists up to 8,192 page refs, so ten stay well inside the
+ * transaction's read limit.
+ */
+const RUN_PAGE = 10;
+
+/**
+ * Documentation pages one page of the listing stamp reads: a page body can be
+ * up to 768 KiB, so the read is bounded by bytes as well as rows.
+ */
+const PAGE_BODIES_READ = { numItems: MIGRATION_PAGE, maximumBytesRead: 4 * 1024 * 1024 } as const;
 
 /** How long one `runPending` call migrates before it hands back what is left. */
 const RUN_BUDGET_MS = 8 * 60 * 1_000;
@@ -470,6 +525,70 @@ async function rekeyMirrors(ctx: MutationCtx, cursor: string | null): Promise<Mi
 }
 
 /**
+ * Move each sync run's record of its unread pages from the reason text a
+ * release before 0.6.0 wrote it in onto the run's `unread` field (D D1 (a)),
+ * so a rewrite of the reason can never lose it.
+ */
+async function moveUnreadRecords(ctx: MutationCtx, cursor: string | null): Promise<MigrationPage> {
+  const page = await ctx.db.query('docSyncRuns').paginate({ cursor, numItems: RUN_PAGE });
+  let changed = 0;
+  for (const run of page.page) {
+    const record = run.unread === undefined ? legacyUnreadRecord(run.reason) : undefined;
+    if (record === undefined) continue;
+    await ctx.db.patch(run._id, { unread: record, reason: reasonWithoutLegacyRecord(run.reason) });
+    changed += 1;
+  }
+  return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
+}
+
+/**
+ * Give each stored documentation page a listing row (D D2 (a)). A page of a
+ * release before 0.6.0 was kept by its run's refs; from this release a finish
+ * removes a page whose row an earlier listing stamped, so every page needs
+ * one. The stamp is 0, below every listing a sync starts: the next sync that
+ * names the page restamps it, and a run begun before this release keeps the
+ * pages its refs name.
+ */
+async function stampPageListings(ctx: MutationCtx, cursor: string | null): Promise<MigrationPage> {
+  const page = await ctx.db.query('docPages').paginate({ ...PAGE_BODIES_READ, cursor });
+  let changed = 0;
+  for (const stored of page.page) {
+    const listed = await ctx.db
+      .query('docPageListings')
+      .withIndex('by_source_ref', (q) => q.eq('sourceId', stored.sourceId).eq('ref', stored.ref))
+      .first();
+    if (listed !== null) continue;
+    await ctx.db.insert('docPageListings', {
+      sourceId: stored.sourceId,
+      ref: stored.ref,
+      seenBy: 0,
+    });
+    changed += 1;
+  }
+  return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
+}
+
+/**
+ * Stamp each credential a sync superseded before 0.6.0 with the upgrade's
+ * moment (C2 D2 (a)): when it was superseded is not recorded, so its keep
+ * starts now, and no row is pruned sooner than the keep after the upgrade.
+ */
+async function stampSupersededAt(ctx: MutationCtx, cursor: string | null): Promise<MigrationPage> {
+  const now = Date.now();
+  const page = await ctx.db.query('credentials').paginate({ cursor, numItems: MIGRATION_PAGE });
+  const unstamped = page.page.filter(
+    (credential) => credential.status === 'superseded' && credential.supersededAt === undefined,
+  );
+  for (const credential of unstamped) await ctx.db.patch(credential._id, { supersededAt: now });
+  return {
+    read: page.page.length,
+    changed: unstamped.length,
+    cursor: page.continueCursor,
+    isDone: page.isDone,
+  };
+}
+
+/**
  * Re-seal one page of credentials in the Node runtime (decision Q15, step
  * 14). The action writes each page's rows itself; this reports the page.
  */
@@ -531,6 +650,12 @@ const MIGRATION_PAGES: Readonly<
     await restartAccessClocksPage(ctx, cursor, Date.now()),
   'surfaces-single-approval': async (ctx, cursor) =>
     await singleApprovalPage(ctx, cursor, Date.now()),
+  'surfaces-withheld-tools': async (ctx, cursor) => await backfillWithheldToolsPage(ctx, cursor),
+  'work-evaluation-unavailable-cause': async (ctx, cursor) =>
+    await backfillUnavailableCausePage(ctx, cursor),
+  'sync-runs-unread': moveUnreadRecords,
+  'doc-page-listings': stampPageListings,
+  'credentials-superseded-at': stampSupersededAt,
 };
 
 /** A migration's row, if it has started. */

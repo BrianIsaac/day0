@@ -462,7 +462,6 @@ describe('the cron targets, run by the names they are scheduled under', (): void
           verdict: 'connected',
           whereFound: [],
           managerApprovedAt: 1,
-          itApprovedAt: 1,
           credentialLanded: true,
           createdAt: 1,
         }),

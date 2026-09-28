@@ -26,9 +26,11 @@ import { appendEvent } from './eventLog';
 import { mirroredDocSlug } from '../src/docs/types';
 import {
   endedShort,
+  reasonWithoutLegacyRecord,
   unreadPagesLine,
   unreadRecordIn,
   withUnreadPages,
+  type UnreadRecord,
 } from '../src/docs/sync-record';
 import { runToResume } from '../src/docs/sync-resume';
 import { cardPageRefs } from '../src/docs/card-pages';
@@ -62,9 +64,9 @@ export { FINISHING_CURSOR };
 
 /**
  * How many finishing pages go by between the checkpoints a run's cursor
- * records: a run lists its pages, so recording it after every page would
- * rewrite that list each time; a finish resumed from a checkpoint walks at
- * most this many pages again, which delete nothing new.
+ * records: a run begun before 0.6.0 lists its pages, so recording it after
+ * every page would rewrite that list each time; a finish resumed from a
+ * checkpoint walks at most this many pages again, which delete nothing new.
  */
 export const FINISHING_CHECKPOINT_EVERY = 10;
 
@@ -75,8 +77,22 @@ export const FINISHING_CHECKPOINT_EVERY = 10;
  */
 export const PAGED_READ = { numItems: 100, maximumBytesRead: 4 * 1024 * 1024 } as const;
 
-/** Convex's bound on an array's length, and so on the pages one generation can record. */
-export const MAX_GENERATION_PAGES = 8_192;
+/**
+ * Listing rows one page of the finish's walk reads. Each may lead to one
+ * stored page read and deleted, of up to `MAX_STORED_PAGE_BYTES` (768 KiB),
+ * so sixteen stay under a transaction's 16 MiB read limit.
+ */
+export const STALE_LISTING_PAGE = 16;
+
+/**
+ * How long a superseded page credential is kept before its source's finish
+ * prunes it, when no surface holds it (C2 D2 (a)). A value that returns to
+ * its page within this long revives its own row; past it, a page whose token
+ * rotates monthly keeps about one superseded row per credential rather than
+ * one per rotation, so neither the 512-row page read nor the 1,000-row source
+ * cap is ever reached by history alone.
+ */
+export const SUPERSEDED_CREDENTIAL_KEEP_MS = 30 * 24 * 60 * 60 * 1000;
 
 /** How long a finished run is kept for the record before the run history is pruned. */
 export const RUN_HISTORY_MS = 7 * 24 * 60 * 60 * 1000;
@@ -100,6 +116,18 @@ const CARD_SURFACE_LIMIT = 1_000;
 /** Why a run that a newer one replaced before it finished ended. */
 const SUPERSEDED_RUN_REASON = 'a newer sync of the source started before this one finished';
 
+/**
+ * The patch that says why a run ended short: the reason on one line, and the
+ * run's record of its unread pages on its own field, where an earlier
+ * release's record kept in the reason text moves as the reason is rewritten.
+ */
+function endedShortPatch(
+  ending: string,
+  run: Doc<'docSyncRuns'>,
+): { reason: string; unread: UnreadRecord | undefined } {
+  return { reason: endedShort(ending), unread: unreadRecordIn(run) };
+}
+
 /** Why a run that a newer one took over from its cursor ended. */
 function resumedRunReason(pageCount: number): string {
   return `a newer sync of the source took over from its cursor after ${pageCount} ${pageCount === 1 ? 'page' : 'pages'}`;
@@ -110,19 +138,74 @@ function resumedRunReason(pageCount: number): string {
  *
  * Counting the pages would read every page body (C-15). The last completed
  * run's summary counts what it kept; before a sync has completed, the newest
- * run's recorded refs are the pages it has stored so far.
+ * run's listing count is the pages it has named so far.
  */
 async function storedPageCount(ctx: QueryCtx, source: Doc<'docSources'>): Promise<number> {
   const completed = source.lastCompletedSyncId
     ? await ctx.db.get(source.lastCompletedSyncId)
     : null;
-  if (completed) return completed.summary?.pagesKept ?? completed.refs.length;
+  if (completed) return completed.summary?.pagesKept ?? listedCount(completed);
   const newest = await ctx.db
     .query('docSyncRuns')
     .withIndex('by_source', (index) => index.eq('sourceId', source._id))
     .order('desc')
     .first();
-  return newest?.refs.length ?? 0;
+  return newest ? listedCount(newest) : 0;
+}
+
+/** How many page refs a run's listing has named, counted from a pre-0.6.0 run's refs where it kept no count. */
+function listedCount(run: Doc<'docSyncRuns'>): number {
+  return run.pagesListed ?? run.refs?.length ?? 0;
+}
+
+/**
+ * The page refs a run begun before 0.6.0 recorded before its listing was
+ * stamped on `docPageListings`: its finish keeps them as listed. Empty for
+ * every later run.
+ */
+function legacyListedRefs(run: Doc<'docSyncRuns'>): ReadonlySet<string> {
+  return new Set(run.refs ?? []);
+}
+
+/** Start the next listing of a source, one that reads from page one, and return its number. */
+async function nextListing(ctx: MutationCtx, source: Doc<'docSources'>): Promise<number> {
+  const listing = (source.listings ?? 0) + 1;
+  await ctx.db.patch(source._id, { listings: listing });
+  return listing;
+}
+
+/**
+ * The listing a run reads: its own, or, for a run begun before 0.6.0, the
+ * source's next, given to it now so the rest of its batches stamp one listing.
+ */
+async function runListing(ctx: MutationCtx, run: Doc<'docSyncRuns'>): Promise<number> {
+  if (run.listing !== undefined) return run.listing;
+  const source = await ctx.db.get(run.sourceId);
+  if (!source) throw new Error('Documentation source not found.');
+  const listing = await nextListing(ctx, source);
+  await ctx.db.patch(run._id, { listing });
+  return listing;
+}
+
+/**
+ * Stamp each ref a batch listed with the listing that named it, so the
+ * finish keeps its page (D D2 (a)). One small row per ref, found by index:
+ * no page body is read or written.
+ */
+async function stampListed(
+  ctx: MutationCtx,
+  sourceId: Id<'docSources'>,
+  refs: readonly string[],
+  listing: number,
+): Promise<void> {
+  for (const ref of new Set(refs)) {
+    const row = await ctx.db
+      .query('docPageListings')
+      .withIndex('by_source_ref', (index) => index.eq('sourceId', sourceId).eq('ref', ref))
+      .unique();
+    if (row === null) await ctx.db.insert('docPageListings', { sourceId, ref, seenBy: listing });
+    else if (row.seenBy !== listing) await ctx.db.patch(row._id, { seenBy: listing });
+  }
 }
 
 export interface LinkInput {
@@ -523,7 +606,7 @@ async function removeSource(ctx: MutationCtx, source: Doc<'docSources'>): Promis
 }
 
 /** The tables a removed source leaves rows in, in the order they are deleted. */
-const SOURCE_ROW_TABLES = ['mockDocs', 'docPages', 'docSyncRuns'] as const;
+const SOURCE_ROW_TABLES = ['mockDocs', 'docPages', 'docPageListings', 'docSyncRuns'] as const;
 
 /**
  * Delete one bounded page of a removed source's rows in one table, and schedule the next.
@@ -802,11 +885,13 @@ export const sourcesForAgentInternal = internalQuery({
  * Start a fenced sync generation, taking over a run that ended short from its cursor.
  *
  * Internal. The source's newest run, when it failed or is being replaced
- * before it finished, carries its cursor, its refs and credential refs, its
- * counts and its record of unread pages into the new run, which reads on
+ * before it finished, carries its cursor, its listing, its credential refs,
+ * its counts and its record of unread pages into the new run, which reads on
  * from there (step 17); its own reason says the new run took over. A fresh
  * start (`fresh`, as a new connection secret needs), a run too old or a
- * resume that got nowhere reads from page one (`runToResume`).
+ * resume that got nowhere reads from page one (`runToResume`) and starts the
+ * source's next listing, so every page an earlier one named is pruned unless
+ * this one names it again.
  *
  * @returns The new run's id; its `cursor` is where its first batch reads from.
  */
@@ -827,29 +912,33 @@ export const beginSync = internalMutation({
       await ctx.db.patch(active._id, {
         state: 'superseded',
         completedAt: now,
-        reason: endedShort(
+        ...endedShortPatch(
           active._id === resumed?._id ? resumedRunReason(active.pageCount) : SUPERSEDED_RUN_REASON,
-          active.reason,
+          active,
         ),
       });
     } else if (resumed !== undefined) {
       const ending = (resumed.reason ?? '').split('\n')[0] || 'The run ended short.';
       const tookOver = resumedRunReason(resumed.pageCount);
-      await ctx.db.patch(resumed._id, {
-        reason: endedShort(
+      await ctx.db.patch(
+        resumed._id,
+        endedShortPatch(
           `${ending} ${tookOver.charAt(0).toUpperCase()}${tookOver.slice(1)}.`,
-          resumed.reason,
+          resumed,
         ),
-      });
+      );
     }
     const runId = await ctx.db.insert('docSyncRuns', {
       sourceId: source._id,
       cursor: resumed?.cursor,
-      refs: resumed?.refs ?? [],
+      listing:
+        resumed === undefined ? await nextListing(ctx, source) : await runListing(ctx, resumed),
+      pagesListed: resumed === undefined ? 0 : listedCount(resumed),
+      ...(resumed?.refs !== undefined ? { refs: resumed.refs } : {}),
       credentialRefs: resumed?.credentialRefs ?? [],
       pageCount: resumed?.pageCount ?? 0,
       redactionCount: resumed?.redactionCount ?? 0,
-      reason: unreadRecordIn(resumed?.reason),
+      unread: unreadRecordIn(resumed),
       state: 'running',
       createdAt: now,
     });
@@ -886,11 +975,12 @@ export const restartSync = internalMutation({
     await ctx.db.patch(run._id, {
       state: 'superseded',
       completedAt: now,
-      reason: endedShort(LISTING_CHANGED_REASON, run.reason),
+      ...endedShortPatch(LISTING_CHANGED_REASON, run),
     });
     const runId = await ctx.db.insert('docSyncRuns', {
       sourceId: source._id,
-      refs: [],
+      listing: await nextListing(ctx, source),
+      pagesListed: 0,
       credentialRefs: [],
       pageCount: 0,
       redactionCount: 0,
@@ -914,7 +1004,8 @@ export const restartSync = internalMutation({
  * over `RUN_HISTORY_MS` ago is deleted unless the source still points at it
  * (running, last completed, last discovered); a completed one is kept while
  * the migration that reads completed runs by their completion time has not
- * run. A run lists its pages, so a pass reads at most `RUN_PRUNE_BATCH`.
+ * run. A run begun before 0.6.0 lists its pages, so a pass reads at most
+ * `RUN_PRUNE_BATCH`.
  *
  * @returns How many runs were deleted.
  */
@@ -969,26 +1060,12 @@ export const syncContext = internalQuery({
 });
 
 /**
- * A generation's page refs with a batch's added, within what one run can record.
- *
- * @throws Error naming the bound when the source lists more pages than one run records.
- */
-function generationRefs(recorded: readonly string[], batch: readonly string[]): string[] {
-  const refs = [...recorded, ...batch];
-  if (refs.length > MAX_GENERATION_PAGES) {
-    throw new Error(
-      `This source lists more than ${MAX_GENERATION_PAGES.toLocaleString('en-GB')} pages, the most one sync can record; split it into smaller sources.`,
-    );
-  }
-  return refs;
-}
-
-/**
  * Record one non-final batch and advance its provider-safe cursor.
  *
  * The batch's `refs` and `credentialRefs` include the pages it could not
- * read and their stored credentials, so the finished generation keeps them;
- * `unread` names those pages in the run's record.
+ * read and their stored credentials, so the finished generation keeps them:
+ * each ref is stamped with the run's listing (`docPageListings`), however
+ * many pages the source lists; `unread` names those pages in the run's record.
  */
 export const recordSyncBatch = internalMutation({
   args: {
@@ -1013,14 +1090,15 @@ export const recordSyncBatch = internalMutation({
     ) {
       return false;
     }
-    const refs = generationRefs(run.refs, args.refs);
+    await stampListed(ctx, source._id, args.refs, await runListing(ctx, run));
     await ctx.db.patch(run._id, {
       cursor: args.nextCursor,
-      refs,
+      pagesListed: listedCount(run) + args.refs.length,
       credentialRefs: [...run.credentialRefs, ...args.credentialRefs],
       pageCount: run.pageCount + args.pageCount,
       redactionCount: run.redactionCount + args.redactionCount,
-      reason: withUnreadPages(run.reason, args.unread ?? []),
+      unread: withUnreadPages(unreadRecordIn(run), args.unread ?? []),
+      reason: reasonWithoutLegacyRecord(run.reason),
     });
     await ctx.db.patch(source._id, { updatedAt: Date.now() });
     return true;
@@ -1109,8 +1187,11 @@ function phaseOf(checkpoint: string, phase: FinishingPhase): void {
 /**
  * Delete one bounded page of the stored pages a finishing generation did not list.
  *
- * Internal; the finishing sync walks the source's pages with it. A page the
- * generation listed but could not read is in its refs and is kept (P5-11).
+ * Internal; the finishing sync walks, with it, only the source's listing rows
+ * an earlier listing stamped (D D2 (a)): a page this generation listed was
+ * restamped by its batch, one it listed but could not read too (P5-11), so
+ * the walk reads nothing a stable corpus keeps, whatever its size. A page a
+ * run begun before 0.6.0 recorded in its refs is kept and restamped.
  *
  * @returns Where the finish stands, or null when the run is no longer at that checkpoint.
  */
@@ -1120,18 +1201,85 @@ export const prunePages = internalMutation({
     phaseOf(args.checkpoint, 'pages');
     const finishing = await finishingRun(ctx, args.sourceId, args.runId, args.checkpoint);
     if (!finishing) return null;
-    const current = new Set(finishing.run.refs);
+    // A run begun before 0.6.0 cut off here holds a cursor of its walk over the
+    // pages themselves, which this walk cannot take; the walk starts over, as
+    // every row it has already passed is gone or restamped.
+    const from = finishing.run.listing === undefined ? null : args.from;
+    const listing = await runListing(ctx, finishing.run);
+    const legacy = legacyListedRefs(finishing.run);
+    // A row this page restamps or deletes leaves the range behind the cursor.
     const page = await ctx.db
-      .query('docPages')
-      .withIndex('by_source', (index) => index.eq('sourceId', args.sourceId))
-      .paginate({ ...PAGED_READ, cursor: args.from });
+      .query('docPageListings')
+      .withIndex('by_source', (index) => index.eq('sourceId', args.sourceId).lt('seenBy', listing))
+      .paginate({ numItems: STALE_LISTING_PAGE, cursor: from });
     let removed = 0;
     for (const row of page.page) {
-      if (current.has(row.ref)) continue;
+      if (legacy.has(row.ref)) {
+        await ctx.db.patch(row._id, { seenBy: listing });
+        continue;
+      }
+      const stored = await ctx.db
+        .query('docPages')
+        .withIndex('by_source_ref', (index) =>
+          index.eq('sourceId', args.sourceId).eq('ref', row.ref),
+        )
+        .unique();
+      if (stored !== null) {
+        await ctx.db.delete(stored._id);
+        removed += 1;
+      }
       await ctx.db.delete(row._id);
+    }
+    return await closeFinishingPage(ctx, finishing.run, args, 'pages', 'credentials', {
+      ...page,
+      removed,
+    });
+  },
+});
+
+/**
+ * Delete one bounded page of a finishing source's superseded page credentials
+ * that have aged out (C2 D2 (a)): superseded longer than
+ * `SUPERSEDED_CREDENTIAL_KEEP_MS` ago, bound to no surface and never revoked
+ * by a person, whose revoke the row must keep holding. Internal; the
+ * finishing sync walks the source's credential rows with it, after the pages.
+ *
+ * @returns Where the finish stands, or null when the run is no longer at that checkpoint.
+ */
+export const pruneSupersededCredentials = internalMutation({
+  args: finishingPageArgs,
+  handler: async (ctx, args): Promise<FinishingPage | null> => {
+    phaseOf(args.checkpoint, 'credentials');
+    const finishing = await finishingRun(ctx, args.sourceId, args.runId, args.checkpoint);
+    if (!finishing) return null;
+    const cutoff = Date.now() - SUPERSEDED_CREDENTIAL_KEEP_MS;
+    const page = await ctx.db
+      .query('credentials')
+      .withIndex('by_user_source_ref', (index) =>
+        index.eq('userId', finishing.source.userId).eq('source.sourceId', args.sourceId),
+      )
+      .paginate({ ...PAGED_READ, cursor: args.from });
+    let removed = 0;
+    for (const credential of page.page) {
+      // A person's revoke is kept for good: were the row gone, the same value
+      // returning to its page would be stored afresh, unrevoked.
+      if (
+        credential.status !== 'superseded' ||
+        credential.revokedAt !== undefined ||
+        credential.supersededAt === undefined ||
+        credential.supersededAt > cutoff
+      ) {
+        continue;
+      }
+      const bound = await ctx.db
+        .query('surfaces')
+        .withIndex('by_credentialId', (index) => index.eq('credentialId', credential._id))
+        .first();
+      if (bound !== null) continue;
+      await ctx.db.delete(credential._id);
       removed += 1;
     }
-    return await closeFinishingPage(ctx, finishing.run, args, 'pages', 'mirrors', {
+    return await closeFinishingPage(ctx, finishing.run, args, 'credentials', 'mirrors', {
       ...page,
       removed,
     });
@@ -1154,14 +1302,21 @@ export const pruneMirrors = internalMutation({
     phaseOf(args.checkpoint, 'mirrors');
     const finishing = await finishingRun(ctx, args.sourceId, args.runId, args.checkpoint);
     if (!finishing) return null;
-    const current = new Set(finishing.run.refs);
+    const listing = await runListing(ctx, finishing.run);
+    // A run begun before 0.6.0 names some of its pages only in its refs, and a
+    // page the listing migration has not reached yet has no row to restamp.
+    const legacy = legacyListedRefs(finishing.run);
     const page = await ctx.db
       .query('mockDocs')
       .withIndex('by_source', (index) => index.eq('sourceId', args.sourceId))
       .paginate({ ...PAGED_READ, cursor: args.from });
     let removed = 0;
     for (const mirror of page.page) {
-      if (mirror.sourceRef && current.has(mirror.sourceRef)) {
+      if (
+        mirror.sourceRef &&
+        (legacy.has(mirror.sourceRef) ||
+          (await listedBy(ctx, args.sourceId, mirror.sourceRef, listing)))
+      ) {
         const slug = mirroredDocSlug(args.sourceId, mirror.sourceRef);
         if (mirror.slug === slug) continue;
         // An old-slug copy is the employee's only one until the page is
@@ -1183,6 +1338,20 @@ export const pruneMirrors = internalMutation({
     });
   },
 });
+
+/** Whether a listing named a source's page: its listing row carries the listing's stamp. */
+async function listedBy(
+  ctx: QueryCtx,
+  sourceId: Id<'docSources'>,
+  ref: string,
+  listing: number,
+): Promise<boolean> {
+  const row = await ctx.db
+    .query('docPageListings')
+    .withIndex('by_source_ref', (index) => index.eq('sourceId', sourceId).eq('ref', ref))
+    .unique();
+  return row?.seenBy === listing;
+}
 
 /** The verdicts under which an approved or proposed intake scope is re-read after a sync. */
 const SCOPED_VERDICTS: ReadonlySet<Doc<'surfaces'>['verdict']> = new Set([
@@ -1282,7 +1451,9 @@ export const applyRestatedScope = internalMutation({
         'A documented intake queue changed. Reject this card and re-run orientation before approval.',
       managerApprovedAt: undefined,
       probeGeneration: (surface.probeGeneration ?? 0) + 1,
+      probeStartedAt: undefined,
       toolAllowlist: undefined,
+      withheldTools: undefined,
       approvedToolAllowlist: undefined,
       toolAllowlistApprovedAt: undefined,
       toolArguments: undefined,
@@ -1313,10 +1484,11 @@ export const applyRestatedScope = internalMutation({
  * scopes (its cursor is the finish's `scopes` checkpoint), passing what those
  * steps removed as `pruned`; a resumed finish counts its own part only. A
  * caller that finishes a run from its last read batch passes that batch
- * instead. `pagesKept` is the pages the generation lists. A page the generation could not read is in its
- * refs, so it keeps its last stored version, mirror and credentials; the
- * run's reason names it and the source's line says so until a sync reads it
- * (P5-11).
+ * instead, whose refs are stamped with the run's listing. `pagesKept` is the
+ * pages the generation lists. A page the generation could not read is
+ * stamped too, so it keeps its last stored version, mirror and credentials;
+ * the run's unread record names it and the source's line says so until a
+ * sync reads it (P5-11).
  */
 export const finishSync = internalMutation({
   args: {
@@ -1331,6 +1503,7 @@ export const finishSync = internalMutation({
     pruned: v.optional(
       v.object({
         pagesRemoved: v.number(),
+        credentialsPruned: v.optional(v.number()),
         mirrorsRemoved: v.number(),
         surfacesToReapprove: v.number(),
       }),
@@ -1350,7 +1523,8 @@ export const finishSync = internalMutation({
     ) {
       return { completed: false, pages: 0, redactions: 0 };
     }
-    const refs = generationRefs(run.refs, args.refs);
+    await stampListed(ctx, source._id, args.refs, await runListing(ctx, run));
+    const pagesListed = listedCount(run) + args.refs.length;
     const currentCredentialRefs = new Set([...run.credentialRefs, ...args.credentialRefs]);
     const credentials = await ctx.db
       .query('credentials')
@@ -1368,19 +1542,26 @@ export const finishSync = internalMutation({
     }
     const pageCount = run.pageCount + args.pageCount;
     const redactionCount = run.redactionCount + args.redactionCount;
-    const unreadRecord = withUnreadPages(run.reason, args.unread ?? []);
-    const pruned = args.pruned ?? { pagesRemoved: 0, mirrorsRemoved: 0, surfacesToReapprove: 0 };
+    const unreadRecord = withUnreadPages(unreadRecordIn(run), args.unread ?? []);
+    const pruned = {
+      pagesRemoved: 0,
+      credentialsPruned: 0,
+      mirrorsRemoved: 0,
+      surfacesToReapprove: 0,
+      ...args.pruned,
+    };
     const now = Date.now();
     await ctx.db.patch(run._id, {
       cursor: undefined,
-      refs,
+      pagesListed,
       credentialRefs: [...currentCredentialRefs],
       pageCount,
       redactionCount,
       state: 'completed',
       completedAt: now,
-      reason: unreadRecord,
-      summary: { pagesKept: refs.length, ...pruned, credentialsSuperseded },
+      reason: undefined,
+      unread: unreadRecord,
+      summary: { pagesKept: pagesListed, ...pruned, credentialsSuperseded },
     });
     await ctx.db.patch(source._id, {
       activeSyncId: undefined,
@@ -1405,10 +1586,13 @@ async function supersedeCredential(
   // Superseded, not revoked: the status alone keeps the value out of every
   // decrypt and exact-value list, and the same value returning on a later
   // sync revives the row (`credentials.store`). Only a person's revoke
-  // stamps `revokedAt`, so a sync never undoes one and never makes one.
+  // stamps `revokedAt`, so a sync never undoes one and never makes one. The
+  // first supersede's time stands through every later sync's, so the row ages.
   await ctx.db.patch(credential._id, {
     status: 'superseded',
     statusReason: 'No longer detected in synced documentation.',
+    supersededAt:
+      credential.status === 'superseded' ? (credential.supersededAt ?? Date.now()) : Date.now(),
   });
   const surfaces = await ctx.db
     .query('surfaces')
@@ -1443,7 +1627,9 @@ async function supersedeCredential(
         'The previously detected credential is no longer present in synced documentation. Land a valid credential before probing again.',
       // A probe that already decrypted the retired value cannot reconnect this surface.
       probeGeneration: (surface.probeGeneration ?? 0) + 1,
+      probeStartedAt: undefined,
       toolAllowlist: undefined,
+      withheldTools: undefined,
       toolArguments: undefined,
       lastVerifiedAt: undefined,
       providerIdentityId: undefined,
@@ -1472,7 +1658,7 @@ export const failSync = internalMutation({
     await ctx.db.patch(run._id, {
       state: 'error',
       completedAt: now,
-      reason: endedShort(args.reason, run.reason),
+      ...endedShortPatch(args.reason, run),
     });
     await ctx.db.patch(source._id, {
       activeSyncId: undefined,
@@ -1547,6 +1733,11 @@ export const upsertPage = internalMutation({
       if (!unchanged) await ctx.db.patch(existing._id, page);
       return existing._id;
     }
+    // Every stored page carries a listing row, so a page whose batch never
+    // recorded is still found, and removed, by the next finish that did not list it.
+    const run = await ctx.db.get(args.syncRunId);
+    if (!run) throw new Error('Documentation sync run not found.');
+    await stampListed(ctx, args.sourceId, [args.ref], await runListing(ctx, run));
     return await ctx.db.insert('docPages', { sourceId: args.sourceId, ref: args.ref, ...page });
   },
 });

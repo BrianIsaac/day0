@@ -203,7 +203,6 @@ describe('documentation discovery lifecycle', (): void => {
         whereFound: [{ ref: 'legacy.md', quote: 'Linear MCP endpoint' }],
         credentialLanded: true,
         managerApprovedAt: 2,
-        itApprovedAt: 3,
         lastVerifiedAt: 4,
         createdAt: 1,
       });
@@ -229,7 +228,6 @@ describe('documentation discovery lifecycle', (): void => {
       path: 'mcp',
       endpoint: 'https://mcp.linear.app/mcp',
       managerApprovedAt: 2,
-      itApprovedAt: 3,
       lastVerifiedAt: 4,
       discoveryEvidence: expect.arrayContaining([
         expect.objectContaining({
@@ -461,7 +459,6 @@ describe('documentation discovery lifecycle', (): void => {
         path: 'documented-api',
         endpoint: 'https://slack.com/api/',
         managerApprovedAt: 10,
-        itApprovedAt: 11,
       });
       await ctx.db.patch(duplicate._id, { verdict: 'declared', reason: 'Rejected by operator.' });
     });
@@ -510,7 +507,6 @@ describe('documentation discovery lifecycle', (): void => {
       verdict: 'approved',
       endpoint: 'https://slack.com/api/',
       managerApprovedAt: 10,
-      itApprovedAt: 11,
     });
     expect(result.surfaces.find((surface) => surface.slug === 'slack-web-api')).toMatchObject({
       verdict: 'declared',
@@ -543,7 +539,6 @@ describe('documentation discovery lifecycle', (): void => {
         fallbackPath: 'escalate',
         endpoint: 'https://northstar.example.test/api',
         managerApprovedAt: 10,
-        itApprovedAt: 11,
       });
       return surface._id;
     });
@@ -566,7 +561,6 @@ describe('documentation discovery lifecycle', (): void => {
       path: 'documented-api',
       endpoint: 'https://northstar.example.test/api',
       managerApprovedAt: 10,
-      itApprovedAt: 11,
       discoveryEvidence: [
         expect.objectContaining({
           kind: 'documentation',

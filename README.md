@@ -875,7 +875,7 @@ It resolves values the way the running app does, which matters more than it soun
 
 ## Schema (`convex/schema.ts`)
 
-The schema contains 33 tables: 24 carry per-agent or agent-owned runtime state, one keeps the owner's record of the employees it retired, five hold owner-level documentation and credential state, one is the transient lease on the verification sandbox, and two are the deployment's own record of the migrations it has run and the release its rows are at.
+The schema contains 34 tables: 24 carry per-agent or agent-owned runtime state, one keeps the owner's record of the employees it retired, six hold owner-level documentation and credential state, one is the transient lease on the verification sandbox, and two are the deployment's own record of the migrations it has run and the release its rows are at.
 
 | Table | Purpose |
 |---|---|
@@ -887,6 +887,7 @@ The schema contains 33 tables: 24 carry per-agent or agent-owned runtime state, 
 | `docSources` | Linked MCP, folder, git and URL documentation locations with sync/discovery status |
 | `docSyncRuns` | Fenced source generations, safe continuation cursors and page/redaction totals |
 | `docPages` | Normalised, credential-redacted pages keyed by source and stable reference |
+| `docPageListings` | The listing of its source that last named each page, which a finishing sync prunes by |
 | `docSystemDiscoveries` | Current and retired evidence-backed system candidates derived from each source |
 | `surfaces` | Per-agent system connection cards, approvals, paths, probe results, tool catalogues and intake checkpoints |
 | `voiceSessions` | Day-1 1:1 sessions (`elevenlabs` / `gemini-live` / `chat`) |

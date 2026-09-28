@@ -910,6 +910,7 @@ describe('an evaluation that keeps dying (wave 2 review M23, E-70 D2)', (): void
       state: 'discovered',
       evaluationAttempts: 1,
       evaluationUnavailableAt: expect.any(Number),
+      evaluationUnavailableCause: expect.stringContaining('provider answered 503'),
     });
 
     recorded.scopeOutcome = undefined;
@@ -920,6 +921,7 @@ describe('an evaluation that keeps dying (wave 2 review M23, E-70 D2)', (): void
     expect(evaluated.state).toBe('plan-pending');
     expect(evaluated).not.toHaveProperty('evaluationAttempts');
     expect(evaluated).not.toHaveProperty('evaluationUnavailableAt');
+    expect(evaluated).not.toHaveProperty('evaluationUnavailableCause');
   });
 
   it('marks a row unavailable only for the attempt that holds its claim, never from a late answer of a lapsed one', async (): Promise<void> => {
@@ -946,6 +948,7 @@ describe('an evaluation that keeps dying (wave 2 review M23, E-70 D2)', (): void
       claimedAt: first.claimedAt,
     });
     expect(await readItem(harness, workItemId)).not.toHaveProperty('evaluationUnavailableAt');
+    expect(await readItem(harness, workItemId)).not.toHaveProperty('evaluationUnavailableCause');
     await harness.mutation(internal.work.recordScopeJudgementUnavailable, {
       workItemId,
       cause: 'provider answered 503',
@@ -954,6 +957,7 @@ describe('an evaluation that keeps dying (wave 2 review M23, E-70 D2)', (): void
     expect(await readItem(harness, workItemId)).toMatchObject({
       evaluationAttempts: 2,
       evaluationUnavailableAt: expect.any(Number),
+      evaluationUnavailableCause: 'provider answered 503',
     });
   });
 

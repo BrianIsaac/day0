@@ -275,9 +275,18 @@ try:
     result = None
 except urllib.error.HTTPError as error:
     result = [error.code, error.headers.get('Retry-After'), json.loads(error.read())]
-print(json.dumps(result))
 held.close()
+# The held connection's handler thread is a daemon: it must have answered the
+# close and given its slot back before the interpreter exits, or its line on
+# stderr races the interpreter's shutdown, which aborts the process.
+deadline = time.monotonic() + 5
+while not httpd.slots.acquire(blocking=False):
+    if time.monotonic() > deadline:
+        raise SystemExit('the held connection never gave its slot back')
+    time.sleep(0.01)
+httpd.slots.release()
 httpd.shutdown()
+print(json.dumps(result))
 `);
     expect(JSON.parse(output)).toEqual([503, '1', { error: 'busy: too many connections' }]);
   });

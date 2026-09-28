@@ -2,26 +2,26 @@ import { describe, expect, it } from 'vitest';
 import {
   MAX_UNREAD_LISTED,
   endedShort,
-  unreadPageCount,
+  legacyUnreadRecord,
+  reasonWithoutLegacyRecord,
   unreadPagesLine,
   unreadRecordIn,
   withUnreadPages,
 } from '../../../src/docs/sync-record';
 
 describe('the record of pages a sync could not read (P5-11)', (): void => {
-  it('names each page with its reason under a header that counts them', (): void => {
+  it('names each page with its reason and counts them', (): void => {
     const record = withUnreadPages(undefined, [
       { ref: 'a.md', reason: 'HTTP 404' },
       { ref: 'b.md', reason: 'truncated' },
     ]);
-    expect(record).toBe(
-      [
-        '2 pages could not be read this sync and keep their last stored version',
-        '- a.md: HTTP 404',
-        '- b.md: truncated',
-      ].join('\n'),
-    );
-    expect(unreadPageCount(record)).toBe(2);
+    expect(record).toEqual({
+      count: 2,
+      pages: [
+        { ref: 'a.md', reason: 'HTTP 404' },
+        { ref: 'b.md', reason: 'truncated' },
+      ],
+    });
     expect(withUnreadPages(record, [])).toBe(record);
     expect(withUnreadPages(undefined, [])).toBeUndefined();
   });
@@ -33,25 +33,15 @@ describe('the record of pages a sync could not read (P5-11)', (): void => {
     }));
     const first = withUnreadPages(undefined, many.slice(0, 7));
     const record = withUnreadPages(first, many.slice(7));
-    expect(unreadPageCount(record)).toBe(12);
-    const lines = record?.split('\n') ?? [];
-    expect(lines[0]).toBe(
-      '12 pages could not be read this sync and keep their last stored version',
-    );
-    expect(lines.slice(1, -1)).toHaveLength(MAX_UNREAD_LISTED);
-    expect(lines.at(-1)).toBe('- and 2 more');
-    expect(unreadPageCount(withUnreadPages(record, [{ ref: 'x.md', reason: 'gone' }]))).toBe(13);
-    expect(
-      withUnreadPages(record, [{ ref: 'x.md', reason: 'gone' }])
-        ?.split('\n')
-        .at(-1),
-    ).toBe('- and 3 more');
+    expect(record?.count).toBe(12);
+    expect(record?.pages).toHaveLength(MAX_UNREAD_LISTED);
+    expect(withUnreadPages(record, [{ ref: 'x.md', reason: 'gone' }])?.count).toBe(13);
+    expect(unreadPagesLine(record)).toMatch(/page-9\.md: HTTP 500; and 2 more\. The next sync/);
   });
 
-  it('reads nothing into a reason that is not an unread-pages record', (): void => {
-    expect(unreadPageCount('a newer sync of the source started before this one finished')).toBe(0);
-    expect(unreadPagesLine('The documentation read was interrupted (timeout).')).toBeUndefined();
+  it('says nothing for a run that read every page', (): void => {
     expect(unreadPagesLine(undefined)).toBeUndefined();
+    expect(unreadPagesLine({ count: 0, pages: [] })).toBeUndefined();
   });
 
   it('puts the record on one line for the source', (): void => {
@@ -62,16 +52,6 @@ describe('the record of pages a sync could not read (P5-11)', (): void => {
     );
   });
 
-  it('keeps a run’s unread-pages record below the reason it ended short, for a resume to carry on (step 17)', (): void => {
-    const record = withUnreadPages(undefined, [{ ref: 'a.md', reason: 'HTTP 404' }]);
-    const ended = endedShort('The documentation read was interrupted (timeout).', record);
-    expect(ended).toBe(`The documentation read was interrupted (timeout).\n${record}`);
-    expect(unreadRecordIn(ended)).toBe(record);
-    expect(unreadRecordIn(record)).toBe(record);
-    expect(endedShort('superseded', undefined)).toBe('superseded');
-    expect(unreadRecordIn('The documentation read was interrupted (timeout).')).toBeUndefined();
-  });
-
   it('keeps each page to one bounded line, whatever lines its failure has', (): void => {
     const record = withUnreadPages(undefined, [
       {
@@ -80,19 +60,60 @@ describe('the record of pages a sync could not read (P5-11)', (): void => {
       },
       { ref: 'b.md', reason: 'x'.repeat(400) },
     ]);
-    const lines = record?.split('\n') ?? [];
-    expect(lines).toHaveLength(3);
-    expect(lines[1]).toBe('- a.md: Uncaught Error: failed at handler (docSources.ts:1) at run');
-    expect(lines[2]).toHaveLength(240);
-    expect(unreadPageCount(withUnreadPages(record, [{ ref: 'c.md', reason: 'gone' }]))).toBe(3);
+    expect(record?.pages[0].reason).toBe(
+      'Uncaught Error: failed at handler (docSources.ts:1) at run',
+    );
+    expect(record?.pages[1].reason).toHaveLength(240);
   });
 
-  it('reads no record out of a failure whose text holds a line like one', (): void => {
-    const ending = endedShort(
-      'Provider said:\n2 pages could not be read this sync and keep their last stored version',
+  it('puts the reason a run ended short on one line, whatever lines the failure has', (): void => {
+    expect(
+      endedShort(
+        'Provider said:\n2 pages could not be read this sync and keep their last stored version',
+      ),
+    ).toBe('Provider said: 2 pages could not be read this sync and keep their last stored version');
+  });
+
+  it('reads the run’s own field, and leaves a reason rewrite unable to touch it (D D1 (a))', (): void => {
+    const record = withUnreadPages(undefined, [{ ref: 'a.md', reason: 'HTTP 404' }]);
+    expect(unreadRecordIn({ unread: record, reason: endedShort('superseded') })).toBe(record);
+    expect(unreadRecordIn({ reason: 'The documentation read was interrupted (timeout).' })).toBe(
       undefined,
     );
-    expect(ending.split('\n')).toHaveLength(1);
-    expect(unreadRecordIn(ending)).toBeUndefined();
+    expect(unreadRecordIn(undefined)).toBeUndefined();
+  });
+});
+
+describe('the record an earlier release kept in the reason text', (): void => {
+  const legacy = [
+    'The documentation read was interrupted (timeout).',
+    '12 pages could not be read this sync and keep their last stored version',
+    '- https://wiki.example/a: HTTP 404',
+    '- b.md: the page is 800 KiB: larger than Day0 stores',
+    '- and 10 more',
+  ].join('\n');
+
+  it('is read until the migration has moved it onto the field', (): void => {
+    const record = {
+      count: 12,
+      pages: [
+        { ref: 'https://wiki.example/a', reason: 'HTTP 404' },
+        { ref: 'b.md', reason: 'the page is 800 KiB: larger than Day0 stores' },
+      ],
+    };
+    expect(legacyUnreadRecord(legacy)).toEqual(record);
+    expect(unreadRecordIn({ reason: legacy })).toEqual(record);
+    expect(legacyUnreadRecord('a newer sync of the source started before this one finished')).toBe(
+      undefined,
+    );
+  });
+
+  it('leaves the reason the line it ended short on, or nothing when the record was all it held', (): void => {
+    expect(reasonWithoutLegacyRecord(legacy)).toBe(
+      'The documentation read was interrupted (timeout).',
+    );
+    expect(reasonWithoutLegacyRecord(legacy.split('\n').slice(1).join('\n'))).toBeUndefined();
+    expect(reasonWithoutLegacyRecord('superseded')).toBe('superseded');
+    expect(reasonWithoutLegacyRecord(undefined)).toBeUndefined();
   });
 });

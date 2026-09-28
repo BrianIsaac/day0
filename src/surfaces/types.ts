@@ -270,7 +270,6 @@ export interface ConnectRequest {
   };
   blastRadius: string;
   costBand: 'none' | 'low' | 'medium';
-  expiresInDays: number;
   rollback: string;
   openQuestions: string[];
 }

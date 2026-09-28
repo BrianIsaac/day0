@@ -31,7 +31,6 @@ import {
   type ScopeValue,
 } from '@/surfaces/intake-scope';
 import type { SurfaceDiscoveryEvidence } from '@/docs/system-discovery';
-import { isEventOf } from '@/events/contract';
 import { clockTime, useAgentZone, useNow } from '../time';
 import { LiveStatus, refusalText, type ChangeOutcome } from '../live-status';
 
@@ -769,7 +768,7 @@ export function AccessRow({
 /** A surface as the tools row reads it. */
 export type ToolsSurface = Pick<
   Doc<'surfaces'>,
-  '_id' | 'displayName' | 'verdict' | 'toolAllowlist' | 'approvedToolAllowlist'
+  '_id' | 'displayName' | 'verdict' | 'toolAllowlist' | 'approvedToolAllowlist' | 'withheldTools'
 >;
 
 /**
@@ -777,26 +776,22 @@ export type ToolsSurface = Pick<
  * tools it may call (U10 D2 (b), the re-approval of a narrowed card).
  *
  * The first connection after an approval freezes the approved list; a later
- * probe that finds more tools keeps them back (`surface.connected` names them
- * as withheld) until the manager approves them here, and nothing else widens
- * the list (`surfaces.approveTools`). Taking a tool off stops it at once;
- * one added is called once the next probe finds the provider offers it.
+ * probe that finds more tools keeps them back (the row's `withheldTools`)
+ * until the manager approves them here, and nothing else widens the list
+ * (`surfaces.approveTools`). Taking a tool off stops it at once; one added is
+ * called once the next probe finds the provider offers it.
  *
  * Args:
- *   props: The surface, the tools its latest connection withheld when known,
- *     and the approval callback.
+ *   props: The surface and the approval callback.
  *
  * Returns:
  *   The row, or nothing for a card that is not connected.
  */
 export function ToolsRow({
   surface,
-  withheld,
   onApprove,
 }: {
   surface: ToolsSurface;
-  /** The latest `surface.connected` event's withheld tools, when the page has read it. */
-  withheld?: readonly string[];
   onApprove: (tools: string[]) => Promise<unknown>;
 }): React.ReactNode {
   const [editing, setEditing] = useState(false);
@@ -810,7 +805,7 @@ export function ToolsRow({
   const calls = surface.toolAllowlist ?? [];
   const approved = surface.approvedToolAllowlist ?? calls;
   const notOffered = approved.filter((tool) => !calls.includes(tool));
-  const keptBack = (withheld ?? []).filter((tool) => !approved.includes(tool));
+  const keptBack = (surface.withheldTools ?? []).filter((tool) => !approved.includes(tool));
   const options = [...new Set([...approved, ...keptBack, ...added])];
   const formId = `tools-${surface._id}`;
   const open = (): void => {
@@ -977,33 +972,6 @@ export function ToolsRow({
 }
 
 /**
- * The tools the newest `surface.connected` event of each surface withheld,
- * from the events the page has read. A surface whose newest connection is not
- * among them is left out: the page does not know, and says nothing.
- *
- * Args:
- *   events: Recent events, newest first.
- *
- * Returns:
- *   Each surface's withheld tools, by surface id.
- */
-export function withheldToolsBySurface(
-  events: ReadonlyArray<Pick<Doc<'events'>, 'type' | 'payload'>>,
-): ReadonlyMap<string, readonly string[]> {
-  const found = new Map<string, readonly string[]>();
-  for (const event of events) {
-    if (!isEventOf(event, 'surface.connected')) continue;
-    const payload = event.payload as Partial<typeof event.payload>;
-    if (typeof payload.surfaceId !== 'string' || found.has(payload.surfaceId)) continue;
-    const tools = Array.isArray(payload.withheldTools)
-      ? payload.withheldTools.filter((tool): tool is string => typeof tool === 'string')
-      : [];
-    found.set(payload.surfaceId, tools);
-  }
-  return found;
-}
-
-/**
  * What the credential store says about a stored credential: revoked, or a
  * status the sync or a rotation set, with its reason (U19 D5). Nothing for a
  * credential that is simply live.
@@ -1119,11 +1087,6 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
   const setAccessDays = useMutation(api.surfaces.setAccessDays);
   const approveTools = useMutation(api.surfaces.approveTools);
   const now = useNow();
-  // The withheld tools are on the latest `surface.connected` event only, so
-  // the card reads them from the recent events; a connection older than the
-  // window is not claimed to have withheld nothing, it is not described.
-  const events = useQuery(api.events.recent, { agentId, limit: 100 });
-  const withheldTools = useMemo(() => withheldToolsBySurface(events ?? []), [events]);
   const reorient = useAction(api.surfaces.reorient);
   const requestProposal = useMutation(api.surfaces.requestProposal);
   const probe = useAction(api.surfaceActions.probe);
@@ -1394,7 +1357,6 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
               />
               <ToolsRow
                 surface={surface}
-                withheld={withheldTools.get(surface._id)}
                 onApprove={(tools) => approveTools({ surfaceId: surface._id, tools })}
               />
               {surface.intakeScope && scopeFieldsFor(surface.class).length > 0 ? (

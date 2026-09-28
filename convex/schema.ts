@@ -122,6 +122,14 @@ export default defineSchema({
     lastUsedAt: v.optional(v.number()),
     status: v.optional(v.union(v.literal('suspect'), v.literal('superseded'))),
     statusReason: v.optional(v.string()),
+    /**
+     * When a sync first superseded the row, kept while it stays superseded and
+     * cleared when its value returns. A page row superseded longer than
+     * `SUPERSEDED_CREDENTIAL_KEEP_MS` that no surface holds is pruned by its
+     * source's next finish (C2 D2 (a)). The `credentials-superseded-at`
+     * migration stamps the rows superseded before it with the upgrade.
+     */
+    supersededAt: v.optional(v.number()),
     revokedAt: v.optional(v.number()),
     /** Which credential key sealed this row. Declared ahead of the re-seal
      * that writes it (step 32); nothing writes or reads it yet. */
@@ -160,6 +168,8 @@ export default defineSchema({
     ),
     lastSyncAt: v.optional(v.number()),
     lastError: v.optional(v.string()),
+    /** How many listings of the source a sync has started from page one; the newest's number. */
+    listings: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index('by_user', ['userId']),
@@ -168,7 +178,21 @@ export default defineSchema({
   docSyncRuns: defineTable({
     sourceId: v.id('docSources'),
     cursor: v.optional(v.string()),
-    refs: v.array(v.string()),
+    /**
+     * The page refs a run of a release before 0.6.0 listed, which bounded a
+     * generation at Convex's 8,192-entry array. Nothing writes it from 0.6.0:
+     * a listed page is stamped on its `docPageListings` row instead. Read only
+     * as a pre-0.6.0 run's listing when that run is resumed or finished.
+     */
+    refs: v.optional(v.array(v.string())),
+    /**
+     * The source's listing this run reads (`docSources.listings`): a sync that
+     * reads from page one starts the next, a resumed one carries it on. Given
+     * lazily to a run begun before 0.6.0.
+     */
+    listing: v.optional(v.number()),
+    /** How many page refs the run's listing has named so far, a resumed run's carried. */
+    pagesListed: v.optional(v.number()),
     credentialRefs: v.array(v.string()),
     pageCount: v.number(),
     redactionCount: v.number(),
@@ -180,8 +204,20 @@ export default defineSchema({
     ),
     createdAt: v.number(),
     completedAt: v.optional(v.number()),
-    /** Why the run ended without completing: the failure it recorded, or the newer run that superseded it. */
+    /** Why the run ended without completing, on one line: the failure it recorded, or the newer run that superseded it. */
     reason: v.optional(v.string()),
+    /**
+     * The pages the run listed and could not read, each keeping its last
+     * stored version (P5-11): how many, and the first ten by name with why.
+     * A resumed run carries it on. Written from 0.6.0; the `sync-runs-unread`
+     * migration moves the record earlier releases kept below `reason`.
+     */
+    unread: v.optional(
+      v.object({
+        count: v.number(),
+        pages: v.array(v.object({ ref: v.string(), reason: v.string() })),
+      }),
+    ),
     /** What a completed run changed, as the final batch counted it. */
     summary: v.optional(
       v.object({
@@ -190,6 +226,8 @@ export default defineSchema({
         mirrorsRemoved: v.number(),
         credentialsSuperseded: v.number(),
         surfacesToReapprove: v.number(),
+        /** Superseded page credentials the finish pruned; absent on runs before 0.6.0. */
+        credentialsPruned: v.optional(v.number()),
       }),
     ),
   })
@@ -207,6 +245,25 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_source', ['sourceId'])
+    .index('by_source_ref', ['sourceId', 'ref']),
+
+  /**
+   * The listing that last named each page of a source (D D2 (a)). Each batch
+   * stamps the refs it listed; a finishing sync removes the pages whose stamp
+   * is older than its own listing, reading only those. A slim row of its own
+   * rather than a field on `docPages`, so restamping every listed page each
+   * sync never rewrites a page body or wakes the page's readers (P5-18).
+   * Every stored page has one (`upsertPage`, the `doc-page-listings`
+   * migration); a listed page not stored yet may have one without a page.
+   */
+  docPageListings: defineTable({
+    sourceId: v.id('docSources'),
+    ref: v.string(),
+    /** The source's listing (`docSources.listings`) that last named the ref; 0 for the upgrade's copy. */
+    seenBy: v.number(),
+  })
+    /** By source, then listing: the finish's walk of what a listing did not name. */
+    .index('by_source', ['sourceId', 'seenBy'])
     .index('by_source_ref', ['sourceId', 'ref']),
 
   docSystemDiscoveries: defineTable({
@@ -332,6 +389,15 @@ export default defineSchema({
     approvedToolAllowlist: v.optional(v.array(v.string())),
     /** When `approvedToolAllowlist` was set, by a connection or by the manager. */
     toolAllowlistApprovedAt: v.optional(v.number()),
+    /**
+     * The tools the last connection's provider offered that the approved list
+     * left out (`frozenTools`), which the card offers the manager to approve.
+     * Written by `recordConnected` beside the stored list, absent when it
+     * withheld nothing; cleared with the stored list, and narrowed when the
+     * manager approves one of them. The `surfaces-withheld-tools` migration
+     * copies it from each connected card's newest `surface.connected` event.
+     */
+    withheldTools: v.optional(v.array(v.string())),
     toolArguments: v.optional(
       v.array(v.object({ tool: v.string(), arguments: v.array(v.string()) })),
     ),
@@ -371,6 +437,14 @@ export default defineSchema({
      * step only a human can take, so it is reported rather than retried. */
     channelsNotJoined: v.optional(v.array(v.string())),
     probeGeneration: v.optional(v.number()),
+    /**
+     * When the probe of the current generation began, cleared when it records
+     * its result (connected, failed, rate-limited) or the generation ends
+     * (access ended, a sync's demotion). A routine re-probe asked for while
+     * it is younger than `PROBE_LEASE_MS` is not made (E-88); a probe a person
+     * asks for supersedes it. Absent means no probe is in flight.
+     */
+    probeStartedAt: v.optional(v.number()),
     /** The pending orientation job for a declared row, so a re-run cannot double-schedule. */
     orientationJobId: v.optional(v.id('_scheduled_functions')),
     waterfallPosition: v.optional(v.number()),
@@ -662,6 +736,13 @@ export default defineSchema({
     evaluationAttempts: v.optional(v.number()),
     /** When an evaluation of this row last found the scope judgement unreachable (E-70). */
     evaluationUnavailableAt: v.optional(v.number()),
+    /**
+     * Why it was unreachable, as that evaluation's `work.scope-judgement-unavailable`
+     * event gave it: written and cleared with `evaluationUnavailableAt`, so the
+     * card's waiting line reads the row, not the feed. The
+     * `work-evaluation-unavailable-cause` migration copies it onto rows stamped before it.
+     */
+    evaluationUnavailableCause: v.optional(v.string()),
     /** Real mode: the same claim for drafting the plan of a claimed row, released by the stored plan. */
     draftClaimedAt: v.optional(v.number()),
     planPendingAt: v.optional(v.number()),
@@ -781,6 +862,13 @@ export default defineSchema({
       'decision.surfaceSlug',
       'decision.channel',
     ])
+    /** The rows asked on one manager channel by when they were decided: the notice window's read (M D3 (b)). */
+    .index('by_agent_decision_channel_decided', [
+      'agentId',
+      'decision.surfaceSlug',
+      'decision.channel',
+      'decision.decidedAt',
+    ])
     .index('by_skill', ['skillId'])
     /** One employee's row for a provider item: intake's idempotency key. */
     .index('by_agent_extId', ['agentId', 'sourceSystem', 'externalId'])
@@ -888,7 +976,14 @@ export default defineSchema({
     decidedAt: v.optional(v.number()),
     outcome: v.optional(v.union(v.literal('approved'), v.literal('rejected'))),
     decidedTs: v.optional(v.string()),
-  }).index('by_agent_id', ['agentId', 'id']),
+  })
+    .index('by_agent_id', ['agentId', 'id'])
+    /**
+     * One manager channel's batches by decision time: the undecided ones,
+     * newest first, for the decision poll (M D3 (b)). Per channel, so batches
+     * another DM was sent never crowd an open one out of the read.
+     */
+    .index('by_agent_channel_decided', ['agentId', 'surfaceSlug', 'channel', 'decidedAt']),
 
   /**
    * What the gate tells the manager about a finished run: that work landed,

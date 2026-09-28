@@ -177,6 +177,16 @@ export function upgradeVerdict(input: {
 /** The table the upgrade's migrations keep their progress in. */
 export const MIGRATIONS_TABLE = 'migrations';
 
+/** A schema declaration a widen-migrate-narrow cycle retires, with the migration that clears it. */
+export interface RetiredDeclaration {
+  /** The field, as `table.field`. */
+  readonly declaration: string;
+  /** The migration that clears it from every row. */
+  readonly migration: string;
+  /** The release that ships the migration. */
+  readonly release: string;
+}
+
 /**
  * The declarations this checkout's schema no longer carries, each with the
  * migration that cleared it from every row (decision N10: a
@@ -185,11 +195,7 @@ export const MIGRATIONS_TABLE = 'migrations';
  * these would refuse the push halfway; the upgrade refuses before anything is
  * pushed instead, until the release that shipped the migration has run it.
  */
-export const RETIRED_DECLARATIONS: ReadonlyArray<{
-  readonly declaration: string;
-  readonly migration: string;
-  readonly release: string;
-}> = [
+export const RETIRED_DECLARATIONS: readonly RetiredDeclaration[] = [
   { declaration: 'agents.docSourceIds', migration: 'agents-inclusion-list', release: '0.4.0' },
   { declaration: 'agents.posture', migration: 'agents-posture', release: '0.4.0' },
   { declaration: 'skills.daytonaSandboxId', migration: 'skills-sandbox-id', release: '0.4.0' },
@@ -199,6 +205,22 @@ export const RETIRED_DECLARATIONS: ReadonlyArray<{
     release: '0.4.0',
   },
   { declaration: 'surfaces.credentialRef', migration: 'surfaces-credential-ref', release: '0.4.0' },
+];
+
+/**
+ * The declarations this checkout still carries and ships the clearing
+ * migration of: the release after it removes each one, and moves its row
+ * into `RETIRED_DECLARATIONS` as it does (N10). The release check does not
+ * read these: the schema still declares the field, so a row that carries it
+ * pushes, and its migration runs after the push. Listed now so the removal is
+ * one move, which the migration tests hold to the schema and the migrations.
+ */
+export const RETIRING_DECLARATIONS: readonly RetiredDeclaration[] = [
+  {
+    declaration: 'surfaces.itApprovedAt',
+    migration: 'surfaces-single-approval',
+    release: '0.6.0',
+  },
 ];
 
 /** The most migration rows the check reads; one per migration any release shipped. */

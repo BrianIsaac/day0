@@ -10,6 +10,7 @@ import {
   readReleaseVerdict,
   releaseStampArguments,
   RETIRED_DECLARATIONS,
+  RETIRING_DECLARATIONS,
   unclearedDeclarations,
   upgradeVerdict,
 } from '../../scripts/releases';
@@ -187,6 +188,37 @@ describe('the declarations this checkout retired (N10)', (): void => {
       stderr: '',
     });
     expect(readReleaseVerdict(cli, checkout)).toMatchObject({ allowed: true });
+  });
+});
+
+describe('the declarations the next release retires (N10, Q D2)', (): void => {
+  it('pushes a v0.5.0 volume whose single-approval migration has not run, since this checkout still declares itApprovedAt', (): void => {
+    expect(RETIRING_DECLARATIONS).toContainEqual({
+      declaration: 'surfaces.itApprovedAt',
+      migration: 'surfaces-single-approval',
+      release: '0.6.0',
+    });
+    // A v0.5.0 volume finished v0.4.0's clearing migrations and none of this release's.
+    const cleared = RETIRED_DECLARATIONS.filter((row) => row.release === '0.4.0')
+      .map(
+        ({ migration }) =>
+          `${JSON.stringify({ name: migration, release: '0.4.0', read: 1, changed: 0, startedAt: 1, completedAt: 2 })}\n`,
+      )
+      .join('');
+    const cli = (args: readonly string[]) => ({
+      status: 0,
+      stdout:
+        {
+          'convex data': 'agents\ndeploymentVersions\nmigrations\nsurfaces\n',
+          'convex data deploymentVersions --limit 1 --format jsonl':
+            '{"release":"0.5.0","recordedAt":1}\n',
+          'convex data migrations --limit 1000 --format jsonl': cleared,
+        }[args.join(' ')] ?? '',
+      stderr: '',
+    });
+    expect(
+      readReleaseVerdict(cli, { release: '0.6.0', releases: [...RELEASES, '0.5.0', '0.6.0'] }),
+    ).toMatchObject({ allowed: true, from: '0.5.0' });
   });
 });
 

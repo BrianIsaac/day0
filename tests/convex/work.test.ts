@@ -883,7 +883,7 @@ describe('manager channel request claims', (): void => {
       return row._id;
     });
     const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId: slackId });
-    if (!probe) throw new Error('probe was not reserved');
+    if (!probe.reserved) throw new Error('probe was not reserved');
     await harness.mutation(internal.surfaces.recordConnected, {
       surfaceId: slackId,
       generation: probe.generation,
@@ -947,7 +947,7 @@ describe('manager channel request claims', (): void => {
       return row._id;
     });
     const failed = await harness.mutation(internal.surfaces.beginProbe, { surfaceId: slackId });
-    if (!failed) throw new Error('probe was not reserved');
+    if (!failed.reserved) throw new Error('probe was not reserved');
     await harness.mutation(internal.surfaces.recordProbeFailure, {
       surfaceId: slackId,
       generation: failed.generation,
@@ -955,7 +955,7 @@ describe('manager channel request claims', (): void => {
       reason: 'the manager email boss@day0.local resolves to a deactivated Slack user.',
     });
     const reconnect = await harness.mutation(internal.surfaces.beginProbe, { surfaceId: slackId });
-    if (!reconnect) throw new Error('probe was not reserved');
+    if (!reconnect.reserved) throw new Error('probe was not reserved');
     await harness.mutation(internal.surfaces.recordConnected, {
       surfaceId: slackId,
       generation: reconnect.generation,
@@ -1356,6 +1356,161 @@ describe('manager channel request claims', (): void => {
     });
   });
 
+  it('finds a batch opened after two hundred older batches that were never decided, by index under the transaction limits (M D3 (b))', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest({ schema, modules: allConvexModules(), transactionLimits: true });
+    const { agentId, workItemId, runId } = await seed(harness, 'actions-pending', undefined, {
+      withSlack: true,
+    });
+    const other = await pendAnother(harness, agentId);
+    const surfaceId = await slackSurfaceId(harness, agentId);
+    const asked = (id: string) => ({
+      id,
+      kind: 'actions' as const,
+      requestedAt: 1,
+      channel: 'D0MANAGER',
+      surfaceSlug: 'slack',
+      surfaceName: 'Slack',
+    });
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, { pendingRunId: runId, decision: asked('ab3xyz') });
+      await ctx.db.patch(other.workItemId, { decision: asked('cd4uvw') });
+      // Batches whose members were decided one by one: undecided for good.
+      for (let index = 0; index < 201; index += 1) {
+        await ctx.db.insert('decisionBatches', {
+          agentId,
+          id: `a${String(index).padStart(5, '2')}`,
+          surfaceSlug: 'slack',
+          channel: 'D0MANAGER',
+          members: [
+            { workItemId, decisionId: `old-${index}`, pendingRunId: runId },
+            {
+              workItemId: other.workItemId,
+              decisionId: `old-${index}-b`,
+              pendingRunId: other.runId,
+            },
+          ],
+          requestedAt: 1,
+        });
+      }
+    });
+    await harness.mutation(internal.work.prepareDecisionBatch, {
+      agentId,
+      batchId: 'zzzzzz',
+      surfaceSlug: 'slack',
+      channel: 'D0MANAGER',
+      members: [
+        { workItemId, decisionId: 'ab3xyz', pendingRunId: runId },
+        { workItemId: other.workItemId, decisionId: 'cd4uvw', pendingRunId: other.runId },
+      ],
+    });
+    expect(await harness.query(internal.work.openDecisions, { surfaceId })).toMatchObject({
+      batches: [{ batchId: 'zzzzzz', decisionIds: ['ab3xyz', 'cd4uvw'] }],
+    });
+  });
+
+  it('finds an open batch behind two hundred newer undecided batches of another channel (adversarial pass)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest({ schema, modules: allConvexModules(), transactionLimits: true });
+    const { agentId, workItemId, runId } = await seed(harness, 'actions-pending', undefined, {
+      withSlack: true,
+    });
+    const other = await pendAnother(harness, agentId);
+    const surfaceId = await slackSurfaceId(harness, agentId);
+    const asked = (id: string) => ({
+      id,
+      kind: 'actions' as const,
+      requestedAt: 1,
+      channel: 'D0MANAGER',
+      surfaceSlug: 'slack',
+      surfaceName: 'Slack',
+    });
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, { pendingRunId: runId, decision: asked('ab3xyz') });
+      await ctx.db.patch(other.workItemId, { decision: asked('cd4uvw') });
+    });
+    await harness.mutation(internal.work.prepareDecisionBatch, {
+      agentId,
+      batchId: 'ef5rst',
+      surfaceSlug: 'slack',
+      channel: 'D0MANAGER',
+      members: [
+        { workItemId, decisionId: 'ab3xyz', pendingRunId: runId },
+        { workItemId: other.workItemId, decisionId: 'cd4uvw', pendingRunId: other.runId },
+      ],
+    });
+    // Newer batches a previous manager's DM was sent, decided one by one there.
+    await harness.run(async (ctx): Promise<void> => {
+      for (let index = 0; index < 201; index += 1) {
+        await ctx.db.insert('decisionBatches', {
+          agentId,
+          id: `p${String(index).padStart(5, '2')}`,
+          surfaceSlug: 'slack',
+          channel: 'D0PREVIOUS',
+          members: [
+            { workItemId, decisionId: `old-${index}`, pendingRunId: runId },
+            {
+              workItemId: other.workItemId,
+              decisionId: `old-${index}-b`,
+              pendingRunId: other.runId,
+            },
+          ],
+          requestedAt: 1,
+        });
+      }
+    });
+    expect(await harness.query(internal.work.openDecisions, { surfaceId })).toMatchObject({
+      batches: [{ batchId: 'ef5rst', decisionIds: ['ab3xyz', 'cd4uvw'] }],
+    });
+  });
+
+  it('owes the notice for a row decided within the hour behind fifty newer rows asked on the DM (M D3 (b))', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    const now = Date.UTC(2026, 8, 28, 9, 0);
+    vi.setSystemTime(now);
+    const harness = convexTest({ schema, modules: allConvexModules(), transactionLimits: true });
+    const { agentId, workItemId } = await seed(harness, 'plan-approved', undefined, {
+      withSlack: true,
+    });
+    const surfaceId = await slackSurfaceId(harness, agentId);
+    const asked = (id: string, decidedAt?: number) => ({
+      id,
+      kind: 'plan' as const,
+      requestedAt: 1,
+      channel: 'D0MANAGER',
+      surfaceSlug: 'slack',
+      surfaceName: 'Slack',
+      ...(decidedAt !== undefined ? { decidedAt, outcome: 'approved' as const } : {}),
+    });
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, { decision: asked('ab3xyz', now - 10 * 60_000) });
+      for (let index = 0; index < 60; index += 1) {
+        await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: `REVOPS-${100 + index}`,
+          title: `Ticket ${index}`,
+          contentSummary: 'Asked long ago, never answered.',
+          contentRefs: [],
+          state: 'plan-pending',
+          observedAt: 1,
+          createdAt: 1,
+          decision: asked(`q${index}`),
+        });
+      }
+    });
+    expect(await harness.query(internal.work.openDecisions, { surfaceId })).toMatchObject({
+      noticeOwed: true,
+    });
+    vi.setSystemTime(now + 51 * 60_000);
+    expect(await harness.query(internal.work.openDecisions, { surfaceId })).toMatchObject({
+      noticeOwed: false,
+    });
+    vi.useRealTimers();
+  });
+
   it('re-sends a delivered request marked failed whose replacement was never claimed, once the manager is resolved (M7)', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
@@ -1379,7 +1534,7 @@ describe('manager channel request claims', (): void => {
     });
     const surfaceId = await slackSurfaceId(harness, agentId);
     const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
-    if (!probe) throw new Error('probe was not reserved');
+    if (!probe.reserved) throw new Error('probe was not reserved');
     await harness.mutation(internal.surfaces.recordConnected, {
       surfaceId,
       generation: probe.generation,

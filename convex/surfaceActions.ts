@@ -8,6 +8,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { action, internalAction, type ActionCtx } from './_generated/server';
 import { assertOwnsAgentAction } from './ownership';
+import { PROBEABLE_VERDICTS, type ProbeRefusal, type ProbeReservation } from './surfaces';
 import { relevantSystemText } from './orientationActions';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 import { createSecretMcpClient } from '../src/surfaces/mcp-client';
@@ -191,13 +192,12 @@ function probeFailureVerdict(error: unknown, safeReason: string): 'ungranted' | 
   return 'listed-dead';
 }
 
-/** The verdicts `beginProbe` admits; a row that left them is no longer this probe's to call. */
-const PROBEABLE_VERDICTS: ReadonlyArray<Doc<'surfaces'>['verdict']> = [
-  'approved',
-  'connected',
-  'ungranted',
-  'listed-dead',
-];
+/**
+ * The verdicts whose cards the hourly sweep probes again, with a credential
+ * and an approval (`orientationData.isReprobeCandidate`); a card with any
+ * other verdict is probed only when something asks.
+ */
+const SWEPT_VERDICTS: ReadonlyArray<Doc<'surfaces'>['verdict']> = ['connected', 'listed-dead'];
 
 /** How long a probe waits before its one retry. */
 export const PROBE_RETRY_WAIT_MS = 5_000;
@@ -1120,12 +1120,30 @@ export async function probeSlackSurface(
   };
 }
 
+/** One probe asked for: the card, and whether it is a routine re-probe. */
+export interface ProbeRequest {
+  readonly surfaceId: Id<'surfaces'>;
+  /**
+   * The hourly sweep's re-probe or a rate limit's re-ask, which yields to a
+   * probe of the card already in flight (E-88). Every other probe is asked
+   * for by a person's action and supersedes one in flight.
+   */
+  readonly routine?: boolean;
+}
+
+/** What a probe `beginProbe` refused says, by the refusal. */
+const PROBE_REFUSED: Readonly<Record<ProbeRefusal, string>> = {
+  'not-probeable': 'Surface is not ready to probe.',
+  'access-ended': "The card's access has ended; only the manager's renewal probes it again.",
+  'in-flight': 'A probe of this card is already running; this routine re-probe was not made.',
+};
+
 /**
  * Execute one generation-fenced provider probe.
  *
  * Args:
  *   ctx: Convex Node action context.
- *   surfaceId: Surface being verified.
+ *   request: The surface being verified, and whether the probe is routine.
  *
  * Returns:
  *   Safe connection outcome containing no credential or provider response body.
@@ -1133,14 +1151,26 @@ export async function probeSlackSurface(
  */
 export async function runSurfaceProbe(
   ctx: ActionCtx,
-  surfaceId: Id<'surfaces'>,
+  request: ProbeRequest,
   dependencies: ProbeDependencies = probeDependencies,
 ): Promise<ProbeOutcome> {
-  const claimed: { surface: Doc<'surfaces'>; generation: number } | null = await ctx.runMutation(
-    internal.surfaces.beginProbe,
-    { surfaceId },
-  );
-  if (!claimed) return { verdict: 'skipped', reason: 'Surface is not ready to probe.' };
+  const { surfaceId } = request;
+  const claimed: ProbeReservation = await ctx.runMutation(internal.surfaces.beginProbe, {
+    surfaceId,
+    ...(request.routine === true ? { routine: true } : {}),
+  });
+  if (!claimed.reserved) {
+    // A re-ask on a card no hourly sweep covers is the only probe that card
+    // gets, so one that met a probe in flight is asked again once it ends.
+    if (claimed.refusal === 'in-flight' && !SWEPT_VERDICTS.includes(claimed.verdict)) {
+      await ctx.scheduler.runAfter(
+        Math.max(0, claimed.leaseEndsAt - Date.now()),
+        internal.surfaceActions.probeInternal,
+        { surfaceId, routine: true },
+      );
+    }
+    return { verdict: 'skipped', reason: PROBE_REFUSED[claimed.refusal] };
+  }
   let { surface, generation } = claimed;
   const context = await ctx.runQuery(internal.orientationData.surfaceForOrientation, { surfaceId });
   if (!context) return { verdict: 'skipped', reason: 'Surface no longer exists.' };
@@ -1255,7 +1285,7 @@ export async function runSurfaceProbe(
    * scheduled for when the provider said it could answer, within bounds.
    */
   const leaveRateLimited = async (limited: ProbeRateLimited): Promise<ProbeOutcome> => {
-    const swept = surface.verdict === 'connected' || surface.verdict === 'listed-dead';
+    const swept = SWEPT_VERDICTS.includes(surface.verdict);
     const next = swept
       ? RATE_LIMITED_REPROBE_MS.max
       : Math.min(
@@ -1268,12 +1298,16 @@ export async function runSurfaceProbe(
       reason: limited.message,
       retryAfterMs: next,
       attemptedAt: dependencies.now(),
+      endsProbe: true,
     });
     if (!recorded) {
       return { verdict: 'skipped', reason: 'A newer surface probe superseded this result.' };
     }
     if (!swept) {
-      await ctx.scheduler.runAfter(next, internal.surfaceActions.probeInternal, { surfaceId });
+      await ctx.scheduler.runAfter(next, internal.surfaceActions.probeInternal, {
+        surfaceId,
+        routine: true,
+      });
     }
     return {
       verdict: 'skipped',
@@ -1518,13 +1552,20 @@ export const probe = action({
 /**
  * Internal approval and maintenance entry point for one isolated probe.
  *
- * `renewExpiry` is retired and ignored: a probe never moves the access end
- * date (Q5). It stays accepted until the Slack install
- * (`slackProvisionActions.ts`) stops passing it.
+ * `routine` marks the hourly sweep's re-probe and a rate limit's re-ask,
+ * which yield to a probe already in flight (E-88); every other caller is a
+ * person's action and supersedes it. `renewExpiry` is retired and ignored: a
+ * probe never moves the access end date (Q5). It stays accepted until the
+ * Slack install (`slackProvisionActions.ts`) stops passing it.
  */
 export const probeInternal = internalAction({
-  args: { surfaceId: v.id('surfaces'), renewExpiry: v.optional(v.boolean()) },
-  handler: async (ctx, args): Promise<ProbeOutcome> => await runSurfaceProbe(ctx, args.surfaceId),
+  args: {
+    surfaceId: v.id('surfaces'),
+    routine: v.optional(v.boolean()),
+    renewExpiry: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args): Promise<ProbeOutcome> =>
+    await runSurfaceProbe(ctx, { surfaceId: args.surfaceId, routine: args.routine }),
 });
 
 /**
@@ -1653,6 +1694,7 @@ export const reprobeAll = internalAction({
       if (notice) noticed += 1;
       await ctx.scheduler.runAfter(0, internal.surfaceActions.probeInternal, {
         surfaceId: surface._id,
+        routine: true,
       });
       scheduled += 1;
     }
