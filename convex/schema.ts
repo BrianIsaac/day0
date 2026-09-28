@@ -1092,6 +1092,8 @@ export default defineSchema({
      * See `convex/skills.ts`. */
     authoringRunId: v.optional(v.id('events')),
     authoringClaimedAt: v.optional(v.number()),
+    /** How many authoring runs in a row were deferred because the model provider could not be reached. */
+    authoringDeferrals: v.optional(v.number()),
     /** Names the run that checked this body: a Daytona sandbox id, or
      * `local:<run id>` from the bundled local sandbox. */
     sandboxId: v.optional(v.string()),

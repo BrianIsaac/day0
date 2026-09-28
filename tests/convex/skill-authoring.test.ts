@@ -9,6 +9,7 @@ import schema from '../../convex/schema';
 import { REFUSED_DRAFT_PROMPT_CHARS } from '../../src/work/authored-skill';
 import type { SkillSandboxRun } from '../../src/lib/skill-sandbox';
 import { allConvexModules } from './all-modules';
+import { MAX_AUTHORING_DEFERRALS } from '../../convex/skills';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 /**
@@ -36,6 +37,8 @@ const recorded = vi.hoisted(() => ({
   users: [] as string[],
   schemas: [] as unknown[],
   outputs: [] as Array<{ body: string; smokeTest: string }>,
+  /** Failures the author call raises, in turn, before any queued output. */
+  failures: [] as unknown[],
   sandboxRuns: 0,
   sandboxPrograms: [] as string[],
   sandbox: undefined as SkillSandboxRun | undefined,
@@ -48,6 +51,8 @@ vi.mock('../../src/lib/mastra', () => ({
   agentJson: schemaChecked(async (args): Promise<unknown> => {
     recorded.users.push(args.user);
     recorded.schemas.push(args.schema);
+    const failure = recorded.failures.shift();
+    if (failure !== undefined) throw failure;
     const next = recorded.outputs.shift();
     if (!next) throw new Error('no authored output queued');
     return next;
@@ -443,6 +448,50 @@ describe('real-mode authoring, where the harness is the smoke test', (): void =>
 
   afterEach((): void => {
     restoreSurfaceMode();
+  });
+
+  it('defers an authoring the model provider could not answer, and the retry it scheduled registers (U9 step 20)', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { skillId } = await seedApprovedSkill(harness);
+    recorded.failures.push(Object.assign(new Error('upstream unavailable'), { status: 503 }));
+
+    const first = await harness
+      .withIdentity(OWNER)
+      .action(api.skillActions.authorAndRegisterSkill, { skillId });
+    expect(first).toMatchObject({ ok: false });
+    expect(first.reason).toContain('tried again');
+    const deferred = await readSkill(harness, skillId);
+    // Listed and retryable, holding no claim, and not failed: nothing about the skill was wrong.
+    expect(deferred.state).toBe('authoring');
+    expect(deferred.authoringRunId).toBeUndefined();
+    expect(deferred.verificationLog).toContain('upstream unavailable');
+    const events = await harness.run(async (ctx) => await ctx.db.query('events').collect());
+    expect(events.map((event) => event.type)).toContain('skill.authoring-deferred');
+    expect(events.map((event) => event.type)).not.toContain('skill.failed');
+
+    recorded.outputs.push({ body: reusableBody, smokeTest: casesSmokeTest });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    expect((await readSkill(harness, skillId)).state).toBe('registered');
+    vi.useRealTimers();
+  });
+
+  it('fails an authoring the provider stays away from for every retry, so the manager decides', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { skillId } = await seedApprovedSkill(harness);
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      recorded.failures.push(Object.assign(new Error('upstream unavailable'), { status: 503 }));
+    }
+    await harness.withIdentity(OWNER).action(api.skillActions.authorAndRegisterSkill, { skillId });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    const failed = await readSkill(harness, skillId);
+    expect(failed.state).toBe('failed');
+    expect(failed.verificationLog).toContain('could not be reached');
+    // The first call and each scheduled retry asked the model once.
+    expect(recorded.users).toHaveLength(1 + MAX_AUTHORING_DEFERRALS);
+    recorded.failures.length = 0;
+    vi.useRealTimers();
   });
 
   it('asks in the real-mode schema, sends the sandbox the harness, and registers', async (): Promise<void> => {

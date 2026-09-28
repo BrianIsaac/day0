@@ -192,6 +192,10 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     `skill check failed: ${text(payload.name) ?? 'unnamed'}${because(payload.reason)}`,
   'skill.sandbox-skipped': (payload) =>
     `skill check skipped, no sandbox: ${text(payload.name) ?? 'unnamed'}${because(payload.reason)}`,
+  'skill.authoring-deferred': (payload) =>
+    `skill authoring waiting for the model provider: ${text(payload.name) ?? 'unnamed'}${
+      duration(payload.retryInMs) ? `, again in ${duration(payload.retryInMs)}` : ''
+    }${because(payload.reason)}`,
   'skill.sandbox-waiting': (payload) =>
     `skill check waiting for the sandbox: ${text(payload.name) ?? 'unnamed'}${
       duration(payload.retryInMs) ? `, again in ${duration(payload.retryInMs)}` : ''

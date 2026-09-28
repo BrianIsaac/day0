@@ -366,7 +366,7 @@ export interface VoiceFinalisationAbandonedPayload {
 
 /** The payload of `skill.authoring-refused`. */
 export interface SkillAuthoringRefusedPayload extends SkillNamed {
-  readonly attempted: 'authoring-progress' | 'register' | 'fail' | 'park-unverified';
+  readonly attempted: 'authoring-progress' | 'register' | 'fail' | 'park-unverified' | 'defer';
   readonly state: Doc<'skills'>['state'];
 }
 
@@ -428,6 +428,13 @@ export type SkillSandboxSkippedPayload = SkillReason;
 export interface SkillSandboxWaitingPayload extends SkillNamed {
   readonly heldForMs: number;
   readonly retryInMs: number;
+}
+
+/** The payload of `skill.authoring-deferred`: the model provider could not be reached. */
+export interface SkillAuthoringDeferredPayload extends SkillReason {
+  readonly retryInMs: number;
+  /** This deferral's place in the run of them, from 1. */
+  readonly attempt: number;
 }
 
 // Surfaces.
@@ -1050,6 +1057,7 @@ export interface EventPayloads {
   'skill.verification-failed': SkillVerificationFailedPayload;
   'skill.sandbox-skipped': SkillSandboxSkippedPayload;
   'skill.sandbox-waiting': SkillSandboxWaitingPayload;
+  'skill.authoring-deferred': SkillAuthoringDeferredPayload;
   'surface.charter-match-ambiguous': SurfaceCharterMatchAmbiguousPayload;
   'surface.proposed': SurfaceProposedPayload;
   'surface.oriented': SurfaceOrientedPayload;
@@ -1193,6 +1201,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'skill.verification-failed',
   'skill.sandbox-skipped',
   'skill.sandbox-waiting',
+  'skill.authoring-deferred',
   'surface.charter-match-ambiguous',
   'surface.proposed',
   'surface.oriented',
