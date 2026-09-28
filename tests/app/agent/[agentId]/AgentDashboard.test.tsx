@@ -1428,6 +1428,35 @@ describe('charter confirm-or-strike list', (): void => {
     expect(renderToStaticMarkup(<ConstraintList constraints={[]} approved={false} />)).toBe('');
   });
 
+  it('draws the line through only a rule struck since the list rendered, and settles its mark', (): void => {
+    /** The quote of every row the list marks as struck just now. */
+    const just = (root: ParentNode): string[] =>
+      [...root.querySelectorAll('li[data-just]')].map(
+        (row) => row.querySelector('[data-strike]')?.textContent ?? '',
+      );
+    const list = (struck: boolean) => (
+      <ConstraintList
+        constraints={[{ ...constraints[0]!, struck }, constraints[1]!]}
+        approved={false}
+        onStrike={() => undefined}
+        onRestore={() => undefined}
+      />
+    );
+    const view = mount(list(false));
+    expect(just(view.container)).toEqual([]);
+    expect(view.container.querySelectorAll('[data-struck-mark]')).toHaveLength(1);
+
+    act((): void => view.root.render(list(true)));
+    expect(just(view.container)).toEqual(["“if it's a ticket it has an owner and a priority”"]);
+    expect(view.container.querySelector('li[data-just] [data-struck-mark]')?.textContent).toBe(
+      '· struck',
+    );
+
+    act((): void => view.root.render(list(false)));
+    expect(just(view.container)).toEqual([]);
+    view.unmount();
+  });
+
   it('names the struck count on the Approve button', (): void => {
     const charter = {
       _id: 'charter-1',

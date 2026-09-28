@@ -1130,6 +1130,11 @@ export function ConstraintList({
   /** What striking a rule would do, computed as approval computes it. */
   previewStrike?: (index: number) => StrikePreview;
 }) {
+  // A rule struck since the list first rendered is this visit's decision, and its line draws.
+  const [struckOnArrival] = useState(
+    (): ReadonlySet<number> =>
+      new Set(constraints.flatMap((constraint, index) => (constraint.struck ? [index] : []))),
+  );
   if (constraints.length === 0) return null;
   return (
     <div className="text-xs">
@@ -1145,6 +1150,7 @@ export function ConstraintList({
           return (
             <li
               key={index}
+              data-just={constraint.struck && !struckOnArrival.has(index) ? '' : undefined}
               className={`flex items-start gap-2 p-2 rounded-md border ${
                 constraint.struck
                   ? 'border-[var(--color-border)] text-[var(--color-muted)]'
@@ -1152,7 +1158,10 @@ export function ConstraintList({
               }`}
             >
               <div className="flex-1 min-w-0">
-                <p className={constraint.struck ? 'line-through' : 'text-[var(--color-fg)]'}>
+                <p
+                  data-strike=""
+                  className={constraint.struck ? 'line-through' : 'text-[var(--color-fg)]'}
+                >
                   {/* A derived rule's quote is the clause itself, not a sentence
                     the manager said, so it is not printed as a quotation. */}
                   {constraint.origin === 'derived' ? (
@@ -1180,7 +1189,12 @@ export function ConstraintList({
                     ? " · found by checking the clauses (the charter's wording, not a sentence of yours)"
                     : ''}
                   {constraint.origin === 'manager' ? ' · added by you' : ''}
-                  {constraint.struck ? ' · struck' : ''}
+                  {constraint.struck ? (
+                    <>
+                      {' '}
+                      <span data-struck-mark="">· struck</span>
+                    </>
+                  ) : null}
                 </p>
                 {preview?.refusal ? (
                   <p className="text-[10px] text-[var(--color-warn)] mt-0.5">
