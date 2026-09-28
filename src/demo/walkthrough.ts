@@ -69,6 +69,18 @@ export function elapsedLabel(seconds: number): string {
   return `+${minutes}:${String(seconds % 60).padStart(2, '0')}`;
 }
 
+/**
+ * How much wider than tall a capture is before it counts as a header strip: a status line or a
+ * card header the README shows cropped, which the device frame can only draw at about half its
+ * size, so the page links it at full size (W D5 (b)).
+ */
+export const HEADER_STRIP_RATIO = 4;
+
+/** Whether a capture is a header strip, too wide for the frame to draw legibly. */
+export function isHeaderStrip(capture: Pick<RunCapture, 'width' | 'height'>): boolean {
+  return capture.width >= capture.height * HEADER_STRIP_RATIO;
+}
+
 /** The first step the README gives an elapsed time for, from which the page's clock runs. */
 export function firstTimedStep(recorded: RecordedRun): RunStep | undefined {
   return recorded.steps.find((step) => step.elapsedSeconds !== null);

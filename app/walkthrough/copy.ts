@@ -33,6 +33,8 @@ export const WALKTHROUGH = {
     const first = firstTimedStep(run);
     return first === undefined ? 'untimed' : `timed from step ${first.number}`;
   },
+  /** The name of the link a header-strip capture opens at full size by. */
+  fullSize: (step: number): string => `Open the capture of step ${step} at full size`,
   storyHeading: 'The run, step by step',
   ledgerLabel: 'The record so far',
   numbers: { heading: 'The numbers this run ended on', lede: 'Single run, counts not rates.' },

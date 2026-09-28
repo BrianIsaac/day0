@@ -3,7 +3,7 @@
 import Image from 'next/image';
 import { useRef } from 'react';
 import type { RecordedRun, RunStep } from '@/demo/walkthrough';
-import { elapsedLabel } from '@/demo/walkthrough';
+import { elapsedLabel, isHeaderStrip } from '@/demo/walkthrough';
 import { useInReadingBand } from '../motion';
 import { RunClock } from './RunClock';
 import { WALKTHROUGH } from './copy';
@@ -31,14 +31,8 @@ function DeviceFrame({ run, active }: { run: RecordedRun; active: number }) {
         data-pin-stack=""
         className="relative aspect-[16/9] bg-[var(--color-bg)] md:aspect-[16/10]"
       >
-        {run.steps.map((shot, index) => (
-          <div
-            key={shot.number}
-            data-frame={shot.number}
-            data-on={index === active ? '' : undefined}
-            aria-hidden={index !== active}
-            className="absolute inset-0"
-          >
+        {run.steps.map((shot, index) => {
+          const capture = (
             <Image
               src={shot.capture.src}
               width={shot.capture.width}
@@ -48,8 +42,31 @@ function DeviceFrame({ run, active }: { run: RecordedRun; active: number }) {
               loading={index === 0 ? 'eager' : 'lazy'}
               className="h-full w-full object-contain object-top"
             />
-          </div>
-        ))}
+          );
+          return (
+            <div
+              key={shot.number}
+              data-frame={shot.number}
+              data-on={index === active ? '' : undefined}
+              aria-hidden={index !== active}
+              // A hidden frame takes no focus and no click, so the shown one's link is the one hit.
+              inert={index !== active}
+              className="absolute inset-0"
+            >
+              {isHeaderStrip(shot.capture) ? (
+                <a
+                  href={shot.capture.src}
+                  aria-label={WALKTHROUGH.fullSize(shot.number)}
+                  className="block h-full cursor-zoom-in"
+                >
+                  {capture}
+                </a>
+              ) : (
+                capture
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

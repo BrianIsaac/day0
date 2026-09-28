@@ -963,6 +963,10 @@ body {
     transform 200ms var(--ease-arrive);
 }
 
+[data-pin-stack] > [data-frame]:not([data-on]) {
+  pointer-events: none;
+}
+
 [data-pin-stack] > [data-frame][data-on] {
   opacity: 1;
   transform: none;
