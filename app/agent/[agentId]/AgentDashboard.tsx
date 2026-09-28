@@ -2134,7 +2134,12 @@ export function RegisteredSkillsPanel({
   const author = useAction(api.skillActions.authorAndRegisterSkill);
   const requestRevision = useMutation(api.skills.requestRevision);
   const [retrying, setRetrying] = useState<Id<'skills'> | null>(null);
-  const [returnTo, setReturnTo] = useState<HTMLElement | null>(null);
+  // The control that started a run, and the card that stands in for it once a
+  // registration moves its row out of this list.
+  const [returnTo, setReturnTo] = useState<{
+    control: HTMLElement;
+    card: HTMLElement | null;
+  } | null>(null);
   const now = useNow();
   const describedBy = useId();
 
@@ -2147,7 +2152,7 @@ export function RegisteredSkillsPanel({
     origin: HTMLElement,
   ): Promise<void> {
     setRetrying(skillId);
-    setReturnTo(origin);
+    setReturnTo({ control: origin, card: origin.closest<HTMLElement>('section[tabindex="-1"]') });
     onAuthoringAttempt(null);
     try {
       if (revise) await requestRevision({ skillId });
@@ -2173,7 +2178,7 @@ export function RegisteredSkillsPanel({
   // once it is enabled again, unless the manager has moved on.
   useEffect(() => {
     if (retrying !== null || returnTo === null) return;
-    returnFocus(returnTo, null);
+    returnFocus(returnTo.control, returnTo.card);
     // eslint-disable-next-line react-hooks/set-state-in-effect -- the focus return happens once per settled run
     setReturnTo(null);
   }, [retrying, returnTo]);

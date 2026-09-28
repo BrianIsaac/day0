@@ -2017,6 +2017,31 @@ describe('what Retry does to an unregistered skill', (): void => {
     backend.results = {};
   });
 
+  it('gives focus to the Skills card when a registered Retry takes its row out of the list', async (): Promise<void> => {
+    backend.results = { 'skillActions:authorAndRegisterSkill': { ok: true } };
+    const panel = (rows: Doc<'skills'>[]) => (
+      <RegisteredSkillsPanel
+        skills={[]}
+        unregistered={rows}
+        authoringFailure={null}
+        onAuthoringAttempt={noop}
+        focusRef={{ current: null }}
+      />
+    );
+    const view = mount(panel([refused]));
+    const retry = button(view.container, 'Retry refresh-the-tile');
+    retry.focus();
+    await act(async (): Promise<void> => {
+      retry.click();
+      // The row registers and leaves the list before the run's promise settles.
+      view.root.render(panel([]));
+    });
+    await settle();
+    expect(focusedName()).toBe('Skills · 0 registered');
+    view.unmount();
+    backend.results = {};
+  });
+
   it('says a registration and an authoring failure in the Skills card live region, and gives each control a 44 px target', (): void => {
     const done = renderToStaticMarkup(
       <RegisteredSkillsPanel
