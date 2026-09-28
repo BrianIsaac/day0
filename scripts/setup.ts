@@ -66,7 +66,7 @@ import { basename, dirname, join, resolve, sep } from 'node:path';
 import { createInterface, type Interface } from 'node:readline';
 import { Writable } from 'node:stream';
 import { pathToFileURL } from 'node:url';
-import { DEFAULT_DOCS_HOST_DIR } from '../src/docs/host-dir';
+import { DEFAULT_DOCS_HOST_DIR, ensureDocsHostDir } from '../src/docs/host-dir';
 import {
   FIRST_SUCCESS,
   MOCK_FIRST_SUCCESS,
@@ -110,7 +110,7 @@ import {
 } from './redactor-device';
 import { COMPANY_COMMAND, COMPANY_SCRIPT, companyHandSteps, loadBedSpec } from './bed/spec';
 import { pinnedNodeImage, redactorVolumeClone, REDACTOR_VOLUME_SUFFIXES } from './lib/docker';
-import { setupRoute } from './setup-route';
+import { isLoopback, setupRoute } from './setup-route';
 import {
   checkoutReleases,
   type CheckoutReleases,
@@ -666,11 +666,6 @@ export interface TargetRefusal {
   setting: string;
   reason: string;
   fix: string;
-}
-
-/** Loopback from the host is nothing at all from inside a container. */
-function isLoopback(url: string): boolean {
-  return /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\]|0\.0\.0\.0)(:|\/|$)/i.test(url);
 }
 
 /**
@@ -2931,8 +2926,9 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       io.log(`Created ${ENV_FILE} from ${ENV_EXAMPLE}, readable only by you.`);
     }
     if (real) {
-      const docs = ensureDocsDirectory(docsHostDir, io.cwd);
+      const docs = ensureDocsHostDir(docsHostDir, io.cwd, '--docs');
       if (docs.created) {
+        writeFileSync(join(docs.path, 'README.md'), DOCS_STUB, 'utf8');
         io.log(`Created ${docs.path} with a placeholder page; put your team's Markdown there.`);
       }
     }
@@ -4330,34 +4326,6 @@ export async function runCommand(options: SetupOptions, io: SetupIo): Promise<nu
     case undefined:
       return runSetup(options, io);
   }
-}
-
-/**
- * Make sure the documentation folder exists, writing a placeholder page into
- * one this helper created so the first sync has something to say.
- *
- * Args:
- *   configured: `DAY0_DOCS_HOST_DIR` as it will be written.
- *   cwd: Repository root.
- *
- * Returns:
- *   The absolute path and whether it was created now.
- *
- * Raises:
- *   Error: If a non-default path does not exist.
- */
-function ensureDocsDirectory(configured: string, cwd: string): { path: string; created: boolean } {
-  const path = resolve(cwd, configured);
-  if (existsSync(path)) return { path, created: false };
-  if (path !== resolve(cwd, DEFAULT_DOCS_HOST_DIR)) {
-    throw new Error(
-      `--docs ${configured} does not exist. Create it, or point it at the directory holding the ` +
-        'Markdown the backend should read.',
-    );
-  }
-  mkdirSync(path, { recursive: true });
-  writeFileSync(join(path, 'README.md'), DOCS_STUB, 'utf8');
-  return { path, created: true };
 }
 
 /** Whether `nvidia-smi -L` names a GPU, which is a reason to try rather than a promise. */

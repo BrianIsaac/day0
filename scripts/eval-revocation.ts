@@ -16,6 +16,7 @@ import {
   type RevocationTrial,
   type TrialCheckpoint,
 } from '../evaluation/revocation/report';
+import { eventWorkItemId } from '../evaluation/graders';
 import { mintDevNoAuthToken } from '../src/lib/dev-auth-token';
 import { assembleTrace } from '../src/export/trace';
 import { REDACTOR_TIMEOUT_MS } from '../src/redaction/policy';
@@ -236,11 +237,6 @@ function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
-}
-
-function eventWorkItemId(event: EventRow): string | undefined {
-  const value = record(event.payload).workItemId;
-  return typeof value === 'string' ? value : undefined;
 }
 
 function methodCalls(snapshot: ProviderSnapshot, method: string): number {

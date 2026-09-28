@@ -16,6 +16,7 @@ import {
   type EvaluationArm,
   type EvaluationSnapshot,
   type EvaluationTask,
+  eventWorkItemId,
 } from '../evaluation/graders';
 import {
   COMPARISON_EXPERIMENT,
@@ -535,12 +536,6 @@ function graderSnapshot(
       })),
     })),
   };
-}
-
-function eventWorkItemId(event: RawSnapshot['events'][number]): string | undefined {
-  if (!event.payload || typeof event.payload !== 'object') return undefined;
-  const value = (event.payload as { workItemId?: unknown }).workItemId;
-  return typeof value === 'string' ? value : undefined;
 }
 
 /** Events that end a work item: its own terminal events and the two ways an apply ends it. */
