@@ -7,6 +7,7 @@ import { useMutation } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { INIT_PROMPT, managerReplies } from '@/agent/day-one-turn';
+import { postCharterSynthesis } from './charter-synthesis';
 
 function textOf(message: UIMessage): string {
   return message.parts
@@ -289,18 +290,14 @@ export function ChatRoom({
   useEffect(() => {
     if (!done || synthFired.current) return;
     synthFired.current = true;
-    const transcript = charterTranscript(messages);
-    // Posted once and not awaited: a failed post is shown by the charter card
-    // staying at its draft, where the manager retries (P10-3 names the retry
-    // as its own step).
-    void fetch('/api/onboarding/synthesise', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      // Naming the session is what ends it: the chat 1:1 goes through the same
-      // claim-once finalisation as a call, so the row it opened reaches `done`
-      // carrying its transcript, instead of sitting at `active` for good while
-      // the charter it produced is on the page.
-      body: JSON.stringify({ agentId, bossLabel, transcript, voiceSessionId: sessionRef.current }),
+    // Naming the session ends it: the row the chat 1:1 opened reaches `done`
+    // carrying its transcript, instead of sitting at `active` for good while
+    // the charter it produced is on the page.
+    postCharterSynthesis({
+      agentId,
+      bossLabel,
+      transcript: charterTranscript(messages),
+      voiceSessionId: sessionRef.current,
     });
   }, [done, messages, agentId, bossLabel]);
 

@@ -5,6 +5,7 @@ import { useConversation, ConversationProvider } from '@elevenlabs/react';
 import { useMutation } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
+import { postCharterSynthesis } from './charter-synthesis';
 
 interface StartResponse {
   /** False when the deployment has no ElevenLabs credentials. */
@@ -103,19 +104,12 @@ function VoiceRoomInner({
           .join('\n\n');
         if (text) {
           finalisePosted.current = true;
-          // Posted once and not awaited: the transcript is set below whether
-          // or not the post lands, and a failed post is shown by the charter
-          // card staying at its draft, where the manager retries (P10-3 names
-          // the retry as its own step).
-          void fetch('/api/onboarding/synthesise', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              agentId,
-              bossLabel,
-              transcript: text,
-              voiceSessionId: sessionRef.current?.id ?? null,
-            }),
+          // The transcript is set below whether or not the post lands.
+          postCharterSynthesis({
+            agentId,
+            bossLabel,
+            transcript: text,
+            voiceSessionId: sessionRef.current?.id ?? null,
           });
         }
         return current;
