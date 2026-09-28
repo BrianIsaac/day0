@@ -364,13 +364,19 @@ describe('the protected volumes and projects', (): void => {
     expect(() => assertNotProtected('day0-redactor-warm')).not.toThrow();
   });
 
-  it('guards every volume down --volumes would remove, the redactor pair included', (): void => {
+  it('guards every volume down --volumes would remove: each the compose file declares', (): void => {
     expect(projectVolumeNames('day0-p11-abc123')).toEqual([
       'day0-p11-abc123_convex_data',
-      'day0-p11-abc123_sandbox_socket',
       'day0-p11-abc123_model_data',
+      'day0-p11-abc123_notion_npm_cache',
+      'day0-p11-abc123_sandbox_socket',
       'day0-p11-abc123_redactor_venv',
       'day0-p11-abc123_redactor_models',
+      'day0-p11-abc123_redactor_tmp',
+    ]);
+    expect(projectVolumeNames('day0-p11-abc123', 'volumes:\n  one:\n  two:\n')).toEqual([
+      'day0-p11-abc123_one',
+      'day0-p11-abc123_two',
     ]);
     for (const name of [...PROTECTED_PROJECTS, ...READ_ONLY_PROJECTS]) {
       expect(() => projectVolumeNames(name)).toThrow();

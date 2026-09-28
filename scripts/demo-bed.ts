@@ -50,6 +50,7 @@ import { connect } from 'node:net';
 import { basename, dirname, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { pathToFileURL } from 'node:url';
+import { parse as parseYaml } from 'yaml';
 import { PROFILES } from './compose';
 import {
   checkoutReleases,
@@ -466,26 +467,31 @@ export function assertBedProject(name: string): void {
 }
 
 /**
- * Every volume `down --volumes` would remove for a project, each one checked.
+ * Every volume `down --volumes` would remove for a project, each one checked:
+ * each volume the compose file declares, read from it so a new one is never
+ * left behind by a teardown (review m38).
  *
- * Args:
- *   project: The compose project name.
- *
- * Returns:
- *   The five volume names the compose file declares, prefixed with the project.
- *
- * Raises:
- *   Error: When the project, or any of its volumes, is protected or read-only.
+ * @param project - The compose project name.
+ * @param composeText - The compose file; `docker-compose.yml` by default.
+ * @returns The declared volume names, prefixed with the project.
+ * @throws Error when the project, or any of its volumes, is protected or
+ *   read-only, or the compose file declares no volumes.
  */
-export function projectVolumeNames(project: string): string[] {
+export function projectVolumeNames(
+  project: string,
+  composeText: string = readFileSync(COMPOSE_FILE, 'utf8'),
+): string[] {
   assertBedProject(project);
-  return ['convex_data', 'sandbox_socket', 'model_data', 'redactor_venv', 'redactor_models'].map(
-    (suffix: string): string => {
-      const volume = `${project}_${suffix}`;
-      assertNotProtected(volume);
-      return volume;
-    },
-  );
+  const declared = (parseYaml(composeText) as { volumes?: Record<string, unknown> } | null)
+    ?.volumes;
+  if (!declared || Object.keys(declared).length === 0) {
+    throw new Error(`${COMPOSE_FILE} declares no volumes to remove.`);
+  }
+  return Object.keys(declared).map((suffix: string): string => {
+    const volume = `${project}_${suffix}`;
+    assertNotProtected(volume);
+    return volume;
+  });
 }
 
 /**
