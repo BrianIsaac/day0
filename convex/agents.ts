@@ -411,22 +411,6 @@ export const get = query({
   },
 });
 
-export const getByEmail = query({
-  args: { bossEmail: v.string() },
-  handler: async (ctx, args) => {
-    const identity = await getCaller(ctx);
-    if (!identity) return null;
-    const row = await ctx.db
-      .query('agents')
-      .withIndex('by_bossEmail', (q) => q.eq('bossEmail', args.bossEmail))
-      .order('desc')
-      .first();
-    if (!row) return null;
-    if (row.userId !== identity.subject) return null;
-    return row;
-  },
-});
-
 /**
  * Internal-only fetch used by action-side ownership assertions; bypasses
  * the public `get` so that `assertOwnsAgentAction` doesn't recurse through
