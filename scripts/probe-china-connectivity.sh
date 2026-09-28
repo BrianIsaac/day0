@@ -384,7 +384,8 @@ fi
 # ---------------------------------------------------------------------------
 section "4. Authenticated inference as ${MODEL}"
 
-# Build a chat-completions body. Day0 sends max_completion_tokens, a system
+# Build a chat-completions body. The probe sends max_completion_tokens (Day0 itself
+# sends max_tokens on every non-OpenAI host, see src/lib/openai.ts), a system
 # and a user message, and (on its native rung) response_format. The ceiling
 # here is the 4000 Day0's raw path uses; on a thinking model the reasoning
 # tokens count against it, which is what the reasoning fields in the report

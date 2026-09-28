@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import { agentJson, makeAgent } from '../lib/mastra';
-import { SYSTEM_CLASSES } from './system-classes';
-export { SYSTEM_CLASSES } from './system-classes';
+import { SYSTEM_CLASSES, type SystemClass } from './system-classes';
 import {
   CONSTRAINT_KINDS,
   deriveConstraints,
@@ -11,6 +10,7 @@ import {
 } from './charter-constraints';
 export type { CharterConstraint } from './charter-constraints';
 import { renderBullets } from './charter-workspace';
+import { escapeRegExp } from '../lib/regex';
 export { identityFromCharter, toolsFromCharter } from './charter-workspace';
 
 /**
@@ -21,52 +21,61 @@ export { identityFromCharter, toolsFromCharter } from './charter-workspace';
  * Only v0.0 is produced: the manager 1:1 is the sole evidence source
  * Day0 has. `CharterVersion` still names v0.1 (collaborator 1:1s) and
  * v0.2 (an observation layer), because the renderer and the persisted
- * rows are versioned for them — neither is implemented.
+ * rows are versioned for them - neither is implemented.
  */
 
 export type CharterVersion = '0.0' | '0.1' | '0.2' | (string & { readonly _v?: 'charter' });
 
+/** How the employee reaches a named collaborator: through the manager, on its own, or not yet decided. */
 export type IntroPath = 'manager' | 'self' | 'tbd';
 
+/** One sentence the charter cites, with where it came from. */
 export interface EvidenceItem {
   text: string;
   source: string;
 }
 
+/** A person the manager named in the 1:1, what to go to them about, and how to reach them. */
 export interface NamedCollaborator {
   name: string;
   topic: string;
   introPath: IntroPath;
 }
 
+/** Who approves the employee's work, and how sure the charter is of it. */
 export interface ApprovalChain {
   boss: string;
   confidence: 'low' | 'medium' | 'high';
 }
 
+/** A neighbouring role and how the employee stays out of its lane. */
 export interface AdjacentRole {
   who: string;
   staysOutOfTheirLaneBy: string;
 }
 
+/** What the employee will and will not do, in the manager's words. */
 export interface ProposedBoundaries {
   willDo: string[];
   willNotDo: string[];
   escalationTriggers: string[];
 }
 
+/** What the employee aims to have done by day 30, 60 and 90. */
 export interface ShortTermGoals {
   day30: string;
   day60: string;
   day90: string;
 }
 
+/** A work system the manager named, classed for the surface ladder, with where it was mentioned. */
 export interface NamedSystem {
   name: string;
-  class: (typeof SYSTEM_CLASSES)[number];
+  class: SystemClass;
   whereMentioned: string;
 }
 
+/** The employee's charter: the role, boundaries, goals, collaborators and systems the 1:1 produced, versioned. */
 export interface Charter {
   version: CharterVersion;
   source: string;
@@ -102,6 +111,7 @@ export interface Charter {
   createdAt: string;
 }
 
+/** A question the charter left open and the manager's later answer to it. */
 export interface AnsweredQuestion {
   question: string;
   answer: string;
@@ -109,6 +119,7 @@ export interface AnsweredQuestion {
   answeredAt: string;
 }
 
+/** The seven topics the Day-1 1:1 covers, in order. */
 export const DAY_ONE_TOPICS = [
   'why-this-hire',
   'role-and-goals',
@@ -119,6 +130,7 @@ export const DAY_ONE_TOPICS = [
   'open-questions',
 ] as const;
 
+/** One of the seven Day-1 topics. */
 export type DayOneTopic = (typeof DAY_ONE_TOPICS)[number];
 
 const SYSTEM_PROMPT = [
@@ -138,6 +150,7 @@ const SYSTEM_PROMPT = [
 
 const charterAgent = makeAgent('day0-charter', SYSTEM_PROMPT);
 
+/** The charter as the model returns it, validated field by field before it becomes a `Charter`. */
 export const charterSchema = z.object({
   whyThisHire: z.string(),
   proposedFunction: z.string(),
@@ -194,6 +207,7 @@ export const charterSchema = z.object({
 
 type RawCharterPayload = z.infer<typeof charterSchema>;
 
+/** What charter synthesis takes: the answers by topic, the version to write and the clock. */
 export interface SynthesiseCharterArgs {
   answers: Record<DayOneTopic, string>;
   version: CharterVersion;
@@ -330,9 +344,7 @@ export function normaliseNamedSystems(systems: readonly NamedSystem[]): NamedSys
       name = canonicalRows.find(
         (row): boolean =>
           row.system.class === system.class &&
-          new RegExp(`\\b${row.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(
-            system.whereMentioned,
-          ),
+          new RegExp(`\\b${escapeRegExp(row.name)}\\b`, 'i').test(system.whereMentioned),
       )?.name;
     }
     if (!name) continue;
@@ -431,8 +443,8 @@ export interface TranscriptSides {
  *
  * Evidence is the charter's claim to be grounded in what the boss said, and each
  * clause is stamped `from manager 1:1 day-1`. A clause carrying the agent's own
- * words is therefore false on its face — it is the agent citing itself as the
- * source for what the boss wants — and no model has to be consulted to notice,
+ * words is therefore false on its face - it is the agent citing itself as the
+ * source for what the boss wants - and no model has to be consulted to notice,
  * because both halves of the transcript are in hand.
  *
  * A run of words the agent said *and the manager also said* proves nothing: an
@@ -444,7 +456,7 @@ export interface TranscriptSides {
  * read by the boss, quoted into IDENTITY.md and carried into every downstream
  * prompt. Dropped rather than fatal: the rest of the charter came from the
  * manager's answers and refusing to produce one would leave a finished 1:1 with
- * nothing to show for it — and the retry would spend two more model calls to
+ * nothing to show for it - and the retry would spend two more model calls to
  * arrive at the same place. So the clause goes, and a synthesis note says it
  * went, because a charter that quietly lost its evidence is the same silent
  * failure in a smaller size.
@@ -484,6 +496,7 @@ export function withoutAgentQuotedEvidence(
   };
 }
 
+/** Draft a charter from the Day-1 answers through the model, validated and versioned. */
 export async function synthesiseCharter(args: SynthesiseCharterArgs): Promise<Charter> {
   const createdAt = (args.createdAt ?? new Date()).toISOString();
   const raw = await agentJson<RawCharterPayload>({
@@ -494,6 +507,7 @@ export async function synthesiseCharter(args: SynthesiseCharterArgs): Promise<Ch
   return assemble(raw, args, createdAt);
 }
 
+/** Render a charter as the Markdown document the workspace and the card show. */
 export function renderCharter(c: Charter, date = new Date()): string {
   const isoDate = date.toISOString().slice(0, 10);
   const lines: string[] = [
@@ -576,6 +590,7 @@ function renderAdjacents(items: AdjacentRole[]): string[] {
   return items.map((a) => `  - ${a.who} — ${a.staysOutOfTheirLaneBy}`);
 }
 
+/** The one line that names the employee's role, from the charter's function or its reason for hire. */
 export function extractRole(c: Charter): string {
   return (c.proposedFunction || c.whyThisHire || 'autonomous agent').trim();
 }

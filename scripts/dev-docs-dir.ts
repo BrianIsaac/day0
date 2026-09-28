@@ -8,6 +8,7 @@
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { ensureDocsHostDir } from '../src/docs/host-dir';
+import { errorMessage } from '../src/lib/errors';
 
 const ENV_FILE = '.env.local';
 const DOCS_HOST_DIR_VAR = 'DAY0_DOCS_HOST_DIR';
@@ -40,6 +41,6 @@ try {
     );
   }
 } catch (error) {
-  console.error(`error: ${(error as Error).message}`);
+  console.error(`error: ${errorMessage(error)}`);
   process.exit(1);
 }

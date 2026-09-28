@@ -6,6 +6,7 @@
 import { browserSequenceOf, type WorkItemView } from './checks';
 import { assembleTrace } from '../../../src/export/trace';
 
+/** An employee as the rehearsal reads it from the backend. */
 export interface AgentRow {
   _id: string;
   name: string;
@@ -13,11 +14,13 @@ export interface AgentRow {
   createdAt: number;
 }
 
+/** A charter as the rehearsal reads it. */
 export interface CharterRow {
   _id: string;
   approved: boolean;
 }
 
+/** A surface as the rehearsal reads it. */
 export interface SurfaceRow {
   _id: string;
   slug: string;
@@ -33,6 +36,7 @@ export interface SurfaceRow {
   managerDmChannelId?: string;
 }
 
+/** A documentation source as the rehearsal reads it. */
 export interface DocSourceRow {
   _id: string;
   label: string;
@@ -41,6 +45,7 @@ export interface DocSourceRow {
   lastError?: string;
 }
 
+/** A skill as the rehearsal reads it. */
 export interface SkillRow {
   _id: string;
   name: string;
@@ -48,6 +53,7 @@ export interface SkillRow {
   proposedFor?: string;
 }
 
+/** A work item as the rehearsal reads it. */
 export interface WorkItemRow extends WorkItemView {
   _id: string;
   sourceSystem: string;
@@ -58,6 +64,7 @@ export interface WorkItemRow extends WorkItemView {
   proposedSkillId?: string;
 }
 
+/** An event as the rehearsal reads it. */
 export interface EventRow {
   _id: string;
   type: string;
@@ -91,13 +98,12 @@ export async function connectBackend(
   url: string,
   signingKey: string,
 ): Promise<{ reader: BackendReader; exportForAgent: (agentId: string) => Promise<unknown> }> {
-  process.env.DEV_NO_AUTH_SIGNING_KEY = signingKey;
   const { ConvexHttpClient } = await import('convex/browser');
   const { mintDevNoAuthToken } = await import('../../../src/lib/dev-auth-token');
   const { api } = await import('../../../convex/_generated/api');
   type Id<T extends string> = string & { __tableName: T };
   const client = new ConvexHttpClient(url, { skipConvexDeploymentUrlCheck: true, logger: false });
-  client.setAuth(await mintDevNoAuthToken());
+  client.setAuth(await mintDevNoAuthToken(undefined, signingKey));
   const agentId = (id: string): Id<'agents'> => id as Id<'agents'>;
   const reader: BackendReader = {
     agents: async () => (await client.query(api.agents.listForUser, {})) as AgentRow[],
@@ -274,6 +280,7 @@ export function competingClaims(items: readonly WorkItemRow[], ticketId: string)
   );
 }
 
+/** Why a work item was skipped, as the rehearsal classifies it. */
 export type SkipKind = 'quality-fit' | 'out-of-scope' | 'other';
 
 /**

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { getFunctionName } from 'convex/server';
 import { describe, expect, it, vi } from 'vitest';
@@ -72,6 +73,23 @@ describe('MockEnvironment caption and tabs', (): void => {
     expect(markup).not.toContain('>Twitter<');
     expect(markup).not.toContain('>Tickets<');
     expect(markup).not.toContain('mock-only');
+  });
+});
+
+describe('the hash links the work cards carry', (): void => {
+  const dashboard = readFileSync(
+    new URL('../../../../app/agent/[agentId]/AgentDashboard.tsx', import.meta.url),
+    'utf8',
+  );
+  const hashes = [...dashboard.matchAll(/href="#([a-z-]+)"/g)].map((match) => match[1]);
+
+  it('each name an element the environment panel renders, so the link scrolls as well as switching the tab', (): void => {
+    expect(hashes).toContain('surfaces');
+    queries.mode = 'real';
+    const markup = renderToStaticMarkup(<MockEnvironment agentId={agentId} />);
+    for (const hash of new Set(hashes)) {
+      expect(markup).toContain(`id="${hash}"`);
+    }
   });
 });
 

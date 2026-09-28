@@ -21,6 +21,7 @@ export interface ArmHarnessDiagnostics {
   ollamaModelDigest: string | null;
 }
 
+/** One arm's model parameters as the harness resolved them, with its diagnostics. */
 export interface ArmHarnessParameters extends ArmHarnessDiagnostics {
   modelId: string;
   temperature: number;
@@ -47,20 +48,24 @@ export interface ArmHarnessParameters extends ArmHarnessDiagnostics {
   skillSandboxBackend: 'local';
 }
 
+/** Both arms' parameters side by side. */
 export interface EvaluationHarnessParameters {
   day0: ArmHarnessParameters;
   baseline: ArmHarnessParameters;
 }
 
+/** What the Ollama server reports about itself and the model: version and digest. */
 export interface OllamaMetadata {
   version: string | null;
   modelDigest: string | null;
 }
 
+/** What the parity check may be handed instead of reaching Ollama itself. */
 export interface HarnessParityDependencies {
   readOllamaMetadata?: (baseUrl: string, model: string) => OllamaMetadata;
 }
 
+/** The differences between the two arms that the comparison is about, stated so a report can print them. */
 export const INTENTIONAL_ARM_DIFFERENCES = {
   onboardingPipeline: {
     day0: 'runtime charter, loaded documents, approved plan, and exact-action gate',
@@ -72,6 +77,7 @@ export const INTENTIONAL_ARM_DIFFERENCES = {
   },
 } as const;
 
+/** The stated arm differences. */
 export type IntentionalArmDifferences = typeof INTENTIONAL_ARM_DIFFERENCES;
 
 function nonEmpty(value: string | undefined): string | undefined {
@@ -194,6 +200,7 @@ function armParameters(
   return parameters;
 }
 
+/** The diagnostics of one arm's parameters, for the evidence file. */
 export function harnessDiagnostics(parameters: ArmHarnessParameters): ArmHarnessDiagnostics {
   const { effectiveTemperature, providerWarnings, ollamaVersion, ollamaModelDigest } = parameters;
   return { effectiveTemperature, providerWarnings, ollamaVersion, ollamaModelDigest };

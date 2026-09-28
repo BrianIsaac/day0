@@ -25,7 +25,7 @@ export function runThroughBody(): Charter {
     ],
     priorityReading: ['team overview'],
     adjacentRoles: [],
-    approvalChain: { boss: 'Brian', confidence: 'high' },
+    approvalChain: { boss: 'Sam', confidence: 'high' },
     openQuestions: ['Whether Northstar CRM access will be granted.', 'Who owns the Looker pipeline tile.'],
     constraints: [
       {

@@ -28,16 +28,6 @@ import { appendEvent, eventsOfType } from './eventLog';
 import { isEventOf, type EventOf, type EventType } from '../src/events/contract';
 import { agentZone, expiryNoticeDay, expiryNoticeDue } from '../src/lib/zone';
 
-const surfaceVerdict = v.union(
-  v.literal('declared'),
-  v.literal('proposed'),
-  v.literal('approved'),
-  v.literal('connected'),
-  v.literal('ungranted'),
-  v.literal('absent'),
-  v.literal('listed-dead'),
-);
-
 const MAX_LADDER_PATHS = 3;
 const MAX_PROBE_ATTEMPTS = 12;
 const MAX_DISCOVERY_EVIDENCE = 64;
@@ -718,27 +708,6 @@ export const recordOrientationFailure = internalMutation({
   },
 });
 
-/** Set a surface verdict from a server-side probe or lifecycle action. */
-export const setStatus = internalMutation({
-  args: {
-    surfaceId: v.id('surfaces'),
-    verdict: surfaceVerdict,
-    reason: v.optional(v.string()),
-    credentialLanded: v.optional(v.boolean()),
-    lastVerifiedAt: v.optional(v.number()),
-  },
-  handler: async (ctx, args): Promise<void> => {
-    const surface = await ctx.db.get(args.surfaceId);
-    if (!surface) throw new Error('Surface not found.');
-    await ctx.db.patch(surface._id, {
-      verdict: args.verdict,
-      reason: args.reason,
-      credentialLanded: args.credentialLanded ?? surface.credentialLanded,
-      lastVerifiedAt: args.lastVerifiedAt ?? surface.lastVerifiedAt,
-    });
-  },
-});
-
 /** Attach an encrypted credential reference without exposing its value. */
 export const attachCredential = internalMutation({
   args: {
@@ -1290,11 +1259,11 @@ export const demoteAfterProbeFailure = internalMutation({
  * Returns:
  *   Ids of the work items requeued.
  */
-type DeferredSurfaceVerdict = {
+interface DeferredSurfaceVerdict {
   reason?: string;
   missingSurface?: string;
   missingPermissions?: string[];
-};
+}
 
 async function requeueDeferredWork(
   ctx: MutationCtx,

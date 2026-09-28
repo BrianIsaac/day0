@@ -3,13 +3,14 @@ import type { ExecutionPlan, MockAction, PlanStepOutcome } from '../../../src/wo
 
 /**
  * Priya's `#revops-asks` ask from the fourth full internal run of 19 September
- * (main 0ba9479, real mode, autonomy on): the work item, its approved plan with
+ * (main 0ba9479, GLM 5.3 Flash via Featherless, real mode, autonomy on): the
+ * work item, its approved plan with
  * the declared obligations, the four phase-one actions with their ledger, and
  * the closing set (fill, Save, snapshot, manager DM) with the ledger the apply
  * wrote and the closing phase's plan-step accounting. The item ended
  * `completed` with no reply in its thread (finding W). Every string is the
- * run's own, read from `findings/priya-revops-asks-completed-no-reply.jsonl`;
- * each ledger `effect` is cut at 300 characters and the snapshot row's
+ * run's own, read from its private findings file; each ledger `effect` is
+ * cut at 300 characters and the snapshot row's
  * `sessionRestore` is left out.
  */
 
@@ -181,7 +182,7 @@ export const revopsAsksClosing: MockAction[] = [
   },
   {
     "args": {
-      "body": "{\"channel\":\"D0BS5SXMXPZ\",\"text\":\"Escalation on the pipeline coverage ask (C0BSF04TZ19:1789761481.815889): the Looker tile showed 68%, so I have emitted the documented refresh to 74% (fill, Save, snapshot) and will read back the audit line as evidence. The thread reply quoting the figure and audit line will be drafted once that read-back lands. Separately: per-deal reconciliation of the three Friday standup deals (check 2 of the Q3 close checklist) needs the Q4 pipeline tracker, which has no approved connection surface. Could you obtain an approved access path for it? I have not substituted another source.\"}",
+      "body": "{\"channel\":\"D0MANAGER\",\"text\":\"Escalation on the pipeline coverage ask (C0BSF04TZ19:1789761481.815889): the Looker tile showed 68%, so I have emitted the documented refresh to 74% (fill, Save, snapshot) and will read back the audit line as evidence. The thread reply quoting the figure and audit line will be drafted once that read-back lands. Separately: per-deal reconciliation of the three Friday standup deals (check 2 of the Q3 close checklist) needs the Q4 pipeline tracker, which has no approved connection surface. Could you obtain an approved access path for it? I have not substituted another source.\"}",
       "headersJson": "{\"Authorization\":\"Bearer {{secret}}\",\"Content-Type\":\"application/json; charset=utf-8\"}",
       "method": "POST",
       "path": "/chat.postMessage",
@@ -217,7 +218,7 @@ export const revopsAsksClosingLedger = [
   },
   {
     "authority": "autonomous",
-    "effect": "HTTP 200 · {\"ok\":true,\"channel\":\"D0BS5SXMXPZ\",\"ts\":\"1789782539.692389\",\"message\":{\"subtype\":\"bot_message\",\"text\":\"Escalation on the pipeline coverage ask (C0BSF04TZ19:1789761481.8…",
+    "effect": "HTTP 200 · {\"ok\":true,\"channel\":\"D0MANAGER\",\"ts\":\"1789782539.692389\",\"message\":{\"subtype\":\"bot_message\",\"text\":\"Escalation on the pipeline coverage ask (C0BSF04TZ19:1789761481.8…",
     "idempotencyKey": "nh77jdv0197e3thhjmfy683h3x8eqr10:k97eeyrbrqfqv94tmpm7yk3prd8epg69:7",
     "ok": true,
     "providerId": "1789782539.692389",

@@ -1,5 +1,6 @@
 import { containsTokenShape } from './redact';
 import { structuralSystemCandidates } from '../docs/system-discovery';
+import { escapeRegExp } from '../lib/regex';
 
 /**
  * The queues one employee reads on a work-bearing surface.
@@ -230,7 +231,8 @@ export function channelDescriptions(
     const mentions = channels
       .filter((item): boolean => item.ref === page.ref && item.sourceId === page.sourceId)
       .map(
-        (item): RegExp => new RegExp(`(?<![a-z0-9_-])#${escaped(item.value)}(?![a-z0-9_-])`, 'i'),
+        (item): RegExp =>
+          new RegExp(`(?<![a-z0-9_-])#${escapeRegExp(item.value)}(?![a-z0-9_-])`, 'i'),
       );
     for (const passage of passages(page.markdown)) {
       if (CHANNELS_LABEL.test(passage) || containsTokenShape(passage)) continue;
@@ -356,11 +358,6 @@ export function groundScopePicks(
   return scope;
 }
 
-/** Escape a value for use inside a regular expression. */
-function escaped(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
 /**
  * Pick the candidates the manager's own sentences name, word for word.
  *
@@ -388,8 +385,8 @@ export function sentenceScopePicks(
     (candidate, index): Array<{ candidate: ScopeCandidate; number: number; at: number }> => {
       const pattern =
         candidate.field === 'channel'
-          ? new RegExp(`(?<![a-z0-9_-])#${escaped(candidate.value)}(?![a-z0-9_-])`, 'i')
-          : new RegExp(`(?<![A-Za-z0-9_#-])${escaped(candidate.value)}(?![A-Za-z0-9_-])`);
+          ? new RegExp(`(?<![a-z0-9_-])#${escapeRegExp(candidate.value)}(?![a-z0-9_-])`, 'i')
+          : new RegExp(`(?<![A-Za-z0-9_#-])${escapeRegExp(candidate.value)}(?![A-Za-z0-9_-])`);
       const at = pattern.exec(text)?.index;
       return at === undefined ? [] : [{ candidate, number: index + 1, at }];
     },

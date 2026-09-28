@@ -27,7 +27,7 @@ describe('application providers', () => {
   it('renders an unconfigured shell without a public Convex address', async () => {
     vi.stubEnv('NEXT_PUBLIC_CONVEX_URL', undefined);
     vi.stubEnv('NEXT_PUBLIC_DEV_NO_AUTH', undefined);
-    const { Providers } = await import('../../app/providers');
+    const { Providers } = await import('../../app/Providers');
     const NeedsBackend = (): never => {
       throw new Error('Backend-dependent children must wait');
     };
@@ -44,7 +44,7 @@ describe('application providers', () => {
   it('constructs the same real client and Clerk provider when configured', async () => {
     vi.stubEnv('NEXT_PUBLIC_CONVEX_URL', 'https://configured-test.convex.cloud');
     vi.stubEnv('NEXT_PUBLIC_DEV_NO_AUTH', undefined);
-    const { Providers } = await import('../../app/providers');
+    const { Providers } = await import('../../app/Providers');
     const html = renderToStaticMarkup(
       <Providers>
         <main>Configured page</main>
@@ -63,6 +63,6 @@ describe('application providers', () => {
     vi.stubEnv('NODE_ENV', 'production');
     vi.stubEnv('NEXT_PUBLIC_DEV_NO_AUTH', 'true');
     vi.stubEnv('NEXT_PUBLIC_CONVEX_URL', undefined);
-    await expect(import('../../app/providers')).rejects.toThrow('refused outside `next dev`');
+    await expect(import('../../app/Providers')).rejects.toThrow('refused outside `next dev`');
   });
 });

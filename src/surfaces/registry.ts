@@ -2,11 +2,11 @@ import type { SpanModel } from '../redaction/client';
 import type { ActionCtx } from '../../convex/_generated/server';
 import type { Id } from '../../convex/_generated/dataModel';
 import { actionIdempotencyKey } from '../work/idempotency';
-import type { MockAction, MockSurfaceSnapshot } from '../work/types';
+import { MOCK_ACTION_TOOLS, type MockAction, type MockSurfaceSnapshot } from '../work/types';
 import type { DecryptCredential } from './credentials';
 import { HttpAdapter, type ApiConnector, type FetchLike } from './http';
 import { McpAdapter, type CreateMcpClient } from './mcp';
-import { MOCK_TOOLS, mockAdapter } from './mock';
+import { mockAdapter } from './mock';
 import { IncompleteSignInError, sessionRecipe, signsIn } from './browser-session';
 import {
   actionClass,
@@ -558,7 +558,7 @@ export async function applySurfaceActions(
       const adapter = adapters.get(action.tool);
       if (!adapter) {
         const reason =
-          mode === 'real' && (MOCK_TOOLS as readonly string[]).includes(action.tool)
+          mode === 'real' && (MOCK_ACTION_TOOLS as readonly string[]).includes(action.tool)
             ? mockVerbRefusal(action.tool)
             : UNKNOWN_TOOL;
         applied.push(refused(action.tool, reason, idempotencyKey));

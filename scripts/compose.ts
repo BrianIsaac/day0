@@ -24,6 +24,7 @@
  */
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
+import { errorMessage } from '../src/lib/errors';
 
 const ENV_FILE = '.env.local';
 
@@ -144,7 +145,7 @@ function main(): void {
   try {
     invocation = parseComposeArguments(argv);
   } catch (error) {
-    console.error(`error: ${(error as Error).message}`);
+    console.error(`error: ${errorMessage(error)}`);
     process.exit(1);
   }
   console.log(`Components:\n  ${componentSummary(invocation.profiles)}\n`);

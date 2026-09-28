@@ -27,7 +27,7 @@ interface InboundMessage {
  *   - useConversation requires a ConversationProvider ancestor.
  *   - startSession() is sync and returns void; errors come via onError.
  *   - onConnect receives `{ conversationId }`.
- *   - onError receives `(message: string, context?: any)` — first arg
+ *   - onError receives `(message: string, context?: any)` - first arg
  *     is the plain string, not an object with `.message`.
  *   - micMuted is a controlled prop; isSpeaking / isListening expose
  *     the agent's turn state.
@@ -60,7 +60,7 @@ function VoiceRoomInner({
     webhookToken: string;
   } | null>(null);
   // The SDK captures its callbacks once, so `onConnect` and `onDisconnect` see
-  // whatever `session` held on the render that created them — null, for a call
+  // whatever `session` held on the render that created them - null, for a call
   // started in the same tick. A ref is what the callbacks can read the live
   // value from, and the session id is the key both finalisation paths agree on:
   // without it here, the browser's post cannot be recognised as the same work
@@ -85,7 +85,7 @@ function VoiceRoomInner({
           sessionId: current.id,
           elevenLabsConversationId: conversationId,
         }).catch(() => {
-          // Non-fatal — the post-call webhook records the conversation id
+          // Non-fatal - the post-call webhook records the conversation id
           // itself when this never lands.
         });
       }
@@ -103,6 +103,10 @@ function VoiceRoomInner({
           .join('\n\n');
         if (text) {
           finalisePosted.current = true;
+          // Posted once and not awaited: the transcript is set below whether
+          // or not the post lands, and a failed post is shown by the charter
+          // card staying at its draft, where the manager retries (P10-3 names
+          // the retry as its own step).
           void fetch('/api/onboarding/synthesise', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -141,7 +145,7 @@ function VoiceRoomInner({
             setStart(data);
             if (data.warning) {
               setError(
-                `${data.warning}. Falling back to public agent mode — voice will work if the agent is configured for public access.`,
+                `${data.warning}. Falling back to public agent mode - voice will work if the agent is configured for public access.`,
               );
             }
           }
@@ -183,8 +187,8 @@ function VoiceRoomInner({
   const isSpeaking = conversation.isSpeaking;
   const isListening = conversation.isListening;
 
-  // No ElevenLabs credentials on this deployment — say so plainly and
-  // hand the boss to chat mode, which runs the identical 1:1.
+  // No ElevenLabs credentials on this deployment - say so plainly and
+  // hand the boss to chat mode, which asks the same seven topics in text.
   if (start && !start.configured) {
     return (
       <section className="bg-[var(--color-card)] border border-[var(--color-warn)]/40 rounded-xl p-4">

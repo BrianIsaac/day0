@@ -52,9 +52,9 @@ function tabIsAvailable(key: TabKey, isReal: boolean): boolean {
  * Read the tab a location hash names.
  *
  * A card link such as `#surfaces` (the awaiting-connection deferral on a work
- * item) must switch the tab, not only scroll, so the hash is honoured on
- * mount and on every `hashchange`. The Surfaces tab exists only in real mode;
- * elsewhere its hash names nothing.
+ * item) must switch the tab as well as scroll to the panel that carries the
+ * id, so the hash is honoured on mount and on every `hashchange`. The
+ * Surfaces tab exists only in real mode; elsewhere its hash names nothing.
  *
  * Args:
  *   hash: `window.location.hash`, with or without the leading `#`.
@@ -137,7 +137,7 @@ export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
 
       {/* Wraps rather than scrolls. A tab strip that overflows hides whole
           surfaces behind a gesture nothing on the page suggests, and the two
-          it hid here — Twitter and Tickets — are two fifths of the environment
+          it hid here - Twitter and Tickets - are two fifths of the environment
           the agent works in. */}
       <nav className="flex flex-wrap gap-1 px-2 pt-2 border-b border-[var(--color-border)]">
         {tabs.map((t) => {
@@ -176,7 +176,9 @@ export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
         })}
       </nav>
 
-      <div className="p-4 min-h-[24rem] max-h-[40rem] overflow-y-auto">
+      {/* The panel carries the id the card links name, so `#surfaces` scrolls
+          here as well as selecting the tab above. */}
+      <div id="surfaces" className="p-4 min-h-[24rem] max-h-[40rem] overflow-y-auto">
         {displayedActive === 'docs' ? <DocsTab agentId={agentId} mode={mode} /> : null}
         {/* The four below are mock-only, so they are never reached with a real
             deployment mode and take none. */}

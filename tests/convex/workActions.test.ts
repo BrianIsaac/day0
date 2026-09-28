@@ -6440,7 +6440,7 @@ describe('an ask that leaves a held ticket to its own work item still answers (1
         await ctx.db.patch(
           surface._id,
           surface.slug === 'slack'
-            ? { managerDmChannelId: 'D0BS5SXMXPZ', managerUserId: 'U0MANAGER' }
+            ? { managerDmChannelId: 'D0MANAGER', managerUserId: 'U0MANAGER' }
             : {
                 toolAllowlist: [
                   'save_comment',

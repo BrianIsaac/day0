@@ -30,6 +30,7 @@ import {
   type ScopePick,
   type ScopeValue,
 } from '../src/surfaces/intake-scope';
+import { escapeRegExp } from '../src/lib/regex';
 
 const URL_PATTERN = /https?:\/\/[^\s)>"'`]+/gi;
 const SENTENCE_BOUNDARY = /(?<=[.!?])\s+/;
@@ -47,6 +48,7 @@ const API_BASE = /\/api(?:[/?#]|$)|^https?:\/\/api\./i;
 const NO_SURFACE_PATTERN =
   /\bno (?:approved |official |supported |sanctioned )?(?:api|mcp(?: server)?|connection(?: surface)?|integration(?: surface)?|endpoint|surface|access path)\b|\bnot (?:yet )?(?:an? )?approved\b|\bno approved\b/i;
 
+/** The model's orientation reply for one system, validated: the path, the fallback, the evidence and the credential finding. */
 export const orientationSchema = z.object({
   path: z.enum(['mcp', 'documented-api', 'browser-driven', 'escalate']),
   fallbackPath: z.enum(['mcp', 'documented-api', 'browser-driven', 'escalate']),
@@ -70,7 +72,12 @@ export const orientationSchema = z.object({
 
 type OrientationDraft = z.infer<typeof orientationSchema>;
 type OrientationPath = OrientationDraft['path'];
-type Evidence = { sourceId: string; ref: string; quote: string; url?: string };
+interface Evidence {
+  sourceId: string;
+  ref: string;
+  quote: string;
+  url?: string;
+}
 type CredentialId = GenericId<'credentials'>;
 
 /** The stored row an orientation run attaches to a surface. */
@@ -79,8 +86,10 @@ interface ResolvedCredential {
   kind: Doc<'credentials'>['kind'];
 }
 
+/** How a system authenticates, as orientation read it from the documentation. */
 export type CredentialMethod = 'api-key' | 'bot-token' | 'oauth' | 'unknown';
 
+/** What orientation found about a credential: a value, a location, or nothing. */
 export interface CredentialFinding {
   found: 'value' | 'location' | 'none';
   label?: string;
@@ -93,6 +102,7 @@ export interface CredentialFinding {
   summary?: string;
 }
 
+/** The page and reference a credential finding cites. */
 export interface CredentialPage {
   sourceId: string;
   ref: string;
@@ -132,17 +142,21 @@ interface JudgedEndpoint {
   readonly reason: string | undefined;
 }
 
+/** One rung of the ladder: a path and the endpoint the documentation names for it. */
 export interface SurfacePathCandidate {
   path: Exclude<OrientationPath, 'escalate'>;
   endpoint: string;
 }
-type RegistryRemote = { type?: unknown; url?: unknown };
-type RegistryServer = {
+interface RegistryRemote {
+  type?: unknown;
+  url?: unknown;
+}
+interface RegistryServer {
   description?: unknown;
   name?: unknown;
   remotes?: unknown;
   title?: unknown;
-};
+}
 
 const orientationAgent = makeAgent(
   'surface-orientation',
@@ -188,7 +202,7 @@ export function systemNamePattern(system: string): RegExp {
     .toLowerCase()
     .split(/[^\p{L}\p{N}]+/u)
     .filter(Boolean)
-    .map((word: string): string => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    .map(escapeRegExp);
   const body = words.length > 0 ? words.join(`[^${LETTER_OR_DIGIT}]*`) : '(?!)';
   return new RegExp(`(?<!${SPACED_SCRIPT_CHARACTER})${body}(?!${SPACED_SCRIPT_CHARACTER})`, 'iu');
 }
@@ -951,6 +965,7 @@ function fallbackDraft(surface: Doc<'surfaces'>, relevantText: string): Orientat
 /** How long one surface's model call may take before literal evidence decides alone. */
 export const MODEL_BUDGET_MS = 120_000;
 
+/** The model's intake-scope reply, validated: which numbered candidates it picks and why. */
 export const intakeScopePickSchema = z.object({
   picks: z.array(z.object({ candidate: z.number().int() })),
   reasoning: z.string(),

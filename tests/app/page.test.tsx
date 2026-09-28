@@ -65,7 +65,6 @@ const oneEmployeeMetrics = {
   charter: {
     timeToFirstDraftedMs: 30_000,
     timeToFirstApprovedMs: 67_000,
-    revisions: 0,
     requestChanges: 0,
   },
   decisions: {

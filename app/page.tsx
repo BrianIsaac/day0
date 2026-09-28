@@ -26,8 +26,9 @@ import { deploymentZone } from '@/lib/zone';
 import { CompanySupervision } from './CompanySupervision';
 import { CursorToggle } from './CursorToggle';
 import { PageMotion } from './PageMotion';
+import { errorMessage } from '@/lib/errors';
 
-/** Whoever the dashboard is acting for — a Clerk user, or the local dev boss. */
+/** Whoever the dashboard is acting for - a Clerk user, or the local dev boss. */
 interface Boss {
   email: string | undefined;
   firstName: string | undefined;
@@ -86,7 +87,7 @@ function SignedOutHero() {
               className="text-lg text-[var(--color-muted)] mb-10 leading-relaxed max-w-xl"
             >
               One name in. Everything else is learned state. The agent runs its own Day-1 1:1 with
-              its boss, drafts a charter for approval, then claims work under your eye — proposing
+              its boss, drafts a charter for approval, then claims work under your eye - proposing
               new skills when it hits a gap, and authoring them in a sandbox.
             </p>
             <div data-enter="3" className="flex flex-wrap items-center gap-3">
@@ -404,7 +405,7 @@ function SignedInDashboard({ boss }: { boss: Boss }) {
     if (!workerName.trim()) return;
     const bossEmail = boss.email;
     if (!bossEmail) {
-      setError('Could not read your email address — try signing out and back in.');
+      setError('Could not read your email address - try signing out and back in.');
       return;
     }
     setSubmitting(true);
@@ -422,14 +423,17 @@ function SignedInDashboard({ boss }: { boss: Boss }) {
         // its dashboard and every day boundary the server draws follow it.
         zone: deploymentZone(),
       });
+      // The seed is fire-and-forget by design (P9-10): the page navigates
+      // away on the next line, so a failed post can only show where it is
+      // felt, as an empty mock office on the dashboard.
       fetch('/api/seed', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ agentId }),
-      }).catch(() => {});
+      }).catch((): void => undefined);
       router.push(`/agent/${agentId}`);
     } catch (err) {
-      setError((err as Error).message);
+      setError(errorMessage(err));
       setSubmitting(false);
     }
   }
@@ -612,10 +616,10 @@ const OFFICE_IDLE_SPOTS = [
   { x: 19, y: 37 },
 ] as const;
 
-type OfficePoint = {
+interface OfficePoint {
   x: number;
   y: number;
-};
+}
 
 const OFFICE_DESKS = [
   { x: 14, y: 17, seatX: 14, seatY: 25, variant: 'wide' },

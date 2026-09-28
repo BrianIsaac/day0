@@ -2,10 +2,10 @@ import type { AppliedAction } from '../../../src/surfaces/types';
 import type { MockAction, MockSurfaceSnapshot } from '../../../src/work/types';
 
 /**
- * Two closing comments on the audit-note ticket, reconstructed from the run
- * records (`docs/plans/progress/runthrough-goai-final-2026-09-14-handover.md`,
- * "16 Sep run", finding 5). Neither bed was exported, so the texts follow the
- * records' wording rather than a dump.
+ * Two closing comments on the audit-note ticket, reconstructed from the
+ * private records of the 15 and 16 September runs (GLM 5.3 Flash via
+ * Featherless, real mode), finding 5 of the 16 September run. Neither bed
+ * was exported, so the texts follow the records' wording rather than a dump.
  *
  * 15 September: the manager demanded an answer the agent had no evidence for,
  * before the checklist page existed, and the agent asserted completion.

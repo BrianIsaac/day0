@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CompanySupervision, CompanySupervisionCard } from '../../app/CompanySupervision';
-import type { AgentMetrics, OwnerMetrics } from '../../convex/metrics';
+import type { AgentMetrics, OwnerMetrics } from '../../src/metrics/types';
 import type { Id } from '../../convex/_generated/dataModel';
 
 const query = vi.hoisted(() => ({ result: undefined as unknown }));
@@ -33,7 +33,6 @@ function agentMetrics(overrides: {
     charter: {
       timeToFirstDraftedMs: overrides.approvedAfterMs,
       timeToFirstApprovedMs: overrides.approvedAfterMs,
-      revisions: 0,
       requestChanges: 0,
     },
     decisions: {

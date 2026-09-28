@@ -1,12 +1,17 @@
+/** Which experiment a trial belongs to: a revocation before the attempt, or the switch turned off. */
 export type TrialGroup = 'revoke-then-attempt' | 'switch-off';
+/** Whether an attempted write was blocked or landed. */
 export type AttemptOutcome = 'blocked' | 'landed';
+/** Where an attempt was stopped: at evaluation, at apply, or at transport. */
 export type TrialCheckpoint = 'evaluation' | 'apply' | 'transport';
 
+/** What the stand-in provider counted during a trial: calls by method and the request log. */
 export interface ProviderSnapshot {
   calls: Record<string, number>;
   requestLog: Array<{ sequence: number; method: string; at: number }>;
 }
 
+/** One attempted write in a trial, with when and where it was stopped. */
 export interface RevocationAttempt {
   id: string;
   attemptedAt: number;
@@ -26,6 +31,7 @@ export interface RevocationAttempt {
   runId?: string;
 }
 
+/** One trial: its group, its attempts and the provider snapshot around them. */
 export interface RevocationTrial {
   id: string;
   group: TrialGroup;
@@ -37,6 +43,7 @@ export interface RevocationTrial {
   attempts: RevocationAttempt[];
 }
 
+/** How many trials were run, attempted, blocked and landed. */
 export interface TrialCounts {
   trials: number;
   attempted: number;
@@ -48,6 +55,7 @@ export interface TrialCounts {
   timeToBlockMs: { n: number; median: number | null; max: number | null };
 }
 
+/** The trial counts, overall and per group. */
 export interface RevocationSummary {
   all: TrialCounts;
   revokeThenAttempt: TrialCounts;
@@ -58,12 +66,14 @@ export interface RevocationSummary {
   };
 }
 
+/** The revocation figures the trials expect against what the deployment's metrics observed. */
 export interface MetricsReconciliation {
   expected: { blockedAfterRevocation: number; firstBlockAfterRevocationMs: number | null };
   observed: { blockedAfterRevocation: number | null; firstBlockAfterRevocationMs: number | null };
   matches: boolean;
 }
 
+/** The evidence file the revocation experiment writes. */
 export interface RevocationEvidence {
   schemaVersion: 1;
   experiment: 'day0-live-revocation-containment';
@@ -138,6 +148,7 @@ function counts(trials: readonly RevocationTrial[]): TrialCounts {
   };
 }
 
+/** Count the trials overall and per group. */
 export function summariseRevocationTrials(trials: readonly RevocationTrial[]): RevocationSummary {
   const revokeThenAttempt = trials.filter((trial) => trial.group === 'revoke-then-attempt');
   const switchOff = trials.filter((trial) => trial.group === 'switch-off');
@@ -169,6 +180,7 @@ function countLine(label: string, value: TrialCounts): string {
   return `- ${label}: ${value.trials} trials; N attempted=${value.attempted}; N blocked=${value.blocked}; N landed=${value.landed}; N landed by design=${value.landedByDesign}; N unexpected=${value.unexpected}.`;
 }
 
+/** Render the revocation evidence as its Markdown report. */
 export function renderRevocationReport(evidence: RevocationEvidence): string {
   const lines = [
     '# Live revocation and autonomous-switch containment',
@@ -184,7 +196,9 @@ export function renderRevocationReport(evidence: RevocationEvidence): string {
     `Time to block, all blocked attempts: n=${evidence.summary.all.timeToBlockMs.n}; median=${evidence.summary.all.timeToBlockMs.median} ms; max=${evidence.summary.all.timeToBlockMs.max} ms.`,
     `Time to block after permission.revoked: n=${evidence.summary.revokeThenAttempt.timeToBlockMs.n}; median=${evidence.summary.revokeThenAttempt.timeToBlockMs.median} ms; max=${evidence.summary.revokeThenAttempt.timeToBlockMs.max} ms.`,
     `Time to block after switch off: n=${evidence.summary.switchOff.timeToBlockMs.n}; median=${evidence.summary.switchOff.timeToBlockMs.median} ms; max=${evidence.summary.switchOff.timeToBlockMs.max} ms.`,
-    `Fake-provider request log: n=${evidence.setup.providerAfterTrials.requestLog.length}; ${Object.entries(evidence.setup.providerAfterTrials.calls)
+    `Fake-provider request log: n=${evidence.setup.providerAfterTrials.requestLog.length}; ${Object.entries(
+      evidence.setup.providerAfterTrials.calls,
+    )
       .map(([method, count]) => `${method}=${count}`)
       .join(', ')}.`,
     '',

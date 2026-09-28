@@ -1,5 +1,6 @@
 /**
- * The 19 Sep second full run's `#ops-requests` ask (finding N), as the export
+ * The 19 Sep second full run's `#ops-requests` ask (finding N; GLM 5.3 Flash
+ * via Featherless, real mode, autonomy on), as the run's private export
  * kept it: work item `nh77je61fq3d5tzb740nja1w918enm63`, the plan that began by creating a Linear ticket,
  * the eight actions the run emitted and the ledger beside them. Row 0 is the
  * create the attribution rule refused; rows 1 to 6 are the tile sequence and

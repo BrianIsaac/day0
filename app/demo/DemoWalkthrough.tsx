@@ -11,6 +11,7 @@ import type {
   RecordedWorkItem,
   RecordedWorkspaceFile,
 } from '@/demo/hosted-demo-snapshot';
+import { recordingProvenanceLine } from '@/demo/hosted-demo-snapshot';
 
 /**
  * A recorded run of the product, rendered from the tracked snapshot.
@@ -714,6 +715,9 @@ export function DemoWalkthrough({ snapshot }: { snapshot: HostedDemoSnapshot }) 
           <p className="text-sm leading-relaxed">{recording.readOnly}</p>
           <p className="text-xs text-[var(--color-muted)] mt-2 leading-relaxed">
             {recording.sanitised}
+          </p>
+          <p className="text-xs text-[var(--color-muted)] mt-2 leading-relaxed">
+            {recordingProvenanceLine(recording)}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--color-muted)]">

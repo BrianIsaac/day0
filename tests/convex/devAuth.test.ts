@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { DEV_NO_AUTH_AUDIENCE, DEV_NO_AUTH_ISSUER } from '../../src/lib/dev-auth-issuer';
 import {
-  DEV_NO_AUTH_AUDIENCE,
-  DEV_NO_AUTH_ISSUER,
   devNoAuthProvider,
   devNoAuthRequested,
   notAuthenticatedMessage,

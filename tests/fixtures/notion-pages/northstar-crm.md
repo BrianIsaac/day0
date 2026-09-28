@@ -1,7 +1,10 @@
 # Northstar CRM
 
-Northstar CRM is the synthetic internal system of record for account and opportunity ownership.
-Records contain invented account names, stage, forecast amount, close date and owner role.
+Kestrel Supply Co. is a synthetic company built for the Day0 demonstration. Every account and
+record named here is invented.
+
+Northstar CRM is the internal system of record for account and opportunity ownership. Records
+contain account names, stage, forecast amount, close date and owner role.
 
 The Business Systems owner controls access. No approved API, MCP server, browser route, credential
 or other integration surface is recorded in the team documentation.

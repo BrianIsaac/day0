@@ -3,6 +3,8 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { ConvexHttpClient } from 'convex/browser';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
+import { log } from '@/lib/logger';
+import { errorMessage } from '@/lib/errors';
 
 interface ElevenLabsPostCallPayload {
   type?: string;
@@ -34,14 +36,14 @@ const MISSING_SECRET =
  * ElevenLabs post-call transcription webhook. The agent's dashboard
  * webhook config carries this URL. Custom data (our internal agentId,
  * the boss label, the session's webhook token) lands at
- * `data.conversation_initiation_client_data.dynamic_variables` —
+ * `data.conversation_initiation_client_data.dynamic_variables` -
  * sent in the original `startSession({ dynamicVariables })` call from
  * the browser.
  *
  * Trust model: no Clerk JWT reaches this route, so the caller is
  * authenticated by the `elevenlabs-signature` HMAC over the raw body,
  * verified below before anything else reads the payload. Without the
- * shared secret the route refuses every request — a check that fails open
+ * shared secret the route refuses every request - a check that fails open
  * would be worse than no check, because the call site would read as
  * protected. Behind that, the Convex action independently binds the
  * transcript to a session via `internal_session_token`; it is a public
@@ -51,7 +53,7 @@ export async function POST(req: Request): Promise<NextResponse> {
   const rawBody = await req.text();
   const signature = verifySignature(rawBody, req.headers.get('elevenlabs-signature'));
   if (!signature.ok) {
-    console.error(`[elevenlabs webhook] rejected: ${signature.error}`);
+    log.warn('elevenlabs webhook rejected', { reason: signature.error, status: signature.status });
     return NextResponse.json({ error: signature.error }, { status: signature.status });
   }
 
@@ -110,15 +112,15 @@ export async function POST(req: Request): Promise<NextResponse> {
     //
     // `in-progress` is answered 200 for the same reason, and that answer spends
     // this delivery: a 200 is not retried. What makes that safe is that the
-    // deployment no longer needs the retry — a claim that fails schedules its
+    // deployment no longer needs the retry - a claim that fails schedules its
     // own re-drive in the transaction that releases it
     // (`convex/voice.ts:releaseFinalisation`). Answering a retryable status here
     // instead would trade a defect for a worse one: repeated non-2xx is what
     // gets a webhook disabled.
     return NextResponse.json(result);
   } catch (err) {
-    const message = (err as Error).message ?? 'unknown error';
-    console.error(`[elevenlabs webhook] synthesis failed: ${message}`);
+    const message = errorMessage(err);
+    log.error('elevenlabs webhook synthesis failed', { reason: message });
     if (message.includes('webhook denied')) {
       return NextResponse.json(
         { error: 'payload does not match a voice session for that agent' },

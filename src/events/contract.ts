@@ -34,7 +34,7 @@ type RunId = Id<'events'>;
 type SessionId = Id<'voiceSessions'>;
 
 /** Where a charter amendment came from. */
-export type AmendmentVia = 'dashboard' | 'plan-approval' | 'channel';
+export type AmendmentVia = 'dashboard' | 'plan-approval';
 
 /** Where the manager decided a plan or a held set. */
 export type DecidedVia = 'dashboard' | 'channel';

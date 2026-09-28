@@ -1,25 +1,48 @@
 /** @vitest-environment node */
 
 import { describe, expect, it } from 'vitest';
-import { markdownTitle, normaliseToolNames, resolveDocsDirectory } from '../../convex/probeActions';
+import type { ActionCtx } from '../../convex/_generated/server';
+import type { Id } from '../../convex/_generated/dataModel';
+import { probeMcpHandler } from '../../convex/probeActions';
 
-describe('probeActions pure helpers', (): void => {
-  it('returns raw provider tool names in stable order', (): void => {
-    expect(normaliseToolNames(['probe_save_issue', 'probe_list_issues'], 'probe')).toEqual([
-      'list_issues',
-      'save_issue',
-    ]);
-  });
+const sourceId = 'source-1' as Id<'docSources'>;
 
-  it('reads the first level-one Markdown heading', (): void => {
-    expect(markdownTitle('intro\n# Team onboarding\nbody', 'onboarding')).toBe('Team onboarding');
-    expect(markdownTitle('intro only', 'onboarding')).toBe('onboarding');
-  });
+/** A context whose source read and credential decrypt answer from the arguments. */
+function contextWith(
+  source: Record<string, unknown> | null,
+  credential = 'plain-token',
+): ActionCtx {
+  return {
+    runQuery: async (): Promise<Record<string, unknown> | null> => source,
+    runAction: async (): Promise<string> => credential,
+  } as unknown as ActionCtx;
+}
 
-  it('refuses paths outside the configured documentation root', (): void => {
-    expect(resolveDocsDirectory('/docs', 'runbooks')).toBe('/docs/runbooks');
-    expect((): string => resolveDocsDirectory('/docs', '../secret')).toThrow(
-      'Folder probe root must stay inside DAY0_DOCS_ROOT.',
+describe('the MCP documentation probe', (): void => {
+  it('discovers the provider tool names with the decrypted credential and times the discovery', async (): Promise<void> => {
+    const seen: string[] = [];
+    const result = await probeMcpHandler(
+      contextWith({ _id: sourceId, kind: 'mcp', credentialId: 'cred-1', locator: 'https://x' }),
+      { docSourceId: sourceId },
+      async (_source, credential): Promise<string[]> => {
+        seen.push(credential);
+        return ['save_issue', 'list_issues'];
+      },
     );
+    expect(result.toolNames).toEqual(['save_issue', 'list_issues']);
+    expect(result.elapsedMs).toBeGreaterThanOrEqual(0);
+    expect(seen).toEqual(['plain-token']);
+  });
+
+  it('refuses a source that is missing, not MCP, or without a credential', async (): Promise<void> => {
+    for (const source of [
+      null,
+      { _id: sourceId, kind: 'folder', credentialId: 'c' },
+      { _id: sourceId, kind: 'mcp' },
+    ]) {
+      await expect(
+        probeMcpHandler(contextWith(source), { docSourceId: sourceId }, async () => []),
+      ).rejects.toThrow('Credential-backed MCP documentation source not found.');
+    }
   });
 });

@@ -3,11 +3,11 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { auth } from '@clerk/nextjs/server';
-import { DEV_NO_AUTH_SUBJECT } from '@convex/devAuth';
+import { DEV_NO_AUTH_SUBJECT } from './dev-auth-issuer';
 import { DEV_NO_AUTH } from './dev-auth';
 
 /**
- * No-auth development mode — possession of this machine's local key.
+ * No-auth development mode - possession of this machine's local key.
  *
  * Server-only. Never import this from a client component: it reads the two
  * secrets the mode turns on, and `NEXT_PUBLIC_*` is the only thing the browser
@@ -31,7 +31,7 @@ import { DEV_NO_AUTH } from './dev-auth';
  *     so an attacker who can reach the dev server gets a 403 and nothing else.
  *   - `DEV_NO_AUTH_SIGNING_KEY` signs the short-lived token Convex accepts. The
  *     deployment holds only its public half, so an attacker who can reach the
- *     Convex socket directly — bypassing this process entirely — still cannot
+ *     Convex socket directly - bypassing this process entirely - still cannot
  *     produce a token it will verify.
  *
  * Neither is an inference about where a caller sits. Both are facts the checking
@@ -59,7 +59,7 @@ export function devNoAuthKeyGaps(): string[] | null {
 /**
  * Whether a caller-supplied value is this machine's unlock secret. Compares in
  * time independent of how much of the secret was guessed correctly, and treats
- * an unset secret as matching nothing — the failure mode of the whole mode has
+ * an unset secret as matching nothing - the failure mode of the whole mode has
  * to be refusal, never an open door.
  */
 export function isDevNoAuthSecret(candidate: string | null | undefined): boolean {

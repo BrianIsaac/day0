@@ -66,6 +66,7 @@ import {
   venvStampCommand,
   type VenvDevice,
 } from './redactor-device';
+import { errorMessage } from '../src/lib/errors';
 
 const ENV_FILE = '.env.local';
 const COMPOSE_FILE = 'docker-compose.yml';
@@ -226,6 +227,7 @@ const SYNC_SCRIPT = 'scripts/sync-convex-env.sh';
 /** Pinned in the compose file; used for the throwaway tar containers too. */
 const TAR_IMAGE_PREFIX = 'node:22-alpine@sha256:';
 
+/** The verbs the demo bed script takes. */
 export type Command = 'up' | 'snapshot' | 'restore' | 'preflight' | 'offline-rung' | 'down';
 
 const COMMANDS: readonly Command[] = [
@@ -237,6 +239,7 @@ const COMMANDS: readonly Command[] = [
   'down',
 ];
 
+/** Every flag the demo bed script takes, parsed from its arguments. */
 export interface DemoBedOptions {
   command: Command;
   project: string;
@@ -587,6 +590,7 @@ export function restoreCommand(
   ];
 }
 
+/** One Compose service and the image reference it runs. */
 export interface ComposeImage {
   service: string;
   reference: string;
@@ -648,6 +652,7 @@ export function upsertEnvText(text: string, updates: Readonly<Record<string, str
   return `${lines.join('\n')}\n`;
 }
 
+/** The host ports a bed's services listen on. */
 export interface BedPorts {
   backend: number;
   site: number;
@@ -677,6 +682,7 @@ export function bedPorts(values: Readonly<Record<string, string>>): BedPorts {
   };
 }
 
+/** One line of a bed's service listing: the service, its state and its health. */
 export interface ServiceRow {
   service: string;
   state: string;
@@ -846,8 +852,10 @@ export function credentialKeyToAdopt(
   return deploymentValue === fileValue ? undefined : deploymentValue;
 }
 
+/** How a pre-flight item stands: fine, worth a look, or a gap. */
 export type ChecklistStatus = 'ok' | 'warn' | 'gap';
 
+/** One pre-flight line with its status. */
 export interface ChecklistItem {
   label: string;
   status: ChecklistStatus;
@@ -875,6 +883,7 @@ export function renderChecklist(items: readonly ChecklistItem[]): string {
   return lines.join('\n');
 }
 
+/** What the tier verdicts read: whether the video, the offline rung and the live bed are ready. */
 export interface TierInputs {
   videoPresent: boolean;
   offlineRungReady: boolean;
@@ -904,6 +913,7 @@ export interface TierInputs {
   probeTier: 1 | 2 | 3 | undefined;
 }
 
+/** One demo tier and whether it can go. */
 export interface TierVerdict {
   name: string;
   go: boolean;
@@ -1017,12 +1027,14 @@ export function snapshotRefusal(
   );
 }
 
+/** The commands that clone one Docker volume for a warm bed. */
 export interface VolumeClone {
   volume: string;
   create: string[];
   copy: string[];
 }
 
+/** What the warm-redactor plan reads: the bed and the bed to warm it from. */
 export interface WarmRedactorInput {
   /** The bed. */
   project: string;
@@ -1034,6 +1046,7 @@ export interface WarmRedactorInput {
   image: string;
 }
 
+/** The volume clones and the compose invocation that bring a warm redactor up. */
 export interface WarmRedactorPlan {
   /** One create and one copy command per volume; empty when the bed's own are kept. */
   clone: VolumeClone[];
@@ -1183,6 +1196,7 @@ export function redactorVenvRefusal(device: VenvDevice, venv: string): string | 
   }
 }
 
+/** Whether a bed's offline rung has everything it needs, and what is missing. */
 export interface RungReadiness {
   /** The bed. */
   project: string;
@@ -1517,6 +1531,7 @@ function assertBedTarget(project: string, values: Readonly<Values>, ports: BedPo
   }
 }
 
+/** The env values a bed's compose invocation takes for its project and profiles. */
 export function bedEnvDefaults(
   project: string,
   profiles: readonly string[],
@@ -1742,11 +1757,10 @@ async function bossClient(
   const url = values.CONVEX_SELF_HOSTED_URL;
   if (!url) return { reason: 'CONVEX_SELF_HOSTED_URL is empty' };
   if (!values.DEV_NO_AUTH_SIGNING_KEY) return { reason: 'DEV_NO_AUTH_SIGNING_KEY is empty' };
-  process.env.DEV_NO_AUTH_SIGNING_KEY = values.DEV_NO_AUTH_SIGNING_KEY;
   const { ConvexHttpClient } = await import('convex/browser');
   const { mintDevNoAuthToken } = await import('../src/lib/dev-auth-token');
   const client = new ConvexHttpClient(url, { skipConvexDeploymentUrlCheck: true, logger: false });
-  client.setAuth(await mintDevNoAuthToken());
+  client.setAuth(await mintDevNoAuthToken(undefined, values.DEV_NO_AUTH_SIGNING_KEY));
   return { client };
 }
 
@@ -2262,7 +2276,7 @@ async function surfacesState(values: Values): Promise<SurfaceSummary | string> {
       ...(lastProbeFailure ? { lastProbeFailure: lastProbeFailure.text } : {}),
     };
   } catch (error) {
-    return (error as Error).message.split('\n')[0];
+    return errorMessage(error).split('\n')[0];
   }
 }
 
@@ -2395,7 +2409,7 @@ async function preflight(options: DemoBedOptions): Promise<number> {
         items.push({
           label: 'Backend config',
           status: 'gap',
-          detail: (error as Error).message.split('\n')[0],
+          detail: errorMessage(error).split('\n')[0],
         });
       }
     }
@@ -2726,7 +2740,7 @@ async function main(): Promise<number> {
   try {
     options = parseDemoBedArguments(process.argv.slice(2), readEnvFile());
   } catch (error) {
-    const message = (error as Error).message;
+    const message = errorMessage(error);
     if (message.startsWith('Usage:')) {
       log(message);
       return 0;
@@ -2755,7 +2769,7 @@ async function main(): Promise<number> {
         return 0;
     }
   } catch (error) {
-    process.stderr.write(`error: ${(error as Error).message}\n`);
+    process.stderr.write(`error: ${errorMessage(error)}\n`);
     return 1;
   }
 }

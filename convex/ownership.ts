@@ -3,7 +3,8 @@ import type { Doc, Id } from './_generated/dataModel';
 import type { QueryCtx, MutationCtx, ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import { CUSTOMER_OIDC_ISSUER_VAR } from '../src/lib/customer-oidc';
-import { DEV_NO_AUTH_SESSION_CLAIM, notAuthenticatedMessage } from './devAuth';
+import { DEV_NO_AUTH_SESSION_CLAIM } from '../src/lib/dev-auth-issuer';
+import { notAuthenticatedMessage } from './devAuth';
 
 /**
  * Per-account ownership guards. Every public query/mutation/action that
@@ -59,29 +60,27 @@ export function callerSessionId(identity: UserIdentity): string | undefined {
 }
 
 /**
- * The verified caller, or null for an anonymous one.
- *
- * `subject` on the identity returned here is the owner key
- * ({@link ownerKeyOf}), not necessarily the token's `sub`, so every guard and
- * every row written from it agree on one key per owner. Every other claim is
- * the token's own.
+ * A verified caller: the token's own claims, `subject` included, plus the
+ * owner key every guard compares and every row is keyed on ({@link ownerKeyOf}).
  */
-export async function getCaller(
-  ctx: QueryCtx | MutationCtx | ActionCtx,
-): Promise<UserIdentity | null> {
+export interface Caller extends UserIdentity {
+  readonly ownerKey: string;
+}
+
+/** The verified caller, or null for an anonymous one. */
+export async function getCaller(ctx: QueryCtx | MutationCtx | ActionCtx): Promise<Caller | null> {
   const identity = await ctx.auth.getUserIdentity();
-  return identity && { ...identity, subject: ownerKeyOf(identity) };
+  return identity && { ...identity, ownerKey: ownerKeyOf(identity) };
 }
 
 /** The verified caller; throws the mode's not-authenticated message for an anonymous one. */
-export async function getCallerOrThrow(
-  ctx: QueryCtx | MutationCtx | ActionCtx,
-): Promise<UserIdentity> {
+export async function getCallerOrThrow(ctx: QueryCtx | MutationCtx | ActionCtx): Promise<Caller> {
   const identity = await getCaller(ctx);
   if (!identity) throw new Error(notAuthenticatedMessage());
   return identity;
 }
 
+/** The employee, if the caller owns it; throws otherwise. The guard for a row keyed by agent id; the four below cover rows keyed otherwise. */
 export async function assertOwnsAgent(
   ctx: QueryCtx | MutationCtx,
   agentId: Id<'agents'>,
@@ -90,10 +89,11 @@ export async function assertOwnsAgent(
   const agent = await ctx.db.get(agentId);
   if (!agent) throw new Error('agent not found');
   if (!agent.userId) throw new Error('forbidden: agent has no owner');
-  if (agent.userId !== identity.subject) throw new Error('forbidden');
+  if (agent.userId !== identity.ownerKey) throw new Error('forbidden');
   return agent;
 }
 
+/** The employee, if the caller owns it, for an action that has no database handle. */
 export async function assertOwnsAgentAction(
   ctx: ActionCtx,
   agentId: Id<'agents'>,
@@ -102,10 +102,11 @@ export async function assertOwnsAgentAction(
   const agent = await ctx.runQuery(internal.agents.getInternal, { agentId });
   if (!agent) throw new Error('agent not found');
   if (!agent.userId) throw new Error('forbidden: agent has no owner');
-  if (agent.userId !== identity.subject) throw new Error('forbidden');
+  if (agent.userId !== identity.ownerKey) throw new Error('forbidden');
   return agent;
 }
 
+/** The charter, if the caller owns its employee; throws otherwise. */
 export async function assertOwnsCharter(
   ctx: QueryCtx | MutationCtx,
   charterId: Id<'charters'>,
@@ -116,6 +117,7 @@ export async function assertOwnsCharter(
   return charter;
 }
 
+/** The work item, if the caller owns its employee; throws otherwise. */
 export async function assertOwnsWorkItem(
   ctx: QueryCtx | MutationCtx,
   workItemId: Id<'workItems'>,
@@ -126,6 +128,7 @@ export async function assertOwnsWorkItem(
   return item;
 }
 
+/** The skill, if the caller owns its employee; throws otherwise. */
 export async function assertOwnsSkill(
   ctx: QueryCtx | MutationCtx,
   skillId: Id<'skills'>,
@@ -136,6 +139,7 @@ export async function assertOwnsSkill(
   return skill;
 }
 
+/** The voice session, if the caller owns its employee; throws otherwise. */
 export async function assertOwnsVoiceSession(
   ctx: QueryCtx | MutationCtx,
   sessionId: Id<'voiceSessions'>,

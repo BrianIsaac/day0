@@ -47,7 +47,7 @@ import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { writePrivateEnv } from './private-env';
-import { DEV_NO_AUTH_KEY_ID } from '../convex/devAuth';
+import { DEV_NO_AUTH_KEY_ID } from '../src/lib/dev-auth-issuer';
 import type { DEV_NO_AUTH_UNLOCK_PARAM as UnlockParam } from '../src/lib/dev-auth-server';
 
 // This runs under bare `tsx`, outside Next's bundler, so it cannot *import*

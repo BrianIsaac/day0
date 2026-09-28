@@ -160,6 +160,20 @@ describe('plan drafter grounding', (): void => {
     planRecorded.instructions.length = 0;
   });
 
+  it('refuses a plan with no step or more than eight, rather than cutting it silently', (): void => {
+    const base = {
+      summary: 's',
+      expectedOutputType: 'message',
+      riskNotes: '',
+      reversibility: '',
+      estimatedMinutes: 5,
+    };
+    expect(planSchema.safeParse({ ...base, steps: [] }).success).toBe(false);
+    expect(planSchema.safeParse({ ...base, steps: Array(9).fill('step') }).success).toBe(false);
+    const eight = planSchema.safeParse({ ...base, steps: Array(8).fill('step') });
+    expect(eight.success && eight.data.steps).toHaveLength(8);
+  });
+
   it('tells the planner which evidence it plans from', (): void => {
     const prompt = planSystemPrompt(false);
     expect(prompt).toContain('connected');

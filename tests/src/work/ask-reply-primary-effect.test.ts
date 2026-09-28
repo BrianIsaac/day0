@@ -84,7 +84,7 @@ describe('the reply to the asker is the primary effect of a mention (19 Sep four
       [threadReply(reply.channel, reply.threadTs), { ...landed, ok: false, reason: 'HTTP 500' }],
       [threadReply(reply.channel, '1789700000.000001'), landed],
       [threadReply(reply.channel), landed],
-      [threadReply('D0BS5SXMXPZ'), landed],
+      [threadReply('D0MANAGER'), landed],
     ];
     for (const [action, row] of cases) {
       expect(

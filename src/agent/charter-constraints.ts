@@ -1,5 +1,6 @@
 import type { Charter, DayOneTopic } from './charter';
 import { CANDIDATE_PROPERTIES } from '../work/candidate-properties';
+import { escapeRegExp } from '../lib/regex';
 
 /**
  * The clauses of a charter that act as constraints on work, kept beside the
@@ -55,10 +56,6 @@ export const CLAUSE_FIELDS = [
 
 export type ClauseField = (typeof CLAUSE_FIELDS)[number];
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
 /**
  * A provenance suffix a model may append to a clause: a bracketed note that
  * names the 1:1 or day 1 and says where it came from (from, per, source,
@@ -67,7 +64,7 @@ function escapeRegExp(value: string): string {
  * each clause and evidence rows carry it in `source`, so a suffix in the
  * clause text is noise the reader sees twice. GLM 5.3 Flash wrote
  * "(from manager 1:1 day-1)" on every clause of one 16 September draft. A
- * bracket that merely mentions the 1:1 ("(the Monday 1:1 with Brian)") is
+ * bracket that merely mentions the 1:1 ("(the Monday 1:1 with Sam)") is
  * clause text and stays.
  */
 const PROVENANCE_SUFFIX =

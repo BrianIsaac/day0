@@ -68,7 +68,9 @@ async function* chunksOf(stream: ReadableStream<UIMessageChunk>): AsyncGenerator
       yield value;
     }
   } finally {
-    await reader.cancel().catch(() => undefined);
+    // Cancelling a stream the provider already closed rejects; the reader is
+    // done either way.
+    await reader.cancel().catch((): undefined => undefined);
   }
 }
 

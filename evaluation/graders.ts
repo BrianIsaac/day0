@@ -380,7 +380,8 @@ function includes(haystack: string, needle: string): boolean {
   return haystack.toLocaleLowerCase().includes(needle.toLocaleLowerCase());
 }
 
-function eventWorkItemId(event: EvaluationSnapshot['events'][number]): string | undefined {
+/** The work item an event's payload names, when it names one. */
+export function eventWorkItemId(event: { payload?: unknown }): string | undefined {
   if (!event.payload || typeof event.payload !== 'object') return undefined;
   const value = (event.payload as { workItemId?: unknown }).workItemId;
   return typeof value === 'string' ? value : undefined;

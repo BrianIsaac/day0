@@ -19,7 +19,7 @@ export const log1Candidate: WorkCandidate = { ...{
   "contentRefs": [
     "https://linear.app/day00/issue/LOG-1/exception-sh-4471-held-at-port-klang-meridian-freight-no-revised-eta"
   ],
-  "requesterLabel": "Brian"
+  "requesterLabel": "Sam"
 }, observedAt: new Date(1789782360619) } as WorkCandidate;
 
 /** The approved plan: a DM step, then a comment and a Done the judgement made `conditional-write` under `conditional-on-manager`; no read declared. */
@@ -210,7 +210,7 @@ export const log3Candidate: WorkCandidate = { ...{
   "contentRefs": [
     "https://linear.app/day00/issue/LOG-3/exception-sh-4480-held-at-port-klang-meridian-freight-no-revised-eta"
   ],
-  "requesterLabel": "Brian"
+  "requesterLabel": "Sam"
 }, observedAt: new Date(1789783197004) } as WorkCandidate;
 
 /** SH-4480's approved plan, the same declared shape as LOG-1's; it applied the two corrections kept from LOG-1. */

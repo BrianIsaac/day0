@@ -27,13 +27,14 @@ export const planDraftedWithoutValidator = v.object({
 });
 
 /**
- * Day0 schema — one world per agent, by design.
+ * Day0 schema - one world per agent, by design.
  *
  * Every other table FK-points back at an `agents` row, the mock work
  * environment included, so an agent's workspace, queue, skills and grants
  * are its own and are never shared with another agent or another user.
  * `workspace` stores the 8-file convention as one row per (agent, file).
- * `events` is an append-only feed driving the live UI.
+ * `events` is the feed driving the live UI; the server patches a row's payload in
+ * place when a later phase completes it, so it is not strictly append-only.
  */
 export default defineSchema({
   agents: defineTable({
@@ -43,7 +44,7 @@ export default defineSchema({
     /** Sources the owner unticked at deploy. Everything else the owner links,
      * before or after the deploy, is inherited. */
     excludedDocSourceIds: v.optional(v.array(v.id('docSources'))),
-    /** Clerk user id (`identity.subject`). Optional for legacy rows; new
+    /** The owner key (`ownerKeyOf` the caller's identity). Optional for legacy rows; new
      * deploys must populate it. Queries scope by this so each owner's
      * agents are isolated. */
     userId: v.optional(v.string()),
@@ -543,8 +544,8 @@ export default defineSchema({
   voiceSessions: defineTable({
     agentId: v.id('agents'),
     mode: v.union(v.literal('elevenlabs'), v.literal('gemini-live'), v.literal('chat')),
-    /** The finalisation state machine. A call has two independent finishers —
-     * the browser's `onDisconnect` post and the ElevenLabs post-call webhook —
+    /** The finalisation state machine. A call has two independent finishers -
+     * the browser's `onDisconnect` post and the ElevenLabs post-call webhook -
      * so `synthesising` is the reservation exactly one of them wins before any
      * model call is spent. See `convex/voice.ts`. */
     state: v.union(

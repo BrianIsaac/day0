@@ -34,7 +34,9 @@ import {
 import { agentZone, canonicalZone, deploymentZone } from '../src/lib/zone';
 import { appendEvent } from './eventLog';
 
+/** Where a permission grant came from: deployment, the manager, a skill or a surface. */
 export const PERMISSION_GRANT_SOURCES = ['deploy', 'manager', 'skill', 'surface'] as const;
+/** One source of a permission grant. */
 export type PermissionGrantSource = (typeof PERMISSION_GRANT_SOURCES)[number];
 
 const permissionGrantSource = v.union(
@@ -45,7 +47,7 @@ const permissionGrantSource = v.union(
 );
 
 /**
- * Agent CRUD + state transitions. Each agent is owned by one caller subject —
+ * Agent CRUD + state transitions. Each agent is owned by one caller subject -
  * a Clerk user, or the single synthetic user in no-auth dev mode;
  * `listForUser` filters by the signed-in user so concurrent demos stay
  * isolated. All other public functions that take an `agentId` enforce
@@ -59,7 +61,7 @@ export const listForUser = query({
     if (!identity) return [];
     return await ctx.db
       .query('agents')
-      .withIndex('by_userId', (q) => q.eq('userId', identity.subject))
+      .withIndex('by_userId', (q) => q.eq('userId', identity.ownerKey))
       .order('desc')
       .take(20);
   },
@@ -367,11 +369,11 @@ export const rosterForUser = query({
   returns: v.array(rosterRowValidator),
   handler: async (ctx): Promise<RosterRow[]> => {
     const identity = await getCaller(ctx);
-    if (!identity?.subject) return [];
+    if (!identity?.ownerKey) return [];
     const agents = (
       await ctx.db
         .query('agents')
-        .withIndex('by_userId', (q) => q.eq('userId', identity.subject))
+        .withIndex('by_userId', (q) => q.eq('userId', identity.ownerKey))
         .order('desc')
         .take(ROSTER_SCAN_LIMIT)
     )
@@ -379,7 +381,7 @@ export const rosterForUser = query({
       .slice(0, ROSTER_LIMIT);
     const sources = await ctx.db
       .query('docSources')
-      .withIndex('by_user', (q) => q.eq('userId', identity.subject))
+      .withIndex('by_user', (q) => q.eq('userId', identity.ownerKey))
       .take(DOC_SOURCE_READ_LIMIT);
     return await Promise.all(
       agents.map(async (agent): Promise<RosterRow> => {
@@ -404,26 +406,11 @@ export const rosterForUser = query({
   },
 });
 
+/** Public, owner-guarded: one employee. */
 export const get = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args) => {
     return await assertOwnsAgent(ctx, args.agentId);
-  },
-});
-
-export const getByEmail = query({
-  args: { bossEmail: v.string() },
-  handler: async (ctx, args) => {
-    const identity = await getCaller(ctx);
-    if (!identity) return null;
-    const row = await ctx.db
-      .query('agents')
-      .withIndex('by_bossEmail', (q) => q.eq('bossEmail', args.bossEmail))
-      .order('desc')
-      .first();
-    if (!row) return null;
-    if (row.userId !== identity.subject) return null;
-    return row;
   },
 });
 
@@ -439,6 +426,7 @@ export const getInternal = internalQuery({
   },
 });
 
+/** Public: creates an employee for the caller with its deployment grants and workspace, in the caller's zone. */
 export const deploy = mutation({
   args: {
     bossEmail: v.string(),
@@ -459,7 +447,7 @@ export const deploy = mutation({
     }
     for (const sourceId of args.excludedDocSourceIds ?? []) {
       const source = await ctx.db.get(sourceId);
-      if (!source || source.userId !== identity.subject) {
+      if (!source || source.userId !== identity.ownerKey) {
         throw new Error('Documentation source not found or owned by another user.');
       }
     }
@@ -471,7 +459,7 @@ export const deploy = mutation({
       excludedDocSourceIds: args.excludedDocSourceIds?.length
         ? args.excludedDocSourceIds
         : undefined,
-      userId: identity.subject,
+      userId: identity.ownerKey,
       state: 'deployed',
       arm: args.arm ?? 'day0',
       zone,
@@ -600,6 +588,7 @@ export const setBossEmail = mutation({
   },
 });
 
+/** Public, owner-guarded: grants permission scopes to an employee as the manager. */
 export const grantScopes = mutation({
   args: { agentId: v.id('agents'), scopes: v.array(v.string()) },
   handler: async (ctx, args) => {
@@ -702,6 +691,7 @@ export const permissionScopes = query({
   },
 });
 
+/** Internal: sets an employee's lifecycle state. */
 export const setState = internalMutation({
   args: {
     agentId: v.id('agents'),
@@ -712,6 +702,7 @@ export const setState = internalMutation({
   },
 });
 
+/** Public, owner-guarded: an employee's most recent events, newest first. */
 export const recentEvents = query({
   args: { agentId: v.id('agents'), limit: v.optional(v.number()) },
   handler: async (ctx, args) => {
@@ -725,6 +716,7 @@ export const recentEvents = query({
   },
 });
 
+/** Internal: an employee's active permission grants. */
 export const grantedScopes = internalQuery({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<Doc<'permissionGrants'>[]> => {

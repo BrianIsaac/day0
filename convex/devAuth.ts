@@ -1,5 +1,5 @@
 /**
- * No-auth development mode — the shared definition of the local issuer.
+ * No-auth development mode - the shared definition of the local issuer.
  *
  * When it is on, Clerk is not involved. The deployment accepts one locally
  * issued token instead, and every caller who presents it resolves to one fixed
@@ -23,38 +23,22 @@
  * provider. Convex then accepts a caller only if it presents a token signed by
  * the private half, which never leaves `.env.local`. A caller who reaches the
  * socket from anywhere at all still cannot present as the local boss without
- * that key, so the backend is checking a fact it can observe — a signature —
+ * that key, so the backend is checking a fact it can observe - a signature -
  * rather than inferring one it cannot.
  *
  * The Next.js half mints those tokens and gates who may ask for one; see
  * `src/lib/dev-auth-server.ts`.
  */
 
+import {
+  DEV_NO_AUTH_ALGORITHM,
+  DEV_NO_AUTH_AUDIENCE,
+  DEV_NO_AUTH_ISSUER,
+} from '../src/lib/dev-auth-issuer';
 import { presentHostedMarkers } from '../src/lib/hosted-markers';
 
 const FLAG = 'NEXT_PUBLIC_DEV_NO_AUTH';
 const JWKS_VAR = 'DEV_NO_AUTH_JWKS';
-
-/** The single subject the whole per-user data model hangs off in no-auth mode. */
-export const DEV_NO_AUTH_SUBJECT = 'dev-no-auth|local-boss';
-
-/** Names the local issuer. Never resolved over the network by either half. */
-export const DEV_NO_AUTH_ISSUER = 'https://dev-no-auth.day0.local';
-
-/** Checked against the token's `aud` claim by the deployment. */
-export const DEV_NO_AUTH_AUDIENCE = 'day0-dev-no-auth';
-
-export const DEV_NO_AUTH_KEY_ID = 'day0-dev-no-auth';
-
-/**
- * The claim a local token carries its browser's session id in, so the one
- * subject every browser shares can still be told apart per browser. `sid` is
- * the name OIDC session management gives the same fact, so the owner's ledger
- * reads one claim whichever issuer signed the caller in.
- */
-export const DEV_NO_AUTH_SESSION_CLAIM = 'sid';
-
-export const DEV_NO_AUTH_ALGORITHM = 'ES256';
 
 /**
  * Reading an unset name can throw rather than return `undefined` depending on

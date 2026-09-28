@@ -1,7 +1,10 @@
 # Looker pipeline tile
 
-The pipeline coverage tile on the RevOps Looker dashboard is the number quoted in the Friday
-standup and in the Q3 close summary. It is maintained by hand.
+Kestrel Supply Co. is a synthetic company built for the Day0 demonstration. The tile, its figure
+and its login are invented.
+
+The Looker pipeline tile holds the single pipeline coverage figure revenue operations maintains
+by hand. The figure is quoted in the Friday standup and in the Q3 close summary.
 
 ## Where it is
 
@@ -18,8 +21,8 @@ Owner: the RevOps operations lead.
 
 ## Current approved figure
 
-For `REVOPS-7`, the Friday standup coverage summary states **74%**. That summary is the approved
-source for this refresh; enter `74%` exactly and preserve the tile's audit line as proof.
+For this close, the Friday standup coverage summary states **74%**. That summary is the approved
+source for the refresh; enter `74%` exactly and preserve the tile's audit line as proof.
 
 ## Working rules
 
@@ -31,4 +34,4 @@ source for this refresh; enter `74%` exactly and preserve the tile's audit line 
 - Never take a screenshot of the dashboard into a ticket or a message. Quote the figure and the
   audit line instead.
 - If the page cannot be reached or the login is refused, say so and ask the operations lead. Do not
-  look for another route into the dashboard - there is not one.
+  look for another route into the dashboard; there is not one.

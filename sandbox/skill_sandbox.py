@@ -23,10 +23,12 @@ than the code:
     runs as `nobody`.
   - Memory, process count, CPU time, file size and wall-clock are all capped.
     The wall-clock cap is 60 seconds, which is what the Daytona path allows.
-  - A run cannot outlive itself. Killing its process group misses anything that
-    called `setsid()` to leave that group, so this process also holds the child
-    subreaper bit: an escapee whose parent dies is re-parented here, and every
-    run ends by sweeping what is parented here. See `become_subreaper`.
+  - A run's processes cannot outlive it. Killing its process group misses
+    anything that called `setsid()` to leave that group, so this process also
+    holds the child subreaper bit: an escapee whose parent dies is re-parented
+    here, and every run ends by sweeping what is parented here. See
+    `become_subreaper`. Requests a run queued on this socket before it was
+    killed are not swept; they are served after it.
 
 What it is not is a defence against someone who is trying. A container escape
 is a container escape, and the smoke test shares a uid with this supervisor. It

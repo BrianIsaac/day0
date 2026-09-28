@@ -2,11 +2,11 @@ import type { DayOneTopic } from './charter';
 
 /**
  * Day-1 manager 1:1 conversational protocol. Lifted from Protean's
- * `src/agent/day-one-prompts.ts` — the seven topics are load-bearing
+ * `src/agent/day-one-prompts.ts` - the seven topics are load-bearing
  * for the charter synthesis prompt downstream.
  *
  * The agent leads the boss through seven topics, "conversational, like
- * a real new hire's first 1:1 — one question at a time, follow-ups
+ * a real new hire's first 1:1 - one question at a time, follow-ups
  * threaded, not a structured questionnaire to fill in."
  *
  * Used by both the chat-mode flow and the voice flow (the questions
@@ -21,6 +21,7 @@ export interface DayOneTopicSpec {
 
 const AGENT_NAME = 'Day0';
 
+/** The employee's opening line of the Day-1 1:1, addressed to the manager by first name. */
 export const DAY_ONE_WELCOME = (managerFirstName: string): string =>
   [
     `Hi ${managerFirstName} — I'm ${AGENT_NAME}, the agent you just deployed.`,
@@ -28,6 +29,7 @@ export const DAY_ONE_WELCOME = (managerFirstName: string): string =>
     `I'll ask seven short questions and then put together a draft charter for you to look over. Bullet points are fine if you're short on time.`,
   ].join('\n\n');
 
+/** The seven Day-1 topics with the question each asks. */
 export const DAY_ONE_TOPIC_SPECS: readonly DayOneTopicSpec[] = [
   {
     topic: 'why-this-hire',
@@ -82,12 +84,14 @@ export const DAY_ONE_TOPIC_SPECS: readonly DayOneTopicSpec[] = [
 
 const TOPIC_LOOKUP = new Map(DAY_ONE_TOPIC_SPECS.map((s) => [s.topic, s]));
 
+/** The question the 1:1 asks for one topic. */
 export function topicQuestion(topic: DayOneTopic): string {
   const spec = TOPIC_LOOKUP.get(topic);
   if (!spec) throw new Error(`day-one-prompts: unknown topic ${topic}`);
   return spec.question;
 }
 
+/** The SOUL.md an employee starts with. */
 export function defaultSoul(): string {
   return [
     '# SOUL',
@@ -102,6 +106,7 @@ export function defaultSoul(): string {
   ].join('\n');
 }
 
+/** The BOOTSTRAP.md that scripts the Day-1 1:1. */
 export function day1Script(): string {
   return [
     '# BOOTSTRAP — Day 1',

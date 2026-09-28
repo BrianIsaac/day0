@@ -1,4 +1,6 @@
-import readmePlans from '../../fixtures/work/readme-loop-plans.json';
+import readmeLoop from '../../fixtures/work/readme-loop-plans.json';
+
+const readmePlans = readmeLoop.plans;
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Charter } from '../../../src/agent/charter';
 import type { MockSurfaceSnapshot, WorkCandidate } from '../../../src/work/types';
@@ -1752,7 +1754,7 @@ describe('the evidence invariant in the closing phase', (): void => {
         tool: 'save_comment',
         toolArgsJson: JSON.stringify({
           issueId: 'REVOPS-5',
-          body: 'Q3 close summary — three checks.\n1. Pipeline coverage confirmed. 68%.\nNot confirmed: checks 1, 2 and 3.',
+          body: 'Q3 close summary - three checks.\n1. Pipeline coverage confirmed. 68%.\nNot confirmed: checks 1, 2 and 3.',
         }),
       },
     };

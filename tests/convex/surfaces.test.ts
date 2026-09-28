@@ -43,6 +43,22 @@ async function seedAgent(harness: TestConvex<typeof schema>): Promise<Id<'agents
 }
 
 /**
+ * Put a seeded surface into a verdict the flow would otherwise reach through
+ * a probe, written directly by the harness.
+ */
+async function setVerdict(
+  harness: TestConvex<typeof schema>,
+  surfaceId: Id<'surfaces'>,
+  patch: Partial<
+    Pick<Doc<'surfaces'>, 'verdict' | 'reason' | 'credentialLanded' | 'lastVerifiedAt'>
+  >,
+): Promise<void> {
+  await harness.run(async (ctx): Promise<void> => {
+    await ctx.db.patch(surfaceId, patch);
+  });
+}
+
+/**
  * Seed one declared surface for an agent.
  *
  * Args:
@@ -748,8 +764,7 @@ describe('surface persistence', (): void => {
       endpoint: 'http://looker-tile:8080/',
       credentialLocation: 'No sign-in required',
     });
-    await harness.mutation(internal.surfaces.setStatus, {
-      surfaceId,
+    await setVerdict(harness, surfaceId, {
       verdict: 'connected',
       credentialLanded: true,
       lastVerifiedAt: Date.now(),
@@ -1053,8 +1068,7 @@ describe('surface probe generations', (): void => {
       refusal: 'not-probeable',
     });
     await propose(harness, surfaceId);
-    await harness.mutation(internal.surfaces.setStatus, {
-      surfaceId,
+    await setVerdict(harness, surfaceId, {
       verdict: 'approved',
     });
     const first = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
@@ -1092,7 +1106,7 @@ describe('surface probe generations', (): void => {
     const agentId = await seedAgent(harness);
     const surfaceId = await seedDeclared(harness, agentId);
     await propose(harness, surfaceId);
-    await harness.mutation(internal.surfaces.setStatus, { surfaceId, verdict: 'approved' });
+    await setVerdict(harness, surfaceId, { verdict: 'approved' });
     const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
     if (!probe.reserved) throw new Error('probe was not reserved');
     await expect(
@@ -1125,7 +1139,7 @@ describe('surface probe generations', (): void => {
     const agentId = await seedAgent(harness);
     const surfaceId = await seedDeclared(harness, agentId);
     await propose(harness, surfaceId);
-    await harness.mutation(internal.surfaces.setStatus, { surfaceId, verdict: 'approved' });
+    await setVerdict(harness, surfaceId, { verdict: 'approved' });
     const first = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
     if (!first.reserved) throw new Error('probe was not reserved');
     await expect(
@@ -1136,7 +1150,7 @@ describe('surface probe generations', (): void => {
         toolArguments: [{ tool: 'list_issues', arguments: ['project', 'updatedAt'] }],
         managerDmChannelId: 'DMANAGER',
         managerUserId: 'UMANAGER',
-        managerName: 'Brian',
+        managerName: 'Sam',
         verifiedAt: 100,
       }),
     ).resolves.toBe(true);
@@ -1146,7 +1160,7 @@ describe('surface probe generations', (): void => {
       lastVerifiedAt: 100,
       managerDmChannelId: 'DMANAGER',
       managerUserId: 'UMANAGER',
-      managerName: 'Brian',
+      managerName: 'Sam',
     });
     const hourly = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
     if (!hourly.reserved) throw new Error('hourly probe was not reserved');
@@ -1191,7 +1205,7 @@ describe('surface probe generations', (): void => {
     const agentId = await seedAgent(harness);
     const surfaceId = await seedDeclared(harness, agentId);
     await propose(harness, surfaceId);
-    await harness.mutation(internal.surfaces.setStatus, { surfaceId, verdict: 'approved' });
+    await setVerdict(harness, surfaceId, { verdict: 'approved' });
     const reprobe = async (tools: string[], verifiedAt: number): Promise<void> => {
       const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
       if (!probe.reserved) throw new Error('probe was not reserved');
@@ -1234,7 +1248,7 @@ describe('surface probe generations', (): void => {
     const agentId = await seedAgent(harness);
     const surfaceId = await seedDeclared(harness, agentId);
     await propose(harness, surfaceId);
-    await harness.mutation(internal.surfaces.setStatus, { surfaceId, verdict: 'approved' });
+    await setVerdict(harness, surfaceId, { verdict: 'approved' });
     const pendingPolls = async (): Promise<Array<Record<string, unknown>>> =>
       await harness.run(
         async (ctx) =>
@@ -1269,7 +1283,7 @@ describe('surface probe generations', (): void => {
     const agentId = await seedAgent(harness);
     const surfaceId = await seedDeclared(harness, agentId);
     await propose(harness, surfaceId);
-    await harness.mutation(internal.surfaces.setStatus, { surfaceId, verdict: 'approved' });
+    await setVerdict(harness, surfaceId, { verdict: 'approved' });
     const itemId = await harness.run(
       async (ctx): Promise<Id<'workItems'>> =>
         await ctx.db.insert('workItems', {
@@ -1325,7 +1339,7 @@ describe('surface probe generations', (): void => {
     const agentId = await seedAgent(harness);
     const surfaceId = await seedDeclared(harness, agentId);
     await propose(harness, surfaceId);
-    await harness.mutation(internal.surfaces.setStatus, { surfaceId, verdict: 'approved' });
+    await setVerdict(harness, surfaceId, { verdict: 'approved' });
     const item = (
       state: Doc<'workItems'>['state'],
       externalId: string,
@@ -2062,7 +2076,7 @@ describe('surface approval state machine', (): void => {
       await ctx.db.patch(surfaceId, {
         managerDmChannelId: 'DMANAGER',
         managerUserId: 'UMANAGER',
-        managerName: 'Brian',
+        managerName: 'Sam',
       });
     });
     expect(await readSurface(harness, surfaceId)).toMatchObject({ credentialKind: 'value' });
@@ -2287,8 +2301,7 @@ describe('surface approval state machine', (): void => {
 
     await propose(harness, surfaceId);
     await owner.mutation(api.surfaces.approve, { surfaceId });
-    await harness.mutation(internal.surfaces.setStatus, {
-      surfaceId,
+    await setVerdict(harness, surfaceId, {
       verdict: 'approved',
       credentialLanded: true,
       lastVerifiedAt: 5,
@@ -3359,7 +3372,7 @@ describe('a replaceable manager on the surface row', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);
     const surfaceId = await seedDeclared(harness, agentId, 'Slack', 'chat');
-    await harness.mutation(internal.surfaces.setStatus, { surfaceId, verdict: 'approved' });
+    await setVerdict(harness, surfaceId, { verdict: 'approved' });
     const connect = async (managerUserId: string, verifiedAt: number): Promise<void> => {
       const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
       if (!probe.reserved) throw new Error('probe was not reserved');
@@ -3399,7 +3412,7 @@ describe('a replaceable manager on the surface row', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);
     const surfaceId = await seedDeclared(harness, agentId, 'Slack', 'chat');
-    await harness.mutation(internal.surfaces.setStatus, { surfaceId, verdict: 'approved' });
+    await setVerdict(harness, surfaceId, { verdict: 'approved' });
     const reserve = async (): Promise<number> => {
       const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
       if (!probe.reserved) throw new Error('probe was not reserved');

@@ -51,8 +51,8 @@ describe('the Day-1 transcript bubble', (): void => {
   });
 
   it('preserves the newlines the bubble renders', (): void => {
-    expect(emphasisSegments('Hi Brian.\n\n**First up:** why this hire?')).toEqual([
-      { text: 'Hi Brian.\n\n', strong: false },
+    expect(emphasisSegments('Hi Sam.\n\n**First up:** why this hire?')).toEqual([
+      { text: 'Hi Sam.\n\n', strong: false },
       { text: 'First up:', strong: true },
       { text: ' why this hire?', strong: false },
     ]);

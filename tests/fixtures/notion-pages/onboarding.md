@@ -1,53 +1,43 @@
-# Revenue operations onboarding
+# Kestrel Supply onboarding
 
-Day0 joins a synthetic revenue operations team that sits between Sales and Finance. The team
-uses only synthetic accounts, values and conversations in this demonstration workspace.
+Kestrel Supply Co. is a synthetic company built for the Day0 demonstration. Every name, account,
+shipment, figure and message on these pages is invented.
 
-## Cold-start posture
+Kestrel Supply distributes packaging and warehouse consumables to retailers in Singapore and
+Malaysia. Three teams run the back office, and each has its own handbook in this folder:
 
-- Draft first, send the draft to the manager, and wait for approval before anything is published.
-- Do not infer identifiers, credentials or connection details that the documentation does not name.
-- Raise unclear ownership or missing-system access in the manager DM.
-- Keep formal status and audit comments on the originating Linear issue.
+- Revenue operations: `revops/handbook.md`, the Q3 close and the pipeline coverage figure.
+- Finance close: `finance/handbook.md`, the month-end close.
+- Logistics desk: `logistics/handbook.md`, shipment exceptions.
 
-## Systems and access owners
+Read this page first, then your own team's handbook and its runbooks. Another team's handbook is
+that team's to follow.
+
+## Shared systems
 
 | System | What it is for | Access owner |
 |---|---|---|
-| Linear | Team `REVOPS`, project `Q3 close`, is the formal work queue and audit trail. Access details are on the `Linear automation` page. | Work management administrator |
-| Slack | `#revops-asks` receives inbound requests, `#revops` is the team channel, and the manager DM is the only permitted outbound destination during cold start. How automations get a Slack identity is on the `Slack automation policy` page. | Messaging administrator |
-| Northstar CRM | Internal account and opportunity records used during close. No approved connection surface is recorded. | Business Systems owner |
-| Team documentation | This handbook in Notion (onboarding, system pages) and the runbooks folder (how-to guides, queue). | Revenue operations manager |
+| Linear | The formal work queue and audit trail. Each team works in its own Linear team and project, named in its handbook. Access details are on the `Linear automation` page. | Work management administrator |
+| Slack | Requests and team conversation. Each team reads its own channels, named in its handbook, and `#ops-requests` is the one request channel all three teams read. How automations post is on the `Slack automation policy` page. | Messaging administrator |
+| Looker pipeline tile | The pipeline coverage figure revenue operations maintains on its dashboard. | RevOps operations lead |
+| Northstar CRM | Account and opportunity records. No approved connection surface is recorded. | Business Systems owner |
+| NetLedger | The general ledger, the source of record for the books. No approved connection surface is recorded. | Finance systems owner |
 
-## Escalation paths
+## Working rules for every team
 
-- Ask questions about a public request in `#revops-asks`, but hold any proposed public reply for
-  manager review.
-- Send completed drafts and connection questions to the manager DM.
+- Draft first. Send the draft to the manager and wait for approval before anything is published,
+  until the manager changes that explicitly.
+- Do not infer identifiers, credentials or connection details that the documentation does not name.
+- Keep formal status and audit comments on the originating Linear issue.
+- Work your own team's queue. A request in `#ops-requests` belongs to the team whose handbook
+  covers that work; the other teams leave it.
+- Take one bounded request at a time, and keep the source issue or message identifier in every
+  plan and note.
+
+## Escalation
+
+- Questions, drafts for review and connection questions go to the manager in the manager DM.
 - Route missing Linear or Slack access to the named administrator through the manager.
-- For Northstar CRM work, ask the manager to obtain an approved access path. Do not substitute a
-  similarly named service or invent an endpoint.
-
-## First week
-
-### Day 1
-
-- Read this page and both runbooks.
-- Review `queue.md` and identify which work is blocked by missing access.
-- Confirm the manager-DM-only outbound rule.
-
-### Days 2-3
-
-- Read the `Q3 close` project queue and inspect the source records for one bounded request.
-- Draft one update without sending it to a public channel.
-
-### Days 4-5
-
-- Complete one manager-approved Linear update.
-- Record the provider result in the work ledger.
-
-## Week 2 onwards
-
-- Take one bounded request at a time.
-- Preserve the source issue or message identifier in every plan and audit note.
-- Continue the draft, manager review, then ship posture until the manager changes it explicitly.
+- Where the work needs a system that has no approved connection surface, record where you looked
+  and ask the manager to obtain an approved access path. Do not substitute a similarly named
+  service or invent an endpoint.

@@ -26,8 +26,10 @@ export const REDACTION_CONTEXTS = [
   'prompt',
   'export',
 ] as const;
+/** Where a redaction runs, which decides what it keeps and what it redacts. */
 export type RedactionContext = (typeof REDACTION_CONTEXTS)[number];
 
+/** The kinds of value the redaction can find. */
 export const ENTITY_KINDS = [
   'secret',
   'person',
@@ -39,8 +41,10 @@ export const ENTITY_KINDS = [
   'date-of-birth',
   'ip',
 ] as const;
+/** One kind of value the redaction can find. */
 export type EntityKind = (typeof ENTITY_KINDS)[number];
 
+/** What the policy does with a found value in a context: redact it or keep it. */
 export type Disposition = 'redact' | 'keep';
 
 /** The labels the model is asked for, each mapped to the kind it reports. */

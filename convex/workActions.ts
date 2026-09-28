@@ -10,7 +10,7 @@ import {
   isScopeUnavailable,
   type EvaluateLookups,
 } from '../src/work/evaluate';
-import { spanModelFromEnv } from '../src/redaction/client';
+import { spanModelFromEnv } from '../src/redaction/span-model-env';
 import {
   candidateRecordRead,
   unreadCandidateRecord,
@@ -177,9 +177,10 @@ import {
   toolRefusal,
   UNKNOWN_SURFACE,
 } from '../src/surfaces/policy';
+import { errorMessage } from '../src/lib/errors';
 
 /**
- * Node actions for the work loop — Layer-2 evaluation, Layer-3 plan
+ * Node actions for the work loop - Layer-2 evaluation, Layer-3 plan
  * draft, and post-approval skill execution.
  *
  * Each handler derives its agent from the work item it loaded rather than
@@ -3352,7 +3353,7 @@ export const applyApprovedActions = internalAction({
       }
       return await finishRun(ctx, args.workItemId, claim, output, applied, knownValues, surfaces);
     } catch (err) {
-      const reason = (err as Error).message;
+      const reason = errorMessage(err);
       await ctx.runMutation(internal.work.recoverInterruptedApply, {
         workItemId: args.workItemId,
         pendingRunId: claim.pendingRunId,

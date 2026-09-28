@@ -42,11 +42,11 @@ export function liveManagerFeedback(feedback: ManagerFeedback | undefined): stri
  *   feedback: The stored feedback.
  *
  * Returns:
- *   `Retry note` for a note given with Retry, `Plan rejection reason` for a
- *   cancelled plan's reason, else `Rejection reason`.
+ *   `Retry note` for a note given with Retry, `Plan cancel reason` for a
+ *   cancelled plan's reason (the card's control is Cancel), else `Rejection reason`.
  */
 export function managerFeedbackLabel(feedback: Pick<ManagerFeedback, 'kind'>): string {
   if (feedback.kind === 'retry-note') return 'Retry note';
-  if (feedback.kind === 'plan-rejection') return 'Plan rejection reason';
+  if (feedback.kind === 'plan-rejection') return 'Plan cancel reason';
   return 'Rejection reason';
 }

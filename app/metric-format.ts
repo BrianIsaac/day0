@@ -1,4 +1,4 @@
-import type { AgentMetrics } from '../convex/metrics';
+import type { AgentMetrics } from '@/metrics/types';
 
 /**
  * A supervision duration as the cards print it: seconds under a minute,

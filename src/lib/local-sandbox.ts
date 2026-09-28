@@ -17,6 +17,7 @@
 import { request as httpRequest } from 'node:http';
 import { env } from '../env';
 import type { AuthorSkillArgs, SmokeTestOutcome } from './skill-sandbox';
+import { errnoCode, errorMessage } from '../lib/errors';
 
 /**
  * Long enough to cover the service's own 60-second cap on a smoke test plus
@@ -95,7 +96,7 @@ export async function probeLocalSandbox(): Promise<{ ok: boolean; reason: string
     if (res.status !== 200) return { ok: false, reason: `health check answered ${res.status}` };
     return { ok: true, reason: 'serving' };
   } catch (err) {
-    return { ok: false, reason: (err as NodeJS.ErrnoException).code ?? (err as Error).message };
+    return { ok: false, reason: errnoCode(err) ?? errorMessage(err) };
   }
 }
 

@@ -66,7 +66,7 @@ import { basename, dirname, join, resolve, sep } from 'node:path';
 import { createInterface, type Interface } from 'node:readline';
 import { Writable } from 'node:stream';
 import { pathToFileURL } from 'node:url';
-import { DEFAULT_DOCS_HOST_DIR } from '../src/docs/host-dir';
+import { DEFAULT_DOCS_HOST_DIR, ensureDocsHostDir } from '../src/docs/host-dir';
 import {
   FIRST_SUCCESS,
   MOCK_FIRST_SUCCESS,
@@ -110,7 +110,7 @@ import {
 } from './redactor-device';
 import { COMPANY_COMMAND, COMPANY_SCRIPT, companyHandSteps, loadBedSpec } from './bed/spec';
 import { pinnedNodeImage, redactorVolumeClone, REDACTOR_VOLUME_SUFFIXES } from './lib/docker';
-import { setupRoute } from './setup-route';
+import { isLoopback, setupRoute } from './setup-route';
 import {
   checkoutReleases,
   type CheckoutReleases,
@@ -126,6 +126,7 @@ import {
   type MigrationReport,
   type UpgradeVerdict,
 } from './releases';
+import { errorMessage } from '../src/lib/errors';
 
 const ENV_FILE = '.env.local';
 const ENV_EXAMPLE = '.env.example';
@@ -139,7 +140,9 @@ const CONTAINER_MODEL_PORT = 11434;
 
 /** Minimum tool versions, matching `engines` in package.json. */
 export const REQUIRED_NODE_MAJOR = 22;
+/** The pnpm major the setup needs, as the lockfile format requires. */
 export const REQUIRED_PNPM_MAJOR = 9;
+/** The Docker Compose major the setup needs: the v2 plugin form. */
 export const REQUIRED_COMPOSE_MAJOR = 2;
 
 /** Mock is the seeded office; real is the reader's own documentation and systems. */
@@ -213,8 +216,10 @@ export const REAL_MODE_PROFILES: readonly string[] = ['docs-notion', 'browser', 
 
 /** Where the backend reaches the two components real mode starts. */
 export const BROWSER_MCP_URL = 'http://playwright-mcp:8931/mcp';
+/** The redactor's address as the backend container reaches it on the Compose network. */
 export const REDACTOR_URL = 'http://redactor:8000';
 
+/** Every flag and verb the setup command takes, parsed from its arguments. */
 export interface SetupOptions {
   /** A lifecycle verb instead of the setup itself. */
   command?: SetupCommand;
@@ -266,12 +271,14 @@ export interface SetupOptions {
   help: boolean;
 }
 
+/** What a child process returned: its status and both output streams. */
 export interface RunResult {
   status: number | null;
   stdout: string;
   stderr: string;
 }
 
+/** How a child process is run: the extra environment, the working directory and the input it gets. */
 export interface RunOptions {
   /** Values layered on top of this process's environment for the child. */
   env?: Record<string, string>;
@@ -502,6 +509,7 @@ export function majorVersion(text: string | undefined): number | undefined {
   return match ? Number.parseInt(match[1], 10) : undefined;
 }
 
+/** One prerequisite check: what was looked for, whether it is there, and the line to print. */
 export interface PrerequisiteResult {
   name: string;
   ok: boolean;
@@ -520,6 +528,7 @@ export interface DaemonAnswer {
   arch?: string;
 }
 
+/** What the prerequisite probes saw, one field per tool, before the report reads them. */
 export interface PrerequisiteObservations {
   /** What `node --version` printed, or undefined when it could not be run. */
   node?: string;
@@ -661,15 +670,11 @@ export function buildEnvironmentRefusal(
   );
 }
 
+/** Why a target address is refused: the setting and the reason, printed as one line. */
 export interface TargetRefusal {
   setting: string;
   reason: string;
   fix: string;
-}
-
-/** Loopback from the host is nothing at all from inside a container. */
-function isLoopback(url: string): boolean {
-  return /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\]|0\.0\.0\.0)(:|\/|$)/i.test(url);
 }
 
 /**
@@ -731,6 +736,7 @@ export function projectVolumes(project: string): string[] {
   return [`${project}_convex_data`, `${project}_sandbox_socket`];
 }
 
+/** What the env file says about the checkout it was written for, and how this checkout compares. */
 export interface CheckoutClaim {
   /** Whether this checkout is a git main worktree rather than a linked one or a copy. */
   mainWorktree: boolean;
@@ -906,6 +912,7 @@ export function attachmentDecision(args: {
   return args.fileProject.trim() === args.project ? 'rerun' : 'refuse';
 }
 
+/** The model address as the host reaches it and as the backend container reaches it. */
 export interface ModelAddresses {
   OPENAI_BASE_URL: string;
   CONVEX_OPENAI_BASE_URL: string;
@@ -982,6 +989,7 @@ export function parseFreeVram(stdout: string): number | undefined {
   return values.length === 0 ? undefined : Math.max(...values);
 }
 
+/** The local model the picker chose, with the label its download is announced by. */
 export interface LocalModelChoice {
   model: string;
   downloadLabel: string;
@@ -1032,6 +1040,7 @@ export function chooseLocalModel(freeVramMiB: number | undefined): LocalModelCho
   };
 }
 
+/** Everything the env-file plan reads: the route, the project, the model, the addresses and the keys. */
 export interface EnvPlanInput {
   route: SetupRoute;
   project: string;
@@ -1449,6 +1458,7 @@ export function firstSuccessLines(
   return lines;
 }
 
+/** A Featherless API key and where it came from: the environment, the env file or a prompt. */
 export interface FeatherlessKey {
   /** Where the key comes from; `file` means the file's own value is kept as it is. */
   source: 'environment' | 'file' | 'prompt';
@@ -1545,6 +1555,7 @@ export function printableUpdate(name: string, value: string): string {
   return value === '' ? `${name}= (emptied)` : `${name}=<hidden>`;
 }
 
+/** What a planned step reads: the mode, the route, the project and the addresses. */
 export interface StepContext {
   mode: SetupMode;
   route: SetupRoute;
@@ -1563,6 +1574,7 @@ export interface StepContext {
   commit?: string;
 }
 
+/** One command the setup runs, as the plan prints it and the runner executes it. */
 export interface PlannedCommand {
   command: string;
   args: string[];
@@ -1648,6 +1660,7 @@ export function stepCommands(step: string, context: StepContext): PlannedCommand
 /** How many `runPending` calls the setup makes before it says the migrations did not finish. */
 const MIGRATION_CALLS = 12;
 
+/** Everything the step plan reads: the mode, the route, the profiles and the flags. */
 export interface PlanInput {
   mode: SetupMode;
   route: SetupRoute;
@@ -2930,8 +2943,9 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       io.log(`Created ${ENV_FILE} from ${ENV_EXAMPLE}, readable only by you.`);
     }
     if (real) {
-      const docs = ensureDocsDirectory(docsHostDir, io.cwd);
+      const docs = ensureDocsHostDir(docsHostDir, io.cwd, '--docs');
       if (docs.created) {
+        writeFileSync(join(docs.path, 'README.md'), DOCS_STUB, 'utf8');
         io.log(`Created ${docs.path} with a placeholder page; put your team's Markdown there.`);
       }
     }
@@ -3476,7 +3490,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       io.log(state);
       return 130;
     }
-    io.log(`error: ${(error as Error).message}`);
+    io.log(`error: ${errorMessage(error)}`);
     return 1;
   }
 }
@@ -3622,7 +3636,7 @@ export async function runStop(options: SetupOptions, io: SetupIo): Promise<numbe
     io.log(`Throw it all away with \`${verbCommand('clear', options.mode)}\`.`);
     return 0;
   } catch (error) {
-    io.log(`error: ${(error as Error).message}`);
+    io.log(`error: ${errorMessage(error)}`);
     return 1;
   }
 }
@@ -3688,7 +3702,7 @@ export async function runResume(options: SetupOptions, io: SetupIo): Promise<num
       io,
     );
   } catch (error) {
-    io.log(`error: ${(error as Error).message}`);
+    io.log(`error: ${errorMessage(error)}`);
     return 1;
   }
 }
@@ -3775,7 +3789,7 @@ export async function runClear(options: SetupOptions, io: SetupIo): Promise<numb
       io.log('Cancelled. Nothing was removed.');
       return 130;
     }
-    io.log(`error: ${(error as Error).message}`);
+    io.log(`error: ${errorMessage(error)}`);
     return 1;
   }
 }
@@ -4331,34 +4345,6 @@ export async function runCommand(options: SetupOptions, io: SetupIo): Promise<nu
   }
 }
 
-/**
- * Make sure the documentation folder exists, writing a placeholder page into
- * one this helper created so the first sync has something to say.
- *
- * Args:
- *   configured: `DAY0_DOCS_HOST_DIR` as it will be written.
- *   cwd: Repository root.
- *
- * Returns:
- *   The absolute path and whether it was created now.
- *
- * Raises:
- *   Error: If a non-default path does not exist.
- */
-function ensureDocsDirectory(configured: string, cwd: string): { path: string; created: boolean } {
-  const path = resolve(cwd, configured);
-  if (existsSync(path)) return { path, created: false };
-  if (path !== resolve(cwd, DEFAULT_DOCS_HOST_DIR)) {
-    throw new Error(
-      `--docs ${configured} does not exist. Create it, or point it at the directory holding the ` +
-        'Markdown the backend should read.',
-    );
-  }
-  mkdirSync(path, { recursive: true });
-  writeFileSync(join(path, 'README.md'), DOCS_STUB, 'utf8');
-  return { path, created: true };
-}
-
 /** Whether `nvidia-smi -L` names a GPU, which is a reason to try rather than a promise. */
 function hasNvidiaDriver(io: SetupIo): boolean {
   const probe = io.run('nvidia-smi', ['-L'], { timeoutMs: 30_000 });
@@ -4644,7 +4630,7 @@ async function main(): Promise<number> {
   try {
     options = parseSetupArguments(process.argv.slice(2));
   } catch (error) {
-    process.stderr.write(`error: ${(error as Error).message}\n`);
+    process.stderr.write(`error: ${errorMessage(error)}\n`);
     return 2;
   }
   if (options.help) {

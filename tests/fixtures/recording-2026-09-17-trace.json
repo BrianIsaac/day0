@@ -219,7 +219,7 @@
             },
             {
               "args": {
-                "body": "{\"channel\":\"D0BS5SXMXPZ\",\"text\":\"Coverage ask (C0BSF04TZ19 / 1787746453.202809): the Looker tile showed 68%, not the approved 74%, so I applied the documented refresh (74% entered, Save clicked) and am reading back the audit line. The thread reply quoting the figure and audit line will follow once that read-back lands. Also flagging: per-deal reconciliation for the three Friday standup deals cannot be confirmed - no Q4 pipeline tracker surface is connected and Northstar CRM has no approved access path. Should I request an approved access path?\"}",
+                "body": "{\"channel\":\"D0MANAGER\",\"text\":\"Coverage ask (C0BSF04TZ19 / 1787746453.202809): the Looker tile showed 68%, not the approved 74%, so I applied the documented refresh (74% entered, Save clicked) and am reading back the audit line. The thread reply quoting the figure and audit line will follow once that read-back lands. Also flagging: per-deal reconciliation for the three Friday standup deals cannot be confirmed - no Q4 pipeline tracker surface is connected and Northstar CRM has no approved access path. Should I request an approved access path?\"}",
                 "headersJson": "{\"Authorization\":\"Bearer {{secret}}\",\"Content-Type\":\"application/json; charset=utf-8\"}",
                 "method": "POST",
                 "path": "/chat.postMessage",
@@ -276,7 +276,7 @@
             },
             {
               "authority": "autonomous",
-              "effect": "HTTP 200 · {\"ok\":true,\"channel\":\"D0BS5SXMXPZ\",\"ts\":\"1789592857.505309\",\"message\":{\"user\":\"U0BTFK6FLNL\",\"type\":\"message\",\"ts\":\"1789592857.505309\",\"bot_id\":\"B0BSF18GRJ7\",\"app_id\":\"<…",
+              "effect": "HTTP 200 · {\"ok\":true,\"channel\":\"D0MANAGER\",\"ts\":\"1789592857.505309\",\"message\":{\"user\":\"U0BTFK6FLNL\",\"type\":\"message\",\"ts\":\"1789592857.505309\",\"bot_id\":\"B0BSF18GRJ7\",\"app_id\":\"<…",
               "idempotencyKey": "n57d5ekg1grzcgk9atf2698mgn8ehqq9:k57bve1hwbp8wyz0d23hcc98gs8egr5c:7",
               "ok": true,
               "providerId": "1789592857.505309",
@@ -330,7 +330,7 @@
             {
               "action": {
                 "args": {
-                  "body": "{\"channel\":\"D0BS5SXMXPZ\",\"text\":\"Coverage ask (C0BSF04TZ19 / 1787746453.202809): the Looker tile showed 68%, not the approved 74%, so I applied the documented refresh (74% entered, Save clicked) and am reading back the audit line. The thread reply quoting the figure and audit line will follow once that read-back lands. Also flagging: per-deal reconciliation for the three Friday standup deals cannot be confirmed - no Q4 pipeline tracker surface is connected and Northstar CRM has no approved access path. Should I request an approved access path?\"}",
+                  "body": "{\"channel\":\"D0MANAGER\",\"text\":\"Coverage ask (C0BSF04TZ19 / 1787746453.202809): the Looker tile showed 68%, not the approved 74%, so I applied the documented refresh (74% entered, Save clicked) and am reading back the audit line. The thread reply quoting the figure and audit line will follow once that read-back lands. Also flagging: per-deal reconciliation for the three Friday standup deals cannot be confirmed - no Q4 pipeline tracker surface is connected and Northstar CRM has no approved access path. Should I request an approved access path?\"}",
                   "headersJson": "{\"Authorization\":\"Bearer {{secret}}\",\"Content-Type\":\"application/json; charset=utf-8\"}",
                   "method": "POST",
                   "path": "/chat.postMessage",
@@ -340,7 +340,7 @@
               },
               "applied": {
                 "authority": "autonomous",
-                "effect": "HTTP 200 · {\"ok\":true,\"channel\":\"D0BS5SXMXPZ\",\"ts\":\"1789592857.505309\",\"message\":{\"user\":\"U0BTFK6FLNL\",\"type\":\"message\",\"ts\":\"1789592857.505309\",\"bot_id\":\"B0BSF18GRJ7\",\"app_id\":\"<…",
+                "effect": "HTTP 200 · {\"ok\":true,\"channel\":\"D0MANAGER\",\"ts\":\"1789592857.505309\",\"message\":{\"user\":\"U0BTFK6FLNL\",\"type\":\"message\",\"ts\":\"1789592857.505309\",\"bot_id\":\"B0BSF18GRJ7\",\"app_id\":\"<…",
                 "idempotencyKey": "n57d5ekg1grzcgk9atf2698mgn8ehqq9:k57bve1hwbp8wyz0d23hcc98gs8egr5c:7",
                 "ok": true,
                 "providerId": "1789592857.505309",
@@ -792,7 +792,7 @@
         "contentSummary": "Summarise the completed close checks as a comment, then move to Done after manager approval",
         "createdAt": 1789592583374,
         "decision": {
-          "channel": "D0BS5SXMXPZ",
+          "channel": "D0MANAGER",
           "decidedAt": 1789592950207,
           "decidedVia": "dashboard",
           "id": "j8nayp",
@@ -2149,7 +2149,7 @@
         "lastPolledAt": 1789593058314,
         "lastVerifiedAt": 1789592576632,
         "managerApprovedAt": 1789592574991,
-        "managerDmChannelId": "D0BS5SXMXPZ",
+        "managerDmChannelId": "D0MANAGER",
         "orientationJobId": "kc2drg965cw66m6997m3qpmbcx8egc9v",
         "path": "documented-api",
         "pathCandidates": [
@@ -4656,7 +4656,7 @@
               },
               {
                 "args": {
-                  "body": "{\"channel\":\"D0BS5SXMXPZ\",\"text\":\"Coverage ask (C0BSF04TZ19 / 1787746453.202809): the Looker tile showed 68%, not the approved 74%, so I applied the documented refresh (74% entered, Save clicked) and am reading back the audit line. The thread reply quoting the figure and audit line will follow once that read-back lands. Also flagging: per-deal reconciliation for the three Friday standup deals cannot be confirmed - no Q4 pipeline tracker surface is connected and Northstar CRM has no approved access path. Should I request an approved access path?\"}",
+                  "body": "{\"channel\":\"D0MANAGER\",\"text\":\"Coverage ask (C0BSF04TZ19 / 1787746453.202809): the Looker tile showed 68%, not the approved 74%, so I applied the documented refresh (74% entered, Save clicked) and am reading back the audit line. The thread reply quoting the figure and audit line will follow once that read-back lands. Also flagging: per-deal reconciliation for the three Friday standup deals cannot be confirmed - no Q4 pipeline tracker surface is connected and Northstar CRM has no approved access path. Should I request an approved access path?\"}",
                   "headersJson": "{\"Authorization\":\"Bearer {{secret}}\",\"Content-Type\":\"application/json; charset=utf-8\"}",
                   "method": "POST",
                   "path": "/chat.postMessage",
@@ -4715,7 +4715,7 @@
               },
               {
                 "authority": "autonomous",
-                "effect": "HTTP 200 · {\"ok\":true,\"channel\":\"D0BS5SXMXPZ\",\"ts\":\"1789592857.505309\",\"message\":{\"user\":\"U0BTFK6FLNL\",\"type\":\"message\",\"ts\":\"1789592857.505309\",\"bot_id\":\"B0BSF18GRJ7\",\"app_id\":\"<…",
+                "effect": "HTTP 200 · {\"ok\":true,\"channel\":\"D0MANAGER\",\"ts\":\"1789592857.505309\",\"message\":{\"user\":\"U0BTFK6FLNL\",\"type\":\"message\",\"ts\":\"1789592857.505309\",\"bot_id\":\"B0BSF18GRJ7\",\"app_id\":\"<…",
                 "idempotencyKey": "n57d5ekg1grzcgk9atf2698mgn8ehqq9:k57bve1hwbp8wyz0d23hcc98gs8egr5c:7",
                 "ok": true,
                 "providerId": "1789592857.505309",
@@ -5104,7 +5104,7 @@
             },
             {
               "actionIndex": 7,
-              "effect": "HTTP 200 · {\"ok\":true,\"channel\":\"D0BS5SXMXPZ\",\"ts\":\"1789592857.505309\",\"message\":{\"user\":\"U0BTFK6FLNL\",\"type\":\"message\",\"ts\":\"1789592857.505309\",\"bot_id\":\"B0BSF18GRJ7\",\"app_id\":\"<…",
+              "effect": "HTTP 200 · {\"ok\":true,\"channel\":\"D0MANAGER\",\"ts\":\"1789592857.505309\",\"message\":{\"user\":\"U0BTFK6FLNL\",\"type\":\"message\",\"ts\":\"1789592857.505309\",\"bot_id\":\"B0BSF18GRJ7\",\"app_id\":\"<…",
               "idempotencyKey": "n57d5ekg1grzcgk9atf2698mgn8ehqq9:k57bve1hwbp8wyz0d23hcc98gs8egr5c:7",
               "outcome": "landed",
               "phase": "single",
@@ -5896,7 +5896,7 @@
               },
               {
                 "args": {
-                  "body": "{\"channel\":\"D0BS5SXMXPZ\",\"text\":\"Coverage ask (C0BSF04TZ19 / 1787746453.202809): the Looker tile showed 68%, not the approved 74%, so I applied the documented refresh (74% entered, Save clicked) and am reading back the audit line. The thread reply quoting the figure and audit line will follow once that read-back lands. Also flagging: per-deal reconciliation for the three Friday standup deals cannot be confirmed - no Q4 pipeline tracker surface is connected and Northstar CRM has no approved access path. Should I request an approved access path?\"}",
+                  "body": "{\"channel\":\"D0MANAGER\",\"text\":\"Coverage ask (C0BSF04TZ19 / 1787746453.202809): the Looker tile showed 68%, not the approved 74%, so I applied the documented refresh (74% entered, Save clicked) and am reading back the audit line. The thread reply quoting the figure and audit line will follow once that read-back lands. Also flagging: per-deal reconciliation for the three Friday standup deals cannot be confirmed - no Q4 pipeline tracker surface is connected and Northstar CRM has no approved access path. Should I request an approved access path?\"}",
                   "headersJson": "{\"Authorization\":\"Bearer {{secret}}\",\"Content-Type\":\"application/json; charset=utf-8\"}",
                   "method": "POST",
                   "path": "/chat.postMessage",
@@ -5953,7 +5953,7 @@
               },
               {
                 "authority": "autonomous",
-                "effect": "HTTP 200 · {\"ok\":true,\"channel\":\"D0BS5SXMXPZ\",\"ts\":\"1789592857.505309\",\"message\":{\"user\":\"U0BTFK6FLNL\",\"type\":\"message\",\"ts\":\"1789592857.505309\",\"bot_id\":\"B0BSF18GRJ7\",\"app_id\":\"<…",
+                "effect": "HTTP 200 · {\"ok\":true,\"channel\":\"D0MANAGER\",\"ts\":\"1789592857.505309\",\"message\":{\"user\":\"U0BTFK6FLNL\",\"type\":\"message\",\"ts\":\"1789592857.505309\",\"bot_id\":\"B0BSF18GRJ7\",\"app_id\":\"<…",
                 "idempotencyKey": "n57d5ekg1grzcgk9atf2698mgn8ehqq9:k57bve1hwbp8wyz0d23hcc98gs8egr5c:7",
                 "ok": true,
                 "providerId": "1789592857.505309",
@@ -6007,7 +6007,7 @@
               {
                 "action": {
                   "args": {
-                    "body": "{\"channel\":\"D0BS5SXMXPZ\",\"text\":\"Coverage ask (C0BSF04TZ19 / 1787746453.202809): the Looker tile showed 68%, not the approved 74%, so I applied the documented refresh (74% entered, Save clicked) and am reading back the audit line. The thread reply quoting the figure and audit line will follow once that read-back lands. Also flagging: per-deal reconciliation for the three Friday standup deals cannot be confirmed - no Q4 pipeline tracker surface is connected and Northstar CRM has no approved access path. Should I request an approved access path?\"}",
+                    "body": "{\"channel\":\"D0MANAGER\",\"text\":\"Coverage ask (C0BSF04TZ19 / 1787746453.202809): the Looker tile showed 68%, not the approved 74%, so I applied the documented refresh (74% entered, Save clicked) and am reading back the audit line. The thread reply quoting the figure and audit line will follow once that read-back lands. Also flagging: per-deal reconciliation for the three Friday standup deals cannot be confirmed - no Q4 pipeline tracker surface is connected and Northstar CRM has no approved access path. Should I request an approved access path?\"}",
                     "headersJson": "{\"Authorization\":\"Bearer {{secret}}\",\"Content-Type\":\"application/json; charset=utf-8\"}",
                     "method": "POST",
                     "path": "/chat.postMessage",
@@ -6017,7 +6017,7 @@
                 },
                 "applied": {
                   "authority": "autonomous",
-                  "effect": "HTTP 200 · {\"ok\":true,\"channel\":\"D0BS5SXMXPZ\",\"ts\":\"1789592857.505309\",\"message\":{\"user\":\"U0BTFK6FLNL\",\"type\":\"message\",\"ts\":\"1789592857.505309\",\"bot_id\":\"B0BSF18GRJ7\",\"app_id\":\"<…",
+                  "effect": "HTTP 200 · {\"ok\":true,\"channel\":\"D0MANAGER\",\"ts\":\"1789592857.505309\",\"message\":{\"user\":\"U0BTFK6FLNL\",\"type\":\"message\",\"ts\":\"1789592857.505309\",\"bot_id\":\"B0BSF18GRJ7\",\"app_id\":\"<…",
                   "idempotencyKey": "n57d5ekg1grzcgk9atf2698mgn8ehqq9:k57bve1hwbp8wyz0d23hcc98gs8egr5c:7",
                   "ok": true,
                   "providerId": "1789592857.505309",

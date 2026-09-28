@@ -20,6 +20,7 @@ import {
   type ServerHandle,
   type ServerStarter,
 } from './process';
+import { errorMessage } from '../../../src/lib/errors';
 
 /** The query parameter the unlock URL carries; restated from src/lib/dev-auth-server.ts, which tsx cannot import. */
 export const UNLOCK_PARAM: typeof import('../../../src/lib/dev-auth-server').DEV_NO_AUTH_UNLOCK_PARAM =
@@ -442,7 +443,7 @@ export async function startApp(
     );
   } catch (error) {
     await server.stop();
-    throw new Error(`${(error as Error).message}\n${server.output().slice(-4000)}`);
+    throw new Error(`${errorMessage(error)}\n${server.output().slice(-4000)}`);
   }
   return server;
 }

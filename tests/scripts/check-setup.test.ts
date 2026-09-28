@@ -9,7 +9,6 @@ import {
   composeRunningServices,
   docSourceDependency,
   egressHosts,
-  handbookTwinDriftLine,
   main,
   migrationsSection,
   modelSection,
@@ -349,18 +348,6 @@ describe('the support report without an env file', (): void => {
       kind: 'day0-setup-report',
       error: `${missing} not found`,
     });
-  });
-});
-
-describe('the handbook twins line', (): void => {
-  it('tells the operator to copy the page from the operator-only twins directory (U21 D2)', (): void => {
-    const line = handbookTwinDriftLine(['onboarding', 'northstar-crm (no published page)']);
-    expect(line).toBe(
-      'Handbook page twins differ from their fixtures: onboarding, northstar-crm (no published page). ' +
-        'Copy docs/private/notion-pages/<page>.md over tests/fixtures/notion-pages/<page>.md; ' +
-        'the tests read the fixture, so a stale twin tests a page nobody publishes.',
-    );
-    expect(line).not.toContain('docs/submission');
   });
 });
 

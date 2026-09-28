@@ -38,7 +38,7 @@ export { ModelRefusalError, ModelReplyCutError } from './structured-fallback';
  *
  * Both helpers retry on transient model errors (503 service overloads,
  * generic API errors flagged `isRetryable`). The Mastra/AI-SDK default
- * is two retries on top of the initial attempt — that has not been
+ * is two retries on top of the initial attempt - that has not been
  * enough during demo windows when the provider is hot. We wrap with
  * exponential backoff up to five attempts so the loop survives a flake.
  */
@@ -66,6 +66,7 @@ export const MODEL_TEMPERATURE = 0.4;
  * an action killed mid-call reported nothing.
  */
 export const MODEL_CALL_TIMEOUT_MS = 300_000;
+/** How many times the provider SDK retries one call on its own before the wrapper's retry sees it. */
 export const MODEL_PROVIDER_MAX_RETRIES = 2;
 
 /** When one model call must be done by, armed once at its entry. */
@@ -122,11 +123,13 @@ async function withinDeadline<T>(
   }
 }
 
+/** The per-call overrides a model call takes: its output budget and reasoning effort. */
 export interface ModelCallSettings {
   maxOutputTokens?: number;
   reasoningEffort?: typeof env.OPENAI_REASONING_EFFORT;
 }
 
+/** The provider options for one model call, from the environment with the overrides applied. */
 export function modelCallOptions(overrides: ModelCallSettings = {}) {
   const maxOutputTokens = overrides.maxOutputTokens ?? env.OPENAI_MAX_OUTPUT_TOKENS;
   const reasoningEffort = overrides.reasoningEffort ?? env.OPENAI_REASONING_EFFORT;
@@ -139,6 +142,7 @@ export function modelCallOptions(overrides: ModelCallSettings = {}) {
   };
 }
 
+/** The wrapper's retry policy for a rate limit or a server error: attempts and delays. */
 export const MODEL_RETRY_POLICY = {
   maxAttempts: 5,
   baseDelayMs: 2000,
@@ -238,6 +242,7 @@ export async function withModelRetry<T>(
   return await withRetry({ label, agent: label }, fn, armDeadline());
 }
 
+/** A Mastra agent with the configured model and the given instructions. */
 export function makeAgent(name: string, instructions: string): Agent {
   return new Agent({
     id: name,
@@ -339,6 +344,7 @@ function pinnedStructuredMode(override?: StructuredMode): StructuredMode | undef
   return env.OPENAI_JSON_MODE === 'auto' ? undefined : env.OPENAI_JSON_MODE;
 }
 
+/** What a JSON model call takes: the agent, the user prompt, the schema and the call settings. */
 export interface AgentJsonArgs extends ModelCallSettings {
   agent: Agent;
   user: string;
@@ -347,6 +353,7 @@ export interface AgentJsonArgs extends ModelCallSettings {
   mode?: StructuredMode;
 }
 
+/** A JSON model call's value with which strategy produced it. */
 export interface AgentJsonResult<T> {
   value: T;
   /** Which strategy actually produced the object. */
@@ -502,6 +509,7 @@ export async function agentJsonWithMode<T>(args: AgentJsonArgs): Promise<AgentJs
   };
 }
 
+/** Ask an agent for one JSON object matching a schema, through the configured JSON mode and its repairs. */
 export async function agentJson<T>(args: AgentJsonArgs): Promise<T> {
   return (await agentJsonWithMode<T>(args)).value;
 }

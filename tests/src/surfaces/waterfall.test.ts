@@ -37,6 +37,24 @@ describe('surface intake waterfall', (): void => {
     ).toEqual(['Linear', 'Slack', 'Northstar CRM', 'Team documentation']);
   });
 
+  it('keeps a system whose name has no Latin letter, so a Chinese handbook orders its systems too (N8)', (): void => {
+    // The page title, the heading and the header row stay English until N8's
+    // word lists land; the key is what dropped the name.
+    const onboarding = [
+      '## Systems and access owners',
+      '',
+      '| System | Use | Owner |',
+      '|---|---|---|',
+      '| 钉钉 | Requests | Messaging |',
+      '| Linear | Work queue | IT |',
+    ].join('\n');
+    expect(
+      extractDocumentedSystemOrder([
+        { title: 'Revenue operations onboarding', content: onboarding },
+      ]),
+    ).toEqual(['钉钉', 'Linear']);
+  });
+
   it('keeps of a page only what the order reads, so a paged walk holds no body without a systems table', (): void => {
     const table = '## Systems and access owners\n\n| System |\n|---|\n| Linear |';
     expect(waterfallEntry({ title: 'Onboarding', content: '# Welcome\n\nRead on.' })).toEqual({

@@ -32,7 +32,7 @@ function systemKey(value: string): string {
   return value
     .replace(/[`*_~]/g, '')
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
     .trim()
     .replace(/\s+/g, ' ');
 }

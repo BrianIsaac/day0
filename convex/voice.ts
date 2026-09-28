@@ -20,7 +20,7 @@ import { appendEvent } from './eventLog';
  * Finalisation is a state machine rather than a sequence of writes, because a
  * genuine call has two independent finishers: the browser posts from
  * `onDisconnect` as soon as it holds a transcript, and ElevenLabs posts the
- * signed post-call webhook — which it may deliver more than once, with a
+ * signed post-call webhook - which it may deliver more than once, with a
  * byte-identical payload, and which expects a prompt 200 either way.
  *
  *   active ──claim──▶ synthesising ──finalise──▶ done
@@ -42,7 +42,7 @@ import { appendEvent } from './eventLog';
  * release arrow above is a promise the deployment has to keep by itself: it
  * schedules its own re-drive in the same transaction that hands the session
  * back, and `sweepStalledFinalisations` covers the one case that transaction
- * cannot — a finisher that died before it could release anything.
+ * cannot - a finisher that died before it could release anything.
  *
  * That is only possible because the claim writes down what it was given. The
  * transcript and the boss label are on the row from the moment a finisher wins,
@@ -78,8 +78,8 @@ export const latest = query({
  *
  * "One 1:1, one session" is decided here rather than asked of the caller,
  * because the caller cannot keep that promise. A React effect starting a room is
- * invoked twice on mount under Strict Mode and again on every remount — a
- * resume, a mode resync, a hot reload — and each invocation used to insert a
+ * invoked twice on mount under Strict Mode and again on every remount - a
+ * resume, a mode resync, a hot reload - and each invocation used to insert a
  * row, so a single conversation left a scatter of `active` sessions, none of
  * which any transcript would ever be attributed to. A latch in the component
  * would cover the first case and none of the others; deciding against the row is
@@ -90,14 +90,14 @@ export const latest = query({
  * the conversation that is already under way. Only a finished one starts the
  * next 1:1, which is what makes Request Changes open a genuinely new session.
  *
- * Reuse crosses modes on purpose — switching from chat to voice mid-1:1 is the
+ * Reuse crosses modes on purpose - switching from chat to voice mid-1:1 is the
  * same conversation on a different surface, and the UI says as much before it
  * switches. The conversation id goes with the mode, since it names a call that
  * is over.
  *
  * Returns the row id plus `webhookToken`, the capability the caller hands to
  * ElevenLabs so the post-call webhook can prove which session it is reporting on
- * — see `claimWebhookFinalisation`. Only the boss who owns the agent ever sees
+ * - see `claimWebhookFinalisation`. Only the boss who owns the agent ever sees
  * it: this mutation is ownership-checked.
  */
 export const start = mutation({
@@ -157,7 +157,7 @@ export const start = mutation({
 /**
  * Patch the ElevenLabs conversation id onto an existing voice session
  * row. Called from the browser's `onConnect` callback once the SDK
- * assigns a conversation id — the row was created earlier (in
+ * assigns a conversation id - the row was created earlier (in
  * `voice.start`) before the WebSocket connected, so we couldn't store
  * the id at that point. Best-effort: `claimWebhookFinalisation` records the id
  * itself when this call never lands.
@@ -211,8 +211,8 @@ export const getInternal = internalQuery({
 
 /**
  * How long a `synthesising` reservation is honoured before another finisher may
- * take it over. An action that dies mid-flight — an interrupted deploy, a
- * process restart — never releases its own claim, so without an expiry a
+ * take it over. An action that dies mid-flight - an interrupted deploy, a
+ * process restart - never releases its own claim, so without an expiry a
  * session would be wedged short of `done` with no way back.
  *
  * Comfortably longer than two model calls including their retry ladders, and
@@ -245,9 +245,9 @@ interface FinalisationMaterial {
 /**
  * What a finisher is told when it asks to finalise a session.
  *
- *   claimed     — it won; it alone may spend model calls and commit.
- *   in-progress — another finisher holds a live claim.
- *   already-done — the work is recorded; here is what it produced.
+ *   claimed     - it won; it alone may spend model calls and commit.
+ *   in-progress - another finisher holds a live claim.
+ *   already-done - the work is recorded; here is what it produced.
  */
 export type FinalisationClaim =
   | {
@@ -266,7 +266,7 @@ export type FinalisationClaim =
 
 /**
  * Decide and write in one transaction. Convex runs a mutation serialisably, so
- * a second caller reading this row necessarily sees the first caller's patch —
+ * a second caller reading this row necessarily sees the first caller's patch -
  * which is the property a separate check-then-act pair cannot have.
  */
 async function claimSession(
@@ -345,7 +345,7 @@ export const claimFinalisation = internalMutation({
 });
 
 /**
- * Webhook entry — resolve the delivery to its session and claim it in the same
+ * Webhook entry - resolve the delivery to its session and claim it in the same
  * transaction, so nothing can slip between recognising the session and
  * reserving it.
  *
@@ -413,8 +413,8 @@ export type RecoveryClaim =
   | { outcome: 'declined'; reason: string };
 
 /**
- * The recovery entry. It carries no transcript of its own — it works from what
- * the failed attempt wrote down — and it takes the session only when there is
+ * The recovery entry. It carries no transcript of its own - it works from what
+ * the failed attempt wrote down - and it takes the session only when there is
  * genuinely nobody else on it: not finished, not held by a live claim, with
  * material to work from and attempts left.
  *
@@ -539,7 +539,7 @@ export const finaliseSession = internalMutation({
 });
 
 /**
- * Hand the session back when a finaliser cannot finish — a model call failed,
+ * Hand the session back when a finaliser cannot finish - a model call failed,
  * or the object came back unusable. The session returns to `active`, which is
  * the state a fresh finisher can claim, so a failed run costs one attempt
  * rather than the charter. The reason is kept on the row and in the feed so the
@@ -550,7 +550,7 @@ export const finaliseSession = internalMutation({
  * delivery has already been answered 200. So the re-drive is scheduled here,
  * inside the same transaction as the release. Convex commits a scheduled
  * function with the mutation that scheduled it, which makes "the session is
- * retryable" and "somebody will retry it" one fact rather than two — the
+ * retryable" and "somebody will retry it" one fact rather than two - the
  * process that failed can now die without taking the retry with it.
  */
 export const releaseFinalisation = internalMutation({
@@ -614,7 +614,7 @@ export const releaseFinalisation = internalMutation({
  *
  * It also picks up a released session whose scheduled retry never arrived,
  * which is why it waits a full lease past the failure before touching an
- * `active` row — long enough that a retry already on its way has had its turn.
+ * `active` row - long enough that a retry already on its way has had its turn.
  * A session still in the middle of a live call carries no accepted transcript,
  * so it is never mistaken for one that needs finishing.
  */

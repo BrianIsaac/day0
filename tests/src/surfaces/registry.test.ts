@@ -3,7 +3,8 @@ import type { ActionCtx } from '../../../convex/_generated/server';
 import type { Id } from '../../../convex/_generated/dataModel';
 import { HttpAdapter } from '../../../src/surfaces/http';
 import { McpAdapter, type McpClientLike, type McpClientOptions } from '../../../src/surfaces/mcp';
-import { MOCK_TOOLS, mockAdapter } from '../../../src/surfaces/mock';
+import { mockAdapter } from '../../../src/surfaces/mock';
+import { MOCK_ACTION_TOOLS } from '../../../src/work/types';
 import {
   AWAITING_APPROVAL,
   HELD_NOT_APPROVED,
@@ -154,10 +155,10 @@ function recordHttp(recorded: Recorded): RealAdapterDeps['fetch'] {
 describe('surface adapter registry', (): void => {
   it('maps the legacy mock verbs in mock mode only', (): void => {
     const mock = resolveAdapters('mock', []);
-    for (const tool of MOCK_TOOLS) expect(mock.get(tool)).toBe(mockAdapter);
+    for (const tool of MOCK_ACTION_TOOLS) expect(mock.get(tool)).toBe(mockAdapter);
     expect(mock.has('mcp.call')).toBe(false);
     const real = resolveAdapters('real', [linear], deps({ mcp: [], http: [] }));
-    for (const tool of MOCK_TOOLS) expect(real.has(tool)).toBe(false);
+    for (const tool of MOCK_ACTION_TOOLS) expect(real.has(tool)).toBe(false);
     expect(resolveAdapters('real', []).size).toBe(0);
   });
 

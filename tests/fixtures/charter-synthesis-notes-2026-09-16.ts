@@ -4,9 +4,9 @@
  * note about a clause it dropped. The planning pane asked all four at plan
  * approval, the note among them, as if the manager had left it open.
  *
- * The texts are reconstructed from the run record
- * (`docs/plans/progress/runthrough-goai-final-2026-09-14-handover.md`,
- * "16 Sep run", finding 3); the bed that produced them was not exported.
+ * The texts are reconstructed from the run's private record (GLM 5.3 Flash
+ * via Featherless, real mode), finding 3 of the 16 September run; the bed
+ * that produced them was not exported, so nothing here is verbatim.
  */
 
 export const SYNTHESIS_SELF_CHECK_NOTE_2026_09_16 =

@@ -166,7 +166,7 @@ describe('the Day-1 chat route', (): void => {
   it('sends the configured budget and effort to a compatible endpoint', async (): Promise<void> => {
     const POST = await loadChatRoute({ baseUrl: FEATHERLESS, budget: '32768', effort: 'low' });
 
-    const response = await POST(day1Request({ messages: [], bossLabel: 'Brian' }));
+    const response = await POST(day1Request({ messages: [], bossLabel: 'Sam' }));
     await response.text();
 
     expect(response.status).toBe(200);
@@ -217,7 +217,7 @@ describe('the Day-1 chat route', (): void => {
   it('still opens the seven-topic 1:1 and offers the completion tool', async (): Promise<void> => {
     const POST = await loadChatRoute({ baseUrl: FEATHERLESS, budget: '32768', effort: 'low' });
 
-    await (await POST(day1Request({ messages: [], bossLabel: 'Brian' }))).text();
+    await (await POST(day1Request({ messages: [], bossLabel: 'Sam' }))).text();
 
     const body = sent[0] as {
       messages: { role: string; content: string }[];
@@ -245,7 +245,7 @@ describe('the Day-1 chat route', (): void => {
   it('refuses a body with no messages array before calling the model', async (): Promise<void> => {
     const POST = await loadChatRoute({ baseUrl: FEATHERLESS, budget: '32768', effort: 'low' });
 
-    const response = await POST(day1Request({ bossLabel: 'Brian' }));
+    const response = await POST(day1Request({ bossLabel: 'Sam' }));
 
     expect(response.status).toBe(400);
     expect(sent).toHaveLength(0);

@@ -36,11 +36,11 @@ body {
 
 /* Cursor is fully owned by `app/WhipCursor.tsx`. It hides the native
    cursor on mount via inline body style and renders a Verlet-physics
-   canvas whip on top. Element-level cursor rules removed deliberately —
+   canvas whip on top. Element-level cursor rules removed deliberately -
    they would have higher specificity than the inline body style and
    would render a second cursor on hover. */
 
-/* Custom scrollbars — blend with the dark shell, never feel default */
+/* Custom scrollbars - blend with the dark shell, never feel default */
 *::-webkit-scrollbar {
   width: 10px;
   height: 10px;

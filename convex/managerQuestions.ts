@@ -2,7 +2,8 @@ import { v } from 'convex/values';
 import { mutation, query, type MutationCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, assertOwnsWorkItem } from './ownership';
-import { amendCharterInTransaction, type AmendmentVia } from './charters';
+import { amendCharterInTransaction } from './charters';
+import type { AmendmentVia } from '../src/events/contract';
 import type { Charter } from '../src/agent/charter';
 import {
   managerOpenQuestions,

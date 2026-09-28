@@ -45,8 +45,7 @@
  */
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { parse as parseYaml } from 'yaml';
 import { customerOidcIssuer, type CustomerOidcIssuer } from '../src/lib/customer-oidc';
@@ -303,58 +302,6 @@ export function main(envFile: string = ENV_FILE, options: { report?: boolean } =
   }
   console.log(`Nothing here is half-done. ${modeAndRouteLine(v)}`);
   return 0;
-}
-
-/** Where the operator keeps the handbook pages pasted into Notion: ignored, operator-only. */
-const HANDBOOK_PAGES_DIR = 'docs/private/notion-pages';
-
-/** Where the orientation tests read their committed twins of the handbook pages. */
-const HANDBOOK_FIXTURE_DIR = 'tests/fixtures/notion-pages';
-
-/**
- * Name the handbook pages whose committed fixture no longer matches the page.
- *
- * The pages under `docs/private/notion-pages/` are what the operator pastes
- * into Notion; the twins under `tests/fixtures/` are what the orientation tests
- * read. They have to be byte-identical or the suite proves things about a page
- * that is not the one published - which happened once while this check was
- * being written. `docs/` is gitignored, so this cannot be a test; it is checked
- * here, where the directory exists, and silently skipped where it does not.
- *
- * Returns:
- *   The stems of pages that differ, or that exist on only one side.
- */
-function driftedHandbookTwins(): string[] {
-  const pagesDir = HANDBOOK_PAGES_DIR;
-  const fixtureDir = HANDBOOK_FIXTURE_DIR;
-  if (!existsSync(pagesDir) || !existsSync(fixtureDir)) return [];
-  const drifted: string[] = [];
-  for (const file of readdirSync(fixtureDir)) {
-    if (!file.endsWith('.md')) continue;
-    const page = join(pagesDir, file);
-    if (!existsSync(page)) {
-      drifted.push(`${file.replace(/\.md$/, '')} (no published page)`);
-      continue;
-    }
-    if (readFileSync(page, 'utf8') !== readFileSync(join(fixtureDir, file), 'utf8')) {
-      drifted.push(file.replace(/\.md$/, ''));
-    }
-  }
-  return drifted;
-}
-
-/**
- * The setup report's line for handbook twins that drifted, with the copy
- * that brings each fixture back in line.
- *
- * @param drifted - The stems `driftedHandbookTwins` named.
- */
-export function handbookTwinDriftLine(drifted: readonly string[]): string {
-  return (
-    `Handbook page twins differ from their fixtures: ${drifted.join(', ')}. ` +
-    `Copy ${HANDBOOK_PAGES_DIR}/<page>.md over ${HANDBOOK_FIXTURE_DIR}/<page>.md; ` +
-    'the tests read the fixture, so a stale twin tests a page nobody publishes.'
-  );
 }
 
 /**
@@ -678,17 +625,7 @@ function surfacesSection(values: Values, services: string[] | undefined): Sectio
     `Credential key ${keyPresent ? 'present' : 'absent'}; stored credentials ${count ?? 'unavailable'}.`,
     `Install redirect: ${values.DAY0_PUBLIC_URL ? `${values.DAY0_PUBLIC_URL}/api/oauth/slack` : 'DAY0_PUBLIC_URL is unset, so no dedicated app can be provisioned'}.`,
   ];
-  const drifted = driftedHandbookTwins();
-  if (drifted.length > 0) {
-    lines.push(handbookTwinDriftLine(drifted));
-  }
-  if (
-    !backendRunning ||
-    !docsReadable ||
-    !keyPresent ||
-    count === undefined ||
-    drifted.length > 0
-  ) {
+  if (!backendRunning || !docsReadable || !keyPresent || count === undefined) {
     return { title: 'Surfaces: real (local) - needs fixing', status: 'gap', lines };
   }
   return {
@@ -1373,7 +1310,7 @@ function voiceSection(v: Values): Section {
     status: 'warn',
     lines: [
       `Missing ${gaps.join(' and ')}.`,
-      'The mode picker greys voice out and chat runs the identical Day-1 1:1,',
+      'The mode picker greys voice out and chat asks the same seven Day-1 topics in text,',
       'so this is a complete setup if you meant to skip voice.',
     ],
   };

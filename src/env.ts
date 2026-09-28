@@ -3,11 +3,12 @@ import { z } from 'zod';
 import { DEFAULT_MODEL } from './lib/model-name';
 
 /**
- * Lazy env validation. All fields are `.optional()` or have defaults so
- * module loading never throws — Convex bundles and loads the modules
- * before the deployment env vars are wired, so a strict t3-env contract
- * would refuse to bundle. Each downstream client (`openai()`, `daytona()`)
- * validates the keys it actually needs at first call.
+ * The environment contract. Every field is `.optional()` or has a default, so
+ * loading with nothing set never throws; loading does throw for a value
+ * outside the contract (an `OPENAI_REASONING_EFFORT` the schema does not
+ * list), because Convex bundles and loads the modules before the deployment
+ * env vars are wired, and an absent value must not be a crash while a wrong
+ * one must not be silent.
  */
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -15,7 +16,6 @@ const schema = z.object({
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_BASE_URL: z.string().optional(),
   OPENAI_MODEL: z.string().default(DEFAULT_MODEL),
-  OPENAI_IMAGE_MODEL: z.string().default('gpt-image-2'),
   OPENAI_JSON_MODE: z.enum(['auto', 'native', 'prompt']).default('auto'),
   OPENAI_STRUCTURED_REPAIR_ATTEMPTS: z.coerce.number().int().min(0).max(3).default(2),
   OPENAI_MAX_OUTPUT_TOKENS: z.coerce.number().int().positive().optional(),
@@ -28,9 +28,6 @@ const schema = z.object({
   // runs and only post-call finalisation is refused. `pnpm check:setup` reports
   // the two separately.
   ELEVENLABS_WEBHOOK_SECRET: z.string().optional(),
-
-  GOOGLE_API_KEY: z.string().optional(),
-  GEMINI_LIVE_MODEL: z.string().default('gemini-flash-3.1-live'),
 
   DAYTONA_API_KEY: z.string().optional(),
   DAYTONA_API_URL: z.string().default('https://app.daytona.io/api'),
@@ -54,7 +51,7 @@ const schema = z.object({
   NEXT_PUBLIC_DEMO_TENANT_SLUG: z.string().default('acme-demo'),
 
   // `true` skips Clerk entirely and runs as one synthetic local user. Refused
-  // outside `next dev` — see src/lib/dev-auth.ts.
+  // outside `next dev` - see src/lib/dev-auth.ts.
   NEXT_PUBLIC_DEV_NO_AUTH: z.string().optional(),
   DAY0_SURFACE_MODE: z.enum(['mock', 'real']).default('mock'),
   DAY0_DOCS_ROOT: z.string().default('/docs'),
@@ -87,7 +84,6 @@ const OPTIONAL_STRINGS = [
   'OPENAI_API_KEY',
   'OPENAI_BASE_URL',
   'OPENAI_MODEL',
-  'OPENAI_IMAGE_MODEL',
   'OPENAI_JSON_MODE',
   'OPENAI_STRUCTURED_REPAIR_ATTEMPTS',
   'OPENAI_MAX_OUTPUT_TOKENS',
@@ -95,8 +91,6 @@ const OPTIONAL_STRINGS = [
   'ELEVENLABS_API_KEY',
   'ELEVENLABS_AGENT_ID',
   'ELEVENLABS_WEBHOOK_SECRET',
-  'GOOGLE_API_KEY',
-  'GEMINI_LIVE_MODEL',
   'DAYTONA_API_KEY',
   'DAYTONA_API_URL',
   'SKILL_SANDBOX_SOCKET',
@@ -146,7 +140,6 @@ export const env = schema.parse(
     OPENAI_API_KEY: process.env.OPENAI_API_KEY,
     OPENAI_BASE_URL: process.env.OPENAI_BASE_URL,
     OPENAI_MODEL: process.env.OPENAI_MODEL,
-    OPENAI_IMAGE_MODEL: process.env.OPENAI_IMAGE_MODEL,
     OPENAI_JSON_MODE: process.env.OPENAI_JSON_MODE,
     OPENAI_STRUCTURED_REPAIR_ATTEMPTS: process.env.OPENAI_STRUCTURED_REPAIR_ATTEMPTS,
     OPENAI_MAX_OUTPUT_TOKENS: process.env.OPENAI_MAX_OUTPUT_TOKENS,
@@ -154,8 +147,6 @@ export const env = schema.parse(
     ELEVENLABS_API_KEY: process.env.ELEVENLABS_API_KEY,
     ELEVENLABS_AGENT_ID: process.env.ELEVENLABS_AGENT_ID,
     ELEVENLABS_WEBHOOK_SECRET: process.env.ELEVENLABS_WEBHOOK_SECRET,
-    GOOGLE_API_KEY: process.env.GOOGLE_API_KEY,
-    GEMINI_LIVE_MODEL: process.env.GEMINI_LIVE_MODEL,
     DAYTONA_API_KEY: process.env.DAYTONA_API_KEY,
     DAYTONA_API_URL: process.env.DAYTONA_API_URL,
     SKILL_SANDBOX_SOCKET: process.env.SKILL_SANDBOX_SOCKET,

@@ -171,21 +171,6 @@ export class FolderReader implements DocumentationReader {
   }
 
   /**
-   * Read every Markdown page under a source locator.
-   *
-   * Args:
-   *   source: Linked folder source.
-   *   _secret: Unused because folder sources need no credential.
-   *
-   * Returns:
-   *   Normalised pages in deterministic reference order.
-   */
-  async listPages(source: DocSourceRecord, _secret?: string): Promise<DocPage[]> {
-    void _secret;
-    return await readMarkdownDirectory(source, resolveFolderLocator(this.root, source.locator));
-  }
-
-  /**
    * Read at most one sync action's worth of Markdown pages.
    *
    * Args:

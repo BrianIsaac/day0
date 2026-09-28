@@ -63,6 +63,7 @@ import {
   withheldWithClaimedWrite,
   type HeldExternalItem,
 } from './claim-key';
+import { escapeRegExp } from '../lib/regex';
 
 export { replyTargetLine };
 
@@ -93,7 +94,7 @@ function skillInputLines(skillBody: string, candidate: WorkCandidate, mode: Surf
  * prior. The executor returns:
  *   - draft: the deliverable the manager reads. Written in the same turn that
  *     emits the actions and before any of them is applied, so it is the
- *     agent's account of the work and never the record of it — that is the
+ *     agent's account of the work and never the record of it - that is the
  *     applied ledger the caller builds from the adapters.
  *   - notes: assumptions / open questions
  *   - actions: typed mutations against mock work surfaces (Spreadsheet,
@@ -212,6 +213,7 @@ const procedureDestinationSchema = z.discriminatedUnion('kind', [
     .strict(),
 ]);
 
+/** The procedure contract the executor answers with: which runtime trail each action follows, validated. */
 export const procedureContractSchema = z
   .object({
     trails: z.array(
@@ -252,6 +254,7 @@ export const procedureContractSchema = z
   })
   .strict();
 
+/** A validated procedure contract. */
 export type ProcedureContract = z.infer<typeof procedureContractSchema>;
 
 type ProcedureDocument = MockSurfaceSnapshot['howToGuides'][number];
@@ -525,6 +528,7 @@ const cellsSchema = z
   )
   .min(1);
 
+/** One emitted action as the model returns it, either verb, validated before it reaches the gate. */
 export const generatedActionSchema = z.union([
   z
     .object({
@@ -635,6 +639,7 @@ const deferredProcedureTrailSchema = z
   })
   .strict();
 
+/** The executor's reply for a single-phase run: draft, notes, actions and procedure trails. */
 export const executeSchema = z
   .object({
     draft: z.string(),
@@ -668,6 +673,7 @@ const realPlanStepOutcomeSchema = z
   })
   .strict();
 
+/** The executor's reply for the closing phase of a two-phase run. */
 export const dependentExecuteSchema = z
   .object({
     draft: z.string(),
@@ -961,12 +967,14 @@ function materialiseGeneratedAction(action: GeneratedAction): MockAction {
   }
 }
 
+/** The skill a run executes, as the evaluator selected it. */
 export interface SelectedSkill {
   name: string;
   description: string;
   body: string;
 }
 
+/** Everything a skill run takes: the skill, the plan, the candidate, the context and the surfaces. */
 export interface RunSkillArgs {
   skill: SelectedSkill;
   plan: ExecutionPlan;
@@ -1156,6 +1164,7 @@ export function planStepBasisRule(feedback: string | undefined): string {
   return "A fact the manager's feedback states is approved evidence for this work item: a plan step that fact settles is satisfied with basis `manager-feedback` and evidence quoting the fact, even when the ledger does not show it. Every other outcome has basis `ledger`. A promised read the ledger lacks stays blocked; the manager's word settles a fact, never a read the plan promised.";
 }
 
+/** The closing phase's arguments: the run's arguments plus the prerequisite output and its ledger. */
 export interface RunDependentSkillArgs extends RunSkillArgs {
   initialOutput: ExecutionOutput;
   initialLedger: AppliedAction[];
@@ -1472,6 +1481,7 @@ function describeWithheldAction(action: MockAction): string {
   return action.tool;
 }
 
+/** The prompt lines that tell a resumed closing phase what its earlier set was and why the gate refused it. */
 export function refusedClosingLines(refused: RefusedClosing): string[] {
   const share = Math.max(
     REFUSED_ACTION_PROMPT_FLOOR,
@@ -1510,6 +1520,7 @@ function agentIdentityPart(value: string): string {
   );
 }
 
+/** The Mastra agent name for one skill on one candidate, which keys the model's JSON-mode memory. */
 export function skillAgentName(
   skillName: string,
   candidate: Pick<WorkCandidate, 'sourceSystem' | 'externalId'>,
@@ -2044,10 +2055,9 @@ function affirmsSurfaceAction(
   clause: string,
   surface: Pick<SurfaceRecord, 'slug' | 'displayName'>,
 ): boolean {
-  const escape = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const stripped = clause
-    .replace(new RegExp(escape(surface.displayName), 'gi'), ' ')
-    .replace(new RegExp(escape(surface.slug), 'gi'), ' ');
+    .replace(new RegExp(escapeRegExp(surface.displayName), 'gi'), ' ')
+    .replace(new RegExp(escapeRegExp(surface.slug), 'gi'), ' ');
   for (const verb of stripped.matchAll(SURFACE_ACTION_VERB)) {
     if (!GOVERNING_NEGATION.test(stripped.slice(0, verb.index))) return true;
   }
@@ -2134,10 +2144,9 @@ function fixesRecordPayload(
   candidate: Pick<WorkCandidate, 'externalId'>,
 ): string | undefined {
   if (namesResultDependency(clause) || NOT_A_WRITE.test(clause)) return undefined;
-  const escape = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const stripped = clause
-    .replace(new RegExp(escape(surface.displayName), 'gi'), ' ')
-    .replace(new RegExp(escape(surface.slug), 'gi'), ' ');
+    .replace(new RegExp(escapeRegExp(surface.displayName), 'gi'), ' ')
+    .replace(new RegExp(escapeRegExp(surface.slug), 'gi'), ' ');
   const committed = [...stripped.matchAll(RECORD_ACTION_VERB)].some(
     (verb) => !GOVERNING_NEGATION.test(stripped.slice(0, verb.index)),
   );
@@ -2187,6 +2196,7 @@ function namesSurface(text: string, surface: Pick<SurfaceRecord, 'slug' | 'displ
   return phrase.length > 0 && ` ${lower.replace(/[^a-z0-9]+/g, ' ')} `.includes(` ${phrase} `);
 }
 
+/** What the deferral audit reads: the mode, the plan, the surfaces and the prior actions. */
 export interface DeferralAuditContext {
   mode: SurfaceMode;
   plan: Pick<ExecutionPlan, 'summary' | 'steps'>;
@@ -2201,17 +2211,16 @@ function orderedWriteDependency(
   context: DeferralAuditContext,
 ): boolean {
   if (prior.kind !== 'mcp.call' || actionIntent(prior) !== 'write') return false;
-  const escape = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  if (!new RegExp(`\\b${escape(prior.surface)}\\b`, 'i').test(description)) return false;
+  if (!new RegExp(`\\b${escapeRegExp(prior.surface)}\\b`, 'i').test(description)) return false;
   const nextTool = description.match(/\b(?:save|update|create|post|delete|add)[_.][a-z_]+\b/i)?.[0];
   const status = /\b(?:save_issue|update_issue|done|status|state change)\b/i.test(description);
   const before = isAuditComment(prior)
     ? '(?:comment|save_comment|create_comment)'
-    : escape(prior.tool);
+    : escapeRegExp(prior.tool);
   const after = status
     ? '(?:save_issue|update_issue|(?:move|mark|set|change)[^.;\\n]{0,60}(?:done|status|state)|state change)'
     : nextTool
-      ? escape(nextTool)
+      ? escapeRegExp(nextTool)
       : undefined;
   if (!after) return false;
   const ordered = new RegExp(
@@ -2389,6 +2398,7 @@ export function deferralAudit(
   return issues;
 }
 
+/** The contract violations in a mock-mode output: actions the draft describes but does not carry, and the reverse. */
 export function mockActionContractIssues(
   output: ExecutionOutput,
   candidate: WorkCandidate,
@@ -2607,6 +2617,7 @@ export function renderEnvSnapshot(env: MockSurfaceSnapshot): string {
   return lines.join('\n');
 }
 
+/** Drop the closing actions an executor wrote before their read landed, by index, keeping the rest. */
 export function removePrewrittenClosingActions(
   output: ExecutionOutput,
   indices: readonly number[],
@@ -2689,6 +2700,7 @@ async function withoutOwnThreadReferencesRecorded<
   return { ...output, actions: [...scrubbed.actions] };
 }
 
+/** Execute one skill on one candidate through the model, with its output audited before it returns. */
 export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
   return withoutOwnThreadReferencesRecorded(await authorSkillRun(args), args);
 }
@@ -3102,6 +3114,7 @@ export function repairableWriteArguments(
   return rows;
 }
 
+/** What the held-write argument repair takes: the actions, the surfaces and the probed argument names. */
 export interface RepairHeldWriteArgumentsArgs {
   actions: readonly MockAction[];
   surfaces: readonly SurfaceRecord[];
@@ -3252,6 +3265,7 @@ export function repairableReadFailures(
 
 const repairedArgumentsSchema = z.object({ toolArgsJson: z.string() }).strict();
 
+/** What the tool-argument repair takes: the skill, the candidate and the actions the gate refused. */
 export interface RepairToolArgumentsArgs {
   skill: Pick<SelectedSkill, 'name'>;
   candidate: WorkCandidate;
@@ -3323,6 +3337,7 @@ export async function repairToolArguments(
   };
 }
 
+/** What the failed-read repair takes: the actions, their ledger and the reads to retry. */
 export interface RepairFailedReadsArgs {
   actions: readonly MockAction[];
   applied: readonly AppliedAction[];

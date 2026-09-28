@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   HOSTED_DEMO_SNAPSHOT,
   type HostedDemoSnapshot,
+  recordedOnLabel,
 } from '../../../src/demo/hosted-demo-snapshot';
 
 /**
@@ -59,6 +60,12 @@ describe('the committed hosted-demo snapshot', (): void => {
     expect(HOSTED_DEMO_SNAPSHOT.agent.id).toMatch(/^agent-\d+$/);
     for (const item of HOSTED_DEMO_SNAPSHOT.workItems) expect(item.id).toMatch(/^work-\d+$/);
     for (const skill of HOSTED_DEMO_SNAPSHOT.skills) expect(skill.id).toMatch(/^skill-\d+$/);
+  });
+
+  it('carries the day it was exported and the frontend build the deployment served (Q3)', (): void => {
+    expect(HOSTED_DEMO_SNAPSHOT.recording.recordedOn).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(HOSTED_DEMO_SNAPSHOT.recording.revision).toMatch(/^[0-9a-f]{7,12}$/);
+    expect(recordedOnLabel(HOSTED_DEMO_SNAPSHOT.recording)).toBe('12 September 2026');
   });
 
   it('tells the recording in offsets, never on a wall clock', (): void => {

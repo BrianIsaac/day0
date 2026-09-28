@@ -1,6 +1,7 @@
 import { surfaceSlug } from '../surfaces/slug';
 import type { SurfaceMode } from '../surfaces/types';
 import type { WorkCandidate } from './types';
+import { escapeRegExp } from '../lib/regex';
 
 /**
  * The inputs a skill body declares and how the executor binds them per run.
@@ -186,7 +187,7 @@ const ADDED_DECLARATION_SOURCE =
 const ADDED_DECLARATION_MARK = 'Declared by Day0: the author used it without declaring it.';
 
 const ADDED_DECLARATION = new RegExp(
-  `^\\s*[-*+]\\s*\`<([a-z][a-z0-9]*(?:-[a-z0-9]+)+)>\`:.*${ADDED_DECLARATION_MARK.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`,
+  `^\\s*[-*+]\\s*\`<([a-z][a-z0-9]*(?:-[a-z0-9]+)+)>\`:.*${escapeRegExp(ADDED_DECLARATION_MARK)}\\s*$`,
 );
 
 /** Words that make a placeholder name a credential whatever surrounds them. */

@@ -2,6 +2,7 @@ import { SYSTEM_CLASSES, type SystemClass } from '../agent/system-classes';
 import { surfaceSlug } from '../surfaces/slug';
 import type { SurfaceMode } from '../surfaces/types';
 import type { SkillShape, WorkCandidate } from './types';
+import { escapeRegExp } from '../lib/regex';
 
 /**
  * The shape of the skill a candidate needs: one operation on one surface
@@ -179,8 +180,7 @@ function isReadOnlyRequest(
     surface.slug,
   ]);
   const outsideBoundary = names.reduce(
-    (text: string, name: string): string =>
-      text.replace(new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), ' '),
+    (text: string, name: string): string => text.replace(new RegExp(escapeRegExp(name), 'gi'), ' '),
     candidateText(candidate).replace(new RegExp(READ_ONLY_BOUNDARY.source, 'gi'), ' '),
   );
   return !WRITE_REQUEST.test(outsideBoundary);

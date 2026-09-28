@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -9,7 +10,7 @@ vi.mock('convex/react', () => ({
 
 import { declareUndeclaredInputs } from '../../../../src/work/skill-inputs';
 import type { Doc, Id } from '../../../../convex/_generated/dataModel';
-import type { AgentMetrics } from '../../../../convex/metrics';
+import type { AgentMetrics } from '../../../../src/metrics/types';
 import type { SurfaceRecord } from '../../../../src/surfaces/types';
 import {
   ActionPayload,
@@ -73,6 +74,22 @@ import {
   RECORDED_QUESTIONS_2026_09_16,
   SYNTHESIS_SELF_CHECK_NOTE_2026_09_16,
 } from '../../../fixtures/charter-synthesis-notes-2026-09-16';
+
+describe('the panels the dashboard loads on demand', (): void => {
+  const source = readFileSync(
+    new URL('../../../../app/agent/[agentId]/AgentDashboard.tsx', import.meta.url),
+    'utf8',
+  );
+
+  it('loads the chat room, the voice room and the work environment as their own chunks, the voice room never on the server', (): void => {
+    for (const panel of ['ChatRoom', 'VoiceRoom', 'MockEnvironment']) {
+      expect(source).not.toMatch(new RegExp(`import \\{ ${panel} \\} from './${panel}'`));
+      expect(source).toMatch(new RegExp(`const ${panel} = dynamic\\(`));
+    }
+    const voice = /const VoiceRoom = dynamic\([\s\S]*?\}\);/.exec(source)?.[0] ?? '';
+    expect(voice).toContain('ssr: false');
+  });
+});
 
 describe('held action payload', (): void => {
   it('renders the verb with the arguments it reads and none of the empty flat-bag defaults', (): void => {
@@ -1443,7 +1460,7 @@ describe('the charter card and the strikes approval can honour', (): void => {
   it('offers the 15 September strike as the clause it removes, and disables the one strike that was always refused', (): void => {
     const markup = renderToStaticMarkup(<CharterCard charter={draft(strikeRefusalBody(false))} />);
     expect(markup).toContain(
-      'strikes the clause: “Take ownership of Northstar CRM-dependent work that Brain must handle.”',
+      'strikes the clause: “Take ownership of Northstar CRM-dependent work that Sam must handle.”',
     );
     expect(markup).toContain(
       'cannot be struck: strike or edit the whole will-not-do clause; removing only part could change its boundary',
@@ -1454,12 +1471,12 @@ describe('the charter card and the strikes approval can honour', (): void => {
   it('refuses up front the strike that would drop the only clause bounding a system', (): void => {
     const body = strikeRefusalBody(false);
     body.proposedBoundaries.willNotDo = [
-      'Take ownership of Northstar CRM-dependent work that Brain must handle.',
+      'Take ownership of Northstar CRM-dependent work that Sam must handle.',
     ];
     body.proposedBoundaries.escalationTriggers = [];
     const markup = renderToStaticMarkup(<CharterCard charter={draft(body)} />);
     expect(markup).toContain(
-      'cannot be struck: strike refused: “Take ownership of Northstar CRM-dependent work that Brain must handle.” is the only clause that bounds Northstar CRM',
+      'cannot be struck: strike refused: “Take ownership of Northstar CRM-dependent work that Sam must handle.” is the only clause that bounds Northstar CRM',
     );
     expect(strikeButtons(markup)[2]).toBe(true);
   });
@@ -1467,7 +1484,7 @@ describe('the charter card and the strikes approval can honour', (): void => {
   it('enables exactly the strikes whose toggled charter approval would apply', (): void => {
     const bounded = strikeRefusalBody(false);
     bounded.proposedBoundaries.willNotDo = [
-      'Take ownership of Northstar CRM-dependent work that Brain must handle.',
+      'Take ownership of Northstar CRM-dependent work that Sam must handle.',
     ];
     bounded.proposedBoundaries.escalationTriggers = [];
     for (const body of [strikeRefusalBody(false), bounded]) {
@@ -2136,7 +2153,6 @@ describe('dashboard decisions on the supervision card (P6-9)', (): void => {
       charter: {
         timeToFirstDraftedMs: 1,
         timeToFirstApprovedMs: 2,
-        revisions: 0,
         requestChanges: 0,
       },
       decisions: {

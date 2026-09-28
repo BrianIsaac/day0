@@ -11,9 +11,9 @@ import {
   type PrivateHostAllowlist,
 } from '../../lib/private-hosts';
 import { resolveHostname, type HostResolver } from '../../surfaces/mcp-address';
-import type { DocPage, DocSourceRecord } from '../types';
+import type { DocSourceRecord } from '../types';
 import type { DocumentationReader, ReadPageBatch } from './batch';
-import { readMarkdownDirectory, readMarkdownDirectoryBatch } from './folder';
+import { readMarkdownDirectoryBatch } from './folder';
 
 const MAX_ARCHIVE_BYTES = 25 * 1024 * 1024;
 
@@ -331,24 +331,6 @@ export class GitReader implements DocumentationReader {
       secret,
       async (checkout: string): Promise<ReadPageBatch> =>
         await readMarkdownDirectoryBatch(source, checkout, cursor, limit),
-    );
-  }
-
-  /**
-   * Read Markdown from a shallow checkout or bounded provider archive.
-   *
-   * Args:
-   *   source: Linked git source.
-   *   secret: The source's own reader secret, if any.
-   *
-   * Returns:
-   *   Normalised Markdown pages.
-   */
-  async listPages(source: DocSourceRecord, secret?: string): Promise<DocPage[]> {
-    return await this.withCheckout(
-      source,
-      secret,
-      async (checkout: string): Promise<DocPage[]> => await readMarkdownDirectory(source, checkout),
     );
   }
 

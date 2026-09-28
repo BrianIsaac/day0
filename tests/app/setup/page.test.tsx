@@ -18,6 +18,7 @@ import {
   TRAPS,
   WAY_NAMES,
 } from '../../../src/setup/quickstart';
+import { HOSTED_DEMO_SNAPSHOT, recordedOnLabel } from '../../../src/demo/hosted-demo-snapshot';
 
 /**
  * `/setup` is the page a signed-out visitor lands on from the landing page's
@@ -92,6 +93,15 @@ describe('the /setup guide', (): void => {
         'pnpm setup:local',
       );
     }
+  });
+
+  it('dates the recording its parity claim refers to and says the product has moved on (Q3)', (): void => {
+    const claim =
+      /The product the hosted demo recorded on ([^,]+), which has moved on since, running locally in real mode/.exec(
+        text,
+      );
+    expect(claim?.[1]).toBe(recordedOnLabel(HOSTED_DEMO_SNAPSHOT.recording));
+    expect(claim?.[1]).toBe('12 September 2026');
   });
 
   it('says once, under the two local ways, that both are real mode, with the three verbs', (): void => {

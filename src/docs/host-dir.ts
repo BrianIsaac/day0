@@ -28,13 +28,17 @@ export interface DocsHostDir {
  * Raises:
  *   Error: If a non-default path does not exist.
  */
-export function ensureDocsHostDir(configured: string | undefined, cwd: string): DocsHostDir {
+export function ensureDocsHostDir(
+  configured: string | undefined,
+  cwd: string,
+  setting = 'DAY0_DOCS_HOST_DIR',
+): DocsHostDir {
   const value = configured?.trim() || DEFAULT_DOCS_HOST_DIR;
   const path = resolve(cwd, value);
   if (existsSync(path)) return { path, created: false };
   if (path !== resolve(cwd, DEFAULT_DOCS_HOST_DIR)) {
     throw new Error(
-      `DAY0_DOCS_HOST_DIR=${value} does not exist. Create it, or point it at the directory ` +
+      `${setting}${setting.startsWith('--') ? ' ' : '='}${value} does not exist. Create it, or point it at the directory ` +
         'holding the Markdown the backend should read.',
     );
   }

@@ -60,6 +60,7 @@ import { waitUntil, type Runner, type ServerHandle, type ServerStarter } from '.
 import { shotPath } from './output';
 import type { RunRecord } from './report';
 import { belongsToWorkItems, botMessagesSince } from './slack';
+import { errorMessage } from '../../../src/lib/errors';
 
 /** The agent the rehearsal deploys. */
 export const AGENT_NAME = 'rehearsal worker';
@@ -554,7 +555,7 @@ const assignTicket: Phase = {
           try {
             await slack.deleteMessage(channel, message.ts);
           } catch (error) {
-            failures.push(`${message.ts}: ${(error as Error).message}`);
+            failures.push(`${message.ts}: ${errorMessage(error)}`);
           }
         }
         ctx.record.writes.push(`Slack: ${messages.length} DM(s) from the bot deleted`);
@@ -869,7 +870,7 @@ export async function runPhases(
         detail: detail ?? undefined,
       });
     } catch (error) {
-      const reason = (error as Error).message;
+      const reason = errorMessage(error);
       const stopped = error instanceof StopRun;
       ctx.record.phases.push({
         name: phase.name,
