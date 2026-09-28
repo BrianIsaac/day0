@@ -4978,62 +4978,75 @@ export function PermissionRows({
   onRevoke: (scope: string) => void;
   onRegrant: (scope: string) => void;
 }) {
+  const id = useId();
   return (
     <ul className="space-y-2 text-xs">
       {scopes.map((row) => {
         const confirming = confirmingScope === row.scope;
-        const busy = busyScope === row.scope;
+        const busy = busyScope !== null;
         return (
           <li key={row.scope} className="rounded-md border border-[var(--color-border)] p-2">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
-                <p className="font-mono text-[var(--color-fg)] truncate">{row.scope}</p>
+                <p className="font-mono text-[var(--color-fg)] break-all">{row.scope}</p>
                 <p className="text-[10px] text-[var(--color-muted)]">
                   {row.active ? 'granted' : 'revoked'} - from {PERMISSION_SOURCE_LABEL[row.source]}
                 </p>
               </div>
-              {row.active ? (
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => onAskRevoke(row.scope)}
-                  className="shrink-0 px-2 py-1 rounded border border-[var(--color-danger)]/40 text-[10px] text-[var(--color-danger)] disabled:opacity-50"
-                >
-                  Revoke
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => onRegrant(row.scope)}
-                  className="shrink-0 px-2 py-1 rounded border border-[var(--color-accent)]/40 text-[10px] text-[var(--color-accent)] disabled:opacity-50"
-                >
-                  Re-grant
-                </button>
-              )}
+              {/* One button whose word follows the grant, so focus stays on it
+                  when a revoke or a re-grant flips the row. */}
+              <button
+                type="button"
+                id={permissionControlId(id, row.scope)}
+                disabled={busy}
+                aria-label={`${row.active ? 'Revoke' : 'Re-grant'} ${row.scope}`}
+                aria-expanded={row.active ? confirming : undefined}
+                onClick={() => (row.active ? onAskRevoke(row.scope) : onRegrant(row.scope))}
+                className={`shrink-0 min-h-11 px-3 rounded border text-[10px] disabled:opacity-50 ${
+                  row.active
+                    ? 'border-[var(--color-danger)]/40 text-[var(--color-danger)]'
+                    : 'border-[var(--color-accent)]/40 text-[var(--color-accent)]'
+                }`}
+              >
+                {row.active ? 'Revoke' : 'Re-grant'}
+              </button>
             </div>
             {confirming ? (
-              <div className="mt-2 pt-2 border-t border-[var(--color-border)]">
+              <div
+                role="group"
+                aria-label={`Revoke ${row.scope}?`}
+                className="mt-2 pt-2 border-t border-[var(--color-border)]"
+              >
                 <p className="text-[10px] text-[var(--color-fg)] mb-2">
                   Revoke {row.scope}? Day0 will stop queued and in-flight work that still needs this
                   standing scope at its final authority check. Actions already approved by you keep
                   their exact approval; a provider call past its final authority check may still
                   finish.
                 </p>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
                     disabled={busy}
                     onClick={() => onRevoke(row.scope)}
-                    className="px-2 py-1 rounded bg-[var(--color-danger)]/20 text-[10px] text-[var(--color-danger)] disabled:opacity-50"
+                    className="min-h-11 px-3 rounded bg-[var(--color-danger)]/20 text-[10px] text-[var(--color-danger)] disabled:opacity-50"
                   >
                     Confirm revoke
                   </button>
                   <button
                     type="button"
+                    autoFocus
                     disabled={busy}
-                    onClick={onCancelRevoke}
-                    className="px-2 py-1 rounded border border-[var(--color-border)] text-[10px] disabled:opacity-50"
+                    onClick={() => {
+                      onCancelRevoke();
+                      document.getElementById(permissionControlId(id, row.scope))?.focus();
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'Escape') return;
+                      event.preventDefault();
+                      onCancelRevoke();
+                      document.getElementById(permissionControlId(id, row.scope))?.focus();
+                    }}
+                    className="min-h-11 px-3 rounded border border-[var(--color-border)] text-[10px] disabled:opacity-50"
                   >
                     Keep grant
                   </button>
@@ -5045,6 +5058,11 @@ export function PermissionRows({
       })}
     </ul>
   );
+}
+
+/** The id of a permission row's revoke or re-grant button, unique on the page. */
+function permissionControlId(list: string, scope: string): string {
+  return `${list}-${scope.replace(/[^A-Za-z0-9_-]/g, '-')}`;
 }
 
 /**
@@ -5063,31 +5081,40 @@ export function PermissionsCard({ agentId }: { agentId: Id<'agents'> }) {
   const grantScopes = useMutation(api.agents.grantScopes);
   const [confirmingScope, setConfirmingScope] = useState<string | null>(null);
   const [busyScope, setBusyScope] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const card = useRef<HTMLElement>(null);
+  const control = useRef<string | null>(null);
+  const change = useChange(card);
 
-  async function change(scope: string, kind: 'revoke' | 'grant'): Promise<void> {
+  function decide(scope: string, kind: 'revoke' | 'grant'): void {
     setBusyScope(scope);
-    setError(null);
-    try {
-      if (kind === 'revoke') {
-        await revokeScope({
-          agentId,
-          scope,
-          reason: 'Revoked by the manager from the agent dashboard.',
-        });
-        setConfirmingScope(null);
-      } else {
-        await grantScopes({ agentId, scopes: [scope] });
-      }
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setBusyScope(null);
-    }
+    // The confirmation closes with the revoke, so focus goes to the row's own
+    // button, which now reads Re-grant.
+    control.current = document.activeElement?.closest('li')?.querySelector('button')?.id ?? null;
+    change.run<unknown>(
+      () =>
+        kind === 'revoke'
+          ? revokeScope({
+              agentId,
+              scope,
+              reason: 'Revoked by the manager from the agent dashboard.',
+            })
+          : grantScopes({ agentId, scopes: [scope] }),
+      {
+        done:
+          kind === 'revoke'
+            ? `Revoked ${scope}: work that still needs it stops at its final authority check.`
+            : `Granted ${scope} again.`,
+        refused: kind === 'revoke' ? `${scope} was not revoked.` : `${scope} was not granted.`,
+        after: () => setConfirmingScope(null),
+        focus: () => (control.current ? document.getElementById(control.current) : null),
+      },
+    );
   }
 
+  // Busy follows the change, so the rows wait for it and let go together.
+  const pending = change.busy ? busyScope : null;
   return (
-    <Card title="Permissions">
+    <Card title="Permissions" focusRef={card}>
       <p className="text-[10px] text-[var(--color-muted)] mb-3 leading-relaxed">
         {PERMISSIONS_NOTE}
       </p>
@@ -5099,14 +5126,17 @@ export function PermissionsCard({ agentId }: { agentId: Id<'agents'> }) {
         <PermissionRows
           scopes={scopes}
           confirmingScope={confirmingScope}
-          busyScope={busyScope}
-          onAskRevoke={setConfirmingScope}
+          busyScope={pending}
+          onAskRevoke={(scope) => {
+            change.clear();
+            setConfirmingScope(scope);
+          }}
           onCancelRevoke={() => setConfirmingScope(null)}
-          onRevoke={(scope) => void change(scope, 'revoke')}
-          onRegrant={(scope) => void change(scope, 'grant')}
+          onRevoke={(scope) => decide(scope, 'revoke')}
+          onRegrant={(scope) => decide(scope, 'grant')}
         />
       )}
-      {error ? <p className="mt-2 text-[10px] text-[var(--color-danger)]">{error}</p> : null}
+      <LiveStatus outcome={change.outcome} />
     </Card>
   );
 }

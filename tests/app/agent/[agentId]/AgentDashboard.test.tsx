@@ -16,6 +16,8 @@ const backend = vi.hoisted(() => ({
   results: {} as Record<string, unknown>,
   /** Every call made, by function name, with its arguments. */
   calls: [] as Array<{ name: string; args: unknown }>,
+  /** What a query answers, by function name; undefined (loading) otherwise. */
+  queries: {} as Record<string, unknown>,
 }));
 
 vi.mock('convex/react', () => {
@@ -28,7 +30,11 @@ vi.mock('convex/react', () => {
       if (refusal !== undefined) throw new Error(refusal);
       return backend.results[name];
     };
-  return { useQuery: (): undefined => undefined, useMutation: call, useAction: call };
+  return {
+    useQuery: (reference: unknown): unknown => backend.queries[getFunctionName(reference as never)],
+    useMutation: call,
+    useAction: call,
+  };
 });
 
 import { declareUndeclaredInputs } from '../../../../src/work/skill-inputs';
@@ -3441,6 +3447,48 @@ describe('approving held actions across items at once (step 45)', (): void => {
     expect(said(view.container)).toEqual([
       'Approved 2 held actions across 2 items: they apply now.',
     ]);
+    view.unmount();
+  });
+});
+
+describe('revoking and granting a permission from the card (step 45, P6-7)', (): void => {
+  afterEach((): void => {
+    backend.queries = {};
+    backend.refusals = {};
+  });
+
+  it('confirms a revoke with focus on the safe choice, says what it did, and gives focus back to the row', async (): Promise<void> => {
+    backend.queries = {
+      'agents:permissionScopes': [{ scope: 'linear:write', active: true, source: 'deploy' }],
+    };
+    const view = mount(<PermissionsCard agentId={'agent-1' as Id<'agents'>} />);
+    await press(view.container, 'Revoke linear:write');
+    expect(focusedName()).toBe('Keep grant');
+    await press(view.container, 'Keep grant');
+    expect(focusedName()).toBe('Revoke linear:write');
+
+    await press(view.container, 'Revoke linear:write');
+    await press(view.container, 'Confirm revoke');
+    expect(said(view.container)).toEqual([
+      'Revoked linear:write: work that still needs it stops at its final authority check.',
+    ]);
+    expect(focusedName()).toBe('Revoke linear:write');
+    expect(view.container.querySelector('[role="group"]')).toBeNull();
+    view.unmount();
+  });
+
+  it('says a refused re-grant, and gives every control a 44 px target', async (): Promise<void> => {
+    backend.queries = {
+      'agents:permissionScopes': [{ scope: 'slack:write', active: false, source: 'manager' }],
+    };
+    backend.refusals = {
+      'agents:grantScopes': `[CONVEX M(agents:grantScopes)] [Request ID: 1] Server Error\nUncaught Error: slack:write is not a scope this employee can hold.\n    at handler (../convex/agents.ts:1:1)`,
+    };
+    const view = mount(<PermissionsCard agentId={'agent-1' as Id<'agents'>} />);
+    expect(button(view.container, 'Re-grant slack:write').className).toMatch(/\bmin-h-11\b/);
+    await press(view.container, 'Re-grant slack:write');
+    expect(said(view.container)).toEqual(['slack:write is not a scope this employee can hold.']);
+    expect(focusedName()).toBe('Re-grant slack:write');
     view.unmount();
   });
 });
