@@ -1817,6 +1817,8 @@ describe('probing the browser floor', (): void => {
     throwsRefusal?: boolean;
     /** The dashboard's element lines; the documented marker unless a test redesigns it. */
     dashboard?: string;
+    /** The sign-in page's element lines; the tile's login form unless a test redesigns it. */
+    signInPage?: string;
     /** Serve the login over two pages, the account first and the password after Next. */
     twoPages?: boolean;
   }) {
@@ -1827,12 +1829,14 @@ describe('probing the browser floor', (): void => {
     const lines: Record<TilePage, string> = {
       account: '- textbox "Email" [ref=e11]\n- button "Next" [ref=e12]',
       password: '- textbox "Password" [ref=e14]\n- button "Sign in" [ref=e15]',
-      'sign-in': [
-        '- heading "Sign in" [level=1] [ref=e7]',
-        '- textbox "Username" [ref=e11]',
-        '- textbox "Password" [ref=e14]',
-        '- button "Sign in" [ref=e15] [cursor=pointer]',
-      ].join('\n'),
+      'sign-in':
+        options.signInPage ??
+        [
+          '- heading "Sign in" [level=1] [ref=e7]',
+          '- textbox "Username" [ref=e11]',
+          '- textbox "Password" [ref=e14]',
+          '- button "Sign in" [ref=e15] [cursor=pointer]',
+        ].join('\n'),
       dashboard:
         options.dashboard ??
         '- heading "Pipeline coverage" [level=2] [ref=e20]\n- textbox "Pipeline coverage" [ref=e21]',
@@ -1926,6 +1930,44 @@ describe('probing the browser floor', (): void => {
         () => client,
       ),
     ).rejects.toThrow('refused browser_fill_form while Day0 was signing in');
+  });
+
+  it('refuses, before typing the credential, an element the login page shows too (wave 3.5 review M6)', async (): Promise<void> => {
+    const { client, filled } = signInDriver({
+      password: 'pipeline-tile-local',
+      signInPage: [
+        '- heading "Pipeline coverage" [level=1] [ref=e7]',
+        '- textbox "Username" [ref=e11]',
+        '- textbox "Password" [ref=e14]',
+        '- button "Sign in" [ref=e15] [cursor=pointer]',
+      ].join('\n'),
+    });
+    await expect(
+      probeBrowserSurface(
+        signedInRequest({ credential: 'pipeline-tile-local', username: 'revops' }),
+        () => client,
+      ),
+    ).rejects.toThrow(
+      'already shows the documented element "Pipeline coverage" before Day0 signs in',
+    );
+    expect(filled).toEqual([]);
+  });
+
+  it('refuses a page that shows the element beside a credential box still asking (wave 3.5 review M6)', async (): Promise<void> => {
+    const { client } = signInDriver({
+      password: 'pipeline-tile-local',
+      dashboard: [
+        '- heading "Pipeline coverage" [level=2] [ref=e20]',
+        '- textbox "Password" [ref=e14]',
+        '- button "Sign in" [ref=e15]',
+      ].join('\n'),
+    });
+    await expect(
+      probeBrowserSurface(
+        signedInRequest({ credential: 'pipeline-tile-local', username: 'revops' }),
+        () => client,
+      ),
+    ).rejects.toThrow('still asks for it beside the documented element "Pipeline coverage"');
   });
 
   it('finds the element however many the signed-in page shows by that name', async (): Promise<void> => {
