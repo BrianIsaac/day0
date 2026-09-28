@@ -4,7 +4,7 @@ import { DEFAULT_MODEL } from './lib/model-name';
 
 /**
  * Lazy env validation. All fields are `.optional()` or have defaults so
- * module loading never throws — Convex bundles and loads the modules
+ * module loading never throws - Convex bundles and loads the modules
  * before the deployment env vars are wired, so a strict t3-env contract
  * would refuse to bundle. Each downstream client (`openai()`, `daytona()`)
  * validates the keys it actually needs at first call.
@@ -54,7 +54,7 @@ const schema = z.object({
   NEXT_PUBLIC_DEMO_TENANT_SLUG: z.string().default('acme-demo'),
 
   // `true` skips Clerk entirely and runs as one synthetic local user. Refused
-  // outside `next dev` — see src/lib/dev-auth.ts.
+  // outside `next dev` - see src/lib/dev-auth.ts.
   NEXT_PUBLIC_DEV_NO_AUTH: z.string().optional(),
   DAY0_SURFACE_MODE: z.enum(['mock', 'real']).default('mock'),
   DAY0_DOCS_ROOT: z.string().default('/docs'),

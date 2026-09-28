@@ -1,11 +1,11 @@
 /// <reference types="node" />
 
 /**
- * No-auth development mode — the Next.js half.
+ * No-auth development mode - the Next.js half.
  *
  * When it is on, Clerk is skipped end to end: no `ClerkProvider`, no Clerk JWT
  * minting in the API routes. Convex resolves every caller to one fixed synthetic
- * user instead, so ownership checks and the per-user data model are unchanged —
+ * user instead, so ownership checks and the per-user data model are unchanged  -
  * there is simply only ever one user. It exists so the project can be run from a
  * fresh clone with no third-party accounts.
  *
@@ -15,8 +15,8 @@
  *   1. It must be asked for explicitly. `NEXT_PUBLIC_DEV_NO_AUTH` must equal the
  *      exact string `true`; unset, empty, `1` and `TRUE` all mean off.
  *   2. It only ever resolves on under `next dev`. `NODE_ENV === 'development'`
- *      is a hard requirement, so every `next build` and `next start` — which is
- *      all Vercel ever runs — has it off, in the server bundle and the browser
+ *      is a hard requirement, so every `next build` and `next start` - which is
+ *      all Vercel ever runs - has it off, in the server bundle and the browser
  *      bundle alike.
  *   3. Asking for it anywhere production-like throws at module load. A stray
  *      `NEXT_PUBLIC_DEV_NO_AUTH=true` in a Vercel project fails the build with
@@ -26,7 +26,7 @@
  * separate question with a separate answer, because a dev server that is running
  * can be reached through a tunnel, a reverse proxy or a relay no matter what
  * address it binds: a caller must hold this machine's local key. That check, and
- * the key itself, live in `src/lib/dev-auth-server.ts` — deliberately not here,
+ * the key itself, live in `src/lib/dev-auth-server.ts` - deliberately not here,
  * because this module is imported by client components and secrets must not be.
  */
 
@@ -37,7 +37,7 @@ const isDevelopment = process.env.NODE_ENV === 'development';
 
 /**
  * `VERCEL` is set on every Vercel build and every Vercel runtime, previews
- * included. It is server-only — the browser bundle is covered by the NODE_ENV
+ * included. It is server-only - the browser bundle is covered by the NODE_ENV
  * check, which Vercel can never make `development`.
  */
 const onVercel = !!process.env.VERCEL || !!process.env.NEXT_PUBLIC_VERCEL_ENV;

@@ -27,15 +27,15 @@ import { errorMessage } from '../src/lib/errors';
 /**
  * Day-1 onboarding actions. Surfaces:
  *
- *   - `synthesiseFromAnswers` — chat-friendly entry: given the seven topic
+ *   - `synthesiseFromAnswers` - chat-friendly entry: given the seven topic
  *     answers, produces Charter v0.0, persists, seeds the 8-file workspace.
- *   - `synthesiseFromTranscript` — chat-mode entry: given a role-labelled
+ *   - `synthesiseFromTranscript` - chat-mode entry: given a role-labelled
  *     transcript, attributes the seven answers to the manager's own turns,
  *     then hands off to the same pipeline. Ownership-checked.
- *   - `synthesiseFromTranscriptForWebhook` — webhook entry: same logic,
+ *   - `synthesiseFromTranscriptForWebhook` - webhook entry: same logic,
  *     but the caller carries no Clerk identity. Authenticated by the
  *     per-session webhook token; trust model documented at the action.
- *   - `recoverFinalisation` — the deployment finishing a call neither client
+ *   - `recoverFinalisation` - the deployment finishing a call neither client
  *     will come back for. Internal, and scheduled by the database rather
  *     than called by anybody.
  *   - `postCharterApproval` - scheduled by `charters.approve`. Seeds the
@@ -47,8 +47,8 @@ import { errorMessage } from '../src/lib/errors';
 
 /**
  * Who said a line, as the surface that wrote the transcript labelled it. Every
- * producer labels every line — `ChatRoom` writes USER/ASSISTANT, the voice room
- * and the ElevenLabs post-call webhook write USER/AGENT — so which half of the
+ * producer labels every line - `ChatRoom` writes USER/ASSISTANT, the voice room
+ * and the ElevenLabs post-call webhook write USER/AGENT - so which half of the
  * conversation a sentence came from is a fact about the input. Asking a model to
  * work it out is what let an 8B answer its own questions and sign the manager's
  * name to them.
@@ -123,7 +123,7 @@ const QUESTION_LABELLING_SYSTEM = [
   'Each numbered item is one thing the agent said. Say which of the seven topics it was asking about.',
   '',
   'The seven topics, and how each is normally asked:',
-  ...DAY_ONE_TOPIC_SPECS.map((s) => `  ${s.topic} — ${s.question.split('\n')[1] ?? s.question}`),
+  ...DAY_ONE_TOPIC_SPECS.map((s) => `  ${s.topic} - ${s.question.split('\n')[1] ?? s.question}`),
   '',
   'Rules:',
   '  - One label per numbered item, in the same order, using the item numbers given.',
@@ -146,7 +146,7 @@ type QuestionLabels = z.infer<typeof questionLabelSchema>;
 
 /**
  * Which topic each of the agent's questions was asking about. The model sees the
- * agent's questions and nothing else — not one word the manager said — and it
+ * agent's questions and nothing else - not one word the manager said - and it
  * answers in labels rather than in prose. Both halves of that are deliberate:
  * text it never receives cannot be reworded, and a reply that can only be one of
  * eight labels cannot become an answer.
@@ -184,7 +184,7 @@ interface AttributedTranscript {
  * The invariant this exists to hold: an answer is only ever the manager's own
  * turns, copied. The model chooses which topic a question was about; the code
  * copies the replies to that question across. Nothing the agent said can reach
- * an answer, however the labelling comes back — a wrong label misfiles the
+ * an answer, however the labelling comes back - a wrong label misfiles the
  * manager's words, it does not replace them with the agent's.
  *
  * An unlabelled question is treated as a follow-up and its replies stay with the
@@ -263,7 +263,7 @@ async function draftCharter(args: {
       { fileName: 'TOOLS.md', content: toolsFromCharter(charter) },
       { fileName: 'BOOTSTRAP.md', content: day1Script() },
       { fileName: 'USER.md', content: `# USER\n\nBoss: ${args.bossLabel}\n` },
-      { fileName: 'MEMORY.md', content: '# MEMORY\n\n(empty — populated by post-turn review)\n' },
+      { fileName: 'MEMORY.md', content: '# MEMORY\n\n(empty - populated by post-turn review)\n' },
       {
         fileName: 'HEARTBEAT.md',
         content: `# HEARTBEAT\n\nDeployed: ${new Date().toISOString()}\n`,
@@ -275,9 +275,9 @@ async function draftCharter(args: {
 /**
  * What a finalisation attempt tells its caller.
  *
- *   synthesised — this attempt did the work.
- *   duplicate   — someone else already did it; here is what they produced.
- *   in-progress — someone else is doing it now.
+ *   synthesised - this attempt did the work.
+ *   duplicate   - someone else already did it; here is what they produced.
+ *   in-progress - someone else is doing it now.
  *
  * The last two are successes from the caller's point of view: the transcript
  * has been accepted and the charter either exists or is being written.
@@ -290,7 +290,7 @@ export type SynthesisOutcome =
 /**
  * What the guard found, in the feed. A clause that quoted the agent is dropped
  * from the charter and a synthesis note says so, but neither says it happened
- * *again* — and a model doing this on every run is a different fault from one
+ * *again* - and a model doing this on every run is a different fault from one
  * doing it once, with a different fix.
  */
 async function reportRejectedEvidence(
@@ -332,8 +332,8 @@ async function doSynthesise(
 
 /**
  * Run the finalisation this caller has won: extract, draft, commit. A failure
- * anywhere in it hands the session back so a later delivery — or the other
- * path — can try again, rather than leaving the boss with a finished call and
+ * anywhere in it hands the session back so a later delivery - or the other
+ * path - can try again, rather than leaving the boss with a finished call and
  * no charter.
  */
 async function finaliseClaimedSession(
@@ -419,7 +419,7 @@ export const synthesiseFromAnswers = action({
 
 /**
  * Browser entry. Two things are proved before a single model call is spent:
- * that the caller owns `agentId`, and — in one transaction, against the row —
+ * that the caller owns `agentId`, and - in one transaction, against the row  -
  * that `voiceSessionId` is that agent's session and is finalisable. Ownership
  * of the session follows from the pair, and only from the pair: a session id
  * the caller merely knows proves nothing about who may end that call.
@@ -466,7 +466,7 @@ export const synthesiseFromTranscript = action({
 });
 
 /**
- * Webhook entry — called by the ElevenLabs post-call webhook, which carries
+ * Webhook entry - called by the ElevenLabs post-call webhook, which carries
  * no Clerk JWT. Two independent checks stand in for the ownership check:
  *
  *   - The route (`app/api/voice/elevenlabs/webhook/route.ts`) verifies the
@@ -525,8 +525,8 @@ export type RecoveryOutcome =
 /**
  * Finish a call that both clients have given up on.
  *
- * The browser's `onDisconnect` post is a one-shot by construction — the page is
- * usually gone before the response arrives — and a delivery that overlapped a
+ * The browser's `onDisconnect` post is a one-shot by construction - the page is
+ * usually gone before the response arrives - and a delivery that overlapped a
  * live claim was answered 200, which is what stops ElevenLabs wasting a retry
  * on work already in flight but also spends that delivery. So a released
  * session has no client left to come back for it, and the deployment finishes

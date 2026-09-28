@@ -119,14 +119,14 @@ export const listForAgent = query({
 });
 
 /**
- * Commit a charter that has no voice session behind it — the chat-mode 1:1 and
+ * Commit a charter that has no voice session behind it - the chat-mode 1:1 and
  * the answers-first entry point. A run that does have one goes through
  * `voice.finaliseSession`, which adds the session transition to this same
  * transaction.
  *
  * The agent moves to `charter-pending` here for the same reason it does there:
  * the 1:1 is over the moment a charter exists. Without it the chat route left
- * the row at `day-one-in-progress` for good — a dashboard still showing the
+ * the row at `day-one-in-progress` for good - a dashboard still showing the
  * 1:1 in progress under the charter it produced, and an avatar still working
  * on the landing page.
  */

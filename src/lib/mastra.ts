@@ -38,7 +38,7 @@ export { ModelRefusalError, ModelReplyCutError } from './structured-fallback';
  *
  * Both helpers retry on transient model errors (503 service overloads,
  * generic API errors flagged `isRetryable`). The Mastra/AI-SDK default
- * is two retries on top of the initial attempt — that has not been
+ * is two retries on top of the initial attempt - that has not been
  * enough during demo windows when the provider is hot. We wrap with
  * exponential backoff up to five attempts so the loop survives a flake.
  */

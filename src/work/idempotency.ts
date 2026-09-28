@@ -11,7 +11,7 @@
  * The key is derived from three ids the caller cannot choose: the work item,
  * the run (the id of the claim event minted by `work.claimForExecution`) and
  * the action's position in the emitted list. It is therefore stable for the
- * lifetime of one claim and different for the next one — a boss pressing
+ * lifetime of one claim and different for the next one - a boss pressing
  * Retry is asking for the plan to run again, and gets a fresh run.
  */
 export interface ActionIdempotencyArgs {

@@ -21,7 +21,7 @@ export { identityFromCharter, toolsFromCharter } from './charter-workspace';
  * Only v0.0 is produced: the manager 1:1 is the sole evidence source
  * Day0 has. `CharterVersion` still names v0.1 (collaborator 1:1s) and
  * v0.2 (an observation layer), because the renderer and the persisted
- * rows are versioned for them — neither is implemented.
+ * rows are versioned for them - neither is implemented.
  */
 
 export type CharterVersion = '0.0' | '0.1' | '0.2' | (string & { readonly _v?: 'charter' });
@@ -429,8 +429,8 @@ export interface TranscriptSides {
  *
  * Evidence is the charter's claim to be grounded in what the boss said, and each
  * clause is stamped `from manager 1:1 day-1`. A clause carrying the agent's own
- * words is therefore false on its face — it is the agent citing itself as the
- * source for what the boss wants — and no model has to be consulted to notice,
+ * words is therefore false on its face - it is the agent citing itself as the
+ * source for what the boss wants - and no model has to be consulted to notice,
  * because both halves of the transcript are in hand.
  *
  * A run of words the agent said *and the manager also said* proves nothing: an
@@ -442,7 +442,7 @@ export interface TranscriptSides {
  * read by the boss, quoted into IDENTITY.md and carried into every downstream
  * prompt. Dropped rather than fatal: the rest of the charter came from the
  * manager's answers and refusing to produce one would leave a finished 1:1 with
- * nothing to show for it — and the retry would spend two more model calls to
+ * nothing to show for it - and the retry would spend two more model calls to
  * arrive at the same place. So the clause goes, and a synthesis note says it
  * went, because a charter that quietly lost its evidence is the same silent
  * failure in a smaller size.
@@ -495,7 +495,7 @@ export async function synthesiseCharter(args: SynthesiseCharterArgs): Promise<Ch
 export function renderCharter(c: Charter, date = new Date()): string {
   const isoDate = date.toISOString().slice(0, 10);
   const lines: string[] = [
-    `DRAFT CHARTER — Day0 v${c.version} — ${isoDate}`,
+    `DRAFT CHARTER - Day0 v${c.version} - ${isoDate}`,
     `SOURCE: ${c.source}`,
     '',
     'WHY THIS HIRE                                              [from manager 1:1]',
@@ -538,13 +538,13 @@ export function renderCharter(c: Charter, date = new Date()): string {
     `  - Boss: ${c.approvalChain.boss}`,
     `  - Confidence: ${c.approvalChain.confidence}`,
     '',
-    'OPEN QUESTIONS — to follow up',
+    'OPEN QUESTIONS - to follow up',
     ...renderBullets(c.openQuestions, '  '),
     '',
     ...((c.answeredQuestions ?? []).length > 0
       ? [
           'ANSWERED QUESTIONS                                         [from manager, after approval]',
-          ...(c.answeredQuestions ?? []).map((q) => `  - ${q.question} — ${q.answer}`),
+          ...(c.answeredQuestions ?? []).map((q) => `  - ${q.question} - ${q.answer}`),
           '',
         ]
       : []),
@@ -566,12 +566,12 @@ function renderEvidence(items: EvidenceItem[]): string[] {
 
 function renderCollaborators(items: NamedCollaborator[]): string[] {
   if (items.length === 0) return ['  - (none yet)'];
-  return items.map((n) => `  - ${n.name} — ${n.topic} — intro path: ${n.introPath}`);
+  return items.map((n) => `  - ${n.name} - ${n.topic} - intro path: ${n.introPath}`);
 }
 
 function renderAdjacents(items: AdjacentRole[]): string[] {
   if (items.length === 0) return ['  - (none flagged yet)'];
-  return items.map((a) => `  - ${a.who} — ${a.staysOutOfTheirLaneBy}`);
+  return items.map((a) => `  - ${a.who} - ${a.staysOutOfTheirLaneBy}`);
 }
 
 export function extractRole(c: Charter): string {

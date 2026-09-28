@@ -180,7 +180,7 @@ import {
 import { errorMessage } from '../src/lib/errors';
 
 /**
- * Node actions for the work loop — Layer-2 evaluation, Layer-3 plan
+ * Node actions for the work loop - Layer-2 evaluation, Layer-3 plan
  * draft, and post-approval skill execution.
  *
  * Each handler derives its agent from the work item it loaded rather than

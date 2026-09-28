@@ -137,7 +137,7 @@ export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
 
       {/* Wraps rather than scrolls. A tab strip that overflows hides whole
           surfaces behind a gesture nothing on the page suggests, and the two
-          it hid here — Twitter and Tickets — are two fifths of the environment
+          it hid here - Twitter and Tickets - are two fifths of the environment
           the agent works in. */}
       <nav className="flex flex-wrap gap-1 px-2 pt-2 border-b border-[var(--color-border)]">
         {tabs.map((t) => {

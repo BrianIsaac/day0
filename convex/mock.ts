@@ -510,7 +510,7 @@ export const updateTicket = internalMutation({
     }
     // `changed` means a semantic field moved, not "a patch was issued". Setting
     // a done ticket to done rewrites the same status and a fresh `updatedAt`,
-    // neither of which the executor's environment snapshot carries — so the
+    // neither of which the executor's environment snapshot carries - so the
     // work would complete on a write nobody can see.
     const statusMoves = !!args.status && args.status !== ticket.status;
     const newComment = args.comment?.trim();

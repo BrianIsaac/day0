@@ -28,7 +28,7 @@ import { CursorToggle } from './CursorToggle';
 import { PageMotion } from './PageMotion';
 import { errorMessage } from '@/lib/errors';
 
-/** Whoever the dashboard is acting for — a Clerk user, or the local dev boss. */
+/** Whoever the dashboard is acting for - a Clerk user, or the local dev boss. */
 interface Boss {
   email: string | undefined;
   firstName: string | undefined;
@@ -87,7 +87,7 @@ function SignedOutHero() {
               className="text-lg text-[var(--color-muted)] mb-10 leading-relaxed max-w-xl"
             >
               One name in. Everything else is learned state. The agent runs its own Day-1 1:1 with
-              its boss, drafts a charter for approval, then claims work under your eye — proposing
+              its boss, drafts a charter for approval, then claims work under your eye - proposing
               new skills when it hits a gap, and authoring them in a sandbox.
             </p>
             <div data-enter="3" className="flex flex-wrap items-center gap-3">
@@ -405,7 +405,7 @@ function SignedInDashboard({ boss }: { boss: Boss }) {
     if (!workerName.trim()) return;
     const bossEmail = boss.email;
     if (!bossEmail) {
-      setError('Could not read your email address — try signing out and back in.');
+      setError('Could not read your email address - try signing out and back in.');
       return;
     }
     setSubmitting(true);

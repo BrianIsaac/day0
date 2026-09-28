@@ -1754,7 +1754,7 @@ describe('the evidence invariant in the closing phase', (): void => {
         tool: 'save_comment',
         toolArgsJson: JSON.stringify({
           issueId: 'REVOPS-5',
-          body: 'Q3 close summary — three checks.\n1. Pipeline coverage confirmed. 68%.\nNot confirmed: checks 1, 2 and 3.',
+          body: 'Q3 close summary - three checks.\n1. Pipeline coverage confirmed. 68%.\nNot confirmed: checks 1, 2 and 3.',
         }),
       },
     };

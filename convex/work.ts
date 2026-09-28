@@ -2518,8 +2518,8 @@ export async function applyVerdict(
 
   // Late-arriving verdict guard: a verdict is the entry transition from
   // `discovered` (initial evaluation) or `needs-skill` (pending-reevaluation
-  // after a skill registers). If the row has already advanced past these —
-  // claimed, plan-pending, plan-approved, executing, completed, etc. — a stale
+  // after a skill registers). If the row has already advanced past these  -
+  // claimed, plan-pending, plan-approved, executing, completed, etc. - a stale
   // verdict must NOT stomp the row's state, which would wipe a drafted plan or
   // running execution. Ignore silently.
   if (row.state !== 'discovered' && row.state !== 'needs-skill') {
@@ -2704,7 +2704,7 @@ export const setVerdict = internalMutation({
  *
  * Same shape as `claimForExecution`: two callers can both read `claimed`
  * before either writes, and the second would otherwise replace a plan the boss
- * may already be reading — with a second plan-drafted event to match. The
+ * may already be reading - with a second plan-drafted event to match. The
  * state check and the write share one transaction, so the second caller is
  * told its draft was not needed.
  */
@@ -4599,7 +4599,7 @@ export const resumeStalledSteps = internalMutation({
  * apply every action. React Strict Mode plus the dashboard's auto-progress
  * effect supplies that second caller for free in development.
  *
- * The winner gets a `runId` — the id of the claim event, which is durable,
+ * The winner gets a `runId` - the id of the claim event, which is durable,
  * unique per claim and derived from nothing the caller controls. Adapter
  * calls key their idempotency off it, so an external effect can be recognised
  * as already-applied if the run is interrupted before its completion lands.
@@ -4939,7 +4939,7 @@ export const resumeExecution = internalMutation({
 /**
  * Mark a run done, and refuse to when nothing is behind it.
  *
- * The rule — every action the run emitted changed the work environment — was
+ * The rule - every action the run emitted changed the work environment - was
  * enforced by the caller that happens to run the skill today. That leaves it
  * one caller away from being lost, and it reads as satisfied by a run that
  * emitted no actions at all: vacuously, every action succeeded. `completed`

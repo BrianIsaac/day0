@@ -6,7 +6,7 @@ import { DEV_NO_AUTH } from '@/lib/dev-auth';
 /**
  * The account controls in the header. Clerk's `Show`/`UserButton` need a
  * `ClerkProvider` above them, which no-auth dev mode deliberately doesn't
- * render — so that mode gets a badge instead, both to keep the header honest
+ * render - so that mode gets a badge instead, both to keep the header honest
  * and to make it obvious at a glance that authentication is off.
  */
 export function HeaderAccount() {

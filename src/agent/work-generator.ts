@@ -7,31 +7,31 @@ import type { MockSurfaceSnapshot } from '../work/types';
  * Generate three day-one work items grounded in the boss's charter AND
  * the agent's actual mock environment.
  *
- * No hardcoded slugs in the prompt — we render the live surface
+ * No hardcoded slugs in the prompt - we render the live surface
  * snapshot (slack channels, spreadsheets, docs, tweets, tickets) so the
  * LLM picks real identifiers that exist on the agent's workbench. Each
  * generated work item references concrete surface rows the executor can
  * later mutate.
  *
  * The 3-item mix drives the standard demo narrative:
- *   1. A docs-read item — handled by the builtin `see-internal-docs` skill
- *   2. An action item — triggers the propose-new-skill loop
- *   3. An out-of-scope item — evaluator skips it
+ *   1. A docs-read item - handled by the builtin `see-internal-docs` skill
+ *   2. An action item - triggers the propose-new-skill loop
+ *   3. An out-of-scope item - evaluator skips it
  */
 
 export const WORK_GEN_SYSTEM = [
   'You generate 3 day-one work items for a newly-deployed autonomous agent.',
-  "The boss has just approved the agent's charter; three realistic inbox-style requests now land in the agent's queue — the kind of work a competent new hire would face on their first week.",
+  "The boss has just approved the agent's charter; three realistic inbox-style requests now land in the agent's queue - the kind of work a competent new hire would face on their first week.",
   '',
-  "You will be given (a) the charter and (b) a snapshot of the agent's actual mock work environment with real slugs/IDs. Use ONLY surface identifiers that appear in the snapshot — never invent slugs the env doesn't have. Each work item's contentRefs must reference real rows the executor can later mutate.",
+  "You will be given (a) the charter and (b) a snapshot of the agent's actual mock work environment with real slugs/IDs. Use ONLY surface identifiers that appear in the snapshot - never invent slugs the env doesn't have. Each work item's contentRefs must reference real rows the executor can later mutate.",
   '',
   'Generate exactly 3 items, in this order, with this purpose:',
   '',
-  '1. Read-and-answer item — sourceSystem MUST be "docs". A question the agent answers by reading internal team docs (the agent has a builtin "see-internal-docs" skill). Pick a topic that fits the role described in the charter and a doc slug that actually exists in the snapshot.',
+  '1. Read-and-answer item - sourceSystem MUST be "docs". A question the agent answers by reading internal team docs (the agent has a builtin "see-internal-docs" skill). Pick a topic that fits the role described in the charter and a doc slug that actually exists in the snapshot.',
   '',
-  '2. Action item — sourceSystem MUST be one of "spreadsheet" / "ticket" / "social" / "slack" — pick whichever surface best fits the charter\'s role. The task requires a write action (append a row, update a ticket, post a reply, post a message) on a surface that exists in the snapshot. This will trigger the propose-new-skill flow.',
+  '2. Action item - sourceSystem MUST be one of "spreadsheet" / "ticket" / "social" / "slack" - pick whichever surface best fits the charter\'s role. The task requires a write action (append a row, update a ticket, post a reply, post a message) on a surface that exists in the snapshot. This will trigger the propose-new-skill flow.',
   '',
-  "3. Out-of-scope item — sourceSystem can be anything. A task that is plausibly forwarded by a colleague but lies outside the role described in the charter. Make the mismatch clear from the charter's runtime willDo and willNotDo clauses without assuming a particular team or profession. The evaluator should skip this. May or may not reference an existing surface.",
+  "3. Out-of-scope item - sourceSystem can be anything. A task that is plausibly forwarded by a colleague but lies outside the role described in the charter. Make the mismatch clear from the charter's runtime willDo and willNotDo clauses without assuming a particular team or profession. The evaluator should skip this. May or may not reference an existing surface.",
   '',
   'Discipline:',
   '  - Each contentSummary is 2-3 sentences and includes a direct quoted request from a named person (the named collaborators in the charter, or "Manager" for the boss).',

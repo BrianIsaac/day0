@@ -104,7 +104,7 @@ async function main(): Promise<void> {
     ].join('\n'),
   );
 
-  // 1. Plain chat completion — the floor every other step stands on.
+  // 1. Plain chat completion - the floor every other step stands on.
   try {
     const { value, ms } = await timed(() =>
       textComplete({
@@ -119,7 +119,7 @@ async function main(): Promise<void> {
     return finish();
   }
 
-  // 2. Pure function — no network, so it fails loudly on a regression
+  // 2. Pure function - no network, so it fails loudly on a regression
   //    rather than hiding behind a model that happened to behave.
   const messy = '<think>weighing it up</think>\n```json\n{"a": {"b": "}"}}\n```\ntrailing prose';
   record(
@@ -128,7 +128,7 @@ async function main(): Promise<void> {
     `recovered ${extractJsonPayload(messy) ?? '(nothing)'}`,
   );
 
-  // 3. Native JSON mode — response_format honoured?
+  // 3. Native JSON mode - response_format honoured?
   const jsonArgs = {
     system: 'You return JSON objects describing a work item.',
     user: 'Return {"title": string, "priority": "low"|"high"} for a task about refreshing a sales tracker.',
@@ -145,10 +145,10 @@ async function main(): Promise<void> {
       `${ms.toFixed(0)}ms · title="${value.value.title}"`,
     );
   } catch (err) {
-    record('json mode · native', false, `${errorMessage(err)} — prompt mode covers this`, true);
+    record('json mode · native', false, `${errorMessage(err)} - prompt mode covers this`, true);
   }
 
-  // 4. Prompt fallback — must work even where step 3 did.
+  // 4. Prompt fallback - must work even where step 3 did.
   resetJsonModeMemo();
   try {
     const { value, ms } = await timed(() =>
@@ -186,7 +186,7 @@ async function main(): Promise<void> {
       `${ms.toFixed(0)}ms · ${value.value.steps.length} steps`,
     );
   } catch (err) {
-    record('mastra · native', false, `${errorMessage(err)} — prompt injection covers this`, true);
+    record('mastra · native', false, `${errorMessage(err)} - prompt injection covers this`, true);
   }
 
   // 6. The same call with schema injection instead of response_format,
@@ -238,7 +238,7 @@ async function main(): Promise<void> {
       `${ms.toFixed(0)}ms · settled on ${value.mode}${how}`,
     );
   } catch (err) {
-    record('mastra · auto', false, `${errorMessage(err)} — neither rung produced an object`);
+    record('mastra · auto', false, `${errorMessage(err)} - neither rung produced an object`);
   }
 
   finish();

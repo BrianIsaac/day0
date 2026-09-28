@@ -222,7 +222,7 @@ export function ChatRoom({
 }) {
   const startSession = useMutation(api.voice.start);
   const [draft, setDraft] = useState('');
-  // A latch, not UI state — nothing renders off it, so a ref keeps the
+  // A latch, not UI state - nothing renders off it, so a ref keeps the
   // once-only guard out of the render cycle.
   const synthFired = useRef(false);
   // The session this 1:1 belongs to, read by the finalisation post below. A ref
@@ -253,7 +253,7 @@ export function ChatRoom({
   // Kick the agent's opening turn once the session row exists. Strict Mode
   // invokes this twice and the discarded invocation cancels its own send, so one
   // mount asks one opening question. It still asks for a session twice, and any
-  // remount asks again — `voice.start` answers all of them with the same row,
+  // remount asks again - `voice.start` answers all of them with the same row,
   // which is why nothing here has to be latched to keep the count at one.
   useEffect(() => {
     let cancelled = false;
@@ -306,7 +306,7 @@ export function ChatRoom({
 
   // The opening turn is sent from an effect, so for a moment after mount the
   // composer is live with nothing yet asked. A reply typed into that gap arrives
-  // ahead of the agent's own first turn and answers a question it has not put —
+  // ahead of the agent's own first turn and answers a question it has not put  -
   // an error surfaces instead, because then there is nothing else to wait for.
   const opened = messages.some((m) => m.role === 'assistant') || !!streamError;
   const composerDisabled = composerLocked({ status, done, opened });

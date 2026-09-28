@@ -3,7 +3,7 @@ import type { AgentId } from '../lib/ids';
 import type { AppliedAction } from '../surfaces/types';
 
 /**
- * Work-gathering domain types. Single-tenant Day0 distillation —
+ * Work-gathering domain types. Single-tenant Day0 distillation  -
  * dropped the Slack-userid + tenant-id bookkeeping from Protean's
  * version since this stack has neither.
  */
@@ -81,7 +81,7 @@ export type WorkVerdict =
 export interface AgentContext {
   agentId: AgentId;
   charter: Charter;
-  /** AGENTS.md content (slot 10) — feeds Layer-2 quality fit. */
+  /** AGENTS.md content (slot 10) - feeds Layer-2 quality fit. */
   agentsMd: string;
   /** Display label of the boss (email or first name). */
   bossLabel: string;
@@ -476,7 +476,7 @@ export interface DependentExecutionOutput {
 }
 
 export interface MockSurfaceSnapshot {
-  /** Available how-to-update guides — agent reads these to know action shape. */
+  /** Available how-to-update guides - agent reads these to know action shape. */
   howToGuides: Array<{ slug: string; title: string; body: string }>;
   /** Snapshot of relevant team docs the agent might need to answer questions. */
   teamDocs: Array<{ slug: string; title: string; body: string }>;

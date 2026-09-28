@@ -89,7 +89,7 @@ class MockSurfaceAdapter implements SurfaceAdapter {
             addedBy: 'Day0 (agent)',
           });
           effect = clipEffect(
-            `1 row appended to ${args.sheetSlug} · ${args.tabName} — ` +
+            `1 row appended to ${args.sheetSlug} · ${args.tabName} - ` +
               args.cells.map((c) => `${c.header}=${c.value || '(blank)'}`).join(', '),
             180,
           );
@@ -114,7 +114,7 @@ class MockSurfaceAdapter implements SurfaceAdapter {
           });
           effect = clipEffect(
             `1 message posted to ${args.channelSlug}` +
-              `${args.threadKey ? ` · thread ${args.threadKey}` : ''} — “${args.body}”`,
+              `${args.threadKey ? ` · thread ${args.threadKey}` : ''} - “${args.body}”`,
             180,
           );
           // A coworker only replies to a message that actually landed.
@@ -149,7 +149,7 @@ class MockSurfaceAdapter implements SurfaceAdapter {
             body: args.body,
             isAgentDraft: true,
           });
-          effect = clipEffect(`1 reply drafted on ${args.tweetSlug} — “${args.body}”`, 180);
+          effect = clipEffect(`1 reply drafted on ${args.tweetSlug} - “${args.body}”`, 180);
           break;
         }
         case 'ticket.update': {
@@ -167,7 +167,7 @@ class MockSurfaceAdapter implements SurfaceAdapter {
             [
               `ticket ${args.slug}`,
               args.status ? `set to ${args.status}` : null,
-              args.comment ? `1 comment — “${args.comment}”` : null,
+              args.comment ? `1 comment - “${args.comment}”` : null,
             ]
               .filter(Boolean)
               .join(' · '),

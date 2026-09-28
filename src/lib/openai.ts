@@ -60,7 +60,7 @@ function resolveApiKey(): string {
   if (env.OPENAI_API_KEY) return env.OPENAI_API_KEY;
   if (env.OPENAI_BASE_URL) return PLACEHOLDER_API_KEY;
   throw new Error(
-    'OPENAI_API_KEY not set — set it, or set OPENAI_BASE_URL to an OpenAI-compatible endpoint that needs no key',
+    'OPENAI_API_KEY not set - set it, or set OPENAI_BASE_URL to an OpenAI-compatible endpoint that needs no key',
   );
 }
 
@@ -114,7 +114,7 @@ export type JsonMode = 'native' | 'prompt';
  */
 export const JSON_ONLY_INSTRUCTION = [
   '',
-  'OUTPUT CONTRACT — non-negotiable:',
+  'OUTPUT CONTRACT - non-negotiable:',
   '  - Reply with ONE JSON object and nothing else.',
   '  - No markdown fences, no commentary before or after the object.',
   '  - The first character of your reply is "{" and the last is "}".',
@@ -224,8 +224,8 @@ export interface JsonCompleteResult<TParsed> {
 /**
  * Single-shot JSON completion with an explicit two-strategy ladder.
  *
- *   native — `response_format: { type: 'json_object' }`, the OpenAI way.
- *   prompt — no `response_format`; the contract goes in the system
+ *   native - `response_format: { type: 'json_object' }`, the OpenAI way.
+ *   prompt - no `response_format`; the contract goes in the system
  *            prompt and the object is extracted from the reply text.
  *
  * `OPENAI_JSON_MODE` pins a strategy (`native` / `prompt`) for testing
@@ -233,8 +233,8 @@ export interface JsonCompleteResult<TParsed> {
  * tries native; when that fails for a reason `response_format` could
  * explain, the prompt attempt doubles as the experiment that settles it,
  * and only its success demotes the endpoint. A failure the parameter
- * cannot explain — a rate limit, a bad key, an overlong context, a sick
- * server, anything statusless that nothing ties to the endpoint — is
+ * cannot explain - a rate limit, a bad key, an overlong context, a sick
+ * server, anything statusless that nothing ties to the endpoint - is
  * rethrown untried: prompt injection recovers from none of them and a
  * second doomed round-trip would only hide the real cause. Where the
  * parameter is implicated but the failure could also have passed on a
@@ -336,7 +336,7 @@ export class JsonParseError extends StructuredContractError {
     readonly raw: string,
     cause: string,
   ) {
-    super(`jsonComplete(${mode}): model returned invalid JSON — ${cause}`);
+    super(`jsonComplete(${mode}): model returned invalid JSON - ${cause}`);
     this.name = 'JsonParseError';
   }
 }
@@ -366,7 +366,7 @@ async function runJsonCompletion<TParsed>(
     parsed = JSON.parse(payload);
   } catch (err) {
     // A native-mode reply that needs extraction means the server took
-    // the parameter and ignored it — recoverable, so surface it as a
+    // the parameter and ignored it - recoverable, so surface it as a
     // parse error the ladder can catch rather than a hard throw.
     const salvaged = mode === 'native' ? extractJsonPayload(raw) : null;
     if (salvaged) {

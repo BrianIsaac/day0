@@ -661,7 +661,7 @@ describe('executor output contract', (): void => {
     const issues = mockActionContractIssues(
       {
         draft:
-          'EVAL-DOC-04 — Before changing a Salesforce record, surface a draft to the manager for review. (Escalation paths)',
+          'EVAL-DOC-04 - Before changing a Salesforce record, surface a draft to the manager for review. (Escalation paths)',
         notes: 'No ticket update is included.',
         needsDependentPhase: false,
         procedureTrails: [{ trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null }],
@@ -678,7 +678,7 @@ describe('executor output contract', (): void => {
             tool: 'slack.postMessage',
             args: recordedArgs({
               channelSlug: 'dm-manager',
-              body: 'Manager — proposed comment for REVOPS-EVAL-04, pending your approval.',
+              body: 'Manager - proposed comment for REVOPS-EVAL-04, pending your approval.',
             }),
           },
         ],
@@ -726,7 +726,7 @@ describe('executor output contract', (): void => {
             args: recordedArgs({
               slug: 'REVOPS-EVAL-05',
               status: 'in-progress',
-              comment: 'EVAL-DOC-05 — q4-revenue-tracker is the source of truth. (Team overview)',
+              comment: 'EVAL-DOC-05 - q4-revenue-tracker is the source of truth. (Team overview)',
             }),
           },
         ],
@@ -1710,10 +1710,10 @@ describe('frozen prompt text', (): void => {
       "You are an autonomous workplace agent named Day0.
       A skill body has been loaded as your behavioural prior for this turn. The plan has been approved; you are authorised to act.
       Apply the skill to the candidate. Produce three things:
-        1. A draft (human-readable) — the deliverable the manager reads and decides whether to ratify.
-        2. Notes — short assumptions or open questions (single sentence).
-        3. Actions — typed mutations against mock work surfaces (spreadsheet, slack, twitter, ticket). These are the only things that reach the work environment.
-        4. Procedure trails — one \`procedureTrails\` row for every parsed runtime trail listed below. Map an applicable trail to the zero-based index of its emitted action; otherwise leave the index null and give a concrete inapplicability reason.
+        1. A draft (human-readable) - the deliverable the manager reads and decides whether to ratify.
+        2. Notes - short assumptions or open questions (single sentence).
+        3. Actions - typed mutations against mock work surfaces (spreadsheet, slack, twitter, ticket). These are the only things that reach the work environment.
+        4. Procedure trails - one \`procedureTrails\` row for every parsed runtime trail listed below. Map an applicable trail to the zero-based index of its emitted action; otherwise leave the index null and give a concrete inapplicability reason.
 
       The draft is written before a single action has been applied, so anything it claims about completed work is a prediction, and a wrong one costs the manager their trust in every other line of it. Therefore:
         - The draft may describe only what the actions in THIS response do. One change is one action: three rows appended means three \`spreadsheet.appendRow\` actions, not one action and a sentence saying three.
@@ -1722,10 +1722,10 @@ describe('frozen prompt text', (): void => {
         - Emit every action in this response and set \`needsDependentPhase\` to false: the mock environment treats it as one approval set and runs no second authoring phase.
 
       Action format: see the how-to-update guides in your context. Each action is { tool: string, args: object }. The args object contains exactly the fields for its selected tool and no fields from another tool. Available tools:
-        - spreadsheet.appendRow — { sheetSlug, tabName, cells: [{ header, value }, …] }
-        - slack.postMessage    — { channelSlug, threadKey: string or null, body }
-        - twitter.reply        — { tweetSlug, body }
-        - ticket.update        — { slug, status: value or null, comment: string or null }
+        - spreadsheet.appendRow - { sheetSlug, tabName, cells: [{ header, value }, …] }
+        - slack.postMessage    - { channelSlug, threadKey: string or null, body }
+        - twitter.reply        - { tweetSlug, body }
+        - ticket.update        - { slug, status: value or null, comment: string or null }
 
       Discipline:
         - Mock comparison mode: every emitted action is held for the manager's literal approval and only applied after that decision.
@@ -1897,7 +1897,7 @@ describe('executor preamble by mode', (): void => {
   it('puts the literal mock action contract after a conflicting skill body', (): void => {
     const conflictingBodies = [
       [
-        '- Drafts only — never claim an answer was posted to the team.',
+        '- Drafts only - never claim an answer was posted to the team.',
         '- If the question implies needing to *change* something (update a spreadsheet, file a ticket), surface that as a follow-up; this skill is read-only.',
       ].join('\n'),
       [

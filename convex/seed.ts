@@ -41,7 +41,7 @@ The boss or a teammate has asked a question whose answer is plausibly in the tea
 - \`coverage\` ("complete" | "partial" | "none"): your confidence the docs covered the question.
 
 ## Boundaries
-- Drafts only — never claim an answer was posted to the team.
+- Drafts only - never claim an answer was posted to the team.
 - If the question implies needing to *change* something (update a spreadsheet, file a ticket), surface that as a follow-up; this skill is read-only.
 `;
 

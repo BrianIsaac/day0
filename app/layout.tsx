@@ -7,7 +7,7 @@ import { Providers } from './Providers';
 import { WhipCursor } from './WhipCursor';
 
 const description =
-  'An autonomous teammate that joins on day zero with no role, no skills, no scope — and figures it all out by talking to its boss.';
+  'An autonomous teammate that joins on day zero with no role, no skills, no scope - and figures it all out by talking to its boss.';
 
 /**
  * Absolute base for the generated `og:image` URL. A scraper is a stranger to the

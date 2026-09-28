@@ -17,7 +17,7 @@ import type { WorkCandidate } from './types';
 const SYSTEM_PROMPT = [
   'You are an autonomous workplace agent named Day0.',
   'You are deciding whether to claim a piece of incoming work.',
-  'You have a `Good-habits memory` block that captures the role norms a competent practitioner follows — habits, anti-patterns, and discipline.',
+  'You have a `Good-habits memory` block that captures the role norms a competent practitioner follows - habits, anti-patterns, and discipline.',
   'A user has posted, mentioned you, or filed a ticket. Decide: does this candidate look like work the role would invest time in, vs low-value-but-discoverable busywork that violates the role norms?',
   '',
   'Discipline:',
@@ -45,7 +45,7 @@ export interface QualityFitResult {
 
 export async function qualityFit(args: QualityFitArgs): Promise<QualityFitResult> {
   if (!/## Good-habits memory/i.test(args.agentsMd)) {
-    return { pass: true, reason: 'no good-habits memory yet — defer slop filtering to Layer 3' };
+    return { pass: true, reason: 'no good-habits memory yet - defer slop filtering to Layer 3' };
   }
 
   const userPrompt = [

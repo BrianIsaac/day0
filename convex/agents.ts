@@ -45,7 +45,7 @@ const permissionGrantSource = v.union(
 );
 
 /**
- * Agent CRUD + state transitions. Each agent is owned by one caller subject —
+ * Agent CRUD + state transitions. Each agent is owned by one caller subject  -
  * a Clerk user, or the single synthetic user in no-auth dev mode;
  * `listForUser` filters by the signed-in user so concurrent demos stay
  * isolated. All other public functions that take an `agentId` enforce

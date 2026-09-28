@@ -36,7 +36,7 @@ const SYSTEM_PROMPT = [
   'Run a Day-1 manager 1:1 with the boss who just hired you.',
   'Walk through SEVEN topics, conversationally, one at a time:',
   ...DAY_ONE_TOPIC_SPECS.map(
-    (s, i) => `  ${i + 1}. ${s.topic} — ${s.question.split('\n')[1] ?? s.question}`,
+    (s, i) => `  ${i + 1}. ${s.topic} - ${s.question.split('\n')[1] ?? s.question}`,
   ),
   '',
   'Rules:',

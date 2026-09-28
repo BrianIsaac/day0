@@ -24,7 +24,7 @@ import { EVENT_TYPES } from '../src/events/contract';
 import { eventsOfType } from './eventLog';
 
 /**
- * Events feed — append-only, drives the live UI ticker. The reading side
+ * Events feed - append-only, drives the live UI ticker. The reading side
  * enforces per-account ownership; the writing side is internal-only.
  */
 

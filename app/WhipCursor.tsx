@@ -20,7 +20,7 @@ const HANDLE_FRACTION = 0.18;
 const SUPPRESS_STYLE_ID = 'day0-whip-cursor-suppress';
 
 /**
- * Sitewide custom cursor — a Verlet-integrated rope that trails the mouse
+ * Sitewide custom cursor - a Verlet-integrated rope that trails the mouse
  * with whip-like physics. The head is pinned to the pointer; the body
  * lags behind, the tip flicks on mousedown.
  *
@@ -78,7 +78,7 @@ export function WhipCursor() {
 
     // Inject a global rule that hides the cursor on every element. The
     // browser user-agent stylesheet sets `cursor: pointer` on <button>
-    // and <a[href]>, so inline `cursor: none` on <body> isn't enough —
+    // and <a[href]>, so inline `cursor: none` on <body> isn't enough  -
     // children inherit `none` but UA defaults override that for
     // interactive elements. A stylesheet rule at higher specificity
     // covers everything, and unmount removes the tag so the no-JS /
@@ -96,7 +96,7 @@ export function WhipCursor() {
     const onMouseDown = () => {
       // Velocity burst on click: pull the tip's "previous" position
       // backward along the current direction so Verlet integration
-      // interprets it as a sudden lunge — produces a visible flick.
+      // interprets it as a sudden lunge - produces a visible flick.
       const pts = pointsRef.current;
       if (pts.length < 3) return;
       const last = pts[pts.length - 1];
@@ -120,7 +120,7 @@ export function WhipCursor() {
 
       // Pin head to mouse, but cap displacement per frame so a
       // fast cross-screen swipe doesn't snap the rope into a stretched
-      // line — the body catches up over a few frames instead.
+      // line - the body catches up over a few frames instead.
       const hdx = m.x - pts[0].x;
       const hdy = m.y - pts[0].y;
       const hd = Math.sqrt(hdx * hdx + hdy * hdy);
@@ -146,7 +146,7 @@ export function WhipCursor() {
         p.y += vy + GRAVITY * dt;
       }
 
-      // Constraint solving — Gauss-Seidel, multi-pass.
+      // Constraint solving - Gauss-Seidel, multi-pass.
       for (let iter = 0; iter < ITERATIONS; iter++) {
         for (let i = 0; i < pts.length - 1; i++) {
           const a = pts[i];
@@ -164,7 +164,7 @@ export function WhipCursor() {
         }
       }
 
-      // Render — clear in CSS pixel space (transform is scaled by dpr).
+      // Render - clear in CSS pixel space (transform is scaled by dpr).
       ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
@@ -174,11 +174,11 @@ export function WhipCursor() {
         const w = 5.5 * (1 - t * 0.95) + 0.4;
         let color: string;
         if (t < HANDLE_FRACTION) {
-          // Handle — warm brown
+          // Handle - warm brown
           const ht = t / HANDLE_FRACTION;
           color = `rgba(161,98,64,${0.95 - ht * 0.05})`;
         } else {
-          // Body → tip — cyan accent fading
+          // Body → tip - cyan accent fading
           const bt = (t - HANDLE_FRACTION) / (1 - HANDLE_FRACTION);
           const alpha = 0.95 - bt * 0.55;
           color = `rgba(34,211,238,${alpha})`;
@@ -191,7 +191,7 @@ export function WhipCursor() {
         ctx.stroke();
       }
 
-      // Bright tip dot — the click hotspot.
+      // Bright tip dot - the click hotspot.
       const tip = pts[pts.length - 1];
       ctx.beginPath();
       ctx.arc(tip.x, tip.y, 1.7, 0, Math.PI * 2);

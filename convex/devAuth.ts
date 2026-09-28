@@ -1,5 +1,5 @@
 /**
- * No-auth development mode — the shared definition of the local issuer.
+ * No-auth development mode - the shared definition of the local issuer.
  *
  * When it is on, Clerk is not involved. The deployment accepts one locally
  * issued token instead, and every caller who presents it resolves to one fixed
@@ -23,7 +23,7 @@
  * provider. Convex then accepts a caller only if it presents a token signed by
  * the private half, which never leaves `.env.local`. A caller who reaches the
  * socket from anywhere at all still cannot present as the local boss without
- * that key, so the backend is checking a fact it can observe — a signature —
+ * that key, so the backend is checking a fact it can observe - a signature  -
  * rather than inferring one it cannot.
  *
  * The Next.js half mints those tokens and gates who may ask for one; see
