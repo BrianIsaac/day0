@@ -1201,13 +1201,17 @@ export const prunePages = internalMutation({
     phaseOf(args.checkpoint, 'pages');
     const finishing = await finishingRun(ctx, args.sourceId, args.runId, args.checkpoint);
     if (!finishing) return null;
+    // A run begun before 0.6.0 cut off here holds a cursor of its walk over the
+    // pages themselves, which this walk cannot take; the walk starts over, as
+    // every row it has already passed is gone or restamped.
+    const from = finishing.run.listing === undefined ? null : args.from;
     const listing = await runListing(ctx, finishing.run);
     const legacy = legacyListedRefs(finishing.run);
     // A row this page restamps or deletes leaves the range behind the cursor.
     const page = await ctx.db
       .query('docPageListings')
       .withIndex('by_source', (index) => index.eq('sourceId', args.sourceId).lt('seenBy', listing))
-      .paginate({ numItems: STALE_LISTING_PAGE, cursor: args.from });
+      .paginate({ numItems: STALE_LISTING_PAGE, cursor: from });
     let removed = 0;
     for (const row of page.page) {
       if (legacy.has(row.ref)) {

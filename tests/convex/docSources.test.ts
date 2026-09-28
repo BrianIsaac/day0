@@ -15,6 +15,7 @@ import {
   validateReaderSecret,
 } from '../../convex/docSources';
 import { DOCS_NOTION_LOCATOR } from '../../src/docs/components';
+import { finishingCursor } from '../../src/docs/finishing';
 import { allConvexModules } from './all-modules';
 import { mirroredDocSlug } from '../../src/docs/types';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
@@ -2069,6 +2070,58 @@ describe('the documentation store under the transaction limits (step 49)', (): v
       ).map((mirror) => mirror.sourceRef),
     }));
     expect(left).toEqual({ pages: ['runbook.md'], mirrors: ['runbook.md'] });
+  });
+
+  it('finishes a run begun before 0.6.0 that was cut off part-way through its pages, whose cursor walked the pages themselves', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = limitedHarness();
+    const { sourceId } = await seedSyncedSource(harness);
+    const { runId } = await harness.run(async (ctx) => {
+      for (const ref of ['kept.md', 'stale.md']) {
+        await ctx.db.insert('docPages', {
+          sourceId,
+          ref,
+          title: ref,
+          markdown: `# ${ref}`,
+          updatedAt: 1,
+        });
+        await ctx.db.insert('docPageListings', { sourceId, ref, seenBy: 0 });
+      }
+      // The pre-0.6.0 walk over the pages, one page in.
+      const walked = await ctx.db
+        .query('docPages')
+        .withIndex('by_source', (index) => index.eq('sourceId', sourceId))
+        .paginate({ numItems: 1, cursor: null });
+      const runId = await ctx.db.insert('docSyncRuns', {
+        sourceId,
+        cursor: finishingCursor({ phase: 'pages', cursor: walked.continueCursor }),
+        refs: ['page.md', 'kept.md'],
+        credentialRefs: [],
+        pageCount: 2,
+        redactionCount: 0,
+        state: 'running',
+        createdAt: Date.now(),
+      });
+      await ctx.db.patch(sourceId, { activeSyncId: runId });
+      return { runId };
+    });
+    const checkpoint = await harness.run(async (ctx) => (await ctx.db.get(runId))?.cursor);
+
+    await expect(
+      harness.action(internal.docSyncActions.syncBatch, { sourceId, runId, cursor: checkpoint }),
+    ).resolves.toMatchObject({ ok: true, complete: true });
+    const left = await harness.run(async (ctx) =>
+      (
+        await ctx.db
+          .query('docPages')
+          .withIndex('by_source', (index) => index.eq('sourceId', sourceId))
+          .collect()
+      )
+        .map((page) => page.ref)
+        .sort(),
+    );
+    expect(left).toEqual(['kept.md', 'page.md']);
   });
 
   it('removes a page whose batch never recorded, at the next finish that does not name it', async (): Promise<void> => {
