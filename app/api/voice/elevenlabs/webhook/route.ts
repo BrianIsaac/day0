@@ -3,6 +3,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { ConvexHttpClient } from 'convex/browser';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
+import { log } from '@/lib/logger';
 
 interface ElevenLabsPostCallPayload {
   type?: string;
@@ -51,7 +52,7 @@ export async function POST(req: Request): Promise<NextResponse> {
   const rawBody = await req.text();
   const signature = verifySignature(rawBody, req.headers.get('elevenlabs-signature'));
   if (!signature.ok) {
-    console.error(`[elevenlabs webhook] rejected: ${signature.error}`);
+    log.warn('elevenlabs webhook rejected', { reason: signature.error, status: signature.status });
     return NextResponse.json({ error: signature.error }, { status: signature.status });
   }
 
@@ -118,7 +119,7 @@ export async function POST(req: Request): Promise<NextResponse> {
     return NextResponse.json(result);
   } catch (err) {
     const message = (err as Error).message ?? 'unknown error';
-    console.error(`[elevenlabs webhook] synthesis failed: ${message}`);
+    log.error('elevenlabs webhook synthesis failed', { reason: message });
     if (message.includes('webhook denied')) {
       return NextResponse.json(
         { error: 'payload does not match a voice session for that agent' },
