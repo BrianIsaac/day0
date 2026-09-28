@@ -240,6 +240,25 @@ test.describe('the landing on a phone', () => {
     }));
     expect(widths).toEqual({ page: 390, screen: 390 });
   });
+
+  test('draws every frame’s window at the band’s height, so no step shows an empty band under it', async ({
+    page,
+  }) => {
+    await page.goto('/');
+    await page.locator('[data-pin-stack]').waitFor();
+    const heights = await page.evaluate(() => {
+      const stack = document.querySelector<HTMLElement>('[data-pin-stack]');
+      return {
+        stack: stack?.offsetHeight ?? 0,
+        windows: Array.from(
+          stack?.querySelectorAll<HTMLElement>(':scope > [data-frame] > *') ?? [],
+          (window) => window.offsetHeight,
+        ),
+      };
+    });
+    expect(heights.windows).toHaveLength(4);
+    expect(heights.windows).toEqual(heights.windows.map(() => heights.stack));
+  });
 });
 
 test.describe('the landing under reduced motion', () => {
