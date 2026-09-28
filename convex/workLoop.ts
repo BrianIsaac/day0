@@ -752,7 +752,7 @@ export async function resumeStalledStepsInTransaction(
 export const CHECK_FOR_WORK_INTERVAL_MS = 60_000;
 
 /** The event that records an on-demand poll; the interval is read from it. */
-const CHECK_REQUESTED = 'work.check-requested';
+const CHECK_REQUESTED = 'work.check-requested' satisfies EventType;
 
 /** Surface classes the intake sweep has a work reader for. */
 const WORK_SURFACE_CLASSES = new Set(['kanban', 'chat']);
@@ -783,15 +783,10 @@ export const checkForNewWork = mutation({
     await assertOwnsAgent(ctx, args.agentId);
     const now = Date.now();
     const since = now - CHECK_FOR_WORK_INTERVAL_MS;
-    const lastCheck = (
-      await ctx.db
-        .query('events')
-        .withIndex('by_agent', (q) => q.eq('agentId', args.agentId).gt('_creationTime', since))
-        .collect()
-    )
-      .filter((event) => event.type === CHECK_REQUESTED && event.createdAt > since)
-      .at(-1);
-    if (lastCheck) {
+    const lastCheck = await eventsOfType(ctx, args.agentId, CHECK_REQUESTED, { after: since })
+      .order('desc')
+      .first();
+    if (lastCheck && lastCheck.createdAt > since) {
       return { scheduled: 0, retryInMs: lastCheck.createdAt + CHECK_FOR_WORK_INTERVAL_MS - now };
     }
     const surfaces = (
