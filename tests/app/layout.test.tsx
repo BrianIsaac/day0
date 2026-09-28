@@ -62,6 +62,12 @@ async function renderLayout(): Promise<string> {
   );
 }
 
+describe('the document language', (): void => {
+  it('declares British English, the spelling every string on the page uses', async (): Promise<void> => {
+    expect(await renderLayout()).toContain('<html lang="en-GB">');
+  });
+});
+
 describe('documentation navigation by deployment mode', () => {
   it('omits the link until the backend has answered', async () => {
     expect(await renderLayout()).not.toContain('href="/documentation"');
