@@ -41,6 +41,8 @@ export interface ChangeWords<Result> {
   readonly refused: string;
   /** What the control does once the change lands (close an editor, clear a field). */
   readonly after?: (result: Result) => void;
+  /** Where focus goes once the change lands, when not back to the control (a cleared field). */
+  readonly focus?: () => HTMLElement | null;
 }
 
 /** A dashboard change in flight, what it came to, and the call that starts one. */
@@ -94,10 +96,12 @@ export function useChange(fallback?: RefObject<HTMLElement | null>): Change {
   const [outcome, setOutcome] = useState<ChangeOutcome | null>(null);
   const [settled, setSettled] = useState(0);
   const origin = useRef<HTMLElement | null>(null);
+  const landed = useRef<(() => HTMLElement | null) | undefined>(undefined);
   const run = useCallback(
     <Result,>(call: () => Promise<Result> | Result, words: ChangeWords<Result>): void => {
       origin.current =
         document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      landed.current = undefined;
       setBusy(true);
       setOutcome(null);
       // The chain ends in its own catch, which says the refusal in the live
@@ -111,6 +115,7 @@ export function useChange(fallback?: RefObject<HTMLElement | null>): Change {
               text: typeof words.done === 'function' ? words.done(result) : words.done,
             });
             words.after?.(result);
+            landed.current = words.focus;
           },
           (err: unknown): void =>
             setOutcome({ tone: 'refused', text: refusalText(err, words.refused) }),
@@ -128,8 +133,11 @@ export function useChange(fallback?: RefObject<HTMLElement | null>): Change {
   useEffect(() => {
     if (settled === 0) return;
     const from = origin.current;
+    const target = landed.current?.();
     origin.current = null;
-    returnFocus(from, fallback?.current ?? null);
+    landed.current = undefined;
+    if (target) target.focus();
+    else returnFocus(from, fallback?.current ?? null);
   }, [settled, fallback]);
   return { busy, outcome, run, clear };
 }

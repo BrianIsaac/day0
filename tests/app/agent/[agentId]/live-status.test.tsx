@@ -158,3 +158,43 @@ describe('a dashboard change reported the same way everywhere', (): void => {
     expect(document.activeElement).toBe(button);
   });
 });
+
+describe('a change that names where focus goes once it lands', (): void => {
+  it('gives focus to the named element after the render that re-enables it', async (): Promise<void> => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    function Adder() {
+      const field = useRef<HTMLInputElement>(null);
+      const change = useChange();
+      return (
+        <div>
+          <input ref={field} aria-label="entry" disabled={change.busy} />
+          <button
+            type="button"
+            disabled={change.busy}
+            onClick={(): void =>
+              change.run(async () => undefined, {
+                done: 'Added.',
+                refused: 'Not added.',
+                focus: () => field.current,
+              })
+            }
+          >
+            Add
+          </button>
+        </div>
+      );
+    }
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    act((): void => root.render(<Adder />));
+    const add = container.querySelector('button');
+    add?.focus();
+    await act(async (): Promise<void> => {
+      add?.click();
+    });
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('entry');
+    act((): void => root.unmount());
+    container.remove();
+  });
+});
