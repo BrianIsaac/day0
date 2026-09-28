@@ -7,6 +7,7 @@ import {
   actionModeInstruction,
   CANDIDATE_RECORD_LENGTH,
   candidateRecordRead,
+  unreadCandidateRecord,
   draftExecutionPlan,
   OWN_ITEM_READS_PLANNER,
   planPreconditionAudit,
@@ -736,6 +737,25 @@ describe('the candidate record read before the plan', (): void => {
       tool: 'fetch_ticket',
       action: { args: { toolArgsJson: '{"key":"REVOPS-7"}' } },
     });
+  });
+
+  it('says the ticket was not read when its system is not connected, so no plan is drafted as though it had been (U9 step 20)', (): void => {
+    const down: SurfaceRecord = { ...linear, verdict: 'listed-dead' };
+    expect(candidateRecordRead(ticket, [down], now)).toBeUndefined();
+    const unread = unreadCandidateRecord(ticket, [down], now);
+    expect(unread).toEqual({
+      surface: 'linear',
+      tool: 'not read',
+      subject: 'record',
+      unavailable:
+        'Linear is not connected (listed-dead), so the ticket was not read; plan from the candidate alone and name what the record would settle',
+    });
+    expect(renderCandidateRecord(unread!).join('\n')).toContain(
+      'record unavailable: Linear is not connected',
+    );
+    // Connected, or no system to read from: nothing to say.
+    expect(unreadCandidateRecord(ticket, [linear], now)).toBeUndefined();
+    expect(unreadCandidateRecord(ticket, [], now)).toBeUndefined();
   });
 
   const slack: SurfaceRecord = {

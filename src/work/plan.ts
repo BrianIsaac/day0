@@ -567,6 +567,44 @@ export function candidateRecordRead(
 }
 
 /**
+ * The record a plan is drafted without, when the candidate's system would
+ * have been read but is not connected: a ticket or an ask's thread whose
+ * surface is down, ungranted or not yet approved (U9 step 20, P7-18). The
+ * planner is told the record was not read and why, rather than nothing, so
+ * the plan does not read as grounded in it.
+ *
+ * @param candidate - The work candidate.
+ * @param surfaces - The agent's surfaces.
+ * @param now - The clock the connection verdict is resolved against.
+ * @returns The unavailable record, or undefined when the system is connected
+ *   or the candidate has no record to read.
+ */
+export function unreadCandidateRecord(
+  candidate: Pick<WorkCandidate, 'sourceCategory' | 'sourceSystem' | 'replyTarget'>,
+  surfaces: readonly SurfaceRecord[],
+  now: number,
+): CandidateRecord | undefined {
+  const surface = surfaces.find((row) => row.slug === surfaceSlug(candidate.sourceSystem));
+  if (!surface) return undefined;
+  const verdict = verdictFor(surface, now);
+  if (verdict === 'connected') return undefined;
+  const subject: CandidateRecordSubject | undefined =
+    candidate.sourceCategory === 'ticket-queue'
+      ? 'record'
+      : candidate.sourceCategory === 'event-stream' && candidate.replyTarget?.threadTs
+        ? 'thread'
+        : undefined;
+  if (subject === undefined) return undefined;
+  const noun = subject === 'record' ? 'ticket' : 'thread';
+  return {
+    surface: surface.slug,
+    tool: 'not read',
+    subject,
+    unavailable: `${surface.displayName} is not connected (${verdict}), so the ${noun} was not read; plan from the candidate alone and name what the ${subject} would settle`,
+  };
+}
+
+/**
  * The bounded thread read for a chat ask, when its surface documents one.
  *
  * The request is the same GET the intake poller makes, with the surface's
