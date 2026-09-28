@@ -41,7 +41,7 @@ export const DEFINITIONS = {
     'Automatic changes: writes to a system applied without asking, under standing or autonomous authority. Reads and messages to the manager also apply on their own and are counted on the line below, never as changes; a browser call replayed to sign in again is never an automatic action. Approved: approved by the manager. Held: waiting for the manager. Rejected: rejected by the manager. Refused: blocked by the gate or a missing grant.',
   audit:
     'Landed ledger rows that carry their tool, authority, effect, run and idempotency key, over every landed row, replayed browser calls included. The company row pools every employee’s rows.',
-  company: 'Every employee above, pooled. Evaluation agents and baseline arms are left out.',
+  company: 'Every employee above, pooled. Evaluation employees and baseline arms are left out.',
 } as const;
 
 interface Column {
@@ -180,11 +180,13 @@ export const PILOT_FIGURES: readonly PilotFigure[] = [
   },
 ];
 
-/** The label a stacked row prints above a cell's value, hidden where the table has its header. */
-function StackLabel({ children }: { children: ReactNode }) {
+/** The label and unit a stacked row prints above a cell's value, hidden where the table has its header. */
+function StackLabel({ column }: { column: Column }) {
+  // The header row carries the same words for assistive technology, so this copy is visual only.
   return (
-    <span className="mb-0.5 block font-sans text-xs text-[var(--color-muted)] lg:hidden">
-      {children}
+    <span aria-hidden="true" className="mb-0.5 block font-sans text-xs lg:hidden">
+      <span className="block text-[var(--color-muted)]">{column.label}</span>
+      <span className="block text-[var(--color-muted)]/80">{column.unit}</span>
     </span>
   );
 }
@@ -213,27 +215,27 @@ function FigureCells({
 }) {
   return (
     <>
-      <td className={`${CELL} max-lg:col-span-2`}>
-        <StackLabel>{COLUMN.charter.label}</StackLabel>
+      <td role="cell" className={`${CELL} max-lg:col-span-2`}>
+        <StackLabel column={COLUMN.charter} />
         {charter}
       </td>
-      <td className={`${CELL} whitespace-nowrap`}>
-        <StackLabel>{COLUMN.decisions.label}</StackLabel>
+      <td role="cell" className={`${CELL} whitespace-nowrap`}>
+        <StackLabel column={COLUMN.decisions} />
         {decisionsCell(decisions)}
       </td>
-      <td className={`${CELL} whitespace-nowrap`}>
-        <StackLabel>{COLUMN.wait.label}</StackLabel>
+      <td role="cell" className={`${CELL} whitespace-nowrap`}>
+        <StackLabel column={COLUMN.wait} />
         {waitCell(decisions)}
       </td>
-      <td className={CELL}>
-        <StackLabel>{COLUMN.actions.label}</StackLabel>
+      <td role="cell" className={CELL}>
+        <StackLabel column={COLUMN.actions} />
         <span className="block whitespace-nowrap">{actionsCell(actions)}</span>
         <span className="block text-[var(--color-muted)]">
           + {readsAndMessages(actions.automatic)}
         </span>
       </td>
-      <td className={`${CELL} whitespace-nowrap`}>
-        <StackLabel>{COLUMN.audit.label}</StackLabel>
+      <td role="cell" className={`${CELL} whitespace-nowrap`}>
+        <StackLabel column={COLUMN.audit} />
         {formatAuditTrail(auditTrail)}
       </td>
     </>
@@ -268,6 +270,7 @@ function ColumnHeader({ column }: { column: Column }) {
   return (
     <th
       scope="col"
+      role="columnheader"
       title={column.definition}
       className="cursor-help px-3 py-2 align-bottom font-medium"
     >
@@ -280,9 +283,12 @@ function ColumnHeader({ column }: { column: Column }) {
 /** The header row both tables share: the employee, then one header per figure. */
 function HeaderRow({ columns }: { columns: readonly Column[] }) {
   return (
-    <thead className="max-lg:sr-only">
-      <tr className="border-b border-[var(--color-border)] text-xs uppercase tracking-wider text-[var(--color-muted)]">
-        <th scope="col" className="px-5 py-2 align-bottom font-medium">
+    <thead role="rowgroup" className="max-lg:sr-only">
+      <tr
+        role="row"
+        className="border-b border-[var(--color-border)] text-xs uppercase tracking-wider text-[var(--color-muted)]"
+      >
+        <th scope="col" role="columnheader" className="px-5 py-2 align-bottom font-medium">
           Employee
         </th>
         {columns.map((column) => (
@@ -320,20 +326,24 @@ function PilotFiguresTable({ figures }: { figures: OwnerMetrics }) {
   ];
   return (
     <div className="border-t border-[var(--color-border)]">
-      <table className={TABLE}>
+      <table role="table" className={TABLE}>
         <caption className="px-5 pt-3 text-left text-xs uppercase tracking-wider text-[var(--color-muted)] max-lg:block">
           Pilot figures
         </caption>
         <HeaderRow columns={PILOT_FIGURES} />
-        <tbody className={BODY}>
+        <tbody role="rowgroup" className={BODY}>
           {rows.map((row) => (
-            <tr key={row.key} className={row.key === 'company' ? COMPANY_ROW : EMPLOYEE_ROW}>
-              <th scope="row" className={ROW_HEADER}>
+            <tr
+              key={row.key}
+              role="row"
+              className={row.key === 'company' ? COMPANY_ROW : EMPLOYEE_ROW}
+            >
+              <th scope="row" role="rowheader" className={ROW_HEADER}>
                 {row.name}
               </th>
               {PILOT_FIGURES.map((figure) => (
-                <td key={figure.label} className={CELL}>
-                  <StackLabel>{figure.label}</StackLabel>
+                <td key={figure.label} role="cell" className={CELL}>
+                  <StackLabel column={figure} />
                   {figure.value(row.pilot)}
                 </td>
               ))}
@@ -351,14 +361,13 @@ function PilotFiguresTable({ figures }: { figures: OwnerMetrics }) {
  * it every row stacks with its cells labelled, so the card never scrolls
  * sideways.
  *
- * Args:
- *   figures: The owner's figures.
+ * @param figures - The owner's figures.
  */
 export function CompanySupervisionCard({ figures }: { figures: OwnerMetrics }) {
   const { company } = figures;
   const notes = [
     figures.excludedAgents > 0
-      ? `${count(figures.excludedAgents, 'evaluation agent')} left out`
+      ? `${count(figures.excludedAgents, 'evaluation employee')} left out`
       : null,
     figures.omittedEmployees > 0
       ? `Covers the ${company.employees} most recent employees; ${count(figures.omittedEmployees, 'earlier one', 'earlier ones')} ${figures.omittedEmployees === 1 ? 'is' : 'are'} not counted`
@@ -375,12 +384,12 @@ export function CompanySupervisionCard({ figures }: { figures: OwnerMetrics }) {
           {count(company.employees, 'employee')}, one manager
         </span>
       </div>
-      <table className={TABLE} aria-label="Company supervision">
+      <table role="table" className={TABLE} aria-label="Company supervision">
         <HeaderRow columns={COLUMNS} />
-        <tbody className={BODY}>
+        <tbody role="rowgroup" className={BODY}>
           {figures.employees.map((employee) => (
-            <tr key={employee.agentId} className={EMPLOYEE_ROW}>
-              <th scope="row" className={ROW_HEADER}>
+            <tr key={employee.agentId} role="row" className={EMPLOYEE_ROW}>
+              <th scope="row" role="rowheader" className={ROW_HEADER}>
                 {employee.name}
               </th>
               <FigureCells
@@ -395,9 +404,10 @@ export function CompanySupervisionCard({ figures }: { figures: OwnerMetrics }) {
               />
             </tr>
           ))}
-          <tr className={COMPANY_ROW}>
+          <tr role="row" className={COMPANY_ROW}>
             <th
               scope="row"
+              role="rowheader"
               title={DEFINITIONS.company}
               className={`${ROW_HEADER} cursor-help underline decoration-dotted underline-offset-2`}
             >
