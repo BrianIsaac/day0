@@ -281,7 +281,7 @@ export function recompute(
       const trace = readAgentTrace(JSON.parse(readFileSync(path, 'utf8')));
       if (trace === undefined) {
         throw new Error(
-          `${path} is not a day0 trace (version 2 or 3); export it with scripts/export-trace.ts`,
+          `${path} is not a day0 trace (version 2 or 3); export it with pnpm export:trace`,
         );
       }
       return trace;

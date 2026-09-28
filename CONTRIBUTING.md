@@ -48,6 +48,7 @@ Every `pnpm` script, in the order a contributor meets them. The ones marked real
 | `pnpm probe:surface <surfaceId>` | Real mode: probes one surface card and prints the verdict |
 | `pnpm demo:bed <subcommand>` | A restorable demonstration bed: snapshot, restore, up, preflight, offline-rung, down |
 | `pnpm eval:comparison`, `eval:revocation`, `eval:gate` | The evaluation, below |
+| `pnpm export:trace <agentId> --out <file>` | Writes one agent's whole trace, page by page, to one file |
 | `pnpm metrics:recompute <export>` | Recomputes an owner's supervision figures from a snapshot export |
 | `pnpm lint`, `typecheck`, `test`, `build` | The gate, below |
 | `pnpm gate` | The whole gate as the runner runs it, below |

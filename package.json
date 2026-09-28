@@ -38,6 +38,7 @@
     "eval:comparison": "tsx --env-file-if-exists=.env.local scripts/eval-comparison.ts",
     "eval:gate": "tsx evaluation/gate/run.ts",
     "metrics:recompute": "tsx scripts/recompute-metrics.ts",
+    "export:trace": "tsx scripts/export-trace.ts",
     "eval:revocation": "tsx --env-file-if-exists=.env.local scripts/eval-revocation.ts",
     "probe:model": "tsx --env-file-if-exists=.env.local scripts/probe-model-endpoint.ts",
     "probe:mcp": "tsx --env-file-if-exists=.env.local scripts/probe-mcp.ts",

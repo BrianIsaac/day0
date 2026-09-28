@@ -1,7 +1,7 @@
 /**
  * Export one agent's whole trace to one file, a page at a time:
  *
- *   pnpm exec tsx scripts/export-trace.ts <agentId> --out <trace.json> [--identity <subject>]
+ *   pnpm export:trace <agentId> --out <trace.json> [--identity <subject>]
  *
  * The export action never returns the whole trace (the pinned backend image
  * refuses an array past 8,192 elements, which one agent's events pass), so
@@ -27,8 +27,7 @@ import {
   type TracePage,
 } from '../src/export/trace';
 
-const USAGE =
-  'Usage: pnpm exec tsx scripts/export-trace.ts <agentId> --out <trace.json> [--identity <subject>]';
+const USAGE = 'Usage: pnpm export:trace <agentId> --out <trace.json> [--identity <subject>]';
 
 /** One call of a deployed function: its name, its arguments, the caller's subject. */
 export type ConvexRun = (name: string, args: Record<string, unknown>, subject: string) => unknown;

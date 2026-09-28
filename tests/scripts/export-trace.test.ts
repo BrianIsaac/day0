@@ -107,7 +107,7 @@ describe('exporting one agent’s trace to a file', (): void => {
     const errors: string[] = [];
     const io = { log: () => undefined, error: (line: string) => errors.push(line) };
     expect(await runExportTrace(['agent-1'], io, fakeDeployment([]))).toBe(2);
-    expect(errors[0]).toMatch(/^Usage:/);
+    expect(errors[0]).toMatch(/^Usage: pnpm export:trace <agentId> --out <trace\.json>/);
     const refusing: ConvexRun = () => {
       throw new Error('exportActions:exportForAgent failed: forbidden');
     };
