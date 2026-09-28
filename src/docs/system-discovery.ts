@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { SYSTEM_CLASSES } from '../agent/system-classes';
+import { SYSTEM_CLASSES, type SystemClass } from '../agent/system-classes';
 import { droppedScriptSuffix } from '../lib/short-hash';
 import { surfaceSlug } from '../surfaces/slug';
 
@@ -12,7 +12,7 @@ export interface DiscoveryPage {
 
 export interface DiscoveredSystemCandidate {
   name: string;
-  class: (typeof SYSTEM_CLASSES)[number];
+  class: SystemClass;
   ref: string;
   quote: string;
   url?: string;
@@ -72,7 +72,7 @@ function firstHeading(page: DiscoveryPage): string | undefined {
 function recognisedClass(
   name: string,
   evidence: string,
-): Exclude<(typeof SYSTEM_CLASSES)[number], 'docs' | 'other'> | undefined {
+): Exclude<SystemClass, 'docs' | 'other'> | undefined {
   const text = `${name}\n${evidence}`.toLowerCase();
   if (/\b(?:crm|customer relationship|opportunit(?:y|ies))\b/.test(text)) return 'crm';
   if (/\b(?:analytics|dashboard|looker|tableau|reporting|tile)\b/.test(text)) return 'analytics';
@@ -144,7 +144,7 @@ function rejectDocumentationCandidate(
   return true;
 }
 
-function classFor(name: string, evidence: string): (typeof SYSTEM_CLASSES)[number] {
+function classFor(name: string, evidence: string): SystemClass {
   const recognised = recognisedClass(name, evidence);
   if (recognised) return recognised;
   if (documentationArtefactReason(name, evidence) !== undefined) return 'docs';

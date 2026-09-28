@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import { agentJson, makeAgent } from '../lib/mastra';
-import { SYSTEM_CLASSES } from './system-classes';
-export { SYSTEM_CLASSES } from './system-classes';
+import { SYSTEM_CLASSES, type SystemClass } from './system-classes';
 import {
   CONSTRAINT_KINDS,
   deriveConstraints,
@@ -63,7 +62,7 @@ export interface ShortTermGoals {
 
 export interface NamedSystem {
   name: string;
-  class: (typeof SYSTEM_CLASSES)[number];
+  class: SystemClass;
   whereMentioned: string;
 }
 
