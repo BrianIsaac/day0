@@ -1419,9 +1419,9 @@ export async function runSurfaceProbe(
         surface.class === 'chat' &&
         !isSlackApiEndpoint(surface.endpoint)
       ) {
-        // Chat intake reads every documented-API chat surface through Slack's
-        // Web API with the surface's key (`intakeActions.ts` `slackGet`), so
-        // another chat system connected here would have its key sent to Slack.
+        // The documented-API chat reader speaks Slack's Web API alone
+        // (`chatReaderFor`), so another chat system connected here would have
+        // no reader, and a reader pointed at Slack would send it its key.
         throw new Day0ProbeLimitation(
           `Day0 reads chat over a documented API only through Slack's Web API, so it does not connect ${surface.displayName} at ${surface.endpoint ?? 'an undocumented address'}. ` +
             `This is a limitation of this Day0 deployment, not evidence that ${surface.displayName} is unavailable. ` +
