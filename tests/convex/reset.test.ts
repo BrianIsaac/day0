@@ -844,3 +844,53 @@ describe('reset in mock mode', (): void => {
     expect(await harness.run(async (ctx) => await ctx.db.query('events').collect())).toEqual([]);
   });
 });
+
+describe('the jobs a reset leaves scheduled (step 47, P4-7)', (): void => {
+  it("cancels the retired employee's pending jobs and keeps a colleague's", async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { retiring, colleague, item } = await harness.run(async (ctx) => {
+      const insertAgent = async (name: string): Promise<Id<'agents'>> =>
+        await ctx.db.insert('agents', {
+          bossEmail: 'boss@day0.local',
+          name,
+          userId: 'owner',
+          state: 'active',
+          createdAt: 1,
+        });
+      const retiring = await insertAgent('Priya');
+      const colleague = await insertAgent('Mateo');
+      const item = await insertMinimalRow(ctx, 'workItems', retiring);
+      await ctx.scheduler.runAfter(60_000, internal.workActions.evaluateWorkItemInternal, {
+        workItemId: item as Id<'workItems'>,
+      });
+      await ctx.scheduler.runAfter(60_000, internal.work.reevaluatePending, {
+        agentId: retiring,
+        trigger: 'claim-released',
+        key: 'claim-1',
+      });
+      await ctx.scheduler.runAfter(60_000, internal.work.reevaluatePending, {
+        agentId: colleague,
+        trigger: 'claim-released',
+        key: 'claim-1',
+      });
+      return { retiring, colleague, item };
+    });
+
+    await harness
+      .withIdentity({ subject: 'owner' })
+      .mutation(api.reset.deleteMyData, { agentId: retiring });
+
+    const jobs = await harness.run(
+      async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
+    );
+    const stateOf = (predicate: (args: Record<string, unknown>) => boolean): string[] =>
+      jobs
+        .filter((job) => predicate(job.args[0] as Record<string, unknown>))
+        .map((job) => job.state.kind);
+    expect(stateOf((args) => args.workItemId === item)).toEqual(['canceled']);
+    expect(stateOf((args) => args.agentId === retiring)).toEqual(['canceled']);
+    expect(stateOf((args) => args.agentId === colleague)).toEqual(['pending']);
+    vi.useRealTimers();
+  });
+});
