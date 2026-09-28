@@ -287,14 +287,22 @@ export function DocumentationPage(): React.ReactNode {
                   ) : null}
                   <button
                     type="button"
-                    onClick={() => void resync({ sourceId: source._id })}
+                    onClick={() => {
+                      resync({ sourceId: source._id }).catch((failure: unknown) =>
+                        setError(plainErrorMessage(errorMessage(failure))),
+                      );
+                    }}
                     className="text-xs border border-[var(--color-border)] rounded px-3 py-1.5"
                   >
                     Re-sync
                   </button>
                   <button
                     type="button"
-                    onClick={() => void unlink({ sourceId: source._id })}
+                    onClick={() => {
+                      unlink({ sourceId: source._id }).catch((failure: unknown) =>
+                        setError(plainErrorMessage(errorMessage(failure))),
+                      );
+                    }}
                     className="text-xs border border-[var(--color-danger)]/40 text-[var(--color-danger)] rounded px-3 py-1.5"
                   >
                     Unlink
