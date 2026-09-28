@@ -3,6 +3,7 @@ import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { establishConvexCaller } from '@/lib/convex-caller';
 import { crossOriginRefusal, readJsonBody } from '@/lib/json-request';
+import { log } from '@/lib/logger';
 
 /** An agent id and nothing else; anything larger is not a seed request. */
 const SEED_BODY_LIMIT_BYTES = 4 * 1024;
@@ -30,10 +31,21 @@ export async function POST(req: Request): Promise<NextResponse> {
     return NextResponse.json({ error: 'agentId required' }, { status: 400 });
   }
 
-  const result = await client.action(api.seed.seedDemo, {
-    agentId: agentId as Id<'agents'>,
-  });
-  return NextResponse.json(result);
+  try {
+    const result = await client.action(api.seed.seedDemo, {
+      agentId: agentId as Id<'agents'>,
+    });
+    return NextResponse.json(result);
+  } catch (err: unknown) {
+    // The deployment's error text is for the log, not the page: in production
+    // it carries the function path and the backend's own words (C-34).
+    const message = err instanceof Error ? err.message : String(err);
+    log.warn('demo seeding failed', { reason: message });
+    if (/\bforbidden\b/.test(message)) {
+      return NextResponse.json({ error: 'that agent is not yours to seed' }, { status: 403 });
+    }
+    return NextResponse.json({ error: 'demo seeding failed' }, { status: 500 });
+  }
 }
 
 function agentIdOf(value: unknown): string | undefined {
