@@ -443,7 +443,7 @@ export function planPreconditionAudit(
 
 export const planSchema = z.object({
   summary: z.string(),
-  steps: z.array(z.string()),
+  steps: z.array(z.string()).min(1).max(8),
   expectedOutputType: z.enum([
     'message',
     'doc-update',
@@ -864,7 +864,7 @@ export function planUserPrompt(args: Omit<DraftPlanArgs, 'autonomousActions'>): 
 function materialisePlan(raw: z.infer<typeof planSchema>): ExecutionPlan {
   return {
     summary: raw.summary,
-    steps: raw.steps.slice(0, 8),
+    steps: raw.steps,
     expectedOutputType: raw.expectedOutputType,
     riskNotes: raw.riskNotes,
     reversibility: raw.reversibility,
