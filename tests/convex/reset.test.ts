@@ -846,6 +846,10 @@ describe('reset in mock mode', (): void => {
 });
 
 describe('the jobs a reset leaves scheduled (step 47, P4-7)', (): void => {
+  afterEach((): void => {
+    vi.useRealTimers();
+  });
+
   it("cancels the retired employee's pending jobs and keeps a colleague's", async (): Promise<void> => {
     vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
@@ -880,10 +884,11 @@ describe('the jobs a reset leaves scheduled (step 47, P4-7)', (): void => {
         trigger: 'claim-released',
         key: 'claim-1',
       });
+      // A colleague's wake keyed on something the retire deletes stays theirs.
       await ctx.scheduler.runAfter(60_000, internal.work.reevaluatePending, {
         agentId: colleague,
         trigger: 'claim-released',
-        key: 'claim-1',
+        key: item,
       });
       return { retiring, colleague, item };
     });
@@ -902,6 +907,5 @@ describe('the jobs a reset leaves scheduled (step 47, P4-7)', (): void => {
     expect(stateOf((args) => args.workItemId === item)).toEqual(['canceled']);
     expect(stateOf((args) => args.agentId === retiring)).toEqual(['canceled']);
     expect(stateOf((args) => args.agentId === colleague)).toEqual(['pending']);
-    vi.useRealTimers();
   });
 });

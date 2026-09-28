@@ -105,8 +105,9 @@ interface Retired {
 /**
  * The newest scheduled-function records a reset reads for jobs it cancels.
  * The backend keeps finished records for a week beside the pending ones, so
- * this is far past a team deployment's queue; a pending job older than the
- * window still meets a missing row, which every step reads as not its own.
+ * this is far past a team deployment's queue. A pending job older than the
+ * window still runs against a missing row: most steps end as a no-op, and a
+ * few (`work.setFailed`, `work.decidePlan`) throw into the backend log.
  */
 const SCHEDULED_JOB_SCAN_LIMIT = 4_000;
 
