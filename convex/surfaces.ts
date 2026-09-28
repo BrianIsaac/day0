@@ -937,27 +937,82 @@ export const recordInstalledApp = internalMutation({
   },
 });
 
-/** Reserve the next probe generation for an approved connection candidate. */
+/**
+ * How long a probe holds its card against a routine re-probe (E-88): its one
+ * retry's wait (at most the provider backoff's 30 s), two 30 s provider calls
+ * and a browser sign-in, with room to spare. A probe that dies without
+ * recording its result frees the card when the lease lapses.
+ */
+export const PROBE_LEASE_MS = 2 * 60_000;
+
+/** The verdicts a probe may run on. */
+const PROBEABLE_VERDICTS: ReadonlyArray<Doc<'surfaces'>['verdict']> = [
+  'approved',
+  'connected',
+  'ungranted',
+  'listed-dead',
+];
+
+/** Why `beginProbe` reserved no generation. */
+export type ProbeRefusal = 'not-probeable' | 'access-ended' | 'in-flight';
+
+/** A probe generation `beginProbe` reserved, with the row as it now stands. */
+export interface ProbeReserved {
+  readonly reserved: true;
+  readonly surface: Doc<'surfaces'>;
+  readonly generation: number;
+}
+
+/** A probe `beginProbe` did not reserve, and why. */
+export interface ProbeRefused {
+  readonly reserved: false;
+  readonly refusal: ProbeRefusal;
+}
+
+/** What `beginProbe` answers. */
+export type ProbeReservation = ProbeReserved | ProbeRefused;
+
+/** Whether the probe of a card's current generation began within the lease. */
+function probeInFlight(surface: Doc<'surfaces'>, now: number): boolean {
+  return surface.probeStartedAt !== undefined && now - surface.probeStartedAt < PROBE_LEASE_MS;
+}
+
+/**
+ * Reserve the next probe generation for an approved connection candidate.
+ *
+ * Internal; the probe's first write. The new generation fences every result
+ * an older probe may still write, and its start is stamped so a routine
+ * re-probe (the hourly sweep, a rate limit's re-ask) asked for while it runs
+ * is not made: two such probes within the lease cost one provider round-trip
+ * (E-88). A probe a person's action asks for (the card's Probe, a landed
+ * credential, an approval, a renewal, a tool approval, a manager change)
+ * supersedes the one in flight, whose answer may be about what just changed.
+ * A card whose end date has passed is ended here, not probed.
+ */
 export const beginProbe = internalMutation({
-  args: { surfaceId: v.id('surfaces') },
-  handler: async (ctx, args): Promise<{ surface: Doc<'surfaces'>; generation: number } | null> => {
+  args: { surfaceId: v.id('surfaces'), routine: v.optional(v.boolean()) },
+  handler: async (ctx, args): Promise<ProbeReservation> => {
     const surface = await ctx.db.get(args.surfaceId);
-    if (
-      !surface ||
-      !['approved', 'connected', 'ungranted', 'listed-dead'].includes(surface.verdict)
-    ) {
-      return null;
+    if (!surface || !PROBEABLE_VERDICTS.includes(surface.verdict)) {
+      return { reserved: false, refusal: 'not-probeable' };
     }
     // A probe that found the provider working would otherwise reconnect an
     // access whose end date has passed; only the manager's renewal does that.
     const now = Date.now();
     if (accessEndDatePassed(surface, now)) {
       if (surface.reason !== 'expired') await endAccessInTransaction(ctx, surface, now);
-      return null;
+      return { reserved: false, refusal: 'access-ended' };
     }
-    const generation = (surface.probeGeneration ?? 0) + 1;
-    await ctx.db.patch(surface._id, { probeGeneration: generation });
-    return { surface: { ...surface, probeGeneration: generation }, generation };
+    if (args.routine === true && probeInFlight(surface, now)) {
+      return { reserved: false, refusal: 'in-flight' };
+    }
+    const started = { probeGeneration: (surface.probeGeneration ?? 0) + 1, probeStartedAt: now };
+    await ctx.db.patch(surface._id, started);
+    return {
+      reserved: true,
+      surface: { ...surface, ...started },
+      generation: started.probeGeneration,
+    };
   },
 });
 
@@ -974,7 +1029,8 @@ export const recordProbeFailure = internalMutation({
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) throw new Error('Surface not found.');
     if (surface.probeGeneration !== args.generation) return false;
-    if (!['approved', 'connected', 'ungranted', 'listed-dead'].includes(surface.verdict)) {
+    if (!PROBEABLE_VERDICTS.includes(surface.verdict)) {
+      await ctx.db.patch(surface._id, { probeStartedAt: undefined });
       return false;
     }
     // A probe that began before the end date and failed after it leaves the
@@ -996,6 +1052,7 @@ export const recordProbeFailure = internalMutation({
       providerWorkspaceId: undefined,
       channelsNotJoined: undefined,
       lastVerifiedAt: undefined,
+      probeStartedAt: undefined,
       probeAttempts: withProbeAttempt(surface, {
         path: surface.path ?? 'unknown',
         endpoint: surface.endpoint,
@@ -1020,6 +1077,8 @@ export const recordProbeFailure = internalMutation({
  * Written before the wait, so the card and the trail show the retry while it
  * is pending and keep it after the second call connects. The verdict is left
  * alone: one failed call establishes nothing about the enterprise's system.
+ * A provider that rate-limited the retry as well ends the probe here
+ * (`endsProbe`), leaving the verdict, so the card is free for the next probe.
  *
  * Returns:
  *   False when a newer probe has taken over, or the row is no longer approved,
@@ -1032,15 +1091,18 @@ export const recordProbeRetry = internalMutation({
     reason: v.string(),
     retryAfterMs: v.number(),
     attemptedAt: v.number(),
+    endsProbe: v.optional(v.boolean()),
   },
   handler: async (ctx, args): Promise<boolean> => {
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) throw new Error('Surface not found.');
     if (surface.probeGeneration !== args.generation) return false;
-    if (!['approved', 'connected', 'ungranted', 'listed-dead'].includes(surface.verdict)) {
+    if (!PROBEABLE_VERDICTS.includes(surface.verdict)) {
+      await ctx.db.patch(surface._id, { probeStartedAt: undefined });
       return false;
     }
     await ctx.db.patch(surface._id, {
+      ...(args.endsProbe === true ? { probeStartedAt: undefined } : {}),
       probeAttempts: withProbeAttempt(surface, {
         path: surface.path ?? 'unknown',
         endpoint: surface.endpoint,
@@ -1120,6 +1182,8 @@ export const demoteAfterProbeFailure = internalMutation({
       reason: reason.slice(0, 500),
       credentialLanded: false,
       probeGeneration: generation,
+      // The same probe goes on to the next rung under the new generation.
+      probeStartedAt: Date.now(),
       toolAllowlist: undefined,
       approvedToolAllowlist: undefined,
       toolAllowlistApprovedAt: undefined,
@@ -1341,7 +1405,8 @@ export const recordConnected = internalMutation({
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) throw new Error('Surface not found.');
     if (surface.probeGeneration !== args.generation) return false;
-    if (!['approved', 'connected', 'ungranted', 'listed-dead'].includes(surface.verdict)) {
+    if (!PROBEABLE_VERDICTS.includes(surface.verdict)) {
+      await ctx.db.patch(surface._id, { probeStartedAt: undefined });
       return false;
     }
     // A probe in flight across the end date never reconnects the access, and
@@ -1361,6 +1426,7 @@ export const recordConnected = internalMutation({
       reason: undefined,
       credentialLanded: true,
       lastVerifiedAt: args.verifiedAt,
+      probeStartedAt: undefined,
       toolAllowlist: tools.allowlist,
       toolArguments: tools.toolArguments,
       ...(surface.approvedToolAllowlist === undefined
@@ -1469,6 +1535,11 @@ async function endAccessInTransaction(
     reason: 'expired',
     credentialLanded: false,
     lastVerifiedAt: undefined,
+    // The end of access ends the probe in flight: whatever it finds lands on
+    // no generation, so neither it nor a renewal after it can reconnect the
+    // card on an answer taken before the end (wave 2 review M20, m9).
+    probeGeneration: (surface.probeGeneration ?? 0) + 1,
+    probeStartedAt: undefined,
   });
   // The end date is on the event so the upgrade can tell this release's end
   // of a proposal-started clock from an end the older code recorded.

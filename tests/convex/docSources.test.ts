@@ -941,6 +941,7 @@ describe('documentation sources in real mode', (): void => {
           createdAt: 1,
           managerApprovedAt: 2,
           probeGeneration: 4,
+          probeStartedAt: 3,
           intakeScope: {
             channels: [
               {
@@ -970,6 +971,8 @@ describe('documentation sources in real mode', (): void => {
     });
     const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
     expect(surface).toMatchObject({ verdict: 'proposed', probeGeneration: 5 });
+    // The probe in flight is ended with its generation, so the next probe is not held back.
+    expect(surface?.probeStartedAt).toBeUndefined();
     expect(surface?.managerApprovedAt).toBeUndefined();
     expect(surface?.intakeScope?.channels?.[0].value).toBe('finance-close');
     await expect(
@@ -1184,6 +1187,7 @@ it('supersedes missing page credentials and unbinds every dependent surface atom
       request: { credential: { found: 'value', method: 'bot-token', evidenceRef: 'page.md' } },
       managerApprovedAt: 2,
       probeGeneration: 4,
+      probeStartedAt: 5,
       lastVerifiedAt: 5,
       toolAllowlist: ['chat.postMessage'],
       providerIdentityId: 'bot',
@@ -1225,6 +1229,7 @@ it('supersedes missing page credentials and unbinds every dependent surface atom
     request: { credential: { found: 'location', method: 'bot-token' } },
   });
   expect(surface?.credentialId).toBeUndefined();
+  expect(surface?.probeStartedAt).toBeUndefined();
   expect(surface?.toolAllowlist).toBeUndefined();
   expect(surface?.lastVerifiedAt).toBeUndefined();
   expect(surface?.providerIdentityId).toBeUndefined();

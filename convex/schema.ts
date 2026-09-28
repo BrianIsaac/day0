@@ -371,6 +371,14 @@ export default defineSchema({
      * step only a human can take, so it is reported rather than retried. */
     channelsNotJoined: v.optional(v.array(v.string())),
     probeGeneration: v.optional(v.number()),
+    /**
+     * When the probe of the current generation began, cleared when it records
+     * its result (connected, failed, rate-limited) or the generation ends
+     * (access ended, a sync's demotion). A routine re-probe asked for while
+     * it is younger than `PROBE_LEASE_MS` is not made (E-88); a probe a person
+     * asks for supersedes it. Absent means no probe is in flight.
+     */
+    probeStartedAt: v.optional(v.number()),
     /** The pending orientation job for a declared row, so a re-run cannot double-schedule. */
     orientationJobId: v.optional(v.id('_scheduled_functions')),
     waterfallPosition: v.optional(v.number()),

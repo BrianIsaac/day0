@@ -4,7 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
-import { backfillCharterProvenance, retireCharterSystem, surfaceSlug } from '../../convex/surfaces';
+import {
+  backfillCharterProvenance,
+  PROBE_LEASE_MS,
+  retireCharterSystem,
+  surfaceSlug,
+} from '../../convex/surfaces';
 import { BROWSER_DRIVER_ABSENT } from '../../src/surfaces/browser';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
@@ -894,7 +899,7 @@ describe('surface probe generations', (): void => {
       });
     });
     const first = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
-    if (!first) throw new Error('probe was not reserved');
+    if (!first.reserved) throw new Error('probe was not reserved');
     await harness.run(async (ctx): Promise<void> => {
       await ctx.db.patch(surfaceId, { fallbackPath: 'documented-api' });
     });
@@ -1003,7 +1008,7 @@ describe('surface probe generations', (): void => {
       });
     });
     const first = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
-    if (!first) throw new Error('probe was not reserved');
+    if (!first.reserved) throw new Error('probe was not reserved');
     // The descent is one-way, so a route that demonstrably works is not given
     // up on its first bad minute.
     await expect(
@@ -1028,7 +1033,7 @@ describe('surface probe generations', (): void => {
     });
     // The next probe finds a row that is no longer connected, and descends.
     const second = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
-    if (!second) throw new Error('re-probe was not reserved');
+    if (!second.reserved) throw new Error('re-probe was not reserved');
     await expect(
       harness.mutation(internal.surfaces.demoteAfterProbeFailure, {
         surfaceId,
@@ -1043,7 +1048,10 @@ describe('surface probe generations', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);
     const surfaceId = await seedDeclared(harness, agentId);
-    await expect(harness.mutation(internal.surfaces.beginProbe, { surfaceId })).resolves.toBeNull();
+    await expect(harness.mutation(internal.surfaces.beginProbe, { surfaceId })).resolves.toEqual({
+      reserved: false,
+      refusal: 'not-probeable',
+    });
     await propose(harness, surfaceId);
     await harness.mutation(internal.surfaces.setStatus, {
       surfaceId,
@@ -1086,7 +1094,7 @@ describe('surface probe generations', (): void => {
     await propose(harness, surfaceId);
     await harness.mutation(internal.surfaces.setStatus, { surfaceId, verdict: 'approved' });
     const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
-    if (!probe) throw new Error('probe was not reserved');
+    if (!probe.reserved) throw new Error('probe was not reserved');
     await expect(
       harness.mutation(internal.surfaces.recordProbeFailure, {
         surfaceId,
@@ -1119,7 +1127,7 @@ describe('surface probe generations', (): void => {
     await propose(harness, surfaceId);
     await harness.mutation(internal.surfaces.setStatus, { surfaceId, verdict: 'approved' });
     const first = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
-    if (!first) throw new Error('probe was not reserved');
+    if (!first.reserved) throw new Error('probe was not reserved');
     await expect(
       harness.mutation(internal.surfaces.recordConnected, {
         surfaceId,
@@ -1141,7 +1149,7 @@ describe('surface probe generations', (): void => {
       managerName: 'Brian',
     });
     const hourly = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
-    if (!hourly) throw new Error('hourly probe was not reserved');
+    if (!hourly.reserved) throw new Error('hourly probe was not reserved');
     await expect(
       harness.mutation(internal.surfaces.recordConnected, {
         surfaceId,
@@ -1186,7 +1194,7 @@ describe('surface probe generations', (): void => {
     await harness.mutation(internal.surfaces.setStatus, { surfaceId, verdict: 'approved' });
     const reprobe = async (tools: string[], verifiedAt: number): Promise<void> => {
       const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
-      if (!probe) throw new Error('probe was not reserved');
+      if (!probe.reserved) throw new Error('probe was not reserved');
       await harness.mutation(internal.surfaces.recordConnected, {
         surfaceId,
         generation: probe.generation,
@@ -1236,7 +1244,7 @@ describe('surface probe generations', (): void => {
       );
     const connect = async (): Promise<void> => {
       const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
-      if (!probe) throw new Error('probe was not reserved');
+      if (!probe.reserved) throw new Error('probe was not reserved');
       await harness.mutation(internal.surfaces.recordConnected, {
         surfaceId,
         generation: probe.generation,
@@ -1283,7 +1291,7 @@ describe('surface probe generations', (): void => {
         }),
     );
     const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
-    if (!probe) throw new Error('probe was not reserved');
+    if (!probe.reserved) throw new Error('probe was not reserved');
     await harness.mutation(internal.surfaces.recordConnected, {
       surfaceId,
       generation: probe.generation,
@@ -1368,7 +1376,7 @@ describe('surface probe generations', (): void => {
       ],
     );
     const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
-    if (!probe) throw new Error('probe was not reserved');
+    if (!probe.reserved) throw new Error('probe was not reserved');
     await harness.mutation(internal.surfaces.recordConnected, {
       surfaceId,
       generation: probe.generation,
@@ -1479,7 +1487,7 @@ describe('surface probe generations', (): void => {
       },
     );
     const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId: tileId });
-    if (!probe) throw new Error('probe was not reserved');
+    if (!probe.reserved) throw new Error('probe was not reserved');
 
     await harness.mutation(internal.surfaces.recordConnected, {
       surfaceId: tileId,
@@ -1570,7 +1578,7 @@ describe('surface probe generations', (): void => {
       },
     );
     const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId: tileId });
-    if (!probe) throw new Error('probe was not reserved');
+    if (!probe.reserved) throw new Error('probe was not reserved');
 
     await harness.mutation(internal.surfaces.recordConnected, {
       surfaceId: tileId,
@@ -1594,6 +1602,219 @@ describe('surface probe generations', (): void => {
       slug: 'looker-pipeline-tile',
       previousMissingSurface: 'looker',
     });
+  });
+});
+
+describe('the in-flight probe guard (E-88)', (): void => {
+  const STARTED_AT = Date.UTC(2026, 8, 20, 9);
+  const DAY = 24 * 60 * 60 * 1_000;
+
+  beforeEach((): void => {
+    useSurfaceMode('real');
+    // Every timer is faked so the probes a renewal schedules wait to be run.
+    vi.useFakeTimers();
+    vi.setSystemTime(STARTED_AT);
+  });
+
+  /**
+   * An approved card with a month of access left and no scheduled probe.
+   *
+   * Args:
+   *   harness: Convex test harness.
+   *
+   * Returns:
+   *   The surface id.
+   */
+  async function approvedCard(harness: TestConvex<typeof schema>): Promise<Id<'surfaces'>> {
+    const agentId = await seedAgent(harness);
+    const surfaceId = await seedDeclared(harness, agentId);
+    await propose(harness, surfaceId);
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(surfaceId, {
+        verdict: 'approved',
+        managerApprovedAt: STARTED_AT - DAY,
+        expiresAt: STARTED_AT + 30 * DAY,
+        accessSetBy: 'approval',
+      });
+    });
+    return surfaceId;
+  }
+
+  /** Reserve a probe generation, failing the test when none is reserved. */
+  async function reserve(
+    harness: TestConvex<typeof schema>,
+    surfaceId: Id<'surfaces'>,
+    routine?: true,
+  ): Promise<number> {
+    const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId, routine });
+    if (!probe.reserved) throw new Error(`probe was not reserved: ${probe.refusal}`);
+    return probe.generation;
+  }
+
+  it('makes no routine re-probe while a probe of the card is in flight, and makes it once the lease lapses', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await approvedCard(harness);
+    const first = await reserve(harness, surfaceId, true);
+
+    vi.setSystemTime(STARTED_AT + PROBE_LEASE_MS - 1);
+    await expect(
+      harness.mutation(internal.surfaces.beginProbe, { surfaceId, routine: true }),
+    ).resolves.toEqual({ reserved: false, refusal: 'in-flight' });
+    expect(await readSurface(harness, surfaceId)).toMatchObject({
+      probeGeneration: first,
+      probeStartedAt: STARTED_AT,
+    });
+
+    // A probe that died without a result frees the card when its lease lapses.
+    vi.setSystemTime(STARTED_AT + PROBE_LEASE_MS);
+    await expect(reserve(harness, surfaceId, true)).resolves.toBe(first + 1);
+  });
+
+  it('lets a probe a person asked for supersede the one in flight, whose answer then lands nowhere', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await approvedCard(harness);
+    const routine = await reserve(harness, surfaceId, true);
+
+    vi.setSystemTime(STARTED_AT + 1_000);
+    const manual = await reserve(harness, surfaceId);
+    expect(manual).toBe(routine + 1);
+    await expect(
+      harness.mutation(internal.surfaces.recordConnected, {
+        surfaceId,
+        generation: routine,
+        toolAllowlist: ['list_issues'],
+        toolArguments: [],
+        verifiedAt: STARTED_AT + 2_000,
+      }),
+    ).resolves.toBe(false);
+    expect(await readSurface(harness, surfaceId)).toMatchObject({
+      verdict: 'approved',
+      probeStartedAt: STARTED_AT + 1_000,
+    });
+  });
+
+  it('frees the card for the next routine probe once a probe records what it found', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await approvedCard(harness);
+
+    const connecting = await reserve(harness, surfaceId, true);
+    await harness.mutation(internal.surfaces.recordConnected, {
+      surfaceId,
+      generation: connecting,
+      toolAllowlist: ['list_issues'],
+      toolArguments: [],
+      verifiedAt: STARTED_AT,
+    });
+    expect(await readSurface(harness, surfaceId)).not.toHaveProperty('probeStartedAt');
+
+    const failing = await reserve(harness, surfaceId, true);
+    await harness.mutation(internal.surfaces.recordProbeFailure, {
+      surfaceId,
+      generation: failing,
+      verdict: 'listed-dead',
+      reason: 'MCP server returned HTTP 503',
+      attemptedAt: STARTED_AT,
+    });
+    expect(await readSurface(harness, surfaceId)).not.toHaveProperty('probeStartedAt');
+
+    // A retry before the second call holds the card; a rate limit that ends the probe frees it.
+    const limited = await reserve(harness, surfaceId, true);
+    await harness.mutation(internal.surfaces.recordProbeRetry, {
+      surfaceId,
+      generation: limited,
+      reason: 'HTTP 503',
+      retryAfterMs: 5_000,
+      attemptedAt: STARTED_AT,
+    });
+    expect(await readSurface(harness, surfaceId)).toMatchObject({ probeStartedAt: STARTED_AT });
+    await harness.mutation(internal.surfaces.recordProbeRetry, {
+      surfaceId,
+      generation: limited,
+      reason: 'HTTP 429 Too Many Requests',
+      retryAfterMs: 300_000,
+      attemptedAt: STARTED_AT,
+      endsProbe: true,
+    });
+    expect(await readSurface(harness, surfaceId)).not.toHaveProperty('probeStartedAt');
+    await expect(reserve(harness, surfaceId, true)).resolves.toBe(limited + 1);
+  });
+
+  it('holds the card while a demoted probe goes on to the next rung', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const surfaceId = await seedDeclared(harness, agentId, 'Jira', 'kanban');
+    await harness.mutation(internal.surfaces.propose, {
+      surfaceId,
+      request: { target: { system: 'Jira' } },
+      whereFound: [],
+      path: 'mcp',
+      fallbackPath: 'browser-driven',
+      pathCandidates: [
+        { path: 'mcp', endpoint: 'https://mcp.jira.example/mcp' },
+        { path: 'browser-driven', endpoint: 'https://jira.example/issues' },
+      ],
+      endpoint: 'https://mcp.jira.example/mcp',
+    });
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(surfaceId, { verdict: 'approved', managerApprovedAt: STARTED_AT });
+    });
+    const first = await reserve(harness, surfaceId, true);
+    vi.setSystemTime(STARTED_AT + 60_000);
+    const demoted = await harness.mutation(internal.surfaces.demoteAfterProbeFailure, {
+      surfaceId,
+      generation: first,
+      reason: 'MCP server returned HTTP 503',
+      attemptedAt: STARTED_AT + 60_000,
+    });
+
+    expect(demoted?.generation).toBe(first + 1);
+    expect(await readSurface(harness, surfaceId)).toMatchObject({
+      probeStartedAt: STARTED_AT + 60_000,
+    });
+    vi.setSystemTime(STARTED_AT + PROBE_LEASE_MS);
+    await expect(
+      harness.mutation(internal.surfaces.beginProbe, { surfaceId, routine: true }),
+    ).resolves.toEqual({ reserved: false, refusal: 'in-flight' });
+  });
+
+  it('ends the probe in flight with the access, so a renewal after the end cannot reconnect on its answer (wave 2 review M20, m9)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await approvedCard(harness);
+    const endsAt = STARTED_AT + 30 * DAY;
+    vi.setSystemTime(endsAt - 2_000);
+    const inFlight = await reserve(harness, surfaceId, true);
+
+    vi.setSystemTime(endsAt + 1_000);
+    await harness.mutation(internal.surfaces.recordExpired, { surfaceId, now: endsAt + 1_000 });
+    await harness
+      .withIdentity({ subject: 'owner' })
+      .mutation(api.surfaces.setAccessDays, { surfaceId, days: 30 });
+
+    vi.setSystemTime(endsAt + 3_000);
+    await expect(
+      harness.mutation(internal.surfaces.recordConnected, {
+        surfaceId,
+        generation: inFlight,
+        toolAllowlist: ['list_issues'],
+        toolArguments: [],
+        verifiedAt: endsAt + 3_000,
+      }),
+    ).resolves.toBe(false);
+    const row = await readSurface(harness, surfaceId);
+    expect(row.verdict).toBe('approved');
+    expect(row).not.toHaveProperty('probeStartedAt');
+    const grants = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('permissionGrants')
+          .withIndex('by_agent_scope', (index) =>
+            index.eq('agentId', row.agentId).eq('scope', 'linear:read'),
+          )
+          .collect(),
+    );
+    expect(grants).toEqual([]);
+    // The renewal's own probe is made at once, the ended one never held the card.
+    await expect(reserve(harness, surfaceId, true)).resolves.toBe(inFlight + 2);
   });
 });
 
@@ -2481,7 +2702,7 @@ describe('access expiry (Q5)', (): void => {
     const surfaceId = await approvedSurface(harness);
     for (const verifiedAt of [APPROVED_AT + DAY, APPROVED_AT + 20 * DAY]) {
       const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
-      if (!probe) throw new Error('probe was not reserved');
+      if (!probe.reserved) throw new Error('probe was not reserved');
       await harness.mutation(internal.surfaces.recordConnected, {
         surfaceId,
         generation: probe.generation,
@@ -2500,7 +2721,10 @@ describe('access expiry (Q5)', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const surfaceId = await approvedSurface(harness);
     vi.setSystemTime(ENDS_AT + DAY);
-    await expect(harness.mutation(internal.surfaces.beginProbe, { surfaceId })).resolves.toBeNull();
+    await expect(harness.mutation(internal.surfaces.beginProbe, { surfaceId })).resolves.toEqual({
+      reserved: false,
+      refusal: 'access-ended',
+    });
     expect(await readSurface(harness, surfaceId)).toMatchObject({
       verdict: 'approved',
       reason: 'expired',
@@ -2515,7 +2739,10 @@ describe('access expiry (Q5)', (): void => {
     await harness.mutation(internal.surfaces.recordExpired, { surfaceId, now: endedAt });
 
     // A credential landed afterwards schedules a probe; the probe must not reconnect.
-    await expect(harness.mutation(internal.surfaces.beginProbe, { surfaceId })).resolves.toBeNull();
+    await expect(harness.mutation(internal.surfaces.beginProbe, { surfaceId })).resolves.toEqual({
+      reserved: false,
+      refusal: 'access-ended',
+    });
     expect(await payloads(harness, 'surface.expired')).toHaveLength(1);
 
     await harness
@@ -2544,7 +2771,7 @@ describe('access expiry (Q5)', (): void => {
     const endsAt = ENDS_AT;
     vi.setSystemTime(endsAt - 2_000);
     const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
-    if (!probe) throw new Error('probe was not reserved');
+    if (!probe.reserved) throw new Error('probe was not reserved');
     vi.setSystemTime(endsAt + 3_000);
     await expect(
       harness.mutation(internal.surfaces.demoteAfterProbeFailure, {
@@ -2572,7 +2799,7 @@ describe('access expiry (Q5)', (): void => {
       const endsAt = ENDS_AT;
       vi.setSystemTime(endsAt - 2_000);
       const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
-      if (!probe) throw new Error('probe was not reserved');
+      if (!probe.reserved) throw new Error('probe was not reserved');
       vi.setSystemTime(endsAt + 3_000);
       const written =
         outcome === 'connects'
@@ -2611,7 +2838,7 @@ describe('access expiry (Q5)', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const surfaceId = await approvedSurface(harness);
     const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
-    if (!probe) throw new Error('probe was not reserved');
+    if (!probe.reserved) throw new Error('probe was not reserved');
     await harness.mutation(internal.surfaces.recordConnected, {
       surfaceId,
       generation: probe.generation,
@@ -2657,7 +2884,7 @@ describe('access expiry (Q5)', (): void => {
     const surfaceId = await approvedSurface(harness);
     const connect = async (tools: string[], verifiedAt: number): Promise<void> => {
       const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
-      if (!probe) throw new Error('probe was not reserved');
+      if (!probe.reserved) throw new Error('probe was not reserved');
       await harness.mutation(internal.surfaces.recordConnected, {
         surfaceId,
         generation: probe.generation,
@@ -2692,7 +2919,7 @@ describe('access expiry (Q5)', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const surfaceId = await approvedSurface(harness);
     const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
-    if (!probe) throw new Error('probe was not reserved');
+    if (!probe.reserved) throw new Error('probe was not reserved');
     await harness.mutation(internal.surfaces.recordConnected, {
       surfaceId,
       generation: probe.generation,
@@ -2932,7 +3159,7 @@ describe('the read grant on reconnect (Q7)', (): void => {
     verifiedAt: number,
   ): Promise<void> {
     const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
-    if (!probe) throw new Error('probe was not reserved');
+    if (!probe.reserved) throw new Error('probe was not reserved');
     await harness.mutation(internal.surfaces.recordConnected, {
       surfaceId,
       generation: probe.generation,
@@ -2954,7 +3181,7 @@ describe('the read grant on reconnect (Q7)', (): void => {
     surfaceId: Id<'surfaces'>,
   ): Promise<void> {
     const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
-    if (!probe) throw new Error('probe was not reserved');
+    if (!probe.reserved) throw new Error('probe was not reserved');
     await harness.mutation(internal.surfaces.recordProbeFailure, {
       surfaceId,
       generation: probe.generation,
@@ -3081,7 +3308,7 @@ describe('a replaceable manager on the surface row', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const surfaceId = await seedSlackWithLadder(harness, 'ungranted');
     const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
-    if (!probe) throw new Error('probe was not reserved');
+    if (!probe.reserved) throw new Error('probe was not reserved');
     await expect(
       harness.mutation(internal.surfaces.demoteAfterProbeFailure, {
         surfaceId,
@@ -3100,7 +3327,7 @@ describe('a replaceable manager on the surface row', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const surfaceId = await seedSlackWithLadder(harness, 'listed-dead');
     const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
-    if (!probe) throw new Error('probe was not reserved');
+    if (!probe.reserved) throw new Error('probe was not reserved');
     await expect(
       harness.mutation(internal.surfaces.demoteAfterProbeFailure, {
         surfaceId,
@@ -3118,7 +3345,7 @@ describe('a replaceable manager on the surface row', (): void => {
     await harness.mutation(internal.surfaces.setStatus, { surfaceId, verdict: 'approved' });
     const connect = async (managerUserId: string, verifiedAt: number): Promise<void> => {
       const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
-      if (!probe) throw new Error('probe was not reserved');
+      if (!probe.reserved) throw new Error('probe was not reserved');
       await harness.mutation(internal.surfaces.recordConnected, {
         surfaceId,
         generation: probe.generation,
@@ -3158,7 +3385,7 @@ describe('a replaceable manager on the surface row', (): void => {
     await harness.mutation(internal.surfaces.setStatus, { surfaceId, verdict: 'approved' });
     const reserve = async (): Promise<number> => {
       const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
-      if (!probe) throw new Error('probe was not reserved');
+      if (!probe.reserved) throw new Error('probe was not reserved');
       return probe.generation;
     };
     const connect = async (managerUserId: string, verifiedAt: number): Promise<void> => {
@@ -3225,7 +3452,7 @@ describe('the approved tool list (U10 D2 (b), wave 2 review M2)', (): void => {
     });
     const probe = async (tools: string[], verifiedAt: number): Promise<void> => {
       const reserved = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
-      if (!reserved) throw new Error('probe was not reserved');
+      if (!reserved.reserved) throw new Error('probe was not reserved');
       await harness.mutation(internal.surfaces.recordConnected, {
         surfaceId,
         generation: reserved.generation,
@@ -3252,7 +3479,7 @@ describe('the approved tool list (U10 D2 (b), wave 2 review M2)', (): void => {
     const { harness, surfaceId, probe } = await approvedCard();
     await probe(['list_issues', 'save_comment'], 100);
     const failing = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
-    if (!failing) throw new Error('probe was not reserved');
+    if (!failing.reserved) throw new Error('probe was not reserved');
     await harness.mutation(internal.surfaces.recordProbeFailure, {
       surfaceId,
       generation: failing.generation,
@@ -3369,7 +3596,7 @@ describe('the approved tool list (U10 D2 (b), wave 2 review M2)', (): void => {
       await ctx.db.patch(surfaceId, { verdict: 'listed-dead' });
     });
     const failing = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
-    if (!failing) throw new Error('probe was not reserved');
+    if (!failing.reserved) throw new Error('probe was not reserved');
     await harness.mutation(internal.surfaces.demoteAfterProbeFailure, {
       surfaceId,
       generation: failing.generation,

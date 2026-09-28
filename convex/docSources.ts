@@ -1282,6 +1282,7 @@ export const applyRestatedScope = internalMutation({
         'A documented intake queue changed. Reject this card and re-run orientation before approval.',
       managerApprovedAt: undefined,
       probeGeneration: (surface.probeGeneration ?? 0) + 1,
+      probeStartedAt: undefined,
       toolAllowlist: undefined,
       approvedToolAllowlist: undefined,
       toolAllowlistApprovedAt: undefined,
@@ -1443,6 +1444,7 @@ async function supersedeCredential(
         'The previously detected credential is no longer present in synced documentation. Land a valid credential before probing again.',
       // A probe that already decrypted the retired value cannot reconnect this surface.
       probeGeneration: (surface.probeGeneration ?? 0) + 1,
+      probeStartedAt: undefined,
       toolAllowlist: undefined,
       toolArguments: undefined,
       lastVerifiedAt: undefined,

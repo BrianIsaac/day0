@@ -883,7 +883,7 @@ describe('manager channel request claims', (): void => {
       return row._id;
     });
     const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId: slackId });
-    if (!probe) throw new Error('probe was not reserved');
+    if (!probe.reserved) throw new Error('probe was not reserved');
     await harness.mutation(internal.surfaces.recordConnected, {
       surfaceId: slackId,
       generation: probe.generation,
@@ -947,7 +947,7 @@ describe('manager channel request claims', (): void => {
       return row._id;
     });
     const failed = await harness.mutation(internal.surfaces.beginProbe, { surfaceId: slackId });
-    if (!failed) throw new Error('probe was not reserved');
+    if (!failed.reserved) throw new Error('probe was not reserved');
     await harness.mutation(internal.surfaces.recordProbeFailure, {
       surfaceId: slackId,
       generation: failed.generation,
@@ -955,7 +955,7 @@ describe('manager channel request claims', (): void => {
       reason: 'the manager email boss@day0.local resolves to a deactivated Slack user.',
     });
     const reconnect = await harness.mutation(internal.surfaces.beginProbe, { surfaceId: slackId });
-    if (!reconnect) throw new Error('probe was not reserved');
+    if (!reconnect.reserved) throw new Error('probe was not reserved');
     await harness.mutation(internal.surfaces.recordConnected, {
       surfaceId: slackId,
       generation: reconnect.generation,
@@ -1379,7 +1379,7 @@ describe('manager channel request claims', (): void => {
     });
     const surfaceId = await slackSurfaceId(harness, agentId);
     const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
-    if (!probe) throw new Error('probe was not reserved');
+    if (!probe.reserved) throw new Error('probe was not reserved');
     await harness.mutation(internal.surfaces.recordConnected, {
       surfaceId,
       generation: probe.generation,

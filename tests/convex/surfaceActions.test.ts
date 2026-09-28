@@ -518,7 +518,7 @@ describe('surface probe action state', (): void => {
           _reference: unknown,
           args: Record<string, unknown>,
         ): Promise<unknown> => {
-          if (Object.keys(args).length === 1) return { surface, generation: 1 };
+          if (Object.keys(args).length === 1) return { reserved: true, surface, generation: 1 };
           if ('verdict' in args) {
             failures.push(args);
             return true;
@@ -531,7 +531,7 @@ describe('surface probe action state', (): void => {
         }),
         runAction: vi.fn(),
       } as unknown as ActionCtx,
-      surfaceId,
+      { surfaceId },
       {
         probeMcp,
         probeBrowser: vi.fn(),
@@ -606,7 +606,7 @@ describe('surface probe action state', (): void => {
           _reference: unknown,
           args: Record<string, unknown>,
         ): Promise<unknown> => {
-          if (Object.keys(args).length === 1) return { surface, generation: 1 };
+          if (Object.keys(args).length === 1) return { reserved: true, surface, generation: 1 };
           if ('verdict' in args) {
             failures.push(args);
             return true;
@@ -621,13 +621,17 @@ describe('surface probe action state', (): void => {
         runAction: fakeRunAction('provider-contract-value'),
       } as unknown as ActionCtx;
 
-      const outcome = await runSurfaceProbe(ctx, surfaceId, {
-        probeMcp,
-        probeBrowser: vi.fn(),
-        probeSlack: vi.fn(),
-        now: (): number => 1_000,
-        wait: async (): Promise<void> => undefined,
-      });
+      const outcome = await runSurfaceProbe(
+        ctx,
+        { surfaceId },
+        {
+          probeMcp,
+          probeBrowser: vi.fn(),
+          probeSlack: vi.fn(),
+          now: (): number => 1_000,
+          wait: async (): Promise<void> => undefined,
+        },
+      );
 
       expect(outcome).toMatchObject({ verdict: expectedVerdict });
       expect(outcome.reason).toContain(expectedReason);
@@ -674,7 +678,7 @@ describe('surface probe action state', (): void => {
             _reference: unknown,
             args: Record<string, unknown>,
           ): Promise<unknown> => {
-            if (Object.keys(args).length === 1) return { surface, generation: 1 };
+            if (Object.keys(args).length === 1) return { reserved: true, surface, generation: 1 };
             if ('verifiedAt' in args || 'providerBotId' in args) return true;
             return null;
           },
@@ -684,7 +688,7 @@ describe('surface probe action state', (): void => {
               : [],
           runAction: fakeRunAction('slack-contract-value'),
         } as unknown as ActionCtx,
-        surfaceId,
+        { surfaceId },
         { probeBrowser: vi.fn(), probeMcp: vi.fn(), probeSlack, now: (): number => 1_000 },
       );
       expect(outcome).toMatchObject({ verdict: 'connected' });
@@ -730,7 +734,7 @@ describe('surface probe action state', (): void => {
             _reference: unknown,
             args: Record<string, unknown>,
           ): Promise<unknown> => {
-            if (Object.keys(args).length === 1) return { surface, generation: 1 };
+            if (Object.keys(args).length === 1) return { reserved: true, surface, generation: 1 };
             if ('providerBotId' in args) {
               writes.push(
                 `identity ${String(args.providerBotId)} at generation ${String(args.generation)}`,
@@ -749,7 +753,7 @@ describe('surface probe action state', (): void => {
               : [],
           runAction: fakeRunAction('slack-contract-value'),
         } as unknown as ActionCtx,
-        surfaceId,
+        { surfaceId },
         { probeBrowser: vi.fn(), probeMcp: vi.fn(), probeSlack, now: (): number => 1_000 },
       );
       return { outcome, writes };
@@ -807,7 +811,7 @@ describe('surface probe action state', (): void => {
           _reference: unknown,
           args: Record<string, unknown>,
         ): Promise<unknown> => {
-          if (Object.keys(args).length === 1) return { surface, generation: 1 };
+          if (Object.keys(args).length === 1) return { reserved: true, surface, generation: 1 };
           if ('verifiedAt' in args) return true;
           return null;
         },
@@ -817,7 +821,7 @@ describe('surface probe action state', (): void => {
             : pages,
         runAction: fakeRunAction('slack-contract-value'),
       } as unknown as ActionCtx,
-      surfaceId,
+      { surfaceId },
       { probeBrowser: vi.fn(), probeMcp: vi.fn(), probeSlack, now: (): number => 1_000 },
     );
     expect(probeSlack).toHaveBeenCalledOnce();
@@ -834,6 +838,7 @@ describe('surface probe action state', (): void => {
         mutationArguments.push(args);
         if (Object.keys(args).length === 1 && args.surfaceId === surfaceId) {
           return {
+            reserved: true,
             generation: 4,
             surface: {
               _id: surfaceId,
@@ -877,12 +882,16 @@ describe('surface probe action state', (): void => {
       };
     });
 
-    const result = await runSurfaceProbe(ctx, surfaceId, {
-      probeMcp,
-      probeBrowser: vi.fn(),
-      probeSlack: vi.fn(),
-      now: (): number => 1_000,
-    });
+    const result = await runSurfaceProbe(
+      ctx,
+      { surfaceId },
+      {
+        probeMcp,
+        probeBrowser: vi.fn(),
+        probeSlack: vi.fn(),
+        now: (): number => 1_000,
+      },
+    );
 
     expect(runAction).toHaveBeenCalledOnce();
     expect(probeMcp).toHaveBeenCalledOnce();
@@ -919,6 +928,7 @@ describe('surface probe action state', (): void => {
         mutationArguments.push(args);
         if (Object.keys(args).length === 1) {
           return {
+            reserved: true,
             generation: 1,
             surface: {
               _id: surfaceId,
@@ -946,12 +956,16 @@ describe('surface probe action state', (): void => {
     } as unknown as ActionCtx;
 
     await expect(
-      runSurfaceProbe(ctx, surfaceId, {
-        probeMcp: async () => ({ toolAllowlist: ['list_issues'], toolArguments: [] }),
-        probeBrowser: vi.fn(),
-        probeSlack: vi.fn(),
-        now: (): number => 1_000,
-      }),
+      runSurfaceProbe(
+        ctx,
+        { surfaceId },
+        {
+          probeMcp: async () => ({ toolAllowlist: ['list_issues'], toolArguments: [] }),
+          probeBrowser: vi.fn(),
+          probeSlack: vi.fn(),
+          now: (): number => 1_000,
+        },
+      ),
     ).resolves.toEqual({
       verdict: 'skipped',
       reason: 'A newer surface probe superseded this result.',
@@ -1106,7 +1120,7 @@ describe('probing a documented API that is not Slack', (): void => {
           _reference: unknown,
           args: Record<string, unknown>,
         ): Promise<unknown> => {
-          if (Object.keys(args).length === 1) return { surface, generation: 1 };
+          if (Object.keys(args).length === 1) return { reserved: true, surface, generation: 1 };
           if ('verifiedAt' in args) {
             connected.push(args);
             return true;
@@ -1127,7 +1141,7 @@ describe('probing a documented API that is not Slack', (): void => {
             : pages,
         runAction: fakeRunAction('tracker-key'),
       } as unknown as ActionCtx,
-      surfaceId,
+      { surfaceId },
       {
         probeBrowser: vi.fn(),
         probeMcp: vi.fn(),
@@ -1291,6 +1305,12 @@ describe('the hourly re-probe sweep', (): void => {
         .map((job) => (job.args[0] as { surfaceId: Id<'surfaces'> }).surfaceId)
         .sort(),
     ).toEqual([ending, later].sort());
+    // Each is routine: it yields to a probe of the card already in flight (E-88).
+    expect(
+      rows.jobs
+        .filter((job) => job.name === 'surfaceActions:probeInternal')
+        .map((job) => (job.args[0] as { routine?: boolean }).routine),
+    ).toEqual([true, true]);
   });
 });
 
@@ -1945,7 +1965,7 @@ describe('probing the browser floor', (): void => {
         runQuery: harness.query.bind(harness),
         runAction: fakeRunAction('pipeline-tile-local'),
       } as unknown as ActionCtx,
-      surfaceId,
+      { surfaceId },
       {
         probeBrowser: async (probe: BrowserProbeRequest) =>
           await probeBrowserSurface(probe, () => refusing.client),
@@ -2061,7 +2081,7 @@ describe('probing the browser floor', (): void => {
         runQuery: harness.query.bind(harness),
         runAction: fakeRunAction('pipeline-tile-local'),
       } as unknown as ActionCtx,
-      surfaceId,
+      { surfaceId },
       { probeBrowser, probeMcp: vi.fn(), probeSlack: vi.fn(), now: (): number => 1_000 },
     );
     expect(probeBrowser).toHaveBeenCalledWith({
@@ -2086,7 +2106,7 @@ describe('probing the browser floor', (): void => {
         runQuery: harness.query.bind(harness),
         runAction: fakeRunAction(new Error('no credential to decrypt')),
       } as unknown as ActionCtx,
-      surfaceId,
+      { surfaceId },
       { probeBrowser, probeMcp: vi.fn(), probeSlack: vi.fn(), now: (): number => 1_000 },
     );
     expect(outcome.verdict).toBe('ungranted');
@@ -2110,7 +2130,7 @@ describe('probing the browser floor', (): void => {
         runQuery: harness.query.bind(harness),
         runAction: fakeRunAction(new Error('no credential to decrypt')),
       } as unknown as ActionCtx,
-      surfaceId,
+      { surfaceId },
       { probeBrowser, probeMcp: vi.fn(), probeSlack: vi.fn(), now: (): number => 1_000 },
     );
     // Not `listed-dead`: the enterprise's system is not what is missing.
@@ -2134,7 +2154,7 @@ describe('probing the browser floor', (): void => {
           runQuery: harness.query.bind(harness),
           runAction: fakeRunAction(new Error('no credential to decrypt')),
         } as unknown as ActionCtx,
-        surfaceId,
+        { surfaceId },
         {
           probeBrowser,
           probeMcp: vi.fn(),
@@ -2201,7 +2221,7 @@ describe('probing the browser floor', (): void => {
         runQuery: harness.query.bind(harness),
         runAction: fakeRunAction('jira-contract-credential'),
       } as unknown as ActionCtx,
-      surfaceId,
+      { surfaceId },
       {
         probeBrowser: vi.fn(),
         probeMcp: (endpoint: string | undefined, credential: string): Promise<McpDiscovery> =>
@@ -2276,7 +2296,7 @@ describe('probing the browser floor', (): void => {
           runQuery: harness.query.bind(harness),
           runAction: fakeRunAction(new Error('no credential to decrypt')),
         } as unknown as ActionCtx,
-        reportsId,
+        { surfaceId: reportsId },
         { probeBrowser, probeMcp: vi.fn(), probeSlack: vi.fn(), now: (): number => 1_000 },
       ),
     ).resolves.toMatchObject({ verdict: 'connected' });
@@ -2338,7 +2358,7 @@ describe('probing the browser floor', (): void => {
         runQuery: harness.query.bind(harness),
         runAction: fakeRunAction(new Error('credential row is gone')),
       } as unknown as ActionCtx,
-      surfaceId,
+      { surfaceId },
       { probeBrowser, probeMcp: vi.fn(), probeSlack: vi.fn(), now: (): number => 1_000 },
     );
     expect(outcome).toMatchObject({
@@ -2427,7 +2447,7 @@ describe('probing the browser floor', (): void => {
         runQuery: harness.query.bind(harness),
         runAction: fakeRunAction('jira-contract-credential'),
       } as unknown as ActionCtx,
-      surfaceId,
+      { surfaceId },
       {
         probeBrowser,
         probeMcp,
@@ -2629,14 +2649,18 @@ describe('one failed probe does not write listed-dead', (): void => {
     const clients = scriptedFactory([fails(RUN_TRANSPORT_FAILURE), answers]);
     const wait = vi.fn(async (): Promise<void> => undefined);
 
-    const outcome = await runSurfaceProbe(probeContext(harness), surfaceId, {
-      probeMcp: (endpoint, credential) =>
-        probeMcpSurface(endpoint, credential, clients.factory, publicDns, reachable),
-      probeBrowser: vi.fn(),
-      probeSlack: vi.fn(),
-      now: (): number => 1_000,
-      wait,
-    });
+    const outcome = await runSurfaceProbe(
+      probeContext(harness),
+      { surfaceId },
+      {
+        probeMcp: (endpoint, credential) =>
+          probeMcpSurface(endpoint, credential, clients.factory, publicDns, reachable),
+        probeBrowser: vi.fn(),
+        probeSlack: vi.fn(),
+        now: (): number => 1_000,
+        wait,
+      },
+    );
 
     expect(outcome).toMatchObject({ verdict: 'connected' });
     expect(clients.made()).toBe(2);
@@ -2663,20 +2687,24 @@ describe('one failed probe does not write listed-dead', (): void => {
     const clients = scriptedFactory([fails(RUN_TRANSPORT_FAILURE)]);
     const wait = vi.fn(async (): Promise<void> => undefined);
 
-    const outcome = await runSurfaceProbe(probeContext(harness), surfaceId, {
-      probeMcp: (endpoint, credential) =>
-        probeMcpSurface(
-          endpoint,
-          credential,
-          clients.factory,
-          publicDns,
-          async (): Promise<string> => 'A request without the key failed too: ECONNRESET.',
-        ),
-      probeBrowser: vi.fn(),
-      probeSlack: vi.fn(),
-      now: (): number => 1_000,
-      wait,
-    });
+    const outcome = await runSurfaceProbe(
+      probeContext(harness),
+      { surfaceId },
+      {
+        probeMcp: (endpoint, credential) =>
+          probeMcpSurface(
+            endpoint,
+            credential,
+            clients.factory,
+            publicDns,
+            async (): Promise<string> => 'A request without the key failed too: ECONNRESET.',
+          ),
+        probeBrowser: vi.fn(),
+        probeSlack: vi.fn(),
+        now: (): number => 1_000,
+        wait,
+      },
+    );
 
     expect(outcome.verdict).toBe('listed-dead');
     expect(outcome.reason).toContain('any available HTTP transport');
@@ -2705,14 +2733,18 @@ describe('one failed probe does not write listed-dead', (): void => {
     const wait = vi.fn(async (): Promise<void> => undefined);
     const inspect = vi.fn(reachable);
 
-    const outcome = await runSurfaceProbe(probeContext(harness), surfaceId, {
-      probeMcp: (endpoint, credential) =>
-        probeMcpSurface(endpoint, credential, clients.factory, publicDns, inspect),
-      probeBrowser: vi.fn(),
-      probeSlack: vi.fn(),
-      now: (): number => 1_000,
-      wait,
-    });
+    const outcome = await runSurfaceProbe(
+      probeContext(harness),
+      { surfaceId },
+      {
+        probeMcp: (endpoint, credential) =>
+          probeMcpSurface(endpoint, credential, clients.factory, publicDns, inspect),
+        probeBrowser: vi.fn(),
+        probeSlack: vi.fn(),
+        now: (): number => 1_000,
+        wait,
+      },
+    );
 
     expect(outcome.verdict).toBe('ungranted');
     expect(outcome.reason).toContain('401');
@@ -2735,14 +2767,18 @@ describe('one failed probe does not write listed-dead', (): void => {
     ]);
     const wait = vi.fn(async (): Promise<void> => undefined);
 
-    const outcome = await runSurfaceProbe(probeContext(harness), surfaceId, {
-      probeMcp: (endpoint, credential) =>
-        probeMcpSurface(endpoint, credential, clients.factory, publicDns, reachable),
-      probeBrowser: vi.fn(),
-      probeSlack: vi.fn(),
-      now: (): number => 1_000,
-      wait,
-    });
+    const outcome = await runSurfaceProbe(
+      probeContext(harness),
+      { surfaceId },
+      {
+        probeMcp: (endpoint, credential) =>
+          probeMcpSurface(endpoint, credential, clients.factory, publicDns, reachable),
+        probeBrowser: vi.fn(),
+        probeSlack: vi.fn(),
+        now: (): number => 1_000,
+        wait,
+      },
+    );
 
     expect(outcome.verdict).toBe('connected');
     expect(clients.made()).toBe(2);
@@ -2754,14 +2790,18 @@ describe('one failed probe does not write listed-dead', (): void => {
     const clients = scriptedFactory([{ definitions: { surface: {} }, errors: {} }]);
     const wait = vi.fn(async (): Promise<void> => undefined);
 
-    const outcome = await runSurfaceProbe(probeContext(harness), surfaceId, {
-      probeMcp: (endpoint, credential) =>
-        probeMcpSurface(endpoint, credential, clients.factory, publicDns, reachable),
-      probeBrowser: vi.fn(),
-      probeSlack: vi.fn(),
-      now: (): number => 1_000,
-      wait,
-    });
+    const outcome = await runSurfaceProbe(
+      probeContext(harness),
+      { surfaceId },
+      {
+        probeMcp: (endpoint, credential) =>
+          probeMcpSurface(endpoint, credential, clients.factory, publicDns, reachable),
+        probeBrowser: vi.fn(),
+        probeSlack: vi.fn(),
+        now: (): number => 1_000,
+        wait,
+      },
+    );
 
     expect(outcome.verdict).toBe('ungranted');
     expect(clients.made()).toBe(1);
@@ -2773,16 +2813,20 @@ describe('one failed probe does not write listed-dead', (): void => {
     const surfaceId = await approvedSurface(harness, { path: 'mcp' });
     const clients = scriptedFactory([fails(RUN_TRANSPORT_FAILURE), answers]);
 
-    const outcome = await runSurfaceProbe(probeContext(harness), surfaceId, {
-      probeMcp: (endpoint, credential) =>
-        probeMcpSurface(endpoint, credential, clients.factory, publicDns, reachable),
-      probeBrowser: vi.fn(),
-      probeSlack: vi.fn(),
-      now: (): number => 1_000,
-      wait: async (): Promise<void> => {
-        await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+    const outcome = await runSurfaceProbe(
+      probeContext(harness),
+      { surfaceId },
+      {
+        probeMcp: (endpoint, credential) =>
+          probeMcpSurface(endpoint, credential, clients.factory, publicDns, reachable),
+        probeBrowser: vi.fn(),
+        probeSlack: vi.fn(),
+        now: (): number => 1_000,
+        wait: async (): Promise<void> => {
+          await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+        },
       },
-    });
+    );
 
     expect(outcome).toEqual({
       verdict: 'skipped',
@@ -2791,23 +2835,101 @@ describe('one failed probe does not write listed-dead', (): void => {
     expect(clients.made()).toBe(1);
   });
 
+  it('makes one provider round-trip for two routine probes of one card within the lease (E-88)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await approvedSurface(harness, { path: 'mcp' });
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve): void => {
+      release = resolve;
+    });
+    const probeMcp = vi.fn(async () => {
+      await held;
+      return { toolAllowlist: ['list_issues'], toolArguments: [] };
+    });
+    const dependencies = { probeMcp, probeBrowser: vi.fn(), probeSlack: vi.fn(), now: () => 1_000 };
+
+    const sweep = runSurfaceProbe(
+      probeContext(harness),
+      { surfaceId, routine: true },
+      dependencies,
+    );
+    await vi.waitFor((): void => expect(probeMcp).toHaveBeenCalledTimes(1));
+    const again = await runSurfaceProbe(
+      probeContext(harness),
+      { surfaceId, routine: true },
+      dependencies,
+    );
+    release();
+
+    expect(again).toEqual({
+      verdict: 'skipped',
+      reason: 'A probe of this card is already running; this routine re-probe was not made.',
+    });
+    await expect(sweep).resolves.toMatchObject({ verdict: 'connected' });
+    expect(probeMcp).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets the manager's Probe supersede a routine probe in flight, whose answer is then dropped (E-88)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await approvedSurface(harness, { path: 'mcp' });
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve): void => {
+      release = resolve;
+    });
+    const probeMcp = vi
+      .fn(
+        async (): Promise<{ toolAllowlist: string[]; toolArguments: [] }> => ({
+          toolAllowlist: ['list_issues', 'save_comment'],
+          toolArguments: [],
+        }),
+      )
+      .mockImplementationOnce(async () => {
+        await held;
+        return { toolAllowlist: ['list_issues'], toolArguments: [] };
+      });
+    const dependencies = { probeMcp, probeBrowser: vi.fn(), probeSlack: vi.fn(), now: () => 1_000 };
+
+    const sweep = runSurfaceProbe(
+      probeContext(harness),
+      { surfaceId, routine: true },
+      dependencies,
+    );
+    await vi.waitFor((): void => expect(probeMcp).toHaveBeenCalledTimes(1));
+    await expect(
+      runSurfaceProbe(probeContext(harness), { surfaceId }, dependencies),
+    ).resolves.toMatchObject({ verdict: 'connected' });
+    release();
+
+    await expect(sweep).resolves.toEqual({
+      verdict: 'skipped',
+      reason: 'A newer surface probe superseded this result.',
+    });
+    expect(probeMcp).toHaveBeenCalledTimes(2);
+    const row = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+    expect(row?.toolAllowlist).toEqual(['list_issues', 'save_comment']);
+  });
+
   it('makes no second call with the key when the approval was withdrawn during the wait', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const surfaceId = await approvedSurface(harness, { path: 'mcp' });
     const clients = scriptedFactory([fails(RUN_TRANSPORT_FAILURE), answers]);
 
-    const outcome = await runSurfaceProbe(probeContext(harness), surfaceId, {
-      probeMcp: (endpoint, credential) =>
-        probeMcpSurface(endpoint, credential, clients.factory, publicDns, reachable),
-      probeBrowser: vi.fn(),
-      probeSlack: vi.fn(),
-      now: (): number => 1_000,
-      wait: async (): Promise<void> => {
-        await harness.run(async (ctx): Promise<void> => {
-          await ctx.db.patch(surfaceId, { verdict: 'proposed' });
-        });
+    const outcome = await runSurfaceProbe(
+      probeContext(harness),
+      { surfaceId },
+      {
+        probeMcp: (endpoint, credential) =>
+          probeMcpSurface(endpoint, credential, clients.factory, publicDns, reachable),
+        probeBrowser: vi.fn(),
+        probeSlack: vi.fn(),
+        now: (): number => 1_000,
+        wait: async (): Promise<void> => {
+          await harness.run(async (ctx): Promise<void> => {
+            await ctx.db.patch(surfaceId, { verdict: 'proposed' });
+          });
+        },
       },
-    });
+    );
 
     expect(outcome.verdict).toBe('skipped');
     expect(clients.made()).toBe(1);
@@ -2823,14 +2945,18 @@ describe('one failed probe does not write listed-dead', (): void => {
       throw new TypeError('fetch failed', { cause: { code: 'ECONNRESET' } });
     });
 
-    const outcome = await runSurfaceProbe(probeContext(harness), surfaceId, {
-      probeMcp: vi.fn(),
-      probeBrowser: vi.fn(),
-      probeSlack: (credential, bossEmail, policy, _fetcher, channels) =>
-        probeSlackSurface(credential, bossEmail, policy, fetcher, channels),
-      now: (): number => 1_000,
-      wait,
-    });
+    const outcome = await runSurfaceProbe(
+      probeContext(harness),
+      { surfaceId },
+      {
+        probeMcp: vi.fn(),
+        probeBrowser: vi.fn(),
+        probeSlack: (credential, bossEmail, policy, _fetcher, channels) =>
+          probeSlackSurface(credential, bossEmail, policy, fetcher, channels),
+        now: (): number => 1_000,
+        wait,
+      },
+    );
 
     expect(outcome.verdict).toBe('listed-dead');
     expect(outcome.reason).toBe('Slack auth.test could not be reached: ECONNRESET.');
@@ -2850,14 +2976,18 @@ describe('one failed probe does not write listed-dead', (): void => {
         }),
     );
 
-    const outcome = await runSurfaceProbe(probeContext(harness), surfaceId, {
-      probeMcp: vi.fn(),
-      probeBrowser: vi.fn(),
-      probeSlack: (credential, bossEmail, policy, _fetcher, channels) =>
-        probeSlackSurface(credential, bossEmail, policy, fetcher, channels),
-      now: (): number => 1_000,
-      wait,
-    });
+    const outcome = await runSurfaceProbe(
+      probeContext(harness),
+      { surfaceId },
+      {
+        probeMcp: vi.fn(),
+        probeBrowser: vi.fn(),
+        probeSlack: (credential, bossEmail, policy, _fetcher, channels) =>
+          probeSlackSurface(credential, bossEmail, policy, fetcher, channels),
+        now: (): number => 1_000,
+        wait,
+      },
+    );
 
     expect(outcome.verdict).toBe('listed-dead');
     expect(outcome.reason).toBe('Slack auth.test answered HTTP 502.');
@@ -2876,7 +3006,7 @@ describe('one failed probe does not write listed-dead', (): void => {
     const runAfter = vi.fn(async (): Promise<void> => undefined);
     const outcome = await runSurfaceProbe(
       { ...probeContext(harness), scheduler: { runAfter } } as unknown as ActionCtx,
-      surfaceId,
+      { surfaceId },
       {
         probeMcp: vi.fn(),
         probeBrowser: vi.fn(),
@@ -2956,8 +3086,13 @@ describe('one failed probe does not write listed-dead', (): void => {
     expect(surface?.verdict).toBe('approved');
     expect(fetcher).toHaveBeenCalledOnce();
     expect(wait).not.toHaveBeenCalled();
-    // An approved card is not in the hourly sweep, so its next probe is scheduled.
-    expect(runAfter).toHaveBeenCalledWith(900_000, expect.anything(), { surfaceId });
+    // An approved card is not in the hourly sweep, so its next probe is
+    // scheduled, as a routine one; the rate-limited probe has ended (E-88).
+    expect(runAfter).toHaveBeenCalledWith(900_000, expect.anything(), {
+      surfaceId,
+      routine: true,
+    });
+    expect(surface).not.toHaveProperty('probeStartedAt');
   });
 
   it('does not retry a Slack token the workspace refused', async (): Promise<void> => {
@@ -2968,14 +3103,18 @@ describe('one failed probe does not write listed-dead', (): void => {
       async (): Promise<Response> => slackResponse({ ok: false, error: 'invalid_auth' }),
     );
 
-    const outcome = await runSurfaceProbe(probeContext(harness), surfaceId, {
-      probeMcp: vi.fn(),
-      probeBrowser: vi.fn(),
-      probeSlack: (credential, bossEmail, policy, _fetcher, channels) =>
-        probeSlackSurface(credential, bossEmail, policy, fetcher, channels),
-      now: (): number => 1_000,
-      wait,
-    });
+    const outcome = await runSurfaceProbe(
+      probeContext(harness),
+      { surfaceId },
+      {
+        probeMcp: vi.fn(),
+        probeBrowser: vi.fn(),
+        probeSlack: (credential, bossEmail, policy, _fetcher, channels) =>
+          probeSlackSurface(credential, bossEmail, policy, fetcher, channels),
+        now: (): number => 1_000,
+        wait,
+      },
+    );
 
     expect(outcome.verdict).toBe('ungranted');
     expect(fetcher).toHaveBeenCalledOnce();
@@ -2996,13 +3135,17 @@ describe('one failed probe does not write listed-dead', (): void => {
       )
       .mockResolvedValueOnce({ toolAllowlist: ['browser_navigate'], toolArguments: [] });
 
-    const outcome = await runSurfaceProbe(probeContext(harness), surfaceId, {
-      probeMcp: vi.fn(),
-      probeBrowser,
-      probeSlack: vi.fn(),
-      now: (): number => 1_000,
-      wait,
-    });
+    const outcome = await runSurfaceProbe(
+      probeContext(harness),
+      { surfaceId },
+      {
+        probeMcp: vi.fn(),
+        probeBrowser,
+        probeSlack: vi.fn(),
+        now: (): number => 1_000,
+        wait,
+      },
+    );
 
     expect(outcome.verdict).toBe('connected');
     expect(probeBrowser).toHaveBeenCalledTimes(2);
@@ -3013,13 +3156,17 @@ describe('one failed probe does not write listed-dead', (): void => {
       throw new Error(BROWSER_DRIVER_ABSENT_REASON);
     });
     wait.mockClear();
-    const second = await runSurfaceProbe(probeContext(harness), absent, {
-      probeMcp: vi.fn(),
-      probeBrowser: driverDown,
-      probeSlack: vi.fn(),
-      now: (): number => 1_000,
-      wait,
-    });
+    const second = await runSurfaceProbe(
+      probeContext(harness),
+      { surfaceId: absent },
+      {
+        probeMcp: vi.fn(),
+        probeBrowser: driverDown,
+        probeSlack: vi.fn(),
+        now: (): number => 1_000,
+        wait,
+      },
+    );
     expect(second.verdict).toBe('ungranted');
     expect(driverDown).toHaveBeenCalledOnce();
     expect(wait).not.toHaveBeenCalled();
