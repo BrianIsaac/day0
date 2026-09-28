@@ -672,6 +672,19 @@ describe('the env file', (): void => {
     expect(derived.DAY0_TEST_SLACK_AUTHORIZE_URL).toBe('http://127.0.0.1:44090/oauth/v2/authorize');
   });
 
+  it('names a bed that runs the offline rung an evaluation bed, and keeps a name the file gives', (): void => {
+    const ports = bedPorts({});
+    expect(bedEnvDefaults('day0-a7-abc123', BED_PROFILES, {}, ports).DAY0_EVALUATION_BED).toBe(
+      'day0-a7-abc123',
+    );
+    expect(
+      bedEnvDefaults('day0-a7-abc123', BED_PROFILES, { DAY0_EVALUATION_BED: 'kept' }, ports),
+    ).not.toHaveProperty('DAY0_EVALUATION_BED');
+    expect(bedEnvDefaults('day0-a7-abc123', ['real'], {}, ports)).not.toHaveProperty(
+      'DAY0_EVALUATION_BED',
+    );
+  });
+
   it('leaves a correct Slack seam alone and refuses an unsafe address', (): void => {
     const ports = bedPorts({});
     expect(bedEnvDefaults('day0-a7-abc123', ['real'], {}, ports)).not.toHaveProperty(

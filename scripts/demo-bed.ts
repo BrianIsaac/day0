@@ -1534,6 +1534,9 @@ export function bedEnvDefaults(
     if (!values.DAY0_TEST_SLACK_API_URL) derived.DAY0_TEST_SLACK_API_URL = TEST_SLACK_API_URL;
     if (!values.DAY0_TEST_SLACK_AUTHORIZE_URL)
       derived.DAY0_TEST_SLACK_AUTHORIZE_URL = `http://127.0.0.1:${ports.fakeSlack}/oauth/v2/authorize`;
+    // The offline rung is the revocation trial, which refuses a deployment
+    // that does not name itself an evaluation bed (N9).
+    if (!values.DAY0_EVALUATION_BED) derived.DAY0_EVALUATION_BED = project;
   }
   return derived;
 }
