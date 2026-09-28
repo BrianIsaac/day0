@@ -215,17 +215,45 @@ export function decisionIdFromBytes(bytes: Uint8Array): string {
 function chatToolArguments(
   surface: SurfaceRecord,
   tool: string,
-): { channel: string; text: string } {
+): { channel: string; text: string; thread?: string } {
   const names = surface.toolArguments?.find((entry) => entry.tool === tool)?.arguments ?? [];
   const channel = names.find((name) =>
     /channel|conversation|recipient|destination|chat/i.test(name),
   );
   const text = names.find((name) => /text|body|message|content/i.test(name));
-  return { channel: channel ?? 'channel', text: text ?? 'text' };
+  const thread = names.find((name) => /thread/i.test(name));
+  return {
+    channel: channel ?? 'channel',
+    text: text ?? 'text',
+    ...(thread ? { thread } : {}),
+  };
 }
 
-/** Build one manager-DM action through the connected chat surface's own adapter path. */
-export function managerMessageAction(surface: SurfaceRecord, text: string): MockAction {
+/** The documented Slack headers every manager-DM request carries; the secret is placed by the gate. */
+const SLACK_JSON_HEADERS = JSON.stringify({
+  Authorization: 'Bearer {{secret}}',
+  'Content-Type': 'application/json; charset=utf-8',
+});
+
+/** Where in the manager DM a message goes: under Day0's own request, when it answers one. */
+export interface ManagerMessagePlacement {
+  /** The provider timestamp of the message to thread under. */
+  readonly threadTs?: string;
+}
+
+/**
+ * Build one manager-DM action through the connected chat surface's own adapter path.
+ *
+ * A message that answers Day0's own request (an acknowledgement) is threaded
+ * under it (M finding 3): on the documented API by `thread_ts`, over MCP by
+ * the thread argument the tool advertised at probe time, and at the top of
+ * the DM when the tool advertised none.
+ */
+export function managerMessageAction(
+  surface: SurfaceRecord,
+  text: string,
+  placement: ManagerMessagePlacement = {},
+): MockAction {
   if (surface.class !== 'chat' || !surface.managerDmChannelId) {
     throw new Error('surface is not a manager chat channel');
   }
@@ -234,7 +262,16 @@ export function managerMessageAction(surface: SurfaceRecord, text: string): Mock
   );
   if (!postTool) throw new Error('manager chat surface exposes no message-send operation');
   const names = chatToolArguments(surface, postTool);
-  const body = { [names.channel]: surface.managerDmChannelId, [names.text]: text };
+  const thread = placement.threadTs
+    ? surface.path === 'mcp'
+      ? names.thread
+      : 'thread_ts'
+    : undefined;
+  const body = {
+    [names.channel]: surface.managerDmChannelId,
+    [names.text]: text,
+    ...(thread && placement.threadTs ? { [thread]: placement.threadTs } : {}),
+  };
   if (surface.path === 'mcp') {
     return {
       tool: 'mcp.call',
@@ -248,15 +285,41 @@ export function managerMessageAction(surface: SurfaceRecord, text: string): Mock
         surface: surface.slug,
         method: 'POST',
         path: postTool,
-        headersJson: JSON.stringify({
-          Authorization: 'Bearer {{secret}}',
-          'Content-Type': 'application/json; charset=utf-8',
-        }),
+        headersJson: SLACK_JSON_HEADERS,
         body: JSON.stringify(body),
       },
     };
   }
   throw new Error(`manager chat path ${surface.path ?? 'unknown'} cannot send messages`);
+}
+
+/**
+ * Build the edit of one of Day0's own messages in the manager DM, when the
+ * surface can make one: a documented API whose card allowlisted
+ * `chat.update`. MCP chat tools advertise no edit, so there is none there.
+ *
+ * @param ts - The provider timestamp of the message to edit.
+ * @returns The action, or undefined when the surface cannot edit a message.
+ */
+export function managerMessageUpdateAction(
+  surface: SurfaceRecord,
+  ts: string,
+  text: string,
+): MockAction | undefined {
+  if (surface.class !== 'chat' || !surface.managerDmChannelId) return undefined;
+  if (surface.path !== 'documented-api') return undefined;
+  const updateTool = surface.toolAllowlist?.find((tool) => /^\/*chat\.update$/.test(tool));
+  if (!updateTool) return undefined;
+  return {
+    tool: 'http.request',
+    args: {
+      surface: surface.slug,
+      method: 'POST',
+      path: updateTool,
+      headersJson: SLACK_JSON_HEADERS,
+      body: JSON.stringify({ channel: surface.managerDmChannelId, ts, text }),
+    },
+  };
 }
 
 function oneLine(value: unknown, fallback: string): string {
