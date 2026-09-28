@@ -1099,6 +1099,8 @@ describe('real surface intake', (): void => {
       }),
       surfaceRow('slack', 'Slack', 'chat', {
         credentialId: slackCredential,
+        // The chat reader reads Slack's documented Web API only.
+        endpoint: 'https://slack.com/api/',
         toolAllowlist: ['conversations.list', 'conversations.history'],
         providerIdentityId: 'UBOT',
         providerBotId: 'BBOT',
@@ -4036,7 +4038,7 @@ describe('polling that survives a 429 (step 17, Q13)', (): void => {
     expect([...harness.seeds.keys()]).toEqual(['agent-intake:slack:CREVOPS:1770000000.000100']);
     expect(harness.records[0]?.polledAt).toBeUndefined();
     expect(harness.records[0]?.skipReason).toBe(
-      'intake read in part; read again next time: #revops-asks (Slack conversations.history was rate limited (ratelimited).)',
+      'intake read in part; read again next time: #revops-asks (Slack conversations.history was not answered now (ratelimited).)',
     );
   });
 
@@ -4056,7 +4058,9 @@ describe('polling that survives a 429 (step 17, Q13)', (): void => {
         },
       }),
     ).resolves.toMatchObject({ candidates: 0, polled: 0, skipped: 1 });
-    expect(harness.records[0]?.skipReason).toBe('intake failed: not_in_channel');
+    expect(harness.records[0]?.skipReason).toBe(
+      'intake failed: Slack conversations.history failed: not_in_channel',
+    );
   });
 
   it('finds an approved channel past the third page of the channel list', async (): Promise<void> => {
@@ -4338,7 +4342,7 @@ describe('decision replies one message at a time, and the DM read only when some
       {
         surfaceId: id<'surfaces'>('surface-slack'),
         failure:
-          'decision poll read in part; read again next time: the thread of decision ab3xyz (internal_error)',
+          'decision poll read in part; read again next time: the thread of decision ab3xyz (Slack conversations.replies failed: internal_error)',
       },
     ]);
   });

@@ -24,6 +24,16 @@ import type { McpConnection } from '../src/surfaces/mcp';
 import { browserComponentRefusal } from '../src/surfaces/browser';
 import { documentedChannelNames } from '../src/surfaces/slack-policy';
 import {
+  ChatReadRefused,
+  chatReaderFor,
+  MAX_HISTORY_PAGES,
+  type ChatChannel,
+  type ChatMessage,
+  type ChatReader,
+} from '../src/surfaces/chat-reader';
+import { slackApiBaseUrl } from '../src/surfaces/slack-endpoint';
+import { toSurfaceRecord } from '../src/surfaces/records';
+import {
   approvedChannelNames,
   approvedLinearScope,
   emptyScopeReason,
@@ -67,14 +77,6 @@ const PROVIDER_TIMEOUT_MS = 10_000;
  */
 const SWEEP_WAIT_BUDGET_MS = 6 * 60_000;
 const MAX_MCP_PAGES = 5;
-/**
- * A bound on the channel list walk, not a budget: the walk stops as soon as
- * every approved channel is found, and a workspace with more public channels
- * than this (10,000 at 200 a page) is refused with the reason rather than read
- * in part.
- */
-const MAX_SLACK_CHANNEL_PAGES = 50;
-const MAX_SLACK_HISTORY_PAGES = 5;
 const PAGE_SIZE = 100;
 
 type CredentialId = GenericId<'credentials'>;
@@ -238,22 +240,6 @@ interface LinearScope {
 interface McpPage {
   issues: Record<string, unknown>[];
   nextCursor?: string;
-}
-
-interface SlackChannel {
-  id: string;
-  name: string;
-}
-
-interface SlackMessage {
-  text: string;
-  ts: string;
-  user?: string;
-  /** The posting app's bot id; the only author mark on a post sent under a customised name. */
-  botId?: string;
-  appId?: string;
-  /** The parent message when the mention itself sits inside a thread. */
-  threadTs?: string;
 }
 
 interface ChatPollResult {
@@ -1178,179 +1164,7 @@ async function pollLinear(
   }
 }
 
-/**
- * Call one allowlisted Slack read method and enforce Slack's in-band errors.
- *
- * Args:
- *   fetcher: HTTP implementation.
- *   credential: Decrypted Slack bot token.
- *   method: Allowed Slack Web API read method.
- *   query: Query parameters.
- *
- * Returns:
- *   Successful response object.
- */
-async function slackGet(
-  fetcher: IntakeFetcher,
-  credential: string,
-  method: 'auth.test' | 'conversations.list' | 'conversations.history' | 'conversations.replies',
-  query: Record<string, string>,
-): Promise<Record<string, unknown>> {
-  const url = new URL(`https://slack.com/api/${method}`);
-  for (const [name, value] of Object.entries(query)) url.searchParams.set(name, value);
-  const response = await fetcher(url, {
-    method: 'GET',
-    redirect: 'error',
-    headers: { Authorization: `Bearer ${credential}` },
-  });
-  const payload = asRecord(await response.json()) ?? {};
-  if (!response.ok || payload.ok !== true) {
-    const error =
-      typeof payload.error === 'string' ? payload.error : `Slack returned HTTP ${response.status}.`;
-    if (response.status === 429 || error === 'ratelimited') {
-      throw new TransientProviderError(`Slack ${method} was rate limited (${error}).`, {
-        status: response.status,
-      });
-    }
-    throw new Error(error);
-  }
-  return payload;
-}
-
-/**
- * Read a Slack pagination cursor from a Web API response.
- *
- * Args:
- *   payload: Successful Slack response.
- *
- * Returns:
- *   A non-empty cursor, or undefined.
- */
-function slackCursor(payload: Record<string, unknown>): string | undefined {
-  const metadata = asRecord(payload.response_metadata);
-  const cursor = metadata?.next_cursor;
-  return typeof cursor === 'string' && cursor.trim() ? cursor.trim() : undefined;
-}
-
-/**
- * Resolve documented Slack names to channel ids with bounded pagination.
- *
- * Args:
- *   fetcher: HTTP implementation.
- *   credential: Decrypted bot token.
- *   names: Documented channel names without hashes.
- *
- * Returns:
- *   Exactly the visible documented channels.
- *
- * Raises:
- *   Error: If one or more documented channels are not visible to the app.
- */
-async function resolveSlackChannels(
-  fetcher: IntakeFetcher,
-  credential: string,
-  names: readonly string[],
-): Promise<SlackChannel[]> {
-  const wanted = new Set(names.map((name: string): string => name.toLowerCase()));
-  const found = new Map<string, SlackChannel>();
-  const cursors = new Set<string>();
-  let cursor: string | undefined;
-  for (let pageIndex = 0; pageIndex < MAX_SLACK_CHANNEL_PAGES; pageIndex += 1) {
-    const payload = await slackGet(fetcher, credential, 'conversations.list', {
-      exclude_archived: 'true',
-      limit: '200',
-      types: 'public_channel',
-      ...(cursor ? { cursor } : {}),
-    });
-    const channels = Array.isArray(payload.channels) ? payload.channels : [];
-    for (const item of channels) {
-      const channel = asRecord(item);
-      if (typeof channel?.id !== 'string' || typeof channel.name !== 'string') continue;
-      const name = channel.name.toLowerCase();
-      if (wanted.has(name)) found.set(name, { id: channel.id, name });
-    }
-    if (found.size === wanted.size) break;
-    cursor = slackCursor(payload);
-    if (!cursor) break;
-    if (cursors.has(cursor)) {
-      throw new Error('Slack conversations.list repeated a cursor before the channel list ended.');
-    }
-    if (pageIndex === MAX_SLACK_CHANNEL_PAGES - 1) {
-      throw new Error(
-        `Slack conversations.list did not end within ${MAX_SLACK_CHANNEL_PAGES} pages of public channels.`,
-      );
-    }
-    cursors.add(cursor);
-  }
-  const missing = [...wanted].filter((name: string): boolean => !found.has(name));
-  if (missing.length > 0) {
-    throw new Error(
-      `Slack channels are not visible: ${missing.map((name: string): string => `#${name}`).join(', ')}.`,
-    );
-  }
-  return names.map((name: string): SlackChannel => found.get(name.toLowerCase())!);
-}
-
-/**
- * Read bounded channel history newer than the last completed poll.
- *
- * Args:
- *   fetcher: HTTP implementation.
- *   credential: Decrypted bot token.
- *   channelId: Provider channel id.
- *   lastPolledAt: Previous completed checkpoint.
- *
- * Returns:
- *   Slack message identity and text fields.
- */
-async function slackHistory(
-  fetcher: IntakeFetcher,
-  credential: string,
-  channelId: string,
-  lastPolledAt?: number,
-  thread?: { ts: string },
-): Promise<SlackMessage[]> {
-  const messages: SlackMessage[] = [];
-  const cursors = new Set<string>();
-  let cursor: string | undefined;
-  const method = thread ? 'conversations.replies' : 'conversations.history';
-  for (let pageIndex = 0; pageIndex < MAX_SLACK_HISTORY_PAGES; pageIndex += 1) {
-    const payload = await slackGet(fetcher, credential, method, {
-      channel: channelId,
-      ...(thread ? { ts: thread.ts } : {}),
-      inclusive: 'true',
-      limit: '200',
-      ...(lastPolledAt !== undefined ? { oldest: String(lastPolledAt / 1_000) } : {}),
-      ...(cursor ? { cursor } : {}),
-    });
-    const rows = Array.isArray(payload.messages) ? payload.messages : [];
-    for (const item of rows) {
-      const row = asRecord(item);
-      if (typeof row?.ts !== 'string' || typeof row.text !== 'string') continue;
-      messages.push({
-        ts: row.ts,
-        text: row.text,
-        user: typeof row.user === 'string' ? row.user : undefined,
-        botId: typeof row.bot_id === 'string' ? row.bot_id : undefined,
-        appId: typeof row.app_id === 'string' ? row.app_id : undefined,
-        threadTs: typeof row.thread_ts === 'string' ? row.thread_ts : undefined,
-      });
-    }
-    const nextCursor = slackCursor(payload);
-    if (!nextCursor) break;
-    if (cursors.has(nextCursor)) {
-      throw new Error(`Slack ${method} repeated a cursor before pagination completed.`);
-    }
-    if (pageIndex === MAX_SLACK_HISTORY_PAGES - 1) {
-      throw new Error(`Slack ${method} pagination did not complete within the page limit.`);
-    }
-    cursors.add(nextCursor);
-    cursor = nextCursor;
-  }
-  return messages;
-}
-
-function mcpMessagePage(value: unknown): { messages: SlackMessage[]; nextCursor?: string } {
+function mcpMessagePage(value: unknown): { messages: ChatMessage[]; nextCursor?: string } {
   const decoded = decodeMcpPayload(value);
   const record = asRecord(decoded) ?? {};
   const data = asRecord(record.data);
@@ -1360,7 +1174,7 @@ function mcpMessagePage(value: unknown): { messages: SlackMessage[]; nextCursor?
     : Array.isArray(container.items)
       ? container.items
       : [];
-  const messages = rows.flatMap((item): SlackMessage[] => {
+  const messages = rows.flatMap((item): ChatMessage[] => {
     const row = asRecord(item);
     if (typeof row?.ts !== 'string' || typeof row.text !== 'string') return [];
     return [
@@ -1408,7 +1222,7 @@ function managerMessages(): ManagerMessages {
 function collectManagerMessages(
   found: ManagerMessages,
   surface: Doc<'surfaces'>,
-  messages: readonly SlackMessage[],
+  messages: readonly ChatMessage[],
   skipTs?: string,
 ): void {
   for (const message of messages) {
@@ -1458,7 +1272,7 @@ async function pollMcpManagerReplies(
     if (!tool.execute) throw new Error('Chat history tool is not executable.');
     const seenCursors = new Set<string>();
     let cursor: string | undefined;
-    for (let pageIndex = 0; pageIndex < MAX_SLACK_HISTORY_PAGES; pageIndex += 1) {
+    for (let pageIndex = 0; pageIndex < MAX_HISTORY_PAGES; pageIndex += 1) {
       const args: Record<string, unknown> = { [channelName]: surface.managerDmChannelId };
       const limitName = discoveredArgument(properties, ['limit', 'first', 'pageSize']);
       if (limitName) args[limitName] = PAGE_SIZE;
@@ -1482,7 +1296,7 @@ async function pollMcpManagerReplies(
       if (seenCursors.has(page.nextCursor)) {
         throw new Error('Chat history repeated a cursor before pagination completed.');
       }
-      if (pageIndex === MAX_SLACK_HISTORY_PAGES - 1) {
+      if (pageIndex === MAX_HISTORY_PAGES - 1) {
         throw new Error('Chat history pagination did not complete within the page limit.');
       }
       seenCursors.add(page.nextCursor);
@@ -1507,8 +1321,8 @@ async function pollMcpManagerReplies(
  *   Normalised event-stream candidate.
  */
 export function slackCandidate(
-  message: SlackMessage,
-  channel: SlackChannel,
+  message: ChatMessage,
+  channel: ChatChannel,
   surface: Doc<'surfaces'>,
   observedAt: number,
 ): WorkCandidate {
@@ -1551,7 +1365,7 @@ export function slackCandidate(
  *   True when the message is the app's own.
  */
 function postedByConnectedApp(
-  message: SlackMessage,
+  message: ChatMessage,
   surface: Doc<'surfaces'>,
   botId: string,
 ): boolean {
@@ -1574,8 +1388,7 @@ const NO_APP_IDENTITY = 'Slack probe stored no app identity; probe the surface a
  *
  * Args:
  *   surface: Connected Slack surface.
- *   credential: Decrypted bot token.
- *   fetcher: HTTP implementation.
+ *   reader: The surface's chat reader.
  *   remember: Persists an identity read here against the row's probe generation.
  *
  * Returns:
@@ -1586,19 +1399,18 @@ const NO_APP_IDENTITY = 'Slack probe stored no app identity; probe the surface a
  */
 async function connectedBotId(
   surface: Doc<'surfaces'>,
-  credential: string,
-  fetcher: IntakeFetcher,
+  reader: ChatReader,
   remember: (providerBotId: string, generation: number) => Promise<void>,
 ): Promise<string> {
   if (surface.providerBotId) return surface.providerBotId;
   if (!surface.toolAllowlist?.includes('auth.test') || surface.probeGeneration === undefined) {
     throw new Error(NO_APP_IDENTITY);
   }
-  const auth = await slackGet(fetcher, credential, 'auth.test', {});
-  if (auth.user_id !== surface.providerIdentityId) throw new Error(NO_APP_IDENTITY);
-  if (typeof auth.bot_id !== 'string' || !auth.bot_id) throw new Error(NO_APP_IDENTITY);
-  await remember(auth.bot_id, surface.probeGeneration);
-  return auth.bot_id;
+  const identity = await reader.identity();
+  if (identity.userId !== surface.providerIdentityId) throw new Error(NO_APP_IDENTITY);
+  if (!identity.botId) throw new Error(NO_APP_IDENTITY);
+  await remember(identity.botId, surface.probeGeneration);
+  return identity.botId;
 }
 
 /** What one chat poll reads: the manager's decision replies, the channels' asks, or both. */
@@ -1617,24 +1429,24 @@ interface ChatPollScope {
 }
 
 /**
- * Poll documented Slack channels for exact mentions of the connected bot.
+ * Poll a chat surface's approved channels for exact mentions of the connected
+ * bot, and its manager DM for decision replies, through the surface's chat
+ * reader (B's contract, A6: one reader per rung, no bespoke adapter here).
  *
  * Args:
- *   surface: Connected Slack surface with probe identity metadata.
- *   pages: Policy pages visible to the agent.
- *   credential: Decrypted bot token.
+ *   surface: Connected chat surface with probe identity metadata.
+ *   reader: The surface's chat reader.
+ *   pages: Policy pages visible to the agent, for a card with no approved scope.
  *   observedAt: Poll start used for candidate timestamps.
- *   fetcher: Injectable HTTP implementation.
  *
  * Returns:
- *   Normalised mention candidates.
+ *   Normalised mention candidates, and the manager's replies.
  */
-async function pollSlack(
+async function pollChatReader(
   surface: Doc<'surfaces'>,
+  reader: ChatReader,
   pages: readonly Doc<'docPages'>[],
-  credential: string,
   observedAt: number,
-  fetcher: IntakeFetcher,
   include: ChatPollScope,
   rememberBotId: (providerBotId: string, generation: number) => Promise<void>,
 ): Promise<ChatPollResult> {
@@ -1651,26 +1463,21 @@ async function pollSlack(
   if (include.work) {
     if (!surface.providerIdentityId) throw new Error('Slack probe stored no bot identity.');
     if (!surface.providerWorkspaceId) throw new Error('Slack probe stored no workspace identity.');
-    const botId = await connectedBotId(surface, credential, fetcher, rememberBotId);
+    const botId = await connectedBotId(surface, reader, rememberBotId);
     const names = surface.intakeScope
       ? approvedChannelNames(surface.intakeScope)
       : slackChannelsFromPages(pages);
     if (names.length === 0) throw new Error('Slack policy names no intake channels.');
-    const channels = await resolveSlackChannels(fetcher, credential, names);
+    const channels = await reader.listChannels(names);
     const mention = `<@${surface.providerIdentityId}>`;
     const since = include.mentionsSince;
     const sinceTs = since === undefined ? undefined : String(since / 1_000);
     for (const channel of channels) {
       // One channel that still fails after its retries costs that channel's
       // read, not the rest of the poll: its mentions are read again next time.
-      let messages: SlackMessage[];
+      let messages: ChatMessage[];
       try {
-        messages = await slackHistory(
-          fetcher,
-          credential,
-          channel.id,
-          surface.lastPolledAt ?? since,
-        );
+        messages = await reader.readSince(channel.id, surface.lastPolledAt ?? since);
       } catch (error) {
         // A refusal (`not_in_channel`, `invalid_auth`, the page limit) is not
         // waited out by reading again, so it fails the poll as it always did.
@@ -1699,11 +1506,7 @@ async function pollSlack(
     const dm = surface.managerDmChannelId;
     // The top-level read is the poll: when it fails nothing is resolved and
     // the checkpoint holds.
-    collectManagerMessages(
-      found,
-      surface,
-      await slackHistory(fetcher, credential, dm, surface.lastPolledAt),
-    );
+    collectManagerMessages(found, surface, await reader.readSince(dm, surface.lastPolledAt));
     // `conversations.history` lists only top-level messages. A manager who answers in
     // the thread under the request is answering all the same, so each open request's
     // thread is read too, when the probe allowlisted the replies method. A thread
@@ -1715,11 +1518,11 @@ async function pollSlack(
           collectManagerMessages(
             found,
             surface,
-            await slackHistory(fetcher, credential, dm, surface.lastPolledAt, { ts: request.ts }),
+            await reader.readThread(dm, request.ts, surface.lastPolledAt),
             request.ts,
           );
         } catch (error) {
-          if (error instanceof Error && error.message === SLACK_THREAD_NOT_FOUND) {
+          if (error instanceof ChatReadRefused && error.code === SLACK_THREAD_NOT_FOUND) {
             missingThreads.push(request.decisionId);
             continue;
           }
@@ -1767,17 +1570,8 @@ async function pollChat(
   rememberBotId: (providerBotId: string, generation: number) => Promise<void>,
 ): Promise<ChatPollResult> {
   const polled = await (async (): Promise<ChatPollResult> => {
-    if (surface.path === 'documented-api') {
-      return await pollSlack(
-        surface,
-        pages,
-        credential,
-        observedAt,
-        fetcher,
-        include,
-        rememberBotId,
-      );
-    }
+    // The MCP rung reads the manager DM through its own history tool; the
+    // chat reader has no MCP rung yet, and switching would stop MCP decisions.
     if (surface.path === 'mcp') {
       const found = include.decisions
         ? await pollMcpManagerReplies(surface, credential, makeClient)
@@ -1793,9 +1587,13 @@ async function pollChat(
         unread: [],
       };
     }
-    throw new Error(
-      `Connected chat surface path ${surface.path ?? 'unknown'} has no intake reader.`,
-    );
+    const chosen = chatReaderFor(toSurfaceRecord(surface), {
+      credential,
+      fetch: fetcher,
+      slackApiBase: slackApiBaseUrl(),
+    });
+    if (!chosen.ok) throw new Error(chosen.reason);
+    return await pollChatReader(surface, chosen.reader, pages, observedAt, include, rememberBotId);
   })();
   // Providers list newest first. Replies must resolve in the order the manager sent
   // them, so the first answer decides and a later change of mind is the duplicate.
