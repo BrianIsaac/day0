@@ -18,11 +18,12 @@ import {
   PARKED_WORK_STATES,
   wakeQueuedWork,
 } from './workLoop';
-import { holdsLiveAuthoringClaim } from '../src/lib/skill-authoring';
 import {
-  providerReconciliationEntries,
-  retryRequiresProviderReconciliation,
-} from '../src/work/reconciliation';
+  NEEDS_MANAGER_STATES,
+  parkedRowNeedsManager,
+  stoppedRowNeedsManager,
+  stoppedRowOffersMove,
+} from '../src/work/needs-manager';
 import { agentReadsSource } from './docSources';
 import { isEvaluationAgent } from './metrics';
 import { isManagerLookupFailure } from '../src/surfaces/manager-lookup';
@@ -107,28 +108,8 @@ const OPEN_STATE_READ_LIMIT = 100;
  */
 const STOPPED_READ_LIMIT = 25;
 
-/** How the reason on a row the manager's own rejection failed begins. */
-const MANAGER_REJECTION_PREFIX = 'rejected by the manager';
-
 /** Bound on the owner's documentation sources read for the count. */
 const DOC_SOURCE_READ_LIMIT = 100;
-
-/** The open states that wait on the manager: a plan to approve, a held action set. */
-const NEEDS_MANAGER_STATES: ReadonlySet<string> = new Set(['plan-pending', 'actions-pending']);
-
-/**
- * The skill states in which the next move on a skill is the manager's: a
- * proposal to approve, and an authoring run to start or start again, which
- * only the dashboard does. `registered` is absent: a row still parked behind
- * a registered skill is released by no manager action.
- */
-const SKILL_WAITS_ON_MANAGER_STATES: ReadonlySet<string> = new Set([
-  'proposed',
-  'approved',
-  'authoring',
-  'verified',
-  'failed',
-]);
 
 const rosterRowValidator = v.object({
   agentId: v.id('agents'),
@@ -216,76 +197,6 @@ async function charterStanding(ctx: QueryCtx, agentId: Id<'agents'>): Promise<Ch
     return { roleLine, draftAwaitsManager };
   }
   return { roleLine: CHARTER_PENDING_ROLE_LINE, draftAwaitsManager: draftAwaitsManager ?? false };
-}
-
-/**
- * Whether only the manager can release a parked row.
- *
- * A deferral waits on a connection or a read grant, both the manager's to
- * give. A row waiting on a skill is the manager's while the skill waits on a
- * manager's click and no authoring run holds it; before a proposal exists,
- * while a run is in flight, or once the skill is registered, it is not. A
- * row queued at the cap is released by a slot freeing, and the rows holding
- * the slots that wait on the manager are already counted.
- *
- * Args:
- *   row: The parked row.
- *   skills: The skills the parked rows wait on, by id.
- *   now: The instant an authoring claim is judged against.
- *
- * Returns:
- *   True when the row counts under needs-you.
- */
-function parkedRowNeedsManager(
-  row: Doc<'workItems'>,
-  skills: ReadonlyMap<Id<'skills'>, Doc<'skills'> | null>,
-  now: number,
-): boolean {
-  if (row.state === 'deferred') return true;
-  if (row.state !== 'needs-skill' || !row.proposedSkillId) return false;
-  const skill = skills.get(row.proposedSkillId);
-  if (!skill || !SKILL_WAITS_ON_MANAGER_STATES.has(skill.state)) return false;
-  return !holdsLiveAuthoringClaim(skill, now);
-}
-
-/**
- * Whether a failed row's card still offers the manager a move.
- *
- * The card offers Retry on every failed row, and where a write may have
- * landed it asks for the provider reconciliation first, which is also the
- * manager's. The one row with neither is an interrupted apply whose ledger
- * names nothing to verify: the confirmation and Retry are both disabled and
- * `work.reconcileFailed` refuses, so nothing the manager does moves it. A
- * recorded reconciliation needs no reading: it is only ever recorded against
- * a ledger that names entries.
- *
- * Args:
- *   row: The failed row.
- *
- * Returns:
- *   True when Retry is open, or the reconciliation that opens it is.
- */
-function stoppedRowOffersMove(row: Doc<'workItems'>): boolean {
-  if (!retryRequiresProviderReconciliation(row.output, row.skipReason)) return true;
-  return providerReconciliationEntries(row.output).length > 0;
-}
-
-/**
- * Whether a stopped row waits on the manager.
- *
- * A run that stopped or failed leaves the next move to the manager: answer
- * what it asked, direct it, or send it again. A row the manager's own
- * rejection failed waits on nobody: Retry is there, but the last decision
- * was theirs.
- *
- * Args:
- *   row: A failed row whose card offers a move.
- *
- * Returns:
- *   True when the row counts under needs-you.
- */
-function stoppedRowNeedsManager(row: Doc<'workItems'>): boolean {
-  return row.skipReason?.startsWith(MANAGER_REJECTION_PREFIX) !== true;
 }
 
 /**
