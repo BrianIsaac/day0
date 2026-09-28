@@ -4894,25 +4894,42 @@ export const recordManagerNote = internalMutation({
   },
 });
 
-/** The most unsent notes one digest check reads across agents, and one agent's digest takes. */
+/** The most unsent notes one agent's digest takes. */
 const DIGEST_NOTE_LIMIT = 500;
 
 /** A digest this soon after the last one waits: at most one per quarter hour, whatever triggered it. */
 const DIGEST_MIN_GAP_MS = 15 * 60_000;
 
+/** The most agents one page of digest candidates reads. */
+const DIGEST_AGENT_PAGE = 100;
+
 /**
- * The agents holding notes not sent yet: digest agents, and agents switched
- * to per run with notes the switch stranded. Reads the unsent notes only;
- * `prepareManagerDigest` decides which agents are due now.
+ * One page of the agents holding notes not sent yet: digest agents, and
+ * agents switched to per run with notes the switch stranded. Internal; reads
+ * one page of agents and at most one note of each, by the agent's own unsent
+ * index, so notes that can never go out (no manager channel, a channel gone)
+ * pile up under their agent and never hide another agent's digest (review
+ * m18). `prepareManagerDigest` decides which agents are due now.
+ *
+ * @returns The page's candidates and the cursor of the next page, null after the last.
  */
 export const digestCandidates = internalQuery({
-  args: {},
-  handler: async (ctx): Promise<Id<'agents'>[]> => {
-    const unsent = await ctx.db
-      .query('managerNotes')
-      .withIndex('by_unsent', (q) => q.eq('claimedAt', undefined).eq('providerTs', undefined))
-      .take(DIGEST_NOTE_LIMIT);
-    return [...new Set(unsent.map((note) => note.agentId))];
+  args: { cursor: v.union(v.string(), v.null()) },
+  handler: async (ctx, args): Promise<{ agentIds: Id<'agents'>[]; cursor: string | null }> => {
+    const page = await ctx.db
+      .query('agents')
+      .paginate({ cursor: args.cursor, numItems: DIGEST_AGENT_PAGE });
+    const agentIds: Id<'agents'>[] = [];
+    for (const agent of page.page) {
+      const unsent = await ctx.db
+        .query('managerNotes')
+        .withIndex('by_agent_unsent', (q) =>
+          q.eq('agentId', agent._id).eq('claimedAt', undefined).eq('providerTs', undefined),
+        )
+        .first();
+      if (unsent !== null) agentIds.push(agent._id);
+    }
+    return { agentIds, cursor: page.isDone ? null : page.continueCursor };
   },
 });
 

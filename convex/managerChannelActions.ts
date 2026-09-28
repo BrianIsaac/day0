@@ -303,7 +303,16 @@ export const sendManagerNote = internalAction({
 export const sendManagerDigests = internalAction({
   args: {},
   handler: async (ctx): Promise<{ sent: number; failed: number }> => {
-    const agents = await ctx.runQuery(internal.work.digestCandidates, {});
+    const agents: Id<'agents'>[] = [];
+    let cursor: string | null = null;
+    do {
+      const page: { agentIds: Id<'agents'>[]; cursor: string | null } = await ctx.runQuery(
+        internal.work.digestCandidates,
+        { cursor },
+      );
+      agents.push(...page.agentIds);
+      cursor = page.cursor;
+    } while (cursor !== null);
     let sent = 0;
     let failed = 0;
     for (const agentId of agents) {

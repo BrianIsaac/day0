@@ -802,7 +802,9 @@ describe('the notes the gate sends for the manager', (): void => {
     expect(note?.providerTs).toBeUndefined();
     expect(note?.claimedAt).toBeUndefined();
     expect(note?.failure).toBeTruthy();
-    expect(await harness.query(internal.work.digestCandidates, {})).toEqual([agentId]);
+    expect(
+      (await harness.query(internal.work.digestCandidates, { cursor: null })).agentIds,
+    ).toEqual([agentId]);
   });
 });
 

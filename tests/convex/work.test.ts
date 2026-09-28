@@ -3568,7 +3568,62 @@ describe('the exact-action gate', (): void => {
     expect(await scheduledFunctionNames(harness)).not.toContain(
       'managerChannelActions:sendManagerNote',
     );
-    expect(await harness.query(internal.work.digestCandidates, {})).toEqual([agentId]);
+    expect(
+      (await harness.query(internal.work.digestCandidates, { cursor: null })).agentIds,
+    ).toEqual([agentId]);
+  });
+
+  it("finds every agent holding an unsent note, however many one agent's stuck notes pile up first (review m18)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const [stuck, waiting] = await harness.run(async (ctx) => {
+      const ids: Id<'agents'>[] = [];
+      for (const [name, notes] of [
+        ['Stuck', 600],
+        ['Waiting', 1],
+      ] as const) {
+        const agentId = await ctx.db.insert('agents', {
+          bossEmail: 'boss@day0.local',
+          name,
+          userId: 'owner',
+          state: 'active',
+          createdAt: 1,
+        });
+        const workItemId = await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: `${name}-1`,
+          title: 'A ticket',
+          contentSummary: 'A ticket.',
+          contentRefs: [],
+          state: 'completed',
+          observedAt: 1,
+          createdAt: 1,
+        });
+        for (let index = 0; index < notes; index += 1) {
+          await ctx.db.insert('managerNotes', {
+            agentId,
+            workItemId,
+            kind: 'landed',
+            text: 'landed',
+            createdAt: index,
+          });
+        }
+        ids.push(agentId);
+      }
+      return ids;
+    });
+    const found: Id<'agents'>[] = [];
+    let cursor: string | null = null;
+    do {
+      const page: { agentIds: Id<'agents'>[]; cursor: string | null } = await harness.query(
+        internal.work.digestCandidates,
+        { cursor },
+      );
+      found.push(...page.agentIds);
+      cursor = page.cursor;
+    } while (cursor !== null);
+    expect(found.sort()).toEqual([stuck, waiting].sort());
   });
 
   it('records a failure with nothing landed as stopped, and one after a landed write as failed', async (): Promise<void> => {

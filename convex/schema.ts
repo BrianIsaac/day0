@@ -1005,8 +1005,7 @@ export default defineSchema({
     keptFor: v.optional(v.union(v.literal('per-run'), v.literal('digest'))),
   })
     .index('by_agent', ['agentId'])
-    /** The notes not sent yet, across agents, so the digest never reads the sent history. */
-    .index('by_unsent', ['claimedAt', 'providerTs'])
+    /** One agent's notes not sent yet, so the digest never reads the sent history. */
     .index('by_agent_unsent', ['agentId', 'claimedAt', 'providerTs']),
 
   /**
