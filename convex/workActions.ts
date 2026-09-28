@@ -3238,13 +3238,14 @@ export const applyApprovedActions = internalAction({
       workItemId: args.workItemId,
     });
     if (!claim.claimed) return { ok: false, reason: claim.reason };
+    let knownValues: readonly string[] = [];
     try {
       const agent = await ctx.runQuery(internal.agents.getInternal, { agentId: claim.agentId });
       if (!agent) throw new Error('agent not found');
       // Resolved once, before any transport: a run with many outcomes
       // decrypts once, and a list that cannot be produced fails the run
       // here rather than after a write has landed.
-      const knownValues = await knownValuesForAgent(ctx, agent);
+      knownValues = await knownValuesForAgent(ctx, agent);
       const surfaces = await loadSurfaces(ctx, claim.agentId);
       const grantRows: Doc<'permissionGrants'>[] = await ctx.runQuery(
         internal.agents.grantedScopes,
@@ -3391,7 +3392,7 @@ export const applyApprovedActions = internalAction({
       }
       return await finishRun(ctx, args.workItemId, claim, output, applied, knownValues, surfaces);
     } catch (err) {
-      const reason = safeFailureMessage(err, '', 'the apply failed');
+      const reason = safeFailureMessage(err, '', 'the apply failed', 300, knownValues);
       await ctx.runMutation(internal.work.recoverInterruptedApply, {
         workItemId: args.workItemId,
         pendingRunId: claim.pendingRunId,
