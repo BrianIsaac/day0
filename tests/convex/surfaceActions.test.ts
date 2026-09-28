@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { ErrorCategory, ErrorDomain, MastraError } from '@mastra/core/error';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getFunctionName } from 'convex/server';
 import { ConvexError } from 'convex/values';
@@ -1812,6 +1813,8 @@ describe('probing the browser floor', (): void => {
     password: string;
     /** A tool the driver answers with an error. */
     refuse?: string;
+    /** Answer the refusal as the production client does: thrown as the server's own error. */
+    throwsRefusal?: boolean;
     /** The dashboard's element lines; the documented marker unless a test redesigns it. */
     dashboard?: string;
     /** Serve the login over two pages, the account first and the password after Next. */
@@ -1849,6 +1852,14 @@ describe('probing the browser floor', (): void => {
         errors: {} as Record<string, string>,
       }),
       callTool: async (name: string, args: Record<string, unknown>) => {
+        if (name === options.refuse && options.throwsRefusal) {
+          throw new MastraError({
+            id: 'MCP_CLIENT_TOOL_EXECUTION_FAILED',
+            domain: ErrorDomain.MCP,
+            category: ErrorCategory.THIRD_PARTY,
+            text: 'Error: element is detached',
+          });
+        }
         if (name === options.refuse) return { isError: true, text: 'Error: element is detached' };
         if (name === 'browser_fill_form') filled.push(args);
         if (name === 'browser_click') {
@@ -1901,6 +1912,20 @@ describe('probing the browser floor', (): void => {
       ),
     ).rejects.toThrow('the page did not show the documented element "Pipeline coverage"');
     expect(clicked).toEqual(['Sign in']);
+  });
+
+  it('reads a refusal the real driver throws as Day0 not checking the credential, as it reads one returned (wave 3.5 review M5)', async (): Promise<void> => {
+    const { client } = signInDriver({
+      password: 'pipeline-tile-local',
+      refuse: 'browser_fill_form',
+      throwsRefusal: true,
+    });
+    await expect(
+      probeBrowserSurface(
+        signedInRequest({ credential: 'pipeline-tile-local', username: 'revops' }),
+        () => client,
+      ),
+    ).rejects.toThrow('refused browser_fill_form while Day0 was signing in');
   });
 
   it('finds the element however many the signed-in page shows by that name', async (): Promise<void> => {

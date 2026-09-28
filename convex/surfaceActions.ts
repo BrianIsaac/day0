@@ -41,7 +41,7 @@ import {
   type LoginForm,
   type SnapshotElement,
 } from '../src/surfaces/browser';
-import { interpretToolResult } from '../src/surfaces/mcp';
+import { interpretToolResult, isServerToolError } from '../src/surfaces/mcp';
 import {
   channelsAwaitingInvite,
   documentedChannelNames,
@@ -573,7 +573,15 @@ async function probeCall(
       `Day0 browser component does not expose ${tool}, which signing in needs.`,
     );
   }
-  const result = await client.callTool(tool, args);
+  let result: { isError: boolean; text: string };
+  try {
+    result = await client.callTool(tool, args);
+  } catch (error) {
+    // The client throws the driver's own refusal (`onToolError: 'throw'`);
+    // the driver answered, so this is the same refusal as an `isError` result.
+    if (!isServerToolError(error)) throw error;
+    result = { isError: true, text: '' };
+  }
   if (result.isError) {
     throw new Day0ProbeLimitation(
       `The browser driver refused ${tool} while Day0 was signing in, so the credential was not checked. This is not evidence that the system is unavailable.`,
