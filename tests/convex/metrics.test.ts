@@ -2,7 +2,8 @@ import { convexTest } from 'convex-test';
 import { describe, expect, it } from 'vitest';
 import { api } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
-import { computeAgentMetrics, type OwnerMetrics } from '../../convex/metrics';
+import { computeAgentMetrics } from '../../convex/metrics';
+import type { OwnerMetrics } from '../../src/metrics/types';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 

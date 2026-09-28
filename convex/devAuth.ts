@@ -30,31 +30,15 @@
  * `src/lib/dev-auth-server.ts`.
  */
 
+import {
+  DEV_NO_AUTH_ALGORITHM,
+  DEV_NO_AUTH_AUDIENCE,
+  DEV_NO_AUTH_ISSUER,
+} from '../src/lib/dev-auth-issuer';
 import { presentHostedMarkers } from '../src/lib/hosted-markers';
 
 const FLAG = 'NEXT_PUBLIC_DEV_NO_AUTH';
 const JWKS_VAR = 'DEV_NO_AUTH_JWKS';
-
-/** The single subject the whole per-user data model hangs off in no-auth mode. */
-export const DEV_NO_AUTH_SUBJECT = 'dev-no-auth|local-boss';
-
-/** Names the local issuer. Never resolved over the network by either half. */
-export const DEV_NO_AUTH_ISSUER = 'https://dev-no-auth.day0.local';
-
-/** Checked against the token's `aud` claim by the deployment. */
-export const DEV_NO_AUTH_AUDIENCE = 'day0-dev-no-auth';
-
-export const DEV_NO_AUTH_KEY_ID = 'day0-dev-no-auth';
-
-/**
- * The claim a local token carries its browser's session id in, so the one
- * subject every browser shares can still be told apart per browser. `sid` is
- * the name OIDC session management gives the same fact, so the owner's ledger
- * reads one claim whichever issuer signed the caller in.
- */
-export const DEV_NO_AUTH_SESSION_CLAIM = 'sid';
-
-export const DEV_NO_AUTH_ALGORITHM = 'ES256';
 
 /**
  * Reading an unset name can throw rather than return `undefined` depending on

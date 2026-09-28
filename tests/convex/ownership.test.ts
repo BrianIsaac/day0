@@ -3,7 +3,7 @@ import type { UserIdentity } from 'convex/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../../convex/_generated/api';
 import schema from '../../convex/schema';
-import { DEV_NO_AUTH_ISSUER, DEV_NO_AUTH_SUBJECT } from '../../convex/devAuth';
+import { DEV_NO_AUTH_ISSUER, DEV_NO_AUTH_SUBJECT } from '../../src/lib/dev-auth-issuer';
 import { callerSessionId, ownerKeyOf } from '../../convex/ownership';
 import { allConvexModules } from './all-modules';
 

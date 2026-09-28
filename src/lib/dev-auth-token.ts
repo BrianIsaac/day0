@@ -7,7 +7,7 @@ import {
   DEV_NO_AUTH_KEY_ID,
   DEV_NO_AUTH_SESSION_CLAIM,
   DEV_NO_AUTH_SUBJECT,
-} from '@convex/devAuth';
+} from './dev-auth-issuer';
 
 const TOKEN_LIFETIME_SECONDS = 3600;
 

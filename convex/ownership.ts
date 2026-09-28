@@ -3,7 +3,8 @@ import type { Doc, Id } from './_generated/dataModel';
 import type { QueryCtx, MutationCtx, ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import { CUSTOMER_OIDC_ISSUER_VAR } from '../src/lib/customer-oidc';
-import { DEV_NO_AUTH_SESSION_CLAIM, notAuthenticatedMessage } from './devAuth';
+import { DEV_NO_AUTH_SESSION_CLAIM } from '../src/lib/dev-auth-issuer';
+import { notAuthenticatedMessage } from './devAuth';
 
 /**
  * Per-account ownership guards. Every public query/mutation/action that

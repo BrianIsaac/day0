@@ -9,7 +9,7 @@ vi.mock('convex/react', () => ({
 
 import { declareUndeclaredInputs } from '../../../../src/work/skill-inputs';
 import type { Doc, Id } from '../../../../convex/_generated/dataModel';
-import type { AgentMetrics } from '../../../../convex/metrics';
+import type { AgentMetrics } from '../../../../src/metrics/types';
 import type { SurfaceRecord } from '../../../../src/surfaces/types';
 import {
   ActionPayload,

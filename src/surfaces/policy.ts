@@ -1,6 +1,5 @@
-import type { MockAction, ReplyTarget } from '../work/types';
+import { MOCK_ACTION_TOOLS, type MockAction, type ReplyTarget } from '../work/types';
 import { isInterstitialControl, NEXT_CONTROL, SIGN_IN_CONTROL } from './browser';
-import { MOCK_TOOLS } from './mock';
 import type {
   ActionAuthority,
   ActionClass,
@@ -1356,7 +1355,7 @@ export function refusalFor(
   | { refused: true; reason: string }
   | { refused: false; parsed: ParsedSurfaceAction; surface: SurfaceRecord } {
   if (!isSurfaceTool(action.tool)) {
-    const mock = (MOCK_TOOLS as readonly string[]).includes(action.tool);
+    const mock = (MOCK_ACTION_TOOLS as readonly string[]).includes(action.tool);
     return { refused: true, reason: mock ? mockVerbRefusal(action.tool) : UNKNOWN_TOOL };
   }
   const parsed = parseSurfaceAction(action);

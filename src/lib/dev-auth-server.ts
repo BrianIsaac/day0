@@ -3,7 +3,7 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { auth } from '@clerk/nextjs/server';
-import { DEV_NO_AUTH_SUBJECT } from '@convex/devAuth';
+import { DEV_NO_AUTH_SUBJECT } from './dev-auth-issuer';
 import { DEV_NO_AUTH } from './dev-auth';
 
 /**

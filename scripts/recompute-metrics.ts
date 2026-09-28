@@ -32,15 +32,15 @@ import { readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { Doc, Id } from '../convex/_generated/dataModel';
-import { DEV_NO_AUTH_SUBJECT } from '../convex/devAuth';
+import { DEV_NO_AUTH_SUBJECT } from '../src/lib/dev-auth-issuer';
 import {
   byWriteOrder,
   computeCompanyMetrics,
   isEvaluationAgent,
   selectCompanyEmployees,
   type EmployeeRecords,
-  type OwnerMetrics,
 } from '../convex/metrics';
+import type { OwnerMetrics } from '../src/metrics/types';
 import { exportEntries, exportRows } from './convex-export';
 import { readAgentTrace, type AgentTrace, type TraceManifest } from '../src/export/trace';
 import { isEventType, type EventType } from '../src/events/contract';

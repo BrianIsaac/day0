@@ -19,7 +19,7 @@ import { spawnSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { DEV_NO_AUTH_SUBJECT } from '../convex/devAuth';
+import { DEV_NO_AUTH_SUBJECT } from '../src/lib/dev-auth-issuer';
 import {
   assembleTrace,
   type AgentTrace,

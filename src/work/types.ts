@@ -196,6 +196,19 @@ export const SURFACE_ACTION_TOOLS = ['mcp.call', 'http.request'] as const;
 export const ACTION_TOOLS = [...MOCK_ACTION_TOOLS, ...SURFACE_ACTION_TOOLS] as const;
 
 export type MockActionTool = (typeof MOCK_ACTION_TOOLS)[number];
+
+/**
+ * What a write did to the mock environment. `changed: false` is the honest
+ * answer when the action named a surface that does not exist, or asked for a
+ * patch with nothing in it: the mutation resolved, and the work environment is
+ * exactly as it was. The executor completes a work item on `changed`, never on
+ * "the promise did not reject".
+ */
+export interface MockWriteResult {
+  changed: boolean;
+  reason?: string;
+}
+
 export type SurfaceActionTool = (typeof SURFACE_ACTION_TOOLS)[number];
 export type ActionTool = (typeof ACTION_TOOLS)[number];
 

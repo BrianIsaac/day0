@@ -2,7 +2,7 @@ import { v } from 'convex/values';
 import { internalMutation, internalQuery, query } from './_generated/server';
 import type { Doc } from './_generated/dataModel';
 import { assertOwnsAgent } from './ownership';
-import type { MockSurfaceSnapshot } from '../src/work/types';
+import type { MockSurfaceSnapshot, MockWriteResult } from '../src/work/types';
 import { assertCurrentGeneration } from '../src/docs/sync-generation';
 
 /**
@@ -16,18 +16,6 @@ import { assertCurrentGeneration } from '../src/docs/sync-generation';
  * mutations defined here. The dashboard subscribes to the same data
  * via these queries so edits surface live.
  */
-
-/**
- * What a write did to the mock environment. `changed: false` is the honest
- * answer when the action named a surface that does not exist, or asked for a
- * patch with nothing in it: the mutation resolved, and the work environment is
- * exactly as it was. The executor completes a work item on `changed`, never on
- * "the promise did not reject".
- */
-export interface MockWriteResult {
-  changed: boolean;
-  reason?: string;
-}
 
 /** Internal snapshot used only by an already-authorised scheduler continuation. */
 export const snapshotInternal = internalQuery({

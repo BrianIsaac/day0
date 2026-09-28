@@ -114,7 +114,7 @@ import {
   NOTIFICATION_MODE_LABELS,
   type ManagerNotificationMode,
 } from '../../../src/work/manager-notes';
-import type { AgentMetrics } from '../../../convex/metrics';
+import type { AgentMetrics } from '@/metrics/types';
 import { formatAuditTrail, formatMetricDuration } from '../../metric-format';
 import { PILOT_FIGURES, readsAndMessages } from '../../CompanySupervision';
 

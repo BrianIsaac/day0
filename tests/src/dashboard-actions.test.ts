@@ -29,7 +29,7 @@ import {
   ProviderReconciliationControl,
 } from '../../app/agent/[agentId]/AgentDashboard';
 import { formatMetricDuration } from '../../app/metric-format';
-import type { AgentMetrics } from '../../convex/metrics';
+import type { AgentMetrics } from '../../src/metrics/types';
 import type { Doc } from '../../convex/_generated/dataModel';
 import { HELD_MUTATION, HELD_PUBLIC_POST, type ActionVerdict } from '../../src/surfaces/policy';
 import {

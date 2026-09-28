@@ -1,27 +1,14 @@
 import type { ActionCtx } from '../../convex/_generated/server';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
-import type { MockWriteResult } from '../../convex/mock';
-import type { MockAction, MockSurfaceSnapshot } from '../work/types';
+import {
+  MOCK_ACTION_TOOLS,
+  type MockAction,
+  type MockSurfaceSnapshot,
+  type MockWriteResult,
+} from '../work/types';
 import type { AdapterRun, AppliedAction, SurfaceAdapter } from './types';
 
-export const MOCK_TOOLS = [
-  'spreadsheet.appendRow',
-  'slack.postMessage',
-  'twitter.reply',
-  'ticket.update',
-] as const satisfies readonly MockAction['tool'][];
-
-/**
- * Keep one ledger line readable in a card without losing what it identifies.
- *
- * Args:
- *   text: Provider effect text.
- *   max: Maximum output length.
- *
- * Returns:
- *   Flattened and clipped effect text.
- */
 /**
  * How much of a read's provider result the ledger keeps. A read exists for the
  * closing phase to author from, so its result must survive the ledger whole
@@ -31,6 +18,7 @@ export const MOCK_TOOLS = [
  */
 export const READ_EFFECT_LENGTH = 4_000;
 
+/** Keep one ledger line readable in a card without losing what it identifies: flattened and clipped to `max`. */
 export function clipEffect(text: string, max: number): string {
   const flat = text.replace(/\s+/g, ' ').trim();
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
@@ -38,7 +26,7 @@ export function clipEffect(text: string, max: number): string {
 
 /** Adapter for the existing per-agent Convex mock environment. */
 class MockSurfaceAdapter implements SurfaceAdapter {
-  readonly tools = MOCK_TOOLS;
+  readonly tools = MOCK_ACTION_TOOLS;
 
   /**
    * Read the complete per-agent mock workbench.
