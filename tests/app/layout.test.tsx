@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -136,15 +137,18 @@ describe('the header', (): void => {
   });
 
   /*
-   * N29's page transition (UX 11) is a React `<ViewTransition>` around this main. Next's vendored
-   * React has one; the React these tests render with (the installed 19.2.6) does not, so the
-   * layout cannot render it here without a stand-in. When this fails, the installed React has
-   * caught up: wrap the main as the wave 5 M handover (D1) sets out.
+   * N29's page transition (UX 11) is a React `<ViewTransition>` around this main. The installed
+   * React is pinned to the one Next 16.2.6 vendors (the operator's D1 (a)), so these tests render
+   * with the React the app ships. If it ever loses the export, this fails before the layout does.
    */
-  it('renders under the installed React, which has no ViewTransition yet', async (): Promise<void> => {
+  it('renders with the React the app ships, which has ViewTransition (the operator’s D1 (a))', async (): Promise<void> => {
     const react: Record<string, unknown> = await import('react');
-    expect(react.ViewTransition).toBeUndefined();
-    expect(await renderLayout()).not.toContain('view-transition');
+    // The React Next vendors and runs the app on, against the one these tests render with.
+    const vendored = createRequire(import.meta.url)('next/dist/compiled/react') as {
+      version: string;
+    };
+    expect(react.version).toBe(vendored.version);
+    expect(react.ViewTransition).toBeDefined();
   });
 
   it('colours the browser chrome with the page', async (): Promise<void> => {
