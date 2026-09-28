@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { SurfaceRecord } from '../../../src/surfaces/types';
 import {
   askedFor,
+  canEditManagerMessage,
   DECISION_ID_ALPHABET,
   decisionIdFromBytes,
   decisionRequestText,
@@ -312,6 +313,19 @@ describe('manager channel decision requests', (): void => {
     expect(
       managerMessageUpdateAction({ ...updating, path: 'mcp' }, '1.100', 'Decided.'),
     ).toBeUndefined();
+  });
+
+  it('can edit a manager DM message only where the gate would allow chat.update', (): void => {
+    const withEdit = { ...slack, toolAllowlist: [...(slack.toolAllowlist ?? []), 'chat.update'] };
+    expect(canEditManagerMessage(withEdit)).toBe(true);
+    expect(canEditManagerMessage(slack)).toBe(false);
+    // The gate names the operation exactly, so a spelling it refuses edits nothing.
+    expect(canEditManagerMessage({ ...slack, toolAllowlist: ['/chat.update'] })).toBe(false);
+    expect(
+      managerMessageUpdateAction({ ...slack, toolAllowlist: ['/chat.update'] }, '1.1', 'x'),
+    ).toBeUndefined();
+    expect(canEditManagerMessage({ ...withEdit, managerDmChannelId: undefined })).toBe(false);
+    expect(canEditManagerMessage({ ...withEdit, path: 'mcp' })).toBe(false);
   });
 
   it('parses only bounded approve and reject prefixes', (): void => {

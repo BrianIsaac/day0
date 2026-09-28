@@ -74,6 +74,7 @@ import { isRevocationTrialRow } from './revocationEvaluation';
 import {
   askedFor,
   batchDecisionNoticeText,
+  canEditManagerMessage,
   DECISION_NOTICE_WINDOW_MS,
   DECISION_REQUEST_RECOVERY_MS,
   type DecisionKind,
@@ -3565,8 +3566,7 @@ export const prepareRequestClose = internalMutation({
         candidate.class === 'chat' &&
         candidate.verdict === 'connected' &&
         candidate.managerDmChannelId === decision.channel &&
-        candidate.path === 'documented-api' &&
-        (candidate.toolAllowlist ?? []).includes('chat.update'),
+        canEditManagerMessage(toSurfaceRecord(candidate)),
     );
     if (!agent || !surface) return { prepared: false as const };
     const requestRunId = await appendEvent(ctx, {

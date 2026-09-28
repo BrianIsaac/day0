@@ -293,6 +293,26 @@ export function managerMessageAction(
   throw new Error(`manager chat path ${surface.path ?? 'unknown'} cannot send messages`);
 }
 
+/** The Slack method that edits a message; the gate matches it by this exact name. */
+const MESSAGE_EDIT_METHOD = 'chat.update';
+
+/**
+ * Whether a surface can edit one of Day0's messages in the manager DM: a
+ * documented-API chat card with a manager DM whose allowlist names
+ * `chat.update` exactly, as the gate's allowlist check reads it.
+ */
+export function canEditManagerMessage(
+  surface: Pick<SurfaceRecord, 'class' | 'managerDmChannelId' | 'path' | 'toolAllowlist'>,
+): boolean {
+  return (
+    surface.class === 'chat' &&
+    surface.managerDmChannelId !== undefined &&
+    surface.managerDmChannelId !== '' &&
+    surface.path === 'documented-api' &&
+    (surface.toolAllowlist ?? []).includes(MESSAGE_EDIT_METHOD)
+  );
+}
+
 /**
  * Build the edit of one of Day0's own messages in the manager DM, when the
  * surface can make one: a documented API whose card allowlisted
@@ -306,16 +326,13 @@ export function managerMessageUpdateAction(
   ts: string,
   text: string,
 ): MockAction | undefined {
-  if (surface.class !== 'chat' || !surface.managerDmChannelId) return undefined;
-  if (surface.path !== 'documented-api') return undefined;
-  const updateTool = surface.toolAllowlist?.find((tool) => /^\/*chat\.update$/.test(tool));
-  if (!updateTool) return undefined;
+  if (!canEditManagerMessage(surface) || !surface.managerDmChannelId) return undefined;
   return {
     tool: 'http.request',
     args: {
       surface: surface.slug,
       method: 'POST',
-      path: updateTool,
+      path: MESSAGE_EDIT_METHOD,
       headersJson: SLACK_JSON_HEADERS,
       body: JSON.stringify({ channel: surface.managerDmChannelId, ts, text }),
     },
