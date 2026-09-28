@@ -13,7 +13,7 @@ const DASHBOARD = readFileSync('app/agent/[agentId]/AgentDashboard.tsx', 'utf8')
 const CHAT = readFileSync('app/agent/[agentId]/ChatRoom.tsx', 'utf8');
 const SURFACES = readFileSync('app/agent/[agentId]/mock/SurfacesTab.tsx', 'utf8');
 const DOCUMENTATION = readFileSync('app/documentation/DocumentationPage.tsx', 'utf8');
-const LANDING = readFileSync('app/page.tsx', 'utf8');
+const DEPLOY_FORM = readFileSync('app/home/DeployForm.tsx', 'utf8');
 const DRIVER = readFileSync('scripts/bed/rehearsal/driver.ts', 'utf8');
 
 describe('the dashboard driver', (): void => {
@@ -73,7 +73,8 @@ describe('the dashboard driver', (): void => {
       [SURFACES, 'id={`credential-${props.credentialLabel}`}'],
       [DOCUMENTATION, 'placeholder="Location label"'],
       [DOCUMENTATION, 'Link location'],
-      [LANDING, 'placeholder="worker 1"'],
+      [DEPLOY_FORM, 'placeholder="worker 1"'],
+      [DEPLOY_FORM, "'Deploying…' : 'Deploy'"],
       [CHAT, 'Day-1 1:1 · chat mode'],
     ] as const) {
       expect(file).toContain(text);
@@ -89,6 +90,7 @@ describe('the dashboard driver', (): void => {
       "'Location label'",
       "'Link location'",
       "'worker 1'",
+      "name: 'Deploy', exact: true",
     ]) {
       expect(DRIVER).toContain(selector);
     }

@@ -152,7 +152,8 @@ export function DeployForm({
             type="text"
             required
             disabled={submitting}
-            placeholder={DEFAULT_NAME}
+            // The bed rehearsal's driver finds the field by this placeholder (scripts/bed/rehearsal/driver.ts).
+            placeholder="worker 1"
             value={name}
             onChange={(event) => setName(event.target.value)}
             aria-describedby={nameHelpId}
@@ -207,7 +208,8 @@ export function DeployForm({
           disabled={submitting}
           className="rounded-lg bg-[var(--color-accent)] px-5 py-2.5 text-sm font-medium text-[var(--color-bg)] disabled:opacity-50"
         >
-          {submitting ? 'Deploying…' : trimmed ? `Deploy ${trimmed}` : 'Deploy'}
+          {/* Exactly "Deploy": the bed rehearsal's driver presses the button by that name. */}
+          {submitting ? 'Deploying…' : 'Deploy'}
         </button>
         <span className="text-xs text-[var(--color-muted)]">
           Takes a few seconds. {trimmed || 'Your new employee'} will then ask you for a Day-1

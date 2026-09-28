@@ -61,8 +61,8 @@ describe('DeployForm', (): void => {
     );
   });
 
-  it('says on the button what happens next, and credits the faces without naming anyone', (): void => {
-    expect(text).toContain('Deploy worker 1');
+  it('says beside the button what happens next, and credits the faces without naming anyone', (): void => {
+    expect(html).toMatch(/<button type="submit"[^>]*>Deploy<\/button>/);
     expect(text).toContain(
       'Takes a few seconds. worker 1 will then ask you for a Day-1 one-to-one.',
     );
@@ -121,7 +121,9 @@ describe('DeployForm, deploying', (): void => {
     act(() => type(host.querySelector<HTMLInputElement>('input[type="text"]')!, '  Mira  '));
     act(() => host.querySelector<HTMLButtonElement>('[aria-label="Face 7"]')!.click());
     act(() => host.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
-    expect(host.querySelector('button[type="submit"]')?.textContent).toBe('Deploy Mira');
+    expect(host.textContent).toContain(
+      'Takes a few seconds. Mira will then ask you for a Day-1 one-to-one.',
+    );
 
     await act(async () => {
       host.querySelector('form')!.requestSubmit();
