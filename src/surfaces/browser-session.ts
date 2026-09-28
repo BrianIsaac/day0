@@ -15,6 +15,7 @@ import type {
 } from './types';
 
 export type { SessionRecipeStep } from './types';
+import { landedEntry } from './types';
 
 export class IncompleteSignInError extends Error {
   constructor() {
@@ -55,10 +56,6 @@ interface BrowserRow {
   authority?: ActionAuthority;
 }
 
-function landed(row: AppliedAction | undefined): row is AppliedAction {
-  return row?.ok === true && row.held !== true && row.awaitingApproval !== true;
-}
-
 /** The run and the durable position a run key names: `<item>:<run>:<index>[.session-<n>]`. */
 function keyPosition(key: string): { runId: string; index: number; sub: number } | undefined {
   const parts = key.split(':');
@@ -78,7 +75,7 @@ function browserRow(
   row: AppliedAction | undefined,
   replayOf?: string,
 ): BrowserRow | undefined {
-  if (!action || !landed(row)) return undefined;
+  if (!action || !landedEntry(row)) return undefined;
   const parsed = parseSurfaceAction(action);
   if (!parsed.ok || parsed.action.kind !== 'mcp.call' || parsed.action.surface !== slug) {
     return undefined;

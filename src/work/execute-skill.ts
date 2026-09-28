@@ -63,6 +63,7 @@ import {
   withheldWithClaimedWrite,
   type HeldExternalItem,
 } from './claim-key';
+import { escapeRegExp } from '../lib/regex';
 
 export { replyTargetLine };
 
@@ -2044,10 +2045,9 @@ function affirmsSurfaceAction(
   clause: string,
   surface: Pick<SurfaceRecord, 'slug' | 'displayName'>,
 ): boolean {
-  const escape = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const stripped = clause
-    .replace(new RegExp(escape(surface.displayName), 'gi'), ' ')
-    .replace(new RegExp(escape(surface.slug), 'gi'), ' ');
+    .replace(new RegExp(escapeRegExp(surface.displayName), 'gi'), ' ')
+    .replace(new RegExp(escapeRegExp(surface.slug), 'gi'), ' ');
   for (const verb of stripped.matchAll(SURFACE_ACTION_VERB)) {
     if (!GOVERNING_NEGATION.test(stripped.slice(0, verb.index))) return true;
   }
@@ -2134,10 +2134,9 @@ function fixesRecordPayload(
   candidate: Pick<WorkCandidate, 'externalId'>,
 ): string | undefined {
   if (namesResultDependency(clause) || NOT_A_WRITE.test(clause)) return undefined;
-  const escape = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const stripped = clause
-    .replace(new RegExp(escape(surface.displayName), 'gi'), ' ')
-    .replace(new RegExp(escape(surface.slug), 'gi'), ' ');
+    .replace(new RegExp(escapeRegExp(surface.displayName), 'gi'), ' ')
+    .replace(new RegExp(escapeRegExp(surface.slug), 'gi'), ' ');
   const committed = [...stripped.matchAll(RECORD_ACTION_VERB)].some(
     (verb) => !GOVERNING_NEGATION.test(stripped.slice(0, verb.index)),
   );
@@ -2201,17 +2200,16 @@ function orderedWriteDependency(
   context: DeferralAuditContext,
 ): boolean {
   if (prior.kind !== 'mcp.call' || actionIntent(prior) !== 'write') return false;
-  const escape = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  if (!new RegExp(`\\b${escape(prior.surface)}\\b`, 'i').test(description)) return false;
+  if (!new RegExp(`\\b${escapeRegExp(prior.surface)}\\b`, 'i').test(description)) return false;
   const nextTool = description.match(/\b(?:save|update|create|post|delete|add)[_.][a-z_]+\b/i)?.[0];
   const status = /\b(?:save_issue|update_issue|done|status|state change)\b/i.test(description);
   const before = isAuditComment(prior)
     ? '(?:comment|save_comment|create_comment)'
-    : escape(prior.tool);
+    : escapeRegExp(prior.tool);
   const after = status
     ? '(?:save_issue|update_issue|(?:move|mark|set|change)[^.;\\n]{0,60}(?:done|status|state)|state change)'
     : nextTool
-      ? escape(nextTool)
+      ? escapeRegExp(nextTool)
       : undefined;
   if (!after) return false;
   const ordered = new RegExp(

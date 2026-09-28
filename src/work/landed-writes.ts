@@ -11,11 +11,12 @@ import {
   type ParsedSurfaceAction,
 } from '../surfaces/policy';
 import { redactTokenShapes } from '../surfaces/redact';
-import type { AppliedAction, SurfaceRecord } from '../surfaces/types';
+import { landedEntry, type AppliedAction, type SurfaceRecord } from '../surfaces/types';
 import { messageTexts } from './evidence-claims';
 import { actionIdempotencyKey } from './idempotency';
 import { ledgerPhases } from './reconciliation';
 import type { LandedWrite, MockAction } from './types';
+import { escapeRegExp } from '../lib/regex';
 
 /**
  * What earlier runs of a work item already put on a provider, and how a
@@ -140,10 +141,6 @@ function reuseOf(
   };
 }
 
-function landed(entry: AppliedAction | undefined): entry is AppliedAction {
-  return entry?.ok === true && !entry.held && !entry.awaitingApproval;
-}
-
 function parsedWrite(action: MockAction): ParsedSurfaceAction | undefined {
   const parsed = parseSurfaceAction(action);
   return parsed.ok && actionIntent(parsed.action) === 'write' ? parsed.action : undefined;
@@ -166,7 +163,7 @@ export function landedWritesOf(output: unknown): LandedWrite[] {
   const own = ledgerPhases(output).flatMap(({ actions, applied }) =>
     actions.flatMap((action, index): LandedWrite[] => {
       const entry = applied[index] as AppliedAction | undefined;
-      return landed(entry) && parsedWrite(action) ? [{ action, applied: entry }] : [];
+      return landedEntry(entry) && parsedWrite(action) ? [{ action, applied: entry }] : [];
     }),
   );
   // Every write is its own row, keyed by the idempotency key it was sent
@@ -271,7 +268,7 @@ export function lastLandedState(
   const ticketKey = `${surface}|status|${ticket.trim().toLowerCase()}`;
   return writes
     .flatMap((write) => {
-      const parsed = landed(write.applied) ? parsedWrite(write.action) : undefined;
+      const parsed = landedEntry(write.applied) ? parsedWrite(write.action) : undefined;
       const status = parsed ? statusChange(parsed) : undefined;
       return status?.ticketKey === ticketKey ? [status.state] : [];
     })
@@ -285,7 +282,7 @@ export function lastLandedState(
  */
 function stateDirected(feedback: string | undefined, state: string): boolean {
   if (!feedback?.trim()) return false;
-  const escaped = state.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const escaped = escapeRegExp(state);
   for (const match of feedback.matchAll(new RegExp(`\\b${escaped}\\b`, 'gi'))) {
     const before = feedback.slice(0, match.index).trim().split(/\s+/).slice(-5).join(' ');
     if (!DECLINED.test(before)) return true;
@@ -422,7 +419,7 @@ export function reusedLedger(
   // The last state an earlier run landed on each ticket; sources are oldest first.
   const byStatus = new Map<string, { state: string; applied: AppliedAction }>();
   for (const source of sources) {
-    if (!landed(source.applied)) continue;
+    if (!landedEntry(source.applied)) continue;
     const key = options.identicalPayloads ? payload(source.action) : undefined;
     if (key && !byPayload.has(key)) byPayload.set(key, source.applied);
     const parsed = parsedWrite(source.action);
@@ -435,7 +432,7 @@ export function reusedLedger(
   // A ticket this run already moved in an earlier phase is in the state this
   // run set, whatever an earlier run left it in.
   for (const write of options.thisRun ?? []) {
-    const parsed = landed(write.applied) ? parsedWrite(write.action) : undefined;
+    const parsed = landedEntry(write.applied) ? parsedWrite(write.action) : undefined;
     const status = parsed ? statusChange(parsed) : undefined;
     if (status) byStatus.delete(status.ticketKey);
   }

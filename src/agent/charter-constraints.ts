@@ -1,5 +1,6 @@
 import type { Charter, DayOneTopic } from './charter';
 import { CANDIDATE_PROPERTIES } from '../work/candidate-properties';
+import { escapeRegExp } from '../lib/regex';
 
 /**
  * The clauses of a charter that act as constraints on work, kept beside the
@@ -54,10 +55,6 @@ export const CLAUSE_FIELDS = [
 ] as const;
 
 export type ClauseField = (typeof CLAUSE_FIELDS)[number];
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
 
 /**
  * A provenance suffix a model may append to a clause: a bracketed note that

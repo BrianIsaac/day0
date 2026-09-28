@@ -11,6 +11,7 @@ import {
   type WorkCandidate,
 } from './types';
 import type { SurfaceMode } from '../surfaces/types';
+import { escapeRegExp } from '../lib/regex';
 
 /**
  * The one scope judgement of a work candidate.
@@ -167,10 +168,6 @@ export function charterOverlap(candidate: WorkCandidate, charter: Charter): stri
 }
 
 const NAME_CHARACTER = 'A-Za-z0-9_-';
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
 
 /**
  * Whether prose names a value as a whole phrase.

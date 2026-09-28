@@ -8,10 +8,11 @@
  */
 
 import { actionIntent, parseSurfaceAction } from '../surfaces/policy';
-import type { SurfaceRecord } from '../surfaces/types';
+import { landedEntry, type SurfaceRecord } from '../surfaces/types';
 import { readsTheItem, type GroundingRead } from './evidence-claims';
 import type { DeclaredRead } from './obligations';
 import type { MockAction } from './types';
+import { escapeRegExp } from '../lib/regex';
 
 /**
  * The surfaces the item's plan-grounding reads landed on.
@@ -37,7 +38,7 @@ export function groundingReadSurfaces(
   if (!externalId) return surfaces;
   for (const { action, applied } of reads) {
     if (!action || typeof action.tool !== 'string' || !action.args) continue;
-    if (applied?.ok !== true || applied.held || applied.awaitingApproval) continue;
+    if (!landedEntry(applied)) continue;
     if (!readsTheItem(action, externalId)) continue;
     const parsed = parseSurfaceAction(action);
     if (parsed.ok) surfaces.add(parsed.action.surface.toLowerCase());
@@ -54,10 +55,6 @@ const KEPT = /\b(?:not|never|don't|dont|cannot|can't)\s+(?:skip|omit|drop|remove
 /** A sentence that reports the read as missing, or asks for it: "no Slack read was made, do it now". */
 const DEMANDED =
   /\bthere\s+(?:was|were)\s+no\b|\b(?:was|were)\s+(?:not\s+)?(?:made|done|taken)\b|\b(?:again|first|missing|forgot|forgotten|do\s+it|make\s+it)\b|\?\s*$/i;
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
 
 /**
  * Whether the manager's retry note takes a declared read out of the work.

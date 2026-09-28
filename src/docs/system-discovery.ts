@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { SYSTEM_CLASSES, type SystemClass } from '../agent/system-classes';
 import { droppedScriptSuffix } from '../lib/short-hash';
 import { surfaceSlug } from '../surfaces/slug';
+import { escapeRegExp } from '../lib/regex';
 
 export interface DiscoveryPage {
   ref: string;
@@ -206,7 +207,7 @@ function phrasePattern(name: string): RegExp {
     .split(/[^A-Za-z0-9]+/)
     .filter(Boolean);
   return new RegExp(
-    `(?:^|[^A-Za-z0-9])${words.map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[^A-Za-z0-9]+')}(?=$|[^A-Za-z0-9])`,
+    `(?:^|[^A-Za-z0-9])${words.map(escapeRegExp).join('[^A-Za-z0-9]+')}(?=$|[^A-Za-z0-9])`,
     'i',
   );
 }

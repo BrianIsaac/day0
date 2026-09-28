@@ -5,7 +5,7 @@ import {
   isStatusChange,
   parseSurfaceAction,
 } from '../surfaces/policy';
-import type { AppliedAction, SurfaceRecord } from '../surfaces/types';
+import { landedEntry, type AppliedAction, type SurfaceRecord } from '../surfaces/types';
 import { declaredReads, readingSteps } from './obligations';
 import type {
   DeclaredQuestion,
@@ -29,10 +29,6 @@ export interface ClosingResume extends ExecutionOutput {
 }
 
 type Surface = { slug: string; displayName: string };
-
-function landedEntry(entry: AppliedAction | undefined): boolean {
-  return entry?.ok === true && !entry.held && !entry.awaitingApproval;
-}
 
 function isRead(action: ExecutionOutput['actions'][number]): boolean {
   const parsed = parseSurfaceAction(action);
@@ -160,8 +156,7 @@ export function closingResume(
   if (
     applied.length !== actions.length ||
     actions.some((_, index) => {
-      const entry = applied[index];
-      return !entry?.ok || entry.held || entry.awaitingApproval;
+      return !landedEntry(applied[index]);
     })
   )
     return undefined;
@@ -196,11 +191,10 @@ export function closingResume(
     })
   )
     return undefined;
-  if (closingActions.every((_, index) => closingApplied[index]?.ok && !closingApplied[index]?.held))
-    return undefined;
+  if (closingActions.every((_, index) => landedEntry(closingApplied[index]))) return undefined;
   const landedClosing = closingActions.flatMap((action, index) => {
     const entry = closingApplied[index];
-    return entry?.ok && !entry.held && !entry.awaitingApproval ? [{ action, entry }] : [];
+    return landedEntry(entry) ? [{ action, entry }] : [];
   });
   return {
     draft: row.draft,

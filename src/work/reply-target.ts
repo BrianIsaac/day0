@@ -7,6 +7,7 @@ import {
 } from '../surfaces/policy';
 import { messageTexts } from './evidence-claims';
 import type { MockAction, ReplyTarget } from './types';
+import { escapeRegExp } from '../lib/regex';
 
 /** A Slack mention's external id: `<channel id>:<message ts>`. */
 const SLACK_EXTERNAL_ID = /^([CDG][A-Z0-9]+):(\d+\.\d+)$/;
@@ -60,14 +61,13 @@ export function replyTargetLine(target: ReplyTarget): string {
 /** Where a message is read, relative to the thread the work item answers. */
 export type ThreadReferencePlace = 'in-thread' | 'elsewhere';
 
-const REGEX_META = /[.*+?^${}()|[\]\\]/g;
 /** A label a model puts before the pair: `Ref:`, `Reference:`, `Thread:`, `Record id:`. */
 const REFERENCE_LABEL = String.raw`\b(?:thread\s+)?(?:ref(?:erence)?|thread|record(?:\s+id)?|id)\b\s*[:#-]?\s*`;
 
 /** The thread's raw identity as a model writes it: the channel and timestamp pair, or the timestamp alone. */
 function rawThreadReference(target: ReplyTarget & { threadTs: string }): string {
-  const channel = target.channel.replace(REGEX_META, '\\$&');
-  const ts = target.threadTs.replace(REGEX_META, '\\$&');
+  const channel = escapeRegExp(target.channel);
+  const ts = escapeRegExp(target.threadTs);
   return String.raw`(?:(?:channel\s+)?${channel}\s*[:/,]?\s*(?:thread(?:_ts)?\s*[:=]?\s*)?)?${ts}`;
 }
 

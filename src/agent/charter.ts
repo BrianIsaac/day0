@@ -10,6 +10,7 @@ import {
 } from './charter-constraints';
 export type { CharterConstraint } from './charter-constraints';
 import { renderBullets } from './charter-workspace';
+import { escapeRegExp } from '../lib/regex';
 export { identityFromCharter, toolsFromCharter } from './charter-workspace';
 
 /**
@@ -329,9 +330,7 @@ export function normaliseNamedSystems(systems: readonly NamedSystem[]): NamedSys
       name = canonicalRows.find(
         (row): boolean =>
           row.system.class === system.class &&
-          new RegExp(`\\b${row.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(
-            system.whereMentioned,
-          ),
+          new RegExp(`\\b${escapeRegExp(row.name)}\\b`, 'i').test(system.whereMentioned),
       )?.name;
     }
     if (!name) continue;

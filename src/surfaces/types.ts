@@ -208,6 +208,15 @@ export type SessionRestoreResult =
 /** Who or what authorised an applied surface action. */
 export type ActionAuthority = 'manager' | 'autonomous' | 'standing';
 
+/**
+ * Whether a ledger row landed on its system: it succeeded and is neither held
+ * for the manager nor waiting on an approval. Every gate, resume and re-read
+ * reads landing through this one predicate.
+ */
+export function landedEntry(row: AppliedAction | undefined): row is AppliedAction {
+  return row?.ok === true && row.held !== true && row.awaitingApproval !== true;
+}
+
 export interface AppliedAction extends ActionOutcome {
   tool: string;
   idempotencyKey: string;

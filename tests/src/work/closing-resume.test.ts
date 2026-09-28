@@ -403,6 +403,34 @@ describe('resuming after a closing gate refusal', () => {
     ).toMatchObject({ resumedClosing: true });
   });
 
+  it('treats a closing write still waiting on approval as not landed, so the retry resumes at closing rather than skipping it', () => {
+    const prerequisites = [action('looker', 'browser_snapshot'), action('linear', 'list_issues')];
+    const waiting = { tool: 'mcp.call', ok: true, awaitingApproval: true, idempotencyKey: 'k' };
+    expect(
+      closingResume(
+        {
+          draft: '',
+          notes: '',
+          prerequisiteCount: 2,
+          actions: [...prerequisites, action('linear', 'save_comment')],
+          applied: [landed, landed, waiting],
+          planStepOutcomes: [1, 2].map((step) => ({
+            step,
+            status: 'satisfied',
+            evidence: 'ledger row 1: the issues',
+          })),
+        },
+        plan,
+        'closing set withheld',
+        surfaces,
+      ),
+    ).toMatchObject({
+      resumedClosing: true,
+      actions: prerequisites,
+      previousClosing: { actions: [action('linear', 'save_comment')], applied: [waiting] },
+    });
+  });
+
   it('goes back through phase one when a prerequisite did not land or a promised surface was not read', () => {
     expect(
       closingResume(

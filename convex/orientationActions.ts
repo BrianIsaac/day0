@@ -30,6 +30,7 @@ import {
   type ScopePick,
   type ScopeValue,
 } from '../src/surfaces/intake-scope';
+import { escapeRegExp } from '../src/lib/regex';
 
 const URL_PATTERN = /https?:\/\/[^\s)>"'`]+/gi;
 const SENTENCE_BOUNDARY = /(?<=[.!?])\s+/;
@@ -188,7 +189,7 @@ export function systemNamePattern(system: string): RegExp {
     .toLowerCase()
     .split(/[^\p{L}\p{N}]+/u)
     .filter(Boolean)
-    .map((word: string): string => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    .map(escapeRegExp);
   const body = words.length > 0 ? words.join(`[^${LETTER_OR_DIGIT}]*`) : '(?!)';
   return new RegExp(`(?<!${SPACED_SCRIPT_CHARACTER})${body}(?!${SPACED_SCRIPT_CHARACTER})`, 'iu');
 }
