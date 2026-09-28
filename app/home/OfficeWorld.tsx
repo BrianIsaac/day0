@@ -110,10 +110,26 @@ type OfficeStyle = CSSProperties & {
  */
 const FIGURE_EDGE_INSET = '4.5rem';
 
+/** Half the widest desk: a desk's centre keeps this far from the box's edge, so none is cut off. */
+const DESK_EDGE_INSET = '3rem';
+
+/** The fewest desks a phone draws (UX 12, v3 option c): the ones the first four employees take. */
+const PHONE_DESK_MINIMUM = 4;
+
+/** A percent across the office, kept `inset` from either edge. */
+function insetLeft(percent: number, inset: string): string {
+  return `clamp(${inset}, ${percent}%, calc(100% - ${inset}))`;
+}
+
 /** The mini office world: the employees at their desks or roaming the rooms. */
-export function OfficeWorld({ agents }: { agents: RosterRow[] | undefined }) {
+export function OfficeWorld({ agents }: { agents: readonly RosterRow[] | undefined }) {
   const visibleAgents = agents ?? [];
   const deskCount = Math.max(8, Math.min(OFFICE_DESKS.length, visibleAgents.length));
+  const phoneDesks = new Set(
+    Array.from({ length: Math.max(PHONE_DESK_MINIMUM, visibleAgents.length) }, (_, index) =>
+      deskFor(index),
+    ),
+  );
   const [agentDestinations, setAgentDestinations] = useState<Record<string, OfficePoint>>({});
   const office = useRef<HTMLDivElement>(null);
   useLightUpOnce(office);
@@ -169,7 +185,12 @@ export function OfficeWorld({ agents }: { agents: RosterRow[] | undefined }) {
         ))}
 
         {OFFICE_DESKS.slice(0, deskCount).map((desk, index) => (
-          <OfficeDesk key={`${desk.x}-${desk.y}-${index}`} desk={desk} index={index} />
+          <OfficeDesk
+            key={`${desk.x}-${desk.y}-${index}`}
+            desk={desk}
+            index={index}
+            onPhone={phoneDesks.has(index)}
+          />
         ))}
 
         {visibleAgents.length === 0 ? (
@@ -240,18 +261,35 @@ function OfficeSignal({ signal }: { signal: (typeof OFFICE_SIGNALS)[number] }) {
   );
 }
 
-function OfficeDesk({ desk, index }: { desk: (typeof OFFICE_DESKS)[number]; index: number }) {
-  const chairStyle: OfficeStyle = { left: `${desk.seatX}%`, top: `${desk.seatY}%`, '--i': index };
-  const deskStyle: OfficeStyle = { left: `${desk.x}%`, top: `${desk.y}%`, '--i': index };
+function OfficeDesk({
+  desk,
+  index,
+  onPhone,
+}: {
+  desk: (typeof OFFICE_DESKS)[number];
+  index: number;
+  onPhone: boolean;
+}) {
+  const chairStyle: OfficeStyle = {
+    left: insetLeft(desk.seatX, DESK_EDGE_INSET),
+    top: `${desk.seatY}%`,
+    '--i': index,
+  };
+  const deskStyle: OfficeStyle = {
+    left: insetLeft(desk.x, DESK_EDGE_INSET),
+    top: `${desk.y}%`,
+    '--i': index,
+  };
+  const phone = onPhone ? '' : ' max-sm:hidden';
   return (
     <>
       <div
-        className={`day0-pixel-chair day0-pixel-chair-${desk.variant} absolute -translate-x-1/2 -translate-y-1/2`}
+        className={`day0-pixel-chair day0-pixel-chair-${desk.variant} absolute -translate-x-1/2 -translate-y-1/2${phone}`}
         style={chairStyle}
         aria-hidden="true"
       />
       <div
-        className={`day0-pixel-desk day0-pixel-desk-${desk.variant} absolute -translate-x-1/2 -translate-y-1/2`}
+        className={`day0-pixel-desk day0-pixel-desk-${desk.variant} absolute -translate-x-1/2 -translate-y-1/2${phone}`}
         style={deskStyle}
         aria-hidden="true"
       >
@@ -292,7 +330,7 @@ function OfficeAgent({
   const x = working ? desk.seatX : idleX;
   const y = working ? desk.seatY : idleY;
   const style: OfficeStyle = {
-    left: `clamp(${FIGURE_EDGE_INSET}, ${x}%, calc(100% - ${FIGURE_EDGE_INSET}))`,
+    left: insetLeft(x, FIGURE_EDGE_INSET),
     top: `${y}%`,
     '--walk-duration': `${2700 + (seed % 700)}ms`,
   };

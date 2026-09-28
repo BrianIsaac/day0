@@ -78,4 +78,31 @@ describe('OfficeWorld', (): void => {
       [67, 25],
     ]);
   });
+
+  it('draws four desks on a phone, the ones the first four employees take (UX 12, option c)', (): void => {
+    const html = renderToStaticMarkup(<OfficeWorld agents={[]} />);
+    const desks = [...html.matchAll(/class="day0-pixel-desk ([^"]*)"/g)].map((match) => match[1]);
+    const chairs = [...html.matchAll(/class="day0-pixel-chair ([^"]*)"/g)].map((match) => match[1]);
+    expect(desks).toHaveLength(8);
+    const hidden = (classes: string[]): number[] =>
+      classes.flatMap((names, index) => (names.includes('max-sm:hidden') ? [index] : []));
+    expect(hidden(desks)).toEqual([1, 4, 5, 7]);
+    expect(hidden(chairs)).toEqual([1, 4, 5, 7]);
+    const staffed = renderToStaticMarkup(
+      <OfficeWorld
+        agents={Array.from(
+          { length: 6 },
+          (_, index) => ({ ...idle, agentId: `a${index}` }) as RosterRow,
+        )}
+      />,
+    );
+    expect(
+      hidden([...staffed.matchAll(/class="day0-pixel-desk ([^"]*)"/g)].map((match) => match[1])),
+    ).toEqual([4, 5]);
+  });
+
+  it('keeps every desk inside the office at a phone’s width', (): void => {
+    const html = renderToStaticMarkup(<OfficeWorld agents={[]} />);
+    expect(html).toContain('left:clamp(3rem, 86%, calc(100% - 3rem))');
+  });
 });
