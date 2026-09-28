@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import Link from 'next/link';
 import type { Doc } from '@convex/_generated/dataModel';
 import { avatarById } from '@/agent/avatar-pets';
+import { useLightUpOnce } from './office-light-up';
 import { AgentPixelAvatar } from './PixelAvatar';
 import type { RosterRow } from './types';
 
@@ -85,13 +86,24 @@ const OFFICE_DESKS = [
 
 type OfficeStyle = CSSProperties & {
   '--walk-duration'?: string;
+  /** The element's place in the light-up stagger. */
+  '--i'?: number;
 };
+
+/**
+ * Half a name plate's width: a figure's centre never comes nearer the box's
+ * edge than this, so at a phone's width the plate is not cut off by the
+ * office's clipping while the desk it sits at stays near the edge.
+ */
+const FIGURE_EDGE_INSET = '4.5rem';
 
 /** The mini office world: the employees at their desks or roaming the rooms. */
 export function OfficeWorld({ agents }: { agents: RosterRow[] | undefined }) {
   const visibleAgents = agents ?? [];
   const deskCount = Math.max(8, Math.min(OFFICE_DESKS.length, visibleAgents.length));
   const [agentDestinations, setAgentDestinations] = useState<Record<string, OfficePoint>>({});
+  const office = useRef<HTMLDivElement>(null);
+  useLightUpOnce(office);
 
   // Agents open at the deterministic idle spot `OfficeAgent` derives from their
   // id and start roaming from the first tick, so no synchronous seeding here.
@@ -119,12 +131,12 @@ export function OfficeWorld({ agents }: { agents: RosterRow[] | undefined }) {
     <section className="mb-6 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-card)]">
       <div className="flex items-center justify-between border-b border-[var(--color-border)] px-5 py-4">
         <h2 className="text-sm font-semibold">Mini office world</h2>
-        <span className="text-[10px] text-[var(--color-muted)]">{visibleAgents.length} total</span>
+        <span className="text-xs text-[var(--color-muted)]">{visibleAgents.length} total</span>
       </div>
 
-      <div className="day0-pixel-office relative min-h-[560px] overflow-hidden">
-        {OFFICE_ROOMS.map((room) => (
-          <OfficeRoom key={`${room.left}-${room.top}`} room={room} />
+      <div ref={office} className="day0-pixel-office relative min-h-[560px] overflow-hidden">
+        {OFFICE_ROOMS.map((room, index) => (
+          <OfficeRoom key={`${room.left}-${room.top}`} room={room} index={index} />
         ))}
 
         {OFFICE_CORRIDORS.map((corridor) => (
@@ -132,7 +144,11 @@ export function OfficeWorld({ agents }: { agents: RosterRow[] | undefined }) {
         ))}
 
         {OFFICE_DECOR.map((decor, index) => (
-          <OfficeDecor key={`${decor.kind}-${decor.x}-${decor.y}-${index}`} decor={decor} />
+          <OfficeDecor
+            key={`${decor.kind}-${decor.x}-${decor.y}-${index}`}
+            decor={decor}
+            index={index}
+          />
         ))}
 
         {OFFICE_SIGNALS.map((signal) => (
@@ -140,11 +156,11 @@ export function OfficeWorld({ agents }: { agents: RosterRow[] | undefined }) {
         ))}
 
         {OFFICE_DESKS.slice(0, deskCount).map((desk, index) => (
-          <OfficeDesk key={`${desk.x}-${desk.y}-${index}`} desk={desk} />
+          <OfficeDesk key={`${desk.x}-${desk.y}-${index}`} desk={desk} index={index} />
         ))}
 
         {visibleAgents.length === 0 ? (
-          <div className="day0-pixel-office-empty absolute left-5 top-5 z-10 px-3 py-2 text-[10px] uppercase tracking-[0.16em] text-[var(--color-muted)]">
+          <div className="day0-pixel-office-empty absolute left-5 top-5 z-10 px-3 py-2 text-xs uppercase tracking-[0.16em] text-[var(--color-muted)]">
             {agents ? 'office ready' : 'syncing office'}
           </div>
         ) : null}
@@ -162,13 +178,17 @@ export function OfficeWorld({ agents }: { agents: RosterRow[] | undefined }) {
   );
 }
 
-function OfficeRoom({ room }: { room: (typeof OFFICE_ROOMS)[number] }) {
+function OfficeRoom({ room, index }: { room: (typeof OFFICE_ROOMS)[number]; index: number }) {
+  const style: OfficeStyle = { ...rectStyle(room), '--i': index };
   return (
     <div
       className={`day0-pixel-room day0-pixel-room-${room.tone} absolute`}
-      style={rectStyle(room)}
+      style={style}
       aria-hidden="true"
-    />
+    >
+      {/* The wash that rises and falls as the room lights up; invisible otherwise. */}
+      <span className="day0-pixel-room-light" aria-hidden="true" />
+    </div>
   );
 }
 
@@ -182,11 +202,12 @@ function OfficeCorridor({ corridor }: { corridor: (typeof OFFICE_CORRIDORS)[numb
   );
 }
 
-function OfficeDecor({ decor }: { decor: (typeof OFFICE_DECOR)[number] }) {
+function OfficeDecor({ decor, index }: { decor: (typeof OFFICE_DECOR)[number]; index: number }) {
+  const style: OfficeStyle = { left: `${decor.x}%`, top: `${decor.y}%`, '--i': index };
   return (
     <div
       className={`day0-pixel-decor day0-pixel-${decor.kind} absolute -translate-x-1/2 -translate-y-1/2`}
-      style={{ left: `${decor.x}%`, top: `${decor.y}%` }}
+      style={style}
       aria-hidden="true"
     />
   );
@@ -206,17 +227,19 @@ function OfficeSignal({ signal }: { signal: (typeof OFFICE_SIGNALS)[number] }) {
   );
 }
 
-function OfficeDesk({ desk }: { desk: (typeof OFFICE_DESKS)[number] }) {
+function OfficeDesk({ desk, index }: { desk: (typeof OFFICE_DESKS)[number]; index: number }) {
+  const chairStyle: OfficeStyle = { left: `${desk.seatX}%`, top: `${desk.seatY}%`, '--i': index };
+  const deskStyle: OfficeStyle = { left: `${desk.x}%`, top: `${desk.y}%`, '--i': index };
   return (
     <>
       <div
         className={`day0-pixel-chair day0-pixel-chair-${desk.variant} absolute -translate-x-1/2 -translate-y-1/2`}
-        style={{ left: `${desk.seatX}%`, top: `${desk.seatY}%` }}
+        style={chairStyle}
         aria-hidden="true"
       />
       <div
         className={`day0-pixel-desk day0-pixel-desk-${desk.variant} absolute -translate-x-1/2 -translate-y-1/2`}
-        style={{ left: `${desk.x}%`, top: `${desk.y}%` }}
+        style={deskStyle}
         aria-hidden="true"
       >
         <div className="day0-pixel-monitor absolute left-3 right-3 top-2 h-4">
@@ -256,7 +279,7 @@ function OfficeAgent({
   const x = working ? desk.seatX : idleX;
   const y = working ? desk.seatY : idleY;
   const style: OfficeStyle = {
-    left: `${x}%`,
+    left: `clamp(${FIGURE_EDGE_INSET}, ${x}%, calc(100% - ${FIGURE_EDGE_INSET}))`,
     top: `${y}%`,
     '--walk-duration': `${2700 + (seed % 700)}ms`,
   };
@@ -268,7 +291,7 @@ function OfficeAgent({
         working ? 'day0-office-agent-seated' : 'day0-office-agent-walking'
       }`}
       style={style}
-      title={`${agent.name} - ${working ? 'working at desk' : 'roaming'}`}
+      title={`${agent.name}, ${working ? 'working at a desk' : 'roaming the office'}`}
     >
       <div className={working ? 'day0-office-agent-working' : 'day0-office-agent-roaming'}>
         <AgentPixelAvatar
@@ -277,12 +300,12 @@ function OfficeAgent({
           label={agent.name}
         />
         <div className="day0-pixel-nameplate mt-1 max-w-36 px-2 py-1 text-center">
-          <div className="truncate text-[10px] text-[var(--color-fg)]">{agent.name}</div>
-          <div className="truncate text-[9px] text-[var(--color-fg)]/70" title={agent.roleLine}>
+          <div className="truncate text-xs text-[var(--color-fg)]">{agent.name}</div>
+          <div className="truncate text-xs text-[var(--color-fg)]/70" title={agent.roleLine}>
             {agent.roleLine}
           </div>
         </div>
-        <div className="mt-1 rounded-full border border-[var(--color-border)] bg-[var(--color-card)]/90 px-2 py-0.5 text-center text-[9px] text-[var(--color-muted)]">
+        <div className="mt-1 rounded-full border border-[var(--color-border)] bg-[var(--color-card)]/90 px-2 py-0.5 text-center text-xs whitespace-nowrap text-[var(--color-muted)]">
           reads {agent.docSourceCount} {agent.docSourceCount === 1 ? 'location' : 'locations'}
         </div>
       </div>
