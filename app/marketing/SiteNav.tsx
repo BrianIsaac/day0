@@ -1,13 +1,15 @@
 'use client';
 
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import { useUser } from '@clerk/nextjs';
 import { DEV_NO_AUTH } from '@/lib/dev-auth';
 import { GitHubMark } from './GitHubMark';
 
 const TONE =
   'rounded-md text-[var(--color-muted)] transition-colors duration-150 hover:text-[var(--color-fg)]';
-const LINK = `${TONE} px-2.5 py-2 text-[13px]`;
+// Each link is a 44 px target inside the 56 px header (N14).
+const LINK = `${TONE} inline-flex min-h-11 items-center px-2.5 text-[13px]`;
 
 /**
  * The public site navigation in the header, shown exactly when `/` shows the marketing page:
@@ -21,6 +23,7 @@ export function SiteNav() {
 
 function SignedOutNav() {
   const { user } = useUser();
+  const pathname = usePathname();
   if (user) return null;
   return (
     <nav aria-label="Site" className="hidden items-center gap-1.5 md:flex">
@@ -31,10 +34,15 @@ function SignedOutNav() {
         Evidence
       </Link>
       {/* Not prefetched: until its route lands a prefetch would reach the proxy's sign-in wall. */}
-      <Link href="/walkthrough" prefetch={false} className={LINK}>
+      <Link
+        href="/walkthrough"
+        prefetch={false}
+        aria-current={pathname === '/walkthrough' ? 'page' : undefined}
+        className={LINK}
+      >
         Walkthrough
       </Link>
-      <GitHubMark className={`${TONE} inline-flex items-center p-2`} />
+      <GitHubMark className={`${TONE} inline-flex size-11 items-center justify-center`} />
     </nav>
   );
 }

@@ -117,6 +117,15 @@ describe('the header', (): void => {
     expect(html).toMatch(/<main id="main" tabindex="-1"[^>]*><p>Page<\/p><\/main>/);
   });
 
+  it('keeps the skip link and the home link at the 44 px target floor, the skip link never shrunk to a pixel (N14)', async (): Promise<void> => {
+    const html = await renderLayout();
+    const skip = /<a href="#main"[^>]*>/.exec(html)?.[0] ?? '';
+    expect(skip).toMatch(/\bmin-h-11\b/);
+    expect(skip).not.toMatch(/\bsr-only\b/);
+    expect(skip).toMatch(/-translate-y-\[calc\(100%\+1rem\)\][^"]*\bfocus:translate-y-0\b/);
+    expect(/<a [^>]*aria-label="Day0 home"[^>]*>/.exec(html)?.[0]).toMatch(/\bmin-h-11\b/);
+  });
+
   it('holds every page in its one main landmark, after the header', async (): Promise<void> => {
     const html = await renderLayout();
     expect(html.match(/<main[\s>]/g)).toHaveLength(1);
