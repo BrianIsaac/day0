@@ -10,8 +10,7 @@ let doubles: BrowserDoubles;
 let container: HTMLDivElement;
 let root: Root;
 
-function render(seconds: number | null, reduce = false): void {
-  doubles ??= installBrowserDoubles(reduce);
+function render(seconds: number | null): void {
   act((): void => root.render(<RunClock seconds={seconds} untimed="timed from step 4" />));
 }
 
@@ -20,13 +19,13 @@ beforeEach((): void => {
   container = document.createElement('div');
   document.body.append(container);
   root = createRoot(container);
+  doubles = installBrowserDoubles(false);
 });
 
 afterEach((): void => {
   act((): void => root.unmount());
   vi.unstubAllGlobals();
   document.body.replaceChildren();
-  doubles = undefined as unknown as BrowserDoubles;
 });
 
 describe('RunClock', () => {
@@ -65,8 +64,10 @@ describe('RunClock', () => {
   });
 
   it('lands at once under reduced motion', () => {
-    render(432, true);
-    render(2925, true);
+    vi.unstubAllGlobals();
+    doubles = installBrowserDoubles(true);
+    render(432);
+    render(2925);
     expect(container.textContent).toBe('+48:45');
     expect(doubles.pendingFrames()).toBe(0);
   });
