@@ -775,11 +775,24 @@ export interface PlanHeldObligationsFailedOpen extends WorkItemNamed {
   readonly failure: string;
 }
 
+/**
+ * `work.plan-held` for a plan drafted without its ticket or thread (P7-18):
+ * nobody read what it acts on, so the switch does not run it.
+ */
+export interface PlanHeldDraftedWithout extends WorkItemNamed {
+  readonly reason: 'drafted-without-record';
+  /** The source system's surface slug. */
+  readonly surfaceSlug: string;
+  /** The system was not connected, or it was and the read did not land. */
+  readonly cause: 'not-connected' | 'read-failed';
+}
+
 /** The payload of `work.plan-held`, by why the plan waits for the manager. */
 export type WorkPlanHeldPayload =
   | PlanHeldSkipOverruled
   | PlanHeldForRejection
-  | PlanHeldObligationsFailedOpen;
+  | PlanHeldObligationsFailedOpen
+  | PlanHeldDraftedWithout;
 
 /** The payload of `work.plan-approved`. */
 export interface WorkPlanApprovedPayload extends WorkItemNamed {

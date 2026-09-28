@@ -210,6 +210,7 @@ export const requestDecision = internalAction({
       id: prepared.decisionId,
       kind: args.kind as DecisionKind,
       plan: prepared.plan,
+      ...(prepared.draftedWithout ? { draftedWithout: prepared.draftedWithout } : {}),
       actions: ((prepared.output ?? {}) as { actions?: MockAction[] }).actions,
       heldIndexes: prepared.heldIndexes,
       refused: prepared.refused,

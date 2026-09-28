@@ -370,6 +370,8 @@ export function decisionRequestText(args: {
   refused?: ReadonlyArray<{ readonly index: number; readonly reason: string }>;
   /** Whether Slack renders the request, so another channel reads by its Slack mention. */
   slackMarkup?: boolean;
+  /** For a plan drafted without its ticket or thread: the system and why (P7-18). */
+  draftedWithout?: DraftedWithoutLine;
 }): string {
   const heading = `${args.agentName} needs your decision on “${oneLine(args.title, 'Untitled work')}”.`;
   const about = args.item ? itemLines(args.item) : [];
@@ -391,7 +393,10 @@ export function decisionRequestText(args: {
   let scope: string | undefined;
   if (args.kind === 'plan') {
     listHeading = planHeading(args.plan);
-    lines = planLines(args.plan);
+    lines = [
+      ...(args.draftedWithout ? [draftedWithoutLine(args.draftedWithout)] : []),
+      ...planLines(args.plan),
+    ];
     noun = 'plan steps';
   } else {
     const actions = args.actions ?? [];
@@ -502,6 +507,26 @@ function refusedLines(
     ...shown,
     ...(more > 0 ? [`…and ${more} more refused; the full list is in day0.`] : []),
   ];
+}
+
+/** What a plan request says of a plan drafted without its ticket or thread (P7-18). */
+export interface DraftedWithoutLine {
+  /** The source system's display name. */
+  readonly system: string;
+  readonly subject: 'record' | 'thread';
+  readonly cause: 'not-connected' | 'read-failed';
+}
+
+/**
+ * The line that tells the manager a plan was drafted without what it acts
+ * on, and what approving it now means.
+ */
+function draftedWithoutLine(without: DraftedWithoutLine): string {
+  const noun = without.subject === 'record' ? 'ticket' : 'thread';
+  const system = oneLine(without.system, 'its system');
+  return without.cause === 'not-connected'
+    ? `Drafted without reading the ${noun}: ${system} was not connected. Day0 drafts the plan again when ${system} is back; approving now runs it as drafted.`
+    : `Drafted without reading the ${noun}: the read on ${system} did not land. Approving runs it as drafted.`;
 }
 
 /** The first line of a plan request: its summary, or where to read the plan. */

@@ -3479,7 +3479,43 @@ describe('executing an approved plan through the gate', (): void => {
       ]);
       const events = await groundingEvents(harness);
       expect(events[0]!.payload).toMatchObject({ applied: { ok: false } });
-      expect((await readItem(harness, workItemId)).state).toBe('plan-pending');
+      expect(await readItem(harness, workItemId)).toMatchObject({
+        state: 'plan-pending',
+        planDraftedWithout: { surfaceSlug: 'linear', subject: 'record', cause: 'read-failed' },
+      });
+    });
+
+    it('holds a plan drafted while its system is down for the manager, whatever the switch says (P7-18)', async (): Promise<void> => {
+      useSurfaceMode('real');
+      const harness = convexTest(contractSchema(), allConvexModules());
+      const { agentId, workItemId } = await seed(harness, 'real', undefined, {
+        autonomousActions: true,
+      });
+      await toClaimed(harness, workItemId);
+      await harness.run(async (ctx): Promise<void> => {
+        const linear = await ctx.db
+          .query('surfaces')
+          .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId).eq('slug', 'linear'))
+          .unique();
+        await ctx.db.patch(linear!._id, { verdict: 'listed-dead' });
+      });
+      await expect(
+        harness.withIdentity(OWNER).action(api.workActions.draftPlan, { workItemId }),
+      ).resolves.toEqual({ ok: true });
+      expect(recorded.mcp).toHaveLength(0);
+      expect(await readItem(harness, workItemId)).toMatchObject({
+        state: 'plan-pending',
+        planDraftedWithout: { surfaceSlug: 'linear', subject: 'record', cause: 'not-connected' },
+      });
+      const held = (await harness.run(async (ctx) => await ctx.db.query('events').collect())).find(
+        (event) => event.type === 'work.plan-held',
+      );
+      expect(held?.payload).toEqual({
+        workItemId,
+        reason: 'drafted-without-record',
+        surfaceSlug: 'linear',
+        cause: 'not-connected',
+      });
     });
 
     it('reports an ungranted read as unavailable without calling the provider', async (): Promise<void> => {

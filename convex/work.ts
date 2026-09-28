@@ -10,7 +10,7 @@ import {
   type QueryCtx,
 } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
-import { ticketSnapshotValidator } from './schema';
+import { planDraftedWithoutValidator, ticketSnapshotValidator } from './schema';
 import { internal } from './_generated/api';
 import { assertOwnsAgent, assertOwnsWorkItem, getCallerOrThrow } from './ownership';
 import { answerQuestionInTransaction, askOpenQuestionsAtPlan } from './managerQuestions';
@@ -2808,8 +2808,17 @@ async function withAppliedCorrections(
   return { plan: applied.length > 0 ? { ...rest, appliedCorrections: applied } : rest, applied };
 }
 
+/**
+ * Store a drafted plan and park the row for its decision. Internal; the
+ * drafting action's. `draftedWithout` says the plan was drafted without its
+ * ticket or thread (P7-18); a plan drafted with it clears an earlier one's.
+ */
 export const setPlan = internalMutation({
-  args: { workItemId: v.id('workItems'), plan: v.any() },
+  args: {
+    workItemId: v.id('workItems'),
+    plan: v.any(),
+    draftedWithout: v.optional(planDraftedWithoutValidator),
+  },
   handler: async (ctx, args): Promise<{ stored: boolean }> => {
     const row = await ctx.db.get(args.workItemId);
     if (!row) throw new Error('workItem not found');
@@ -2818,6 +2827,7 @@ export const setPlan = internalMutation({
     await ctx.db.patch(args.workItemId, {
       plan,
       state: 'plan-pending',
+      planDraftedWithout: args.draftedWithout,
       ...(SURFACE_MODE === 'real' ? { planPendingAt: Date.now() } : {}),
       ...(row.draftClaimedAt !== undefined ? { draftClaimedAt: undefined } : {}),
     });
@@ -2878,7 +2888,9 @@ function obligationsFailedOpen(plan: unknown): string | undefined {
  * plan comes back to them. So does a plan whose obligations judgement failed
  * open (`reason: 'obligations-failed-open'`): its declared reads and writes
  * stand unchecked, and the gates the switch trusts read exactly those
- * (E-70 D4). Internal; called by the drafting action and the stalled-step
+ * (E-70 D4). So does a plan drafted without its ticket or thread
+ * (`reason: 'drafted-without-record'`, P7-18): nobody read what it acts on.
+ * Internal; called by the drafting action and the stalled-step
  * sweep.
  */
 export const decidePlan = internalMutation({
@@ -2924,6 +2936,26 @@ export const decidePlan = internalMutation({
             workItemId: args.workItemId,
             reason: 'obligations-failed-open',
             failure: unchecked,
+          },
+          createdAt: Date.now(),
+        });
+      }
+      await scheduleDecisionRequest(ctx, row, 'plan');
+      return { approved: false };
+    }
+    // Nobody read what a plan drafted without its ticket or thread acts on,
+    // so the switch does not run it (P7-18); the manager may.
+    const without = row.planDraftedWithout;
+    if (without !== undefined) {
+      if (!args.recovery) {
+        await appendEvent(ctx, {
+          agentId: row.agentId,
+          type: 'work.plan-held',
+          payload: {
+            workItemId: args.workItemId,
+            reason: 'drafted-without-record',
+            surfaceSlug: without.surfaceSlug,
+            cause: without.cause,
           },
           createdAt: Date.now(),
         });
@@ -3114,6 +3146,17 @@ export const prepareDecisionRequest = internalMutation({
         ...(row.replyTarget ? { replyTarget: row.replyTarget } : {}),
       },
       plan: row.plan,
+      ...(args.kind === 'plan' && row.planDraftedWithout
+        ? {
+            draftedWithout: {
+              system:
+                surfaceRows.find((surface) => surface.slug === row.planDraftedWithout?.surfaceSlug)
+                  ?.displayName ?? row.planDraftedWithout.surfaceSlug,
+              subject: row.planDraftedWithout.subject,
+              cause: row.planDraftedWithout.cause,
+            },
+          }
+        : {}),
       output: row.output,
       heldIndexes,
       refused,

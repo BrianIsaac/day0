@@ -26,6 +26,9 @@ describe('the live feed labels', (): void => {
     expect(held({ reason: 'obligations-failed-open', failure: 'model unavailable' })).toBe(
       'plan held for you: its reads and writes could not be checked',
     );
+    expect(
+      held({ reason: 'drafted-without-record', surfaceSlug: 'linear', cause: 'not-connected' }),
+    ).toBe('plan held for you: it was drafted without reading its ticket or thread');
     expect(held({ reason: 'a reason from a later build' })).toBe(
       'plan held for you: it waits for your decision',
     );

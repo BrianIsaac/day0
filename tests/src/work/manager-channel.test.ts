@@ -484,6 +484,25 @@ describe('what a decision request says about its item (P8-6, U9 step 24)', (): v
     expect(text.indexOf('Held actions:')).toBeLessThan(text.indexOf('Refused by'));
   });
 
+  it('tells the manager a plan was drafted without its ticket, and what approving it means (P7-18)', (): void => {
+    const request = (cause: 'not-connected' | 'read-failed'): string[] =>
+      decisionRequestText({
+        agentName: 'ops worker',
+        title: 'Close August',
+        id: 'ab3xyz',
+        kind: 'plan',
+        plan: { summary: 'Close the month.', steps: ['Comment the figures.'] },
+        draftedWithout: { system: 'Linear', subject: 'record', cause },
+      }).split('\n');
+    expect(request('not-connected').slice(2, 4)).toEqual([
+      'Plan: Close the month.',
+      'Drafted without reading the ticket: Linear was not connected. Day0 drafts the plan again when Linear is back; approving now runs it as drafted.',
+    ]);
+    expect(request('read-failed')[3]).toBe(
+      'Drafted without reading the ticket: the read on Linear did not land. Approving runs it as drafted.',
+    );
+  });
+
   it('names another channel by its Slack mention when Slack renders the request', (): void => {
     const post: MockAction = {
       tool: 'http.request',
