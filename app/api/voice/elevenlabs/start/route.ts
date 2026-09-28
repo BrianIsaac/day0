@@ -6,6 +6,12 @@ import { log } from '@/lib/logger';
 /** How long the signed-URL request may take before the page is told voice is unreachable. */
 const SIGNED_URL_TIMEOUT_MS = 10_000;
 
+/** What the page reads when ElevenLabs refuses a signed URL; the provider's reason is in the log. */
+const SIGNED_URL_REFUSED = 'ElevenLabs refused a signed URL for this agent';
+
+/** The longest part of a refusal's body the log keeps. */
+const PROVIDER_BODY_LOG_CHARS = 500;
+
 const UNCONFIGURED_REASON =
   'Voice mode needs ELEVENLABS_API_KEY and ELEVENLABS_AGENT_ID. Chat mode runs the same Day-1 1:1 without them.';
 
@@ -18,10 +24,11 @@ const UNCONFIGURED_REASON =
  * the caller is established here and not left to the proxy matcher
  * alone.
  *
- * On any non-OK response from ElevenLabs we surface the actual error to
- * the browser. Silent fallbacks made it impossible to tell whether the
- * failure was a wrong API key, a wrong agent id, or an allowlist that
- * doesn't include this domain.
+ * A non-OK response from ElevenLabs is never silent, since a silent
+ * fallback made it impossible to tell a wrong API key from a wrong agent id
+ * or an allowlist that does not include this domain; but its body is the
+ * provider's words about the account, so it goes to the server log with the
+ * status and the page gets fixed text (N26).
  *
  * ElevenLabs is optional: with no key this answers 200 with
  * `configured: false` rather than an error status, and the UI routes
@@ -73,13 +80,17 @@ export async function GET(req: Request): Promise<NextResponse> {
       // Either way, fall back to passing the agent id directly to the
       // browser so it can connect over the public WebSocket. The browser
       // surfaces the warning but still lets the user click Start.
-      const body = await res.text();
+      log.warn('ElevenLabs refused a signed URL', {
+        status: res.status,
+        statusText: res.statusText,
+        body: (await res.text()).slice(0, PROVIDER_BODY_LOG_CHARS),
+      });
       return NextResponse.json({
         configured: true,
         agentId: voiceAgentId,
         signedUrl: null,
         public: true,
-        warning: `signed-url fetch returned ${res.status} ${res.statusText}: ${body.slice(0, 200)}`,
+        warning: SIGNED_URL_REFUSED,
       });
     }
     const data = (await res.json()) as { signed_url?: string };
