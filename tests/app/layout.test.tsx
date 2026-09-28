@@ -6,6 +6,7 @@ vi.mock('../../app/Providers', () => ({
   Providers: ({ children }: { children: React.ReactNode }) => children,
 }));
 vi.mock('../../app/HeaderAccount', () => ({ HeaderAccount: () => null }));
+vi.mock('@clerk/nextjs', () => ({ useUser: () => ({ user: null }) }));
 
 /** What the backend's `config.surfaceMode` query answers; undefined while it has not. */
 const backend = vi.hoisted((): { mode: 'mock' | 'real' | undefined } => ({ mode: undefined }));
@@ -89,5 +90,45 @@ describe('documentation navigation by deployment mode', () => {
     backend.mode = 'real';
     vi.resetModules();
     expect(await renderLayout()).toContain('href="/documentation"');
+  });
+});
+
+describe('the header', (): void => {
+  it('puts the mark beside the wordmark in the one link home', async (): Promise<void> => {
+    const html = await renderLayout();
+    const home = /<a [^>]*href="\/"[^>]*>([\s\S]*?)<\/a>/.exec(html);
+    expect(home?.[0]).toContain('aria-label="Day0 home"');
+    expect(home?.[1]).toMatch(
+      /^<svg viewBox="0 0 16 16"[\s\S]*<\/svg><span aria-hidden="true">Day0<\/span>$/,
+    );
+  });
+
+  it('carries the public navigation for a signed-out visitor, with the walkthrough and GitHub', async (): Promise<void> => {
+    const html = await renderLayout();
+    expect(html).toMatch(
+      /<nav aria-label="Site"[\s\S]*href="\/walkthrough"[\s\S]*aria-label="Day0 on GitHub"/,
+    );
+  });
+
+  it('lets a keyboard skip the header to the page, before anything else takes focus', async (): Promise<void> => {
+    const html = await renderLayout();
+    const body = html.slice(html.indexOf('<body>') + '<body>'.length);
+    expect(body).toMatch(/^<a href="#main"[^>]*>Skip to content<\/a>/);
+    expect(html).toMatch(/<div id="main" tabindex="-1"[^>]*><main>Page<\/main><\/div>/);
+  });
+
+  it('colours the browser chrome with the page', async (): Promise<void> => {
+    const { viewport } = await import('../../app/layout');
+    expect(viewport.themeColor).toBe('#0a0a0b');
+    const css = readFileSync(new URL('../../app/globals.css', import.meta.url), 'utf8');
+    expect(css).toContain('--color-bg: #0a0a0b;');
+  });
+
+  it('describes the site as the landing does, in the manager’s words', async (): Promise<void> => {
+    const { metadata } = await import('../../app/layout');
+    expect(metadata.description).toMatch(
+      /^One name in\. Day0 holds a five-minute one-to-one with its manager/,
+    );
+    expect(metadata.description).not.toMatch(/boss|teammate/);
   });
 });
