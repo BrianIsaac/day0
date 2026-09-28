@@ -6780,8 +6780,6 @@ const needsYouBaseFields = {
   waitingAtLeast: v.boolean(),
 };
 
-const needsYouBaseValidator = v.object(needsYouBaseFields);
-
 const needsYouEntryValidator = v.union(
   v.object({ kind: v.literal('charter'), ...needsYouBaseFields }),
   v.object({
@@ -6824,8 +6822,8 @@ const needsYouValidator = v.object({
 /** One thing waiting on the manager. */
 type NeedsYouEntry = Infer<typeof needsYouEntryValidator>;
 
-/** The fields every entry shares. */
-type NeedsYouBase = Infer<typeof needsYouBaseValidator>;
+/** The fields every entry shares: a charter entry is nothing else. */
+type NeedsYouBase = Omit<Extract<NeedsYouEntry, { kind: 'charter' }>, 'kind'>;
 
 /** The event types whose rows mark an item or a system entering a state that waits on the manager. */
 type EntryEventType =
@@ -6887,10 +6885,9 @@ async function enteredAtByRow(
   for (const type of types) {
     const seen = new Set<string>();
     // One more than the bound, so a type with exactly the bound's events reads as complete.
-    const events = eventsOfType(ctx, agentId, type)
+    const read = await eventsOfType(ctx, agentId, type)
       .order('desc')
       .take(ENTRY_EVENT_SCAN_LIMIT + 1);
-    const read = await events;
     for (const event of read.slice(0, ENTRY_EVENT_SCAN_LIMIT)) {
       const id = enteredSubject(event);
       if (id === undefined || !wanted.has(id) || seen.has(id)) continue;
