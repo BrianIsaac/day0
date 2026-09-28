@@ -5,6 +5,7 @@ import { useQuery } from 'convex/react';
 import Link from 'next/link';
 import { api } from '@convex/_generated/api';
 import { useNow } from '../agent/[agentId]/time';
+import { useArrival } from '../arrival';
 import { CompanySupervision } from '../CompanySupervision';
 import { DeployForm } from './DeployForm';
 import { EmployeeRoster } from './EmployeeRoster';
@@ -35,6 +36,8 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
   const now = useNow();
   const [deploying, setDeploying] = useState(false);
   const deployToggle = useRef<HTMLButtonElement>(null);
+  // The main column's cards arrive with the page (v4 section 1.3); the aside does not move.
+  const arriving = useArrival();
 
   const staffed = roster !== undefined && roster.length > 0;
   const showDeployForm = roster !== undefined && (!staffed || deploying);
@@ -67,7 +70,7 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
       </header>
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_20rem] xl:items-start">
-        <div className="flex min-w-0 flex-col gap-6">
+        <div data-cards={arriving ? '' : undefined} className="flex min-w-0 flex-col gap-6">
           {showDeployForm ? (
             <DeployForm
               boss={boss}

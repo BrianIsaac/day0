@@ -146,4 +146,11 @@ describe('NeedsYouList', (): void => {
   it('sets no type below the 12 px floor', (): void => {
     expect(html).not.toMatch(/text-\[(9|10|11)px\]/);
   });
+
+  it('arrives its entries as the card’s second tier, as the Work tab’s rows do (v4 section 1.3)', (): void => {
+    expect(html).toMatch(/<ol data-cards="rows"[^>]*><li/);
+    expect(renderToStaticMarkup(<NeedsYouList inbox={undefined} now={NOW} />)).not.toContain(
+      'data-cards',
+    );
+  });
 });

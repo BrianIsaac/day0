@@ -384,10 +384,11 @@ describe('the company home', (): void => {
     );
   });
 
-  it('leaves the card-arrive attributes to the motion pane: one main column, no data-cards yet', (): void => {
+  it('arrives the main column’s cards with the page and leaves the aside still (v4 section 1.3)', (): void => {
     const page = render(roster);
-    expect(page).not.toContain('data-cards');
-    expect(page).toMatch(/<div class="flex min-w-0 flex-col gap-6"><section/);
+    expect(page).toMatch(/<div data-cards="" class="flex min-w-0 flex-col gap-6"><section/);
+    expect(page.match(/data-cards=""/g)).toHaveLength(1);
+    expect(page).toMatch(/<aside class="flex flex-col gap-6">/);
   });
 
   it('keeps the hosted one-employee home under a snapshot', (): void => {
