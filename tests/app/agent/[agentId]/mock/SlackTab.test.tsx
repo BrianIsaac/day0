@@ -115,3 +115,13 @@ describe("the office's message stamps (N12)", (): void => {
     expect(html).not.toContain('4 Sep 2025, 15:33');
   });
 });
+
+describe('the conversation for a keyboard and a screen reader (step 45, P10-4)', (): void => {
+  it('names the rail as navigation, marks the open channel in words and makes the messages a focusable log', (): void => {
+    const markup = renderToStaticMarkup(<SlackTab agentId={agentId} />);
+    expect(markup).not.toContain('<aside');
+    expect(markup).toMatch(/<nav aria-label="Channels and direct messages"/);
+    expect(markup).toMatch(/aria-current="true" class="min-h-11 /);
+    expect(markup).toMatch(/<div tabindex="0" role="log" aria-label="Messages"/);
+  });
+});

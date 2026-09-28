@@ -47,7 +47,10 @@ export function SlackTab({ agentId }: { agentId: Id<'agents'> }) {
   return (
     <div className="@container h-full">
       <div className="grid grid-cols-1 @lg:grid-cols-[11rem_minmax(0,1fr)] gap-3 @lg:gap-4 h-full">
-        <aside className="@lg:border-r border-[var(--color-border)] @lg:pr-3 @lg:-mr-1 @lg:overflow-y-auto min-w-0">
+        <nav
+          aria-label="Channels and direct messages"
+          className="@lg:border-r border-[var(--color-border)] @lg:pr-3 @lg:-mr-1 @lg:overflow-y-auto min-w-0"
+        >
           <ChannelGroup
             label="Channels"
             channels={channelList}
@@ -61,9 +64,16 @@ export function SlackTab({ agentId }: { agentId: Id<'agents'> }) {
             onPick={setPickedSlug}
             className="mt-2 @lg:mt-4"
           />
-        </aside>
+        </nav>
 
-        <div ref={scrollRef} className="overflow-y-auto @lg:pr-2 space-y-3 min-w-0">
+        {/* Focusable and named, so a keyboard can scroll the conversation. */}
+        <div
+          ref={scrollRef}
+          tabIndex={0}
+          role="log"
+          aria-label="Messages"
+          className="overflow-y-auto @lg:pr-2 space-y-3 min-w-0"
+        >
           {sortedMessages.length === 0 ? (
             <div className="text-xs text-[var(--color-muted)]">no messages in this channel yet</div>
           ) : (
@@ -98,8 +108,10 @@ function ChannelGroup({
         {channels.map((c) => (
           <li key={c._id}>
             <button
+              type="button"
               onClick={() => onPick(c.slug)}
-              className={`text-left px-2 py-1 rounded @lg:w-full ${
+              aria-current={c.slug === activeSlug ? 'true' : undefined}
+              className={`min-h-11 text-left px-2 py-1 rounded @lg:w-full ${
                 c.slug === activeSlug
                   ? 'bg-[var(--color-accent)]/15 text-[var(--color-accent)]'
                   : 'text-[var(--color-fg)] hover:bg-[var(--color-bg)]'

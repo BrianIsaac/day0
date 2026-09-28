@@ -31,4 +31,12 @@ describe('the Docs pane', (): void => {
     expect(article).toContain('tabindex="0"');
     expect(article).toContain('aria-label="Page: RevOps handbook"');
   });
+
+  it('puts the documents in a named navigation list beside the page only when the panel is wide, never an aside inside main', (): void => {
+    const markup = renderToStaticMarkup(<DocsTab agentId={agentId} mode="real" />);
+    expect(markup).not.toContain('<aside');
+    expect(markup).toMatch(/<nav aria-label="Documents"/);
+    expect(markup).toContain('grid grid-cols-1 @lg:grid-cols-[12rem_1fr]');
+    expect(markup).toMatch(/<button type="button" aria-current="true" class="min-h-11 /);
+  });
 });
