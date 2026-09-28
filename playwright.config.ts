@@ -12,6 +12,8 @@ const PORT = 3100;
 
 export default defineConfig({
   testDir: 'tests/browser',
+  // The specs only: `*.test.ts` beside them are the helpers' own tests, which Vitest runs.
+  testMatch: '**/*.spec.ts',
   outputDir: '.next/playwright/results',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
