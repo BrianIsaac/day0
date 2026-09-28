@@ -3,7 +3,7 @@
 import { ClerkProvider, useAuth } from '@clerk/nextjs';
 import { ConvexProviderWithAuth, ConvexReactClient, useConvexAuth } from 'convex/react';
 import { ConvexProviderWithClerk } from 'convex/react-clerk';
-import { ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import { DEV_NO_AUTH } from '@/lib/dev-auth';
 
 /**
@@ -72,7 +72,9 @@ function useDevNoAuth() {
   useEffect(() => {
     let current = true;
     fetchAccessToken()
-      .catch(() => null)
+      // A token the server refuses, or cannot be reached for, is "not signed
+      // in": the gate below says so, and the unlock link is the way back.
+      .catch((): null => null)
       .then((token) => {
         if (current) setState({ isLoading: false, isAuthenticated: token !== null });
       });

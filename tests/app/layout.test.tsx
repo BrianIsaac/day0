@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('../../app/providers', () => ({
+vi.mock('../../app/Providers', () => ({
   Providers: ({ children }: { children: React.ReactNode }) => children,
 }));
 vi.mock('../../app/HeaderAccount', () => ({ HeaderAccount: () => null }));

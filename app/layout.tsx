@@ -3,7 +3,7 @@ import Link from 'next/link';
 import './globals.css';
 import { DocumentationLink } from './DocumentationLink';
 import { HeaderAccount } from './HeaderAccount';
-import { Providers } from './providers';
+import { Providers } from './Providers';
 import { WhipCursor } from './WhipCursor';
 
 const description =
