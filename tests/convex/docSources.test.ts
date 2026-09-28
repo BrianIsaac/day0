@@ -1986,6 +1986,82 @@ describe('the documentation store under the transaction limits (step 49)', (): v
     expect(completed?.summary).toMatchObject({ pagesKept: 1, pagesRemoved: 1 });
   });
 
+  it('keeps the mirror of a page a run begun before 0.6.0 named, while the listing migration has not reached the page', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = limitedHarness();
+    const { sourceId, agentId, runId } = await harness.run(async (ctx) => {
+      const sourceId = await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'Folder',
+        kind: 'folder',
+        locator: '.',
+        status: 'linking',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'legacy mirror test',
+        userId: 'owner',
+        state: 'deployed',
+        createdAt: 1,
+      });
+      // Stored before the upgrade, and not yet given a listing row by the migration.
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'runbook.md',
+        title: 'Runbook',
+        markdown: '# Runbook',
+        updatedAt: 1,
+      });
+      await ctx.db.insert('mockDocs', {
+        agentId,
+        slug: mirroredDocSlug(sourceId, 'runbook.md'),
+        title: 'Runbook',
+        body: '# Runbook',
+        category: 'how-to-guide',
+        sourceId,
+        sourceRef: 'runbook.md',
+        updatedAt: 1,
+      });
+      const runId = await ctx.db.insert('docSyncRuns', {
+        sourceId,
+        cursor: FINISHING_CURSOR,
+        refs: ['runbook.md'],
+        credentialRefs: [],
+        pageCount: 1,
+        redactionCount: 0,
+        state: 'running',
+        createdAt: Date.now(),
+      });
+      await ctx.db.patch(sourceId, { activeSyncId: runId });
+      return { sourceId, agentId, runId };
+    });
+
+    await harness.action(internal.docSyncActions.syncBatch, {
+      sourceId,
+      runId,
+      cursor: FINISHING_CURSOR,
+    });
+
+    const left = await harness.run(async (ctx) => ({
+      pages: (
+        await ctx.db
+          .query('docPages')
+          .withIndex('by_source', (index) => index.eq('sourceId', sourceId))
+          .collect()
+      ).map((page) => page.ref),
+      mirrors: (
+        await ctx.db
+          .query('mockDocs')
+          .withIndex('by_agent_slug', (index) => index.eq('agentId', agentId))
+          .collect()
+      ).map((mirror) => mirror.sourceRef),
+    }));
+    expect(left).toEqual({ pages: ['runbook.md'], mirrors: ['runbook.md'] });
+  });
+
   it('removes a page whose batch never recorded, at the next finish that does not name it', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();

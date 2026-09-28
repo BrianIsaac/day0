@@ -1295,13 +1295,20 @@ export const pruneMirrors = internalMutation({
     const finishing = await finishingRun(ctx, args.sourceId, args.runId, args.checkpoint);
     if (!finishing) return null;
     const listing = await runListing(ctx, finishing.run);
+    // A run begun before 0.6.0 names some of its pages only in its refs, and a
+    // page the listing migration has not reached yet has no row to restamp.
+    const legacy = legacyListedRefs(finishing.run);
     const page = await ctx.db
       .query('mockDocs')
       .withIndex('by_source', (index) => index.eq('sourceId', args.sourceId))
       .paginate({ ...PAGED_READ, cursor: args.from });
     let removed = 0;
     for (const mirror of page.page) {
-      if (mirror.sourceRef && (await listedBy(ctx, args.sourceId, mirror.sourceRef, listing))) {
+      if (
+        mirror.sourceRef &&
+        (legacy.has(mirror.sourceRef) ||
+          (await listedBy(ctx, args.sourceId, mirror.sourceRef, listing)))
+      ) {
         const slug = mirroredDocSlug(args.sourceId, mirror.sourceRef);
         if (mirror.slug === slug) continue;
         // An old-slug copy is the employee's only one until the page is
