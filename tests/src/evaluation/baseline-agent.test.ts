@@ -50,7 +50,8 @@ vi.mock('../../../src/lib/mastra', () => ({
   MODEL_PROVIDER_MAX_RETRIES: 2,
   MODEL_TEMPERATURE: 0.4,
   modelCallOptions: () => ({ modelSettings: { temperature: 0.4 } }),
-  withModelRetry: async <T>(_label: string, run: () => Promise<T>): Promise<T> => await run(),
+  withModelRetry: async <T>(_label: string, run: (signal: AbortSignal) => Promise<T>): Promise<T> =>
+    await run(new AbortController().signal),
 }));
 
 afterEach((): void => {

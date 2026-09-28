@@ -169,7 +169,7 @@ describe('model-call telemetry from the retry wrapper', (): void => {
     ]);
   });
 
-  it('distinguishes a retry followed by a 300-second timeout from one slow request', async (): Promise<void> => {
+  it('ends a retry followed by a slow request at the call budget, not a fresh one per attempt (U9 step 20)', async (): Promise<void> => {
     vi.useFakeTimers();
     const warning = vi.spyOn(console, 'warn').mockImplementation((): void => {});
     let calls = 0;
@@ -192,10 +192,40 @@ describe('model-call telemetry from the retry wrapper', (): void => {
       attempts: 2,
       retries: 1,
       providerCalls: 2,
-      durationMs: MODEL_CALL_TIMEOUT_MS + 2_000,
+      // The second attempt had what the first and its backoff left, not a fresh budget.
+      durationMs: MODEL_CALL_TIMEOUT_MS,
       outcome: 'timed-out',
     });
     expect(warning).toHaveBeenCalledTimes(1);
+  });
+
+  it('never lets a call outlive its budget, however many slow attempts it makes (P7-18)', async (): Promise<void> => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'warn').mockImplementation((): void => {});
+    // Each attempt is refused as busy after 100 s, so five of them and their
+    // backoffs would take more than eight minutes, and the SDK's own retries
+    // inside each would take longer still.
+    const generate = vi.fn(
+      (): Promise<{ object: unknown }> =>
+        new Promise((_resolve, reject) => {
+          setTimeout(() => reject({ statusCode: 503, message: 'busy' }), 100_000);
+        }),
+    );
+    const agent = { name: 'day0-skill-runtime', generate } as unknown as Agent;
+    const pending = collect(() =>
+      agentJson({ agent, user: SECRET_PROMPT, schema: {} }).catch((err: unknown) => err),
+    );
+    await vi.advanceTimersByTimeAsync(MODEL_CALL_TIMEOUT_MS);
+    const { reports, result } = await pending;
+    expect((result as Error).name).toBe('TimeoutError');
+    expect(generate).toHaveBeenCalledTimes(3);
+    expect(reports).toEqual([
+      expect.objectContaining({
+        attempts: 3,
+        durationMs: MODEL_CALL_TIMEOUT_MS,
+        outcome: 'timed-out',
+      }),
+    ]);
   });
 
   it('reports a text call too, and nothing when no observer is installed', async (): Promise<void> => {
