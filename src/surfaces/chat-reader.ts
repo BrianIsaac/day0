@@ -80,6 +80,21 @@ export interface ChatReader {
   postAction(post: ChatPost): MockAction;
 }
 
+/**
+ * A read the chat system refused with a code of its own (`not_in_channel`,
+ * `thread_not_found`), which reading again would repeat. The code is kept so a
+ * caller decides by it, not by the message.
+ */
+export class ChatReadRefused extends Error {
+  readonly code: string;
+
+  constructor(method: string, code: string) {
+    super(`Slack ${method} failed: ${code}`);
+    this.name = 'ChatReadRefused';
+    this.code = code;
+  }
+}
+
 /** The fetch a reader goes through; the caller's backoff and timeout wrap it. */
 export type ChatFetch = (input: URL, init: RequestInit) => Promise<Response>;
 
@@ -180,7 +195,7 @@ export function slackChatReader(
         status: response.status,
       });
     }
-    throw new Error(`Slack ${method} failed: ${error}`);
+    throw new ChatReadRefused(method, error);
   };
 
   const readPages = async (

@@ -5,6 +5,7 @@ import {
   MAX_CHANNEL_PAGES,
   slackChatReader,
   type ChatFetch,
+  ChatReadRefused,
 } from '../../../src/surfaces/chat-reader';
 import { parseSurfaceAction, toolRefusal } from '../../../src/surfaces/policy';
 import { httpSecretPlacementRefusal } from '../../../src/surfaces/secrets';
@@ -138,6 +139,9 @@ describe('the Slack chat reader', (): void => {
     );
     await expect(failure).rejects.toThrow('Slack conversations.history failed: not_in_channel');
     await expect(failure).rejects.not.toBeInstanceOf(TransientProviderError);
+    // The provider's code travels on the refusal, so a caller matches it without reading prose.
+    await expect(failure).rejects.toBeInstanceOf(ChatReadRefused);
+    await expect(failure).rejects.toMatchObject({ code: 'not_in_channel' });
   });
 
   it('calls no method the probe did not allow, and sends the key only as a bearer', async (): Promise<void> => {
