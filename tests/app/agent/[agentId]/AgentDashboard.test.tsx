@@ -559,6 +559,19 @@ describe('a run with two phases', (): void => {
     );
     expect(single).toContain('written before anything was applied');
   });
+
+  it('calls the draft the employee’s, never the agent’s (N29)', (): void => {
+    const single = renderToStaticMarkup(
+      <DraftDetails
+        output={{ draft: 'd', notes: '', applied: twoPhase.applied }}
+        title="Close REVOPS-5"
+      />,
+    );
+    expect(single).toContain('Draft the employee wrote (1 chars)');
+    expect(single).toContain('aria-label="Draft the employee wrote: Close REVOPS-5"');
+    expect(single).toContain('The employee&#x27;s own words');
+    expect(single).not.toMatch(/\bagent\b/i);
+  });
 });
 
 describe('a browser signed in again before a row', (): void => {
@@ -1156,7 +1169,8 @@ describe('the manager line', (): void => {
     const markup = renderToStaticMarkup(
       <ManagerLine bossEmail="boss@day0.local" onChange={async () => undefined} />,
     );
-    expect(markup).toContain('Agent reporting to');
+    expect(markup).toContain('Employee reporting to');
+    expect(markup).not.toMatch(/\bagent\b/i);
     expect(markup).toContain('boss@day0.local');
     expect(markup).toContain('Change manager');
     expect(markup).not.toContain('could not find this manager');

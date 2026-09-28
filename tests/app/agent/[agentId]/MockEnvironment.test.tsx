@@ -81,7 +81,7 @@ describe('MockEnvironment caption and tabs', (): void => {
     queries.mode = 'mock';
     const markup = renderToStaticMarkup(<MockEnvironment agentId={agentId} />);
     expect(markup).toContain('Mock work environment');
-    expect(markup).toContain('Mock surfaces - when the agent runs a skill');
+    expect(markup).toContain('Mock surfaces - when the employee runs a skill');
     expect(markup).not.toContain('Surfaces');
     expect(markup).not.toContain('real mode');
     expect(markup).toContain('Q4 Revenue Tracker');

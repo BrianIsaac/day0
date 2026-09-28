@@ -437,7 +437,7 @@ export function AgentDashboard({ agentId }: Props) {
 /** What each state of the switch does, for its title. */
 const AUTONOMY_TITLES: Record<'off' | 'on', string> = {
   off: 'Supervised: reads and the DM to you apply on their own; every other action waits for your approval of the exact payload.',
-  on: 'Autonomous: the agent acts on connected systems without asking, within the connections and skills you have approved.',
+  on: 'Autonomous: the employee acts on connected systems without asking, within the connections and skills you have approved.',
 };
 
 /** Whether a key press should take the safe path out of the confirmation. */
@@ -696,7 +696,7 @@ export function ManagerLine({
           }}
         >
           <label className="text-2xl font-semibold tracking-tight" htmlFor="manager-email">
-            Agent reporting to
+            Employee reporting to
           </label>
           <input
             id="manager-email"
@@ -736,7 +736,7 @@ export function ManagerLine({
         </form>
       ) : (
         <h1 className="text-2xl font-semibold tracking-tight">
-          Agent reporting to{' '}
+          Employee reporting to{' '}
           <span className="font-mono break-all text-[var(--color-accent)]">{bossEmail}</span>{' '}
           <button
             ref={toggle}
@@ -3037,14 +3037,14 @@ export function DraftDetails({ output, title }: { output: RunOutput; title?: str
   return (
     <details className="mt-2 text-xs">
       <summary className="min-h-11 py-3 cursor-pointer text-[var(--color-accent)]">
-        Draft the agent wrote ({output.draft.length} chars)
+        Draft the employee wrote ({output.draft.length} chars)
       </summary>
       {/* Bounded and wrapped like the other long texts on the card (P9-2), and
           reachable from the keyboard once it scrolls. */}
       <pre
         tabIndex={0}
         role="region"
-        aria-label={title ? `Draft the agent wrote: ${title}` : 'Draft the agent wrote'}
+        aria-label={title ? `Draft the employee wrote: ${title}` : 'Draft the employee wrote'}
         className="mt-2 p-2 max-h-72 overflow-y-auto rounded bg-[var(--color-bg)] border border-[var(--color-border)] whitespace-pre-wrap break-words text-[var(--color-fg)]"
       >
         {output.draft}
@@ -3055,7 +3055,7 @@ export function DraftDetails({ output, title }: { output: RunOutput; title?: str
       <p className="mt-1 text-[10px] text-[var(--color-muted)]">
         {closingPhase
           ? 'The closing draft, written after the prerequisite actions were applied and from their ledger. Only the changes listed above reached the work environment.'
-          : "The agent's own words, written before anything was applied. Only the changes listed above reached the work environment."}
+          : "The employee's own words, written before anything was applied. Only the changes listed above reached the work environment."}
       </p>
     </details>
   );
@@ -4976,7 +4976,7 @@ export function WorkItemCard({
           ) : null}
           {item.state === 'completed' ? (
             <p className="text-[10px] text-[var(--color-muted)] mt-1">
-              Retry with a note sends this finished work back; the note reaches the agent as your
+              Retry with a note sends this finished work back; the note reaches the employee as your
               direction, and its writes are held again unless autonomous actions are on.
             </p>
           ) : null}
@@ -5253,7 +5253,7 @@ export function PermissionsCard({ agentId }: { agentId: Id<'agents'> }) {
           ? revokeScope({
               agentId,
               scope,
-              reason: 'Revoked by the manager from the agent dashboard.',
+              reason: "Revoked by the manager from the employee's dashboard.",
             })
           : grantScopes({ agentId, scopes: [scope] }),
       {

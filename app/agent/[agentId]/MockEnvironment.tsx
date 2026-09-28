@@ -20,7 +20,7 @@ export type EnvironmentMode = 'mock' | 'real';
 const PANEL_ID = 'surfaces';
 
 const CAPTIONS: Record<EnvironmentMode, string> = {
-  mock: 'Mock surfaces - when the agent runs a skill, edits land here in real time',
+  mock: 'Mock surfaces - when the employee runs a skill, edits land here in real time',
   real: 'Documentation day0 can read, and the connection status of every system it has discovered',
 };
 
