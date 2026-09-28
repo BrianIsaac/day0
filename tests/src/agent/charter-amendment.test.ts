@@ -286,22 +286,6 @@ describe('amending the people fields', (): void => {
       ]),
     ).toThrow(/no introduction path named email/);
   });
-
-  it('sets who approves as the manager said it, with high confidence', (): void => {
-    const body = {
-      ...approvedBody(),
-      approvalChain: { boss: 'the finance lead', confidence: 'low' as const },
-    };
-
-    const { charter } = applyCharterChanges(body, [
-      { kind: 'set-approval-chain', boss: ' Priya  Shah ' },
-    ]);
-
-    expect(charter.approvalChain).toEqual({ boss: 'Priya Shah', confidence: 'high' });
-    expect(() => applyCharterChanges(body, [{ kind: 'set-approval-chain', boss: '' }])).toThrow(
-      /who approves cannot be empty/,
-    );
-  });
 });
 
 describe('editing a bounding clause (P8-9)', (): void => {

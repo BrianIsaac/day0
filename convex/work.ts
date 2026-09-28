@@ -72,10 +72,16 @@ import {
 import { landedWritesOf } from '../src/work/landed-writes';
 import { isRevocationTrialRow } from './revocationEvaluation';
 import {
+  askedFor,
   batchDecisionNoticeText,
+  DECISION_NOTICE_WINDOW_MS,
   DECISION_REQUEST_RECOVERY_MS,
   type DecisionKind,
   MANAGER_FEEDBACK_MAX_CHARS,
+  NOTHING_OPEN,
+  type OpenDecisionBatch,
+  type OpenDecisionRequest,
+  type OpenDecisions,
   undeliveredDecisionReason,
 } from '../src/work/manager-channel';
 import { browserComponentRefusal, withBrowserComponentState } from '../src/surfaces/browser';
@@ -96,8 +102,10 @@ import {
   managerNotificationMode,
   stoppedNoteText,
   type ManagerNoteKind,
+  type OwedDecision,
 } from '../src/work/manager-notes';
 import { agentZone } from '../src/lib/zone';
+import { accessEnded, accessEndedReason } from '../src/work/surface-access';
 import { appendEvent } from './eventLog';
 import { retiredClaimOn, retiredHolderName } from './retirements';
 import type { WorkActionsAutoApplyingPayload } from '../src/events/contract';
@@ -134,7 +142,7 @@ async function scheduleDecisionRequest(
     .query('surfaces')
     .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
     .collect();
-  const available = surfaces.some(isManagerChannel);
+  const available = surfaces.some(askableChannel);
   if (available) {
     await ctx.scheduler.runAfter(0, internal.managerChannelActions.requestDecision, {
       workItemId: row._id,
@@ -144,11 +152,24 @@ async function scheduleDecisionRequest(
 }
 
 /**
+ * A manager chat channel the manager can be asked through now: connected
+ * with the manager's ids (`isManagerChannel`), and its access end date not
+ * passed, whatever the row says until the hourly sweep ends it (Q5, M21).
+ *
+ * @param surface - A surface row of the agent.
+ * @returns True when a request or a note may be sent through it.
+ */
+function askableChannel(surface: Doc<'surfaces'>): boolean {
+  return isManagerChannel(surface) && !accessEnded(surface, Date.now());
+}
+
+/**
  * Read the authority and connection state used at the provider boundary.
  *
  * The agent, grants and one surface are read in one transaction so an action
  * cannot combine a switch value from one revision with grants or a connection
- * from another.
+ * from another. A surface whose access end date has passed is named as ended,
+ * so the last boundary before a send refuses it whatever its row still says.
  */
 export const transportAuthority = internalQuery({
   args: { agentId: v.id('agents'), surfaceSlug: v.string() },
@@ -164,6 +185,11 @@ export const transportAuthority = internalQuery({
         /** Scopes the manager revoked that no later grant restored. */
         revokedScopes?: string[];
         surface?: ReturnType<typeof toSurfaceRecord>;
+        /**
+         * Why the surface is not connected though its row still says so: its
+         * access end date passed before the hourly sweep ended it (Q5, M21).
+         */
+        accessEnded?: string;
       }
   > => {
     const agent = await ctx.db.get(args.agentId);
@@ -194,6 +220,9 @@ export const transportAuthority = internalQuery({
       grants: [...active],
       revokedScopes: revoked,
       ...(surface ? { surface: toSurfaceRecord(surface) } : {}),
+      ...(surface?.expiresAt !== undefined && accessEnded(surface, Date.now())
+        ? { accessEnded: accessEndedReason(surface.expiresAt, agentZone(agent)) }
+        : {}),
     };
   },
 });
@@ -297,6 +326,8 @@ export const workItemSeedFields = {
   ),
   /** When the ask was made, by the provider's clock (a Linear `createdAt`), when intake read it. */
   askedAt: v.optional(v.number()),
+  /** When intake read the item: the poll's start, the ask time when the provider gives none. */
+  observedAt: v.optional(v.number()),
 } as const;
 
 export interface WorkItemSeedInput {
@@ -316,19 +347,24 @@ export interface WorkItemSeedInput {
   replyTarget?: { channel: string; channelName?: string; threadTs?: string };
   /** When the ask was made, by the provider's clock, when intake read it. */
   askedAt?: number;
+  /** When intake read the item: the poll's start. */
+  observedAt?: number;
 }
 
 /**
  * When an item was asked for: the provider's time intake passed, else the
- * `ts` a Slack message's id carries (`<channel id>:<ts>`), else now. Cycle time
- * (A9) starts here, so a chat ask seen on a later poll still counts from the
- * message.
+ * `ts` a Slack message's id carries (`<channel id>:<ts>`), else when intake
+ * read it, else now. Cycle time (A9) starts here, so a chat ask seen on a
+ * later poll still counts from the message.
  */
-function askedAtOf(args: Pick<WorkItemSeedInput, 'askedAt' | 'externalId'>, now: number): number {
+function askedAtOf(
+  args: Pick<WorkItemSeedInput, 'askedAt' | 'externalId' | 'observedAt'>,
+  now: number,
+): number {
   if (args.askedAt !== undefined) return args.askedAt;
   const ts = /^[CDG][A-Z0-9]{6,}:(\d{9,10}\.\d{1,6})$/.exec(args.externalId)?.[1];
   const fromTs = ts === undefined ? null : providerTsToMs(ts);
-  return fromTs === null ? now : Math.round(fromTs);
+  return fromTs === null ? (args.observedAt ?? now) : Math.round(fromTs);
 }
 
 /**
@@ -780,7 +816,7 @@ export async function seedItemInTransaction(
     await rememberExternalAlias(ctx, existing, args.externalAlias, externalClaimAlias);
     return existing._id;
   }
-  const { externalAlias, askedAt, ...seed } = args;
+  const { externalAlias, askedAt, observedAt, ...seed } = args;
   const id = await ctx.db.insert('workItems', {
     ...seed,
     ...(externalClaimKey ? { externalClaimKey } : {}),
@@ -788,7 +824,7 @@ export async function seedItemInTransaction(
       ? { externalAlias, externalClaimAlias }
       : {}),
     state: 'discovered',
-    observedAt: askedAtOf({ askedAt, externalId: args.externalId }, Date.now()),
+    observedAt: askedAtOf({ askedAt, externalId: args.externalId, observedAt }, Date.now()),
     createdAt: Date.now(),
   });
   await appendEvent(ctx, {
@@ -1591,6 +1627,75 @@ export const writeClaimHolder = internalQuery({
       if (waiting) return await holderOf(target, waiting, true);
     }
     return null;
+  },
+});
+
+/**
+ * Take the tickets a run's landed writes went to, when no work item holds them.
+ *
+ * Internal; the apply path's, after a phase's writes land. A write to a
+ * ticket no work item was discovered from took no claim, so the ticket,
+ * re-listed by the write, was claimed unopposed by a colleague's intake,
+ * whose executor was told nothing of the comment (P8-2). Each landed ticket
+ * write now leaves the writing work item holding the ticket, so the
+ * colleague's evaluation meets the claim and its executor lists the item
+ * with what landed. The ticket is taken under every spelling the apply's
+ * guard reads (`writeTargetIds`), since the listing may print either case. A
+ * ticket another work item holds is left to it, the work item's own
+ * discovered item is never claimed twice, and a browser page field is
+ * claimed before authoring (`takeWriteTargetClaims`), not here.
+ *
+ * @returns The keys taken.
+ */
+export const claimLandedTicketWrites = internalMutation({
+  args: {
+    workItemId: v.id('workItems'),
+    writes: v.array(v.object({ surfaceSlug: v.string(), targets: v.array(v.string()) })),
+  },
+  handler: async (ctx, args): Promise<string[]> => {
+    const row = await ctx.db.get(args.workItemId);
+    if (SURFACE_MODE !== 'real' || !row || isRevocationTrialRow(row)) return [];
+    const userId = (await ctx.db.get(row.agentId))?.userId;
+    if (!userId) return [];
+    const keys = new Set<string>();
+    for (const write of args.writes) {
+      const surface = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent_slug', (q) =>
+          q.eq('agentId', row.agentId).eq('slug', write.surfaceSlug),
+        )
+        .first();
+      if (surface?.class !== 'kanban' || surface.path === 'browser-driven') continue;
+      for (const target of write.targets) {
+        const key = providerItemKey(
+          surface,
+          { sourceSystem: surface.slug, externalId: target },
+          SURFACE_MODE,
+        );
+        if (key !== undefined && key !== row.externalClaimKey && key !== row.externalClaimAlias) {
+          keys.add(key);
+        }
+      }
+    }
+    const now = Date.now();
+    const taken: string[] = [];
+    for (const key of keys) {
+      const live = await ctx.db
+        .query('externalClaims')
+        .withIndex('by_user_key', (q) => q.eq('userId', userId).eq('key', key))
+        .filter((q) => q.eq(q.field('releasedAt'), undefined))
+        .collect();
+      if (live.length > 0 || (await retiredClaimOn(ctx, userId, key))) continue;
+      await ctx.db.insert('externalClaims', {
+        userId,
+        key,
+        agentId: row.agentId,
+        workItemId: row._id,
+        claimedAt: now,
+      });
+      taken.push(key);
+    }
+    return taken;
   },
 });
 
@@ -2634,6 +2739,22 @@ export const setPlan = internalMutation({
 });
 
 /**
+ * Why a stored plan's obligations judgement failed open, if it did.
+ *
+ * Either shape the settlement leaves: the planner's own fields standing
+ * unchecked (`obligations.failedOpen`), or no fields at all
+ * (`obligationsFailedOpen`).
+ *
+ * @param plan - The work item's stored plan.
+ * @returns The recorded reason, or undefined when the judgement answered.
+ */
+function obligationsFailedOpen(plan: unknown): string | undefined {
+  if (typeof plan !== 'object' || plan === null) return undefined;
+  const { obligations, obligationsFailedOpen: none } = plan as Partial<ExecutionPlan>;
+  return obligations?.failedOpen ?? none;
+}
+
+/**
  * Decide whether a freshly drafted plan should continue without a click.
  *
  * This is deliberately separate from `setPlan`. The plan is always persisted
@@ -2646,8 +2767,11 @@ export const setPlan = internalMutation({
  * first time it is held for that reason a `work.plan-held` event names the
  * first rejection. So does the plan of an item the manager took anyway after
  * the agent skipped it (`reason: 'skip-overruled'`): the card promised that
- * plan comes back to them. Internal; called by the drafting action and the
- * stalled-step sweep.
+ * plan comes back to them. So does a plan whose obligations judgement failed
+ * open (`reason: 'obligations-failed-open'`): its declared reads and writes
+ * stand unchecked, and the gates the switch trusts read exactly those
+ * (E-70 D4). Internal; called by the drafting action and the stalled-step
+ * sweep.
  */
 export const decidePlan = internalMutation({
   args: { workItemId: v.id('workItems'), recovery: v.optional(v.boolean()) },
@@ -2674,6 +2798,25 @@ export const decidePlan = internalMutation({
           agentId: row.agentId,
           type: 'work.plan-held',
           payload: { workItemId: args.workItemId, reason: 'skip-overruled', waived },
+          createdAt: Date.now(),
+        });
+      }
+      await scheduleDecisionRequest(ctx, row, 'plan');
+      return { approved: false };
+    }
+    // A plan whose obligations judgement failed open carries reads and writes
+    // nobody checked; the switch trusts the gates, and the gates trust those.
+    const unchecked = obligationsFailedOpen(row.plan);
+    if (unchecked !== undefined) {
+      if (!args.recovery) {
+        await appendEvent(ctx, {
+          agentId: row.agentId,
+          type: 'work.plan-held',
+          payload: {
+            workItemId: args.workItemId,
+            reason: 'obligations-failed-open',
+            failure: unchecked,
+          },
           createdAt: Date.now(),
         });
       }
@@ -2757,7 +2900,7 @@ export const prepareDecisionRequest = internalMutation({
       .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
       .collect();
     const chat = surfaceRows
-      .filter(isManagerChannel)
+      .filter(askableChannel)
       .sort(
         (left, right) =>
           (left.waterfallPosition ?? Number.MAX_SAFE_INTEGER) -
@@ -2772,9 +2915,14 @@ export const prepareDecisionRequest = internalMutation({
       .withIndex('by_agent_scope', (q) => q.eq('agentId', row.agentId))
       .collect();
     const actions = actionsOf(row.output);
-    const heldIndexes =
+    const verdicts = verdictList(row.actionVerdicts, actions.length);
+    const heldIndexes = args.kind === 'actions' ? indexesWith(verdicts, 'held') : [];
+    const refused =
       args.kind === 'actions'
-        ? indexesWith(verdictList(row.actionVerdicts, actions.length), 'held')
+        ? refusedReasonEntries(row.actionVerdicts, actions.length).map(([index, reason]) => ({
+            index,
+            reason,
+          }))
         : [];
     if (args.kind === 'actions' && heldIndexes.length === 0) {
       return { prepared: false as const, reason: 'no held actions need a decision' };
@@ -2846,9 +2994,16 @@ export const prepareDecisionRequest = internalMutation({
       agentId: row.agentId,
       agentName: agent.name,
       title: row.title,
+      item: {
+        sourceCategory: row.sourceCategory,
+        externalId: row.externalId,
+        ...(row.contentRefs[0] ? { link: row.contentRefs[0] } : {}),
+        ...(row.replyTarget ? { replyTarget: row.replyTarget } : {}),
+      },
       plan: row.plan,
       output: row.output,
       heldIndexes,
+      refused,
       decisionId: args.decisionId,
       requestRunId,
       surface: toSurfaceRecord(chat),
@@ -2908,7 +3063,9 @@ export const MANAGER_CHANGED_RESEND_REASON =
  * holds a code nobody here will answer: the old manager is refused and the
  * new one never saw it. That is so whether the previous manager is still on
  * the row or a failed lookup wiped them first. Each such request is marked
- * failed and re-sent on the new DM with a fresh code, like an undelivered one.
+ * failed and re-sent on the new DM with a fresh code, like an undelivered one;
+ * so is a delivered request already marked failed whose re-send never claimed
+ * its replacement.
  *
  * @param currentChannel - The DM channel the probe just resolved.
  * @returns How many requests were re-sent.
@@ -2928,15 +3085,15 @@ export async function resendDecisionsAfterManagerChange(
           .collect(),
     ),
   );
+  // A delivered request marked failed and never replaced (its re-send died
+  // before it claimed a new code) is stranded the same way (wave 3 review M7).
   const stale = parked.flat().flatMap((row) => {
     const decision = row.decision;
     const open =
       !!decision?.ts &&
-      !decision.decidedAt &&
-      !decision.requestFailedAt &&
+      askedFor(decision, row.state) &&
       decision.surfaceSlug === surface.slug &&
-      decision.channel !== currentChannel &&
-      row.state === (decision.kind === 'plan' ? 'plan-pending' : 'actions-pending');
+      (decision.requestFailedAt !== undefined || decision.channel !== currentChannel);
     return open && decision ? [{ row, decision }] : [];
   });
   for (const { row, decision } of stale) {
@@ -2969,35 +3126,109 @@ export const recoverUndeliveredDecisionRequest = internalMutation({
   },
 });
 
+/** A parked row and the open request it carries. */
+interface OpenRequest {
+  readonly row: Doc<'workItems'>;
+  readonly decision: NonNullable<Doc<'workItems'>['decision']>;
+}
+
 /**
- * The decision requests intake must still read replies under.
+ * The requests open on a manager chat channel: claimed or delivered on its
+ * current DM, undecided, not marked failed, for the state the row is parked in.
  *
- * A request is open once it landed (it has a provider ts, so there is a
- * message to have a thread) and until the decision is made or the row
- * leaves its parked state. Scoped to one chat surface so a reply in
- * another manager channel is never read against it.
+ * @param surface - The chat surface.
+ * @returns The rows and their requests.
  */
-export const openDecisionRequests = internalQuery({
+async function openRequestsOn(ctx: QueryCtx, surface: Doc<'surfaces'>): Promise<OpenRequest[]> {
+  const channel = surface.managerDmChannelId;
+  if (surface.class !== 'chat' || channel === undefined) return [];
+  const parked = await Promise.all(
+    (['plan-pending', 'actions-pending'] as const).map(
+      async (state) =>
+        await ctx.db
+          .query('workItems')
+          .withIndex('by_agent_state', (q) => q.eq('agentId', surface.agentId).eq('state', state))
+          .collect(),
+    ),
+  );
+  return parked.flat().flatMap((row): OpenRequest[] => {
+    const decision = row.decision;
+    if (
+      !decision ||
+      !askedFor(decision, row.state) ||
+      decision.requestFailedAt !== undefined ||
+      decision.surfaceSlug !== surface.slug ||
+      decision.channel !== channel
+    ) {
+      return [];
+    }
+    return [{ row, decision }];
+  });
+}
+
+/** Newest rows asked on one channel read for a recent decision there. */
+const NOTICE_WINDOW_SCAN = 50;
+
+/** Undecided batches of one agent read for the ones with open members. */
+const OPEN_BATCH_SCAN = 200;
+
+/**
+ * What one manager chat channel has open, for the decision poll (Q13).
+ *
+ * Internal; intake's. A request is open from its claim until it is decided,
+ * marked failed, or the row leaves the parked state it asks about, and only
+ * on the DM it was sent to: a request delivered to a previous manager's DM,
+ * or marked failed and not replaced yet, is not read on this one (wave 3
+ * review M7). A batch is open while one of its members is. A notice is owed
+ * for `DECISION_NOTICE_WINDOW_MS` after a decision on the channel. With
+ * nothing open and no notice owed, the poll leaves the DM unread.
+ */
+export const openDecisions = internalQuery({
   args: { surfaceId: v.id('surfaces') },
-  handler: async (ctx, args): Promise<Array<{ workItemId: Id<'workItems'>; ts: string }>> => {
+  handler: async (ctx, args): Promise<OpenDecisions> => {
     const surface = await ctx.db.get(args.surfaceId);
-    if (!surface || surface.class !== 'chat') return [];
-    const parked = await Promise.all(
-      (['plan-pending', 'actions-pending'] as const).map(
-        async (state) =>
-          await ctx.db
-            .query('workItems')
-            .withIndex('by_agent_state', (q) => q.eq('agentId', surface.agentId).eq('state', state))
-            .collect(),
-      ),
+    const channel = surface?.managerDmChannelId;
+    if (!surface || surface.class !== 'chat' || channel === undefined) return NOTHING_OPEN;
+    const requests = (await openRequestsOn(ctx, surface)).map(
+      ({ decision }): OpenDecisionRequest => ({
+        decisionId: decision.id,
+        ...(decision.ts ? { ts: decision.ts } : {}),
+      }),
     );
-    return parked.flat().flatMap((row) => {
-      const decision = row.decision;
-      if (!decision?.ts || decision.decidedAt || decision.surfaceSlug !== surface.slug) return [];
-      const expectedState = decision.kind === 'plan' ? 'plan-pending' : 'actions-pending';
-      if (row.state !== expectedState) return [];
-      return [{ workItemId: row._id, ts: decision.ts }];
+    const openIds = new Set(requests.map((request) => request.decisionId));
+    const batches = (
+      await ctx.db
+        .query('decisionBatches')
+        .withIndex('by_agent_id', (q) => q.eq('agentId', surface.agentId))
+        .filter((q) =>
+          q.and(
+            q.eq(q.field('decidedAt'), undefined),
+            q.eq(q.field('surfaceSlug'), surface.slug),
+            q.eq(q.field('channel'), channel),
+          ),
+        )
+        .take(OPEN_BATCH_SCAN)
+    ).flatMap((batch): OpenDecisionBatch[] => {
+      const decisionIds = batch.members
+        .map((member) => member.decisionId)
+        .filter((id) => openIds.has(id));
+      return decisionIds.length > 0 ? [{ batchId: batch.id, decisionIds }] : [];
     });
+    const since = Date.now() - DECISION_NOTICE_WINDOW_MS;
+    const recent = await ctx.db
+      .query('workItems')
+      .withIndex('by_agent_decision_surface_channel', (q) =>
+        q
+          .eq('agentId', surface.agentId)
+          .eq('decision.surfaceSlug', surface.slug)
+          .eq('decision.channel', channel),
+      )
+      .order('desc')
+      .take(NOTICE_WINDOW_SCAN);
+    const noticeOwed = recent.some(
+      (row) => row.decision?.decidedAt !== undefined && row.decision.decidedAt >= since,
+    );
+    return { requests, batches, noticeOwed };
   },
 });
 
@@ -3559,7 +3790,7 @@ export const resendDecisionRequest = mutation({
   args: { workItemId: v.id('workItems') },
   handler: async (ctx, args) => {
     const row = await assertOwnsWorkItem(ctx, args.workItemId);
-    const decision = row.decision;
+    const decision = askedFor(row.decision, row.state) ? row.decision : undefined;
     const neverAsked =
       !decision &&
       (row.state === 'plan-pending' ||
@@ -3569,7 +3800,7 @@ export const resendDecisionRequest = mutation({
         .query('surfaces')
         .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
         .collect();
-      if (!surfaces.some(isManagerChannel)) {
+      if (!surfaces.some(askableChannel)) {
         throw new ConvexError(
           'No manager chat channel is connected, so there is nowhere to ask; decide here instead.',
         );
@@ -3589,11 +3820,13 @@ export const resendDecisionRequest = mutation({
     }
     const expectedState = decision?.kind === 'plan' ? 'plan-pending' : 'actions-pending';
     if (!decision || decision.decidedAt || row.state !== expectedState) {
-      throw new Error('There is no open decision request to resend.');
+      throw new ConvexError('There is no open decision request to resend.');
     }
-    if (decision.ts) throw new Error('The request was delivered; the manager holds its code.');
+    if (decision.ts) {
+      throw new ConvexError('The request was delivered; the manager holds its code.');
+    }
     if (!undeliveredDecisionReason(decision, Date.now())) {
-      throw new Error('The request is still being delivered.');
+      throw new ConvexError('The request is still being delivered.');
     }
     await supersedeDecisionRequest(ctx, row, decision, 'resend requested from the dashboard');
     return { ok: true };
@@ -4131,6 +4364,99 @@ export const recoverDependentAuthoring = internalMutation({
 });
 
 /**
+ * How many times a run whose execution failed on the model outside the item
+ * (a rate limit, an outage, a timeout) is sent back to execute before it
+ * stops for the manager's Retry: the draft's ladder (`MAX_DRAFT_RESUMES`).
+ */
+export const MAX_EXECUTION_RESUMES = 3;
+
+/** How long a resumed execution waits before it runs again, doubled for each resume. */
+export const EXECUTION_RESUME_DELAY_MS = 60_000;
+
+/** Recent resume events read to count a row's resumes since its last Retry. */
+const EXECUTION_RESUME_HISTORY = 200;
+
+/**
+ * How many times this row's execution was resumed since the manager last
+ * retried it.
+ *
+ * @param row - The executing row.
+ * @returns The resumes counted from the row's latest `work.retry`, or all of them.
+ */
+async function executionResumesSinceRetry(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+): Promise<number> {
+  const forRow = async (type: 'work.execution-resumed' | 'work.retry'): Promise<Doc<'events'>[]> =>
+    (
+      await ctx.db
+        .query('events')
+        .withIndex('by_agent_type', (q) => q.eq('agentId', row.agentId).eq('type', type))
+        .order('desc')
+        .take(EXECUTION_RESUME_HISTORY)
+    ).filter((event) => (event.payload as { workItemId?: unknown }).workItemId === row._id);
+  const [resumes, retries] = await Promise.all([
+    forRow('work.execution-resumed'),
+    forRow('work.retry'),
+  ]);
+  const since = retries[0]?.createdAt ?? Number.NEGATIVE_INFINITY;
+  return resumes.filter((event) => event.createdAt > since).length;
+}
+
+/**
+ * Send a run whose execution failed on the model back to execute, or stop it
+ * once the resumes are spent (P7-18: a model outage made execution final).
+ *
+ * Internal; the execution action calls it for a failure that is not about the
+ * item (`itemBoundModelFailure`). Fenced on the run's claim and on nothing
+ * having been held or applied, so only an execution that ended before the
+ * gate goes back: the row returns to `plan-approved` with a
+ * `work.execution-resumed` event and its execution is scheduled after a
+ * doubling wait (the stalled-step sweep may run it sooner). After
+ * `MAX_EXECUTION_RESUMES` the row stops with the reason, for Retry.
+ *
+ * @returns `resumed`, `stopped`, or `moved-on` when the run is no longer the row's.
+ */
+export const resumeExecution = internalMutation({
+  args: { workItemId: v.id('workItems'), runId: v.id('events'), reason: v.string() },
+  handler: async (ctx, args): Promise<{ outcome: 'resumed' | 'stopped' | 'moved-on' }> => {
+    const row = await ctx.db.get(args.workItemId);
+    if (
+      !row ||
+      row.state !== 'executing' ||
+      row.executionRunId !== args.runId ||
+      row.pendingRunId !== undefined ||
+      row.applyAttemptId !== undefined ||
+      row.applyPhase !== undefined
+    ) {
+      return { outcome: 'moved-on' };
+    }
+    const attempt = (await executionResumesSinceRetry(ctx, row)) + 1;
+    if (attempt > MAX_EXECUTION_RESUMES) {
+      await failInTransaction(ctx, row, {
+        reason: `the execution failed ${attempt} times on the model (${args.reason}); Retry runs it again`,
+        stopped: true,
+      });
+      return { outcome: 'stopped' };
+    }
+    const now = Date.now();
+    await ctx.db.patch(row._id, { state: 'plan-approved', executionRunId: undefined });
+    await appendEvent(ctx, {
+      agentId: row.agentId,
+      type: 'work.execution-resumed',
+      payload: { workItemId: row._id, runId: args.runId, attempt, reason: args.reason },
+      createdAt: now,
+    });
+    await ctx.scheduler.runAfter(
+      EXECUTION_RESUME_DELAY_MS * 2 ** (attempt - 1),
+      internal.workActions.executeApprovedPlanInternal,
+      { workItemId: row._id },
+    );
+    return { outcome: 'resumed' };
+  },
+});
+
+/**
  * Mark a run done, and refuse to when nothing is behind it.
  *
  * The rule — every action the run emitted changed the work environment — was
@@ -4347,7 +4673,7 @@ async function queueManagerNote(
     .query('surfaces')
     .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
     .collect();
-  if (!surfaces.some(isManagerChannel)) return;
+  if (!surfaces.some(askableChannel)) return;
   const mode = managerNotificationMode(agent);
   if (kind === 'stopped' && mode === 'per-run') return;
   const noteId = await ctx.db.insert('managerNotes', {
@@ -4377,7 +4703,7 @@ async function managerDelivery(ctx: MutationCtx, agentId: Id<'agents'>) {
       .collect(),
   ]);
   const chat = surfaceRows
-    .filter(isManagerChannel)
+    .filter(askableChannel)
     .sort(
       (left, right) =>
         (left.waterfallPosition ?? Number.MAX_SAFE_INTEGER) -
@@ -4547,6 +4873,40 @@ async function digestNoteFilter(
  * due: at the top of the hour in the agent's zone, or at once for notes a
  * switch to per run stranded; never twice in one quarter hour.
  */
+/**
+ * What the manager still has to decide for an agent, oldest first: each
+ * parked row's delivered request with its code, or the row alone when no
+ * request reached the manager (never asked, or its request failed).
+ *
+ * @param agentId - The agent.
+ * @returns The owed decisions.
+ */
+async function owedDecisions(ctx: QueryCtx, agentId: Id<'agents'>): Promise<OwedDecision[]> {
+  const parked = await Promise.all(
+    (['plan-pending', 'actions-pending'] as const).map(
+      async (state) =>
+        await ctx.db
+          .query('workItems')
+          .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', state))
+          .collect(),
+    ),
+  );
+  return parked
+    .flat()
+    .filter((row) => row.state === 'plan-pending' || row.approvedIndexes === undefined)
+    .filter((row) => !isRevocationTrialRow(row))
+    .sort((left, right) => left._creationTime - right._creationTime)
+    .map((row): OwedDecision => {
+      const decision = row.decision;
+      const delivered =
+        decision !== undefined &&
+        askedFor(decision, row.state) &&
+        decision.ts !== undefined &&
+        decision.requestFailedAt === undefined;
+      return { title: row.title, ...(delivered ? { decisionId: decision.id } : {}) };
+    });
+}
+
 export const prepareManagerDigest = internalMutation({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args) => {
@@ -4592,7 +4952,12 @@ export const prepareManagerDigest = internalMutation({
       requestRunId: digestId,
       workItemId: notes[0].workItemId,
       noteIds: notes.map((note) => note._id),
-      text: digestText({ agentName: agent.name, zone: agentZone(agent), notes }),
+      text: digestText({
+        agentName: agent.name,
+        zone: agentZone(agent),
+        notes,
+        owed: await owedDecisions(ctx, args.agentId),
+      }),
     };
   },
 });
@@ -4932,6 +5297,9 @@ export const setActionsPending = internalMutation({
       actionVerdicts,
       applyAttemptId: undefined,
       applyClaimedAt: undefined,
+      // Whatever decision the row carries answered an earlier park (the plan,
+      // or phase one's set); this set has not been asked about (review M5).
+      decision: undefined,
     });
     await appendEvent(ctx, {
       agentId: row.agentId,
@@ -4984,6 +5352,8 @@ export const setAwaitingApproval = internalMutation({
       applyPhase: undefined,
       applyAttemptId: undefined,
       applyClaimedAt: undefined,
+      // The held rows of this set have not been asked about (review M5).
+      decision: undefined,
     });
     await appendEvent(ctx, {
       agentId: row.agentId,
@@ -5480,6 +5850,96 @@ export const resolveChannelDecision = internalMutation({
       text,
     });
     return { status: 'decided' as const, outcome: args.reply.verb };
+  },
+});
+
+/** Why a request whose message the DM no longer holds is sent again. */
+export const THREAD_NOT_FOUND_REASON =
+  'the request message is no longer in the manager DM (thread_not_found)';
+
+/**
+ * Close a delivered request whose thread the provider says does not exist,
+ * and send it again with a fresh code.
+ *
+ * Internal; intake's, when reading the request's thread answers
+ * `thread_not_found` (wave 3 review M7). The request is marked failed and
+ * re-sent (`work.decision-request-resent`), so the next poll reads the new
+ * request and not a thread that is gone.
+ *
+ * @returns Whether the request was closed; false when it is no longer open on this DM.
+ */
+export const closeDecisionThread = internalMutation({
+  args: { surfaceId: v.id('surfaces'), decisionId: v.string() },
+  handler: async (ctx, args): Promise<boolean> => {
+    const surface = await ctx.db.get(args.surfaceId);
+    if (!surface) return false;
+    const open = (await openRequestsOn(ctx, surface)).find(
+      ({ decision }) => decision.id === args.decisionId && decision.ts !== undefined,
+    );
+    if (!open) return false;
+    await supersedeDecisionRequest(ctx, open.row, open.decision, THREAD_NOT_FOUND_REASON);
+    return true;
+  },
+});
+
+/** Why a manager reply got the unreadable-reply notice, on its ignored event. */
+export const UNREADABLE_REPLY_REASON = 'reply not readable as a decision';
+
+/** The most open codes the unreadable-reply notice names. */
+const UNREADABLE_NOTICE_CODES = 5;
+
+/**
+ * Tell the manager, once, that a reply could not be read as a decision.
+ *
+ * Internal; intake's, for a manager message in the DM, or in an open
+ * request's thread, that the parser does not read as approve or reject. Only
+ * a message sent after an open request on this DM is a reply to one; nothing
+ * is said while no request is open. Once per message: the notice is keyed by
+ * the message's provider ts, so a re-read of the same window says nothing
+ * again. Writes `work.decision-ignored` with the reason when it notices.
+ *
+ * @returns Whether a notice was queued.
+ */
+export const noticeUnreadableReply = internalMutation({
+  args: { surfaceId: v.id('surfaces'), userId: v.string(), messageTs: v.string() },
+  handler: async (ctx, args): Promise<boolean> => {
+    const surface = await ctx.db.get(args.surfaceId);
+    if (!surface?.managerUserId || args.userId !== surface.managerUserId) return false;
+    const messageAt = providerTsToMs(args.messageTs);
+    if (messageAt === null) return false;
+    const answered = (await openRequestsOn(ctx, surface))
+      .filter(({ decision }) => decision.requestedAt <= messageAt)
+      .sort((left, right) => right.decision.requestedAt - left.decision.requestedAt);
+    const anchor = answered[0];
+    if (!anchor) return false;
+    const codes = answered.slice(0, UNREADABLE_NOTICE_CODES).map(({ decision }) => decision.id);
+    const example = codes[0];
+    const text = [
+      `I couldn’t read that as a decision. Reply “approve ${example}” or “reject ${example} <reason>”, with the code from the request.`,
+      ...(codes.length > 1 ? [`Open decisions: ${codes.join(', ')}.`] : []),
+    ].join(' ');
+    const queued = await queueManagerReplyNotice(ctx, {
+      surfaceId: surface._id,
+      workItemId: anchor.row._id,
+      decisionId: anchor.decision.id,
+      messageTs: args.messageTs,
+      kind: 'unknown',
+      text,
+    });
+    if (queued) {
+      await appendEvent(ctx, {
+        agentId: surface.agentId,
+        type: 'work.decision-ignored',
+        payload: {
+          surfaceId: surface._id,
+          messageTs: args.messageTs,
+          userId: args.userId,
+          reason: UNREADABLE_REPLY_REASON,
+        },
+        createdAt: Date.now(),
+      });
+    }
+    return queued;
   },
 });
 

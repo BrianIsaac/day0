@@ -26,6 +26,7 @@ import { intakeScopeValues } from '../src/surfaces/intake-scope';
 import { isManagerLookupFailure } from '../src/surfaces/manager-lookup';
 import { appendEvent } from './eventLog';
 import { isEventOf } from '../src/events/contract';
+import { agentZone, expiryNoticeDay, expiryNoticeDue } from '../src/lib/zone';
 
 const surfaceVerdict = v.union(
   v.literal('declared'),
@@ -982,6 +983,13 @@ export const recordProbeFailure = internalMutation({
     if (!['approved', 'connected', 'ungranted', 'listed-dead'].includes(surface.verdict)) {
       return false;
     }
+    // A probe that began before the end date and failed after it leaves the
+    // access ended, not dead: the renewal reads `expired` (wave 2 review M20).
+    if (await endedBeforeProbeLanded(ctx, surface)) return false;
+    // The last resolved manager stays: a failed lookup is the usual way a
+    // manager leaves, and the connecting probe after it can only say the
+    // manager changed (Q6) by comparing with who the row resolved before.
+    // Nothing reads it off a row that is not connected.
     await ctx.db.patch(surface._id, {
       verdict: args.verdict,
       reason: args.reason,
@@ -989,7 +997,6 @@ export const recordProbeFailure = internalMutation({
       toolAllowlist: undefined,
       toolArguments: undefined,
       managerDmChannelId: undefined,
-      managerUserId: undefined,
       managerName: undefined,
       providerIdentityId: undefined,
       providerWorkspaceId: undefined,
@@ -1098,6 +1105,8 @@ export const demoteAfterProbeFailure = internalMutation({
     ) {
       return null;
     }
+    // Past the end date there is no rung to fall to: the access ended.
+    if (await endedBeforeProbeLanded(ctx, surface)) return null;
     const candidates = (surface.pathCandidates ?? []).slice(0, MAX_LADDER_PATHS);
     const currentIndex = candidates.findIndex(
       (candidate): boolean =>
@@ -1342,6 +1351,9 @@ export const recordConnected = internalMutation({
     if (!['approved', 'connected', 'ungranted', 'listed-dead'].includes(surface.verdict)) {
       return false;
     }
+    // A probe in flight across the end date never reconnects the access, and
+    // never re-grants its read scope (wave 2 review D4 (a), M20).
+    if (await endedBeforeProbeLanded(ctx, surface)) return false;
     const transitioned = surface.verdict !== 'connected';
     const previousManager = surface.managerUserId;
     const managerChange =
@@ -1423,9 +1435,6 @@ export const SURFACE_ACCESS_DEFAULT_DAYS = 90;
 /** The longest access a card or the manager can set, in days. */
 export const SURFACE_ACCESS_MAX_DAYS = 365;
 
-/** How long before the end date the manager is told it is coming (Q5). */
-export const EXPIRY_NOTICE_MS = 7 * DAY_MS;
-
 /** Surfaces one page of the access-clock migration reads. */
 const ACCESS_BACKFILL_BATCH = 100;
 
@@ -1496,6 +1505,30 @@ async function endAccessInTransaction(
     payload: { surfaceId: surface._id, expiresAt: surface.expiresAt },
     createdAt: now,
   });
+}
+
+/**
+ * Refuse a probe result that lands on or after the access end date.
+ *
+ * `beginProbe` refuses a probe that starts after the date; one reserved
+ * before it can land after it. The access is ended here if the sweep has not
+ * ended it yet, so the refusal leaves the row as the sweep would.
+ *
+ * Args:
+ *   ctx: Mutation context of the probe's result.
+ *   surface: The surface the probe reserved.
+ *
+ * Returns:
+ *   True when the end date has passed and the result must not be written.
+ */
+async function endedBeforeProbeLanded(
+  ctx: MutationCtx,
+  surface: Doc<'surfaces'>,
+): Promise<boolean> {
+  const now = Date.now();
+  if (!accessEndDatePassed(surface, now)) return false;
+  if (surface.reason !== 'expired') await endAccessInTransaction(ctx, surface, now);
+  return true;
 }
 
 /**
@@ -1661,8 +1694,10 @@ export const setAccessDays = mutation({
 /**
  * Tell the manager, once per end date, that a surface's access ends within a week.
  *
- * Internal; the hourly re-probe sweep's. Writes one `surface.expiring` event
- * per end date, so a date the manager moves is noticed again.
+ * Internal; the hourly re-probe sweep's. The week is counted in the agent's
+ * zone (N12): the notice is due from the start of the day a week before the
+ * end date there, and the event names that day. Writes one `surface.expiring`
+ * event per end date, so a date the manager moves is noticed again.
  *
  * Returns:
  *   Whether a notice was written.
@@ -1675,17 +1710,23 @@ export const recordExpiryNotice = internalMutation({
       !surface ||
       !ACCESS_VERDICTS.includes(surface.verdict) ||
       surface.reason === 'expired' ||
-      surface.expiresAt === undefined ||
-      surface.expiresAt <= args.now ||
-      surface.expiresAt - args.now > EXPIRY_NOTICE_MS
+      surface.expiresAt === undefined
     ) {
       return false;
     }
+    const agent = await ctx.db.get(surface.agentId);
+    if (!agent) return false;
+    const zone = agentZone(agent);
+    if (!expiryNoticeDue(args.now, surface.expiresAt, zone)) return false;
     if (await surfaceEventExists(ctx, surface, 'surface.expiring', surface.expiresAt)) return false;
     await appendEvent(ctx, {
       agentId: surface.agentId,
       type: 'surface.expiring',
-      payload: { surfaceId: surface._id, expiresAt: surface.expiresAt },
+      payload: {
+        surfaceId: surface._id,
+        expiresAt: surface.expiresAt,
+        noticeDay: expiryNoticeDay(surface.expiresAt, zone),
+      },
       createdAt: args.now,
     });
     return true;

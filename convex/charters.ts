@@ -161,10 +161,11 @@ export async function renderWorkspaceFromCharter(
   agentId: Id<'agents'>,
   charter: Charter,
 ): Promise<void> {
+  const agent = await ctx.db.get(agentId);
   await writeFileImpl(ctx, {
     agentId,
     fileName: 'IDENTITY.md',
-    content: identityFromCharter(charter),
+    content: identityFromCharter(charter, agent?.bossEmail),
   });
   await writeFileImpl(ctx, { agentId, fileName: 'TOOLS.md', content: toolsFromCharter(charter) });
 }
@@ -336,7 +337,6 @@ export const charterChangeValidator = v.union(
       introPath: v.union(v.literal('manager'), v.literal('self'), v.literal('tbd')),
     }),
   }),
-  v.object({ kind: v.literal('set-approval-chain'), boss: v.string() }),
 );
 
 /** Who sent an amendment. */

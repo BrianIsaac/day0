@@ -49,6 +49,100 @@ export function undeliveredDecisionReason(
   if (now - decision.requestedAt >= DECISION_REQUEST_RECOVERY_MS) return 'request not delivered';
   return undefined;
 }
+/**
+ * Whether a parked row's decision is the request for the decision it waits
+ * on now: of the parked kind and undecided.
+ *
+ * A decided plan request left on a row that then parked an action set, or a
+ * decided phase-one request on a closing set, answered an earlier park; the
+ * set now waiting was never asked about, and every place that asks must see
+ * that (wave 3 review M5).
+ *
+ * @param decision - The row's decision fields, if any.
+ * @param state - The row's state.
+ * @returns True when the decision belongs to the state the row is parked in.
+ */
+export function askedFor(
+  decision: { readonly kind: DecisionKind; readonly decidedAt?: number } | undefined,
+  state: string,
+): boolean {
+  if (!decision || decision.decidedAt !== undefined) return false;
+  return (
+    (state === 'plan-pending' && decision.kind === 'plan') ||
+    (state === 'actions-pending' && decision.kind === 'actions')
+  );
+}
+
+/** A decision request intake reads replies against: sent, or on its way. */
+export interface OpenDecisionRequest {
+  readonly decisionId: string;
+  /** The request message's provider ts; absent while the send is in flight. */
+  readonly ts?: string;
+}
+
+/** A batch code whose members include open requests, with those members' codes. */
+export interface OpenDecisionBatch {
+  readonly batchId: string;
+  readonly decisionIds: readonly string[];
+}
+
+/**
+ * What a manager chat channel has open, which decides whether the decision
+ * poll reads its DM at all (Q13's back-off when nothing is open).
+ */
+export interface OpenDecisions {
+  readonly requests: readonly OpenDecisionRequest[];
+  readonly batches: readonly OpenDecisionBatch[];
+  /**
+   * A decision on the channel is recent enough that a late reply to it, or a
+   * mistyped code, should still be answered (`DECISION_NOTICE_WINDOW_MS`).
+   */
+  readonly noticeOwed: boolean;
+}
+
+/** Nothing open and no notice owed: the decision poll leaves the DM unread. */
+export const NOTHING_OPEN: OpenDecisions = { requests: [], batches: [], noticeOwed: false };
+
+/**
+ * How long after a decision is made on a channel its DM is still read, so a
+ * reply sent late, to a code already decided, is told so.
+ */
+export const DECISION_NOTICE_WINDOW_MS = 60 * 60 * 1000;
+
+/**
+ * Whether the decision poll reads the manager DM.
+ *
+ * @param open - What the channel has open.
+ * @returns True when a request or a batch is open or a notice may be owed.
+ */
+export function readsManagerDm(open: OpenDecisions): boolean {
+  return open.requests.length > 0 || open.batches.length > 0 || open.noticeOwed;
+}
+
+/**
+ * The codes whose replies wait for the next poll because a read they depend
+ * on failed: each request whose thread could not be read, and every batch
+ * that decides one of them. An answer in the unread thread may have come
+ * first and said otherwise, so no reply to those codes is taken until the
+ * thread has been read (Q13, per-message resolution).
+ *
+ * @param open - What the channel has open.
+ * @param unreadThreads - The codes of the requests whose thread read failed.
+ * @returns The codes held.
+ */
+export function heldReplyCodes(
+  open: OpenDecisions,
+  unreadThreads: readonly string[],
+): ReadonlySet<string> {
+  const unread = new Set(unreadThreads);
+  return new Set([
+    ...unread,
+    ...open.batches
+      .filter((batch) => batch.decisionIds.some((id) => unread.has(id)))
+      .map((batch) => batch.batchId),
+  ]);
+}
+
 export type DecisionReply =
   | { verb: 'approve'; id: string }
   | { verb: 'reject'; id: string; reason: string };
@@ -94,7 +188,8 @@ export function parseDecisionReply(text: string): DecisionReply | undefined {
   const verb = match[1].toLowerCase() as 'approve' | 'reject';
   const id = match[2].toLowerCase();
   const rest = (match[3] ?? '').replace(/[\s.!,;:]+$/, '').trim();
-  if (verb === 'approve') return rest === '' || APPROVE_COURTESY.test(rest) ? { verb, id } : undefined;
+  if (verb === 'approve')
+    return rest === '' || APPROVE_COURTESY.test(rest) ? { verb, id } : undefined;
   return { verb, id, reason: rest.slice(0, MANAGER_FEEDBACK_MAX_CHARS) };
 }
 
@@ -117,9 +212,14 @@ export function decisionIdFromBytes(bytes: Uint8Array): string {
 }
 
 /** Find the semantic argument names a generic chat MCP tool advertised at probe time. */
-function chatToolArguments(surface: SurfaceRecord, tool: string): { channel: string; text: string } {
+function chatToolArguments(
+  surface: SurfaceRecord,
+  tool: string,
+): { channel: string; text: string } {
   const names = surface.toolArguments?.find((entry) => entry.tool === tool)?.arguments ?? [];
-  const channel = names.find((name) => /channel|conversation|recipient|destination|chat/i.test(name));
+  const channel = names.find((name) =>
+    /channel|conversation|recipient|destination|chat/i.test(name),
+  );
   const text = names.find((name) => /text|body|message|content/i.test(name));
   return { channel: channel ?? 'channel', text: text ?? 'text' };
 }
@@ -184,9 +284,18 @@ export function decisionRequestText(args: {
   surfaces?: SurfaceRecord[];
   /** The held actions are the run's closing phase, not its first set. */
   closingPhase?: boolean;
+  /** The work item the request is about: its ticket and link, or the ask and its thread. */
+  item?: DecisionRequestItem;
+  /** The set's rows the gate refused, which no decision sends. */
+  refused?: ReadonlyArray<{ readonly index: number; readonly reason: string }>;
 }): string {
   const heading = `${args.agentName} needs your decision on “${oneLine(args.title, 'Untitled work')}”.`;
+  const about = args.item ? itemLines(args.item) : [];
   const reply = `Reply “approve ${args.id}” or “reject ${args.id} <reason>”.`;
+  const refused =
+    args.kind === 'actions'
+      ? refusedLines(args.refused ?? [], args.actions ?? [], args.surfaces ?? [])
+      : [];
   let listHeading: string;
   let lines: string[];
   let noun: string;
@@ -202,7 +311,8 @@ export function decisionRequestText(args: {
       ? 'Closing actions, written from the results of the actions already applied in this run:'
       : 'Held actions:';
     lines = held.map(
-      (index, position) => `${position + 1}. ${summariseAction(actions[index], args.surfaces ?? [])}`,
+      (index, position) =>
+        `${position + 1}. ${summariseAction(actions[index], args.surfaces ?? [])}`,
     );
     if (lines.length === 0) lines = ['1. Review the held actions in day0.'];
     noun = 'held actions';
@@ -215,19 +325,83 @@ export function decisionRequestText(args: {
   const frame = (shown: readonly string[], omitted: number): string =>
     [
       heading,
+      ...about,
       '',
       listHeading,
       ...shown,
       ...(omitted > 0 ? [`…and ${omitted} more ${noun}; the full list is in day0.`] : []),
+      ...(refused.length > 0 ? ['', ...refused] : []),
       '',
       reply,
       ...(scope ? [scope] : []),
     ].join('\n');
   let shown = lines.length;
-  while (shown > 1 && frame(lines.slice(0, shown), lines.length - shown).length > MANAGER_MESSAGE_MAX_CHARS) {
+  while (
+    shown > 1 &&
+    frame(lines.slice(0, shown), lines.length - shown).length > MANAGER_MESSAGE_MAX_CHARS
+  ) {
     shown -= 1;
   }
   return frame(lines.slice(0, shown), lines.length - shown);
+}
+
+/** What a decision request says about the work item it asks about. */
+export interface DecisionRequestItem {
+  readonly sourceCategory: string;
+  readonly externalId: string;
+  /** The provider's link to the item: the ticket, or the ask's message. */
+  readonly link?: string;
+  /** Where the answer to a chat ask goes: the ask's channel and thread. */
+  readonly replyTarget?: { readonly channel: string; readonly channelName?: string };
+}
+
+/**
+ * The lines under the heading that say which item this is: a ticket's id
+ * and link, or where a chat ask was made and that its answer goes back to
+ * that thread (P8-6), so two requests with the same title can be told apart
+ * and opened from a phone.
+ */
+function itemLines(item: DecisionRequestItem): string[] {
+  const link = item.link === undefined ? '' : oneLine(item.link, '');
+  if (item.replyTarget) {
+    const channel = `#${oneLine(item.replyTarget.channelName ?? item.replyTarget.channel, 'the channel')}`;
+    return [
+      `Asked in ${channel}${link ? `: ${link}` : ''}`,
+      `The answer to the ask goes to its thread in ${channel}.`,
+    ];
+  }
+  if (item.sourceCategory === 'ticket-queue') {
+    return [`Ticket: ${oneLine(item.externalId, 'unnamed')}${link ? ` ${link}` : ''}`];
+  }
+  return link ? [`Source: ${link}`] : [];
+}
+
+/** The most refused rows a request lists by name. */
+const REFUSED_LINES_SHOWN = 5;
+
+/**
+ * The rows of a held set the gate refused, each with its reason: no decision
+ * sends them, and a manager approving the set should know what it leaves out.
+ */
+function refusedLines(
+  refused: ReadonlyArray<{ readonly index: number; readonly reason: string }>,
+  actions: readonly MockAction[],
+  surfaces: readonly SurfaceRecord[],
+): string[] {
+  if (refused.length === 0) return [];
+  const clip = (line: string): string =>
+    line.length > PLAN_LINE_MAX_CHARS ? `${line.slice(0, PLAN_LINE_MAX_CHARS - 1)}…` : line;
+  const shown = refused.slice(0, REFUSED_LINES_SHOWN).map(({ index, reason }) => {
+    const action = actions[index];
+    const what = action ? summariseAction(action, surfaces) : `action ${index + 1}`;
+    return clip(`- ${what} (${oneLine(reason, 'refused')})`);
+  });
+  const more = refused.length - shown.length;
+  return [
+    'Refused by Day0’s gate, so not sent whatever you decide:',
+    ...shown,
+    ...(more > 0 ? [`…and ${more} more refused; the full list is in day0.`] : []),
+  ];
 }
 
 /** The first line of a plan request: its summary, or where to read the plan. */
@@ -256,7 +430,9 @@ function planLines(plan: unknown): string[] {
   const risk = oneLine(body.riskNotes, '');
   const reversibility = oneLine(body.reversibility, '');
   return [
-    ...(steps.length > 0 ? ['Steps:', ...steps.map((step, index) => clip(`${index + 1}. ${step}`))] : []),
+    ...(steps.length > 0
+      ? ['Steps:', ...steps.map((step, index) => clip(`${index + 1}. ${step}`))]
+      : []),
     ...(risk ? [clip(`Risk: ${risk}`)] : []),
     ...(reversibility ? [clip(`Reversibility: ${reversibility}`)] : []),
   ];
@@ -282,7 +458,8 @@ export function batchRequestLines(args: {
     '',
     `${count} held action sets are waiting, each shown in its own request:`,
     ...args.members.map(
-      (member, index) => `${index + 1}. ${oneLine(member.title, 'Untitled work')} (${member.decisionId})`,
+      (member, index) =>
+        `${index + 1}. ${oneLine(member.title, 'Untitled work')} (${member.decisionId})`,
     ),
     `Reply “approve ${args.id}” to approve every held action in all ${count}, or “reject ${args.id} <reason>” to reject them all. A request decided since is left as decided.`,
   ];

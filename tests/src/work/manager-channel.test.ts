@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { SurfaceRecord } from '../../../src/surfaces/types';
 import {
+  askedFor,
   DECISION_ID_ALPHABET,
   decisionIdFromBytes,
   decisionRequestText,
@@ -35,11 +36,13 @@ describe('manager channel decision requests', (): void => {
       alphabet.slice(0, 6),
     );
     expect(decisionIdFromBytes(new Uint8Array([247, 30, 31, 61, 62, 93, 200]))).toBe(
-      [alphabet[247 % 31], alphabet[30], alphabet[0], alphabet[30], alphabet[0], alphabet[0]].join(''),
+      [alphabet[247 % 31], alphabet[30], alphabet[0], alphabet[30], alphabet[0], alphabet[0]].join(
+        '',
+      ),
     );
-    expect(() => decisionIdFromBytes(new Uint8Array([248, 249, 250, 251, 252, 253, 1, 2, 3]))).toThrow(
-      /random bytes/,
-    );
+    expect(() =>
+      decisionIdFromBytes(new Uint8Array([248, 249, 250, 251, 252, 253, 1, 2, 3])),
+    ).toThrow(/random bytes/);
   });
 
   it('derives a six-character token from random bytes without ambiguous characters', (): void => {
@@ -116,7 +119,11 @@ describe('manager channel decision requests', (): void => {
   it('says an approval covers every held action listed, and where to approve some (P5-8)', (): void => {
     const held: MockAction = {
       tool: 'mcp.call',
-      args: { surface: 'linear', tool: 'save_issue', toolArgsJson: '{"id":"iss-1","state":"Done"}' },
+      args: {
+        surface: 'linear',
+        tool: 'save_issue',
+        toolArgsJson: '{"id":"iss-1","state":"Done"}',
+      },
     };
     const text = decisionRequestText({
       agentName: 'ops worker',
@@ -159,7 +166,11 @@ describe('manager channel decision requests', (): void => {
   it('tells the manager a second request closes the run they already approved', (): void => {
     const held: MockAction = {
       tool: 'mcp.call',
-      args: { surface: 'linear', tool: 'save_issue', toolArgsJson: '{"id":"iss-1","state":"Done"}' },
+      args: {
+        surface: 'linear',
+        tool: 'save_issue',
+        toolArgsJson: '{"id":"iss-1","state":"Done"}',
+      },
     };
     const text = decisionRequestText({
       agentName: 'ops worker',
@@ -251,7 +262,10 @@ describe('manager channel decision requests', (): void => {
     // courtesy is ignored, but a condition is not an approval of everything (P5-9).
     expect(parseDecisionReply('“please approve ab3xyz”')).toBeUndefined();
     expect(parseDecisionReply('approve ab3xyz thanks')).toEqual({ verb: 'approve', id: 'ab3xyz' });
-    expect(parseDecisionReply('approve ab3xyz, thank you!')).toEqual({ verb: 'approve', id: 'ab3xyz' });
+    expect(parseDecisionReply('approve ab3xyz, thank you!')).toEqual({
+      verb: 'approve',
+      id: 'ab3xyz',
+    });
     expect(parseDecisionReply('approve ab3xyz but not the Done')).toBeUndefined();
     expect(parseDecisionReply('approve ab3xyz except the close')).toBeUndefined();
   });
@@ -272,5 +286,97 @@ describe('manager channel decision requests', (): void => {
       reason: 'not this week',
     });
     expect(parseDecisionReply('approve ab3xyz?')).toBeUndefined();
+  });
+});
+
+describe('askedFor (wave 3 review M5)', (): void => {
+  it('counts only an undecided request of the kind the row is parked on', (): void => {
+    expect(askedFor({ kind: 'plan' }, 'plan-pending')).toBe(true);
+    expect(askedFor({ kind: 'actions' }, 'actions-pending')).toBe(true);
+    expect(askedFor(undefined, 'actions-pending')).toBe(false);
+    expect(askedFor({ kind: 'plan', decidedAt: 2 }, 'actions-pending')).toBe(false);
+    expect(askedFor({ kind: 'plan' }, 'actions-pending')).toBe(false);
+    expect(askedFor({ kind: 'actions', decidedAt: 2 }, 'actions-pending')).toBe(false);
+  });
+});
+
+describe('what a decision request says about its item (P8-6, U9 step 24)', (): void => {
+  const close: MockAction = {
+    tool: 'mcp.call',
+    args: {
+      surface: 'linear',
+      tool: 'save_issue',
+      toolArgsJson: '{"id":"REVOPS-7","state":"Done"}',
+    },
+  };
+
+  it('names the ticket and its link under the heading', (): void => {
+    const text = decisionRequestText({
+      agentName: 'ops worker',
+      title: 'Close August',
+      id: 'ab3xyz',
+      kind: 'plan',
+      plan: { summary: 'Comment, then close the issue.' },
+      item: {
+        sourceCategory: 'ticket-queue',
+        externalId: 'REVOPS-7',
+        link: 'https://linear.app/day0/issue/REVOPS-7',
+      },
+    });
+    expect(text.split('\n').slice(0, 2)).toEqual([
+      'ops worker needs your decision on “Close August”.',
+      'Ticket: REVOPS-7 https://linear.app/day0/issue/REVOPS-7',
+    ]);
+  });
+
+  it('says where a chat ask was made and that its answer goes back to its thread', (): void => {
+    const text = decisionRequestText({
+      agentName: 'ops worker',
+      title: 'Slack mention in #revops-asks',
+      id: 'ab3xyz',
+      kind: 'plan',
+      plan: { summary: 'Answer the ask.' },
+      item: {
+        sourceCategory: 'event-stream',
+        externalId: 'CASKS:1789757862.783069',
+        link: 'https://app.slack.com/client/T0/CASKS/thread/CASKS-1789757862783069',
+        replyTarget: { channel: 'CASKS', channelName: 'revops-asks' },
+      },
+    });
+    expect(text.split('\n').slice(1, 3)).toEqual([
+      'Asked in #revops-asks: https://app.slack.com/client/T0/CASKS/thread/CASKS-1789757862783069',
+      'The answer to the ask goes to its thread in #revops-asks.',
+    ]);
+  });
+
+  it('lists the rows the gate refused, with why, apart from the held ones', (): void => {
+    const post: MockAction = {
+      tool: 'http.request',
+      args: {
+        surface: 'team-chat',
+        method: 'POST',
+        path: 'chat.postMessage',
+        body: JSON.stringify({ channel: 'C0PUBLIC', text: 'Close completed.' }),
+      },
+    };
+    const text = decisionRequestText({
+      agentName: 'ops worker',
+      title: 'Close August',
+      id: 'ab3xyz',
+      kind: 'actions',
+      actions: [close, post],
+      heldIndexes: [0],
+      refused: [{ index: 1, reason: 'reply outside the source channel' }],
+      surfaces: [slack],
+    });
+    expect(text).toContain(
+      [
+        'Refused by Day0’s gate, so not sent whatever you decide:',
+        '- Post to Slack channel C0PUBLIC: "Close completed." (reply outside the source channel)',
+        '',
+        'Reply “approve ab3xyz” or “reject ab3xyz <reason>”.',
+      ].join('\n'),
+    );
+    expect(text.indexOf('Held actions:')).toBeLessThan(text.indexOf('Refused by'));
   });
 });

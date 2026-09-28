@@ -2547,6 +2547,87 @@ describe('access expiry (Q5)', (): void => {
     ).resolves.toMatchObject({ generation: expect.any(Number) });
   });
 
+  it('falls to no lower rung when a probe begun before the end date fails after it (M20)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    vi.setSystemTime(PROPOSED_AT);
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await approvedSurface(harness);
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(surfaceId, {
+        fallbackPath: 'browser-driven',
+        pathCandidates: [
+          { path: 'mcp', endpoint: 'https://mcp.linear.app/mcp' },
+          { path: 'browser-driven', endpoint: 'https://linear.app' },
+        ],
+      });
+    });
+    const endsAt = APPROVED_AT + 30 * DAY;
+    vi.setSystemTime(endsAt - 2_000);
+    const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+    if (!probe) throw new Error('probe was not reserved');
+    vi.setSystemTime(endsAt + 3_000);
+    await expect(
+      harness.mutation(internal.surfaces.demoteAfterProbeFailure, {
+        surfaceId,
+        generation: probe.generation,
+        reason: 'connect ETIMEDOUT',
+        attemptedAt: endsAt + 3_000,
+      }),
+    ).resolves.toBeNull();
+    expect(await readSurface(harness, surfaceId)).toMatchObject({
+      verdict: 'approved',
+      reason: 'expired',
+      path: 'mcp',
+    });
+  });
+
+  it.each(['connects', 'fails'] as const)(
+    'refuses a probe begun before the end date that %s after it (wave 2 review M20)',
+    async (outcome): Promise<void> => {
+      useSurfaceMode('real');
+      vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+      vi.setSystemTime(PROPOSED_AT);
+      const harness = convexTest(schema, allConvexModules());
+      const surfaceId = await approvedSurface(harness);
+      const endsAt = APPROVED_AT + 30 * DAY;
+      vi.setSystemTime(endsAt - 2_000);
+      const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+      if (!probe) throw new Error('probe was not reserved');
+      vi.setSystemTime(endsAt + 3_000);
+      const written =
+        outcome === 'connects'
+          ? await harness.mutation(internal.surfaces.recordConnected, {
+              surfaceId,
+              generation: probe.generation,
+              toolAllowlist: ['list_issues'],
+              toolArguments: [],
+              verifiedAt: endsAt + 3_000,
+            })
+          : await harness.mutation(internal.surfaces.recordProbeFailure, {
+              surfaceId,
+              generation: probe.generation,
+              verdict: 'listed-dead',
+              reason: 'the server did not answer',
+            });
+      expect(written).toBe(false);
+      expect(await readSurface(harness, surfaceId)).toMatchObject({
+        verdict: 'approved',
+        reason: 'expired',
+      });
+      expect(await payloads(harness, 'surface.expired')).toHaveLength(1);
+      expect(await payloads(harness, 'surface.connected')).toEqual([]);
+      const grants = await harness.run(
+        async (ctx) => await ctx.db.query('permissionGrants').collect(),
+      );
+      expect(grants.map((grant) => grant.scope)).not.toContain('linear:read');
+      const scheduled = await harness.run(
+        async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
+      );
+      expect(scheduled.map((job) => job.name)).not.toContain('intakeActions:pollSurface');
+    },
+  );
+
   it('lets the manager set the length, which restarts the clock and renews an ended access', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const surfaceId = await approvedSurface(harness);
@@ -2699,7 +2780,32 @@ describe('access expiry (Q5)', (): void => {
     for (const now of [expiresAt - 7 * DAY, expiresAt - 6 * DAY]) {
       await harness.mutation(internal.surfaces.recordExpiryNotice, { surfaceId, now });
     }
-    expect(await payloads(harness, 'surface.expiring')).toEqual([{ surfaceId, expiresAt }]);
+    expect(await payloads(harness, 'surface.expiring')).toEqual([
+      { surfaceId, expiresAt, noticeDay: '2026-10-04' },
+    ]);
+  });
+
+  it('counts the week in the agent’s zone and names the notice day (Q5, N12)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await approvedSurface(harness);
+    const agentId = (await readSurface(harness, surfaceId)).agentId;
+    await harness.run(async (ctx) => await ctx.db.patch(agentId, { zone: 'Asia/Singapore' }));
+    // Midnight UTC on 11 October is 08:00 on 11 October in Singapore; the
+    // notice day there is 4 October, which starts at 16:00 UTC on 3 October.
+    const expiresAt = APPROVED_AT + 30 * DAY;
+    const noticeDayStarts = Date.UTC(2026, 9, 3, 16);
+    await expect(
+      harness.mutation(internal.surfaces.recordExpiryNotice, {
+        surfaceId,
+        now: noticeDayStarts - 1,
+      }),
+    ).resolves.toBe(false);
+    await expect(
+      harness.mutation(internal.surfaces.recordExpiryNotice, { surfaceId, now: noticeDayStarts }),
+    ).resolves.toBe(true);
+    expect(await payloads(harness, 'surface.expiring')).toEqual([
+      { surfaceId, expiresAt, noticeDay: '2026-10-04' },
+    ]);
   });
 
   it('notices a new end date after the manager moves it', async (): Promise<void> => {
@@ -2714,8 +2820,8 @@ describe('access expiry (Q5)', (): void => {
     const second = first - DAY + 3 * DAY;
     await harness.mutation(internal.surfaces.recordExpiryNotice, { surfaceId, now: second - DAY });
     expect(await payloads(harness, 'surface.expiring')).toEqual([
-      { surfaceId, expiresAt: first },
-      { surfaceId, expiresAt: second },
+      { surfaceId, expiresAt: first, noticeDay: '2026-10-04' },
+      { surfaceId, expiresAt: second, noticeDay: '2026-10-06' },
     ]);
   });
 
@@ -3068,6 +3174,50 @@ describe('a replaceable manager on the surface row', (): void => {
         },
         createdAt: 300,
       },
+    ]);
+  });
+  it('records manager.changed when the probe after a failed lookup resolves someone else (wave 3 review m7)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const surfaceId = await seedDeclared(harness, agentId, 'Slack', 'chat');
+    await harness.mutation(internal.surfaces.setStatus, { surfaceId, verdict: 'approved' });
+    const reserve = async (): Promise<number> => {
+      const probe = await harness.mutation(internal.surfaces.beginProbe, { surfaceId });
+      if (!probe) throw new Error('probe was not reserved');
+      return probe.generation;
+    };
+    const connect = async (managerUserId: string, verifiedAt: number): Promise<void> => {
+      await harness.mutation(internal.surfaces.recordConnected, {
+        surfaceId,
+        generation: await reserve(),
+        toolAllowlist: ['chat.postMessage'],
+        toolArguments: [],
+        managerDmChannelId: `D${managerUserId}`,
+        managerUserId,
+        managerName: managerUserId,
+        verifiedAt,
+      });
+    };
+    await connect('UFIRST', 100);
+    await harness.mutation(internal.surfaces.recordProbeFailure, {
+      surfaceId,
+      generation: await reserve(),
+      verdict: 'ungranted',
+      reason: LEFT_WORKSPACE,
+    });
+    expect(await readSurface(harness, surfaceId)).toMatchObject({
+      verdict: 'ungranted',
+      managerUserId: 'UFIRST',
+    });
+    expect(await readSurface(harness, surfaceId)).not.toHaveProperty('managerDmChannelId');
+    await connect('USECOND', 300);
+    const changes = await harness.run(async (ctx) =>
+      (await ctx.db.query('events').collect())
+        .filter((event): boolean => event.type === 'manager.changed')
+        .map((event) => event.payload),
+    );
+    expect(changes).toEqual([
+      { surfaceId, via: 'probe', previousManagerUserId: 'UFIRST', managerUserId: 'USECOND' },
     ]);
   });
 });

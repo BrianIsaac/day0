@@ -522,6 +522,11 @@ export interface SurfaceAccessSetPayload extends SurfaceNamed {
 /** The payload of `surface.expiring`. */
 export interface SurfaceExpiringPayload extends SurfaceNamed {
   readonly expiresAt: number;
+  /**
+   * The calendar day, `YYYY-MM-DD` in the agent's zone, the week's notice
+   * falls due (Q5, N12). Absent on a notice written before the zone.
+   */
+  readonly noticeDay?: string;
 }
 
 /** The payload of `surface.approved`. */
@@ -707,6 +712,15 @@ export interface WorkDraftResumedPayload extends WorkItemNamed {
   readonly attempt: number;
 }
 
+/**
+ * The payload of `work.execution-resumed`: a run whose execution failed on
+ * the model, sent back to execute again (`attempt` counts from the last Retry).
+ */
+export interface WorkExecutionResumedPayload extends WorkItemRun {
+  readonly attempt: number;
+  readonly reason: string;
+}
+
 /** `work.plan-held` for a plan whose row the manager waived a skip on. */
 export interface PlanHeldSkipOverruled extends WorkItemNamed {
   readonly reason: 'skip-overruled';
@@ -722,8 +736,21 @@ export interface PlanHeldForRejection extends WorkItemNamed {
   readonly rejection?: string;
 }
 
+/**
+ * `work.plan-held` for a plan whose obligations judgement could not be
+ * reached, so its declared reads and writes stand unchecked (E-70 D4).
+ */
+export interface PlanHeldObligationsFailedOpen extends WorkItemNamed {
+  readonly reason: 'obligations-failed-open';
+  /** Why the judgement was not reached, as the settlement recorded it. */
+  readonly failure: string;
+}
+
 /** The payload of `work.plan-held`, by why the plan waits for the manager. */
-export type WorkPlanHeldPayload = PlanHeldSkipOverruled | PlanHeldForRejection;
+export type WorkPlanHeldPayload =
+  | PlanHeldSkipOverruled
+  | PlanHeldForRejection
+  | PlanHeldObligationsFailedOpen;
 
 /** The payload of `work.plan-approved`. */
 export interface WorkPlanApprovedPayload extends WorkItemNamed {
@@ -1048,6 +1075,7 @@ export interface EventPayloads {
   'work.corrections-redaction-limited': WorkCorrectionsRedactionLimitedPayload;
   'work.correction-retired': WorkCorrectionRetiredPayload;
   'work.draft-resumed': WorkDraftResumedPayload;
+  'work.execution-resumed': WorkExecutionResumedPayload;
   'work.plan-held': WorkPlanHeldPayload;
   'work.plan-approved': WorkPlanApprovedPayload;
   'work.decision-requesting': WorkDecisionRequestingPayload;
@@ -1188,6 +1216,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'work.corrections-redaction-limited',
   'work.correction-retired',
   'work.draft-resumed',
+  'work.execution-resumed',
   'work.plan-held',
   'work.plan-approved',
   'work.decision-requesting',

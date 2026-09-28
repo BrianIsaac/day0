@@ -1293,7 +1293,7 @@ describe('the hourly re-probe sweep', (): void => {
       rows.events
         .filter((event) => event.type === 'surface.expiring')
         .map((event) => event.payload),
-    ).toEqual([{ surfaceId: ending, expiresAt: NOW + 3 * DAY }]);
+    ).toEqual([{ surfaceId: ending, expiresAt: NOW + 3 * DAY, noticeDay: '2026-09-23' }]);
     expect(
       rows.jobs
         .filter((job) => job.name === 'surfaceActions:probeInternal')

@@ -19,6 +19,8 @@ import {
   type DraftPlanArgs,
 } from '../src/work/plan';
 import type { ObligationEvent } from '../src/work/plan-obligations';
+import { accessEnded } from '../src/work/surface-access';
+import { log } from '../src/lib/logger';
 import type { ClosingAuthoring, ModelCallStage } from '../src/events/contract';
 import {
   ClosingGateRefusal,
@@ -542,7 +544,7 @@ async function evaluateWorkItemHandler(
         agentId: asAgentId(agentId),
         charter,
         agentsMd: agentsMd ?? '',
-        bossLabel: charter.approvalChain.boss,
+        bossLabel: agent.bossEmail,
         autonomousActions: autonomousActionsOn(agent),
         surfaceMode: surfaceConfig.mode,
         surfaces,
@@ -1215,6 +1217,20 @@ async function holdDay0Actions(
     });
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
+    // A failure that is not about the item (a rate limit, an outage, a
+    // timeout) goes through the resume ladder before the run stops, as a
+    // draft's does; one about the item stops it now (`draftOrFail`'s rule).
+    if (SURFACE_MODE === 'real' && itemBoundModelFailure(err) === undefined) {
+      const resumed = await ctx.runMutation(internal.work.resumeExecution, {
+        workItemId: args.workItemId,
+        runId: args.runId,
+        reason: safeFailureMessage(err, '', 'the execution failed'),
+      });
+      if (resumed.outcome === 'resumed') {
+        return result({ ok: false, reason: `execution will be tried again: ${reason}` });
+      }
+      if (resumed.outcome === 'stopped') return result({ ok: false, reason });
+    }
     await ctx.runMutation(internal.work.setFailed, {
       workItemId: args.workItemId,
       reason,
@@ -3590,6 +3606,7 @@ function authorityBeforeTransport(
     if (!authority.agentExists) return 'agent not found';
     const surface = authority.surface;
     if (!surface) return UNKNOWN_SURFACE;
+    if (authority.accessEnded) return authority.accessEnded;
     if (surfaceAuthorityShape(surface) !== surfaceAuthorityShape(claimedSurface)) {
       return 'surface authority changed before transport';
     }
@@ -3630,16 +3647,6 @@ function authorityBeforeTransport(
   };
 }
 
-/**
- * Load the agent's surfaces as the executors read them.
- *
- * Args:
- *   ctx: Convex action context.
- *   agentId: The agent.
- *
- * Returns:
- *   Executor-facing surface records.
- */
 /**
  * Load what a real-mode plan is drawn from: the agent's surfaces with their
  * verdicts and the same documentation the executor cites.
@@ -3864,11 +3871,72 @@ async function executorCorrections(
   return scrubbed.entries;
 }
 
+/**
+ * Load the agent's surfaces as the executors read them, with an access whose
+ * end date has passed resolved as not connected (`endedAccessView`).
+ *
+ * Args:
+ *   ctx: Convex action context.
+ *   agentId: The agent.
+ *
+ * Returns:
+ *   Executor-facing surface records.
+ */
 async function loadSurfaces(ctx: ActionCtx, agentId: Id<'agents'>): Promise<SurfaceRecord[]> {
   const rows: Doc<'surfaces'>[] = await ctx.runQuery(internal.orientationData.surfacesForAgent, {
     agentId,
   });
-  return rows.map((row) => toSurfaceRecord(row));
+  const now = Date.now();
+  return rows.map((row) => toSurfaceRecord(accessEnded(row, now) ? endedAccessView(row) : row));
+}
+
+/**
+ * A surface whose access end date has passed, as the hourly sweep will leave
+ * it (`surfaces.recordExpired`): approved, no credential landed, unverified.
+ * The end date is the boundary (Q5, wave 2 review M21), so nothing the loop
+ * resolves reads or writes through it in the hour before the sweep runs.
+ */
+function endedAccessView(row: Doc<'surfaces'>): Doc<'surfaces'> {
+  return { ...row, verdict: 'approved', credentialLanded: false, lastVerifiedAt: undefined };
+}
+
+/**
+ * Hold the tickets a phase's landed writes went to, when no work item holds
+ * them (P8-2; `work.claimLandedTicketWrites`). Real mode only.
+ *
+ * @param actions - The phase's actions.
+ * @param applied - Their ledger rows, by index.
+ * @param surfaces - The agent's surfaces.
+ */
+async function claimLandedTicketWrites(
+  ctx: ActionCtx,
+  workItemId: Id<'workItems'>,
+  actions: readonly MockAction[],
+  applied: readonly AppliedAction[],
+  surfaces: readonly SurfaceRecord[],
+): Promise<void> {
+  if (SURFACE_MODE !== 'real') return;
+  const writes = actions.flatMap((action, index) => {
+    const row = applied[index];
+    if (!row?.ok || row.held) return [];
+    const parsed = parseSurfaceAction(action);
+    if (!parsed.ok) return [];
+    const surface = surfaces.find((candidate) => candidate.slug === parsed.action.surface);
+    if (surface?.class !== 'kanban' || surface.path === 'browser-driven') return [];
+    const targets = writeTargetIds(parsed.action, surface);
+    return targets.length > 0 ? [{ surfaceSlug: surface.slug, targets }] : [];
+  });
+  if (writes.length === 0) return;
+  try {
+    await ctx.runMutation(internal.work.claimLandedTicketWrites, { workItemId, writes });
+  } catch (error) {
+    // The writes landed; the run's outcome is recorded whatever happens to
+    // the claim, which only keeps a colleague from repeating them.
+    log.warn('landed ticket writes not claimed', {
+      workItemId,
+      reason: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 /** What `finishRun` needs from the apply claim. */
@@ -3911,6 +3979,7 @@ async function finishRun(
   knownValues: readonly string[] = [],
   surfaces: readonly SurfaceRecord[] = [],
 ): Promise<{ ok: boolean; reason?: string }> {
+  await claimLandedTicketWrites(ctx, workItemId, rawOutput.actions ?? [], rawApplied, surfaces);
   // The whole persisted record passes the exact-value layer once more here:
   // the adapters already applied it to provider text, and this covers every
   // other string the dashboard renders from the run, whatever wrote it.
