@@ -16,6 +16,7 @@ import {
   surfaceRefusal,
   toolRefusal,
   UNKNOWN_SURFACE,
+  type RequestEdit,
 } from '../src/surfaces/policy';
 import { applySurfaceActions } from '../src/surfaces/registry';
 import { safeFailureMessage } from '../src/surfaces/redact';
@@ -91,7 +92,7 @@ async function deliverManagerMessage(
     workItemId,
     delivery,
     managerMessageAction(delivery.surface, text, threadTs ? { threadTs } : {}),
-    decisionId,
+    decisionId ? { decisionId } : {},
   );
 }
 
@@ -106,8 +107,9 @@ async function applyManagerAction(
   workItemId: Id<'workItems'>,
   delivery: ManagerDelivery,
   action: MockAction,
-  decisionId?: string,
+  options: { readonly decisionId?: string; readonly requestEdit?: RequestEdit } = {},
 ) {
+  const { decisionId, requestEdit } = options;
   const applied = await applySurfaceActions(
     ctx,
     'real',
@@ -131,6 +133,7 @@ async function applyManagerAction(
       approvedIndexes: new Set([0]),
       autoPhase: true,
       autonomousActions: false,
+      ...(requestEdit ? { requestEdit } : {}),
     },
   );
   const result = applied[0];
@@ -283,7 +286,9 @@ export const closeDecisionRequest = internalAction({
     const action = managerMessageUpdateAction(prepared.surface, prepared.ts, prepared.text);
     if (!action) return { closed: false };
     try {
-      await applyManagerAction(ctx, args.workItemId, prepared, action);
+      await applyManagerAction(ctx, args.workItemId, prepared, action, {
+        requestEdit: { channel: prepared.channel, ts: prepared.ts },
+      });
       return { closed: true };
     } catch (error) {
       log.warn('the decided request could not be marked in the manager DM; the decision stands', {

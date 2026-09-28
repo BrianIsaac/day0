@@ -8,6 +8,7 @@ import {
   AWAITING_APPROVAL,
   HELD_NOT_APPROVED,
   HELD_PUBLIC_POST,
+  MESSAGE_EDIT_REFUSED,
   MOCK_VERB_REFUSED,
   NOT_AUTOMATIC,
   SHARED_WRITE_WITHOUT_ATTRIBUTION,
@@ -904,6 +905,67 @@ describe('applying surface actions', (): void => {
       url: 'https://slack.com/api/chat.postMessage',
       body: { channel: 'D0MANAGER', thread_ts: '1787738163.314789' },
     });
+  });
+
+  it('edits a manager DM message only as the one request edit its caller names (M finding 3)', async (): Promise<void> => {
+    const recorded: Recorded = { mcp: [], http: [] };
+    const slackWithUpdate = {
+      ...slack,
+      toolAllowlist: [...(slack.toolAllowlist ?? []), 'chat.update'],
+    };
+    const edit = (ts: string, channel = 'D0MANAGER'): MockAction => ({
+      tool: 'http.request',
+      args: {
+        ...dm.args,
+        path: '/chat.update',
+        body: JSON.stringify({ channel, ts, text: 'Decided: approved in this DM (ab3xyz).' }),
+      },
+    });
+    const grants = new Set(['boss:message', 'slack:write']);
+    // A plan's edit of Day0's own open request would rewrite what the manager
+    // is deciding, so no apply edits a message unless it names that message.
+    const byPlan = await applySurfaceActions(
+      ctx,
+      'real',
+      [slackWithUpdate],
+      run,
+      [edit('1787738163.314789')],
+      { deps: deps(recorded), grants, now },
+    );
+    expect(byPlan[0]).toMatchObject({ ok: false, reason: MESSAGE_EDIT_REFUSED });
+    const requestEdit = { channel: 'D0MANAGER', ts: '1787738163.314789' };
+    const elsewhere = await applySurfaceActions(
+      ctx,
+      'real',
+      [slackWithUpdate],
+      run,
+      [edit('1787738000.000001'), edit('1787738163.314789', 'C0PUBLIC')],
+      { deps: deps(recorded), grants, now, requestEdit },
+    );
+    expect(elsewhere.map((entry) => entry.reason)).toEqual([
+      MESSAGE_EDIT_REFUSED,
+      MESSAGE_EDIT_REFUSED,
+    ]);
+    expect(recorded.http).toEqual([]);
+    const named = await applySurfaceActions(
+      ctx,
+      'real',
+      [slackWithUpdate],
+      run,
+      [edit('1787738163.314789')],
+      { deps: deps(recorded), grants: new Set(['boss:message']), now, requestEdit },
+    );
+    expect(named[0]).toMatchObject({ ok: true });
+    expect(recorded.http).toEqual([
+      {
+        url: 'https://slack.com/api/chat.update',
+        body: {
+          channel: 'D0MANAGER',
+          ts: '1787738163.314789',
+          text: 'Decided: approved in this DM (ab3xyz).\n\n-- Priya (Day0) · run wi_1/run_1',
+        },
+      },
+    ]);
   });
 
   it('appends provenance to a generic MCP manager message', async (): Promise<void> => {

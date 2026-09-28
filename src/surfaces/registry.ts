@@ -19,6 +19,7 @@ import {
   isAutomatic,
   isMessage,
   isSurfaceTool,
+  messageEditRefusal,
   mockVerbRefusal,
   needsStandingGrant,
   NOT_AUTOMATIC,
@@ -38,6 +39,7 @@ import {
   WITHHELD_AFTER_FAILED_BROWSER_WRITE,
   WITHHELD_AFTER_FAILED_WRITE,
   type ParsedSurfaceAction,
+  type RequestEdit,
 } from './policy';
 import type {
   ActionAuthority,
@@ -128,6 +130,11 @@ export interface ApplyOptions {
   autonomousActions?: boolean;
   /** Exact source channel and thread when the work item is a chat reply. */
   replyTarget?: ReplyTarget;
+  /**
+   * The one manager-DM message this apply may edit: the decided request the
+   * manager channel closes. Without it every chat message edit is refused.
+   */
+  requestEdit?: RequestEdit;
   /**
    * Why a write is withheld because another work item holds the external
    * item it addresses, if one does. Asked for each write that would be sent
@@ -590,6 +597,11 @@ export async function applySurfaceActions(
       const unlisted = toolRefusal(parsed.action, surface);
       if (unlisted) {
         applied.push(refused(action.tool, unlisted, idempotencyKey));
+        continue;
+      }
+      const editRefused = messageEditRefusal(parsed.action, surface, options.requestEdit);
+      if (editRefused) {
+        applied.push(refused(action.tool, editRefused, idempotencyKey));
         continue;
       }
       const replyMismatch = replyTargetRefusal(parsed.action, surface, options.replyTarget);
