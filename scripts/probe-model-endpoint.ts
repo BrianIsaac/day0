@@ -41,6 +41,7 @@ import {
   structuredModeFor,
 } from '../src/lib/mastra';
 import { WAY_NAMES } from '../src/setup/quickstart';
+import { errorMessage } from '../src/lib/errors';
 
 /**
  * What a passing probe leaves the reader with: conformance is not speed, and
@@ -114,7 +115,7 @@ async function main(): Promise<void> {
     );
     record('chat completions', value.length > 0, `${ms.toFixed(0)}ms · "${value.slice(0, 40)}"`);
   } catch (err) {
-    record('chat completions', false, (err as Error).message);
+    record('chat completions', false, errorMessage(err));
     return finish();
   }
 
@@ -144,12 +145,7 @@ async function main(): Promise<void> {
       `${ms.toFixed(0)}ms · title="${value.value.title}"`,
     );
   } catch (err) {
-    record(
-      'json mode · native',
-      false,
-      `${(err as Error).message} — prompt mode covers this`,
-      true,
-    );
+    record('json mode · native', false, `${errorMessage(err)} — prompt mode covers this`, true);
   }
 
   // 4. Prompt fallback — must work even where step 3 did.
@@ -164,7 +160,7 @@ async function main(): Promise<void> {
       `${ms.toFixed(0)}ms · title="${value.value.title}"`,
     );
   } catch (err) {
-    record('json mode · prompt', false, (err as Error).message);
+    record('json mode · prompt', false, errorMessage(err));
   }
 
   // 5. The Mastra path every domain function actually calls.
@@ -190,12 +186,7 @@ async function main(): Promise<void> {
       `${ms.toFixed(0)}ms · ${value.value.steps.length} steps`,
     );
   } catch (err) {
-    record(
-      'mastra · native',
-      false,
-      `${(err as Error).message} — prompt injection covers this`,
-      true,
-    );
+    record('mastra · native', false, `${errorMessage(err)} — prompt injection covers this`, true);
   }
 
   // 6. The same call with schema injection instead of response_format,
@@ -216,7 +207,7 @@ async function main(): Promise<void> {
       `${ms.toFixed(0)}ms · ${value.value.steps.length} steps`,
     );
   } catch (err) {
-    record('mastra · prompt injection', false, (err as Error).message);
+    record('mastra · prompt injection', false, errorMessage(err));
   }
 
   // 7. What the app will actually do here. `auto` starts native and only
@@ -247,7 +238,7 @@ async function main(): Promise<void> {
       `${ms.toFixed(0)}ms · settled on ${value.mode}${how}`,
     );
   } catch (err) {
-    record('mastra · auto', false, `${(err as Error).message} — neither rung produced an object`);
+    record('mastra · auto', false, `${errorMessage(err)} — neither rung produced an object`);
   }
 
   finish();

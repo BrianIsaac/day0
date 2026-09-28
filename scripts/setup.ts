@@ -126,6 +126,7 @@ import {
   type MigrationReport,
   type UpgradeVerdict,
 } from './releases';
+import { errorMessage } from '../src/lib/errors';
 
 const ENV_FILE = '.env.local';
 const ENV_EXAMPLE = '.env.example';
@@ -3476,7 +3477,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       io.log(state);
       return 130;
     }
-    io.log(`error: ${(error as Error).message}`);
+    io.log(`error: ${errorMessage(error)}`);
     return 1;
   }
 }
@@ -3622,7 +3623,7 @@ export async function runStop(options: SetupOptions, io: SetupIo): Promise<numbe
     io.log(`Throw it all away with \`${verbCommand('clear', options.mode)}\`.`);
     return 0;
   } catch (error) {
-    io.log(`error: ${(error as Error).message}`);
+    io.log(`error: ${errorMessage(error)}`);
     return 1;
   }
 }
@@ -3688,7 +3689,7 @@ export async function runResume(options: SetupOptions, io: SetupIo): Promise<num
       io,
     );
   } catch (error) {
-    io.log(`error: ${(error as Error).message}`);
+    io.log(`error: ${errorMessage(error)}`);
     return 1;
   }
 }
@@ -3775,7 +3776,7 @@ export async function runClear(options: SetupOptions, io: SetupIo): Promise<numb
       io.log('Cancelled. Nothing was removed.');
       return 130;
     }
-    io.log(`error: ${(error as Error).message}`);
+    io.log(`error: ${errorMessage(error)}`);
     return 1;
   }
 }
@@ -4644,7 +4645,7 @@ async function main(): Promise<number> {
   try {
     options = parseSetupArguments(process.argv.slice(2));
   } catch (error) {
-    process.stderr.write(`error: ${(error as Error).message}\n`);
+    process.stderr.write(`error: ${errorMessage(error)}\n`);
     return 2;
   }
   if (options.help) {

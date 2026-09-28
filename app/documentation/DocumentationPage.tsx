@@ -7,6 +7,7 @@ import type { Id } from '@convex/_generated/dataModel';
 import { DOCS_NOTION_LOCATOR, serverKindHelp } from '@/docs/components';
 import { plainErrorMessage } from '@/lib/plain-error';
 import { REPOSITORY_URL } from '@/setup/quickstart';
+import { errorMessage } from '@/lib/errors';
 
 type SourceKind = 'folder' | 'git' | 'urls' | 'mcp';
 type ServerKind = 'notion' | 'confluence' | 'drive' | 'generic';
@@ -147,7 +148,7 @@ export function DocumentationPage(): React.ReactNode {
       setLabel(cleared.label);
       setLocator(cleared.locator);
     } catch (failure) {
-      setError(plainErrorMessage((failure as Error).message));
+      setError(plainErrorMessage(errorMessage(failure)));
     } finally {
       setBusy(false);
     }
@@ -171,7 +172,7 @@ export function DocumentationPage(): React.ReactNode {
       });
       setRotatingSourceId(null);
     } catch (failure) {
-      setError(plainErrorMessage((failure as Error).message));
+      setError(plainErrorMessage(errorMessage(failure)));
     } finally {
       setBusySourceId(null);
     }

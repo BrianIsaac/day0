@@ -22,6 +22,7 @@ import { assertOwnsAgentAction } from './ownership';
 import type { WorkspaceFile } from './charters';
 import { logEvent } from './eventLog';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
+import { errorMessage } from '../src/lib/errors';
 
 /**
  * Day-1 onboarding actions. Surfaces:
@@ -377,7 +378,7 @@ async function finaliseClaimedSession(
       await ctx.runMutation(internal.voice.releaseFinalisation, {
         sessionId: args.sessionId,
         claimToken: args.claimToken,
-        reason: (err as Error).message ?? 'unknown error',
+        reason: errorMessage(err),
       });
     } catch {
       /* keep the original failure */
@@ -562,7 +563,7 @@ export const recoverFinalisation = internalAction({
       // The release this attempt already performed carries the reason and
       // schedules the next try, so rethrowing would only turn a handled failure
       // into a failed scheduled function.
-      return { outcome: 'failed', reason: (err as Error).message ?? 'unknown error' };
+      return { outcome: 'failed', reason: errorMessage(err) };
     }
   },
 });

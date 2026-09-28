@@ -115,6 +115,7 @@ import {
 import type { AgentMetrics } from '@/metrics/types';
 import { formatAuditTrail, formatMetricDuration } from '../../metric-format';
 import { PILOT_FIGURES, readsAndMessages } from '../../CompanySupervision';
+import { errorMessage } from '@/lib/errors';
 
 interface Props {
   agentId: Id<'agents'>;
@@ -461,7 +462,7 @@ export function AutonomyControl({
     setError(null);
     onChange(next)
       .then(() => setConfirming(false))
-      .catch((err: unknown) => setError((err as Error).message))
+      .catch((err: unknown) => setError(errorMessage(err)))
       .finally(() => setBusy(false));
   }
 
@@ -535,7 +536,7 @@ export function NotificationModeControl({
           setBusy(true);
           setError(null);
           onChange(next)
-            .catch((err: unknown) => setError((err as Error).message))
+            .catch((err: unknown) => setError(errorMessage(err)))
             .finally(() => setBusy(false));
         }}
         className="bg-transparent text-xs text-[var(--color-fg)] disabled:cursor-wait"
@@ -1788,7 +1789,7 @@ function ProposedSkillsPanel({
                       onAuthoringAttempt({
                         skillId: s._id,
                         name: s.name,
-                        reason: (err as Error).message,
+                        reason: errorMessage(err),
                       });
                     }
                   }}
@@ -1875,7 +1876,7 @@ export function RegisteredSkillsPanel({
         onAuthoringAttempt({ skillId, name, reason: result.reason ?? 'retry did not succeed' });
       }
     } catch (err) {
-      onAuthoringAttempt({ skillId, name, reason: (err as Error).message });
+      onAuthoringAttempt({ skillId, name, reason: errorMessage(err) });
     } finally {
       setRetrying(null);
     }
@@ -1895,7 +1896,7 @@ export function RegisteredSkillsPanel({
         });
       }
     } catch (err) {
-      onAuthoringAttempt({ skillId, name, reason: (err as Error).message });
+      onAuthoringAttempt({ skillId, name, reason: errorMessage(err) });
     } finally {
       setRetrying(null);
     }
@@ -2169,7 +2170,7 @@ function CheckForNewWork({ agentId }: { agentId: Id<'agents'> }) {
             setError(null);
             check({ agentId })
               .then((result) => setMessage(checkForWorkMessage(result)))
-              .catch((err: unknown) => setError((err as Error).message))
+              .catch((err: unknown) => setError(errorMessage(err)))
               .finally(() => setBusy(false));
           }}
           className="shrink-0 px-2 py-1 rounded-md text-[10px] border border-[var(--color-border)] hover:border-[var(--color-accent)] disabled:opacity-50 disabled:cursor-not-allowed"
@@ -3300,7 +3301,7 @@ export function PendingActions({
     try {
       await call();
     } catch (err) {
-      setError((err as Error).message);
+      setError(errorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -3772,7 +3773,7 @@ export function PendingDecisionsPanel({
                 approvedIndexes: member.heldIndexes,
               })),
             )
-              .catch((err: unknown) => setError((err as Error).message))
+              .catch((err: unknown) => setError(errorMessage(err)))
               .finally(() => setBusy(false));
           }}
           className="px-3 py-1 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] text-xs font-medium disabled:opacity-50"
@@ -4744,7 +4745,7 @@ export function PermissionsCard({ agentId }: { agentId: Id<'agents'> }) {
         await grantScopes({ agentId, scopes: [scope] });
       }
     } catch (err) {
-      setError((err as Error).message);
+      setError(errorMessage(err));
     } finally {
       setBusyScope(null);
     }

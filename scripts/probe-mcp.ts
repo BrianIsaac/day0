@@ -1,5 +1,6 @@
 /// <reference types="node" />
 import { spawnSync } from 'node:child_process';
+import { errorMessage } from '../src/lib/errors';
 
 interface McpProbeResult {
   toolNames: string[];
@@ -103,6 +104,6 @@ function main(): void {
 try {
   main();
 } catch (error) {
-  process.stderr.write(`FAIL  ${redactSecrets((error as Error).message)}\n`);
+  process.stderr.write(`FAIL  ${redactSecrets(errorMessage(error))}\n`);
   process.exitCode = 1;
 }

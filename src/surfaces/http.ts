@@ -35,6 +35,7 @@ import type {
   SurfaceAdapter,
   SurfaceRecord,
 } from './types';
+import { errorMessage } from '../lib/errors';
 
 export const HTTP_TOOLS = ['http.request'] as const satisfies readonly MockAction['tool'][];
 export const HTTP_TIMEOUT_MS = 20_000;
@@ -591,7 +592,7 @@ export class HttpAdapter implements SurfaceAdapter {
     try {
       url = resolveRequestUrl(transportEndpoint, request.path);
     } catch (error) {
-      return { tool: action.tool, ok: false, reason: (error as Error).message, idempotencyKey };
+      return { tool: action.tool, ok: false, reason: errorMessage(error), idempotencyKey };
     }
     const unlisted = operationRefusal(
       surface.toolAllowlist,

@@ -26,6 +26,7 @@ import { deploymentZone } from '@/lib/zone';
 import { CompanySupervision } from './CompanySupervision';
 import { CursorToggle } from './CursorToggle';
 import { PageMotion } from './PageMotion';
+import { errorMessage } from '@/lib/errors';
 
 /** Whoever the dashboard is acting for — a Clerk user, or the local dev boss. */
 interface Boss {
@@ -432,7 +433,7 @@ function SignedInDashboard({ boss }: { boss: Boss }) {
       }).catch((): void => undefined);
       router.push(`/agent/${agentId}`);
     } catch (err) {
-      setError((err as Error).message);
+      setError(errorMessage(err));
       setSubmitting(false);
     }
   }

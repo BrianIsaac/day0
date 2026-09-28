@@ -46,6 +46,7 @@ import { logEvent } from './eventLog';
 import { spanModelFromEnv } from '../src/redaction/client';
 import { ownerKnownValues } from '../src/redaction/known-values';
 import { itemBoundModelFailure } from '../src/lib/structured-fallback';
+import { errorMessage } from '../src/lib/errors';
 
 /**
  * Autonomous skill authoring action. Demo headline:
@@ -973,7 +974,7 @@ async function authorAndRegister(
       }
     }
   } catch (err) {
-    skipReason = `${backend} threw: ${(err as Error).message}`;
+    skipReason = `${backend} threw: ${errorMessage(err)}`;
     verificationLog = skipReason;
   } finally {
     // Released whichever way the check went, so the next employee's

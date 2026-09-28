@@ -33,6 +33,7 @@ import {
 import type { SurfaceDiscoveryEvidence } from '@/docs/system-discovery';
 import { clockTime, useAgentZone, useNow } from '../time';
 import { LiveStatus, refusalText, type ChangeOutcome } from '../live-status';
+import { errorMessage } from '@/lib/errors';
 
 interface SurfaceEvidence {
   sourceId?: string;
@@ -1104,7 +1105,7 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
     try {
       await reorient({ agentId });
     } catch (failure) {
-      setReorientError(plainErrorMessage((failure as Error).message));
+      setReorientError(plainErrorMessage(errorMessage(failure)));
     } finally {
       setReorienting(false);
     }
@@ -1137,7 +1138,7 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
       setOperation({
         kind: 'probe',
         surfaceId,
-        error: plainErrorMessage((failure as Error).message),
+        error: plainErrorMessage(errorMessage(failure)),
       });
     }
   }
@@ -1151,7 +1152,7 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
       setOperation({
         kind: 'propose',
         surfaceId,
-        error: plainErrorMessage((failure as Error).message),
+        error: plainErrorMessage(errorMessage(failure)),
       });
     }
   }
@@ -1165,7 +1166,7 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
       setOperation({
         kind: 'provision',
         surfaceId,
-        error: plainErrorMessage((failure as Error).message),
+        error: plainErrorMessage(errorMessage(failure)),
       });
     }
   }
@@ -1183,7 +1184,7 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
       setOperation({
         kind: 'landing',
         surfaceId,
-        error: plainErrorMessage((failure as Error).message),
+        error: plainErrorMessage(errorMessage(failure)),
       });
     }
   }

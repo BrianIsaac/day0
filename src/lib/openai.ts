@@ -11,6 +11,7 @@ import {
   providerEndpointLabel,
   StructuredContractError,
 } from './structured-fallback';
+import { errorMessage } from '../lib/errors';
 
 /**
  * Provider-agnostic model client. Every raw-SDK call and every AI-SDK
@@ -375,7 +376,7 @@ async function runJsonCompletion<TParsed>(
         /* fall through to the parse error below */
       }
     }
-    throw new JsonParseError(mode, raw, (err as Error).message);
+    throw new JsonParseError(mode, raw, errorMessage(err));
   }
   return finalise(parsed, args);
 }

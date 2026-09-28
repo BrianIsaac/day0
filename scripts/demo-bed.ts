@@ -66,6 +66,7 @@ import {
   venvStampCommand,
   type VenvDevice,
 } from './redactor-device';
+import { errorMessage } from '../src/lib/errors';
 
 const ENV_FILE = '.env.local';
 const COMPOSE_FILE = 'docker-compose.yml';
@@ -2262,7 +2263,7 @@ async function surfacesState(values: Values): Promise<SurfaceSummary | string> {
       ...(lastProbeFailure ? { lastProbeFailure: lastProbeFailure.text } : {}),
     };
   } catch (error) {
-    return (error as Error).message.split('\n')[0];
+    return errorMessage(error).split('\n')[0];
   }
 }
 
@@ -2395,7 +2396,7 @@ async function preflight(options: DemoBedOptions): Promise<number> {
         items.push({
           label: 'Backend config',
           status: 'gap',
-          detail: (error as Error).message.split('\n')[0],
+          detail: errorMessage(error).split('\n')[0],
         });
       }
     }
@@ -2726,7 +2727,7 @@ async function main(): Promise<number> {
   try {
     options = parseDemoBedArguments(process.argv.slice(2), readEnvFile());
   } catch (error) {
-    const message = (error as Error).message;
+    const message = errorMessage(error);
     if (message.startsWith('Usage:')) {
       log(message);
       return 0;
@@ -2755,7 +2756,7 @@ async function main(): Promise<number> {
         return 0;
     }
   } catch (error) {
-    process.stderr.write(`error: ${(error as Error).message}\n`);
+    process.stderr.write(`error: ${errorMessage(error)}\n`);
     return 1;
   }
 }

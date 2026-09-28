@@ -4,6 +4,7 @@ import { ConvexHttpClient } from 'convex/browser';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { log } from '@/lib/logger';
+import { errorMessage } from '@/lib/errors';
 
 interface ElevenLabsPostCallPayload {
   type?: string;
@@ -118,7 +119,7 @@ export async function POST(req: Request): Promise<NextResponse> {
     // gets a webhook disabled.
     return NextResponse.json(result);
   } catch (err) {
-    const message = (err as Error).message ?? 'unknown error';
+    const message = errorMessage(err);
     log.error('elevenlabs webhook synthesis failed', { reason: message });
     if (message.includes('webhook denied')) {
       return NextResponse.json(

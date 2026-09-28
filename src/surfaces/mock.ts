@@ -8,6 +8,7 @@ import {
   type MockWriteResult,
 } from '../work/types';
 import type { AdapterRun, AppliedAction, SurfaceAdapter } from './types';
+import { errorMessage } from '../lib/errors';
 
 /**
  * How much of a read's provider result the ledger keeps. A read exists for the
@@ -262,7 +263,7 @@ class MockSurfaceAdapter implements SurfaceAdapter {
       return {
         tool: action.tool,
         ok: false,
-        reason: (error as Error).message,
+        reason: errorMessage(error),
         idempotencyKey,
       };
     }
