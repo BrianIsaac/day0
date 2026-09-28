@@ -33,10 +33,8 @@ function SignedOutNav() {
       <Link href="/#evidence" className={LINK}>
         Evidence
       </Link>
-      {/* Not prefetched: until its route lands a prefetch would reach the proxy's sign-in wall. */}
       <Link
         href="/walkthrough"
-        prefetch={false}
         aria-current={pathname === '/walkthrough' ? 'page' : undefined}
         className={LINK}
       >

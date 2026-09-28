@@ -4,7 +4,7 @@ import { PageMotion } from '../PageMotion';
 import { CardGroup } from './CardGroup';
 import { EVIDENCE } from './evidence';
 import { EvidenceTable } from './EvidenceTable';
-import { DISCLOSURES_URL, FOOTER, HERO, HOW, PROBLEM, TRY, WHY } from './copy';
+import { FOOTER, HERO, HOW, PROBLEM, TRY, WHY } from './copy';
 import { CharterFrame } from './frames/CharterFrame';
 import { DocumentationFrame } from './frames/DocumentationFrame';
 import { HeldWriteFrame } from './frames/HeldWriteFrame';
@@ -138,7 +138,7 @@ export function MarketingLanding() {
               {EVIDENCE.lede}
             </p>
             <p data-rise="" style={rise(2)} className="mt-4 leading-relaxed">
-              <Link href="/walkthrough" prefetch={false} className={INLINE_LINK}>
+              <Link href="/walkthrough" className={INLINE_LINK}>
                 {EVIDENCE.walkthroughLink}
               </Link>
               {' · '}
@@ -158,13 +158,7 @@ export function MarketingLanding() {
         <CardGroup className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-6">
           <div className={`${CARD} flex flex-col items-start gap-3 border-[var(--color-border)]`}>
             <h3 className="text-base font-semibold">{TRY.hosted.title}</h3>
-            <p className="leading-relaxed text-[var(--color-muted)]">
-              {TRY.hosted.body} {TRY.hosted.notice.before}
-              <a href={DISCLOSURES_URL} className={INLINE_LINK}>
-                {TRY.hosted.notice.link}
-              </a>
-              {TRY.hosted.notice.after}
-            </p>
+            <p className="leading-relaxed text-[var(--color-muted)]">{TRY.hosted.body}</p>
             <Link href="/sign-in" className={PRIMARY}>
               {HERO.tryDemo}
             </Link>
@@ -174,7 +168,13 @@ export function MarketingLanding() {
           >
             <h3 className="text-base font-semibold">{TRY.local.title}</h3>
             <p className="leading-relaxed text-[var(--color-muted)]">{TRY.local.body}</p>
-            <pre className="w-full overflow-x-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3.5 py-3 font-mono text-[13px] leading-relaxed">
+            {/* Focusable so a keyboard can scroll it where the commands run wider than the card. */}
+            <pre
+              tabIndex={0}
+              role="region"
+              aria-label={TRY.local.commandsLabel}
+              className="w-full overflow-x-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3.5 py-3 font-mono text-[13px] leading-relaxed"
+            >
               <code>{TRY.local.commands.join('\n')}</code>
             </pre>
             <Link href="/setup" className={SECONDARY}>
@@ -195,7 +195,7 @@ export function MarketingLanding() {
           <Link href="/sign-in" className={`${PRIMARY} max-md:w-full`}>
             {HERO.tryDemo}
           </Link>
-          <Link href="/walkthrough" prefetch={false} className={`${SECONDARY} max-md:w-full`}>
+          <Link href="/walkthrough" className={`${SECONDARY} max-md:w-full`}>
             {TRY.readWalkthrough}
           </Link>
         </div>
@@ -207,7 +207,7 @@ export function MarketingLanding() {
           <ul className="flex flex-wrap gap-x-5 gap-y-2">
             {FOOTER.links.map((link) => (
               <li key={link.label}>
-                <a href={link.href} className={INLINE_LINK}>
+                <a href={link.href} className={`${INLINE_LINK} inline-flex min-h-11 items-center`}>
                   {link.label}
                 </a>
               </li>

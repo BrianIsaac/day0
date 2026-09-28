@@ -260,14 +260,10 @@ describe('signed-out landing page', (): void => {
     expect(primary).toContain('border-transparent');
   });
 
-  it('says what the hosted demo is on its own card, and links what it collects before sign-in', (): void => {
+  it('says what the hosted demo is on its own card, and that the sign-in page says what it collects', (): void => {
+    // The sign-in page carries the hosted demo notice (N6), so the card says so as drawn.
     expect(text).toContain(
-      'Sign in, name an employee, hold the one-to-one yourself. The office is seeded and synthetic; nothing you do reaches a real system.',
-    );
-    // The sign-in page carries no notice of its own, so the card must not promise one.
-    expect(text).not.toContain('the sign-in page says');
-    expect(html).toMatch(
-      /Before you sign in, read <a href="https:\/\/github\.com\/BrianIsaac\/day0#disclosures"[^>]*>what the hosted demo collects and who receives it<\/a>\./,
+      'Sign in, name an employee, hold the one-to-one yourself. The office is seeded and synthetic; nothing you do reaches a real system. Before you type anything, the sign-in page says what the hosted demo collects and who receives it.',
     );
   });
 

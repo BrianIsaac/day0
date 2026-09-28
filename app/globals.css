@@ -802,6 +802,20 @@ body {
   opacity: 0;
 }
 
+/* Still, the traffic is drawn at rest: each packet halfway along its line, and the docs packet
+   waiting at the hub for approval, as the moving orbit holds it. */
+@media (prefers-reduced-motion: reduce) {
+  .day0-surface-packet {
+    opacity: 0.85;
+    transform: translate(calc(var(--packet-x) / 2), calc(var(--packet-y) / 2));
+  }
+
+  .day0-surface-packet-held {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 @media (prefers-reduced-motion: no-preference) {
   .day0-surface-orbit,
   .day0-surface-link,

@@ -87,6 +87,14 @@ describe('the public-page motion', () => {
     expect(rule).not.toMatch(/transition:[^;]*transform/);
   });
 
+  it('draws the orbit traffic at rest under reduced motion, never leaving the packets invisible (m18)', () => {
+    const [packet] = rulesFor(reduce, '.day0-surface-packet');
+    expect(packet).toMatch(/opacity:\s*0\.85/);
+    expect(packet).toMatch(/transform:\s*translate\(calc\(var\(--packet-x\) \/ 2\)/);
+    const [held] = rulesFor(reduce, '.day0-surface-packet-held');
+    expect(held).toMatch(/opacity:\s*1/);
+  });
+
   it('arrives cards 8 px over 260 ms, 50 ms apart, for up to twelve cards', () => {
     expect(CSS).toMatch(
       /@keyframes day0-rise-in \{\s*from \{\s*opacity: 0;\s*transform: translateY\(8px\);/,
