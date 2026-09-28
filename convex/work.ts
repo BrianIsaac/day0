@@ -5602,26 +5602,6 @@ function actionsOf(output: unknown): unknown[] {
   return ((output ?? {}) as { actions?: unknown[] }).actions ?? [];
 }
 
-interface LedgerPhase {
-  actions: MockAction[];
-  applied: Array<{ ok?: boolean; held?: boolean; outcomeUnknown?: boolean }>;
-}
-
-/** Every action list and ledger a run's output carries, prerequisite phase first. */
-export function ledgerPhases(output: unknown): LedgerPhase[] {
-  const phases: LedgerPhase[] = [];
-  const top = (output ?? {}) as {
-    actions?: MockAction[];
-    applied?: LedgerPhase['applied'];
-    initial?: { actions?: MockAction[]; applied?: LedgerPhase['applied'] };
-  };
-  if (top.initial && (top.initial.actions || top.initial.applied)) {
-    phases.push({ actions: top.initial.actions ?? [], applied: top.initial.applied ?? [] });
-  }
-  phases.push({ actions: top.actions ?? [], applied: top.applied ?? [] });
-  return phases;
-}
-
 function ledgerOf(output: unknown): Array<AppliedAction | undefined> {
   return ((output ?? {}) as { applied?: Array<AppliedAction | undefined> }).applied ?? [];
 }
