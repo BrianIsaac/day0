@@ -4,7 +4,9 @@ import { describe, expect, it } from 'vitest';
 import {
   LICENCE_TEXTS,
   collectNoticeInput,
+  composePins,
   copyrightLine,
+  libvipsRelease,
   lockedLibvips,
   productionGraph,
   renderNotice,
@@ -73,6 +75,12 @@ function input(overrides: Partial<NoticeInput> = {}): NoticeInput {
       },
     ],
     libvips: ['@img/sharp-libvips-linux-x64@1.2.4'],
+    pins: {
+      notionMcpServer: '2.5.1',
+      redactorModel: 'urchade/gliner_multi_pii-v1',
+      localModel: 'qwen3:8b',
+      libvipsRelease: '1.2.4',
+    },
     proteanFiles: ['src/work/plan.ts'],
     texts: Object.fromEntries(LICENCE_TEXTS.map((name) => [name, `text of ${name}\n`])),
     ...overrides,
@@ -137,6 +145,34 @@ describe('renderNotice', () => {
     for (const name of LICENCE_TEXTS) expect(text).toContain(`text of ${name}`);
   });
 
+  it('credits the versions and models its pins name, not ones typed into the script', () => {
+    const moved = renderNotice(
+      input({
+        pins: {
+          notionMcpServer: '9.9.9',
+          redactorModel: 'urchade/gliner_multi_pii-v1',
+          localModel: 'qwen3:14b',
+          libvipsRelease: '9.8.7',
+        },
+      }),
+    );
+    expect(moved).toContain('@notionhq/notion-mcp-server 9.9.9');
+    expect(moved).toContain('(sharp-libvips 9.8.7, THIRD-PARTY-NOTICES.md)');
+    expect(moved).toContain('Qwen3 (qwen3:14b through Ollama');
+    expect(moved).not.toContain('2.5.1');
+    expect(moved).not.toContain('qwen3:8b');
+  });
+
+  it('refuses a model it has no credit for, so the gate fails until one is written', () => {
+    const pins = input().pins;
+    expect(() => renderNotice(input({ pins: { ...pins, redactorModel: 'acme/pii' } }))).toThrow(
+      /redactor model acme\/pii/,
+    );
+    expect(() => renderNotice(input({ pins: { ...pins, localModel: 'llama3:8b' } }))).toThrow(
+      /local model llama3:8b/,
+    );
+  });
+
   it('ends with one newline', () => {
     expect(text.endsWith('\n')).toBe(true);
     expect(text.endsWith('\n\n')).toBe(false);
@@ -170,11 +206,55 @@ describe('lockedLibvips', () => {
       '    resolution: {integrity: sha512-b}',
       "  '@img/sharp-linux-x64@0.34.5':",
       '    resolution: {integrity: sha512-c}',
+      "  '@img/sharp-win32-x64@0.34.5':",
+      '    resolution: {integrity: sha512-d}',
+      "  '@img/sharp-wasm32@0.34.5':",
+      '    resolution: {integrity: sha512-e}',
     ].join('\n');
     expect(lockedLibvips(lockfile)).toEqual([
       '@img/sharp-libvips-darwin-arm64@1.2.4',
       '@img/sharp-libvips-linux-x64@1.2.4',
+      '@img/sharp-wasm32@0.34.5',
+      '@img/sharp-win32-x64@0.34.5',
     ]);
+  });
+});
+
+describe('libvipsRelease', () => {
+  it('reads the one sharp-libvips release, ignoring the sharp builds that bundle it', () => {
+    expect(
+      libvipsRelease([
+        '@img/sharp-libvips-darwin-arm64@1.2.4',
+        '@img/sharp-libvips-linux-x64@1.2.4',
+        '@img/sharp-win32-x64@0.34.5',
+      ]),
+    ).toBe('1.2.4');
+  });
+
+  it('refuses a lockfile resolving two releases, since NOTICE lists one release', () => {
+    expect(() =>
+      libvipsRelease([
+        '@img/sharp-libvips-darwin-arm64@1.2.4',
+        '@img/sharp-libvips-linux-x64@1.3.0',
+      ]),
+    ).toThrow(/1\.2\.4, 1\.3\.0/);
+  });
+});
+
+describe('composePins', () => {
+  it('reads the Notion server pin and the redactor model from the compose file', () => {
+    const compose = [
+      '      - REDACTOR_MODEL=${REDACTOR_MODEL:-urchade/gliner_multi_pii-v1}',
+      "        'exec npx -y @notionhq/notion-mcp-server@2.6.0 --transport http',",
+    ].join('\n');
+    expect(composePins(compose)).toEqual({
+      notionMcpServer: '2.6.0',
+      redactorModel: 'urchade/gliner_multi_pii-v1',
+    });
+  });
+
+  it('refuses a compose file that no longer pins either', () => {
+    expect(() => composePins('services: {}\n')).toThrow(/no longer pins/);
   });
 });
 

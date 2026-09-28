@@ -211,6 +211,10 @@ sharp's prebuilt libvips, for every platform pnpm-lock.yaml resolves:
 - @img/sharp-libvips-linux-x64@1.2.4
 - @img/sharp-libvips-linuxmusl-arm64@1.2.4
 - @img/sharp-libvips-linuxmusl-x64@1.2.4
+- @img/sharp-wasm32@0.34.5
+- @img/sharp-win32-arm64@0.34.5
+- @img/sharp-win32-ia32@0.34.5
+- @img/sharp-win32-x64@0.34.5
 
 LGPL-3.0-or-later. These are optional dependencies of next through sharp
 (Next.js's image pipeline). No day0 code calls sharp or next/image and this

@@ -8,9 +8,13 @@
  * direct dependencies in `package.json` with the licence and holder their
  * installed package states; the production graph under `node_modules`, for
  * the transitive packages whose licence carries a notice duty; `pnpm-lock.yaml`
- * for the sharp libvips binaries, which install per platform; and the tables
- * below for what no package manifest describes (the images the compose file
- * runs, the models, the avatar art, the adapted files). The licence texts the
+ * for the sharp libvips binaries, which install per platform; the compose file
+ * and the model catalogue for the pinned service version and the model names;
+ * and the tables below for what no package manifest describes (the images the
+ * compose file runs, the model credits, the avatar art, the adapted files).
+ * Every version and name that can move lives in one of those sources, never in
+ * this script, so a bump the gate does not see cannot leave NOTICE wrong. The
+ * licence texts the
  * LGPL and MPL require travel with it from `licenses/`. The gate runs the
  * check (`tests/scripts/notice.test.ts`).
  */
@@ -18,6 +22,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } fr
 import { dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
+import { CURATED_MODELS } from './models';
 
 /** One package as its installed manifest and licence file describe it. */
 export interface PackageLicence {
@@ -35,13 +40,26 @@ export interface TransitiveNotice extends PackageLicence {
   readonly notice?: string;
 }
 
+/** The versions and names NOTICE credits that the compose file, the lockfile or the model catalogue pin. */
+export interface NoticePins {
+  /** The `@notionhq/notion-mcp-server` version the docs-notion service runs. */
+  readonly notionMcpServer: string;
+  /** The redactor's default span model, as the compose file names it. */
+  readonly redactorModel: string;
+  /** The local model route's default, the first model the catalogue recommends. */
+  readonly localModel: string;
+  /** The sharp-libvips release the lockfile resolves. */
+  readonly libvipsRelease: string;
+}
+
 /** Everything the NOTICE is rendered from. */
 export interface NoticeInput {
   readonly runtime: readonly PackageLicence[];
   readonly development: readonly PackageLicence[];
   readonly transitive: readonly TransitiveNotice[];
-  /** The sharp libvips binaries the lockfile resolves, as `name@version`. */
+  /** The sharp prebuilds carrying libvips that the lockfile resolves, as `name@version`. */
   readonly libvips: readonly string[];
+  readonly pins: NoticePins;
   /** Tracked source files whose header says they were lifted from Protean. */
   readonly proteanFiles: readonly string[];
   /** The licence texts under `licenses/`, by file name. */
@@ -60,8 +78,21 @@ const PLAIN_LICENCES: ReadonlySet<string> = new Set([
   '(Apache-2.0 AND BSD-3-Clause)',
 ]);
 
-/** The libvips binaries install per platform, so they come from the lockfile, never the graph. */
-const LIBVIPS = /^@img\/sharp-libvips-/;
+/**
+ * The prebuilds that carry libvips install per platform, so they come from the
+ * lockfile, never the graph: the `sharp-libvips-*` packages, and the win32 and
+ * wasm32 builds of sharp itself, which bundle libvips in their own package.
+ */
+const LIBVIPS = /^@img\/sharp-(?:libvips-|win32-|wasm32@)/;
+
+/** The separate libvips packages, whose version is the sharp-libvips release. */
+const LIBVIPS_RELEASE = /^@img\/sharp-libvips-[^@]+@(.+)$/;
+
+/** The Notion MCP server the docs-notion service installs at start, pinned in its command. */
+const NOTION_MCP_PIN = /@notionhq\/notion-mcp-server@([\w.-]+)/;
+
+/** The redactor's default model, as the compose file's `REDACTOR_MODEL` fallback names it. */
+const REDACTOR_MODEL_PIN = /REDACTOR_MODEL=\$\{REDACTOR_MODEL:-([^}]+)\}/;
 
 /** The licence texts `licenses/` carries, in the order NOTICE appends them. */
 export const LICENCE_TEXTS = ['LGPL-3.0.txt', 'GPL-3.0.txt', 'MPL-2.0.txt'] as const;
@@ -84,7 +115,9 @@ Convex self-hosted backend (https://github.com/get-convex/convex-backend),
 Functional Source License, Version 1.1, ALv2 Future License
 (FSL-1.1-ALv2), Copyright 2026 Convex, Inc.`;
 
-const SERVICES = `The compose file pulls these images by digest; the repository does not
+/** The images the compose file runs, with the Notion server at the version it pins. */
+function servicesBody(pins: NoticePins): string {
+  return `The compose file pulls these images by digest; the repository does not
 contain or redistribute them.
 
 - Convex backend and dashboard (ghcr.io/get-convex/convex-backend,
@@ -97,7 +130,7 @@ contain or redistribute them.
   Copyright (c) Ollama.
 - Playwright MCP (mcr.microsoft.com/playwright/mcp), the browser component:
   Apache-2.0, Copyright (c) Microsoft Corporation.
-- Notion MCP server (@notionhq/notion-mcp-server 2.5.1, installed by the
+- Notion MCP server (@notionhq/notion-mcp-server ${pins.notionMcpServer}, installed by the
   docs-notion-mcp service at start): MIT, Copyright (c) 2025 Notion Labs, Inc.
 - python:3.12-slim (the sandbox and the redactor): Python is under the
   Python Software Foundation License Version 2 (PSF-2.0); the image's other
@@ -105,22 +138,56 @@ contain or redistribute them.
 - node:22-alpine (the Notion component and the two test doubles): Node.js is
   MIT, Copyright Node.js contributors; the image's other software is under its
   own licences.`;
+}
 
-const MODELS = `Model weights are downloaded at first use, pinned by digest where the
-component verifies them, and never stored in this repository.
-
-- urchade/gliner_multi_pii-v1, the redactor's span model: Apache-2.0,
+/** The redactor models this script can credit, by the id the compose file names. */
+const REDACTOR_MODEL_CREDITS: Readonly<Record<string, string>> = {
+  'urchade/gliner_multi_pii-v1': `- urchade/gliner_multi_pii-v1, the redactor's span model: Apache-2.0,
   published on Hugging Face by the account urchade. GLiNER is described in
   Urchade Zaratiana, Nadi Tomeh, Pierre Holat and Thierry Charnois, "GLiNER:
   Generalist Model for Named Entity Recognition using Bidirectional
   Transformer", Proceedings of NAACL-HLT 2024, pages 5364-5376.
 - microsoft/mdeberta-v3-base, the span model's backbone, whose configuration
-  and tokenizer the redactor loads: MIT, Copyright (c) Microsoft Corporation.
-- Qwen3 (qwen3:8b through Ollama, the local model route's default): Apache-2.0,
-  Copyright 2024 Alibaba Cloud.
+  and tokenizer the redactor loads: MIT, Copyright (c) Microsoft Corporation.`,
+};
+
+/** The local model families this script can credit, by the prefix of the id `ollama pull` takes. */
+const LOCAL_MODEL_CREDITS: readonly { readonly prefix: string; readonly credit: string }[] = [
+  {
+    prefix: 'qwen3:',
+    credit:
+      "Qwen3 ({id} through Ollama, the local model route's default): Apache-2.0,\n  Copyright 2024 Alibaba Cloud.",
+  },
+];
+
+/**
+ * The models section, crediting the models the compose file and the catalogue name.
+ *
+ * @throws Error when either names a model this script has no credit for, so a
+ *   model change fails the gate until its credit is written here.
+ */
+function modelsBody(pins: NoticePins): string {
+  const redactor = REDACTOR_MODEL_CREDITS[pins.redactorModel];
+  if (redactor === undefined) {
+    throw new Error(
+      `no NOTICE credit for the redactor model ${pins.redactorModel}: add it to scripts/notice.ts`,
+    );
+  }
+  const local = LOCAL_MODEL_CREDITS.find(({ prefix }) => pins.localModel.startsWith(prefix));
+  if (local === undefined) {
+    throw new Error(
+      `no NOTICE credit for the local model ${pins.localModel}: add it to scripts/notice.ts`,
+    );
+  }
+  return `Model weights are downloaded at first use, pinned by digest where the
+component verifies them, and never stored in this repository.
+
+${redactor}
+- ${local.credit.replace('{id}', pins.localModel)}
 
 Hosted models reached over an API are the operator's choice and account; none
 is distributed.`;
+}
 
 const IMAGES = `The pixel-art agent faces under public/agent-avatars/faces/ come from the
 public Singapore Codex Pets community gallery
@@ -130,11 +197,13 @@ contributors). The gallery states no licence for its images. They are used as
 demo art with this credit, the product names no person they depict, and they
 are not covered by this repository's Apache-2.0 licence.`;
 
-const LIBVIPS_NOTE = `LGPL-3.0-or-later. These are optional dependencies of next through sharp
+/** What the libvips binaries bundle, as the named sharp-libvips release's THIRD-PARTY-NOTICES.md lists it. */
+function libvipsNote(release: string): string {
+  return `LGPL-3.0-or-later. These are optional dependencies of next through sharp
 (Next.js's image pipeline). No day0 code calls sharp or next/image and this
 repository ships no build containing them; the terms below bind whoever
 distributes a build that does. The libvips binaries bundle these components
-(sharp-libvips 1.2.4, THIRD-PARTY-NOTICES.md):
+(sharp-libvips ${release}, THIRD-PARTY-NOTICES.md):
 
   LGPL-3.0: fribidi, glib, libexif, libheif, librsvg, libvips, pango,
     proxy-libintl (used under the "any later version" clause of LGPLv2 or
@@ -152,6 +221,7 @@ distributes a build that does. The libvips binaries bundle these components
 
 The LGPL-3.0 and the GPL-3.0 it supplements, and the MPL-2.0, are appended at
 the end of this file.`;
+}
 
 const VERCEL_OG = `@vercel/og, compiled into next under next/dist/compiled/@vercel/og:
 MPL-2.0 (appended at the end of this file). Day0 does not call it.`;
@@ -205,9 +275,20 @@ export function copyrightLine(licenceText: string): string | undefined {
     ?.replace(/\s+/g, ' ');
 }
 
+/**
+ * The first file in a directory, by name, that a pattern matches. The listing
+ * is sorted because `readdirSync` returns the file system's order, which
+ * differs between machines when a package ships two matching files.
+ */
+function firstFileMatching(directory: string, pattern: RegExp): string | undefined {
+  return readdirSync(directory)
+    .filter((file) => pattern.test(file))
+    .sort()[0];
+}
+
 /** A package directory's licence file, if it ships one. */
 function licenceFileOf(directory: string): string | undefined {
-  return readdirSync(directory).find((file) => /^(?:licen[cs]e|copying)(?:\.|$)/i.test(file));
+  return firstFileMatching(directory, /^(?:licen[cs]e|copying)(?:\.|$)/i);
 }
 
 /** Read one installed package's licence facts from its directory. */
@@ -272,12 +353,12 @@ export function productionGraph(root: string): Map<string, string> {
       queue.push(join(modules, name));
     }
   }
-  return new Map([...found.entries()].sort(([a], [b]) => a.localeCompare(b)));
+  return new Map([...found.entries()].sort(([a], [b]) => a.localeCompare(b, 'en')));
 }
 
 /** A package's own NOTICE file, if it ships one. */
 function noticeFileOf(directory: string): string | undefined {
-  const file = readdirSync(directory).find((name) => /^notice(?:\.|$)/i.test(name));
+  const file = firstFileMatching(directory, /^notice(?:\.|$)/i);
   return file ? readFileSync(join(directory, file), 'utf8').trim() : undefined;
 }
 
@@ -299,12 +380,47 @@ export function transitiveNotices(graph: ReadonlyMap<string, string>): Transitiv
   return notices;
 }
 
-/** The sharp libvips binaries the lockfile resolves, for every platform. */
+/** The sharp prebuilds carrying libvips that the lockfile resolves, for every platform. */
 export function lockedLibvips(lockfile: string): string[] {
   const packages = (parse(lockfile) as { packages?: Record<string, unknown> }).packages ?? {};
   return Object.keys(packages)
     .filter((key) => LIBVIPS.test(key))
     .sort();
+}
+
+/**
+ * The one sharp-libvips release the lockfile's libvips packages resolve to.
+ *
+ * @throws Error when the lockfile resolves none, or more than one release,
+ *   since NOTICE lists one release's bundled components.
+ */
+export function libvipsRelease(prebuilds: readonly string[]): string {
+  const releases = [...new Set(prebuilds.flatMap((name) => LIBVIPS_RELEASE.exec(name)?.[1] ?? []))];
+  if (releases.length !== 1) {
+    throw new Error(
+      `expected one sharp-libvips release in pnpm-lock.yaml, found ${releases.length === 0 ? 'none' : releases.join(', ')}`,
+    );
+  }
+  return releases[0]!;
+}
+
+/**
+ * The pinned versions and names the compose file states.
+ *
+ * @throws Error when the compose file no longer pins the Notion server or
+ *   names the redactor's default model in the shape this reads.
+ */
+export function composePins(
+  compose: string,
+): Pick<NoticePins, 'notionMcpServer' | 'redactorModel'> {
+  const notionMcpServer = NOTION_MCP_PIN.exec(compose)?.[1];
+  const redactorModel = REDACTOR_MODEL_PIN.exec(compose)?.[1];
+  if (notionMcpServer === undefined || redactorModel === undefined) {
+    throw new Error(
+      'docker-compose.yml no longer pins @notionhq/notion-mcp-server@<version> or names REDACTOR_MODEL=${REDACTOR_MODEL:-<model>}',
+    );
+  }
+  return { notionMcpServer, redactorModel };
 }
 
 /** Tracked source files that say they were lifted from, or follow, Protean's. */
@@ -333,13 +449,19 @@ export function collectNoticeInput(root: string): NoticeInput {
       .sort()
       .map((name) => readPackage(realpathSync(join(root, 'node_modules', name))));
   const runtimeNames = new Set(Object.keys(manifest.dependencies ?? {}));
+  const libvips = lockedLibvips(readFileSync(join(root, 'pnpm-lock.yaml'), 'utf8'));
   return {
     runtime: direct(manifest.dependencies),
     development: direct(manifest.devDependencies),
     transitive: transitiveNotices(productionGraph(root)).filter(
       (found) => !runtimeNames.has(found.name),
     ),
-    libvips: lockedLibvips(readFileSync(join(root, 'pnpm-lock.yaml'), 'utf8')),
+    libvips,
+    pins: {
+      ...composePins(readFileSync(join(root, 'docker-compose.yml'), 'utf8')),
+      localModel: CURATED_MODELS[0]!.id,
+      libvipsRelease: libvipsRelease(libvips),
+    },
     proteanFiles: proteanFiles(root),
     texts: Object.fromEntries(
       LICENCE_TEXTS.map((name) => [name, readFileSync(join(root, 'licenses', name), 'utf8')]),
@@ -397,7 +519,7 @@ function transitiveBody(input: NoticeInput): string {
   }
   parts.push(
     "sharp's prebuilt libvips, for every platform pnpm-lock.yaml resolves:\n\n" +
-      `${input.libvips.map((name) => `- ${name}`).join('\n')}\n\n${LIBVIPS_NOTE}`,
+      `${input.libvips.map((name) => `- ${name}`).join('\n')}\n\n${libvipsNote(input.pins.libvipsRelease)}`,
   );
   parts.push(VERCEL_OG);
   return parts.join('\n\n');
@@ -419,8 +541,8 @@ export function renderNotice(input: NoticeInput): string {
     input.proteanFiles.map((file) => `- ${file}`).join('\n');
   const sections = [
     section(1, 'Works this repository adapts', adapted),
-    section(2, 'Images the compose file runs', SERVICES),
-    section(3, 'Models', MODELS),
+    section(2, 'Images the compose file runs', servicesBody(input.pins)),
+    section(3, 'Models', modelsBody(input.pins)),
     section(4, 'Images in this repository', IMAGES),
     section(5, 'Direct dependencies', input.runtime.map(packageLine).join('\n')),
     section(
