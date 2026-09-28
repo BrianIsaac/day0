@@ -76,11 +76,13 @@
   },
   "devDependencies": {
     "@edge-runtime/vm": "^5.0.0",
+    "@playwright/test": "1.63.0",
     "@tailwindcss/postcss": "^4.2.4",
     "@types/node": "^22.10.0",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@types/turndown": "^5.0.6",
+    "axe-core": "4.11.4",
     "convex-test": "^0.0.54",
     "eslint": "^9.16.0",
     "eslint-config-next": "^16.2.6",
