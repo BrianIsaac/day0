@@ -385,30 +385,86 @@ export const revokeInternal = internalMutation({
   },
 });
 
-/** The most rows one page can hold that `store` reads to find a value it already has. */
-const PAGE_ROW_LIMIT = 64;
+/**
+ * The most rows of one page a read returns. A page's rows are its live values
+ * and every value a sync superseded there, which stays so it revives if it
+ * returns; a page past this has had hundreds of values swapped on it, and the
+ * read refuses rather than leave some of its rows out.
+ */
+const PAGE_ROW_LIMIT = 512;
 
 /**
- * The page-derived rows of one page of one source, whatever the page's count
- * of values made their refs. Internal; read by `store` before it inserts.
+ * The page-derived rows of one page of one source, whatever shape of ref they
+ * carry: value-keyed, or the page-only and position-and-label refs stored
+ * before them.
+ *
+ * @param ctx - A query context.
+ * @param page - The owner, the source and the page.
+ * @throws Error when the page holds more rows than one read returns.
+ */
+async function pageRows(
+  ctx: QueryCtx,
+  page: { userId: string; sourceId: Id<'docSources'>; pageRef: string },
+): Promise<Doc<'credentials'>[]> {
+  const { from, to } = credentialRefRange(page.pageRef);
+  // The range also holds refs of pages whose ref extends this one (`page!x`),
+  // so the bound counts only this page's own rows.
+  const rows: Doc<'credentials'>[] = [];
+  for await (const row of ctx.db
+    .query('credentials')
+    .withIndex('by_user_source_ref', (index) =>
+      index
+        .eq('userId', page.userId)
+        .eq('source.sourceId', page.sourceId)
+        .gte('source.ref', from)
+        .lte('source.ref', to),
+    )) {
+    if (typeof row.source === 'string' || credentialPageRef(row.source.ref) !== page.pageRef) {
+      continue;
+    }
+    if (rows.length === PAGE_ROW_LIMIT) {
+      throw new Error(
+        `A documentation page holds more than ${PAGE_ROW_LIMIT} stored credentials; it cannot be read whole.`,
+      );
+    }
+    rows.push(row);
+  }
+  return rows;
+}
+
+/**
+ * The page-derived rows of one page of one source. Internal; read by `store`
+ * before it inserts and by the sync for a page it could not read.
  */
 export const pageRowsForStore = internalQuery({
   args: { userId: v.string(), sourceId: v.id('docSources'), pageRef: v.string() },
+  handler: async (ctx, args): Promise<Doc<'credentials'>[]> => await pageRows(ctx, args),
+});
+
+/**
+ * The live rows of one page whose label is the marker's, oldest first.
+ * Internal; read by orientation to bind a `<credential: label, stored>`
+ * marker to the row its sync stored, which a value-keyed ref does not name.
+ * Oldest first is the page's own order when one sync stored them all, as
+ * `store` runs in document order.
+ */
+export const pageRowsByLabel = internalQuery({
+  args: {
+    userId: v.string(),
+    sourceId: v.id('docSources'),
+    pageRef: v.string(),
+    label: v.string(),
+  },
   handler: async (ctx, args): Promise<Doc<'credentials'>[]> => {
-    const { from, to } = credentialRefRange(args.pageRef);
-    const rows = await ctx.db
-      .query('credentials')
-      .withIndex('by_user_source_ref', (index) =>
-        index
-          .eq('userId', args.userId)
-          .eq('source.sourceId', args.sourceId)
-          .gte('source.ref', from)
-          .lte('source.ref', to),
+    const wanted = args.label.trim().toLowerCase();
+    return (await pageRows(ctx, args))
+      .filter(
+        (row) =>
+          row.revokedAt === undefined &&
+          row.status === undefined &&
+          row.label.trim().toLowerCase() === wanted,
       )
-      .take(PAGE_ROW_LIMIT);
-    return rows.filter(
-      (row) => typeof row.source !== 'string' && credentialPageRef(row.source.ref) === args.pageRef,
-    );
+      .sort((left, right) => left._creationTime - right._creationTime);
   },
 });
 
@@ -500,11 +556,13 @@ async function storedValue(
  * Encrypt and store one credential through the stable lane-A contract.
  * Internal.
  *
- * A page-derived value is upserted by `(userId, sourceId, ref)`. A ref the
- * source has no row for is first looked for on the same page: a value the
- * page already holds under the ref its old count of values gave it is moved
- * to the new ref, not stored again, so a page gaining or losing a value never
- * mints a row for a value already known. The value is sealed bound to its
+ * A page-derived value is upserted by `(userId, sourceId, ref)`, its ref keyed
+ * by the value's fingerprint (`credentialSourceRef`), so the same value found
+ * again lands on its own row whatever its label or place on the page. A ref
+ * the source has no row for is first looked for on the same page by value: a
+ * row stored under a ref from before value-keyed refs, or under a fingerprint
+ * taken with a key since rotated, is moved to the new ref rather than stored
+ * again, so no known value mints a second row. The value is sealed bound to its
  * owner, so it opens only on that owner's row. The Node-only AES operation is
  * isolated in `credentialCryptoActions` because Convex forbids a Node module
  * from also exporting this module's public query and mutation.

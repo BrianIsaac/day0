@@ -613,6 +613,136 @@ describe('a page whose count of values changes (P10-1)', (): void => {
   });
 });
 
+describe('the rows of one page, read by label for orientation', (): void => {
+  const pageRef = 'runbook.md';
+
+  /** Insert one page-derived row directly, with no value, under a ref and label. */
+  async function pageRow(
+    harness: TestConvex<typeof schema>,
+    row: {
+      userId?: string;
+      sourceId: Id<'docSources'>;
+      ref: string;
+      label: string;
+      revokedAt?: number;
+      status?: 'suspect' | 'superseded';
+    },
+  ): Promise<Id<'credentials'>> {
+    return await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('credentials', {
+          userId: row.userId ?? 'owner',
+          kind: 'value',
+          label: row.label,
+          source: { sourceId: row.sourceId, ref: row.ref },
+          createdAt: 1,
+          ...(row.revokedAt !== undefined ? { revokedAt: row.revokedAt } : {}),
+          ...(row.status !== undefined ? { status: row.status } : {}),
+        }),
+    );
+  }
+
+  it("binds by label over the page's live rows, oldest first, whatever shape of ref each carries", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await seedSource(harness, 'owner');
+    const otherSourceId = await seedSource(harness, 'owner');
+    const label = 'linear service token';
+    const legacy = await pageRow(harness, { sourceId, ref: `${pageRef}#credential=1-x`, label });
+    const keyed = await pageRow(harness, {
+      sourceId,
+      ref: `${pageRef}#credential=${'a'.repeat(32)}`,
+      label: '  Linear Service Token ',
+    });
+    const pageOnly = await pageRow(harness, { sourceId, ref: pageRef, label });
+    await pageRow(harness, {
+      sourceId,
+      ref: `${pageRef}#credential=${'b'.repeat(32)}`,
+      label,
+      revokedAt: 5,
+    });
+    for (const status of ['suspect', 'superseded'] as const) {
+      await pageRow(harness, { sourceId, ref: `${pageRef}#credential=${status}`, label, status });
+    }
+    await pageRow(harness, {
+      sourceId,
+      ref: `${pageRef}#credential=${'c'.repeat(32)}`,
+      label: 'slack bot token',
+    });
+    // A page whose ref extends this one's sorts inside its index range.
+    await pageRow(harness, {
+      sourceId,
+      ref: `${pageRef} copy#credential=${'d'.repeat(32)}`,
+      label,
+    });
+    await pageRow(harness, { sourceId: otherSourceId, ref: pageRef, label });
+    await pageRow(harness, { userId: 'someone else', sourceId, ref: pageRef, label });
+
+    const bound = await harness.query(internal.credentials.pageRowsByLabel, {
+      userId: 'owner',
+      sourceId,
+      pageRef,
+      label: 'Linear service token',
+    });
+    expect(bound.map((row) => row._id)).toEqual([legacy, keyed, pageOnly]);
+  });
+
+  it('reads every row of a page past the old 64-row read, where rows used to be left out unnoticed', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await seedSource(harness, 'owner');
+    for (let index = 0; index < 100; index += 1) {
+      await pageRow(harness, {
+        sourceId,
+        ref: `${pageRef}#credential=${index.toString(16).padStart(32, '0')}`,
+        label: 'swapped token',
+        status: 'superseded',
+      });
+    }
+    const live = await pageRow(harness, {
+      sourceId,
+      ref: `${pageRef}#credential=${'f'.repeat(32)}`,
+      label: 'swapped token',
+    });
+    await expect(
+      harness.query(internal.credentials.pageRowsForStore, { userId: 'owner', sourceId, pageRef }),
+    ).resolves.toHaveLength(101);
+    await expect(
+      harness.query(internal.credentials.pageRowsByLabel, {
+        userId: 'owner',
+        sourceId,
+        pageRef,
+        label: 'swapped token',
+      }),
+    ).resolves.toEqual([expect.objectContaining({ _id: live })]);
+  });
+
+  it('refuses a page with more rows than one read returns, rather than leaving some out', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await seedSource(harness, 'owner');
+    await harness.run(async (ctx) => {
+      for (let index = 0; index <= 512; index += 1) {
+        await ctx.db.insert('credentials', {
+          userId: 'owner',
+          kind: 'value',
+          label: 'swapped token',
+          source: {
+            sourceId,
+            ref: `${pageRef}#credential=${index.toString(16).padStart(32, '0')}`,
+          },
+          createdAt: 1,
+          status: 'superseded',
+        });
+      }
+    });
+    await expect(
+      harness.query(internal.credentials.pageRowsForStore, { userId: 'owner', sourceId, pageRef }),
+    ).rejects.toThrow('A documentation page holds more than 512 stored credentials');
+  });
+
+  it('is internal', (): void => {
+    expect(credentialsModule.pageRowsByLabel.isInternal).toBe(true);
+  });
+});
+
 describe('the known-value cap (P10-1)', (): void => {
   /** Insert `count` rows for one owner, each shaped by `extra`. */
   const insertRows = async (
