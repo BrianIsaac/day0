@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { RedactorUnavailableError, type ModelSpan } from '../../../src/redaction/client';
-import { personalDataMarker, redactStructural, redactText } from '../../../src/redaction/redact';
+import {
+  personalDataMarker,
+  redactFloorFor,
+  redactStructural,
+  redactText,
+} from '../../../src/redaction/redact';
 import { CORPUS_SLOTS } from '../../fixtures/redaction-corpus';
 import {
   RecordedSpanModel,
@@ -148,6 +153,28 @@ describe('redactStructural', (): void => {
     expect(redactStructural('Password: hunter2')).toBe('Password: <redacted>');
     expect(redactStructural('Ticket key: REVOPS-7\nToken budget: none')).toBe(
       'Ticket key: REVOPS-7\nToken budget: none',
+    );
+  });
+});
+
+describe('redactFloorFor', (): void => {
+  it("removes the personal data the context's policy row redacts, each marked as its kind", (): void => {
+    const text =
+      'cc jane.doe@acme.com, call +65 9123 4567, DOB 1990-03-12\nHome address: 1 Raffles Place';
+    expect(redactFloorFor(text, 'export')).toBe(
+      'cc <redacted: email>, call <redacted: phone>, DOB <redacted: date-of-birth>\n' +
+        'Home address: <redacted: address>',
+    );
+    // Documentation keeps an e-mail, because a page names who to ask by it.
+    expect(redactFloorFor('ask jane.doe@acme.com', 'documentation')).toBe('ask jane.doe@acme.com');
+  });
+
+  it('still removes every exact value and structural secret, as the floor always does', (): void => {
+    expect(redactFloorFor(`token ${CORPUS_SLOTS.slack_bot_token}`, 'export')).toBe(
+      'token <redacted>',
+    );
+    expect(redactFloorFor('The password is hunter2', 'export', ['hunter2'])).toBe(
+      'The password is <redacted>',
     );
   });
 });

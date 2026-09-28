@@ -27,6 +27,7 @@ import {
   type RedactionContext,
 } from './policy';
 import { mergeSpans, replaceSpans, structuralSpans } from './structural';
+import { personalDataSpans } from './personal';
 
 export const REDACTED = '<redacted>';
 
@@ -277,4 +278,33 @@ export async function redactText(
 export function redactStructural(text: string, known: readonly string[] = []): string {
   const spans = mergeSpans([...structuralSpans(text), ...knownValueSpans(text, known)]);
   return replaceSpans(text, spans, (): string => REDACTED);
+}
+
+/**
+ * The synchronous floor for one context: every exact value and structural
+ * secret, and the personal data the personal-data grammar finds wherever the
+ * context's policy row redacts its kind, each marked as that kind.
+ *
+ * For a place that cannot await the model but owes a context its policy: the
+ * export, whose row redacts e-mail, phone, address, id number and date of
+ * birth (review M9). The model's share of the row comes when the export runs
+ * it.
+ *
+ * @param text - Untrusted text.
+ * @param context - The context whose policy row decides each personal kind.
+ * @param known - Exact values to remove first.
+ */
+export function redactFloorFor(
+  text: string,
+  context: RedactionContext,
+  known: readonly string[] = [],
+): string {
+  const spans = mergeSpans<{ start: number; end: number; kind: EntityKind }>([
+    ...structuralSpans(text),
+    ...knownValueSpans(text, known),
+    ...personalDataSpans(text).filter((span) => dispositionFor(context, span.kind) === 'redact'),
+  ]);
+  return replaceSpans(text, spans, (span): string =>
+    span.kind === 'secret' ? REDACTED : personalDataMarker(span.kind),
+  );
 }
