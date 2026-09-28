@@ -121,8 +121,20 @@ function insetLeft(percent: number, inset: string): string {
   return `clamp(${inset}, ${percent}%, calc(100% - ${inset}))`;
 }
 
-/** The mini office world: the employees at their desks or roaming the rooms. */
-export function OfficeWorld({ agents }: { agents: readonly RosterRow[] | undefined }) {
+/**
+ * The mini office world: the employees at their desks or roaming the rooms.
+ *
+ * @param agents - The roster, undefined while it loads.
+ * @param settled - Whether everything above the office on the page has arrived, so its light-up
+ *   can tell whether it opens on screen.
+ */
+export function OfficeWorld({
+  agents,
+  settled,
+}: {
+  agents: readonly RosterRow[] | undefined;
+  settled: boolean;
+}) {
   const visibleAgents = agents ?? [];
   const deskCount = Math.max(8, Math.min(OFFICE_DESKS.length, visibleAgents.length));
   const phoneDesks = new Set(
@@ -132,7 +144,7 @@ export function OfficeWorld({ agents }: { agents: readonly RosterRow[] | undefin
   );
   const [agentDestinations, setAgentDestinations] = useState<Record<string, OfficePoint>>({});
   const office = useRef<HTMLDivElement>(null);
-  useLightUpOnce(office);
+  useLightUpOnce(office, settled);
 
   // Agents open at the deterministic idle spot `OfficeAgent` derives from their
   // id and start roaming from the first tick, so no synchronous seeding here.

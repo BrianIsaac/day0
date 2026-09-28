@@ -23,12 +23,17 @@ export const LIGHT_UP_MS = 5 * 50 + 80 + 900;
  * there. The attribute is written on the element rather than held in React
  * state, so the sequence plays without a render.
  *
+ * "Already on screen" is decided once the page above the office has settled:
+ * while the roster and the inbox load, the page is short and the office sits
+ * high, and the data that arrives pushes it below the fold.
+ *
  * @param ref - The office container.
+ * @param settled - Whether everything above the office on the page has arrived.
  */
-export function useLightUpOnce(ref: RefObject<HTMLElement | null>): void {
+export function useLightUpOnce(ref: RefObject<HTMLElement | null>, settled: boolean): void {
   useEffect(() => {
     const office = ref.current;
-    if (!office || !('IntersectionObserver' in window)) return;
+    if (!settled || !office || !('IntersectionObserver' in window)) return;
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     // Content already being read is never hidden and replayed.
     if (office.getBoundingClientRect().top < window.innerHeight) return;
@@ -52,5 +57,5 @@ export function useLightUpOnce(ref: RefObject<HTMLElement | null>): void {
       clearTimeout(settle);
       delete office.dataset.seen;
     };
-  }, [ref]);
+  }, [ref, settled]);
 }

@@ -91,7 +91,10 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
           ) : null}
           {staffed ? <NeedsYouList inbox={inbox} now={now} /> : null}
           <EmployeeRoster employees={roster} waiting={waitingByEmployee(inbox)} />
-          <OfficeWorld agents={roster} />
+          <OfficeWorld
+            agents={roster}
+            settled={roster !== undefined && (!staffed || inbox !== undefined)}
+          />
           {staffed ? (
             <MonthCard roster={roster} figures={figures} waiting={inbox?.total ?? 0} now={now} />
           ) : null}

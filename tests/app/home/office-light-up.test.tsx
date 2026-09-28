@@ -30,9 +30,9 @@ class FakeObserver {
   }
 }
 
-function Office({ top }: { top: number }) {
+function Office({ top, settled = true }: { top: number; settled?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
-  useLightUpOnce(ref);
+  useLightUpOnce(ref, settled);
   return <div ref={ref} data-top={top} />;
 }
 
@@ -40,11 +40,11 @@ let host: HTMLDivElement;
 let root: Root;
 let reduced = false;
 
-function mount(top: number): HTMLElement {
+function mount(top: number, settled = true): HTMLElement {
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
     top,
   } as DOMRect);
-  act(() => root.render(<Office top={top} />));
+  act(() => root.render(<Office top={top} settled={settled} />));
   return host.firstElementChild as HTMLElement;
 }
 
@@ -102,6 +102,18 @@ describe('useLightUpOnce', (): void => {
     const office = mount(120);
     expect(office.dataset.seen).toBeUndefined();
     expect(FakeObserver.last).toBeUndefined();
+  });
+
+  it('decides once the page has settled, so an office the data pushes below the fold still lights up (M9)', (): void => {
+    // While the roster loads the page is short and the office sits on screen.
+    const office = mount(120, false);
+    expect(office.dataset.seen).toBeUndefined();
+    expect(FakeObserver.last).toBeUndefined();
+    // The roster, the inbox and the month card arrive and push it below the fold.
+    mount(window.innerHeight + 400, true);
+    expect(office.dataset.seen).toBe('waiting');
+    act(() => FakeObserver.last?.fire(true));
+    expect(office.dataset.seen).toBe('seen');
   });
 
   it('leaves the office still when the reader asks for reduced motion', (): void => {

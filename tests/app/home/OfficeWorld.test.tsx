@@ -21,14 +21,14 @@ const idle = { ...mira, agentId: 'synthetic-idle', name: 'Aiko', openCount: 0 } 
 
 describe('OfficeWorld', (): void => {
   it('renders every room lit, with no light-up state, before the script runs', (): void => {
-    const html = renderToStaticMarkup(<OfficeWorld agents={[mira]} />);
+    const html = renderToStaticMarkup(<OfficeWorld agents={[mira]} settled />);
     expect(html).not.toContain('data-seen');
     const rooms = [...html.matchAll(/class="day0-pixel-room day0-pixel-room-\w+ absolute"[^>]*>/g)];
     expect(rooms).toHaveLength(6);
   });
 
   it('numbers the rooms, desks, chairs and decor for the light-up stagger, each with a wash', (): void => {
-    const html = renderToStaticMarkup(<OfficeWorld agents={[]} />);
+    const html = renderToStaticMarkup(<OfficeWorld agents={[]} settled />);
     for (let index = 0; index < 6; index += 1) {
       expect(html).toMatch(
         new RegExp(
@@ -42,34 +42,34 @@ describe('OfficeWorld', (): void => {
   });
 
   it('shows the ready plate and the eight-desk minimum in an empty office', (): void => {
-    const html = renderToStaticMarkup(<OfficeWorld agents={[]} />);
+    const html = renderToStaticMarkup(<OfficeWorld agents={[]} settled />);
     expect(html).toContain('office ready');
     expect(html).toContain('0 total');
   });
 
   it('titles a figure with the employee and what it is doing, nothing else (N6)', (): void => {
-    const html = renderToStaticMarkup(<OfficeWorld agents={[mira, idle]} />);
+    const html = renderToStaticMarkup(<OfficeWorld agents={[mira, idle]} settled />);
     expect(html).toContain('title="Mira, working at a desk"');
     expect(html).toContain('title="Aiko, roaming the office"');
     expect(html).not.toMatch(/title="[^"]* - /);
   });
 
   it('sets the name plate, the reads pill, the plate and the count at the 12 px floor', (): void => {
-    const empty = renderToStaticMarkup(<OfficeWorld agents={[]} />);
-    const staffed = renderToStaticMarkup(<OfficeWorld agents={[mira]} />);
+    const empty = renderToStaticMarkup(<OfficeWorld agents={[]} settled />);
+    const staffed = renderToStaticMarkup(<OfficeWorld agents={[mira]} settled />);
     expect(`${empty}${staffed}`).not.toMatch(/text-\[(9|10|11)px\]/);
     expect(staffed).toContain('reads 2 locations');
     expect(staffed).toContain(mira.roleLine);
   });
 
   it('keeps a figure and its name plate inside the office at a phone width', (): void => {
-    const html = renderToStaticMarkup(<OfficeWorld agents={[mira]} />);
+    const html = renderToStaticMarkup(<OfficeWorld agents={[mira]} settled />);
     expect(html).toContain('left:clamp(4.5rem, 14%, calc(100% - 4.5rem))');
   });
 
   it('seats working employees far apart first, so two name plates never overlap', (): void => {
     const second = { ...mira, agentId: 'synthetic-second', name: 'Aiko' } as RosterRow;
-    const html = renderToStaticMarkup(<OfficeWorld agents={[mira, second]} />);
+    const html = renderToStaticMarkup(<OfficeWorld agents={[mira, second]} settled />);
     const seats = [...html.matchAll(/left:clamp\(4\.5rem, (\d+)%[^;]*;top:(\d+)%/g)].map(
       (match) => [Number(match[1]), Number(match[2])],
     );
@@ -80,7 +80,7 @@ describe('OfficeWorld', (): void => {
   });
 
   it('draws four desks on a phone, the ones the first four employees take (UX 12, option c)', (): void => {
-    const html = renderToStaticMarkup(<OfficeWorld agents={[]} />);
+    const html = renderToStaticMarkup(<OfficeWorld agents={[]} settled />);
     const desks = [...html.matchAll(/class="day0-pixel-desk ([^"]*)"/g)].map((match) => match[1]);
     const chairs = [...html.matchAll(/class="day0-pixel-chair ([^"]*)"/g)].map((match) => match[1]);
     expect(desks).toHaveLength(8);
@@ -94,6 +94,7 @@ describe('OfficeWorld', (): void => {
           { length: 6 },
           (_, index) => ({ ...idle, agentId: `a${index}` }) as RosterRow,
         )}
+        settled
       />,
     );
     expect(
@@ -102,7 +103,7 @@ describe('OfficeWorld', (): void => {
   });
 
   it('keeps every desk inside the office at a phone’s width', (): void => {
-    const html = renderToStaticMarkup(<OfficeWorld agents={[]} />);
+    const html = renderToStaticMarkup(<OfficeWorld agents={[]} settled />);
     expect(html).toContain('left:clamp(3.5rem, 86%, calc(100% - 3.5rem))');
   });
 });
