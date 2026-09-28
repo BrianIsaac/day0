@@ -12,6 +12,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const queries = vi.hoisted(() => ({
   mode: 'mock' as 'mock' | 'real' | undefined,
   surfacesLoaded: true,
+  /** A third document the employee has just written, when set. */
+  newDoc: false,
 }));
 
 vi.mock('convex/react', () => ({
@@ -45,6 +47,17 @@ vi.mock('convex/react', () => ({
           body: 'How work enters the queue.',
           category: 'how-to-guide',
         },
+        ...(queries.newDoc
+          ? [
+              {
+                _id: 'doc-3',
+                slug: 'doc-3',
+                title: 'Close checklist',
+                body: 'What the close needs.',
+                category: 'how-to-guide',
+              },
+            ]
+          : []),
       ];
     }
     return [];
@@ -214,5 +227,36 @@ describe('a cold load whose hash names a tab', (): void => {
     window.history.replaceState(null, '', '/agent/agent-1#work-item-1');
     mount();
     expect(scrolled).toEqual([]);
+  });
+});
+
+describe('a tab count that changes on the page (v3 section 5.2)', (): void => {
+  let root: Root | undefined;
+
+  afterEach((): void => {
+    act((): void => root?.unmount());
+    root = undefined;
+    queries.newDoc = false;
+    document.body.replaceChildren();
+  });
+
+  /** The Docs tab's badge. */
+  const docsBadge = (): Element | null | undefined =>
+    [...document.querySelectorAll('nav[aria-label="Work environment"] button')]
+      .find((tab) => tab.textContent?.startsWith('Docs'))
+      ?.querySelector('span.rounded-full');
+
+  it('shows its first figure still, then rolls the old figure out as the new one rolls in', (): void => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    root = createRoot(container);
+    act((): void => root?.render(<MockEnvironment agentId={'agent-1' as Id<'agents'>} />));
+    expect(docsBadge()?.innerHTML).toBe('2');
+
+    queries.newDoc = true;
+    act((): void => root?.render(<MockEnvironment agentId={'agent-1' as Id<'agents'>} />));
+    expect(docsBadge()?.innerHTML).toBe(
+      '<span class="roll"><span aria-hidden="true" class="from">2</span><span class="to">3</span></span>',
+    );
   });
 });

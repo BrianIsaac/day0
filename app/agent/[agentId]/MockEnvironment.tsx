@@ -86,6 +86,28 @@ export function activeTabForEnvironment(active: TabKey, hash: string, isReal: bo
   return isReal ? 'docs' : 'slack';
 }
 
+/**
+ * A tab's count. When it changes on the page, the old figure rolls up and out as the new one
+ * rolls in (v3 section 5.2), after the card that caused it has settled; the first figure is
+ * simply there, and under reduced motion only the new one shows.
+ */
+export function RollingCount({ value }: { value: number }) {
+  const [counts, setCounts] = useState<{ readonly now: number; readonly previous?: number }>({
+    now: value,
+  });
+  // The figure the page last showed, kept as the render's own state so the roll starts from it.
+  if (counts.now !== value) setCounts({ now: value, previous: counts.now });
+  if (counts.previous === undefined) return <>{value}</>;
+  return (
+    <span key={value} className="roll">
+      <span aria-hidden="true" className="from">
+        {counts.previous}
+      </span>
+      <span className="to">{value}</span>
+    </span>
+  );
+}
+
 export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
   const [active, setActive] = useState<TabKey>('slack');
   const scrolledToHash = useRef(false);
@@ -181,7 +203,7 @@ export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
                       : 'bg-[var(--color-border)]/40 text-[var(--color-muted)]'
                   }`}
                 >
-                  {count}
+                  <RollingCount value={count} />
                 </span>
               ) : null}
               {sublabel ? (
