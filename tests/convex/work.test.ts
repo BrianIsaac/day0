@@ -6758,6 +6758,20 @@ describe('work.needsYou', (): void => {
     expect((await harness.withIdentity(OWNER).query(api.work.needsYou, {})).total).toBe(0);
   });
 
+  it('dates the one-to-one from a charter sent back, when that put the employee back to deployed', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const aiko = await employee(harness, 'Aiko', { state: 'deployed' });
+    await entered(harness, aiko, 'agent.deployed', {});
+    const sentBackAt = await entered(harness, aiko, 'charter.request_changes', {
+      charterId: 'charter-1',
+      notes: '',
+    });
+
+    const [entry] = (await harness.withIdentity(OWNER).query(api.work.needsYou, {})).entries;
+
+    expect(entry).toMatchObject({ kind: 'one-to-one', waitingSince: sentBackAt });
+  });
+
   it('keeps the newest proposed system when an employee holds more systems than the read takes (m7)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const mira = await employee(harness, 'Mira');

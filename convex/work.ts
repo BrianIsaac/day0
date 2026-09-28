@@ -7019,6 +7019,22 @@ async function waitingRowsOf(
 }
 
 /**
+ * When an employee's one-to-one began to wait on the manager: its deploy, or a charter sent back
+ * since, which returns an employee with no approved charter to `deployed`. A row with neither
+ * event (seeded or imported) is dated by its insert.
+ *
+ * @param ctx - Query context.
+ * @param agent - An employee whose one-to-one waits.
+ */
+async function oneToOneWaitingSince(ctx: QueryCtx, agent: Doc<'agents'>): Promise<number> {
+  const [deployed, sentBack] = await Promise.all([
+    eventsOfType(ctx, agent._id, 'agent.deployed').order('desc').first(),
+    eventsOfType(ctx, agent._id, 'charter.request_changes').order('desc').first(),
+  ]);
+  return Math.max(deployed?._creationTime ?? agent._creationTime, sentBack?._creationTime ?? 0);
+}
+
+/**
  * Everything one employee waits on the manager for, each entry dated.
  *
  * @param ctx - Query context.
@@ -7032,7 +7048,7 @@ async function needsYouOfEmployee(
 ): Promise<NeedsYouEntry[]> {
   const waiting = await waitingRowsOf(ctx, agent._id, now);
   const [
-    deployed,
+    oneToOneSince,
     questions,
     planEntered,
     heldEntered,
@@ -7040,10 +7056,7 @@ async function needsYouOfEmployee(
     stoppedEntered,
     surfaceEntered,
   ] = await Promise.all([
-    // The one-to-one has waited since the deploy; a row with no event is dated by its insert.
-    oneToOneWaitsOnManager(agent)
-      ? eventsOfType(ctx, agent._id, 'agent.deployed').order('desc').first()
-      : null,
+    oneToOneWaitsOnManager(agent) ? oneToOneWaitingSince(ctx, agent) : null,
     Promise.all(
       waiting.plans.map(
         async (row) =>
@@ -7087,15 +7100,11 @@ async function needsYouOfEmployee(
     dates.get(row._id) ?? exact(row._creationTime);
 
   return [
-    ...(oneToOneWaitsOnManager(agent)
+    ...(oneToOneSince !== null
       ? [
           {
             kind: 'one-to-one' as const,
-            ...base(
-              `one-to-one:${agent._id}`,
-              'one-to-one',
-              exact(deployed?._creationTime ?? agent._creationTime),
-            ),
+            ...base(`one-to-one:${agent._id}`, 'one-to-one', exact(oneToOneSince)),
           },
         ]
       : []),
