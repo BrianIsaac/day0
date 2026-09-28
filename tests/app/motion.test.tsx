@@ -24,6 +24,13 @@ const media = vi.hoisted(() => {
   };
 });
 
+/** The part of a `MediaQueryList` the hooks read. */
+interface MediaQueryDouble {
+  readonly matches: boolean;
+  addEventListener(type: string, listener: () => void): void;
+  removeEventListener(type: string, listener: () => void): void;
+}
+
 /** Every `IntersectionObserver` the hooks create, with the element and callback it holds. */
 const observers: { callback: IntersectionObserverCallback; target?: Element }[] = [];
 
@@ -48,7 +55,7 @@ beforeEach((): void => {
   let nextFrame = 1;
   vi.stubGlobal(
     'matchMedia',
-    (): Partial<MediaQueryList> => ({
+    (): MediaQueryDouble => ({
       get matches(): boolean {
         return media.matches;
       },
@@ -273,7 +280,9 @@ describe('useInReadingBand', (): void => {
     layOut(0);
     act((): void => root.render(<Sequence />));
     act((): void => root.render(<p />));
-    act((): void => window.dispatchEvent(new Event('scroll')));
+    act((): void => {
+      window.dispatchEvent(new Event('scroll'));
+    });
     expect(frames).toHaveLength(0);
     expect(resized).toBeUndefined();
   });
