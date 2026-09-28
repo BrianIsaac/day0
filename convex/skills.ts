@@ -54,8 +54,8 @@ import type { SkillAuthoringRefusedPayload } from '../src/events/contract';
  *   - exclusive: `claimAuthoringRun` decides and takes the skill in one
  *     transaction, so a second run cannot start alongside the first;
  *   - fenced: every mutation on that path carries the run's id and is refused
- *     unless the skill still carries it, so a run that lost its claim — to a
- *     takeover, or to the boss rejecting the skill underneath it — cannot write
+ *     unless the skill still carries it, so a run that lost its claim - to a
+ *     takeover, or to the boss rejecting the skill underneath it - cannot write
  *     a result the current state has moved past.
  */
 
@@ -65,8 +65,8 @@ import type { SkillAuthoringRefusedPayload } from '../src/events/contract';
  * registered, so re-authoring cannot pull the ground out from under an executor
  * already calling it.
  *
- * `registered` and `rejected` are absent on purpose. Both are decisions —
- * one the sandbox made, one the boss made — and a run that could reopen either
+ * `registered` and `rejected` are absent on purpose. Both are decisions -
+ * one the sandbox made, one the boss made - and a run that could reopen either
  * is the race this claim exists to close.
  */
 const CLAIMABLE_STATES = ['approved', 'authoring', 'verified', 'failed'] as const;
@@ -481,6 +481,7 @@ async function surfaceForWork(
   return { sourceSystem: item.sourceSystem, targetSurface };
 }
 
+/** Public, owner-guarded: an employee's registered skills. */
 export const registered = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<Doc<'skills'>[]> => {
@@ -492,6 +493,7 @@ export const registered = query({
   },
 });
 
+/** Internal: an employee's registered skills, for a scheduled step with no caller. */
 export const registeredInternal = internalQuery({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<Doc<'skills'>[]> =>
@@ -544,6 +546,7 @@ export const verificationFailed = query({
   },
 });
 
+/** Public, owner-guarded: an employee's proposed skills awaiting the manager. */
 export const proposed = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<Doc<'skills'>[]> => {
@@ -555,6 +558,7 @@ export const proposed = query({
   },
 });
 
+/** Public, owner-guarded: one skill. */
 export const get = query({
   args: { skillId: v.id('skills') },
   handler: async (ctx, args) => {
@@ -562,6 +566,7 @@ export const get = query({
   },
 });
 
+/** Public, owner-guarded: an employee's skill by name. */
 export const findByAgentName = query({
   args: { agentId: v.id('agents'), name: v.string() },
   handler: async (ctx, args) => {
@@ -573,6 +578,7 @@ export const findByAgentName = query({
   },
 });
 
+/** Internal: registers a built-in skill for an employee at deployment. */
 export const installBuiltin = internalMutation({
   args: {
     agentId: v.id('agents'),
@@ -606,6 +612,7 @@ export const installBuiltin = internalMutation({
   },
 });
 
+/** Internal: proposes a skill for the manager, from the work that needed it. */
 export const propose = internalMutation({
   args: {
     agentId: v.id('agents'),
@@ -702,12 +709,17 @@ export const propose = internalMutation({
   },
 });
 
+/**
+ * Public, owner-guarded: approves a proposed skill whose target surface is
+ * connected, grants its required scopes and records the approval. Nothing is
+ * scheduled here; the dashboard starts the authoring once this returns.
+ */
 export const approve = mutation({
   args: { skillId: v.id('skills') },
   handler: async (ctx, args) => {
     const row = await assertOwnsSkill(ctx, args.skillId);
     if (row.state !== 'proposed') {
-      throw new Error(`skill state is ${row.state}; expected proposed`);
+      throw new Error(`cannot approve "${row.name}": it is ${row.state}, not proposed`);
     }
     // A skill may only target a connected surface. The sandbox stays offline,
     // so approval is the first point at which the target is checked, and the
@@ -957,7 +969,7 @@ export const retireUnshaped = internalMutation({
  * This is the whole of the concurrency control for authoring, and it is the
  * same shape as `work.claimForExecution`: a mutation is a transaction, so the
  * state check and the move to `authoring` cannot be split by a second caller,
- * where an action that reads the state and writes it back as two calls can be —
+ * where an action that reads the state and writes it back as two calls can be -
  * and both callers then author, verify and write a result for the same skill.
  *
  * The winner gets a `runId`: the id of the claim event, durable, unique per
@@ -1062,8 +1074,8 @@ export const recordAuthoringProgress = internalMutation({
  * fail in: either the skill is callable and its work item is queued, or
  * neither happened and the row is still where the retry can pick it up.
  *
- * The run releases its claim here, which is what lets the next run — a retry
- * after a later problem — start at all.
+ * The run releases its claim here, which is what lets the next run - a retry
+ * after a later problem - start at all.
  */
 export const completeRegistration = internalMutation({
   args: {
@@ -1230,7 +1242,7 @@ export const deferAuthoringRun = internalMutation({
 
 /**
  * No sandbox ran, so the body is all there is to keep. The skill stops at
- * `authoring` — listed, uncallable, retryable — because registering is what
+ * `authoring` - listed, uncallable, retryable - because registering is what
  * claims the body was checked, and nothing checked it.
  *
  * The claim is released: this run is over, and the retry that follows a sandbox

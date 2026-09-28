@@ -1,19 +1,13 @@
 /**
- * Branded id types — phantom property at compile time, plain string at
- * runtime. Keeps Convex `Id<'agents'>` etc. distinct from arbitrary
- * strings without paying a runtime cost.
+ * A branded agent id: a phantom property at compile time, a plain string at
+ * runtime, so a Convex `Id<'agents'>` stays distinct from an arbitrary
+ * string without a runtime cost.
  */
 
-declare const _brand: unique symbol;
+declare const brand: unique symbol;
 
-export type AgentId = string & { readonly [_brand]: 'agents' };
-export type CharterId = string & { readonly [_brand]: 'charters' };
-export type WorkItemId = string & { readonly [_brand]: 'workItems' };
-export type SkillId = string & { readonly [_brand]: 'skills' };
-export type VoiceSessionId = string & { readonly [_brand]: 'voiceSessions' };
+/** An agent's id as the work types carry it. */
+export type AgentId = string & { readonly [brand]: 'agents' };
 
-export const asAgentId = (s: string): AgentId => s as AgentId;
-export const asCharterId = (s: string): CharterId => s as CharterId;
-export const asWorkItemId = (s: string): WorkItemId => s as WorkItemId;
-export const asSkillId = (s: string): SkillId => s as SkillId;
-export const asVoiceSessionId = (s: string): VoiceSessionId => s as VoiceSessionId;
+/** Brand a string that is known to be an agent id. */
+export const asAgentId = (value: string): AgentId => value as AgentId;

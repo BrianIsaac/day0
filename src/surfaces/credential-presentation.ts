@@ -1,8 +1,10 @@
 import { credentialPageRef } from '../docs/credential-ref';
 import { isManagerLookupFailure } from './manager-lookup';
 
+/** How a system authenticates, as orientation read it from the documentation. */
 export type CredentialMethod = 'api-key' | 'bot-token' | 'oauth' | 'unknown';
 
+/** What orientation found about a surface's credential: a value, a location, or nothing, with the evidence. */
 export interface SurfaceCredentialFinding {
   evidenceRef?: string;
   found: 'value' | 'location' | 'none';
@@ -12,12 +14,14 @@ export interface SurfaceCredentialFinding {
   method: CredentialMethod;
 }
 
+/** One stored credential as the card lists it: its id, label and kind. */
 export interface CredentialOwnerSummary {
   _id: string;
   label: string;
   source: 'entered' | 'oauth' | { ref: string; sourceId: string };
 }
 
+/** The dedicated app a surface was provisioned with. */
 export interface SurfaceProvisioning {
   appId: string;
   appName: string;
@@ -27,6 +31,7 @@ export interface SurfaceProvisioning {
   stateExpiresAt?: number;
 }
 
+/** What the credential row shows and allows for one surface. */
 export interface CredentialPresentation {
   canLand: boolean;
   /** A longer documented procedure shown under the row, clipped for the card. */
@@ -75,6 +80,7 @@ export const PROVISION_NOTE =
   "afterwards Day0 asks Slack to revoke it and records Slack's answer, rather than keeping it for " +
   'the twelve hours it would otherwise live.';
 
+/** What the presentation is built from: the verdict, the finding, the stored credentials and the provisioning. */
 export interface CredentialPresentationInput {
   verdict?: string;
   credential?: SurfaceCredentialFinding;

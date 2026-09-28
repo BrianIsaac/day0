@@ -16,11 +16,13 @@ export interface LedgerRow {
   repair?: { reason: string; toolArgsJson: string };
 }
 
+/** An action as the rehearsal checks read it. */
 export interface ActionView {
   tool: string;
   args: { surface?: string; tool?: string; toolArgsJson?: string; path?: string; body?: string };
 }
 
+/** A work item as the rehearsal checks read it: its state, plan and output. */
 export interface WorkItemView {
   state: string;
   plan?: { steps: string[]; advisorySteps?: number[] };
@@ -33,6 +35,7 @@ export interface WorkItemView {
   };
 }
 
+/** One rehearsal check and whether it passed, with what it saw. */
 export interface CheckResult {
   check: string;
   passed: boolean;
@@ -106,6 +109,7 @@ export function checkPlanWithoutOwnershipGate(item: WorkItemView): CheckResult {
   };
 }
 
+/** One browser action of a run with its ledger outcome, by index. */
 export interface BrowserRow {
   index: number;
   tool: string;
@@ -241,6 +245,7 @@ export function checkWrongKeyReadRepaired(item: WorkItemView): CheckResult {
   };
 }
 
+/** What the tile read-back found: the figure and the audit line. */
 export interface ReadBack {
   figure: string;
   auditLine: string;

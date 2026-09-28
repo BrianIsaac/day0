@@ -43,7 +43,7 @@ const ROOT = fileURLToPath(new URL('../../', import.meta.url));
  */
 
 const SLUG = 'looker-pipeline-tile';
-const MANAGER_DM = 'D0BS5SXMXPZ';
+const MANAGER_DM = 'D0MANAGER';
 const RUNBOOK = readFileSync(
   join(ROOT, 'bed/company/folder/revops/runbooks/how-to-refresh-the-tile.md'),
   'utf8',
@@ -152,11 +152,7 @@ vi.mock('../../src/lib/mastra', () => ({
   agentText: async (): Promise<string> => '',
 }));
 
-vi.mock('../../src/surfaces/credentials', () => ({
-  decryptCredentialRef: { name: 'credentials:decrypt' },
-  decryptCredential: async (_ctx: unknown, credentialId: string): Promise<string> =>
-    `plain-${credentialId}`,
-}));
+vi.mock('../../src/surfaces/credentials', () => import('./fakes/surface-credentials'));
 
 vi.mock('../../src/surfaces/mcp', async (importOriginal) => {
   const original = await importOriginal<typeof import('../../src/surfaces/mcp')>();

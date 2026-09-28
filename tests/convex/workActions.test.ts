@@ -3267,6 +3267,40 @@ describe('executing an approved plan through the gate', (): void => {
       );
     });
 
+    it("fails the row with the step bound's reason on its card when the plan has nine steps", async (): Promise<void> => {
+      useSurfaceMode('real');
+      const { StructuredOutputInvalidError } =
+        await vi.importActual<typeof import('../../src/lib/mastra')>('../../src/lib/mastra');
+      const { planSchema } = await import('../../src/work/plan');
+      const nineSteps = planSchema.safeParse({
+        summary: 'Nine steps.',
+        steps: Array.from({ length: 9 }, (_, index): string => `Step ${index + 1}.`),
+        expectedOutputType: 'message',
+        riskNotes: '',
+        reversibility: '',
+        estimatedMinutes: 9,
+      });
+      recorded.planFailure = new StructuredOutputInvalidError(
+        'day0-plan',
+        'native',
+        Object.assign(new Error('Structured output validation failed'), {
+          id: 'STRUCTURED_OUTPUT_SCHEMA_VALIDATION_FAILED',
+          cause: nineSteps.error,
+        }),
+      );
+      const harness = convexTest(contractSchema(), allConvexModules());
+      const { workItemId } = await seed(harness, 'real');
+      await toClaimed(harness, workItemId);
+
+      await harness.withIdentity(OWNER).action(api.workActions.draftPlan, { workItemId });
+
+      const row = await readItem(harness, workItemId);
+      expect(row.state).toBe('failed');
+      expect(row.skipReason).toContain(
+        "plan draft failed: the model's reply held no valid structured object: the plan had 9 steps; the most is 8",
+      );
+    });
+
     it('fails the row when the plan reply was cut off at the output limit', async (): Promise<void> => {
       useSurfaceMode('real');
       const { ModelReplyCutError } = await import('../../src/lib/structured-fallback');
@@ -6440,7 +6474,7 @@ describe('an ask that leaves a held ticket to its own work item still answers (1
         await ctx.db.patch(
           surface._id,
           surface.slug === 'slack'
-            ? { managerDmChannelId: 'D0BS5SXMXPZ', managerUserId: 'U0MANAGER' }
+            ? { managerDmChannelId: 'D0MANAGER', managerUserId: 'U0MANAGER' }
             : {
                 toolAllowlist: [
                   'save_comment',

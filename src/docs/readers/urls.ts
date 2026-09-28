@@ -147,25 +147,6 @@ export class UrlsReader implements DocumentationReader {
   }
 
   /**
-   * Fetch each listed page and normalise HTML to Markdown.
-   *
-   * Args:
-   *   source: Linked URL-list source.
-   *   secret: The source's own reader secret, if any.
-   *
-   * Returns:
-   *   Normalised documentation pages in locator order.
-   */
-  async listPages(source: DocSourceRecord, secret?: string): Promise<DocPage[]> {
-    const urls = parseUrlLocator(source.locator);
-    const { pages, unread } = splitPageReads(
-      await this.fetchPages(source, urls, pageAccess(urls, secret)),
-    );
-    if (unread.length > 0) throw new Error(`${unread[0].ref}: ${unread[0].reason}`);
-    return pages;
-  }
-
-  /**
    * Fetch and normalise a known-safe URL batch, one page at a time.
    *
    * Every listed address is its own page on its own host, so any failure to

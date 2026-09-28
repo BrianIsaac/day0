@@ -33,22 +33,25 @@ import {
 import type { SurfaceDiscoveryEvidence } from '@/docs/system-discovery';
 import { clockTime, useAgentZone, useNow } from '../time';
 import { LiveStatus, refusalText, type ChangeOutcome } from '../live-status';
+import { errorMessage } from '@/lib/errors';
 
-type SurfaceEvidence = {
+interface SurfaceEvidence {
   sourceId?: string;
   ref?: string;
   quote?: string;
   url?: string;
-};
+}
 
 /** The one control that approves a proposed card (Q10); the rehearsal driver clicks it by name. */
 export const APPROVE_CARD = 'Approve';
 
+/** What the tab says while the surfaces are loading. */
 export const LOADING_SURFACES = 'Loading discovered systems, connection status and evidence…';
+/** What the tab says before orientation has discovered anything. */
 export const EMPTY_SURFACES =
   'No systems have been discovered yet. After charter approval, orientation maps systems from the linked documentation and shows their connection status here.';
 
-type ConnectRequestBody = {
+interface ConnectRequestBody {
   target?: {
     reasoning?: string;
     fallbackPath?: string;
@@ -63,14 +66,15 @@ type ConnectRequestBody = {
   costBand?: string;
   rollback?: string;
   openQuestions?: string[];
-};
+}
 
-type Operation = {
+interface Operation {
   error?: string;
   kind: 'approve' | 'landing' | 'probe' | 'propose' | 'provision' | 'reject';
   surfaceId: string;
-};
+}
 
+/** The Slack provisioning row's inputs: the token handler, its error and the presentation. */
 export interface ProvisioningRowProps {
   error?: string;
   onProvision: (configurationToken: string) => void;
@@ -79,6 +83,7 @@ export interface ProvisioningRowProps {
   surfaceSlug: string;
 }
 
+/** Where orientation found a system: the pages it cites, by source. */
 export function DiscoveryProvenance({
   evidence,
   sourceLabels,
@@ -156,6 +161,7 @@ export function PageLine({ text }: { text: string }): React.ReactNode {
   );
 }
 
+/** The intake scope row's inputs: the scope, its drift and the re-orientation handler. */
 export interface IntakeScopeRowProps {
   drift: readonly ScopeValue[];
   scope: IntakeScope;
@@ -223,6 +229,7 @@ export function IntakeScopeRow(props: IntakeScopeRowProps): React.ReactNode {
   );
 }
 
+/** A discovered system the charter did not name, awaiting a proposal. */
 export interface UnnamedSystem {
   _id: string;
   slug: string;
@@ -231,6 +238,7 @@ export interface UnnamedSystem {
   discoveryEvidence?: SurfaceDiscoveryEvidence[];
 }
 
+/** The unnamed-systems row's inputs: the systems, the propose handler and its error. */
 export interface UnnamedSystemsRowProps {
   error?: { surfaceId: string; message: string };
   onPropose: (surfaceId: string) => void;
@@ -447,6 +455,7 @@ const credentialSummariesQuery = makeFunctionReference<
   CredentialStatus[]
 >('credentials:summaryForOwner');
 
+/** The credential row's inputs: the label, the landing handler, its state and error. */
 export interface CredentialRowProps {
   credentialLabel: string;
   error?: string;
@@ -545,15 +554,16 @@ export function EvidenceQuote({ quote }: { quote?: string }): React.ReactNode {
   );
 }
 
-type SurfaceProbeAttempt = {
+interface SurfaceProbeAttempt {
   path: string;
   endpoint?: string;
   outcome: 'demoted' | 'ungranted' | 'listed-dead' | 'retried';
   reason: string;
   attemptedAt: number;
   retryAfterMs?: number;
-};
+}
 
+/** The connection ladder's inputs: the candidate paths, the attempts and the verdict. */
 export interface SurfaceLadderProps {
   candidates?: Array<{ path: string; endpoint: string }>;
   attempts?: SurfaceProbeAttempt[];
@@ -988,6 +998,7 @@ export function credentialStatusLine(
   return undefined;
 }
 
+/** The Surfaces tab: every discovered system with its connection state, evidence and controls. */
 export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.ReactNode {
   const surfaces = useQuery(api.surfaces.listForAgent, { agentId });
   const pages = useQuery(api.docSources.pagesForAgent, { agentId });
@@ -1104,7 +1115,7 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
     try {
       await reorient({ agentId });
     } catch (failure) {
-      setReorientError(plainErrorMessage((failure as Error).message));
+      setReorientError(plainErrorMessage(errorMessage(failure)));
     } finally {
       setReorienting(false);
     }
@@ -1137,7 +1148,7 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
       setOperation({
         kind: 'probe',
         surfaceId,
-        error: plainErrorMessage((failure as Error).message),
+        error: plainErrorMessage(errorMessage(failure)),
       });
     }
   }
@@ -1151,7 +1162,7 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
       setOperation({
         kind: 'propose',
         surfaceId,
-        error: plainErrorMessage((failure as Error).message),
+        error: plainErrorMessage(errorMessage(failure)),
       });
     }
   }
@@ -1165,7 +1176,7 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
       setOperation({
         kind: 'provision',
         surfaceId,
-        error: plainErrorMessage((failure as Error).message),
+        error: plainErrorMessage(errorMessage(failure)),
       });
     }
   }
@@ -1183,7 +1194,7 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
       setOperation({
         kind: 'landing',
         surfaceId,
-        error: plainErrorMessage((failure as Error).message),
+        error: plainErrorMessage(errorMessage(failure)),
       });
     }
   }
@@ -1375,6 +1386,7 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
                     currentOperation?.kind === 'provision' ? currentOperation.error : undefined
                   }
                   onProvision={(configurationToken: string): void => {
+                    // onProvision ends in its own catch, which shows the refusal on the row.
                     void onProvision(surface._id, configurationToken);
                   }}
                   presentation={provisioningPresentation}
@@ -1388,6 +1400,7 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
                   error={currentOperation?.kind === 'landing' ? currentOperation.error : undefined}
                   landing={currentOperation?.kind === 'landing' && !currentOperation.error}
                   onLand={(plaintext: string): void => {
+                    // onLand ends in its own catch, which shows the refusal on the row.
                     void onLand(
                       surface._id,
                       presentation.label ?? `${surface.displayName} credential`,
@@ -1483,6 +1496,7 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
             : undefined
         }
         onPropose={(surfaceId: string): void => {
+          // onPropose ends in its own catch, which shows the refusal on the row.
           void onPropose(surfaceId as Id<'surfaces'>);
         }}
         proposing={

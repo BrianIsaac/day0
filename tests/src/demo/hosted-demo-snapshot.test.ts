@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   HOSTED_DEMO_SNAPSHOT,
   type HostedDemoSnapshot,
+  recordingProvenanceLine,
 } from '../../../src/demo/hosted-demo-snapshot';
 
 /**
@@ -59,6 +60,18 @@ describe('the committed hosted-demo snapshot', (): void => {
     expect(HOSTED_DEMO_SNAPSHOT.agent.id).toMatch(/^agent-\d+$/);
     for (const item of HOSTED_DEMO_SNAPSHOT.workItems) expect(item.id).toMatch(/^work-\d+$/);
     for (const skill of HOSTED_DEMO_SNAPSHOT.skills) expect(skill.id).toMatch(/^skill-\d+$/);
+  });
+
+  it('carries the day it was exported, the build the deployment served and the day that build went live (Q3)', (): void => {
+    expect(HOSTED_DEMO_SNAPSHOT.recording.recordedOn).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(HOSTED_DEMO_SNAPSHOT.recording.liveSince).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(HOSTED_DEMO_SNAPSHOT.recording.revision).toMatch(/^[0-9a-f]{7,12}$/);
+  });
+
+  it('dates the export, not the run, and says the run came before it (Q3)', (): void => {
+    expect(recordingProvenanceLine(HOSTED_DEMO_SNAPSHOT.recording)).toBe(
+      'Exported from the hosted deployment on 12 September 2026 (build 3ed8779, live since 13 August 2026); the run it shows took place before that and is told in offsets. The product has moved on since.',
+    );
   });
 
   it('tells the recording in offsets, never on a wall clock', (): void => {

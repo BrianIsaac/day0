@@ -102,8 +102,10 @@ export const STATE_FILE = '.demo-bed/company.json';
 const ENV_FILE = '.env.local';
 
 const VERBS = ['docs', 'check', 'seed', 'post', 'teardown'] as const;
+/** The verbs the company bed script takes. */
 export type CompanyVerb = (typeof VERBS)[number];
 
+/** Every flag and verb the company bed script takes, parsed from its arguments. */
 export interface CompanyOptions {
   verb?: CompanyVerb;
   key?: string;
@@ -113,12 +115,14 @@ export interface CompanyOptions {
   help: boolean;
 }
 
+/** What a child process returned: its status and both output streams. */
 export interface RunResult {
   status: number | null;
   stdout: string;
   stderr: string;
 }
 
+/** How a child process is run: the extra environment and the input it gets. */
 export interface RunOptions {
   /** Values layered on this process's environment for the child. */
   env?: Record<string, string>;
@@ -230,6 +234,7 @@ export function tokenScrub(
 
 type Status = 'ok' | 'gap' | 'note';
 
+/** The bed report: says lines as it goes and counts the gaps for the exit code. */
 export class Report {
   gaps = 0;
 

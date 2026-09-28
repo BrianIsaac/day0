@@ -205,7 +205,7 @@ describe('the 15 September strike the card offered and approval refused', (): vo
     expect(approved?.payload).toEqual({
       charterId,
       version: '0.0',
-      struckConstraints: ['Take ownership of Northstar CRM-dependent work that Brain must handle.'],
+      struckConstraints: ['Take ownership of Northstar CRM-dependent work that Sam must handle.'],
     });
   });
 });

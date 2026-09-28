@@ -57,9 +57,12 @@ import type {
   SurfaceRecord,
 } from './types';
 
+/** The one verb the MCP adapter serves. */
 export const MCP_TOOLS = ['mcp.call'] as const satisfies readonly MockAction['tool'][];
 
+/** How long one MCP tool call may take. */
 export const MCP_TIMEOUT_MS = 30_000;
+/** How much of a write's result the ledger keeps as its effect line. */
 export const EFFECT_LENGTH = 180;
 /** The most of one acted element's name the ledger keeps. */
 const ELEMENT_NAME_LENGTH = 120;
@@ -173,6 +176,7 @@ export function isServerToolError(error: unknown): boolean {
   );
 }
 
+/** What creating an MCP client takes: the server name, its endpoint and the credential. */
 export interface McpClientOptions {
   /** The surface slug; Mastra namespaces tool names as `<serverName>_<tool>`. */
   serverName: string;
@@ -180,8 +184,10 @@ export interface McpClientOptions {
   bearer?: string;
 }
 
+/** The factory the adapter builds MCP clients with, so a test can hand it a double. */
 export type CreateMcpClient = (options: McpClientOptions) => McpClientLike;
 
+/** What the MCP adapter depends on: the decrypt and the client factory. */
 export interface McpAdapterDeps {
   decrypt: DecryptCredential;
   createClient: CreateMcpClient;

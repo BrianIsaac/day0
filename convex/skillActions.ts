@@ -43,9 +43,10 @@ import { verdictFor as surfaceVerdictFor } from '../src/surfaces/verdict';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { SANDBOX_LEASE_RETRY_MS } from './sandboxLease';
 import { logEvent } from './eventLog';
-import { spanModelFromEnv } from '../src/redaction/client';
+import { spanModelFromEnv } from '../src/redaction/span-model-env';
 import { ownerKnownValues } from '../src/redaction/known-values';
 import { itemBoundModelFailure } from '../src/lib/structured-fallback';
+import { errorMessage } from '../src/lib/errors';
 
 /**
  * Autonomous skill authoring action. Demo headline:
@@ -54,7 +55,7 @@ import { itemBoundModelFailure } from '../src/lib/structured-fallback';
  *   2. Mastra Agent (GPT-5.6 Terra) authors the SKILL.md body from
  *      name/description/rationale + a short Python smoke test that
  *      exercises the skill behaviour.
- *   3. A sandbox runs the smoke test — Daytona where a key is configured,
+ *   3. A sandbox runs the smoke test - Daytona where a key is configured,
  *      the bundled local service otherwise. `src/lib/skill-sandbox.ts`
  *      picks, and reports the same shape whichever ran.
  *   4. If the sandbox exits 0 having printed one line per representative
@@ -71,7 +72,7 @@ import { itemBoundModelFailure } from '../src/lib/structured-fallback';
  * decides: the sandbox runs `src/work/smoke-harness.ts` around them, so an
  * assertion the author wrote about its own output can never fail the check.
  *
- * The Python smoke is a Voyager-style execution-success signal —
+ * The Python smoke is a Voyager-style execution-success signal -
  * sandbox exit 0 means the body is internally consistent. Plan 2 / 3
  * adds environment + critic signals.
  */
@@ -596,7 +597,7 @@ const SUPERSEDED =
  * through here so the boss is never left guessing: the row lands in `failed`
  * (listed, with a Retry, in the skills panel), the event feed carries the
  * reason, and the work item that asked for the skill says why it is still
- * waiting. All three in one fenced transaction — a failing run that has lost
+ * waiting. All three in one fenced transaction - a failing run that has lost
  * its claim writes none of them.
  */
 async function recordAuthoringFailure(
@@ -973,7 +974,7 @@ async function authorAndRegister(
       }
     }
   } catch (err) {
-    skipReason = `${backend} threw: ${(err as Error).message}`;
+    skipReason = `${backend} threw: ${errorMessage(err)}`;
     verificationLog = skipReason;
   } finally {
     // Released whichever way the check went, so the next employee's

@@ -34,12 +34,14 @@ import { questionKey } from './manager-questions';
 
 export type ListClauseField = 'willDo' | 'willNotDo' | 'escalationTriggers';
 
+/** The charter fields that are lists of clauses an amendment may edit. */
 export const LIST_CLAUSE_FIELDS: readonly ListClauseField[] = [
   'willDo',
   'willNotDo',
   'escalationTriggers',
 ];
 
+/** One change an amendment makes to a charter, by kind. */
 export type CharterChange =
   | { kind: 'edit-function'; text: string }
   /** `index` equal to the list length appends; empty `text` removes. */
@@ -59,12 +61,14 @@ export type CharterChange =
 
 const INTRO_PATHS: readonly IntroPath[] = ['manager', 'self', 'tbd'];
 
+/** One field an amendment changed, with the value before and after. */
 export interface FieldDiff {
   field: string;
   before: unknown;
   after: unknown;
 }
 
+/** The charter after an amendment, with the systems it added and the diff. */
 export interface AppliedAmendment {
   charter: Charter;
   systemsAdded: NamedSystem[];

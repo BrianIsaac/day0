@@ -1,6 +1,7 @@
 /**
- * The 19 Sep third full run's two stopped rows of Mateo's (findings R and S),
- * as `findings/mateo-stopped-rows-0744.jsonl` kept them. `FIN_1_ITEM` is the
+ * The 19 Sep third full run's two stopped rows of Mateo's (findings R and S;
+ * GLM 5.3 Flash via Featherless, real mode, autonomy on), as the run's
+ * private findings file kept them. `FIN_1_ITEM` is the
  * ticket's own item: `list_issues` landed, then `POST /conversations.list`, a
  * Slack read, was refused as an unattributable write and the run stopped.
  * `FINANCE_CLOSE_ASK` is the `#finance-close` ask: its executor obeyed the
@@ -207,7 +208,7 @@ export const FINANCE_CLOSE_ASK = {
     },
     {
       "args": {
-        "body": "{\"channel\":\"D0BS5SXMXPZ\",\"text\":\"Answered the #finance-close close-status ask in thread C0C2P932A2H:1789761522.764859 with the step states read from Linear (FIN-2 Done, FIN-3 In Progress). The note comment and Done transition on FIN-1 were not emitted from this run: FIN-1 has its own claimed work item, so those writes belong there.\"}",
+        "body": "{\"channel\":\"D0MANAGER\",\"text\":\"Answered the #finance-close close-status ask in thread C0C2P932A2H:1789761522.764859 with the step states read from Linear (FIN-2 Done, FIN-3 In Progress). The note comment and Done transition on FIN-1 were not emitted from this run: FIN-1 has its own claimed work item, so those writes belong there.\"}",
         "headersJson": "{\"Authorization\":\"Bearer {{secret}}\",\"Content-Type\":\"application/json; charset=utf-8\"}",
         "method": "POST",
         "path": "/chat.postMessage",
@@ -234,7 +235,7 @@ export const FINANCE_CLOSE_ASK = {
       "tool": "http.request"
     },
     {
-      "effect": "http.request slack · POST /chat.postMessage · headers {Authorization: \"Bearer {{secret}}\", Content-Type: \"application/json; charset=utf-8\"} · body \"{\"channel\":\"D0BS5SXMXPZ\",\"text\":\"Answered the #finance-close close-status ask in thread C0C2P932A2H:1789761522.764859 with the step states read from Lin",
+      "effect": "http.request slack · POST /chat.postMessage · headers {Authorization: \"Bearer {{secret}}\", Content-Type: \"application/json; charset=utf-8\"} · body \"{\"channel\":\"D0MANAGER\",\"text\":\"Answered the #finance-close close-status ask in thread C0C2P932A2H:1789761522.764859 with the step states read from Lin",
       "held": true,
       "idempotencyKey": "nh7bf0b5gp8psrcvnqpgmhq9wh8en1mg:k977yk8wf2t632bbxbzns1ta3x8eng7g:2",
       "ok": true,

@@ -1,5 +1,5 @@
 {
-  "source": "demo rehearsal 2, 19 Sep 2026, bed day0-reh2-a4637a: export.zip and findings/*.jsonl, rows verbatim",
+  "source": "demo rehearsal 2, 19 Sep 2026, bed day0-reh2-a4637a, GLM 5.3 Flash via Featherless, real mode: rows verbatim from the run's private export and findings files, kept outside the tree",
   "agents": {
     "j578dhkwnnds0zw43fpy548fr98eqjbt": "Aiko",
     "j57989cmmzw48hyh3wkv32tzp58eqx09": "Mateo",
@@ -16,7 +16,7 @@
       "contentSummary": "Post the close status note for the September close on this ticket.\n\nday0-demo-key: fin-status",
       "createdAt": 1789788208815.0,
       "decision": {
-        "channel": "D0BS5SXMXPZ",
+        "channel": "D0MANAGER",
         "decidedAt": 1789788594067.0,
         "decidedVia": "dashboard",
         "id": "3rfmmx",
@@ -70,7 +70,7 @@
         "applied": [
           {
             "authority": "autonomous",
-            "effect": "list_issues on linear · {\"issues\":[{\"id\":\"FIN-3\",\"uuid\":\"ed68714b-9f4d-44c2-936f-38e591315295\",\"title\":\"Bank reconciliation for September\",\"description\":\"Close calendar step, business day 4: the accounting team reconciles the September bank statements in NetLedger.\\n\\nday0-demo-key: fin-bankrec\",\"priority\":{\"value\":0,\"name\":\"No priority\"},\"url\":\"https://linear.app/day00/issue/FIN-3/bank-reconciliation-for-september\",\"gitBranchName\":\"isaacbikjk/fin-3-bank-reconciliation-for-september\",\"createdAt\":\"2026-09-18T18:25:27.104Z\",\"updatedAt\":\"2026-09-19T03:10:41.808Z\",\"archivedAt\":null,\"completedAt\":null,\"startedAt\":\"2026-09-18T18:25:27.130Z\",\"canceledAt\":null,\"dueDate\":null,\"slaStartedAt\":null,\"slaMediumRiskAt\":null,\"slaHighRiskAt\":null,\"slaBreachesAt\":null,\"status\":\"In Progress\",\"statusType\":\"started\",\"labels\":[\"day0-demo\"],\"createdBy\":\"Brian\",\"createdById\":\"11ecf8f2-2b26-4f9f-a24d-03ba2c3a283f\",\"project\":\"September close\",\"projectId\":\"5bad0674-f635-455f-a8da-bf8d43a059d7\",\"team\":\"Finance close\",\"teamId\":\"5feabff1-075d-4029-a318-954f4db96f01\"},{\"id\":\"FIN-2\",\"uuid\":\"67461d7d-056f-427b-9b64-13bb787fd58c\",\"title\":\"Accruals booked for September\",\"description\":\"Close calendar step, business day 3: the accounting team books the September accruals in NetLedger.\\n\\nday0-demo-key: fin-accruals\",\"priority\":{\"value\":0,\"name\":\"No priority\"},\"url\":\"https://linear.app/day00/issue/FIN-2/accruals-booked-for-september\",\"gitBranchName\":\"isaacbikjk/fin-2-accruals-booked-for-september\",\"createdAt\":\"2026-09-18T18:25:26.631Z\",\"updatedAt\":\"2026-09-19T03:10:40.199Z\",\"archivedAt\":null,\"completedAt\":\"2026-09-18T18:25:26.659Z\",\"startedAt\":null,\"canceledAt\":null,\"dueDate\":null,\"slaStartedAt\":null,\"slaMediumRiskAt\":null,\"slaHighRiskAt\":null,\"slaBreachesAt\":null,\"status\":\"Done\",\"statusType\":\"completed\",\"labels\":[\"day0-demo\"],\"createdBy\":\"Brian\",\"createdById\":\"11ecf8f2-2b26-4f9f-a24d-03ba2c3a283f\",\"project\":\"September close\",\"projectId\":\"5bad0674-f635-455f-a8da-bf8d43a059d7\",\"team\":\"Finance close\",\"teamId\":\"5feabff1-075d-4029-a318-954f4db96f01\"},{\"id\":\"FIN-1\",\"uuid\":\"8fe4bfa1-3f35-4aa9-abf3-07cd5700c3b1\",\"title\":\"Post the September close status note\",\"description\":\"Post the close status note for the September close on this ticket.\\n\\nday0-demo-key: fin-status\",\"priority\":{\"value\":0,\"name\":\"No priority\"},\"url\":\"https://linear.app/day00/issue/FIN-1/post-the-september-close-status-note\",\"gitBranchName\":\"isaacbikjk/fin-1-post-the-september-close-status-note\",\"createdAt\":\"2026-09-18T14:18:35.053Z\",\"updatedAt\":\"2026-09-19T03:10:37.977Z\",\"archivedAt\":null,\"completedAt\":null,\"startedAt\":null,\"canceledAt\":null,\"dueDate\":null,\"slaStartedAt\":null,\"slaMediumRiskAt\":null,\"slaHighRiskAt\":null,\"slaBreachesAt\":null,\"status\":\"Todo\",\"statusType\":\"unstarted\",\"labels\":[\"day0-demo\"],\"createdBy\":\"Brian\",\"createdById\":\"11ecf8f2-2b26-4f9f-a24d-03ba2c3a283f\",\"project\":\"September close\",\"projectId\":\"5bad0674-f635-455f-a8da-bf8d43a059d7\",\"team\":\"Finance close\",\"teamId\":\"5feabff1-075d-4029-a318-954f4db96f01\"}],\"hasNextPage\":false}",
+            "effect": "list_issues on linear · {\"issues\":[{\"id\":\"FIN-3\",\"uuid\":\"ed68714b-9f4d-44c2-936f-38e591315295\",\"title\":\"Bank reconciliation for September\",\"description\":\"Close calendar step, business day 4: the accounting team reconciles the September bank statements in NetLedger.\\n\\nday0-demo-key: fin-bankrec\",\"priority\":{\"value\":0,\"name\":\"No priority\"},\"url\":\"https://linear.app/day00/issue/FIN-3/bank-reconciliation-for-september\",\"gitBranchName\":\"sam/fin-3-bank-reconciliation-for-september\",\"createdAt\":\"2026-09-18T18:25:27.104Z\",\"updatedAt\":\"2026-09-19T03:10:41.808Z\",\"archivedAt\":null,\"completedAt\":null,\"startedAt\":\"2026-09-18T18:25:27.130Z\",\"canceledAt\":null,\"dueDate\":null,\"slaStartedAt\":null,\"slaMediumRiskAt\":null,\"slaHighRiskAt\":null,\"slaBreachesAt\":null,\"status\":\"In Progress\",\"statusType\":\"started\",\"labels\":[\"day0-demo\"],\"createdBy\":\"Sam\",\"createdById\":\"11ecf8f2-2b26-4f9f-a24d-03ba2c3a283f\",\"project\":\"September close\",\"projectId\":\"5bad0674-f635-455f-a8da-bf8d43a059d7\",\"team\":\"Finance close\",\"teamId\":\"5feabff1-075d-4029-a318-954f4db96f01\"},{\"id\":\"FIN-2\",\"uuid\":\"67461d7d-056f-427b-9b64-13bb787fd58c\",\"title\":\"Accruals booked for September\",\"description\":\"Close calendar step, business day 3: the accounting team books the September accruals in NetLedger.\\n\\nday0-demo-key: fin-accruals\",\"priority\":{\"value\":0,\"name\":\"No priority\"},\"url\":\"https://linear.app/day00/issue/FIN-2/accruals-booked-for-september\",\"gitBranchName\":\"sam/fin-2-accruals-booked-for-september\",\"createdAt\":\"2026-09-18T18:25:26.631Z\",\"updatedAt\":\"2026-09-19T03:10:40.199Z\",\"archivedAt\":null,\"completedAt\":\"2026-09-18T18:25:26.659Z\",\"startedAt\":null,\"canceledAt\":null,\"dueDate\":null,\"slaStartedAt\":null,\"slaMediumRiskAt\":null,\"slaHighRiskAt\":null,\"slaBreachesAt\":null,\"status\":\"Done\",\"statusType\":\"completed\",\"labels\":[\"day0-demo\"],\"createdBy\":\"Sam\",\"createdById\":\"11ecf8f2-2b26-4f9f-a24d-03ba2c3a283f\",\"project\":\"September close\",\"projectId\":\"5bad0674-f635-455f-a8da-bf8d43a059d7\",\"team\":\"Finance close\",\"teamId\":\"5feabff1-075d-4029-a318-954f4db96f01\"},{\"id\":\"FIN-1\",\"uuid\":\"8fe4bfa1-3f35-4aa9-abf3-07cd5700c3b1\",\"title\":\"Post the September close status note\",\"description\":\"Post the close status note for the September close on this ticket.\\n\\nday0-demo-key: fin-status\",\"priority\":{\"value\":0,\"name\":\"No priority\"},\"url\":\"https://linear.app/day00/issue/FIN-1/post-the-september-close-status-note\",\"gitBranchName\":\"sam/fin-1-post-the-september-close-status-note\",\"createdAt\":\"2026-09-18T14:18:35.053Z\",\"updatedAt\":\"2026-09-19T03:10:37.977Z\",\"archivedAt\":null,\"completedAt\":null,\"startedAt\":null,\"canceledAt\":null,\"dueDate\":null,\"slaStartedAt\":null,\"slaMediumRiskAt\":null,\"slaHighRiskAt\":null,\"slaBreachesAt\":null,\"status\":\"Todo\",\"statusType\":\"unstarted\",\"labels\":[\"day0-demo\"],\"createdBy\":\"Sam\",\"createdById\":\"11ecf8f2-2b26-4f9f-a24d-03ba2c3a283f\",\"project\":\"September close\",\"projectId\":\"5bad0674-f635-455f-a8da-bf8d43a059d7\",\"team\":\"Finance close\",\"teamId\":\"5feabff1-075d-4029-a318-954f4db96f01\"}],\"hasNextPage\":false}",
             "idempotencyKey": "nh70d5rwjha1npsqn1zeaecwr58eq8w1:k97csg8epbw71j04xw1abfgaes8epy3j:0",
             "ok": true,
             "providerId": "FIN-3",
@@ -78,7 +78,7 @@
           },
           {
             "authority": "autonomous",
-            "effect": "get_issue on linear · {\"id\":\"FIN-1\",\"uuid\":\"8fe4bfa1-3f35-4aa9-abf3-07cd5700c3b1\",\"title\":\"Post the September close status note\",\"description\":\"Post the close status note for the September close on this ticket.\\n\\nday0-demo-key: fin-status\",\"priority\":{\"value\":0,\"name\":\"No priority\"},\"url\":\"https://linear.app/day00/issue/FIN-1/post-the-september-close-status-note\",\"gitBranchName\":\"<redacted>\",\"createdAt\":\"2026-09-18T14:18:35.053Z\",\"updatedAt\":\"2026-09-19T03:10:37.977Z\",\"archivedAt\":null,\"completedAt\":null,\"startedAt\":null,\"canceledAt\":null,\"dueDate\":null,\"slaStartedAt\":null,\"slaMediumRiskAt\":null,\"slaHighRiskAt\":null,\"slaBreachesAt\":null,\"status\":\"Todo\",\"statusType\":\"unstarted\",\"labels\":[\"day0-demo\"],\"attachments\":[],\"documents\":[],\"stateHistory\":[{\"state\":{\"id\":\"050c56cb-0eec-48b1-af55-9de045fd9ba6\",\"name\":\"Todo\",\"type\":\"unstarted\"},\"startedAt\":\"2026-09-18T14:18:35.053Z\",\"endedAt\":\"2026-09-18T19:07:25.235Z\"},{\"state\":{\"id\":\"43886f79-2dfb-4588-96a2-35dc31bb3a67\",\"name\":\"Done\",\"type\":\"completed\"},\"startedAt\":\"2026-09-18T19:07:25.235Z\",\"endedAt\":\"2026-09-18T21:13:55.401Z\"},{\"state\":{\"id\":\"050c56cb-0eec-48b1-af55-9de045fd9ba6\",\"name\":\"Todo\",\"type\":\"unstarted\"},\"startedAt\":\"2026-09-18T21:13:55.401Z\",\"endedAt\":\"2026-09-18T21:44:32.373Z\"},{\"state\":{\"id\":\"43886f79-2dfb-4588-96a2-35dc31bb3a67\",\"name\":\"Done\",\"type\":\"completed\"},\"startedAt\":\"2026-09-18T21:44:32.373Z\",\"endedAt\":\"2026-09-18T23:23:53.494Z\"},{\"state\":{\"id\":\"050c56cb-0eec-48b1-af55-9de045fd9ba6\",\"name\":\"Todo\",\"type\":\"unstarted\"},\"startedAt\":\"2026-09-18T23:23:53.494Z\",\"endedAt\":\"2026-09-19T01:52:18.026Z\"},{\"state\":{\"id\":\"43886f79-2dfb-4588-96a2-35dc31bb3a67\",\"name\":\"Done\",\"type\":\"completed\"},\"startedAt\":\"2026-09-19T01:52:18.026Z\",\"endedAt\":\"2026-09-19T03:10:37.974Z\"},{\"state\":{\"id\":\"050c56cb-0eec-48b1-af55-9de045fd9ba6\",\"name\":\"Todo\",\"type\":\"unstarted\"},\"startedAt\":\"2026-09-19T03:10:37.974Z\",\"endedAt\":null}],\"createdBy\":\"Brian\",\"createdById\":\"11ecf8f2-2b26-4f9f-a24d-03ba2c3a283f\",\"project\":\"September close\",\"projectId\":\"5bad0674-f635-455f-a8da-bf8d43a059d7\",\"team\":\"Finance close\",\"teamId\":\"5feabff1-075d-4029-a318-954f4db96f01\"}",
+            "effect": "get_issue on linear · {\"id\":\"FIN-1\",\"uuid\":\"8fe4bfa1-3f35-4aa9-abf3-07cd5700c3b1\",\"title\":\"Post the September close status note\",\"description\":\"Post the close status note for the September close on this ticket.\\n\\nday0-demo-key: fin-status\",\"priority\":{\"value\":0,\"name\":\"No priority\"},\"url\":\"https://linear.app/day00/issue/FIN-1/post-the-september-close-status-note\",\"gitBranchName\":\"<redacted>\",\"createdAt\":\"2026-09-18T14:18:35.053Z\",\"updatedAt\":\"2026-09-19T03:10:37.977Z\",\"archivedAt\":null,\"completedAt\":null,\"startedAt\":null,\"canceledAt\":null,\"dueDate\":null,\"slaStartedAt\":null,\"slaMediumRiskAt\":null,\"slaHighRiskAt\":null,\"slaBreachesAt\":null,\"status\":\"Todo\",\"statusType\":\"unstarted\",\"labels\":[\"day0-demo\"],\"attachments\":[],\"documents\":[],\"stateHistory\":[{\"state\":{\"id\":\"050c56cb-0eec-48b1-af55-9de045fd9ba6\",\"name\":\"Todo\",\"type\":\"unstarted\"},\"startedAt\":\"2026-09-18T14:18:35.053Z\",\"endedAt\":\"2026-09-18T19:07:25.235Z\"},{\"state\":{\"id\":\"43886f79-2dfb-4588-96a2-35dc31bb3a67\",\"name\":\"Done\",\"type\":\"completed\"},\"startedAt\":\"2026-09-18T19:07:25.235Z\",\"endedAt\":\"2026-09-18T21:13:55.401Z\"},{\"state\":{\"id\":\"050c56cb-0eec-48b1-af55-9de045fd9ba6\",\"name\":\"Todo\",\"type\":\"unstarted\"},\"startedAt\":\"2026-09-18T21:13:55.401Z\",\"endedAt\":\"2026-09-18T21:44:32.373Z\"},{\"state\":{\"id\":\"43886f79-2dfb-4588-96a2-35dc31bb3a67\",\"name\":\"Done\",\"type\":\"completed\"},\"startedAt\":\"2026-09-18T21:44:32.373Z\",\"endedAt\":\"2026-09-18T23:23:53.494Z\"},{\"state\":{\"id\":\"050c56cb-0eec-48b1-af55-9de045fd9ba6\",\"name\":\"Todo\",\"type\":\"unstarted\"},\"startedAt\":\"2026-09-18T23:23:53.494Z\",\"endedAt\":\"2026-09-19T01:52:18.026Z\"},{\"state\":{\"id\":\"43886f79-2dfb-4588-96a2-35dc31bb3a67\",\"name\":\"Done\",\"type\":\"completed\"},\"startedAt\":\"2026-09-19T01:52:18.026Z\",\"endedAt\":\"2026-09-19T03:10:37.974Z\"},{\"state\":{\"id\":\"050c56cb-0eec-48b1-af55-9de045fd9ba6\",\"name\":\"Todo\",\"type\":\"unstarted\"},\"startedAt\":\"2026-09-19T03:10:37.974Z\",\"endedAt\":null}],\"createdBy\":\"Sam\",\"createdById\":\"11ecf8f2-2b26-4f9f-a24d-03ba2c3a283f\",\"project\":\"September close\",\"projectId\":\"5bad0674-f635-455f-a8da-bf8d43a059d7\",\"team\":\"Finance close\",\"teamId\":\"5feabff1-075d-4029-a318-954f4db96f01\"}",
             "idempotencyKey": "nh70d5rwjha1npsqn1zeaecwr58eq8w1:k97csg8epbw71j04xw1abfgaes8epy3j:1",
             "ok": true,
             "providerId": "FIN-1",
@@ -185,8 +185,8 @@
       "planPendingAt": 1789788391288.0,
       "priority": "No priority",
       "proposedSkillId": "n57e1nt2jx34ft5dx04y6aghm98eq5e2",
-      "requester": "Brian",
-      "requesterLabel": "Brian",
+      "requester": "Sam",
+      "requesterLabel": "Sam",
       "scopeAdmission": {
         "at": 1789788210680.0,
         "basis": "charter-judgement",
@@ -246,7 +246,7 @@
       "contentSummary": "<@U0BTFK6FLNL> please refresh the pipeline tile to the standup figure",
       "createdAt": 1789788168016.0,
       "decision": {
-        "channel": "D0BS5SXMXPZ",
+        "channel": "D0MANAGER",
         "decidedAt": 1789788454684.0,
         "decidedVia": "dashboard",
         "id": "5g2ys9",
@@ -491,7 +491,7 @@
       "contentSummary": "Shipment SH-4471 is held at Port Klang. The carrier, Meridian Freight, has not given a revised ETA.\n\nday0-demo-key: log-sh4471",
       "createdAt": 1789788239259.0,
       "decision": {
-        "channel": "D0BS5SXMXPZ",
+        "channel": "D0MANAGER",
         "decidedAt": 1789788904632.0,
         "decidedVia": "dashboard",
         "id": "vxx85y",
@@ -556,7 +556,7 @@
           {
             "action": {
               "args": {
-                "body": "{\"channel\":\"D0BS5SXMXPZ\",\"text\":\"Escalation per the logistics handbook's 'Notices and ETAs' rule (LOG-1): shipment SH-4471 is held at Port Klang and the carrier, Meridian Freight, has given no revised ETA. Before I record the exception and draft the customer notice, could you confirm with the desk lead (1) which of the two handbook templates to use — 'Delay, revised ETA confirmed' does not fit, so presumably 'Delay, ETA unconfirmed, next update by <time>' — and (2) the next-update time to promise? Once I have both answers I will post the exception comment on LOG-1 and move it to Done, held for your approval of the exact payloads.\"}",
+                "body": "{\"channel\":\"D0MANAGER\",\"text\":\"Escalation per the logistics handbook's 'Notices and ETAs' rule (LOG-1): shipment SH-4471 is held at Port Klang and the carrier, Meridian Freight, has given no revised ETA. Before I record the exception and draft the customer notice, could you confirm with the desk lead (1) which of the two handbook templates to use — 'Delay, revised ETA confirmed' does not fit, so presumably 'Delay, ETA unconfirmed, next update by <time>' — and (2) the next-update time to promise? Once I have both answers I will post the exception comment on LOG-1 and move it to Done, held for your approval of the exact payloads.\"}",
                 "headersJson": "{\"Authorization\":\"Bearer {{secret}}\",\"Content-Type\":\"application/json; charset=utf-8\"}",
                 "method": "POST",
                 "path": "/chat.postMessage",
@@ -566,7 +566,7 @@
             },
             "applied": {
               "authority": "standing",
-              "effect": "HTTP 200 · {\"ok\":true,\"channel\":\"D0BS5SXMXPZ\",\"ts\":\"1789788660.332569\",\"message\":{\"subtype\":\"bot_message\",\"text\":\"Escalation per the logistics handbook's 'Notices and ETAs' rule (…",
+              "effect": "HTTP 200 · {\"ok\":true,\"channel\":\"D0MANAGER\",\"ts\":\"1789788660.332569\",\"message\":{\"subtype\":\"bot_message\",\"text\":\"Escalation per the logistics handbook's 'Notices and ETAs' rule (…",
               "idempotencyKey": "nh7ed4b9807fm82jz0ffk1cm358ep46j:k973t2c4anq8qkkp2q43xwxz9n8eq6fp:0",
               "ok": true,
               "providerId": "1789788660.332569",
@@ -625,8 +625,8 @@
       "planPendingAt": 1789788504864.0,
       "priority": "No priority",
       "proposedSkillId": "n570fs7308rcq3tbdr2ysr89qn8eqqfr",
-      "requester": "Brian",
-      "requesterLabel": "Brian",
+      "requester": "Sam",
+      "requesterLabel": "Sam",
       "scopeAdmission": {
         "at": 1789788240620.0,
         "basis": "charter-judgement",
@@ -657,7 +657,7 @@
       "contentSummary": "Shipment SH-4471 is held at Port Klang. The carrier, Meridian Freight, has not given a revised ETA.\n\nday0-demo-key: log-sh4471",
       "createdAt": 1789788239259,
       "decision": {
-        "channel": "D0BS5SXMXPZ",
+        "channel": "D0MANAGER",
         "decidedAt": 1789788634276,
         "decidedVia": "dashboard",
         "id": "7egeh4",
@@ -677,7 +677,7 @@
         "actions": [
           {
             "args": {
-              "body": "{\"channel\":\"D0BS5SXMXPZ\",\"text\":\"Escalation per the logistics handbook's 'Notices and ETAs' rule (LOG-1): shipment SH-4471 is held at Port Klang and the carrier, Meridian Freight, has given no revised ETA. Before I record the exception and draft the customer notice, could you confirm with the desk lead (1) which of the two handbook templates to use — 'Delay, revised ETA confirmed' does not fit, so presumably 'Delay, ETA unconfirmed, next update by <time>' — and (2) the next-update time to promise? Once I have both answers I will post the exception comment on LOG-1 and move it to Done, held for your approval of the exact payloads.\"}",
+              "body": "{\"channel\":\"D0MANAGER\",\"text\":\"Escalation per the logistics handbook's 'Notices and ETAs' rule (LOG-1): shipment SH-4471 is held at Port Klang and the carrier, Meridian Freight, has given no revised ETA. Before I record the exception and draft the customer notice, could you confirm with the desk lead (1) which of the two handbook templates to use — 'Delay, revised ETA confirmed' does not fit, so presumably 'Delay, ETA unconfirmed, next update by <time>' — and (2) the next-update time to promise? Once I have both answers I will post the exception comment on LOG-1 and move it to Done, held for your approval of the exact payloads.\"}",
               "headersJson": "{\"Authorization\":\"Bearer {{secret}}\",\"Content-Type\":\"application/json; charset=utf-8\"}",
               "method": "POST",
               "path": "/chat.postMessage",
@@ -689,7 +689,7 @@
         "applied": [
           {
             "authority": "standing",
-            "effect": "HTTP 200 · {\"ok\":true,\"channel\":\"D0BS5SXMXPZ\",\"ts\":\"1789788660.332569\",\"message\":{\"subtype\":\"bot_message\",\"text\":\"Escalation per the logistics handbook's 'Notices and ETAs' rule (…",
+            "effect": "HTTP 200 · {\"ok\":true,\"channel\":\"D0MANAGER\",\"ts\":\"1789788660.332569\",\"message\":{\"subtype\":\"bot_message\",\"text\":\"Escalation per the logistics handbook's 'Notices and ETAs' rule (…",
             "idempotencyKey": "nh7ed4b9807fm82jz0ffk1cm358ep46j:k973t2c4anq8qkkp2q43xwxz9n8eq6fp:0",
             "ok": true,
             "providerId": "1789788660.332569",
@@ -701,7 +701,7 @@
         "notes": "No desk-lead answer has arrived in this run, so the conditional comment and Done move cannot be truthfully emitted; the DM is the only landed write and no further action is taken this turn.",
         "planStepOutcomes": [
           {
-            "evidence": "Applied ledger row 0: http.request POST /chat.postMessage to manager DM D0BS5SXMXPZ landed (HTTP 200, ts 1789788660.332569), asking the desk lead's template choice and next-update time for SH-4471 / LOG-1.",
+            "evidence": "Applied ledger row 0: http.request POST /chat.postMessage to manager DM D0MANAGER landed (HTTP 200, ts 1789788660.332569), asking the desk lead's template choice and next-update time for SH-4471 / LOG-1.",
             "status": "satisfied",
             "step": 1
           },
@@ -766,8 +766,8 @@
       "planPendingAt": 1789788504864,
       "priority": "No priority",
       "proposedSkillId": "n570fs7308rcq3tbdr2ysr89qn8eqqfr",
-      "requester": "Brian",
-      "requesterLabel": "Brian",
+      "requester": "Sam",
+      "requesterLabel": "Sam",
       "scopeAdmission": {
         "at": 1789788240620,
         "basis": "charter-judgement",
@@ -959,8 +959,8 @@
       "credentialLanded": true,
       "credentialKind": "location",
       "lastVerifiedAt": 1789788167099.0,
-      "managerDmChannelId": "D0BS5SXMXPZ",
-      "managerName": "Brian",
+      "managerDmChannelId": "D0MANAGER",
+      "managerName": "Sam",
       "providerIdentityId": "U0BTFK6FLNL",
       "toolAllowlist": [
         "auth.test",

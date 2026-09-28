@@ -28,6 +28,7 @@ import { SYSTEM_CLASSES } from '../src/agent/system-classes';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { appendEvent } from './eventLog';
 import { questionKey } from '../src/agent/manager-questions';
+import type { AmendmentVia } from '../src/events/contract';
 
 /**
  * Charter CRUD + binary-plus-edit approval mutation. Every public
@@ -40,6 +41,7 @@ export const workspaceFileValidator = v.object({
   content: v.string(),
 });
 
+/** One workspace file as a charter commit writes it. */
 export interface WorkspaceFile {
   fileName: string;
   content: string;
@@ -84,6 +86,7 @@ export async function commitCharterAndWorkspace(
   return charterId;
 }
 
+/** Public, owner-guarded: an employee's latest charter version. */
 export const latest = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args) => {
@@ -96,6 +99,7 @@ export const latest = query({
   },
 });
 
+/** Internal: an employee's latest charter version, for a scheduled step with no caller. */
 export const latestInternal = internalQuery({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args) =>
@@ -106,6 +110,7 @@ export const latestInternal = internalQuery({
       .first(),
 });
 
+/** Public, owner-guarded: every version of an employee's charter. */
 export const listForAgent = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args) => {
@@ -119,14 +124,14 @@ export const listForAgent = query({
 });
 
 /**
- * Commit a charter that has no voice session behind it — the chat-mode 1:1 and
+ * Commit a charter that has no voice session behind it - the chat-mode 1:1 and
  * the answers-first entry point. A run that does have one goes through
  * `voice.finaliseSession`, which adds the session transition to this same
  * transaction.
  *
  * The agent moves to `charter-pending` here for the same reason it does there:
  * the 1:1 is over the moment a charter exists. Without it the chat route left
- * the row at `day-one-in-progress` for good — a dashboard still showing the
+ * the row at `day-one-in-progress` for good - a dashboard still showing the
  * 1:1 in progress under the charter it produced, and an avatar still working
  * on the landing page.
  */
@@ -177,6 +182,7 @@ const strikeResultValidator = v.union(
   v.object({ ok: v.literal(false), reason: v.string() }),
 );
 
+/** Whether a strike went through, and why not when it was refused. */
 export type StrikeResult = { ok: true } | { ok: false; reason: string };
 
 /**
@@ -339,9 +345,6 @@ export const charterChangeValidator = v.union(
     }),
   }),
 );
-
-/** Who sent an amendment. */
-export type AmendmentVia = 'dashboard' | 'plan-approval' | 'channel';
 
 /**
  * Amend the agent's approved charter: one new version, one event, the

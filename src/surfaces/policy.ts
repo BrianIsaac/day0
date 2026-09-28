@@ -1,6 +1,5 @@
-import type { MockAction, ReplyTarget } from '../work/types';
+import { MOCK_ACTION_TOOLS, type MockAction, type ReplyTarget } from '../work/types';
 import { isInterstitialControl, NEXT_CONTROL, SIGN_IN_CONTROL } from './browser';
-import { MOCK_TOOLS } from './mock';
 import type {
   ActionAuthority,
   ActionClass,
@@ -21,11 +20,17 @@ import { verdictFor } from './verdict';
 
 export const ACTION_JSON_LIMIT_BYTES = 16 * 1024;
 
+/** The gate's reason for an action whose shape it cannot read; a detail follows in brackets. */
 export const MALFORMED_ACTION = 'malformed action';
+/** The gate's reason for an action whose scope the employee holds no grant for. */
 export const NO_GRANT = 'no grant';
+/** The gate's reason for an action naming a surface the employee has not discovered. */
 export const UNKNOWN_SURFACE = 'unknown surface';
+/** The gate's reason for an action on a surface that is discovered but not connected. */
 export const SURFACE_NOT_CONNECTED = 'surface not connected';
+/** The gate's reason for an MCP tool outside the surface's probed allowlist. */
 export const TOOL_NOT_ALLOWED = 'tool not in the surface allowlist';
+/** Why a public post waits for the manager while the autonomy switch is off. */
 export const HELD_PUBLIC_POST = 'public post held for the manager';
 /** Why a browser read waits with the writes it shares a session with. */
 export const HELD_BROWSER_SEQUENCE =
@@ -39,8 +44,11 @@ export const HELD_MUTATION = 'system-of-record mutation held for the manager';
 /** Why a ticket state change waits under the switch: the approved plan said the state stays where it is. */
 export const HELD_WITHHELD_TRANSITION =
   'ticket state transition the approved plan leaves to the manager; held for the manager';
+/** Why a write with no more specific class waits for the manager while the switch is off. */
 export const HELD_WRITE = 'write held for the manager';
+/** The outcome of a held action the manager did not approve. */
 export const HELD_NOT_APPROVED = 'not approved by the manager';
+/** The outcome of a held action while its decision request is open. */
 export const AWAITING_APPROVAL = "awaiting the manager's approval";
 /**
  * Why a message is not sent after a write in its set did not land: it was
@@ -56,11 +64,17 @@ export const WITHHELD_AFTER_FAILED_WRITE =
  */
 export const WITHHELD_AFTER_FAILED_BROWSER_WRITE =
   'withheld: an earlier write on this page did not land, so this one would act on a page that is not as the run left it';
+/** Why an action authorised by the switch is refused when the switch is off. */
 export const NOT_AUTOMATIC = 'not an automatic action';
+/** The gate's reason for a tool name no adapter registers. */
 export const UNKNOWN_TOOL = 'unknown tool';
+/** The gate's reason for a ticket state change that carries no audit comment. */
 export const STATUS_WITHOUT_COMMENT = 'status change without audit comment';
+/** The gate's reason for a write that supplies its own provenance trailer, which only the gate appends. */
 export const TRAILER_REFUSED = 'skill-supplied provenance trailer refused';
+/** The gate's reason for a write that supplies its own username on a shared credential. */
 export const USERNAME_REFUSED = 'skill-supplied username refused';
+/** The gate's reason for a mock-office verb emitted on a real-mode deployment. */
 export const MOCK_VERB_REFUSED = 'mock verb refused in real mode';
 /**
  * Why a write through a shared credential is refused when nothing in it could
@@ -73,7 +87,9 @@ export const SHARED_WRITE_WITHOUT_ATTRIBUTION =
 /** The same refusal as rows written before 19 Sep 2026 carry it. */
 export const LEGACY_SHARED_WRITE_WITHOUT_ATTRIBUTION =
   'shared credential write without attributable content';
+/** The gate's reason for a chat reply that names a channel or thread other than the work item's. */
 export const REPLY_TARGET_REFUSED = 'chat reply does not match the work item reply target';
+/** The gate's reason for a chat message edit that is not the edit marking a decided request. */
 export const MESSAGE_EDIT_REFUSED =
   'a chat message edit is sent only as the edit that marks a decided request';
 
@@ -303,10 +319,14 @@ export const ISSUE_KEYS = ['issueId', 'issue_id', 'id', 'issue', 'ticketId', 'ti
 const TRAILER_MARK = /--\s[^\n]*\(Day0\)\s·\srun\s/;
 const TRAILER_END = /(?:^|\n)--\s[^\n]*\(Day0\)\s·\srun\s[^\s/]+\/[^\s/]+\s*$/;
 
+/** A JSON object as an action carries its arguments. */
 export type JsonObject = Record<string, unknown>;
+/** One of the HTTP verbs a documented-API action may use. */
 export type HttpMethod = (typeof HTTP_METHODS)[number];
+/** Whether an action reads a system or changes it, as the gate classifies it. */
 export type ActionIntent = 'read' | 'write';
 
+/** An MCP tool call as the gate reads it from an emitted action. */
 export interface ParsedMcpCall {
   kind: 'mcp.call';
   surface: string;
@@ -314,6 +334,7 @@ export interface ParsedMcpCall {
   toolArgs: JsonObject;
 }
 
+/** A documented-API request as the gate reads it from an emitted action. */
 export interface ParsedHttpRequest {
   kind: 'http.request';
   surface: string;
@@ -325,8 +346,10 @@ export interface ParsedHttpRequest {
   bodyJson?: JsonObject;
 }
 
+/** Either surface verb, parsed. */
 export type ParsedSurfaceAction = ParsedMcpCall | ParsedHttpRequest;
 
+/** A parsed surface action, or the reason it could not be parsed. */
 export type ParseResult = { ok: true; action: ParsedSurfaceAction } | { ok: false; reason: string };
 
 function operationTokens(value: string): string[] {
@@ -360,7 +383,10 @@ export function isSurfaceTool(tool: string): tool is 'mcp.call' | 'http.request'
   return tool === 'mcp.call' || tool === 'http.request';
 }
 
-type Malformed = { ok: false; reason: string };
+interface Malformed {
+  ok: false;
+  reason: string;
+}
 
 function malformed(detail: string): Malformed {
   return { ok: false, reason: `${MALFORMED_ACTION} (${detail})` };
@@ -955,7 +981,8 @@ function replayedClickRefusal(parsed: ParsedSurfaceAction): string | undefined {
  * with - never under the authority of the phase that needs the page. A
  * `manager` row keeps the approved-phase rule (a read needs its grant, a
  * write rests on the approval); an `autonomous` row needs the toggle on now;
- * a `standing` row, or one that recorded no authority, needs its grant now.
+ * a `standing` row, or one that recorded no authority, needs its grant now;
+ * a row carrying an authority no release wrote is refused whatever it holds.
  * A scope the manager revoked blocks all three: a replay is a new request to
  * the system, and a revocation promises that nothing more needing the scope
  * is sent.
@@ -992,8 +1019,14 @@ export function replayAuthorityRefusal(
     case 'autonomous':
       if (!live.autonomousActions) return NOT_AUTOMATIC;
       return grantRefusal(parsed, surface, live.grants, true, revoked);
-    default:
+    case 'standing':
+    case undefined:
       return grantRefusal(parsed, surface, live.grants, false, revoked);
+    default: {
+      // A persisted row may carry an authority no release wrote; it is refused, never sent.
+      const unhandled: never = authority;
+      return `${NO_GRANT} (unknown authority ${String(unhandled)})`;
+    }
   }
 }
 
@@ -1356,7 +1389,7 @@ export function refusalFor(
   | { refused: true; reason: string }
   | { refused: false; parsed: ParsedSurfaceAction; surface: SurfaceRecord } {
   if (!isSurfaceTool(action.tool)) {
-    const mock = (MOCK_TOOLS as readonly string[]).includes(action.tool);
+    const mock = (MOCK_ACTION_TOOLS as readonly string[]).includes(action.tool);
     return { refused: true, reason: mock ? mockVerbRefusal(action.tool) : UNKNOWN_TOOL };
   }
   const parsed = parseSurfaceAction(action);
@@ -1437,7 +1470,7 @@ export function reviewAction(
       return { disposition: 'held', reason: HELD_PUBLIC_POST };
     case 'mutation':
       return { disposition: 'held', reason: HELD_MUTATION };
-    default:
+    case 'write':
       return { disposition: 'held', reason: HELD_WRITE };
   }
 }
@@ -1630,6 +1663,7 @@ export function targetIssue(parsed: ParsedSurfaceAction): string | undefined {
   return parsed.kind === 'mcp.call' ? firstString(parsed.toolArgs, ISSUE_KEYS) : undefined;
 }
 
+/** The issue identifiers an MCP call names in any of its known id arguments. */
 export function targetIssueReferences(parsed: ParsedSurfaceAction): string[] {
   if (parsed.kind !== 'mcp.call') return [];
   return [
@@ -1689,12 +1723,14 @@ function hasLandedAuditComment(
   return false;
 }
 
+/** The run a provenance trailer names: which employee, on which item, in which run. */
 export interface ProvenanceRun {
   agentName: string;
   workItemId: string;
   runId: string;
 }
 
+/** A write with its trailer appended, or the reason the trailer was refused. */
 export type ProvenanceResult =
   | { ok: true; action: ParsedSurfaceAction }
   | { ok: false; reason: string };

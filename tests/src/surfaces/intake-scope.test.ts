@@ -880,3 +880,79 @@ describe('the scope an approved card reads', (): void => {
     );
   });
 });
+
+describe('a channel whose name has no Latin letter (N8)', (): void => {
+  const policy: ScopePage = {
+    sourceId: 'source-folder',
+    ref: 'slack-automation-policy.md',
+    markdown: [
+      '# Slack automation policy',
+      '',
+      '- Channels: `#营收运营` (requests), `#revops`.',
+      '',
+      'Requests arrive in #营收运营; the team talks in #营收运营组, which Day0 never reads.',
+    ].join('\n'),
+  };
+
+  it('is offered as a scope beside a Latin one, read the way the channel list reads it', (): void => {
+    expect(
+      scopeCandidates([policy], ['channel']).map((candidate): string => candidate.value),
+    ).toEqual(['营收运营', 'revops']);
+  });
+
+  it('is described by the passage that names it, and never by a longer name it begins', (): void => {
+    const candidates = scopeCandidates([policy], ['channel']).filter(
+      (candidate): boolean => candidate.value === '营收运营',
+    );
+    expect(channelDescriptions([policy], candidates)).toEqual([
+      {
+        ref: 'slack-automation-policy.md',
+        text: 'Requests arrive in #营收运营; the team talks in #营收运营组, which Day0 never reads.',
+      },
+    ]);
+    expect(
+      channelDescriptions(
+        [{ ...policy, markdown: '- Channels: `#营收运营`\n\nThe team talks in #营收运营组.' }],
+        candidates,
+      ),
+    ).toEqual([]);
+  });
+
+  it("is picked when the manager's sentence names it with its hash, and not for a longer name", (): void => {
+    const candidates = scopeCandidates([policy], ['channel']);
+    const picked = (sentence: string): string[] =>
+      approvedChannelNames(
+        groundScopePicks(sentenceScopePicks([sentence], candidates), candidates),
+      );
+    expect(picked('Slack: #营收运营 is where requests come in.')).toEqual(['营收运营']);
+    expect(picked('Slack: #营收运营组 is only where we talk.')).toEqual([]);
+  });
+});
+
+describe('a channel named in prose written with no spaces (N8)', (): void => {
+  const policy: ScopePage = {
+    sourceId: 'source-folder',
+    ref: 'slack-automation-policy.md',
+    markdown: ['- Channels: `#revops`, `#营收运营`', '', '请求在#revops提出。'].join('\n'),
+  };
+
+  it('describes a Latin channel whose hash touches a Chinese character', (): void => {
+    const candidates = scopeCandidates([policy], ['channel']).filter(
+      (candidate): boolean => candidate.value === 'revops',
+    );
+    expect(channelDescriptions([policy], candidates)).toEqual([
+      { ref: 'slack-automation-policy.md', text: '请求在#revops提出。' },
+    ]);
+  });
+
+  it("picks a Latin channel the manager's Chinese sentence names, and still not a longer Latin name", (): void => {
+    const candidates = scopeCandidates([policy], ['channel']);
+    const picked = (sentence: string): string[] =>
+      approvedChannelNames(
+        groundScopePicks(sentenceScopePicks([sentence], candidates), candidates),
+      );
+    expect(picked('Slack：在#revops接收请求')).toEqual(['revops']);
+    expect(picked('Slack：在#营收运营接收请求')).toEqual([]);
+    expect(picked('Slack: #revops-asks only')).toEqual([]);
+  });
+});

@@ -32,18 +32,19 @@ import { readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { Doc, Id } from '../convex/_generated/dataModel';
-import { DEV_NO_AUTH_SUBJECT } from '../convex/devAuth';
+import { DEV_NO_AUTH_SUBJECT } from '../src/lib/dev-auth-issuer';
 import {
   byWriteOrder,
   computeCompanyMetrics,
   isEvaluationAgent,
   selectCompanyEmployees,
   type EmployeeRecords,
-  type OwnerMetrics,
 } from '../convex/metrics';
+import type { OwnerMetrics } from '../src/metrics/types';
 import { exportEntries, exportRows } from './convex-export';
 import { readAgentTrace, type AgentTrace, type TraceManifest } from '../src/export/trace';
 import { isEventType, type EventType } from '../src/events/contract';
+import { errorMessage } from '../src/lib/errors';
 
 const USAGE =
   'Usage: pnpm metrics:recompute <trace.json>... | <export.zip|export-directory> [--owner <subject>] [--expect <file.json>] [--json]';
@@ -420,7 +421,7 @@ export function runRecompute(argv: readonly string[], io: Io = console): number 
     recomputed = recompute(options.paths, { owner: options.owner });
     if (options.expect !== undefined) expected = JSON.parse(readFileSync(options.expect, 'utf8'));
   } catch (error) {
-    io.error(`Recompute failed: ${(error as Error).message}`);
+    io.error(`Recompute failed: ${errorMessage(error)}`);
     return 2;
   }
   io.log(JSON.stringify(recomputed.figures, null, 2));

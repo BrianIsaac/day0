@@ -36,6 +36,12 @@ describe('what the walkthrough tells a visitor it is', (): void => {
   it('explains the clock it is using instead of dates', (): void => {
     expect(text).toContain(HOSTED_DEMO_SNAPSHOT.recording.clock);
   });
+
+  it('dates the export, names the build and when it went live, and says the run came before it (Q3)', (): void => {
+    expect(text).toContain(
+      'Exported from the hosted deployment on 12 September 2026 (build 3ed8779, live since 13 August 2026); the run it shows took place before that and is told in offsets. The product has moved on since.',
+    );
+  });
 });
 
 describe('the charter and its approval', (): void => {

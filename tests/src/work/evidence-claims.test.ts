@@ -20,6 +20,7 @@ import {
   UNSUPPORTED_CLAIM_2026_09_15,
   UNSUPPORTED_COMMENT_2026_09_15,
 } from '../../fixtures/work/closing-comments-2026-09-15';
+import { REVOPS_5_DM_1 } from '../../fixtures/closing-gates-2026-09-16';
 import {
   LEDGER_2026_09_16_RUN_3,
   RUN_3_RETRY_ACTION,
@@ -278,8 +279,7 @@ describe('which phase-one actions are messages to people', (): void => {
 describe('a settled form inside a condition', (): void => {
   const nothing: ClaimEvidence = { ledger: '', documentation: [], managerFeedback: [] };
   /** REVOPS-5's first phase-one DM on 16 September, as the run sent it: a question, not a report. */
-  const RUN_DM_1 =
-    'REVOPS-5 close-summary audit note: check 2 (Friday standup deals reconciled) is not confirmed — no Q4 pipeline tracker surface is connected. The audit comment will be posted with that check marked not confirmed. Per the Q3 close checklist the ticket moves to Done only when all three checks are confirmed or you say so — should REVOPS-5 move to Done?';
+  const RUN_DM_1 = REVOPS_5_DM_1;
 
   it('states what must hold, not what does, so the 16 September question DM stands', (): void => {
     expect(unsupportedClaims(RUN_DM_1, nothing)).toEqual([]);
@@ -379,6 +379,8 @@ describe('the telegraphic form a status message takes', (): void => {
 });
 
 describe('the 16 September run 3 retry comment: numbered checks and a not-confirmed line', (): void => {
+  /** The dash the run wrote between a ticket and its state, U+2014, kept as its data. */
+  const DASH = '\u2014';
   const evidenceRun3: ClaimEvidence = {
     ledger: appliedLedgerPrompt(LEDGER_2026_09_16_RUN_3.actions, LEDGER_2026_09_16_RUN_3.applied),
     documentation,
@@ -417,7 +419,7 @@ describe('the 16 September run 3 retry comment: numbered checks and a not-confir
     expect(unsupportedClaimIssues([SUPPORTED_ACTION_2026_09_16], evidence16)).toEqual([]);
     const allMet = [
       '1. Pipeline coverage confirmed. The tile shows 74%; audit line: Last updated by revops at 2026-09-16 07:42:48 UTC.',
-      '2. Close tickets at Done. As Linear reports them: REVOPS-6 — Done; REVOPS-7 — Done.',
+      `2. Close tickets at Done. As Linear reports them: REVOPS-6 ${DASH} Done; REVOPS-7 ${DASH} Done.`,
       'Not confirmed: none.',
     ].join('\n');
     expect(unsupportedClaimIssues([comment(allMet)], evidenceRun3)).toEqual([]);
@@ -425,8 +427,10 @@ describe('the 16 September run 3 retry comment: numbered checks and a not-confir
 
   it('reads evidence that is only a dash, "pending", "to be confirmed" or "awaiting" as unmet', (): void => {
     for (const evidenceLine of [
-      '—',
+      ' - ',
+      ` ${DASH} `,
       '-',
+      DASH,
       'pending',
       'To be confirmed with the team.',
       'Awaiting REVOPS-7.',
@@ -455,7 +459,7 @@ describe('the 16 September run 3 retry comment: numbered checks and a not-confir
   it('reads a close the head asks for without naming the state ("Close tickets") against an open state in the evidence', (): void => {
     const openState = [
       '1. Pipeline coverage confirmed. The tile shows 74%.',
-      '2. Close tickets. As Linear reports them: REVOPS-6 — Backlog; REVOPS-7 — In Progress.',
+      `2. Close tickets. As Linear reports them: REVOPS-6 ${DASH} Backlog; REVOPS-7 ${DASH} In Progress.`,
       'Not confirmed: none.',
     ].join('\n');
     const issues = unsupportedClaimIssues([comment(openState)], evidenceRun3);
@@ -463,8 +467,8 @@ describe('the 16 September run 3 retry comment: numbered checks and a not-confir
     expect(issues[0]).toContain('check 2');
     expect(issues[0]).toContain('Backlog');
     const closed = openState.replace(
-      'REVOPS-6 — Backlog; REVOPS-7 — In Progress',
-      'REVOPS-6 — Done; REVOPS-7 — Cancelled',
+      `REVOPS-6 ${DASH} Backlog; REVOPS-7 ${DASH} In Progress`,
+      `REVOPS-6 ${DASH} Done; REVOPS-7 ${DASH} Cancelled`,
     );
     expect(unsupportedClaimIssues([comment(closed)], evidenceRun3)).toEqual([]);
     // A head with no closing word and no state names no required state.
@@ -475,8 +479,8 @@ describe('the 16 September run 3 retry comment: numbered checks and a not-confir
   it('accepts a closing line that names the unmet checks by an identifier from their evidence or by the words of their head', (): void => {
     const note = [
       '1. Pipeline coverage confirmed. The tile shows 74%.',
-      '2. Friday standup deals reconciled. Not confirmed — no tracker connected.',
-      '3. Close tickets at Done. REVOPS-6 — Backlog; REVOPS-7 — Backlog.',
+      `2. Friday standup deals reconciled. Not confirmed ${DASH} no tracker connected.`,
+      `3. Close tickets at Done. REVOPS-6 ${DASH} Backlog; REVOPS-7 ${DASH} Backlog.`,
       'Not confirmed: deal reconciliation (no tracker) and ticket closure (REVOPS-6 and REVOPS-7 still at Backlog).',
     ].join('\n');
     expect(unsupportedClaimIssues([comment(note)], evidenceRun3)).toEqual([]);
@@ -498,7 +502,7 @@ describe('the 16 September run 3 retry comment: numbered checks and a not-confir
   it('reads an absent read and a not-confirmed phrase as unmet, whichever check carries it', (): void => {
     const absentRead = [
       '1. Pipeline coverage confirmed. The tile could not be read: the sign-in page redirected.',
-      '2. Close tickets at Done. As Linear reports them: REVOPS-6 — Done; REVOPS-7 — Done.',
+      `2. Close tickets at Done. As Linear reports them: REVOPS-6 ${DASH} Done; REVOPS-7 ${DASH} Done.`,
       'Not confirmed: none.',
     ].join('\n');
     const issues = unsupportedClaimIssues([comment(absentRead)], evidenceRun3);
@@ -506,7 +510,7 @@ describe('the 16 September run 3 retry comment: numbered checks and a not-confir
     expect(issues[0]).toContain('check 1');
     const namedByHead = absentRead.replace(
       'Not confirmed: none.',
-      'Not confirmed: pipeline coverage — the tile could not be read.',
+      `Not confirmed: pipeline coverage ${DASH} the tile could not be read.`,
     );
     expect(unsupportedClaimIssues([comment(namedByHead)], evidenceRun3)).toEqual([]);
   });

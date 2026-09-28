@@ -1,6 +1,6 @@
 import type { MockAction } from '../work/types';
 import { actionIntent, parseSurfaceAction } from './policy';
-import type { AppliedAction, SurfaceRecord } from './types';
+import { landedEntry, type AppliedAction, type SurfaceRecord } from './types';
 
 /**
  * Evidence taken again when a retry resumes at the closing phase.
@@ -19,10 +19,6 @@ export interface FailedReread {
   /** The reads attempted, and each one's ledger row, the replay that preceded it nested in it. */
   actions: MockAction[];
   applied: AppliedAction[];
-}
-
-function landed(row: AppliedAction | undefined): row is AppliedAction {
-  return row?.ok === true && row.held !== true && row.awaitingApproval !== true;
 }
 
 /**
@@ -48,7 +44,7 @@ export function carriedReadIndexes(
   const reads: number[] = [];
   const lastSnapshot = new Map<string, number>();
   actions.forEach((action, index): void => {
-    if (!landed(applied[index])) return;
+    if (!landedEntry(applied[index])) return;
     const parsed = parseSurfaceAction(action);
     if (!parsed.ok || actionIntent(parsed.action) !== 'read') return;
     const surface = surfaces.find((row) => row.slug === parsed.action.surface);
@@ -110,7 +106,7 @@ export function withRereads(
       },
     };
   }
-  const failedIndex = indexes.find((index) => !landed(applied[index]));
+  const failedIndex = indexes.find((index) => !landedEntry(applied[index]));
   if (failedIndex === undefined) return { ok: true, applied };
   const action = carried.actions[failedIndex]!;
   const parsed = parseSurfaceAction(action);

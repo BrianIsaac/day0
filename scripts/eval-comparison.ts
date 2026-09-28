@@ -2,7 +2,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { readFile, mkdir, rename, writeFile } from 'node:fs/promises';
-import { dirname, extname, resolve } from 'node:path';
+import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { ConvexHttpClient } from 'convex/browser';
 import type { FunctionReturnType } from 'convex/server';
@@ -16,6 +16,7 @@ import {
   type EvaluationArm,
   type EvaluationSnapshot,
   type EvaluationTask,
+  eventWorkItemId,
 } from '../evaluation/graders';
 import {
   COMPARISON_EXPERIMENT,
@@ -537,12 +538,6 @@ function graderSnapshot(
   };
 }
 
-function eventWorkItemId(event: RawSnapshot['events'][number]): string | undefined {
-  if (!event.payload || typeof event.payload !== 'object') return undefined;
-  const value = (event.payload as { workItemId?: unknown }).workItemId;
-  return typeof value === 'string' ? value : undefined;
-}
-
 /** Events that end a work item: its own terminal events and the two ways an apply ends it. */
 const TERMINAL_EVENT_TYPES: ReadonlySet<string> = new Set([
   'work.completed',
@@ -957,6 +952,31 @@ function regradeTask(
   };
 }
 
+/** Where a checkout keeps its evaluation evidence, relative to its root. */
+const RESULTS_SEGMENT = 'evaluation/results/';
+
+/**
+ * The re-graded source's path as a result records it: from the checkout root
+ * when the source sits under an `evaluation/results/` tree, relative to the
+ * working directory when it sits under that, and the file name alone
+ * otherwise. A tracked result never carries the machine directory a checkout
+ * or a scratch clone happened to sit in (N15).
+ */
+export function recordedSourcePath(sourcePath: string): string {
+  const absolute = resolve(sourcePath).split(sep).join('/');
+  const segment = absolute.lastIndexOf(`/${RESULTS_SEGMENT}`);
+  if (segment !== -1) return absolute.slice(segment + 1);
+  const fromWorkingDirectory = relative(process.cwd(), resolve(sourcePath));
+  const outside =
+    fromWorkingDirectory === '..' ||
+    fromWorkingDirectory.startsWith(`..${sep}`) ||
+    isAbsolute(fromWorkingDirectory);
+  if (!outside) {
+    return fromWorkingDirectory.split(sep).join('/');
+  }
+  return basename(absolute);
+}
+
 /** Read a regrade source, refusing an output that exists or a task the task file lacks. */
 async function readRegradeSource(
   options: CliOptions,
@@ -1069,7 +1089,7 @@ export async function runRegrade(
   if (modelCallsMade !== 0) throw new Error('re-grade attempted a model call');
   evidence.generatedAt = (dependencies.now ?? new Date()).toISOString();
   evidence.regradedFrom = {
-    path: sourcePath,
+    path: recordedSourcePath(sourcePath),
     commit: source.configuration.commit,
     gradedAtCommit: dependencies.commit ?? currentCommit(),
     generatedAt: source.generatedAt,

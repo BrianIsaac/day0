@@ -1,7 +1,15 @@
 import { readFileSync } from 'node:fs';
 import { credentialMarker } from '../../src/docs/redaction';
 
-/** The handbook pages the operator pastes into Notion, committed as twins of `docs/private/notion-pages/`. */
+/**
+ * The handbook pages the orientation and sync tests read. Four are the
+ * company bed's own pages byte for byte (`bed/company/folder/`,
+ * `bed/company/notion/`; `tests/bed/company-docs.test.ts` fails while a copy
+ * is stale). `slack-day0-app` is the Slack policy page of the operator's
+ * September 2026 Notion workspace, kept because it carries the app manifest
+ * the provisioning tests read and the bed's Slack page does not; see
+ * `tests/fixtures/README.md`.
+ */
 export type NotionPageName =
   | 'onboarding'
   | 'linear-automation'
@@ -14,7 +22,7 @@ export const LINEAR_TOKEN_PLACEHOLDER = 'PASTE_LINEAR_API_KEY_HERE';
 export const LOOKER_PASSWORD_PLACEHOLDER = 'pipeline-tile-local';
 
 /**
- * Read one page template exactly as it is pasted into Notion.
+ * Read one page template exactly as it is published.
  *
  * Args:
  *   name: The page's file stem under `tests/fixtures/notion-pages/`.

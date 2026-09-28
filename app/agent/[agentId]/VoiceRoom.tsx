@@ -5,6 +5,8 @@ import { useConversation, ConversationProvider } from '@elevenlabs/react';
 import { useMutation } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
+import { postCharterSynthesis } from './charter-synthesis';
+import { ROOM_HEIGHT } from './room-frame';
 
 interface StartResponse {
   /** False when the deployment has no ElevenLabs credentials. */
@@ -27,7 +29,7 @@ interface InboundMessage {
  *   - useConversation requires a ConversationProvider ancestor.
  *   - startSession() is sync and returns void; errors come via onError.
  *   - onConnect receives `{ conversationId }`.
- *   - onError receives `(message: string, context?: any)` — first arg
+ *   - onError receives `(message: string, context?: any)` - first arg
  *     is the plain string, not an object with `.message`.
  *   - micMuted is a controlled prop; isSpeaking / isListening expose
  *     the agent's turn state.
@@ -60,7 +62,7 @@ function VoiceRoomInner({
     webhookToken: string;
   } | null>(null);
   // The SDK captures its callbacks once, so `onConnect` and `onDisconnect` see
-  // whatever `session` held on the render that created them — null, for a call
+  // whatever `session` held on the render that created them - null, for a call
   // started in the same tick. A ref is what the callbacks can read the live
   // value from, and the session id is the key both finalisation paths agree on:
   // without it here, the browser's post cannot be recognised as the same work
@@ -85,7 +87,7 @@ function VoiceRoomInner({
           sessionId: current.id,
           elevenLabsConversationId: conversationId,
         }).catch(() => {
-          // Non-fatal — the post-call webhook records the conversation id
+          // Non-fatal - the post-call webhook records the conversation id
           // itself when this never lands.
         });
       }
@@ -103,15 +105,12 @@ function VoiceRoomInner({
           .join('\n\n');
         if (text) {
           finalisePosted.current = true;
-          void fetch('/api/onboarding/synthesise', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              agentId,
-              bossLabel,
-              transcript: text,
-              voiceSessionId: sessionRef.current?.id ?? null,
-            }),
+          // The transcript is set below whether or not the post lands.
+          postCharterSynthesis({
+            agentId,
+            bossLabel,
+            transcript: text,
+            voiceSessionId: sessionRef.current?.id ?? null,
           });
         }
         return current;
@@ -141,7 +140,7 @@ function VoiceRoomInner({
             setStart(data);
             if (data.warning) {
               setError(
-                `${data.warning}. Falling back to public agent mode — voice will work if the agent is configured for public access.`,
+                `${data.warning}. Falling back to public agent mode - voice will work if the agent is configured for public access.`,
               );
             }
           }
@@ -183,8 +182,8 @@ function VoiceRoomInner({
   const isSpeaking = conversation.isSpeaking;
   const isListening = conversation.isListening;
 
-  // No ElevenLabs credentials on this deployment — say so plainly and
-  // hand the boss to chat mode, which runs the identical 1:1.
+  // No ElevenLabs credentials on this deployment - say so plainly and
+  // hand the boss to chat mode, which asks the same seven topics in text.
   if (start && !start.configured) {
     return (
       <section className="bg-[var(--color-card)] border border-[var(--color-warn)]/40 rounded-xl p-4">
@@ -206,7 +205,9 @@ function VoiceRoomInner({
   }
 
   return (
-    <section className="bg-[var(--color-card)] border border-[var(--color-accent)]/40 rounded-xl p-4">
+    <section
+      className={`bg-[var(--color-card)] border border-[var(--color-accent)]/40 rounded-xl p-4 flex flex-col ${ROOM_HEIGHT}`}
+    >
       <div className="flex items-center justify-between mb-3">
         <h2 className="text-sm font-semibold">Day-1 1:1 · voice mode</h2>
         <div className="flex items-center gap-3">
@@ -260,7 +261,7 @@ function VoiceRoomInner({
 
       <div
         ref={transcriptRef}
-        className="bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg p-3 max-h-64 overflow-y-auto text-xs space-y-1"
+        className="bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg p-3 flex-1 min-h-0 overflow-y-auto text-xs space-y-1"
       >
         {transcript.length === 0 ? (
           <p className="text-[var(--color-muted)]">live transcript will appear here…</p>

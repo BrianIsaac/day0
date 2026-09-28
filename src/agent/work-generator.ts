@@ -7,16 +7,16 @@ import type { MockSurfaceSnapshot } from '../work/types';
  * Generate three day-one work items grounded in the boss's charter AND
  * the agent's actual mock environment.
  *
- * No hardcoded slugs in the prompt — we render the live surface
+ * No hardcoded slugs in the prompt - we render the live surface
  * snapshot (slack channels, spreadsheets, docs, tweets, tickets) so the
  * LLM picks real identifiers that exist on the agent's workbench. Each
  * generated work item references concrete surface rows the executor can
  * later mutate.
  *
  * The 3-item mix drives the standard demo narrative:
- *   1. A docs-read item — handled by the builtin `see-internal-docs` skill
- *   2. An action item — triggers the propose-new-skill loop
- *   3. An out-of-scope item — evaluator skips it
+ *   1. A docs-read item - handled by the builtin `see-internal-docs` skill
+ *   2. An action item - triggers the propose-new-skill loop
+ *   3. An out-of-scope item - evaluator skips it
  */
 
 export const WORK_GEN_SYSTEM = [

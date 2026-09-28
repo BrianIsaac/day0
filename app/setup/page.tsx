@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { PageMotion } from '../PageMotion';
+import { HOSTED_DEMO_SNAPSHOT, recordingProvenanceLine } from '@/demo/hosted-demo-snapshot';
 
 import {
   DATA_LOCATION,
@@ -125,12 +126,15 @@ export default function SetupPage() {
             Run Day0 on your own machine.
           </h1>
           <p className="text-base text-[var(--color-muted)] leading-relaxed mb-4">
-            The same product this demo records, running locally in real mode: a self-hosted backend,
+            The product the hosted demo shows, running locally in real mode: a self-hosted backend,
             your own documentation and the systems it names, and a sandbox that verifies the skills
             the agent writes. The backend and sandbox run locally. A cloud model receives your chat
             and relevant content from your documentation; the local-model way runs the model here
             too. The seeded mock office the hosted demo works in is mock mode, which the evaluation
             harness uses and which no local way runs.
+          </p>
+          <p className="text-xs text-[var(--color-muted)] leading-relaxed mb-4">
+            {recordingProvenanceLine(HOSTED_DEMO_SNAPSHOT.recording)}
           </p>
           <div
             role="note"

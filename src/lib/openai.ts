@@ -11,6 +11,7 @@ import {
   providerEndpointLabel,
   StructuredContractError,
 } from './structured-fallback';
+import { errorMessage } from '../lib/errors';
 
 /**
  * Provider-agnostic model client. Every raw-SDK call and every AI-SDK
@@ -19,8 +20,9 @@ import {
  *
  *   OPENAI_BASE_URL=http://localhost:11434/v1   OPENAI_MODEL=qwen3:8b
  *
- * Verified shapes: ollama, vLLM, llama.cpp `llama-server`, LM Studio,
- * and hosted OpenAI-compatible gateways (Qwen, DeepSeek, OpenRouter,
+ * Verified on a bed: Ollama (qwen3), Featherless (GLM 5.3 Flash) and OpenAI
+ * itself. Spoken by protocol only, unverified here: vLLM, llama.cpp
+ * `llama-server`, LM Studio and hosted OpenAI-compatible gateways (Qwen, DeepSeek, OpenRouter,
  * Groq, Together). Leave OPENAI_BASE_URL unset for api.openai.com.
  */
 
@@ -29,6 +31,7 @@ export const MODEL = env.OPENAI_MODEL;
 /** The AI-SDK model instance shape, without depending on `@ai-sdk/provider` directly. */
 export type SdkLanguageModel = ReturnType<OpenAIProvider['languageModel']>;
 
+/** Which OpenAI API the configured provider speaks: Responses or chat completions. */
 export type ModelProviderClient = 'openai.responses' | 'openai.chat';
 
 let client: OpenAI | null = null;
@@ -59,10 +62,11 @@ function resolveApiKey(): string {
   if (env.OPENAI_API_KEY) return env.OPENAI_API_KEY;
   if (env.OPENAI_BASE_URL) return PLACEHOLDER_API_KEY;
   throw new Error(
-    'OPENAI_API_KEY not set — set it, or set OPENAI_BASE_URL to an OpenAI-compatible endpoint that needs no key',
+    'OPENAI_API_KEY not set - set it, or set OPENAI_BASE_URL to an OpenAI-compatible endpoint that needs no key',
   );
 }
 
+/** The one OpenAI client, built on first use from the environment. */
 export function openai(): OpenAI {
   if (!client) {
     client = new OpenAI({
@@ -97,6 +101,7 @@ export function languageModel(modelId: string = MODEL): SdkLanguageModel {
   return env.OPENAI_BASE_URL ? resolvedProvider.chat(modelId) : resolvedProvider.responses(modelId);
 }
 
+/** Which API to speak to a base URL: Responses for OpenAI itself, chat completions elsewhere. */
 export function modelProviderClient(
   baseUrl: string | undefined = env.OPENAI_BASE_URL,
 ): ModelProviderClient {
@@ -195,6 +200,7 @@ export function extractJsonPayload(raw: string): string | null {
   return null;
 }
 
+/** What a JSON completion takes: the prompts, the parser and the call settings. */
 export interface JsonCompleteArgs<TParsed> {
   system: string;
   user: string;
@@ -212,6 +218,7 @@ export interface JsonCompleteArgs<TParsed> {
   mode?: JsonMode;
 }
 
+/** A JSON completion's value with which coercion produced it. */
 export interface JsonCompleteResult<TParsed> {
   value: TParsed;
   /** Which coercion actually produced the object. */
@@ -223,8 +230,8 @@ export interface JsonCompleteResult<TParsed> {
 /**
  * Single-shot JSON completion with an explicit two-strategy ladder.
  *
- *   native — `response_format: { type: 'json_object' }`, the OpenAI way.
- *   prompt — no `response_format`; the contract goes in the system
+ *   native - `response_format: { type: 'json_object' }`, the OpenAI way.
+ *   prompt - no `response_format`; the contract goes in the system
  *            prompt and the object is extracted from the reply text.
  *
  * `OPENAI_JSON_MODE` pins a strategy (`native` / `prompt`) for testing
@@ -232,8 +239,8 @@ export interface JsonCompleteResult<TParsed> {
  * tries native; when that fails for a reason `response_format` could
  * explain, the prompt attempt doubles as the experiment that settles it,
  * and only its success demotes the endpoint. A failure the parameter
- * cannot explain — a rate limit, a bad key, an overlong context, a sick
- * server, anything statusless that nothing ties to the endpoint — is
+ * cannot explain - a rate limit, a bad key, an overlong context, a sick
+ * server, anything statusless that nothing ties to the endpoint - is
  * rethrown untried: prompt injection recovers from none of them and a
  * second doomed round-trip would only hide the real cause. Where the
  * parameter is implicated but the failure could also have passed on a
@@ -335,7 +342,7 @@ export class JsonParseError extends StructuredContractError {
     readonly raw: string,
     cause: string,
   ) {
-    super(`jsonComplete(${mode}): model returned invalid JSON — ${cause}`);
+    super(`jsonComplete(${mode}): model returned invalid JSON - ${cause}`);
     this.name = 'JsonParseError';
   }
 }
@@ -365,7 +372,7 @@ async function runJsonCompletion<TParsed>(
     parsed = JSON.parse(payload);
   } catch (err) {
     // A native-mode reply that needs extraction means the server took
-    // the parameter and ignored it — recoverable, so surface it as a
+    // the parameter and ignored it - recoverable, so surface it as a
     // parse error the ladder can catch rather than a hard throw.
     const salvaged = mode === 'native' ? extractJsonPayload(raw) : null;
     if (salvaged) {
@@ -375,7 +382,7 @@ async function runJsonCompletion<TParsed>(
         /* fall through to the parse error below */
       }
     }
-    throw new JsonParseError(mode, raw, (err as Error).message);
+    throw new JsonParseError(mode, raw, errorMessage(err));
   }
   return finalise(parsed, args);
 }
@@ -384,6 +391,7 @@ function finalise<TParsed>(parsed: unknown, args: JsonCompleteArgs<TParsed>): TP
   return args.coerce ? args.coerce(parsed) : (parsed as TParsed);
 }
 
+/** What a text completion takes: the prompts and the call settings. */
 export interface TextCompleteArgs {
   system: string;
   user: string;
@@ -407,6 +415,7 @@ function rawModelSettings(args: Pick<TextCompleteArgs, 'maxTokens' | 'reasoningE
   };
 }
 
+/** One plain-text chat completion. */
 export async function textComplete(args: TextCompleteArgs): Promise<string> {
   const res = await openai().chat.completions.create({
     model: args.model ?? MODEL,

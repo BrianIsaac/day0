@@ -219,9 +219,9 @@ describe('the clone of a listed git host', (): void => {
         label: 'Runbooks',
         locator: 'https://docs.corp.internal/team/docs#main',
       };
-      await expect(new GitReader(answering('127.0.0.1')).listPages(source)).rejects.toThrow(
-        'answers with an address day0 never dials',
-      );
+      await expect(
+        new GitReader(answering('127.0.0.1')).listPageBatch(source, undefined, undefined, 25),
+      ).rejects.toThrow('answers with an address day0 never dials');
     },
   );
 });

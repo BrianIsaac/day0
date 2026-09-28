@@ -5,15 +5,13 @@ import {
   OUT_OF_SCOPE_SKIP_PREFIX,
   QUALITY_FIT_SKIP_PREFIX,
 } from '@/work/types';
+import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useState, useEffect, useId, useMemo, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useAction } from 'convex/react';
 import { ConvexError } from 'convex/values';
 import { api } from '../../../convex/_generated/api';
 import type { Doc, Id } from '../../../convex/_generated/dataModel';
-import { ChatRoom } from './ChatRoom';
-import { VoiceRoom } from './VoiceRoom';
-import { MockEnvironment } from './MockEnvironment';
 import {
   AppliedCorrectionsLine,
   KeptCorrectionsPanel,
@@ -94,6 +92,7 @@ import {
   useNow,
 } from './time';
 import { eventLabel } from './event-labels';
+import { ROOM_HEIGHT } from './room-frame';
 import {
   compareWaitingRows,
   EVALUATION_ATTEMPTS_SPENT,
@@ -114,9 +113,11 @@ import {
   NOTIFICATION_MODE_LABELS,
   type ManagerNotificationMode,
 } from '../../../src/work/manager-notes';
-import type { AgentMetrics } from '../../../convex/metrics';
+import type { AgentMetrics } from '@/metrics/types';
 import { formatAuditTrail, formatMetricDuration } from '../../metric-format';
 import { PILOT_FIGURES, readsAndMessages } from '../../CompanySupervision';
+import { errorMessage } from '@/lib/errors';
+import { plainErrorMessage } from '@/lib/plain-error';
 
 interface Props {
   agentId: Id<'agents'>;
@@ -133,6 +134,45 @@ interface AuthoringAttempt {
   reason: string;
 }
 
+/**
+ * What a panel shows while its chunk is on the way: the panel's own frame,
+ * so the page does not jump by a card when the chunk lands.
+ */
+function PanelLoading({ label, frame }: { label: string; frame: string }): React.JSX.Element {
+  return (
+    <p
+      className={`${frame} flex items-center justify-center text-xs text-[var(--color-muted)]`}
+      role="status"
+    >
+      Loading {label}
+    </p>
+  );
+}
+
+/** The frames the three panels occupy, as their own markup sizes them. */
+const ROOM_FRAME = `${ROOM_HEIGHT} rounded-xl border border-[var(--color-border)]`;
+const ENVIRONMENT_FRAME = 'min-h-[30rem] rounded-xl border border-[var(--color-border)]';
+
+/*
+ * The three panels below are the page's own chunks, loaded when they mount:
+ * the voice room carries the ElevenLabs SDK and the mock environment its
+ * five tabs, and neither is needed to draw the first paint of the page. The
+ * voice room also touches the browser at import, so it is never rendered on
+ * the server.
+ */
+const ChatRoom = dynamic(() => import('./ChatRoom').then((module) => module.ChatRoom), {
+  loading: () => <PanelLoading label="the 1:1" frame={ROOM_FRAME} />,
+});
+const VoiceRoom = dynamic(() => import('./VoiceRoom').then((module) => module.VoiceRoom), {
+  ssr: false,
+  loading: () => <PanelLoading label="the 1:1" frame={ROOM_FRAME} />,
+});
+const MockEnvironment = dynamic(
+  () => import('./MockEnvironment').then((module) => module.MockEnvironment),
+  { loading: () => <PanelLoading label="the work environment" frame={ENVIRONMENT_FRAME} /> },
+);
+
+/** The employee's page: the 1:1, the charter, the queue, the skills, the permissions and the office. */
 export function AgentDashboard({ agentId }: Props) {
   const agent = useQuery(api.agents.get, { agentId });
   const charter = useQuery(api.charters.latest, { agentId });
@@ -281,7 +321,6 @@ export function AgentDashboard({ agentId }: Props) {
             {charter ? <CharterCard charter={charter} manager={agent.bossEmail} /> : null}
 
             <ProposedSkillsPanel
-              agentId={agentId}
               skills={proposedSkills ?? []}
               surfaces={surfaces}
               onAuthoringAttempt={setLastAttempt}
@@ -435,7 +474,7 @@ export function AutonomyControl({
     setError(null);
     onChange(next)
       .then(() => setConfirming(false))
-      .catch((err: unknown) => setError((err as Error).message))
+      .catch((err: unknown) => setError(errorMessage(err)))
       .finally(() => setBusy(false));
   }
 
@@ -497,7 +536,7 @@ export function NotificationModeControl({
   return (
     <label
       className="flex items-center gap-1.5 px-3 py-1 rounded-full border border-[var(--color-border)] text-[10px] text-[var(--color-muted)]"
-      title="Decision requests are always sent at once. This sets how you hear that work landed or a run stopped."
+      title="Decision requests go to your manager channel at once whenever one is connected. This sets how you hear that work landed or a run stopped."
     >
       <span>Manager DMs</span>
       <select
@@ -509,7 +548,7 @@ export function NotificationModeControl({
           setBusy(true);
           setError(null);
           onChange(next)
-            .catch((err: unknown) => setError((err as Error).message))
+            .catch((err: unknown) => setError(errorMessage(err)))
             .finally(() => setBusy(false));
         }}
         className="bg-transparent text-xs text-[var(--color-fg)] disabled:cursor-wait"
@@ -772,6 +811,7 @@ export function ZoneLine({
   );
 }
 
+/** The page header: the employee's name, state, zone, autonomy switch and manager channel control. */
 export function DashboardHeader({
   agent,
   charter,
@@ -933,8 +973,8 @@ function ModePicker({ onPick }: { onPick: (mode: 'voice' | 'chat') => void }) {
       </div>
       {voiceOff ? (
         <p className="text-xs text-[var(--color-muted)] mt-3">
-          Voice is off on this deployment: no ElevenLabs credentials. Chat runs the identical
-          seven-topic 1:1.
+          Voice is off on this deployment: no ElevenLabs credentials. Chat asks the same seven
+          topics in text.
         </p>
       ) : null}
     </Card>
@@ -1124,8 +1164,12 @@ export function CharterCard({
 
   async function toggleStrike(index: number, struck: boolean): Promise<void> {
     setStrikeError(null);
-    const result = await setConstraintStruck({ charterId: charter._id, index, struck });
-    if (!result.ok) setStrikeError(result.reason);
+    try {
+      const result = await setConstraintStruck({ charterId: charter._id, index, struck });
+      if (!result.ok) setStrikeError(result.reason);
+    } catch (failure: unknown) {
+      setStrikeError(plainErrorMessage(errorMessage(failure)));
+    }
   }
 
   async function sendAmendment(change: CharterChange): Promise<boolean> {
@@ -1338,8 +1382,11 @@ function AddLine({
       <button
         className={AMEND_BUTTON}
         disabled={!draft.trim()}
-        onClick={async () => {
-          if (await onAdd(draft)) setDraft('');
+        onClick={() => {
+          // onAdd never rejects: a refusal is shown on the panel.
+          void onAdd(draft).then((added) => {
+            if (added) setDraft('');
+          });
         }}
       >
         {label}
@@ -1506,15 +1553,14 @@ export function AmendCharterPanel({
             <button
               className={AMEND_BUTTON}
               disabled={!rule.quote.trim()}
-              onClick={async () => {
-                if (
-                  await onAmend({
-                    kind: 'add-constraint',
-                    constraint: { kind: rule.kind, quote: rule.quote, clause: ruleClause },
-                  })
-                ) {
-                  setRule({ quote: '', kind: rule.kind });
-                }
+              onClick={() => {
+                // onAmend never rejects: a refusal is shown on the panel.
+                void onAmend({
+                  kind: 'add-constraint',
+                  constraint: { kind: rule.kind, quote: rule.quote, clause: ruleClause },
+                }).then((amended) => {
+                  if (amended) setRule({ quote: '', kind: rule.kind });
+                });
               }}
             >
               Add rule
@@ -1605,10 +1651,11 @@ export function AmendCharterPanel({
               <button
                 className={AMEND_BUTTON}
                 disabled={!system.name.trim() || !system.whereMentioned.trim()}
-                onClick={async () => {
-                  if (await onAmend({ kind: 'add-system', system })) {
-                    setSystem({ name: '', class: 'other', whereMentioned: '' });
-                  }
+                onClick={() => {
+                  // onAmend never rejects: a refusal is shown on the panel.
+                  void onAmend({ kind: 'add-system', system }).then((amended) => {
+                    if (amended) setSystem({ name: '', class: 'other', whereMentioned: '' });
+                  });
                 }}
               >
                 Add system
@@ -1692,13 +1739,12 @@ function BoundaryList({ label, items }: { label: string; items: string[] }) {
   );
 }
 
-function ProposedSkillsPanel({
-  agentId,
+/** The skills the agent proposed and the manager has not decided, each with Approve and Reject. */
+export function ProposedSkillsPanel({
   skills,
   surfaces,
   onAuthoringAttempt,
 }: {
-  agentId: Id<'agents'>;
   skills: Doc<'skills'>[];
   /** The agent's surfaces in real mode; a skill targeting one that is not
    *  connected cannot be approved yet, and the button says why. */
@@ -1745,26 +1791,23 @@ function ProposedSkillsPanel({
                 <button
                   disabled={Boolean(refusal)}
                   title={refusal}
-                  onClick={async () => {
-                    await approve({ skillId: s._id });
-                    void agentId;
+                  onClick={() => {
                     onAuthoringAttempt(null);
-                    try {
-                      const result = await author({ skillId: s._id });
-                      if (!result.ok) {
-                        onAuthoringAttempt({
-                          skillId: s._id,
-                          name: s.name,
-                          reason: result.reason ?? 'authoring did not finish',
-                        });
-                      }
-                    } catch (err) {
-                      onAuthoringAttempt({
-                        skillId: s._id,
-                        name: s.name,
-                        reason: (err as Error).message,
-                      });
-                    }
+                    const file = (reason: string): void =>
+                      onAuthoringAttempt({ skillId: s._id, name: s.name, reason });
+                    // Discarded because each step's rejection is handled here and
+                    // filed as the attempt on the row. The approval's refusals name
+                    // the approve themselves (`cannot approve "<skill>": ...`).
+                    void approve({ skillId: s._id }).then(
+                      () =>
+                        author({ skillId: s._id }).then(
+                          (result) => {
+                            if (!result.ok) file(result.reason ?? 'authoring did not finish');
+                          },
+                          (err: unknown) => file(plainErrorMessage(errorMessage(err))),
+                        ),
+                      (err: unknown) => file(plainErrorMessage(errorMessage(err))),
+                    );
                   }}
                   className="px-3 py-1.5 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] hover:bg-[var(--color-ok)]/30 text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-[var(--color-ok)]/20"
                 >
@@ -1808,6 +1851,7 @@ export function retryVerifiesSavedDraft(
   return skill.state === 'authoring' && Boolean(skill.body) && Boolean(skill.pendingSmokeTest);
 }
 
+/** The registered skills and the ones waiting on a grant, with the author's attempts. */
 export function RegisteredSkillsPanel({
   skills,
   unregistered,
@@ -1849,7 +1893,7 @@ export function RegisteredSkillsPanel({
         onAuthoringAttempt({ skillId, name, reason: result.reason ?? 'retry did not succeed' });
       }
     } catch (err) {
-      onAuthoringAttempt({ skillId, name, reason: (err as Error).message });
+      onAuthoringAttempt({ skillId, name, reason: plainErrorMessage(errorMessage(err)) });
     } finally {
       setRetrying(null);
     }
@@ -1869,7 +1913,7 @@ export function RegisteredSkillsPanel({
         });
       }
     } catch (err) {
-      onAuthoringAttempt({ skillId, name, reason: (err as Error).message });
+      onAuthoringAttempt({ skillId, name, reason: plainErrorMessage(errorMessage(err)) });
     } finally {
       setRetrying(null);
     }
@@ -2143,7 +2187,7 @@ function CheckForNewWork({ agentId }: { agentId: Id<'agents'> }) {
             setError(null);
             check({ agentId })
               .then((result) => setMessage(checkForWorkMessage(result)))
-              .catch((err: unknown) => setError((err as Error).message))
+              .catch((err: unknown) => setError(errorMessage(err)))
               .finally(() => setBusy(false));
           }}
           className="shrink-0 px-2 py-1 rounded-md text-[10px] border border-[var(--color-border)] hover:border-[var(--color-accent)] disabled:opacity-50 disabled:cursor-not-allowed"
@@ -2242,6 +2286,7 @@ export function sortedForQueue<
   );
 }
 
+/** The employee's work items in the order that puts what needs the manager first. */
 export function WorkQueue({
   agentId,
   workItems,
@@ -2287,15 +2332,20 @@ export function WorkQueue({
   // One in-flight call per (step, item). Strict Mode runs every effect twice
   // on mount, and a subscription update re-runs them before the first call has
   // moved the row, so without this the same item is handed to the same action
-  // several times over. The backend refuses the duplicates (`claimForExecution`
-  // is the authority), but a refusal is not a reason to keep asking.
+  // several times over. Each step's claim mutation refuses the duplicate, but
+  // a refusal is not a reason to keep asking.
   const inFlight = useRef(new Set<string>());
   const once = useCallback((step: string, id: string, call: () => Promise<unknown>) => {
     const key = `${step}:${id}`;
     if (inFlight.current.has(key)) return;
     inFlight.current.add(key);
     call()
-      .catch(() => {})
+      // A step that fails on the row records the failure there, where the card
+      // reads it. A refusal before the row is touched (the item gone, the
+      // charter not approved, an ownership refusal, a claim another call
+      // already holds) leaves nothing on the row and is dropped here; the
+      // promise only holds the in-flight key.
+      .catch((): void => undefined)
       .finally(() => inFlight.current.delete(key));
   }, []);
 
@@ -2888,6 +2938,7 @@ export function PlanObligationsLine({
   );
 }
 
+/** The plan's steps beside what the run recorded for each. */
 export function PlanExecutionLedger({ outcomes }: { outcomes: PlanStepOutcomeRow[] }) {
   if (outcomes.length === 0) return null;
   return (
@@ -3072,6 +3123,7 @@ export function liveRetryNote(typed: TypedRetryNote, token: string): string {
   return typed.token === token ? typed.text : '';
 }
 
+/** The mutation arguments that cancel a plan with the manager's reason. */
 export function cancelPlanRequest(
   workItemId: Id<'workItems'>,
   reason?: string,
@@ -3272,7 +3324,7 @@ export function PendingActions({
     try {
       await call();
     } catch (err) {
-      setError((err as Error).message);
+      setError(errorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -3744,7 +3796,7 @@ export function PendingDecisionsPanel({
                 approvedIndexes: member.heldIndexes,
               })),
             )
-              .catch((err: unknown) => setError((err as Error).message))
+              .catch((err: unknown) => setError(errorMessage(err)))
               .finally(() => setBusy(false));
           }}
           className="px-3 py-1 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] text-xs font-medium disabled:opacity-50"
@@ -3820,6 +3872,7 @@ export function waitingLine(item: WaitingItem, zone: string | undefined): string
   return 'Waiting for a free slot: Day0 evaluates the most urgent item first, then the oldest, as work finishes.';
 }
 
+/** One work item: its verdict, plan, held actions, ledger and the controls the state allows. */
 export function WorkItemCard({
   item,
   surfaces,
@@ -4483,6 +4536,7 @@ export function WorkItemCard({
   );
 }
 
+/** The checklist a failed run shows before a retry: confirm what landed on the provider. */
 export function ProviderReconciliationControl({
   entries,
   reconciliation,
@@ -4582,6 +4636,7 @@ export function ProviderReconciliationControl({
 
 type PermissionSource = 'deploy' | 'manager' | 'skill' | 'surface';
 
+/** One permission scope as the panel shows it, with whether it is active. */
 export interface PermissionScopeView {
   scope: string;
   active: boolean;
@@ -4597,6 +4652,7 @@ const PERMISSION_SOURCE_LABEL: Record<PermissionSource, string> = {
   surface: 'surface',
 };
 
+/** The permission scopes with their revoke controls. */
 export function PermissionRows({
   scopes,
   confirmingScope,
@@ -4716,7 +4772,7 @@ export function PermissionsCard({ agentId }: { agentId: Id<'agents'> }) {
         await grantScopes({ agentId, scopes: [scope] });
       }
     } catch (err) {
-      setError((err as Error).message);
+      setError(errorMessage(err));
     } finally {
       setBusyScope(null);
     }
@@ -4751,6 +4807,7 @@ function metricValue(value: string | undefined): string {
   return value ?? 'loading…';
 }
 
+/** The employee's supervision figures. */
 export function MetricsCard({ metrics }: { metrics: AgentMetrics | undefined }) {
   // A decision made on the dashboard is a decision whether or not a chat
   // surface was ever asked, so "not yet" means no decision at all (P6-9).

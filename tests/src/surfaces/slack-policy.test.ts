@@ -17,6 +17,14 @@ describe('the channels the policy page names', (): void => {
     expect(documentedChannelNames([POLICY])).toEqual(['revops-asks', 'revops']);
   });
 
+  it('reads a channel whose name has no Latin letter (N8)', (): void => {
+    const page = {
+      title: 'Slack automation policy',
+      markdown: '- Channels: `#营收运营` (requests), `#revops`.',
+    };
+    expect(documentedChannelNames([page])).toEqual(['营收运营', 'revops']);
+  });
+
   it('ignores a page that is not about the chat system', (): void => {
     expect(
       documentedChannelNames([

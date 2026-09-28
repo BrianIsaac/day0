@@ -41,6 +41,7 @@ import { runCommand, startServer } from './rehearsal/process';
 import { runStamp, type RunRecord } from './rehearsal/report';
 import { runPhases, type RehearsalContext } from './rehearsal/run';
 import { SlackClient } from '../lib/slack';
+import { errorMessage } from '../../src/lib/errors';
 
 /** How long past the ceiling a phase that never reaches a wait is given before the clean-up runs anyway. */
 const CEILING_GRACE_MINUTES = 5;
@@ -96,7 +97,7 @@ async function main(): Promise<number> {
   try {
     options = parseRehearsalArguments(process.argv.slice(2));
   } catch (error) {
-    fail((error as Error).message);
+    fail(errorMessage(error));
   }
   if (options.help) {
     process.stdout.write(USAGE);
@@ -204,7 +205,7 @@ async function main(): Promise<number> {
     await runPhases(ctx);
   } catch (error) {
     record.status = 'failed';
-    record.stoppedAt = `outside a phase: ${(error as Error).message}`;
+    record.stoppedAt = `outside a phase: ${errorMessage(error)}`;
     log(record.stoppedAt);
   }
   clearTimeout(backstop);

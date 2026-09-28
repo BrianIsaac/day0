@@ -390,6 +390,7 @@ function procedureAsksFor(body: string, words: RegExp): boolean {
   });
 }
 
+/** Which plan steps check a candidate property nothing asked for, with the issues found. */
 export interface PlanPreconditionAudit {
   /** One-based steps that check a candidate property nothing asked for. */
   flagged: number[];
@@ -441,9 +442,23 @@ export function planPreconditionAudit(
   return { flagged, issues };
 }
 
+/** The most steps a plan may carry; a longer one is refused with its reason, never cut (N28). */
+const PLAN_MAX_STEPS = 8;
+
+/**
+ * The planner's reply, validated: one to eight steps with the summary, output
+ * type and risk notes. The step bound's messages are what the card shows when
+ * a reply breaks it.
+ */
 export const planSchema = z.object({
   summary: z.string(),
-  steps: z.array(z.string()),
+  steps: z
+    .array(z.string())
+    .min(1, { error: 'the plan had no steps; the least is one' })
+    .max(PLAN_MAX_STEPS, {
+      error: (issue): string =>
+        `the plan had ${Array.isArray(issue.input) ? issue.input.length : 'too many'} steps; the most is ${PLAN_MAX_STEPS}`,
+    }),
   expectedOutputType: z.enum([
     'message',
     'doc-update',
@@ -753,6 +768,7 @@ export async function redactGroundingRead(
   return degraded ? { ...redacted, redaction: 'structural-only' } : redacted;
 }
 
+/** What drafting a plan takes: the candidate, the charter, the switch, the mode, the surfaces and the documents. */
 export interface DraftPlanArgs {
   candidate: WorkCandidate;
   charter: Charter;
@@ -864,7 +880,7 @@ export function planUserPrompt(args: Omit<DraftPlanArgs, 'autonomousActions'>): 
 function materialisePlan(raw: z.infer<typeof planSchema>): ExecutionPlan {
   return {
     summary: raw.summary,
-    steps: raw.steps.slice(0, 8),
+    steps: raw.steps,
     expectedOutputType: raw.expectedOutputType,
     riskNotes: raw.riskNotes,
     reversibility: raw.reversibility,
@@ -872,6 +888,7 @@ function materialisePlan(raw: z.infer<typeof planSchema>): ExecutionPlan {
   };
 }
 
+/** Draft the execution plan for one candidate through the model, with its obligations judged. */
 export async function draftExecutionPlan(args: DraftPlanArgs): Promise<ExecutionPlan> {
   const { autonomousActions, onObligationEvent, ...prompt } = args;
   const planAgent = makeAgent('day0-plan', planSystemPrompt(autonomousActions, args.surfaceMode));
@@ -983,13 +1000,4 @@ async function withObligations(
   if (settled.obligations) return { ...plan, obligations: settled.obligations };
   const failedOpen = settled.events.find((event) => event.type === 'plan.obligations-failed-open');
   return failedOpen ? { ...plan, obligationsFailedOpen: failedOpen.payload.reason } : plan;
-}
-
-export function renderPlanSummary(plan: ExecutionPlan): string {
-  const stepsRendered = plan.steps.map((s, i) => `${i + 1}. ${s}`).join(' ');
-  return [
-    `${plan.summary} (~${plan.estimatedMinutes}m)`,
-    `Steps: ${stepsRendered}`,
-    `Reversibility: ${plan.reversibility}.`,
-  ].join(' | ');
 }

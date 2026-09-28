@@ -48,7 +48,7 @@ describe('folder documentation reader', (): void => {
       kind: 'folder',
       locator: 'team',
     };
-    const pages = await new FolderReader(root).listPages(source);
+    const { pages } = await new FolderReader(root).listPageBatch(source, undefined, undefined, 25);
     expect(pages.map((page) => ({ ref: page.ref, title: page.title }))).toEqual([
       { ref: 'onboarding.md', title: 'Onboarding' },
       { ref: 'runbooks/ticket.md', title: 'ticket' },

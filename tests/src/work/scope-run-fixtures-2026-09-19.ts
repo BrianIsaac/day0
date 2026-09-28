@@ -131,7 +131,7 @@ function ticket(
     contentRefs: [ref],
     observedAt: new Date(NOW - 1_000),
     priority: 'No priority',
-    requesterLabel: 'Brian',
+    requesterLabel: 'Sam',
   };
 }
 

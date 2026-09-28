@@ -6,6 +6,7 @@ vi.hoisted(() => {
   process.env.OPENAI_API_KEY = 'test-key';
 });
 import type { Agent } from '@mastra/core/agent';
+import { MastraError } from '@mastra/core/error';
 import {
   agentJson,
   agentJsonWithMode,
@@ -14,6 +15,7 @@ import {
   ModelRefusalError,
   ModelReplyCutError,
   resetStructuredModeMemo,
+  StructuredOutputInvalidError,
   withModelRetry,
 } from '../../../src/lib/mastra';
 import {
@@ -21,7 +23,8 @@ import {
   observeModelCalls,
   type ModelCallReport,
 } from '../../../src/lib/model-call-telemetry';
-import { providerEndpointLabel } from '../../../src/lib/structured-fallback';
+import { itemBoundModelFailure, providerEndpointLabel } from '../../../src/lib/structured-fallback';
+import { planSchema } from '../../../src/work/plan';
 
 /**
  * The retry wrapper reports every model call to the observer the loop step
@@ -753,5 +756,59 @@ describe('the bill on the report', (): void => {
       }),
     );
     expect(JSON.stringify(lines)).not.toContain(secretToken);
+  });
+});
+
+describe('a reply the schema refused', (): void => {
+  /** The violation as Mastra raises it: its own error, with the schema's parse error as the cause. */
+  function mastraViolation(value: unknown): MastraError {
+    const parsed = planSchema.safeParse(value);
+    return new MastraError(
+      {
+        domain: 'AGENT',
+        category: 'SYSTEM',
+        id: 'STRUCTURED_OUTPUT_SCHEMA_VALIDATION_FAILED',
+        text: 'Structured output validation failed: - steps: the plan had 9 steps; the most is 8',
+        details: { value: JSON.stringify(value) },
+      },
+      parsed.error,
+    );
+  }
+
+  it("carries the schema's reason to the card, not the generic text", async (): Promise<void> => {
+    const nineSteps = {
+      summary: 'Nine steps.',
+      steps: Array.from({ length: 9 }, (_, index): string => `Step ${index + 1}.`),
+      expectedOutputType: 'message',
+      riskNotes: '',
+      reversibility: '',
+      estimatedMinutes: 9,
+    };
+    const generate = vi.fn().mockRejectedValue(mastraViolation(nineSteps));
+    const agent = { name: 'day0-plan', generate } as unknown as Agent;
+
+    const refused = await agentJsonWithMode({
+      agent,
+      user: 'plan',
+      schema: planSchema,
+      mode: 'native',
+    }).catch((err: unknown): unknown => err);
+
+    expect(refused).toBeInstanceOf(StructuredOutputInvalidError);
+    expect(refused).toMatchObject({ issues: ['the plan had 9 steps; the most is 8'] });
+    expect(itemBoundModelFailure(refused)).toBe(
+      "the model's reply held no valid structured object: the plan had 9 steps; the most is 8",
+    );
+  });
+
+  it('keeps the generic text when the violation carries no parse error', (): void => {
+    const bare = Object.assign(new Error('Structured output validation failed'), {
+      id: 'STRUCTURED_OUTPUT_SCHEMA_VALIDATION_FAILED',
+    });
+
+    expect(new StructuredOutputInvalidError('day0-plan', 'native', bare).issues).toEqual([]);
+    expect(
+      itemBoundModelFailure(new StructuredOutputInvalidError('day0-plan', 'native', bare)),
+    ).toBe("the model's reply held no valid structured object");
   });
 });

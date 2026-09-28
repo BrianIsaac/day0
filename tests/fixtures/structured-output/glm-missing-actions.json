@@ -2,7 +2,7 @@
   {
     "provenance": "Fresh authorised three-task capture on 2026-09-12; synthetic office content sanitised. Historical paired reply bodies were not retained.",
     "captureId": "217de01c-3032-4112-a783-99ef46bb180e",
-    "capture": "capture1-functions.jsonl",
+    "capture": "private capture of 12 September 2026, GLM 5.3 Flash via Featherless, kept outside the tree",
     "rawReplySha256": "35a706822eb641dcd65a214637c2eb9ddcf32e01bdf9d3d9496f61ce5cd8b73b",
     "taskId": "write-priya-verification",
     "message": "Structured output validation failed: - actions: Too small: expected array to have >=2 items",

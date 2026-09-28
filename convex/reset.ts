@@ -357,7 +357,7 @@ export const deleteMyData = mutation({
   args: { alsoUnlinkDocumentation: v.optional(v.boolean()), agentId: v.optional(v.id('agents')) },
   handler: async (ctx, args): Promise<{ deleted: number; unlinkedSources: number }> => {
     const identity = await getCallerOrThrow(ctx);
-    const userId = identity.subject;
+    const userId = identity.ownerKey;
     // The unlink purges every credential the owner holds, the ones the
     // remaining employees connect with included.
     if (args.agentId !== undefined && args.alsoUnlinkDocumentation) {

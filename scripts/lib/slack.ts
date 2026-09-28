@@ -9,10 +9,14 @@
 import { retryAfterMs, transportFailureKind } from '../../src/lib/transport-error';
 
 const API = 'https://slack.com/api/';
+/** How long one Slack Web API call may take. */
 export const SLACK_TIMEOUT_MS = 30_000;
+/** The pause before the one retry of a Slack call that was rate limited. */
 export const SLACK_RETRY_PAUSE_MS = 2_000;
+/** The longest Retry-After the bed honours before giving up on a call. */
 export const MAX_SLACK_RETRY_WAIT_MS = 60_000;
 
+/** One Slack message as the bed reads it back: its timestamp, text and thread. */
 export interface SlackMessage {
   ts: string;
   text: string;
@@ -20,17 +24,20 @@ export interface SlackMessage {
   user?: string;
 }
 
+/** A Slack Web API reply's envelope: ok, and the error name when not. */
 export interface SlackAnswer {
   ok: boolean;
   error?: string;
   [key: string]: unknown;
 }
 
+/** What the retry needs from its caller: a line to say and a way to wait. */
 export interface SlackRetryIo {
   say(line: string): void;
   sleep(ms: number): Promise<void>;
 }
 
+/** A Slack Web API call that failed, with the status and the error Slack named. */
 export class SlackRequestError extends Error {
   constructor(
     message: string,
@@ -45,6 +52,7 @@ export class SlackRequestError extends Error {
   }
 }
 
+/** The retry io for a script: says nothing and sleeps for real. */
 export const DEFAULT_SLACK_RETRY_IO: SlackRetryIo = {
   say: (): void => undefined,
   sleep: async (ms: number): Promise<void> => await new Promise((done) => setTimeout(done, ms)),
@@ -81,6 +89,7 @@ function transportFailure(error: unknown): unknown {
   );
 }
 
+/** Run a Slack call and, if Slack rate limits it, wait what it asked and try once more. */
 export async function retrySlackOnce<T>(
   what: string,
   io: SlackRetryIo,
@@ -124,6 +133,7 @@ export async function retrySlackOnce<T>(
   }
 }
 
+/** One Slack Web API call with the bed token, decoded and checked for ok. */
 export async function requestSlack(
   fetchImpl: typeof fetch,
   token: string,

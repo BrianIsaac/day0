@@ -1,15 +1,38 @@
+/** @vitest-environment jsdom */
+
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { act } from 'react';
+import { createRoot } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { getFunctionName } from 'convex/server';
 import { describe, expect, it, vi } from 'vitest';
+
+const backend = vi.hoisted(() => ({
+  /** Mutations and actions that reject, by function name, with the text they reject with. */
+  refusals: {} as Record<string, string>,
+}));
 
 vi.mock('convex/react', () => ({
   useQuery: (): undefined => undefined,
-  useMutation: (): (() => Promise<void>) => async (): Promise<void> => undefined,
-  useAction: (): (() => Promise<void>) => async (): Promise<void> => undefined,
+  useMutation:
+    (reference: unknown): (() => Promise<void>) =>
+    async (): Promise<void> => {
+      const refusal = backend.refusals[getFunctionName(reference as never)];
+      if (refusal !== undefined) throw new Error(refusal);
+    },
+  useAction:
+    (reference: unknown): (() => Promise<void>) =>
+    async (): Promise<void> => {
+      const refusal = backend.refusals[getFunctionName(reference as never)];
+      if (refusal !== undefined) throw new Error(refusal);
+    },
 }));
 
 import { declareUndeclaredInputs } from '../../../../src/work/skill-inputs';
 import type { Doc, Id } from '../../../../convex/_generated/dataModel';
-import type { AgentMetrics } from '../../../../convex/metrics';
+import type { AgentMetrics } from '../../../../src/metrics/types';
 import type { SurfaceRecord } from '../../../../src/surfaces/types';
 import {
   ActionPayload,
@@ -29,6 +52,7 @@ import {
   RefusedBlockedSteps,
   RefusedClosingDetails,
   RefusedDraftDetails,
+  ProposedSkillsPanel,
   RegisteredSkillsPanel,
   WithheldActionsDetails,
   retryVerifiesSavedDraft,
@@ -73,6 +97,27 @@ import {
   RECORDED_QUESTIONS_2026_09_16,
   SYNTHESIS_SELF_CHECK_NOTE_2026_09_16,
 } from '../../../fixtures/charter-synthesis-notes-2026-09-16';
+
+describe('the panels the dashboard loads on demand', (): void => {
+  // Resolved by path: under jsdom, Vite rewrites `new URL(path, import.meta.url)`
+  // into a served asset address rather than a file.
+  const source = readFileSync(
+    resolve(
+      dirname(fileURLToPath(import.meta.url)),
+      '../../../../app/agent/[agentId]/AgentDashboard.tsx',
+    ),
+    'utf8',
+  );
+
+  it('loads the chat room, the voice room and the work environment as their own chunks, the voice room never on the server', (): void => {
+    for (const panel of ['ChatRoom', 'VoiceRoom', 'MockEnvironment']) {
+      expect(source).not.toMatch(new RegExp(`import \\{ ${panel} \\} from './${panel}'`));
+      expect(source).toMatch(new RegExp(`const ${panel} = dynamic\\(`));
+    }
+    const voice = /const VoiceRoom = dynamic\([\s\S]*?\}\);/.exec(source)?.[0] ?? '';
+    expect(voice).toContain('ssr: false');
+  });
+});
 
 describe('held action payload', (): void => {
   it('renders the verb with the arguments it reads and none of the empty flat-bag defaults', (): void => {
@@ -1364,6 +1409,57 @@ describe('charter confirm-or-strike list', (): void => {
     );
   });
 
+  it.each([
+    ['Strike', 0, false],
+    ['Restore', 1, true],
+  ] as const)(
+    'shows why a %s the backend refused was not recorded, on the card',
+    async (label, index, struck): Promise<void> => {
+      (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+      backend.refusals = {
+        'charters:setConstraintStruck': `[CONVEX M(charters:setConstraintStruck)] [Request ID: 1] Server Error\nUncaught Error: The charter was approved while this page was open.\n    at handler (../convex/charters.ts:1:1)`,
+      };
+      const charter = {
+        _id: 'charter-1',
+        _creationTime: 1,
+        agentId: 'agent-1',
+        version: '0.0',
+        approved: false,
+        createdAt: 1,
+        body: {
+          whyThisHire: 'Close week.',
+          proposedFunction:
+            'Own routine revenue operations work from owned, prioritized Linear tickets.',
+          shortTermGoals: { day30: 'a', day60: 'b', day90: 'c' },
+          proposedBoundaries: { willDo: [], willNotDo: [], escalationTriggers: [] },
+          namedCollaborators: [],
+          priorityReading: [],
+          openQuestions: [],
+          constraints,
+        },
+      } as unknown as Doc<'charters'>;
+      expect(constraints[index]?.struck === true).toBe(struck);
+      const container = document.createElement('div');
+      document.body.append(container);
+      const root = createRoot(container);
+      act((): void => root.render(<CharterCard charter={charter} />));
+
+      const button = [...container.querySelectorAll('button')].find(
+        (candidate) => candidate.textContent === label && !candidate.disabled,
+      );
+      expect(button).toBeDefined();
+      await act(async (): Promise<void> => {
+        button?.click();
+      });
+
+      expect(container.textContent).toContain('The charter was approved while this page was open.');
+      expect(container.textContent).not.toContain('Request ID');
+      act((): void => root.unmount());
+      container.remove();
+      backend.refusals = {};
+    },
+  );
+
   it('says what a strike removes, and disables one the effective charter refuses with the reason', (): void => {
     const markup = renderToStaticMarkup(
       <ConstraintList
@@ -1443,7 +1539,7 @@ describe('the charter card and the strikes approval can honour', (): void => {
   it('offers the 15 September strike as the clause it removes, and disables the one strike that was always refused', (): void => {
     const markup = renderToStaticMarkup(<CharterCard charter={draft(strikeRefusalBody(false))} />);
     expect(markup).toContain(
-      'strikes the clause: “Take ownership of Northstar CRM-dependent work that Brain must handle.”',
+      'strikes the clause: “Take ownership of Northstar CRM-dependent work that Sam must handle.”',
     );
     expect(markup).toContain(
       'cannot be struck: strike or edit the whole will-not-do clause; removing only part could change its boundary',
@@ -1454,12 +1550,12 @@ describe('the charter card and the strikes approval can honour', (): void => {
   it('refuses up front the strike that would drop the only clause bounding a system', (): void => {
     const body = strikeRefusalBody(false);
     body.proposedBoundaries.willNotDo = [
-      'Take ownership of Northstar CRM-dependent work that Brain must handle.',
+      'Take ownership of Northstar CRM-dependent work that Sam must handle.',
     ];
     body.proposedBoundaries.escalationTriggers = [];
     const markup = renderToStaticMarkup(<CharterCard charter={draft(body)} />);
     expect(markup).toContain(
-      'cannot be struck: strike refused: “Take ownership of Northstar CRM-dependent work that Brain must handle.” is the only clause that bounds Northstar CRM',
+      'cannot be struck: strike refused: “Take ownership of Northstar CRM-dependent work that Sam must handle.” is the only clause that bounds Northstar CRM',
     );
     expect(strikeButtons(markup)[2]).toBe(true);
   });
@@ -1467,7 +1563,7 @@ describe('the charter card and the strikes approval can honour', (): void => {
   it('enables exactly the strikes whose toggled charter approval would apply', (): void => {
     const bounded = strikeRefusalBody(false);
     bounded.proposedBoundaries.willNotDo = [
-      'Take ownership of Northstar CRM-dependent work that Brain must handle.',
+      'Take ownership of Northstar CRM-dependent work that Sam must handle.',
     ];
     bounded.proposedBoundaries.escalationTriggers = [];
     for (const body of [strikeRefusalBody(false), bounded]) {
@@ -1648,6 +1744,42 @@ describe('the refused skill draft', (): void => {
   });
 });
 
+/**
+ * Render a panel in a document, have the named backend call refuse with the
+ * transport's envelope around a message, click the named button and return the
+ * attempts the panel filed.
+ */
+async function clickAndRecord(
+  label: string,
+  refusedCall: string,
+  message: string,
+  panel: (record: (attempt: unknown) => void) => React.ReactNode,
+): Promise<unknown[]> {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  backend.refusals = {
+    [refusedCall]: `[CONVEX A(${refusedCall})] [Request ID: 1] Server Error\nUncaught Error: ${message}\n    at handler (../convex/x.ts:1:1)`,
+  };
+  const attempts: unknown[] = [];
+  const container = document.createElement('div');
+  document.body.append(container);
+  const root = createRoot(container);
+  try {
+    act((): void => root.render(panel((attempt): void => void attempts.push(attempt))));
+    const button = [...container.querySelectorAll('button')].find(
+      (candidate) => candidate.textContent === label,
+    );
+    expect(button).toBeDefined();
+    await act(async (): Promise<void> => {
+      button?.click();
+    });
+    return attempts;
+  } finally {
+    act((): void => root.unmount());
+    container.remove();
+    backend.refusals = {};
+  }
+}
+
 describe('what Retry does to an unregistered skill', (): void => {
   const noop = (): void => undefined;
   const base = {
@@ -1691,6 +1823,50 @@ describe('what Retry does to an unregistered skill', (): void => {
     const markup = panel([parked]);
     expect(markup).toContain('title="Run the body and smoke test this skill already has');
     expect(markup).not.toContain('Author this skill again');
+  });
+
+  it('files a refused Retry as the attempt, in the words written for a person', async (): Promise<void> => {
+    const attempts = await clickAndRecord(
+      'Retry',
+      'skillActions:authorAndRegisterSkill',
+      'The sandbox component is not running.',
+      (record) => (
+        <RegisteredSkillsPanel
+          skills={[]}
+          unregistered={[refused]}
+          authoringFailure={null}
+          onAuthoringAttempt={record}
+        />
+      ),
+    );
+    expect(attempts).toEqual([
+      null,
+      {
+        skillId: 'skill-2',
+        name: 'refresh-the-tile',
+        reason: 'The sandbox component is not running.',
+      },
+    ]);
+  });
+
+  it('files a refused Approve in the words written for a person, the transport envelope stripped', async (): Promise<void> => {
+    const proposed = { ...base, state: 'proposed', requiredScopes: [] } as unknown as Doc<'skills'>;
+    const attempts = await clickAndRecord(
+      'Approve · author and verify',
+      'skills:approve',
+      'cannot approve "refresh-the-tile": it is approved, not proposed',
+      (record) => (
+        <ProposedSkillsPanel skills={[proposed]} surfaces={[]} onAuthoringAttempt={record} />
+      ),
+    );
+    expect(attempts).toEqual([
+      null,
+      {
+        skillId: 'skill-1',
+        name: 'refresh-the-tile',
+        reason: 'cannot approve "refresh-the-tile": it is approved, not proposed',
+      },
+    ]);
   });
 
   it('offers a refused skill a fresh authoring call', (): void => {
@@ -2136,7 +2312,6 @@ describe('dashboard decisions on the supervision card (P6-9)', (): void => {
       charter: {
         timeToFirstDraftedMs: 1,
         timeToFirstApprovedMs: 2,
-        revisions: 0,
         requestChanges: 0,
       },
       decisions: {

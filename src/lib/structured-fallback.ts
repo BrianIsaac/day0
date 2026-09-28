@@ -238,6 +238,17 @@ export function moderationRefusal(err: unknown): string | undefined {
   return failureText(facts.serverText || facts.diagnosis);
 }
 
+/** The schema's reasons a contract error carries: a refused reply's issues, say "the plan had 9 steps; the most is 8". */
+function schemaIssuesOf(err: StructuredContractError): string[] {
+  if (!('issues' in err) || !Array.isArray(err.issues)) return [];
+  return err.issues.filter((issue: unknown): issue is string => typeof issue === 'string');
+}
+
+/** The opening of the reply a contract error kept, when it kept one. */
+function replyOf(err: StructuredContractError): string {
+  return 'reply' in err && typeof err.reply === 'string' ? err.reply : '';
+}
+
 /** Statuses that say the provider rejected this request as sent, not its own condition. */
 const REQUEST_REJECTED_STATUSES: ReadonlySet<number> = new Set([400, 404, 422]);
 
@@ -261,9 +272,9 @@ export function itemBoundModelFailure(err: unknown): string | undefined {
       : 'the model provider refused the request on content grounds';
   }
   if (err instanceof StructuredContractError) {
-    const reply = 'reply' in err && typeof err.reply === 'string' ? failureText(err.reply) : '';
-    return reply
-      ? `the model's reply held no valid structured object: ${reply}`
+    const said = failureText(schemaIssuesOf(err).join('; ') || replyOf(err));
+    return said
+      ? `the model's reply held no valid structured object: ${said}`
       : "the model's reply held no valid structured object";
   }
   const facts = gatherFacts(err);

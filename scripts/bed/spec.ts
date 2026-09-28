@@ -8,13 +8,17 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
 
+/** Where the company bed lives, relative to the checkout. */
 export const BED_DIR = 'bed/company';
 /** The company bed's entry, relative to the checkout. */
 export const COMPANY_SCRIPT = 'scripts/bed/company.ts';
 /** How the company bed is run: internal tooling, by its script path rather than a package alias (N4). */
 export const COMPANY_COMMAND = `pnpm exec tsx ${COMPANY_SCRIPT}`;
+/** The env file key that holds the bed's Linear API key. */
 export const LINEAR_KEY_ENV = 'DAY0_BED_LINEAR_API_KEY';
+/** The env file key that holds the bed's Slack bot token. */
 export const SLACK_TOKEN_ENV = 'DAY0_BED_SLACK_BOT_TOKEN';
+/** The env file key that holds the bed's Notion integration token. */
 export const NOTION_TOKEN_ENV = 'DAY0_BED_NOTION_TOKEN';
 /** The five channels the bed's handbooks and Slack policy name, in the order the policy lists them. */
 export const BED_CHANNELS: readonly string[] = [
@@ -47,7 +51,9 @@ const specSchema = z.object({
   tickets: z.array(ticketSchema).min(1),
 });
 
+/** The bed specification as its JSON file declares it, validated. */
 export type BedSpec = z.infer<typeof specSchema>;
+/** One ticket the bed specification seeds. */
 export type BedTicket = z.infer<typeof ticketSchema>;
 
 /**

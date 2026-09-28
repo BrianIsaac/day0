@@ -1,27 +1,15 @@
 import type { ActionCtx } from '../../convex/_generated/server';
-import { api, internal } from '../../convex/_generated/api';
-import type { Doc, Id } from '../../convex/_generated/dataModel';
-import type { MockWriteResult } from '../../convex/mock';
-import type { MockAction, MockSurfaceSnapshot } from '../work/types';
+import { internal } from '../../convex/_generated/api';
+import type { Id } from '../../convex/_generated/dataModel';
+import {
+  MOCK_ACTION_TOOLS,
+  type MockAction,
+  type MockSurfaceSnapshot,
+  type MockWriteResult,
+} from '../work/types';
 import type { AdapterRun, AppliedAction, SurfaceAdapter } from './types';
+import { errorMessage } from '../lib/errors';
 
-export const MOCK_TOOLS = [
-  'spreadsheet.appendRow',
-  'slack.postMessage',
-  'twitter.reply',
-  'ticket.update',
-] as const satisfies readonly MockAction['tool'][];
-
-/**
- * Keep one ledger line readable in a card without losing what it identifies.
- *
- * Args:
- *   text: Provider effect text.
- *   max: Maximum output length.
- *
- * Returns:
- *   Flattened and clipped effect text.
- */
 /**
  * How much of a read's provider result the ledger keeps. A read exists for the
  * closing phase to author from, so its result must survive the ledger whole
@@ -31,6 +19,7 @@ export const MOCK_TOOLS = [
  */
 export const READ_EFFECT_LENGTH = 4_000;
 
+/** Keep one ledger line readable in a card without losing what it identifies: flattened and clipped to `max`. */
 export function clipEffect(text: string, max: number): string {
   const flat = text.replace(/\s+/g, ' ').trim();
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
@@ -38,7 +27,7 @@ export function clipEffect(text: string, max: number): string {
 
 /** Adapter for the existing per-agent Convex mock environment. */
 class MockSurfaceAdapter implements SurfaceAdapter {
-  readonly tools = MOCK_TOOLS;
+  readonly tools = MOCK_ACTION_TOOLS;
 
   /**
    * Read the complete per-agent mock workbench.
@@ -51,73 +40,7 @@ class MockSurfaceAdapter implements SurfaceAdapter {
    *   Hydrated documents, sheets, messages, tweets and tickets.
    */
   async read(ctx: ActionCtx, agentId: Id<'agents'>): Promise<MockSurfaceSnapshot> {
-    const docs: Doc<'mockDocs'>[] = await ctx.runQuery(api.mock.listDocs, { agentId });
-    const sheets: Doc<'mockSpreadsheets'>[] = await ctx.runQuery(api.mock.listSpreadsheets, {
-      agentId,
-    });
-    const channels: Doc<'mockSlackChannels'>[] = await ctx.runQuery(api.mock.listChannels, {
-      agentId,
-    });
-    const tweets: Doc<'mockTweets'>[] = await ctx.runQuery(api.mock.listTweets, { agentId });
-    const tickets: Doc<'mockTickets'>[] = await ctx.runQuery(api.mock.listTickets, { agentId });
-
-    const spreadsheetsHydrated = await Promise.all(
-      sheets.map(async (s) => {
-        const detail = await ctx.runQuery(api.mock.getSpreadsheet, { agentId, slug: s.slug });
-        const rows = (detail?.rows ?? []) as Doc<'mockSpreadsheetRows'>[];
-        return {
-          slug: s.slug,
-          title: s.title,
-          tabs: s.tabs,
-          rows: rows.map((r) => ({
-            tabName: r.tabName,
-            cells: r.cells as Record<string, string>,
-          })),
-        };
-      }),
-    );
-
-    const channelsHydrated = await Promise.all(
-      channels.map(async (c) => {
-        const messages = (await ctx.runQuery(api.mock.listMessages, {
-          agentId,
-          channelSlug: c.slug,
-        })) as Doc<'mockSlackMessages'>[];
-        return {
-          slug: c.slug,
-          displayName: c.displayName,
-          kind: c.kind,
-          recentMessages: messages.slice(-12).map((m) => ({
-            sender: m.sender,
-            body: m.body,
-            threadKey: m.threadKey,
-          })),
-        };
-      }),
-    );
-
-    return {
-      howToGuides: docs
-        .filter((d) => d.category === 'how-to-guide')
-        .map((d) => ({ slug: d.slug, title: d.title, body: d.body })),
-      teamDocs: docs
-        .filter((d) => d.category === 'team-doc')
-        .map((d) => ({ slug: d.slug, title: d.title, body: d.body })),
-      spreadsheets: spreadsheetsHydrated,
-      slackChannels: channelsHydrated,
-      tweets: tweets.map((t) => ({
-        slug: t.slug,
-        author: t.author,
-        handle: t.handle,
-        body: t.body,
-      })),
-      tickets: tickets.map((t) => ({
-        slug: t.slug,
-        title: t.title,
-        status: t.status,
-        body: t.body,
-      })),
-    };
+    return await ctx.runQuery(internal.mock.snapshotInternal, { agentId });
   }
 
   /**
@@ -166,7 +89,7 @@ class MockSurfaceAdapter implements SurfaceAdapter {
             addedBy: 'Day0 (agent)',
           });
           effect = clipEffect(
-            `1 row appended to ${args.sheetSlug} · ${args.tabName} — ` +
+            `1 row appended to ${args.sheetSlug} · ${args.tabName} - ` +
               args.cells.map((c) => `${c.header}=${c.value || '(blank)'}`).join(', '),
             180,
           );
@@ -191,7 +114,7 @@ class MockSurfaceAdapter implements SurfaceAdapter {
           });
           effect = clipEffect(
             `1 message posted to ${args.channelSlug}` +
-              `${args.threadKey ? ` · thread ${args.threadKey}` : ''} — “${args.body}”`,
+              `${args.threadKey ? ` · thread ${args.threadKey}` : ''} - “${args.body}”`,
             180,
           );
           // A coworker only replies to a message that actually landed.
@@ -226,7 +149,7 @@ class MockSurfaceAdapter implements SurfaceAdapter {
             body: args.body,
             isAgentDraft: true,
           });
-          effect = clipEffect(`1 reply drafted on ${args.tweetSlug} — “${args.body}”`, 180);
+          effect = clipEffect(`1 reply drafted on ${args.tweetSlug} - “${args.body}”`, 180);
           break;
         }
         case 'ticket.update': {
@@ -244,7 +167,7 @@ class MockSurfaceAdapter implements SurfaceAdapter {
             [
               `ticket ${args.slug}`,
               args.status ? `set to ${args.status}` : null,
-              args.comment ? `1 comment — “${args.comment}”` : null,
+              args.comment ? `1 comment - “${args.comment}”` : null,
             ]
               .filter(Boolean)
               .join(' · '),
@@ -252,8 +175,15 @@ class MockSurfaceAdapter implements SurfaceAdapter {
           );
           break;
         }
-        default:
-          return { tool: action.tool, ok: false, reason: 'unknown tool', idempotencyKey };
+        case 'mcp.call':
+        case 'http.request':
+          // The registry routes surface tools to their own adapters; one
+          // reaching the mock adapter is a routing defect, not a work outcome.
+          return { tool: action.tool, ok: false, reason: 'not a mock tool', idempotencyKey };
+        default: {
+          const unhandled: never = action.tool;
+          throw new Error(`unhandled mock tool ${String(unhandled)}`);
+        }
       }
       return result.changed
         ? { tool: action.tool, ok: true, effect, idempotencyKey }
@@ -267,7 +197,7 @@ class MockSurfaceAdapter implements SurfaceAdapter {
       return {
         tool: action.tool,
         ok: false,
-        reason: (error as Error).message,
+        reason: errorMessage(error),
         idempotencyKey,
       };
     }

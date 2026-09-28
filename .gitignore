@@ -19,9 +19,11 @@ coverage
 # internal planning docs, fixture content, and AI agent meta - not part of the public repo.
 # `/docs/*` rather than `/docs/` because git will not look inside an excluded
 # directory, so a negation under one can never take effect: excluding the
-# entries lets `docs/running/` be re-included below.
+# entries lets `docs/running/` and `docs/standards/` (the engineering standard
+# CONTRIBUTING points at, N27) be re-included below.
 /docs/*
 !/docs/running/
+!/docs/standards/
 /docs-fixture/
 /docs-local/
 AGENTS.md

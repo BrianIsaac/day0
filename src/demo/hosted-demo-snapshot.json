@@ -5,7 +5,10 @@
     "readOnly": "This page replays a recording. Nothing here is live: no agent is created, no work is claimed, and no approval on this page can be given or taken back.",
     "sanitised": "Identities, addresses, links and system identifiers have been replaced or removed. The office itself is Day0’s built-in mock workplace.",
     "clock": "Times are minutes and seconds from the moment the agent was deployed.",
-    "spanLabel": "+12:01"
+    "spanLabel": "+12:01",
+    "recordedOn": "2026-09-12",
+    "revision": "3ed8779",
+    "liveSince": "2026-08-13"
   },
   "agent": {
     "id": "agent-1",
@@ -423,7 +426,7 @@
     },
     {
       "fileName": "MEMORY.md",
-      "purpose": "Written back after each turn.",
+      "purpose": "A placeholder written at deployment; nothing wrote to it in this recording.",
       "bytes": 52,
       "excerpt": "# MEMORY\n\n(empty — populated by post-turn review)\n",
       "excerpted": false

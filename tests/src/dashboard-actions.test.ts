@@ -29,7 +29,7 @@ import {
   ProviderReconciliationControl,
 } from '../../app/agent/[agentId]/AgentDashboard';
 import { formatMetricDuration } from '../../app/metric-format';
-import type { AgentMetrics } from '../../convex/metrics';
+import type { AgentMetrics } from '../../src/metrics/types';
 import type { Doc } from '../../convex/_generated/dataModel';
 import { HELD_MUTATION, HELD_PUBLIC_POST, type ActionVerdict } from '../../src/surfaces/policy';
 import {
@@ -51,7 +51,7 @@ const connectedSlack: SurfaceRecord = {
   endpoint: 'https://slack.com/api/',
   toolAllowlist: ['chat.postMessage'],
   managerDmChannelId: 'D0MANAGER',
-  managerName: 'Brian',
+  managerName: 'Sam',
 };
 
 const dm: MockAction = {
@@ -116,12 +116,12 @@ describe('dashboard exact-action gate', (): void => {
     expect(html).not.toContain(HELD_BEFORE_AUTONOMY_NOTE);
     // The plain line comes first, the reason on the same line, and the literal payload is folded away.
     expect(html).toMatch(
-      /<p[^>]*>Send Brian a Slack DM: &quot;Draft ready\.&quot;<span[^>]*> · system-of-record mutation held for the manager<\/span><\/p>/,
+      /<p[^>]*>Send Sam a Slack DM: &quot;Draft ready\.&quot;<span[^>]*> · system-of-record mutation held for the manager<\/span><\/p>/,
     );
     expect(html).toMatch(
       /<p[^>]*>Post to Slack channel C0PUBLIC: &quot;x{120}…&quot;<span[^>]*> · refused · no grant \(slack:write\)<\/span><\/p>/,
     );
-    expect(html.indexOf('Send Brian a Slack DM')).toBeLessThan(
+    expect(html.indexOf('Send Sam a Slack DM')).toBeLessThan(
       html.indexOf('&quot;tool&quot;: &quot;http.request&quot;'),
     );
     expect(html).toMatch(/<details[^>]*><summary[^>]*>exact payload<\/summary><code/);
@@ -170,7 +170,7 @@ describe('dashboard exact-action gate', (): void => {
       'held for your approval',
     );
     expect(html).not.toContain('Read issue REVOPS-10');
-    expect(html).not.toContain('Send Brian a Slack DM');
+    expect(html).not.toContain('Send Sam a Slack DM');
     expect(html).toContain('Reply in #revops-asks thread: &quot;Covered.&quot;');
     expect(html).toMatch(/<input type="checkbox"[^>]*aria-label="approve action 3" checked=""/);
     expect(html).not.toMatch(/aria-label="approve action 1"/);
@@ -391,7 +391,6 @@ const completeMetrics: AgentMetrics = {
   charter: {
     timeToFirstDraftedMs: 120_000,
     timeToFirstApprovedMs: 208_000,
-    revisions: 1,
     requestChanges: 1,
   },
   decisions: {
@@ -632,7 +631,9 @@ describe('the manager DM mode control', (): void => {
     expect(html).toContain('Manager DMs');
     expect(html).toContain('<option value="per-run">per run</option>');
     expect(html).toContain('<option value="digest" selected="">hourly digest</option>');
-    expect(html).toContain('Decision requests are always sent at once');
+    expect(html).toContain(
+      'Decision requests go to your manager channel at once whenever one is connected',
+    );
   });
 });
 

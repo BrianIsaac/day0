@@ -18,6 +18,10 @@ import {
   TRAPS,
   WAY_NAMES,
 } from '../../../src/setup/quickstart';
+import {
+  HOSTED_DEMO_SNAPSHOT,
+  recordingProvenanceLine,
+} from '../../../src/demo/hosted-demo-snapshot';
 
 /**
  * `/setup` is the page a signed-out visitor lands on from the landing page's
@@ -92,6 +96,14 @@ describe('the /setup guide', (): void => {
         'pnpm setup:local',
       );
     }
+  });
+
+  it('dates the export its parity claim refers to, says the run came before it and that the product has moved on (Q3)', (): void => {
+    expect(text).toContain('The product the hosted demo shows, running locally in real mode');
+    expect(text).toContain(recordingProvenanceLine(HOSTED_DEMO_SNAPSHOT.recording));
+    expect(text).toContain(
+      'Exported from the hosted deployment on 12 September 2026 (build 3ed8779, live since 13 August 2026); the run it shows took place before that and is told in offsets. The product has moved on since.',
+    );
   });
 
   it('says once, under the two local ways, that both are real mode, with the three verbs', (): void => {

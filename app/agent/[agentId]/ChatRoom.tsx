@@ -7,6 +7,8 @@ import { useMutation } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { INIT_PROMPT, managerReplies } from '@/agent/day-one-turn';
+import { postCharterSynthesis } from './charter-synthesis';
+import { ROOM_HEIGHT } from './room-frame';
 
 function textOf(message: UIMessage): string {
   return message.parts
@@ -222,7 +224,7 @@ export function ChatRoom({
 }) {
   const startSession = useMutation(api.voice.start);
   const [draft, setDraft] = useState('');
-  // A latch, not UI state — nothing renders off it, so a ref keeps the
+  // A latch, not UI state - nothing renders off it, so a ref keeps the
   // once-only guard out of the render cycle.
   const synthFired = useRef(false);
   // The session this 1:1 belongs to, read by the finalisation post below. A ref
@@ -253,7 +255,7 @@ export function ChatRoom({
   // Kick the agent's opening turn once the session row exists. Strict Mode
   // invokes this twice and the discarded invocation cancels its own send, so one
   // mount asks one opening question. It still asks for a session twice, and any
-  // remount asks again — `voice.start` answers all of them with the same row,
+  // remount asks again - `voice.start` answers all of them with the same row,
   // which is why nothing here has to be latched to keep the count at one.
   useEffect(() => {
     let cancelled = false;
@@ -289,21 +291,20 @@ export function ChatRoom({
   useEffect(() => {
     if (!done || synthFired.current) return;
     synthFired.current = true;
-    const transcript = charterTranscript(messages);
-    void fetch('/api/onboarding/synthesise', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      // Naming the session is what ends it: the chat 1:1 goes through the same
-      // claim-once finalisation as a call, so the row it opened reaches `done`
-      // carrying its transcript, instead of sitting at `active` for good while
-      // the charter it produced is on the page.
-      body: JSON.stringify({ agentId, bossLabel, transcript, voiceSessionId: sessionRef.current }),
+    // Naming the session ends it: the row the chat 1:1 opened reaches `done`
+    // carrying its transcript, instead of sitting at `active` for good while
+    // the charter it produced is on the page.
+    postCharterSynthesis({
+      agentId,
+      bossLabel,
+      transcript: charterTranscript(messages),
+      voiceSessionId: sessionRef.current,
     });
   }, [done, messages, agentId, bossLabel]);
 
   // The opening turn is sent from an effect, so for a moment after mount the
   // composer is live with nothing yet asked. A reply typed into that gap arrives
-  // ahead of the agent's own first turn and answers a question it has not put —
+  // ahead of the agent's own first turn and answers a question it has not put -
   // an error surfaces instead, because then there is nothing else to wait for.
   const opened = messages.some((m) => m.role === 'assistant') || !!streamError;
   const composerDisabled = composerLocked({ status, done, opened });
@@ -318,6 +319,7 @@ export function ChatRoom({
 
   function retryTurn() {
     setStreamError(null);
+    // askAgain reports its own failure through setStreamError and never rejects.
     void askAgain({ messages, regenerate, sendMessage });
   }
 
@@ -330,7 +332,9 @@ export function ChatRoom({
   }
 
   return (
-    <section className="bg-[var(--color-card)] border border-[var(--color-accent)]/40 rounded-xl flex flex-col h-[28rem]">
+    <section
+      className={`bg-[var(--color-card)] border border-[var(--color-accent)]/40 rounded-xl flex flex-col ${ROOM_HEIGHT}`}
+    >
       <header className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between">
         <h2 className="text-sm font-semibold">Day-1 1:1 · chat mode</h2>
         <div className="flex items-center gap-3">

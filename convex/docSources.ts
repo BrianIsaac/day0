@@ -414,7 +414,7 @@ export const listMine = query({
     const identity = await getCallerOrThrow(ctx);
     const sources = await ctx.db
       .query('docSources')
-      .withIndex('by_user', (index) => index.eq('userId', identity.subject))
+      .withIndex('by_user', (index) => index.eq('userId', identity.ownerKey))
       .collect();
     return await Promise.all(
       sources.map(async (source) => ({
@@ -435,7 +435,7 @@ export const byIds = query({
     );
     return sources.filter(
       (source): source is Doc<'docSources'> =>
-        source !== null && source.userId === identity.subject,
+        source !== null && source.userId === identity.ownerKey,
     );
   },
 });
@@ -474,14 +474,14 @@ export const link = action({
     // component that stops after the link is reported.
     await assertDocsComponentReachable(input);
     const sourceId = await ctx.runMutation(internal.docSources.createSource, {
-      userId: identity.subject,
+      userId: identity.ownerKey,
       ...input,
     });
     let storedCredentialId: Id<'credentials'> | undefined;
     try {
       if (credential) {
         storedCredentialId = await ctx.runAction(internal.credentials.store, {
-          userId: identity.subject,
+          userId: identity.ownerKey,
           kind: 'value',
           label: secretLabel(input),
           plaintext: credential,
@@ -489,7 +489,7 @@ export const link = action({
         });
         await ctx.runMutation(internal.docSources.attachCredential, {
           sourceId,
-          userId: identity.subject,
+          userId: identity.ownerKey,
           credentialId: storedCredentialId,
         });
       }
@@ -498,7 +498,7 @@ export const link = action({
     } catch (error) {
       await ctx.runMutation(internal.docSources.deleteFailedLink, {
         sourceId,
-        userId: identity.subject,
+        userId: identity.ownerKey,
         credentialId: storedCredentialId,
       });
       throw error;
@@ -521,14 +521,14 @@ export const rotateCredential = action({
     if (!args.credential) throw new Error('Connection secret is required.');
     const source = await ctx.runQuery(internal.docSources.getOwnedInternal, {
       sourceId: args.sourceId,
-      userId: identity.subject,
+      userId: identity.ownerKey,
     });
     if (!source || !SECRET_KINDS.has(source.kind)) {
       throw new Error('Documentation source not found.');
     }
     validateReaderSecret(source, args.credential);
     const credentialId = await ctx.runAction(internal.credentials.store, {
-      userId: identity.subject,
+      userId: identity.ownerKey,
       kind: 'value',
       label: secretLabel(source),
       plaintext: args.credential,
@@ -536,7 +536,7 @@ export const rotateCredential = action({
     });
     await ctx.runMutation(internal.docSources.attachCredential, {
       sourceId: source._id,
-      userId: identity.subject,
+      userId: identity.ownerKey,
       credentialId,
     });
     if (source.credentialId) {
@@ -566,7 +566,7 @@ export const resync = mutation({
     assertRealMode('Documentation resync');
     const identity = await getCallerOrThrow(ctx);
     const source = await ctx.db.get(args.sourceId);
-    if (!source || source.userId !== identity.subject)
+    if (!source || source.userId !== identity.ownerKey)
       throw new Error('Documentation source not found.');
     await ctx.db.patch(source._id, {
       status: 'linking',
@@ -592,7 +592,7 @@ export const unlink = mutation({
     assertRealMode('Documentation unlinking');
     const identity = await getCallerOrThrow(ctx);
     const source = await ctx.db.get(args.sourceId);
-    if (!source || source.userId !== identity.subject)
+    if (!source || source.userId !== identity.ownerKey)
       throw new Error('Documentation source not found.');
     await removeSource(ctx, source);
     return null;

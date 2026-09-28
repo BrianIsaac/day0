@@ -2,7 +2,7 @@ import { v } from 'convex/values';
 import { internalMutation } from './_generated/server';
 
 /**
- * Seed the per-agent mock work environment. Idempotent — safe to call
+ * Seed the per-agent mock work environment. Idempotent - safe to call
  * multiple times. The "how-to-update-X" guides in mockDocs are
  * machine-readable contracts the executor reads to decide which
  * actions[] to emit; the team docs are read by the see-internal-docs
@@ -317,7 +317,7 @@ export const seedMockEnvironment = internalMutation({
     for (const d of TEAM_DOCS) await upsertDoc(d.slug, d.title, d.body, 'team-doc');
     for (const g of HOW_TO_GUIDES) await upsertDoc(g.slug, g.title, g.body, 'how-to-guide');
 
-    // Spreadsheet — Q4 Revenue Tracker, two tabs
+    // Spreadsheet - Q4 Revenue Tracker, two tabs
     const sheetSlug = 'q4-revenue-tracker';
     const sheetExisting = await ctx.db
       .query('mockSpreadsheets')
@@ -394,7 +394,7 @@ export const seedMockEnvironment = internalMutation({
     await ensureChannel('dm-priya', 'DM · Priya', 'dm');
     await ensureChannel('dm-aman', 'DM · Aman', 'dm');
 
-    // Initial Slack messages — set the scene
+    // Initial Slack messages - set the scene
     const seedMessage = async (
       channelSlug: string,
       threadKey: string | undefined,
@@ -452,7 +452,7 @@ export const seedMockEnvironment = internalMutation({
       });
     }
 
-    // Tickets — REVOPS-123, REVOPS-124
+    // Tickets - REVOPS-123, REVOPS-124
     const ensureTicket = async (
       slug: string,
       title: string,

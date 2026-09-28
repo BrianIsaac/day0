@@ -1,6 +1,7 @@
 /// <reference types="node" />
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
+import { errorMessage } from '../src/lib/errors';
 
 interface ProbeOutcome {
   verdict: 'connected' | 'ungranted' | 'listed-dead' | 'skipped';
@@ -61,7 +62,7 @@ export function probeSurface(surfaceId: string): ProbeOutcome {
   try {
     return JSON.parse(child.stdout) as ProbeOutcome;
   } catch (error) {
-    throw new Error(`Convex returned invalid JSON: ${(error as Error).message}`);
+    throw new Error(`Convex returned invalid JSON: ${errorMessage(error)}`);
   }
 }
 
@@ -77,7 +78,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   try {
     main();
   } catch (error) {
-    process.stderr.write(`FAIL  ${redactProbeOutput((error as Error).message)}\n`);
+    process.stderr.write(`FAIL  ${redactProbeOutput(errorMessage(error))}\n`);
     process.exitCode = 1;
   }
 }

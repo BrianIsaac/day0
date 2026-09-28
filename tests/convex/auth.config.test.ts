@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { DEV_NO_AUTH_ISSUER } from '../../convex/devAuth';
+import { DEV_NO_AUTH_ISSUER } from '../../src/lib/dev-auth-issuer';
 
 const DATA_JWKS = 'data:text/plain;charset=utf-8;base64,eyJrZXlzIjpbXX0=';
 

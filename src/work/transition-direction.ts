@@ -2,6 +2,7 @@ import { isSurfaceTool, parseSurfaceAction, statusChangeTarget } from '../surfac
 import { liveManagerFeedback, type ManagerFeedback } from './manager-feedback';
 import { planObligations, transitionWithheld } from './obligations';
 import type { ExecutionPlan, MockAction, PlanStepOutcome } from './types';
+import { escapeRegExp } from '../lib/regex';
 
 /**
  * A retry note that directs the ticket state change in so many words.
@@ -21,10 +22,6 @@ import type { ExecutionPlan, MockAction, PlanStepOutcome } from './types';
 
 /** Words that turn a sentence naming the state into a refusal or a deferral of it. */
 const NEGATED = /\b(?:not|no|never|don't|dont|do not|hold|wait|yet|later|unless|until|instead)\b/i;
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
 
 /**
  * Whether the note names the state in a sentence that neither negates nor

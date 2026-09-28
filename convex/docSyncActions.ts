@@ -10,11 +10,8 @@ import { markdownPageTitle } from '../src/docs/readers/folder';
 import { unwrapWholePageFence } from '../src/docs/readers/mcp';
 import { credentialSourceRef } from '../src/docs/credential-ref';
 import { redactCredentials } from '../src/docs/redaction';
-import {
-  RedactorUnavailableError,
-  spanModelFromEnv,
-  type SpanModel,
-} from '../src/redaction/client';
+import { RedactorUnavailableError, type SpanModel } from '../src/redaction/client';
+import { spanModelFromEnv } from '../src/redaction/span-model-env';
 import { ownerKnownValues } from '../src/redaction/known-values';
 import { redactSecret } from '../src/surfaces/redact';
 import { interruptedReadError } from '../src/lib/transport-error';

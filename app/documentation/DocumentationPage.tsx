@@ -7,6 +7,7 @@ import type { Id } from '@convex/_generated/dataModel';
 import { DOCS_NOTION_LOCATOR, serverKindHelp } from '@/docs/components';
 import { plainErrorMessage } from '@/lib/plain-error';
 import { REPOSITORY_URL } from '@/setup/quickstart';
+import { errorMessage } from '@/lib/errors';
 
 type SourceKind = 'folder' | 'git' | 'urls' | 'mcp';
 type ServerKind = 'notion' | 'confluence' | 'drive' | 'generic';
@@ -147,7 +148,7 @@ export function DocumentationPage(): React.ReactNode {
       setLabel(cleared.label);
       setLocator(cleared.locator);
     } catch (failure) {
-      setError(plainErrorMessage((failure as Error).message));
+      setError(plainErrorMessage(errorMessage(failure)));
     } finally {
       setBusy(false);
     }
@@ -171,7 +172,7 @@ export function DocumentationPage(): React.ReactNode {
       });
       setRotatingSourceId(null);
     } catch (failure) {
-      setError(plainErrorMessage((failure as Error).message));
+      setError(plainErrorMessage(errorMessage(failure)));
     } finally {
       setBusySourceId(null);
     }
@@ -272,9 +273,12 @@ export function DocumentationPage(): React.ReactNode {
                       </button>
                       <button
                         type="button"
-                        onClick={() =>
-                          void revokeCredential({ credentialId: source.credentialId! })
-                        }
+                        onClick={() => {
+                          revokeCredential({ credentialId: source.credentialId! }).catch(
+                            (failure: unknown) =>
+                              setError(plainErrorMessage(errorMessage(failure))),
+                          );
+                        }}
                         className="text-xs border border-[var(--color-danger)]/40 text-[var(--color-danger)] rounded px-3 py-1.5"
                       >
                         Revoke
@@ -283,14 +287,22 @@ export function DocumentationPage(): React.ReactNode {
                   ) : null}
                   <button
                     type="button"
-                    onClick={() => void resync({ sourceId: source._id })}
+                    onClick={() => {
+                      resync({ sourceId: source._id }).catch((failure: unknown) =>
+                        setError(plainErrorMessage(errorMessage(failure))),
+                      );
+                    }}
                     className="text-xs border border-[var(--color-border)] rounded px-3 py-1.5"
                   >
                     Re-sync
                   </button>
                   <button
                     type="button"
-                    onClick={() => void unlink({ sourceId: source._id })}
+                    onClick={() => {
+                      unlink({ sourceId: source._id }).catch((failure: unknown) =>
+                        setError(plainErrorMessage(errorMessage(failure))),
+                      );
+                    }}
                     className="text-xs border border-[var(--color-danger)]/40 text-[var(--color-danger)] rounded px-3 py-1.5"
                   >
                     Unlink

@@ -3,7 +3,7 @@
 import type { ReactNode } from 'react';
 import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
-import type { AgentMetrics, OwnerMetrics, PilotFigures } from '@convex/metrics';
+import type { AgentMetrics, OwnerMetrics, PilotFigures } from '@/metrics/types';
 import { formatAuditTrail, formatMetricDuration } from './metric-format';
 
 const NUMBER_WORDS = [

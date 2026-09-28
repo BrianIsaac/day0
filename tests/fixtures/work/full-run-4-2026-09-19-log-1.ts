@@ -2,11 +2,12 @@ import type { DependentExecutionOutput, ExecutionOutput, ExecutionPlan, WorkCand
 
 /**
  * Aiko's LOG-1 (SH-4471) and LOG-3 (SH-4480) from the fourth full internal
- * run of 19 September (main 0ba9479, real mode, autonomy off), and LOG-1 from
+ * run of 19 September (main 0ba9479, GLM 5.3 Flash via Featherless, real
+ * mode, autonomy off), and LOG-1 from
  * the second sitting of the same day, which stopped where the fourth did not.
  * Every string is the runs' own, read from the fourth run's findings row and
- * the two exports; only the manager's DM channel id is replaced, `observedAt`
- * is rebuilt as a date and the plan's correction ids are left to the test,
+ * the two exports; only the identifiers the substitution rule names are
+ * replaced (`tests/fixtures/README.md`), `observedAt` is rebuilt as a date and the plan's correction ids are left to the test,
  * which inserts the rows they name.
  */
 
@@ -19,7 +20,7 @@ export const log1Candidate: WorkCandidate = { ...{
   "contentRefs": [
     "https://linear.app/day00/issue/LOG-1/exception-sh-4471-held-at-port-klang-meridian-freight-no-revised-eta"
   ],
-  "requesterLabel": "Brian"
+  "requesterLabel": "Sam"
 }, observedAt: new Date(1789782360619) } as WorkCandidate;
 
 /** The approved plan: a DM step, then a comment and a Done the judgement made `conditional-write` under `conditional-on-manager`; no read declared. */
@@ -210,7 +211,7 @@ export const log3Candidate: WorkCandidate = { ...{
   "contentRefs": [
     "https://linear.app/day00/issue/LOG-3/exception-sh-4480-held-at-port-klang-meridian-freight-no-revised-eta"
   ],
-  "requesterLabel": "Brian"
+  "requesterLabel": "Sam"
 }, observedAt: new Date(1789783197004) } as WorkCandidate;
 
 /** SH-4480's approved plan, the same declared shape as LOG-1's; it applied the two corrections kept from LOG-1. */

@@ -5,4 +5,4 @@ contact_links:
     about: A suspected vulnerability goes through the private channel in SECURITY.md, not a public issue.
   - name: Setting it up
     url: https://github.com/BrianIsaac/day0#local-dev
-    about: The three local routes, the real-mode route and what pnpm check:setup reports are in the README.
+    about: The three ways to run it (the hosted demo and the two local ways, both real mode) and what pnpm check:setup reports are in the README.

@@ -121,7 +121,7 @@ async function synthesise(): Promise<Doc<'charters'>> {
   const owner = harness.withIdentity({ subject: 'owner' });
   const result = await owner.action(api.onboarding.synthesiseFromTranscript, {
     agentId,
-    bossLabel: 'Brian',
+    bossLabel: 'Sam',
     transcript: DAY_ONE_TRANSCRIPT_2026_09_14,
   });
   if (result.outcome !== 'synthesised') throw new Error(`outcome ${result.outcome}`);
@@ -238,7 +238,7 @@ describe('the workspace a synthesised charter seeds', (): void => {
     const owner = harness.withIdentity({ subject: 'owner' });
     await owner.action(api.onboarding.synthesiseFromTranscript, {
       agentId,
-      bossLabel: 'Brian',
+      bossLabel: 'Sam',
       transcript: DAY_ONE_TRANSCRIPT_2026_09_14,
     });
 

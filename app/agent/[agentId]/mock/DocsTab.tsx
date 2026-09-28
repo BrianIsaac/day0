@@ -123,7 +123,7 @@ export function DocsTab({
                     : 'bg-[var(--color-muted)]/15 text-[var(--color-muted)]'
                 }`}
               >
-                {active.category === 'how-to-guide' ? 'agent-readable' : 'team doc'}
+                {active.category === 'how-to-guide' ? 'how-to guide' : 'team doc'}
               </span>
               {active.sourceUrl ? (
                 <a

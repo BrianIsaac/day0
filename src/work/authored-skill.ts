@@ -4,6 +4,7 @@ import {
   undeclaredSkillInputs,
   declaredSkillInputs,
 } from './skill-inputs';
+import { escapeRegExp } from '../lib/regex';
 
 /**
  * The static gate on an authored skill, run before any sandbox spends a run.
@@ -40,10 +41,6 @@ const WHOLE_NUMBER =
   /(?<![A-Za-z0-9_.,-])(?:\d{1,3}(?:,\d{3})+|\d{2,})(?:\.\d+)?(?![A-Za-z0-9%]|[.,]\d)/g;
 const QUOTED = /["“]([^"”\n]{3,})["”]/g;
 const MIN_LITERAL_LENGTH = 2;
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
 
 /**
  * The values of one work item that a skill body must not repeat.
