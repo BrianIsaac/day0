@@ -35,6 +35,15 @@ async function refusalOf(response: Response): Promise<string> {
   return `the drafting service answered ${response.status}`;
 }
 
+/** A post the deadline stopped, said in whole seconds. */
+function lateBy(deadlineMs: number): CharterSynthesisOutcome {
+  return {
+    ok: false,
+    late: true,
+    reason: `drafting has taken longer than ${Math.round(deadlineMs / 1000)} seconds`,
+  };
+}
+
 /**
  * Post a finished 1:1 for charter synthesis and say what became of it. Each room latches its own
  * call, so the post goes once per 1:1 unless the manager asks for it again.
@@ -58,26 +67,23 @@ export async function postCharterSynthesis(
     late = true;
     deadline.abort();
   }, deadlineMs);
-  let response: Response;
   try {
-    response = await fetch('/api/onboarding/synthesise', {
+    const response = await fetch('/api/onboarding/synthesise', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(request),
       signal: deadline.signal,
     });
+    if (response.ok) return { ok: true };
+    // The refusal's body is read under the same deadline: a body that stalls is a late post.
+    const reason = await refusalOf(response);
+    return late ? lateBy(deadlineMs) : { ok: false, late: false, reason };
   } catch {
     // Either the deadline aborted the post or the page could not reach Day0; `late` says which.
-    return {
-      ok: false,
-      late,
-      reason: late
-        ? `drafting has taken longer than ${Math.round(deadlineMs / 1000)} seconds`
-        : 'the page could not reach Day0',
-    };
+    return late
+      ? lateBy(deadlineMs)
+      : { ok: false, late: false, reason: 'the page could not reach Day0' };
   } finally {
     clearTimeout(timer);
   }
-  if (response.ok) return { ok: true };
-  return { ok: false, late: false, reason: await refusalOf(response) };
 }

@@ -101,6 +101,35 @@ describe('the charter synthesis post', (): void => {
     expect(SYNTHESIS_DEADLINE_MS).toBe(90_000);
   });
 
+  it('holds a refusal whose body stalls to the same deadline', async (): Promise<void> => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      'fetch',
+      async (_url: string, init: RequestInit): Promise<Response> =>
+        new Response(
+          new ReadableStream({
+            start(controller): void {
+              init.signal?.addEventListener('abort', () => controller.error(init.signal?.reason), {
+                once: true,
+              });
+            },
+          }),
+          { status: 502 },
+        ),
+    );
+    let outcome: unknown;
+    // Read as it settles; the post never rejects, so nothing is left to land anywhere.
+    void postCharterSynthesis(request).then((settled) => {
+      outcome = settled;
+    });
+    await vi.advanceTimersByTimeAsync(SYNTHESIS_DEADLINE_MS);
+    expect(outcome).toEqual({
+      ok: false,
+      late: true,
+      reason: 'drafting has taken longer than 90 seconds',
+    });
+  });
+
   it('says the page could not reach Day0 when the post fails before the deadline, not that it was late', async (): Promise<void> => {
     vi.useFakeTimers();
     vi.stubGlobal('fetch', async (): Promise<Response> => {
