@@ -15,7 +15,8 @@ import {
 } from '../../../../app/agent/[agentId]/EmployeeShell';
 import { CharterView } from '../../../../app/agent/[agentId]/charter/CharterView';
 import { WorkView } from '../../../../app/agent/[agentId]/work/WorkView';
-import { focusedName, mount, press, said, settle } from '../../../fixtures/dom/press';
+import { ManageView } from '../../../../app/agent/[agentId]/manage/ManageView';
+import { focusedName, mount, press, said, settle, typeInto } from '../../../fixtures/dom/press';
 import { ARRIVAL_MS } from '../../../../app/arrival';
 import { dashboardMetrics } from '../../../fixtures/dashboard/metrics';
 
@@ -24,9 +25,17 @@ const backend = vi.hoisted(() => ({
   refusals: {} as Record<string, string>,
   /** What a mutation or action resolves with, by function name; undefined otherwise. */
   results: {} as Record<string, unknown>,
+  /**
+   * What the backend's subscriptions do while a call lands, by function name: Convex applies the
+   * queries a mutation changed before the mutation's promise resolves.
+   */
+  landing: {} as Record<string, () => void>,
   /** Every call made, by function name, with its arguments. */
   calls: [] as Array<{ name: string; args: unknown }>,
-  /** What a query answers, by function name; undefined (loading) otherwise. */
+  /**
+   * What a query answers, by function name; undefined (loading) otherwise. An `Error` is thrown
+   * during render, as `useQuery` rethrows what the backend's query threw.
+   */
   queries: {} as Record<string, unknown>,
 }));
 
@@ -38,10 +47,16 @@ vi.mock('convex/react', () => {
       backend.calls.push({ name, args });
       const refusal = backend.refusals[name];
       if (refusal !== undefined) throw new Error(refusal);
+      backend.landing[name]?.();
       return backend.results[name];
     };
   return {
-    useQuery: (reference: unknown): unknown => backend.queries[getFunctionName(reference as never)],
+    useQuery: (reference: unknown, args?: unknown): unknown => {
+      if (args === 'skip') return undefined;
+      const answer = backend.queries[getFunctionName(reference as never)];
+      if (answer instanceof Error) throw answer;
+      return answer;
+    },
     useMutation: call,
     useAction: call,
   };
@@ -412,12 +427,87 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     view.unmount();
   });
 
-  it('says so when the employee does not exist or is not the caller’s, rather than loading for ever', async (): Promise<void> => {
-    backend.queries = { 'agents:get': null };
+  /** What each of the employee's other reads throws once the employee is gone, as the backend does. */
+  const gone = (): Record<string, unknown> =>
+    Object.fromEntries(
+      [
+        'charters:latest',
+        'surfaces:listForAgent',
+        'work:needsYouForAgent',
+        'work:listForAgent',
+        'skills:proposed',
+        'metrics:forAgent',
+      ].map((name) => [name, new Error('agent not found')]),
+    );
+
+  it('says "No such employee" for an id that names none, reading nothing else of it', async (): Promise<void> => {
+    backend.queries = { ...gone(), 'config:surfaceMode': { mode: 'real' }, 'agents:get': null };
     const view = mount(page());
     await settle();
     expect(view.container.querySelector('h1')?.textContent).toBe('No such employee');
     expect(view.container.textContent).not.toContain('loading employee');
+    view.unmount();
+  });
+
+  it('names the employee as retired, not missing, when it goes while its page is open', async (): Promise<void> => {
+    route.segment = 'manage';
+    backend.queries = {
+      'agents:get': row('active'),
+      'charters:latest': approved,
+      'config:surfaceMode': { mode: 'real' },
+      'surfaces:listForAgent': [],
+    };
+    const view = mount(page(<p>the manage tab</p>));
+    await settle();
+    expect(view.container.textContent).toContain('the manage tab');
+
+    backend.queries = { ...gone(), 'config:surfaceMode': { mode: 'real' }, 'agents:get': null };
+    act((): void => view.root.render(page(<p>the manage tab</p>)));
+    await settle();
+    expect(view.container.querySelector('h1')?.textContent).toBe('Mira is retired');
+    expect(view.container.textContent).not.toContain('the manage tab');
+    expect(view.container.querySelector('a[href="/"]')?.textContent).toBe('Back to your employees');
+    view.unmount();
+  });
+
+  it('retires the employee from its own Manage tab and lands on the company home, the page never crashing', async (): Promise<void> => {
+    route.segment = 'manage';
+    const standing = {
+      'agents:get': row('active'),
+      'charters:latest': approved,
+      'config:surfaceMode': { mode: 'mock' },
+      'work:needsYouForAgent': { entries: [], total: 0 },
+      'reset:retirePreview': {
+        mode: 'mock',
+        rowCounts: { events: 3 },
+        atLeast: false,
+        revoked: [],
+        kept: [],
+        keptClaims: 0,
+        tombstone: false,
+      },
+    };
+    backend.queries = standing;
+    backend.results = { 'reset:retire': { agentName: 'Mira' } };
+    const view = mount(page(<ManageView />));
+    await settle();
+    backend.landing = {
+      'reset:retire': (): void => {
+        backend.queries = { ...gone(), 'config:surfaceMode': { mode: 'mock' }, 'agents:get': null };
+        view.root.render(page(<ManageView />));
+      },
+    };
+
+    await press(view.container, 'Retire Mira…');
+    const field = document.querySelector<HTMLInputElement>('[role="alertdialog"] input');
+    if (!field) throw new Error('no retire dialog');
+    typeInto(field, 'retire Mira');
+    await press(document.body, 'Retire Mira');
+
+    expect(backend.calls.at(-1)).toEqual({ name: 'reset:retire', args: { agentId: 'agent-1' } });
+    expect(view.container.querySelector('h1')?.textContent).toBe('Mira is retired');
+    expect(route.replaced).toEqual(['/']);
+    backend.landing = {};
     view.unmount();
   });
 

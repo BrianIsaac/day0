@@ -29,6 +29,7 @@ import {
   type EmployeeTab,
 } from './employee-tabs';
 import { EmployeeHeader } from './EmployeeHeader';
+import { EmployeeRetired, NoSuchEmployee } from './NoSuchEmployee';
 import { currentStep, firstWeekSteps } from './first-week';
 import { AgentZoneContext } from './time';
 
@@ -107,17 +108,20 @@ export function EmployeeShell({
   children: ReactNode;
 }) {
   const agent = useQuery(api.agents.get, { agentId });
-  const latest = useQuery(api.charters.latest, { agentId });
+  // The employee's other reads wait on it: each refuses an employee that is gone, so once a
+  // retire lands they are dropped in the same render that learns it, and the page says so.
+  const present = agent ? { agentId } : 'skip';
+  const latest = useQuery(api.charters.latest, present);
   const surfaceConfig = useQuery(api.config.surfaceMode);
   const surfaceMode = surfaceConfig?.mode;
   const surfaceRows = useQuery(
     api.surfaces.listForAgent,
-    surfaceMode === 'real' ? { agentId } : 'skip',
+    surfaceMode === 'real' ? present : 'skip',
   );
-  const inbox = useQuery(api.work.needsYouForAgent, { agentId });
-  const workItems = useQuery(api.work.listForAgent, { agentId });
-  const proposedSkills = useQuery(api.skills.proposed, { agentId });
-  const metrics = useQuery(api.metrics.forAgent, { agentId });
+  const inbox = useQuery(api.work.needsYouForAgent, present);
+  const workItems = useQuery(api.work.listForAgent, present);
+  const proposedSkills = useQuery(api.skills.proposed, present);
+  const metrics = useQuery(api.metrics.forAgent, present);
   const segment = useSelectedLayoutSegment();
   const router = useRouter();
   const selected = tabOfSegment(segment);
@@ -130,6 +134,9 @@ export function EmployeeShell({
   const [sentBack, setSentBack] = useState<Id<'charters'> | null>(null);
   const onboarding = useRef<HTMLDivElement>(null);
   const arriving = useArrival(agent !== undefined && agent !== null);
+  // The name the page last showed, so an employee retired while its page is open is named.
+  const [shownName, setShownName] = useState<string | null>(null);
+  if (agent && agent.name !== shownName) setShownName(agent.name);
 
   const surfaces = useMemo(
     (): SurfaceRecord[] => (surfaceRows ?? []).map((row) => toSurfaceRecord(row)),
@@ -200,15 +207,7 @@ export function EmployeeShell({
   );
 
   if (agent === null) {
-    return (
-      <div className="mx-auto grid w-full max-w-7xl gap-3 px-4 py-10 sm:px-6">
-        <h1 className="text-2xl font-semibold tracking-[-0.02em]">No such employee</h1>
-        <p className="text-[var(--color-fg-2)]">
-          This employee was retired, or the address names one that is not yours.{' '}
-          <Link href="/">Your employees</Link>.
-        </p>
-      </div>
-    );
+    return shownName === null ? <NoSuchEmployee /> : <EmployeeRetired name={shownName} />;
   }
 
   if (!agent || !employee) {
