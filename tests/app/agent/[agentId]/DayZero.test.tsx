@@ -60,6 +60,19 @@ describe('ModePicker', () => {
   });
 });
 
+describe('ModePicker when the probe fails', () => {
+  it('reads an error answer as voice being unavailable', async () => {
+    vi.stubGlobal(
+      'fetch',
+      async (): Promise<Response> => new Response('<html>down</html>', { status: 502 }),
+    );
+    const view = mount(<ModePicker onPick={() => undefined} />);
+    await settle();
+    expect(view.container.textContent).toContain('Voice is off on this deployment');
+    view.unmount();
+  });
+});
+
 describe('DayZero', () => {
   it('sets the one-to-one beside what the employee knows so far and the first lines of its record', async () => {
     probe(true);

@@ -81,7 +81,10 @@ export function employeeTabItems(
  * @param agent - The employee.
  * @param charter - Its newest charter, or null.
  */
-export function onDayZero(agent: Pick<Doc<'agents'>, 'state'>, charter: unknown): boolean {
+export function onDayZero(
+  agent: Pick<Doc<'agents'>, 'state'>,
+  charter: Pick<Doc<'charters'>, '_id'> | null,
+): boolean {
   return charter === null && (agent.state === 'deployed' || agent.state === 'day-one-in-progress');
 }
 
@@ -195,6 +198,18 @@ export function EmployeeShell({
         : null,
     [agent, charter, surfaceMode, surfaces, arriving],
   );
+
+  if (agent === null) {
+    return (
+      <div className="mx-auto grid w-full max-w-7xl gap-3 px-4 py-10 sm:px-6">
+        <h1 className="text-2xl font-semibold tracking-[-0.02em]">No such employee</h1>
+        <p className="text-[var(--color-fg-2)]">
+          This employee was retired, or the address names one that is not yours.{' '}
+          <Link href="/">Your employees</Link>.
+        </p>
+      </div>
+    );
+  }
 
   if (!agent || !employee) {
     return (

@@ -2,12 +2,6 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 
-vi.mock('../../app/agent/[agentId]/ChatRoom', () => ({ ChatRoom: (): null => null }));
-vi.mock('../../app/agent/[agentId]/VoiceRoom', () => ({ VoiceRoom: (): null => null }));
-vi.mock('../../app/agent/[agentId]/MockEnvironment', () => ({
-  MockEnvironment: (): null => null,
-}));
-
 import {
   AutonomyConfirm,
   AutonomyControl,

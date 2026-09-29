@@ -47,13 +47,17 @@ export function ModePicker({ onPick }: { onPick: (mode: 'voice' | 'chat') => voi
 
   useEffect(() => {
     let cancelled = false;
-    fetch('/api/voice/elevenlabs/start?probe=1')
-      .then((r) => r.json())
-      .then((d: { configured?: boolean }) => {
-        if (!cancelled) setVoiceConfigured(d.configured !== false);
+    // The chain ends in its own catch, which reads a failed probe as voice being unavailable.
+    void fetch('/api/voice/elevenlabs/start?probe=1')
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`voice probe answered ${response.status}`);
+        return (await response.json()) as { configured?: boolean };
+      })
+      .then((answer) => {
+        if (!cancelled) setVoiceConfigured(answer.configured !== false);
       })
       .catch(() => {
-        // The probe failing is voice being unavailable, which the picker says below.
+        // A probe that fails is voice being unavailable, which the picker says below.
         if (!cancelled) setVoiceConfigured(false);
       });
     return () => {

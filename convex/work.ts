@@ -7213,8 +7213,10 @@ const needsYouForAgentValidator = v.object({
  * Public, owner-guarded (`assertOwnsAgent`): what one employee waits on the
  * manager for, longest wait first, for the Needs you tab of the employee's
  * page (N7). The same rows, kinds and dating as `needsYou`, read by the same
- * `needsYouOfEmployee`, so the tab and the company home never disagree.
- * Writes nothing.
+ * `needsYouOfEmployee`, so for an employee the home lists, the tab lists the
+ * same entries in the same order. The home leaves out evaluation agents and
+ * reads at most `NEEDS_YOU_EMPLOYEE_LIMIT` employees; the tab answers for the
+ * one employee its page is about, whichever it is. Writes nothing.
  *
  * @returns At most `NEEDS_YOU_LIMIT` entries and how many there are in all.
  */

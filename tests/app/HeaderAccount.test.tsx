@@ -18,8 +18,15 @@ vi.mock('@clerk/nextjs', () => ({
     clerk.appearance.signUp = appearance;
     return children;
   },
-  UserButton: ({ appearance }: { appearance?: unknown }): null => {
+  UserButton: ({
+    appearance,
+    userProfileProps,
+  }: {
+    appearance?: unknown;
+    userProfileProps?: { appearance?: unknown };
+  }): null => {
     clerk.appearance.account = appearance;
+    clerk.appearance.profile = userProfileProps?.appearance;
     return null;
   },
 }));
@@ -48,5 +55,7 @@ describe('the header account controls', (): void => {
     clerk.signedIn = true;
     renderToStaticMarkup(<HeaderAccount />);
     expect(clerk.appearance.account).toBe(clerkAppearance);
+    // Manage account opens the profile as a modal of its own, which takes the appearance too.
+    expect(clerk.appearance.profile).toBe(clerkAppearance);
   });
 });

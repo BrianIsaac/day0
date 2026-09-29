@@ -16,6 +16,7 @@ import { RecordLine } from '../../components/RecordLine';
 import { useEmployee } from './employee-context';
 import { employeeTabHref } from './employee-tabs';
 import { EmployeeRail } from './EmployeeRail';
+import { TAKE_IT_ANYWAY } from './work/work-item';
 import { useNow } from './time';
 
 /** How many skipped items the page names under what else is waiting. */
@@ -60,32 +61,47 @@ function overrulable(item: Pick<Doc<'workItems'>, 'verdict'>): boolean {
 }
 
 /**
- * What the employee set aside, which waits on nobody: each skipped item with why, and the link to
- * its card on the Work tab, where the manager can give it the work anyway.
+ * What waits on nobody: each item the employee set aside, newest first, with why and the link to
+ * its card on the Work tab, where the manager can give it the work anyway; and whether a
+ * reorientation card is open (none can be yet, A11), with the page that says what it covers.
  */
 function SetAside({ title, skipped }: { title: string; skipped: readonly Doc<'workItems'>[] }) {
   const { agent } = useEmployee();
   const work = employeeTabHref(agent._id, 'work');
+  // Newest first: what the employee set aside most recently is the likeliest to still matter.
+  const newest = [...skipped].sort((left, right) => right._creationTime - left._creationTime);
+  const more = newest.length - SKIPPED_LINES;
   return (
     <Card title={title}>
-      {skipped.length === 0 ? (
-        <p className="text-sm text-[var(--color-muted)]">{agent.name} has set nothing aside.</p>
-      ) : (
-        <ul className="grid gap-2">
-          {skipped.slice(0, SKIPPED_LINES).map((item) => {
+      <ul className="grid gap-2">
+        {newest.length === 0 ? (
+          <RecordLine kind="withheld">{agent.name} has set nothing aside.</RecordLine>
+        ) : (
+          newest.slice(0, SKIPPED_LINES).map((item) => {
             const reason = skipReasonOf(item);
             return (
               <RecordLine key={item._id} kind="withheld">
                 Skipped “{item.title}”{reason ? `: ${reason.replace(/\.$/, '')}` : ''}.{' '}
                 <Link href={`${work}#item-${item._id}`}>
-                  {overrulable(item) ? `Give ${agent.name} this work` : 'Open it on the Work tab'}
+                  {overrulable(item)
+                    ? `${TAKE_IT_ANYWAY} on the Work tab`
+                    : 'Open it on the Work tab'}
                 </Link>
                 .
               </RecordLine>
             );
-          })}
-        </ul>
-      )}
+          })
+        )}
+        <RecordLine kind="noted">
+          No reorientation card is open.{' '}
+          <Link href={`/agent/${agent._id}/reorientation`}>What reorientation covers</Link>.
+        </RecordLine>
+      </ul>
+      {more > 0 ? (
+        <p className="mt-3 text-[13px] text-[var(--color-muted)]">
+          {more} more set aside, on the <Link href={work}>Work tab</Link>.
+        </p>
+      ) : null}
     </Card>
   );
 }

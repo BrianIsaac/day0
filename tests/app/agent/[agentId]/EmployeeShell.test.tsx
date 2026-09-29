@@ -402,10 +402,19 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     view.unmount();
   });
 
+  it('says so when the employee does not exist or is not the caller’s, rather than loading for ever', async (): Promise<void> => {
+    backend.queries = { 'agents:get': null };
+    const view = mount(page());
+    await settle();
+    expect(view.container.querySelector('h1')?.textContent).toBe('No such employee');
+    expect(view.container.textContent).not.toContain('loading employee');
+    view.unmount();
+  });
+
   it('shows day zero in place of the tabs until the one-to-one has drafted a charter', async (): Promise<void> => {
     expect(onDayZero({ state: 'deployed' }, null)).toBe(true);
     expect(onDayZero({ state: 'day-one-in-progress' }, null)).toBe(true);
-    expect(onDayZero({ state: 'deployed' }, approved)).toBe(false);
+    expect(onDayZero({ state: 'deployed' }, { _id: 'charter-1' as Id<'charters'> })).toBe(false);
     expect(onDayZero({ state: 'active' }, null)).toBe(false);
 
     backend.queries = { 'agents:get': row('deployed'), 'charters:latest': null };

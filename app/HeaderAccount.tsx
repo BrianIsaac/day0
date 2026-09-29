@@ -39,7 +39,10 @@ export function HeaderAccount() {
         </div>
       </Show>
       <Show when="signed-in">
-        <UserButton appearance={clerkAppearance} />
+        <UserButton
+          appearance={clerkAppearance}
+          userProfileProps={{ appearance: clerkAppearance }}
+        />
       </Show>
     </>
   );

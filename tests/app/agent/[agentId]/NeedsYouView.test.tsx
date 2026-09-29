@@ -77,6 +77,22 @@ describe('NeedsYouView', () => {
     expect(html).toContain('>Decide</a>');
     expect(html).toContain('>Nothing else is waiting on you</h2>');
     expect(html).toContain('Mira has set nothing aside.');
+    expect(html).toContain('No reorientation card is open.');
+    expect(html).toContain('href="/agent/agent-1/reorientation"');
+  });
+
+  it('names the newest five things set aside, and how many more wait on the Work tab', () => {
+    backend.queries = {
+      'work:needsYouForAgent': { total: 0, entries: [] },
+      'work:listForAgent': Array.from({ length: 7 }, (_, index) => ({
+        ...skipped(`w${index}`),
+        _creationTime: index,
+      })),
+    };
+    const html = text(renderToStaticMarkup(asEmployee(<NeedsYouView />)));
+    expect(html.indexOf('Item w6')).toBeLessThan(html.indexOf('Item w2'));
+    expect(html).not.toContain('Item w1');
+    expect(html).toContain('2 more set aside, on the');
   });
 
   it('carries what the employee set aside under what else waits, with its reason and the way to give it back', () => {
@@ -92,7 +108,7 @@ describe('NeedsYouView', () => {
     expect(html).not.toContain('<ol');
     expect(html).toContain('>Nothing is waiting on you</h2>');
     expect(html).toContain('Skipped “Item w3”: This is forecasting work for Aman.');
-    expect(html).toContain('href="/agent/agent-1/work#item-w3">Give Mira this work</a>');
+    expect(html).toContain('href="/agent/agent-1/work#item-w3">Take it anyway on the Work tab</a>');
     expect(html).toContain('href="/agent/agent-1/work#item-w4">Open it on the Work tab</a>');
     expect(html).not.toContain('Item w5');
   });
