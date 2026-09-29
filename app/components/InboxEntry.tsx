@@ -149,8 +149,9 @@ function sentence(text: string): string {
 /**
  * One entry of the needs-you inbox (N7): what waits on the manager, what it is about, how long it
  * has waited (and, for held writes, since when, in the employee's zone), and the one control that
- * takes the manager to where it is decided. A held write is the one entry in the warn tone, and
- * its control is the approve look. The company home names the employee each entry is about; the
+ * takes the manager to where it is decided, named by its label and the entry's title so a list of
+ * links never reads "Open, Open, Open". A held write is the one entry in the warn tone; its
+ * control goes to the decision and so keeps the plain look, never the approval's. The company home names the employee each entry is about; the
  * employee's own page does not.
  *
  * @param entry - The entry.
@@ -167,6 +168,7 @@ export function InboxEntry({
   named?: boolean;
 }) {
   const titleId = useId();
+  const controlId = `${titleId}-control`;
   const { ask, about, control } = inboxEntryWords(entry);
   const held = entry.kind === 'held';
   return (
@@ -189,10 +191,10 @@ export function InboxEntry({
       </div>
       <div className="flex sm:justify-end">
         <ButtonLink
+          id={controlId}
           href={inboxEntryHref(entry)}
-          variant={held ? 'approve' : 'secondary'}
           size="small"
-          aria-describedby={titleId}
+          aria-labelledby={`${controlId} ${titleId}`}
         >
           {control}
         </ButtonLink>

@@ -33,10 +33,10 @@ describe('Tabs', () => {
     expect(html).toMatch(/role="tablist" aria-label="Employee page"/);
     expect(html.match(/role="tab"/g)).toHaveLength(3);
     expect(html).toMatch(
-      /<a id="tab-work" role="tab" aria-selected="true"[^>]*href="\/agent\/a1\/work"/,
+      /<a id="employee-tab-work" role="tab" aria-selected="true"[^>]*href="\/agent\/a1\/work"/,
     );
     expect(html).toMatch(
-      /<a id="tab-needs-you" role="tab" aria-selected="false"[^>]*href="\/agent\/a1"/,
+      /<a id="employee-tab-needs-you" role="tab" aria-selected="false"[^>]*href="\/agent\/a1"/,
     );
   });
 
@@ -44,7 +44,7 @@ describe('Tabs', () => {
     const html = renderToStaticMarkup(strip());
     expect(html.match(/tabindex="0"/g)).toHaveLength(1);
     expect(html.match(/aria-controls="employee-tab"/g)).toHaveLength(1);
-    expect(html).toMatch(/role="tabpanel" aria-labelledby="tab-work"/);
+    expect(html).toMatch(/role="tabpanel" aria-labelledby="employee-tab-work"/);
   });
 
   it('moves focus along the strip with the arrow keys, Home and End, wrapping at the ends', () => {
@@ -81,6 +81,45 @@ describe('Tabs', () => {
     );
     expect(html).toMatch(/Work <span class="[^"]*text-\[var\(--color-muted\)\][^"]*">3<\/span>/);
     expect(html).toMatch(/>Charter<\/a>/);
+  });
+
+  it('follows the focused tab on Space as on Enter', () => {
+    const view = mount(strip());
+    const tabs = [...view.container.querySelectorAll<HTMLAnchorElement>('[role="tab"]')];
+    const followed: string[] = [];
+    for (const tab of tabs)
+      tab.addEventListener('click', (event) => {
+        event.preventDefault();
+        followed.push(tab.textContent ?? '');
+      });
+    tabs[2]?.focus();
+    act((): void => {
+      tabs[2]?.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    });
+    expect(followed).toEqual(['Charter']);
+    view.unmount();
+  });
+
+  it('keeps the strip one tab stop when the selected key names no tab', () => {
+    const html = renderToStaticMarkup(
+      <Tabs label="t" items={ITEMS} selected="reorientation" panelId="p" />,
+    );
+    expect(html.match(/tabindex="0"/g)).toHaveLength(1);
+    expect(html).toMatch(/<a id="p-needs-you" role="tab" aria-selected="false"[^>]*tabindex="0"/);
+  });
+
+  it('brings the selected tab into view when the strip is scrolled past it on a narrow window', () => {
+    const view = mount(strip('charter'));
+    const list = view.container.querySelector<HTMLElement>('[role="tablist"]');
+    const charter = view.container.querySelector<HTMLElement>('#employee-tab-charter');
+    if (!list || !charter) throw new Error('no strip');
+    Object.defineProperty(list, 'clientWidth', { value: 100 });
+    Object.defineProperty(charter, 'offsetLeft', { value: 300 });
+    Object.defineProperty(charter, 'offsetWidth', { value: 80 });
+    act((): void => view.root.render(strip('work')));
+    act((): void => view.root.render(strip('charter')));
+    expect(list.scrollLeft).toBeGreaterThan(0);
+    view.unmount();
   });
 
   it('draws a hot count of nothing as a plain one', () => {

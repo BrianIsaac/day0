@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useRef, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react';
 import { RollingCount } from './RollingCount';
 
 /** One tab: where it goes and what it counts. */
@@ -15,9 +15,15 @@ export interface TabItem {
   readonly hot?: boolean;
 }
 
-/** The id a tab's element carries, so its panel can name it. */
-export function tabId(key: string): string {
-  return `tab-${key}`;
+/**
+ * The id a tab's element carries, so its panel can name it: the panel's id and the tab's key,
+ * so two strips on one page never share an id.
+ *
+ * @param panelId - The id of the panel the strip controls.
+ * @param key - The tab.
+ */
+export function tabId(panelId: string, key: string): string {
+  return `${panelId}-${key}`;
 }
 
 /** Where arrow keys, Home and End move focus from `index` in a strip of `count` tabs. */
@@ -39,7 +45,7 @@ export function nextTabIndex(key: string, index: number, count: number): number 
 /**
  * A strip of tabs, each its own address (a route segment), so the address names the tab and a
  * tab can be linked to. It is the ARIA tabs pattern with manual activation: the strip is one tab
- * stop, arrow keys, Home and End move focus along it, and Enter follows the focused tab. A count
+ * stop, arrow keys, Home and End move focus along it, and Enter or Space follows the focused tab. A count
  * beside a label rolls when it changes (`RollingCount`), and one that waits on the manager is in
  * the warn tone. A tab change itself is never animated (round two section 4.4).
  *
@@ -60,7 +66,28 @@ export function Tabs({
   panelId: string;
 }) {
   const strip = useRef<HTMLDivElement>(null);
+  // The strip is one tab stop: the selected tab, or the first when the key names none (a page
+  // under a tab, such as reorientation under Needs you, selects the tab it sits under).
+  const stop = items.some((item) => item.key === selected) ? selected : items[0]?.key;
+  // On a narrow window the strip scrolls sideways: the selected tab is brought into view, so the
+  // tab the page is on is never off the edge.
+  useEffect(() => {
+    const list = strip.current;
+    const tab = list?.querySelector<HTMLElement>(`#${CSS.escape(tabId(panelId, selected))}`);
+    if (!list || !tab) return;
+    const left = tab.offsetLeft;
+    const right = left + tab.offsetWidth;
+    if (left < list.scrollLeft || right > list.scrollLeft + list.clientWidth) {
+      list.scrollLeft = Math.max(0, left - (list.clientWidth - tab.offsetWidth) / 2);
+    }
+  }, [panelId, selected]);
   function onKeyDown(event: KeyboardEvent<HTMLAnchorElement>, index: number): void {
+    if (event.key === ' ') {
+      // Space follows the tab as Enter does (the ARIA tabs pattern), not scroll the page.
+      event.preventDefault();
+      event.currentTarget.click();
+      return;
+    }
     const next = nextTabIndex(event.key, index, items.length);
     if (next === undefined) return;
     event.preventDefault();
@@ -79,13 +106,13 @@ export function Tabs({
         return (
           <Link
             key={item.key}
-            id={tabId(item.key)}
+            id={tabId(panelId, item.key)}
             href={item.href}
             role="tab"
             aria-selected={current}
             // Only the selected tab's panel is on the page; the others name no element.
             aria-controls={current ? panelId : undefined}
-            tabIndex={current ? 0 : -1}
+            tabIndex={item.key === stop ? 0 : -1}
             onKeyDown={(event) => onKeyDown(event, index)}
             className={`-mb-px inline-flex h-11 shrink-0 items-center gap-2 border-b-2 px-3 text-sm font-medium whitespace-nowrap no-underline ${
               current
@@ -131,7 +158,7 @@ export function TabPanel({
   children: ReactNode;
 }) {
   return (
-    <div id={id} role="tabpanel" aria-labelledby={tabId(selected)} tabIndex={-1}>
+    <div id={id} role="tabpanel" aria-labelledby={tabId(id, selected)} tabIndex={-1}>
       {children}
     </div>
   );

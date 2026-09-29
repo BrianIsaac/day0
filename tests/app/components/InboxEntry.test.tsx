@@ -126,15 +126,20 @@ describe('InboxEntry', (): void => {
     expect(planHtml).not.toContain('warn');
   });
 
-  it('has one control, a 44 px link described by the entry’s title', (): void => {
+  it('has one control, a 44 px link named by its label and the entry’s title', (): void => {
     const html = renderToStaticMarkup(<InboxEntry entry={held} now={NOW} />);
     expect(html.match(/<a /g)).toHaveLength(1);
     const title = /<p id="([^"]+)"/.exec(html)?.[1];
-    expect(html).toMatch(
-      new RegExp(
-        `<a class="[^"]*\\bmin-h-11\\b[^"]*" aria-describedby="${title}" href="/agent/synthetic-mira/work#item-item-1">Decide</a>`,
-      ),
-    );
+    const link = /<a [^>]*>Decide<\/a>/.exec(html)?.[0] ?? '';
+    const control = /id="([^"]+)"/.exec(link)?.[1];
+    expect(link).toMatch(/\bmin-h-11\b/);
+    expect(link).toContain(`aria-labelledby="${control} ${title}"`);
+    expect(link).toContain('href="/agent/synthetic-mira/work#item-item-1"');
+  });
+
+  it('draws the held entry’s control as the way to the decision, not as the approval itself', (): void => {
+    const html = renderToStaticMarkup(<InboxEntry entry={held} now={NOW} />);
+    expect(html).not.toContain('text-[var(--color-ok)]');
   });
 
   it('sets no type below the 12 px floor', (): void => {
