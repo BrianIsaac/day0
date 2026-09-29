@@ -46,6 +46,7 @@ vi.mock('@ai-sdk/react', async (importOriginal) => ({
 }));
 
 import { ChatRoom, progressOf, sendsReply } from '../../../../app/agent/[agentId]/ChatRoom';
+import { SYNTHESIS_DEADLINE_MS } from '../../../../app/agent/[agentId]/charter-synthesis';
 import type { Id } from '../../../../convex/_generated/dataModel';
 import { INIT_PROMPT } from '../../../../src/agent/day-one-turn';
 import { MAX_FINALISATION_RECOVERIES } from '../../../../src/agent/one-to-one-phase';
@@ -229,14 +230,25 @@ describe('finishing and drafting (round two section 3.4)', (): void => {
   });
 
   it('says the draft is taking longer than usual once the post outlasts its deadline', async (): Promise<void> => {
-    answerPosts(async () => {
-      throw new DOMException('The operation timed out.', 'TimeoutError');
-    });
+    vi.useFakeTimers();
+    // The route never answers: the post waits until its own deadline aborts it.
+    vi.stubGlobal(
+      'fetch',
+      (_url: string, init: RequestInit): Promise<Response> =>
+        new Promise((_resolve, reject): void => {
+          init.signal?.addEventListener('abort', () => reject(init.signal?.reason), {
+            once: true,
+          });
+        }),
+    );
     room.messages = CONVERSATION.slice(0, 3);
     const view = mount(<ChatRoom agentId={AGENT} bossLabel="Sam" />);
     await settle();
     await press(view.container, 'Finish');
     await press(document.body, 'Finish and draft');
+    await act(async (): Promise<void> => {
+      await vi.advanceTimersByTimeAsync(SYNTHESIS_DEADLINE_MS);
+    });
     await settle();
     expect(view.container.querySelector('[role="status"]')?.textContent).toBe(
       'Drafting your charter, usually under a minute. It has taken longer than usual. It carries on, and the charter opens here when it is ready.',
@@ -292,6 +304,23 @@ describe('a room that comes back to a one-to-one already over', (): void => {
     );
     expect(view.container.textContent).toContain('1 of 7 answered');
     expect(said(view.container).join(' ')).toContain('Drafting your charter');
+    view.unmount();
+  });
+
+  it('draws a stored turn as the live one was drawn: its emphasis bold, never its marks (m21)', async (): Promise<void> => {
+    room.session = {
+      _id: 'session-1',
+      state: 'synthesising',
+      pendingTranscript:
+        'ASSISTANT: **Topic 1 - Why this hire:** what changed?\n\nUSER: The **close**, mostly.',
+    };
+    const view = mount(<ChatRoom agentId={AGENT} bossLabel="Sam" />);
+    await settle();
+    const log = view.container.querySelector('[role="log"]');
+    expect(log?.querySelector('strong')?.textContent).toBe('Topic 1 - Why this hire:');
+    expect(log?.textContent).not.toContain('**Topic');
+    // The manager's own words are drawn as typed.
+    expect(log?.textContent).toContain('The **close**, mostly.');
     view.unmount();
   });
 

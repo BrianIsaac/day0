@@ -103,6 +103,16 @@ describe('the kept corrections panel', (): void => {
     expect(keptCorrectionsTitle([])).toBe('Kept corrections');
   });
 
+  it('sets no type below the 12 px floor (m8)', (): void => {
+    for (const corrections of [[kept], [{ ...kept, appliedTo: [] }], []]) {
+      expect(
+        renderToStaticMarkup(
+          <KeptCorrectionsPanel corrections={corrections} titles={titles} onRetire={resolved} />,
+        ),
+      ).not.toMatch(/text-\[(9|10|11)px\]/);
+    }
+  });
+
   it('counts the corrections still fed back in its title', (): void => {
     expect(
       keptCorrectionsTitle([kept, { ...kept, _id: 'c2' as Id<'corrections'>, retiredAt: 5 }]),

@@ -45,10 +45,11 @@ export function RecordLine({
         aria-hidden="true"
         className={`size-[9px] justify-self-center rounded-full ${DOT[kind]}`}
       />
-      <span className="min-w-0 break-words text-sm text-[var(--color-fg-2)]">
+      {/* A div, not a span: a line's body can hold flow content (a payload's disclosure). */}
+      <div className="min-w-0 break-words text-sm text-[var(--color-fg-2)]">
         <span className="sr-only">{SAID[kind]}: </span>
         {children}
-      </span>
+      </div>
       {time !== undefined ? (
         <time
           dateTime={new Date(time.at).toISOString()}

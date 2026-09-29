@@ -47,13 +47,13 @@ afterEach((): void => {
 describe('asking the employee for changes (round two section 3.5)', (): void => {
   it('sends the draft back with the reason, says the employee redrafts, and tells the page which draft went', async (): Promise<void> => {
     backend.results = { 'charters:requestChanges': { ok: true, redrafting: true } };
-    const page: string[] = [];
+    const page: Array<[string, { redrafting: boolean }]> = [];
     const view = mount(
       <ChangesRequest
         charter={draft}
         name="Mira"
         hasTranscript
-        onSentBack={(id) => page.push(id)}
+        onSentBack={(id, outcome) => page.push([id, outcome])}
       />,
     );
     expect(view.container.textContent).toContain(
@@ -78,19 +78,19 @@ describe('asking the employee for changes (round two section 3.5)', (): void => 
     expect(said(view.container)).toEqual([
       'Sent back: Mira is redrafting from your one-to-one and your note.',
     ]);
-    expect(page).toEqual(['charter-1']);
+    expect(page).toEqual([['charter-1', { redrafting: true }]]);
     view.unmount();
   });
 
   it('says the draft is withdrawn and tells the page which draft went', async (): Promise<void> => {
     backend.results = { 'charters:requestChanges': { ok: true, redrafting: false } };
-    const page: string[] = [];
+    const page: Array<[string, { redrafting: boolean }]> = [];
     const view = mount(
       <ChangesRequest
         charter={draft}
         name="Mira"
         hasTranscript={false}
-        onSentBack={(id) => page.push(id)}
+        onSentBack={(id, outcome) => page.push([id, outcome])}
       />,
     );
     expect(view.container.textContent).toContain('No transcript was kept for this draft');
@@ -98,7 +98,7 @@ describe('asking the employee for changes (round two section 3.5)', (): void => 
     expect(backend.calls.map((entry) => entry.name)).toEqual(['charters:requestChanges']);
     expect(said(view.container)).toEqual([SENT_BACK]);
     expect(SENT_BACK).toBe('Charter sent back: this draft is withdrawn.');
-    expect(page).toEqual(['charter-1']);
+    expect(page).toEqual([['charter-1', { redrafting: false }]]);
     view.unmount();
   });
 
@@ -106,13 +106,13 @@ describe('asking the employee for changes (round two section 3.5)', (): void => 
     backend.refusals = {
       'charters:requestChanges': `[CONVEX M(charters:requestChanges)] [Request ID: 1] Server Error\nUncaught Error: Only the latest draft can be sent back.\n    at handler (../convex/charters.ts:1:1)`,
     };
-    const page: string[] = [];
+    const page: Array<[string, { redrafting: boolean }]> = [];
     const view = mount(
       <ChangesRequest
         charter={draft}
         name="Mira"
         hasTranscript
-        onSentBack={(id) => page.push(id)}
+        onSentBack={(id, outcome) => page.push([id, outcome])}
       />,
     );
     typeInto(view.container.querySelector('textarea')!, 'Name the deck.');

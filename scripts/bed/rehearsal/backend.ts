@@ -5,6 +5,7 @@
  */
 import { browserSequenceOf, type WorkItemView } from './checks';
 import { assembleTrace } from '../../../src/export/trace';
+import { probeInFlight } from '../../../src/surfaces/probe-lease';
 
 /** An employee as the rehearsal reads it from the backend. */
 export interface AgentRow {
@@ -34,6 +35,12 @@ export interface SurfaceRow {
   credentialKind?: string;
   credentialLocation?: string;
   managerDmChannelId?: string;
+  /** Why `approve` would refuse the card now; only on a proposed card (E-63). */
+  approvalRefusal?: string;
+  /** How many probes the surface has started, a probe counting from its start. */
+  probeGeneration?: number;
+  /** When the probe in flight started; absent while none runs. */
+  probeStartedAt?: number;
 }
 
 /** A documentation source as the rehearsal reads it. */
@@ -333,6 +340,27 @@ export function closingHeld(
   tileSlug: string = TILE_SLUG,
 ): boolean {
   return batchHeld(item) && browserSequenceOf(item, tileSlug).length === 0;
+}
+
+/**
+ * Whether a probe started after the one counted has finished: every probe raises the generation
+ * as it starts and clears its start when it ends, so a verdict read then is that probe's. A probe
+ * that died without recording its end is finished once its lease lapses, as the server reads it.
+ *
+ * Args:
+ *   surface: The card's row now.
+ *   generation: The generation read before the change the probe answers.
+ *   now: The moment asked about.
+ *
+ * Returns:
+ *   True once a later probe has started and none is in flight.
+ */
+export function probeSettledAfter(
+  surface: Pick<SurfaceRow, 'probeGeneration' | 'probeStartedAt'>,
+  generation: number,
+  now: number,
+): boolean {
+  return (surface.probeGeneration ?? 0) > generation && !probeInFlight(surface, now);
 }
 
 /**

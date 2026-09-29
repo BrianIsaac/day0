@@ -55,6 +55,7 @@ import { ManageView } from '../../../../app/agent/[agentId]/manage/ManageView';
 import { ReorientationView } from '../../../../app/agent/[agentId]/reorientation/ReorientationView';
 import { dashboardMetrics } from '../../../fixtures/dashboard/metrics';
 import { axeViolations } from '../../../fixtures/dom/axe';
+import { underTarget } from '../../../fixtures/dom/targets';
 import { mount, settle } from '../../../fixtures/dom/press';
 import { openQuestionStopReason } from '../../../../src/work/obligations';
 
@@ -339,7 +340,6 @@ function populated(): Record<string, unknown> {
       { scope: 'linear:write', active: true, source: 'deploy' },
       { scope: 'slack:write', active: false, source: 'manager' },
     ],
-    'docSources:pagesForAgent': [],
     'docSources:byIds': [],
   };
 }
@@ -413,31 +413,6 @@ describe('the dashboard against the accessibility floor (N14, step 45)', (): voi
     view.unmount();
   });
 });
-
-/**
- * The controls and standalone links of a rendered tree whose own box, or the label wrapping them,
- * is not at least 44 px tall by class: jsdom lays nothing out, so the class is
- * what can be read here, and the browser job measures the public pages.
- */
-function underTarget(root: Element): string[] {
-  // `min-h-11` or `h-11` only: padding alone gives 40 px on a `text-xs` line.
-  const tall = /(^|\s)(min-h-11|h-11)(\s|$)/;
-  // A link in a sentence is exempt (WCAG 2.5.8's inline exception); every other link is a target.
-  const standalone = (control: Element): boolean =>
-    control.tagName !== 'A' || control.closest('p, li, dd, td') === null;
-  return [...root.querySelectorAll('button, input, select, textarea, summary, a[href]')]
-    .filter((control) => (control as HTMLInputElement).type !== 'hidden')
-    .filter(standalone)
-    .filter(
-      (control) =>
-        !tall.test(control.getAttribute('class') ?? '') &&
-        !tall.test(control.closest('label')?.getAttribute('class') ?? ''),
-    )
-    .map(
-      (control) =>
-        `${control.tagName.toLowerCase()} "${(control.getAttribute('aria-label') ?? control.textContent ?? '').trim().slice(0, 60)}"`,
-    );
-}
 
 describe("the dashboard's pointer targets (N14: 44 by 44 CSS pixels)", (): void => {
   it.each(TABS)(

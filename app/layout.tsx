@@ -8,6 +8,7 @@ import { BrandMark } from './marketing/BrandMark';
 import { HERO } from './marketing/copy';
 import { SiteNav } from './marketing/SiteNav';
 import { Providers } from './Providers';
+import { RetiredNoticeProvider } from './RetiredNotice';
 
 const description = HERO.lede;
 
@@ -66,7 +67,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </div>
             </div>
           </header>
-          <MainTransition>{children}</MainTransition>
+          <RetiredNoticeProvider>
+            <MainTransition>{children}</MainTransition>
+          </RetiredNoticeProvider>
         </Providers>
       </body>
     </html>

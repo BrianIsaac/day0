@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import { useMutation, useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { autonomousActionsOn } from '@/work/autonomy';
+import { needsYouItemIds } from '@/work/state-display';
 import { Card } from '../../../components/Card';
 import { Columns } from '../../../components/Columns';
 import {
@@ -35,15 +36,7 @@ export function WorkView() {
   const retireCorrection = useMutation(api.corrections.retire);
   // The inbox's own read, which the shell already holds: the Needs you filter is its rule set.
   const inbox = useQuery(api.work.needsYouForAgent, { agentId });
-  const needsYou = useMemo(
-    (): ReadonlySet<string> =>
-      new Set(
-        (inbox?.entries ?? []).flatMap((entry) =>
-          'workItemId' in entry ? [entry.workItemId as string] : [],
-        ),
-      ),
-    [inbox],
-  );
+  const needsYou = useMemo(() => needsYouItemIds(inbox?.entries ?? []), [inbox]);
   const itemTitles = useMemo(
     (): Map<string, string> => new Map((workItems ?? []).map((item) => [item._id, item.title])),
     [workItems],

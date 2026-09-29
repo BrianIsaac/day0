@@ -29,18 +29,14 @@ import {
 } from './work';
 import schema from './schema';
 import { scheduleNextStep } from './workLoop';
-import {
-  intakeScopeValues,
-  presentScopeDrift,
-  restatedScope,
-  type ScopePage,
-} from '../src/surfaces/intake-scope';
+import { presentScopeDrift, restatedScope, type ScopeValue } from '../src/surfaces/intake-scope';
 import {
   extractDocumentedSystemOrder,
   orderSurfaceWaterfall,
   waterfallEntry,
 } from '../src/surfaces/waterfall';
 import { cardPageRefs } from '../src/docs/card-pages';
+import { PROBE_LEASE_MS, probeInFlight } from '../src/surfaces/probe-lease';
 import { agentReadsSource } from './docSources';
 import { isManagerLookupFailure } from '../src/surfaces/manager-lookup';
 import { appendEvent, eventsOfType } from './eventLog';
@@ -236,39 +232,53 @@ export interface ListedSurface extends Doc<'surfaces'> {
   readonly scopeChange?: string;
 }
 
-/** The most pages the cards' order and drift read, and the most bytes of them (D D4). */
+/**
+ * The most pages the cards' order and drift read, and a soft cap on their bytes (D D4): a page is
+ * read only while the pages already kept leave room for it, so the set never passes the cap. A
+ * scope page past either bound reads as no longer stated, which disables Approve with the reason;
+ * the scope pages are named first (`cardPageRefs`), so only an employee whose cards cite more
+ * than the bounds hold ever meets it.
+ */
 const CARD_PAGE_LIMIT = 100;
 const CARD_PAGE_BYTES = 8 * 1024 * 1024;
 
-/** A page the cards read: its body for the drift, its title for the documented order. */
-interface CardPage extends ScopePage {
-  readonly title: string;
-}
+/** The most documentation sources of one owner the cards' pages are looked up in. */
+const CARD_SOURCE_LIMIT = 100;
+
+/** The most surfaces of one employee the cards are listed from. */
+const CARD_SURFACE_LIMIT = 1_000;
+
+/** Why a proposed card whose documented intake queue its page no longer states cannot be approved. */
+const INTAKE_QUEUE_CHANGED =
+  'A documented intake queue changed; reject this card and re-run orientation before approval.';
 
 /**
- * Read the pages an employee's cards read (each approved scope value's page, then each system's
- * evidence pages, `cardPageRefs`), by reference, from the sources the employee reads, up to the
- * page and byte bounds, in the order the sources and their pages were created.
+ * Read the pages some surface cards read (each scope value's page, then each system's evidence
+ * pages, `cardPageRefs`), by reference, from the sources the employee reads, within the card
+ * bounds, in the order the sources and their pages were created. The one reader of card pages:
+ * the list, the approval and the probe (`docSources.cardPagesForSurface`) read through it.
+ *
+ * @param agent - The employee, whose readable sources bound the refs.
+ * @param surfaces - The cards whose pages are read.
  */
-async function readCardPages(
+export async function readCardPages(
   ctx: QueryCtx,
   agent: Doc<'agents'>,
   surfaces: readonly Doc<'surfaces'>[],
-): Promise<CardPage[]> {
+): Promise<Doc<'docPages'>[]> {
   const owner = agent.userId;
   if (owner === undefined) return [];
   const sources = (
     await ctx.db
       .query('docSources')
       .withIndex('by_user', (index) => index.eq('userId', owner))
-      .collect()
+      .take(CARD_SOURCE_LIMIT)
   ).filter((source) => agentReadsSource(agent, source._id));
   const rank = new Map(sources.map((source, index) => [String(source._id), index]));
   const encoder = new TextEncoder();
   const pages: Array<Doc<'docPages'>> = [];
   let bytes = 0;
   for (const { sourceId, ref } of cardPageRefs(surfaces, new Set(rank.keys()), CARD_PAGE_LIMIT)) {
-    if (bytes >= CARD_PAGE_BYTES) break;
     const page = await ctx.db
       .query('docPages')
       .withIndex('by_source_ref', (index) =>
@@ -276,23 +286,30 @@ async function readCardPages(
       )
       .unique();
     if (!page) continue;
-    bytes += encoder.encode(page.markdown).length;
+    const size = encoder.encode(page.markdown).length;
+    if (bytes + size > CARD_PAGE_BYTES) break;
+    bytes += size;
     pages.push(page);
   }
-  return pages
-    .sort(
-      (left, right): number =>
-        (rank.get(String(left.sourceId)) ?? 0) - (rank.get(String(right.sourceId)) ?? 0) ||
-        left._creationTime - right._creationTime,
-    )
-    .map(
-      (page): CardPage => ({
-        sourceId: page.sourceId,
-        ref: page.ref,
-        title: page.title,
-        markdown: page.markdown,
-      }),
-    );
+  return pages.sort(
+    (left, right): number =>
+      (rank.get(String(left.sourceId)) ?? 0) - (rank.get(String(right.sourceId)) ?? 0) ||
+      left._creationTime - right._creationTime,
+  );
+}
+
+/**
+ * Why a proposed card's documented intake queue no longer supports its approval, judged by value
+ * from the pages the cards already read (`restatedScope`, the rule the drift line uses), or
+ * undefined when every queue value is still stated. A line re-spaced, reflowed or given a remark
+ * beside the value states the same queue.
+ *
+ * @param drift - The scope values `restatedScope` found no longer stated.
+ */
+function intakeQueueRefusal(drift: readonly ScopeValue[]): string | undefined {
+  return drift.some((value): boolean => value.sourceId !== undefined)
+    ? INTAKE_QUEUE_CHANGED
+    : undefined;
 }
 
 /**
@@ -301,8 +318,8 @@ async function readCardPages(
  * Public, owner-guarded; reads, writes nothing. The rows come in the documented order (the
  * systems table on the pages the cards cite, then class), each with its browser component's
  * state, the refusal `approve` would give now on a proposed card (`approvalRefusal`), and what
- * changed on its approved scope's pages (`scopeChange`). The pages are read here, so the browser
- * is never sent them.
+ * changed on its approved scope's pages (`scopeChange`). The pages are read here, once, and both
+ * the refusal and the change are judged from them; the browser is never sent them.
  */
 export const listForAgent = query({
   args: { agentId: v.id('agents') },
@@ -311,30 +328,31 @@ export const listForAgent = query({
     const surfaces = await ctx.db
       .query('surfaces')
       .withIndex('by_agent', (index) => index.eq('agentId', args.agentId))
-      .collect();
+      .take(CARD_SURFACE_LIMIT);
     const pages = await readCardPages(ctx, agent, surfaces);
     const documented = extractDocumentedSystemOrder(
       pages.map((page) => waterfallEntry({ title: page.title, content: page.markdown })),
     );
     const refusal = browserComponentRefusal(process.env.DAY0_BROWSER_MCP_URL);
-    return await Promise.all(
-      orderSurfaceWaterfall(surfaces, documented).map(async (surface): Promise<ListedSurface> => {
-        const listed = withBrowserComponentState(surface, refusal);
-        const scopeChange = listed.intakeScope
-          ? presentScopeDrift(listed.intakeScope, restatedScope(listed.intakeScope, pages).drift, {
-              // Only a proposed card offers Reject on the page.
-              canReject: listed.verdict === 'proposed',
-            })
+    return orderSurfaceWaterfall(surfaces, documented).map((surface): ListedSurface => {
+      const listed = withBrowserComponentState(surface, refusal);
+      const drift = listed.intakeScope ? restatedScope(listed.intakeScope, pages).drift : [];
+      const scopeChange = listed.intakeScope
+        ? presentScopeDrift(listed.intakeScope, drift, {
+            // Only a proposed card offers Reject on the page.
+            canReject: listed.verdict === 'proposed',
+          })
+        : undefined;
+      const refused =
+        listed.verdict === 'proposed'
+          ? (intakeQueueRefusal(drift) ?? browserRefusal(listed))
           : undefined;
-        const refused =
-          listed.verdict === 'proposed' ? await approvalRefusal(ctx, listed) : undefined;
-        return {
-          ...listed,
-          ...(refused === undefined ? {} : { approvalRefusal: refused }),
-          ...(scopeChange === undefined ? {} : { scopeChange }),
-        };
-      }),
-    );
+      return {
+        ...listed,
+        ...(refused === undefined ? {} : { approvalRefusal: refused }),
+        ...(scopeChange === undefined ? {} : { scopeChange }),
+      };
+    });
   },
 });
 
@@ -782,15 +800,17 @@ export const requestProposal = mutation({
   handler: async (ctx, args): Promise<null> => {
     assertRealMode('Surface proposal');
     const surface = await ctx.db.get(args.surfaceId);
-    if (!surface) throw new Error('Surface not found.');
+    if (!surface) throw new ConvexError('Surface not found.');
     await assertOwnsAgent(ctx, surface.agentId);
     if (surface.verdict !== 'declared') {
-      throw new Error(`Only a declared system can be proposed; this one is ${surface.verdict}.`);
+      throw new ConvexError(
+        `Only a declared system can be proposed; this one is ${surface.verdict}.`,
+      );
     }
     if (surface.orientationJobId) {
       const job = await ctx.db.system.get(surface.orientationJobId);
       if (job?.state.kind === 'inProgress') {
-        throw new Error('Orientation is already running for this system; its card follows.');
+        throw new ConvexError('Orientation is already running for this system; its card follows.');
       }
       if (job?.state.kind === 'pending') await ctx.scheduler.cancel(job._id);
     }
@@ -1054,13 +1074,8 @@ export const recordInstalledApp = internalMutation({
   },
 });
 
-/**
- * How long a probe holds its card against a routine re-probe (E-88): its one
- * retry's wait (at most the provider backoff's 30 s), two 30 s provider calls
- * and a browser sign-in, with room to spare. A probe that dies without
- * recording its result frees the card when the lease lapses.
- */
-export const PROBE_LEASE_MS = 2 * 60_000;
+/** How long a probe holds its card against a routine re-probe (E-88); see `src/surfaces/probe-lease.ts`. */
+export { PROBE_LEASE_MS };
 
 /** The verdicts a probe may run on; a row that leaves them is no longer a probe's to call. */
 export const PROBEABLE_VERDICTS: ReadonlyArray<Doc<'surfaces'>['verdict']> = [
@@ -1100,11 +1115,6 @@ export interface ProbeInFlight {
 
 /** What `beginProbe` answers. */
 export type ProbeReservation = ProbeReserved | ProbeRefused | ProbeInFlight;
-
-/** Whether the probe of a card's current generation began within the lease. */
-function probeInFlight(surface: Doc<'surfaces'>, now: number): boolean {
-  return surface.probeStartedAt !== undefined && now - surface.probeStartedAt < PROBE_LEASE_MS;
-}
 
 /**
  * Reserve the next probe generation for an approved connection candidate.
@@ -1845,7 +1855,7 @@ export const setAccessDays = mutation({
   handler: async (ctx, args): Promise<{ expiresAt: number }> => {
     assertRealMode('Setting surface access');
     const surface = await ctx.db.get(args.surfaceId);
-    if (!surface) throw new Error('Surface not found.');
+    if (!surface) throw new ConvexError('Surface not found.');
     await assertOwnsAgent(ctx, surface.agentId);
     if (!ACCESS_VERDICTS.includes(surface.verdict)) {
       throw new ConvexError(
@@ -2115,16 +2125,21 @@ export async function singleApprovalPage(
       await ctx.db.patch(surface._id, { itApprovedAt: undefined });
     }
     if (approvedAt !== undefined) {
-      const queue = await intakeQueueRefusal(ctx, surface);
-      if (queue === undefined && browserRefusal(surface) === undefined) {
-        await approveInTransaction(ctx, surface, { approvedAt, now, by: 'upgrade' });
+      const check = await approvalCheck(ctx, surface);
+      if (check.refusal === undefined) {
+        await approveInTransaction(ctx, surface, {
+          approvedAt,
+          now,
+          by: 'upgrade',
+          intakeScope: check.intakeScope,
+        });
       } else {
         // A browser card refused for its absent driver stores nothing: the card
         // reads the component live, so it offers Approve again once the driver
         // runs. A stored absence would block it for good (wave 3.5 review M12).
         await ctx.db.patch(surface._id, {
           managerApprovedAt: undefined,
-          ...(queue === undefined ? {} : { reason: queue }),
+          ...(check.refusal === INTAKE_QUEUE_CHANGED ? { reason: check.refusal } : {}),
         });
       }
     }
@@ -2176,17 +2191,33 @@ export const recordIntake = internalMutation({
   },
 });
 
+/** What approving a proposed card would do now: why it is refused, or the scope it stores. */
+interface ApprovalCheck {
+  /** Why `approve` refuses the card now, or undefined when it can be approved. */
+  readonly refusal?: string;
+  /** The card's scope with each value pointing at the line that states it now, to store on approval. */
+  readonly intakeScope?: Doc<'surfaces'>['intakeScope'];
+}
+
 /**
- * Why a proposed card cannot be approved now, or undefined when it can.
- *
- * Every documented intake queue the card reads must still read as quoted,
- * and a browser-driven card needs the component that drives it.
+ * Judge a proposed card for approval as its card is listed: every documented intake queue value
+ * still stated, read by value from the pages the employee's cards read (the list's own read and
+ * rule, so Approve is refused exactly when the list says it would be), and a browser-driven card
+ * with the component that drives it.
  */
-async function approvalRefusal(
-  ctx: QueryCtx,
-  surface: Doc<'surfaces'>,
-): Promise<string | undefined> {
-  return (await intakeQueueRefusal(ctx, surface)) ?? browserRefusal(surface);
+async function approvalCheck(ctx: QueryCtx, surface: Doc<'surfaces'>): Promise<ApprovalCheck> {
+  if (!surface.intakeScope) return { refusal: browserRefusal(surface) };
+  const agent = await ctx.db.get(surface.agentId);
+  const cards = await ctx.db
+    .query('surfaces')
+    .withIndex('by_agent', (index) => index.eq('agentId', surface.agentId))
+    .take(CARD_SURFACE_LIMIT);
+  const pages = agent ? await readCardPages(ctx, agent, cards) : [];
+  const restated = restatedScope(surface.intakeScope, pages);
+  return {
+    refusal: intakeQueueRefusal(restated.drift) ?? browserRefusal(surface),
+    intakeScope: restated.scope,
+  };
 }
 
 /** Why a browser-driven card cannot be approved on this deployment now: its driver is not configured or not listening. */
@@ -2194,29 +2225,6 @@ function browserRefusal(surface: Doc<'surfaces'>): string | undefined {
   return surface.path === 'browser-driven'
     ? browserComponentRefusal(process.env.DAY0_BROWSER_MCP_URL)
     : undefined;
-}
-
-/**
- * Why a proposed card's documented intake queues no longer support its
- * approval, or undefined when every queue still reads as quoted.
- */
-async function intakeQueueRefusal(
-  ctx: QueryCtx,
-  surface: Doc<'surfaces'>,
-): Promise<string | undefined> {
-  for (const value of surface.intakeScope ? intakeScopeValues(surface.intakeScope) : []) {
-    if (!value.sourceId) continue;
-    const page = await ctx.db
-      .query('docPages')
-      .withIndex('by_source_ref', (index) =>
-        index.eq('sourceId', value.sourceId as Id<'docSources'>).eq('ref', value.ref),
-      )
-      .unique();
-    if (!page?.markdown.split(/\r?\n/).some((line) => line.trim() === value.quote)) {
-      return 'A documented intake queue changed; reject this card and re-run orientation before approval.';
-    }
-  }
-  return undefined;
 }
 
 /** One approval to apply: when the manager gave it, when access starts, and who set the end date. */
@@ -2227,6 +2235,8 @@ interface Approval {
   readonly now: number;
   /** `approval` for the card's button, `upgrade` for a card an older release left half approved. */
   readonly by: Extract<AccessSetBy, 'approval' | 'upgrade'>;
+  /** The scope restated against its pages now, stored so intake reads the lines approved. */
+  readonly intakeScope?: Doc<'surfaces'>['intakeScope'];
 }
 
 /**
@@ -2246,6 +2256,7 @@ async function approveInTransaction(
     managerApprovedAt: approval.approvedAt,
     expiresAt,
     accessSetBy: approval.by,
+    ...(approval.intakeScope === undefined ? {} : { intakeScope: approval.intakeScope }),
   });
   await logAccessSet(ctx, surface, {
     by: approval.by,
@@ -2289,10 +2300,15 @@ export const approve = mutation({
         `Only a proposed surface can be approved; this one is ${surface.verdict}.`,
       );
     }
-    const refusal = await approvalRefusal(ctx, surface);
-    if (refusal !== undefined) throw new ConvexError(refusal);
+    const check = await approvalCheck(ctx, surface);
+    if (check.refusal !== undefined) throw new ConvexError(check.refusal);
     const now = Date.now();
-    await approveInTransaction(ctx, surface, { approvedAt: now, now, by: 'approval' });
+    await approveInTransaction(ctx, surface, {
+      approvedAt: now,
+      now,
+      by: 'approval',
+      intakeScope: check.intakeScope,
+    });
   },
 });
 
@@ -2307,10 +2323,10 @@ export const reject = mutation({
   handler: async (ctx, args): Promise<void> => {
     assertRealMode('Surface rejection');
     const surface = await ctx.db.get(args.surfaceId);
-    if (!surface) throw new Error('Surface not found.');
+    if (!surface) throw new ConvexError('Surface not found.');
     await assertOwnsAgent(ctx, surface.agentId);
     if (surface.verdict !== 'proposed' && surface.verdict !== 'approved') {
-      throw new Error(
+      throw new ConvexError(
         `Only a proposed or approved surface can be rejected; this one is ${surface.verdict}.`,
       );
     }

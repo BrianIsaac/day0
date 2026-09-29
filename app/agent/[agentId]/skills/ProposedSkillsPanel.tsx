@@ -13,6 +13,7 @@ import { Card } from '../../../components/Card';
 import { skillApprovalRefusal } from '@/surfaces/policy';
 import { AdoptionRow } from './AdoptionRow';
 import { plainSkillName, ScopeChips } from './skill-parts';
+import { rationaleBesideItem } from '@/work/skill-rationale';
 
 /**
  * The skills the employee proposed and the manager has not decided, each with the item that
@@ -94,7 +95,7 @@ export function ProposedSkillsPanel({
                   </p>
                   <p className="text-[13px] leading-relaxed text-[var(--color-fg-2)]">
                     {item ? <>First needed by &ldquo;{item}&rdquo;. </> : null}
-                    {s.rationale ?? null}
+                    {s.rationale ? (item ? rationaleBesideItem(s.rationale) : s.rationale) : null}
                   </p>
                   {s.requiredScopes && s.requiredScopes.length > 0 ? (
                     <p className="text-xs leading-relaxed text-[var(--color-muted)]">

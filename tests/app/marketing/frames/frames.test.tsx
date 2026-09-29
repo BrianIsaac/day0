@@ -45,12 +45,12 @@ describe('the charter frame', () => {
 describe('the held-write frame', () => {
   const html = renderToStaticMarkup(<HeldWriteFrame />);
 
-  it('shows the exact held comment, that nothing has landed, and the product’s own two controls', () => {
+  it('shows the exact held comment, that nothing has landed, and the card’s own three controls (m17)', () => {
     expect(text(html)).toContain('1 action is waiting for you Comment on LOG-2 in Linear');
     expect(text(html)).toContain('Carrier: Meridian Freight; revised ETA: 26 September');
     expect(text(html)).toContain('Nothing has reached a surface.');
     expect(html).toMatch(/<div data-seq="" style="--i:5" aria-hidden="true"/);
-    expect(text(html)).toContain('Approve all Reject run');
+    expect(text(html)).toContain('Approve selected (1) Approve all Reject the run');
     expect(html).not.toContain('<button');
   });
 });

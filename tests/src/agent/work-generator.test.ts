@@ -18,6 +18,13 @@ describe('generated demo work prompt', (): void => {
     expect(WORK_GEN_SYSTEM).not.toMatch(/RevOps|revenue operations/i);
     expect(WORK_GEN_SYSTEM).toContain('outside the role described in the charter');
   });
+
+  it('keeps how an item is handled out of the words the manager reads on its card (N29)', (): void => {
+    // The out-of-scope item once told the model the evaluator should skip it, and the model wrote
+    // "the agent should skip and route this back" into the item the manager read.
+    expect(WORK_GEN_SYSTEM).not.toMatch(/should skip/i);
+    expect(WORK_GEN_SYSTEM).toContain('never say how the request should be handled');
+  });
 });
 
 describe('the charter the generator reads', (): void => {

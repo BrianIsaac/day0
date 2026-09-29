@@ -15,7 +15,17 @@ import {
 } from '../../../../app/agent/[agentId]/EmployeeShell';
 import { CharterView } from '../../../../app/agent/[agentId]/charter/CharterView';
 import { WorkView } from '../../../../app/agent/[agentId]/work/WorkView';
-import { focusedName, mount, press, said, settle } from '../../../fixtures/dom/press';
+import { ManageView } from '../../../../app/agent/[agentId]/manage/ManageView';
+import { RetiredNotice, RetiredNoticeProvider } from '../../../../app/RetiredNotice';
+import {
+  focusedName,
+  mount,
+  press,
+  said,
+  settle,
+  typeInto,
+  unmountAll,
+} from '../../../fixtures/dom/press';
 import { ARRIVAL_MS } from '../../../../app/arrival';
 import { dashboardMetrics } from '../../../fixtures/dashboard/metrics';
 
@@ -24,9 +34,17 @@ const backend = vi.hoisted(() => ({
   refusals: {} as Record<string, string>,
   /** What a mutation or action resolves with, by function name; undefined otherwise. */
   results: {} as Record<string, unknown>,
+  /**
+   * What the backend's subscriptions do while a call lands, by function name: Convex applies the
+   * queries a mutation changed before the mutation's promise resolves.
+   */
+  landing: {} as Record<string, () => void>,
   /** Every call made, by function name, with its arguments. */
   calls: [] as Array<{ name: string; args: unknown }>,
-  /** What a query answers, by function name; undefined (loading) otherwise. */
+  /**
+   * What a query answers, by function name; undefined (loading) otherwise. An `Error` is thrown
+   * during render, as `useQuery` rethrows what the backend's query threw.
+   */
   queries: {} as Record<string, unknown>,
 }));
 
@@ -38,10 +56,16 @@ vi.mock('convex/react', () => {
       backend.calls.push({ name, args });
       const refusal = backend.refusals[name];
       if (refusal !== undefined) throw new Error(refusal);
+      backend.landing[name]?.();
       return backend.results[name];
     };
   return {
-    useQuery: (reference: unknown): unknown => backend.queries[getFunctionName(reference as never)],
+    useQuery: (reference: unknown, args?: unknown): unknown => {
+      if (args === 'skip') return undefined;
+      const answer = backend.queries[getFunctionName(reference as never)];
+      if (answer instanceof Error) throw answer;
+      return answer;
+    },
     useMutation: call,
     useAction: call,
   };
@@ -132,6 +156,7 @@ describe('the page after a draft charter is sent back (step 45)', (): void => {
 
   afterEach((): void => {
     backend.queries = {};
+    unmountAll();
     document.body.replaceChildren();
   });
 
@@ -153,6 +178,42 @@ describe('the page after a draft charter is sent back (step 45)', (): void => {
       'The 1:1 is open again, so the employee can redraft the charter from what you tell it.',
     );
     expect(focusedName()).toBe('The 1:1 that drafts the charter');
+    view.unmount();
+  });
+
+  it('says the employee is redrafting from the note, and the pill and rail say the charter is being drafted', async (): Promise<void> => {
+    route.segment = 'charter';
+    backend.queries = {
+      'agents:get': agent('charter-pending'),
+      'charters:latest': draft,
+      'charters:transcriptOf': { transcript: 'Employee: Why this hire?\nManager: Close week.' },
+    };
+    backend.results = { 'charters:requestChanges': { ok: true, redrafting: true } };
+    const view = mount(page(<CharterView />));
+    typeInto(view.container.querySelector('textarea')!, 'Name the committee deck.');
+    await press(view.container, 'Send and redraft');
+    backend.queries = {
+      'agents:get': agent('day-one-in-progress'),
+      'charters:latest': null,
+      'voice:latest': {
+        _id: 'session-1',
+        mode: 'chat',
+        state: 'active',
+        pendingTranscript: 'Employee: Why this hire?\nManager: Close week.',
+      },
+    };
+    act((): void => view.root.render(page(<CharterView />)));
+    await settle();
+
+    expect(said(view.container)).toContain(
+      'Sent back with your note: Priya is redrafting the charter from your one-to-one.',
+    );
+    expect(said(view.container).join(' ')).not.toContain('The 1:1 is open again');
+    expect(focusedName()).toBe('The 1:1 that drafts the charter');
+    expect(view.container.querySelector('header')?.textContent).toContain('Drafting the charter');
+    expect(view.container.querySelector('header')?.textContent).not.toContain('In your one-to-one');
+    const rail = view.container.querySelector('ol[aria-label="First week"]');
+    expect(rail?.querySelector('[aria-current="step"]')?.textContent).toContain('Charter approved');
     view.unmount();
   });
 
@@ -182,6 +243,7 @@ describe('the page after a draft charter is sent back (step 45)', (): void => {
 describe('the page in the layout (N29, UX 11)', (): void => {
   afterEach((): void => {
     backend.queries = {};
+    unmountAll();
     document.body.replaceChildren();
   });
 
@@ -241,6 +303,7 @@ describe('the cards arriving on first render (v4 section 1.3)', (): void => {
   afterEach((): void => {
     vi.useRealTimers();
     backend.queries = {};
+    unmountAll();
     document.body.replaceChildren();
   });
 
@@ -292,6 +355,7 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     route.segment = null;
     route.replaced.length = 0;
     window.history.replaceState(null, '', window.location.pathname);
+    unmountAll();
     document.body.replaceChildren();
   });
 
@@ -374,6 +438,30 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     view.unmount();
   });
 
+  it('counts a stopped run the inbox lists, as the queue files it under Needs you (D7, m5)', async (): Promise<void> => {
+    backend.queries = {
+      'agents:get': row('active'),
+      'charters:latest': approved,
+      'work:needsYouForAgent': {
+        entries: [{ kind: 'stopped', agentId: 'agent-1', workItemId: 'w5' }],
+        total: 1,
+      },
+      'work:listForAgent': [
+        { _id: 'w2', state: 'executing' },
+        { _id: 'w3', state: 'completed' },
+        { _id: 'w5', state: 'failed' },
+        { _id: 'w6', state: 'failed' },
+      ],
+    };
+    const view = mount(page());
+    await settle();
+    const work = [...view.container.querySelectorAll('[role="tab"]')].find((candidate) =>
+      candidate.textContent?.startsWith('Work'),
+    );
+    expect(work?.textContent).toBe('Work 2');
+    view.unmount();
+  });
+
   it('sends a hash addressed to the environment to the Surfaces tab, and leaves any other hash be', async (): Promise<void> => {
     backend.queries = { 'agents:get': row('active'), 'charters:latest': approved };
     // A cold load: the hash is in the address before the page, and no hashchange fires for it.
@@ -412,12 +500,102 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     view.unmount();
   });
 
-  it('says so when the employee does not exist or is not the caller’s, rather than loading for ever', async (): Promise<void> => {
-    backend.queries = { 'agents:get': null };
+  /** What each of the employee's other reads throws once the employee is gone, as the backend does. */
+  const gone = (): Record<string, unknown> =>
+    Object.fromEntries(
+      [
+        'charters:latest',
+        'surfaces:listForAgent',
+        'work:needsYouForAgent',
+        'work:listForAgent',
+        'skills:proposed',
+        'metrics:forAgent',
+      ].map((name) => [name, new Error('agent not found')]),
+    );
+
+  it('says "No such employee" for an id that names none, reading nothing else of it', async (): Promise<void> => {
+    backend.queries = { ...gone(), 'config:surfaceMode': { mode: 'real' }, 'agents:get': null };
     const view = mount(page());
     await settle();
     expect(view.container.querySelector('h1')?.textContent).toBe('No such employee');
     expect(view.container.textContent).not.toContain('loading employee');
+    view.unmount();
+  });
+
+  it('names the employee as retired, not missing, when it goes while its page is open', async (): Promise<void> => {
+    route.segment = 'manage';
+    backend.queries = {
+      'agents:get': row('active'),
+      'charters:latest': approved,
+      'config:surfaceMode': { mode: 'real' },
+      'surfaces:listForAgent': [],
+    };
+    const view = mount(page(<p>the manage tab</p>));
+    await settle();
+    expect(view.container.textContent).toContain('the manage tab');
+
+    backend.queries = { ...gone(), 'config:surfaceMode': { mode: 'real' }, 'agents:get': null };
+    act((): void => view.root.render(page(<p>the manage tab</p>)));
+    await settle();
+    expect(view.container.querySelector('h1')?.textContent).toBe('Mira is retired');
+    expect(view.container.textContent).not.toContain('the manage tab');
+    const back = view.container.querySelector('a[href="/"]');
+    expect(back?.textContent).toBe('Back to your employees');
+    expect(back?.className).toMatch(/\bmin-h-11\b/);
+    // The page changed under the manager: the heading says where they are now.
+    expect(focusedName()).toBe('Mira is retired');
+    view.unmount();
+  });
+
+  it('retires the employee from its own Manage tab and lands on the company home, the page never crashing', async (): Promise<void> => {
+    route.segment = 'manage';
+    const standing = {
+      'agents:get': row('active'),
+      'charters:latest': approved,
+      'config:surfaceMode': { mode: 'mock' },
+      'work:needsYouForAgent': { entries: [], total: 0 },
+      'reset:retirePreview': {
+        mode: 'mock',
+        rowCounts: { events: 3 },
+        atLeast: false,
+        revoked: [],
+        kept: [],
+        keptClaims: 0,
+        tombstone: false,
+      },
+    };
+    backend.queries = standing;
+    backend.results = { 'reset:retire': { agentName: 'Mira' } };
+    // The layout's hand-off around the page, and the home it lands on once the route changes.
+    const app = (home: boolean) => (
+      <RetiredNoticeProvider>
+        {home ? <RetiredNotice /> : page(<ManageView />)}
+      </RetiredNoticeProvider>
+    );
+    const view = mount(app(false));
+    await settle();
+    backend.landing = {
+      'reset:retire': (): void => {
+        backend.queries = { ...gone(), 'config:surfaceMode': { mode: 'mock' }, 'agents:get': null };
+        view.root.render(app(false));
+      },
+    };
+
+    await press(view.container, 'Retire Mira…');
+    const field = document.querySelector<HTMLInputElement>('[role="alertdialog"] input');
+    if (!field) throw new Error('no retire dialog');
+    typeInto(field, 'retire Mira');
+    await press(document.body, 'Retire Mira');
+
+    expect(backend.calls.at(-1)).toEqual({ name: 'reset:retire', args: { agentId: 'agent-1' } });
+    expect(view.container.querySelector('h1')?.textContent).toBe('Mira is retired');
+    expect(route.replaced).toEqual(['/']);
+
+    act((): void => view.root.render(app(true)));
+    await settle();
+    expect(said(view.container)).toEqual(['Mira is retired.']);
+    expect(focusedName()).toBe('Mira is retired.');
+    backend.landing = {};
     view.unmount();
   });
 

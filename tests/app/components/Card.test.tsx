@@ -51,4 +51,22 @@ describe('Card', () => {
     view.unmount();
     expect(renderToStaticMarkup(<Card title="Plain">x</Card>)).not.toContain('tabindex');
   });
+
+  it('carries an id and data attributes on the section itself, focusable and scrolled clear of the header', () => {
+    const view = mount(
+      <Card title="Linear" id="surface-linear" data-verdict="proposed">
+        x
+      </Card>,
+    );
+    const card = document.getElementById('surface-linear');
+    expect(card?.tagName).toBe('SECTION');
+    expect(card?.dataset.verdict).toBe('proposed');
+    expect(card?.querySelector('h2')?.id).toBe(card?.getAttribute('aria-labelledby'));
+    expect(card?.className).toContain('scroll-mt-24');
+    card?.focus();
+    expect(document.activeElement).toBe(card);
+    // One landmark for the card, not a wrapper around it.
+    expect(view.container.querySelectorAll('article, section')).toHaveLength(1);
+    view.unmount();
+  });
 });

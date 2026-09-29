@@ -6912,6 +6912,18 @@ describe('work.dismissFailed (N7)', (): void => {
     expect((await readItem(harness, workItemId)).dismissedAt).toBeUndefined();
   });
 
+  it('records the dismissal as a work.dismissed event, once however often it is pressed (m16)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await stopped(harness);
+
+    await harness.withIdentity(OWNER).mutation(api.work.dismissFailed, { workItemId });
+    await harness.withIdentity(OWNER).mutation(api.work.dismissFailed, { workItemId });
+
+    const dismissed = await eventsOfType(harness, agentId, 'work.dismissed');
+    expect(dismissed.map((event) => event.payload)).toEqual([{ workItemId }]);
+    expect(dismissed[0]?.createdAt).toBe((await readItem(harness, workItemId)).dismissedAt);
+  });
+
   it('refuses to dismiss a stop whose write may have landed until the provider is reconciled', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { workItemId } = await seed(harness, 'failed');

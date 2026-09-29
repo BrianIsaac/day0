@@ -7,6 +7,7 @@ import { api } from '@convex/_generated/api';
 import { autonomousActionsOn, autonomyLabel } from '@/work/autonomy';
 import { managerNotificationMode } from '@/work/manager-notes';
 import { shownEmployeeState } from '@/work/state-labels';
+import { useAnnounceRetired } from '../../../RetiredNotice';
 import { Button } from '../../../components/Button';
 import { Card } from '../../../components/Card';
 import { Columns } from '../../../components/Columns';
@@ -28,12 +29,14 @@ const COPY = 'text-sm text-[var(--color-fg-2)]';
  * charter is approved, the autonomous-actions switch with its confirmation, and, above the rail
  * (whose last card says where decisions reach the manager) once a chat surface has found the
  * manager's DM, how the manager hears that work landed or a run stopped. Pause is said to be absent, because the employee has no paused state; Retire opens
- * the retire dialog and, once the employee is gone, takes the manager to the company home.
+ * the retire dialog and, once the employee is gone, takes the manager to the company home, which
+ * says once that it is retired.
  * Appearance is not drawn: the stylesheet carries no light theme.
  */
 export function ManageView() {
   const { agent, charter, surfaceMode, surfaces, arriving } = useEmployee();
   const router = useRouter();
+  const announceRetired = useAnnounceRetired();
   const setAutonomousActions = useMutation(api.agents.setAutonomousActions);
   const setManagerNotifications = useMutation(api.agents.setManagerNotifications);
   const now = useNow();
@@ -130,7 +133,10 @@ export function ManageView() {
           agent={agent}
           mode={surfaceMode}
           onClose={() => setRetiring(false)}
-          onRetired={() => router.replace('/')}
+          onRetired={(name) => {
+            announceRetired(name);
+            router.replace('/');
+          }}
         />
       ) : null}
     </Columns>

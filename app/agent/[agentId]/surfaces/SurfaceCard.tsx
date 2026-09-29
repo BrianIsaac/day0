@@ -150,7 +150,7 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
  * One system's card on the Surfaces tab (round two section 3.9, `agent-surfaces.html`): its name
  * and state, how it is reached, the credential and whose it is, the one approval (Q10), the
  * access end date and its renewal (Q5), what intake reads, and, one step away, where Day0 found
- * it and how each rung was tried. The article carries the id, the verdict and the name the
+ * it and how each rung was tried. The card carries the id, the verdict and the name the
  * rehearsal driver and the Surfaces tab's focus return read.
  */
 export function SurfaceCard({
@@ -218,166 +218,157 @@ export function SurfaceCard({
   const approvedAt = surface.verdict === 'proposed' ? undefined : surface.managerApprovedAt;
   const proposal = request ? <ProposalFacts request={request} surface={surface} /> : null;
   return (
-    <article
+    <Card
       id={`surface-${surface.slug}`}
-      tabIndex={-1}
-      aria-label={surface.displayName}
       data-verdict={surface.verdict}
-      className="scroll-mt-24 rounded-xl"
+      title={surface.displayName}
+      meta={<Chip tone={chip.tone}>{chip.text}</Chip>}
+      tone={cardTone(chip.tone)}
     >
-      <Card
-        title={surface.displayName}
-        meta={<Chip tone={chip.tone}>{chip.text}</Chip>}
-        tone={cardTone(chip.tone)}
-      >
-        <div className="grid gap-4">
-          {skipReason ? (
-            <p className="text-sm text-[var(--color-warn)]">Skipped: {skipReason}</p>
-          ) : null}
-          {surface.lastDecisionError ? (
-            <p className="text-sm text-[var(--color-warn)]">
-              Manager decisions: {surface.lastDecisionError}
+      <div className="grid gap-4">
+        {skipReason ? (
+          <p className="text-sm text-[var(--color-warn)]">Skipped: {skipReason}</p>
+        ) : null}
+        {surface.lastDecisionError ? (
+          <p className="text-sm text-[var(--color-warn)]">
+            Manager decisions: {surface.lastDecisionError}
+          </p>
+        ) : null}
+        {channelsNotJoined ? (
+          <p className="text-sm text-[var(--color-warn)]">{channelsNotJoined}</p>
+        ) : null}
+        {/* A proposed card says it beside its disabled Approve instead. */}
+        {browserFloor.absent && surface.verdict !== 'proposed' ? (
+          <p className="text-sm text-[var(--color-warn)]">{browserFloor.message}</p>
+        ) : null}
+        {surface.reason && !skipReason && surface.reason !== 'expired' ? (
+          <p className="text-sm text-[var(--color-fg-2)]">{surface.reason}</p>
+        ) : null}
+        {request?.target?.reasoning ? (
+          <p className="text-sm text-[var(--color-fg-2)]">{request.target.reasoning}</p>
+        ) : null}
+        {reached || approvedAt !== undefined || (surface.verdict === 'proposed' && proposal) ? (
+          <dl className="grid gap-2.5">
+            {reached ? (
+              <Fact label="Reached">
+                {reached}
+                {surface.endpoint ? (
+                  <>
+                    {' '}
+                    <span className="font-mono text-[13px] break-all text-[var(--color-muted)]">
+                      {surface.endpoint}
+                    </span>
+                  </>
+                ) : null}
+              </Fact>
+            ) : null}
+            {approvedAt !== undefined ? (
+              <Fact label="Approved">
+                by you,{' '}
+                <time dateTime={new Date(approvedAt).toISOString()}>
+                  {clockTime(approvedAt, zone)}
+                </time>
+                . {ONE_APPROVER}
+              </Fact>
+            ) : null}
+            {surface.verdict === 'proposed' ? proposal : null}
+          </dl>
+        ) : null}
+        {surface.intakeScope && scopeFieldsFor(surface.class).length > 0 ? (
+          <IntakeScopeRow
+            changed={surface.scopeChange}
+            scope={surface.intakeScope}
+            sourceLabels={context.sourceLabels}
+            surfaceClass={surface.class}
+            system={surface.displayName}
+          />
+        ) : null}
+        <ToolsRow surface={surface} onApprove={actions.approveTools} />
+        <ExpiryBlock surface={surface} now={context.now} onSetDays={actions.setDays} />
+        {surface.verdict !== 'declared' && surface.verdict !== 'absent' ? (
+          <ProvisioningRow
+            error={failed('provision')}
+            onProvision={actions.provision}
+            presentation={presentProvisioning({
+              credential: request?.credential,
+              hasPublicUrl: context.installRedirectConfigured,
+              provisioning,
+            })}
+            provisioning={pending === 'provision'}
+            surfaceSlug={surface.slug}
+          />
+        ) : null}
+        {request || surface.credentialId || surface.credentialLocation ? (
+          <CredentialField
+            expected={expectedCredential(surface, presentation.label)}
+            approved={surface.managerApprovedAt !== undefined}
+            error={failed('landing')}
+            landing={pending === 'landing'}
+            onLand={(plaintext) => actions.land(credentialLabel, plaintext)}
+            presentation={presentation}
+            status={credentialStatusLine(summary)}
+          />
+        ) : null}
+        {surface.verdict === 'proposed' ? (
+          <ApprovalRow
+            pending={pending === 'approve' || pending === 'reject' ? pending : undefined}
+            blocked={browserFloor.absent}
+            refusal={refusal}
+            error={failed('approve') ?? failed('reject')}
+            onApprove={actions.approve}
+            onReject={actions.reject}
+          />
+        ) : null}
+        {PROBEABLE.has(surface.verdict) ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="small" onClick={actions.probe} disabled={pending === 'probe'}>
+              {pending === 'probe' ? 'Checking…' : 'Check the connection'}
+            </Button>
+            {failed('probe') ? (
+              <span role="alert" className="text-sm text-[var(--color-danger)]">
+                {failed('probe')}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+        <Disclosure summary="Where Day0 found it, and how it was reached">
+          <div className="grid gap-3 text-sm">
+            <p className="text-[13px] text-[var(--color-muted)]">
+              Intake order {surface.waterfallPosition ?? 'not polled yet'} · {surface.class} ·{' '}
+              {surface.path || 'no approved path'}
             </p>
-          ) : null}
-          {channelsNotJoined ? (
-            <p className="text-sm text-[var(--color-warn)]">{channelsNotJoined}</p>
-          ) : null}
-          {/* A proposed card says it beside its disabled Approve instead. */}
-          {browserFloor.absent && surface.verdict !== 'proposed' ? (
-            <p className="text-sm text-[var(--color-warn)]">{browserFloor.message}</p>
-          ) : null}
-          {surface.reason && !skipReason && surface.reason !== 'expired' ? (
-            <p className="text-sm text-[var(--color-fg-2)]">{surface.reason}</p>
-          ) : null}
-          {request?.target?.reasoning ? (
-            <p className="text-sm text-[var(--color-fg-2)]">{request.target.reasoning}</p>
-          ) : null}
-          {reached || approvedAt !== undefined || (surface.verdict === 'proposed' && proposal) ? (
-            <dl className="grid gap-2.5">
-              {reached ? (
-                <Fact label="Reached">
-                  {reached}
-                  {surface.endpoint ? (
-                    <>
-                      {' '}
-                      <span className="font-mono text-[13px] break-all text-[var(--color-muted)]">
-                        {surface.endpoint}
-                      </span>
-                    </>
-                  ) : null}
-                </Fact>
-              ) : null}
-              {approvedAt !== undefined ? (
-                <Fact label="Approved">
-                  by you,{' '}
-                  <time dateTime={new Date(approvedAt).toISOString()}>
-                    {clockTime(approvedAt, zone)}
-                  </time>
-                  . {ONE_APPROVER}
-                </Fact>
-              ) : null}
-              {surface.verdict === 'proposed' ? proposal : null}
-            </dl>
-          ) : null}
-          {surface.intakeScope && scopeFieldsFor(surface.class).length > 0 ? (
-            <IntakeScopeRow
-              changed={surface.scopeChange}
-              scope={surface.intakeScope}
-              sourceLabels={context.sourceLabels}
-              surfaceClass={surface.class}
-              system={surface.displayName}
-            />
-          ) : null}
-          <ToolsRow surface={surface} onApprove={actions.approveTools} />
-          <ExpiryBlock surface={surface} now={context.now} onSetDays={actions.setDays} />
-          {surface.verdict !== 'declared' && surface.verdict !== 'absent' ? (
-            <ProvisioningRow
-              error={failed('provision')}
-              onProvision={actions.provision}
-              presentation={presentProvisioning({
-                credential: request?.credential,
-                hasPublicUrl: context.installRedirectConfigured,
-                provisioning,
-              })}
-              provisioning={pending === 'provision'}
-              surfaceSlug={surface.slug}
-            />
-          ) : null}
-          {request || surface.credentialId || surface.credentialLocation ? (
-            <CredentialField
-              expected={expectedCredential(surface, presentation.label)}
-              approved={surface.managerApprovedAt !== undefined}
-              error={failed('landing')}
-              landing={pending === 'landing'}
-              onLand={(plaintext) => actions.land(credentialLabel, plaintext)}
-              presentation={presentation}
-              status={credentialStatusLine(summary)}
-            />
-          ) : null}
-          {surface.verdict === 'proposed' ? (
-            <ApprovalRow
-              pending={pending === 'approve' || pending === 'reject' ? pending : undefined}
-              blocked={browserFloor.absent}
-              refusal={refusal}
-              error={failed('approve') ?? failed('reject')}
-              onApprove={actions.approve}
-              onReject={actions.reject}
-            />
-          ) : null}
-          {PROBEABLE.has(surface.verdict) ? (
-            <div className="flex flex-wrap items-center gap-2">
-              <Button size="small" onClick={actions.probe} disabled={pending === 'probe'}>
-                {pending === 'probe' ? 'Checking…' : 'Check the connection'}
-              </Button>
-              {failed('probe') ? (
-                <span role="alert" className="text-sm text-[var(--color-danger)]">
-                  {failed('probe')}
-                </span>
-              ) : null}
-            </div>
-          ) : null}
-          <Disclosure summary="Where Day0 found it, and how it was reached">
-            <div className="grid gap-3 text-sm">
-              <p className="text-[13px] text-[var(--color-muted)]">
-                Intake order {surface.waterfallPosition ?? 'not polled yet'} · {surface.class} ·{' '}
-                {surface.path || 'no approved path'}
-              </p>
-              {surface.verdict === 'proposed' || !proposal ? null : (
-                <dl className="grid gap-2.5">{proposal}</dl>
-              )}
-              <SurfaceLadder candidates={ladder} attempts={surface.probeAttempts} />
-              <DiscoveryProvenance
-                evidence={discoveryEvidence}
-                sourceLabels={context.sourceLabels}
-              />
-              {evidence.map((item: SurfaceEvidence, index: number) => {
-                const source = item.sourceId ? context.sourceLabels.get(item.sourceId) : undefined;
-                const label = [source || 'manager 1:1', item.ref].filter(Boolean).join(' / ');
-                return (
-                  <blockquote
-                    key={`${item.ref}-${index}`}
-                    className="border-l-2 border-[var(--color-border-2)] pl-3"
-                  >
-                    {item.url ? (
-                      <a href={item.url} target="_blank" rel="noreferrer">
-                        {label}
-                      </a>
-                    ) : (
-                      <span className="text-[var(--color-muted)]">{label}</span>
-                    )}
-                    <br />
-                    <EvidenceQuote quote={item.quote} />
-                  </blockquote>
-                );
-              })}
-              {request?.openQuestions?.length ? (
-                <p className="text-[var(--color-muted)]">Open: {request.openQuestions.join(' ')}</p>
-              ) : null}
-            </div>
-          </Disclosure>
-        </div>
-      </Card>
-    </article>
+            {surface.verdict === 'proposed' || !proposal ? null : (
+              <dl className="grid gap-2.5">{proposal}</dl>
+            )}
+            <SurfaceLadder candidates={ladder} attempts={surface.probeAttempts} />
+            <DiscoveryProvenance evidence={discoveryEvidence} sourceLabels={context.sourceLabels} />
+            {evidence.map((item: SurfaceEvidence, index: number) => {
+              const source = item.sourceId ? context.sourceLabels.get(item.sourceId) : undefined;
+              const label = [source || 'manager 1:1', item.ref].filter(Boolean).join(' / ');
+              return (
+                <blockquote
+                  key={`${item.ref}-${index}`}
+                  className="border-l-2 border-[var(--color-border-2)] pl-3"
+                >
+                  {item.url ? (
+                    <a href={item.url} target="_blank" rel="noreferrer">
+                      {label}
+                    </a>
+                  ) : (
+                    <span className="text-[var(--color-muted)]">{label}</span>
+                  )}
+                  <br />
+                  <EvidenceQuote quote={item.quote} />
+                </blockquote>
+              );
+            })}
+            {request?.openQuestions?.length ? (
+              <p className="text-[var(--color-muted)]">Open: {request.openQuestions.join(' ')}</p>
+            ) : null}
+          </div>
+        </Disclosure>
+      </div>
+    </Card>
   );
 }
 

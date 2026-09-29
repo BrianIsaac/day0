@@ -8,12 +8,14 @@ import {
   failedSource,
   landingRefusal,
   orientationDone,
+  probeSettledAfter,
   skipKind,
   surfaceSummary,
   ticketItem,
   type SurfaceRow,
   type WorkItemRow,
 } from '../../../../scripts/bed/rehearsal/backend';
+import { PROBE_LEASE_MS } from '../../../../src/surfaces/probe-lease';
 
 function surface(slug: string, verdict: string): SurfaceRow {
   return { _id: slug, slug, displayName: slug, class: 'x', verdict, credentialLanded: false };
@@ -145,5 +147,16 @@ describe('selections over the backend rows', (): void => {
     };
     expect(closingHeld(closing)).toBe(true);
     expect(closingHeld({ ...closing, state: 'completed' })).toBe(false);
+  });
+});
+
+describe('a probe settled after the change it answers', (): void => {
+  it('waits for a later probe to start and end, and counts one that died once its lease lapses', (): void => {
+    expect(probeSettledAfter({ probeGeneration: 1 }, 1, 0)).toBe(false);
+    expect(probeSettledAfter({ probeGeneration: 2, probeStartedAt: 100 }, 1, 200)).toBe(false);
+    expect(probeSettledAfter({ probeGeneration: 2 }, 1, 200)).toBe(true);
+    expect(
+      probeSettledAfter({ probeGeneration: 2, probeStartedAt: 100 }, 1, 100 + PROBE_LEASE_MS),
+    ).toBe(true);
   });
 });

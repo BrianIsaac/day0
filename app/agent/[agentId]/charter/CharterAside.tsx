@@ -3,11 +3,13 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import { transcriptTurns, type TranscriptTurn } from '@/agent/transcript-turns';
 import { Card } from '../../../components/Card';
+import { TurnText } from '../one-to-one/TurnText';
 import { Disclosure } from '../../../components/Disclosure';
 import { RecordLine } from '../../../components/RecordLine';
 import { clockTime, useAgentZone } from '../time';
 import type { CharterCardBody } from './CharterCard';
 import { ChangesRequest } from './ChangesRequest';
+import type { SentBackOutcome } from '../employee-context';
 
 /** The answers of a transcript, each beside the question it answered. */
 export interface Exchange {
@@ -63,7 +65,7 @@ function TranscriptAnswers({ transcript }: { transcript: string }) {
           {exchange.question ? (
             <p className="line-clamp-2 text-[13px] text-[var(--color-muted)]">
               <span className="sr-only">Asked: </span>
-              {exchange.question}
+              <TurnText text={exchange.question} />
             </p>
           ) : null}
           <p className="rounded-xl rounded-br-[4px] border border-[var(--color-accent-line)] bg-[var(--color-accent-soft)] px-3.5 py-2.5 text-sm whitespace-pre-wrap text-[var(--color-fg)]">
@@ -163,7 +165,7 @@ export function CharterVersions({
  *
  * @param transcript - The stored transcript; null when none was kept, undefined while it loads.
  * @param versions - Every version, newest first, once approved; undefined while it loads.
- * @param onSentBack - Told which draft the manager sent back.
+ * @param onSentBack - Told which draft the manager sent back, and whether it is being redrafted.
  */
 export function CharterAside({
   charter,
@@ -176,7 +178,7 @@ export function CharterAside({
   name: string;
   transcript: string | null | undefined;
   versions: readonly Doc<'charters'>[] | undefined;
-  onSentBack: (charterId: Id<'charters'>) => void;
+  onSentBack: (charterId: Id<'charters'>, outcome: SentBackOutcome) => void;
 }) {
   if (!charter.approved) {
     return (

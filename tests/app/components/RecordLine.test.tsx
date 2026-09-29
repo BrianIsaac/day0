@@ -17,6 +17,20 @@ describe('RecordLine', () => {
     expect(html).toContain('>14:41</time>');
   });
 
+  it('holds its body in a div, so a line can carry a disclosure (m3)', () => {
+    const html = renderToStaticMarkup(
+      <RecordLine kind="noted">
+        Payload kept.
+        <details>
+          <summary>Payload</summary>
+        </details>
+      </RecordLine>,
+    );
+    expect(html).toMatch(
+      /<div class="[^"]*"><span class="sr-only">Noted: <\/span>Payload kept\.<details>/,
+    );
+  });
+
   it('carries no time for a line about a standing state', () => {
     expect(
       renderToStaticMarkup(<RecordLine kind="withheld">Skipped “Refresh the view”.</RecordLine>),

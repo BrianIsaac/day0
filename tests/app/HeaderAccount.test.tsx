@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const clerk = vi.hoisted(() => ({
   signedIn: false,
@@ -57,5 +57,22 @@ describe('the header account controls', (): void => {
     expect(clerk.appearance.account).toBe(clerkAppearance);
     // Manage account opens the profile as a modal of its own, which takes the appearance too.
     expect(clerk.appearance.profile).toBe(clerkAppearance);
+  });
+});
+
+describe('the no-auth badge', (): void => {
+  afterEach((): void => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it('says no-auth mode is on at the 12 px floor, never below it (m8)', async (): Promise<void> => {
+    vi.stubEnv('NODE_ENV', 'development');
+    vi.stubEnv('NEXT_PUBLIC_DEV_NO_AUTH', 'true');
+    vi.resetModules();
+    const { HeaderAccount: Badged } = await import('../../app/HeaderAccount');
+    const html = renderToStaticMarkup(<Badged />);
+    expect(html).toContain('No-auth dev mode');
+    expect(html).not.toMatch(/text-\[(9|10|11)px\]/);
   });
 });

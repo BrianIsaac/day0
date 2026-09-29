@@ -51,6 +51,16 @@ describe('what sits beside the charter', (): void => {
     expect(render(<WhatYouSaid transcript={undefined} />)).toContain('Loading the one-to-one');
   });
 
+  it("draws a stored question's emphasis bold, as the live room did, never its marks (m21)", (): void => {
+    const kept = render(
+      <WhatYouSaid
+        transcript={'ASSISTANT: **Topic 1 - Why this hire:** what changed?\n\nUSER: The close.'}
+      />,
+    );
+    expect(kept).toContain('<strong class="font-semibold">Topic 1 - Why this hire:</strong>');
+    expect(kept).not.toContain('**');
+  });
+
   it('lists every version newest first, with the approval and the rules it struck', (): void => {
     const first = row({
       approved: true,
@@ -65,7 +75,7 @@ describe('what sits beside the charter', (): void => {
       createdAt: Date.UTC(2026, 8, 30, 9, 0),
     });
     const html = render(<CharterVersions versions={[amended, first]} current={amended} />);
-    const lines = [...html.matchAll(/<\/span>(v0\.[^<]+)<\/span>/g)].map((m) => m[1]);
+    const lines = [...html.matchAll(/<\/span>(v0\.[^<]+)<\/div>/g)].map((m) => m[1]);
     expect(lines).toEqual([
       'v0.1 amended by you · in force',
       'v0.0 approved by you, 1 rule struck',

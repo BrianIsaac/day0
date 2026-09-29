@@ -47,6 +47,10 @@ const text = html
   .replace(/\s+/g, ' ');
 
 describe('the /setup guide', (): void => {
+  it('sets no type below the 12 px floor (m41)', (): void => {
+    expect(html).not.toMatch(/text-\[(9|10|11)px\]/);
+  });
+
   it('leaves the one main landmark to the layout', (): void => {
     expect(html).not.toMatch(/<main[\s>]/);
   });

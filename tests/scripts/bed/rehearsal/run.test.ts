@@ -6,6 +6,12 @@ import { UndoLedger } from '../../../../scripts/lib/cleanup';
 import { LinearClient } from '../../../../scripts/lib/linear';
 import { parseRehearsalArguments } from '../../../../scripts/bed/rehearsal/options';
 import { RunDirectory } from '../../../../scripts/bed/rehearsal/output';
+import {
+  TILE_SLUG,
+  type BackendReader,
+  type SurfaceRow,
+} from '../../../../scripts/bed/rehearsal/backend';
+import type { Dashboard } from '../../../../scripts/bed/rehearsal/driver';
 import type { RunRecord } from '../../../../scripts/bed/rehearsal/report';
 import {
   BOUNDARY,
@@ -211,5 +217,155 @@ describe('running the phases', (): void => {
     expect(readFileSync(join(out.path, 'summary.md'), 'utf8')).toContain(
       'Stopped at: stack: the backend did not answer',
     );
+  });
+});
+
+describe('the cards phase against the split page (M5)', (): void => {
+  const created: string[] = [];
+  afterEach((): void => {
+    for (const path of created.splice(0)) rmSync(path, { recursive: true, force: true });
+  });
+
+  /** A card as the backend lists it, and what the fake page does to it. */
+  interface FakeCard {
+    slug: string;
+    verdict: string;
+    probeGeneration: number;
+    credentialLanded: boolean;
+    approvalRefusal?: string;
+  }
+
+  /**
+   * The page and the backend behind it, as the phase meets them: approving a card runs a probe
+   * with no credential (which a Linear key it has not got answers `ungranted`), and landing one
+   * runs the probe that connects it.
+   */
+  function office(cards: FakeCard[]): {
+    dashboard: Dashboard;
+    backend: BackendReader;
+    calls: string[];
+  } {
+    const calls: string[] = [];
+    const bySlug = (slug: string): FakeCard => {
+      const card = cards.find((candidate) => candidate.slug === slug);
+      if (!card) throw new Error(`no ${slug} card on the page`);
+      return card;
+    };
+    const unused = async (): Promise<never> => {
+      throw new Error('not a step of the cards phase');
+    };
+    const dashboard: Dashboard = {
+      unlock: unused,
+      linkFolder: unused,
+      deploy: unused,
+      chooseChat: unused,
+      waitForAgentTurn: unused,
+      sendReply: unused,
+      lastAgentMessage: unused,
+      approveCharter: unused,
+      approveSkill: unused,
+      approvePlan: unused,
+      approveAll: unused,
+      takeAnyway: unused,
+      cancelPlan: unused,
+      showTab: unused,
+      close: unused,
+      openSurfaces: async () => {
+        calls.push('open surfaces');
+      },
+      screenshot: async () => undefined,
+      approveCard: async (slug) => {
+        const card = bySlug(slug);
+        if (card.approvalRefusal) throw new Error(`the ${slug} card cannot be approved`);
+        calls.push(`approve ${slug}`);
+        card.probeGeneration += 1;
+        card.verdict = slug === TILE_SLUG ? 'connected' : 'ungranted';
+      },
+      landCredential: async (slug) => {
+        const card = bySlug(slug);
+        if (card.verdict === 'proposed')
+          throw new Error(`no credential field on ${slug} before approval`);
+        calls.push(`land ${slug}`);
+        card.credentialLanded = true;
+        card.probeGeneration += 1;
+        card.verdict = 'connected';
+      },
+    };
+    const backend = {
+      surfaces: async (): Promise<SurfaceRow[]> =>
+        cards.map((card) => ({
+          _id: card.slug,
+          displayName: card.slug,
+          class: 'kanban',
+          ...card,
+        })),
+    } as unknown as BackendReader;
+    return { dashboard, backend, calls };
+  }
+
+  function proposed(slug: string, fields: Partial<FakeCard> = {}): FakeCard {
+    return { slug, verdict: 'proposed', probeGeneration: 0, credentialLanded: false, ...fields };
+  }
+
+  function cardsPhase(): Phase {
+    const phase = PHASES.find((candidate) => candidate.name === 'cards');
+    if (!phase) throw new Error('no cards phase');
+    return phase;
+  }
+
+  function run(dashboard: Dashboard, backend: BackendReader, secrets: RehearsalContext['secrets']) {
+    const primary = mkdtempSync(join(tmpdir(), 'rehearsal-cards-'));
+    created.push(primary);
+    const out = new RunDirectory(join(primary, 'run'));
+    out.prepare();
+    const ctx = context(['--secrets', 's', '--dry-run'], out);
+    ctx.secrets = secrets;
+    ctx.state = { shots: 0, dashboard, backend, agentId: 'a1' };
+    return cardsPhase().run(ctx);
+  }
+
+  it('approves each card before it lands the credential, and judges only the probe after the landing', async (): Promise<void> => {
+    const page = office([proposed('linear'), proposed(TILE_SLUG), proposed('slack')]);
+    const outcome = await run(page.dashboard, page.backend, {
+      linearApiKey: 'lin_api_test',
+      slackBotToken: 'xoxb-test',
+    });
+    expect(page.calls).toEqual([
+      'open surfaces',
+      'approve linear',
+      'land linear',
+      `approve ${TILE_SLUG}`,
+      'approve slack',
+      'land slack',
+    ]);
+    expect(outcome).toBe(`linear: connected, ${TILE_SLUG}: connected, slack: connected`);
+  });
+
+  it('leaves the Slack card unapproved without a token, whatever its approval would say', async (): Promise<void> => {
+    const page = office([
+      proposed('linear'),
+      proposed(TILE_SLUG),
+      proposed('slack', { approvalRefusal: 'the manager lookup failed' }),
+    ]);
+    const outcome = await run(page.dashboard, page.backend, { linearApiKey: 'lin_api_test' });
+    expect(page.calls).not.toContain('approve slack');
+    expect(outcome).toContain('slack: left unapproved (no token)');
+  });
+
+  it('stops on the refusal the listing carries before it presses anything', async (): Promise<void> => {
+    const refusal =
+      'A documented intake queue changed; reject this card and re-run orientation before approval.';
+    const page = office([
+      proposed('linear', { approvalRefusal: refusal }),
+      proposed(TILE_SLUG),
+      proposed('slack'),
+    ]);
+    await expect(
+      run(page.dashboard, page.backend, {
+        linearApiKey: 'lin_api_test',
+        slackBotToken: 'xoxb-test',
+      }),
+    ).rejects.toThrow(`the linear card cannot be approved: ${refusal}`);
+    expect(page.calls).toEqual(['open surfaces']);
   });
 });

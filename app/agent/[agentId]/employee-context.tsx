@@ -4,6 +4,12 @@ import { createContext, useContext } from 'react';
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { SurfaceRecord } from '@/surfaces/types';
 
+/** What became of a draft the manager sent back, as `charters.requestChanges` answered. */
+export interface SentBackOutcome {
+  /** The employee is redrafting from its stored transcript and the note, not reopening the talk. */
+  readonly redrafting: boolean;
+}
+
 /** What the employee page's shell has read and every tab shares. */
 export interface Employee {
   readonly agent: Doc<'agents'>;
@@ -19,10 +25,11 @@ export interface Employee {
    */
   readonly arriving: boolean;
   /**
-   * Tell the shell the manager sent this draft back, so that when the one-to-one returns in its
-   * place the page says so and gives it focus.
+   * Tell the shell the manager sent this draft back, and whether the employee is redrafting it
+   * from the one-to-one and the note, so that when the one-to-one returns in its place the page
+   * says which and gives it focus.
    */
-  readonly reportSentBack: (charterId: Id<'charters'>) => void;
+  readonly reportSentBack: (charterId: Id<'charters'>, outcome: SentBackOutcome) => void;
 }
 
 /** The employee the shell has loaded; a tab renders only once it has. */

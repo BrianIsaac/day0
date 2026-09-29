@@ -43,6 +43,25 @@ function sentence(words: string): string {
 }
 
 /**
+ * The claims the retire keeps, in a sentence: one, several, or a floor when the preview stopped
+ * counting its items, oldest first (the later ones may hold claims even when those counted held none).
+ */
+function keptClaimsLine(
+  preview: Pick<RetirePreview, 'keptClaims' | 'keptClaimsAtLeast'>,
+): string | undefined {
+  const rest = 'it may already have written, so no colleague repeats those writes.';
+  if (preview.keptClaimsAtLeast) {
+    return preview.keptClaims > 0
+      ? `The claims on at least ${preview.keptClaims} items ${rest}`
+      : `The claims on any of its later items ${rest}`;
+  }
+  if (preview.keptClaims === 0) return undefined;
+  return preview.keptClaims === 1
+    ? 'The claim on the item it may already have written, so no colleague repeats the write.'
+    : `The claims on ${preview.keptClaims} items ${rest}`;
+}
+
+/**
  * What retiring the employee does, line by line, in the manager's words (round two section 3.9):
  * what is revoked, deleted and kept, and what waits on the manager and goes undecided. The
  * hosted office wipes and keeps nothing, so it says so rather than promising a record.
@@ -66,6 +85,7 @@ export function retireLines(preview: RetirePreview, waiting: string): RetireLine
       waits,
     ];
   }
+  const claims = keptClaimsLine(preview);
   const kept = [
     'One record under your account: the name, the rows each table lost and the date, so the audit export can say the employee existed.',
     ...(preview.kept.length > 0
@@ -75,11 +95,7 @@ export function retireLines(preview: RetirePreview, waiting: string): RetireLine
           ),
         ]
       : []),
-    ...(preview.keptClaims > 0
-      ? [
-          `The claim on ${preview.keptClaims === 1 ? 'the item' : `${preview.keptClaims} items`} it may already have written, so no colleague repeats the write.`,
-        ]
-      : []),
+    ...(claims === undefined ? [] : [claims]),
   ];
   return [
     {
@@ -181,14 +197,14 @@ export function RetireDialog({
       role="alertdialog"
       title={`Retire ${agent.name}?`}
       onClose={onClose}
+      description={
+        mode === 'mock'
+          ? `This removes ${agent.name} and everything it made in the hosted office. It cannot be undone.`
+          : `This ends ${agent.name}'s employment now. It cannot be undone.`
+      }
       initialFocus={keep}
       busy={change.busy}
     >
-      <p className="text-[var(--color-fg-2)]">
-        {mode === 'mock'
-          ? `This removes ${agent.name} and everything it made in the hosted office. It cannot be undone.`
-          : `This ends ${agent.name}'s employment now. It cannot be undone.`}
-      </p>
       {account}
       <form
         className="grid gap-4"

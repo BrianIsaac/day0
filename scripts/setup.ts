@@ -4458,21 +4458,29 @@ async function switchScheduledJobs(
       return 0;
     }
     if (verb === 'pause' && state.reason !== undefined) {
-      // Already paused, so no restart: only the owner changes, and with it
-      // whether the next upgrade that completes lifts it.
+      // An upgrade's pause is taken over as the manager's own, so the next
+      // upgrade that completes leaves it. The backend is restarted as well: an
+      // upgrade that stopped before its own restart left modules running with
+      // the env they started with, which may not hold the pause at all.
       if (options.dryRun) {
-        io.log(`Would run: npx ${pauseArguments(byHand).join(' ')}`);
+        io.log('Would run:');
+        io.log(`  npx ${pauseArguments(byHand).join(' ')}`);
+        io.log('  pnpm run convex:restart');
+        io.log('');
+        io.log('Nothing was changed.');
         return 0;
       }
-      const failure = changeCronsPause(io, environment, pauseArguments(byHand));
+      const failure =
+        changeCronsPause(io, environment, pauseArguments(byHand)) ??
+        (await restartBackend(io, environment, ports.backend));
       if (failure !== undefined) {
         io.log(`error: ${failure}.`);
         return 1;
       }
       io.log(
         `${project}'s scheduled jobs were paused by an upgrade that did not finish (${state.reason}); ` +
-          'they are now paused by hand, so the next upgrade leaves them paused until ' +
-          `\`${verbCommand('unpause', options.mode)}\`.`,
+          'they are now paused by hand and the backend has restarted to hold them, so the next ' +
+          `upgrade leaves them paused until \`${verbCommand('unpause', options.mode)}\`.`,
       );
       return 0;
     }
@@ -4961,14 +4969,18 @@ function unfinishedPauseNote(io: SetupIo, target: LifecycleTarget, options: Setu
   if (!(runningServices(io, target.project) ?? []).includes('backend')) {
     io.log(
       `The backend is not running, so whether the scheduled jobs are paused cannot be read; if an ` +
-        `upgrade paused them, they stay paused: ${lifts}`,
+        `upgrade paused them, they stay paused once it starts: ${lifts}`,
     );
     return;
   }
   const state = readCronsPause(io, target.environment);
   if ('failure' in state || state.reason === undefined || !isUpgradePause(state.reason)) return;
+  // The flag is on the deployment, but a backend the upgrade did not restart
+  // keeps the env its modules started with, so the jobs may still run.
   io.log(
-    `The scheduled jobs stay paused while the upgrade is unfinished (${state.reason}): ${lifts}`,
+    `The unfinished upgrade set a pause on the scheduled jobs (${state.reason}), but the running ` +
+      'backend reads it only when it restarts, so the jobs may still run: ' +
+      `\`${verbCommand('pause', options.mode)}\` holds them now, restarting the backend. ${lifts}`,
   );
 }
 

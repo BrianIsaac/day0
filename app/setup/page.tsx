@@ -30,8 +30,10 @@ export const metadata: Metadata = {
     'Run Day0 on your own machine: what you need, the three ways to run it, the five commands, what a first success looks like, and what to do when it stops.',
 };
 
-// The page is static apart from the release line, which is read again at
-// most hourly, so a functions upgrade reaches it without an app deploy.
+/**
+ * How often the page is drawn again: it is static apart from the release line, which is read at
+ * most hourly, so a functions upgrade reaches it without an app deploy.
+ */
 export const revalidate = 3600;
 
 /**
@@ -84,7 +86,7 @@ function Section({
   return (
     <section id={id} data-reveal="" data-scroll-section="" className="scroll-mt-20">
       <div className="flex items-baseline gap-3 mb-3">
-        <span className="font-mono text-[11px] text-[var(--color-muted)]">
+        <span className="font-mono text-xs text-[var(--color-muted)]">
           {String(index).padStart(2, '0')}
         </span>
         <h2 className="text-xl font-semibold tracking-tight">{title}</h2>
@@ -126,7 +128,7 @@ export default async function SetupPage() {
           data-scroll-section=""
           className="mb-10 scroll-mt-20 lg:col-start-2"
         >
-          <p className="text-[11px] uppercase tracking-[0.28em] text-[var(--color-accent)] mb-4">
+          <p className="text-xs uppercase tracking-[0.28em] text-[var(--color-accent)] mb-4">
             Set up Day0
           </p>
           <h1 className="text-3xl sm:text-4xl font-semibold tracking-tight leading-tight mb-5">
@@ -168,7 +170,7 @@ export default async function SetupPage() {
                   data-section-link=""
                   className="flex h-full min-h-11 items-center gap-2 px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-xs hover:border-[var(--color-accent)]"
                 >
-                  <span className="font-mono text-[10px] text-[var(--color-muted)]">
+                  <span className="font-mono text-xs text-[var(--color-muted)]">
                     {String(index + 1).padStart(2, '0')}
                   </span>
                   {section.title}

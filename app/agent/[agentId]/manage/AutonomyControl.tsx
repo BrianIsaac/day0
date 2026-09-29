@@ -42,10 +42,10 @@ export function AutonomyConfirm({
       role="alertdialog"
       title="Turn on autonomous actions?"
       onClose={onCancel}
+      description={AUTONOMY_WARNING}
       initialFocus={cancel}
       busy={busy}
     >
-      <p className="leading-relaxed text-[var(--color-fg-2)]">{AUTONOMY_WARNING}</p>
       <StatusRegion outcome={outcome} />
       <div className="flex flex-wrap justify-end gap-2">
         <Button ref={cancel} size="large" disabled={busy} onClick={onCancel}>

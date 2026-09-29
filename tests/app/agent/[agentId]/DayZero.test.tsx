@@ -2,7 +2,7 @@
 
 import { createRef } from 'react';
 import { getFunctionName } from 'convex/server';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const backend = vi.hoisted(() => ({ queries: {} as Record<string, unknown> }));
 
@@ -13,9 +13,28 @@ vi.mock('convex/react', () => ({
   useAction: () => async (): Promise<void> => undefined,
 }));
 
+/** The chat's history, one array for every render, as `useChat` keeps it. */
+const chat = vi.hoisted(() => ({ messages: [] as unknown[] }));
+
+vi.mock('@ai-sdk/react', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@ai-sdk/react')>()),
+  useChat: () => ({
+    messages: chat.messages,
+    sendMessage: (): void => undefined,
+    regenerate: (): void => undefined,
+    setMessages: (): void => undefined,
+    status: 'ready',
+  }),
+}));
+
 import { DayZero, ModePicker } from '../../../../app/agent/[agentId]/DayZero';
 import { EMPLOYEE_ROW, asEmployee } from '../../../fixtures/dom/employee';
 import { button, mount, press, settle } from '../../../fixtures/dom/press';
+
+beforeEach((): void => {
+  // jsdom lays nothing out and has no scrollTo; the chat room keeps its newest turn in view with it.
+  (globalThis as { Element: typeof Element }).Element.prototype.scrollTo = (): void => undefined;
+});
 
 afterEach((): void => {
   backend.queries = {};
@@ -125,6 +144,54 @@ describe('DayZero', () => {
     );
     await settle();
     expect(view.container.textContent).not.toContain('voice or chat?');
+    view.unmount();
+  });
+
+  it('sets the chat room beside what the manager has answered so far and what the one-to-one becomes', async () => {
+    probe(true);
+    backend.queries = {
+      'voice:latest': {
+        _id: 'session-1',
+        mode: 'chat',
+        state: 'active',
+        pendingTranscript: 'Employee: Why this hire?\nManager: We close the books every week.',
+      },
+    };
+    const view = mount(
+      asEmployee(<DayZero onboarding={createRef<HTMLDivElement>()} arriving={false} />, {
+        agent: { ...EMPLOYEE_ROW, state: 'day-one-in-progress' },
+        charter: null,
+      }),
+    );
+    // The room is its own chunk: the answers arrive once it has loaded and read the session.
+    await vi.waitFor(
+      async () => {
+        await settle();
+        expect(view.container.textContent).toContain('We close the books every week.');
+      },
+      { timeout: 5_000 },
+    );
+    const aside = view.container.querySelector('aside') ?? view.container;
+    expect(aside.textContent).toContain('We close the books every week.');
+    expect(aside.textContent).toContain('What this becomes');
+    expect(aside.textContent).toContain('After the seventh answer Mira drafts a charter');
+    expect(aside.textContent).not.toContain('What Mira knows so far');
+    view.unmount();
+  });
+
+  it('keeps what the employee knows beside the voice room, which lists no answers', async () => {
+    probe(true);
+    backend.queries = { 'voice:latest': { _id: 'session-1', mode: 'voice', state: 'active' } };
+    const view = mount(
+      asEmployee(<DayZero onboarding={createRef<HTMLDivElement>()} arriving={false} />, {
+        agent: { ...EMPLOYEE_ROW, state: 'day-one-in-progress' },
+        charter: null,
+      }),
+    );
+    await settle();
+    expect(view.container.textContent).toContain('What this becomes');
+    expect(view.container.textContent).toContain('What Mira knows so far');
+    expect(view.container.textContent).not.toContain('Noted so far');
     view.unmount();
   });
 });

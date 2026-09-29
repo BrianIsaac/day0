@@ -87,5 +87,7 @@ describe('the retire dialog in words', (): void => {
     expect(confirmationMatches('retire Mir', 'retire Mira')).toBe(false);
     expect(confirmationMatches('retire Aman', 'retire Mira')).toBe(false);
     expect(confirmationMatches('', 'retire Mira')).toBe(false);
+    // A name with a composed letter, typed as the letter and its combining mark (m37).
+    expect(confirmationMatches('retire Zoe\u0301', 'retire Zo\u00e9')).toBe(true);
   });
 });

@@ -77,6 +77,20 @@ describe('firstWeekSteps', () => {
     expect(detail({ state: 'active', writeLanded: true }, 3)).toBe('landed');
   });
 
+  it('moves on to the charter while the one-to-one is drafted into one, a send-back redraft included', () => {
+    const steps = firstWeekSteps(facts({ state: 'day-one-in-progress', phase: 'drafting' }));
+    expect(steps.map((step) => step.status)).toEqual(['done', 'done', 'now', 'next', 'next']);
+    expect(steps[1]?.detail).toBe('done');
+    expect(steps[2]?.detail).toBe('being drafted');
+    expect(standings({ state: 'day-one-in-progress', phase: 'talking' })).toEqual([
+      'done',
+      'now',
+      'next',
+      'next',
+      'next',
+    ]);
+  });
+
   it('marks exactly one step as the current one, whatever the figures say', () => {
     for (const state of ['deployed', 'day-one-in-progress', 'charter-pending', 'active'] as const) {
       const steps = firstWeekSteps(facts({ state, writeLanded: true }));

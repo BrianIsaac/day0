@@ -35,6 +35,15 @@ async function refusalOf(response: Response): Promise<string> {
   return `the drafting service answered ${response.status}`;
 }
 
+/** A post the deadline stopped, said in whole seconds. */
+function lateBy(deadlineMs: number): CharterSynthesisOutcome {
+  return {
+    ok: false,
+    late: true,
+    reason: `drafting has taken longer than ${Math.round(deadlineMs / 1000)} seconds`,
+  };
+}
+
 /**
  * Post a finished 1:1 for charter synthesis and say what became of it. Each room latches its own
  * call, so the post goes once per 1:1 unless the manager asks for it again.
@@ -50,24 +59,31 @@ export async function postCharterSynthesis(
   request: CharterSynthesisRequest,
   deadlineMs: number = SYNTHESIS_DEADLINE_MS,
 ): Promise<CharterSynthesisOutcome> {
-  let response: Response;
+  // The deadline runs on the page's own clock (a timer, not `AbortSignal.timeout`), so it is the
+  // one clock the room and its tests both read.
+  const deadline = new AbortController();
+  let late = false;
+  const timer = setTimeout((): void => {
+    late = true;
+    deadline.abort();
+  }, deadlineMs);
   try {
-    response = await fetch('/api/onboarding/synthesise', {
+    const response = await fetch('/api/onboarding/synthesise', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(request),
-      signal: AbortSignal.timeout(deadlineMs),
+      signal: deadline.signal,
     });
-  } catch (err: unknown) {
-    const late = err instanceof DOMException && err.name === 'TimeoutError';
-    return {
-      ok: false,
-      late,
-      reason: late
-        ? `drafting has taken longer than ${Math.round(deadlineMs / 1000)} seconds`
-        : 'the page could not reach Day0',
-    };
+    if (response.ok) return { ok: true };
+    // The refusal's body is read under the same deadline: a body that stalls is a late post.
+    const reason = await refusalOf(response);
+    return late ? lateBy(deadlineMs) : { ok: false, late: false, reason };
+  } catch {
+    // Either the deadline aborted the post or the page could not reach Day0; `late` says which.
+    return late
+      ? lateBy(deadlineMs)
+      : { ok: false, late: false, reason: 'the page could not reach Day0' };
+  } finally {
+    clearTimeout(timer);
   }
-  if (response.ok) return { ok: true };
-  return { ok: false, late: false, reason: await refusalOf(response) };
 }

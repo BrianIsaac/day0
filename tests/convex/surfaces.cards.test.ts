@@ -1,4 +1,5 @@
 import { convexTest, type TestConvex } from 'convex-test';
+import { ConvexError } from 'convex/values';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
@@ -7,6 +8,7 @@ import { BROWSER_DRIVER_ABSENT } from '../../src/surfaces/browser';
 import { allConvexModules } from './all-modules';
 import { companyPage } from '../fixtures/company-bed';
 import type { ListedSurface } from '../../convex/surfaces';
+import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 /**
  * What `surfaces.listForAgent` hands the Surfaces tab's cards beyond the stored row: the reason
@@ -15,7 +17,7 @@ import type { ListedSurface } from '../../convex/surfaces';
  */
 
 afterEach((): void => {
-  vi.unstubAllEnvs();
+  restoreSurfaceMode();
 });
 
 const QUEUE_CHANGED =
@@ -81,11 +83,11 @@ async function card(
 
 describe('the approval refusal on a listed card (E-63)', (): void => {
   it('names why a proposed card whose documented queue changed cannot be approved', async (): Promise<void> => {
-    const { harness, agentId, sourceId } = await seedOffice('Team: FINANCE');
+    const { harness, agentId, sourceId } = await seedOffice('- Team: `FINANCE`');
     await card(harness, agentId, {
       slug: 'linear',
       intakeScope: {
-        team: { value: 'REVOPS', sourceId, ref: 'handbook.md', quote: 'Team: REVOPS' },
+        team: { value: 'REVOPS', sourceId, ref: 'handbook.md', quote: '- Team: `REVOPS`' },
       },
     });
 
@@ -98,7 +100,7 @@ describe('the approval refusal on a listed card (E-63)', (): void => {
 
   it('names the absent browser component on a proposed browser-driven card', async (): Promise<void> => {
     vi.stubEnv('DAY0_BROWSER_MCP_URL', '');
-    const { harness, agentId } = await seedOffice('Team: REVOPS');
+    const { harness, agentId } = await seedOffice('- Team: `REVOPS`');
     await card(harness, agentId, { slug: 'looker', class: 'analytics', path: 'browser-driven' });
 
     const [looker] = await harness
@@ -109,15 +111,15 @@ describe('the approval refusal on a listed card (E-63)', (): void => {
   });
 
   it('leaves the refusal off a card that can be approved, and off every card past proposal', async (): Promise<void> => {
-    const { harness, agentId, sourceId } = await seedOffice('Team: REVOPS');
+    const { harness, agentId, sourceId } = await seedOffice('- Team: `REVOPS`');
     const scope = {
-      team: { value: 'REVOPS', sourceId, ref: 'handbook.md', quote: 'Team: REVOPS' },
+      team: { value: 'REVOPS', sourceId, ref: 'handbook.md', quote: '- Team: `REVOPS`' },
     };
     await card(harness, agentId, { slug: 'linear', intakeScope: scope });
     await card(harness, agentId, {
       slug: 'jira',
       verdict: 'connected',
-      intakeScope: { team: { ...scope.team, quote: 'Team: GONE' } },
+      intakeScope: { team: { ...scope.team, quote: '- Team: `GONE`' } },
     });
 
     const listed = await harness
@@ -172,7 +174,7 @@ function discoveredOn(sourceId: Id<'docSources'>, ref: string, quote: string) {
 
 describe('the order of the listed cards (D D4)', (): void => {
   it('lists the cards in the order the documented systems table gives, read on the server', async (): Promise<void> => {
-    const { harness, agentId, sourceId } = await seedOffice('Team: REVOPS');
+    const { harness, agentId, sourceId } = await seedOffice('- Team: `REVOPS`');
     await page(harness, sourceId, 'onboarding.md', ONBOARDING);
     await card(harness, agentId, {
       slug: 'linear',
@@ -194,7 +196,7 @@ describe('the order of the listed cards (D D4)', (): void => {
   });
 
   it('orders by class when no page the cards cite carries a systems table', async (): Promise<void> => {
-    const { harness, agentId } = await seedOffice('Team: REVOPS');
+    const { harness, agentId } = await seedOffice('- Team: `REVOPS`');
     // Inserted chat first, so the order below is the class rule's, not the insertion's.
     await card(harness, agentId, { slug: 'slack', displayName: 'Slack', class: 'chat' });
     await card(harness, agentId, { slug: 'linear', displayName: 'Linear', class: 'kanban' });
@@ -207,7 +209,7 @@ describe('the order of the listed cards (D D4)', (): void => {
   });
 
   it('reads no page of a source the employee was deployed without', async (): Promise<void> => {
-    const { harness, agentId, sourceId } = await seedOffice('Team: REVOPS');
+    const { harness, agentId, sourceId } = await seedOffice('- Team: `REVOPS`');
     await page(harness, sourceId, 'onboarding.md', ONBOARDING);
     await harness.run(async (ctx) => {
       await ctx.db.patch(agentId, { excludedDocSourceIds: [sourceId] });
@@ -236,7 +238,7 @@ describe('the drift of an approved scope, as a server field (D D4)', (): void =>
     markdown: string,
     verdict: Doc<'surfaces'>['verdict'] = 'connected',
   ): Promise<ListedSurface | undefined> {
-    const { harness, agentId, sourceId } = await seedOffice('Team: REVOPS');
+    const { harness, agentId, sourceId } = await seedOffice('- Team: `REVOPS`');
     await page(harness, sourceId, 'finance/handbook.md', markdown);
     const quoted = (value: string, quote: string) => ({
       value,
@@ -278,5 +280,88 @@ describe('the drift of an approved scope, as a server field (D D4)', (): void =>
     );
 
     expect(linear?.scopeChange).toBeUndefined();
+  });
+});
+
+describe('the intake-queue guard, judged by value (M3, D D9)', (): void => {
+  const STORED = { value: 'REVOPS', ref: 'handbook.md', quote: '- Team: `REVOPS`' };
+  const RESTATED = '- Team:  `REVOPS`  (the request queue; ask Aman first)';
+
+  afterEach((): void => {
+    vi.useRealTimers();
+  });
+
+  /** What a call threw, or undefined when it answered. */
+  async function thrown(call: Promise<unknown>): Promise<unknown> {
+    return await call.then(
+      (): unknown => undefined,
+      (error: unknown): unknown => error,
+    );
+  }
+
+  it('leaves Approve enabled when the queue line is only re-spaced or given a trailing remark', async (): Promise<void> => {
+    const { harness, agentId, sourceId } = await seedOffice(RESTATED);
+    await card(harness, agentId, {
+      slug: 'linear',
+      intakeScope: { team: { ...STORED, sourceId } },
+    });
+
+    const [linear] = await harness
+      .withIdentity({ subject: 'owner' })
+      .query(api.surfaces.listForAgent, { agentId });
+
+    expect(linear?.approvalRefusal).toBeUndefined();
+    expect(linear?.scopeChange).toBeUndefined();
+  });
+
+  it('approves that card and stores the line as it reads now, so intake reads what was approved', async (): Promise<void> => {
+    useSurfaceMode('real');
+    // The approval schedules the card's probe; held on the fake clock, it never runs here.
+    vi.useFakeTimers();
+    const { harness, agentId, sourceId } = await seedOffice(RESTATED);
+    const surfaceId = await card(harness, agentId, {
+      slug: 'linear',
+      intakeScope: { team: { ...STORED, sourceId } },
+    });
+
+    await harness.withIdentity({ subject: 'owner' }).mutation(api.surfaces.approve, { surfaceId });
+
+    const row = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+    expect(row?.verdict).toBe('approved');
+    expect(row?.intakeScope?.team).toEqual({ ...STORED, sourceId, quote: RESTATED.trim() });
+  });
+
+  it('refuses the approval, as a ConvexError the card can read, once the page stops stating the value', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const { harness, agentId, sourceId } = await seedOffice('- Team: `FINANCE`');
+    const surfaceId = await card(harness, agentId, {
+      slug: 'linear',
+      intakeScope: { team: { ...STORED, sourceId } },
+    });
+
+    const refusal = await thrown(
+      harness.withIdentity({ subject: 'owner' }).mutation(api.surfaces.approve, { surfaceId }),
+    );
+
+    expect(refusal).toBeInstanceOf(ConvexError);
+    expect((refusal as ConvexError<string>).data).toBe(QUEUE_CHANGED);
+  });
+
+  it('refuses a reject of a card past approval, and of a gone one, with a ConvexError the card can read', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const { harness, agentId } = await seedOffice('- Team: `REVOPS`');
+    const surfaceId = await card(harness, agentId, { slug: 'linear', verdict: 'declared' });
+    const owner = harness.withIdentity({ subject: 'owner' });
+
+    const refusal = await thrown(owner.mutation(api.surfaces.reject, { surfaceId, reason: 'no' }));
+    expect(refusal).toBeInstanceOf(ConvexError);
+    expect((refusal as ConvexError<string>).data).toBe(
+      'Only a proposed or approved surface can be rejected; this one is declared.',
+    );
+
+    await harness.run(async (ctx) => await ctx.db.delete(surfaceId));
+    const gone = await thrown(owner.mutation(api.surfaces.reject, { surfaceId, reason: 'no' }));
+    expect(gone).toBeInstanceOf(ConvexError);
+    expect((gone as ConvexError<string>).data).toBe('Surface not found.');
   });
 });

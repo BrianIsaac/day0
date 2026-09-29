@@ -57,6 +57,37 @@ export function queueFilterOf(
   }
 }
 
+/**
+ * The work items the manager's needs-you inbox lists, by id: the entries that name an item.
+ *
+ * @param entries - The inbox's entries, as `work.needsYouForAgent` lists them.
+ */
+export function needsYouItemIds(entries: readonly object[]): ReadonlySet<string> {
+  return new Set(
+    entries.flatMap((entry) =>
+      'workItemId' in entry && typeof entry.workItemId === 'string' ? [entry.workItemId] : [],
+    ),
+  );
+}
+
+/**
+ * How many items the Work tab's badge counts: those under the queue's Needs you and In progress
+ * filters, by the queue's own rule (`queueFilterOf`), so a stopped run the inbox lists counts
+ * as it does under Needs you.
+ *
+ * @param items - The employee's work items.
+ * @param needsYou - The items the inbox lists (`needsYouItemIds`).
+ */
+export function openWorkCount(
+  items: ReadonlyArray<{ readonly _id: string; readonly state: WorkItemState }>,
+  needsYou: ReadonlySet<string>,
+): number {
+  return items.filter((item) => {
+    const filter = queueFilterOf(item, needsYou);
+    return filter === 'needs-you' || filter === 'in-progress';
+  }).length;
+}
+
 /** One line of the glossary: the chip's words and tone, what they mean, and the stored states. */
 export interface GlossaryLine {
   readonly label: StateLabel;

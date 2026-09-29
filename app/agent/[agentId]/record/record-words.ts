@@ -6,6 +6,7 @@ import {
   type GrantSource,
   type WorkPlanHeldPayload,
 } from '@/events/contract';
+import { MANAGER_REJECTION_PREFIX } from '@/work/needs-manager';
 
 /**
  * A payload as the record reads it: a row an older release wrote may lack any field a newer
@@ -35,6 +36,16 @@ function text(value: unknown): string | undefined {
 function because(value: unknown): string {
   const reason = text(value);
   return reason ? `: ${reason.replace(/[.!?]+$/, '')}` : '';
+}
+
+/**
+ * The manager's own reason for a rejection, out of the stored one: the row keeps it after
+ * `rejected by the manager`, which the sentence already says as "You rejected".
+ */
+function yourReason(value: unknown): string {
+  const reason = text(value);
+  if (reason === undefined || !reason.startsWith(MANAGER_REJECTION_PREFIX)) return because(reason);
+  return because(reason.slice(MANAGER_REJECTION_PREFIX.length).replace(/^\s*:\s*/, ''));
 }
 
 /** `3 actions`, `1 action`, or nothing for a row that carries no count. */
@@ -474,6 +485,8 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `The provider's state${forItem(subject)} was confirmed${text(p.actor) ? ` by ${p.actor}` : ''}`,
   'work.cancelled': (p, subject) =>
     `${itemOf(subject)} was cancelled${decidedFrom(p.decidedVia)}${because(p.reason)}`,
+  'work.dismissed': (_, subject) =>
+    `You dismissed ${itemOf(subject)} from your inbox. It stays on the Work tab, where Retry runs it again`,
   'work.execution-claimed': (_, subject) => `${subject.name} started the run${forItem(subject)}`,
   'work.dependent-authoring': (_, subject) =>
     `${subject.name} wrote the closing actions${forItem(subject)} from what the first phase landed`,
@@ -497,7 +510,7 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
       subject,
     )}${decidedFrom(p.decidedVia)}`,
   'work.actions-rejected': (p, subject) =>
-    `You rejected the held actions${onItem(subject)}${decidedFrom(p.decidedVia)}${because(
+    `You rejected the held actions${onItem(subject)}${decidedFrom(p.decidedVia)}${yourReason(
       p.reason,
     )}`,
   'work.actions-applying': (p, subject) =>

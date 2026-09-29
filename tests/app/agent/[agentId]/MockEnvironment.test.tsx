@@ -100,7 +100,9 @@ describe('MockEnvironment caption and tabs', (): void => {
   it('shows only the discovered systems and readable documentation in real mode', (): void => {
     const markup = markupIn('real');
     expect(markup).toContain('<section id="surfaces" aria-label="Systems"');
-    expect(markup).toContain('aria-label="Linear" data-verdict="declared"');
+    expect(markup).toMatch(
+      /<section id="surface-linear" aria-labelledby="[^"]+" tabindex="-1" data-verdict="declared"/,
+    );
     expect(markup).toMatch(/<h2[^>]*>Documentation it reads<\/h2>/);
     expect(markup).toContain('Operating handbook');
     expect(markup).toMatch(/<h2[^>]*>Permissions<\/h2>/);

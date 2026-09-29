@@ -5,6 +5,7 @@ import { api } from '../../convex/_generated/api';
 import schema from '../../convex/schema';
 import { DEV_NO_AUTH_ISSUER, DEV_NO_AUTH_SUBJECT } from '../../src/lib/dev-auth-issuer';
 import { callerSessionId, ownerKeyOf } from '../../convex/ownership';
+import { EMPLOYEE_NOT_YOURS, isEmployeeNotYours } from '../../src/agent/employee-access';
 import { allConvexModules } from './all-modules';
 
 const CUSTOMER_ISSUER = 'https://sso.example.com/realms/ops';
@@ -39,7 +40,7 @@ describe('the owner key', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const alice = harness.withIdentity({ issuer: CUSTOMER_ISSUER, subject: 'alice' });
     const agentId = await alice.mutation(api.agents.deploy, { bossEmail: 'alice@example.com' });
-    expect((await alice.query(api.agents.get, { agentId })).userId).toBe(
+    expect((await alice.query(api.agents.get, { agentId }))?.userId).toBe(
       `${CUSTOMER_ISSUER}|alice`,
     );
   });
@@ -52,13 +53,55 @@ describe('the owner key', (): void => {
       subject: DEV_NO_AUTH_SUBJECT,
     });
     const agentId = await local.mutation(api.agents.deploy, { bossEmail: 'boss@day0.local' });
-    expect((await local.query(api.agents.get, { agentId })).userId).toBe(DEV_NO_AUTH_SUBJECT);
+    expect((await local.query(api.agents.get, { agentId }))?.userId).toBe(DEV_NO_AUTH_SUBJECT);
 
     const impostor = harness.withIdentity({
       issuer: CUSTOMER_ISSUER,
       subject: DEV_NO_AUTH_SUBJECT,
     });
-    await expect(impostor.query(api.agents.get, { agentId })).rejects.toThrow('forbidden');
+    await expect(impostor.query(api.agents.get, { agentId })).rejects.toThrow(EMPLOYEE_NOT_YOURS);
+  });
+});
+
+describe('agents.get, the employee page read (ownedAgentOrNull)', (): void => {
+  it('answers null for an employee that is gone, so the page can say so rather than crash', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity({ subject: 'owner' });
+    const agentId = await owner.mutation(api.agents.deploy, { bossEmail: 'boss@example.com' });
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.delete(agentId);
+    });
+    await expect(owner.query(api.agents.get, { agentId })).resolves.toBeNull();
+  });
+
+  it("refuses another owner's employee with a ConvexError the page can read after production strips the rest", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity({ subject: 'owner' });
+    const agentId = await owner.mutation(api.agents.deploy, { bossEmail: 'boss@example.com' });
+    const stranger = harness.withIdentity({ subject: 'stranger' });
+    const refusal = await stranger.query(api.agents.get, { agentId }).then(
+      (): unknown => undefined,
+      (error: unknown): unknown => error,
+    );
+    expect(isEmployeeNotYours(refusal)).toBe(true);
+  });
+
+  it('answers null for an address that names no employee at all, a truncated link included', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity({ subject: 'owner' });
+    const agentId = await owner.mutation(api.agents.deploy, { bossEmail: 'boss@example.com' });
+    await expect(owner.query(api.agents.get, { agentId: 'foo' })).resolves.toBeNull();
+    await expect(
+      owner.query(api.agents.get, { agentId: agentId.slice(0, -3) }),
+    ).resolves.toBeNull();
+    await expect(harness.query(api.agents.get, { agentId: 'foo' })).rejects.toThrow();
+  });
+
+  it('refuses an anonymous caller before it reads the row', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity({ subject: 'owner' });
+    const agentId = await owner.mutation(api.agents.deploy, { bossEmail: 'boss@example.com' });
+    await expect(harness.query(api.agents.get, { agentId })).rejects.toThrow();
   });
 });
 

@@ -8,6 +8,7 @@ import { Button } from '../../../components/Button';
 import { Field, INPUT_CLASS } from '../../../components/Field';
 import { StatusRegion } from '../../../components/StatusRegion';
 import { useChange } from '../../../components/use-change';
+import type { SentBackOutcome } from '../employee-context';
 
 /** The most characters a note may carry; the server holds the same bound. */
 export const CHANGES_NOTE_MAX_CHARS = 2000;
@@ -35,7 +36,7 @@ export function ChangesRequest({
   charter: Doc<'charters'>;
   name: string;
   hasTranscript: boolean | undefined;
-  onSentBack?: (charterId: Id<'charters'>) => void;
+  onSentBack?: (charterId: Id<'charters'>, outcome: SentBackOutcome) => void;
 }) {
   const requestChanges = useMutation(api.charters.requestChanges);
   const form = useRef<HTMLFormElement>(null);
@@ -51,7 +52,7 @@ export function ChangesRequest({
           ? `Sent back: ${name} is redrafting from your one-to-one and your note.`
           : SENT_BACK,
       refused: 'The charter was not sent back.',
-      after: () => onSentBack?.(charter._id),
+      after: (result) => onSentBack?.(charter._id, { redrafting: result.redrafting }),
     });
   }
 

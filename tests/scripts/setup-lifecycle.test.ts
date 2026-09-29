@@ -775,14 +775,31 @@ describe('pausing the scheduled jobs', (): void => {
     expect(ran(again)).not.toContain('convex:restart');
   });
 
-  it('pause takes over the pause an unfinished upgrade left, as its own, so the next upgrade leaves it', async (): Promise<void> => {
+  it('pause takes over the pause an unfinished upgrade left, as its own, and restarts the backend to hold it', async (): Promise<void> => {
     const h = configured({
       services: ['backend'],
       deploymentEnv: 'DAY0_CRONS_PAUSED=upgrade to 0.3.0 at 2026-09-29T13:00:00Z\n',
     });
     expect(await runCommand(verb('pause'), h.io)).toBe(0);
     expect(h.deploymentEnv().DAY0_CRONS_PAUSED).toMatch(/^paused by hand at /);
-    expect(h.output.join('\n')).toContain('now paused by hand');
+    expect(h.output.join('\n')).toContain(
+      'now paused by hand and the backend has restarted to hold them',
+    );
+    // The upgrade may have stopped before its own restart, leaving modules that never read the flag.
+    const lines = ran(h).split('\n');
+    const at = (text: string): number => lines.findIndex((line) => line.includes(text));
+    expect(at('run convex:restart')).toBeGreaterThan(at('convex env set DAY0_CRONS_PAUSED'));
+    expect(at('convex env set DAY0_CRONS_PAUSED')).toBeGreaterThanOrEqual(0);
+  });
+
+  it('prints the takeover and the restart, and changes nothing, on --dry-run', async (): Promise<void> => {
+    const h = configured({
+      services: ['backend'],
+      deploymentEnv: 'DAY0_CRONS_PAUSED=upgrade to 0.3.0 at 2026-09-29T13:00:00Z\n',
+    });
+    expect(await runCommand(verb('pause', { dryRun: true }), h.io)).toBe(0);
+    expect(h.output.join('\n')).toContain('pnpm run convex:restart');
+    expect(h.deploymentEnv().DAY0_CRONS_PAUSED).toBe('upgrade to 0.3.0 at 2026-09-29T13:00:00Z');
     expect(ran(h)).not.toContain('convex:restart');
   });
 
@@ -1050,7 +1067,7 @@ describe('backup, restore and upgrade (step 15)', (): void => {
     });
     expect(await runCommand(verb('upgrade'), h.io)).toBe(1);
     expect(h.output.join('\n')).toContain(
-      'whether the scheduled jobs are paused cannot be read; if an upgrade paused them, they stay paused',
+      'whether the scheduled jobs are paused cannot be read; if an upgrade paused them, they stay paused once it starts',
     );
     rmSync(homeDirectory, { recursive: true, force: true });
   });
@@ -1081,7 +1098,7 @@ describe('backup, restore and upgrade (step 15)', (): void => {
     const left = failed.deploymentEnv().DAY0_CRONS_PAUSED;
     expect(left).toMatch(/^upgrade to 0\.3\.0 at /);
     expect(failed.output.join('\n')).toContain(
-      'The scheduled jobs stay paused while the upgrade is unfinished',
+      'the running backend reads it only when it restarts, so the jobs may still run: `./setup.sh pause` holds them now',
     );
 
     const again = configured({

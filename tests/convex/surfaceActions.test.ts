@@ -991,6 +991,48 @@ describe('surface probe action state', (): void => {
     expect(mutationArguments).not.toContainEqual({ agentId, scope: 'linear:read' });
   });
 
+  it('keeps its route while it waits for the credential the manager lands after approving', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await harness.run(async (ctx): Promise<Id<'surfaces'>> => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'approved before its credential',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      return await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'linear',
+        displayName: 'Linear',
+        class: 'kanban',
+        verdict: 'approved',
+        whereFound: [],
+        path: 'mcp',
+        endpoint: 'https://mcp.linear.app/mcp',
+        pathCandidates: [
+          { path: 'mcp', endpoint: 'https://mcp.linear.app/mcp' },
+          { path: 'documented-api', endpoint: 'https://api.linear.app/graphql' },
+        ],
+        fallbackPath: 'documented-api',
+        credentialLocation: 'IT vault / Day0 Linear',
+        credentialLanded: false,
+        managerApprovedAt: 2,
+        createdAt: 1,
+      });
+    });
+
+    // The approval's own probe: the card asks for the credential only once approved.
+    await harness.action(internal.surfaceActions.probeInternal, { surfaceId });
+
+    const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+    expect(surface).toMatchObject({
+      verdict: 'ungranted',
+      path: 'mcp',
+      endpoint: 'https://mcp.linear.app/mcp',
+    });
+  });
+
   it('marks a missing credential ungranted without invoking a provider', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { agentId, surfaceId } = await harness.run(
