@@ -5,6 +5,7 @@ import {
   recordKindOf,
 } from '../../../../app/agent/[agentId]/event-labels';
 import { EVENT_TYPES } from '../../../../src/events/contract';
+import { eventTypesIn } from '../../../../src/events/record-filters';
 
 describe('the live feed labels', (): void => {
   it('gives every event type the contract lists words of its own, even for a row with no payload', (): void => {
@@ -231,6 +232,12 @@ describe('what a record line says an event did', (): void => {
     expect(recordKindOf({ type: 'work.skipped' })).toBe('withheld');
     expect(recordKindOf({ type: 'work.actions-pending' })).toBe('held');
     expect(recordKindOf({ type: 'skill.proposed' })).toBe('held');
+  });
+
+  it('draws every line the Refused and withheld chip lists as refused or set aside, never noted (m34)', (): void => {
+    for (const type of eventTypesIn('refused')) {
+      expect(['refused', 'withheld'], type).toContain(recordKindOf({ type }));
+    }
   });
 
   it('notes a failed run and a past draft rather than calling them refused or still held', (): void => {
