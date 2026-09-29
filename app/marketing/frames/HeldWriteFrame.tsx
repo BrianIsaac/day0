@@ -3,6 +3,8 @@ import { HELD_WRITE } from './fixtures';
 import { ProductFrame } from './ProductFrame';
 
 const BUTTON = 'inline-flex min-h-9 items-center rounded-lg border px-3 text-sm font-medium';
+/** The look of the card's other controls: its approval of every write and its rejection. */
+const SECONDARY = 'border-[var(--color-border)] bg-[var(--color-card)] text-[var(--color-fg)]';
 
 /** Step 4: a write held as the exact action, with nothing yet sent to the surface. */
 export function HeldWriteFrame() {
@@ -38,11 +40,10 @@ export function HeldWriteFrame() {
           <span
             className={`${BUTTON} border-transparent bg-[var(--color-ok)]/20 text-[var(--color-ok)]`}
           >
-            Approve all
+            Approve selected (1)
           </span>
-          <span className={`${BUTTON} border-[var(--color-danger)]/40 text-[var(--color-danger)]`}>
-            Reject run
-          </span>
+          <span className={`${BUTTON} ${SECONDARY}`}>Approve all</span>
+          <span className={`${BUTTON} ${SECONDARY}`}>Reject the run</span>
         </div>
       </div>
     </ProductFrame>
