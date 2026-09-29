@@ -60,13 +60,13 @@ describe('namedPeople', () => {
 });
 
 describe('provenanceLine', () => {
-  it('says the one-to-one gave the names, in which version, and whether and when it was approved', () => {
+  it('says which charter version names them, and whether and when it was approved', () => {
     const approvedAt = Date.UTC(2026, 8, 26, 14, 23);
     expect(provenanceLine({ ...APPROVED_CHARTER, approvedAt } as Doc<'charters'>, 'UTC')).toBe(
-      'From your one-to-one, in charter version 0.1, approved by you 26 Sep 2026, 14:23.',
+      'Named in charter version 0.1, approved by you 26 Sep 2026, 14:23.',
     );
     expect(provenanceLine({ ...APPROVED_CHARTER, approved: false } as Doc<'charters'>, 'UTC')).toBe(
-      'From your one-to-one, in charter version 0.1, not approved yet.',
+      'Named in charter version 0.1, not approved yet.',
     );
   });
 });
@@ -91,7 +91,9 @@ describe('PeopleView', () => {
     expect(html).toContain('boss@day0.local');
     expect(html).toContain('Priya');
     expect(html).toContain(' · segment and pipeline · reaches out directly');
-    expect(html).toContain('From your one-to-one, in charter version 0.1, approved by you.');
+    expect(html).toContain('Named in charter version 0.1, approved by you.');
+    // An amendment can add a person, so the line never claims the one-to-one named them.
+    expect(html).not.toContain('From your one-to-one');
     expect(html).toContain('does not propose people for you to confirm yet');
     expect(html).not.toMatch(/<button[^>]*>(Confirm|Dismiss|A different person)/);
     expect(html).toMatch(/<button[^>]*>Change manager<\/button>/);

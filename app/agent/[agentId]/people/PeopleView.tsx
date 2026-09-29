@@ -66,18 +66,19 @@ export function namedPeople(body: unknown): NamedPerson[] {
 }
 
 /**
- * Where the charter's people came from, for the line under each: the one-to-one, and the charter
- * version that carries them with whether the manager approved it.
+ * Where the charter's people stand, for the line under each: the charter version that names them
+ * and whether the manager approved it. The one-to-one names them first and an amendment can add
+ * one; the row does not say which, so the line does not either.
  *
  * @param charter - The charter the tab reads.
  * @param zone - The employee's zone, for the approval's date.
  */
 export function provenanceLine(charter: Doc<'charters'>, zone: string | undefined): string {
   const version = `charter version ${charter.version}`;
-  if (!charter.approved) return `From your one-to-one, in ${version}, not approved yet.`;
+  if (!charter.approved) return `Named in ${version}, not approved yet.`;
   return charter.approvedAt === undefined
-    ? `From your one-to-one, in ${version}, approved by you.`
-    : `From your one-to-one, in ${version}, approved by you ${clockTime(charter.approvedAt, zone)}.`;
+    ? `Named in ${version}, approved by you.`
+    : `Named in ${version}, approved by you ${clockTime(charter.approvedAt, zone)}.`;
 }
 
 /**
@@ -133,8 +134,9 @@ export function PeopleView() {
           </p>
         ) : (
           <ul className="grid gap-4">
-            {named.map((person) => (
-              <li key={person.name} className="grid gap-0.5">
+            {named.map((person, index) => (
+              // Two people can share a name; their place in the charter tells them apart.
+              <li key={`${index}-${person.name}`} className="grid gap-0.5">
                 <p className="text-[15px] text-[var(--color-fg-2)]">
                   <span className="font-semibold text-[var(--color-fg)]">{person.name}</span>
                   {person.topic ? ` · ${person.topic}` : null}
