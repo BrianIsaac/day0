@@ -732,7 +732,7 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     view.unmount();
   });
 
-  it('turns the rail into the card when the first write lands in front of the manager, and plays the advance on it', async (): Promise<void> => {
+  it('plays the advance on the rail when the first write lands in front of the manager, then turns it into the card', async (): Promise<void> => {
     const noWrite = {
       ...dashboardMetrics(),
       actions: {
@@ -749,19 +749,39 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     };
     const view = mount(page());
     await settle();
-    const rail = view.container.querySelector('ol[aria-label="First week"]');
-    expect(rail?.querySelector('[aria-current="step"]')?.textContent).toContain(
-      'First supervised write',
-    );
+    expect(
+      view.container
+        .querySelector('ol[aria-label="First week"]')
+        ?.querySelector('[aria-current="step"]')?.textContent,
+    ).toContain('First supervised write');
     expect(view.container.querySelector('header button[aria-label^="First week"]')).toBeNull();
 
     backend.queries = { ...backend.queries, 'metrics:forAgent': dashboardMetrics() };
     act((): void => view.root.render(page()));
     await settle();
-    expect(view.container.querySelector('ol[aria-label="First week"]')).toBeNull();
+    // Re-pinned (review M3): the advance plays on the whole rail, where the step it moves from is
+    // on screen, and the rail gives way to the card once it has played.
+    const rail = (): Element | null => view.container.querySelector('ol[aria-label="First week"]');
+    expect(rail()?.hasAttribute('data-advanced')).toBe(true);
+    expect(rail()?.querySelector('[aria-current="step"]')?.textContent).toContain('Working');
+    expect(view.container.querySelector('header button[aria-label^="First week"]')).toBeNull();
+    await vi.waitFor(
+      (): void => {
+        expect(rail()).toBeNull();
+      },
+      { timeout: 2_000 },
+    );
     const card = view.container.querySelector('header button[aria-label^="First week"]');
     expect(card?.textContent).toContain('Working');
-    expect(card?.closest('.rail')?.hasAttribute('data-advanced')).toBe(true);
+    view.unmount();
+  });
+
+  it('draws a not-yet-working employee’s rail from the row before its charter is read (review M4)', async (): Promise<void> => {
+    backend.queries = { 'agents:get': row('deployed') };
+    const view = mount(page());
+    await settle();
+    const rail = view.container.querySelector('ol[aria-label="First week"]');
+    expect(rail?.querySelector('[aria-current="step"]')?.textContent).toContain('Day-1 one-to-one');
     view.unmount();
   });
 

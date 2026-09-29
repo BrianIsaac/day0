@@ -164,7 +164,7 @@ export function EmployeeShell({
   const steps = agent
     ? firstWeekSteps({
         deployedAt: agent.createdAt,
-        state: shownState ?? agent.state,
+        state: shownEmployeeState(agent.state, charter),
         phase,
         charter,
         writeLanded:
@@ -181,11 +181,14 @@ export function EmployeeShell({
   const stepBefore = usePreviousValue(step, RAIL_ADVANCE_MS);
   const advanced = stepBefore !== undefined && stepBefore !== UNSETTLED && stepBefore < step;
   // Once the employee is working the week is one card in the header (the operator's ruling of
-  // 30 September). Whether it is working waits on the charter and, for an active employee, on
-  // the figures that say a write landed; until then the page draws neither, so a working
-  // employee's page never shows the whole rail and then takes it away.
-  const stageKnown = latest !== undefined && (shownState !== 'active' || metrics !== undefined);
-  const working = stageKnown && steps.at(-1)?.status === 'now';
+  // 30 September). Only an active employee can be working, and whether it is waits on the
+  // figures that say a write landed: until they load its page draws neither, so a working
+  // employee's page never shows the whole rail and then takes it away. Any other employee's rail
+  // is drawn at once, from the row until the charter is read, as it always was.
+  const stageKnown = shownState !== 'active' || (latest !== undefined && metrics !== undefined);
+  // The week moving on to Working in front of the manager plays on the whole rail first, where
+  // the step it moves from is on screen; the rail gives way to the card once that has played.
+  const working = stageKnown && steps.at(-1)?.status === 'now' && !advanced;
   // What follows a draft sent back is the 1:1 again, or, when an approved
   // charter stands beneath the draft, that charter: only the first reopens
   // anything, so only then does the page say so and take focus. A charter
@@ -292,9 +295,12 @@ export function EmployeeShell({
                 (row) => row.class === 'chat' && isManagerLookupFailure(row.reason),
               )?.reason
             }
-            stage={working ? <FirstWeekCard steps={steps} advanced={advanced} /> : undefined}
+            stage={working ? <FirstWeekCard steps={steps} /> : undefined}
           />
-          <StatusRegion outcome={pageOutcome} />
+          {/* The page's own status keeps a gap under the header when it says something. */}
+          <div className="mt-3 has-[>p:empty]:mt-0">
+            <StatusRegion outcome={pageOutcome} />
+          </div>
           {stageKnown && !working ? (
             <div className="mt-5">
               <FirstWeekRail steps={steps} advanced={advanced} />
