@@ -16,9 +16,9 @@ import {
   componentFor,
   isBundledNotionLocator,
 } from '../src/docs/components';
-import { assertOwnsAgent, getCallerOrThrow } from './ownership';
+import { getCallerOrThrow } from './ownership';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
-import { reconcileDocumentedSystems } from './surfaces';
+import { readCardPages, reconcileDocumentedSystems } from './surfaces';
 import { purgeCredential } from './credentials';
 import type { IntakeScope } from '../src/surfaces/intake-scope';
 import { assertCurrentGeneration } from '../src/docs/sync-generation';
@@ -33,7 +33,6 @@ import {
   type UnreadRecord,
 } from '../src/docs/sync-record';
 import { runToResume } from '../src/docs/sync-resume';
-import { cardPageRefs } from '../src/docs/card-pages';
 import { credentialPageRef } from '../src/docs/credential-ref';
 import {
   FINISHING_CURSOR,
@@ -106,13 +105,6 @@ const RUN_PRUNE_BATCH = 8;
  * (`credentials-sync-revoke`): completed runs are kept for it until it has run.
  */
 const RUNS_READ_BY_MIGRATION: MigrationName = 'credentials-sync-revoke';
-
-/** The most pages the surface cards are sent, and the most bytes they are read up to. */
-const CARD_PAGE_LIMIT = 100;
-const CARD_PAGE_BYTES = 8 * 1024 * 1024;
-
-/** The most surfaces of one employee the cards' page list is drawn from. */
-const CARD_SURFACE_LIMIT = 1_000;
 
 /** Why a run that a newer one replaced before it finished ended. */
 const SUPERSEDED_RUN_REASON = 'a newer sync of the source started before this one finished';
@@ -640,34 +632,13 @@ export const deleteSourceRows = internalMutation({
 });
 
 /**
- * Return the documentation pages one owned agent's surface cards read.
- *
- * Public, owner-guarded. The cards need the page each approved intake value
- * quotes and the pages that evidence each system, never the corpus
- * (`cardPageRefs`); each is read by its reference, up to a hundred pages and
- * eight mebibytes, and returned in the order the employee's sources and
- * their pages were created, as the cards read the documented order.
- */
-export const pagesForAgent = query({
-  args: { agentId: v.id('agents') },
-  handler: async (ctx, args) => {
-    const agent = await assertOwnsAgent(ctx, args.agentId);
-    const surfaces = await ctx.db
-      .query('surfaces')
-      .withIndex('by_agent', (index) => index.eq('agentId', agent._id))
-      .take(CARD_SURFACE_LIMIT);
-    return await readCardPages(ctx, agent, surfaces);
-  },
-});
-
-/**
  * The pages one surface's card reads (its approved scope's pages and its
  * evidence), for the probe: the system's own documentation, read by ref
  * rather than as the corpus (D D3 (b)). Internal; reads, writes nothing.
  */
 export const cardPagesForSurface = internalQuery({
   args: { surfaceId: v.id('surfaces') },
-  handler: async (ctx, args): Promise<CardPage[]> => {
+  handler: async (ctx, args): Promise<Doc<'docPages'>[]> => {
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) return [];
     const agent = await ctx.db.get(surface.agentId);
@@ -675,52 +646,6 @@ export const cardPagesForSurface = internalQuery({
     return await readCardPages(ctx, agent, [surface]);
   },
 });
-
-/** A page a card reads, with the label and kind of the source it came from. */
-type CardPage = Doc<'docPages'> & { sourceLabel: string; sourceKind: string };
-
-/**
- * Read the pages some surface cards name, by ref, within the card bounds
- * (`CARD_PAGE_LIMIT` pages, `CARD_PAGE_BYTES` of text), ordered by source
- * then by when each page was first stored.
- *
- * @param agent - The employee, whose readable sources bound the refs.
- * @param surfaces - The cards whose pages are read.
- */
-async function readCardPages(
-  ctx: QueryCtx,
-  agent: Doc<'agents'>,
-  surfaces: readonly Doc<'surfaces'>[],
-): Promise<CardPage[]> {
-  const sources = (
-    await ctx.db
-      .query('docSources')
-      .withIndex('by_user', (index) => index.eq('userId', agent.userId!))
-      .collect()
-  ).filter((source) => agentReadsSource(agent, source._id));
-  const byId = new Map(sources.map((source, index) => [String(source._id), { source, index }]));
-  const refs = cardPageRefs(surfaces, new Set(byId.keys()), CARD_PAGE_LIMIT);
-  const encoder = new TextEncoder();
-  const pages: CardPage[] = [];
-  let bytes = 0;
-  for (const { sourceId, ref } of refs) {
-    if (bytes >= CARD_PAGE_BYTES) break;
-    const owner = byId.get(sourceId);
-    if (!owner) continue;
-    const page = await ctx.db
-      .query('docPages')
-      .withIndex('by_source_ref', (index) => index.eq('sourceId', owner.source._id).eq('ref', ref))
-      .unique();
-    if (!page) continue;
-    bytes += encoder.encode(page.markdown).length;
-    pages.push({ ...page, sourceLabel: owner.source.label, sourceKind: owner.source.kind });
-  }
-  return pages.sort(
-    (left, right): number =>
-      (byId.get(String(left.sourceId))?.index ?? 0) -
-        (byId.get(String(right.sourceId))?.index ?? 0) || left._creationTime - right._creationTime,
-  );
-}
 
 /**
  * Count linked documentation sources by kind, for `pnpm check:setup`.

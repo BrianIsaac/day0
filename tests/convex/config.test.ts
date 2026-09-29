@@ -97,3 +97,36 @@ describe('model settings', (): void => {
     expect((await harness.query(api.config.modelSettings, {})).evaluationBed).toBe('comparison');
   });
 });
+
+describe('the release the deployment is stamped at', (): void => {
+  it('is null on a deployment that was never stamped', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await expect(harness.query(api.config.release, {})).resolves.toBeNull();
+  });
+
+  it('is the newest release, since its first stamp, without its commit', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('deploymentVersions', {
+        release: '0.7.0',
+        commit: 'aaaaaaa',
+        recordedAt: 1,
+      });
+      await ctx.db.insert('deploymentVersions', {
+        release: '0.8.0',
+        commit: 'ea9ced8f014c',
+        recordedAt: 2,
+      });
+      // The same release pushed again from a later commit.
+      await ctx.db.insert('deploymentVersions', {
+        release: '0.8.0',
+        commit: 'b416a660aaaa',
+        recordedAt: 3,
+      });
+    });
+    await expect(harness.query(api.config.release, {})).resolves.toEqual({
+      release: '0.8.0',
+      since: 2,
+    });
+  });
+});

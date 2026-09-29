@@ -4,18 +4,28 @@ import { useState, useMemo } from 'react';
 import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
+import { Chip } from '../../../components/Chip';
+
+/** A group heading of the documents' rail. */
+const GROUP_HEADING =
+  'mb-2 mt-1 text-xs font-semibold tracking-[0.06em] text-[var(--color-muted)] uppercase';
 
 /** What an empty docs list means in each surface mode. */
 export const EMPTY_DOCS: Record<'mock' | 'real', string> = {
-  mock: 'no docs yet - seed first',
+  mock: 'No documents are seeded in this office yet.',
   real: 'No linked documentation is available yet. Link a source or check its sync status on /documentation; synced pages will appear here.',
 };
 
+/** What the Docs pane says while its documents load, in each surface mode. */
 export const LOADING_DOCS: Record<'mock' | 'real', string> = {
-  mock: 'loading docs…',
+  mock: 'Loading the office documents…',
   real: 'Loading linked documentation…',
 };
 
+/**
+ * The documents the employee reads, team documents then how-to guides, one open beside the list:
+ * the office's wiki in mock mode, the linked documentation in real mode.
+ */
 export function DocsTab({
   agentId,
   mode = 'mock',
@@ -46,22 +56,26 @@ export function DocsTab({
 
   const active = activeSlug ? sortedDocs.find((d) => d.slug === activeSlug) : sortedDocs[0];
 
-  if (!docs) return <div className="text-xs text-[var(--color-muted)]">{LOADING_DOCS[mode]}</div>;
+  if (!docs) return <p className="text-sm text-[var(--color-muted)]">{LOADING_DOCS[mode]}</p>;
   if (sortedDocs.length === 0)
-    return <div className="text-xs text-[var(--color-muted)]">{EMPTY_DOCS[mode]}</div>;
+    return <p className="text-sm text-[var(--color-muted)]">{EMPTY_DOCS[mode]}</p>;
 
   return (
-    // One column on a phone and in a narrow panel, the rail beside the page
-    // once the panel is wide enough for both (as the Slack tab does).
-    <div className="grid grid-cols-1 @lg:grid-cols-[12rem_1fr] gap-4 h-full">
+    // One column on a phone and in a narrow panel, the rail beside the page once the panel is
+    // wide enough for both (as the Slack tab does). In the office's fixed panel the columns fill
+    // it; in the real-mode card they bound themselves, so a short list ends the card and a long
+    // page scrolls beside the list.
+    <div
+      className={`grid grid-cols-1 @lg:grid-cols-[12rem_1fr] @lg:grid-rows-[minmax(0,1fr)] gap-4 ${
+        mode === 'real' ? '@lg:max-h-[32rem]' : 'h-full'
+      }`}
+    >
       <nav
         aria-label="Documents"
-        className="@lg:border-r border-[var(--color-border)] @lg:pr-3 @lg:-mr-1 @lg:overflow-y-auto min-w-0"
+        className="min-w-0 border-[var(--color-border)] @lg:-mr-1 @lg:min-h-0 @lg:overflow-y-auto @lg:border-r @lg:pr-3"
       >
-        <div className="text-[10px] uppercase tracking-wider text-[var(--color-muted)] mb-2 mt-1">
-          Team docs
-        </div>
-        <ul className="space-y-1 text-xs">
+        <h3 className={GROUP_HEADING}>Team docs</h3>
+        <ul className="space-y-1 text-sm">
           {sortedDocs
             .filter((d) => d.category === 'team-doc')
             .map((d) => (
@@ -70,13 +84,13 @@ export function DocsTab({
                   type="button"
                   onClick={() => setActiveSlug(d.slug)}
                   aria-current={active?.slug === d.slug ? 'true' : undefined}
-                  className={`min-h-11 w-full text-left px-2 py-1 rounded ${
+                  className={`min-h-11 w-full rounded-lg px-2.5 py-1.5 text-left ${
                     active?.slug === d.slug
                       ? 'bg-[var(--color-accent)]/15 text-[var(--color-accent)]'
-                      : 'text-[var(--color-fg)] hover:bg-[var(--color-bg)]'
+                      : 'text-[var(--color-fg-2)] hover:bg-[var(--color-inset)] hover:text-[var(--color-fg)]'
                   }`}
                 >
-                  <span className="block text-[9px] text-[var(--color-muted)]">
+                  <span className="block text-xs text-[var(--color-muted)]">
                     {d.sourceId
                       ? sourceLabels.get(d.sourceId) || 'linked source'
                       : 'Demo docs (seeded)'}
@@ -86,10 +100,8 @@ export function DocsTab({
               </li>
             ))}
         </ul>
-        <div className="text-[10px] uppercase tracking-wider text-[var(--color-muted)] mb-2 mt-4">
-          How-to guides
-        </div>
-        <ul className="space-y-1 text-xs">
+        <h3 className={`${GROUP_HEADING} mt-4`}>How-to guides</h3>
+        <ul className="space-y-1 text-sm">
           {sortedDocs
             .filter((d) => d.category === 'how-to-guide')
             .map((d) => (
@@ -98,13 +110,13 @@ export function DocsTab({
                   type="button"
                   onClick={() => setActiveSlug(d.slug)}
                   aria-current={active?.slug === d.slug ? 'true' : undefined}
-                  className={`min-h-11 w-full text-left px-2 py-1 rounded ${
+                  className={`min-h-11 w-full rounded-lg px-2.5 py-1.5 text-left ${
                     active?.slug === d.slug
                       ? 'bg-[var(--color-warn)]/15 text-[var(--color-warn)]'
-                      : 'text-[var(--color-muted)] hover:text-[var(--color-fg)] hover:bg-[var(--color-bg)]'
+                      : 'text-[var(--color-fg-2)] hover:bg-[var(--color-inset)] hover:text-[var(--color-fg)]'
                   }`}
                 >
-                  <span className="block text-[9px] text-[var(--color-muted)]">
+                  <span className="block text-xs text-[var(--color-muted)]">
                     {d.sourceId
                       ? sourceLabels.get(d.sourceId) || 'linked source'
                       : 'Demo docs (seeded)'}
@@ -117,40 +129,34 @@ export function DocsTab({
       </nav>
 
       <article
-        className="overflow-y-auto pr-2"
+        className="min-h-0 overflow-y-auto pr-2"
         tabIndex={0}
         aria-label={active ? `Page: ${active.title}` : 'Page'}
       >
         {active ? (
           <>
-            <div className="flex items-center gap-2 mb-3">
+            <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1">
               <h3 className="text-base font-semibold">{active.title}</h3>
-              <span
-                className={`text-[10px] px-1.5 py-0.5 rounded ${
-                  active.category === 'how-to-guide'
-                    ? 'bg-[var(--color-warn)]/15 text-[var(--color-warn)]'
-                    : 'bg-[var(--color-muted)]/15 text-[var(--color-muted)]'
-                }`}
-              >
-                {active.category === 'how-to-guide' ? 'how-to guide' : 'team doc'}
-              </span>
+              <Chip tone={active.category === 'how-to-guide' ? 'warn' : 'muted'}>
+                {active.category === 'how-to-guide' ? 'How-to guide' : 'Team doc'}
+              </Chip>
               {active.sourceUrl ? (
                 <a
                   href={active.sourceUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="text-[10px] text-[var(--color-accent)] underline"
+                  className="inline-flex min-h-11 items-center text-sm"
                 >
-                  open source
+                  Open the source page
                 </a>
               ) : null}
             </div>
-            <pre className="text-xs whitespace-pre-wrap font-sans leading-relaxed text-[var(--color-fg)]">
+            <pre className="font-sans text-sm leading-relaxed whitespace-pre-wrap text-[var(--color-fg)]">
               {active.body}
             </pre>
           </>
         ) : (
-          <div className="text-xs text-[var(--color-muted)]">pick a doc</div>
+          <p className="text-sm text-[var(--color-muted)]">Pick a document from the list.</p>
         )}
       </article>
     </div>

@@ -4940,6 +4940,10 @@ describe('re-admitting pending work when the policy changes', (): void => {
       after: { skipped: expect.any(Number) },
     });
 
+    // Each readmitted row wakes the loop, which schedules its evaluation in workActions. The
+    // drain allows a fixed number of macrotask pumps, and the first import of that module on a
+    // busy runner can outlast them, so it is loaded before the drain waits on its actions.
+    await allConvexModules()['../../convex/workActions.ts']?.();
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
     const remaining = await harness.run(
       async (ctx) =>
@@ -6821,6 +6825,205 @@ describe('work.needsYou', (): void => {
     expect(inbox.waitingByEmployee).toEqual([{ agentId: mira, waiting: 55 }]);
     expect(inbox.entries[0].subject).toBe('Plan 0');
     expect(inbox.entries.at(-1)?.subject).toBe('Plan 49');
+  });
+
+  describe('work.needsYouForAgent', (): void => {
+    it('lists one employee’s entries, longest wait first, as the owner-wide inbox lists them', async (): Promise<void> => {
+      const harness = convexTest(schema, allConvexModules());
+      const mira = await employee(harness, 'Mira');
+      const aiko = await employee(harness, 'Aiko');
+      const held = await item(harness, mira, 'Post the escalation guidance', 'actions-pending', {
+        output: pendingOutput,
+        actionVerdicts: [{ disposition: 'held', reason: 'write' }, { disposition: 'auto' }],
+      });
+      const heldAt = await entered(harness, mira, 'work.actions-pending', { workItemId: held });
+      await item(harness, mira, 'Draft the tier-two reply', 'plan-pending', { planPendingAt: 1 });
+      await item(harness, aiko, 'Aiko’s plan', 'plan-pending', { planPendingAt: 2 });
+
+      const own = await harness
+        .withIdentity(OWNER)
+        .query(api.work.needsYouForAgent, { agentId: mira });
+      const everyone = await harness.withIdentity(OWNER).query(api.work.needsYou, {});
+
+      expect(own.total).toBe(2);
+      expect(own.entries.map((entry) => [entry.kind, entry.subject])).toEqual([
+        ['plan', 'Draft the tier-two reply'],
+        ['held', 'Post the escalation guidance'],
+      ]);
+      expect(own.entries[1]).toMatchObject({ waitingSince: heldAt, heldWrites: 1 });
+      expect(own.entries).toEqual(everyone.entries.filter((entry) => entry.agentId === mira));
+    });
+
+    it('lists a deployed employee’s one-to-one, the one entry its page waits on', async (): Promise<void> => {
+      const harness = convexTest(schema, allConvexModules());
+      const waiting = await employee(harness, 'Aiko', { state: 'deployed' });
+
+      const own = await harness
+        .withIdentity(OWNER)
+        .query(api.work.needsYouForAgent, { agentId: waiting });
+
+      expect(own.entries.map((entry) => entry.kind)).toEqual(['one-to-one']);
+    });
+
+    it('refuses a caller who does not own the employee, and an anonymous one', async (): Promise<void> => {
+      const harness = convexTest(schema, allConvexModules());
+      const theirs = await employee(harness, 'Stranger’s employee', { userId: 'stranger' });
+      await item(harness, theirs, 'Theirs', 'plan-pending', { planPendingAt: 1 });
+
+      await expect(
+        harness.withIdentity(OWNER).query(api.work.needsYouForAgent, { agentId: theirs }),
+      ).rejects.toThrow('forbidden');
+      await expect(harness.query(api.work.needsYouForAgent, { agentId: theirs })).rejects.toThrow();
+    });
+  });
+});
+
+describe('work.dismissFailed (N7)', (): void => {
+  async function stopped(harness: Harness): Promise<{
+    agentId: Id<'agents'>;
+    workItemId: Id<'workItems'>;
+  }> {
+    const { agentId, workItemId } = await seed(harness, 'failed');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        skipReason: 'stopped: nothing landed and nothing to decide',
+      });
+    });
+    return { agentId, workItemId };
+  }
+
+  it('takes a stopped item out of the inbox and keeps it, until a Retry sends it back', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await stopped(harness);
+    const inbox = async (): Promise<string[]> =>
+      (await harness.withIdentity(OWNER).query(api.work.needsYouForAgent, { agentId })).entries.map(
+        (entry) => entry.kind,
+      );
+    expect(await inbox()).toEqual(['stopped']);
+
+    await harness.withIdentity(OWNER).mutation(api.work.dismissFailed, { workItemId });
+
+    const dismissed = await readItem(harness, workItemId);
+    expect(dismissed.state).toBe('failed');
+    expect(dismissed.dismissedAt).toEqual(expect.any(Number));
+    expect(await inbox()).toEqual([]);
+
+    await harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId });
+    expect((await readItem(harness, workItemId)).dismissedAt).toBeUndefined();
+  });
+
+  it('records the dismissal as a work.dismissed event, once however often it is pressed (m16)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await stopped(harness);
+
+    await harness.withIdentity(OWNER).mutation(api.work.dismissFailed, { workItemId });
+    await harness.withIdentity(OWNER).mutation(api.work.dismissFailed, { workItemId });
+
+    const dismissed = await eventsOfType(harness, agentId, 'work.dismissed');
+    expect(dismissed.map((event) => event.payload)).toEqual([{ workItemId }]);
+    expect(dismissed[0]?.createdAt).toBe((await readItem(harness, workItemId)).dismissedAt);
+  });
+
+  it('refuses to dismiss a stop whose write may have landed until the provider is reconciled', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await seed(harness, 'failed');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        skipReason: 'stopped: a write may have landed',
+        output: {
+          draft: 'd',
+          notes: '',
+          actions: [pendingOutput.actions[0]],
+          applied: [
+            { tool: 'mcp.call', ok: false, outcomeUnknown: true, idempotencyKey: 'comment' },
+          ],
+        },
+      });
+    });
+    const refusal = harness.withIdentity(OWNER).mutation(api.work.dismissFailed, { workItemId });
+    await expect(refusal).rejects.toBeInstanceOf(ConvexError);
+    await expect(refusal).rejects.toMatchObject({
+      data: 'A write on this item may have landed: confirm it against the provider before you dismiss it.',
+    });
+    expect((await readItem(harness, workItemId)).dismissedAt).toBeUndefined();
+  });
+
+  it('dismisses once, and refuses an item that is not failed or not the caller’s', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await stopped(harness);
+    await harness.withIdentity(OWNER).mutation(api.work.dismissFailed, { workItemId });
+    const first = (await readItem(harness, workItemId)).dismissedAt;
+    await harness.withIdentity(OWNER).mutation(api.work.dismissFailed, { workItemId });
+    expect((await readItem(harness, workItemId)).dismissedAt).toBe(first);
+
+    await expect(
+      harness
+        .withIdentity({ subject: 'intruder' })
+        .mutation(api.work.dismissFailed, { workItemId }),
+    ).rejects.toThrow('forbidden');
+    const { workItemId: pending } = await seed(harness, 'plan-pending');
+    const refusal = harness
+      .withIdentity(OWNER)
+      .mutation(api.work.dismissFailed, { workItemId: pending });
+    await expect(refusal).rejects.toBeInstanceOf(ConvexError);
+    await expect(refusal).rejects.toMatchObject({
+      data: 'Only a stopped or rejected item can be dismissed; this one has moved on.',
+    });
+  });
+});
+
+describe('work.earlierPlan (round two 3.7, attempt two)', (): void => {
+  it('reads the plan drafted for the item before the manager cancelled it, and none of another item’s', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'plan-pending');
+    const other = await harness.run(async (ctx) => {
+      const draft = (id: Id<'workItems'>, summary: string) =>
+        ctx.db.insert('events', {
+          agentId,
+          type: 'work.plan-drafted',
+          payload: { workItemId: id, plan: { summary, steps: [`${summary} step`] } },
+          createdAt: 1,
+        });
+      await draft(workItemId, 'First plan');
+      const otherId = await ctx.db.insert('workItems', {
+        agentId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'REVOPS-2',
+        title: 'Another',
+        contentSummary: 's',
+        contentRefs: [],
+        state: 'plan-pending',
+        observedAt: 1,
+        createdAt: 1,
+      });
+      await draft(otherId, 'Another item’s plan');
+      return otherId;
+    });
+    // The cancel comes after the first plan; the redraft after the cancel.
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, { planRejectedAt: Date.now() + 1 });
+    });
+    vi.useRealTimers();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('events', {
+        agentId,
+        type: 'work.plan-drafted',
+        payload: { workItemId, plan: { summary: 'Redraft', steps: ['Redraft step'] } },
+        createdAt: 2,
+      });
+    });
+    const owner = harness.withIdentity(OWNER);
+    expect(await owner.query(api.work.earlierPlan, { workItemId })).toEqual({
+      summary: 'First plan',
+      steps: ['First plan step'],
+      draftedAt: expect.any(Number),
+    });
+    expect(await owner.query(api.work.earlierPlan, { workItemId: other })).toBeNull();
+    await expect(
+      harness.withIdentity({ subject: 'stranger' }).query(api.work.earlierPlan, { workItemId }),
+    ).rejects.toThrow('forbidden');
   });
 });
 

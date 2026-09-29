@@ -4,7 +4,9 @@ import {
   normaliseNamedSystems,
   renderCharter,
   toolsFromCharter,
+  userPrompt,
   withoutAgentQuotedEvidence,
+  DAY_ONE_TOPICS,
   type Charter,
   type NamedSystem,
 } from '../../../src/agent/charter';
@@ -211,5 +213,31 @@ describe('the evidence guard', (): void => {
       `  - ${SYNTHESIS_SELF_CHECK_NOTE_2026_09_16}`,
     );
     expect(renderCharter(charter)).not.toContain('SYNTHESIS NOTES');
+  });
+});
+
+describe('the charter prompt', (): void => {
+  const answers = Object.fromEntries(
+    DAY_ONE_TOPICS.map((topic): [string, string] => [topic, `answer on ${topic}`]),
+  ) as Parameters<typeof userPrompt>[0];
+
+  it('puts the seven answers under their topics and nothing more for a first draft', (): void => {
+    const prompt = userPrompt(answers);
+    expect(prompt).toContain('[why-this-hire]\nanswer on why-this-hire');
+    expect(prompt).toContain('[open-questions]\nanswer on open-questions');
+    expect(prompt).not.toContain('[changes-requested]');
+  });
+
+  it('adds every note a draft was sent back with, oldest first, and each rule struck on it', (): void => {
+    const prompt = userPrompt(answers, [
+      { reason: 'Name the committee deck in the 30-day goal.', struck: [] },
+      { reason: '  ', struck: ['Own segment or pipeline work assigned to Priya.'] },
+    ]);
+    const changes = prompt.slice(prompt.indexOf('[changes-requested]'));
+    expect(changes.split('\n').filter((line) => line.startsWith('- '))).toEqual([
+      '- Name the committee deck in the 30-day goal.',
+      '- Leave out the rule "Own segment or pipeline work assigned to Priya.": the manager struck it.',
+    ]);
+    expect(prompt.indexOf('[open-questions]')).toBeLessThan(prompt.indexOf('[changes-requested]'));
   });
 });

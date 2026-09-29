@@ -438,6 +438,7 @@ async function prepareDay0(context: HarnessContext, run: RunWithProgress): Promi
     scopes: [...EVALUATION_SCOPES],
   });
   const agent = await context.client.query(api.agents.get, { agentId });
+  if (agent === null) throw new Error(`agent ${agentId} is gone`);
   let charter = await context.client.query(api.charters.latest, { agentId });
   if (!charter && agent.state !== 'active') {
     const session = await context.client.mutation(api.voice.start, { agentId, mode: 'chat' });

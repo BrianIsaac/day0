@@ -7,8 +7,16 @@ import type { Id, Doc } from '@convex/_generated/dataModel';
 
 /** What an empty sheet list means. The tab is mock-only: real mode does not
  * render it, so it has no real-mode copy to show. */
-export const EMPTY_SPREADSHEETS = 'no spreadsheets seeded';
+export const EMPTY_SPREADSHEETS = 'No spreadsheets are seeded in this office.';
 
+/** The heading classes of the sheet's columns. */
+const COLUMN_HEADING =
+  'px-3 py-2 text-left text-xs font-semibold tracking-[0.06em] text-[var(--color-muted)] uppercase';
+
+/**
+ * The office's spreadsheets: one sheet at a time, its tabs, and the rows of the open tab, those the
+ * employee added marked as its own.
+ */
 export function SpreadsheetTab({ agentId }: { agentId: Id<'agents'> }) {
   const sheets = useQuery(api.mock.listSpreadsheets, { agentId });
   // Nothing picked yet falls through to the first sheet and its first tab, so
@@ -33,16 +41,16 @@ export function SpreadsheetTab({ agentId }: { agentId: Id<'agents'> }) {
   );
 
   if (!sheets)
-    return <div className="text-xs text-[var(--color-muted)]">loading spreadsheets…</div>;
+    return <p className="text-sm text-[var(--color-muted)]">Loading the spreadsheets…</p>;
   if (sheets.length === 0)
-    return <div className="text-xs text-[var(--color-muted)]">{EMPTY_SPREADSHEETS}</div>;
+    return <p className="text-sm text-[var(--color-muted)]">{EMPTY_SPREADSHEETS}</p>;
 
   return (
     <div className="space-y-3 h-full flex flex-col">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h3 className="text-sm font-semibold">{sheet?.title ?? '…'}</h3>
-          <p className="text-[10px] text-[var(--color-muted)]">slug: {activeSlug}</p>
+          <h3 className="text-base font-semibold">{sheet?.title ?? '…'}</h3>
+          <p className="font-mono text-xs text-[var(--color-muted)]">{activeSlug}</p>
         </div>
         <div className="flex flex-wrap gap-1">
           {sheets.map((s) => (
@@ -54,7 +62,7 @@ export function SpreadsheetTab({ agentId }: { agentId: Id<'agents'> }) {
                 setPickedSlug(s.slug);
                 setPickedTab(null);
               }}
-              className={`min-h-11 text-[10px] px-2 py-1 rounded ${
+              className={`min-h-11 rounded-lg px-3 py-1 text-sm ${
                 s.slug === activeSlug
                   ? 'bg-[var(--color-accent)]/20 text-[var(--color-accent)]'
                   : 'text-[var(--color-muted)] hover:text-[var(--color-fg)]'
@@ -74,14 +82,14 @@ export function SpreadsheetTab({ agentId }: { agentId: Id<'agents'> }) {
               type="button"
               aria-pressed={t.name === activeTab}
               onClick={() => setPickedTab(t.name)}
-              className={`min-h-11 text-xs px-3 py-1.5 border-b-2 -mb-px ${
+              className={`-mb-px min-h-11 border-b-2 px-3 py-1.5 text-sm ${
                 t.name === activeTab
                   ? 'border-[var(--color-accent)] text-[var(--color-fg)]'
                   : 'border-transparent text-[var(--color-muted)] hover:text-[var(--color-fg)]'
               }`}
             >
               {t.name}
-              <span className="ml-2 text-[9px] text-[var(--color-muted)]">
+              <span className="ml-2 text-xs text-[var(--color-muted)] tabular-nums">
                 {rows.filter((r) => r.tabName === t.name).length}
               </span>
             </button>
@@ -95,21 +103,18 @@ export function SpreadsheetTab({ agentId }: { agentId: Id<'agents'> }) {
         aria-label={`${sheet?.title ?? 'Sheet'}${activeTab ? `, ${activeTab}` : ''}`}
         className="overflow-auto rounded-md border border-[var(--color-border)] flex-1"
       >
-        <table className="w-full text-xs">
+        <table className="w-full text-sm">
           <thead className="bg-[var(--color-bg)] sticky top-0">
             <tr>
-              <th className="text-left px-3 py-2 font-medium text-[var(--color-muted)] uppercase tracking-wider text-[10px] w-8">
+              <th scope="col" className={`${COLUMN_HEADING} w-8`}>
                 #
               </th>
               {(activeTabSpec?.headers ?? []).map((h) => (
-                <th
-                  key={h}
-                  className="text-left px-3 py-2 font-medium text-[var(--color-muted)] uppercase tracking-wider text-[10px]"
-                >
+                <th key={h} scope="col" className={COLUMN_HEADING}>
                   {h}
                 </th>
               ))}
-              <th className="text-left px-3 py-2 font-medium text-[var(--color-muted)] uppercase tracking-wider text-[10px]">
+              <th scope="col" className={COLUMN_HEADING}>
                 added by
               </th>
             </tr>
@@ -119,9 +124,9 @@ export function SpreadsheetTab({ agentId }: { agentId: Id<'agents'> }) {
               <tr>
                 <td
                   colSpan={(activeTabSpec?.headers ?? []).length + 2}
-                  className="text-center text-[var(--color-muted)] py-6 text-xs"
+                  className="py-6 text-center text-sm text-[var(--color-muted)]"
                 >
-                  no rows yet
+                  No rows in this tab yet.
                 </td>
               </tr>
             ) : (
@@ -138,7 +143,7 @@ export function SpreadsheetTab({ agentId }: { agentId: Id<'agents'> }) {
                       {(r.cells as Record<string, string>)[h] ?? ''}
                     </td>
                   ))}
-                  <td className="px-3 py-1.5 text-[10px] text-[var(--color-muted)]">
+                  <td className="px-3 py-1.5 text-xs text-[var(--color-muted)]">
                     {r.addedBy ?? ''}
                   </td>
                 </tr>

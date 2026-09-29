@@ -1,0 +1,130 @@
+import type { FunctionReturnType } from 'convex/server';
+import type { api } from '@convex/_generated/api';
+import type { InboxItem } from '../../../components/InboxEntry';
+
+/** What `reset.retirePreview` answers for an employee that is still there. */
+export type RetirePreview = NonNullable<FunctionReturnType<typeof api.reset.retirePreview>>;
+
+/** The tables the dialog names row by row, in the order it names them, with their nouns. */
+const NAMED_TABLES: ReadonlyArray<readonly [table: string, one: string, many: string]> = [
+  ['charters', 'charter version', 'charter versions'],
+  ['workItems', 'work item', 'work items'],
+  ['skills', 'skill', 'skills'],
+  ['surfaces', 'connection', 'connections'],
+  ['corrections', 'correction', 'corrections'],
+  ['events', 'event', 'events'],
+];
+
+/**
+ * A list in prose: "a", "a and b", "a, b and c".
+ *
+ * @param parts - The items, in order.
+ */
+export function listed(parts: readonly string[]): string {
+  if (parts.length <= 1) return parts[0] ?? '';
+  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+}
+
+/**
+ * A count with its noun: "1 skill", "3 skills".
+ *
+ * @param count - How many.
+ * @param one - The noun for one.
+ * @param many - The noun for more than one.
+ */
+function counted(count: number, one: string, many: string): string {
+  return `${count.toLocaleString('en-GB')} ${count === 1 ? one : many}`;
+}
+
+/**
+ * What a retire deletes, in the manager's words: the rows the manager knows by name, then every
+ * other row as one count, then how many tables that spans. A table the preview stopped counting
+ * at its bound makes the whole count a floor.
+ *
+ * @param preview - The preview's counts.
+ * @returns "2 charter versions, 3 work items and 41 events across 5 tables", or what says
+ *   there is nothing.
+ */
+export function deletedWords(preview: Pick<RetirePreview, 'rowCounts' | 'atLeast'>): string {
+  const counts = Object.entries(preview.rowCounts).filter(([, count]) => count > 0);
+  if (counts.length === 0) return 'nothing beyond the employee itself: it has made no rows yet';
+  const named = new Set(NAMED_TABLES.map(([table]) => table));
+  const parts = NAMED_TABLES.flatMap(([table, one, many]) => {
+    const count = preview.rowCounts[table] ?? 0;
+    return count > 0 ? [counted(count, one, many)] : [];
+  });
+  const others = counts
+    .filter(([table]) => !named.has(table))
+    .reduce((sum, [, count]) => sum + count, 0);
+  if (others > 0) {
+    parts.push(
+      counted(
+        others,
+        parts.length > 0 ? 'other row' : 'row',
+        parts.length > 0 ? 'other rows' : 'rows',
+      ),
+    );
+  }
+  const floor = preview.atLeast ? 'at least ' : '';
+  return `${floor}${listed(parts)} across ${counted(counts.length, 'table', 'tables')}`;
+}
+
+/**
+ * The connections named in a retire's revoked or kept line: "the Linear credential", "the Slack
+ * and Linear credentials".
+ *
+ * @param surfaces - The connections.
+ */
+export function credentialsWords(surfaces: RetirePreview['revoked']): string {
+  const names = [...new Set(surfaces.map((surface) => surface.displayName))];
+  return `the ${listed(names)} ${names.length === 1 ? 'credential' : 'credentials'}`;
+}
+
+/** How each kind of waiting entry is counted in the dialog, singular and plural. */
+const WAITING_NOUNS: Readonly<Record<InboxItem['kind'], readonly [one: string, many: string]>> = {
+  'one-to-one': ['one-to-one', 'one-to-ones'],
+  charter: ['charter to review', 'charters to review'],
+  plan: ['plan', 'plans'],
+  held: ['held write', 'held writes'],
+  skill: ['skill to approve', 'skills to approve'],
+  parked: ['parked item', 'parked items'],
+  stopped: ['stopped run', 'stopped runs'],
+  surface: ['connection to approve', 'connections to approve'],
+};
+
+/**
+ * What waits on the manager and goes undecided with a retire, counted by kind in the order the
+ * entries first appear: "1 held write and 1 plan". A held entry counts its writes. Entries past
+ * the read the inbox returns are counted as "more" from its total.
+ *
+ * @param entries - The employee's needs-you entries, as `work.needsYouForAgent` lists them.
+ * @param total - How many entries there are in all.
+ * @returns The count in words, or the empty string when nothing waits.
+ */
+export function waitingWords(entries: readonly InboxItem[], total: number): string {
+  const tally = new Map<InboxItem['kind'], number>();
+  for (const entry of entries) {
+    tally.set(
+      entry.kind,
+      (tally.get(entry.kind) ?? 0) + (entry.kind === 'held' ? entry.heldWrites : 1),
+    );
+  }
+  const parts = [...tally].map(([kind, count]) => counted(count, ...WAITING_NOUNS[kind]));
+  const unread = total - entries.length;
+  if (unread > 0) parts.push(`${counted(unread, 'more entry', 'more entries')}`);
+  return listed(parts);
+}
+
+/**
+ * Whether the typed confirmation matches the phrase: case, the spaces around and between words
+ * and how a character was composed (an accent typed as its own mark or as one letter) do not
+ * matter, the words do.
+ *
+ * @param typed - What the manager typed.
+ * @param phrase - What the dialog asks for.
+ */
+export function confirmationMatches(typed: string, phrase: string): boolean {
+  const plain = (text: string): string =>
+    text.normalize('NFC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('en-GB');
+  return plain(typed) === plain(phrase);
+}

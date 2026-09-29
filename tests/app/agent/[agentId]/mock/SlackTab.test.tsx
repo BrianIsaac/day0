@@ -9,7 +9,21 @@ import { describe, expect, it, vi } from 'vitest';
  * is a channel that has messages. `listChannels` returns rows through the
  * `by_agent_slug` index, so the fixture is in slug order, not rail order.
  */
-const state = vi.hoisted(() => ({ channelsOnly: false, dmsOnly: false }));
+const state = vi.hoisted(() => ({
+  channelsOnly: false,
+  dmsOnly: false,
+  seededOffice: false,
+  /** The intake channel's message is the employee's unposted draft, when set. */
+  draft: false,
+}));
+
+/** The hosted office as the seed makes it: the empty team channel sorts before the intake one. */
+const SEEDED_OFFICE = [
+  { _id: 'c-aman', slug: 'dm-aman', displayName: 'DM · Aman', kind: 'dm' },
+  { _id: 'c-manager', slug: 'dm-manager', displayName: 'DM · Manager', kind: 'dm' },
+  { _id: 'c-team', slug: 'revops', displayName: '#revops', kind: 'channel' },
+  { _id: 'c-revops', slug: 'revops-asks', displayName: '#revops-asks', kind: 'channel' },
+] as const;
 
 const CHANNELS = [
   { _id: 'c-aman', slug: 'dm-aman', displayName: 'Aman', kind: 'dm' },
@@ -19,6 +33,7 @@ const CHANNELS = [
 
 const MESSAGES: Readonly<Record<string, readonly { body: string }[]>> = {
   'dm-aman': [],
+  revops: [],
   'dm-manager': [{ body: 'Manager DM body' }],
   'revops-asks': [{ body: 'Pipeline hygiene, please' }],
 };
@@ -27,6 +42,7 @@ vi.mock('convex/react', () => ({
   useQuery: (reference: unknown, args: unknown): unknown => {
     const name = getFunctionName(reference as never);
     if (name === 'mock:listChannels') {
+      if (state.seededOffice) return SEEDED_OFFICE;
       if (state.channelsOnly) return CHANNELS.filter((c) => c.kind === 'channel');
       if (state.dmsOnly) return CHANNELS.filter((c) => c.kind === 'dm');
       return CHANNELS;
@@ -36,8 +52,8 @@ vi.mock('convex/react', () => ({
       const slug = (args as { channelSlug: string }).channelSlug;
       return (MESSAGES[slug] ?? []).map((m, i) => ({
         _id: `${slug}-${i}`,
-        sender: 'Priya',
-        senderKind: 'human',
+        sender: state.draft ? 'Mira (Day0)' : 'Priya',
+        senderKind: state.draft ? 'agent-draft' : 'human',
         body: m.body,
         timestamp: 1_757_000_000_000 + i,
       }));
@@ -47,11 +63,14 @@ vi.mock('convex/react', () => ({
 }));
 
 import type { Id } from '../../../../../convex/_generated/dataModel';
-import { SlackTab } from '../../../../../app/agent/[agentId]/mock/SlackTab';
+import {
+  EMPLOYEE_DRAFT,
+  EMPTY_CONVERSATION,
+  SlackTab,
+} from '../../../../../app/agent/[agentId]/mock/SlackTab';
 import { AgentZoneContext } from '../../../../../app/agent/[agentId]/time';
 
 const agentId = 'agent-1' as Id<'agents'>;
-const EMPTY_CONVERSATION = 'no messages in this channel yet';
 const ACTIVE = 'text-[var(--color-accent)]';
 
 /** The rail rows in the order they are drawn, with whether each is selected. */
@@ -72,6 +91,25 @@ describe('the conversation the mock office opens on', (): void => {
 
     expect(html).toContain('Pipeline hygiene, please');
     expect(html).not.toContain(EMPTY_CONVERSATION);
+  });
+
+  it('is #revops-asks, where the asks arrive, not the empty #revops the rail draws above it (UX 8 (a))', (): void => {
+    state.seededOffice = true;
+    try {
+      const html = renderToStaticMarkup(<SlackTab agentId={agentId} />);
+      const rows = railRows(html);
+      expect(rows.map((r) => r.label)).toEqual([
+        '#revops',
+        '#revops-asks',
+        'DM · Aman',
+        'DM · Manager',
+      ]);
+      expect(rows.filter((r) => r.active).map((r) => r.label)).toEqual(['#revops-asks']);
+      expect(html).toContain('Pipeline hygiene, please');
+      expect(html).not.toContain(EMPTY_CONVERSATION);
+    } finally {
+      state.seededOffice = false;
+    }
   });
 
   it('falls back to the first direct message when no channel is seeded', (): void => {
@@ -123,5 +161,19 @@ describe('the conversation for a keyboard and a screen reader (step 45, P10-4)',
     expect(markup).toMatch(/<nav aria-label="Channels and direct messages"/);
     expect(markup).toMatch(/aria-current="true" class="min-h-11 /);
     expect(markup).toMatch(/<div tabindex="0" role="region" aria-label="Messages"/);
+  });
+});
+
+describe("the employee's own messages, in the manager's word (N29)", (): void => {
+  it('labels a draft the employee has not posted as an employee draft, never an agent draft', (): void => {
+    state.draft = true;
+    try {
+      const markup = renderToStaticMarkup(<SlackTab agentId={agentId} />);
+      expect(markup).toContain(`>${EMPLOYEE_DRAFT}</span>`);
+      expect(markup.toLowerCase()).not.toContain('agent draft');
+      expect(markup).not.toMatch(/>agent</i);
+    } finally {
+      state.draft = false;
+    }
   });
 });

@@ -1,7 +1,9 @@
+import { ConvexError } from 'convex/values';
 import type { UserIdentity } from 'convex/server';
 import type { Doc, Id } from './_generated/dataModel';
 import type { QueryCtx, MutationCtx, ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
+import { EMPLOYEE_NOT_YOURS } from '../src/agent/employee-access';
 import { CUSTOMER_OIDC_ISSUER_VAR } from '../src/lib/customer-oidc';
 import { DEV_NO_AUTH_SESSION_CLAIM } from '../src/lib/dev-auth-issuer';
 import { notAuthenticatedMessage } from './devAuth';
@@ -90,6 +92,25 @@ export async function assertOwnsAgent(
   if (!agent) throw new Error('agent not found');
   if (!agent.userId) throw new Error('forbidden: agent has no owner');
   if (agent.userId !== identity.ownerKey) throw new Error('forbidden');
+  return agent;
+}
+
+/**
+ * The employee, if the caller owns it, or null when no such row exists: the read for a page
+ * that must answer a retired employee or a stale link rather than fail. Another owner's employee
+ * is refused with {@link EMPLOYEE_NOT_YOURS} as a `ConvexError`, so the page can tell the refusal
+ * from a crash after production strips every other error's text.
+ */
+export async function ownedAgentOrNull(
+  ctx: QueryCtx | MutationCtx,
+  agentId: Id<'agents'>,
+): Promise<Doc<'agents'> | null> {
+  const identity = await getCallerOrThrow(ctx);
+  const agent = await ctx.db.get(agentId);
+  if (agent === null) return null;
+  if (!agent.userId || agent.userId !== identity.ownerKey) {
+    throw new ConvexError(EMPLOYEE_NOT_YOURS);
+  }
   return agent;
 }
 

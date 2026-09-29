@@ -1,4 +1,4 @@
-import { v } from 'convex/values';
+import { ConvexError, v } from 'convex/values';
 import {
   mutation,
   query,
@@ -11,6 +11,7 @@ import { internal } from './_generated/api';
 import { assertOwnsAgent, assertOwnsVoiceSession } from './ownership';
 import { commitCharterAndWorkspace, workspaceFileValidator } from './charters';
 import { appendEvent } from './eventLog';
+import { MAX_FINALISATION_RECOVERIES } from '../src/agent/one-to-one-phase';
 
 /**
  * Voice + chat session lifecycle. The agent itself asks the boss
@@ -182,6 +183,38 @@ export const attachConversationId = mutation({
   },
 });
 
+/**
+ * Hold the one-to-one again on a session whose draft failed for good: the transcript it could not
+ * draft from, the notes earlier drafts were sent back with and the spent retry budget all belong
+ * to the conversation being set aside, so none of them rides into the next one's draft.
+ *
+ * Public, owner-guarded (`assertOwnsVoiceSession`). Refused while a finisher holds the session or
+ * after it produced a charter. Any other session comes back `active` with those fields cleared,
+ * one with nothing to set aside included, so the room can open a new call on it.
+ *
+ * @throws ConvexError with the refusal, which the room shows.
+ */
+export const restart = mutation({
+  args: { sessionId: v.id('voiceSessions') },
+  returns: v.object({ ok: v.literal(true) }),
+  handler: async (ctx, args): Promise<{ ok: true }> => {
+    const session = await assertOwnsVoiceSession(ctx, args.sessionId);
+    if (session.state === 'synthesising' || session.state === 'done') {
+      throw new ConvexError('The charter is being drafted from this one-to-one; wait for it.');
+    }
+    await ctx.db.patch(args.sessionId, {
+      state: 'active',
+      pendingTranscript: undefined,
+      pendingBossLabel: undefined,
+      changeRequests: undefined,
+      recoveryAttempts: undefined,
+      finalisationError: undefined,
+      finalisationFailedAt: undefined,
+    });
+    return { ok: true };
+  },
+});
+
 export const recordAnswer = mutation({
   args: {
     sessionId: v.id('voiceSessions'),
@@ -229,12 +262,12 @@ const CLAIM_LEASE_MS = 5 * 60 * 1000;
 const RECOVERY_DELAY_MS = 15 * 1000;
 
 /**
- * How many times the deployment will re-drive one session on its own. Each
- * attempt costs two model calls, so a model that is failing for a reason time
- * will not fix must stop costing them. Reaching this leaves the row `active`
- * and says so in the feed: a genuine later delivery is still free to try.
+ * How many times the deployment will re-drive one session on its own. Reaching
+ * this leaves the row `active` and says so in the feed: a genuine later
+ * delivery is still free to try. Shared with the rooms, which say the draft
+ * failed only once no retry is coming.
  */
-const MAX_RECOVERY_ATTEMPTS = 3;
+const MAX_RECOVERY_ATTEMPTS = MAX_FINALISATION_RECOVERIES;
 
 /** What a finisher was given to work from, and what recovery inherits. */
 interface FinalisationMaterial {

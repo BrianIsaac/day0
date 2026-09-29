@@ -18,13 +18,19 @@ import {
 } from '../../../../app/agent/[agentId]/corrections-panel';
 import { AgentZoneContext } from '../../../../app/agent/[agentId]/time';
 import { act } from 'react';
-import { button, focusedName, mount, press, said, settle } from '../../../fixtures/dom/press';
 import {
-  cancelPlanRequest,
-  ManagerFeedbackNote,
-  PlanApprovalForm,
-  WorkItemCard,
-} from '../../../../app/agent/[agentId]/AgentDashboard';
+  button,
+  focusedName,
+  mount,
+  press,
+  said,
+  settle,
+  typeInto,
+} from '../../../fixtures/dom/press';
+import { cancelPlanRequest } from '../../../../app/agent/[agentId]/work/WorkQueue';
+import { ManagerFeedbackNote } from '../../../../app/agent/[agentId]/work/RunDetails';
+import { PlanApprovalForm } from '../../../../app/agent/[agentId]/work/PlanApproval';
+import { WorkItemCard } from '../../../../app/agent/[agentId]/work/WorkItemCard';
 
 /**
  * A kept correction on the employee's dashboard, and the line on a later
@@ -95,6 +101,16 @@ describe('the kept corrections panel', (): void => {
     );
     expect(markup).toContain('No corrections kept yet');
     expect(keptCorrectionsTitle([])).toBe('Kept corrections');
+  });
+
+  it('sets no type below the 12 px floor (m8)', (): void => {
+    for (const corrections of [[kept], [{ ...kept, appliedTo: [] }], []]) {
+      expect(
+        renderToStaticMarkup(
+          <KeptCorrectionsPanel corrections={corrections} titles={titles} onRetire={resolved} />,
+        ),
+      ).not.toMatch(/text-\[(9|10|11)px\]/);
+    }
   });
 
   it('counts the corrections still fed back in its title', (): void => {
@@ -198,16 +214,28 @@ describe('the plan card line for an applied correction', (): void => {
 });
 
 describe('cancelling a plan with a reason, and retrying it', (): void => {
-  it("gives the plan card's cancel a reason field, and sends the reason only when one is written", (): void => {
-    const markup = renderToStaticMarkup(
-      <PlanApprovalForm riskNotes="" questions={[]} onApprove={noop} onCancel={noop} />,
+  it("gives the plan card's cancel a reason field, and sends the reason only when one is written", async (): Promise<void> => {
+    const cancelled: string[] = [];
+    const view = mount(
+      <PlanApprovalForm
+        riskNotes=""
+        questions={[]}
+        onApprove={noop}
+        onCancel={(reason) => cancelled.push(reason)}
+      />,
     );
-    // The field is named by its visible label, which an aria-label would override.
-    expect(markup).toMatch(
-      /<label for="[^"]*-cancel"[^>]*>Reason, if you cancel \(optional\)<\/label>/,
-    );
-    expect(markup).not.toContain('aria-label="reason for cancelling the plan"');
-    expect(markup).toContain('>Cancel<');
+    // Cancel opens the reason; the field is named by its visible label, which an aria-label would override.
+    expect(view.container.textContent).not.toContain('Reason for cancelling');
+    await press(view.container, 'Cancel this item');
+    const field = [...view.container.querySelectorAll('label')].find(
+      (label) => label.textContent === 'Reason for cancelling (optional)',
+    )?.control as HTMLInputElement | null;
+    if (!field) throw new Error('the reason field has no visible label');
+    expect(field.getAttribute('aria-label')).toBeNull();
+    typeInto(field, 'Comment instead.');
+    await press(view.container, 'Cancel with this reason');
+    expect(cancelled).toEqual(['Comment instead.']);
+    view.unmount();
     const workItemId = 'w5' as Id<'workItems'>;
     expect(cancelPlanRequest(workItemId, 'Comment instead.')).toEqual({
       workItemId,
@@ -257,9 +285,7 @@ describe('cancelling a plan with a reason, and retrying it', (): void => {
     expect(markup).toContain('>Retry<');
     expect(markup).toContain('the plan comes back to you before anything runs');
     expect(markup).not.toContain('even while autonomous actions are on');
-    expect(markup).toMatch(
-      /<label for="retry-note-[^"]*"[^>]*>Note for the new plan \(optional\)<\/label>/,
-    );
+    expect(markup).toMatch(/<label for="[^"]+"[^>]*>Note for the new plan \(optional\)<\/label>/);
     expect(markup).not.toContain('aria-label="note for the retry"');
     expect(markup).toContain('Plan cancel reason');
   });

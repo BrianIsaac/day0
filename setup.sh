@@ -10,6 +10,7 @@
 #   ./setup.sh stop | resume | clear   stop for the day, come back, or throw it away
 #   ./setup.sh backup | restore <file> | upgrade
 #                                      keep a copy, put it back, or move to this checkout's release
+#   ./setup.sh pause | unpause         hold the scheduled jobs, or let them run again
 #
 # This checks the tools the setup needs (the Docker daemon itself, not only
 # its client), installs the dependencies if they are not there yet (never on
@@ -26,6 +27,7 @@ usage() {
 Usage: ./setup.sh --route <featherless|key|endpoint|local> [setup flags]
        ./setup.sh stop | resume | clear [--yes] [--purge-env]
        ./setup.sh backup | restore <file> | upgrade [--yes] [--to <dir>]
+       ./setup.sh pause | unpause [--dry-run]
 
 Real mode, on your own documentation and systems: day0 reads the pages you
 link and, once you approve a card, acts on the systems those pages record.
@@ -76,6 +78,13 @@ Keep a copy, put it back, or move to this checkout's release:
   ./setup.sh upgrade          after a git pull: a backup, pnpm install, then resume,
                               which refuses to skip a release and runs the migrations.
                               A mock deployment upgrades with pnpm setup:local upgrade.
+
+Hold the scheduled jobs, with the stack up:
+  ./setup.sh pause     the intake and decision polls, the digests, the sweeps and
+                       the documentation sync skip until unpause; the backend
+                       restarts so every job reads it. Work already scheduled
+                       runs to its end.
+  ./setup.sh unpause   lift the pause; each job runs again at its next turn
 
 Everything else, ports and project names included: pnpm setup:local --help
 USAGE

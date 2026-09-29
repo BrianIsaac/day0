@@ -12,6 +12,7 @@ import {
 import { verdictFor, type SurfaceLiveness } from '../surfaces/verdict';
 import type { SurfaceMode } from '../surfaces/types';
 import { surfaceSlug } from '../surfaces/slug';
+import { firstNeededSentence } from './skill-rationale';
 import {
   candidateNamesSurface,
   skillNameFor,
@@ -421,7 +422,7 @@ function inferSkillRationale(
   const label = skillOperationLabel(shape);
   const rationale = [
     `No registered skill covers ${label} on ${skillSurfacePhrase(shape)}.`,
-    `First needed by "${candidate.title}" from ${candidate.sourceSystem}; the skill is a reusable procedure for every later work item of this shape, taking each run's values from that item and its runbook.`,
+    firstNeededSentence(candidate.title, candidate.sourceSystem),
   ].join(' ');
   return { name, rationale };
 }
@@ -516,7 +517,7 @@ export async function evaluateCandidate(
     const { name, rationale } = inferSkillRationale(candidate, shape);
     return {
       decision: 'needs-skill',
-      reason: `no registered skill covers ${skillOperationLabel(shape)} on ${skillSurfacePhrase(shape)}; agent will propose "${name}"`,
+      reason: `no registered skill covers ${skillOperationLabel(shape)} on ${skillSurfacePhrase(shape)}; proposing the skill "${name}" for your approval`,
       suggestedSkillName: name,
       suggestedSkillRationale: rationale,
       suggestedSkillShape: shape,

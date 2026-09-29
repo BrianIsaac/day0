@@ -18,6 +18,7 @@ import {
   failedSource,
   landingRefusal,
   orientationDone,
+  probeSettledAfter,
   skipKind,
   surfaceBySlug,
   surfaceSummary,
@@ -25,6 +26,7 @@ import {
   ticketItem,
   TILE_SLUG,
   type BackendReader,
+  type SurfaceRow,
   type WorkItemRow,
 } from './backend';
 import { nextAnswer } from './answers';
@@ -479,28 +481,57 @@ const cards: Phase = {
     await dashboard.openSurfaces();
     const rows = await backend.surfaces(agentId);
     for (const card of CARDS) {
-      if (card.credential === 'none') continue;
+      // A Slack card with no token to land is left unapproved below, so nothing about it stops the run.
+      if (card.credential === 'slack' && !ctx.secrets.slackBotToken) continue;
       const row = surfaceBySlug(rows, card.slug);
-      const refused = row ? landingRefusal(row) : `no ${card.slug} card was proposed`;
+      if (!row) {
+        await shot(ctx, `${card.slug}-not-proposed`);
+        throw new StopRun(`no ${card.slug} card was proposed`);
+      }
+      // The card draws Approve disabled with this reason; the run stops on it rather than
+      // waiting on a control it cannot press.
+      const refused =
+        row.approvalRefusal ?? (card.credential === 'none' ? undefined : landingRefusal(row));
       if (refused) {
-        await shot(ctx, `${card.slug}-not-landable`);
-        throw new StopRun(refused);
+        await shot(ctx, `${card.slug}-not-approvable`);
+        throw new StopRun(`the ${card.slug} card cannot be approved: ${refused}`);
       }
     }
     for (const card of CARDS) {
-      if (card.credential === 'linear')
-        await dashboard.landCredential(card.slug, ctx.secrets.linearApiKey ?? '');
-      if (card.credential === 'slack') {
-        if (!ctx.secrets.slackBotToken) {
-          outcomes.push(`${card.slug}: left unapproved (no token)`);
-          continue;
-        }
-        await dashboard.landCredential(card.slug, ctx.secrets.slackBotToken);
+      if (card.credential === 'slack' && !ctx.secrets.slackBotToken) {
+        outcomes.push(`${card.slug}: left unapproved (no token)`);
+        continue;
       }
+      const current = async (): Promise<SurfaceRow | undefined> =>
+        surfaceBySlug(await backend.surfaces(agentId), card.slug);
+      // Approve first: the card asks for its credential only once approved (D's M13), and the
+      // server refuses a credential landed before. The approval's own probe runs without the
+      // credential, so the run waits it out before landing one and judges only the probe after.
+      const proposed = requireRow(await current(), card.slug);
       await dashboard.approveCard(card.slug);
+      const approved = await waitFor(
+        ctx,
+        `${card.slug}'s approval probe to finish`,
+        3 * 60_000,
+        async () => {
+          const surface = await current();
+          return surface && probeSettledAfter(surface, proposed.probeGeneration ?? 0, ctx.now())
+            ? surface
+            : undefined;
+        },
+      );
+      if (card.credential !== 'none') {
+        await dashboard.landCredential(
+          card.slug,
+          card.credential === 'linear'
+            ? (ctx.secrets.linearApiKey ?? '')
+            : (ctx.secrets.slackBotToken ?? ''),
+        );
+      }
+      const probed = card.credential === 'none' ? -1 : (approved.probeGeneration ?? 0);
       const row = await waitFor(ctx, `${card.slug} to connect`, 3 * 60_000, async () => {
-        const surface = surfaceBySlug(await backend.surfaces(agentId), card.slug);
-        if (!surface) return undefined;
+        const surface = await current();
+        if (!surface || !probeSettledAfter(surface, probed, ctx.now())) return undefined;
         if (['ungranted', 'listed-dead', 'absent'].includes(surface.verdict)) {
           throw new Error(
             `${card.slug} ended ${surface.verdict}: ${surface.reason ?? 'no reason recorded'}`,
@@ -508,14 +539,19 @@ const cards: Phase = {
         }
         return surface.verdict === 'connected' ? surface : undefined;
       });
-      if (card.slug === 'slack')
-        ctx.state.managerDmChannelId = (row as { managerDmChannelId?: string }).managerDmChannelId;
+      if (card.slug === 'slack') ctx.state.managerDmChannelId = row.managerDmChannelId;
       outcomes.push(`${card.slug}: connected`);
     }
     await shot(ctx, 'cards-connected');
     return outcomes.join(', ');
   },
 };
+
+/** A card's row, which the checks before the approvals found. */
+function requireRow(row: SurfaceRow | undefined, slug: string): SurfaceRow {
+  if (!row) throw new StopRun(`the ${slug} card is gone`);
+  return row;
+}
 
 /* ------------------------------- the boundary ------------------------------ */
 
@@ -628,7 +664,7 @@ async function reachPlan(ctx: RehearsalContext): Promise<WorkItemRow> {
           await dashboard.cancelPlan(other.title);
         }
       }
-      await dashboard.showAgent();
+      await dashboard.showTab('work');
       return undefined;
     }
     if (['failed', 'cancelled'].includes(item.state))

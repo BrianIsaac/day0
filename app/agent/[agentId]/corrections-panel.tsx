@@ -3,7 +3,8 @@
 import { useRef } from 'react';
 import type { Id } from '../../../convex/_generated/dataModel';
 import { managerFeedbackLabel, type ManagerFeedbackKind } from '../../../src/work/manager-feedback';
-import { LiveStatus, useChange } from './live-status';
+import { useChange } from '../../components/use-change';
+import { StatusRegion } from '../../components/StatusRegion';
 import { clockTime, clockTimeWithSeconds, useAgentZone } from './time';
 
 /**
@@ -100,7 +101,7 @@ export function KeptCorrectionsPanel({
               key={correction._id}
               className={`p-2 rounded-md border border-[var(--color-border)] text-xs ${retired ? 'opacity-60' : ''}`}
             >
-              <p className="text-[10px] text-[var(--color-muted)] mb-0.5">
+              <p className="text-xs text-[var(--color-muted)] mb-0.5">
                 <span className="uppercase tracking-wider">{managerFeedbackLabel(correction)}</span>{' '}
                 · from “{correction.itemTitle}” ·{' '}
                 <span title={clockTimeWithSeconds(correction.createdAt, zone)}>
@@ -110,11 +111,11 @@ export function KeptCorrectionsPanel({
               <p className="text-[var(--color-fg)] whitespace-pre-wrap break-words">
                 {correction.text}
               </p>
-              <p className="mt-0.5 text-[10px] text-[var(--color-muted)]">
+              <p className="mt-0.5 text-xs text-[var(--color-muted)]">
                 {appliedToText(correction.appliedTo, titles, retired)}
               </p>
               {correction.retiredAt !== undefined ? (
-                <p className="mt-1 text-[10px] text-[var(--color-muted)]">
+                <p className="mt-1 text-xs text-[var(--color-muted)]">
                   retired {clockTime(correction.retiredAt, zone)}: no later plan reads it
                 </p>
               ) : (
@@ -128,7 +129,7 @@ export function KeptCorrectionsPanel({
                       refused: 'The correction was not retired.',
                     })
                   }
-                  className="mt-1 min-h-11 px-3 rounded-md border border-[var(--color-border)] text-[10px] text-[var(--color-fg)] disabled:opacity-50"
+                  className="mt-1 min-h-11 px-3 rounded-md border border-[var(--color-border)] text-xs text-[var(--color-fg)] disabled:opacity-50"
                 >
                   Retire
                 </button>
@@ -137,7 +138,7 @@ export function KeptCorrectionsPanel({
           );
         })}
       </ul>
-      <LiveStatus outcome={change.outcome} />
+      <StatusRegion outcome={change.outcome} />
     </>
   );
 }
@@ -186,7 +187,7 @@ export function AppliedCorrectionsLine({
         );
       })}
       {redaction ? (
-        <p className="text-[10px] text-[var(--color-warn)]">
+        <p className="text-xs text-[var(--color-warn)]">
           Limited redaction: the planner read these corrections checked only against known
           credential values and credential formats.
         </p>

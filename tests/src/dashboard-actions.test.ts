@@ -2,41 +2,32 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 
-vi.mock('../../app/agent/[agentId]/ChatRoom', () => ({ ChatRoom: (): null => null }));
-vi.mock('../../app/agent/[agentId]/VoiceRoom', () => ({ VoiceRoom: (): null => null }));
-vi.mock('../../app/agent/[agentId]/MockEnvironment', () => ({
-  MockEnvironment: (): null => null,
-}));
-
 import {
-  AutonomyConfirm,
-  AutonomyControl,
-  cancelsAutonomyConfirm,
   cancelledReason,
   decisionAttribution,
   failedItemReason,
   landedHeadline,
+  pendingHeadline,
+  pendingVerdicts,
+} from '../../app/agent/[agentId]/work/work-item';
+import {
   ManagerFeedbackNote,
-  MetricsCard,
-  NotificationModeControl,
-  PendingActions,
+  PlanExecutionLedger,
+  ProviderReconciliationControl,
+} from '../../app/agent/[agentId]/work/RunDetails';
+import { MetricsCard } from '../../app/agent/[agentId]/record/MetricsCard';
+import { NotificationModeControl } from '../../app/agent/[agentId]/manage/NotificationModeControl';
+import { PendingActions } from '../../app/agent/[agentId]/work/PendingActions';
+import {
   pendingDecisionMembers,
   PendingDecisionsPanel,
-  pendingHeadline,
-  PlanExecutionLedger,
-  pendingVerdicts,
-  PermissionRows,
-  ProviderReconciliationControl,
-} from '../../app/agent/[agentId]/AgentDashboard';
+} from '../../app/agent/[agentId]/work/PendingDecisionsPanel';
+import { PermissionRows } from '../../app/agent/[agentId]/surfaces/PermissionsCard';
 import { formatMetricDuration } from '../../app/metric-format';
 import type { AgentMetrics } from '../../src/metrics/types';
 import type { Doc } from '../../convex/_generated/dataModel';
 import { HELD_MUTATION, HELD_PUBLIC_POST, type ActionVerdict } from '../../src/surfaces/policy';
-import {
-  AUTONOMY_WARNING,
-  HELD_BEFORE_AUTONOMY_NOTE,
-  HELD_WHILE_SUPERVISED_NOTE,
-} from '../../src/work/autonomy';
+import { HELD_BEFORE_AUTONOMY_NOTE, HELD_WHILE_SUPERVISED_NOTE } from '../../src/work/autonomy';
 import type { SurfaceRecord } from '../../src/surfaces/types';
 import type { MockAction, ReplyTarget } from '../../src/work/types';
 
@@ -114,29 +105,33 @@ describe('dashboard exact-action gate', (): void => {
     // The card says plainly why the row is waiting.
     expect(html).toContain(HELD_WHILE_SUPERVISED_NOTE);
     expect(html).not.toContain(HELD_BEFORE_AUTONOMY_NOTE);
-    // The plain line comes first, the reason on the same line, and the literal payload is folded away.
+    // The plain line comes first, the reason beneath it, and the literal payload is folded away.
     expect(html).toMatch(
-      /<p[^>]*>Send Sam a Slack DM: &quot;Draft ready\.&quot;<span[^>]*> · system-of-record mutation held for the manager<\/span><\/p>/,
+      /<p[^>]*>Send Sam a Slack DM: &quot;Draft ready\.&quot;<\/p><p[^>]*>System-of-record mutation held for you\.<\/p>/,
     );
     expect(html).toMatch(
-      /<p[^>]*>Post to Slack channel C0PUBLIC: &quot;x{120}…&quot;<span[^>]*> · refused · no grant \(slack:write\)<\/span><\/p>/,
+      /<p[^>]*>Post to Slack channel C0PUBLIC: &quot;x{240}&quot;<\/p><p[^>]*>Refused by Day0&#x27;s gate: no grant \(slack:write\)\. It cannot be sent\.<\/p>/,
     );
     expect(html.indexOf('Send Sam a Slack DM')).toBeLessThan(
       html.indexOf('&quot;tool&quot;: &quot;http.request&quot;'),
     );
-    expect(html).toMatch(/<details[^>]*><summary[^>]*>exact payload<\/summary><code/);
+    expect(html).toMatch(
+      /<details[^>]*><summary[^>]*><span[^>]*><\/span>Exact payload<\/summary><div[^>]*><code/,
+    );
     expect(html).not.toMatch(/<details[^>]*open/);
     expect(html).toContain('{{secret}}');
     // Each box is named for its row, not its position, so a screen reader hears what it approves.
     expect(html).toMatch(
-      /<input type="checkbox"[^>]*aria-label="approve: Send Sam a Slack DM: &quot;Draft ready\.&quot;" checked=""/,
+      /<input type="checkbox"[^>]*aria-label="approve: Send Sam a Slack DM: &quot;Draft ready\.&quot;"[^>]*checked=""/,
     );
     expect(html).toMatch(
-      /<input type="checkbox"[^>]*disabled="" aria-label="approve: Post to Slack channel C0PUBLIC[^"]*"\/>/,
+      /<input type="checkbox"[^>]*disabled=""[^>]*aria-label="approve: Post to Slack channel C0PUBLIC[^"]*"[^>]*\/>/,
     );
     expect(html).toMatch(/<button[^>]*>Approve selected \(1\)<\/button>/);
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Approve all<\/button>/);
-    expect(html).not.toMatch(/approve: Post to Slack channel C0PUBLIC[^]*?reject this action/);
+    // A refused row cannot be withheld or included: it is never sent either way.
+    expect(html).not.toContain('Withhold this one: Post to Slack channel C0PUBLIC');
+    expect(html).toContain('aria-label="Withhold this one: Send Sam a Slack DM');
   });
 
   it('lists only the rows that need the manager and says how many applied on their own', (): void => {
@@ -178,7 +173,7 @@ describe('dashboard exact-action gate', (): void => {
     expect(html).not.toContain('Send Sam a Slack DM');
     expect(html).toContain('Reply in #revops-asks thread: &quot;Covered.&quot;');
     expect(html).toMatch(
-      /<input type="checkbox"[^>]*aria-label="approve: Reply in #revops-asks thread: &quot;Covered\.&quot;" checked=""/,
+      /<input type="checkbox"[^>]*aria-label="approve: Reply in #revops-asks thread: &quot;Covered\.&quot;"[^>]*checked=""/,
     );
     expect(html).not.toMatch(/aria-label="approve: Read issue REVOPS-10/);
     expect(html).toMatch(/<button[^>]*>Approve selected \(1\)<\/button>/);
@@ -210,69 +205,6 @@ describe('dashboard exact-action gate', (): void => {
         2,
       ),
     ).toEqual([{ disposition: 'auto' }, { disposition: 'held', reason: HELD_PUBLIC_POST }]);
-  });
-
-  it('renders the autonomous-actions switch with its state named plainly, off and on', (): void => {
-    const off = renderToStaticMarkup(
-      createElement(AutonomyControl, {
-        on: false,
-        tone: 'tone',
-        onChange: vi.fn(async (): Promise<void> => {}),
-      }),
-    );
-    expect(off).toContain('Active · Supervised');
-    expect(off).toContain('Autonomous actions');
-    expect(off).toMatch(
-      /<button[^>]*role="switch"[^>]*aria-checked="false"[^>]*aria-label="Autonomous actions"/,
-    );
-    expect(off).not.toContain(AUTONOMY_WARNING);
-    expect(off).not.toContain('supervised posture');
-    const on = renderToStaticMarkup(
-      createElement(AutonomyControl, {
-        on: true,
-        tone: 'tone',
-        onChange: vi.fn(async (): Promise<void> => {}),
-      }),
-    );
-    expect(on).toContain('Active · Autonomous');
-    expect(on).toMatch(/<button[^>]*role="switch"[^>]*aria-checked="true"/);
-    expect(on).not.toContain(AUTONOMY_WARNING);
-  });
-
-  it('scales the confirmation in from the corner that meets the switch (v3 section 5.2)', (): void => {
-    const html = renderToStaticMarkup(
-      createElement(AutonomyConfirm, { onConfirm: vi.fn(), onCancel: vi.fn() }),
-    );
-    const dialog = /<div[^>]*role="alertdialog"[^>]*>/.exec(html)?.[0] ?? '';
-    expect(dialog).toContain('data-dialog=""');
-    // Anchored at its left edge on a phone and its right edge beside the switch from `sm` up.
-    expect(dialog).toMatch(/\bleft-0\b[^"]*\borigin-top-left\b/);
-    expect(dialog).toMatch(/\bsm:right-0\b[^"]*\bsm:origin-top-right\b/);
-  });
-
-  it("renders the confirmation with the warning in the operator's words and its two buttons", (): void => {
-    const html = renderToStaticMarkup(
-      createElement(AutonomyConfirm, { onConfirm: vi.fn(), onCancel: vi.fn() }),
-    );
-    expect(html).toMatch(
-      /<div[^>]*role="alertdialog"[^>]*aria-modal="true"[^>]*aria-label="Turn on autonomous actions"/,
-    );
-    expect(html).toContain('Turn on autonomous actions?');
-    expect(html).toContain(
-      'The digital employee will act on connected systems without asking - post, comment, change status - within the connections and skills you have approved.',
-    );
-    expect(html).toContain('Turn this on only after its behaviour has been what you want.');
-    expect(html).toContain('Skills and connections still need your approval either way.');
-    expect(html).toMatch(/<button[^>]*>Turn on<\/button>/);
-    expect(html).toMatch(/<button[^>]*autofocus=""[^>]*>Cancel<\/button>/);
-    expect(cancelsAutonomyConfirm('Escape', false)).toBe(true);
-    expect(cancelsAutonomyConfirm('Enter', false)).toBe(false);
-    expect(cancelsAutonomyConfirm('Escape', true)).toBe(false);
-    expect(
-      renderToStaticMarkup(
-        createElement(AutonomyConfirm, { onConfirm: vi.fn(), onCancel: vi.fn(), busy: true }),
-      ),
-    ).toMatch(/<button[^>]*disabled=""[^>]*>Turn on<\/button>/);
   });
 
   it('names how many landed changes applied under the switch', (): void => {
@@ -457,7 +389,8 @@ const completeMetrics: AgentMetrics = {
 describe('the supervision metrics card', (): void => {
   it('renders its labels with the live-run numbers', (): void => {
     const html = renderToStaticMarkup(createElement(MetricsCard, { metrics: completeMetrics }));
-    expect(html).toContain('Supervision metrics');
+    // Titled as the rail's figures are, since deploy (wave 6 A D6).
+    expect(html).toContain('>So far</h2>');
     expect(html).toContain('time to first approved charter');
     expect(html).toContain('3 min 28 s');
     expect(html).toContain('human decisions (approved / rejected)');
@@ -533,8 +466,8 @@ describe('the supervision metrics card', (): void => {
       }),
     );
     expect(html).toContain('linear:read');
-    expect(html).toContain('granted - from surface');
-    expect(html).toContain('revoked - from skill');
+    expect(html).toContain('Granted with a surface card you approved');
+    expect(html).toContain('Revoked; it was granted with a skill you approved');
     expect(html).toContain('Confirm revoke');
     expect(html).toContain('Keep grant');
     expect(html).toContain('Re-grant');
@@ -620,7 +553,9 @@ describe('the cross-item approval panel', (): void => {
     expect(html).toContain('Answer #revops');
     expect(html).toContain('Post to Slack channel C0PUBLIC: &quot;Reply for Answer #revops&quot;');
     expect(html).toContain('1 row is refused by the gate; decide this one on its card.');
-    expect(html).toMatch(/<details[^>]*><summary[^>]*>exact payload<\/summary><code/);
+    expect(html).toMatch(
+      /<details[^>]*><summary[^>]*><span[^>]*><\/span>Exact payload<\/summary><div[^>]*><code/,
+    );
     expect(html).toContain('Approve 1 held action across 1 item');
     expect(html).toContain('Each item is approved exactly as shown');
   });
@@ -636,7 +571,7 @@ describe('the cross-item approval panel', (): void => {
     );
     // Nothing to see, only the live region that says what the last batch came to.
     expect(html).toBe(
-      '<p role="status" aria-live="polite" aria-atomic="true" class="empty:sr-only text-[11px] leading-snug text-[var(--color-muted)]"></p>',
+      '<p role="status" aria-live="polite" aria-atomic="true" class="empty:sr-only text-xs leading-snug text-[var(--color-muted)]"></p>',
     );
   });
 });

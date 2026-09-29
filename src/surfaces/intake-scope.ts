@@ -771,6 +771,8 @@ export function restatedScope<V extends ScopeValue>(
  * Args:
  *   scope: The approved scope.
  *   drift: The values `restatedScope` found drifted, in scope order.
+ *   options: Whether the card offers Reject (a proposed card does), which is the remedy the
+ *     message names.
  *
  * Returns:
  *   One message for the card, or undefined when nothing has changed.
@@ -778,6 +780,7 @@ export function restatedScope<V extends ScopeValue>(
 export function presentScopeDrift(
   scope: IntakeScope,
   drift: readonly ScopeValue[],
+  options: { readonly canReject: boolean } = { canReject: true },
 ): string | undefined {
   if (drift.length === 0) return undefined;
   const label = (value: ScopeValue): string =>
@@ -790,6 +793,8 @@ export function presentScopeDrift(
   return (
     `Changed since this card was proposed: ${drift.map(label).join(', ')} ` +
     `${drift.length === 1 ? 'is' : 'are'} no longer stated on ${refs.join(', ')}. ` +
-    'Intake still reads only what was approved; reject the card and re-run orientation to propose the page as it reads now.'
+    (options.canReject
+      ? 'Intake still reads only what was approved; reject the card and re-run orientation to propose the page as it reads now.'
+      : 'Intake still reads only what was approved.')
   );
 }

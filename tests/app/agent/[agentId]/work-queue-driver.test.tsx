@@ -31,7 +31,16 @@ vi.mock('convex/react', async () => {
   return { useQuery: (): undefined => undefined, useMutation: record, useAction: record };
 });
 
-import { WorkQueue, checkForWorkMessage } from '../../../../app/agent/[agentId]/AgentDashboard';
+// The queue's effects run here with no DOM; the one that lands an inbox link on its card reads
+// the page's location and listens for its fragment changing, which the harness gives as a page
+// opened without a fragment whose fragment never changes.
+vi.stubGlobal('window', {
+  location: { hash: '' },
+  addEventListener: (): void => undefined,
+  removeEventListener: (): void => undefined,
+});
+
+import { WorkQueue, checkForWorkMessage } from '../../../../app/agent/[agentId]/work/WorkQueue';
 
 function item(id: string, state: Doc<'workItems'>['state'], plan?: unknown): Doc<'workItems'> {
   return {

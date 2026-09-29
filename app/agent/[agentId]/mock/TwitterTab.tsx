@@ -3,17 +3,19 @@
 import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
+import { Chip } from '../../../components/Chip';
 
 /** What an empty timeline means. The tab is mock-only: real mode does not
  * render it, so it has no real-mode copy to show. */
-export const EMPTY_TWEETS = 'no tweets seeded';
+export const EMPTY_TWEETS = 'No posts are seeded in this office.';
 
+/** The office's social timeline: each post with its replies, the employee's drafts marked. */
 export function TwitterTab({ agentId }: { agentId: Id<'agents'> }) {
   const tweets = useQuery(api.mock.listTweets, { agentId });
 
-  if (!tweets) return <div className="text-xs text-[var(--color-muted)]">loading…</div>;
+  if (!tweets) return <p className="text-sm text-[var(--color-muted)]">Loading the posts…</p>;
   if (tweets.length === 0)
-    return <div className="text-xs text-[var(--color-muted)]">{EMPTY_TWEETS}</div>;
+    return <p className="text-sm text-[var(--color-muted)]">{EMPTY_TWEETS}</p>;
 
   return (
     <div className="space-y-4">
@@ -31,6 +33,7 @@ export function TwitterTab({ agentId }: { agentId: Id<'agents'> }) {
   );
 }
 
+/** One post and the replies under it. */
 function TweetThread({
   agentId,
   slug,
@@ -46,9 +49,12 @@ function TweetThread({
 }) {
   const replies = useQuery(api.mock.listTweetReplies, { agentId, tweetSlug: slug }) ?? [];
   return (
-    <div className="border border-[var(--color-border)] rounded-md p-3 space-y-3">
+    <div className="space-y-3 rounded-lg border border-[var(--color-border)] p-3">
       <div className="flex items-start gap-3">
-        <div className="w-8 h-8 rounded-full bg-[var(--color-muted)]/30 flex items-center justify-center text-xs font-medium">
+        <div
+          aria-hidden="true"
+          className="flex size-8 shrink-0 items-center justify-center rounded-full bg-[var(--color-muted)]/30 text-xs font-medium"
+        >
           {author.slice(0, 1).toUpperCase()}
         </div>
         <div className="flex-1">
@@ -63,9 +69,10 @@ function TweetThread({
       {replies.length > 0 ? (
         <div className="border-t border-[var(--color-border)] pt-3 space-y-2 ml-11">
           {replies.map((r) => (
-            <div key={r._id} className="flex items-start gap-2 text-xs">
+            <div key={r._id} className="flex items-start gap-2 text-sm">
               <div
-                className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-medium ${
+                aria-hidden="true"
+                className={`flex size-7 shrink-0 items-center justify-center rounded-full text-xs font-medium ${
                   r.isAgentDraft
                     ? 'bg-[var(--color-warn)]/30 text-[var(--color-warn)]'
                     : 'bg-[var(--color-muted)]/30'
@@ -74,14 +81,10 @@ function TweetThread({
                 {r.author.slice(0, 1).toUpperCase()}
               </div>
               <div className="flex-1">
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <span className="font-medium">{r.author}</span>
-                  <span className="text-[var(--color-muted)]">{r.handle}</span>
-                  {r.isAgentDraft ? (
-                    <span className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-[var(--color-warn)]/20 text-[var(--color-warn)]">
-                      draft
-                    </span>
-                  ) : null}
+                  <span className="text-xs text-[var(--color-muted)]">{r.handle}</span>
+                  {r.isAgentDraft ? <Chip tone="warn">Employee draft</Chip> : null}
                 </div>
                 <p className="text-[var(--color-fg)] mt-0.5">{r.body}</p>
               </div>
@@ -89,7 +92,7 @@ function TweetThread({
           ))}
         </div>
       ) : (
-        <div className="text-[10px] text-[var(--color-muted)] ml-11">no replies yet</div>
+        <p className="ml-11 text-xs text-[var(--color-muted)]">No replies yet.</p>
       )}
     </div>
   );

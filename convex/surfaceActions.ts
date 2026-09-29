@@ -1373,9 +1373,10 @@ export async function runSurfaceProbe(
     }
     if (!surface.credentialId && surface.path !== 'browser-driven') {
       const reason = `credential not in the docs; ${surface.credentialLocation ?? 'location not documented'}`;
-      const outcome = await failOrDemote(reason, 'ungranted');
-      if (outcome) return outcome;
-      continue;
+      // No lower rung: a card asks for its credential only once approved, so the approval's own
+      // probe always meets this, and descending would leave the credential the manager lands
+      // next on a weaker route than the one approved, with no way back up.
+      return (await failOrDemote(reason, 'ungranted', false)) ?? { verdict: 'ungranted', reason };
     }
 
     let credential = '';

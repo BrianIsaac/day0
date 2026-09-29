@@ -123,6 +123,8 @@ export interface Harness {
   directory: string;
   /** Volumes Docker reports; the fake keeps it current across creates and a reset. */
   volumes: string[];
+  /** The deployment's env as `npx convex env set` and `remove` have left it. */
+  deploymentEnv: () => Record<string, string>;
 }
 
 export interface HarnessOptions {
@@ -168,7 +170,10 @@ export interface HarnessOptions {
   unfinishedMigrations?: string[];
   /** What each `migrations:runPending` call answers, in order, the last repeated. */
   migrationReports?: string[];
-  /** What `npx convex env list` prints when the admin key is accepted. */
+  /**
+   * What `npx convex env list` prints when the admin key is accepted, before
+   * any `npx convex env set` or `remove` the run makes changes it.
+   */
   deploymentEnv?: string;
   /**
    * The deployment's auth config, judged at every push against the identity
@@ -214,6 +219,15 @@ export function harness(options: HarnessOptions = {}): Harness {
   let clock = 0;
   let broughtUp = false;
   let deploymentSettings: Record<string, string> = { ...(options.deploymentSettings ?? {}) };
+  const deploymentEnv = new Map<string, string>(
+    (options.deploymentEnv ?? '')
+      .split('\n')
+      .filter((line) => line.includes('='))
+      .map((line): [string, string] => [
+        line.slice(0, line.indexOf('=')),
+        line.slice(line.indexOf('=') + 1),
+      ]),
+  );
 
   const run = (command: string, args: readonly string[], runOptions?: RunOptions): RunResult => {
     const joined = [command, ...args].join(' ');
@@ -326,9 +340,17 @@ export function harness(options: HarnessOptions = {}): Harness {
     if (joined.includes('convex env list')) {
       return {
         status: options.adminKeyAccepted === false ? 1 : 0,
-        stdout: options.deploymentEnv ?? '',
+        stdout: [...deploymentEnv].map(([name, value]) => `${name}=${value}\n`).join(''),
         stderr: '',
       };
+    }
+    if (joined.startsWith('npx convex env set ')) {
+      deploymentEnv.set(args[3]!, args[args.length - 1]!);
+      return { status: 0, stdout: '', stderr: '' };
+    }
+    if (joined.startsWith('npx convex env remove ')) {
+      deploymentEnv.delete(args[3]!);
+      return { status: 0, stdout: '', stderr: '' };
     }
     if (joined === 'npx convex data') {
       const listed = [
@@ -465,7 +487,14 @@ export function harness(options: HarnessOptions = {}): Harness {
     newestMigrationRelease: options.newestMigrationRelease ?? '0.3.0',
     ...(options.interactive === undefined ? {} : { interactive: options.interactive }),
   };
-  return { io, commands, output, directory, volumes };
+  return {
+    io,
+    commands,
+    output,
+    directory,
+    volumes,
+    deploymentEnv: (): Record<string, string> => Object.fromEntries(deploymentEnv),
+  };
 }
 
 /**
@@ -484,7 +513,6 @@ export function realRoute(overrides: Partial<SetupOptions> = {}): SetupOptions {
     project: 'day0-setup-test',
     ports: {},
     gpu: 'auto',
-    sandbox: 'local',
     bossEmail: 'manager@example.com',
     dryRun: false,
     reset: false,

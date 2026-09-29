@@ -879,6 +879,12 @@ describe('the scope an approved card reads', (): void => {
       'Changed since this card was proposed: team FIN, #ops-requests are no longer stated on finance/handbook.md. Intake still reads only what was approved; reject the card and re-run orientation to propose the page as it reads now.',
     );
   });
+
+  it('offers no rejection on a connected card, which cannot be rejected', (): void => {
+    expect(presentScopeDrift(finance, [finance.team!], { canReject: false })).toBe(
+      'Changed since this card was proposed: team FIN is no longer stated on finance/handbook.md. Intake still reads only what was approved.',
+    );
+  });
 });
 
 describe('a channel whose name has no Latin letter (N8)', (): void => {

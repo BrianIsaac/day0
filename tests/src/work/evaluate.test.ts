@@ -175,7 +175,7 @@ describe('work surface enablement', (): void => {
     if (verdict.decision !== 'needs-skill') throw new Error('Expected needs-skill verdict');
     expect(verdict.reason).not.toContain('in-scope');
     expect(verdict.reason).toBe(
-      `no registered skill covers ticket comment-and-close on a kanban surface; agent will propose "${verdict.suggestedSkillName}"`,
+      `no registered skill covers ticket comment-and-close on a kanban surface; proposing the skill "${verdict.suggestedSkillName}" for your approval`,
     );
   });
 

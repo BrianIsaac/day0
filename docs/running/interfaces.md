@@ -38,7 +38,9 @@ The entry points a reader is most likely to want:
 | `metrics:forAgent` | query | The Supervision card's numbers, derived from the event ledger |
 | `metrics:forOwner` | query | Every employee's Supervision numbers and the company row: decisions and their waits pooled for the one manager, each employee's time to an approved charter quoted and never summed, evaluation agents and baseline arms left out |
 | `exportActions:exportForAgent`, `exportActions:exportPage` | action | The head of an agent's redacted trace and where its pages start, then one page at a time; `pnpm export:trace` calls both and writes the whole trace to one file |
-| `reset:deleteMyData` | mutation | Deletes the caller's agents and their rows in the enumerated tables |
+| `reset:retire` | mutation | Retires one employee, by `agentId`: real mode revokes what only it bound, deletes its rows in the enumerated tables and keeps a `retirements` row; the hosted office wipes it |
+| `reset:retirePreview` | query | What `reset:retire` would delete, revoke and keep for one employee, for the Manage tab's retire dialog; `null` once the employee is gone |
+| `reset:deleteMyData` | mutation | Retires every one of the caller's employees; `alsoUnlinkDocumentation` unlinks the owner's documentation and revokes every owned credential too |
 
 Names are `module:function`; confirm the current argument shape with `function-spec` rather than from this table, which is a guide to where to look.
 

@@ -28,7 +28,13 @@ function runSync(
   localEnv: string,
   storedCredentials = '',
   pushed = false,
-): { status: number | null; calls: string[]; stderr: string; deployment: string[] } {
+): {
+  status: number | null;
+  calls: string[];
+  stdout: string;
+  stderr: string;
+  deployment: string[];
+} {
   const directory = temporary('day0-sync-env-');
   const envFile = join(directory, '.env.local');
   const log = join(directory, 'calls.log');
@@ -81,7 +87,7 @@ function runSync(
     calls = [];
   }
   const deployment = readFileSync(state, 'utf8').split('\n').filter(Boolean).sort();
-  return { status: result.status, calls, stderr: result.stderr, deployment };
+  return { status: result.status, calls, stdout: result.stdout, stderr: result.stderr, deployment };
 }
 
 describe.skipIf(!hasHostTool('bash'))('sync-convex-env.sh (needs bash)', (): void => {
@@ -132,6 +138,22 @@ describe.skipIf(!hasHostTool('bash'))('sync-convex-env.sh (needs bash)', (): voi
       expect(calls).not.toContain(`convex env set ${name} value`);
     }
     expect(calls).toContain('convex env set OPENAI_API_KEY -- value');
+  });
+
+  it('removes a name the release stopped reading when the deployment holds it, and says a missing one is absent', (): void => {
+    const { status, calls, stdout, deployment } = runSync(
+      ['EXA_API_KEY=exa-stale', 'OPENAI_API_KEY=same'],
+      'OPENAI_API_KEY=same\nEXA_API_KEY=exa-local\nOPENAI_IMAGE_MODEL=gpt-image-1\nDAY0_SURFACE_MODE=mock\n',
+    );
+    expect(status).toBe(0);
+    expect(calls).toContain('convex env remove EXA_API_KEY');
+    expect(deployment).not.toContain('EXA_API_KEY=exa-stale');
+    expect(stdout).toContain('clear EXA_API_KEY (no longer read by the deployment)');
+    expect(calls).not.toContain('convex env remove OPENAI_IMAGE_MODEL');
+    expect(stdout).toContain('clear OPENAI_IMAGE_MODEL (already absent)');
+    expect(calls.some((call) => call.includes('exa-local') || call.includes('gpt-image-1'))).toBe(
+      false,
+    );
   });
 
   it('keeps a value the deployment already holds and sets only what differs', (): void => {

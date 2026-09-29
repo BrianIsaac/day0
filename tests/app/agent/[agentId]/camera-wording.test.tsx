@@ -8,12 +8,9 @@ vi.mock('convex/react', () => ({
 }));
 
 import type { Doc } from '../../../../convex/_generated/dataModel';
-import {
-  WorkItemCard,
-  liveRetryNote,
-  retryNoteToken,
-  sortedForQueue,
-} from '../../../../app/agent/[agentId]/AgentDashboard';
+import { WorkItemCard } from '../../../../app/agent/[agentId]/work/WorkItemCard';
+import { liveRetryNote, retryNoteToken } from '../../../../app/agent/[agentId]/work/work-item';
+import { sortedForQueue } from '../../../../app/agent/[agentId]/work/WorkQueue';
 import { clockTime } from '../../../../app/agent/[agentId]/time';
 import type { AutonomyChange } from '../../../../src/work/autonomy';
 import rehearsal from '../../../fixtures/work/demo-rehearsal-2-2026-09-19.json';
@@ -54,13 +51,15 @@ describe('a plan drafted before autonomous actions were turned on', (): void => 
   const priya = rehearsal.workItems.priyaCompleted;
   const changes = changesFor(priya.agentId);
 
-  it('says when the switch was turned on, between the plan text and the autonomous ledger', (): void => {
+  it('says when the switch was turned on, beside the autonomous count and ahead of the plan text that predates it', (): void => {
     const markup = card(priya, changes);
     const note = `Autonomous actions were turned on at ${clockTime(changes[0]!.at)}, after this plan was drafted; its actions were applied under it.`;
     expect(markup).toContain('Autonomous actions are off, so the browser write sequence');
     expect(markup).toContain(note);
-    expect(markup.indexOf('Autonomous actions are off, so')).toBeLessThan(markup.indexOf(note));
-    expect(markup.indexOf(note)).toBeLessThan(markup.indexOf('7 applied autonomously'));
+    // The landed line leads the finished card (round two section 3.7), so the note sits under
+    // its autonomous count and is read before the plan's own words from before the switch.
+    expect(markup.indexOf('7 applied autonomously')).toBeLessThan(markup.indexOf(note));
+    expect(markup.indexOf(note)).toBeLessThan(markup.indexOf('Autonomous actions are off, so'));
   });
 
   it('keeps the stored plan text as drafted', (): void => {
@@ -127,12 +126,13 @@ describe("one Retry on the page at the run's one Retry", (): void => {
   const skipped = rehearsal.workItems.aikoSkipped;
   const stopped = rehearsal.workItems.aikoStopped;
 
-  it("labels the skipped row's control for what it does, with the explanation as its title", (): void => {
+  it("labels the skipped row's control for what it does, with the explanation beneath it", (): void => {
     const markup = card(skipped, [], false);
     expect(markup).toContain('>Take it anyway</button>');
     expect(markup).not.toContain('>Retry</button>');
-    expect(markup).toContain(
-      'title="Take it anyway re-evaluates this item as in scope, on your decision; its plan still needs your approval."',
+    // Said under the control as its consequence line, not left to a hover title.
+    expect(markup).toMatch(
+      /Take it anyway<\/button><p[^>]*>Take it anyway is your decision that this work is [^<]*to do: it is evaluated again as in scope, and its plan still waits for your approval\.<\/p>/,
     );
   });
 

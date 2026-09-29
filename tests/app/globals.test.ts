@@ -33,6 +33,43 @@ describe('the theme tokens', () => {
       expect(contrast(token('muted'), token(background)), background).toBeGreaterThanOrEqual(4.5);
     }
   });
+
+  it('derives the second text step, the second hairline and each tone fill and line as round two pins them', () => {
+    expect({
+      'fg-2': token('fg-2'),
+      'border-2': token('border-2'),
+      inset: token('inset'),
+      'accent-soft': token('accent-soft'),
+      'accent-line': token('accent-line'),
+      'warn-soft': token('warn-soft'),
+      'warn-line': token('warn-line'),
+      'ok-soft': token('ok-soft'),
+      'ok-line': token('ok-line'),
+      'danger-soft': token('danger-soft'),
+      'danger-line': token('danger-line'),
+    }).toEqual({
+      'fg-2': '#d4d4d8',
+      'border-2': '#3f3f46',
+      inset: '#101012',
+      'accent-soft': '#202b30',
+      'accent-line': '#376772',
+      'warn-soft': '#2e2621',
+      'warn-line': '#735533',
+      'ok-soft': '#202b28',
+      'ok-line': '#396754',
+      'danger-soft': '#281d1f',
+      'danger-line': '#733937',
+    });
+  });
+
+  it('keeps card prose and the accent, warn and ok tones on their fills readable at WCAG AA', () => {
+    expect(contrast(token('fg-2'), token('card'))).toBeGreaterThanOrEqual(4.5);
+    // Danger on its own fill is 4.34:1, short of AA: the design's pair, recorded in the wave 6 A
+    // handover for a product call rather than changed here.
+    for (const tone of ['accent', 'warn', 'ok']) {
+      expect(contrast(token(tone), token(`${tone}-soft`)), tone).toBeGreaterThanOrEqual(4.5);
+    }
+  });
 });
 
 /** The text of every block opened by `opener`, its braces balanced. */
@@ -239,10 +276,10 @@ describe('the product-surface moments (v3 section 5.2, v4 section 2)', () => {
     ],
     [
       '.rail[data-advanced] .rail-step.now::after',
-      /day0-rail-slide 280ms var\(--ease-move\) 150ms/,
+      /var\(--rail-slide, day0-rail-slide\) 280ms var\(--ease-move\) 150ms/,
     ],
     [
-      '.rail[data-advanced] .rail-step.done:has(+ .now)::before',
+      '.rail[data-advanced] .rail-step.done:has(+ .now) .rail-title::before',
       /day0-dot-fill 240ms var\(--ease-arrive\)/,
     ],
     ['[data-dialog]', /day0-dialog-in 200ms var\(--ease-arrive\)/],
@@ -274,6 +311,14 @@ describe('the product-surface moments (v3 section 5.2, v4 section 2)', () => {
     expect(rulesFor(noPreference, "[data-cards='rows']")[0]).toMatch(/--arrive-after:\s*200ms/);
   });
 
+  it("drops the first-week rail's fill down its column on a phone, where the rail stacks", () => {
+    const [phone] = blocks('@media (max-width: 767px) {').filter((block) =>
+      block.includes('--rail-slide'),
+    );
+    expect(phone).toMatch(/\.rail\s*\{\s*--rail-slide:\s*day0-rail-drop;/);
+    expect(blocks('@keyframes day0-rail-drop ')[0]).toMatch(/translateY\(-100%\)/);
+  });
+
   it('shows only the new value of a rolled count or a swapped chip under reduced motion', () => {
     expect(reduce).toMatch(/\.roll > \.from,\s*\.chip-swap > \.from\s*\{\s*display:\s*none;/);
   });
@@ -286,6 +331,7 @@ describe('the product-surface moments (v3 section 5.2, v4 section 2)', () => {
       'roll-out',
       'roll-in',
       'rail-slide',
+      'rail-drop',
       'dot-fill',
       'dialog-in',
     ]) {

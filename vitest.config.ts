@@ -56,6 +56,8 @@ export default defineConfig({
             'tests/browser/**/*.test.ts',
             'tests/evaluation/**/*.test.ts',
             'tests/scripts/**/*.test.ts',
+            // A script pinned against the pages it drives renders them (the rehearsal driver).
+            'tests/scripts/**/*.test.tsx',
             'tests/bed/**/*.test.ts',
             'evaluation/gate/**/*.test.ts',
           ],

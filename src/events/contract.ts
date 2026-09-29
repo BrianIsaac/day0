@@ -252,7 +252,10 @@ export interface CharterAmendedPayload {
 /** The payload of `charter.request_changes`. */
 export interface CharterRequestChangesPayload {
   readonly charterId: CharterId;
+  /** The manager's note, empty when the draft was sent back without one. */
   readonly notes: string;
+  /** Whether the employee redrafts from its transcript and the note; absent on events before the redraft existed. */
+  readonly redrafting?: boolean;
 }
 
 /** The payload of `charter.question-asked`. */
@@ -892,6 +895,9 @@ export interface WorkProviderReconciledPayload extends WorkItemNamed {
   readonly entries: ReconciliationEntry[];
 }
 
+/** The payload of `work.dismissed`: a failed item (stopped or rejected) the manager set aside (N7). */
+export type WorkDismissedPayload = WorkItemNamed;
+
 /** The payload of `work.cancelled`. */
 export interface WorkCancelledPayload extends WorkItemNamed {
   readonly reason: string;
@@ -1150,6 +1156,7 @@ export interface EventPayloads {
   'work.retry': WorkRetryPayload;
   'work.provider-reconciled': WorkProviderReconciledPayload;
   'work.cancelled': WorkCancelledPayload;
+  'work.dismissed': WorkDismissedPayload;
   'work.execution-claimed': WorkExecutionClaimedPayload;
   'work.dependent-authoring': WorkDependentAuthoringPayload;
   'work.dependent-authoring-claimed': WorkDependentAuthoringClaimedPayload;
@@ -1296,6 +1303,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'work.retry',
   'work.provider-reconciled',
   'work.cancelled',
+  'work.dismissed',
   'work.execution-claimed',
   'work.dependent-authoring',
   'work.dependent-authoring-claimed',

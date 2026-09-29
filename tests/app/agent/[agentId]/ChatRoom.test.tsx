@@ -14,12 +14,14 @@ const room = vi.hoisted(() => ({
   sent: [] as unknown[],
 }));
 
-// The seams are the Convex client and the chat hook; the room's own logic runs.
+// The seams are the Convex client and the chat hook; the room's own logic runs. The session
+// query answers null: no one-to-one has been held yet.
 vi.mock('convex/react', () => ({
   useMutation: () => async (): Promise<{ sessionId: string }> => {
     if (room.startRefusal) throw room.startRefusal;
     return { sessionId: 'session-1' };
   },
+  useQuery: (): null => null,
 }));
 vi.mock('@ai-sdk/react', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@ai-sdk/react')>()),
@@ -27,6 +29,7 @@ vi.mock('@ai-sdk/react', async (importOriginal) => ({
     messages: room.messages,
     sendMessage: (message: unknown): void => void room.sent.push(message),
     regenerate: (): void => undefined,
+    setMessages: (): void => undefined,
     status: 'ready',
   }),
 }));
@@ -42,6 +45,7 @@ import {
 } from '../../../fixtures/dom/press';
 import {
   FinishControl,
+  REPLY_HELP,
   REPLY_MAX_CHARS,
   ReplyInput,
   TurnFailureNotice,
@@ -49,53 +53,10 @@ import {
   canFinish,
   charterTranscript,
   composerLocked,
-  emphasisSegments,
   errorLine,
   turnFailure,
 } from '../../../../app/agent/[agentId]/ChatRoom';
 import { INIT_PROMPT } from '../../../../src/agent/day-one-turn';
-
-describe('the Day-1 transcript bubble', (): void => {
-  it('leaves plain prose as one segment', (): void => {
-    expect(emphasisSegments('Understood. What do you see me doing day-to-day?')).toEqual([
-      { text: 'Understood. What do you see me doing day-to-day?', strong: false },
-    ]);
-  });
-
-  it('marks an emphasised label as strong and drops its markers', (): void => {
-    expect(emphasisSegments('Three intros queued. **Topic 4:** what should I read first?')).toEqual(
-      [
-        { text: 'Three intros queued. ', strong: false },
-        { text: 'Topic 4:', strong: true },
-        { text: ' what should I read first?', strong: false },
-      ],
-    );
-  });
-
-  it('handles several emphasised runs in one turn', (): void => {
-    expect(emphasisSegments('**One** and **two**')).toEqual([
-      { text: 'One', strong: true },
-      { text: ' and ', strong: false },
-      { text: 'two', strong: true },
-    ]);
-  });
-
-  it('leaves an unclosed marker exactly as the model wrote it', (): void => {
-    expect(emphasisSegments('a ** b')).toEqual([{ text: 'a ** b', strong: false }]);
-  });
-
-  it('keeps an empty pair of markers as literal text', (): void => {
-    expect(emphasisSegments('a **** b')).toEqual([{ text: 'a **** b', strong: false }]);
-  });
-
-  it('preserves the newlines the bubble renders', (): void => {
-    expect(emphasisSegments('Hi Sam.\n\n**First up:** why this hire?')).toEqual([
-      { text: 'Hi Sam.\n\n', strong: false },
-      { text: 'First up:', strong: true },
-      { text: ' why this hire?', strong: false },
-    ]);
-  });
-});
 
 /** What `useChat` hands `onFinish`, cut down to what the chat room reads. */
 function finished(
@@ -380,7 +341,7 @@ describe('finishing the 1:1 from the room', (): void => {
 });
 
 describe('the composer', (): void => {
-  it('bounds a reply and names the field', (): void => {
+  it('bounds a reply and labels the field for everyone, described by how to send', (): void => {
     const markup = renderToStaticMarkup(
       <ReplyInput
         value=""
@@ -388,12 +349,19 @@ describe('the composer', (): void => {
         onSend={() => {}}
         disabled={false}
         placeholder="type"
+        helpId="reply-help"
       />,
     );
 
     expect(REPLY_MAX_CHARS).toBe(4000);
     expect(markup).toContain(`maxLength="${REPLY_MAX_CHARS}"`);
-    expect(markup).toContain('aria-label="Your reply"');
+    const field = /<textarea[^>]*id="([^"]+)"[^>]*aria-describedby="reply-help"/.exec(markup);
+    expect(field).not.toBeNull();
+    expect(markup).toContain(`<label for="${field![1]}"`);
+    expect(markup).toMatch(/<label[^>]*>Your reply<\/label>/);
+    expect(REPLY_HELP).toBe(
+      'Enter sends. Shift+Enter starts a new line. Short answers are enough.',
+    );
   });
 });
 

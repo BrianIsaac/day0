@@ -12,7 +12,7 @@ import {
   extractRole,
   DAY_ONE_TOPICS,
 } from '../src/agent/charter';
-import type { DayOneTopic } from '../src/agent/charter';
+import type { ChangeRequest, DayOneTopic } from '../src/agent/charter';
 import { defaultSoul, day1Script, DAY_ONE_TOPIC_SPECS } from '../src/agent/day-one-prompts';
 import { generateWorkItemsFromCharter } from '../src/agent/work-generator';
 import type { Charter } from '../src/agent/charter';
@@ -239,17 +239,22 @@ async function draftCharter(args: {
   bossLabel: string;
   answers: Record<DayOneTopic, string>;
   agentTurns: string[];
+  changeRequests?: readonly ChangeRequest[];
 }): Promise<{ charter: Charter; workspaceFiles: WorkspaceFile[]; rejectedEvidence: string[] }> {
   const drafted = await synthesiseCharter({
     answers: args.answers,
     version: CHARTER_VERSION,
     bossLabel: args.bossLabel,
+    changeRequests: args.changeRequests,
   });
-  // The manager's side is the answers themselves: they are that side of the
-  // transcript, copied, which is what the fix above guarantees.
+  // The manager's side is the answers themselves, and the notes they sent
+  // earlier drafts back with: both are their words, copied.
   const reviewed = withoutAgentQuotedEvidence(drafted, {
     agent: args.agentTurns,
-    manager: Object.values(args.answers),
+    manager: [
+      ...Object.values(args.answers),
+      ...(args.changeRequests ?? []).map((request: ChangeRequest): string => request.reason),
+    ],
   });
   const charter = reviewed.charter;
   return {
@@ -347,11 +352,17 @@ async function finaliseClaimedSession(
   },
 ): Promise<SynthesisOutcome> {
   try {
-    const attributed = await attributeTranscript(args.transcript);
+    // A session whose draft was sent back carries the manager's notes, and
+    // whichever finisher reaches it drafts from them with the transcript.
+    const [attributed, session] = await Promise.all([
+      attributeTranscript(args.transcript),
+      ctx.runQuery(internal.voice.getInternal, { sessionId: args.sessionId }),
+    ]);
     const drafted = await draftCharter({
       bossLabel: args.bossLabel,
       answers: attributed.answers,
       agentTurns: attributed.agentTurns,
+      changeRequests: session?.changeRequests,
     });
     const result = await ctx.runMutation(internal.voice.finaliseSession, {
       sessionId: args.sessionId,

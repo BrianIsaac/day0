@@ -32,11 +32,15 @@ const STEPPED_ROUTES: ReadonlySet<string> = new Set(['sign-in', 'sign-up']);
 /**
  * Which page a pathname is, for the transition: the pathname itself, except that a step inside
  * Clerk's sign-in or sign-up (`/sign-in/factor-one`) is the same page, so the widget is not torn
- * down and the page does not play out and in at each step.
+ * down and the page does not play out and in at each step, and an employee's tab
+ * (`/agent/<id>/work`) is the employee's page, so its shell stays mounted and a tab change
+ * reveals at once (round two section 4.4).
  *
  * @param pathname - The current pathname; null outside the app router.
  */
 export function pageKey(pathname: string | null): string {
-  const first = pathname?.split('/')[1] ?? '';
-  return STEPPED_ROUTES.has(first) ? `/${first}` : (pathname ?? '');
+  const [, first = '', second] = pathname?.split('/') ?? [];
+  if (STEPPED_ROUTES.has(first)) return `/${first}`;
+  if (first === 'agent' && second !== undefined) return `/agent/${second}`;
+  return pathname ?? '';
 }

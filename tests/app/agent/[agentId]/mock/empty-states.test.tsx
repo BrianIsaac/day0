@@ -24,7 +24,7 @@ const MOCK_ONLY_TABS = [
   { name: 'Slack', Tab: SlackTab, copy: EMPTY_CHANNELS },
   { name: 'Spreadsheet', Tab: SpreadsheetTab, copy: EMPTY_SPREADSHEETS },
   { name: 'Tickets', Tab: TicketsTab, copy: EMPTY_TICKETS },
-  { name: 'Twitter', Tab: TwitterTab, copy: EMPTY_TWEETS },
+  { name: 'Social', Tab: TwitterTab, copy: EMPTY_TWEETS },
 ] as const;
 
 describe('mock tab empty states', (): void => {

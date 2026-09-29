@@ -293,7 +293,20 @@ it('cancels a stalled provider at the 60-second route deadline', async () => {
 });
 
 describe('a turn the model answers normally', (): void => {
-  it('reaches the chat room byte for byte as the SDK streams it', async (): Promise<void> => {
+  it("says on its start which of the seven questions the turn is on, by the close gate's count", async (): Promise<void> => {
+    const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
+    const topicOf = async (exchanges: number): Promise<unknown> => {
+      const body = await (await POST(day1Request({ messages: historyOf(exchanges) }))).text();
+      const start = body.split('\n').find((line) => line.includes('"type":"start"'));
+      return (JSON.parse(start!.slice('data: '.length)) as { messageMetadata?: unknown })
+        .messageMetadata;
+    };
+    expect(await topicOf(0)).toEqual({ topicIndex: 0 });
+    expect(await topicOf(3)).toEqual({ topicIndex: 3 });
+    expect(await topicOf(9)).toEqual({ topicIndex: 6 });
+  });
+
+  it('reaches the chat room as the SDK streams it, the question on its start', async (): Promise<void> => {
     const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
 
     const response = await POST(day1Request({ messages: historyOf(0) }));
@@ -301,7 +314,7 @@ describe('a turn the model answers normally', (): void => {
     expect(response.headers.get('content-type')).toBe('text/event-stream');
     expect(response.headers.get('x-vercel-ai-ui-message-stream')).toBe('v1');
     expect(await response.text()).toMatchInlineSnapshot(`
-      "data: {"type":"start"}
+      "data: {"type":"start","messageMetadata":{"topicIndex":0}}
 
       data: {"type":"start-step"}
 
@@ -329,7 +342,7 @@ describe('a turn the model answers normally', (): void => {
     const response = await POST(day1Request({ messages: historyOf(7) }));
 
     expect(await response.text()).toMatchInlineSnapshot(`
-      "data: {"type":"start"}
+      "data: {"type":"start","messageMetadata":{"topicIndex":6}}
 
       data: {"type":"start-step"}
 

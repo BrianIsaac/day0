@@ -12,6 +12,7 @@ import { languageModel } from '@/lib/openai';
 import { streamCallOptions } from '@/lib/stream-settings';
 import { DAY_ONE_TOPIC_SPECS, DAY_ONE_WELCOME } from '@/agent/day-one-prompts';
 import { dayOneTurnStream, managerReplies } from '@/agent/day-one-turn';
+import { topicIndexOf, withTopicIndex } from '@/agent/day-one-progress';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -112,12 +113,13 @@ export async function POST(req: Request): Promise<Response> {
         stopWhen: hasToolCall('dayOneComplete'),
         maxRetries: 3,
       }).toUIMessageStream();
+    const replies = managerReplies(uiMessages);
+    // The turn says which of the seven questions it is on, for the room's progress line.
     return createUIMessageStreamResponse({
-      stream: dayOneTurnStream({
-        attempt,
-        replies: managerReplies(uiMessages),
-        signal: abortSignal,
-      }),
+      stream: withTopicIndex(
+        dayOneTurnStream({ attempt, replies, signal: abortSignal }),
+        topicIndexOf(replies),
+      ),
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);

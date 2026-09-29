@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { act } from 'react';
@@ -10,7 +10,6 @@ import { getFunctionName } from 'convex/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const queries = vi.hoisted(() => ({
-  mode: 'mock' as 'mock' | 'real' | undefined,
   surfacesLoaded: true,
   /** A third document the employee has just written, when set. */
   newDoc: false,
@@ -19,18 +18,22 @@ const queries = vi.hoisted(() => ({
 vi.mock('convex/react', () => ({
   useQuery: (reference: unknown, args: unknown): unknown => {
     const name = getFunctionName(reference as never);
-    if (name === 'config:surfaceMode') {
-      if (queries.mode === undefined) return undefined;
-      return { mode: queries.mode, label: queries.mode === 'real' ? 'real (local)' : 'mock' };
-    }
     if (args === 'skip') return undefined;
-    if (
-      !queries.surfacesLoaded &&
-      ['surfaces:listForAgent', 'docSources:pagesForAgent'].includes(name)
-    ) {
-      return undefined;
+    if (!queries.surfacesLoaded && name === 'surfaces:listForAgent') return undefined;
+    if (name === 'surfaces:listForAgent') {
+      return [
+        {
+          _id: 'surface-linear',
+          slug: 'linear',
+          displayName: 'Linear',
+          class: 'kanban',
+          verdict: 'declared',
+          whereFound: [],
+          credentialLanded: false,
+        },
+      ];
     }
-    if (name === 'surfaces:listForAgent') return [{ slug: 'linear' }];
+    if (name === 'charters:latest') return null;
     if (name === 'mock:listDocs') {
       return [
         {
@@ -67,109 +70,119 @@ vi.mock('convex/react', () => ({
 }));
 
 import type { Id } from '../../../../convex/_generated/dataModel';
-import {
-  activeTabForEnvironment,
-  MockEnvironment,
-  ROLL_MS,
-  tabFromHash,
-} from '../../../../app/agent/[agentId]/MockEnvironment';
-import { LOADING_SURFACES } from '../../../../app/agent/[agentId]/mock/SurfacesTab';
+import { MockEnvironment } from '../../../../app/agent/[agentId]/MockEnvironment';
+import { ROLL_MS } from '../../../../app/components/RollingCount';
+import { LOADING_SURFACES } from '../../../../app/agent/[agentId]/surfaces/SurfaceCards';
+import type { SurfaceMode } from '../../../../src/surfaces/types';
 
 const agentId = 'agent-1' as Id<'agents'>;
 
+/** The environment rendered to markup in one mode. */
+const markupIn = (mode: SurfaceMode): string =>
+  renderToStaticMarkup(<MockEnvironment agentId={agentId} mode={mode} />);
+
 describe('MockEnvironment caption and tabs', (): void => {
-  it('says the surfaces are mock and shows no Surfaces tab in mock mode', (): void => {
-    queries.mode = 'mock';
-    const markup = renderToStaticMarkup(<MockEnvironment agentId={agentId} />);
-    expect(markup).toContain('Mock work environment');
-    expect(markup).toContain('Mock surfaces - when the employee runs a skill');
+  it('says the office is the seeded mock and shows no Surfaces tab in mock mode', (): void => {
+    const markup = markupIn('mock');
+    expect(markup).toMatch(/<h2[^>]*>Mock office<\/h2>/);
+    expect(markup).toContain('the seeded workplace this employee works in');
+    expect([...markup.matchAll(/role="tab"[^>]*>([A-Za-z]+)/g)].map((tab) => tab[1])).toEqual([
+      'Slack',
+      'Spreadsheet',
+      'Docs',
+      'Tickets',
+      'Social',
+    ]);
     expect(markup).not.toContain('Surfaces');
     expect(markup).not.toContain('real mode');
-    expect(markup).toContain('Q4 Revenue Tracker');
-    expect(markup).toContain('Linear-style queue');
   });
 
-  it('shows only readable documentation and discovered surfaces in real mode', (): void => {
-    queries.mode = 'real';
-    const markup = renderToStaticMarkup(<MockEnvironment agentId={agentId} />);
-    expect(markup).toContain('>Enterprise context<');
-    expect(markup).toContain(
-      'Documentation day0 can read, and the connection status of every system it has discovered',
+  it('shows only the discovered systems and readable documentation in real mode', (): void => {
+    const markup = markupIn('real');
+    expect(markup).toContain('<section id="surfaces" aria-label="Systems"');
+    expect(markup).toMatch(
+      /<section id="surface-linear" aria-labelledby="[^"]+" tabindex="-1" data-verdict="declared"/,
     );
-    expect(markup).toContain('>Docs<');
-    expect(markup).toContain('>Surfaces<');
-    expect(markup).toContain('linked documentation');
-    expect(markup).toContain('connections + evidence');
+    expect(markup).toMatch(/<h2[^>]*>Documentation it reads<\/h2>/);
     expect(markup).toContain('Operating handbook');
-    expect(markup).not.toContain('>Slack<');
-    expect(markup).not.toContain('>Spreadsheet<');
-    expect(markup).not.toContain('>Twitter<');
-    expect(markup).not.toContain('>Tickets<');
+    expect(markup).toMatch(/<h2[^>]*>Permissions<\/h2>/);
+    expect(markup).not.toContain('role="tablist"');
+    expect(markup).not.toContain('Mock office');
     expect(markup).not.toContain('mock-only');
+  });
+
+  it('says it is loading, not the mock office, while the mode is unknown', (): void => {
+    const markup = renderToStaticMarkup(<MockEnvironment agentId={agentId} mode={undefined} />);
+    expect(markup).toContain('Loading the work environment');
+    expect(markup).not.toContain('Mock office');
   });
 });
 
 describe('the tab strip and the panel for a keyboard and a screen reader (step 45, P10-4)', (): void => {
   it('marks the selected tab in words, not colour alone, gives each tab a 44 px target and names the panel', (): void => {
-    queries.mode = 'real';
-    const markup = renderToStaticMarkup(<MockEnvironment agentId={agentId} />);
-    expect(markup).toMatch(/<nav aria-label="Work environment"/);
+    const markup = markupIn('mock');
+    expect(markup).toMatch(/<div role="tablist" aria-label="Mock office"/);
     const tabs = [
-      ...markup.matchAll(/<button type="button" aria-pressed="(true|false)" class="([^"]*)"/g),
+      ...markup.matchAll(
+        /<button id="([^"]+)" type="button" role="tab" aria-selected="(true|false)"[^>]*class="([^"]*)"/g,
+      ),
     ];
-    expect(tabs.map((tab) => tab[1])).toEqual(['true', 'false']);
-    for (const tab of tabs) expect(tab[2]).toMatch(/\bmin-h-11\b/);
-    expect(markup).toMatch(/<div id="surfaces" tabindex="0" role="region" aria-label="Docs tab"/);
+    expect(tabs.map((tab) => tab[2])).toEqual(['true', 'false', 'false', 'false', 'false']);
+    for (const tab of tabs) expect(tab[3]).toMatch(/\bh-11\b/);
+    expect(markup).toMatch(
+      /<div id="surfaces" role="tabpanel" tabindex="0" aria-labelledby="surfaces-slack"/,
+    );
+  });
+
+  it('moves along the strip with the arrow keys, Home and End, selecting as it goes', (): void => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    act((): void => root.render(<MockEnvironment agentId={agentId} mode="mock" />));
+    const tab = (): HTMLElement | null =>
+      container.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
+    const press = (key: string): void => {
+      act((): void => {
+        document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+      });
+    };
+    tab()?.focus();
+    press('ArrowRight');
+    expect(tab()?.textContent).toMatch(/^Spreadsheet/);
+    expect(document.activeElement).toBe(tab());
+    press('End');
+    expect(tab()?.textContent).toMatch(/^Social/);
+    press('ArrowRight');
+    expect(tab()?.textContent).toMatch(/^Slack/);
+    expect(container.querySelector('[role="tabpanel"]')?.getAttribute('aria-labelledby')).toBe(
+      'surfaces-slack',
+    );
+    act((): void => root.unmount());
+    container.remove();
   });
 });
 
 describe('the hash links the work cards carry', (): void => {
   // Resolved by path: under jsdom, Vite rewrites `new URL(path, import.meta.url)`
   // into a served asset address rather than a file.
-  const dashboard = readFileSync(
-    resolve(
-      dirname(fileURLToPath(import.meta.url)),
-      '../../../../app/agent/[agentId]/AgentDashboard.tsx',
-    ),
-    'utf8',
+  // Every module of the employee page, since the cards that carry the links live in its tabs.
+  const pageDirectory = resolve(
+    dirname(fileURLToPath(import.meta.url)),
+    '../../../../app/agent/[agentId]',
   );
+  const dashboard = readdirSync(pageDirectory, { recursive: true, encoding: 'utf8' })
+    .filter((file) => /\.tsx?$/.test(file))
+    .map((file) => readFileSync(resolve(pageDirectory, file), 'utf8'))
+    .join('\n');
   const hashes = [...dashboard.matchAll(/href="#([a-z-]+)"/g)].map((match) => match[1]);
 
   it('each name an element the environment panel renders, so the link scrolls as well as switching the tab', (): void => {
     expect(hashes).toContain('surfaces');
-    queries.mode = 'real';
-    const markup = renderToStaticMarkup(<MockEnvironment agentId={agentId} />);
+    const markup = markupIn('real');
     for (const hash of new Set(hashes)) {
       expect(markup).toContain(`id="${hash}"`);
     }
-  });
-});
-
-describe('tab selection from the location hash', (): void => {
-  it('names a tab from the hash the card link carries', (): void => {
-    expect(tabFromHash('#surfaces', true)).toBe('surfaces');
-    expect(tabFromHash('surfaces', true)).toBe('surfaces');
-    expect(tabFromHash('#Docs', true)).toBe('docs');
-    expect(tabFromHash('#tickets', false)).toBe('tickets');
-  });
-
-  it('ignores hashes that name no tab, and the Surfaces tab outside real mode', (): void => {
-    expect(tabFromHash('', true)).toBeUndefined();
-    expect(tabFromHash('#work-item-1', true)).toBeUndefined();
-    expect(tabFromHash('#%E0%A4%A', true)).toBeUndefined();
-    expect(tabFromHash('#surfaces', false)).toBeUndefined();
-    expect(tabFromHash('#slack', true)).toBeUndefined();
-    expect(tabFromHash('#spreadsheet', true)).toBeUndefined();
-    expect(tabFromHash('#tweet', true)).toBeUndefined();
-    expect(tabFromHash('#tickets', true)).toBeUndefined();
-  });
-
-  it('keeps the active tab valid when the resolved mode changes', (): void => {
-    expect(activeTabForEnvironment('surfaces', '#surfaces', false)).toBe('slack');
-    expect(activeTabForEnvironment('docs', '#unknown', false)).toBe('docs');
-    expect(activeTabForEnvironment('slack', '#surfaces', true)).toBe('surfaces');
-    expect(activeTabForEnvironment('slack', '#unknown', true)).toBe('docs');
-    expect(activeTabForEnvironment('tickets', '', true)).toBe('docs');
   });
 });
 
@@ -178,7 +191,7 @@ describe('a cold load whose hash names a tab', (): void => {
   let root: Root | undefined;
   let container: HTMLElement | undefined;
 
-  function mount(): void {
+  function mount(mode: SurfaceMode | undefined): void {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     Element.prototype.scrollIntoView = function (this: Element): void {
       scrolled.push(this);
@@ -186,7 +199,7 @@ describe('a cold load whose hash names a tab', (): void => {
     container = document.createElement('div');
     document.body.append(container);
     root = createRoot(container);
-    act((): void => root?.render(<MockEnvironment agentId={agentId} />));
+    act((): void => root?.render(<MockEnvironment agentId={agentId} mode={mode} />));
   }
 
   afterEach((): void => {
@@ -198,22 +211,19 @@ describe('a cold load whose hash names a tab', (): void => {
   });
 
   it('selects the tab and scrolls to the panel, as the Slack OAuth redirect needs', (): void => {
-    queries.mode = 'real';
     queries.surfacesLoaded = false;
     window.history.replaceState(null, '', '/agent/agent-1?install=installed#surfaces');
-    mount();
+    mount('real');
     expect(container?.textContent).toContain(LOADING_SURFACES);
     expect(scrolled.map((element) => element.id)).toEqual(['surfaces']);
   });
 
   it('scrolls once the deployment mode resolves, and not again on a later hash change', (): void => {
-    queries.mode = undefined;
     queries.surfacesLoaded = false;
     window.history.replaceState(null, '', '/agent/agent-1#surfaces');
-    mount();
+    mount(undefined);
     expect(scrolled).toEqual([]);
-    queries.mode = 'real';
-    act((): void => root?.render(<MockEnvironment agentId={agentId} />));
+    act((): void => root?.render(<MockEnvironment agentId={agentId} mode="real" />));
     expect(container?.textContent).toContain(LOADING_SURFACES);
     expect(scrolled.map((element) => element.id)).toEqual(['surfaces']);
     act((): void => {
@@ -224,9 +234,8 @@ describe('a cold load whose hash names a tab', (): void => {
   });
 
   it('does not scroll when the hash names no tab', (): void => {
-    queries.mode = 'real';
     window.history.replaceState(null, '', '/agent/agent-1#work-item-1');
-    mount();
+    mount('real');
     expect(scrolled).toEqual([]);
   });
 });
@@ -243,7 +252,7 @@ describe('a tab count that changes on the page (v3 section 5.2)', (): void => {
 
   /** The Docs tab's badge. */
   const docsBadge = (): Element | null | undefined =>
-    [...document.querySelectorAll('nav[aria-label="Work environment"] button')]
+    [...document.querySelectorAll('[role="tablist"][aria-label="Mock office"] [role="tab"]')]
       .find((tab) => tab.textContent?.startsWith('Docs'))
       ?.querySelector('span.rounded-full');
 
@@ -251,13 +260,17 @@ describe('a tab count that changes on the page (v3 section 5.2)', (): void => {
     const container = document.createElement('div');
     document.body.append(container);
     root = createRoot(container);
-    act((): void => root?.render(<MockEnvironment agentId={'agent-1' as Id<'agents'>} />));
+    act((): void =>
+      root?.render(<MockEnvironment agentId={'agent-1' as Id<'agents'>} mode="mock" />),
+    );
     expect(docsBadge()?.innerHTML).toBe('2');
 
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
       queries.newDoc = true;
-      act((): void => root?.render(<MockEnvironment agentId={'agent-1' as Id<'agents'>} />));
+      act((): void =>
+        root?.render(<MockEnvironment agentId={'agent-1' as Id<'agents'>} mode="mock" />),
+      );
       const roll = docsBadge()?.querySelector('.roll');
       expect(roll?.querySelector('.from')?.textContent).toBe('2');
       expect(roll?.querySelector('.from')?.getAttribute('aria-hidden')).toBe('true');

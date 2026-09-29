@@ -245,7 +245,7 @@ describe('one scope judgement for the R6 card', (): void => {
     expect(verdict).toMatchObject({
       decision: 'needs-skill',
       reason:
-        'no registered skill covers ticket comment-and-close on a kanban surface; agent will propose "kanban-comment-and-close"',
+        'no registered skill covers ticket comment-and-close on a kanban surface; proposing the skill "kanban-comment-and-close" for your approval',
       suggestedSkillName: 'kanban-comment-and-close',
     });
     expect(model.calls).toEqual([]);
