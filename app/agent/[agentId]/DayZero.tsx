@@ -1,13 +1,15 @@
 'use client';
 
 import dynamic from 'next/dynamic';
-import { useEffect, useMemo, useState, type RefObject } from 'react';
+import Link from 'next/link';
+import { useEffect, useMemo, useState, type ReactNode, type RefObject } from 'react';
 import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { Button } from '../../components/Button';
 import { Card } from '../../components/Card';
 import { Columns } from '../../components/Columns';
 import { useEmployee } from './employee-context';
+import { employeeTabHref } from './employee-tabs';
 import { RecordLines, RECENT_EVENTS } from './EmployeeRail';
 import { PanelLoading, ROOM_FRAME } from './PanelLoading';
 
@@ -26,7 +28,7 @@ const VoiceRoom = dynamic(() => import('./VoiceRoom').then((module) => module.Vo
 });
 
 /** How many record lines day zero lists: the deploy and what came with it. */
-const DAY_ZERO_RECORD_LINES = 3;
+const DAY_ZERO_RECORD_LINES = 2;
 
 /** How the one-to-one is being held: not yet chosen, or in one of its two rooms. */
 type Room = 'pick' | 'chat' | 'voice';
@@ -111,15 +113,18 @@ function WhatItKnows() {
   const registered = useQuery(api.skills.registered, { agentId });
   const workspace = useQuery(api.workspace.read, { agentId });
   const files = Object.values(workspace ?? {});
-  const facts: ReadonlyArray<readonly [string, string]> = [
+  const office = employeeTabHref(agent._id, 'surfaces');
+  const facts: ReadonlyArray<readonly [string, ReactNode]> = [
     ['Manager', agent.bossEmail],
     [
       'Office',
-      surfaceMode === undefined
-        ? 'loading'
-        : surfaceMode === 'real'
-          ? 'your own systems, each connected only once you approve it'
-          : 'the hosted mock office',
+      surfaceMode === undefined ? (
+        'loading'
+      ) : surfaceMode === 'real' ? (
+        <Link href={office}>your own systems, each connected only once you approve it</Link>
+      ) : (
+        <Link href={office}>the hosted mock office</Link>
+      ),
     ],
     [
       'Skills',

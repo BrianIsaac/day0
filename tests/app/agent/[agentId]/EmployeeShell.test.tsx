@@ -421,6 +421,19 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     view.unmount();
   });
 
+  it('shows the Surfaces page on day zero when the address names it, with the way back', async (): Promise<void> => {
+    backend.queries = { 'agents:get': row('deployed'), 'charters:latest': null };
+    route.segment = 'surfaces';
+    const view = mount(page(<p>the environment</p>));
+    await settle();
+    expect(view.container.textContent).toContain('the environment');
+    expect(view.container.querySelector('[role="tablist"]')).toBeNull();
+    expect(view.container.querySelector('a[href="/agent/agent-1"]')?.textContent).toBe(
+      'Back to the one-to-one',
+    );
+    view.unmount();
+  });
+
   it('plays no advance as the page loads, the figures arriving after the employee', async (): Promise<void> => {
     backend.queries = {};
     const view = mount(page());

@@ -239,7 +239,19 @@ export function EmployeeShell({
           />
           <StatusRegion outcome={pageOutcome} />
           <FirstWeekRail steps={steps} advanced={advanced} />
-          {dayZero ? (
+          {dayZero && segment === 'surfaces' ? (
+            // The environment is the one tab day zero can need: a card's link or the Slack
+            // OAuth return lands here before the one-to-one is held.
+            <div className="mt-6 grid gap-4">
+              <Link
+                href={employeeTabHref(agentId, 'needs-you')}
+                className="inline-flex min-h-11 items-center self-start text-sm"
+              >
+                Back to the one-to-one
+              </Link>
+              {children}
+            </div>
+          ) : dayZero ? (
             <div className="mt-6">
               <DayZero onboarding={onboarding} arriving={arriving} />
             </div>
