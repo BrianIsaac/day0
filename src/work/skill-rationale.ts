@@ -15,6 +15,26 @@ export function firstNeededSentence(title: string, sourceSystem: string): string
   return `First needed by "${title}" from ${sourceSystem}; the skill is a reusable procedure for every later work item of this shape, taking each run's values from that item and its runbook.`;
 }
 
+/**
+ * The clause the evaluator's needs-skill reason ends with, naming the skill it proposes: the
+ * words it writes now, and the ones rows from before the manager's words (N29) still carry.
+ */
+const PROPOSING_CLAUSE =
+  /;\s*(?:agent will propose|proposing the skill) "[^"]*"(?: for your approval)?\s*$/;
+
+/**
+ * A needs-skill reason as the work card says it beside the skill it already names: the
+ * proposal clause taken out, the rest one sentence.
+ *
+ * @param reason - The verdict's stored reason.
+ */
+export function needsSkillReason(reason: string): string {
+  const cause = reason.replace(PROPOSING_CLAUSE, '').trim();
+  if (cause === '') return '';
+  const capitalised = `${cause.charAt(0).toLocaleUpperCase('en-GB')}${cause.slice(1)}`;
+  return /[.!?]$/.test(capitalised) ? capitalised : `${capitalised}.`;
+}
+
 /** The clause `firstNeededSentence` opens with, up to what the skill is. */
 const FIRST_NEEDED_CLAUSE = /\s*First needed by "[^"]*" from [^;]*; the skill is\b/;
 

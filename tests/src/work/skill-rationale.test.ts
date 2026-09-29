@@ -1,5 +1,23 @@
 import { describe, expect, it } from 'vitest';
-import { firstNeededSentence, rationaleBesideItem } from '../../../src/work/skill-rationale';
+import {
+  firstNeededSentence,
+  needsSkillReason,
+  rationaleBesideItem,
+} from '../../../src/work/skill-rationale';
+
+describe('a needs-skill reason beside the skill the card names', (): void => {
+  it('says the cause as one sentence, the proposal clause taken out, a row from before N29 included', (): void => {
+    for (const reason of [
+      'no registered skill covers ticket update on a kanban surface; proposing the skill "linear-update-issue" for your approval',
+      'no registered skill covers ticket update on a kanban surface; agent will propose "linear-update-issue"',
+    ]) {
+      expect(needsSkillReason(reason)).toBe(
+        'No registered skill covers ticket update on a kanban surface.',
+      );
+    }
+    expect(needsSkillReason('Needed for the close.')).toBe('Needed for the close.');
+  });
+});
 
 describe('a proposed skill rationale beside the item that first needed it', (): void => {
   it('takes out the item the page already names, and keeps what the skill is', (): void => {

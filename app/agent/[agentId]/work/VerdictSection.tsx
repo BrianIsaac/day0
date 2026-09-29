@@ -5,6 +5,7 @@ import type { Doc } from '@convex/_generated/dataModel';
 import type { SurfaceRecord } from '@/surfaces/types';
 import { verdictFor } from '@/surfaces/verdict';
 import { runProgress, type WorkGate } from '@/work/item-display';
+import { needsSkillReason } from '@/work/skill-rationale';
 import { Help, ItemSection, Lead, Note } from './ItemParts';
 import { cancelledReason, colleagueHolding } from './work-item';
 
@@ -82,7 +83,9 @@ export function VerdictSection({
         <Note>
           <Lead>Waiting on a skill</Lead>
           {verdict.suggestedSkillName ? `: ${verdict.suggestedSkillName}` : ''}.{' '}
-          {verdict.reason ? `${verdict.reason} ` : ''}
+          {verdict.reason && needsSkillReason(verdict.reason)
+            ? `${needsSkillReason(verdict.reason)} `
+            : ''}
           <Link
             href={`/agent/${item.agentId}/skills`}
             className="text-[var(--color-accent)] underline underline-offset-4"

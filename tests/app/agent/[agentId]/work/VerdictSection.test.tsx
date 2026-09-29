@@ -43,6 +43,16 @@ describe('why an item that is not moving is where it is', (): void => {
       suggestedSkillName: 'draft-tier-two-reply',
     });
     expect(skill).toContain('Waiting on a skill</span>: draft-tier-two-reply.');
+    const reasoned = verdict('needs-skill', {
+      decision: 'needs-skill',
+      suggestedSkillName: 'linear-update-issue',
+      reason:
+        'no registered skill covers ticket update on a kanban surface; agent will propose "linear-update-issue"',
+    });
+    expect(reasoned).toContain(
+      ': linear-update-issue. No registered skill covers ticket update on a kanban surface. <a',
+    );
+    expect(reasoned).not.toContain('will propose');
     expect(skill).toContain('href="/agent/a-mira/skills"');
     expect(
       verdict(
