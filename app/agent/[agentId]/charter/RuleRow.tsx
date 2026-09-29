@@ -56,6 +56,7 @@ export function RuleRow({
   preview,
   justStruck,
   busy,
+  record = false,
   onStrike,
   onRestore,
 }: {
@@ -64,6 +65,8 @@ export function RuleRow({
   preview: StrikePreview | undefined;
   justStruck: boolean;
   busy: boolean;
+  /** The row is the approved charter's record, drawn without the review's warn line. */
+  record?: boolean;
   onStrike?: (index: number) => void;
   onRestore?: (index: number) => void;
 }) {
@@ -76,7 +79,7 @@ export function RuleRow({
       className={`grid gap-x-4 gap-y-3 rounded-[10px] border p-3.5 sm:grid-cols-[minmax(0,1fr)_auto] sm:px-4 ${
         standing === 'struck'
           ? 'border-[var(--color-border)] bg-[var(--color-card)]'
-          : standing === 'kept'
+          : standing === 'kept' || record
             ? 'border-[var(--color-border)] bg-[var(--color-bg)]'
             : 'border-[var(--color-warn-line)] bg-[var(--color-bg)]'
       }`}
@@ -105,8 +108,10 @@ export function RuleRow({
               {' · in the charter as '}
               {constraint.wording.map((phrase, i) => (
                 <span key={i}>
-                  {i > 0 ? ', ' : ''}
-                  <b className="font-semibold text-[var(--color-fg)]">{phrase}</b>
+                  {i > 0 ? '; ' : ''}
+                  <b className="font-semibold text-[var(--color-fg)]">
+                    {i < constraint.wording.length - 1 ? phrase.replace(/\.$/, '') : phrase}
+                  </b>
                 </span>
               ))}
             </>
@@ -239,6 +244,7 @@ export function ConstraintList({
             }
             justStruck={constraint.struck === true && !struckOnArrival.has(index)}
             busy={busy}
+            record={approved}
             onStrike={onStrike}
             onRestore={onRestore}
           />

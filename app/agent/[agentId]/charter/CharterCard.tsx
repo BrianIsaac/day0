@@ -151,11 +151,7 @@ export function CharterCard({
             constraints={constraints}
             approved={charter.approved}
             busy={change.busy}
-            onStrike={(index) =>
-              charter.approved
-                ? sendAmendment({ kind: 'strike-constraint', index })
-                : toggleStrike(index, true)
-            }
+            onStrike={charter.approved ? undefined : (index) => toggleStrike(index, true)}
             onRestore={charter.approved ? undefined : (index) => toggleStrike(index, false)}
             previewStrike={(index) => strikePreview(body, index)}
           />

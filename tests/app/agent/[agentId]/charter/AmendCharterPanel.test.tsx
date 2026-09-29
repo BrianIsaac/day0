@@ -132,6 +132,32 @@ describe('amending an approved charter from the card', (): void => {
     view.unmount();
   });
 
+  it('strikes a rule of the approved charter from behind the disclosure, the record list itself read-only', async (): Promise<void> => {
+    const ruled = {
+      ...body,
+      constraints: [
+        {
+          kind: 'system-boundary',
+          quote: 'Never post to public channels.',
+          wording: ['Post to public Slack channels.'],
+          origin: 'synthesis',
+        },
+      ],
+    };
+    const view = mount(<CharterCard charter={{ ...charter, body: ruled }} />);
+    const rules = view.container.querySelector('[data-standing]')?.closest('ul');
+    expect(rules?.querySelector('button')).toBeNull();
+    const strike = view.container.querySelector('details button[aria-label^="Strike:"]');
+    expect(strike?.textContent).toBe('Strike');
+    await press(view.container, 'Strike: Never post to public channels.');
+    expect(backend.calls).toContainEqual({
+      name: 'charters:amend',
+      args: { agentId: 'agent-1', changes: [{ kind: 'strike-constraint', index: 0 }] },
+    });
+    view.unmount();
+    backend.calls = [];
+  });
+
   it('is absent from a charter awaiting approval', (): void => {
     const draft = { ...charter, approved: false, body } as unknown as Doc<'charters'>;
     const markup = renderToStaticMarkup(<CharterCard charter={draft} />);

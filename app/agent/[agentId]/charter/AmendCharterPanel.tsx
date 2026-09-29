@@ -9,7 +9,7 @@ import {
 import { useState, useId, useRef } from 'react';
 import type { Doc } from '@convex/_generated/dataModel';
 import type { CharterCardBody } from './CharterCard';
-import type { CharterConstraint } from '@/agent/charter-constraints';
+import { strikePreview, type CharterConstraint } from '@/agent/charter-constraints';
 import { type SystemClass, SYSTEM_CLASSES } from '@/agent/system-classes';
 import { managerOpenQuestions } from '@/agent/manager-questions';
 import { DISCLOSURE_SUMMARY } from '../../../components/Disclosure';
@@ -132,6 +132,54 @@ function AddLine({
       >
         {button}
       </button>
+    </div>
+  );
+}
+
+/**
+ * Strike a rule the approved charter enforces: an amendment, so it lives behind the disclosure
+ * with the other changes, and a strike the charter cannot take is offered disabled with why.
+ */
+function StrikeRules({
+  body,
+  busy,
+  onAmend,
+}: {
+  body: CharterCardBody;
+  busy: boolean;
+  onAmend: (change: CharterChange) => void;
+}) {
+  const standing = (body.constraints ?? []).flatMap((constraint, index) =>
+    constraint.struck ? [] : [{ constraint, index, refusal: strikePreview(body, index).refusal }],
+  );
+  if (standing.length === 0) return null;
+  return (
+    <div>
+      <div className="text-[var(--color-muted)] text-xs uppercase tracking-wider mb-1">
+        Strike a rule
+      </div>
+      <ul className="space-y-1">
+        {standing.map(({ constraint, index, refusal }) => (
+          <li key={index} className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="min-w-0 flex-1 text-[var(--color-fg)]">{constraint.quote}</span>
+            <button
+              type="button"
+              className={AMEND_BUTTON}
+              disabled={busy || refusal !== undefined}
+              title={refusal}
+              aria-label={`Strike: ${constraint.quote}`}
+              onClick={() => onAmend({ kind: 'strike-constraint', index })}
+            >
+              Strike
+            </button>
+            {refusal ? (
+              <span className="basis-full text-xs text-[var(--color-muted)]">
+                cannot be struck: {refusal}
+              </span>
+            ) : null}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -271,6 +319,7 @@ export function AmendCharterPanel({
             </div>
           </div>
         ) : null}
+        <StrikeRules body={body} busy={busy} onAmend={onAmend} />
         <div>
           <div className="text-[var(--color-muted)] text-xs uppercase tracking-wider mb-1">
             Add a rule
