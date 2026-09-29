@@ -775,6 +775,17 @@ describe('pausing the scheduled jobs', (): void => {
     expect(ran(again)).not.toContain('convex:restart');
   });
 
+  it('pause takes over the pause an unfinished upgrade left, as its own, so the next upgrade leaves it', async (): Promise<void> => {
+    const h = configured({
+      services: ['backend'],
+      deploymentEnv: 'DAY0_CRONS_PAUSED=upgrade to 0.3.0 at 2026-09-29T13:00:00Z\n',
+    });
+    expect(await runCommand(verb('pause'), h.io)).toBe(0);
+    expect(h.deploymentEnv().DAY0_CRONS_PAUSED).toMatch(/^paused by hand at /);
+    expect(h.output.join('\n')).toContain('now paused by hand');
+    expect(ran(h)).not.toContain('convex:restart');
+  });
+
   it('unpause removes the flag and restarts the backend; with none set it changes nothing', async (): Promise<void> => {
     const h = configured({
       services: ['backend'],
@@ -889,6 +900,32 @@ describe('backup, restore and upgrade (step 15)', (): void => {
     rmSync(homeDirectory, { recursive: true, force: true });
   });
 
+  it('lifts the pause a backup taken by an upgrade carries, and keeps one set by hand', async (): Promise<void> => {
+    const homeDirectory = home();
+    const taken = configured({ services: ['backend'], environment: { HOME: homeDirectory } });
+    expect(await runCommand(verb('backup'), taken.io)).toBe(0);
+    const directory = join(homeDirectory, 'day0-backups', PROJECT);
+    const file = join(directory, readdirSync(directory).find((name) => name.endsWith('.tar.gz'))!);
+
+    const upgraded = configured({
+      services: ['backend'],
+      environment: { HOME: homeDirectory },
+      deploymentEnv: 'DAY0_CRONS_PAUSED=upgrade to 0.3.0 at 2026-09-29T13:00:00Z\n',
+    });
+    expect(await runCommand(verb('restore', { restoreFrom: file }), upgraded.io)).toBe(0);
+    expect(upgraded.deploymentEnv().DAY0_CRONS_PAUSED).toBeUndefined();
+    expect(upgraded.output.join('\n')).toContain("it carried that upgrade's pause");
+
+    const byHand = configured({
+      services: ['backend'],
+      environment: { HOME: homeDirectory },
+      deploymentEnv: 'DAY0_CRONS_PAUSED=paused by hand at 2026-09-29T13:00:00Z\n',
+    });
+    expect(await runCommand(verb('restore', { restoreFrom: file }), byHand.io)).toBe(0);
+    expect(byHand.deploymentEnv().DAY0_CRONS_PAUSED).toBe('paused by hand at 2026-09-29T13:00:00Z');
+    rmSync(homeDirectory, { recursive: true, force: true });
+  });
+
   it('refuses to restore onto the test profile, or a backup whose checksum does not match', async (): Promise<void> => {
     const homeDirectory = home();
     const taken = configured({ services: ['backend'], environment: { HOME: homeDirectory } });
@@ -991,6 +1028,30 @@ describe('backup, restore and upgrade (step 15)', (): void => {
     expect(h.output.join('\n')).toContain('skips 0.2.0');
     expect(ran(h)).not.toContain('convex env set DAY0_CRONS_PAUSED');
     expect(h.deploymentEnv().DAY0_CRONS_PAUSED).toBeUndefined();
+    rmSync(homeDirectory, { recursive: true, force: true });
+  });
+
+  it('refuses a backup directory inside the checkout before it pauses anything', async (): Promise<void> => {
+    const h = configured({ services: ['backend'] });
+    expect(await runCommand(verb('upgrade', { backupTo: 'backups' }), h.io)).toBe(1);
+    expect(h.output.join('\n')).toContain(
+      'error: nothing was backed up, installed or pushed, because',
+    );
+    expect(h.output.join('\n')).toContain('is inside this checkout');
+    expect(ran(h)).not.toContain('convex env set DAY0_CRONS_PAUSED');
+  });
+
+  it('says the pause may stand when the backend is down after a failed upgrade', async (): Promise<void> => {
+    const homeDirectory = home();
+    const h = configured({
+      services: [],
+      environment: { HOME: homeDirectory },
+      failing: [{ match: 'run convex:up', status: 1, stderr: 'port is already allocated' }],
+    });
+    expect(await runCommand(verb('upgrade'), h.io)).toBe(1);
+    expect(h.output.join('\n')).toContain(
+      'whether the scheduled jobs are paused cannot be read; if an upgrade paused them, they stay paused',
+    );
     rmSync(homeDirectory, { recursive: true, force: true });
   });
 

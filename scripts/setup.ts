@@ -1144,8 +1144,8 @@ export interface EnvPlanInput {
  * A resume is different, because the file is then the reader's selection:
  * what the route and the components derive (the two model addresses, the
  * Featherless settings, the browser and redactor addresses, the no-auth
- * switch) is written only where the file lacks the name, so a value set there
- * by hand survives an upgrade. The resume's own `--model-port` or `--endpoint`
+ * switch) is written only where the file has no value for it, so a value set
+ * there by hand survives an upgrade; an empty no-auth switch is a value. The resume's own `--model-port` or `--endpoint`
  * moves the two addresses as the setup would.
  *
  * Args:
@@ -1207,7 +1207,7 @@ export function setupEnvUpdates(input: EnvPlanInput): Record<string, string> {
   const updates: Record<string, string> = { ...selected };
   for (const [name, value] of Object.entries(derived)) {
     if (name in selected) continue;
-    if (input.resume === undefined || !(name in input.existing)) updates[name] = value;
+    if (input.resume === undefined || !heldByFile(name, input.existing)) updates[name] = value;
   }
   for (const [name, value] of Object.entries(whenMissing)) {
     if (!(name in selected) && (input.existing[name] ?? '') === '') updates[name] = value;
@@ -1234,6 +1234,26 @@ export function sandboxChoice(
 ): SandboxChoice {
   if (named !== undefined) return named;
   return (existing.DAYTONA_API_KEY ?? '').trim() !== '' ? 'daytona' : 'local';
+}
+
+/**
+ * The derived names whose empty value is a choice rather than a gap: an
+ * install that signs in through its own issuer or Clerk empties the no-auth
+ * switch on purpose.
+ */
+const EMPTY_BY_CHOICE: readonly string[] = ['NEXT_PUBLIC_DEV_NO_AUTH'];
+
+/**
+ * Whether the env file holds a value a resume keeps. An empty value is a gap
+ * the resume fills (`.env.example` carries most names empty, and an older
+ * release's setup may never have written one), except where empty is a choice.
+ *
+ * @param name - The derived name.
+ * @param existing - The env file as it stands.
+ */
+function heldByFile(name: string, existing: Readonly<Record<string, string>>): boolean {
+  if (!(name in existing)) return false;
+  return EMPTY_BY_CHOICE.includes(name) || existing[name]!.trim() !== '';
 }
 
 /** What decides the order of the setup's steps. */
@@ -3547,7 +3567,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       io.log(
         `[${steps.indexOf('crons:unpause') + 1}/${steps.length}] the scheduled jobs, released`,
       );
-      const released = await releaseScheduledJobs(io, environment, ports.backend, options);
+      const released = await releaseScheduledJobs(io, environment, ports.backend);
       if ('failure' in released) {
         io.log('');
         io.log(
@@ -3555,7 +3575,13 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
         );
         return 1;
       }
-      io.log(`    ${released.line}`);
+      io.log(
+        released.released === 'lifted'
+          ? '    lifted the pause and restarted the backend; each job runs again at its next turn'
+          : released.released === 'kept'
+            ? `    left paused as it was before the upgrade (${released.reason}); \`${verbCommand('unpause', options.mode)}\` lifts it`
+            : '    the scheduled jobs are not paused',
+      );
     }
 
     if (real && options.company) {
@@ -4350,38 +4376,33 @@ function holdLine(
   }
 }
 
+/** What lifting an upgrade's pause found: nothing paused, a pause set by hand kept, or its own lifted. */
+type Release =
+  | { readonly failure: string }
+  | { readonly released: 'none' | 'lifted' }
+  | { readonly released: 'kept'; readonly reason: string };
+
 /**
- * After a passing check, lift the pause an upgrade set and restart the
+ * Lift a pause an upgrade set, its own or an unfinished one's, and restart the
  * backend; a pause set by hand stays.
  *
  * @param io - The setup environment.
  * @param environment - The child environment naming the deployment.
  * @param port - The backend's host port.
- * @param options - The command line, for the verb's entry point.
- *
- * @returns The line to print, or why the pause was not lifted.
  */
 async function releaseScheduledJobs(
   io: SetupIo,
   environment: Record<string, string>,
   port: number,
-  options: SetupOptions,
-): Promise<{ readonly line: string } | { readonly failure: string }> {
+): Promise<Release> {
   const state = readCronsPause(io, environment);
   if ('failure' in state) return state;
-  if (state.reason === undefined) return { line: 'the scheduled jobs are not paused' };
-  if (!isUpgradePause(state.reason)) {
-    return {
-      line: `left paused as it was before the upgrade (${state.reason}); \`${verbCommand('unpause', options.mode)}\` lifts it`,
-    };
-  }
+  if (state.reason === undefined) return { released: 'none' };
+  if (!isUpgradePause(state.reason)) return { released: 'kept', reason: state.reason };
   const failure =
     changeCronsPause(io, environment, UNPAUSE_ARGUMENTS) ??
     (await restartBackend(io, environment, port));
-  if (failure !== undefined) return { failure };
-  return {
-    line: 'lifted the pause and restarted the backend; each job runs again at its next turn',
-  };
+  return failure === undefined ? { released: 'lifted' } : { failure };
 }
 
 /**
@@ -4429,9 +4450,29 @@ async function switchScheduledJobs(
       io.log(`error: ${state.failure}; nothing was changed.`);
       return 1;
     }
-    if (verb === 'pause' && state.reason !== undefined) {
+    const byHand = `paused by hand at ${isoSeconds(io.now?.() ?? Date.now())}`;
+    if (verb === 'pause' && state.reason !== undefined && !isUpgradePause(state.reason)) {
       io.log(
         `${project}'s scheduled jobs are already paused (${state.reason}); nothing was changed.`,
+      );
+      return 0;
+    }
+    if (verb === 'pause' && state.reason !== undefined) {
+      // Already paused, so no restart: only the owner changes, and with it
+      // whether the next upgrade that completes lifts it.
+      if (options.dryRun) {
+        io.log(`Would run: npx ${pauseArguments(byHand).join(' ')}`);
+        return 0;
+      }
+      const failure = changeCronsPause(io, environment, pauseArguments(byHand));
+      if (failure !== undefined) {
+        io.log(`error: ${failure}.`);
+        return 1;
+      }
+      io.log(
+        `${project}'s scheduled jobs were paused by an upgrade that did not finish (${state.reason}); ` +
+          'they are now paused by hand, so the next upgrade leaves them paused until ' +
+          `\`${verbCommand('unpause', options.mode)}\`.`,
       );
       return 0;
     }
@@ -4439,10 +4480,7 @@ async function switchScheduledJobs(
       io.log(`${project}'s scheduled jobs are not paused; nothing was changed.`);
       return 0;
     }
-    const args =
-      verb === 'pause'
-        ? pauseArguments(`paused by hand at ${isoSeconds(io.now?.() ?? Date.now())}`)
-        : [...UNPAUSE_ARGUMENTS];
+    const args = verb === 'pause' ? pauseArguments(byHand) : [...UNPAUSE_ARGUMENTS];
     if (options.dryRun) {
       io.log('Would run:');
       io.log(`  npx ${args.join(' ')}`);
@@ -4498,6 +4536,40 @@ export async function runUnpause(options: SetupOptions, io: SetupIo): Promise<nu
 }
 
 /**
+ * Where a backup of the installation goes, or why it cannot be taken, read
+ * before anything is stopped or written.
+ *
+ * @param options - The command line.
+ * @param io - The setup environment.
+ * @param target - The installation.
+ */
+function backupPlace(
+  options: SetupOptions,
+  io: SetupIo,
+  target: LifecycleTarget,
+): { readonly directory: string } | { readonly refusal: string } {
+  const { project, checkoutRoot } = target;
+  const volume = projectVolumes(project)[0]!;
+  if (!labelledVolumes(io, project).includes(volume)) {
+    return { refusal: `${project} has no ${volume} volume, so there is nothing to back up.` };
+  }
+  const directory = backupDirectory(options.backupTo, io.environment.HOME, project, io.cwd);
+  if (directory === undefined) {
+    return {
+      refusal: 'there is no home directory to put the backup under; name one with --to <dir>.',
+    };
+  }
+  if (insideCheckout(directory, checkoutRoot)) {
+    return {
+      refusal:
+        `${directory} is inside this checkout. A backup there goes with the checkout it is ` +
+        `meant to outlive; name a directory outside ${checkoutRoot} with --to <dir>.`,
+    };
+  }
+  return { directory };
+}
+
+/**
  * Copy the project's data volume out of the checkout, with a checksum and a
  * manifest beside it. The backend is stopped for the copy, because a tar of a
  * live database is not a backup, and started again after.
@@ -4516,24 +4588,12 @@ export async function runBackup(options: SetupOptions, io: SetupIo): Promise<num
     }
     const { project, environment, checkoutRoot } = target;
     const volume = projectVolumes(project)[0]!;
-    if (!labelledVolumes(io, project).includes(volume)) {
-      io.log(`error: ${project} has no ${volume} volume, so there is nothing to back up.`);
+    const place = backupPlace(options, io, target);
+    if ('refusal' in place) {
+      io.log(`error: ${place.refusal}`);
       return 1;
     }
-    const directory = backupDirectory(options.backupTo, io.environment.HOME, project, io.cwd);
-    if (directory === undefined) {
-      io.log(
-        'error: there is no home directory to put the backup under; name one with --to <dir>.',
-      );
-      return 1;
-    }
-    if (insideCheckout(directory, checkoutRoot)) {
-      io.log(
-        `error: ${directory} is inside this checkout. A backup there goes with the checkout it is ` +
-          `meant to outlive; name a directory outside ${checkoutRoot} with --to <dir>.`,
-      );
-      return 1;
-    }
+    const { directory } = place;
     const name = unusedBackupName(
       directory,
       backupFileName(project, new Date(io.now?.() ?? Date.now())),
@@ -4766,10 +4826,36 @@ export async function runRestore(options: SetupOptions, io: SetupIo): Promise<nu
     }
     io.log(`Restored ${basename(file)} into ${volume}. Resuming on it.`);
     io.log('');
-    return await runResume(
+    const resumed = await runResume(
       { ...options, command: 'resume', restoreFrom: undefined, adoptCredentialKey: true },
       io,
     );
+    if (resumed !== 0) {
+      unfinishedPauseNote(io, target, options);
+      return resumed;
+    }
+    // A backup an upgrade took carries that upgrade's pause, and the state
+    // the restore puts back is the one from before it; a hand pause stays.
+    const released = await releaseScheduledJobs(io, environment, target.ports.backend);
+    if ('failure' in released) {
+      io.log(
+        "error: the backup carried an upgrade's pause on the scheduled jobs, and it was not " +
+          `lifted: ${released.failure}. \`${verbCommand('unpause', options.mode)}\` lifts it.`,
+      );
+      return 1;
+    }
+    if (released.released === 'lifted') {
+      io.log(
+        "The backup was taken as an upgrade began, so it carried that upgrade's pause on the " +
+          'scheduled jobs; it is lifted, as the restored deployment is from before the upgrade.',
+      );
+    } else if (released.released === 'kept') {
+      io.log(
+        `The restored deployment's scheduled jobs are paused (${released.reason}); ` +
+          `\`${verbCommand('unpause', options.mode)}\` lifts it.`,
+      );
+    }
+    return 0;
   } catch (error) {
     if (error instanceof SetupCancelled) {
       io.log('');
@@ -4797,13 +4883,22 @@ export async function runRestore(options: SetupOptions, io: SetupIo): Promise<nu
  * @returns What the resume returns, or the backup's or the install's failure.
  */
 export async function runUpgrade(options: SetupOptions, io: SetupIo): Promise<number> {
+  let target: LifecycleTarget | undefined;
   try {
     const preflight = upgradePreflight(options, io);
     if ('refusal' in preflight) {
       io.log(`error: nothing was backed up, installed or pushed, because ${preflight.refusal}`);
       return 1;
     }
-    const { target, running, pauseReason } = preflight;
+    target = preflight.target;
+    const { running, pauseReason } = preflight;
+    // The backup's own refusals come first, so nothing is paused for a
+    // backup that would not be taken.
+    const place = backupPlace(options, io, target);
+    if ('refusal' in place) {
+      io.log(`error: nothing was backed up, installed or pushed, because ${place.refusal}`);
+      return 1;
+    }
     // A running backend's jobs are paused before the backup, whose restart
     // then starts it paused; a stopped one is paused by the resume once its
     // backend is up and its release checked, before the push.
@@ -4847,6 +4942,7 @@ export async function runUpgrade(options: SetupOptions, io: SetupIo): Promise<nu
     return resumed;
   } catch (error) {
     io.log(`error: ${errorMessage(error)}`);
+    if (target !== undefined) unfinishedPauseNote(io, target, options);
     return 1;
   }
 }
@@ -4859,13 +4955,20 @@ export async function runUpgrade(options: SetupOptions, io: SetupIo): Promise<nu
  * @param options - The command line, for the verbs' entry point.
  */
 function unfinishedPauseNote(io: SetupIo, target: LifecycleTarget, options: SetupOptions): void {
-  if (!(runningServices(io, target.project) ?? []).includes('backend')) return;
+  const lifts =
+    `\`${verbCommand('upgrade', options.mode)}\` again lifts the pause when it completes, and ` +
+    `\`${verbCommand('unpause', options.mode)}\`, with the stack up, lifts it now.`;
+  if (!(runningServices(io, target.project) ?? []).includes('backend')) {
+    io.log(
+      `The backend is not running, so whether the scheduled jobs are paused cannot be read; if an ` +
+        `upgrade paused them, they stay paused: ${lifts}`,
+    );
+    return;
+  }
   const state = readCronsPause(io, target.environment);
   if ('failure' in state || state.reason === undefined || !isUpgradePause(state.reason)) return;
   io.log(
-    `The scheduled jobs stay paused while the upgrade is unfinished (${state.reason}): ` +
-      `\`${verbCommand('upgrade', options.mode)}\` again lifts the pause when it completes, and ` +
-      `\`${verbCommand('unpause', options.mode)}\` lifts it now.`,
+    `The scheduled jobs stay paused while the upgrade is unfinished (${state.reason}): ${lifts}`,
   );
 }
 

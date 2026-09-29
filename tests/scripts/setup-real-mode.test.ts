@@ -220,6 +220,21 @@ describe('the values written per route and mode', (): void => {
     });
   });
 
+  it('on a resume, fills a derived value the file holds empty, except the no-auth switch', (): void => {
+    const updates = setupEnvUpdates({
+      route: 'featherless',
+      project: 'p',
+      ports,
+      existing: { DAY0_REDACTOR_URL: '', DAY0_BROWSER_MCP_URL: ' ', NEXT_PUBLIC_DEV_NO_AUTH: '' },
+      mode: 'real',
+      sandbox: 'local',
+      resume: { endpoint: false, modelPort: false },
+    });
+    expect(updates.DAY0_REDACTOR_URL).toBe(REDACTOR_URL);
+    expect(updates.DAY0_BROWSER_MCP_URL).toBe(BROWSER_MCP_URL);
+    expect(updates.NEXT_PUBLIC_DEV_NO_AUTH).toBeUndefined();
+  });
+
   it('on a resume, moves the two addresses only for the argument that names them', (): void => {
     const endpoint = {
       route: 'endpoint' as const,
