@@ -98,7 +98,7 @@ export function MockEnvironment({
               tabIndex={0}
               role="region"
               aria-label="Linked documentation"
-              className="@container h-[32rem] overflow-y-auto"
+              className="@container max-h-[32rem] overflow-y-auto"
             >
               <DocsTab agentId={agentId} mode="real" />
             </div>
