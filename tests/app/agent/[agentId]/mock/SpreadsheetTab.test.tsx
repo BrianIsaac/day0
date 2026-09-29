@@ -26,7 +26,7 @@ describe('the spreadsheet rows', (): void => {
   it('leaves the added-by cell empty for a row nobody is recorded as adding, and names whoever did', (): void => {
     const markup = renderToStaticMarkup(<SpreadsheetTab agentId={'agent-1' as Id<'agents'>} />);
     const addedBy = [
-      ...markup.matchAll(/<td class="px-3 py-1\.5 text-\[10px\][^"]*">([^<]*)<\/td>/g),
+      ...markup.matchAll(/<td class="px-3 py-1\.5 text-xs[^"]*">([^<]*)<\/td>/g),
     ].map((match) => match[1]);
     expect(addedBy).toEqual(['Priya', '']);
   });

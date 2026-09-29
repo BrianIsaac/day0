@@ -9,7 +9,13 @@ import { describe, expect, it, vi } from 'vitest';
  * is a channel that has messages. `listChannels` returns rows through the
  * `by_agent_slug` index, so the fixture is in slug order, not rail order.
  */
-const state = vi.hoisted(() => ({ channelsOnly: false, dmsOnly: false, seededOffice: false }));
+const state = vi.hoisted(() => ({
+  channelsOnly: false,
+  dmsOnly: false,
+  seededOffice: false,
+  /** The intake channel's message is the employee's unposted draft, when set. */
+  draft: false,
+}));
 
 /** The hosted office as the seed makes it: the empty team channel sorts before the intake one. */
 const SEEDED_OFFICE = [
@@ -46,8 +52,8 @@ vi.mock('convex/react', () => ({
       const slug = (args as { channelSlug: string }).channelSlug;
       return (MESSAGES[slug] ?? []).map((m, i) => ({
         _id: `${slug}-${i}`,
-        sender: 'Priya',
-        senderKind: 'human',
+        sender: state.draft ? 'Mira (Day0)' : 'Priya',
+        senderKind: state.draft ? 'agent-draft' : 'human',
         body: m.body,
         timestamp: 1_757_000_000_000 + i,
       }));
@@ -57,11 +63,14 @@ vi.mock('convex/react', () => ({
 }));
 
 import type { Id } from '../../../../../convex/_generated/dataModel';
-import { SlackTab } from '../../../../../app/agent/[agentId]/mock/SlackTab';
+import {
+  EMPLOYEE_DRAFT,
+  EMPTY_CONVERSATION,
+  SlackTab,
+} from '../../../../../app/agent/[agentId]/mock/SlackTab';
 import { AgentZoneContext } from '../../../../../app/agent/[agentId]/time';
 
 const agentId = 'agent-1' as Id<'agents'>;
-const EMPTY_CONVERSATION = 'no messages in this channel yet';
 const ACTIVE = 'text-[var(--color-accent)]';
 
 /** The rail rows in the order they are drawn, with whether each is selected. */
@@ -152,5 +161,19 @@ describe('the conversation for a keyboard and a screen reader (step 45, P10-4)',
     expect(markup).toMatch(/<nav aria-label="Channels and direct messages"/);
     expect(markup).toMatch(/aria-current="true" class="min-h-11 /);
     expect(markup).toMatch(/<div tabindex="0" role="region" aria-label="Messages"/);
+  });
+});
+
+describe("the employee's own messages, in the manager's word (N29)", (): void => {
+  it('labels a draft the employee has not posted as an employee draft, never an agent draft', (): void => {
+    state.draft = true;
+    try {
+      const markup = renderToStaticMarkup(<SlackTab agentId={agentId} />);
+      expect(markup).toContain(`>${EMPLOYEE_DRAFT}</span>`);
+      expect(markup.toLowerCase()).not.toContain('agent draft');
+      expect(markup).not.toMatch(/>agent</i);
+    } finally {
+      state.draft = false;
+    }
   });
 });

@@ -98,7 +98,7 @@ export function MockEnvironment({
               tabIndex={0}
               role="region"
               aria-label="Linked documentation"
-              className="@container max-h-[40rem] min-h-[16rem] overflow-y-auto"
+              className="@container h-[32rem] overflow-y-auto"
             >
               <DocsTab agentId={agentId} mode="real" />
             </div>
@@ -200,7 +200,7 @@ function MockOffice({
         role="tabpanel"
         tabIndex={0}
         aria-labelledby={tabId(ENVIRONMENT_PANEL_ID, selected.key)}
-        className="@container mt-4 max-h-[40rem] min-h-[24rem] scroll-mt-24 overflow-y-auto"
+        className="@container mt-4 h-[36rem] scroll-mt-24 overflow-y-auto"
       >
         {selected.key === 'slack' ? <SlackTab agentId={agentId} /> : null}
         {selected.key === 'spreadsheet' ? <SpreadsheetTab agentId={agentId} /> : null}
