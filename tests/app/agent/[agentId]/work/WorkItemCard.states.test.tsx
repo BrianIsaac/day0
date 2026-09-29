@@ -5,6 +5,8 @@ import { getFunctionName } from 'convex/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Doc } from '../../../../../convex/_generated/dataModel';
 import { WorkItemCard } from '../../../../../app/agent/[agentId]/work/WorkItemCard';
+import { openQuestionStopReason } from '../../../../../src/work/obligations';
+import { EVALUATION_ATTEMPTS_SPENT } from '../../../../../src/work/queue-order';
 import { AgentZoneContext } from '../../../../../app/agent/[agentId]/time';
 import { button, focusedName, mount, press, said, typeInto } from '../../../../fixtures/dom/press';
 import {
@@ -437,6 +439,96 @@ describe('plan to approve, attempt two (work-retried.html)', (): void => {
     expect(said(view.container)).toEqual([
       'Plan approved: Draft response for new tier-two RevOps ask.',
     ]);
+  });
+});
+
+describe('the states round two does not page, pressed the same way', (): void => {
+  const base = DRAWN.planPending;
+
+  it('retries a stopped run that landed nothing, the reason in words above Retry', async (): Promise<void> => {
+    const view = card({
+      ...base,
+      state: 'failed',
+      skipReason: 'stopped: the read did not land',
+    } as Doc<'workItems'>);
+    expect(chip(view.container)).toBe('Stopped');
+    expect(view.text()).toContain(
+      'stopped, nothing landed and nothing to decide: the read did not land',
+    );
+    await press(view.container, 'Retry');
+    expect(view.calls).toEqual([['retry', '']]);
+    expect(said(view.container)).toEqual([
+      'Sent back: Draft response for new tier-two RevOps ask.',
+    ]);
+    expect(focusedName()).toBe('Retry');
+  });
+
+  it('asks for the answer to the question a run stopped on, and sends it', async (): Promise<void> => {
+    const question = 'Which template should the reply use?';
+    const view = card({
+      ...base,
+      state: 'failed',
+      skipReason: `stopped: ${openQuestionStopReason({ question, steps: [2] })}`,
+      output: {
+        draft: '',
+        notes: '',
+        actions: [],
+        applied: [],
+        openQuestion: { question, steps: [2] },
+      },
+    } as unknown as Doc<'workItems'>);
+    expect(view.text()).toContain('answer it below with Answer and retry');
+    expect(() => button(view.container, 'Answer and retry')).toThrow();
+    typeInto(
+      field(view.container, `Your answer to: \u201c${question}\u201d`),
+      'The exception template.',
+    );
+    await press(view.container, 'Answer and retry');
+    expect(view.calls).toEqual([['retry', 'The exception template.']]);
+    expect(said(view.container)).toEqual([
+      'Answer sent: Draft response for new tier-two RevOps ask runs again with it.',
+    ]);
+  });
+
+  it('drafts a new plan for a cancelled one from the note given', async (): Promise<void> => {
+    const view = card({
+      ...base,
+      state: 'cancelled',
+      skipReason: 'plan cancelled by the manager: keep it in the thread',
+    } as Doc<'workItems'>);
+    expect(chip(view.container)).toBe('Cancelled');
+    expect(view.text()).toContain(
+      'Cancelled. plan cancelled by the manager: keep it in the thread',
+    );
+    typeInto(field(view.container, 'Note for the new plan (optional)'), 'Thread only.');
+    await press(view.container, 'Retry with this note');
+    expect(view.calls).toEqual([['retry', 'Thread only.']]);
+    expect(focusedName()).toBe('Retry with this note');
+  });
+
+  it('sends back a row parked after its evaluations kept dying, and nothing else does', async (): Promise<void> => {
+    const view = card({
+      ...base,
+      state: 'deferred',
+      plan: undefined,
+      verdict: { decision: 'defer', reason: EVALUATION_ATTEMPTS_SPENT, attempts: 3 },
+    } as unknown as Doc<'workItems'>);
+    expect(chip(view.container)).toBe('Parked');
+    expect(view.text()).toContain('3 evaluations of this item stopped without a verdict');
+    await press(view.container, 'Retry');
+    expect(view.calls).toEqual([['retry', '']]);
+  });
+
+  it('points an item waiting on a skill at the Skills tab and offers no control of its own', (): void => {
+    const view = card({
+      ...base,
+      state: 'needs-skill',
+      plan: undefined,
+      verdict: { decision: 'needs-skill', suggestedSkillName: 'draft-tier-two-reply' },
+    } as unknown as Doc<'workItems'>);
+    expect(chip(view.container)).toBe('Waiting on a skill');
+    expect(view.container.querySelector('a[href="/agent/a-mira/skills"]')).not.toBeNull();
+    expect(view.container.querySelectorAll('button')).toHaveLength(0);
   });
 });
 
