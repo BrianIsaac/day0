@@ -169,10 +169,12 @@ export function eventTypesIn(filter: RecordFilter): readonly EventType[] {
 }
 
 /**
- * One line of the record as the Record tab reads it: the stored event, and the title of the work
- * item it is about when it names one that still exists.
+ * One line of the record as the Record tab reads it: the stored event, the title of the work item
+ * it is about and the name of the connection it is about, each when it names one that still
+ * exists.
  */
 export interface RecordEntry {
   readonly event: Doc<'events'>;
   readonly itemTitle?: string;
+  readonly connection?: string;
 }

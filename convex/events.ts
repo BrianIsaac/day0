@@ -83,31 +83,57 @@ export const recent = query({
   },
 });
 
-/**
- * The titles of the work items a page of events names, by id. An id an older row carries in some
- * other shape, or one whose item is gone, has none.
- */
-async function itemTitles(
-  ctx: QueryCtx,
-  events: readonly Doc<'events'>[],
-): Promise<ReadonlyMap<string, string>> {
-  const ids = new Set<Id<'workItems'>>();
-  for (const event of events) {
-    const named: unknown = (event.payload as { workItemId?: unknown } | null | undefined)
-      ?.workItemId;
-    const id = typeof named === 'string' ? ctx.db.normalizeId('workItems', named) : null;
-    if (id !== null) ids.add(id);
-  }
-  const rows = await Promise.all([...ids].map(async (id) => await ctx.db.get(id)));
-  return new Map(rows.flatMap((row) => (row ? [[row._id as string, row.title]] : [])));
+/** A string field of a stored payload, or undefined when the row carries none. */
+function payloadField(event: Doc<'events'>, field: 'workItemId' | 'surfaceId'): string | undefined {
+  const value: unknown = (event.payload as Record<string, unknown> | null | undefined)?.[field];
+  return typeof value === 'string' ? value : undefined;
 }
 
 /**
+ * What a page of events names, by id: the titles of its work items and the names of its
+ * connections. An id an older row carries in some other shape, or one whose row is gone, has none.
+ */
+async function namesFor(
+  ctx: QueryCtx,
+  events: readonly Doc<'events'>[],
+): Promise<{ items: ReadonlyMap<string, string>; connections: ReadonlyMap<string, string> }> {
+  const itemIds = new Set<Id<'workItems'>>();
+  const surfaceIds = new Set<Id<'surfaces'>>();
+  for (const event of events) {
+    const item = payloadField(event, 'workItemId');
+    const itemId = item === undefined ? null : ctx.db.normalizeId('workItems', item);
+    if (itemId !== null) itemIds.add(itemId);
+    const surface = payloadField(event, 'surfaceId');
+    const surfaceId = surface === undefined ? null : ctx.db.normalizeId('surfaces', surface);
+    if (surfaceId !== null) surfaceIds.add(surfaceId);
+  }
+  const [items, surfaces] = await Promise.all([
+    Promise.all([...itemIds].map(async (id) => await ctx.db.get(id))),
+    Promise.all([...surfaceIds].map(async (id) => await ctx.db.get(id))),
+  ]);
+  return {
+    items: new Map(items.flatMap((row) => (row ? [[row._id as string, row.title]] : []))),
+    connections: new Map(
+      surfaces.flatMap((row) => (row ? [[row._id as string, row.displayName]] : [])),
+    ),
+  };
+}
+
+/**
+ * The most events one page of the record reads. A filter that matches few types (the charter's
+ * history) would otherwise walk every event the employee has to fill a page, and hold them all in
+ * the query's read set; bounded, the page comes back short and Show older reads further back.
+ */
+export const RECORD_SCAN_ROWS = 1000;
+
+/**
  * One page of an employee's whole record for the Record tab, newest first, each event with the
- * title of the work item it names. With a filter, only the event types that filter shows
- * (`src/events/record-filters.ts`); without one, every event, intake listings included, since
- * the record leaves nothing out. Public; owner-guarded; reads one page through the agent's index
- * and writes nothing.
+ * title of the work item and the name of the connection it names. With a filter, only the event
+ * types that filter shows (`src/events/record-filters.ts`); without one, every event, intake
+ * listings included, since the record leaves nothing out. A page reads at most
+ * `RECORD_SCAN_ROWS` events, so a selective filter returns a short page with a cursor rather than
+ * walking the whole record. Public; owner-guarded; reads through the agent's index and writes
+ * nothing.
  */
 export const record = query({
   args: {
@@ -126,15 +152,29 @@ export const record = query({
       types === undefined
         ? newestFirst
         : newestFirst.filter((q) => q.or(...types.map((type) => q.eq(q.field('type'), type))))
-    ).paginate(args.paginationOpts);
-    const titles = await itemTitles(ctx, page.page);
+    ).paginate({
+      ...args.paginationOpts,
+      maximumRowsRead: Math.min(
+        args.paginationOpts.maximumRowsRead ?? RECORD_SCAN_ROWS,
+        RECORD_SCAN_ROWS,
+      ),
+    });
+    const names = await namesFor(ctx, page.page);
+    // A page cut at the scan bound is an ordinary short page with its cursor: the client's
+    // paginated hook waits for a split that is never offered when told the split is required.
     return {
-      ...page,
+      isDone: page.isDone,
+      continueCursor: page.continueCursor,
       page: page.page.map((event): RecordEntry => {
-        const named: unknown = (event.payload as { workItemId?: unknown } | null | undefined)
-          ?.workItemId;
-        const itemTitle = typeof named === 'string' ? titles.get(named) : undefined;
-        return itemTitle === undefined ? { event } : { event, itemTitle };
+        const item = payloadField(event, 'workItemId');
+        const surface = payloadField(event, 'surfaceId');
+        const itemTitle = item === undefined ? undefined : names.items.get(item);
+        const connection = surface === undefined ? undefined : names.connections.get(surface);
+        return {
+          event,
+          ...(itemTitle !== undefined ? { itemTitle } : {}),
+          ...(connection !== undefined ? { connection } : {}),
+        };
       }),
     };
   },

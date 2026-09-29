@@ -680,3 +680,87 @@ describe('the Record tab reader', (): void => {
     ).rejects.toThrow();
   });
 });
+
+describe('the Record tab reader over a long record', (): void => {
+  it('reads at most its scan bound per page, so a selective filter comes back short with a cursor and reaches the oldest line page by page', async (): Promise<void> => {
+    const { api } = await import('../../convex/_generated/api');
+    const { RECORD_SCAN_ROWS } = await import('../../convex/events');
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await harness.run(async (ctx): Promise<Id<'agents'>> => {
+      const id = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'Priya',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      await ctx.db.insert('events', {
+        agentId: id,
+        type: 'charter.approved',
+        payload: { version: '0.1' },
+        createdAt: 1,
+      });
+      for (let index = 0; index < RECORD_SCAN_ROWS + 200; index += 1) {
+        await ctx.db.insert('events', {
+          agentId: id,
+          type: 'work.model-call',
+          payload: { stage: 'execution', outcome: 'ok' },
+          createdAt: index + 2,
+        });
+      }
+      return id;
+    });
+    const owner = harness.withIdentity({ subject: 'owner' });
+    const first = await owner.query(api.events.record, {
+      agentId,
+      filter: 'charter',
+      paginationOpts: { numItems: 50, cursor: null },
+    });
+    expect(first.page).toEqual([]);
+    expect(first.isDone).toBe(false);
+    expect(first).not.toHaveProperty('pageStatus');
+    const second = await owner.query(api.events.record, {
+      agentId,
+      filter: 'charter',
+      paginationOpts: { numItems: 50, cursor: first.continueCursor },
+    });
+    expect(second.page.map((entry) => entry.event.type)).toEqual(['charter.approved']);
+    expect(second.isDone).toBe(true);
+  });
+
+  it('names the connection an event is about', async (): Promise<void> => {
+    const { api } = await import('../../convex/_generated/api');
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await harness.run(async (ctx): Promise<Id<'agents'>> => {
+      const id = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'Priya',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const surfaceId = await ctx.db.insert('surfaces', {
+        agentId: id,
+        slug: 'linear',
+        displayName: 'Linear',
+        class: 'kanban',
+        verdict: 'connected',
+        whereFound: [],
+        path: 'mcp',
+        credentialLanded: true,
+        createdAt: 1,
+      });
+      await ctx.db.insert('events', {
+        agentId: id,
+        type: 'surface.approved',
+        payload: { surfaceId },
+        createdAt: 2,
+      });
+      return id;
+    });
+    const page = await harness
+      .withIdentity({ subject: 'owner' })
+      .query(api.events.record, { agentId, paginationOpts: { numItems: 5, cursor: null } });
+    expect(page.page.map((entry) => entry.connection)).toEqual(['Linear']);
+  });
+});
