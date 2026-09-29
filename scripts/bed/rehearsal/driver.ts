@@ -24,7 +24,7 @@ export interface Dashboard {
   lastAgentMessage(): Promise<string>;
   /** Approve the drafted charter. */
   approveCharter(): Promise<void>;
-  /** Open the Surfaces tab of the agent page. */
+  /** Open the Surfaces tab of the employee page. */
   openSurfaces(): Promise<void>;
   /** Type a credential into a card's landing form and submit it. */
   landCredential(slug: string, value: string): Promise<void>;
@@ -40,12 +40,78 @@ export interface Dashboard {
   takeAnyway(title: string): Promise<void>;
   /** Cancel the plan on another item's card. */
   cancelPlan(title: string): Promise<void>;
-  /** Return to the agent page's work queue. */
-  showAgent(): Promise<void>;
+  /** Open one tab of the employee page, unless it is open already. */
+  showTab(tab: EmployeeTabSegment): Promise<void>;
   /** A full-page screenshot to a path. */
   screenshot(path: string): Promise<void>;
   /** Close the browser. */
   close(): Promise<void>;
+}
+
+/**
+ * The tabs of the employee page, as their route segments. The driver cannot read the page's own
+ * list (scripts never import `app/`), so the rendered test pins this copy to it.
+ */
+export const EMPLOYEE_TAB_SEGMENTS = [
+  'needs-you',
+  'work',
+  'charter',
+  'people',
+  'documentation',
+  'skills',
+  'surfaces',
+  'record',
+  'manage',
+] as const;
+
+/** One tab of the employee page. */
+export type EmployeeTabSegment = (typeof EMPLOYEE_TAB_SEGMENTS)[number];
+
+/**
+ * The address of one tab of an employee's page: Needs you is the page itself.
+ *
+ * @param agentId - The employee.
+ * @param tab - The tab.
+ */
+export function tabPath(agentId: string, tab: EmployeeTabSegment): string {
+  return tab === 'needs-you' ? `/agent/${agentId}` : `/agent/${agentId}/${tab}`;
+}
+
+/** The charter's approval, "Approve charter" or, with rules struck, "Approve charter, N rules struck". */
+export const APPROVE_CHARTER = /^Approve charter\b/;
+/** A drafted plan's approval: "Approve plan", or "Approve plan with answers" once it asks anything. */
+export const APPROVE_PLAN = /^Approve plan( with answers)?$/;
+/** Every held action's approval on a work item. */
+export const APPROVE_ALL = 'Approve all';
+/** A proposed skill's approval. */
+export const APPROVE_SKILL = 'Approve · author and verify';
+/** The control that opens a plan's cancellation, and the one that sends it with no reason. */
+export const CANCEL_ITEM = 'Cancel this item';
+export const CANCEL_WITHOUT_REASON = 'Cancel without a reason';
+/** The prefix a screen reader hears before each of the employee's turns in the 1:1's log. */
+export const EMPLOYEE_TURN = 'Employee: ';
+/** The credential field a card draws once it is approved. */
+export const CREDENTIAL_INPUT = 'input[id^="credential-"]';
+
+/**
+ * The selector of one surface's card: the card carries the surface's slug as its id and its
+ * verdict as `data-verdict`.
+ *
+ * @param slug - The surface's slug.
+ */
+export function surfaceCard(slug: string): string {
+  return `#surface-${slug}`;
+}
+
+/**
+ * The employee's last turn in the 1:1's log, without the prefix only a screen reader hears.
+ *
+ * @param turns - The text of each of the log's turns, in order.
+ * @returns The turn, or an empty string when the employee has not spoken yet.
+ */
+export function lastEmployeeTurn(turns: readonly string[]): string {
+  const last = [...turns].reverse().find((turn) => turn.startsWith(EMPLOYEE_TURN));
+  return last === undefined ? '' : last.slice(EMPLOYEE_TURN.length).trim();
 }
 
 /** The chat composer's placeholder while the manager may type. */
@@ -179,29 +245,27 @@ export class PlaywrightDashboard implements Dashboard {
   }
 
   async lastAgentMessage(): Promise<string> {
-    const bubbles = this.page.locator('div:not(.text-right) > div.inline-block');
-    const count = await bubbles.count();
-    return count === 0 ? '' : ((await bubbles.nth(count - 1).textContent()) ?? '').trim();
+    const turns = await this.page.getByRole('log').locator(':scope > div').allTextContents();
+    return lastEmployeeTurn(turns);
   }
 
   async approveCharter(): Promise<void> {
-    await this.page.getByRole('button', { name: 'Approve', exact: true }).first().click();
+    await this.showTab('charter');
+    await this.page.getByRole('button', { name: APPROVE_CHARTER }).click();
   }
 
   async openSurfaces(): Promise<void> {
-    await this.page.goto(`${this.origin}/agent/${this.requireAgent()}#surfaces`, {
-      waitUntil: 'networkidle',
-    });
-    await this.page.locator('article[id^="surface-"]').first().waitFor();
+    await this.showTab('surfaces');
+    await this.page.locator('[id^="surface-"][data-verdict]').first().waitFor();
   }
 
   private card(slug: string): Locator {
-    return this.page.locator(`article#surface-${slug}`);
+    return this.page.locator(surfaceCard(slug));
   }
 
   async landCredential(slug: string, value: string): Promise<void> {
     const card = this.card(slug);
-    const input = card.locator('input[id^="credential-"]');
+    const input = card.locator(CREDENTIAL_INPUT);
     await input.fill(value);
     await card.getByRole('button', { name: /Land/ }).click();
     await input.waitFor({ state: 'detached', timeout: 60_000 });
@@ -209,8 +273,15 @@ export class PlaywrightDashboard implements Dashboard {
 
   async approveCard(slug: string): Promise<void> {
     const card = this.card(slug);
-    await card.getByRole('button', { name: APPROVE_CARD, exact: true }).click();
-    const approved = this.page.locator(`article#surface-${slug}:not([data-verdict="proposed"])`);
+    const approve = card.getByRole('button', { name: APPROVE_CARD, exact: true });
+    // A card the server would refuse draws Approve disabled with the reason as its description.
+    if (await approve.isDisabled()) {
+      const reason = await approve.getAttribute('aria-describedby');
+      const words = reason ? await this.page.locator(`[id="${reason}"]`).textContent() : null;
+      throw new Error(`the ${slug} card cannot be approved: ${words ?? 'no reason drawn'}`);
+    }
+    await approve.click();
+    const approved = this.page.locator(`${surfaceCard(slug)}:not([data-verdict="proposed"])`);
     const refused = card.getByRole('alert');
     await approved.or(refused).first().waitFor({ timeout: APPROVAL_WAIT_MS });
     if (await refused.isVisible()) {
@@ -219,41 +290,41 @@ export class PlaywrightDashboard implements Dashboard {
   }
 
   private workCard(title: string): Locator {
-    return this.page
-      .locator('h3', { hasText: title })
-      .locator('xpath=ancestor::div[contains(@class, "rounded-lg")][1]');
+    return this.page.getByRole('article', { name: title, exact: true });
   }
 
   async approveSkill(name: string): Promise<void> {
-    await this.showAgent();
+    await this.showTab('skills');
     const skill = this.page
-      .locator('span.font-medium', { hasText: name })
-      .locator('xpath=ancestor::div[contains(@class, "rounded-lg")][1]');
-    await skill.getByRole('button', { name: 'Approve · author and verify' }).click();
+      .getByRole('listitem')
+      .filter({ has: this.page.getByText(name, { exact: true }) });
+    await skill.getByRole('button', { name: APPROVE_SKILL, exact: true }).click();
   }
 
   async approvePlan(title: string): Promise<void> {
-    await this.showAgent();
-    await this.workCard(title).getByRole('button', { name: 'Approve plan' }).click();
+    await this.showTab('work');
+    await this.workCard(title).getByRole('button', { name: APPROVE_PLAN }).click();
   }
 
   async approveAll(title: string): Promise<void> {
-    await this.showAgent();
-    await this.workCard(title).getByRole('button', { name: 'Approve all' }).click();
+    await this.showTab('work');
+    await this.workCard(title).getByRole('button', { name: APPROVE_ALL, exact: true }).click();
   }
 
   async takeAnyway(title: string): Promise<void> {
-    await this.showAgent();
+    await this.showTab('work');
     await this.workCard(title).getByRole('button', { name: TAKE_IT_ANYWAY, exact: true }).click();
   }
 
   async cancelPlan(title: string): Promise<void> {
-    await this.showAgent();
-    await this.workCard(title).getByRole('button', { name: 'Cancel', exact: true }).click();
+    await this.showTab('work');
+    const card = this.workCard(title);
+    await card.getByRole('button', { name: CANCEL_ITEM, exact: true }).click();
+    await card.getByRole('button', { name: CANCEL_WITHOUT_REASON, exact: true }).click();
   }
 
-  async showAgent(): Promise<void> {
-    const url = `${this.origin}/agent/${this.requireAgent()}`;
+  async showTab(tab: EmployeeTabSegment): Promise<void> {
+    const url = `${this.origin}${tabPath(this.requireAgent(), tab)}`;
     if (this.page.url().split('#')[0] !== url) {
       await this.page.goto(url, { waitUntil: 'networkidle' });
     }
