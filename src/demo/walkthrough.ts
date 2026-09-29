@@ -87,8 +87,8 @@ export function firstTimedStep(recorded: RecordedRun): RunStep | undefined {
 }
 
 /**
- * The sentence that dates the run and says the product has moved on since it (decision Q3, as
- * `hostedBuildLine` says it of the hosted deployment's build).
+ * The sentence that dates the run and says the product has moved on since it (decision Q3; the
+ * hosted deployment is dated by its release stamp instead, in `deploymentReleaseLine`).
  */
 export function walkthroughProvenanceLine(recorded: Pick<RecordedRun, 'runOn'>): string {
   return (

@@ -1,6 +1,6 @@
 import { ConvexHttpClient } from 'convex/browser';
 import { api } from '../../convex/_generated/api';
-import { dayLabel } from '../demo/day-label';
+import { dayLabelAt } from '../demo/day-label';
 import { log } from '../lib/logger';
 
 /** The release a deployment's functions are stamped at, and when. */
@@ -14,14 +14,24 @@ export interface DeploymentRelease {
 const READ_TIMEOUT_MS = 3_000;
 
 /**
+ * The zone a release stamp's day is read in. The hosted deployment has no
+ * manager whose zone could date it, so it is dated on the operator's and the
+ * venue's clock, and the sentence names the zone (a stamp carries its zone, N12).
+ */
+const DEPLOYMENT_ZONE = 'Asia/Singapore';
+
+/** How the release sentence names `DEPLOYMENT_ZONE` to a reader. */
+const DEPLOYMENT_ZONE_NAME = 'Singapore time';
+
+/**
  * The sentence stating the release the deployment behind a page is at, as a
  * dated fact that stays true when the next release is stamped.
  *
  * @param stamp - The deployment's newest release stamp.
  */
 export function deploymentReleaseLine(stamp: DeploymentRelease): string {
-  const day = new Date(stamp.since).toISOString().slice(0, 10);
-  return `The deployment behind this page has been at v${stamp.release} since ${dayLabel(day)}.`;
+  const day = dayLabelAt(stamp.since, DEPLOYMENT_ZONE);
+  return `The deployment behind this page has been at v${stamp.release} since ${day}, ${DEPLOYMENT_ZONE_NAME}.`;
 }
 
 /**
@@ -51,7 +61,7 @@ export async function readDeploymentRelease(
     });
     return await client.query(api.config.release, {});
   } catch (error) {
-    log.warn('deployment release not read; the page states the recorded build only', {
+    log.warn('deployment release not read; the page states no release', {
       reason: error instanceof Error ? error.message : String(error),
     });
     return null;

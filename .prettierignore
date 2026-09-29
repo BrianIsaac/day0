@@ -1,6 +1,5 @@
 # Fixture data the tests read, some of it compared byte for byte with files
 # outside these directories: data, not code, so it stays as written.
 tests/fixtures/
-src/demo/hosted-demo-snapshot.json
 # Written by the Convex codegen, never by hand.
 convex/_generated/
