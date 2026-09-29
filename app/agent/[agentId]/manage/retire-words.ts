@@ -116,14 +116,15 @@ export function waitingWords(entries: readonly InboxItem[], total: number): stri
 }
 
 /**
- * Whether the typed confirmation matches the phrase: case and the spaces around and between
- * words do not matter, the words do.
+ * Whether the typed confirmation matches the phrase: case, the spaces around and between words
+ * and how a character was composed (an accent typed as its own mark or as one letter) do not
+ * matter, the words do.
  *
  * @param typed - What the manager typed.
  * @param phrase - What the dialog asks for.
  */
 export function confirmationMatches(typed: string, phrase: string): boolean {
   const plain = (text: string): string =>
-    text.trim().replace(/\s+/g, ' ').toLocaleLowerCase('en-GB');
+    text.normalize('NFC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('en-GB');
   return plain(typed) === plain(phrase);
 }
