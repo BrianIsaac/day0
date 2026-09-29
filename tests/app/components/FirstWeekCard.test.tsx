@@ -42,15 +42,36 @@ function key(name: string): void {
 }
 
 /**
- * End an element's CSS animation. jsdom has no `AnimationEvent`, so React may listen for it under
- * a vendor name: each spelling is sent, as a browser sends the one it uses.
+ * End an element's CSS transition. jsdom has no `TransitionEvent`, so React may listen for it
+ * under a vendor name: each spelling is sent, as a browser sends the one it uses.
  */
-function animationEnds(element: Element | null | undefined): void {
+function transitionEnds(element: Element | null | undefined): void {
   act((): void => {
-    for (const name of ['animationend', 'webkitAnimationEnd', 'mozAnimationEnd', 'oAnimationEnd']) {
+    for (const name of [
+      'transitionend',
+      'webkitTransitionEnd',
+      'mozTransitionEnd',
+      'oTransitionEnd',
+    ]) {
       element?.dispatchEvent(new Event(name, { bubbles: true }));
     }
   });
+}
+
+/**
+ * Report the week's transitions as running while `body` runs, as a browser with motion does:
+ * jsdom plays none, so without this the week leaves the moment it closes.
+ */
+async function withMotion(body: () => Promise<void>): Promise<void> {
+  const original = HTMLElement.prototype.getAnimations;
+  HTMLElement.prototype.getAnimations = function (this: HTMLElement): Animation[] {
+    return this.hasAttribute('data-week') ? ([{}] as unknown as Animation[]) : [];
+  };
+  try {
+    await body();
+  } finally {
+    HTMLElement.prototype.getAnimations = original;
+  }
 }
 
 /** Press an element the way a pointer does. */
@@ -212,13 +233,8 @@ describe('FirstWeekCard', () => {
     expect(document.querySelector('[role="dialog"]')).toBeNull();
   });
 
-  it('shrinks back no longer modal, and leaves once its own motion ends', async () => {
-    const running = [{}];
-    const original = HTMLElement.prototype.getAnimations;
-    HTMLElement.prototype.getAnimations = function (this: HTMLElement): Animation[] {
-      return this.hasAttribute('data-week') ? (running as unknown as Animation[]) : [];
-    };
-    try {
+  it('shrinks back no longer modal, and leaves once its own transition ends (re-pinned, review m1)', async () => {
+    await withMotion(async () => {
       const view = mount(page());
       await press(view.container, NAME);
       key('Escape');
@@ -228,14 +244,49 @@ describe('FirstWeekCard', () => {
       expect(week?.getAttribute('aria-hidden')).toBe('true');
       expect(view.container.hasAttribute('inert')).toBe(false);
       expect(focusedName()).toBe(NAME);
-      // A child's motion ending is not the week's.
-      animationEnds(week?.querySelector('li'));
+      // A child's transition ending is not the week's.
+      transitionEnds(week?.querySelector('li'));
       expect(document.querySelector('[data-week]')).not.toBeNull();
-      animationEnds(week);
+      transitionEnds(week);
       expect(document.querySelector('[data-week]')).toBeNull();
-    } finally {
-      HTMLElement.prototype.getAnimations = original;
-    }
+    });
+  });
+
+  it('opens from its placed start: the week is laid over the card at the card’s size, then opens (review m1)', async () => {
+    const seen: string[] = [];
+    const watch = new MutationObserver((records): void => {
+      for (const record of records) {
+        seen.push(`${record.oldValue} to ${(record.target as Element).getAttribute('data-week')}`);
+      }
+    });
+    watch.observe(document.body, {
+      subtree: true,
+      attributeFilter: ['data-week'],
+      attributeOldValue: true,
+    });
+    const view = mount(page());
+    await press(view.container, NAME);
+    const week = document.querySelector<HTMLElement>('[data-week]');
+    watch.disconnect();
+    // Added in its start state, placed and scaled to the card, and only then opened, so the
+    // transition to open starts at the card.
+    expect(week?.style.getPropertyValue('--week-from')).not.toBe('');
+    expect(seen).toEqual(['placing to open']);
+    expect(week?.getAttribute('data-week')).toBe('open');
+  });
+
+  it('turns back from where it is when pressed again as it shrinks: the same week reopens (review m1)', async () => {
+    await withMotion(async () => {
+      const view = mount(page());
+      await press(view.container, NAME);
+      const week = document.querySelector<HTMLElement>('[data-week]');
+      key('Escape');
+      expect(week?.getAttribute('data-week')).toBe('closing');
+      await press(view.container, NAME);
+      expect(document.querySelector('[data-week]')).toBe(week);
+      expect(week?.getAttribute('data-week')).toBe('open');
+      expect(document.activeElement).toBe(week);
+    });
   });
 });
 
