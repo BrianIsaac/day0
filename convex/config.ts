@@ -36,20 +36,33 @@ export const modelSettings = query({
   }),
 });
 
+/** How many stamps `release` reads back to find when the newest release was first stamped. */
+const RELEASE_STAMPS_READ = 50;
+
 /**
- * The release this deployment's functions are stamped at, and when, or null
+ * The release this deployment's functions are stamped at, and since when, or null
  * on one never stamped.
  *
  * Public with no guard: the release is the same for every caller and is
  * published in the repository, and `/setup` states it to signed-out visitors
  * as a dated fact. The commit the stamp records is left out; a page has no
- * use for it. Reads the newest of the stamps the upgrade writes.
+ * use for it. "Since" is the first of the newest run of stamps naming that
+ * release, within the last fifty.
  */
 export const release = query({
   args: {},
-  handler: async (ctx): Promise<{ release: string; recordedAt: number } | null> => {
-    const stamp = await ctx.db.query('deploymentVersions').order('desc').first();
-    return stamp === null ? null : { release: stamp.release, recordedAt: stamp.recordedAt };
+  handler: async (ctx): Promise<{ release: string; since: number } | null> => {
+    const stamps = await ctx.db.query('deploymentVersions').order('desc').take(RELEASE_STAMPS_READ);
+    const newest = stamps[0];
+    if (newest === undefined) return null;
+    // A re-push of the same release stamps it again with its new commit; the
+    // release has been there since the first stamp of the newest run.
+    let since = newest.recordedAt;
+    for (const stamp of stamps) {
+      if (stamp.release !== newest.release) break;
+      since = stamp.recordedAt;
+    }
+    return { release: newest.release, since };
   },
 });
 

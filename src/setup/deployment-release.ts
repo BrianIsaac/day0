@@ -6,8 +6,8 @@ import { log } from '../lib/logger';
 /** The release a deployment's functions are stamped at, and when. */
 export interface DeploymentRelease {
   readonly release: string;
-  /** When the stamp was written, in milliseconds since the epoch. */
-  readonly recordedAt: number;
+  /** When that release was first stamped, in milliseconds since the epoch. */
+  readonly since: number;
 }
 
 /** How long a page waits for the stamp before it renders without it. */
@@ -20,7 +20,7 @@ const READ_TIMEOUT_MS = 3_000;
  * @param stamp - The deployment's newest release stamp.
  */
 export function deploymentReleaseLine(stamp: DeploymentRelease): string {
-  const day = new Date(stamp.recordedAt).toISOString().slice(0, 10);
+  const day = new Date(stamp.since).toISOString().slice(0, 10);
   return `The deployment behind this page has been at v${stamp.release} since ${dayLabel(day)}.`;
 }
 

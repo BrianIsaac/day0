@@ -9,7 +9,7 @@ const STAMPED_AT = Date.UTC(2026, 8, 29, 13, 18, 56);
 
 describe('the line naming the release the deployment behind a page is stamped at', (): void => {
   it('states the release and the day it was stamped, as a dated fact', (): void => {
-    expect(deploymentReleaseLine({ release: '0.8.0', recordedAt: STAMPED_AT })).toBe(
+    expect(deploymentReleaseLine({ release: '0.8.0', since: STAMPED_AT })).toBe(
       'The deployment behind this page has been at v0.8.0 since 29 September 2026.',
     );
   });
@@ -22,7 +22,7 @@ describe('reading the stamp', (): void => {
         new Response(
           JSON.stringify({
             status: 'success',
-            value: { release: '0.8.0', recordedAt: STAMPED_AT },
+            value: { release: '0.8.0', since: STAMPED_AT },
             logLines: [],
           }),
           { status: 200, headers: { 'content-type': 'application/json' } },
@@ -30,7 +30,7 @@ describe('reading the stamp', (): void => {
     );
     await expect(
       readDeploymentRelease({ NEXT_PUBLIC_CONVEX_URL: 'http://127.0.0.1:3210' }, fetch),
-    ).resolves.toEqual({ release: '0.8.0', recordedAt: STAMPED_AT });
+    ).resolves.toEqual({ release: '0.8.0', since: STAMPED_AT });
     expect(String(fetch.mock.calls[0]?.[0])).toMatch(/^http:\/\/127\.0\.0\.1:3210\/api\/query/);
   });
 

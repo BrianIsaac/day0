@@ -104,7 +104,7 @@ describe('the release the deployment is stamped at', (): void => {
     await expect(harness.query(api.config.release, {})).resolves.toBeNull();
   });
 
-  it('is the newest stamp, without its commit', async (): Promise<void> => {
+  it('is the newest release, since its first stamp, without its commit', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     await harness.run(async (ctx) => {
       await ctx.db.insert('deploymentVersions', {
@@ -117,10 +117,16 @@ describe('the release the deployment is stamped at', (): void => {
         commit: 'ea9ced8f014c',
         recordedAt: 2,
       });
+      // The same release pushed again from a later commit.
+      await ctx.db.insert('deploymentVersions', {
+        release: '0.8.0',
+        commit: 'b416a660aaaa',
+        recordedAt: 3,
+      });
     });
     await expect(harness.query(api.config.release, {})).resolves.toEqual({
       release: '0.8.0',
-      recordedAt: 2,
+      since: 2,
     });
   });
 });
