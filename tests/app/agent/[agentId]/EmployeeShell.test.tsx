@@ -213,6 +213,11 @@ describe('the page after a draft charter is sent back (step 45)', (): void => {
     expect(focusedName()).toBe('The 1:1 that drafts the charter');
     expect(view.container.querySelector('header')?.textContent).toContain('Drafting the charter');
     expect(view.container.querySelector('header')?.textContent).not.toContain('In your one-to-one');
+    // The face beside the pill says the same phase (review m3, second pass: pinned where the
+    // header hands it over).
+    expect(view.container.querySelector('header [title]')?.getAttribute('title')).toBe(
+      'Priya, drafting the charter',
+    );
     const rail = view.container.querySelector('ol[aria-label="First week"]');
     expect(rail?.querySelector('[aria-current="step"]')?.textContent).toContain('Charter approved');
     view.unmount();
