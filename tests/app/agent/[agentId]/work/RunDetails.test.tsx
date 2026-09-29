@@ -12,7 +12,9 @@ import {
   RefusedBlockedSteps,
   RefusedClosingDetails,
   WithheldActionsDetails,
+  WorkingFromNote,
 } from '../../../../../app/agent/[agentId]/work/RunDetails';
+import { AgentZoneContext } from '../../../../../app/agent/[agentId]/time';
 import { failedItemReason, phasedLedger } from '../../../../../app/agent/[agentId]/work/work-item';
 import {
   log1FirstStopRefusedClosing,
@@ -343,5 +345,35 @@ describe('a run with two phases', (): void => {
     expect(single).toContain('aria-label="Draft the employee wrote: Close REVOPS-5"');
     expect(single).toContain('The employee&#x27;s own words');
     expect(single).not.toMatch(/\bagent\b/i);
+  });
+});
+
+describe('the word the item is working from (m44)', (): void => {
+  const note = {
+    reason: 'Five bullets at most.',
+    at: Date.UTC(2026, 8, 29, 17, 39),
+    kind: 'retry-note' as const,
+  };
+  const text = (kind: 'redraft' | 'rerun'): string =>
+    new DOMParser().parseFromString(
+      renderToStaticMarkup(
+        <AgentZoneContext value="UTC">
+          <WorkingFromNote kind={kind} feedback={note} />
+        </AgentZoneContext>,
+      ),
+      'text/html',
+    ).body.textContent ?? '';
+
+  it('says a run going again runs with the note, with one preposition', (): void => {
+    expect(text('rerun')).toContain(
+      'Running again with your retry note, given at 29 Sep 2026, 17:39.',
+    );
+    expect(text('rerun')).not.toContain('with from');
+  });
+
+  it('says a redrafted plan was drafted from the note', (): void => {
+    expect(text('redraft')).toContain(
+      'You cancelled an earlier plan, and this one was redrafted from your retry note, given at 29 Sep 2026, 17:39.',
+    );
   });
 });

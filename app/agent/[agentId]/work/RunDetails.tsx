@@ -244,7 +244,7 @@ export function WorkingFromNote({
   const zone = useAgentZone();
   const given = feedback ? (
     <>
-      {' from '}
+      {kind === 'rerun' ? ' with ' : ' from '}
       {feedbackWords(feedback)}, given at{' '}
       <time
         dateTime={new Date(feedback.at).toISOString()}
@@ -261,7 +261,6 @@ export function WorkingFromNote({
           {kind === 'redraft'
             ? 'You cancelled an earlier plan, and this one was redrafted'
             : 'Running again'}
-          {kind === 'rerun' && feedback ? ' with' : ''}
           {given}.
         </span>{' '}
         {feedback ? (
