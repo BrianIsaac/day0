@@ -375,6 +375,8 @@ export function WorkItemCard({
       ) : null}
       {item.state === 'actions-pending' && output && item.approvedIndexes === undefined ? (
         <>
+          {/* What applied on its own is read before the writes still to decide. */}
+          {landedSection}
           {output.initial !== undefined ? (
             <ItemSection>
               <p className="text-sm text-[var(--color-fg-2)]">
@@ -423,7 +425,7 @@ export function WorkItemCard({
           </Note>
         </ItemSection>
       ) : null}
-      {leadsWithResult ? null : landedSection}
+      {leadsWithResult || holding ? null : landedSection}
       {!leadsWithResult && held.length > 0 ? (
         <ItemSection
           title={`${held.length} ${held.length === 1 ? 'action' : 'actions'} held · never sent`}

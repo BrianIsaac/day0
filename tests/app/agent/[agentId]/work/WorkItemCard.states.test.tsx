@@ -212,6 +212,10 @@ describe('write held for you (work-held.html, work-held-withheld.html)', (): voi
     // Supervised, the real gate applied the DM to the manager and holds the other two.
     expect(view.text()).toContain('1 applied automatically · 2 actions awaiting your approval');
     expect(view.text()).toContain('Landed: Sent you a DM in Slack');
+    // What applied on its own reads before the writes still to decide.
+    expect(view.text().indexOf('Landed: Sent you a DM')).toBeLessThan(
+      view.text().indexOf('Approve selected'),
+    );
     expect(view.text()).toContain('Public post held for you.');
     expect(view.text()).toContain('System-of-record mutation held for you.');
     // The whole reply is read in words, not only in the payload.
