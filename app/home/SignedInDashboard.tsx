@@ -12,6 +12,7 @@ import { EmployeeRoster } from './EmployeeRoster';
 import { MonthCard } from './MonthCard';
 import { NeedsYouList } from './NeedsYouList';
 import { OfficeWorld } from './OfficeWorld';
+import { RetiredNotice } from '../RetiredNotice';
 import { ResetCard } from './ResetCard';
 import type { Boss, NeedsYouInbox, RosterRow } from './types';
 
@@ -85,6 +86,7 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
           </button>
         ) : null}
       </header>
+      <RetiredNotice />
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_20rem] xl:items-start">
         <div data-cards={arriving ? '' : undefined} className="flex min-w-0 flex-col gap-6">

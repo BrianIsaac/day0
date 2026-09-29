@@ -16,6 +16,7 @@ import {
 import { CharterView } from '../../../../app/agent/[agentId]/charter/CharterView';
 import { WorkView } from '../../../../app/agent/[agentId]/work/WorkView';
 import { ManageView } from '../../../../app/agent/[agentId]/manage/ManageView';
+import { RetiredNotice, RetiredNoticeProvider } from '../../../../app/RetiredNotice';
 import {
   focusedName,
   mount,
@@ -561,12 +562,18 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     };
     backend.queries = standing;
     backend.results = { 'reset:retire': { agentName: 'Mira' } };
-    const view = mount(page(<ManageView />));
+    // The layout's hand-off around the page, and the home it lands on once the route changes.
+    const app = (home: boolean) => (
+      <RetiredNoticeProvider>
+        {home ? <RetiredNotice /> : page(<ManageView />)}
+      </RetiredNoticeProvider>
+    );
+    const view = mount(app(false));
     await settle();
     backend.landing = {
       'reset:retire': (): void => {
         backend.queries = { ...gone(), 'config:surfaceMode': { mode: 'mock' }, 'agents:get': null };
-        view.root.render(page(<ManageView />));
+        view.root.render(app(false));
       },
     };
 
@@ -579,6 +586,11 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     expect(backend.calls.at(-1)).toEqual({ name: 'reset:retire', args: { agentId: 'agent-1' } });
     expect(view.container.querySelector('h1')?.textContent).toBe('Mira is retired');
     expect(route.replaced).toEqual(['/']);
+
+    act((): void => view.root.render(app(true)));
+    await settle();
+    expect(said(view.container)).toEqual(['Mira is retired.']);
+    expect(focusedName()).toBe('Mira is retired.');
     backend.landing = {};
     view.unmount();
   });
