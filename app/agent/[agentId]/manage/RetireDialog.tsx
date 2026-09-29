@@ -42,10 +42,23 @@ function sentence(words: string): string {
   return `${words.charAt(0).toLocaleUpperCase('en-GB')}${words.slice(1)}.`;
 }
 
-/** The items whose claims the retire keeps, in words: a floor when the preview stopped counting. */
-function claimedItems(preview: Pick<RetirePreview, 'keptClaims' | 'keptClaimsAtLeast'>): string {
-  if (preview.keptClaimsAtLeast) return `at least ${preview.keptClaims} items`;
-  return preview.keptClaims === 1 ? 'the item' : `${preview.keptClaims} items`;
+/**
+ * The claims the retire keeps, in a sentence: one, several, or a floor when the preview stopped
+ * counting its items, oldest first (the later ones may hold claims even when those counted held none).
+ */
+function keptClaimsLine(
+  preview: Pick<RetirePreview, 'keptClaims' | 'keptClaimsAtLeast'>,
+): string | undefined {
+  const rest = 'it may already have written, so no colleague repeats those writes.';
+  if (preview.keptClaimsAtLeast) {
+    return preview.keptClaims > 0
+      ? `The claims on at least ${preview.keptClaims} items ${rest}`
+      : `The claims on any of its later items ${rest}`;
+  }
+  if (preview.keptClaims === 0) return undefined;
+  return preview.keptClaims === 1
+    ? 'The claim on the item it may already have written, so no colleague repeats the write.'
+    : `The claims on ${preview.keptClaims} items ${rest}`;
 }
 
 /**
@@ -72,6 +85,7 @@ export function retireLines(preview: RetirePreview, waiting: string): RetireLine
       waits,
     ];
   }
+  const claims = keptClaimsLine(preview);
   const kept = [
     'One record under your account: the name, the rows each table lost and the date, so the audit export can say the employee existed.',
     ...(preview.kept.length > 0
@@ -81,11 +95,7 @@ export function retireLines(preview: RetirePreview, waiting: string): RetireLine
           ),
         ]
       : []),
-    ...(preview.keptClaims > 0
-      ? [
-          `The claim on ${claimedItems(preview)} it may already have written, so no colleague repeats the write.`,
-        ]
-      : []),
+    ...(claims === undefined ? [] : [claims]),
   ];
   return [
     {

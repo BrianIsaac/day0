@@ -168,11 +168,16 @@ describe('RetireDialog: what retiring does, said before it is done (Q15, N1)', (
     const kept = (preview: RetirePreview): readonly string[] =>
       retireLines(preview, '').find((line) => line.term === 'Kept')?.details ?? [];
     expect(kept({ ...REAL_PREVIEW, keptClaims: 7, keptClaimsAtLeast: true })).toContain(
-      'The claim on at least 7 items it may already have written, so no colleague repeats the write.',
+      'The claims on at least 7 items it may already have written, so no colleague repeats those writes.',
     );
     expect(kept({ ...REAL_PREVIEW, keptClaims: 7 })).toContain(
-      'The claim on 7 items it may already have written, so no colleague repeats the write.',
+      'The claims on 7 items it may already have written, so no colleague repeats those writes.',
     );
+    // Stopped at the floor with none among the oldest items counted: later ones may hold one.
+    expect(kept({ ...REAL_PREVIEW, keptClaims: 0, keptClaimsAtLeast: true })).toContain(
+      'The claims on any of its later items it may already have written, so no colleague repeats those writes.',
+    );
+    expect(kept({ ...REAL_PREVIEW, keptClaims: 0 }).join(' ')).not.toContain('claim');
   });
 
   it('keeps Tab inside the dialog, wrapping at both ends', (): void => {
