@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import {
   DraftingNotice,
+  draftingOutcome,
   draftingWords,
 } from '../../../../../app/agent/[agentId]/one-to-one/DraftingNotice';
 
@@ -24,7 +25,7 @@ describe('what the room says while the charter drafts', (): void => {
       draftingWords('Mira', { kind: 'drafting', retrying: 'model timed out' }, refused),
     ).toMatchObject({
       failed: false,
-      detail: 'The last attempt did not finish (model timed out), so Mira is trying again.',
+      detail: 'The last attempt did not finish, so Mira is trying again.',
     });
   });
 
@@ -46,13 +47,16 @@ describe('what the room says while the charter drafts', (): void => {
         onHoldAgain={() => undefined}
       />,
     );
-    expect(html).toMatch(/^<div role="alert"/);
-    expect(html).toContain('The charter could not be drafted: model timed out.');
+    expect(html).toMatch(/^<div tabindex="-1" data-drafting="failed"/);
+    expect(html).toContain(
+      'The charter could not be drafted: every attempt ended without a usable draft.',
+    );
+    expect(html).not.toContain('model timed out');
     expect(html).toMatch(/<button[^>]*>Draft again<\/button>/);
     expect(html).toMatch(/<button[^>]*>Hold the one-to-one again<\/button>/);
   });
 
-  it('draws the drafting line as a status, not an alert', (): void => {
+  it('draws the drafting line with no control, the room saying it in its own status region', (): void => {
     const html = renderToStaticMarkup(
       <DraftingNotice
         name="Mira"
@@ -62,7 +66,13 @@ describe('what the room says while the charter drafts', (): void => {
         onHoldAgain={() => undefined}
       />,
     );
-    expect(html).toMatch(/^<p role="status"/);
+    expect(html).toMatch(/^<div tabindex="-1" data-drafting="drafting"/);
+    expect(
+      draftingOutcome(draftingWords('Mira', { kind: 'drafting' }, { kind: 'posting' })),
+    ).toEqual({
+      tone: 'done',
+      text: 'Drafting your charter, usually under a minute. Your answers are kept beside it, so you can re-read what you said while you review.',
+    });
     expect(html).not.toContain('<button');
   });
 });

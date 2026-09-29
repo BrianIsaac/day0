@@ -1,6 +1,6 @@
 'use client';
 
-import { useContext, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useContext, useEffect, useId, useMemo, useRef, useState, type Ref } from 'react';
 import { useChat, type UseChatHelpers } from '@ai-sdk/react';
 import { DefaultChatTransport, type ChatStatus, type UIMessage } from 'ai';
 import { useMutation, useQuery } from 'convex/react';
@@ -16,8 +16,14 @@ import { Button, buttonClass } from '../../components/Button';
 import { Dialog } from '../../components/Dialog';
 import { EmployeeContext } from './employee-context';
 import { ROOM_HEIGHT } from './room-frame';
-import { DraftingNotice, type SynthesisPost } from './one-to-one/DraftingNotice';
-import { notedAnswers, type NotedAnswer } from './one-to-one/NotedSoFar';
+import {
+  DraftingNotice,
+  draftingOutcome,
+  draftingWords,
+  type SynthesisPost,
+} from './one-to-one/DraftingNotice';
+import { StatusRegion } from '../../components/StatusRegion';
+import { notedAnswers, notedFromTranscript, type NotedAnswer } from './one-to-one/NotedSoFar';
 import { TopicProgress, type TopicProgressState } from './one-to-one/TopicProgress';
 import { START_DEADLINE_MS, withDeadline } from './one-to-one/deadline';
 
@@ -195,6 +201,7 @@ export function ReplyInput({
   disabled,
   placeholder,
   helpId,
+  inputRef,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -202,6 +209,7 @@ export function ReplyInput({
   disabled: boolean;
   placeholder: string;
   helpId: string;
+  inputRef?: Ref<HTMLTextAreaElement>;
 }) {
   const id = useId();
   return (
@@ -210,6 +218,7 @@ export function ReplyInput({
         Your reply
       </label>
       <textarea
+        ref={inputRef}
         id={id}
         value={value}
         rows={2}
@@ -296,8 +305,10 @@ export function ChatRoom({
   onSwitchMode?: () => void;
   onNoted?: (answers: readonly NotedAnswer[]) => void;
 }) {
-  const name = useContext(EmployeeContext)?.agent.name ?? 'Your employee';
+  const employee = useContext(EmployeeContext);
+  const name = employee?.agent.name ?? 'Your employee';
   const startSession = useMutation(api.voice.start);
+  const restartSession = useMutation(api.voice.restart);
   const session = useQuery(api.voice.latest, { agentId });
   const serverPhase = oneToOnePhase(session);
   const [draft, setDraft] = useState('');
@@ -309,6 +320,10 @@ export function ChatRoom({
   // effect obtained, not whatever a stale render closed over.
   const sessionRef = useRef<Id<'voiceSessions'> | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const noticeRef = useRef<HTMLDivElement>(null);
+  const replyRef = useRef<HTMLTextAreaElement>(null);
+  // Set when the manager holds the one-to-one again: the composer takes focus once it is back.
+  const refocusReply = useRef(false);
 
   const transport = new DefaultChatTransport({
     api: '/api/voice/chat',
@@ -320,8 +335,6 @@ export function ChatRoom({
   const [startAttempt, setStartAttempt] = useState(0);
   const [post, setPost] = useState<SynthesisPost>({ kind: 'idle' });
   const [confirming, setConfirming] = useState<Confirming>(null);
-  // The manager chose to hold the one-to-one again after a draft failed for good.
-  const [heldAgain, setHeldAgain] = useState(false);
   const { messages, sendMessage, regenerate, setMessages, status } = useChat({
     transport,
     onError: (err) => {
@@ -339,8 +352,13 @@ export function ChatRoom({
   const closedByAgent = messages.some((m) => m.parts.some((p) => p.type === 'tool-dayOneComplete'));
   const done = closedByAgent || finishedByManager;
   const transcript = withoutPrimingTurn(messages);
-  // Drafting on the server without a conversation in this room: the room came back to it.
-  const serverOver = serverPhase.kind !== 'talking' && !heldAgain;
+  // Drafting on the server without a conversation in this room: the room came back to it. A
+  // finished session with the employee back at `deployed` is a draft sent back with nothing to
+  // redraft from, so the next one-to-one starts (`voice.start` opens a new session).
+  const serverOver =
+    serverPhase.kind === 'drafting' ||
+    serverPhase.kind === 'failed' ||
+    (serverPhase.kind === 'drafted' && employee?.agent.state !== 'deployed');
   const over = done || serverOver;
   const startable = session !== undefined && !serverOver;
 
@@ -387,7 +405,14 @@ export function ChatRoom({
     return () => cancelAnimationFrame(id);
   }, [messages]);
 
-  const noted = useMemo(() => notedAnswers(messages), [messages]);
+  const pendingTranscript = session?.pendingTranscript;
+  const noted = useMemo(
+    () =>
+      messages.length > 0 || !pendingTranscript
+        ? notedAnswers(messages)
+        : notedFromTranscript(pendingTranscript),
+    [messages, pendingTranscript],
+  );
   useEffect(() => {
     onNoted?.(noted);
   }, [noted, onNoted]);
@@ -448,16 +473,44 @@ export function ChatRoom({
     if (text) postTranscript(text);
   }
 
-  /** Start over after a draft failed for good: a new conversation on the same session. */
+  /**
+   * Start over after a draft failed for good: the session sets the failed conversation aside
+   * (`voice.restart`), then a new one opens on it.
+   */
   function holdAgain(): void {
-    setMessages([]);
-    setFinishedByManager(false);
-    synthFired.current = false;
-    setPost({ kind: 'idle' });
-    setStreamError(null);
-    setHeldAgain(true);
-    setStartAttempt((attempt) => attempt + 1);
+    if (!session) return;
+    // The chain ends in its own rejection handler, which says the refusal in the room.
+    void withDeadline(
+      restartSession({ sessionId: session._id }),
+      START_DEADLINE_MS,
+      `${name} did not answer within ${START_DEADLINE_MS / 1000} seconds`,
+    ).then(
+      () => {
+        setMessages([]);
+        setFinishedByManager(false);
+        synthFired.current = false;
+        refocusReply.current = true;
+        setPost({ kind: 'idle' });
+        setStreamError(null);
+        setStartAttempt((attempt) => attempt + 1);
+      },
+      (err: unknown) => setStartFailure(refusalText(err, 'The one-to-one could not start again.')),
+    );
   }
+
+  const words = over ? draftingWords(name, serverPhase, post) : null;
+  const drafting = words === null ? null : words.failed ? 'failed' : 'drafting';
+
+  // Focus follows the room when the control that moved it has left the page: Finish, Draft
+  // again and Hold again each unmount their own button.
+  useEffect(() => {
+    const lost = document.activeElement === null || document.activeElement === document.body;
+    if (drafting !== null && lost) noticeRef.current?.focus();
+    if (drafting === null && opened && refocusReply.current) {
+      refocusReply.current = false;
+      replyRef.current?.focus();
+    }
+  }, [drafting, opened]);
 
   const answering = status === 'submitted' || status === 'streaming';
   const stored =
@@ -536,6 +589,10 @@ export function ChatRoom({
         ) : null}
       </div>
       <div className="border-t border-[var(--color-border)] px-4 py-3 sm:px-5">
+        {/* On the page before the words change, so the drafting line is said as it changes. */}
+        <div className="sr-only">
+          <StatusRegion outcome={words ? draftingOutcome(words) : null} />
+        </div>
         {over ? (
           <DraftingNotice
             name={name}
@@ -543,6 +600,7 @@ export function ChatRoom({
             post={post}
             onDraftAgain={draftAgain}
             onHoldAgain={holdAgain}
+            focusRef={noticeRef}
           />
         ) : (
           <form
@@ -558,6 +616,7 @@ export function ChatRoom({
               onSend={send}
               disabled={composerDisabled}
               placeholder={opened ? REPLY_PLACEHOLDER : `waiting for ${name}…`}
+              inputRef={replyRef}
               helpId={`${agentId}-reply-help`}
             />
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1">

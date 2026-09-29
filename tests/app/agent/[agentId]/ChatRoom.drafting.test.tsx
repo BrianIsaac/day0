@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 
 import type { UIMessage } from 'ai';
+import { getFunctionName } from 'convex/server';
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -10,17 +11,25 @@ const room = vi.hoisted(() => ({
   /** How `voice.start` answers: at once, never (a lost connection), or with a refusal. */
   start: 'answer' as 'answer' | 'never',
   starts: 0,
+  /** What `voice.restart` was asked to set aside. */
+  restarts: [] as unknown[],
   messages: [] as UIMessage[],
   status: 'ready' as string,
   sent: [] as unknown[],
 }));
 
 vi.mock('convex/react', () => ({
-  useMutation: () => async (): Promise<{ sessionId: string }> => {
-    room.starts += 1;
-    if (room.start === 'never') return await new Promise(() => undefined);
-    return { sessionId: 'session-1' };
-  },
+  useMutation:
+    (reference: unknown) =>
+    async (args: unknown): Promise<unknown> => {
+      if (getFunctionName(reference as never) === 'voice:restart') {
+        room.restarts.push(args);
+        return { ok: true };
+      }
+      room.starts += 1;
+      if (room.start === 'never') return await new Promise(() => undefined);
+      return { sessionId: 'session-1' };
+    },
   useQuery: (): unknown => room.session,
 }));
 vi.mock('@ai-sdk/react', async (importOriginal) => ({
@@ -41,6 +50,7 @@ import type { Id } from '../../../../convex/_generated/dataModel';
 import { INIT_PROMPT } from '../../../../src/agent/day-one-turn';
 import { MAX_FINALISATION_RECOVERIES } from '../../../../src/agent/one-to-one-phase';
 import { axeViolations } from '../../../fixtures/dom/axe';
+import { EMPLOYEE_ROW, asEmployee } from '../../../fixtures/dom/employee';
 import { mount, press, said, settle, typeInto } from '../../../fixtures/dom/press';
 import { underTarget } from '../../../fixtures/dom/targets';
 
@@ -71,6 +81,7 @@ beforeEach((): void => {
   room.session = null;
   room.start = 'answer';
   room.starts = 0;
+  room.restarts = [];
   room.messages = [];
   room.status = 'ready';
   room.sent = [];
@@ -202,15 +213,18 @@ describe('finishing and drafting (round two section 3.4)', (): void => {
     await press(view.container, 'Finish');
     await press(document.body, 'Finish and draft');
     await settle();
-    const alert = view.container.querySelector('[role="alert"]');
-    expect(alert?.textContent).toContain(
+    expect(said(view.container).join(' ')).toContain(
       'The charter could not be drafted: the page could not reach Day0.',
     );
+    // Finish left the page with its form; focus is on what took its place.
+    expect(document.activeElement?.getAttribute('data-drafting')).toBe('failed');
 
     answerPosts(async () => Response.json({ outcome: 'synthesised' }));
     await press(view.container, 'Draft again');
     expect(posts).toHaveLength(1);
-    expect(view.container.querySelector('[role="alert"]')).toBeNull();
+    expect(view.container.querySelector('[data-drafting="failed"]')).toBeNull();
+    expect(document.activeElement?.getAttribute('data-drafting')).toBe('drafting');
+    expect(said(view.container).join(' ')).toContain('Drafting your charter');
     view.unmount();
   });
 
@@ -228,6 +242,38 @@ describe('finishing and drafting (round two section 3.4)', (): void => {
       'Drafting your charter, usually under a minute. It has taken longer than usual. It carries on, and the charter opens here when it is ready.',
     );
     expect(view.container.querySelector('[role="alert"]')).toBeNull();
+    view.unmount();
+  });
+});
+
+describe('a room over a session that already produced a charter', (): void => {
+  const DONE = { _id: 'session-1', state: 'done', transcriptText: 'USER: x' };
+
+  it('opens the next one-to-one once a draft was sent back with nothing to redraft from', async (): Promise<void> => {
+    room.session = DONE;
+    const view = mount(
+      asEmployee(<ChatRoom agentId={AGENT} bossLabel="Sam" />, {
+        agent: { ...EMPLOYEE_ROW, state: 'deployed' },
+        charter: null,
+      }),
+    );
+    await settle();
+    expect(room.starts).toBe(1);
+    expect(room.sent).toEqual([{ text: INIT_PROMPT }]);
+    expect(view.container.textContent).not.toContain('Drafting your charter');
+    view.unmount();
+  });
+
+  it('opens nothing while the charter it produced is on its way to the page', async (): Promise<void> => {
+    room.session = DONE;
+    const view = mount(
+      asEmployee(<ChatRoom agentId={AGENT} bossLabel="Sam" />, {
+        agent: { ...EMPLOYEE_ROW, state: 'charter-pending' },
+        charter: null,
+      }),
+    );
+    await settle();
+    expect(room.starts).toBe(0);
     view.unmount();
   });
 });
@@ -267,9 +313,11 @@ describe('a room that comes back to a one-to-one already over', (): void => {
     };
     const view = mount(<ChatRoom agentId={AGENT} bossLabel="Sam" />);
     await settle();
-    expect(view.container.querySelector('[role="status"]')?.textContent).toContain(
-      'The last attempt did not finish (the model timed out), so Your employee is trying again.',
+    expect(said(view.container).join(' ')).toContain(
+      'The last attempt did not finish, so Your employee is trying again.',
     );
+    // The provider's own text is for the log, not the page (C-34).
+    expect(view.container.textContent).not.toContain('the model timed out');
     view.unmount();
   });
 
@@ -283,15 +331,20 @@ describe('a room that comes back to a one-to-one already over', (): void => {
     };
     const view = mount(<ChatRoom agentId={AGENT} bossLabel="Sam" />);
     await settle();
-    expect(view.container.querySelector('[role="alert"]')?.textContent).toContain(
-      'The charter could not be drafted: the model timed out.',
+    expect(said(view.container).join(' ')).toContain(
+      'The charter could not be drafted: every attempt ended without a usable draft.',
     );
+    expect(view.container.textContent).not.toContain('the model timed out');
     await press(view.container, 'Draft again');
     expect(posts).toEqual([
       { agentId: AGENT, bossLabel: 'Sam', transcript: STORED, voiceSessionId: 'session-1' },
     ]);
 
     await press(view.container, 'Hold the one-to-one again');
+    expect(room.restarts).toEqual([{ sessionId: 'session-1' }]);
+    // The session set the failed conversation aside; the room opens a new one on it.
+    room.session = { _id: 'session-1', state: 'active' };
+    act((): void => view.root.render(<ChatRoom agentId={AGENT} bossLabel="Sam" />));
     await settle();
     expect(room.starts).toBe(1);
     expect(room.sent).toEqual([{ text: INIT_PROMPT }]);

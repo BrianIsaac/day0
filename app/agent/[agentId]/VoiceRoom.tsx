@@ -12,7 +12,13 @@ import { refusalText } from '../../components/use-change';
 import { Button } from '../../components/Button';
 import { EmployeeContext } from './employee-context';
 import { ROOM_HEIGHT } from './room-frame';
-import { DraftingNotice, type SynthesisPost } from './one-to-one/DraftingNotice';
+import {
+  DraftingNotice,
+  draftingOutcome,
+  draftingWords,
+  type SynthesisPost,
+} from './one-to-one/DraftingNotice';
+import { StatusRegion } from '../../components/StatusRegion';
 import { TopicProgress } from './one-to-one/TopicProgress';
 import { START_DEADLINE_MS, withDeadline } from './one-to-one/deadline';
 
@@ -63,14 +69,15 @@ function VoiceRoomInner({
   bossLabel: string;
   onSwitchMode?: () => void;
 }) {
-  const name = useContext(EmployeeContext)?.agent.name ?? 'Your employee';
+  const employee = useContext(EmployeeContext);
+  const name = employee?.agent.name ?? 'Your employee';
+  const restartSession = useMutation(api.voice.restart);
+  const noticeRef = useRef<HTMLDivElement>(null);
   const startSession = useMutation(api.voice.start);
   const attachConversationId = useMutation(api.voice.attachConversationId);
   const stored = useQuery(api.voice.latest, { agentId });
   const serverPhase = oneToOnePhase(stored);
   const [post, setPost] = useState<SynthesisPost>({ kind: 'idle' });
-  // The manager chose to hold the one-to-one again after a draft failed for good.
-  const [heldAgain, setHeldAgain] = useState(false);
   const [session, setSession] = useState<{
     id: Id<'voiceSessions'>;
     webhookToken: string;
@@ -220,7 +227,22 @@ function VoiceRoomInner({
   const isListening = conversation.isListening;
 
   // The call ended and was posted, or the room came back to a one-to-one already drafting.
-  const over = post.kind !== 'idle' || (serverPhase.kind !== 'talking' && !heldAgain);
+  // As in the chat room: a finished session with the employee back at `deployed` is a draft sent
+  // back with nothing to redraft from, and the next call starts a new one.
+  const over =
+    post.kind !== 'idle' ||
+    serverPhase.kind === 'drafting' ||
+    serverPhase.kind === 'failed' ||
+    (serverPhase.kind === 'drafted' && employee?.agent.state !== 'deployed');
+  const words = over ? draftingWords(name, serverPhase, post) : null;
+  const drafting = words === null ? null : words.failed ? 'failed' : 'drafting';
+
+  // Focus follows the room when the control that moved it has left the page: End call, Draft
+  // again and Hold again each unmount their own button.
+  useEffect(() => {
+    const lost = document.activeElement === null || document.activeElement === document.body;
+    if (drafting !== null && lost) noticeRef.current?.focus();
+  }, [drafting]);
 
   // No ElevenLabs credentials on this deployment - say so plainly and
   // hand the boss to chat mode, which asks the same seven topics in text.
@@ -248,12 +270,27 @@ function VoiceRoomInner({
   }
 
   /** Start over after a draft failed for good: a new call on the same session. */
+  /**
+   * Start over after a draft failed for good: the session sets the failed call aside
+   * (`voice.restart`), and the room offers a new call on it.
+   */
   function holdAgain(): void {
-    finalisePosted.current = false;
-    setTranscript([]);
-    setPost({ kind: 'idle' });
-    setError(null);
-    setHeldAgain(true);
+    if (!stored) return;
+    // The chain ends in its own rejection handler, which says the refusal in the room.
+    void withDeadline(
+      restartSession({ sessionId: stored._id }),
+      START_DEADLINE_MS,
+      `${name} did not answer within ${START_DEADLINE_MS / 1000} seconds`,
+    ).then(
+      () => {
+        finalisePosted.current = false;
+        setTranscript([]);
+        setPost({ kind: 'idle' });
+        setError(null);
+      },
+      (err: unknown) =>
+        setError(refusalText(err, 'The one-to-one could not start again').replace(/\.$/, '')),
+    );
   }
 
   const storedTurns =
@@ -278,7 +315,7 @@ function VoiceRoomInner({
           Day-1 1:1 · voice mode
         </h2>
         {over ? (
-          <span className="text-[13px] text-[var(--color-muted)]">complete</span>
+          <span className="text-[13px] text-[var(--color-muted)]">conversation complete</span>
         ) : onSwitchMode && !isConnected ? (
           <Button variant="text" size="small" onClick={onSwitchMode}>
             Switch to chat
@@ -347,8 +384,13 @@ function VoiceRoomInner({
             ))
           )}
         </div>
+        {/* On the page before the words change, so the drafting line is said as it changes. */}
+        <div className="sr-only">
+          <StatusRegion outcome={words ? draftingOutcome(words) : null} />
+        </div>
         {over ? (
           <DraftingNotice
+            focusRef={noticeRef}
             name={name}
             phase={serverPhase}
             post={post}

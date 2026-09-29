@@ -1,6 +1,7 @@
 import type { UIMessage } from 'ai';
 import { dayOneTurnMetadataOf, topicTitle } from '@/agent/day-one-progress';
 import { INIT_PROMPT } from '@/agent/day-one-turn';
+import { transcriptTurns } from '@/agent/transcript-turns';
 import { Card } from '../../../components/Card';
 
 /** One answer the manager gave, under the question it answered when the route named it. */
@@ -51,6 +52,18 @@ export function notedAnswers(messages: readonly UIMessage[]): NotedAnswer[] {
       },
     ];
   });
+}
+
+/**
+ * What the manager answered, read back from a transcript the session stored: a room that came
+ * back to a one-to-one already drafting has no conversation of its own to number.
+ */
+export function notedFromTranscript(transcript: string): NotedAnswer[] {
+  return transcriptTurns(transcript).flatMap((turn, index, turns): NotedAnswer[] =>
+    turn.speaker === 'manager' && turns[index - 1]?.speaker === 'employee'
+      ? [{ topic: null, text: clipped(turn.text) }]
+      : [],
+  );
 }
 
 /** "Noted so far": each answer under its question, so the manager sees what became of it. */
