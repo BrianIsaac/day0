@@ -61,9 +61,15 @@ export function DocsTab({
     return <p className="text-sm text-[var(--color-muted)]">{EMPTY_DOCS[mode]}</p>;
 
   return (
-    // One column on a phone and in a narrow panel, the rail beside the page
-    // once the panel is wide enough for both (as the Slack tab does).
-    <div className="grid grid-cols-1 @lg:grid-cols-[12rem_1fr] @lg:grid-rows-[minmax(0,1fr)] gap-4 h-full">
+    // One column on a phone and in a narrow panel, the rail beside the page once the panel is
+    // wide enough for both (as the Slack tab does). In the office's fixed panel the columns fill
+    // it; in the real-mode card they bound themselves, so a short list ends the card and a long
+    // page scrolls beside the list.
+    <div
+      className={`grid grid-cols-1 @lg:grid-cols-[12rem_1fr] @lg:grid-rows-[minmax(0,1fr)] gap-4 ${
+        mode === 'real' ? '@lg:max-h-[32rem]' : 'h-full'
+      }`}
+    >
       <nav
         aria-label="Documents"
         className="min-w-0 border-[var(--color-border)] @lg:-mr-1 @lg:min-h-0 @lg:overflow-y-auto @lg:border-r @lg:pr-3"
