@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react';
 import { RollingCount } from './RollingCount';
+import { bringTabIntoView } from './strip-scroll';
 
 /** One tab: where it goes and what it counts. */
 export interface TabItem {
@@ -74,12 +75,7 @@ export function Tabs({
   useEffect(() => {
     const list = strip.current;
     const tab = list?.querySelector<HTMLElement>(`#${CSS.escape(tabId(panelId, selected))}`);
-    if (!list || !tab) return;
-    const left = tab.offsetLeft;
-    const right = left + tab.offsetWidth;
-    if (left < list.scrollLeft || right > list.scrollLeft + list.clientWidth) {
-      list.scrollLeft = Math.max(0, left - (list.clientWidth - tab.offsetWidth) / 2);
-    }
+    if (list && tab) bringTabIntoView({ list, tab });
   }, [panelId, selected]);
   function onKeyDown(event: KeyboardEvent<HTMLAnchorElement>, index: number): void {
     if (event.key === ' ') {
