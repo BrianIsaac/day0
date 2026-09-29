@@ -1,5 +1,6 @@
 import { createRequire } from 'node:module';
 import { expect, test, type Page } from '@playwright/test';
+import { beyondDebt, debtKeys, unmetDebt, type Debt } from './known-debt';
 
 /**
  * The public pages against the accessibility floor (N14, `CONTRIBUTING.md`):
@@ -15,129 +16,51 @@ const AXE = require.resolve('axe-core/axe.min.js');
 /** The tags the floor names, as the jsdom check in the mirrored tests runs them. */
 const WCAG_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
 
-/** The pages a visitor reaches without signing in. */
-const PAGES = ['/', '/setup', '/demo'] as const;
-
-/** A failure a public page carries today on files outside the unit that added this job. */
-interface Debt {
-  /** Why it is not fixed here, and whose file it is. */
-  readonly reason: string;
-  /** The axe rules the debt covers on this page. */
-  readonly axe?: readonly string[];
-  /** The controls, as `tag "name"`, under 44 px on this page. */
-  readonly targets?: readonly string[];
-}
+/** The pages a visitor reaches without signing in. `/demo` answers 308 to `/walkthrough`. */
+const PAGES = ['/', '/setup', '/walkthrough', '/sign-in'] as const;
 
 /**
- * What each page is known to fail, named rule by rule and control by
- * control: anything else fails the job, so a new violation on a page that
- * already carries debt is still caught. Each entry leaves with its fix.
+ * What each page is known to fail, node by node (`known-debt.ts`): empty on every page since the
+ * wave 5 pre-tag fix met the floor on `/` and `/setup`. A new failure is added here with its reason
+ * and whose file it is, and leaves with its fix.
  */
 const KNOWN_DEBT: Readonly<Record<(typeof PAGES)[number], readonly Debt[]>> = {
-  '/': [
-    {
-      reason:
-        "the landing footer's links, and the setup command block that scrolls sideways at 390 with nothing focusable in it (app/marketing: the landing pane's, done; no pane in batch 2)",
-      axe: ['scrollable-region-focusable'],
-      targets: ['a "GitHub"', 'a "Data and compliance"', 'a "Changelog"'],
-    },
-  ],
-  '/setup': [
-    {
-      reason:
-        "the page's code blocks scroll sideways at 390 with nothing focusable in them (pass 11 section 3b), and its links are under 44 px (app/setup/page.tsx, no pane in batch 1)",
-      axe: ['scrollable-region-focusable'],
-      targets: [
-        'a "01Before you start"',
-        'a "02Three ways to run it"',
-        'a "03How it reaches a model"',
-        'a "04The commands"',
-        'a "05What first success looks like"',
-        'a "06How long it takes"',
-        'a "07If it stops"',
-        'a "08Stopping and starting again"',
-        'a "09Where the detail is"',
-        'a "Sign in and deploy an agent"',
-        'a "Open the walkthrough"',
-      ],
-    },
-  ],
-  '/demo': [
-    {
-      reason:
-        'the chapter links and the disclosures (app/demo: the walkthrough pane, wave 5, which moves the page to /walkthrough)',
-      targets: [
-        'a "01The charter"',
-        'a "02What it may touch"',
-        'a "03The work"',
-        'a "04The missing skill"',
-        'a "05Its workspace"',
-        'a "06The office"',
-        'a "07The sequence"',
-        'summary "The draft the agent wrote before any of it was app"',
-        'summary "The skill itself"',
-        'summary "The opening of the skill it wrote"',
-        'summary "AGENTS.mdGood habits distilled from research into "',
-        'summary "SOUL.mdVoice and posture the agent writes in.417b"',
-        'summary "IDENTITY.mdRole, why this hire, and the 30/60/90-d"',
-        'summary "USER.mdWho the agent reports to.35b"',
-        'summary "TOOLS.mdPriority reading and the surfaces it knows"',
-        'summary "BOOTSTRAP.mdWhat the agent does on its first day.4"',
-        'summary "MEMORY.mdA placeholder written at deployment; noth"',
-        'summary "HEARTBEAT.mdWhen the agent was deployed and last r"',
-        'summary "How to post to Slack (action guide)how-to-guide"',
-        'summary "How to reply to a tweet (action guide)how-to-guide"',
-        'summary "How to update a spreadsheet (action guide)how-to-g"',
-        'summary "How to update a ticket (action guide)how-to-guide"',
-        'summary "Escalation pathsteam-doc"',
-        'summary "On-call rotationteam-doc"',
-        'summary "Onboarding \u2014 first weekteam-doc"',
-        'summary "Team overview \u2014 RevOpsteam-doc"',
-      ],
-    },
-  ],
+  '/': [],
+  '/setup': [],
+  '/walkthrough': [],
+  '/sign-in': [],
 };
 
 /**
- * Keep the findings the page's known debt does not cover, and note on the
- * test which debts it met, so the report still shows them.
+ * Check one page's findings against its debt: nothing beyond it, and no debt the page no longer
+ * carries. The debts met are noted on the test, so the report still shows them.
  *
  * @param path - The page.
- * @param kind - Which list the debt names: axe rules or controls.
- * @param found - The findings.
- * @param key - The name a finding is known by.
- * @returns The findings no debt covers.
+ * @param kind - Which list: axe findings or small targets.
+ * @param found - Each finding's key.
  */
-function beyondDebt<T>(
+function expectOnlyKnownDebt(
   path: (typeof PAGES)[number],
   kind: 'axe' | 'targets',
-  found: readonly T[],
-  key: (finding: T) => string,
-): T[] {
-  const known = KNOWN_DEBT[path].flatMap((debt) =>
-    (debt[kind] ?? []).map((name) => ({ name, reason: debt.reason })),
-  );
-  const met = known.filter((debt) => found.some((finding) => key(finding) === debt.name));
-  for (const reason of new Set(met.map((debt) => debt.reason))) {
+  found: readonly string[],
+): void {
+  const known = debtKeys(KNOWN_DEBT[path], test.info().project.name, kind);
+  for (const reason of new Set(
+    known.filter((debt) => found.includes(debt.key)).map((debt) => debt.reason),
+  )) {
     test.info().annotations.push({ type: 'known debt', description: reason });
   }
-  return found.filter((finding) => !met.some((debt) => debt.name === key(finding)));
-}
-
-/** One axe violation, as a failing line reads it. */
-interface Violation {
-  id: string;
-  impact: string | null;
-  targets: string[];
+  expect(beyondDebt(known, found), 'beyond the known debt').toEqual([]);
+  expect(unmetDebt(known, found), 'debt the page no longer carries').toEqual([]);
 }
 
 /**
  * Run axe in the page at the floor's tags.
  *
  * @param page - The loaded page.
- * @returns The violations, empty when the page passes.
+ * @returns Each violating node as `rule selector`, empty when the page passes.
  */
-async function axe(page: Page): Promise<Violation[]> {
+async function axe(page: Page): Promise<string[]> {
   await page.addScriptTag({ path: AXE });
   return await page.evaluate(async (tags: string[]) => {
     const run = (
@@ -157,11 +80,9 @@ async function axe(page: Page): Promise<Violation[]> {
       }
     ).axe.run;
     const results = await run(document, { runOnly: { type: 'tag', values: tags } });
-    return results.violations.map((violation) => ({
-      id: violation.id,
-      impact: violation.impact,
-      targets: violation.nodes.map((node) => node.target.join(' ')),
-    }));
+    return results.violations.flatMap((violation) =>
+      violation.nodes.map((node) => `${violation.id} ${node.target.join(' ')}`),
+    );
   }, WCAG_TAGS);
 }
 
@@ -170,10 +91,30 @@ async function axe(page: Page): Promise<Violation[]> {
  * a run of text, which WCAG's inline exception leaves at the text's size.
  *
  * @param page - The loaded page.
- * @returns Each small control, as `tag "name"`.
+ * @returns Each small control, as `tag "name" at selector`.
  */
 async function smallTargets(page: Page): Promise<string[]> {
   return await page.evaluate(() => {
+    // The node's path from the nearest ancestor with an id, as axe names its own nodes.
+    const selectorOf = (element: Element): string => {
+      const parts: string[] = [];
+      let node: Element | null = element;
+      while (node && node !== document.body) {
+        if (node.id) {
+          parts.unshift(`#${CSS.escape(node.id)}`);
+          break;
+        }
+        const tag = node.tagName.toLowerCase();
+        const siblings: Element[] = node.parentElement
+          ? [...node.parentElement.children].filter((sibling) => sibling.tagName === node?.tagName)
+          : [];
+        parts.unshift(
+          siblings.length > 1 ? `${tag}:nth-of-type(${siblings.indexOf(node) + 1})` : tag,
+        );
+        node = node.parentElement;
+      }
+      return parts.join(' > ');
+    };
     const controls = document.querySelectorAll<HTMLElement>(
       'button, a[href], input:not([type="hidden"]), select, textarea, summary, [role="button"], [role="switch"]',
     );
@@ -192,7 +133,7 @@ async function smallTargets(page: Page): Promise<string[]> {
         const name = (control.getAttribute('aria-label') ?? control.textContent ?? '')
           .trim()
           .slice(0, 50);
-        small.push(`${control.tagName.toLowerCase()} "${name}"`);
+        small.push(`${control.tagName.toLowerCase()} "${name}" at ${selectorOf(control)}`);
       }
     }
     return small;
@@ -210,7 +151,7 @@ for (const path of PAGES) {
     });
 
     test('has no axe violation at the WCAG 2.2 AA tags beyond its known debt', async ({ page }) => {
-      expect(beyondDebt(path, 'axe', await axe(page), (violation) => violation.id)).toEqual([]);
+      expectOnlyKnownDebt(path, 'axe', await axe(page));
     });
 
     test('is no wider than the window', async ({ page }) => {
@@ -224,7 +165,7 @@ for (const path of PAGES) {
     test('gives every pointer target beyond its known debt at least 44 by 44 CSS pixels', async ({
       page,
     }) => {
-      expect(beyondDebt(path, 'targets', await smallTargets(page), (target) => target)).toEqual([]);
+      expectOnlyKnownDebt(path, 'targets', await smallTargets(page));
     });
   });
 }

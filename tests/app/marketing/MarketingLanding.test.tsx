@@ -79,4 +79,17 @@ describe('the marketing landing', () => {
       'https://github.com/BrianIsaac/day0/blob/main/evaluation/README.md',
     ]);
   });
+
+  it('gives the footer links a 44 px target (N14)', () => {
+    const footer = /<footer[\s\S]*?<\/footer>/.exec(html)?.[0] ?? '';
+    const links = [...footer.matchAll(/<a [^>]*>/g)].map(([tag]) => tag);
+    expect(links).toHaveLength(3);
+    for (const link of links) expect(link).toMatch(/\bmin-h-11\b[^"]*\bmin-w-11\b/);
+  });
+
+  it('lets a keyboard reach the command block, which scrolls sideways on a phone', () => {
+    expect(html).toMatch(
+      /<pre tabindex="0" role="region" aria-label="Commands to run Day0 locally"/,
+    );
+  });
 });

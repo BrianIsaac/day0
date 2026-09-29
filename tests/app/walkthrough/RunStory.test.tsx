@@ -98,8 +98,8 @@ describe('the recorded run', () => {
     scrollTo(4);
     expect(ledger()).toEqual([
       RECORDED_RUN.steps[0]!.caption,
-      RECORDED_RUN.steps[1]!.caption,
-      RECORDED_RUN.steps[2]!.caption,
+      `${RECORDED_RUN.steps[1]!.caption}+04:34`,
+      `${RECORDED_RUN.steps[2]!.caption}+05:08`,
       `${RECORDED_RUN.steps[3]!.caption}+07:12`,
       `${RECORDED_RUN.steps[4]!.caption}+09:05`,
     ]);
@@ -116,8 +116,8 @@ describe('the recorded run', () => {
 
   it('says where the clock starts instead of inventing a time before the first stated one', () => {
     mount();
-    scrollTo(2);
-    expect(bar()).toBe('Step 3 of 16timed from step 4');
+    scrollTo(0);
+    expect(bar()).toBe('Step 1 of 16timed from step 2');
   });
 
   it('runs the clock from the last time shown to the step’s own, then rests on it', () => {

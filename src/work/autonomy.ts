@@ -22,11 +22,11 @@ export const AUTONOMOUS_LABEL = 'Autonomous';
 
 /**
  * What the manager is told before turning autonomous actions on, in the
- * operator's sense: the agent acts without asking, within what has already
+ * operator's words (29 September 2026): the employee acts without asking, within what has already
  * been approved, and the switch is for after its behaviour has been watched.
  */
 export const AUTONOMY_WARNING =
-  'The agent will act on connected systems without asking - post, comment, change status - within the connections and skills you have approved. Turn this on only after its behaviour has been what you want. Skills and connections still need your approval either way.';
+  'The digital employee will act on connected systems without asking - post, comment, change status - within the connections and skills you have approved. Turn this on only after its behaviour has been what you want. Skills and connections still need your approval either way.';
 
 /** Why a held row is waiting, shown on the pending-actions card while the toggle is off. */
 export const HELD_WHILE_SUPERVISED_NOTE = 'held for your approval - autonomous actions are off';

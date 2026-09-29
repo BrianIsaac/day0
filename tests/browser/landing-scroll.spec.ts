@@ -8,9 +8,11 @@ import { expect, test, type Page } from 'playwright/test';
  * steps at three speeds, at 1440 and 390 wide, down and then up. Every stop is a reader's stop,
  * not the tracker's own rule: at 1440 the step copy centred in the viewport, and the copy beside
  * the pinned frame with their centres level; at 390 the copy just under the pinned frame. At
- * each stop, after 700 ms at rest, exactly one frame is visible and it is the step's, the
- * tracker's active step is the step, and on the way there the active step only moved in the
- * direction of travel.
+ * each stop, after 700 ms at rest, exactly one frame is visible and
+ * it is the step's, the tracker's active step is the step, and on the way there the active step
+ * only moved in the direction of travel. At 375 by 667, a phone too short to pin a frame, each
+ * frame sits inline above its copy (the wave 5 review's D3 (b)): at the step's stop, its top
+ * under the header, the step's own frame is the one wholly on screen and nothing is pinned.
  *
  * Runs against a started app at the configured `baseURL`, signed out, in mock mode. Set
  * `LANDING_SCROLL_LOG` to a directory to keep the per-stop log as JSON and Markdown.
@@ -19,6 +21,7 @@ import { expect, test, type Page } from 'playwright/test';
 const WIDTHS = [
   { tag: '1440', width: 1440, height: 900, mobile: false, stops: ['centred', 'beside'] },
   { tag: '390', width: 390, height: 844, mobile: true, stops: ['under'] },
+  { tag: '375x667', width: 375, height: 667, mobile: true, stops: ['inline'] },
 ] as const;
 const SPEEDS = [
   { tag: 'slow', px: 4 },
@@ -50,10 +53,13 @@ function target(page: Page, step: number, stop: Stop): Promise<number> {
   return page.evaluate(
     ({ step, stop }) => {
       const root = document.querySelector<HTMLElement>('[data-pin]');
-      const side = root?.querySelector<HTMLElement>('[data-pin-side]');
       const copy = root?.querySelector<HTMLElement>(`[data-step="${step}"]`);
-      if (!root || !side || !copy) throw new Error('the pinned sequence is not on the page');
+      if (!root || !copy) throw new Error('the sequence is not on the page');
       const box = copy.getBoundingClientRect();
+      // Inline, the step (its frame first) rests just under the 56 px header.
+      if (stop === 'inline') return Math.round(scrollY + box.top - 72);
+      const side = root.querySelector<HTMLElement>('[data-pin-side]');
+      if (!side) throw new Error('the sequence is not pinned');
       const height = side.offsetHeight;
       // Where the frame rests once the section is pinned: its sticky top, from the stylesheet.
       const top = Number.parseFloat(getComputedStyle(side).top) || 0;
@@ -101,11 +107,24 @@ function travel(page: Page, y: number, px: number): Promise<[number, number][]> 
   );
 }
 
-/** What is visible at rest: the frames above half opacity and the tracker's active step. */
+/**
+ * What is visible at rest: pinned, the frames above half opacity and the tracker's active step;
+ * inline, the frames wholly on screen under the header, and the step whose frame that is.
+ */
 function observe(page: Page): Promise<{ visible: number[]; active: number; scrollY: number }> {
   return page.evaluate(() => {
     const root = document.querySelector<HTMLElement>('[data-pin]');
     const frames = Array.from(root?.querySelectorAll<HTMLElement>('[data-frame]') ?? []);
+    if (root?.dataset.pin === 'inline') {
+      const visible = frames
+        .filter((frame) => {
+          const box = frame.getBoundingClientRect();
+          return box.top >= 56 && box.bottom <= innerHeight;
+        })
+        .map((frame) => Number(frame.dataset.frame));
+      const pinned = root.querySelector('[data-pin-side]') !== null;
+      return { visible, active: pinned ? -1 : (visible[0] ?? 0), scrollY: Math.round(scrollY) };
+    }
     return {
       visible: frames
         .filter((frame) => Number(getComputedStyle(frame).opacity) > 0.5)
@@ -155,9 +174,13 @@ for (const viewport of WIDTHS) {
               const samples = await travel(page, await target(page, step, stop), speed.px);
               await page.waitForTimeout(700);
               const seen = await observe(page);
-              const sequence = samples
-                .map(([, active]) => active)
-                .filter((active, index, all) => index === 0 || active !== all[index - 1]);
+              // Inline there is no tracker to follow: nothing pins, so no step is active.
+              const sequence =
+                stop === 'inline'
+                  ? []
+                  : samples
+                      .map(([, active]) => active)
+                      .filter((active, index, all) => index === 0 || active !== all[index - 1]);
               const monotonic = sequence.every(
                 (active, index) =>
                   index === 0 ||
@@ -216,6 +239,25 @@ test.describe('the landing on a phone', () => {
       screen: innerWidth,
     }));
     expect(widths).toEqual({ page: 390, screen: 390 });
+  });
+
+  test('draws every frame’s window at the band’s height, so no step shows an empty band under it', async ({
+    page,
+  }) => {
+    await page.goto('/');
+    await page.locator('[data-pin-stack]').waitFor();
+    const heights = await page.evaluate(() => {
+      const stack = document.querySelector<HTMLElement>('[data-pin-stack]');
+      return {
+        stack: stack?.offsetHeight ?? 0,
+        windows: Array.from(
+          stack?.querySelectorAll<HTMLElement>(':scope > [data-frame] > *') ?? [],
+          (window) => window.offsetHeight,
+        ),
+      };
+    });
+    expect(heights.windows).toHaveLength(4);
+    expect(heights.windows).toEqual(heights.windows.map(() => heights.stack));
   });
 });
 

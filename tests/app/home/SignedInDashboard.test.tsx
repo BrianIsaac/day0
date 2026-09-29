@@ -161,8 +161,8 @@ const state = vi.hoisted(() => ({
   inbox: undefined as unknown,
 }));
 
-vi.mock('convex/react', () => ({
-  useQuery: (reference: FunctionReference<'query'>) => {
+vi.mock('convex/react', () => {
+  const answer = (reference: FunctionReference<'query'>): unknown => {
     const name = getFunctionName(reference);
     const shown = state.roster as typeof roster;
     if (name === 'agents:listForUser') {
@@ -203,14 +203,21 @@ vi.mock('convex/react', () => ({
       };
     }
     return undefined;
-  },
-  useMutation: (): (() => Promise<void>) => async (): Promise<void> => undefined,
-}));
+  };
+  return {
+    useQuery: answer,
+    // The home reads its inbox through `useQueries`, which answers a failed read as a value.
+    useQueries: (queries: Record<string, { query: FunctionReference<'query'> }>) =>
+      Object.fromEntries(Object.entries(queries).map(([key, { query }]) => [key, answer(query)])),
+    useMutation: (): (() => Promise<void>) => async (): Promise<void> => undefined,
+  };
+});
 
 vi.mock('next/navigation', () => ({
   useRouter: (): { push: () => void } => ({ push: (): void => undefined }),
 }));
 
+import { NEEDS_YOU_UNREADABLE } from '../../../app/home/NeedsYouList';
 import { SignedInDashboard } from '../../../app/home/SignedInDashboard';
 
 const boss = { email: 'boss@example.invalid', firstName: 'Boss' };
@@ -299,6 +306,35 @@ describe('the company home', (): void => {
     ].map((marker) => page.indexOf(marker));
     expect(order.every((index) => index > -1)).toBe(true);
     expect(order).toEqual([...order].sort((a, b) => a - b));
+  });
+
+  it('loses only the inbox when the backend cannot read it, and says so (M6)', (): void => {
+    const page = render(
+      roster,
+      new Error('[CONVEX Q(work:needsYou)] Server Error: too many documents read'),
+    );
+    const text = readAs(page);
+    expect(text).toContain(NEEDS_YOU_UNREADABLE);
+    for (const marker of [
+      '>Roster<',
+      'Mini office world',
+      'September, supervised from here',
+      'Company supervision',
+      'Reset demo',
+    ]) {
+      expect(page).toContain(marker);
+    }
+    expect(text).toContain('Your employees 2 active');
+    expect(text).not.toContain('things need you');
+  });
+
+  it('gives Deploy another, each roster name and Manage a 44 px target (N14, m26)', (): void => {
+    const page = render(roster);
+    expect(/<button[^>]*aria-controls="deploy-form"[^>]*>/.exec(page)?.[0]).toMatch(/\bmin-h-11\b/);
+    const names = [...page.matchAll(/<th scope="row"[^>]*><a [^>]*>/g)].map(([tag]) => tag);
+    expect(names.length).toBeGreaterThan(0);
+    for (const tag of names) expect(tag).toMatch(/\bmin-h-11\b/);
+    expect(/<a [^>]*href="\/documentation"[^>]*>/.exec(page)?.[0]).toMatch(/\bmin-h-11\b/);
   });
 
   it('lists what waits on the manager from the inbox, and the roster counts it per employee', (): void => {

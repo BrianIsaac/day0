@@ -32,7 +32,7 @@
           "text": "Chat was the only mode available, since this deployment carries no ElevenLabs credentials. The agent opened the conversation itself and worked through the seven topics in order: why the hire was made, the role and its 30/60/90 days, who to talk to, what to read, which tools carry the work, what to pick up first, and what is still open. The manager answered in plain sentences. The conversation completed 4 min 34 s after deploy."
         }
       ],
-      "elapsedSeconds": null,
+      "elapsedSeconds": 274,
       "caption": "The opening exchange of the Day-1 one-to-one, in chat.",
       "capture": {
         "src": "/walkthrough/full-run-02-day-one-chat.webp",
@@ -51,7 +51,7 @@
         { "text": "5 min 8 s", "strong": true },
         { "text": "." }
       ],
-      "elapsedSeconds": null,
+      "elapsedSeconds": 308,
       "caption": "The charter the agent wrote, after approval.",
       "capture": {
         "src": "/walkthrough/full-run-03-charter-approved.webp",

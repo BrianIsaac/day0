@@ -36,18 +36,18 @@ export interface RecordingMeta {
 }
 
 /**
- * The sentences that date the export, name its build and the day that build
- * went live, say the run shown took place before the export, and say the
- * product has moved on since (decision Q3). The export is what carries a date;
- * the run is told in offsets only.
+ * The sentences that date the hosted deployment's build from the last export
+ * taken of it, and say the product has moved on since (decision Q3). No page
+ * shows the exported run any more (the walkthrough is the 17 September run), so
+ * nothing here speaks of it; the snapshot stays the record of that day.
  */
-export function recordingProvenanceLine(
+export function hostedBuildLine(
   recording: Pick<RecordingMeta, 'recordedOn' | 'revision' | 'liveSince'>,
 ): string {
   return (
-    `Exported from the hosted deployment on ${dayLabel(recording.recordedOn)} (build ` +
-    `${recording.revision}, live since ${dayLabel(recording.liveSince)}); the run it shows took ` +
-    'place before that and is told in offsets. The product has moved on since.'
+    `On ${dayLabel(recording.recordedOn)}, the day of the last export taken from it, the hosted ` +
+    `deployment was serving build ${recording.revision}, live since ` +
+    `${dayLabel(recording.liveSince)}. The product has moved on since.`
   );
 }
 

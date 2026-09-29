@@ -61,7 +61,7 @@ Who receives what. On the hosted demo, the sign-in email goes to Clerk, the page
 
 Three ways to run it, and the two local ways are real mode: Day0 reads the documentation you link and acts on the systems it names, through approval cards. They differ in one thing only, where the model runs.
 
-- **Hosted demo** - nothing to install. Sign in at [day0-olive.vercel.app](https://day0-olive.vercel.app) for the mock workspace, or open [/demo](https://day0-olive.vercel.app/demo) for the walkthrough without sign-in.
+- **Hosted demo** - nothing to install. Sign in at [day0-olive.vercel.app](https://day0-olive.vercel.app) for the mock workspace, or open [/walkthrough](https://day0-olive.vercel.app/walkthrough) for the walkthrough without sign-in.
 - **Local, cloud model** - `./setup.sh --route featherless`: GLM 5.3 Flash through Featherless, with a Featherless key; `--route key` for OpenAI or any OpenAI-compatible key, `--route endpoint` for a server you already run. Your chat and relevant content are sent to the provider, which charges per token.
 - **Local, local model** - `./setup.sh --route local`: the bundled model (`qwen3:8b` tested) in Docker on this machine, nothing signed up for and nothing metered.
 
@@ -120,13 +120,13 @@ Elapsed times are counted from the moment the agent was deployed. The bed it ran
 
    *Both documentation sources synced before the agent existed. Captured locally on 3 September 2026.*
 
-2. **Deploy the agent and hold the Day-1 one-to-one.** Chat was the only mode available, since this deployment carries no ElevenLabs credentials. The agent opened the conversation itself and worked through the seven topics in order: why the hire was made, the role and its 30/60/90 days, who to talk to, what to read, which tools carry the work, what to pick up first, and what is still open. The manager answered in plain sentences. The conversation completed 4 min 34 s after deploy.
+2. **Deploy the agent and hold the Day-1 one-to-one.** Chat was the only mode available, since this deployment carries no ElevenLabs credentials. The agent opened the conversation itself and worked through the seven topics in order: why the hire was made, the role and its 30/60/90 days, who to talk to, what to read, which tools carry the work, what to pick up first, and what is still open. The manager answered in plain sentences. The conversation completed 4 min 34 s after deploy. Elapsed: 4 min 34 s.
 
    ![The Day-1 chat exchange, with the agent opening the 1:1 by asking why it was hired and what the team needs made easier](.github/images/full-run-02-day-one-chat.webp)
 
    *The opening exchange of the Day-1 one-to-one, in chat. Captured locally on 3 September 2026.*
 
-3. **Approve the charter it drafted.** From that conversation alone the agent wrote its own purpose, proposed function, 30/60/90-day outcomes, boundaries, collaborators and open questions. The manager read it and pressed Approve. Time to first approved charter: **5 min 8 s**.
+3. **Approve the charter it drafted.** From that conversation alone the agent wrote its own purpose, proposed function, 30/60/90-day outcomes, boundaries, collaborators and open questions. The manager read it and pressed Approve. Time to first approved charter: **5 min 8 s**. Elapsed: 5 min 8 s.
 
    ![The approved charter card, showing why this hire, the proposed RevOps coordinator function and the 30/60/90-day outcomes](.github/images/full-run-03-charter-approved.webp)
 
@@ -264,7 +264,7 @@ Whichever you pick, `pnpm check:setup` reads `.env.local` and reports each of th
 
 ## Hosted demo
 
-Nothing to install. Sign in at [`day0-olive.vercel.app`](https://day0-olive.vercel.app) to deploy an agent into the hosted mock office, which runs the product loop on synthetic content and reaches no system of yours; or open [`/demo`](https://day0-olive.vercel.app/demo) for the recorded walkthrough, which needs no sign-in at all. [Live demo](#live-demo) above says what the deployment runs and links both recordings.
+Nothing to install. Sign in at [`day0-olive.vercel.app`](https://day0-olive.vercel.app) to deploy an agent into the hosted mock office, which runs the product loop on synthetic content and reaches no system of yours; or open [`/walkthrough`](https://day0-olive.vercel.app/walkthrough) for the recorded walkthrough, which needs no sign-in at all. [Live demo](#live-demo) above says what the deployment runs and links both recordings.
 
 ## Local, cloud model
 
@@ -810,6 +810,8 @@ It resolves values the way the running app does, which matters more than it soun
 | Route | File | Purpose |
 |---|---|---|
 | `/` | `app/page.tsx` | Landing (signed-out) + deploy/list/reset dashboard (signed-in) |
+| `/walkthrough` | `app/walkthrough/page.tsx` | The recorded run, step by step, public and static; `/demo` redirects here permanently |
+| `/setup` | `app/setup/page.tsx` | The set-up guide: the three ways to run it and the commands, public and static |
 | `/documentation` | `app/documentation/page.tsx` | Owner-level documentation locations: link, sync, rotate credentials, revoke and unlink; linking is local real mode only |
 | `/agent/[agentId]` | `app/agent/[agentId]/page.tsx` | Agent dashboard - charter, mode picker, work queue, skills, supervision and mock/real work surfaces |
 | `/sign-in/[[...sign-in]]`, `/sign-up/[[...sign-up]]` | Clerk catch-all routes | Sign-in / sign-up |
@@ -1166,7 +1168,7 @@ Day0 从更早的一步开始。它在空白状态下部署，之后形成的一
 
 三种运行方式，其中两种本地方式都是 real mode：Day0 读取你链接的文档，并通过审批卡片操作文档中记录的系统。两者只有一处不同：模型在哪里运行。
 
-- **托管演示**：无需安装任何东西。在 [day0-olive.vercel.app](https://day0-olive.vercel.app) 登录即可使用 mock workspace，或打开 [/demo](https://day0-olive.vercel.app/demo) 观看无需登录的演示录像。
+- **托管演示**：无需安装任何东西。在 [day0-olive.vercel.app](https://day0-olive.vercel.app) 登录即可使用 mock workspace，或打开 [/walkthrough](https://day0-olive.vercel.app/walkthrough) 观看无需登录的演示录像。
 - **本地运行，云端模型**：`./setup.sh --route featherless`，通过 Featherless 使用 GLM 5.3 Flash，需要一个 Featherless key；`--route key` 使用 OpenAI 或任意 OpenAI-compatible key，`--route endpoint` 使用你已经在运行的服务器。你的聊天内容及相关内容会发送给该提供商，并按 token 计费。
 - **本地运行，本地模型**：`./setup.sh --route local`，在本机 Docker 中运行内置模型（已测试 `qwen3:8b`），不注册任何账户，也不产生任何费用。
 
@@ -1348,7 +1350,7 @@ Agent 核心不绑定具体模型。`OPENAI_BASE_URL` 留空时，共享模型�
 
 ### 托管演示
 
-无需安装任何东西。在 [`day0-olive.vercel.app`](https://day0-olive.vercel.app) 登录，把一个 Agent 部署进托管的 mock office：它在合成内容上运行完整产品流程，不会触及你的任何系统；或打开 [`/demo`](https://day0-olive.vercel.app/demo) 观看演示录像，完全无需登录。上文[在线演示](#在线演示)说明该部署运行的模型，并链接两段录像。
+无需安装任何东西。在 [`day0-olive.vercel.app`](https://day0-olive.vercel.app) 登录，把一个 Agent 部署进托管的 mock office：它在合成内容上运行完整产品流程，不会触及你的任何系统；或打开 [`/walkthrough`](https://day0-olive.vercel.app/walkthrough) 观看演示录像，完全无需登录。上文[在线演示](#在线演示)说明该部署运行的模型，并链接两段录像。
 
 ### 本地运行，云端模型
 

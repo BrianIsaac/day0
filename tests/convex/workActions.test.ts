@@ -2,10 +2,12 @@
 
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { randomBytes } from 'node:crypto';
 import { serveSpanModel } from '../fixtures/redaction-double';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
+import { sealForOwner } from '../../src/lib/credential-crypto';
 import {
   blockedPlanReason,
   browserTransportRefusal,
@@ -166,6 +168,8 @@ const recorded = vi.hoisted(() => ({
   failMcpAfterRequest: false,
   failedMcpTool: undefined as string | undefined,
   issueRecordText: undefined as string | undefined,
+  /** Thrown by `get_issue` while set, as a transport that fails mid-read would. */
+  issueReadError: undefined as string | undefined,
   /** The state each ticket's last `save_issue` set, as the tracker would show it after. */
   issueStates: new Map<string, string>(),
   afterCredentialRead: undefined as (() => Promise<void>) | undefined,
@@ -706,6 +710,9 @@ vi.mock('../../src/surfaces/mcp', async (importOriginal) => {
                           ],
                         };
                       }
+                      if (tool === 'get_issue' && recorded.issueReadError !== undefined) {
+                        throw new Error(recorded.issueReadError);
+                      }
                       if (tool === 'get_issue' && recorded.issueRecordText !== undefined) {
                         return { content: [{ type: 'text', text: recorded.issueRecordText }] };
                       }
@@ -808,6 +815,7 @@ afterEach((): void => {
   recorded.failMcpAfterRequest = false;
   recorded.failedMcpTool = undefined;
   recorded.issueRecordText = undefined;
+  recorded.issueReadError = undefined;
   recorded.issueStates.clear();
   recorded.afterCredentialRead = undefined;
   recorded.afterToolList = undefined;
@@ -7969,6 +7977,40 @@ describe('the re-read before the first write on a ticket (Q11)', (): void => {
         reason: expect.stringContaining('changed hands'),
       }),
     ]);
+  });
+
+  it("removes the owner's stored values from a failed re-read before it is cut to length (m3)", async (): Promise<void> => {
+    useSurfaceMode('real');
+    const key = randomBytes(32).toString('base64');
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', key);
+    try {
+      const harness = convexTest(contractSchema(), allConvexModules());
+      const workItemId = await atFirstWrite(harness);
+      // A password the page assigned has no token shape, so only the owner's exact values catch it.
+      const value = 'orchard-lantern-4417-quill';
+      await harness.run(async (ctx): Promise<void> => {
+        await ctx.db.insert('credentials', {
+          userId: 'owner',
+          kind: 'value',
+          label: 'linear service token',
+          source: 'entered',
+          createdAt: 1,
+          ...sealForOwner(value, { current: key }, 'owner'),
+        });
+      });
+      // The value starts nine characters before the reason's 300-character cut, so a scrub that
+      // runs only after the cut meets a fragment it cannot recognise.
+      recorded.issueReadError = `upstream refused the read: ${'x'.repeat(263)} ${value} was rejected`;
+
+      await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+      const stopped = await readItem(harness, workItemId);
+      expect(stopped.state).toBe('failed');
+      expect(stopped.skipReason).toContain('withheld before the first write');
+      expect(JSON.stringify(stopped)).not.toContain(value.slice(0, 8));
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it('withholds the apply of a row retried after a refused listing withdrew it (review B1)', async (): Promise<void> => {

@@ -15,6 +15,7 @@ import { internal } from './_generated/api';
 import { assertOwnsAgent, assertOwnsWorkItem, getCaller, getCallerOrThrow } from './ownership';
 import { isEvaluationAgent } from './metrics';
 import {
+  oneToOneWaitsOnManager,
   skillWaitsOnManager,
   stoppedRowNeedsManager,
   stoppedRowOffersMove,
@@ -6750,7 +6751,7 @@ const NEEDS_YOU_STATE_READ_LIMIT = 100;
  */
 const NEEDS_YOU_STOPPED_READ_LIMIT = 25;
 
-/** Bound on an employee's surfaces read for the ones proposed to the manager. */
+/** Bound on an employee's surfaces read, newest first, for the ones proposed to the manager. */
 const NEEDS_YOU_SURFACE_READ_LIMIT = 100;
 
 /** Bound on the questions read for one plan. */
@@ -6782,6 +6783,8 @@ const needsYouBaseFields = {
 
 const needsYouEntryValidator = v.union(
   v.object({ kind: v.literal('charter'), ...needsYouBaseFields }),
+  /** A deployed employee whose Day-1 one-to-one the manager has not begun. */
+  v.object({ kind: v.literal('one-to-one'), ...needsYouBaseFields }),
   v.object({
     kind: v.literal('plan'),
     ...needsYouBaseFields,
@@ -6950,7 +6953,8 @@ interface WaitingRows {
  * held action set the manager already decided is not listed, a skill several
  * items wait on is one entry, and a row parked until the charter is approved
  * is covered by the charter's entry. A system the employee proposed is listed
- * too, since only the manager approves it.
+ * too, since only the manager approves it, and so is a one-to-one not yet
+ * begun (`needsYouOfEmployee`), which is not a row.
  *
  * @param ctx - Query context.
  * @param agentId - The employee.
@@ -6982,9 +6986,11 @@ async function waitingRowsOf(
       rowsIn('deferred'),
       rowsIn('needs-skill'),
       rowsIn('failed', NEEDS_YOU_STOPPED_READ_LIMIT),
+      // Newest first: a proposed system is a recent row, and past the bound the old ones go.
       ctx.db
         .query('surfaces')
         .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+        .order('desc')
         .take(NEEDS_YOU_SURFACE_READ_LIMIT),
     ]);
   const skillIds = [...new Set(skillRows.flatMap((row) => row.proposedSkillId ?? []))];
@@ -7013,6 +7019,22 @@ async function waitingRowsOf(
 }
 
 /**
+ * When an employee's one-to-one began to wait on the manager: its deploy, or a charter sent back
+ * since, which returns an employee with no approved charter to `deployed`. A row with neither
+ * event (seeded or imported) is dated by its insert.
+ *
+ * @param ctx - Query context.
+ * @param agent - An employee whose one-to-one waits.
+ */
+async function oneToOneWaitingSince(ctx: QueryCtx, agent: Doc<'agents'>): Promise<number> {
+  const [deployed, sentBack] = await Promise.all([
+    eventsOfType(ctx, agent._id, 'agent.deployed').order('desc').first(),
+    eventsOfType(ctx, agent._id, 'charter.request_changes').order('desc').first(),
+  ]);
+  return Math.max(deployed?._creationTime ?? agent._creationTime, sentBack?._creationTime ?? 0);
+}
+
+/**
  * Everything one employee waits on the manager for, each entry dated.
  *
  * @param ctx - Query context.
@@ -7025,35 +7047,43 @@ async function needsYouOfEmployee(
   now: number,
 ): Promise<NeedsYouEntry[]> {
   const waiting = await waitingRowsOf(ctx, agent._id, now);
-  const [questions, planEntered, heldEntered, parkedEntered, stoppedEntered, surfaceEntered] =
-    await Promise.all([
-      Promise.all(
-        waiting.plans.map(
-          async (row) =>
-            (
-              await ctx.db
-                .query('managerQuestions')
-                .withIndex('by_work_item', (q) => q.eq('workItemId', row._id))
-                .take(NEEDS_YOU_QUESTION_READ_LIMIT)
-            ).filter((question) => question.answer === undefined).length,
-        ),
+  const [
+    oneToOneSince,
+    questions,
+    planEntered,
+    heldEntered,
+    parkedEntered,
+    stoppedEntered,
+    surfaceEntered,
+  ] = await Promise.all([
+    oneToOneWaitsOnManager(agent) ? oneToOneWaitingSince(ctx, agent) : null,
+    Promise.all(
+      waiting.plans.map(
+        async (row) =>
+          (
+            await ctx.db
+              .query('managerQuestions')
+              .withIndex('by_work_item', (q) => q.eq('workItemId', row._id))
+              .take(NEEDS_YOU_QUESTION_READ_LIMIT)
+          ).filter((question) => question.answer === undefined).length,
       ),
-      enteredAtByRow(
-        ctx,
-        agent._id,
-        ['work.plan-drafted'],
-        waiting.plans.filter((row) => row.planPendingAt === undefined),
-      ),
-      enteredAtByRow(ctx, agent._id, ['work.actions-pending'], waiting.held),
-      enteredAtByRow(
-        ctx,
-        agent._id,
-        ['work.evaluated', 'work.evaluation-parked'],
-        waiting.parked.map(({ row }) => row),
-      ),
-      enteredAtByRow(ctx, agent._id, ['work.failed', 'work.actions-interrupted'], waiting.stopped),
-      enteredAtByRow(ctx, agent._id, ['surface.proposed'], waiting.proposed),
-    ]);
+    ),
+    enteredAtByRow(
+      ctx,
+      agent._id,
+      ['work.plan-drafted'],
+      waiting.plans.filter((row) => row.planPendingAt === undefined),
+    ),
+    enteredAtByRow(ctx, agent._id, ['work.actions-pending'], waiting.held),
+    enteredAtByRow(
+      ctx,
+      agent._id,
+      ['work.evaluated', 'work.evaluation-parked'],
+      waiting.parked.map(({ row }) => row),
+    ),
+    enteredAtByRow(ctx, agent._id, ['work.failed', 'work.actions-interrupted'], waiting.stopped),
+    enteredAtByRow(ctx, agent._id, ['surface.proposed'], waiting.proposed),
+  ]);
 
   const zone = agentZone(agent);
   const base = (key: string, subject: string, entered: EnteredAt): NeedsYouBase => ({
@@ -7070,6 +7100,14 @@ async function needsYouOfEmployee(
     dates.get(row._id) ?? exact(row._creationTime);
 
   return [
+    ...(oneToOneSince !== null
+      ? [
+          {
+            kind: 'one-to-one' as const,
+            ...base(`one-to-one:${agent._id}`, 'one-to-one', exact(oneToOneSince)),
+          },
+        ]
+      : []),
     ...(waiting.charter
       ? [
           {

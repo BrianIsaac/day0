@@ -12,6 +12,8 @@ const PORT = 3100;
 
 export default defineConfig({
   testDir: 'tests/browser',
+  // The specs only: `*.test.ts` beside them are the helpers' own tests, which Vitest runs.
+  testMatch: '**/*.spec.ts',
   outputDir: '.next/playwright/results',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
@@ -21,9 +23,17 @@ export default defineConfig({
     baseURL: `http://localhost:${PORT}`,
     trace: 'retain-on-failure',
   },
+  // The scroll specs set their own viewports (1440, 390, 375x667, 667x375 as
+  // each names them), so they run under one project; the page specs run under
+  // both. Under both, the job ran every scroll pass twice and outlived its own
+  // timeout on the runner.
   projects: [
     { name: 'desktop', use: { browserName: 'chromium', viewport: { width: 1440, height: 900 } } },
-    { name: 'phone', use: { browserName: 'chromium', viewport: { width: 390, height: 844 } } },
+    {
+      name: 'phone',
+      testIgnore: /-scroll\.spec\.ts$/,
+      use: { browserName: 'chromium', viewport: { width: 390, height: 844 } },
+    },
   ],
   webServer: {
     command: `pnpm exec next start -p ${PORT}`,

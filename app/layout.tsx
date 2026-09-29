@@ -3,6 +3,7 @@ import Link from 'next/link';
 import './globals.css';
 import { DocumentationLink } from './DocumentationLink';
 import { HeaderAccount } from './HeaderAccount';
+import { MainTransition } from './MainTransition';
 import { BrandMark } from './marketing/BrandMark';
 import { HERO } from './marketing/copy';
 import { SiteNav } from './marketing/SiteNav';
@@ -44,7 +45,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           Skip to content
         </a>
         <Providers>
-          <header className="sticky top-0 z-10 border-b border-[var(--color-border)] bg-[var(--color-bg)]/80 backdrop-blur-sm">
+          {/* Named so a page transition leaves it in place above the pages that swap under it. */}
+          <header
+            style={{ viewTransitionName: 'site-header' }}
+            className="sticky top-0 z-10 border-b border-[var(--color-border)] bg-[var(--color-bg)]/80 backdrop-blur-sm"
+          >
             <div className="mx-auto flex min-h-14 max-w-7xl items-center justify-between gap-4 px-6">
               <Link
                 href="/"
@@ -61,9 +66,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </div>
             </div>
           </header>
-          <main id="main" tabIndex={-1} className="outline-none">
-            {children}
-          </main>
+          <MainTransition>{children}</MainTransition>
         </Providers>
       </body>
     </html>

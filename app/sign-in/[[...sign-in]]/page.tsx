@@ -24,14 +24,15 @@ export default function SignInPage() {
   if (DEV_NO_AUTH) redirect('/');
 
   return (
-    <main className="mx-auto grid w-full max-w-7xl grid-cols-1 items-start gap-10 px-6 py-10 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] md:gap-12 md:py-16">
+    <div className="mx-auto grid w-full max-w-7xl grid-cols-1 items-start gap-10 px-6 py-10 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] md:gap-12 md:py-16">
       <div className="flex flex-col gap-5">
         <h1 className="text-[1.75rem] font-semibold leading-tight tracking-[-0.02em] text-balance">
           Sign in to deploy an employee
         </h1>
         <p className="max-w-[60ch] leading-relaxed text-[var(--color-muted)]">
+          {/* That none of it reaches a real system is the notice's first sentence, below. */}
           The hosted office is a seeded, synthetic workplace: a Slack, a tracker, a wiki, a ticket
-          queue and one social mention. Nothing your employee does reaches a real system.
+          queue and one social mention.
         </p>
         <ol className="grid gap-1.5 text-[15px]">
           {FIRST_STEPS.map((step, index) => (
@@ -61,6 +62,6 @@ export default function SignInPage() {
           }}
         />
       </div>
-    </main>
+    </div>
   );
 }

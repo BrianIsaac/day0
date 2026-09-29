@@ -40,6 +40,16 @@ describe('the sign-in page', () => {
     );
   });
 
+  it('says that nothing reaches a real system once, in the notice, not again in the lede', async () => {
+    const html = text(await render());
+    expect(html.match(/reaches a real system/g)).toHaveLength(1);
+    expect(html).toContain(HOSTED_DEMO_NOTICE.paragraphs[0]);
+  });
+
+  it('leaves the one main landmark to the layout', async () => {
+    expect(await render()).not.toMatch(/<main[\s>]/);
+  });
+
   it('promises a decision only on the writes the employee holds, and a strike before approval', async () => {
     const html = await render();
     expect(html).toContain(

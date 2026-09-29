@@ -40,7 +40,8 @@ describe('SupervisionFigures', (): void => {
     expect(text).toContain('Decision wait median / p90 2 min 7 s / 2 min 10 s |');
     expect(text).toContain('Automatic changes 12 + 12 reads, 1 manager message |');
     expect(text).toContain('Held, then approved 11 |');
-    expect(text).toContain('Held now 1 |');
+    expect(text).toContain('| Held 1 |');
+    expect(text).not.toContain('Held now');
     expect(text).toContain('Refused 1 |');
     expect(text).toContain('Audit trail 100% (41/41) |');
   });

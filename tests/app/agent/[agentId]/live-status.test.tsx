@@ -44,6 +44,12 @@ describe('the words of a refusal', (): void => {
     expect(refusalText('boom', 'The zone was not changed.')).toBe('The zone was not changed.');
   });
 
+  it('says the fallback for a ConvexError whose data is not a sentence (m2)', (): void => {
+    expect(refusalText(new ConvexError({ code: 'stale' }), 'The zone was not changed.')).toBe(
+      'The zone was not changed.',
+    );
+  });
+
   it("says a plain error's sentence without the transport's envelope (wave 3.5 m10)", (): void => {
     const wrapped = new Error(
       '[CONVEX M(surfaces:setAccessDays)] [Request ID: 7c1e] Server Error\nUncaught Error: Surface not found.\n    at handler (../convex/surfaces.ts:2171:11)\n  Called by client',

@@ -107,7 +107,7 @@ import {
   EVALUATION_ATTEMPTS_SPENT,
   MAX_EVALUATION_ATTEMPTS,
 } from '../../../src/work/queue-order';
-import { LiveStatus, returnFocus, useChange, type ChangeOutcome } from './live-status';
+import { LiveStatus, refusalText, returnFocus, useChange, type ChangeOutcome } from './live-status';
 import { agentZone, isTimeZone } from '../../../src/lib/zone';
 import { draftedWithoutLine, undeliveredDecisionReason } from '../../../src/work/manager-channel';
 import { managerFeedbackLabel, type ManagerFeedback } from '../../../src/work/manager-feedback';
@@ -125,8 +125,6 @@ import {
 import type { AgentMetrics } from '@/metrics/types';
 import { formatAuditTrail, formatMetricDuration } from '../../metric-format';
 import { PILOT_FIGURES, readsAndMessages } from '../../CompanySupervision';
-import { errorMessage } from '@/lib/errors';
-import { plainErrorMessage } from '@/lib/plain-error';
 
 interface Props {
   agentId: Id<'agents'>;
@@ -338,9 +336,7 @@ export function AgentDashboard({ agentId }: Props) {
               (row) => row.class === 'chat' && isManagerLookupFailure(row.reason),
             )?.reason
           }
-          managerChannel={surfaces.some(
-            (surface) => surface.class === 'chat' && !!surface.managerDmChannelId,
-          )}
+          managerChannel={connectedManagerChannel(surfaces, now) !== undefined}
         />
 
         <LiveStatus outcome={pageOutcome} />
@@ -1989,6 +1985,27 @@ function BoundaryList({ label, items }: { label: string; items: string[] }) {
   );
 }
 
+/** What an authoring attempt is filed as when neither its result nor its error carries words. */
+const AUTHORING_UNFINISHED = 'authoring did not finish';
+
+/**
+ * The chat surface the employee can reach its manager on now: a DM channel and the manager's
+ * user resolved, and the connection live by the six-hour rule. The Manager DMs setting and the
+ * work card's "ask again" both read this, so neither offers a channel that cannot deliver.
+ */
+export function connectedManagerChannel(
+  surfaces: readonly SurfaceRecord[],
+  now: number,
+): SurfaceRecord | undefined {
+  return surfaces.find(
+    (surface) =>
+      surface.class === 'chat' &&
+      !!surface.managerDmChannelId &&
+      !!surface.managerUserId &&
+      verdictFor(surface, now) === 'connected',
+  );
+}
+
 /** The skills the agent proposed and the manager has not decided, each with Approve and Reject. */
 export function ProposedSkillsPanel({
   skills,
@@ -2026,8 +2043,8 @@ export function ProposedSkillsPanel({
         // Discarded because both outcomes are handled here and filed as the
         // attempt the Skills card shows in its live region.
         void author({ skillId: skill._id }).then(
-          (result) => file(result.ok ? undefined : (result.reason ?? 'authoring did not finish')),
-          (err: unknown) => file(plainErrorMessage(errorMessage(err))),
+          (result) => file(result.ok ? undefined : (result.reason ?? AUTHORING_UNFINISHED)),
+          (err: unknown) => file(refusalText(err, AUTHORING_UNFINISHED)),
         );
       },
     });
@@ -2195,7 +2212,7 @@ export function RegisteredSkillsPanel({
             },
       );
     } catch (err) {
-      onAuthoringAttempt({ skillId, name, reason: plainErrorMessage(errorMessage(err)) });
+      onAuthoringAttempt({ skillId, name, reason: refusalText(err, AUTHORING_UNFINISHED) });
     } finally {
       setRetrying(null);
     }
@@ -4477,13 +4494,7 @@ export function WorkItemCard({
     !item.decision &&
     (item.state === 'plan-pending' ||
       (item.state === 'actions-pending' && item.approvedIndexes === undefined))
-      ? surfaces.find(
-          (surface) =>
-            surface.class === 'chat' &&
-            !!surface.managerDmChannelId &&
-            !!surface.managerUserId &&
-            verdictFor(surface, now) === 'connected',
-        )
+      ? connectedManagerChannel(surfaces, now)
       : undefined;
   // A failed item whose run landed nothing and left nothing to decide is
   // shown as stopped: Retry stands, and the badge says no harm was done.

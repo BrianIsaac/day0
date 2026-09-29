@@ -6731,6 +6731,82 @@ describe('work.needsYou', (): void => {
     expect(entry).toMatchObject({ kind: 'held', waitingAtLeast: true, waitingSince: others[0] });
   });
 
+  it('lists a deployed employee’s Day-1 one-to-one as the manager’s to hold, dated from its deploy (D4 (b))', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const waiting = await employee(harness, 'Aiko', { state: 'deployed' });
+    const deployedAt = await entered(harness, waiting, 'agent.deployed', {});
+    await employee(harness, 'Mira', { state: 'day-one-in-progress' });
+    await employee(harness, 'Ren', { state: 'active' });
+
+    const inbox = await harness.withIdentity(OWNER).query(api.work.needsYou, {});
+
+    expect(inbox.entries).toEqual([
+      expect.objectContaining({
+        kind: 'one-to-one',
+        key: `one-to-one:${waiting}`,
+        agentId: waiting,
+        employeeName: 'Aiko',
+        subject: 'one-to-one',
+        waitingSince: deployedAt,
+        waitingAtLeast: false,
+      }),
+    ]);
+    expect(inbox.total).toBe(1);
+    expect(inbox.waitingByEmployee.find((row) => row.agentId === waiting)?.waiting).toBe(1);
+
+    await harness.run(async (ctx) => await ctx.db.patch(waiting, { state: 'day-one-in-progress' }));
+    expect((await harness.withIdentity(OWNER).query(api.work.needsYou, {})).total).toBe(0);
+  });
+
+  it('dates the one-to-one from a charter sent back, when that put the employee back to deployed', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const aiko = await employee(harness, 'Aiko', { state: 'deployed' });
+    await entered(harness, aiko, 'agent.deployed', {});
+    const sentBackAt = await entered(harness, aiko, 'charter.request_changes', {
+      charterId: 'charter-1',
+      notes: '',
+    });
+
+    const [entry] = (await harness.withIdentity(OWNER).query(api.work.needsYou, {})).entries;
+
+    expect(entry).toMatchObject({ kind: 'one-to-one', waitingSince: sentBackAt });
+  });
+
+  it('keeps the newest proposed system when an employee holds more systems than the read takes (m7)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const mira = await employee(harness, 'Mira');
+    await harness.run(async (ctx) => {
+      for (let index = 0; index < 100; index += 1) {
+        await ctx.db.insert('surfaces', {
+          agentId: mira,
+          slug: `connected-${index}`,
+          displayName: `Connected ${index}`,
+          class: 'dashboard',
+          verdict: 'connected',
+          credentialLanded: true,
+          whereFound: [],
+          createdAt: 1,
+        });
+      }
+      await ctx.db.insert('surfaces', {
+        agentId: mira,
+        slug: 'looker',
+        displayName: 'Looker',
+        class: 'dashboard',
+        verdict: 'proposed',
+        credentialLanded: false,
+        whereFound: [],
+        createdAt: 2,
+      });
+    });
+
+    const inbox = await harness.withIdentity(OWNER).query(api.work.needsYou, {});
+
+    expect(inbox.entries.map((entry) => [entry.kind, entry.subject])).toEqual([
+      ['surface', 'Looker'],
+    ]);
+  });
+
   it('returns the fifty longest waits and says how many there are', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const mira = await employee(harness, 'Mira');

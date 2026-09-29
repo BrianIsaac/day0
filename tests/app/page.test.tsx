@@ -1,5 +1,8 @@
+/** @vitest-environment jsdom */
+
+import { act, type ReactNode } from 'react';
+import { createRoot } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
-import type { ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { getFunctionName, type FunctionReference } from 'convex/server';
 
@@ -13,11 +16,21 @@ const authState = vi.hoisted(() => ({ loaded: true, signedIn: false, rosterAvail
 vi.mock('@clerk/nextjs', () => ({
   Show: ({ when, children }: { when: string; children: ReactNode }): ReactNode =>
     authState.loaded && when === 'signed-out' ? children : null,
-  useUser: () => ({
-    user: authState.signedIn
-      ? { primaryEmailAddress: { emailAddress: 'boss@example.invalid' }, firstName: 'Boss' }
-      : undefined,
-  }),
+  // Clerk's own shape: no user and `isLoaded: false` until its script has answered.
+  useUser: () =>
+    !authState.loaded
+      ? { isLoaded: false, isSignedIn: undefined, user: undefined }
+      : authState.signedIn
+        ? {
+            isLoaded: true,
+            isSignedIn: true,
+            user: {
+              primaryEmailAddress: { emailAddress: 'boss@example.invalid' },
+              firstName: 'Boss',
+            },
+          }
+        : { isLoaded: true, isSignedIn: false, user: null },
+  useClerk: () => ({ status: authState.loaded ? 'ready' : 'loading' }),
 }));
 
 /** The signed-in owner's company as `agents.rosterForUser` returns it, newest first. */
@@ -114,8 +127,8 @@ const oneEmployeeMetrics = {
   },
 };
 
-vi.mock('convex/react', () => ({
-  useQuery: (reference: FunctionReference<'query'>) => {
+vi.mock('convex/react', () => {
+  const answer = (reference: FunctionReference<'query'>): unknown => {
     if (!authState.signedIn) return undefined;
     const name = getFunctionName(reference);
     if (name === 'agents:listForUser') {
@@ -164,9 +177,15 @@ vi.mock('convex/react', () => ({
     if (name === 'work:needsYou') return { entries: [], total: 0, waitingByEmployee: [] };
     if (name === 'config:surfaceMode') return { mode: 'mock', label: 'mock' };
     return 0;
-  },
-  useMutation: (): (() => Promise<void>) => async (): Promise<void> => undefined,
-}));
+  };
+  return {
+    useQuery: answer,
+    // The home reads its inbox through `useQueries`, which answers a failed read as a value.
+    useQueries: (queries: Record<string, { query: FunctionReference<'query'> }>) =>
+      Object.fromEntries(Object.entries(queries).map(([key, { query }]) => [key, answer(query)])),
+    useMutation: (): (() => Promise<void>) => async (): Promise<void> => undefined,
+  };
+});
 
 vi.mock('next/navigation', () => ({
   useRouter: (): { push: () => void } => ({ push: (): void => undefined }),
@@ -175,12 +194,13 @@ vi.mock('next/navigation', () => ({
 import LandingPage from '../../app/page';
 
 describe('signed-out landing page', (): void => {
-  it('renders public entry links before the authentication script loads', () => {
+  it('serves a neutral shell before the authentication script loads, neither page nor dashboard', () => {
     authState.loaded = false;
     try {
       const pending = renderToStaticMarkup(<LandingPage />);
-      expect(pending).toContain('Try the demo');
-      expect(pending).toContain('Set up Day0');
+      expect(pending).not.toContain('Try the demo');
+      expect(pending).not.toContain('Your employees');
+      expect(pending).toMatch(/^<div class="[^"]*"><\/div>$/);
     } finally {
       authState.loaded = true;
     }
@@ -240,14 +260,10 @@ describe('signed-out landing page', (): void => {
     expect(primary).toContain('border-transparent');
   });
 
-  it('says what the hosted demo is on its own card, and links what it collects before sign-in', (): void => {
+  it('says what the hosted demo is on its own card, and that the sign-in page says what it collects', (): void => {
+    // The sign-in page carries the hosted demo notice (N6), so the card says so as drawn.
     expect(text).toContain(
-      'Sign in, name an employee, hold the one-to-one yourself. The office is seeded and synthetic; nothing you do reaches a real system.',
-    );
-    // The sign-in page carries no notice of its own, so the card must not promise one.
-    expect(text).not.toContain('the sign-in page says');
-    expect(html).toMatch(
-      /Before you sign in, read <a href="https:\/\/github\.com\/BrianIsaac\/day0#disclosures"[^>]*>what the hosted demo collects and who receives it<\/a>\./,
+      'Sign in, name an employee, hold the one-to-one yourself. The office is seeded and synthetic; nothing you do reaches a real system. Before you type anything, the sign-in page says what the hosted demo collects and who receives it.',
     );
   });
 
@@ -357,5 +373,27 @@ describe('signed-in landing', () => {
       authState.rosterAvailable = true;
     }
     expect(renderToStaticMarkup(<LandingPage />)).toContain('Try the demo');
+  });
+
+  it('keeps the dashboard when the session re-resolves mid-visit, never swapping in the hero', () => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    document.cookie = '__client_uat=1759100000; path=/';
+    const host = document.createElement('div');
+    const root = createRoot(host);
+    authState.signedIn = true;
+    try {
+      act(() => root.render(<LandingPage />));
+      expect(host.textContent).toContain('Your employees');
+      // Clerk refreshing an expiring session answers "not loaded" again for a moment.
+      authState.loaded = false;
+      act(() => root.render(<LandingPage />));
+      expect(host.textContent).toContain('Your employees');
+      expect(host.textContent).not.toContain('Try the demo');
+    } finally {
+      act(() => root.unmount());
+      authState.loaded = true;
+      authState.signedIn = false;
+      document.cookie = '__client_uat=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/';
+    }
   });
 });

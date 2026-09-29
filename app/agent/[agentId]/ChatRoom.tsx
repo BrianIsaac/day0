@@ -77,7 +77,7 @@ export function errorLine(err: Error): string {
   } catch {
     // Not JSON: the message is the sentence.
   }
-  return err.message || 'agent unavailable';
+  return err.message || 'employee unavailable';
 }
 
 /**

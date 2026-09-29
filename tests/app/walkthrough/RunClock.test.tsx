@@ -11,7 +11,7 @@ let container: HTMLDivElement;
 let root: Root;
 
 function render(seconds: number | null): void {
-  act((): void => root.render(<RunClock seconds={seconds} untimed="timed from step 4" />));
+  act((): void => root.render(<RunClock seconds={seconds} untimed="timed from step 2" />));
 }
 
 beforeEach((): void => {
@@ -31,7 +31,7 @@ afterEach((): void => {
 describe('RunClock', () => {
   it('says the step is untimed rather than showing an invented time', () => {
     render(null);
-    expect(container.textContent).toBe('timed from step 4');
+    expect(container.textContent).toBe('timed from step 2');
   });
 
   it('is hidden from assistive technology, which reads each step’s time in its copy', () => {

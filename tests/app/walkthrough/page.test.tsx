@@ -4,7 +4,11 @@ import { describe, expect, it } from 'vitest';
 import WalkthroughPage from '../../../app/walkthrough/page';
 import { WALKTHROUGH } from '../../../app/walkthrough/copy';
 import { HOSTED_DEMO_NOTICE } from '../../../src/demo/hosted-notice';
-import { RECORDED_RUN, walkthroughProvenanceLine } from '../../../src/demo/walkthrough';
+import {
+  RECORDED_RUN,
+  isHeaderStrip,
+  walkthroughProvenanceLine,
+} from '../../../src/demo/walkthrough';
 
 /**
  * Nothing is mocked here on purpose. `/walkthrough` is public, so it must render with no Convex
@@ -31,18 +35,39 @@ describe('what the walkthrough tells a visitor it is', () => {
       expect(text.indexOf(notice)).toBeGreaterThan(-1);
       expect(text.indexOf(notice)).toBeLessThan(firstStep);
     }
-    expect(WALKTHROUGH.clock(RECORDED_RUN)).toContain('from step 4 on');
+    expect(WALKTHROUGH.clock(RECORDED_RUN)).toContain('from step 2 on');
     expect(text).toContain(WALKTHROUGH.bed);
   });
 
-  it('offers no control that could be mistaken for an approval', () => {
+  it('offers no control that could be mistaken for an approval: links that open or move, no buttons (W D5 (b))', () => {
     expect(html).not.toContain('<button');
     expect(html).not.toContain('<form');
     expect(html).not.toContain('<input');
     expect(html).not.toContain('onclick');
-    // The README's prose says the manager "pressed Approve"; no link or control may say it.
-    const labels = [...html.matchAll(/<a [^>]*>(.*?)<\/a>/g)].map(([, label]) => label);
-    expect(labels.filter((label) => /approve/i.test(label!))).toEqual([]);
+    // The README's prose says the manager "pressed Approve"; no link may be named for it. A link's
+    // name is its aria-label, or else its text and its images' alt text.
+    const names = [...html.matchAll(/<a ([^>]*)>(.*?)<\/a>/g)].map(
+      ([, attributes, inner]) =>
+        /aria-label="([^"]*)"/.exec(attributes!)?.[1] ??
+        `${inner!.replace(/<[^>]+>/g, ' ')} ${[...inner!.matchAll(/alt="([^"]*)"/g)].map(([, alt]) => alt).join(' ')}`,
+    );
+    expect(names.length).toBeGreaterThan(0);
+    expect(names.filter((name) => /\bapprov/i.test(name))).toEqual([]);
+  });
+
+  it('links each header-strip capture to its full-size file, a plain link that opens the image', () => {
+    const strips = RECORDED_RUN.steps.filter((step) => isHeaderStrip(step.capture));
+    expect(strips.map((step) => step.number)).toEqual([4, 5, 11, 16]);
+    for (const step of strips) {
+      const link = new RegExp(`<a href="${step.capture.src}"[^>]*>`).exec(html)?.[0] ?? '';
+      expect(link, `step ${step.number}`).toContain(
+        `aria-label="${WALKTHROUGH.fullSize(step.number)}"`,
+      );
+      expect(link).not.toContain('target=');
+      // The frame clips what lies outside it, so the focus ring is drawn inside the link.
+      expect(link).toContain('focus-visible:outline-offset-[-3px]');
+    }
+    expect(html.match(/<a href="\/walkthrough\/full-run-[^"]*\.webp"/g)).toHaveLength(4);
   });
 
   it('lays the lede’s claims on the README’s own account of the run', () => {
@@ -67,10 +92,8 @@ describe('what the walkthrough tells a visitor it is', () => {
 });
 
 describe('the page as landmarks', () => {
-  it('holds everything it says in one main landmark', () => {
-    expect(html.match(/<main[ >]/g)).toHaveLength(1);
-    expect(html.indexOf('<main')).toBeLessThan(html.indexOf('<h1'));
-    expect(html.lastIndexOf('</main>')).toBeGreaterThan(html.indexOf(WALKTHROUGH.tryHeading));
+  it('leaves the one main landmark to the layout', () => {
+    expect(html).not.toMatch(/<main[\s>]/);
   });
 });
 
@@ -109,7 +132,7 @@ describe('the run', () => {
   it('reads as the first step without script: one ledger line and the clock caption', () => {
     const ledger = /<ol aria-label="The record so far"[^>]*>(.*?)<\/ol>/.exec(html)?.[1] ?? '';
     expect(ledger.match(/<li/g)).toHaveLength(1);
-    expect(text).toContain('timed from step 4');
+    expect(text).toContain('timed from step 2');
   });
 
   it('marks the pinned sequence for the tracker L built, starting at the first step', () => {

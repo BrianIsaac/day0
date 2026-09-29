@@ -18,10 +18,7 @@ import {
   TRAPS,
   WAY_NAMES,
 } from '../../../src/setup/quickstart';
-import {
-  HOSTED_DEMO_SNAPSHOT,
-  recordingProvenanceLine,
-} from '../../../src/demo/hosted-demo-snapshot';
+import { HOSTED_DEMO_SNAPSHOT, hostedBuildLine } from '../../../src/demo/hosted-demo-snapshot';
 
 /**
  * `/setup` is the page a signed-out visitor lands on from the landing page's
@@ -102,12 +99,10 @@ describe('the /setup guide', (): void => {
     }
   });
 
-  it('dates the export its parity claim refers to, says the run came before it and that the product has moved on (Q3)', (): void => {
+  it('dates the hosted build its parity claim refers to and says the product has moved on, naming no run it does not show (Q3, m12)', (): void => {
     expect(text).toContain('The product the hosted demo shows, running locally in real mode');
-    expect(text).toContain(recordingProvenanceLine(HOSTED_DEMO_SNAPSHOT.recording));
-    expect(text).toContain(
-      'Exported from the hosted deployment on 12 September 2026 (build 3ed8779, live since 13 August 2026); the run it shows took place before that and is told in offsets. The product has moved on since.',
-    );
+    expect(text).toContain(hostedBuildLine(HOSTED_DEMO_SNAPSHOT.recording));
+    expect(text).not.toContain('the run it shows');
   });
 
   it('says once, under the two local ways, that both are real mode, with the three verbs', (): void => {
@@ -228,6 +223,44 @@ describe('the /setup guide', (): void => {
   it('names no model a provider sells, as the landing page does not', (): void => {
     for (const name of ['GPT-5', 'gpt-5', 'Terra', 'GLM', 'Gemini', 'qwen']) {
       expect(text).not.toContain(name);
+    }
+  });
+
+  it('calls what the manager deploys an employee, in its text and its picture (N29, m23)', (): void => {
+    const described = `${text} ${[...html.matchAll(/alt="([^"]*)"/g)].map(([, alt]) => alt).join(' ')}`;
+    expect(described).toContain('the skills the employee writes');
+    expect(described).toContain('the employee opens the one-to-one itself');
+    expect(described).toContain('the employee opening the conversation');
+    for (const retired of ['skills the agent writes', 'the agent opens', 'the agent opening']) {
+      expect(described).not.toContain(retired);
+    }
+  });
+
+  it('lets a keyboard reach every block of commands that can scroll sideways', (): void => {
+    const blocks = [...html.matchAll(/<(pre|code)\b[^>]*overflow-x-auto[^>]*>/g)].map(
+      ([tag]) => tag,
+    );
+    expect(blocks.length).toBeGreaterThan(0);
+    for (const block of blocks) {
+      expect(block).toContain('tabindex="0"');
+      expect(block).toMatch(/aria-label="[^"]+"/);
+    }
+  });
+
+  it('gives the hosted way its two links at 44 px, the sign-in one in the manager’s word', (): void => {
+    for (const label of ['Sign in and deploy an employee', 'Open the walkthrough']) {
+      const link = new RegExp(`<a [^>]*>${label}</a>`).exec(html)?.[0] ?? '';
+      expect(link, label).toMatch(/\bmin-h-11\b/);
+    }
+    expect(text).not.toContain('deploy an agent');
+  });
+
+  it('gives every section link a 44 px target at every width (N14)', (): void => {
+    const links = [...html.matchAll(/<a [^>]*data-section-link=""[^>]*>/g)].map(([tag]) => tag);
+    expect(links.length).toBeGreaterThan(0);
+    for (const link of links) {
+      expect(link).toMatch(/\bmin-h-11\b/);
+      expect(link).not.toMatch(/\blg:min-h-0\b/);
     }
   });
 

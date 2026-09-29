@@ -34,8 +34,8 @@ let doubles: BrowserDoubles;
 let container: HTMLDivElement;
 let root: Root;
 
-function mount(reduce = false): void {
-  doubles = installBrowserDoubles(reduce);
+function mount(reduce = false, short = false): void {
+  doubles = installBrowserDoubles(reduce, short);
   vi.stubGlobal('innerHeight', 900);
   vi.spyOn(window, 'getComputedStyle').mockReturnValue({ top: '290px' } as CSSStyleDeclaration);
   layOut(0);
@@ -121,5 +121,36 @@ describe('the pinned sequence', () => {
     scrollTo(3);
     expect(frames().map((frame) => frame.dataset.seen)).toEqual(['edge', 'edge', 'edge', 'edge']);
     expect(frames()[3]?.hasAttribute('data-on')).toBe(true);
+  });
+});
+
+describe('the sequence on a short screen (M8)', () => {
+  it('lays each frame inline above its own copy, with nothing pinned', () => {
+    mount(false, true);
+    expect(container.querySelector('[data-pin-side]')).toBeNull();
+    expect(container.querySelector('[data-pin]')?.getAttribute('data-pin')).toBe('inline');
+    const steps = Array.from(container.querySelectorAll<HTMLElement>('li[data-step]'));
+    expect(steps.map((step) => step.firstElementChild?.getAttribute('data-frame'))).toEqual([
+      '1',
+      '2',
+      '3',
+      '4',
+    ]);
+    expect(steps.map((step) => step.querySelector('h3')?.textContent)).toEqual([
+      'Step 1',
+      'Step 2',
+      'Step 3',
+      'Step 4',
+    ]);
+    expect(frames().every((frame) => !frame.hasAttribute('aria-hidden'))).toBe(true);
+  });
+
+  it('plays an inline frame’s sequence the first time its step scrolls into view', () => {
+    mount(false, true);
+    const third = container.querySelector('li[data-step="3"]') as Element;
+    act((): void => doubles.report(false, third));
+    expect(frames()[2]?.dataset.seen).toBe('pending');
+    act((): void => doubles.report(true, third));
+    expect(frames()[2]?.dataset.seen).toBe('seen');
   });
 });

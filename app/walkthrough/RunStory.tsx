@@ -3,7 +3,7 @@
 import Image from 'next/image';
 import { useRef } from 'react';
 import type { RecordedRun, RunStep } from '@/demo/walkthrough';
-import { elapsedLabel } from '@/demo/walkthrough';
+import { elapsedLabel, isHeaderStrip } from '@/demo/walkthrough';
 import { useInReadingBand } from '../motion';
 import { RunClock } from './RunClock';
 import { WALKTHROUGH } from './copy';
@@ -31,14 +31,8 @@ function DeviceFrame({ run, active }: { run: RecordedRun; active: number }) {
         data-pin-stack=""
         className="relative aspect-[16/9] bg-[var(--color-bg)] md:aspect-[16/10]"
       >
-        {run.steps.map((shot, index) => (
-          <div
-            key={shot.number}
-            data-frame={shot.number}
-            data-on={index === active ? '' : undefined}
-            aria-hidden={index !== active}
-            className="absolute inset-0"
-          >
+        {run.steps.map((shot, index) => {
+          const capture = (
             <Image
               src={shot.capture.src}
               width={shot.capture.width}
@@ -48,8 +42,31 @@ function DeviceFrame({ run, active }: { run: RecordedRun; active: number }) {
               loading={index === 0 ? 'eager' : 'lazy'}
               className="h-full w-full object-contain object-top"
             />
-          </div>
-        ))}
+          );
+          return (
+            <div
+              key={shot.number}
+              data-frame={shot.number}
+              data-on={index === active ? '' : undefined}
+              aria-hidden={index !== active}
+              // A hidden frame takes no focus and no click, so the shown one's link is the one hit.
+              inert={index !== active}
+              className="absolute inset-0"
+            >
+              {isHeaderStrip(shot.capture) ? (
+                <a
+                  href={shot.capture.src}
+                  aria-label={WALKTHROUGH.fullSize(shot.number)}
+                  className="block h-full cursor-zoom-in focus-visible:outline-offset-[-3px]"
+                >
+                  {capture}
+                </a>
+              ) : (
+                capture
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -64,6 +81,7 @@ function Ledger({ steps, active }: { steps: readonly RunStep[]; active: number }
   return (
     <ol
       aria-label={WALKTHROUGH.ledgerLabel}
+      data-ledger=""
       className="mt-3 flex h-[72px] flex-col justify-end gap-1.5 overflow-hidden [mask-image:linear-gradient(to_bottom,transparent,black_28px)] md:h-[150px]"
     >
       {steps.slice(0, active + 1).map((step, index) => (
@@ -126,7 +144,8 @@ function StepCopy({ step, total }: { step: RunStep; total: number }) {
  * the progress line and the ledger stay pinned beside them (above them on a phone). The step
  * being read comes from `useInReadingBand`, L's geometry tracker, so the frame, the clock and
  * the ledger are always the copy's. Without script the first capture shows and every step's
- * copy reads in full.
+ * copy reads in full. On a short screen the frame keeps its pin with its capture capped and
+ * scaled inside it, and the ledger shows its last two lines (the wave 5 review's D3 (a)).
  */
 export function RunStory({ run }: { run: RecordedRun }) {
   const root = useRef<HTMLDivElement>(null);
@@ -136,6 +155,7 @@ export function RunStory({ run }: { run: RecordedRun }) {
       ref={root}
       data-pin=""
       data-active={active + 1}
+      data-run=""
       className="grid grid-cols-[minmax(0,1fr)] items-start md:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)] md:gap-14"
     >
       <div data-pin-side="">

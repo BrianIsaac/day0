@@ -77,7 +77,7 @@ describe('MonthCard', (): void => {
       />,
     );
     expect(html).toContain('<dl');
-    expect(html).toContain('A busy month counts its first hundred landings per employee here.');
+    expect(html).toContain('A busy month counts its latest hundred landings per employee here.');
     expect(
       renderToStaticMarkup(<MonthCard roster={[]} figures={null} waiting={0} now={NOW} />),
     ).not.toContain('<dl');

@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { SHORT_SCREEN } from '../../app/marketing/PinnedSequence';
 
 const CSS = readFileSync(new URL('../../app/globals.css', import.meta.url), 'utf8');
 
@@ -85,6 +86,55 @@ describe('the public-page motion', () => {
     expect(rule).toMatch(/transform:\s*none/);
     expect(rule).toMatch(/transition:\s*opacity 200ms/);
     expect(rule).not.toMatch(/transition:[^;]*transform/);
+  });
+
+  it('unpins the landing band on the short screen the script lays the frames inline on (M8)', () => {
+    const [short] = blocks(`@media ${SHORT_SCREEN}`);
+    expect(short).toBeDefined();
+    expect(rulesFor(short ?? '', "[data-short='inline'] > [data-pin-side]")[0]).toMatch(
+      /position:\s*static/,
+    );
+  });
+
+  it('plays the page transition as a 90 ms exit then a 200 ms entry, the header and the document still (UX 11)', () => {
+    expect(rulesFor(noPreference, '::view-transition-old(.day0-main-exit)')[0]).toMatch(
+      /animation:\s*day0-page-out 90ms var\(--ease-arrive\) both/,
+    );
+    expect(rulesFor(noPreference, '::view-transition-new(.day0-main-enter)')[0]).toMatch(
+      /animation:\s*day0-page-in 200ms var\(--ease-arrive\) 90ms both/,
+    );
+    expect(rulesFor(CSS, '::view-transition-old(root)')[0]).toMatch(/display:\s*none/);
+    expect(rulesFor(CSS, '::view-transition-new(root)')[0]).toMatch(/animation:\s*none/);
+    expect(rulesFor(CSS, '::view-transition-group(site-header)')[0]).toMatch(/animation:\s*none/);
+  });
+
+  it('swaps the page at once under reduced motion', () => {
+    expect(rulesFor(reduce, '::view-transition-old(.day0-main-exit)')[0]).toMatch(
+      /display:\s*none/,
+    );
+    expect(rulesFor(reduce, '::view-transition-new(.day0-main-enter)')[0]).toMatch(
+      /animation:\s*none/,
+    );
+  });
+
+  it('sets the walkthrough frame beside the copy on a phone on its side, and caps it there (M-a)', () => {
+    const sideways = blocks('@media (max-width: 767px) and (max-height: 559px)').join('\n');
+    expect(rulesFor(sideways, '[data-run]')[0]).toMatch(
+      /grid-template-columns:\s*minmax\(0, 1\.15fr\) minmax\(0, 1fr\)/,
+    );
+    expect(rulesFor(sideways, '[data-run] > [data-pin-side]')[0]).toMatch(/top:\s*64px/);
+    const short = blocks('@media (max-height: 559px)').join('\n');
+    expect(rulesFor(short, '[data-run] [data-pin-stack]')[0]).toMatch(
+      /max-height:\s*calc\(100svh - 204px\)/,
+    );
+  });
+
+  it('draws the orbit traffic at rest under reduced motion, never leaving the packets invisible (m18)', () => {
+    const [packet] = rulesFor(reduce, '.day0-surface-packet');
+    expect(packet).toMatch(/opacity:\s*0\.85/);
+    expect(packet).toMatch(/transform:\s*translate\(calc\(var\(--packet-x\) \/ 2\)/);
+    const [held] = rulesFor(reduce, '.day0-surface-packet-held');
+    expect(held).toMatch(/opacity:\s*1/);
   });
 
   it('arrives cards 8 px over 260 ms, 50 ms apart, for up to twelve cards', () => {

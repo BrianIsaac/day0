@@ -94,11 +94,11 @@ describe('the README run as the page reads it', () => {
     expect(run.runOn).toBe('2026-09-03');
   });
 
-  it('times a step only where the README states an elapsed time, from step 4 on', () => {
+  it('times a step only where the README states an elapsed time, from step 2 on (W D4)', () => {
     expect(run.steps.map((step) => step.elapsedSeconds)).toEqual([
       null,
-      null,
-      null,
+      274,
+      308,
       432,
       545,
       805,

@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { WALKTHROUGH } from '../../../app/walkthrough/copy';
 import { RECORDED_RUN } from '../../../src/demo/walkthrough';
 
-const untimed = { ...RECORDED_RUN, steps: RECORDED_RUN.steps.slice(0, 3) };
+// Step 1 is the one step the README states no elapsed time for (the operator's clock, W D4).
+const untimed = { ...RECORDED_RUN, steps: RECORDED_RUN.steps.slice(0, 1) };
 
 describe('the walkthrough copy', () => {
   it('dates the run in the lede from the generated file', () => {
@@ -11,9 +12,9 @@ describe('the walkthrough copy', () => {
 
   it('says the clock starts at the first step the README times, and never before', () => {
     expect(WALKTHROUGH.clock(RECORDED_RUN)).toBe(
-      'Times are minutes and seconds from the moment the employee was deployed. The README gives each step an elapsed time from step 4 on, so the clock starts there; the steps before it state any time in their own words.',
+      'Times are minutes and seconds from the moment the employee was deployed. The README gives each step an elapsed time from step 2 on, so the clock starts there; the steps before it state any time in their own words.',
     );
-    expect(WALKTHROUGH.untimed(RECORDED_RUN)).toBe('timed from step 4');
+    expect(WALKTHROUGH.untimed(RECORDED_RUN)).toBe('timed from step 2');
   });
 
   it('says the page shows no times when the README states none', () => {

@@ -259,7 +259,7 @@ describe('dashboard exact-action gate', (): void => {
     );
     expect(html).toContain('Turn on autonomous actions?');
     expect(html).toContain(
-      'The agent will act on connected systems without asking - post, comment, change status - within the connections and skills you have approved.',
+      'The digital employee will act on connected systems without asking - post, comment, change status - within the connections and skills you have approved.',
     );
     expect(html).toContain('Turn this on only after its behaviour has been what you want.');
     expect(html).toContain('Skills and connections still need your approval either way.');

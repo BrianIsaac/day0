@@ -93,17 +93,13 @@ export const TRY = {
   heading: 'Try it without connecting anything',
   hosted: {
     title: 'The hosted mock office',
-    body: 'Sign in, name an employee, hold the one-to-one yourself. The office is seeded and synthetic; nothing you do reaches a real system.',
-    /** The disclosure sentence; its middle is a link to what the hosted demo sends and to whom. */
-    notice: {
-      before: 'Before you sign in, read ',
-      link: 'what the hosted demo collects and who receives it',
-      after: '.',
-    },
+    body: 'Sign in, name an employee, hold the one-to-one yourself. The office is seeded and synthetic; nothing you do reaches a real system. Before you type anything, the sign-in page says what the hosted demo collects and who receives it.',
   },
   local: {
     title: 'Run it on your own machine',
     body: 'Real mode against your own Slack and Linear, with any OpenAI-compatible model or a local one. Nothing leaves your machine unless you choose a hosted model.',
+    /** The command block's name, for the keyboard stop it is where the commands scroll. */
+    commandsLabel: 'Commands to run Day0 locally',
     commands: [
       'git clone https://github.com/BrianIsaac/day0.git',
       'cd day0',

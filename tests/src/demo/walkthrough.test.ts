@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  isHeaderStrip,
   RECORDED_RUN,
   elapsedLabel,
   firstTimedStep,
@@ -31,11 +32,11 @@ describe('elapsedLabel', () => {
 
 describe('firstTimedStep', () => {
   it('is the first step the README gives an elapsed time for', () => {
-    expect(firstTimedStep(RECORDED_RUN)?.number).toBe(4);
+    expect(firstTimedStep(RECORDED_RUN)?.number).toBe(2);
   });
 
   it('is absent for a run with no stated times', () => {
-    expect(firstTimedStep({ ...RECORDED_RUN, steps: RECORDED_RUN.steps.slice(0, 3) })).toBe(
+    expect(firstTimedStep({ ...RECORDED_RUN, steps: RECORDED_RUN.steps.slice(0, 1) })).toBe(
       undefined,
     );
   });
@@ -46,5 +47,13 @@ describe('walkthroughProvenanceLine', () => {
     expect(walkthroughProvenanceLine(RECORDED_RUN)).toBe(
       'The run took place, and every capture was taken, on 3 September 2026, on a fresh clone of main. The product has moved on since.',
     );
+  });
+});
+
+describe('isHeaderStrip (W D5 (b))', () => {
+  it('picks the four captures the frame draws at about half size: steps 4, 5, 11 and 16', () => {
+    expect(
+      RECORDED_RUN.steps.filter((step) => isHeaderStrip(step.capture)).map((step) => step.number),
+    ).toEqual([4, 5, 11, 16]);
   });
 });

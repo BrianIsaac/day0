@@ -50,7 +50,7 @@ export function ResetCard({
             Wipe every employee and its workspace, charter, work items, skills and mock environment
             rows you’ve created. Useful between demos.
           </p>
-          <label className="mt-2 flex items-center gap-2 text-sm text-[var(--color-muted)]">
+          <label className="mt-1 flex min-h-11 cursor-pointer items-center gap-2 text-sm text-[var(--color-muted)]">
             <input
               type="checkbox"
               checked={alsoUnlinkDocumentation}
@@ -64,7 +64,7 @@ export function ResetCard({
           // The handler reports its own failure on the card; nothing is left to reject.
           onClick={() => void onReset()}
           disabled={resetting || (!hasEmployees && (!alsoUnlinkDocumentation || !hasDocumentation))}
-          className="shrink-0 self-start whitespace-nowrap rounded-lg border border-[var(--color-danger)]/40 px-4 py-2 text-sm text-[var(--color-danger)] hover:bg-[var(--color-danger)]/10 disabled:opacity-50 sm:self-center"
+          className="inline-flex min-h-11 shrink-0 items-center self-start whitespace-nowrap rounded-lg border border-[var(--color-danger)]/40 px-4 text-sm text-[var(--color-danger)] hover:bg-[var(--color-danger)]/10 disabled:opacity-50 sm:self-center"
         >
           {resetting ? 'Resetting…' : 'Reset everything'}
         </button>
