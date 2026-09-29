@@ -9,7 +9,7 @@ import {
 } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
-import { assertOwnsAgent, getCaller, getCallerOrThrow } from './ownership';
+import { assertOwnsAgent, getCaller, getCallerOrThrow, ownedAgentOrNull } from './ownership';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 import { AUTONOMY_CHANGE_REASON, autonomousActionsOn } from '../src/work/autonomy';
 import {
@@ -387,11 +387,14 @@ export const rosterForUser = query({
   },
 });
 
-/** Public, owner-guarded: one employee. */
+/**
+ * Public, owner-guarded by `ownedAgentOrNull`: one employee, or null once it is gone (retired,
+ * or never there), so the employee page can say so. Another owner's employee is refused.
+ */
 export const get = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args) => {
-    return await assertOwnsAgent(ctx, args.agentId);
+    return await ownedAgentOrNull(ctx, args.agentId);
   },
 });
 
