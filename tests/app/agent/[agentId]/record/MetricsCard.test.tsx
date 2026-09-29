@@ -82,4 +82,12 @@ describe('the figures card, loading and defined (P3-13, moved from the work queu
     for (const figure of PILOT_FIGURES) expect(markup).toContain(figure.definition);
     expect(markup).toContain('What each pilot figure counts');
   });
+
+  it('is titled as the rail’s figures are, since deploy, and says loading rather than a zero', (): void => {
+    const markup = renderToStaticMarkup(<MetricsCard metrics={undefined} />);
+    expect(markup).toContain('>So far</h2>');
+    expect(markup).toContain('since deploy');
+    expect(markup).toContain('loading…');
+    expect(markup).not.toContain('not yet');
+  });
 });

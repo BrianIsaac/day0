@@ -457,7 +457,8 @@ const completeMetrics: AgentMetrics = {
 describe('the supervision metrics card', (): void => {
   it('renders its labels with the live-run numbers', (): void => {
     const html = renderToStaticMarkup(createElement(MetricsCard, { metrics: completeMetrics }));
-    expect(html).toContain('Supervision metrics');
+    // Titled as the rail's figures are, since deploy (wave 6 A D6).
+    expect(html).toContain('>So far</h2>');
     expect(html).toContain('time to first approved charter');
     expect(html).toContain('3 min 28 s');
     expect(html).toContain('human decisions (approved / rejected)');

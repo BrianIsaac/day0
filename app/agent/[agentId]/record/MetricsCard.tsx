@@ -47,7 +47,7 @@ export function MetricsCard({ metrics }: { metrics: AgentMetrics | undefined }) 
     { label: 'audit-trail completeness', value: completeness },
   ];
   return (
-    <Card title="Supervision metrics" tone="accent">
+    <Card title="So far" meta="since deploy" tone="accent">
       <dl className="space-y-2">
         {rows.map((row) => (
           <div key={row.label} className="flex items-start justify-between gap-3 text-xs">
@@ -59,7 +59,7 @@ export function MetricsCard({ metrics }: { metrics: AgentMetrics | undefined }) 
         ))}
       </dl>
       {metrics ? (
-        <div className="mt-3 pt-2 border-t border-[var(--color-border)] text-[10px] text-[var(--color-muted)] leading-relaxed">
+        <div className="mt-3 pt-2 border-t border-[var(--color-border)] text-xs text-[var(--color-muted)] leading-relaxed">
           <p>
             {metrics.decisions.requested} asked on a chat surface -{' '}
             {metrics.decisions.partiallyApproved} partial - {metrics.actions.automatic.writes}{' '}
@@ -74,7 +74,7 @@ export function MetricsCard({ metrics }: { metrics: AgentMetrics | undefined }) 
       ) : null}
       {metrics ? (
         <div className="mt-3 pt-2 border-t border-[var(--color-border)]">
-          <h3 className="mb-1.5 text-[10px] font-normal uppercase tracking-wider text-[var(--color-muted)]">
+          <h3 className="mb-1.5 text-xs font-normal uppercase tracking-wider text-[var(--color-muted)]">
             Pilot figures
           </h3>
           <dl className="space-y-1.5">
@@ -86,7 +86,7 @@ export function MetricsCard({ metrics }: { metrics: AgentMetrics | undefined }) 
               >
                 <dt className="basis-1/2 shrink-0 text-[var(--color-muted)] leading-tight">
                   {figure.label.toLowerCase()}
-                  <span className="block text-[10px]">{figure.unit}</span>
+                  <span className="block text-xs">{figure.unit}</span>
                 </dt>
                 <dd className="min-w-0 font-mono text-[var(--color-fg)] text-right break-words">
                   {figure.value(metrics.pilot)}
@@ -94,7 +94,7 @@ export function MetricsCard({ metrics }: { metrics: AgentMetrics | undefined }) 
               </div>
             ))}
           </dl>
-          <details className="mt-1 text-[10px] text-[var(--color-muted)]">
+          <details className="mt-1 text-xs text-[var(--color-muted)]">
             <summary className={DISCLOSURE_SUMMARY}>What each pilot figure counts</summary>
             <dl className="space-y-1">
               {PILOT_FIGURES.map((figure) => (
