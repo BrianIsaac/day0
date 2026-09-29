@@ -6,11 +6,11 @@ import { useAction, useMutation } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { useState, useId, useEffect } from 'react';
 import { useNow } from '../time';
-import { refusalText, returnFocus } from '../live-status';
+import { refusalText, returnFocus } from '../../../components/use-change';
 import { Card } from '../../../components/Card';
 import { holdsLiveAuthoringClaim } from '@/lib/skill-authoring';
 import { declaredSkillInputs, impliedSkillInputs, systemDeclaredInputs } from '@/work/skill-inputs';
-import { SUMMARY } from '../../../components/Disclosure';
+import { DISCLOSURE_SUMMARY } from '../../../components/Disclosure';
 
 /**
  * Whether Retry on this row verifies the draft it already has rather than
@@ -377,7 +377,7 @@ export function RefusedDraftDetails({
   ].filter((file) => file.content);
   return (
     <details className="mt-1 text-xs">
-      <summary className={SUMMARY}>
+      <summary className={DISCLOSURE_SUMMARY}>
         Refused draft · {files.map((file) => file.name).join(' and ')} · not registered
       </summary>
       <div className="mt-1 space-y-1">

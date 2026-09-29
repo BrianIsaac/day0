@@ -4,7 +4,8 @@ import { useId, useState, useRef } from 'react';
 import type { Id } from '@convex/_generated/dataModel';
 import { useQuery, useMutation } from 'convex/react';
 import { api } from '@convex/_generated/api';
-import { useChange, LiveStatus } from '../live-status';
+import { useChange } from '../../../components/use-change';
+import { StatusRegion } from '../../../components/StatusRegion';
 import { Card } from '../../../components/Card';
 
 type PermissionSource = 'deploy' | 'manager' | 'skill' | 'surface';
@@ -208,7 +209,7 @@ export function PermissionsCard({ agentId }: { agentId: Id<'agents'> }) {
           onRegrant={(scope) => decide(scope, 'grant')}
         />
       )}
-      <LiveStatus outcome={change.outcome} />
+      <StatusRegion outcome={change.outcome} />
     </Card>
   );
 }

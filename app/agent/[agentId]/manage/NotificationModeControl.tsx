@@ -1,7 +1,8 @@
 'use client';
 
 import { type ManagerNotificationMode, NOTIFICATION_MODE_LABELS } from '@/work/manager-notes';
-import { useChange, LiveStatus } from '../live-status';
+import { useChange } from '../../../components/use-change';
+import { StatusRegion } from '../../../components/StatusRegion';
 import { useId } from 'react';
 
 /**
@@ -49,7 +50,7 @@ export function NotificationModeControl({
           {NOTIFICATION_MODE_HINT}
         </span>
       </div>
-      <LiveStatus outcome={change.outcome} />
+      <StatusRegion outcome={change.outcome} />
     </div>
   );
 }

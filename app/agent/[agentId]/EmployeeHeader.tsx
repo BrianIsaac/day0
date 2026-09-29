@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useRef, useMemo } from 'react';
-import { useChange, LiveStatus } from './live-status';
+import { useChange } from '../../components/use-change';
+import { StatusRegion } from '../../components/StatusRegion';
 import { isTimeZone, agentZone } from '@/lib/zone';
 import type { Doc } from '@convex/_generated/dataModel';
 import { useQuery, useMutation } from 'convex/react';
@@ -124,7 +125,7 @@ export function ManagerLine({
           credential still works; change the manager to someone the workspace knows.
         </p>
       ) : null}
-      <LiveStatus outcome={change.outcome} />
+      <StatusRegion outcome={change.outcome} />
     </div>
   );
 }
@@ -252,7 +253,7 @@ export function ZoneLine({
           </p>
         </form>
       ) : null}
-      <LiveStatus outcome={change.outcome} />
+      <StatusRegion outcome={change.outcome} />
     </div>
   );
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { usePreviousValue } from '../previous-value';
+import { usePreviousValue } from '../../../components/previous-value';
 import type { CharterClauseRef, PlanObligations, MockAction } from '@/work/types';
 import {
   type SessionRestoreRow,
@@ -13,7 +13,7 @@ import {
 } from './work-item';
 import { type ManagerFeedback, managerFeedbackLabel } from '@/work/manager-feedback';
 import { useAgentZone, clockTimeWithSeconds, clockTime } from '../time';
-import { SUMMARY } from '../../../components/Disclosure';
+import { DISCLOSURE_SUMMARY } from '../../../components/Disclosure';
 import { describeAction, reviewPayload } from '@/surfaces/policy';
 import { isWithheldForAnswer, planObligations, transitionWithheld } from '@/work/obligations';
 import type { ReconciliationEntry } from '@/work/reconciliation';
@@ -287,7 +287,7 @@ export function RefusedClosingDetails({ refused }: { refused: RefusedClosingRow 
   if (!refused || refused.actions.length === 0) return null;
   return (
     <details className="mt-2 text-xs">
-      <summary className={SUMMARY}>
+      <summary className={DISCLOSURE_SUMMARY}>
         Refused closing set · {refused.actions.length}{' '}
         {refused.actions.length === 1 ? 'action' : 'actions'} · never sent
       </summary>
@@ -345,7 +345,7 @@ export function WithheldActionsDetails({
   const forAnswer = waiting.length > 0;
   return (
     <details className="mt-2 text-xs">
-      <summary className={SUMMARY}>
+      <summary className={DISCLOSURE_SUMMARY}>
         {forAnswer ? 'Waiting on your answer' : 'Withheld by the evidence check'} ·{' '}
         {withheld.length} {withheld.length === 1 ? 'action' : 'actions'} · never sent
       </summary>

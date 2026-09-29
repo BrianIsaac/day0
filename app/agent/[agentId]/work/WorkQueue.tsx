@@ -3,7 +3,8 @@
 import type { Id, Doc } from '@convex/_generated/dataModel';
 import { useMutation, useAction } from 'convex/react';
 import { api } from '@convex/_generated/api';
-import { useChange, LiveStatus } from '../live-status';
+import { useChange } from '../../../components/use-change';
+import { StatusRegion } from '../../../components/StatusRegion';
 import { compareWaitingRows } from '@/work/queue-order';
 import type { SurfaceRecord } from '@/surfaces/types';
 import type { KeptCorrection } from '../corrections-panel';
@@ -63,7 +64,7 @@ export function CheckForNewWork({ agentId }: { agentId: Id<'agents'> }) {
           {change.busy ? 'Checking…' : 'Check for new work'}
         </button>
       </div>
-      <LiveStatus outcome={change.outcome} />
+      <StatusRegion outcome={change.outcome} />
     </div>
   );
 }

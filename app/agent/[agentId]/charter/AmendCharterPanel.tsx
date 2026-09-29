@@ -15,7 +15,7 @@ import { useNow, useAgentZone, clockTimeWithSeconds, relativeTime } from '../tim
 import type { CharterConstraint } from '@/agent/charter-constraints';
 import { type SystemClass, SYSTEM_CLASSES } from '@/agent/system-classes';
 import { managerOpenQuestions } from '@/agent/manager-questions';
-import { SUMMARY } from '../../../components/Disclosure';
+import { DISCLOSURE_SUMMARY } from '../../../components/Disclosure';
 
 const CLAUSE_LIST_LABEL: Record<ListClauseField, string> = {
   willDo: 'Will do',
@@ -196,7 +196,7 @@ export function AmendCharterPanel({
   const openQuestions = managerOpenQuestions(body);
   return (
     <details className="text-xs">
-      <summary className={SUMMARY}>
+      <summary className={DISCLOSURE_SUMMARY}>
         Amend this charter · next version v{nextCharterVersion(charter.version)}
       </summary>
       <div className="mt-2 space-y-3 pl-3 border-l border-[var(--color-border)]">

@@ -2,7 +2,7 @@ import type { AgentMetrics } from '@/metrics/types';
 import { formatAuditTrail, formatMetricDuration } from '../../../metric-format';
 import { Card } from '../../../components/Card';
 import { readsAndMessages, PILOT_FIGURES } from '../../../CompanySupervision';
-import { SUMMARY } from '../../../components/Disclosure';
+import { DISCLOSURE_SUMMARY } from '../../../components/Disclosure';
 
 function metricValue(value: string | undefined): string {
   return value ?? 'loading…';
@@ -95,7 +95,7 @@ export function MetricsCard({ metrics }: { metrics: AgentMetrics | undefined }) 
             ))}
           </dl>
           <details className="mt-1 text-[10px] text-[var(--color-muted)]">
-            <summary className={SUMMARY}>What each pilot figure counts</summary>
+            <summary className={DISCLOSURE_SUMMARY}>What each pilot figure counts</summary>
             <dl className="space-y-1">
               {PILOT_FIGURES.map((figure) => (
                 <div key={figure.label}>

@@ -12,7 +12,8 @@ import {
 import { type PlanApproval, PlanApprovalForm, PendingActions } from './PendingActions';
 import { useNow, useAgentZone, clockTimeWithSeconds, clockTime } from '../time';
 import { useRef, useState, type CSSProperties } from 'react';
-import { useChange, LiveStatus } from '../live-status';
+import { useChange } from '../../../components/use-change';
+import { StatusRegion } from '../../../components/StatusRegion';
 import {
   type PlanObligationsRow,
   type RunOutput,
@@ -39,7 +40,7 @@ import {
   providerReconciliationEntries,
   retryRequiresProviderReconciliation,
 } from '@/work/reconciliation';
-import { usePreviousValue } from '../previous-value';
+import { usePreviousValue } from '../../../components/previous-value';
 import { QUALITY_FIT_SKIP_PREFIX, OUT_OF_SCOPE_SKIP_PREFIX } from '@/work/types';
 import { undeliveredDecisionReason, draftedWithoutLine } from '@/work/manager-channel';
 import { connectedManagerChannel } from '../manager-channel';
@@ -766,7 +767,7 @@ export function WorkItemCard({
           ) : null}
         </div>
       ) : null}
-      <LiveStatus outcome={change.outcome} />
+      <StatusRegion outcome={change.outcome} />
     </div>
   );
 }

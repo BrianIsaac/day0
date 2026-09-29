@@ -8,7 +8,7 @@ import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { INIT_PROMPT, managerReplies } from '@/agent/day-one-turn';
 import { postCharterSynthesis } from './charter-synthesis';
-import { refusalText } from './live-status';
+import { refusalText } from '../../components/use-change';
 import { ROOM_HEIGHT } from './room-frame';
 
 function textOf(message: UIMessage): string {

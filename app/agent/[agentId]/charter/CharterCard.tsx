@@ -10,10 +10,11 @@ import { useState, useRef } from 'react';
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import { useMutation } from 'convex/react';
 import { api } from '@convex/_generated/api';
-import { useChange, LiveStatus } from '../live-status';
+import { useChange } from '../../../components/use-change';
+import { StatusRegion } from '../../../components/StatusRegion';
 import { type CharterChange, nextCharterVersion } from '@/agent/charter-amendment';
 import { Card } from '../../../components/Card';
-import { SUMMARY } from '../../../components/Disclosure';
+import { DISCLOSURE_SUMMARY } from '../../../components/Disclosure';
 import { AmendCharterPanel } from './AmendCharterPanel';
 
 /** The charter body as the card reads it; `constraints` is absent on charters drafted before the list existed. */
@@ -300,7 +301,9 @@ export function CharterCard({
           <Goal label="90-day" text={body.shortTermGoals.day90} />
         </div>
         <details className="text-xs">
-          <summary className={SUMMARY}>Boundaries · collaborators · open questions</summary>
+          <summary className={DISCLOSURE_SUMMARY}>
+            Boundaries · collaborators · open questions
+          </summary>
           <div className="mt-2 space-y-2 pl-3 border-l border-[var(--color-border)]">
             <BoundaryList
               label="Reports to"
@@ -377,7 +380,7 @@ export function CharterCard({
             </button>
           </div>
         ) : null}
-        <LiveStatus outcome={change.outcome} />
+        <StatusRegion outcome={change.outcome} />
       </div>
     </Card>
   );

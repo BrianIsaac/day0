@@ -1,0 +1,103 @@
+/** @vitest-environment jsdom */
+
+import { act } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { afterEach, describe, expect, it } from 'vitest';
+import { nextTabIndex, TabPanel, Tabs, type TabItem } from '../../../app/components/Tabs';
+import { mount } from '../../fixtures/dom/press';
+
+afterEach((): void => {
+  document.body.replaceChildren();
+});
+
+const ITEMS: readonly TabItem[] = [
+  { key: 'needs-you', label: 'Needs you', href: '/agent/a1', count: 3, hot: true },
+  { key: 'work', label: 'Work', href: '/agent/a1/work', count: 3 },
+  { key: 'charter', label: 'Charter', href: '/agent/a1/charter' },
+];
+
+function strip(selected = 'work') {
+  return (
+    <>
+      <Tabs label="Employee page" items={ITEMS} selected={selected} panelId="employee-tab" />
+      <TabPanel id="employee-tab" selected={selected}>
+        <p>panel</p>
+      </TabPanel>
+    </>
+  );
+}
+
+describe('Tabs', () => {
+  it('is a named tablist of links, each its own address, the selected one marked', () => {
+    const html = renderToStaticMarkup(strip());
+    expect(html).toMatch(/role="tablist" aria-label="Employee page"/);
+    expect(html.match(/role="tab"/g)).toHaveLength(3);
+    expect(html).toMatch(
+      /<a id="tab-work" role="tab" aria-selected="true"[^>]*href="\/agent\/a1\/work"/,
+    );
+    expect(html).toMatch(
+      /<a id="tab-needs-you" role="tab" aria-selected="false"[^>]*href="\/agent\/a1"/,
+    );
+  });
+
+  it('is one tab stop: only the selected tab is in the Tab order, and only it names the panel', () => {
+    const html = renderToStaticMarkup(strip());
+    expect(html.match(/tabindex="0"/g)).toHaveLength(1);
+    expect(html.match(/aria-controls="employee-tab"/g)).toHaveLength(1);
+    expect(html).toMatch(/role="tabpanel" aria-labelledby="tab-work"/);
+  });
+
+  it('moves focus along the strip with the arrow keys, Home and End, wrapping at the ends', () => {
+    expect(nextTabIndex('ArrowRight', 2, 3)).toBe(0);
+    expect(nextTabIndex('ArrowLeft', 0, 3)).toBe(2);
+    expect(nextTabIndex('Home', 2, 3)).toBe(0);
+    expect(nextTabIndex('End', 0, 3)).toBe(2);
+    expect(nextTabIndex('Enter', 0, 3)).toBeUndefined();
+
+    const view = mount(strip());
+    const tabs = [...view.container.querySelectorAll<HTMLAnchorElement>('[role="tab"]')];
+    tabs[1]?.focus();
+    for (const [pressed, landed] of [
+      ['ArrowRight', 'Charter'],
+      ['ArrowRight', 'Needs you'],
+      ['End', 'Charter'],
+      ['Home', 'Needs you'],
+      ['ArrowLeft', 'Charter'],
+    ] as const) {
+      act((): void => {
+        document.activeElement?.dispatchEvent(
+          new KeyboardEvent('keydown', { key: pressed, bubbles: true }),
+        );
+      });
+      expect(document.activeElement?.textContent?.startsWith(landed), pressed).toBe(true);
+    }
+    view.unmount();
+  });
+
+  it('counts beside a label, the count that waits on the manager in warn, none when absent', () => {
+    const html = renderToStaticMarkup(strip());
+    expect(html).toMatch(
+      /Needs you <span class="[^"]*text-\[var\(--color-warn\)\][^"]*">3<\/span>/,
+    );
+    expect(html).toMatch(/Work <span class="[^"]*text-\[var\(--color-muted\)\][^"]*">3<\/span>/);
+    expect(html).toMatch(/>Charter<\/a>/);
+  });
+
+  it('draws a hot count of nothing as a plain one', () => {
+    const html = renderToStaticMarkup(
+      <Tabs
+        label="t"
+        items={[{ key: 'a', label: 'Needs you', href: '/a', count: 0, hot: true }]}
+        selected="a"
+        panelId="p"
+      />,
+    );
+    expect(html).not.toContain('--color-warn');
+  });
+
+  it('gives every tab a 44 px target (N14)', () => {
+    for (const tab of renderToStaticMarkup(strip()).match(/<a [^>]*>/g) ?? []) {
+      expect(tab).toMatch(/\bh-11\b/);
+    }
+  });
+});

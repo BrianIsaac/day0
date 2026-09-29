@@ -13,7 +13,8 @@ import {
 } from '@/work/autonomy';
 import { ActionPayload, RepairNote } from './RunDetails';
 import type { Id, Doc } from '@convex/_generated/dataModel';
-import { useChange, LiveStatus } from '../live-status';
+import { useChange } from '../../../components/use-change';
+import { StatusRegion } from '../../../components/StatusRegion';
 
 /**
  * The exact-action gate: every row the ladder did not apply on its own,
@@ -529,7 +530,7 @@ export function PendingDecisionsPanel({
   const change = useChange(fallback);
   // The panel keeps its live region when an approval empties it, so what the
   // approval came to is still said.
-  if (members.length < 2) return <LiveStatus outcome={change.outcome} />;
+  if (members.length < 2) return <StatusRegion outcome={change.outcome} />;
   const eligible = members.filter((member) => member.refused === 0);
   const heldCount = eligible.reduce((sum, member) => sum + member.heldIndexes.length, 0);
   return (
@@ -593,7 +594,7 @@ export function PendingDecisionsPanel({
           list refreshes.
         </span>
       </div>
-      <LiveStatus outcome={change.outcome} />
+      <StatusRegion outcome={change.outcome} />
     </div>
   );
 }

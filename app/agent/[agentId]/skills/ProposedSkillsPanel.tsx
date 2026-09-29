@@ -6,7 +6,8 @@ import { type AuthoringAttempt, AUTHORING_UNFINISHED } from './authoring';
 import { useMutation, useAction } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { useNow } from '../time';
-import { useChange, refusalText, LiveStatus } from '../live-status';
+import { useChange, refusalText } from '../../../components/use-change';
+import { StatusRegion } from '../../../components/StatusRegion';
 import { Card } from '../../../components/Card';
 import { skillApprovalRefusal } from '@/surfaces/policy';
 
@@ -56,7 +57,7 @@ export function ProposedSkillsPanel({
 
   // The panel keeps its live region when the last row leaves it, so the
   // outcome of that decision is still said.
-  if (skills.length === 0) return <LiveStatus outcome={change.outcome} />;
+  if (skills.length === 0) return <StatusRegion outcome={change.outcome} />;
   return (
     <Card title="Proposed skills · awaiting your call" tone="warn">
       <div className="space-y-3">
@@ -113,7 +114,7 @@ export function ProposedSkillsPanel({
             </div>
           );
         })}
-        <LiveStatus outcome={change.outcome} />
+        <StatusRegion outcome={change.outcome} />
       </div>
     </Card>
   );

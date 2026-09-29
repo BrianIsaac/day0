@@ -6,7 +6,8 @@ import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { DOCS_NOTION_LOCATOR, serverKindHelp } from '@/docs/components';
 import { REPOSITORY_URL } from '@/setup/quickstart';
-import { LiveStatus, refusalText, useChange } from '../agent/[agentId]/live-status';
+import { refusalText, useChange } from '../components/use-change';
+import { StatusRegion } from '../components/StatusRegion';
 
 type SourceKind = 'folder' | 'git' | 'urls' | 'mcp';
 type ServerKind = 'notion' | 'confluence' | 'drive' | 'generic';
@@ -290,7 +291,7 @@ export function DocumentationPage(): React.ReactNode {
             aria-label="Linked documentation"
             className="space-y-3 mb-8"
           >
-            <LiveStatus outcome={change.outcome} />
+            <StatusRegion outcome={change.outcome} />
             {(sources || []).map((source) => (
               <article
                 key={source._id}

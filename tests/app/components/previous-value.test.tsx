@@ -2,8 +2,8 @@
 
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { usePreviousValue } from '../../../../app/agent/[agentId]/previous-value';
-import { mount } from '../../../fixtures/dom/press';
+import { usePreviousValue } from '../../../app/components/previous-value';
+import { mount } from '../../fixtures/dom/press';
 
 /** How long the moment under test plays. */
 const MOMENT_MS = 300;

@@ -14,7 +14,8 @@ import {
   KeptCorrectionsPanel,
 } from './corrections-panel';
 import type { AuthoringAttempt } from './skills/authoring';
-import { type ChangeOutcome, LiveStatus } from './live-status';
+import { type ChangeOutcome } from '../../components/use-change';
+import { StatusRegion } from '../../components/StatusRegion';
 import { useArrival } from '../../arrival';
 import { useNow, AgentZoneContext } from './time';
 import { holdsLiveAuthoringClaim } from '@/lib/skill-authoring';
@@ -237,7 +238,7 @@ export function AgentDashboard({ agentId }: Props) {
           managerChannel={connectedManagerChannel(surfaces, now) !== undefined}
         />
 
-        <LiveStatus outcome={pageOutcome} />
+        <StatusRegion outcome={pageOutcome} />
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
           <div data-cards={arriving ? '' : undefined} className="lg:col-span-2 space-y-4">

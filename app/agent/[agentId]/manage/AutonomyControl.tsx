@@ -2,7 +2,8 @@
 
 import { AUTONOMY_WARNING, autonomyLabel } from '@/work/autonomy';
 import { useState, useRef, useId } from 'react';
-import { useChange, LiveStatus } from '../live-status';
+import { useChange } from '../../../components/use-change';
+import { StatusRegion } from '../../../components/StatusRegion';
 
 /** What each state of the switch does, for its title. */
 const AUTONOMY_TITLES: Record<'off' | 'on', string> = {
@@ -152,7 +153,7 @@ export function AutonomyControl({
           </span>
         </button>
       </div>
-      <LiveStatus outcome={change.outcome} />
+      <StatusRegion outcome={change.outcome} />
       {confirming && !on ? (
         <AutonomyConfirm
           busy={change.busy}

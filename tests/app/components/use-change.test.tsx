@@ -2,35 +2,10 @@
 
 import { act, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { renderToStaticMarkup } from 'react-dom/server';
 import { ConvexError } from 'convex/values';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
-import {
-  LiveStatus,
-  refusalText,
-  returnFocus,
-  useChange,
-} from '../../../../app/agent/[agentId]/live-status';
-
-describe('the live region beside a dashboard control', (): void => {
-  it('is in the page before anything is said, so the first outcome is announced', (): void => {
-    const markup = renderToStaticMarkup(<LiveStatus outcome={null} />);
-    expect(markup).toContain('role="status"');
-    expect(markup).toContain('aria-live="polite"');
-    expect(markup).toMatch(/<p [^>]*><\/p>/);
-    // Empty, it holds no space in a spaced column, and it is still in the page.
-    expect(markup).toContain('empty:sr-only');
-  });
-
-  it('says what a change came to, and marks a refusal as one', (): void => {
-    expect(
-      renderToStaticMarkup(<LiveStatus outcome={{ tone: 'done', text: 'Access renewed.' }} />),
-    ).toContain('>Access renewed.</p>');
-    expect(
-      renderToStaticMarkup(<LiveStatus outcome={{ tone: 'refused', text: 'Not a zone.' }} />),
-    ).toContain('text-[var(--color-danger)]');
-  });
-});
+import { refusalText, returnFocus, useChange } from '../../../app/components/use-change';
+import { StatusRegion } from '../../../app/components/StatusRegion';
 
 describe('the words of a refusal', (): void => {
   it("reads a ConvexError's data, an error's message, and falls back when there are none", (): void => {
@@ -127,7 +102,7 @@ function Decision({ call }: { call: () => Promise<string> }) {
           Approve
         </button>
       )}
-      <LiveStatus outcome={change.outcome} />
+      <StatusRegion outcome={change.outcome} />
     </div>
   );
 }
@@ -238,7 +213,7 @@ describe('two changes that overlap on one control', (): void => {
             Second
           </button>
           <p data-busy={String(change.busy)} />
-          <LiveStatus outcome={change.outcome} />
+          <StatusRegion outcome={change.outcome} />
         </div>
       );
     }

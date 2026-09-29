@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { NeedsYouList, waitingFor } from '../../../app/home/NeedsYouList';
+import { NeedsYouList } from '../../../app/home/NeedsYouList';
 import type { NeedsYouInbox } from '../../../app/home/types';
 
 const NOW = Date.UTC(2026, 8, 26, 6, 45);
@@ -92,17 +92,6 @@ const inbox = {
   waitingByEmployee: [],
 } as unknown as NeedsYouInbox;
 
-describe('waitingFor', (): void => {
-  it('says how long in the coarsest honest unit, and "over" for a floor', (): void => {
-    expect(waitingFor(NOW - 20_000, NOW, false)).toBe('waiting under a minute');
-    expect(waitingFor(minutes(6), NOW, false)).toBe('waiting 6 min');
-    expect(waitingFor(minutes(90), NOW, false)).toBe('waiting 1 h 30 min');
-    expect(waitingFor(minutes(3 * 60), NOW, false)).toBe('waiting 3 h');
-    expect(waitingFor(minutes(3 * 24 * 60), NOW, true)).toBe('waiting over 3 days');
-    expect(waitingFor(minutes(24 * 60), NOW, false)).toBe('waiting 1 day');
-  });
-});
-
 describe('NeedsYouList', (): void => {
   const html = renderToStaticMarkup(<NeedsYouList inbox={inbox} now={NOW} />);
   const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
@@ -136,12 +125,25 @@ describe('NeedsYouList', (): void => {
     expect(text).toContain('waiting over 3 days');
   });
 
-  it('links every entry to its employee’s page, with Decide on a held write and Open elsewhere', (): void => {
-    expect(html.match(/href="\/agent\/synthetic-mira"/g)).toHaveLength(6);
-    expect(html.match(/href="\/agent\/synthetic-aiko"/g)).toHaveLength(1);
-    expect(html.match(/href="\/agent\/synthetic-ren"/g)).toHaveLength(1);
+  it('gives every entry one control, opening the tab of its employee’s page that decides it', (): void => {
+    for (const href of [
+      '/agent/synthetic-mira/work#item-item-1',
+      '/agent/synthetic-mira/work#item-item-2',
+      '/agent/synthetic-mira/skills',
+      '/agent/synthetic-aiko/charter',
+      '/agent/synthetic-mira/work#item-item-5',
+      '/agent/synthetic-mira/work#item-item-6',
+      '/agent/synthetic-mira/surfaces',
+      '/agent/synthetic-ren"',
+    ]) {
+      expect(html).toContain(`href="${href}`);
+    }
+    expect(html.match(/<a /g)).toHaveLength(8);
     expect(text.match(/ Decide /g)).toHaveLength(1);
-    expect(text.match(/ Open /g)).toHaveLength(7);
+    expect(text).toContain(' Open the plan ');
+    expect(text).toContain(' Review the charter ');
+    expect(text).toContain(' Hold the one-to-one ');
+    expect(html.match(/>Open<\/a>/g)).toHaveLength(4);
   });
 
   it('says how many more wait beyond the ones shown', (): void => {

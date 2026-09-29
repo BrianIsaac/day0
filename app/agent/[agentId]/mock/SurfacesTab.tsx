@@ -31,7 +31,8 @@ import {
 } from '@/surfaces/intake-scope';
 import type { SurfaceDiscoveryEvidence } from '@/docs/system-discovery';
 import { clockTime, useAgentZone, useNow } from '../time';
-import { LiveStatus, refusalText, useChange, type ChangeOutcome } from '../live-status';
+import { refusalText, useChange, type ChangeOutcome } from '../../../components/use-change';
+import { StatusRegion } from '../../../components/StatusRegion';
 
 interface SurfaceEvidence {
   sourceId?: string;
@@ -796,7 +797,7 @@ export function AccessRow({
           </button>
         </form>
       ) : null}
-      <LiveStatus outcome={outcome} />
+      <StatusRegion outcome={outcome} />
     </div>
   );
 }
@@ -1002,7 +1003,7 @@ export function ToolsRow({
           </div>
         </form>
       ) : null}
-      <LiveStatus outcome={outcome} />
+      <StatusRegion outcome={outcome} />
     </div>
   );
 }
@@ -1219,7 +1220,7 @@ export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.React
       {/* A refusal is said once, by the alert beside the control that met it;
           what a change that landed came to is said here, once for the tab. */}
       <div className="sr-only">
-        <LiveStatus outcome={change.outcome?.tone === 'done' ? change.outcome : null} />
+        <StatusRegion outcome={change.outcome?.tone === 'done' ? change.outcome : null} />
       </div>
       {declared.length > 0 ? (
         <div className="flex flex-wrap items-center gap-2 text-xs">

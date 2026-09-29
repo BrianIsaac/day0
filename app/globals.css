@@ -10,6 +10,20 @@
   --color-ok: #34d399;
   --color-card: #18181b;
   --color-border: #27272a;
+  /* Derived from the tokens above, never new hues (UX round two section 4.1): a second text
+     step for card prose, a second hairline for inputs and chips, the inset one step below a
+     card, and each tone as a fill (mixed into the card) and a line (mixed into the border). */
+  --color-fg-2: #d4d4d8;
+  --color-border-2: #3f3f46;
+  --color-inset: #101012;
+  --color-accent-soft: #202b30;
+  --color-accent-line: #376772;
+  --color-warn-soft: #2e2621;
+  --color-warn-line: #735533;
+  --color-ok-soft: #202b28;
+  --color-ok-line: #396754;
+  --color-danger-soft: #281d1f;
+  --color-danger-line: #733937;
 }
 
 html,
@@ -1209,7 +1223,7 @@ body {
    [data-land]           a work item's landed ledger, just shown: it settles as its lines rise,
                          `--i` (up to 3) 70 ms apart, 570 ms in all.
    .rail[data-advanced]  the first-week rail, just moved on: the fill slides into `.now` and the
-                         dot before it fills. Drawn in round two; no rail is rendered yet.
+                         dot before it (its `.rail-title::before`) fills (`FirstWeekRail`).
    [data-dialog]         a dialog or popover: it scales in from 0.96 at its own transform origin;
                          [data-dialog-backdrop] fades behind it.
    --------------------------------------------------------------------------------------------- */
@@ -1357,7 +1371,7 @@ body {
     animation: day0-rail-slide 280ms var(--ease-move) 150ms both;
   }
 
-  .rail[data-advanced] .rail-step.done:has(+ .now)::before {
+  .rail[data-advanced] .rail-step.done:has(+ .now) .rail-title::before {
     animation: day0-dot-fill 240ms var(--ease-arrive) 60ms both;
   }
 
