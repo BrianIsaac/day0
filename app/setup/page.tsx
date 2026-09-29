@@ -407,6 +407,8 @@ export default async function SetupPage() {
               ))}
             </ol>
             <figure>
+              {/* Lazy, as it sits far below the fold: an eager `<img>` makes React emit a preload
+                hint, which a prefetch of this route carried to the landing page (C2, 30 Sep). */}
               {/* eslint-disable-next-line @next/next/no-img-element -- this page is
                 prerendered and must serve its own bytes; the optimiser would put
                 a server request in front of the one picture a stuck reader needs. */}
@@ -414,6 +416,8 @@ export default async function SetupPage() {
                 src="/setup/first-success-day-one-chat.webp"
                 width={817}
                 height={447}
+                loading="lazy"
+                decoding="async"
                 alt="The Day-1 one-to-one in chat mode, the employee opening the conversation by asking what triggered the decision to bring it on and what the team is trying to make easier"
                 className="rounded-xl border border-[var(--color-border)] w-full h-auto"
               />

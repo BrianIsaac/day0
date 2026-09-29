@@ -179,6 +179,13 @@ describe('the /setup guide', (): void => {
     expect(image).toMatch(/height="\d+"/);
   });
 
+  it('asks no browser to preload its screenshot, so a page that prefetches this one does not fetch it (C2)', (): void => {
+    // React emits one preload rule for both renderers: the HTML's head here, and the hint in
+    // the prefetched payload that the landing page's `/setup` links would act on.
+    expect(html).not.toMatch(/<link[^>]*rel="preload"[^>]*as="image"/);
+    expect(/<img[^>]*>/.exec(html)?.[0]).toContain('loading="lazy"');
+  });
+
   it('hands the reader the checker when something is wrong', (): void => {
     expect(text).toContain('pnpm check:setup');
   });
