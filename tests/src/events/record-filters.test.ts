@@ -27,4 +27,9 @@ describe('the Record tab filters', (): void => {
       if (type.startsWith('charter.') || type.startsWith('voice.')) expect(charter).toContain(type);
     }
   });
+
+  it('lists a grant as a decision, and leaves a connection the documentation reopened out of them', (): void => {
+    expect(RECORD_FILTER_OF['permission.granted']).toContain('decisions');
+    expect(RECORD_FILTER_OF['surface.reopened']).not.toContain('decisions');
+  });
 });
