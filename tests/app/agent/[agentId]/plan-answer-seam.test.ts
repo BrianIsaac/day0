@@ -44,9 +44,9 @@ import schema from '../../../../convex/schema';
 import { managerAnswersOf } from '../../../../convex/workActions';
 import {
   PlanApprovalForm,
-  WorkItemCard,
   planApprovalRequest,
-} from '../../../../app/agent/[agentId]/AgentDashboard';
+} from '../../../../app/agent/[agentId]/work/PendingActions';
+import { WorkItemCard } from '../../../../app/agent/[agentId]/work/WorkItemCard';
 import type { Charter } from '../../../../src/agent/charter';
 import { runSkill } from '../../../../src/work/execute-skill';
 import type { WorkCandidate } from '../../../../src/work/types';

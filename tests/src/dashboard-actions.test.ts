@@ -12,22 +12,28 @@ import {
   AutonomyConfirm,
   AutonomyControl,
   cancelsAutonomyConfirm,
+} from '../../app/agent/[agentId]/manage/AutonomyControl';
+import {
   cancelledReason,
   decisionAttribution,
   failedItemReason,
   landedHeadline,
+  pendingHeadline,
+  pendingVerdicts,
+} from '../../app/agent/[agentId]/work/work-item';
+import {
   ManagerFeedbackNote,
-  MetricsCard,
-  NotificationModeControl,
+  PlanExecutionLedger,
+  ProviderReconciliationControl,
+} from '../../app/agent/[agentId]/work/RunDetails';
+import { MetricsCard } from '../../app/agent/[agentId]/record/MetricsCard';
+import { NotificationModeControl } from '../../app/agent/[agentId]/manage/NotificationModeControl';
+import {
   PendingActions,
   pendingDecisionMembers,
   PendingDecisionsPanel,
-  pendingHeadline,
-  PlanExecutionLedger,
-  pendingVerdicts,
-  PermissionRows,
-  ProviderReconciliationControl,
-} from '../../app/agent/[agentId]/AgentDashboard';
+} from '../../app/agent/[agentId]/work/PendingActions';
+import { PermissionRows } from '../../app/agent/[agentId]/surfaces/PermissionsCard';
 import { formatMetricDuration } from '../../app/metric-format';
 import type { AgentMetrics } from '../../src/metrics/types';
 import type { Doc } from '../../convex/_generated/dataModel';

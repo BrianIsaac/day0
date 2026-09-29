@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { act } from 'react';
@@ -126,13 +126,15 @@ describe('the tab strip and the panel for a keyboard and a screen reader (step 4
 describe('the hash links the work cards carry', (): void => {
   // Resolved by path: under jsdom, Vite rewrites `new URL(path, import.meta.url)`
   // into a served asset address rather than a file.
-  const dashboard = readFileSync(
-    resolve(
-      dirname(fileURLToPath(import.meta.url)),
-      '../../../../app/agent/[agentId]/AgentDashboard.tsx',
-    ),
-    'utf8',
+  // Every module of the employee page, since the cards that carry the links live in its tabs.
+  const pageDirectory = resolve(
+    dirname(fileURLToPath(import.meta.url)),
+    '../../../../app/agent/[agentId]',
   );
+  const dashboard = readdirSync(pageDirectory, { recursive: true, encoding: 'utf8' })
+    .filter((file) => /\.tsx?$/.test(file))
+    .map((file) => readFileSync(resolve(pageDirectory, file), 'utf8'))
+    .join('\n');
   const hashes = [...dashboard.matchAll(/href="#([a-z-]+)"/g)].map((match) => match[1]);
 
   it('each name an element the environment panel renders, so the link scrolls as well as switching the tab', (): void => {

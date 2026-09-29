@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   agentIdFromUrl,
@@ -9,7 +9,12 @@ import {
   TAKE_IT_ANYWAY,
 } from '../../../../scripts/bed/rehearsal/driver';
 
-const DASHBOARD = readFileSync('app/agent/[agentId]/AgentDashboard.tsx', 'utf8');
+// The employee page is a layout and a page per tab over many modules; the driver clicks
+// whichever of them renders the control, so its texts are read across the whole directory.
+const DASHBOARD = readdirSync('app/agent/[agentId]', { recursive: true, encoding: 'utf8' })
+  .filter((file) => /\.tsx?$/.test(file))
+  .map((file) => readFileSync(`app/agent/[agentId]/${file}`, 'utf8'))
+  .join('\n');
 const CHAT = readFileSync('app/agent/[agentId]/ChatRoom.tsx', 'utf8');
 const SURFACES = readFileSync('app/agent/[agentId]/mock/SurfacesTab.tsx', 'utf8');
 const DOCUMENTATION = readFileSync('app/documentation/DocumentationPage.tsx', 'utf8');

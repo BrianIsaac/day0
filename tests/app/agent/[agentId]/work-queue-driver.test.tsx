@@ -31,7 +31,7 @@ vi.mock('convex/react', async () => {
   return { useQuery: (): undefined => undefined, useMutation: record, useAction: record };
 });
 
-import { WorkQueue, checkForWorkMessage } from '../../../../app/agent/[agentId]/AgentDashboard';
+import { WorkQueue, checkForWorkMessage } from '../../../../app/agent/[agentId]/work/WorkQueue';
 
 function item(id: string, state: Doc<'workItems'>['state'], plan?: unknown): Doc<'workItems'> {
   return {

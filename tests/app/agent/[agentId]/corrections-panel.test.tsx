@@ -19,12 +19,10 @@ import {
 import { AgentZoneContext } from '../../../../app/agent/[agentId]/time';
 import { act } from 'react';
 import { button, focusedName, mount, press, said, settle } from '../../../fixtures/dom/press';
-import {
-  cancelPlanRequest,
-  ManagerFeedbackNote,
-  PlanApprovalForm,
-  WorkItemCard,
-} from '../../../../app/agent/[agentId]/AgentDashboard';
+import { cancelPlanRequest } from '../../../../app/agent/[agentId]/work/WorkQueue';
+import { ManagerFeedbackNote } from '../../../../app/agent/[agentId]/work/RunDetails';
+import { PlanApprovalForm } from '../../../../app/agent/[agentId]/work/PendingActions';
+import { WorkItemCard } from '../../../../app/agent/[agentId]/work/WorkItemCard';
 
 /**
  * A kept correction on the employee's dashboard, and the line on a later

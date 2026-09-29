@@ -21,11 +21,8 @@ vi.mock('../../../../src/lib/mastra', () => ({
 import { api } from '../../../../convex/_generated/api';
 import type { Doc, Id } from '../../../../convex/_generated/dataModel';
 import schema from '../../../../convex/schema';
-import {
-  WorkItemCard,
-  nextItemToEvaluate,
-  retryRequest,
-} from '../../../../app/agent/[agentId]/AgentDashboard';
+import { WorkItemCard } from '../../../../app/agent/[agentId]/work/WorkItemCard';
+import { nextItemToEvaluate, retryRequest } from '../../../../app/agent/[agentId]/work/WorkQueue';
 import { OUT_OF_SCOPE_SKIP_PREFIX } from '../../../../src/work/types';
 import { allConvexModules } from '../../../convex/all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from '../../../convex/surface-mode-env';

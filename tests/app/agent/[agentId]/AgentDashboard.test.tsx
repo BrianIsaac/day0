@@ -46,54 +46,65 @@ import { PILOT_FIGURES } from '../../../../app/CompanySupervision';
 import type { SurfaceRecord } from '../../../../src/surfaces/types';
 import {
   ActionPayload,
-  AgentDashboard,
-  AmendCharterPanel,
-  AutonomyControl,
-  CheckForNewWork,
-  ZoneLine,
-  EventTicker,
-  WorkQueue,
-  NotificationModeControl,
-  PendingDecisionsPanel,
-  CharterCard,
-  ConstraintList,
-  DashboardHeader,
   ManagerFeedbackNote,
   ProviderReconciliationControl,
   DraftDetails,
-  ManagerLine,
-  MetricsCard,
-  defaultRuleClause,
-  PendingActions,
-  PlanApprovalForm,
   PlanExecutionLedger,
   RefusedBlockedSteps,
   RefusedClosingDetails,
-  RefusedDraftDetails,
-  ProposedSkillsPanel,
-  RegisteredSkillsPanel,
   WithheldActionsDetails,
-  retryVerifiesSavedDraft,
-  failedItemReason,
   RepairNote,
   SessionRestoreNote,
-  WorkItemCard,
   CHIP_SWAP_MS,
-  connectedManagerChannel,
-  LANDING_MS,
+} from '../../../../app/agent/[agentId]/work/RunDetails';
+import { AgentDashboard } from '../../../../app/agent/[agentId]/AgentDashboard';
+import {
+  AmendCharterPanel,
+  defaultRuleClause,
+} from '../../../../app/agent/[agentId]/charter/AmendCharterPanel';
+import { AutonomyControl } from '../../../../app/agent/[agentId]/manage/AutonomyControl';
+import {
+  CheckForNewWork,
+  WorkQueue,
   sortedForQueue,
-  phasedLedger,
-  PermissionRows,
-  PermissionsCard,
-  eventItemTitle,
+} from '../../../../app/agent/[agentId]/work/WorkQueue';
+import {
+  ZoneLine,
+  DashboardHeader,
+  ManagerLine,
+} from '../../../../app/agent/[agentId]/EmployeeHeader';
+import { EventTicker, eventItemTitle } from '../../../../app/agent/[agentId]/record/EventTicker';
+import { NotificationModeControl } from '../../../../app/agent/[agentId]/manage/NotificationModeControl';
+import {
+  PendingDecisionsPanel,
+  PendingActions,
+  PlanApprovalForm,
   planApprovalRequest,
+  typedEstimateMinutes,
+} from '../../../../app/agent/[agentId]/work/PendingActions';
+import { CharterCard, ConstraintList } from '../../../../app/agent/[agentId]/charter/CharterCard';
+import { MetricsCard } from '../../../../app/agent/[agentId]/record/MetricsCard';
+import {
+  RefusedDraftDetails,
+  RegisteredSkillsPanel,
+  retryVerifiesSavedDraft,
+} from '../../../../app/agent/[agentId]/skills/RegisteredSkillsPanel';
+import { ProposedSkillsPanel } from '../../../../app/agent/[agentId]/skills/ProposedSkillsPanel';
+import {
+  failedItemReason,
+  phasedLedger,
   ANSWER_AND_RETRY,
   SKIP_RETRY_NOTE,
   TAKE_IT_ANYWAY,
   TICKET_REREAD_STOP,
-  typedEstimateMinutes,
   waitingLine,
-} from '../../../../app/agent/[agentId]/AgentDashboard';
+} from '../../../../app/agent/[agentId]/work/work-item';
+import { WorkItemCard, LANDING_MS } from '../../../../app/agent/[agentId]/work/WorkItemCard';
+import { connectedManagerChannel } from '../../../../app/agent/[agentId]/manager-channel';
+import {
+  PermissionRows,
+  PermissionsCard,
+} from '../../../../app/agent/[agentId]/surfaces/PermissionsCard';
 import {
   button,
   choose,
