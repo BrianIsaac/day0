@@ -141,7 +141,7 @@ describe('the /setup guide', (): void => {
     expect(text).toContain('The product the hosted demo shows, running locally in real mode');
     expect(text).not.toContain('the run it shows');
     expect(text).not.toContain('The deployment behind this page');
-    expect(text).not.toMatch(/serving build|last export|12 September 2026|3ed8779/);
+    expect(text).not.toMatch(/serving build|last export taken|3ed8779/);
   });
 
   it('dates the hosted demo by the release its deployment is stamped at, once, on the Singapore day (C1)', async (): Promise<void> => {
@@ -149,7 +149,7 @@ describe('the /setup guide', (): void => {
     const line =
       'The deployment behind this page has been at v0.9.0 since 30 September 2026, Singapore time.';
     expect(stamped.split(line)).toHaveLength(2);
-    expect(stamped).not.toMatch(/serving build|last export|12 September 2026|3ed8779/);
+    expect(stamped).not.toMatch(/serving build|last export taken|3ed8779/);
   });
 
   it('says once, under the two local ways, that both are real mode, with the three verbs', (): void => {

@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  DEPLOYMENT_ZONE,
   deploymentReleaseLine,
   readDeploymentRelease,
 } from '../../../src/setup/deployment-release';
@@ -22,7 +21,6 @@ describe('the line naming the release the deployment behind a page is stamped at
     expect(deploymentReleaseLine({ release: '0.9.0', since: V090_STAMPED_AT })).toBe(
       'The deployment behind this page has been at v0.9.0 since 30 September 2026, Singapore time.',
     );
-    expect(DEPLOYMENT_ZONE).toBe('Asia/Singapore');
   });
 
   it('dates the last Singapore minute of a day by that day, and the next minute by the next', (): void => {

@@ -18,7 +18,7 @@ const READ_TIMEOUT_MS = 3_000;
  * manager whose zone could date it, so it is dated on the operator's and the
  * venue's clock, and the sentence names the zone (a stamp carries its zone, N12).
  */
-export const DEPLOYMENT_ZONE = 'Asia/Singapore';
+const DEPLOYMENT_ZONE = 'Asia/Singapore';
 
 /** How the release sentence names `DEPLOYMENT_ZONE` to a reader. */
 const DEPLOYMENT_ZONE_NAME = 'Singapore time';
