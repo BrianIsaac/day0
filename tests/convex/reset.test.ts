@@ -441,7 +441,7 @@ describe('retire in real mode', (): void => {
     const { harness, retiring } = await seedRealOwner();
     await harness
       .withIdentity({ subject: 'owner' })
-      .mutation(api.reset.deleteMyData, { agentId: retiring });
+      .mutation(api.reset.retire, { agentId: retiring });
     const events = await harness.run(
       async (ctx) =>
         await ctx.db
@@ -480,7 +480,7 @@ describe('retire in real mode', (): void => {
       await seedRealOwner();
     await harness
       .withIdentity({ subject: 'owner' })
-      .mutation(api.reset.deleteMyData, { agentId: retiring });
+      .mutation(api.reset.retire, { agentId: retiring });
     const row = async (id: Id<'credentials'>) =>
       await harness.run(async (ctx) => await ctx.db.get(id));
     for (const id of [only, secret]) {
@@ -577,7 +577,7 @@ describe('retire in real mode', (): void => {
 
     await harness
       .withIdentity({ subject: 'owner' })
-      .mutation(api.reset.deleteMyData, { agentId: retiring });
+      .mutation(api.reset.retire, { agentId: retiring });
 
     const [retirement] = await retirementsOf(harness);
     expect(retirement.claims).toMatchObject([
@@ -635,7 +635,7 @@ describe('retire in real mode', (): void => {
 
     await harness
       .withIdentity({ subject: 'owner' })
-      .mutation(api.reset.deleteMyData, { agentId: retiring });
+      .mutation(api.reset.retire, { agentId: retiring });
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
 
     expect((await retirementsOf(harness))[0].claims).toEqual([]);
@@ -663,7 +663,7 @@ describe('retire in real mode', (): void => {
 
     await harness
       .withIdentity({ subject: 'owner' })
-      .mutation(api.reset.deleteMyData, { agentId: retiring });
+      .mutation(api.reset.retire, { agentId: retiring });
 
     expect((await retirementsOf(harness))[0].rejections).toMatchObject([
       { keys: ['linear:REVOPS-9'], rejectedAt: 5 },
@@ -724,7 +724,7 @@ describe('retire in real mode', (): void => {
 
     await harness
       .withIdentity({ subject: 'owner' })
-      .mutation(api.reset.deleteMyData, { agentId: retiring });
+      .mutation(api.reset.retire, { agentId: retiring });
 
     expect((await retirementsOf(harness))[0].claims).toMatchObject([
       { key, writeTarget: { field: 'Pipeline coverage' }, settledAt: expect.any(Number) },
@@ -773,7 +773,7 @@ describe('retire in real mode', (): void => {
 
     await harness
       .withIdentity({ subject: 'owner' })
-      .mutation(api.reset.deleteMyData, { agentId: retiring });
+      .mutation(api.reset.retire, { agentId: retiring });
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
 
     expect((await retirementsOf(harness))[0].claims).toEqual([]);
@@ -800,7 +800,7 @@ describe('retire in real mode', (): void => {
     });
     await harness
       .withIdentity({ subject: 'owner' })
-      .mutation(api.reset.deleteMyData, { agentId: retiring });
+      .mutation(api.reset.retire, { agentId: retiring });
     expect((await retirementsOf(harness))[0].claims).toHaveLength(1);
 
     await harness.withIdentity({ subject: 'owner' }).mutation(api.reset.deleteMyData, {});
@@ -814,11 +814,12 @@ describe('retire in real mode', (): void => {
 
   it('refuses to unlink the documentation while retiring one employee', async (): Promise<void> => {
     const { harness, retiring, shared } = await seedRealOwner();
+    // Unlinking retires every employee, so the one-employee retire takes no such argument.
     await expect(
       harness
         .withIdentity({ subject: 'owner' })
-        .mutation(api.reset.deleteMyData, { agentId: retiring, alsoUnlinkDocumentation: true }),
-    ).rejects.toThrow('unlinking the documentation retires every employee');
+        .mutation(api.reset.retire, { agentId: retiring, alsoUnlinkDocumentation: true } as never),
+    ).rejects.toThrow('alsoUnlinkDocumentation');
     expect(await harness.run(async (ctx) => await ctx.db.get(retiring))).not.toBeNull();
     expect(await harness.run(async (ctx) => await ctx.db.get(shared))).not.toHaveProperty(
       'revokedAt',
@@ -830,7 +831,7 @@ describe('retire in real mode', (): void => {
     await expect(
       harness
         .withIdentity({ subject: 'stranger' })
-        .mutation(api.reset.deleteMyData, { agentId: retiring }),
+        .mutation(api.reset.retire, { agentId: retiring }),
     ).rejects.toThrow('forbidden');
     expect(await harness.run(async (ctx) => await ctx.db.get(retiring))).not.toBeNull();
   });
@@ -895,7 +896,7 @@ describe('the jobs a reset leaves scheduled (step 47, P4-7)', (): void => {
 
     await harness
       .withIdentity({ subject: 'owner' })
-      .mutation(api.reset.deleteMyData, { agentId: retiring });
+      .mutation(api.reset.retire, { agentId: retiring });
 
     const jobs = await harness.run(
       async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),

@@ -1,7 +1,7 @@
-import { v } from 'convex/values';
+import { v, type Infer } from 'convex/values';
 import type { Doc, Id } from './_generated/dataModel';
 import { ConvexError } from 'convex/values';
-import { mutation, type MutationCtx } from './_generated/server';
+import { mutation, query, type DatabaseReader, type MutationCtx } from './_generated/server';
 import { assertOwnsAgent, getCallerOrThrow } from './ownership';
 import { deleteOwnedDocumentation } from './docSources';
 import { purgeCredential, purgeOwnedCredentials } from './credentials';
@@ -48,6 +48,203 @@ export const AGENT_KEYED_TABLES = [
  * a real-mode retire leaves. No reset deletes their rows.
  */
 export const RETIRE_RECORD_TABLES = ['retirements'] as const;
+
+/** A table whose rows belong to one employee and go with it. */
+export type AgentKeyedTable = (typeof AGENT_KEYED_TABLES)[number];
+
+/** What a reader needs to find one employee's rows: the employee, and its work items for the tables keyed by item. */
+interface EmployeeKeys {
+  readonly agentId: Id<'agents'>;
+  readonly workItemIds: readonly Id<'workItems'>[];
+}
+
+/** The rows of one table that belong to an employee, at most `limit` of them when one is given. */
+type RowReader = (
+  db: DatabaseReader,
+  keys: EmployeeKeys,
+  limit: number | undefined,
+) => Promise<ReadonlyArray<{ readonly _id: string }>>;
+
+/** Every row a query names, or its first `limit`. */
+async function upTo<Row>(
+  query: { take(n: number): Promise<Row[]>; collect(): Promise<Row[]> },
+  limit: number | undefined,
+): Promise<Row[]> {
+  return limit === undefined ? await query.collect() : await query.take(limit);
+}
+
+/**
+ * One employee's rows of a table keyed by work item, read item by item: the claim and the
+ * listing carry the item's employee, and only a reset deletes a work item, so the employee's
+ * items name every such row it has.
+ */
+async function byWorkItem<Row>(
+  keys: EmployeeKeys,
+  limit: number | undefined,
+  read: (workItemId: Id<'workItems'>) => Promise<Row[]>,
+): Promise<Row[]> {
+  const rows = (await Promise.all(keys.workItemIds.map(read))).flat();
+  return limit === undefined ? rows : rows.slice(0, limit);
+}
+
+/**
+ * How each agent-keyed table's rows for one employee are read, each by an index that leads with
+ * the employee or its work item, so neither the retire nor its preview scans another employee's
+ * rows. Typed over the whole list: a table added to `AGENT_KEYED_TABLES` does not compile until
+ * it is given a reader here.
+ */
+const EMPLOYEE_ROWS: Readonly<Record<AgentKeyedTable, RowReader>> = {
+  charters: (db, { agentId }, limit) =>
+    upTo(
+      db.query('charters').withIndex('by_agent', (q) => q.eq('agentId', agentId)),
+      limit,
+    ),
+  workspace: (db, { agentId }, limit) =>
+    upTo(
+      db.query('workspace').withIndex('by_agent_file', (q) => q.eq('agentId', agentId)),
+      limit,
+    ),
+  voiceSessions: (db, { agentId }, limit) =>
+    upTo(
+      db.query('voiceSessions').withIndex('by_agent', (q) => q.eq('agentId', agentId)),
+      limit,
+    ),
+  workItems: (db, { agentId }, limit) =>
+    upTo(
+      db.query('workItems').withIndex('by_agent', (q) => q.eq('agentId', agentId)),
+      limit,
+    ),
+  externalClaims: (db, keys, limit) =>
+    byWorkItem(keys, limit, (workItemId) =>
+      upTo(
+        db.query('externalClaims').withIndex('by_work_item', (q) => q.eq('workItemId', workItemId)),
+        limit,
+      ),
+    ),
+  managerQuestions: (db, { agentId }, limit) =>
+    upTo(
+      db.query('managerQuestions').withIndex('by_agent', (q) => q.eq('agentId', agentId)),
+      limit,
+    ),
+  managerDecisionNotices: (db, { agentId }, limit) =>
+    upTo(
+      db.query('managerDecisionNotices').withIndex('by_agent', (q) => q.eq('agentId', agentId)),
+      limit,
+    ),
+  managerNotes: (db, { agentId }, limit) =>
+    upTo(
+      db.query('managerNotes').withIndex('by_agent', (q) => q.eq('agentId', agentId)),
+      limit,
+    ),
+  corrections: (db, { agentId }, limit) =>
+    upTo(
+      db.query('corrections').withIndex('by_agent', (q) => q.eq('agentId', agentId)),
+      limit,
+    ),
+  decisionBatches: (db, { agentId }, limit) =>
+    upTo(
+      db.query('decisionBatches').withIndex('by_agent_id', (q) => q.eq('agentId', agentId)),
+      limit,
+    ),
+  skills: (db, { agentId }, limit) =>
+    upTo(
+      db.query('skills').withIndex('by_agent_name', (q) => q.eq('agentId', agentId)),
+      limit,
+    ),
+  permissionGrants: (db, { agentId }, limit) =>
+    upTo(
+      db.query('permissionGrants').withIndex('by_agent_scope', (q) => q.eq('agentId', agentId)),
+      limit,
+    ),
+  events: (db, { agentId }, limit) =>
+    upTo(
+      db.query('events').withIndex('by_agent', (q) => q.eq('agentId', agentId)),
+      limit,
+    ),
+  ticketListings: (db, keys, limit) =>
+    byWorkItem(keys, limit, (workItemId) =>
+      upTo(
+        db
+          .query('ticketListings')
+          .withIndex('by_work_item_listed_at', (q) => q.eq('workItemId', workItemId)),
+        limit,
+      ),
+    ),
+  surfaces: (db, { agentId }, limit) =>
+    upTo(
+      db.query('surfaces').withIndex('by_agent', (q) => q.eq('agentId', agentId)),
+      limit,
+    ),
+  mockDocs: (db, { agentId }, limit) =>
+    upTo(
+      db.query('mockDocs').withIndex('by_agent_slug', (q) => q.eq('agentId', agentId)),
+      limit,
+    ),
+  mockSpreadsheets: (db, { agentId }, limit) =>
+    upTo(
+      db.query('mockSpreadsheets').withIndex('by_agent_slug', (q) => q.eq('agentId', agentId)),
+      limit,
+    ),
+  mockSpreadsheetRows: (db, { agentId }, limit) =>
+    upTo(
+      db
+        .query('mockSpreadsheetRows')
+        .withIndex('by_agent_sheet_tab', (q) => q.eq('agentId', agentId)),
+      limit,
+    ),
+  mockSlackChannels: (db, { agentId }, limit) =>
+    upTo(
+      db.query('mockSlackChannels').withIndex('by_agent_slug', (q) => q.eq('agentId', agentId)),
+      limit,
+    ),
+  mockSlackMessages: (db, { agentId }, limit) =>
+    upTo(
+      db.query('mockSlackMessages').withIndex('by_agent_channel', (q) => q.eq('agentId', agentId)),
+      limit,
+    ),
+  mockTweets: (db, { agentId }, limit) =>
+    upTo(
+      db.query('mockTweets').withIndex('by_agent_slug', (q) => q.eq('agentId', agentId)),
+      limit,
+    ),
+  mockTweetReplies: (db, { agentId }, limit) =>
+    upTo(
+      db.query('mockTweetReplies').withIndex('by_agent_tweet', (q) => q.eq('agentId', agentId)),
+      limit,
+    ),
+  mockTickets: (db, { agentId }, limit) =>
+    upTo(
+      db.query('mockTickets').withIndex('by_agent_slug', (q) => q.eq('agentId', agentId)),
+      limit,
+    ),
+};
+
+/**
+ * One employee's rows, table by table: every row when `limit` is absent (the retire), at most
+ * `limit` of each table otherwise (the preview). Tables with no row are left out.
+ *
+ * @param db - Any database reader.
+ * @param agentId - The employee.
+ * @param limit - The most rows read from each table.
+ * @returns The ids of each table's rows.
+ */
+async function employeeRows(
+  db: DatabaseReader,
+  agentId: Id<'agents'>,
+  limit?: number,
+): Promise<Map<AgentKeyedTable, string[]>> {
+  const workItemIds = (await EMPLOYEE_ROWS.workItems(db, { agentId, workItemIds: [] }, limit)).map(
+    (row) => row._id as Id<'workItems'>,
+  );
+  const keys: EmployeeKeys = { agentId, workItemIds };
+  const read = await Promise.all(
+    AGENT_KEYED_TABLES.map(
+      async (table) =>
+        [table, (await EMPLOYEE_ROWS[table](db, keys, limit)).map((row) => row._id)] as const,
+    ),
+  );
+  return new Map(read.filter(([, ids]) => ids.length > 0).map(([table, ids]) => [table, [...ids]]));
+}
 
 /** The event a real-mode retire leaves on each employee's id, naming its `retirements` row. */
 export const AGENT_RETIRED_EVENT = 'agent.retired';
@@ -132,20 +329,22 @@ function credentialsBoundBy(surfaces: readonly Doc<'surfaces'>[]): Set<Id<'crede
  * have written is kept, any other is let go, and every rejection of its plan
  * or held actions is kept by the item's names (decision N3's sibling hold).
  *
- * @param ctx - The retire's mutation context.
+ * @param db - The retire's or its preview's reader.
  * @param agent - The employee being retired.
+ * @param now - When the retire happens, the settle time of a write-target claim it keeps.
+ * @param limit - The most work items read, for the preview; every one for the retire.
  * @returns What its retirement keeps, and the claims to release.
- * @throws ConvexError when there are more than one retirement can keep.
  */
 async function boundariesOf(
-  ctx: MutationCtx,
+  db: DatabaseReader,
   agent: Doc<'agents'>,
   now: number,
+  limit?: number,
 ): Promise<Boundaries> {
-  const items = await ctx.db
-    .query('workItems')
-    .withIndex('by_agent', (q) => q.eq('agentId', agent._id))
-    .collect();
+  const items = await upTo(
+    db.query('workItems').withIndex('by_agent', (q) => q.eq('agentId', agent._id)),
+    limit,
+  );
   const claims: RetiredClaim[] = [];
   const rejections: RetiredRejection[] = [];
   const released: Id<'externalClaims'>[] = [];
@@ -157,7 +356,7 @@ async function boundariesOf(
     if (rejectedAt !== undefined && keys.length > 0) {
       rejections.push({ workItemId: item._id, keys, rejectedAt });
     }
-    const live = await ctx.db
+    const live = await db
       .query('externalClaims')
       .withIndex('by_work_item', (q) => q.eq('workItemId', item._id))
       .filter((q) => q.eq(q.field('releasedAt'), undefined))
@@ -183,12 +382,21 @@ async function boundariesOf(
       });
     }
   }
-  if (claims.length + rejections.length > RETIRED_BOUNDARY_LIMIT) {
-    throw new ConvexError(
-      `This employee holds ${claims.length} items and ${rejections.length} rejections, more than one retirement keeps (${RETIRED_BOUNDARY_LIMIT}).`,
-    );
-  }
   return { claims, rejections, released };
+}
+
+/**
+ * Refuse a retire whose boundaries one retirement row cannot keep.
+ *
+ * @param boundaries - What the retire would keep.
+ * @throws ConvexError when there are more than `RETIRED_BOUNDARY_LIMIT` claims and rejections.
+ */
+function assertKeepable(boundaries: Boundaries): void {
+  const { claims, rejections } = boundaries;
+  if (claims.length + rejections.length <= RETIRED_BOUNDARY_LIMIT) return;
+  throw new ConvexError(
+    `This employee holds ${claims.length} items and ${rejections.length} rejections, more than one retirement keeps (${RETIRED_BOUNDARY_LIMIT}).`,
+  );
 }
 
 /**
@@ -257,21 +465,16 @@ async function deleteEmployee(ctx: MutationCtx, agent: Doc<'agents'>): Promise<R
     .query('surfaces')
     .withIndex('by_agent', (q) => q.eq('agentId', agent._id))
     .collect();
+  const rows = await employeeRows(ctx.db, agent._id);
   const rowCounts: Record<string, number> = {};
   const deletedIds = new Set<string>([agent._id]);
-  const tableDeletions: Array<Promise<unknown>> = [];
-  for (const tableName of AGENT_KEYED_TABLES) {
-    const rows = await ctx.db
-      .query(tableName)
-      .filter((q) => q.eq(q.field('agentId'), agent._id))
-      .collect();
-    if (rows.length > 0) rowCounts[tableName] = rows.length;
-    for (const row of rows) {
-      deletedIds.add(row._id);
-      tableDeletions.push(ctx.db.delete(row._id));
-    }
+  for (const [table, ids] of rows) {
+    rowCounts[table] = ids.length;
+    for (const id of ids) deletedIds.add(id);
   }
-  await Promise.all(tableDeletions);
+  await Promise.all(
+    [...rows.values()].flat().map(async (id) => await ctx.db.delete(id as Id<AgentKeyedTable>)),
+  );
   await ctx.db.delete(agent._id);
   return { rowCounts, boundCredentials: credentialsBoundBy(surfaces), deletedIds };
 }
@@ -322,37 +525,67 @@ async function cancelJobsFor(ctx: MutationCtx, deletedIds: ReadonlySet<string>):
  * employee's surface, as its connection or as a Slack app's client secret, or
  * one of the owner's documentation sources (decision N1).
  *
- * @param ctx - The reset's mutation context.
+ * @param db - The retire's or its preview's reader.
  * @param userId - The owner.
- * @param credentialId - The credential a retired employee bound.
+ * @param credentialId - The credential a retiring employee binds.
+ * @param retiring - The employees being retired, whose own surfaces do not count; after the
+ *   retire has deleted them there are none to skip.
  */
 async function stillBound(
-  ctx: MutationCtx,
+  db: DatabaseReader,
   userId: string,
   credentialId: Id<'credentials'>,
+  retiring: ReadonlySet<Id<'agents'>>,
 ): Promise<boolean> {
-  const connection = await ctx.db
+  const connections = await db
     .query('surfaces')
     .withIndex('by_credentialId', (q) => q.eq('credentialId', credentialId))
-    .first();
-  if (connection) return true;
-  const sources = await ctx.db
+    .collect();
+  if (connections.some((surface) => !retiring.has(surface.agentId))) return true;
+  const sources = await db
     .query('docSources')
     .withIndex('by_user', (q) => q.eq('userId', userId))
     .collect();
   if (sources.some((source) => source.credentialId === credentialId)) return true;
-  const employees = await ctx.db
+  const employees = await db
     .query('agents')
     .withIndex('by_userId', (q) => q.eq('userId', userId))
     .collect();
   for (const employee of employees) {
-    const surfaces = await ctx.db
+    if (retiring.has(employee._id)) continue;
+    const surfaces = await db
       .query('surfaces')
       .withIndex('by_agent', (q) => q.eq('agentId', employee._id))
       .collect();
     if (credentialsBoundBy(surfaces).has(credentialId)) return true;
   }
   return false;
+}
+
+/**
+ * Which of a retiring employee's credentials a retire would revoke and which it would keep for
+ * what still binds them; a credential that is gone or not the owner's is in neither.
+ *
+ * @param db - The retire's or its preview's reader.
+ * @param userId - The owner.
+ * @param bound - The credentials the retiring employees bind.
+ * @param retiring - The employees being retired.
+ */
+async function sortCredentials(
+  db: DatabaseReader,
+  userId: string,
+  bound: ReadonlySet<Id<'credentials'>>,
+  retiring: ReadonlySet<Id<'agents'>>,
+): Promise<{ revoke: Doc<'credentials'>[]; kept: Set<Id<'credentials'>> }> {
+  const revoke: Doc<'credentials'>[] = [];
+  const kept = new Set<Id<'credentials'>>();
+  for (const credentialId of bound) {
+    const credential = await db.get(credentialId);
+    if (!credential || credential.userId !== userId) continue;
+    if (await stillBound(db, userId, credentialId, retiring)) kept.add(credentialId);
+    else revoke.push(credential);
+  }
+  return { revoke, kept };
 }
 
 /**
@@ -370,116 +603,220 @@ async function revokeUnbound(
   bound: ReadonlySet<Id<'credentials'>>,
   now: number,
 ): Promise<{ revoked: Set<Id<'credentials'>>; kept: Set<Id<'credentials'>> }> {
-  const revoked = new Set<Id<'credentials'>>();
-  const kept = new Set<Id<'credentials'>>();
-  for (const credentialId of bound) {
-    const credential = await ctx.db.get(credentialId);
-    if (!credential || credential.userId !== userId) continue;
-    if (await stillBound(ctx, userId, credentialId)) {
-      kept.add(credentialId);
-      continue;
-    }
-    await purgeCredential(ctx, credential, now);
-    revoked.add(credentialId);
-  }
-  return { revoked, kept };
+  const { revoke, kept } = await sortCredentials(ctx.db, userId, bound, new Set());
+  for (const credential of revoke) await purgeCredential(ctx, credential, now);
+  return { revoked: new Set(revoke.map((credential) => credential._id)), kept };
 }
 
 /**
- * Delete the signed-in owner's employees: one, when `agentId` names it, or
- * every one. Public; the caller must own the employee. Idempotent for the
- * whole owner; a named employee already retired is refused as not found.
- * Called from the reset button on the landing page.
+ * Delete employees of one owner and what each owns, and, in real mode, leave each a retirement.
  *
- * In mock mode this is the hosted demo's full wipe. In real mode it is a
- * retire (decisions Q15 and N1): the working rows go, each credential a
- * retired employee bound that nothing else binds is revoked with its
- * ciphertext deleted, and each employee leaves a `retirements` row under its
- * owner that no later reset deletes, counting the rows deleted and the
- * credentials that employee bound, revoked or kept (a credential two retired
- * employees shared is counted in both), with one `agent.retired` event on its
- * own id naming the row. Retiring one employee keeps its claims on items it
- * may already have written and its rejections on its row, where a colleague's
- * claim, write and plan still meet them, and releases its other claims;
- * retiring every employee lets both go.
+ * In mock mode this is the hosted demo's wipe. In real mode it is a retire (decisions Q15 and
+ * N1): the working rows go, each credential a retired employee bound that nothing else binds is
+ * revoked with its ciphertext deleted, and each employee leaves a `retirements` row under its
+ * owner that no later reset deletes, counting the rows deleted and the credentials that employee
+ * bound, revoked or kept (a credential two retired employees shared is counted in both), with one
+ * `agent.retired` event on its own id naming the row. Retiring one employee (`single`) keeps its
+ * claims on items it may already have written and its rejections on its row, where a
+ * colleague's claim, write and plan still meet them, and releases its other claims; retiring
+ * every employee lets both go. Every pending job whose arguments name a deleted row is
+ * cancelled, so nothing scheduled ahead of time for a retired employee runs afterwards.
  *
- * Every pending job whose arguments name a deleted row is cancelled, so
- * nothing scheduled ahead of time for a retired employee runs afterwards.
+ * @param ctx - The mutation context.
+ * @param userId - The owner.
+ * @param agents - The employees to retire, all the owner's.
+ * @param options - Whether this is one employee of several, and whether the owner's
+ *   documentation and credentials go too (never beside `single`).
+ * @throws ConvexError when one employee holds more than its retirement can keep.
+ */
+async function retireEmployees(
+  ctx: MutationCtx,
+  userId: string,
+  agents: readonly Doc<'agents'>[],
+  options: { readonly single: boolean; readonly unlinkDocumentation: boolean },
+): Promise<{ unlinkedSources: number }> {
+  const now = Date.now();
+  const real = SURFACE_MODE === 'real';
+  const keepsBoundaries = options.single && real;
+  const boundaries = new Map<Id<'agents'>, Boundaries>();
+  for (const agent of agents) {
+    const held = keepsBoundaries ? await boundariesOf(ctx.db, agent, now) : NO_BOUNDARIES;
+    assertKeepable(held);
+    boundaries.set(agent._id, held);
+  }
+  const retired = new Map<Id<'agents'>, Retired>();
+  for (const agent of agents) retired.set(agent._id, await deleteEmployee(ctx, agent));
+  await cancelJobsFor(
+    ctx,
+    new Set([...retired.values()].flatMap((entry) => [...entry.deletedIds])),
+  );
+  // Unlinked before the retire counts, so a credential the unlink purges is
+  // counted revoked rather than kept for a source that is gone.
+  const unlinkedSources = options.unlinkDocumentation
+    ? await deleteOwnedDocumentation(ctx, userId)
+    : 0;
+  if (options.unlinkDocumentation) await purgeOwnedCredentials(ctx, userId);
+  if (!real) return { unlinkedSources };
+  if (!options.single) await releaseRetiredBoundaries(ctx, userId);
+  const bound = new Set([...retired.values()].flatMap((entry) => [...entry.boundCredentials]));
+  const { revoked, kept } = await revokeUnbound(ctx, userId, bound, now);
+  for (const agent of agents) {
+    const entry = retired.get(agent._id);
+    const held = boundaries.get(agent._id) ?? NO_BOUNDARIES;
+    if (!entry) continue;
+    const own = [...entry.boundCredentials];
+    const retirementId = await ctx.db.insert('retirements', {
+      userId,
+      agentId: agent._id,
+      agentName: agent.name,
+      retiredAt: now,
+      rowCounts: entry.rowCounts,
+      revokedCredentials: own.filter((id) => revoked.has(id)).length,
+      keptCredentials: own.filter((id) => kept.has(id)).length,
+      claims: held.claims,
+      rejections: held.rejections,
+    });
+    await appendEvent(ctx, {
+      agentId: agent._id,
+      type: AGENT_RETIRED_EVENT,
+      payload: { retirementId, agentId: agent._id, retiredAt: now },
+      createdAt: now,
+    });
+    await wakeReleasedClaims(ctx, userId, held.released);
+  }
+  return { unlinkedSources };
+}
+
+/**
+ * Retire one employee (decisions Q15 and N1): the Manage tab's Retire, once the manager has
+ * typed its confirmation. Public; the caller must own the employee, and one already retired is
+ * refused as not found. Real mode revokes what only it bound, deletes its working rows and
+ * keeps one retirement row with an `agent.retired` event; the hosted office wipes it. What it
+ * would do is `retirePreview`'s answer. Owner-level documentation and credentials are never
+ * touched here: unlinking them retires every employee (`deleteMyData`).
  *
- * Owner-level documentation and credentials outlive a plain reset. With
- * `alsoUnlinkDocumentation` every owned source is unlinked and every owned
- * credential is revoked with its ciphertext deleted; the credential rows
- * stay as the audit trail of what was held. Unlinking retires every
- * employee, so it is refused beside `agentId`.
+ * @returns The retired employee's name.
+ * @throws ConvexError when the employee holds more than one retirement keeps.
+ */
+export const retire = mutation({
+  args: { agentId: v.id('agents') },
+  handler: async (ctx, args): Promise<{ agentName: string }> => {
+    const agent = await assertOwnsAgent(ctx, args.agentId);
+    if (!agent.userId) throw new Error('forbidden: agent has no owner');
+    await retireEmployees(ctx, agent.userId, [agent], {
+      single: true,
+      unlinkDocumentation: false,
+    });
+    return { agentName: agent.name };
+  },
+});
+
+/**
+ * Retire every one of the signed-in owner's employees: the hosted demo's reset and the bed's.
+ * Public, for the signed-in owner; idempotent. Retiring every employee keeps no claim or
+ * rejection binding, since every colleague they bound goes too, and empties the boundaries of
+ * the owner's earlier retirements; the record of each stays.
+ *
+ * Owner-level documentation and credentials outlive it. With `alsoUnlinkDocumentation` every
+ * owned source is unlinked and every owned credential is revoked with its ciphertext deleted;
+ * the credential rows stay as the audit trail of what was held.
  */
 export const deleteMyData = mutation({
-  args: { alsoUnlinkDocumentation: v.optional(v.boolean()), agentId: v.optional(v.id('agents')) },
+  args: { alsoUnlinkDocumentation: v.optional(v.boolean()) },
   handler: async (ctx, args): Promise<{ deleted: number; unlinkedSources: number }> => {
     const identity = await getCallerOrThrow(ctx);
     const userId = identity.ownerKey;
-    // The unlink purges every credential the owner holds, the ones the
-    // remaining employees connect with included.
-    if (args.agentId !== undefined && args.alsoUnlinkDocumentation) {
-      throw new Error(
-        'unlinking the documentation retires every employee; retire one employee without it',
-      );
-    }
-
-    const agents =
-      args.agentId === undefined
-        ? await ctx.db
-            .query('agents')
-            .withIndex('by_userId', (q) => q.eq('userId', userId))
-            .collect()
-        : [await assertOwnsAgent(ctx, args.agentId)];
-
-    const now = Date.now();
-    const single = args.agentId !== undefined && SURFACE_MODE === 'real';
-    const boundaries = new Map<Id<'agents'>, Boundaries>();
-    for (const agent of agents) {
-      boundaries.set(agent._id, single ? await boundariesOf(ctx, agent, now) : NO_BOUNDARIES);
-    }
-    const retired = new Map<Id<'agents'>, Retired>();
-    for (const agent of agents) retired.set(agent._id, await deleteEmployee(ctx, agent));
-    await cancelJobsFor(
-      ctx,
-      new Set([...retired.values()].flatMap((entry) => [...entry.deletedIds])),
-    );
-    // Unlinked before the retire counts, so a credential the unlink purges is
-    // counted revoked rather than kept for a source that is gone.
-    const unlinkedSources = args.alsoUnlinkDocumentation
-      ? await deleteOwnedDocumentation(ctx, userId)
-      : 0;
-    if (args.alsoUnlinkDocumentation) await purgeOwnedCredentials(ctx, userId);
-    if (SURFACE_MODE === 'real') {
-      if (!single) await releaseRetiredBoundaries(ctx, userId);
-      const bound = new Set([...retired.values()].flatMap((entry) => [...entry.boundCredentials]));
-      const { revoked, kept } = await revokeUnbound(ctx, userId, bound, now);
-      for (const agent of agents) {
-        const entry = retired.get(agent._id);
-        const held = boundaries.get(agent._id) ?? NO_BOUNDARIES;
-        if (!entry) continue;
-        const own = [...entry.boundCredentials];
-        const retirementId = await ctx.db.insert('retirements', {
-          userId,
-          agentId: agent._id,
-          agentName: agent.name,
-          retiredAt: now,
-          rowCounts: entry.rowCounts,
-          revokedCredentials: own.filter((id) => revoked.has(id)).length,
-          keptCredentials: own.filter((id) => kept.has(id)).length,
-          claims: held.claims,
-          rejections: held.rejections,
-        });
-        await appendEvent(ctx, {
-          agentId: agent._id,
-          type: AGENT_RETIRED_EVENT,
-          payload: { retirementId, agentId: agent._id, retiredAt: now },
-          createdAt: now,
-        });
-        await wakeReleasedClaims(ctx, userId, held.released);
-      }
-    }
+    const agents = await ctx.db
+      .query('agents')
+      .withIndex('by_userId', (q) => q.eq('userId', userId))
+      .collect();
+    const { unlinkedSources } = await retireEmployees(ctx, userId, agents, {
+      single: false,
+      unlinkDocumentation: args.alsoUnlinkDocumentation === true,
+    });
     return { deleted: agents.length, unlinkedSources };
+  },
+});
+
+/**
+ * The most rows of each table the preview counts; past it the count is "at least". Far past
+ * an employee's own tables apart from its events, and inside one query's read limit across all
+ * of them.
+ */
+export const RETIRE_PREVIEW_ROW_LIMIT = 500;
+
+/** One connection a retire revokes or keeps, by the name the Surfaces tab gives it. */
+const previewSurface = v.object({ slug: v.string(), displayName: v.string() });
+
+/** What `retirePreview` answers. */
+const retirePreviewValidator = v.object({
+  mode: v.union(v.literal('mock'), v.literal('real')),
+  /** Rows the retire deletes, by table, the employee's own row not counted. */
+  rowCounts: v.record(v.string(), v.number()),
+  /** Whether a table reached `RETIRE_PREVIEW_ROW_LIMIT`, so its count is a floor. */
+  atLeast: v.boolean(),
+  /** The connections whose credential is revoked at once: nothing else binds it. */
+  revoked: v.array(previewSurface),
+  /** The connections whose credential stays, for another employee or a documentation source. */
+  kept: v.array(previewSurface),
+  /** The items it may already have written, whose claims its retirement keeps. */
+  keptClaims: v.number(),
+  /** Whether a retirement row outlives it: real mode only. */
+  tombstone: v.boolean(),
+});
+
+/**
+ * What retiring one employee would do, for the retire dialog to say before the manager
+ * confirms: the rows each table would lose, the connections whose credential would be revoked or
+ * kept, the claims its retirement would keep and whether a tombstone stays. What waits on the
+ * manager is `work.needsYouForAgent`'s answer, the inbox's own rule. Public, owner-guarded;
+ * reads by index, at most `RETIRE_PREVIEW_ROW_LIMIT` rows a table; writes nothing. An employee
+ * already gone answers `null`, as the dialog's last read after the retire does.
+ */
+export const retirePreview = query({
+  args: { agentId: v.id('agents') },
+  returns: v.union(v.null(), retirePreviewValidator),
+  handler: async (ctx, args): Promise<Infer<typeof retirePreviewValidator> | null> => {
+    if ((await ctx.db.get(args.agentId)) === null) return null;
+    const agent = await assertOwnsAgent(ctx, args.agentId);
+    const rows = await employeeRows(ctx.db, agent._id, RETIRE_PREVIEW_ROW_LIMIT);
+    const rowCounts = Object.fromEntries([...rows].map(([table, ids]) => [table, ids.length]));
+    const atLeast = [...rows.values()].some((ids) => ids.length >= RETIRE_PREVIEW_ROW_LIMIT);
+    if (SURFACE_MODE !== 'real' || !agent.userId) {
+      return {
+        mode: 'mock',
+        rowCounts,
+        atLeast,
+        revoked: [],
+        kept: [],
+        keptClaims: 0,
+        tombstone: false,
+      };
+    }
+    const surfaces = await ctx.db
+      .query('surfaces')
+      .withIndex('by_agent', (q) => q.eq('agentId', agent._id))
+      .take(RETIRE_PREVIEW_ROW_LIMIT);
+    const { revoke, kept } = await sortCredentials(
+      ctx.db,
+      agent.userId,
+      credentialsBoundBy(surfaces),
+      new Set([agent._id]),
+    );
+    const revokedIds = new Set(revoke.map((credential) => credential._id));
+    const named = (holds: (id: Id<'credentials'>) => boolean) =>
+      surfaces
+        .filter((surface) => [...credentialsBoundBy([surface])].some(holds))
+        .map((surface) => ({ slug: surface.slug, displayName: surface.displayName }));
+    const boundaries = await boundariesOf(ctx.db, agent, Date.now(), RETIRE_PREVIEW_ROW_LIMIT);
+    return {
+      mode: 'real',
+      rowCounts,
+      atLeast,
+      revoked: named((id) => revokedIds.has(id)),
+      kept: named((id) => kept.has(id)),
+      keptClaims: boundaries.claims.length,
+      tombstone: true,
+    };
   },
 });
