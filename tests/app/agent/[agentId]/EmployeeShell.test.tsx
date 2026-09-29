@@ -14,6 +14,7 @@ import {
   onDayZero,
 } from '../../../../app/agent/[agentId]/EmployeeShell';
 import { CharterView } from '../../../../app/agent/[agentId]/charter/CharterView';
+import { useEmployee } from '../../../../app/agent/[agentId]/employee-context';
 import { WorkView } from '../../../../app/agent/[agentId]/work/WorkView';
 import { ManageView } from '../../../../app/agent/[agentId]/manage/ManageView';
 import { RetiredNotice, RetiredNoticeProvider } from '../../../../app/RetiredNotice';
@@ -651,6 +652,50 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     expect(card?.textContent).toContain('Working');
     expect(card?.closest('.rail')?.hasAttribute('data-advanced')).toBe(false);
     expect(view.container.querySelector('ol[aria-label="First week"]')).toBeNull();
+    view.unmount();
+  });
+
+  it('keeps the Skills tab’s last authoring verdict when the manager leaves the tab and comes back (A D11)', async (): Promise<void> => {
+    backend.queries = {
+      'agents:get': row('active'),
+      'charters:latest': approved,
+      'work:listForAgent': [],
+      'metrics:forAgent': dashboardMetrics(),
+    };
+    /** The Skills tab's part: file what the authoring run came to. */
+    function Files() {
+      const { setLastAttempt } = useEmployee();
+      return (
+        <button
+          type="button"
+          onClick={() =>
+            setLastAttempt({
+              skillId: 'skill-1' as Id<'skills'>,
+              name: 'refresh-the-tile',
+              reason: 'authoring did not finish',
+            })
+          }
+        >
+          Approve · author and verify
+        </button>
+      );
+    }
+    /** The Skills tab again, reading what the shell kept. */
+    function Reads() {
+      const { lastAttempt } = useEmployee();
+      return <p>{lastAttempt ? `${lastAttempt.name}: ${lastAttempt.reason}` : 'nothing kept'}</p>;
+    }
+    route.segment = 'skills';
+    const view = mount(page(<Files />));
+    await settle();
+    await press(view.container, 'Approve · author and verify');
+    route.segment = 'work';
+    act((): void => view.root.render(page(<p>the Work tab</p>)));
+    await settle();
+    route.segment = 'skills';
+    act((): void => view.root.render(page(<Reads />)));
+    await settle();
+    expect(view.container.textContent).toContain('refresh-the-tile: authoring did not finish');
     view.unmount();
   });
 

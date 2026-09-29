@@ -23,6 +23,7 @@ import type { ChangeOutcome } from '../../components/use-change';
 import { DayZero } from './DayZero';
 import { EmployeeContext, type Employee, type SentBackOutcome } from './employee-context';
 import { addressesEnvironment } from './environment-hash';
+import type { AuthoringAttempt } from './skills/authoring';
 import {
   EMPLOYEE_TAB_LABELS,
   EMPLOYEE_TAB_PANEL_ID,
@@ -146,6 +147,8 @@ export function EmployeeShell({
   const [pageOutcome, setPageOutcome] = useState<ChangeOutcome | null>(null);
   // The draft the manager sent back and what became of it, until the page shows what follows it.
   const [sentBack, setSentBack] = useState<SentBack | null>(null);
+  // The Skills tab's last authoring verdict, here so it outlives the tab (A D11).
+  const [lastAttempt, setLastAttempt] = useState<AuthoringAttempt | null>(null);
   const onboarding = useRef<HTMLDivElement>(null);
   const arriving = useArrival(agent !== undefined && agent !== null);
   // The name the page last showed, so an employee retired while its page is open is named.
@@ -233,9 +236,11 @@ export function EmployeeShell({
             surfaces,
             arriving,
             reportSentBack,
+            lastAttempt,
+            setLastAttempt,
           }
         : null,
-    [agent, charter, surfaceMode, surfaces, arriving, reportSentBack],
+    [agent, charter, surfaceMode, surfaces, arriving, reportSentBack, lastAttempt, setLastAttempt],
   );
 
   if (agent === null) {

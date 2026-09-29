@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { getFunctionName } from 'convex/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { Id } from '../../../../../convex/_generated/dataModel';
 
 const backend = vi.hoisted(() => ({ queries: {} as Record<string, unknown> }));
 
@@ -30,5 +31,25 @@ describe('SkillsView', () => {
     expect(html).toContain('read-docs');
     expect(html).toContain('>How a skill is made</h2>');
     expect(html).not.toContain('>So far</h2>');
+  });
+
+  it('says the last authoring run did not finish from the attempt the shell holds, so it outlives the tab (A D11, E D9)', () => {
+    backend.queries = {
+      'skills:proposed': [],
+      'skills:registered': [],
+      'skills:get': { _id: 'skill-1', name: 'refresh-the-tile', state: 'approved' },
+    };
+    const html = renderToStaticMarkup(
+      asEmployee(<SkillsView />, {
+        lastAttempt: {
+          skillId: 'skill-1' as Id<'skills'>,
+          name: 'refresh-the-tile',
+          reason: 'The sandbox component is not running.',
+        },
+      }),
+    );
+    expect(html).toContain(
+      'Authoring did not finish: refresh-the-tile: The sandbox component is not running.',
+    );
   });
 });

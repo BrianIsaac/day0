@@ -40,6 +40,8 @@ export function asEmployee(node: ReactNode, overrides: Partial<Employee> = {}): 
     surfaces: [],
     arriving: false,
     reportSentBack: () => undefined,
+    lastAttempt: null,
+    setLastAttempt: () => undefined,
     ...overrides,
   };
   return (

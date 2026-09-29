@@ -1,13 +1,12 @@
 'use client';
 
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useRef } from 'react';
 import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { holdsLiveAuthoringClaim } from '@/lib/skill-authoring';
 import { Columns } from '../../../components/Columns';
 import { useEmployee } from '../employee-context';
 import { useNow } from '../../../components/time';
-import type { AuthoringAttempt } from './authoring';
 import { HowSkillsAreMade } from './HowSkillsAreMade';
 import { ProposedSkillsPanel } from './ProposedSkillsPanel';
 import { RegisteredSkillsPanel } from './RegisteredSkillsPanel';
@@ -15,10 +14,11 @@ import { RegisteredSkillsPanel } from './RegisteredSkillsPanel';
 /**
  * The Skills tab (round two section 3.9): the skills the employee proposed, waiting on the
  * manager, the ones it can call, and the ones not callable yet, with the verdict of the last
- * authoring run the manager started from this tab, beside how a skill is made.
+ * authoring run the manager started from this tab (held by the shell, so it outlives a visit to
+ * another tab), beside how a skill is made.
  */
 export function SkillsView() {
-  const { agent, surfaceMode, surfaces, arriving } = useEmployee();
+  const { agent, surfaceMode, surfaces, arriving, lastAttempt, setLastAttempt } = useEmployee();
   const agentId = agent._id;
   const proposedSkills = useQuery(api.skills.proposed, { agentId });
   const registeredSkills = useQuery(api.skills.registered, { agentId });
@@ -29,7 +29,6 @@ export function SkillsView() {
     (): Map<string, string> => new Map((workItems ?? []).map((item) => [item._id, item.title])),
     [workItems],
   );
-  const [lastAttempt, setLastAttempt] = useState<AuthoringAttempt | null>(null);
   // Ticks, so an authoring claim stops being described as live the moment it
   // stops being honoured rather than on the next thing the boss happens to do.
   const now = useNow();
