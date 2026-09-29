@@ -99,9 +99,15 @@ export function ToolsRow({
     <div className="grid gap-2 text-sm">
       <div className="grid gap-1 sm:grid-cols-[9rem_minmax(0,1fr)] sm:gap-4">
         <p className="text-[13px] text-[var(--color-muted)]">May call</p>
-        <p className="font-mono text-[13px] break-words text-[var(--color-fg-2)]">
-          {calls.length > 0 ? calls.join(', ') : 'no tool the provider offers is approved'}
-        </p>
+        {calls.length > 0 ? (
+          <p className="font-mono text-[13px] break-words text-[var(--color-fg-2)]">
+            {calls.join(', ')}
+          </p>
+        ) : (
+          <p className="text-sm text-[var(--color-fg-2)]">
+            No tool the provider offers is approved.
+          </p>
+        )}
       </div>
       {notOffered.length > 0 ? (
         <p className="text-[13px] text-[var(--color-muted)]">

@@ -34,6 +34,14 @@ describe('the tools line and the re-approval of a narrowed card (Q10, U10 D2 (b)
     expect(markup).toContain('role="status"');
   });
 
+  it('says a card that may call nothing in words, not as a tool name', (): void => {
+    const markup = renderToStaticMarkup(
+      <ToolsRow surface={tools({ toolAllowlist: [] })} onApprove={async () => undefined} />,
+    );
+    expect(markup).toMatch(/<p class="text-sm text-\[var\(--color-fg-2\)\]">No tool/);
+    expect(markup).toContain('No tool the provider offers is approved.');
+  });
+
   it('says nothing is withheld when the row withholds nothing, and nothing for a card not connected', (): void => {
     const none = renderToStaticMarkup(
       <ToolsRow surface={tools({})} onApprove={async () => undefined} />,
