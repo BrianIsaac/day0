@@ -73,7 +73,7 @@ export function WorkspacePanel({
                 <pre
                   tabIndex={0}
                   aria-label={file}
-                  className="mt-1 max-h-48 overflow-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-inset)] p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words text-[var(--color-fg-2)]"
+                  className="mt-1 max-h-48 overflow-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-inset)] p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap wrap-anywhere text-[var(--color-fg-2)]"
                 >
                   {bytes === 0 ? '(empty)' : content}
                 </pre>

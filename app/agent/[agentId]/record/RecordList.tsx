@@ -6,7 +6,6 @@ import type { Id } from '@convex/_generated/dataModel';
 import type { RecordEntry, RecordFilter } from '@/events/record-filters';
 import { Button } from '../../../components/Button';
 import { Card } from '../../../components/Card';
-import { Disclosure } from '../../../components/Disclosure';
 import { RecordLine } from '../../../components/RecordLine';
 import { recordKindOf } from '../event-labels';
 import { clockTime, useAgentZone } from '../time';
@@ -129,16 +128,23 @@ export function RecordList({
               {recordWords(entry.event, {
                 name,
                 ...(entry.itemTitle !== undefined ? { item: entry.itemTitle } : {}),
-              })}
-              <Disclosure summary="Payload">
+              })}{' '}
+              <details className="group/payload inline">
+                <summary className="inline-flex min-h-11 cursor-pointer list-none items-center gap-1.5 align-middle text-[13px] text-[var(--color-muted)] hover:text-[var(--color-fg)] [&::-webkit-details-marker]:hidden">
+                  <span
+                    aria-hidden="true"
+                    className="inline-block size-[6px] -rotate-45 border-r-[1.5px] border-b-[1.5px] border-current transition-transform duration-[180ms] ease-out group-open/payload:rotate-45 motion-reduce:transition-none"
+                  />
+                  Payload
+                </summary>
                 <pre
                   tabIndex={0}
                   aria-label={`Payload of ${entry.event.type}`}
-                  className="max-h-64 overflow-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-inset)] p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words text-[var(--color-fg-2)]"
+                  className="mb-1 max-h-64 overflow-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-inset)] p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap wrap-anywhere text-[var(--color-fg-2)]"
                 >
                   {payloadText(entry)}
                 </pre>
-              </Disclosure>
+              </details>
             </RecordLine>
           ))}
         </ol>

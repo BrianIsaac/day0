@@ -23,6 +23,8 @@ describe('WorkspacePanel', (): void => {
     expect(html.match(/<details/g)).toHaveLength(9);
     expect(html.match(/>empty</g)).toHaveLength(6);
     for (const file of ['AGENTS.md', 'IDENTITY.md', 'HEARTBEAT.md']) expect(html).toContain(file);
+    // A file of one unbroken token wraps anywhere rather than widening the aside.
+    expect(html.match(/<pre[^>]*class="[^"]*\bwrap-anywhere\b/g)).toHaveLength(8);
   });
 
   it('says the files are loading rather than listing eight empty ones', (): void => {

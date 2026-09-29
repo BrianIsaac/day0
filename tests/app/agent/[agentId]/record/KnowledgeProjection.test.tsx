@@ -31,6 +31,7 @@ describe('KnowledgeProjection', (): void => {
     );
     expect(html).toContain('Connections: Slack (connected until 25 Dec 2026)');
     expect(html).not.toContain('Cut at 4,000 characters');
+    expect(html).toMatch(/<pre[^>]*class="[^"]*\bwrap-anywhere\b/);
   });
 
   it('says it is loading rather than drawing an empty projection, and says when one was cut', (): void => {

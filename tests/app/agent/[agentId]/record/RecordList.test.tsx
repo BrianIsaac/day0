@@ -116,6 +116,14 @@ describe('RecordList', (): void => {
     expect(lines[1]?.textContent).toContain('Landed: You approved charter version 0.1.');
     const payload = lines[0]?.querySelector('details');
     expect(payload?.open).toBe(false);
+    // Inline after the sentence, as drawn, not a row between the sentence and its time; its
+    // text wraps anywhere, so a long token cannot widen the page on a phone.
+    expect(payload?.className).toMatch(/\binline\b/);
+    expect(payload?.parentElement?.lastChild).not.toBe(
+      payload?.parentElement?.querySelector('time'),
+    );
+    expect(payload?.querySelector('summary')?.className).toMatch(/\bmin-h-11\b/);
+    expect(payload?.querySelector('pre')?.className).toMatch(/\bwrap-anywhere\b/);
     expect(payload?.querySelector('summary')?.textContent).toContain('Payload');
     expect(JSON.parse(payload?.querySelector('pre')?.textContent ?? '')).toEqual({
       id: 'e2',
