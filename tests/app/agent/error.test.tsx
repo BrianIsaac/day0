@@ -75,7 +75,7 @@ describe('the employee route with an id that names no employee of the caller', (
     const view = mount(route());
     await settle();
     expect(view.container.querySelector('h1')?.textContent).toBe('No such employee');
-    expect(view.container.textContent).not.toContain('could not be drawn');
+    expect(view.container.textContent).not.toContain('did not load');
     view.unmount();
   });
 
@@ -87,7 +87,7 @@ describe('the employee route with an id that names no employee of the caller', (
     const view = mount(route());
     await settle();
     expect(view.container.querySelector('h1')?.textContent).toBe('No such employee');
-    expect(view.container.textContent).toContain('the address names one that is not yours');
+    expect(view.container.textContent).toContain('this link is for an employee that is not yours');
     view.unmount();
   });
 
@@ -98,7 +98,7 @@ describe('the employee route with an id that names no employee of the caller', (
     };
     const view = mount(route());
     await settle();
-    expect(view.container.querySelector('h1')?.textContent).toBe('This page could not be drawn');
+    expect(view.container.querySelector('h1')?.textContent).toBe('This page did not load');
 
     backend.queries = { 'agents:get': null, 'config:surfaceMode': { mode: 'mock' } };
     await press(view.container, 'Try again');

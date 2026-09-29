@@ -15,11 +15,9 @@ export default function EmployeeTabError({ unstable_retry }: { unstable_retry: (
       className="grid gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-5"
     >
       <h2 id="employee-tab-error" className="text-base font-semibold">
-        This tab could not be drawn
+        This tab did not load
       </h2>
-      <p className="text-sm text-[var(--color-fg-2)]">
-        Reading it failed. Try again, or open another tab.
-      </p>
+      <p className="text-sm text-[var(--color-fg-2)]">Try again, or choose another tab above.</p>
       <Button variant="primary" className="self-start" onClick={unstable_retry}>
         Try again
       </Button>

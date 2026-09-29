@@ -32,7 +32,7 @@ describe("a tab's net", (): void => {
     );
     await settle();
     expect(view.container.querySelector('h1')).toBeNull();
-    expect(view.container.querySelector('h2')?.textContent).toBe('This tab could not be drawn');
+    expect(view.container.querySelector('h2')?.textContent).toBe('This tab did not load');
 
     tab.fails = false;
     await press(view.container, 'Try again');

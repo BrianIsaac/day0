@@ -539,7 +539,11 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     await settle();
     expect(view.container.querySelector('h1')?.textContent).toBe('Mira is retired');
     expect(view.container.textContent).not.toContain('the manage tab');
-    expect(view.container.querySelector('a[href="/"]')?.textContent).toBe('Back to your employees');
+    const back = view.container.querySelector('a[href="/"]');
+    expect(back?.textContent).toBe('Back to your employees');
+    expect(back?.className).toMatch(/\bmin-h-11\b/);
+    // The page changed under the manager: the heading says where they are now.
+    expect(focusedName()).toBe('Mira is retired');
     view.unmount();
   });
 
