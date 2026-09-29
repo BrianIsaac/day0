@@ -1,13 +1,29 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useMutation } from 'convex/react';
 import { api } from '@convex/_generated/api';
-import { errorMessage } from '@/lib/errors';
+import { Button } from '../components/Button';
+import { Dialog } from '../components/Dialog';
+import { StatusRegion } from '../components/StatusRegion';
+import { useChange } from '../components/use-change';
 
 /**
- * The demo reset: wipes every employee and what it made, and optionally
- * unlinks the owner's documentation. Disabled while there is nothing to wipe.
+ * What the reset does, said in its confirmation.
+ *
+ * @param alsoUnlinkDocumentation - Whether the owner's documentation goes too.
+ */
+export function resetWarning(alsoUnlinkDocumentation: boolean): string {
+  return alsoUnlinkDocumentation
+    ? 'This deletes every employee and its data, and unlinks every documentation source. It cannot be undone.'
+    : 'This deletes every employee and its data. Your documentation stays linked. It cannot be undone.';
+}
+
+/**
+ * The demo reset: wipes every employee and what it made, and optionally unlinks the owner's
+ * documentation. Disabled while there is nothing to wipe. Pressing it opens the shared
+ * confirmation dialog, Keep everything focused first; what the reset came to is said beside the
+ * button and focus comes back to it.
  *
  * @param hasEmployees - Whether the owner has any agent row, evaluation agents included.
  * @param hasDocumentation - Whether the owner has linked documentation.
@@ -21,25 +37,15 @@ export function ResetCard({
 }) {
   const reset = useMutation(api.reset.deleteMyData);
   const [alsoUnlinkDocumentation, setAlsoUnlinkDocumentation] = useState(false);
-  const [resetting, setResetting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const opener = useRef<HTMLButtonElement>(null);
+  const keep = useRef<HTMLButtonElement>(null);
+  const change = useChange(opener);
 
-  async function onReset(): Promise<void> {
-    const documentationNote = alsoUnlinkDocumentation
-      ? ' and unlink every documentation source'
-      : '';
-    if (!confirm(`Delete every employee and its data${documentationNote}? This cannot be undone.`))
-      return;
-    setResetting(true);
-    setError(null);
-    try {
-      await reset({ alsoUnlinkDocumentation });
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setResetting(false);
-    }
-  }
+  const close = (): void => {
+    change.clear();
+    setConfirming(false);
+  };
 
   return (
     <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-5">
@@ -59,20 +65,58 @@ export function ResetCard({
             Also unlink owner-level documentation locations
           </label>
         </div>
-        <button
-          type="button"
-          // The handler reports its own failure on the card; nothing is left to reject.
-          onClick={() => void onReset()}
-          disabled={resetting || (!hasEmployees && (!alsoUnlinkDocumentation || !hasDocumentation))}
-          className="inline-flex min-h-11 shrink-0 items-center self-start whitespace-nowrap rounded-lg border border-[var(--color-danger)]/40 px-4 text-sm text-[var(--color-danger)] hover:bg-[var(--color-danger)]/10 disabled:opacity-50 sm:self-center"
+        <Button
+          ref={opener}
+          variant="danger"
+          aria-haspopup="dialog"
+          onClick={() => {
+            change.clear();
+            setConfirming(true);
+          }}
+          disabled={
+            change.busy || (!hasEmployees && (!alsoUnlinkDocumentation || !hasDocumentation))
+          }
+          className="shrink-0 self-start sm:self-center"
         >
-          {resetting ? 'Resetting…' : 'Reset everything'}
-        </button>
+          {change.busy ? 'Resetting…' : 'Reset everything'}
+        </Button>
       </div>
-      {error ? (
-        <p role="alert" className="mt-3 text-sm text-[var(--color-danger)]">
-          {error}
-        </p>
+      <StatusRegion outcome={confirming ? null : change.outcome} />
+      {confirming ? (
+        <Dialog
+          role="alertdialog"
+          title="Reset everything?"
+          description={resetWarning(alsoUnlinkDocumentation)}
+          onClose={close}
+          initialFocus={keep}
+          busy={change.busy}
+        >
+          <StatusRegion outcome={change.outcome} />
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button ref={keep} size="large" disabled={change.busy} onClick={close}>
+              Keep everything
+            </Button>
+            <Button
+              variant="danger"
+              size="large"
+              disabled={change.busy}
+              onClick={() =>
+                change.run(() => reset({ alsoUnlinkDocumentation }), {
+                  done: (result) =>
+                    `Reset: ${result.deleted} ${result.deleted === 1 ? 'employee' : 'employees'} wiped${
+                      result.unlinkedSources > 0
+                        ? `, ${result.unlinkedSources} documentation ${result.unlinkedSources === 1 ? 'source' : 'sources'} unlinked`
+                        : ''
+                    }.`,
+                  refused: 'Nothing was reset.',
+                  after: () => setConfirming(false),
+                })
+              }
+            >
+              Reset everything
+            </Button>
+          </div>
+        </Dialog>
       ) : null}
     </section>
   );

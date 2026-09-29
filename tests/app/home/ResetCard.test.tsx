@@ -1,32 +1,26 @@
 /** @vitest-environment jsdom */
 
 import { act } from 'react';
-import { createRoot, type Root } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const reset = vi.hoisted(() => vi.fn());
 vi.mock('convex/react', () => ({ useMutation: () => reset }));
 
-import { ResetCard } from '../../../app/home/ResetCard';
+import { ResetCard, resetWarning } from '../../../app/home/ResetCard';
+import { focusedName, mount, press, said, unmountAll } from '../../fixtures/dom/press';
 
 const buttonOf = (markup: string): string =>
   /<button[^>]*>(?:Reset everything|Resetting…)<\/button>/.exec(markup)?.[0] ?? '';
 
 describe('ResetCard', (): void => {
-  let host: HTMLDivElement;
-  let root: Root;
-
   beforeEach((): void => {
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     reset.mockReset();
-    host = document.createElement('div');
-    root = createRoot(host);
   });
 
   afterEach((): void => {
-    act(() => root.unmount());
-    vi.unstubAllGlobals();
+    unmountAll();
+    document.body.replaceChildren();
   });
 
   it('says what it wipes in the manager’s word for the employees (N29)', (): void => {
@@ -50,30 +44,64 @@ describe('ResetCard', (): void => {
     ).not.toContain('disabled=""');
   });
 
-  it('wipes nothing when the manager declines the confirmation', async (): Promise<void> => {
-    vi.stubGlobal('confirm', () => false);
-    act(() => root.render(<ResetCard hasEmployees hasDocumentation />));
-    await act(async () => host.querySelector('button')!.click());
+  it('asks in the shared dialog, not the browser’s confirm, with Keep everything focused first', async (): Promise<void> => {
+    const confirm = vi.fn();
+    vi.stubGlobal('confirm', confirm);
+    const view = mount(<ResetCard hasEmployees hasDocumentation />);
+    await press(view.container, 'Reset everything');
+    const dialog = document.querySelector('[role="alertdialog"]');
+    expect(dialog).not.toBeNull();
+    expect(
+      document.getElementById(dialog?.getAttribute('aria-labelledby') ?? '')?.textContent,
+    ).toBe('Reset everything?');
+    expect(
+      document.getElementById(dialog?.getAttribute('aria-describedby') ?? '')?.textContent,
+    ).toBe(resetWarning(false));
+    expect(focusedName()).toBe('Keep everything');
+    expect(confirm).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it('wipes nothing when the manager keeps everything, and gives focus back to the button', async (): Promise<void> => {
+    const view = mount(<ResetCard hasEmployees hasDocumentation />);
+    await press(view.container, 'Reset everything');
+    await press(document.body, 'Keep everything');
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
     expect(reset).not.toHaveBeenCalled();
+    expect(focusedName()).toBe('Reset everything');
   });
 
-  it('wipes, with the documentation when ticked, once confirmed', async (): Promise<void> => {
-    vi.stubGlobal('confirm', () => true);
-    reset.mockResolvedValue(undefined);
-    act(() => root.render(<ResetCard hasEmployees hasDocumentation />));
-    act(() => host.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
-    await act(async () => host.querySelector('button')!.click());
+  it('wipes, with the documentation when ticked, once confirmed, and says what went', async (): Promise<void> => {
+    reset.mockResolvedValue({ deleted: 2, unlinkedSources: 1 });
+    const view = mount(<ResetCard hasEmployees hasDocumentation />);
+    act(() => view.container.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
+    await press(view.container, 'Reset everything');
+    expect(
+      document.getElementById(
+        document.querySelector('[role="alertdialog"]')?.getAttribute('aria-describedby') ?? '',
+      )?.textContent,
+    ).toBe(resetWarning(true));
+    const confirmAt = [...document.querySelectorAll('[role="alertdialog"] button')].find(
+      (control) => control.textContent === 'Reset everything',
+    ) as HTMLButtonElement;
+    await press(confirmAt.parentElement as HTMLElement, 'Reset everything');
     expect(reset).toHaveBeenCalledWith({ alsoUnlinkDocumentation: true });
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+    expect(said(view.container)).toEqual([
+      'Reset: 2 employees wiped, 1 documentation source unlinked.',
+    ]);
   });
 
-  it('says why a reset failed on the card instead of rejecting from the click', async (): Promise<void> => {
-    vi.stubGlobal('confirm', () => true);
+  it('says why a reset failed inside the dialog and keeps it open', async (): Promise<void> => {
     reset.mockRejectedValue(new Error('Reset is not available right now'));
-    act(() => root.render(<ResetCard hasEmployees hasDocumentation={false} />));
-    await act(async () => host.querySelector('button')!.click());
-    expect(host.querySelector('[role="alert"]')?.textContent).toContain(
-      'Reset is not available right now',
-    );
-    expect(host.querySelector('button')?.textContent).toBe('Reset everything');
+    const view = mount(<ResetCard hasEmployees hasDocumentation={false} />);
+    await press(view.container, 'Reset everything');
+    const dialog = document.querySelector<HTMLElement>('[role="alertdialog"]')!;
+    const confirmAt = [...dialog.querySelectorAll('button')].find(
+      (control) => control.textContent === 'Reset everything',
+    ) as HTMLButtonElement;
+    await press(confirmAt.parentElement as HTMLElement, 'Reset everything');
+    expect(said(dialog)).toEqual(['Reset is not available right now']);
+    expect(said(view.container)).toEqual([]);
   });
 });
