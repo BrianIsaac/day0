@@ -663,3 +663,28 @@ describe('what the strikes changed, for the record', (): void => {
     expect(clauseChanges(before, before)).toEqual([]);
   });
 });
+
+describe('what the strikes changed, when a will-do empties', (): void => {
+  it('drops the emptied clause and pairs the rewrite with the clause it came from', (): void => {
+    const before = {
+      proposedFunction: 'Own tickets.',
+      proposedBoundaries: {
+        willDo: ['Own the forecast.', 'Handle owned, prioritized tickets.'],
+        willNotDo: [],
+        escalationTriggers: [],
+      },
+    };
+    const after = {
+      ...before,
+      proposedBoundaries: { ...before.proposedBoundaries, willDo: ['Handle tickets.'] },
+    };
+    expect(clauseChanges(before, after)).toEqual([
+      { field: 'willDo', text: 'Own the forecast.' },
+      {
+        field: 'willDo',
+        text: 'Handle owned, prioritized tickets.',
+        rewrittenAs: 'Handle tickets.',
+      },
+    ]);
+  });
+});

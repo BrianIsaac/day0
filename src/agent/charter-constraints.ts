@@ -677,6 +677,27 @@ export interface StruckClause {
   readonly rewrittenAs?: string;
 }
 
+/** A clause's words, lower-cased, without punctuation. */
+function wordsOf(text: string): string[] {
+  return text.toLowerCase().match(/[\p{L}\p{N}'-]+/gu) ?? [];
+}
+
+/**
+ * Whether `to` is `from` with words taken out: a strike removes wording and never adds any, so a
+ * rewritten clause's words are the original's, in order. A will-do the strike emptied is dropped
+ * and never pairs with the next clause's rewrite.
+ */
+function isRewriteOf(from: string, to: string): boolean {
+  const remaining = wordsOf(to);
+  if (remaining.length === 0) return false;
+  let next = 0;
+  for (const word of wordsOf(from)) {
+    if (word === remaining[next]) next += 1;
+    if (next === remaining.length) return true;
+  }
+  return false;
+}
+
 /**
  * What the strikes did to the clauses between a draft and its effective charter: each list clause
  * taken out whole, each will-do rewritten in place (paired in order, as `strikePreview` pairs
@@ -703,7 +724,7 @@ export function clauseChanges(before: ClauseCharter, after: ClauseCharter): Stru
       continue;
     }
     const to = willDoAfter[position];
-    if (to !== undefined && !willDoBefore.includes(to)) {
+    if (to !== undefined && !willDoBefore.includes(to) && isRewriteOf(clause, to)) {
       changes.push({ field: 'willDo', text: clause, rewrittenAs: to });
       position += 1;
     } else {
