@@ -41,6 +41,18 @@ function key(name: string): void {
   });
 }
 
+/**
+ * End an element's CSS animation. jsdom has no `AnimationEvent`, so React may listen for it under
+ * a vendor name: each spelling is sent, as a browser sends the one it uses.
+ */
+function animationEnds(element: Element | null | undefined): void {
+  act((): void => {
+    for (const name of ['animationend', 'webkitAnimationEnd', 'mozAnimationEnd', 'oAnimationEnd']) {
+      element?.dispatchEvent(new Event(name, { bubbles: true }));
+    }
+  });
+}
+
 /** Press an element the way a pointer does. */
 function click(element: Element | null): void {
   act((): void => {
@@ -54,7 +66,8 @@ describe('FirstWeekCard', () => {
     expect(html.match(/<button /g)).toHaveLength(1);
     expect(html).toContain(`aria-label="${NAME}"`);
     expect(html).toContain('aria-expanded="false"');
-    expect(html).toMatch(/aria-controls="[^"]+"/);
+    // The week is not on the page yet, so the card names no element.
+    expect(html).not.toContain('aria-controls');
     // The rail's own cell: its class names, the dot and title, and the current step's tint.
     expect(html).toMatch(
       /<button [^>]*class="rail-step now [^"]*bg-\[var\(--color-accent-soft\)\]/,
@@ -85,7 +98,7 @@ describe('FirstWeekCard', () => {
   it('opens the whole week over the page: expanded, modal, the page behind inert, focus inside', async () => {
     const view = mount(page());
     await press(view.container, NAME);
-    const card = view.container.querySelector('button[aria-controls]');
+    const card = view.container.querySelector('button[aria-label^="First week"]');
     const week = document.querySelector<HTMLElement>('[role="dialog"]');
     expect(card?.getAttribute('aria-expanded')).toBe('true');
     expect(week?.id).toBe(card?.getAttribute('aria-controls'));
@@ -108,7 +121,9 @@ describe('FirstWeekCard', () => {
     expect(document.body.style.overflow).toBe('');
     expect(focusedName()).toBe(NAME);
     expect(
-      view.container.querySelector('button[aria-controls]')?.getAttribute('aria-expanded'),
+      view.container
+        .querySelector('button[aria-label^="First week"]')
+        ?.getAttribute('aria-expanded'),
     ).toBe('false');
   });
 
@@ -125,60 +140,123 @@ describe('FirstWeekCard', () => {
     expect(focusedName()).toBe(NAME);
   });
 
-  it('keeps Tab inside the week, which holds no control', async () => {
+  it('keeps Tab inside the week, whose one control is Close, shown to a keyboard (re-pinned)', async () => {
     const view = mount(page());
     await press(view.container, NAME);
-    const week = document.querySelector('[role="dialog"]');
+    const week = document.querySelector<HTMLElement>('[role="dialog"]');
+    const close = week?.querySelector('button');
+    expect(close?.textContent).toBe('Close the whole week');
+    expect(close?.className).toMatch(/\bsr-only\b.*\bfocus-visible:not-sr-only\b/);
+    expect(close?.className).toMatch(/\bfocus-visible:min-h-11\b/);
+    close?.focus();
     const tab = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
     act((): void => {
       document.activeElement?.dispatchEvent(tab);
     });
     expect(tab.defaultPrevented).toBe(true);
-    expect(document.activeElement).toBe(week);
+    expect(document.activeElement).toBe(close);
+  });
+
+  it('closes from its Close control, for a screen reader on a touch screen with no Escape', async () => {
+    const view = mount(page());
+    await press(view.container, NAME);
+    await press(document.body, 'Close the whole week');
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(focusedName()).toBe(NAME);
+  });
+
+  it('keeps focus in the week on a press that sends no click, and stays open on a double click', async () => {
+    const view = mount(page());
+    await press(view.container, NAME);
+    const scrim = document.querySelector('[data-week-scrim]');
+    const down = new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 2 });
+    act((): void => {
+      scrim?.dispatchEvent(down);
+    });
+    expect(down.defaultPrevented).toBe(true);
+    act((): void => {
+      scrim?.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 2 }));
+    });
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+  });
+
+  it('closes when the window is resized, rather than shrink to where the card was', async () => {
+    const view = mount(page());
+    await press(view.container, NAME);
+    act((): void => {
+      window.dispatchEvent(new Event('resize'));
+    });
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it('shrinks back no longer modal, and leaves once its own motion ends', async () => {
+    const running = [{}];
+    const original = HTMLElement.prototype.getAnimations;
+    HTMLElement.prototype.getAnimations = function (this: HTMLElement): Animation[] {
+      return this.hasAttribute('data-week') ? (running as unknown as Animation[]) : [];
+    };
+    try {
+      const view = mount(page());
+      await press(view.container, NAME);
+      key('Escape');
+      const week = document.querySelector<HTMLElement>('[data-week]');
+      expect(week?.getAttribute('data-week')).toBe('closing');
+      expect(week?.hasAttribute('aria-modal')).toBe(false);
+      expect(week?.getAttribute('aria-hidden')).toBe('true');
+      expect(view.container.hasAttribute('inert')).toBe(false);
+      expect(focusedName()).toBe(NAME);
+      // A child's motion ending is not the week's.
+      animationEnds(week?.querySelector('li'));
+      expect(document.querySelector('[data-week]')).not.toBeNull();
+      animationEnds(week);
+      expect(document.querySelector('[data-week]')).toBeNull();
+    } finally {
+      HTMLElement.prototype.getAnimations = original;
+    }
   });
 });
 
 describe('placeWeek', () => {
   it('lays the week over the card where it runs across the page, growing from the card’s size', () => {
-    const place = placeWeek(
-      { top: 120, left: 1128, width: 240, height: 58 },
-      { left: 104, width: 1232, height: 60 },
-      0,
-      900,
-    );
+    const place = placeWeek({
+      anchor: { top: 120, left: 1128, width: 240, height: 58 },
+      panel: { left: 104, width: 1232, height: 60 },
+      nowTop: 0,
+      windowHeight: 900,
+    });
     expect(place.top).toBe(120);
     expect(place.origin).toBe(`${1128 + 120 - 104}px 29px`);
     expect(place.from).toBeCloseTo(240 / 1232);
   });
 
   it('lifts the stacked week on a phone so its current step sits on the card, within the window', () => {
-    const phone = placeWeek(
-      { top: 300, left: 16, width: 358, height: 44 },
-      { left: 16, width: 358, height: 230 },
-      186,
-      844,
-    );
+    const phone = placeWeek({
+      anchor: { top: 300, left: 16, width: 358, height: 44 },
+      panel: { left: 16, width: 358, height: 230 },
+      nowTop: 186,
+      windowHeight: 844,
+    });
     expect(phone.top).toBe(114);
     expect(phone.origin).toBe(`179px ${300 + 22 - 114}px`);
     expect(phone.from).toBeCloseTo(44 / 230);
 
-    const high = placeWeek(
-      { top: 60, left: 16, width: 358, height: 44 },
-      { left: 16, width: 358, height: 230 },
-      186,
-      844,
-    );
+    const high = placeWeek({
+      anchor: { top: 60, left: 16, width: 358, height: 44 },
+      panel: { left: 16, width: 358, height: 230 },
+      nowTop: 186,
+      windowHeight: 844,
+    });
     expect(high.top).toBe(16);
   });
 
   it('keeps the week inside the window’s foot', () => {
     expect(
-      placeWeek(
-        { top: 820, left: 0, width: 200, height: 50 },
-        { left: 0, width: 1000, height: 60 },
-        0,
-        844,
-      ).top,
+      placeWeek({
+        anchor: { top: 820, left: 0, width: 200, height: 50 },
+        panel: { left: 0, width: 1000, height: 60 },
+        nowTop: 0,
+        windowHeight: 844,
+      }).top,
     ).toBe(844 - 60 - 16);
   });
 });

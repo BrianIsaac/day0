@@ -100,6 +100,11 @@ body {
   outline-offset: -2px;
 }
 
+/* The first week's card keeps its own corners under the ring (`FirstWeekCard`). */
+button.rail-step:focus-visible {
+  border-radius: 0.75rem;
+}
+
 .day0-pixel-office {
   isolation: isolate;
   animation: day0-office-grid-drift 9s steps(4, end) infinite;
@@ -1240,7 +1245,7 @@ body {
    [data-week]           the whole first week opened from its card (`FirstWeekCard`): it grows
                          from the card's size (`--week-from`) at the card (its inline transform
                          origin) as [data-week-scrim] fades in, and on 'closing' shrinks back into
-                         the card as the scrim fades out.
+                         the card as the scrim fades out, on the same curve.
    --------------------------------------------------------------------------------------------- */
 
 @keyframes day0-settle {
@@ -1430,7 +1435,7 @@ body {
   }
 
   [data-week='closing'] {
-    animation: day0-week-shrink 200ms var(--ease-move) both;
+    animation: day0-week-shrink 200ms var(--ease-arrive) both;
   }
 
   [data-week-scrim='open'] {
