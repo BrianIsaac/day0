@@ -583,3 +583,100 @@ describe('export redaction', (): void => {
     });
   });
 });
+
+describe('the Record tab reader', (): void => {
+  /** An employee of `owner` with a work item and five events, oldest first. */
+  async function seedRecord(harness: TestConvex<typeof schema>): Promise<Id<'agents'>> {
+    return await harness.run(async (ctx): Promise<Id<'agents'>> => {
+      const id = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'Priya',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const workItemId = await ctx.db.insert('workItems', {
+        agentId: id,
+        title: 'Refresh the pipeline view',
+        contentSummary: 'Refresh it.',
+        sourceSystem: 'linear',
+        sourceCategory: 'ticket-queue',
+        externalId: 'REVOPS-1',
+        observedAt: 1,
+        contentRefs: [],
+        state: 'discovered',
+        createdAt: 1,
+      });
+      const events: Array<{ type: string; payload: unknown }> = [
+        { type: 'charter.approved', payload: { charterId: 'c', version: '0.1' } },
+        { type: 'work.listed', payload: { workItemId } },
+        { type: 'work.discovered', payload: { workItemId, title: 'Refresh the pipeline view' } },
+        { type: 'work.actions-rejected', payload: { workItemId, reason: 'wrong owner' } },
+        { type: 'work.completed', payload: { workItemId: 'not-an-id' } },
+      ];
+      for (const [index, event] of events.entries()) {
+        await ctx.db.insert('events', { agentId: id, ...event, createdAt: index + 1 });
+      }
+      return id;
+    });
+  }
+
+  it('pages the whole record newest first, intake listings included, each with the title of the item it names', async (): Promise<void> => {
+    const { api } = await import('../../convex/_generated/api');
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedRecord(harness);
+    const owner = harness.withIdentity({ subject: 'owner' });
+    const first = await owner.query(api.events.record, {
+      agentId,
+      paginationOpts: { numItems: 3, cursor: null },
+    });
+    expect(first.page.map((entry) => entry.event.type)).toEqual([
+      'work.completed',
+      'work.actions-rejected',
+      'work.discovered',
+    ]);
+    expect(first.page.map((entry) => entry.itemTitle)).toEqual([
+      undefined,
+      'Refresh the pipeline view',
+      'Refresh the pipeline view',
+    ]);
+    const rest = await owner.query(api.events.record, {
+      agentId,
+      paginationOpts: { numItems: 3, cursor: first.continueCursor },
+    });
+    expect(rest.page.map((entry) => entry.event.type)).toEqual(['work.listed', 'charter.approved']);
+    expect(rest.isDone).toBe(true);
+  });
+
+  it('shows only the types a filter names', async (): Promise<void> => {
+    const { api } = await import('../../convex/_generated/api');
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedRecord(harness);
+    const owner = harness.withIdentity({ subject: 'owner' });
+    const types = async (filter: 'writes' | 'decisions' | 'reads' | 'refused' | 'charter') =>
+      (
+        await owner.query(api.events.record, {
+          agentId,
+          filter,
+          paginationOpts: { numItems: 10, cursor: null },
+        })
+      ).page.map((entry) => entry.event.type);
+    expect(await types('charter')).toEqual(['charter.approved']);
+    expect(await types('reads')).toEqual(['work.discovered', 'work.listed']);
+    expect(await types('refused')).toEqual(['work.actions-rejected']);
+    expect(await types('writes')).toEqual(['work.completed', 'work.actions-rejected']);
+    expect(await types('decisions')).toEqual(['work.actions-rejected', 'charter.approved']);
+  });
+
+  it('refuses a caller who does not own the employee', async (): Promise<void> => {
+    const { api } = await import('../../convex/_generated/api');
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedRecord(harness);
+    await expect(
+      harness.withIdentity({ subject: 'intruder' }).query(api.events.record, {
+        agentId,
+        paginationOpts: { numItems: 3, cursor: null },
+      }),
+    ).rejects.toThrow();
+  });
+});

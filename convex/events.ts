@@ -1,5 +1,9 @@
 import { v } from 'convex/values';
-import type { PaginationOptions, PaginationResult } from 'convex/server';
+import {
+  paginationOptsValidator,
+  type PaginationOptions,
+  type PaginationResult,
+} from 'convex/server';
 import { internalQuery, query, type QueryCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent } from './ownership';
@@ -21,6 +25,7 @@ import {
 } from '../src/export/trace';
 import { WORK_LISTED_EVENT } from './work';
 import { EVENT_TYPES } from '../src/events/contract';
+import { eventTypesIn, RECORD_FILTERS, type RecordEntry } from '../src/events/record-filters';
 import { eventsOfType } from './eventLog';
 
 /**
@@ -75,6 +80,63 @@ export const recent = query({
       if (shown.length >= limit || scanned >= TICKER_SCAN_LIMIT) break;
     }
     return shown;
+  },
+});
+
+/**
+ * The titles of the work items a page of events names, by id. An id an older row carries in some
+ * other shape, or one whose item is gone, has none.
+ */
+async function itemTitles(
+  ctx: QueryCtx,
+  events: readonly Doc<'events'>[],
+): Promise<ReadonlyMap<string, string>> {
+  const ids = new Set<Id<'workItems'>>();
+  for (const event of events) {
+    const named: unknown = (event.payload as { workItemId?: unknown } | null | undefined)
+      ?.workItemId;
+    const id = typeof named === 'string' ? ctx.db.normalizeId('workItems', named) : null;
+    if (id !== null) ids.add(id);
+  }
+  const rows = await Promise.all([...ids].map(async (id) => await ctx.db.get(id)));
+  return new Map(rows.flatMap((row) => (row ? [[row._id as string, row.title]] : [])));
+}
+
+/**
+ * One page of an employee's whole record for the Record tab, newest first, each event with the
+ * title of the work item it names. With a filter, only the event types that filter shows
+ * (`src/events/record-filters.ts`); without one, every event, intake listings included, since
+ * the record leaves nothing out. Public; owner-guarded; reads one page through the agent's index
+ * and writes nothing.
+ */
+export const record = query({
+  args: {
+    agentId: v.id('agents'),
+    filter: v.optional(v.union(...RECORD_FILTERS.map((filter) => v.literal(filter)))),
+    paginationOpts: paginationOptsValidator,
+  },
+  handler: async (ctx, args): Promise<PaginationResult<RecordEntry>> => {
+    await assertOwnsAgent(ctx, args.agentId);
+    const newestFirst = ctx.db
+      .query('events')
+      .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
+      .order('desc');
+    const types = args.filter === undefined ? undefined : eventTypesIn(args.filter);
+    const page = await (
+      types === undefined
+        ? newestFirst
+        : newestFirst.filter((q) => q.or(...types.map((type) => q.eq(q.field('type'), type))))
+    ).paginate(args.paginationOpts);
+    const titles = await itemTitles(ctx, page.page);
+    return {
+      ...page,
+      page: page.page.map((event): RecordEntry => {
+        const named: unknown = (event.payload as { workItemId?: unknown } | null | undefined)
+          ?.workItemId;
+        const itemTitle = typeof named === 'string' ? titles.get(named) : undefined;
+        return itemTitle === undefined ? { event } : { event, itemTitle };
+      }),
+    };
   },
 });
 
