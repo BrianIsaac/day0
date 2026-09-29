@@ -74,7 +74,8 @@ describe('the ElevenLabs start route (C-34)', (): void => {
       agentId: 'agent_voice',
       signedUrl: null,
       public: true,
-      warning: 'ElevenLabs refused a signed URL for this agent',
+      // Re-pinned (unit S, m24): the manager's words, no provider and no "agent" (N29).
+      warning: 'Voice could not open a private call with this employee',
     });
     const entries = logged.map((line) => JSON.parse(line) as Record<string, unknown>);
     expect(entries).toContainEqual(

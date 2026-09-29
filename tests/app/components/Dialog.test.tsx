@@ -2,7 +2,8 @@
 
 import { act, useRef, useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { Dialog, focusableIn } from '../../../app/components/Dialog';
+import { Dialog } from '../../../app/components/Dialog';
+import { focusableIn } from '../../../app/components/use-modal';
 import { mount, press } from '../../fixtures/dom/press';
 
 afterEach((): void => {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   employeeStateLabel,
+  employeeStateWords,
   shownEmployeeState,
   workItemStateLabel,
   type EmployeeState,
@@ -39,6 +40,29 @@ describe('shownEmployeeState', () => {
 
   it('keeps an active employee active while a newer draft of its charter waits for review', () => {
     expect(shownEmployeeState('active', { approved: false })).toBe('active');
+  });
+});
+
+describe('employeeStateWords', () => {
+  // Re-pinned (unit S, m6) from `app/home/employee-state.ts`, whose own words ("Deployed", "In the
+  // one-to-one", "Active") the roster and the face's title printed until they shared these.
+  it('says every state in the one set of words the roster, the face and the pill share', () => {
+    expect(EMPLOYEE_STATES.map((state) => employeeStateWords(state))).toEqual([
+      { text: 'Waiting for your one-to-one', tone: 'warn' },
+      { text: 'In your one-to-one', tone: 'accent' },
+      { text: 'Charter to review', tone: 'warn' },
+      { text: 'Active', tone: 'ok' },
+    ]);
+  });
+
+  it('agrees with the pill on every state, which adds only the autonomy to an active employee', () => {
+    for (const state of EMPLOYEE_STATES) {
+      for (const autonomous of [false, true]) {
+        const pill = employeeStateLabel(state, autonomous).text;
+        expect(pill.startsWith(employeeStateWords(state).text)).toBe(true);
+        expect(pill === employeeStateWords(state).text).toBe(state !== 'active');
+      }
+    }
   });
 });
 

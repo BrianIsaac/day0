@@ -6,8 +6,11 @@ import { log } from '@/lib/logger';
 /** How long the signed-URL request may take before the page is told voice is unreachable. */
 const SIGNED_URL_TIMEOUT_MS = 10_000;
 
-/** What the page reads when ElevenLabs refuses a signed URL; the provider's reason is in the log. */
-const SIGNED_URL_REFUSED = 'ElevenLabs refused a signed URL for this agent';
+/**
+ * What the page reads when ElevenLabs refuses a signed URL, in the manager's words (N29): the
+ * provider, the signed URL and its reason are the log's (N26).
+ */
+const SIGNED_URL_REFUSED = 'Voice could not open a private call with this employee';
 
 /** The longest part of a refusal's body the log keeps. */
 const PROVIDER_BODY_LOG_CHARS = 500;

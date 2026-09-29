@@ -4,7 +4,7 @@ import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { ticketNowSentence } from '@/work/item-display';
-import { clockTime, clockTimeWithSeconds } from '../time';
+import { clockTime, clockTimeWithSeconds } from '../../../components/time';
 import { ItemSection } from './ItemParts';
 
 /**

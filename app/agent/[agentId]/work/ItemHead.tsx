@@ -6,7 +6,7 @@ import { sourceLine } from '@/work/item-display';
 import { undeliveredDecisionReason } from '@/work/manager-channel';
 import { Button } from '../../../components/Button';
 import { connectedManagerChannel } from '../manager-channel';
-import { clockTime, clockTimeWithSeconds } from '../time';
+import { clockTime, clockTimeWithSeconds } from '../../../components/time';
 import { Quote, Tag } from './ItemParts';
 import { StateChip } from './RunDetails';
 import { decisionAttribution } from './work-item';

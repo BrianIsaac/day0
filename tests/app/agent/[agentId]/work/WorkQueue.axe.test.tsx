@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Id } from '../../../../../convex/_generated/dataModel';
 import { WorkQueue } from '../../../../../app/agent/[agentId]/work/WorkQueue';
 import { StateGlossary } from '../../../../../app/agent/[agentId]/work/StateGlossary';
-import { AgentZoneContext } from '../../../../../app/agent/[agentId]/time';
+import { AgentZoneContext } from '../../../../../app/components/time';
 import { axeViolations } from '../../../../fixtures/dom/axe';
 import { mount, press, settle } from '../../../../fixtures/dom/press';
 import {

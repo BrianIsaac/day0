@@ -12,7 +12,7 @@ import {
   clipLedgerRow,
 } from './work-item';
 import { type ManagerFeedback, managerFeedbackLabel } from '@/work/manager-feedback';
-import { useAgentZone, clockTimeWithSeconds, clockTime } from '../time';
+import { useAgentZone, clockTimeWithSeconds, clockTime } from '../../../components/time';
 import { Disclosure } from '../../../components/Disclosure';
 import { describeAction, reviewPayload } from '@/surfaces/policy';
 import { isWithheldForAnswer, planObligations, transitionWithheld } from '@/work/obligations';

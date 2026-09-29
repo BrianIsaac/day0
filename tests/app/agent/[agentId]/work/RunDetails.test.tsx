@@ -14,7 +14,7 @@ import {
   WithheldActionsDetails,
   WorkingFromNote,
 } from '../../../../../app/agent/[agentId]/work/RunDetails';
-import { AgentZoneContext } from '../../../../../app/agent/[agentId]/time';
+import { AgentZoneContext } from '../../../../../app/components/time';
 import { failedItemReason, phasedLedger } from '../../../../../app/agent/[agentId]/work/work-item';
 import {
   log1FirstStopRefusedClosing,

@@ -4,7 +4,7 @@ import { useRef, useState } from 'react';
 import { useQueries, useQuery } from 'convex/react';
 import Link from 'next/link';
 import { api } from '@convex/_generated/api';
-import { useNow } from '../agent/[agentId]/time';
+import { useNow } from '../components/time';
 import { useArrival } from '../arrival';
 import { CompanySupervision } from '../CompanySupervision';
 import { DeployForm } from './DeployForm';

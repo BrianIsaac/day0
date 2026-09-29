@@ -2,7 +2,7 @@ import type { Doc } from '@convex/_generated/dataModel';
 import type { OneToOnePhase } from '@/agent/one-to-one-phase';
 import type { EmployeeState } from '@/work/state-labels';
 import type { RailStep } from '../../components/FirstWeekRail';
-import { clockTime } from './time';
+import { clockTime } from '../../components/time';
 
 /** What the first week's steps are read from. */
 export interface FirstWeekFacts {

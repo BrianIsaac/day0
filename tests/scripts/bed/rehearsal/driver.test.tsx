@@ -69,7 +69,7 @@ import {
   type SurfaceCardActions,
   type SurfaceCardContext,
 } from '../../../../app/agent/[agentId]/surfaces/SurfaceCard';
-import { AgentZoneContext } from '../../../../app/agent/[agentId]/time';
+import { AgentZoneContext } from '../../../../app/components/time';
 import { WorkItemCard } from '../../../../app/agent/[agentId]/work/WorkItemCard';
 import { INIT_PROMPT } from '../../../../src/agent/day-one-turn';
 import { DRAWN, EMPLOYEE, QUESTION, SURFACES, ZONE } from '../../../fixtures/work/drawn-states';

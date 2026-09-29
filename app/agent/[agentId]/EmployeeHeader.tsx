@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useMemo } from 'react';
+import { useState, useRef, useMemo, type ReactNode } from 'react';
 import { useChange } from '../../components/use-change';
 import { StatusRegion } from '../../components/StatusRegion';
 import { isTimeZone, agentZone } from '@/lib/zone';
@@ -264,24 +264,29 @@ export function ZoneLine({
 /**
  * The employee page's header (round two section 3.3): the employee's face and name as the page's
  * one h1, who it reports to with Change manager (U9), the zone every time on the page is in with
- * its control (K), and beside them the office it works in and its state in the manager's words.
- * The autonomy switch and the manager-DM setting are the Manage tab's.
+ * its control (K), and beside them the office it works in and its state in the manager's words,
+ * with the first week's stage under them once the employee is working. The autonomy switch and
+ * the manager-DM setting are the Manage tab's.
  *
  * @param agent - The employee.
  * @param charter - What the page is showing, which outranks the row when the two disagree.
  * @param phase - Where the one-to-one stands (`oneToOnePhase`), so the pill says when a charter is being drafted.
  * @param managerLookupFailure - A chat surface's reason when its probe could not find the manager.
+ * @param stage - The first week's card (`FirstWeekCard`), under the pills; none before the
+ *   employee is working, when the whole rail runs under the header instead.
  */
 export function EmployeeHeader({
   agent,
   charter,
   phase,
   managerLookupFailure,
+  stage,
 }: {
   agent: Doc<'agents'>;
   charter: Doc<'charters'> | null;
   phase?: OneToOnePhase['kind'];
   managerLookupFailure?: string;
+  stage?: ReactNode;
 }) {
   const surfaceConfig = useQuery(api.config.surfaceMode);
   const setBossEmail = useMutation(api.agents.setBossEmail);
@@ -289,7 +294,7 @@ export function EmployeeHeader({
   const shown = shownEmployeeState(agent.state, charter);
   const status = employeeStateLabel(shown, autonomousActionsOn(agent), phase);
   return (
-    <header className="flex flex-wrap items-start justify-between gap-4 pb-5">
+    <header className="flex flex-wrap items-start justify-between gap-4">
       <div className="flex min-w-0 items-start gap-3.5">
         <AgentPixelAvatar avatar={avatarById(agent.avatarId)} state={shown} label={agent.name} />
         <div className="min-w-0">
@@ -305,11 +310,14 @@ export function EmployeeHeader({
           />
         </div>
       </div>
-      <div className="flex flex-wrap items-center gap-2">
-        {surfaceConfig ? (
-          <Pill>{surfaceConfig.mode === 'mock' ? 'mock office' : surfaceConfig.label}</Pill>
-        ) : null}
-        <Pill tone={status.tone}>{status.text}</Pill>
+      <div className="grid basis-full justify-items-start gap-2 sm:basis-auto sm:justify-items-end">
+        <div className="flex flex-wrap items-center gap-2">
+          {surfaceConfig ? (
+            <Pill>{surfaceConfig.mode === 'mock' ? 'mock office' : surfaceConfig.label}</Pill>
+          ) : null}
+          <Pill tone={status.tone}>{status.text}</Pill>
+        </div>
+        {stage}
       </div>
     </header>
   );

@@ -94,11 +94,14 @@ export function Tabs({
     strip.current?.querySelectorAll<HTMLAnchorElement>('[role="tab"]')[next]?.focus();
   }
   return (
+    // The strip's line is drawn inside its box, under the tabs, so the selected tab's underline
+    // covers it without reaching past the box: a tab hanging 1 px below made the strip scroll
+    // vertically, and a scroll box draws a scrollbar wherever one is not hidden.
     <div
       ref={strip}
       role="tablist"
       aria-label={label}
-      className="flex gap-0.5 overflow-x-auto border-b border-[var(--color-border)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      className="flex gap-0.5 overflow-x-auto overflow-y-hidden shadow-[inset_0_-1px_0_var(--color-border)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
     >
       {items.map((item, index) => {
         const current = item.key === selected;
@@ -114,7 +117,7 @@ export function Tabs({
             aria-controls={current ? panelId : undefined}
             tabIndex={item.key === stop ? 0 : -1}
             onKeyDown={(event) => onKeyDown(event, index)}
-            className={`-mb-px inline-flex h-11 shrink-0 items-center gap-2 border-b-2 px-3 text-sm font-medium whitespace-nowrap no-underline ${
+            className={`inline-flex h-11 shrink-0 items-center gap-2 border-b-2 px-3 text-sm font-medium whitespace-nowrap no-underline ${
               current
                 ? 'border-[var(--color-accent)] text-[var(--color-fg)]'
                 : 'border-transparent text-[var(--color-muted)] hover:text-[var(--color-fg)]'

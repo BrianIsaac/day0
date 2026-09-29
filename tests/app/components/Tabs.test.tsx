@@ -134,6 +134,19 @@ describe('Tabs', () => {
     expect(html).not.toContain('--color-warn');
   });
 
+  it('holds every tab inside the strip, its line drawn within, so the strip never scrolls downwards', () => {
+    // The layout itself is proven in a browser (`tests/browser/tab-strip.spec.ts`); jsdom lays
+    // nothing out, so this pins the two classes that keep it: no tab hangs below the strip, and
+    // the strip clips what does.
+    const html = renderToStaticMarkup(strip());
+    const list = /<div role="tablist"[^>]*class="([^"]*)"/.exec(html)?.[1] ?? '';
+    expect(list.split(' ')).toEqual(
+      expect.arrayContaining(['overflow-x-auto', 'overflow-y-hidden', '[scrollbar-width:none]']),
+    );
+    expect(list).not.toMatch(/\bborder-b\b/);
+    for (const tab of html.match(/<a [^>]*>/g) ?? []) expect(tab).not.toContain('-mb-px');
+  });
+
   it('gives every tab a 44 px target (N14)', () => {
     for (const tab of renderToStaticMarkup(strip()).match(/<a [^>]*>/g) ?? []) {
       expect(tab).toMatch(/\bh-11\b/);

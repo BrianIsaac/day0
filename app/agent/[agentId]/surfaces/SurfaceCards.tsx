@@ -13,7 +13,7 @@ import { Columns } from '../../../components/Columns';
 import { StatusRegion } from '../../../components/StatusRegion';
 import { refusalText, useChange } from '../../../components/use-change';
 import { ENVIRONMENT_PANEL_ID } from '../environment-hash';
-import { useNow } from '../time';
+import { useNow } from '../../../components/time';
 import {
   SurfaceCard,
   type CredentialStatus,

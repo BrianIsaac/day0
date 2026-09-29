@@ -3,6 +3,7 @@
 import { createContext, useContext } from 'react';
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { SurfaceRecord } from '@/surfaces/types';
+import type { AuthoringAttempt } from './skills/authoring';
 
 /** What became of a draft the manager sent back, as `charters.requestChanges` answered. */
 export interface SentBackOutcome {
@@ -30,6 +31,14 @@ export interface Employee {
    * says which and gives it focus.
    */
   readonly reportSentBack: (charterId: Id<'charters'>, outcome: SentBackOutcome) => void;
+  /**
+   * The last authoring run the manager started from the Skills tab, and what it came to; null
+   * before one. Held by the shell, so leaving the tab while a skill is being written keeps the
+   * notice that it did not finish (A D11, E D9).
+   */
+  readonly lastAttempt: AuthoringAttempt | null;
+  /** File an authoring run's outcome, or clear it (null) as a new run starts. */
+  readonly setLastAttempt: (attempt: AuthoringAttempt | null) => void;
 }
 
 /** The employee the shell has loaded; a tab renders only once it has. */

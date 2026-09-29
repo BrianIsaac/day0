@@ -23,6 +23,33 @@ const SAID: Readonly<Record<RailStepStatus, string>> = {
 };
 
 /**
+ * The layout of one step's cell, in the rail or drawn on its own (`FirstWeekCard`): its dot and
+ * title beside its detail on a phone, above it from `md` up.
+ */
+export const RAIL_CELL =
+  'grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-baseline gap-2 px-3 py-2 md:grid-cols-1 md:gap-0.5 md:px-3.5 md:py-2.5';
+
+/**
+ * What one step's cell says: its dot and title, its standing in words for a screen reader, and
+ * its detail.
+ *
+ * @param step - The step.
+ */
+export function RailStepText({ step }: { step: RailStep }) {
+  return (
+    <>
+      <span
+        className={`rail-title flex items-center gap-2 text-[13px] font-semibold before:box-border before:size-3.5 before:shrink-0 before:rounded-full before:content-[''] ${TITLE[step.status]}`}
+      >
+        {step.title}
+        <span className="sr-only">, {SAID[step.status]}</span>
+      </span>
+      <span className="text-xs text-[var(--color-muted)]">{step.detail}</span>
+    </>
+  );
+}
+
+/**
  * The first week as a rail of steps (round two section 3.3): each one done, now or next, a dot
  * filled, ringed or outlined beside its title, and the current step tinted and marked as the
  * current one. It runs across the page and stacks on a phone. `advanced` plays the moment the
@@ -49,17 +76,11 @@ export function FirstWeekRail({
         <li
           key={step.title}
           aria-current={step.status === 'now' ? 'step' : undefined}
-          className={`rail-step ${step.status} grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-baseline gap-2 border-b border-[var(--color-border)] px-3 py-2 last:border-b-0 md:flex-1 md:grid-cols-1 md:gap-0.5 md:border-r md:border-b-0 md:px-3.5 md:py-2.5 md:last:border-r-0 ${
+          className={`rail-step ${step.status} ${RAIL_CELL} border-b border-[var(--color-border)] last:border-b-0 md:flex-1 md:border-r md:border-b-0 md:last:border-r-0 ${
             step.status === 'now' ? 'bg-[var(--color-accent-soft)]' : ''
           }`}
         >
-          <span
-            className={`rail-title flex items-center gap-2 text-[13px] font-semibold before:box-border before:size-3.5 before:shrink-0 before:rounded-full before:content-[''] ${TITLE[step.status]}`}
-          >
-            {step.title}
-            <span className="sr-only">, {SAID[step.status]}</span>
-          </span>
-          <span className="text-xs text-[var(--color-muted)]">{step.detail}</span>
+          <RailStepText step={step} />
         </li>
       ))}
     </ol>

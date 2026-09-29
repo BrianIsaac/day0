@@ -6,7 +6,7 @@ import { Card } from '../../../components/Card';
 import { TurnText } from '../one-to-one/TurnText';
 import { Disclosure } from '../../../components/Disclosure';
 import { RecordLine } from '../../../components/RecordLine';
-import { clockTime, useAgentZone } from '../time';
+import { clockTime, useAgentZone } from '../../../components/time';
 import type { CharterCardBody } from './CharterCard';
 import { ChangesRequest } from './ChangesRequest';
 import type { SentBackOutcome } from '../employee-context';

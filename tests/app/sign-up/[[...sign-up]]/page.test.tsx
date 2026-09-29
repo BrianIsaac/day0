@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -26,5 +29,17 @@ describe('the sign-up page', (): void => {
     clerk.appearance.length = 0;
     renderToStaticMarkup(<SignUpPage />);
     expect(clerk.appearance).toEqual([clerkAppearance]);
+  });
+
+  it('says what the page is in a TSDoc block on its default export, as the sign-in page does (m7)', (): void => {
+    // Resolved by path: under Vite, `new URL(path, import.meta.url)` is an asset address.
+    const source = readFileSync(
+      resolve(
+        dirname(fileURLToPath(import.meta.url)),
+        '../../../../app/sign-up/[[...sign-up]]/page.tsx',
+      ),
+      'utf8',
+    );
+    expect(source).toMatch(/\/\*\*\n \* [^\n]+[\s\S]*?\*\/\nexport default function SignUpPage\(/);
   });
 });

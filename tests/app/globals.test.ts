@@ -197,6 +197,21 @@ describe('the public-page motion', () => {
     );
   });
 
+  it("keeps the shell's scrollbars in the base layer, so an element's own scrollbar utility outranks them", () => {
+    // Unlayered, the rule beat every Tailwind utility and the tab strip drew a scrollbar.
+    const base = blocks('@layer base').join('\n');
+    expect(rulesFor(base, '*').join('\n')).toMatch(/scrollbar-width:\s*thin/);
+    const unlayered = CSS.replace(/\/\*[\s\S]*?\*\//g, '').replace(
+      /@layer base\s*\{[\s\S]*?\n\}/g,
+      '',
+    );
+    expect(unlayered).not.toMatch(/scrollbar-(width|color)|::-webkit-scrollbar/);
+  });
+
+  it("draws a tab's focus ring inside it, where the strip does not clip it", () => {
+    expect(rulesFor(CSS, "[role='tab']:focus-visible")[0]).toMatch(/outline-offset:\s*-2px/);
+  });
+
   it('takes the scroll position from nobody and leaves no trace of the removed cursor', () => {
     expect(CSS).not.toContain('scroll-behavior');
     expect(CSS).not.toContain('data-enter');
