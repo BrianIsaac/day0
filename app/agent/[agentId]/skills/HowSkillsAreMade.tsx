@@ -18,8 +18,8 @@ export function HowSkillsAreMade({ name }: { name: string }) {
         </li>
       </ol>
       <p className="mt-3 text-[13px] text-[var(--color-muted)]">
-        One run writes a skill at a time: a Retry while one is running is refused until it finishes
-        or its hold lapses.
+        One run writes a skill at a time: Retry waits while one is running and opens once it
+        finishes or its hold lapses.
       </p>
     </Card>
   );

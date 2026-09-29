@@ -12,6 +12,6 @@ describe('HowSkillsAreMade', (): void => {
       'You approve; Mira writes it and checks it with a smoke test in a sandbox.',
       'It registers only once the check passes; a draft that fails stays on this tab with the reason, and Retry feeds the reason back.',
     ]);
-    expect(html).toContain('a Retry while one is running is refused');
+    expect(html).toContain('Retry waits while one is running and opens once it finishes');
   });
 });
