@@ -6822,6 +6822,56 @@ describe('work.needsYou', (): void => {
     expect(inbox.entries[0].subject).toBe('Plan 0');
     expect(inbox.entries.at(-1)?.subject).toBe('Plan 49');
   });
+
+  describe('work.needsYouForAgent', (): void => {
+    it('lists one employee’s entries, longest wait first, as the owner-wide inbox lists them', async (): Promise<void> => {
+      const harness = convexTest(schema, allConvexModules());
+      const mira = await employee(harness, 'Mira');
+      const aiko = await employee(harness, 'Aiko');
+      const held = await item(harness, mira, 'Post the escalation guidance', 'actions-pending', {
+        output: pendingOutput,
+        actionVerdicts: [{ disposition: 'held', reason: 'write' }, { disposition: 'auto' }],
+      });
+      const heldAt = await entered(harness, mira, 'work.actions-pending', { workItemId: held });
+      await item(harness, mira, 'Draft the tier-two reply', 'plan-pending', { planPendingAt: 1 });
+      await item(harness, aiko, 'Aiko’s plan', 'plan-pending', { planPendingAt: 2 });
+
+      const own = await harness
+        .withIdentity(OWNER)
+        .query(api.work.needsYouForAgent, { agentId: mira });
+      const everyone = await harness.withIdentity(OWNER).query(api.work.needsYou, {});
+
+      expect(own.total).toBe(2);
+      expect(own.entries.map((entry) => [entry.kind, entry.subject])).toEqual([
+        ['plan', 'Draft the tier-two reply'],
+        ['held', 'Post the escalation guidance'],
+      ]);
+      expect(own.entries[1]).toMatchObject({ waitingSince: heldAt, heldWrites: 1 });
+      expect(own.entries).toEqual(everyone.entries.filter((entry) => entry.agentId === mira));
+    });
+
+    it('lists a deployed employee’s one-to-one, the one entry its page waits on', async (): Promise<void> => {
+      const harness = convexTest(schema, allConvexModules());
+      const waiting = await employee(harness, 'Aiko', { state: 'deployed' });
+
+      const own = await harness
+        .withIdentity(OWNER)
+        .query(api.work.needsYouForAgent, { agentId: waiting });
+
+      expect(own.entries.map((entry) => entry.kind)).toEqual(['one-to-one']);
+    });
+
+    it('refuses a caller who does not own the employee, and an anonymous one', async (): Promise<void> => {
+      const harness = convexTest(schema, allConvexModules());
+      const theirs = await employee(harness, 'Stranger’s employee', { userId: 'stranger' });
+      await item(harness, theirs, 'Theirs', 'plan-pending', { planPendingAt: 1 });
+
+      await expect(
+        harness.withIdentity(OWNER).query(api.work.needsYouForAgent, { agentId: theirs }),
+      ).rejects.toThrow('forbidden');
+      await expect(harness.query(api.work.needsYouForAgent, { agentId: theirs })).rejects.toThrow();
+    });
+  });
 });
 
 describe('work.needsYou, dating a wait', (): void => {
