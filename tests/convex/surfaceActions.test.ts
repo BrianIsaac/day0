@@ -1014,6 +1014,7 @@ describe('surface probe action state', (): void => {
           { path: 'mcp', endpoint: 'https://mcp.linear.app/mcp' },
           { path: 'documented-api', endpoint: 'https://api.linear.app/graphql' },
         ],
+        fallbackPath: 'documented-api',
         credentialLocation: 'IT vault / Day0 Linear',
         credentialLanded: false,
         managerApprovedAt: 2,
