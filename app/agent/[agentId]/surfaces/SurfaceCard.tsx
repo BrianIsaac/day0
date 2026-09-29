@@ -304,7 +304,6 @@ export function SurfaceCard({
           ) : null}
           {request || surface.credentialId || surface.credentialLocation ? (
             <CredentialField
-              credentialLabel={credentialLabel}
               expected={expectedCredential(surface, presentation.label)}
               approved={surface.managerApprovedAt !== undefined}
               error={failed('landing')}

@@ -19,7 +19,6 @@ function renderCredentialRow(
 ): string {
   return renderToStaticMarkup(
     <CredentialField
-      credentialLabel="Linear credential"
       expected={LINEAR}
       approved
       landing={false}
@@ -54,11 +53,18 @@ describe('CredentialField', (): void => {
     expect(markup).toContain('autoComplete="new-password"');
     expect(markup).not.toContain('value=');
     expect(markup).toContain('Land credential');
+    // The label names the field and the hint describes it, each by one id: an id list is split on
+    // spaces, so an id built from the label ("Linear credential") would name nothing.
+    const input = /<input id="([^"]+)"[^>]*aria-describedby="([^"]+)"/.exec(markup);
+    const [fieldId, hintId] = [input?.[1] ?? '', input?.[2] ?? ''];
+    expect(fieldId).toMatch(/^credential-\S+$/);
+    expect(hintId).toMatch(/^\S+$/);
     expect(markup).toContain(
-      '<label for="credential-Linear credential" class="text-[13px] font-medium text-[var(--color-fg-2)]">The Linear service token the documentation names</label>',
+      `<label for="${fieldId}" class="text-[13px] font-medium text-[var(--color-fg-2)]">The Linear service token the documentation names</label>`,
     );
-    expect(markup).toContain('aria-describedby="credential-Linear credential-hint"');
-    expect(markup).toContain('It is stored encrypted and never shown again.');
+    expect(markup).toMatch(
+      new RegExp(`<p id="${hintId}"[^>]*>It is stored encrypted and never shown again\\.</p>`),
+    );
   });
 
   it('offers no field before the card is approved, and says what it will ask for (B D6)', (): void => {

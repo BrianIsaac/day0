@@ -1,6 +1,6 @@
 'use client';
 
-import type { FormEvent } from 'react';
+import { useId, type FormEvent } from 'react';
 import type { CredentialPresentation } from '@/surfaces/credential-presentation';
 import { Button } from '../../../components/Button';
 import { INPUT_CLASS } from '../../../components/Field';
@@ -8,8 +8,6 @@ import type { ExpectedCredential } from './card-words';
 
 /** The credential field's inputs: what the card says of the credential, and the landing. */
 export interface CredentialFieldProps {
-  /** The credential's name, which also names the field for the rehearsal driver. */
-  readonly credentialLabel: string;
   /** Whose credential the field takes, and what happens to it (Q10). */
   readonly expected: ExpectedCredential;
   /** Whether the card is approved: nothing is landed on a card nobody agreed to (B D6). */
@@ -39,7 +37,9 @@ export function CredentialField(props: CredentialFieldProps) {
     if (typeof value === 'string' && value.trim()) props.onLand(value);
   }
 
-  const fieldId = `credential-${props.credentialLabel}`;
+  // One id, whatever the credential is called: an id list splits on spaces. The prefix is what the
+  // rehearsal driver finds the field by (`input[id^="credential-"]`).
+  const fieldId = `credential-${useId()}`;
   const { presentation } = props;
   return (
     <div className="grid gap-2 text-sm">
@@ -71,7 +71,7 @@ export function CredentialField(props: CredentialFieldProps) {
           </label>
           <div className="flex flex-wrap gap-2">
             <input
-              id={`credential-${props.credentialLabel}`}
+              id={fieldId}
               name="credential"
               type="password"
               autoComplete="new-password"

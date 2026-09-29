@@ -176,7 +176,7 @@ describe('a surface card in each of its states (round two section 3.9)', (): voi
     expect(approved).toContain(
       '>The looker pipeline tile dashboard login the browser session signs in with</label>',
     );
-    expect(approved).toContain('id="credential-looker pipeline tile dashboard login"');
+    expect(approved).toMatch(/<input id="credential-[^"\s]+" type="password"/);
     expect(approved).toContain("types it only into the sign-in form's credential field");
   });
 

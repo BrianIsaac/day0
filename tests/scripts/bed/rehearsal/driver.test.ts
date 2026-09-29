@@ -80,7 +80,7 @@ describe('the dashboard driver', (): void => {
       [SURFACES, `export const APPROVE_CARD = '${APPROVE_CARD}';`],
       [SURFACES, 'data-verdict={surface.verdict}'],
       [SURFACES, 'id={`surface-${surface.slug}`}'],
-      [SURFACES, 'id={`credential-${props.credentialLabel}`}'],
+      [SURFACES, 'const fieldId = `credential-${useId()}`;'],
       [DOCUMENTATION, 'placeholder="Location label"'],
       [DOCUMENTATION, 'Link location'],
       [DEPLOY_FORM, 'placeholder="worker 1"'],
