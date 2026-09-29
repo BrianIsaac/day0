@@ -117,8 +117,7 @@ export function inboxEntryWords(entry: InboxItem): InboxEntryWords {
 
 /**
  * Where an entry's control goes: the tab of the employee's page that performs it, and for a work
- * item the item's own anchor on the Work tab (`#item-<id>`), which lands at the tab's top until
- * the item card carries the id.
+ * item the item's own card on the Work tab (`#item-<id>`), which the queue scrolls to and focuses.
  *
  * @param entry - The entry.
  */
