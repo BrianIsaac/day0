@@ -42,6 +42,12 @@ function sentence(words: string): string {
   return `${words.charAt(0).toLocaleUpperCase('en-GB')}${words.slice(1)}.`;
 }
 
+/** The items whose claims the retire keeps, in words: a floor when the preview stopped counting. */
+function claimedItems(preview: Pick<RetirePreview, 'keptClaims' | 'keptClaimsAtLeast'>): string {
+  if (preview.keptClaimsAtLeast) return `at least ${preview.keptClaims} items`;
+  return preview.keptClaims === 1 ? 'the item' : `${preview.keptClaims} items`;
+}
+
 /**
  * What retiring the employee does, line by line, in the manager's words (round two section 3.9):
  * what is revoked, deleted and kept, and what waits on the manager and goes undecided. The
@@ -77,7 +83,7 @@ export function retireLines(preview: RetirePreview, waiting: string): RetireLine
       : []),
     ...(preview.keptClaims > 0
       ? [
-          `The claim on ${preview.keptClaims === 1 ? 'the item' : `${preview.keptClaims} items`} it may already have written, so no colleague repeats the write.`,
+          `The claim on ${claimedItems(preview)} it may already have written, so no colleague repeats the write.`,
         ]
       : []),
   ];

@@ -2,6 +2,7 @@ import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { api } from '../../convex/_generated/api';
 import { RETIRE_PREVIEW_ROW_LIMIT } from '../../convex/reset';
+import { EMPLOYEE_NOT_YOURS } from '../../src/agent/employee-access';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import type schemaModule from '../../convex/schema';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
@@ -143,6 +144,7 @@ describe('retirePreview in real mode', (): void => {
       revoked: [{ slug: 'linear', displayName: 'Linear' }],
       kept: [{ slug: 'slack', displayName: 'Slack' }],
       keptClaims: 1,
+      keptClaimsAtLeast: false,
       tombstone: true,
     });
 
@@ -200,6 +202,7 @@ describe('retirePreview in real mode', (): void => {
     expect(preview?.rowCounts.workItems).toBe(RETIRE_PREVIEW_ROW_LIMIT);
     expect(preview?.rowCounts.externalClaims).toBe(RETIRE_PREVIEW_ROW_LIMIT);
     expect(preview?.keptClaims).toBeLessThanOrEqual(RETIRE_PREVIEW_ROW_LIMIT);
+    expect(preview?.keptClaimsAtLeast).toBe(true);
   });
 
   it('says nothing about an id, gone or not, to a caller who is not signed in', async (): Promise<void> => {
@@ -218,7 +221,7 @@ describe('retirePreview in real mode', (): void => {
       harness
         .withIdentity({ subject: 'stranger' })
         .query(api.reset.retirePreview, { agentId: retiring }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow(EMPLOYEE_NOT_YOURS);
   });
 
   it('revokes a shared credential once no other employee binds it', async (): Promise<void> => {

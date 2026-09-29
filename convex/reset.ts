@@ -2,7 +2,7 @@ import { v, type Infer } from 'convex/values';
 import type { Doc, Id } from './_generated/dataModel';
 import { ConvexError } from 'convex/values';
 import { mutation, query, type DatabaseReader, type MutationCtx } from './_generated/server';
-import { assertOwnsAgent, getCallerOrThrow } from './ownership';
+import { assertOwnsAgent, getCallerOrThrow, ownedAgentOrNull } from './ownership';
 import { deleteOwnedDocumentation } from './docSources';
 import { purgeCredential, purgeOwnedCredentials } from './credentials';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
@@ -790,6 +790,8 @@ const retirePreviewValidator = v.object({
   kept: v.array(previewSurface),
   /** The items it may already have written, whose claims its retirement keeps. */
   keptClaims: v.number(),
+  /** Whether the claims were counted over the first `RETIRE_PREVIEW_ROW_LIMIT` items only, so the count is a floor. */
+  keptClaimsAtLeast: v.boolean(),
   /** Whether a retirement row outlives it: real mode only. */
   tombstone: v.boolean(),
 });
@@ -800,16 +802,16 @@ const retirePreviewValidator = v.object({
  * kept, the claims its retirement would keep and whether a tombstone stays. What waits on the
  * manager is `work.needsYouForAgent`'s answer, the inbox's own rule. Public, owner-guarded;
  * reads by index, at most `RETIRE_PREVIEW_ROW_LIMIT` rows a table, the work items once for the
- * counts and the claims; writes nothing. An employee already gone answers `null` to a signed-in
- * caller, as the dialog's last read after the retire does.
+ * counts and the claims; writes nothing. Guarded by `ownedAgentOrNull`, as the employee page's own
+ * read is: an employee already gone answers `null`, another owner's is refused.
  */
 export const retirePreview = query({
   args: { agentId: v.id('agents') },
   returns: v.union(v.null(), retirePreviewValidator),
   handler: async (ctx, args): Promise<Infer<typeof retirePreviewValidator> | null> => {
+    const agent = await ownedAgentOrNull(ctx, args.agentId);
+    if (agent === null) return null;
     const identity = await getCallerOrThrow(ctx);
-    if ((await ctx.db.get(args.agentId)) === null) return null;
-    const agent = await assertOwnsAgent(ctx, args.agentId);
     const items = await employeeWorkItems(ctx.db, agent._id, RETIRE_PREVIEW_ROW_LIMIT);
     const rows = await employeeRows(ctx.db, agent._id, items, RETIRE_PREVIEW_ROW_LIMIT);
     const rowCounts = Object.fromEntries([...rows].map(([table, ids]) => [table, ids.length]));
@@ -822,6 +824,7 @@ export const retirePreview = query({
         revoked: [],
         kept: [],
         keptClaims: 0,
+        keptClaimsAtLeast: false,
         tombstone: false,
       };
     }
@@ -848,6 +851,7 @@ export const retirePreview = query({
       revoked: named((id) => revokedIds.has(id)),
       kept: named((id) => kept.has(id)),
       keptClaims: boundaries.claims.length,
+      keptClaimsAtLeast: items.length >= RETIRE_PREVIEW_ROW_LIMIT,
       tombstone: true,
     };
   },

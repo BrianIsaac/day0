@@ -52,6 +52,7 @@ const REAL_PREVIEW: RetirePreview = {
   revoked: [{ slug: 'linear', displayName: 'Linear' }],
   kept: [{ slug: 'slack', displayName: 'Slack' }],
   keptClaims: 1,
+  keptClaimsAtLeast: false,
   tombstone: true,
 };
 
@@ -161,6 +162,17 @@ describe('RetireDialog: what retiring does, said before it is done (Q15, N1)', (
       ['Waiting on you', '1 held write and 1 plan, discarded undecided.'],
     ]);
     view.unmount();
+  });
+
+  it('says the claims are a floor when the preview stopped counting items (m36)', (): void => {
+    const kept = (preview: RetirePreview): readonly string[] =>
+      retireLines(preview, '').find((line) => line.term === 'Kept')?.details ?? [];
+    expect(kept({ ...REAL_PREVIEW, keptClaims: 7, keptClaimsAtLeast: true })).toContain(
+      'The claim on at least 7 items it may already have written, so no colleague repeats the write.',
+    );
+    expect(kept({ ...REAL_PREVIEW, keptClaims: 7 })).toContain(
+      'The claim on 7 items it may already have written, so no colleague repeats the write.',
+    );
   });
 
   it('keeps Tab inside the dialog, wrapping at both ends', (): void => {
