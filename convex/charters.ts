@@ -552,6 +552,9 @@ export const CHANGE_REQUEST_MAX_CHARS = 2000;
 /** How many sessions back the draft's own is looked for; a one-to-one is held once or twice. */
 const SESSIONS_SEARCHED = 20;
 
+/** How many amendments back the first version is looked for; a bound, not an expected depth. */
+const VERSIONS_WALKED = 500;
+
 /**
  * The session a draft was written from, when it is on the row: the chat and voice rooms end
  * theirs by naming it, and the answers-first entry point has none.
@@ -574,7 +577,7 @@ async function sessionOfCharter(
  */
 async function firstVersionOf(ctx: QueryCtx, charter: Doc<'charters'>): Promise<Doc<'charters'>> {
   let current = charter;
-  for (let hops = 0; current.supersedes && hops < SESSIONS_SEARCHED * 10; hops += 1) {
+  for (let hops = 0; current.supersedes && hops < VERSIONS_WALKED; hops += 1) {
     const previous = await ctx.db.get(current.supersedes);
     if (!previous) break;
     current = previous;
@@ -696,7 +699,9 @@ async function queueRedraft(
     claimedAt: undefined,
     recoveryAttempts: 0,
     finalisationError: undefined,
-    finalisationFailedAt: undefined,
+    // Stamped as a handed-back session is, so the sweep's missed-retry arm re-drives the redraft
+    // should the run scheduled below never claim it.
+    finalisationFailedAt: now,
   });
   await ctx.scheduler.runAfter(0, internal.onboarding.recoverFinalisation, {
     sessionId: session._id,

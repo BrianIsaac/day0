@@ -312,6 +312,8 @@ describe('a draft sent back with a note (round two section 3.5)', (): void => {
       ],
     });
     expect(queued?.charterId).toBeUndefined();
+    // Stamped, so the sweep re-drives a redraft whose scheduled run never claims it.
+    expect(queued?.finalisationFailedAt).toEqual(expect.any(Number));
 
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
     vi.useRealTimers();
