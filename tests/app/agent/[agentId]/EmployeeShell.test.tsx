@@ -206,7 +206,7 @@ describe('the page after a draft charter is sent back (step 45)', (): void => {
     await settle();
 
     expect(said(view.container)).toContain(
-      'Sent back with your note: the employee is redrafting the charter from your one-to-one.',
+      'Sent back with your note: Priya is redrafting the charter from your one-to-one.',
     );
     expect(said(view.container).join(' ')).not.toContain('The 1:1 is open again');
     expect(focusedName()).toBe('The 1:1 that drafts the charter');

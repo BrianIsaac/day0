@@ -39,9 +39,14 @@ import { AgentZoneContext } from './time';
 export const ONBOARDING_REOPENED =
   'The 1:1 is open again, so the employee can redraft the charter from what you tell it.';
 
-/** Said, with focus on the one-to-one, when a charter sent back with a note is being redrafted. */
-export const REDRAFTING_FROM_NOTE =
-  'Sent back with your note: the employee is redrafting the charter from your one-to-one.';
+/**
+ * Said, with focus on the one-to-one, when a charter sent back with a note is being redrafted.
+ *
+ * @param name - The employee.
+ */
+export function redraftingFromNote(name: string): string {
+  return `Sent back with your note: ${name} is redrafting the charter from your one-to-one.`;
+}
 
 /** How long the first-week rail's advance plays: its 150 ms pause and 280 ms slide. */
 export const RAIL_ADVANCE_MS = 430;
@@ -175,13 +180,16 @@ export function EmployeeShell({
   // anything, so only then does the page say so and take focus. A charter
   // drafted later retires the sentence.
   const charterId = charter?._id;
+  const agentName = agent?.name;
   useEffect(() => {
     if (sentBack !== null && dayZero) {
       onboarding.current?.focus();
       // eslint-disable-next-line react-hooks/set-state-in-effect -- said once, when the 1:1 is back on the page after a draft was sent back
       setPageOutcome({
         tone: 'done',
-        text: sentBack.redrafting ? REDRAFTING_FROM_NOTE : ONBOARDING_REOPENED,
+        text: sentBack.redrafting
+          ? redraftingFromNote(agentName ?? 'The employee')
+          : ONBOARDING_REOPENED,
       });
       setSentBack(null);
     } else if (sentBack !== null && charterId !== undefined && charterId !== sentBack.charterId) {
@@ -189,7 +197,7 @@ export function EmployeeShell({
     } else if (sentBack === null && charterId !== undefined) {
       setPageOutcome(null);
     }
-  }, [sentBack, dayZero, charterId]);
+  }, [sentBack, dayZero, charterId, agentName]);
 
   // The environment lives on the Surfaces tab; a hash addressed to it anywhere else goes there.
   useEffect(() => {
