@@ -1,5 +1,12 @@
 import { ConvexError, v } from 'convex/values';
-import { action, internalMutation, mutation, query, type MutationCtx } from './_generated/server';
+import {
+  action,
+  internalMutation,
+  mutation,
+  query,
+  type MutationCtx,
+  type QueryCtx,
+} from './_generated/server';
 import { internal } from './_generated/api';
 import { assertOwnsAgent, assertOwnsAgentAction } from './ownership';
 import { grantScopeInTransaction } from './agents';
@@ -198,17 +205,42 @@ export async function backfillCharterProvenance(
   return updated;
 }
 
-/** List connection verdicts for one owned agent. */
+/**
+ * A surface as the Surfaces tab's card reads it: the stored row, its browser-driven state read
+ * against this deployment's component, and why a proposed card cannot be approved now.
+ */
+export interface ListedSurface extends Doc<'surfaces'> {
+  /**
+   * Why `approve` would refuse this card now (a documented intake queue changed, or its browser
+   * component is absent), so the card disables Approve with the reason (E-63). Only on a
+   * proposed card.
+   */
+  readonly approvalRefusal?: string;
+}
+
+/**
+ * List one owned agent's surfaces as their cards read them.
+ *
+ * Public, owner-guarded; reads, writes nothing. Each row carries its browser component's state
+ * and, on a proposed card, the refusal `approve` would give now (`approvalRefusal`).
+ */
 export const listForAgent = query({
   args: { agentId: v.id('agents') },
-  handler: async (ctx, args): Promise<Doc<'surfaces'>[]> => {
+  handler: async (ctx, args): Promise<ListedSurface[]> => {
     await assertOwnsAgent(ctx, args.agentId);
     const surfaces = await ctx.db
       .query('surfaces')
       .withIndex('by_agent', (index) => index.eq('agentId', args.agentId))
       .collect();
     const refusal = browserComponentRefusal(process.env.DAY0_BROWSER_MCP_URL);
-    return surfaces.map((surface) => withBrowserComponentState(surface, refusal));
+    return await Promise.all(
+      surfaces.map(async (surface): Promise<ListedSurface> => {
+        const listed = withBrowserComponentState(surface, refusal);
+        if (listed.verdict !== 'proposed') return listed;
+        const refused = await approvalRefusal(ctx, listed);
+        return refused === undefined ? listed : { ...listed, approvalRefusal: refused };
+      }),
+    );
   },
 });
 
@@ -2057,7 +2089,7 @@ export const recordIntake = internalMutation({
  * and a browser-driven card needs the component that drives it.
  */
 async function approvalRefusal(
-  ctx: MutationCtx,
+  ctx: QueryCtx,
   surface: Doc<'surfaces'>,
 ): Promise<string | undefined> {
   return (await intakeQueueRefusal(ctx, surface)) ?? browserRefusal(surface);
@@ -2075,7 +2107,7 @@ function browserRefusal(surface: Doc<'surfaces'>): string | undefined {
  * approval, or undefined when every queue still reads as quoted.
  */
 async function intakeQueueRefusal(
-  ctx: MutationCtx,
+  ctx: QueryCtx,
   surface: Doc<'surfaces'>,
 ): Promise<string | undefined> {
   for (const value of surface.intakeScope ? intakeScopeValues(surface.intakeScope) : []) {
