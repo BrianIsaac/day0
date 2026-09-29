@@ -1237,6 +1237,10 @@ body {
                          fills (`FirstWeekRail`).
    [data-dialog]         a dialog or popover: it scales in from 0.96 at its own transform origin;
                          [data-dialog-backdrop] fades behind it.
+   [data-week]           the whole first week opened from its card (`FirstWeekCard`): it grows
+                         from the card's size (`--week-from`) at the card (its inline transform
+                         origin) as [data-week-scrim] fades in, and on 'closing' shrinks back into
+                         the card as the scrim fades out.
    --------------------------------------------------------------------------------------------- */
 
 @keyframes day0-settle {
@@ -1302,6 +1306,20 @@ body {
   from {
     opacity: 0;
     transform: scale(0.96);
+  }
+}
+
+@keyframes day0-week-grow {
+  from {
+    opacity: 0;
+    transform: scale(var(--week-from, 0.96));
+  }
+}
+
+@keyframes day0-week-shrink {
+  to {
+    opacity: 0;
+    transform: scale(var(--week-from, 0.96));
   }
 }
 
@@ -1405,6 +1423,22 @@ body {
 
   [data-dialog-backdrop] {
     animation: day0-fade-in 200ms var(--ease-arrive) both;
+  }
+
+  [data-week='open'] {
+    animation: day0-week-grow 260ms var(--ease-arrive) both;
+  }
+
+  [data-week='closing'] {
+    animation: day0-week-shrink 200ms var(--ease-move) both;
+  }
+
+  [data-week-scrim='open'] {
+    animation: day0-fade-in 200ms var(--ease-arrive) both;
+  }
+
+  [data-week-scrim='closing'] {
+    animation: day0-fade-out 200ms var(--ease-arrive) both;
   }
 }
 

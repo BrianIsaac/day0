@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 
 import { getFunctionName } from 'convex/server';
+import { act } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -399,6 +400,23 @@ describe('the dashboard against the accessibility floor (N14, step 45)', (): voi
     },
     30_000,
   );
+
+  it('has no axe violation with the working employee’s whole first week open over the page', async (): Promise<void> => {
+    backend.queries = populated();
+    const view = await openTab(null, () => <NeedsYouView />, 'Nothing else is waiting on you');
+    const card = view.container.querySelector<HTMLButtonElement>(
+      'header button[aria-label^="First week"]',
+    );
+    expect(card).not.toBeNull();
+    await act(async (): Promise<void> => {
+      card?.click();
+    });
+    await settle();
+    expect(document.querySelector('[role="dialog"][aria-modal="true"]')).not.toBeNull();
+    expect(await axeViolations(document.body, ['region'])).toEqual([]);
+    expect(underTarget(view.container)).toEqual([]);
+    view.unmount();
+  }, 30_000);
 
   it('has no axe violation while every query is still loading', async (): Promise<void> => {
     backend.queries = { 'agents:get': populated()['agents:get'] };

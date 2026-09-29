@@ -646,9 +646,77 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     };
     act((): void => view.root.render(page()));
     await settle();
+    // Re-pinned (unit S): a working employee's week is the card in the header, not the rail.
+    const card = view.container.querySelector('header button[aria-label^="First week"]');
+    expect(card?.textContent).toContain('Working');
+    expect(card?.closest('.rail')?.hasAttribute('data-advanced')).toBe(false);
+    expect(view.container.querySelector('ol[aria-label="First week"]')).toBeNull();
+    view.unmount();
+  });
+
+  it('draws a working employee’s week as one card in the header, with no rail under it', async (): Promise<void> => {
+    backend.queries = {
+      'agents:get': row('active'),
+      'charters:latest': approved,
+      'work:listForAgent': [],
+      'metrics:forAgent': dashboardMetrics(),
+    };
+    const view = mount(page());
+    await settle();
+    const header = view.container.querySelector('header');
+    const card = header?.querySelector('button[aria-label^="First week"]');
+    expect(card?.getAttribute('aria-expanded')).toBe('false');
+    expect(card?.getAttribute('aria-label')).toBe(
+      'First week: Working, in the queue. Show the whole week',
+    );
+    // Under the office and state pills, in the header's right column.
+    const column = card?.closest('div.grid');
+    expect(column?.firstElementChild?.textContent).toContain('Active · Supervised');
+    expect(column?.lastElementChild).toBe(card?.closest('.rail'));
+    expect(view.container.querySelector('ol[aria-label="First week"]')).toBeNull();
+    expect(view.container.querySelector('[role="tablist"]')).not.toBeNull();
+    view.unmount();
+  });
+
+  it('draws neither the rail nor the card while the figures that say whether an active employee is working load', async (): Promise<void> => {
+    backend.queries = { 'agents:get': row('active'), 'charters:latest': approved };
+    const view = mount(page());
+    await settle();
+    expect(view.container.querySelector('ol[aria-label="First week"]')).toBeNull();
+    expect(view.container.querySelector('header button[aria-label^="First week"]')).toBeNull();
+    view.unmount();
+  });
+
+  it('turns the rail into the card when the first write lands in front of the manager, and plays the advance on it', async (): Promise<void> => {
+    const noWrite = {
+      ...dashboardMetrics(),
+      actions: {
+        ...dashboardMetrics().actions,
+        approved: 0,
+        automatic: { reads: 0, managerMessages: 0, writes: 0 },
+      },
+    };
+    backend.queries = {
+      'agents:get': row('active'),
+      'charters:latest': approved,
+      'work:listForAgent': [],
+      'metrics:forAgent': noWrite,
+    };
+    const view = mount(page());
+    await settle();
     const rail = view.container.querySelector('ol[aria-label="First week"]');
-    expect(rail?.querySelector('[aria-current="step"]')?.textContent).toContain('Working');
-    expect(rail?.hasAttribute('data-advanced')).toBe(false);
+    expect(rail?.querySelector('[aria-current="step"]')?.textContent).toContain(
+      'First supervised write',
+    );
+    expect(view.container.querySelector('header button[aria-label^="First week"]')).toBeNull();
+
+    backend.queries = { ...backend.queries, 'metrics:forAgent': dashboardMetrics() };
+    act((): void => view.root.render(page()));
+    await settle();
+    expect(view.container.querySelector('ol[aria-label="First week"]')).toBeNull();
+    const card = view.container.querySelector('header button[aria-label^="First week"]');
+    expect(card?.textContent).toContain('Working');
+    expect(card?.closest('.rail')?.hasAttribute('data-advanced')).toBe(true);
     view.unmount();
   });
 

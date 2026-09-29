@@ -14,6 +14,7 @@ import type { SurfaceRecord } from '@/surfaces/types';
 import { needsYouItemIds, openWorkCount } from '@/work/state-display';
 import { shownEmployeeState } from '@/work/state-labels';
 import { useArrival } from '../../arrival';
+import { FirstWeekCard } from '../../components/FirstWeekCard';
 import { FirstWeekRail } from '../../components/FirstWeekRail';
 import { usePreviousValue } from '../../components/previous-value';
 import { StatusRegion } from '../../components/StatusRegion';
@@ -101,7 +102,8 @@ export function onDayZero(
 
 /**
  * The employee page (round two section 3.3 and 3.9): the employee's name, state and zone, the
- * first-week rail, and either the day-zero state or the tab strip over the selected tab's page.
+ * first-week rail (one card in the header once the employee is working), and either the day-zero
+ * state or the tab strip over the selected tab's page.
  * Every tab reads the employee through `useEmployee`, so the page loads it once.
  *
  * A hash addressed to the work environment (`#surfaces`, which the Slack OAuth redirect and the
@@ -155,10 +157,11 @@ export function EmployeeShell({
     [surfaceRows],
   );
   const dayZero = agent ? onDayZero(agent, charter) : false;
+  const shownState = agent ? shownEmployeeState(agent.state, charter) : undefined;
   const steps = agent
     ? firstWeekSteps({
         deployedAt: agent.createdAt,
-        state: shownEmployeeState(agent.state, charter),
+        state: shownState ?? agent.state,
         phase,
         charter,
         writeLanded:
@@ -174,7 +177,12 @@ export function EmployeeShell({
   const step = settled ? currentStep(steps) : UNSETTLED;
   const stepBefore = usePreviousValue(step, RAIL_ADVANCE_MS);
   const advanced = stepBefore !== undefined && stepBefore !== UNSETTLED && stepBefore < step;
-
+  // Once the employee is working the week is one card in the header (the operator's ruling of
+  // 30 September). Whether it is working waits on the charter and, for an active employee, on
+  // the figures that say a write landed; until then the page draws neither, so a working
+  // employee's page never shows the whole rail and then takes it away.
+  const stageKnown = latest !== undefined && (shownState !== 'active' || metrics !== undefined);
+  const working = stageKnown && steps.at(-1)?.status === 'now';
   // What follows a draft sent back is the 1:1 again, or, when an approved
   // charter stands beneath the draft, that charter: only the first reopens
   // anything, so only then does the page say so and take focus. A charter
@@ -279,9 +287,14 @@ export function EmployeeShell({
                 (row) => row.class === 'chat' && isManagerLookupFailure(row.reason),
               )?.reason
             }
+            stage={working ? <FirstWeekCard steps={steps} advanced={advanced} /> : undefined}
           />
           <StatusRegion outcome={pageOutcome} />
-          <FirstWeekRail steps={steps} advanced={advanced} />
+          {stageKnown && !working ? (
+            <div className="mt-5">
+              <FirstWeekRail steps={steps} advanced={advanced} />
+            </div>
+          ) : null}
           {dayZero && segment === 'surfaces' ? (
             // The environment is the one tab day zero can need: a card's link or the Slack
             // OAuth return lands here before the one-to-one is held.
