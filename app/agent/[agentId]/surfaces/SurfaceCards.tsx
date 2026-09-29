@@ -148,11 +148,10 @@ export function SurfaceCards({
     words: { done: string | ((result: Result) => string); refused: string },
   ): void {
     putOperation(surface._id, { kind, surfaceId: surface._id });
-    // A system waiting on a proposal has no card yet: its list item stands in for it.
+    // A system waiting on a proposal has no card yet: the systems themselves stand in for it.
     cardFocus.current =
       document.getElementById(`surface-${surface.slug}`) ??
-      document.activeElement?.closest('li') ??
-      null;
+      document.getElementById(ENVIRONMENT_PANEL_ID);
     change.run(
       async (): Promise<Result> => {
         try {

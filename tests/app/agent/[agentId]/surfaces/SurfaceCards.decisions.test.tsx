@@ -18,6 +18,8 @@ const tab = vi.hoisted(() => ({
   held: {} as Record<string, Promise<void>>,
   /** A second proposed card beside Linear, when set. */
   second: false,
+  /** A documented system the charter does not name, waiting on the manager's Propose, when set. */
+  unnamed: false,
 }));
 
 vi.mock('convex/react', () => {
@@ -47,8 +49,30 @@ vi.mock('convex/react', () => {
           credentialLanded: false,
           createdAt: 1,
         };
+        const hubspot = {
+          _id: 'surface-hubspot',
+          agentId: 'agent-1',
+          slug: 'hubspot',
+          displayName: 'HubSpot',
+          class: 'crm',
+          verdict: 'declared',
+          whereFound: [],
+          discoveryEvidence: [
+            {
+              kind: 'documentation',
+              ref: 'systems/hubspot.md',
+              quote: '# HubSpot',
+              current: true,
+              firstSeenAt: 1,
+              lastSeenAt: 1,
+            },
+          ],
+          credentialLanded: false,
+          createdAt: 1,
+        };
         return [
           ...(tab.second ? [notion] : []),
+          ...(tab.unnamed ? [hubspot] : []),
           {
             _id: 'surface-linear',
             agentId: 'agent-1',
@@ -63,7 +87,16 @@ vi.mock('convex/react', () => {
           },
         ];
       }
-      if (name === 'charters:latest') return null;
+      if (name === 'charters:latest') {
+        return tab.unnamed
+          ? {
+              approved: true,
+              body: {
+                namedSystems: [{ name: 'Linear', class: 'kanban', whereMentioned: 'named' }],
+              },
+            }
+          : null;
+      }
       if (name === 'config:components') return { browser: false };
       if (name === 'surfaces:installRedirectConfigured') return false;
       return [];
@@ -82,6 +115,7 @@ afterEach((): void => {
   tab.refusals = {};
   tab.held = {};
   tab.second = false;
+  tab.unnamed = false;
 });
 
 describe('a decision on a surface card', (): void => {
@@ -154,6 +188,28 @@ describe('a decision on a surface card', (): void => {
     });
     await settle();
     expect(card('linear').textContent).not.toContain('Approving...');
+    view.unmount();
+  });
+
+  it('gives focus to the systems once a proposed system leaves the list it was pressed in', async (): Promise<void> => {
+    tab.unnamed = true;
+    const view = mount(<SurfaceCards agentId={'agent-1' as Id<'agents'>} />);
+    const propose = view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Propose HubSpot"]',
+    );
+    propose?.focus();
+    await act(async (): Promise<void> => {
+      propose?.click();
+      // Its card is drafted: the system is no longer waiting on the manager.
+      tab.unnamed = false;
+      view.root.render(<SurfaceCards agentId={'agent-1' as Id<'agents'>} />);
+    });
+    await settle();
+
+    expect(said(view.container)).toEqual([
+      'Proposal requested for HubSpot; its card appears once it is drafted.',
+    ]);
+    expect(focusedName()).toBe('Systems');
     view.unmount();
   });
 });
