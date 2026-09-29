@@ -23,7 +23,7 @@ export interface StateLabel {
 }
 
 /** The newest charter's standing as the shown state reads it, or null before one is drafted. */
-export type CharterApproval = Pick<Doc<'charters'>, 'approved'> | null;
+export type CharterApproval = Readonly<Pick<Doc<'charters'>, 'approved'>> | null;
 
 /**
  * The state the page shows for an employee: its charter, when the page has one, outranks the
