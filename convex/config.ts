@@ -36,6 +36,23 @@ export const modelSettings = query({
   }),
 });
 
+/**
+ * The release this deployment's functions are stamped at, and when, or null
+ * on one never stamped.
+ *
+ * Public with no guard: the release is the same for every caller and is
+ * published in the repository, and `/setup` states it to signed-out visitors
+ * as a dated fact. The commit the stamp records is left out; a page has no
+ * use for it. Reads the newest of the stamps the upgrade writes.
+ */
+export const release = query({
+  args: {},
+  handler: async (ctx): Promise<{ release: string; recordedAt: number } | null> => {
+    const stamp = await ctx.db.query('deploymentVersions').order('desc').first();
+    return stamp === null ? null : { release: stamp.release, recordedAt: stamp.recordedAt };
+  },
+});
+
 /** Which optional components this deployment is configured for. */
 export interface ComponentStatus {
   /** Whether a browser driver is configured, so the browser floor can run. */

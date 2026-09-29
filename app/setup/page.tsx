@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { PageMotion } from '../PageMotion';
 import { HOSTED_DEMO_SNAPSHOT, hostedBuildLine } from '@/demo/hosted-demo-snapshot';
+import { deploymentReleaseLine, readDeploymentRelease } from '@/setup/deployment-release';
 
 import {
   DATA_LOCATION,
@@ -29,8 +30,13 @@ export const metadata: Metadata = {
     'Run Day0 on your own machine: what you need, the three ways to run it, the five commands, what a first success looks like, and what to do when it stops.',
 };
 
+// The page is static apart from the release line, which is read again at
+// most hourly, so a functions upgrade reaches it without an app deploy.
+export const revalidate = 3600;
+
 /**
- * The setup guide, static and signed out.
+ * The setup guide, signed out, and static but for the line naming the
+ * deployment's release.
  *
  * A visitor arrives here from the landing page having never run the product,
  * and this page may be the only instruction they read, so it carries the whole
@@ -109,7 +115,8 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
   );
 }
 
-export default function SetupPage() {
+export default async function SetupPage() {
+  const stamp = await readDeploymentRelease();
   return (
     <PageMotion className="day0-public-motion day0-setup-motion" revealMargin="0px 0px 120px 0px">
       <div className="min-h-[calc(100vh-3.25rem)] px-6 py-12 max-w-3xl lg:max-w-6xl mx-auto w-full lg:grid lg:grid-cols-[14rem_minmax(0,1fr)] lg:gap-x-12">
@@ -135,6 +142,7 @@ export default function SetupPage() {
           </p>
           <p className="text-xs text-[var(--color-muted)] leading-relaxed mb-4">
             {hostedBuildLine(HOSTED_DEMO_SNAPSHOT.recording)}
+            {stamp !== null ? ` ${deploymentReleaseLine(stamp)}` : ''}
           </p>
           <div
             role="note"
