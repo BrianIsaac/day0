@@ -20,7 +20,8 @@ const CHAT = readFileSync('app/agent/[agentId]/ChatRoom.tsx', 'utf8');
 const SURFACES = ['SurfacesTab', 'SurfaceRows', 'SurfaceControls']
   .map((file) => readFileSync(`app/agent/[agentId]/mock/${file}.tsx`, 'utf8'))
   .join('\n');
-const DOCUMENTATION = readFileSync('app/documentation/DocumentationPage.tsx', 'utf8');
+// The link form the Documentation page and tab share.
+const DOCUMENTATION = readFileSync('app/documentation/LinkSourceForm.tsx', 'utf8');
 const DEPLOY_FORM = readFileSync('app/home/DeployForm.tsx', 'utf8');
 const DRIVER = readFileSync('scripts/bed/rehearsal/driver.ts', 'utf8');
 

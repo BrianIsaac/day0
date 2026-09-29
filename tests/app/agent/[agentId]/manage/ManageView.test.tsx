@@ -7,6 +7,8 @@ import type { Doc } from '../../../../../convex/_generated/dataModel';
 import type { SurfaceRecord } from '../../../../../src/surfaces/types';
 import { EmployeeContext } from '../../../../../app/agent/[agentId]/employee-context';
 import { ManageView } from '../../../../../app/agent/[agentId]/manage/ManageView';
+import { asEmployee } from '../../../../fixtures/dom/employee';
+import { mount, press, typeInto } from '../../../../fixtures/dom/press';
 
 const backend = vi.hoisted(() => ({
   /** Mutations and actions that reject, by function name, with the text they reject with. */
@@ -35,6 +37,12 @@ vi.mock('convex/react', () => {
     useAction: call,
   };
 });
+
+const route = vi.hoisted(() => ({ replaced: [] as string[] }));
+
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ replace: (href: string): number => route.replaced.push(href) }),
+}));
 
 describe('ManageView: the manager DM setting waits for a manager channel (N7)', (): void => {
   afterEach((): void => {
@@ -123,5 +131,53 @@ describe('ManageView: the manager DM setting waits for a manager channel (N7)', 
     const html = manage([], { mode: 'loading' });
     expect(html).toContain('Loading the switch');
     expect(html).not.toContain('hosted office');
+  });
+
+  it('says there is no pause for one employee, and what holds every write instead', (): void => {
+    expect(manage([])).toContain(
+      'There is no pause for one employee: while Priya is employed it keeps reading its queue and working. To hold every write for your approval, leave autonomous actions off.',
+    );
+    expect(manage([], { mode: 'mock' })).toContain(
+      'There is no pause for one employee: Priya keeps working through the hosted office&#x27;s queue, and every write waits for your decision.',
+    );
+    // Round two draws a Pause button and an Appearance card; neither has a backend or a theme.
+    expect(manage([])).not.toContain('Pause Priya');
+    expect(manage([])).not.toContain('Appearance');
+  });
+
+  it('says what retiring does in each mode, and waits for the mode before offering it', (): void => {
+    expect(manage([])).toContain('Day0 deletes its copy of any credential only Priya uses');
+    expect(manage([], { mode: 'mock' })).toContain(
+      'Removes Priya and everything it made in the hosted office. Nothing is kept.',
+    );
+    expect(manage([], { mode: 'loading' })).toMatch(/<button[^>]*disabled=""[^>]*>Retire Priya…/);
+  });
+
+  it('opens the retire dialog from its card and goes to the company home once the employee is gone', async (): Promise<void> => {
+    route.replaced = [];
+    backend.queries = {
+      'reset:retirePreview': {
+        mode: 'mock',
+        rowCounts: { events: 3 },
+        atLeast: false,
+        revoked: [],
+        kept: [],
+        keptClaims: 0,
+        tombstone: false,
+      },
+      'work:needsYouForAgent': { entries: [], total: 0 },
+    };
+    backend.results = { 'reset:retire': { agentName: 'Mira' } };
+    const view = mount(asEmployee(<ManageView />));
+
+    await press(view.container, 'Retire Mira…');
+    const field = document.querySelector<HTMLInputElement>('[role="alertdialog"] input');
+    if (!field) throw new Error('no retire dialog');
+    typeInto(field, 'retire Mira');
+    await press(document.body, 'Retire Mira');
+
+    expect(backend.calls.at(-1)).toEqual({ name: 'reset:retire', args: { agentId: 'agent-1' } });
+    expect(route.replaced).toEqual(['/']);
+    view.unmount();
   });
 });

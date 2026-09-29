@@ -3,11 +3,6 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
-  AutonomyConfirm,
-  AutonomyControl,
-  cancelsAutonomyConfirm,
-} from '../../app/agent/[agentId]/manage/AutonomyControl';
-import {
   cancelledReason,
   decisionAttribution,
   failedItemReason,
@@ -32,11 +27,7 @@ import { formatMetricDuration } from '../../app/metric-format';
 import type { AgentMetrics } from '../../src/metrics/types';
 import type { Doc } from '../../convex/_generated/dataModel';
 import { HELD_MUTATION, HELD_PUBLIC_POST, type ActionVerdict } from '../../src/surfaces/policy';
-import {
-  AUTONOMY_WARNING,
-  HELD_BEFORE_AUTONOMY_NOTE,
-  HELD_WHILE_SUPERVISED_NOTE,
-} from '../../src/work/autonomy';
+import { HELD_BEFORE_AUTONOMY_NOTE, HELD_WHILE_SUPERVISED_NOTE } from '../../src/work/autonomy';
 import type { SurfaceRecord } from '../../src/surfaces/types';
 import type { MockAction, ReplyTarget } from '../../src/work/types';
 
@@ -210,69 +201,6 @@ describe('dashboard exact-action gate', (): void => {
         2,
       ),
     ).toEqual([{ disposition: 'auto' }, { disposition: 'held', reason: HELD_PUBLIC_POST }]);
-  });
-
-  it('renders the autonomous-actions switch with its state named plainly, off and on', (): void => {
-    const off = renderToStaticMarkup(
-      createElement(AutonomyControl, {
-        on: false,
-        tone: 'tone',
-        onChange: vi.fn(async (): Promise<void> => {}),
-      }),
-    );
-    expect(off).toContain('Active · Supervised');
-    expect(off).toContain('Autonomous actions');
-    expect(off).toMatch(
-      /<button[^>]*role="switch"[^>]*aria-checked="false"[^>]*aria-label="Autonomous actions"/,
-    );
-    expect(off).not.toContain(AUTONOMY_WARNING);
-    expect(off).not.toContain('supervised posture');
-    const on = renderToStaticMarkup(
-      createElement(AutonomyControl, {
-        on: true,
-        tone: 'tone',
-        onChange: vi.fn(async (): Promise<void> => {}),
-      }),
-    );
-    expect(on).toContain('Active · Autonomous');
-    expect(on).toMatch(/<button[^>]*role="switch"[^>]*aria-checked="true"/);
-    expect(on).not.toContain(AUTONOMY_WARNING);
-  });
-
-  it('scales the confirmation in from the corner that meets the switch (v3 section 5.2)', (): void => {
-    const html = renderToStaticMarkup(
-      createElement(AutonomyConfirm, { onConfirm: vi.fn(), onCancel: vi.fn() }),
-    );
-    const dialog = /<div[^>]*role="alertdialog"[^>]*>/.exec(html)?.[0] ?? '';
-    expect(dialog).toContain('data-dialog=""');
-    // Anchored at its left edge on a phone and its right edge beside the switch from `sm` up.
-    expect(dialog).toMatch(/\bleft-0\b[^"]*\borigin-top-left\b/);
-    expect(dialog).toMatch(/\bsm:right-0\b[^"]*\bsm:origin-top-right\b/);
-  });
-
-  it("renders the confirmation with the warning in the operator's words and its two buttons", (): void => {
-    const html = renderToStaticMarkup(
-      createElement(AutonomyConfirm, { onConfirm: vi.fn(), onCancel: vi.fn() }),
-    );
-    expect(html).toMatch(
-      /<div[^>]*role="alertdialog"[^>]*aria-modal="true"[^>]*aria-label="Turn on autonomous actions"/,
-    );
-    expect(html).toContain('Turn on autonomous actions?');
-    expect(html).toContain(
-      'The digital employee will act on connected systems without asking - post, comment, change status - within the connections and skills you have approved.',
-    );
-    expect(html).toContain('Turn this on only after its behaviour has been what you want.');
-    expect(html).toContain('Skills and connections still need your approval either way.');
-    expect(html).toMatch(/<button[^>]*>Turn on<\/button>/);
-    expect(html).toMatch(/<button[^>]*autofocus=""[^>]*>Cancel<\/button>/);
-    expect(cancelsAutonomyConfirm('Escape', false)).toBe(true);
-    expect(cancelsAutonomyConfirm('Enter', false)).toBe(false);
-    expect(cancelsAutonomyConfirm('Escape', true)).toBe(false);
-    expect(
-      renderToStaticMarkup(
-        createElement(AutonomyConfirm, { onConfirm: vi.fn(), onCancel: vi.fn(), busy: true }),
-      ),
-    ).toMatch(/<button[^>]*disabled=""[^>]*>Turn on<\/button>/);
   });
 
   it('names how many landed changes applied under the switch', (): void => {

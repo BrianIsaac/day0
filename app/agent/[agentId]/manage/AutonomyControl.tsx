@@ -1,102 +1,78 @@
 'use client';
 
-import { AUTONOMY_WARNING, autonomyLabel } from '@/work/autonomy';
+import { AUTONOMY_WARNING } from '@/work/autonomy';
 import { useState, useRef, useId } from 'react';
-import { useChange } from '../../../components/use-change';
+import { Button } from '../../../components/Button';
+import { Dialog } from '../../../components/Dialog';
+import { useChange, type ChangeOutcome } from '../../../components/use-change';
 import { StatusRegion } from '../../../components/StatusRegion';
 
-/** What each state of the switch does, for its title. */
-const AUTONOMY_TITLES: Record<'off' | 'on', string> = {
+/** What each state of the switch does, said under its name. */
+export const AUTONOMY_TITLES: Readonly<Record<'off' | 'on', string>> = {
   off: 'Supervised: reads and the DM to you apply on their own; every other action waits for your approval of the exact payload.',
   on: 'Autonomous: the employee acts on connected systems without asking, within the connections and skills you have approved.',
 };
 
-/** Whether a key press should take the safe path out of the confirmation. */
-export function cancelsAutonomyConfirm(key: string, busy: boolean): boolean {
-  return key === 'Escape' && !busy;
-}
-
 /**
- * The confirmation shown before autonomous actions are turned on.
+ * The confirmation shown before autonomous actions are turned on: the warning in the operator's
+ * words (`AUTONOMY_WARNING`, untouched), Cancel holding focus, and Turn on. It is the product's
+ * one dialog (`Dialog`, M's scale-in moment): focus is kept inside it, and Escape or a press on
+ * the page behind cancels, unless the change is in flight.
  *
- * Args:
- *   onConfirm: Turn the switch on.
- *   onCancel: Leave it off.
- *   busy: Whether the change is in flight.
- *
- * Returns:
- *   The warning in the operator's words with its two buttons.
+ * @param onConfirm - Turn the switch on.
+ * @param onCancel - Leave it off.
+ * @param busy - Whether the change is in flight.
+ * @param outcome - What the last attempt came to: a refusal is said here, inside the dialog, since
+ *   the page behind it is inert while it is open.
  */
 export function AutonomyConfirm({
   onConfirm,
   onCancel,
   busy = false,
+  outcome = null,
 }: {
   onConfirm: () => void;
   onCancel: () => void;
   busy?: boolean;
+  outcome?: ChangeOutcome | null;
 }) {
+  const cancel = useRef<HTMLButtonElement>(null);
   return (
-    // It scales in from the corner it hangs from, not its centre (v3 section 5.2).
-    <div
+    <Dialog
       role="alertdialog"
-      aria-modal="true"
-      aria-label="Turn on autonomous actions"
-      data-dialog=""
-      onKeyDown={(event) => {
-        if (!cancelsAutonomyConfirm(event.key, busy)) return;
-        event.preventDefault();
-        event.stopPropagation();
-        onCancel();
-      }}
-      className="absolute left-0 sm:left-auto sm:right-0 top-full mt-2 origin-top-left sm:origin-top-right w-80 max-w-[calc(100vw-3rem)] p-3 rounded-lg border border-[var(--color-warn)]/40 bg-[var(--color-card)] shadow-lg text-left text-xs text-[var(--color-fg)] z-10"
+      title="Turn on autonomous actions?"
+      onClose={onCancel}
+      initialFocus={cancel}
+      busy={busy}
     >
-      <p className="font-medium text-[var(--color-warn)] mb-1">Turn on autonomous actions?</p>
-      <p className="mb-3 leading-relaxed">{AUTONOMY_WARNING}</p>
-      <div className="flex gap-2">
-        <button
-          type="button"
-          disabled={busy}
-          onClick={onConfirm}
-          className="min-h-11 px-3 rounded-md bg-[var(--color-warn)] text-[var(--color-bg)] font-medium disabled:opacity-60"
-        >
-          Turn on
-        </button>
-        <button
-          type="button"
-          autoFocus
-          disabled={busy}
-          onClick={onCancel}
-          className="min-h-11 px-3 rounded-md border border-[var(--color-border)] disabled:opacity-60"
-        >
+      <p className="leading-relaxed text-[var(--color-fg-2)]">{AUTONOMY_WARNING}</p>
+      <StatusRegion outcome={outcome} />
+      <div className="flex flex-wrap justify-end gap-2">
+        <Button ref={cancel} size="large" disabled={busy} onClick={onCancel}>
           Cancel
-        </button>
+        </Button>
+        <Button variant="retry" size="large" disabled={busy} onClick={onConfirm}>
+          Turn on
+        </Button>
       </div>
-    </div>
+    </Dialog>
   );
 }
 
 /**
- * The header chip as the manager's autonomous-actions switch, real mode only.
+ * The manager's autonomous-actions switch, real mode only (Manage tab): its name and what the
+ * current state does, beside a switch drawn 24 by 44 inside its 44 px target. Turning it on
+ * opens the confirmation; turning it off needs none. What each change came to is said in a live
+ * region and focus comes back to the switch.
  *
- * Turning it on opens the confirmation; turning it off needs none. The chip
- * names the state plainly ("Supervised" / "Autonomous") beside the switch.
- *
- * Args:
- *   on: Whether autonomous actions are on.
- *   tone: The chip's colour classes.
- *   onChange: Persist the manager's choice.
- *
- * Returns:
- *   The labelled switch styled as the chip.
+ * @param on - Whether autonomous actions are on.
+ * @param onChange - Persist the manager's choice.
  */
 export function AutonomyControl({
   on,
-  tone,
   onChange,
 }: {
   on: boolean;
-  tone: string;
   onChange: (on: boolean) => Promise<unknown>;
 }) {
   const [confirming, setConfirming] = useState(false);
@@ -115,16 +91,14 @@ export function AutonomyControl({
   }
 
   return (
-    <div className="relative">
-      <div
-        className={`flex items-center gap-2 pl-3 pr-1 rounded-full text-xs font-medium ${tone}`}
-        title={AUTONOMY_TITLES[on ? 'on' : 'off']}
-      >
-        <span>Active · {autonomyLabel(on)}</span>
-        <span className="text-[10px] font-normal opacity-80">Autonomous actions</span>
-        <span id={describedBy} className="sr-only">
-          {AUTONOMY_TITLES[on ? 'on' : 'off']}
-        </span>
+    <div className="grid gap-2">
+      <div className="flex items-center justify-between gap-4">
+        <div className="min-w-0">
+          <p className="text-[15px] font-medium text-[var(--color-fg)]">Autonomous actions</p>
+          <p id={describedBy} className="text-sm text-[var(--color-fg-2)]">
+            {AUTONOMY_TITLES[on ? 'on' : 'off']}
+          </p>
+        </div>
         <button
           ref={toggle}
           type="button"
@@ -137,30 +111,34 @@ export function AutonomyControl({
             if (on) persist(false);
             else setConfirming(true);
           }}
-          className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-full disabled:cursor-wait"
+          className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-full disabled:cursor-wait"
         >
           <span
             aria-hidden="true"
-            className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${
-              on ? 'bg-[var(--color-warn)]' : 'bg-[var(--color-muted)]/40'
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-[180ms] ${
+              on ? 'bg-[var(--color-warn)]' : 'bg-[var(--color-border-2)]'
             }`}
           >
             <span
-              className={`inline-block h-3 w-3 rounded-full bg-[var(--color-bg)] transition-transform ${
-                on ? 'translate-x-3.5' : 'translate-x-0.5'
+              className={`inline-block h-5 w-5 rounded-full bg-[var(--color-fg)] transition-transform duration-[180ms] ease-out ${
+                on ? 'translate-x-[22px]' : 'translate-x-0.5'
               }`}
             />
           </span>
         </button>
       </div>
-      <StatusRegion outcome={change.outcome} />
+      <p className="text-[13px] text-[var(--color-muted)]">
+        Turning it on asks you to confirm first; turning it off takes effect at once.
+      </p>
+      <StatusRegion outcome={confirming ? null : change.outcome} />
       {confirming && !on ? (
         <AutonomyConfirm
           busy={change.busy}
+          outcome={change.outcome}
           onConfirm={() => persist(true)}
           onCancel={() => {
+            change.clear();
             setConfirming(false);
-            toggle.current?.focus();
           }}
         />
       ) : null}
