@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { expect, test, type Page } from '@playwright/test';
+import { bringTabIntoView, type TabInStrip } from '../../app/components/strip-scroll';
 
 /**
  * The tab strip in a real Chromium with classic scrollbars, which only a browser lays out: it
@@ -13,12 +14,21 @@ import { expect, test, type Page } from '@playwright/test';
 // Chromium's headless default hides scrollbars; the manager's browser draws them.
 test.use({ launchOptions: { ignoreDefaultArgs: ['--hide-scrollbars'] } });
 
-/** The strip's markup, rendered once from the component. */
-const MARKUP = execFileSync(
-  process.execPath,
-  ['--import', 'tsx', fileURLToPath(new URL('./tab-strip-markup.ts', import.meta.url))],
-  { encoding: 'utf8' },
-);
+/**
+ * The strip's markup, rendered from the component with one tab selected.
+ *
+ * @param selected - The key of the selected tab.
+ */
+function markup(selected: string): string {
+  return execFileSync(
+    process.execPath,
+    ['--import', 'tsx', fileURLToPath(new URL('./tab-strip-markup.ts', import.meta.url)), selected],
+    { encoding: 'utf8' },
+  );
+}
+
+/** The strip with its first tab selected, as the employee page opens. */
+const MARKUP = markup('needs-you');
 
 /** What the strip measures once laid out. */
 interface StripReading {
@@ -33,11 +43,12 @@ interface StripReading {
 }
 
 /**
- * Mount the strip, the first tab selected, in a page-width column at the top of a public page.
+ * Mount the strip in a page-width column at the top of a public page.
  *
  * @param page - The loaded page.
+ * @param html - The strip's markup; the first tab selected when absent.
  */
-async function mountStrip(page: Page): Promise<StripReading> {
+async function mountStrip(page: Page, html: string = MARKUP): Promise<StripReading> {
   return await page.evaluate((html: string) => {
     const column = document.createElement('div');
     column.style.cssText =
@@ -57,7 +68,46 @@ async function mountStrip(page: Page): Promise<StripReading> {
       selectedBottom: selected.getBoundingClientRect().bottom,
       stripBottom: strip.getBoundingClientRect().bottom,
     };
-  }, MARKUP);
+  }, html);
+}
+
+/** Where the selected tab sits in the strip's visible box, once the strip has brought it in. */
+interface InView {
+  /** How far the tab reaches past the strip's visible box, on either side; 0 when inside. */
+  readonly outside: number;
+  /** How far the tab's centre is from the strip's. */
+  readonly offCentre: number;
+  readonly scrollLeft: number;
+}
+
+/**
+ * Mount the strip with a tab selected and bring that tab into view with the component's own step
+ * (`bringTabIntoView`, which `Tabs` runs as the strip renders), then read where it sits.
+ *
+ * @param page - The loaded page.
+ * @param selected - The key of the selected tab.
+ */
+async function selectedInView(page: Page, selected: string): Promise<InView> {
+  await mountStrip(page, markup(selected));
+  const strip = await page.evaluateHandle((): TabInStrip => {
+    const list = document.querySelector<HTMLElement>('[role="tablist"]');
+    const tab = list?.querySelector<HTMLElement>('[aria-selected="true"]');
+    if (!list || !tab) throw new Error('the strip did not render');
+    return { list, tab };
+  });
+  await page.evaluate(bringTabIntoView, strip);
+  return await page.evaluate(() => {
+    const strip = document.querySelector<HTMLElement>('[role="tablist"]');
+    const chosen = strip?.querySelector<HTMLElement>('[aria-selected="true"]');
+    if (!strip || !chosen) throw new Error('the strip did not render');
+    const outer = strip.getBoundingClientRect();
+    const inner = chosen.getBoundingClientRect();
+    return {
+      outside: Math.max(0, outer.left - inner.left, inner.right - outer.right),
+      offCentre: Math.abs(inner.left + inner.width / 2 - (outer.left + outer.width / 2)),
+      scrollLeft: strip.scrollLeft,
+    };
+  });
 }
 
 test.describe('the tab strip', () => {
@@ -87,5 +137,25 @@ test.describe('the tab strip', () => {
     const strip = await mountStrip(page);
     const narrow = (page.viewportSize()?.width ?? 0) < 768;
     expect(strip.scrollWidth > strip.clientWidth).toBe(narrow);
+  });
+
+  test('brings the last tab into view when it is selected on a phone (review m12)', async ({
+    page,
+  }) => {
+    const manage = await selectedInView(page, 'manage');
+    // Scrolled to its end: the strip's scroll width is whole pixels and its tabs' widths are not,
+    // so the last tab may reach a fraction of a pixel past the edge, never a whole one.
+    expect(manage.outside).toBeLessThan(1);
+    const narrow = (page.viewportSize()?.width ?? 0) < 768;
+    expect(manage.scrollLeft > 0).toBe(narrow);
+  });
+
+  test('centres a selected tab from the middle of the strip where the strip scrolls', async ({
+    page,
+  }) => {
+    const skills = await selectedInView(page, 'skills');
+    expect(skills.outside).toBe(0);
+    if ((page.viewportSize()?.width ?? 0) < 768) expect(skills.offCentre).toBeLessThanOrEqual(1);
+    else expect(skills.scrollLeft).toBe(0);
   });
 });

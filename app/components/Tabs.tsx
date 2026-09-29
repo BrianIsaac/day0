@@ -92,12 +92,13 @@ export function Tabs({
   return (
     // The strip's line is drawn inside its box, under the tabs, so the selected tab's underline
     // covers it without reaching past the box: a tab hanging 1 px below made the strip scroll
-    // vertically, and a scroll box draws a scrollbar wherever one is not hidden.
+    // vertically, and a scroll box draws a scrollbar wherever one is not hidden. The strip is
+    // positioned so its tabs' offsets are measured from it when a tab is brought into view.
     <div
       ref={strip}
       role="tablist"
       aria-label={label}
-      className="flex gap-0.5 overflow-x-auto overflow-y-hidden shadow-[inset_0_-1px_0_var(--color-border)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      className="relative flex gap-0.5 overflow-x-auto overflow-y-hidden shadow-[inset_0_-1px_0_var(--color-border)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
     >
       {items.map((item, index) => {
         const current = item.key === selected;
