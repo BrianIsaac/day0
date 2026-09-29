@@ -515,7 +515,7 @@ const cards: Phase = {
         3 * 60_000,
         async () => {
           const surface = await current();
-          return surface && probeSettledAfter(surface, proposed.probeGeneration ?? 0)
+          return surface && probeSettledAfter(surface, proposed.probeGeneration ?? 0, ctx.now())
             ? surface
             : undefined;
         },
@@ -531,7 +531,7 @@ const cards: Phase = {
       const probed = card.credential === 'none' ? -1 : (approved.probeGeneration ?? 0);
       const row = await waitFor(ctx, `${card.slug} to connect`, 3 * 60_000, async () => {
         const surface = await current();
-        if (!surface || !probeSettledAfter(surface, probed)) return undefined;
+        if (!surface || !probeSettledAfter(surface, probed, ctx.now())) return undefined;
         if (['ungranted', 'listed-dead', 'absent'].includes(surface.verdict)) {
           throw new Error(
             `${card.slug} ended ${surface.verdict}: ${surface.reason ?? 'no reason recorded'}`,
