@@ -72,7 +72,8 @@ vi.mock('convex/react', () => {
 });
 
 import type { Id } from '../../../../../convex/_generated/dataModel';
-import { probeOutcomeText, SurfacesTab } from '../../../../../app/agent/[agentId]/mock/SurfacesTab';
+import { probeOutcomeText } from '../../../../../app/agent/[agentId]/mock/SurfaceRows';
+import { SurfacesTab } from '../../../../../app/agent/[agentId]/mock/SurfacesTab';
 import { focusedName, mount, press, said, settle } from '../../../../fixtures/dom/press';
 
 afterEach((): void => {

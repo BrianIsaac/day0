@@ -59,22 +59,26 @@ vi.mock('convex/react', () => ({
 import type { Id } from '../../../../../convex/_generated/dataModel';
 import {
   AccessRow,
+  ToolsRow,
+  type AccessSurface,
+  type ToolsSurface,
+} from '../../../../../app/agent/[agentId]/mock/SurfaceControls';
+import {
   ApprovalRow,
   CredentialRow,
-  credentialStatusLine,
-  EMPTY_SURFACES,
   DiscoveryProvenance,
   EvidenceQuote,
   IntakeScopeRow,
-  LOADING_SURFACES,
   ProvisioningRow,
   SurfaceLadder,
-  SurfacesTab,
-  ToolsRow,
-  type AccessSurface,
   type CredentialRowProps,
   type ProvisioningRowProps,
-  type ToolsSurface,
+} from '../../../../../app/agent/[agentId]/mock/SurfaceRows';
+import {
+  credentialStatusLine,
+  EMPTY_SURFACES,
+  LOADING_SURFACES,
+  SurfacesTab,
 } from '../../../../../app/agent/[agentId]/mock/SurfacesTab';
 import { AgentZoneContext } from '../../../../../app/agent/[agentId]/time';
 import { companyPage } from '../../../../fixtures/company-bed';

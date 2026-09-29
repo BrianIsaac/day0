@@ -16,7 +16,10 @@ const DASHBOARD = readdirSync('app/agent/[agentId]', { recursive: true, encoding
   .map((file) => readFileSync(`app/agent/[agentId]/${file}`, 'utf8'))
   .join('\n');
 const CHAT = readFileSync('app/agent/[agentId]/ChatRoom.tsx', 'utf8');
-const SURFACES = readFileSync('app/agent/[agentId]/mock/SurfacesTab.tsx', 'utf8');
+// The Surfaces tab's cards are drawn by the tab and the rows and controls beside it.
+const SURFACES = ['SurfacesTab', 'SurfaceRows', 'SurfaceControls']
+  .map((file) => readFileSync(`app/agent/[agentId]/mock/${file}.tsx`, 'utf8'))
+  .join('\n');
 const DOCUMENTATION = readFileSync('app/documentation/DocumentationPage.tsx', 'utf8');
 const DEPLOY_FORM = readFileSync('app/home/DeployForm.tsx', 'utf8');
 const DRIVER = readFileSync('scripts/bed/rehearsal/driver.ts', 'utf8');
