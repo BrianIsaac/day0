@@ -1,4 +1,9 @@
 import type { Doc, Id } from '../../../convex/_generated/dataModel';
+import {
+  HELD_MUTATION,
+  HELD_NOT_APPROVED,
+  HELD_PUBLIC_POST,
+} from '../../../src/surfaces/policy';
 import type { SurfaceRecord } from '../../../src/surfaces/types';
 import type { MockAction } from '../../../src/work/types';
 
@@ -37,6 +42,22 @@ export const SLACK: SurfaceRecord = {
   managerName: 'Sam',
 };
 
+/** Linear, connected: the ticket the stale tile is tracked on. */
+export const LINEAR: SurfaceRecord = {
+  slug: 'linear',
+  displayName: 'Linear',
+  class: 'kanban',
+  verdict: 'connected',
+  credentialLanded: true,
+  lastVerifiedAt: AT,
+  path: 'mcp',
+  endpoint: 'https://mcp.linear.app/mcp',
+  toolAllowlist: ['get_issue', 'save_comment'],
+};
+
+/** Both surfaces the drawn run touches. */
+export const SURFACES: SurfaceRecord[] = [SLACK, LINEAR];
+
 const THREAD = { channel: 'C0ASKS', channelName: 'revops-asks', threadTs: '1790000000.000100' };
 
 const REPLY_TEXT =
@@ -67,6 +88,47 @@ export const MANAGER_DM: MockAction = {
     headersJson: '{"Authorization":"Bearer {{secret}}"}',
     body: JSON.stringify({ channel: 'D0MANAGER', text: DM_TEXT }),
   },
+};
+
+const COMMENT_TEXT =
+  'The Looker pipeline coverage tile is stale; the Q4 Revenue Tracker is the source until it is refreshed.';
+
+/** A comment on the ticket that tracks the stale tile, the second held write. */
+export const TICKET_COMMENT: MockAction = {
+  tool: 'mcp.call',
+  args: {
+    surface: 'linear',
+    tool: 'save_comment',
+    toolArgsJson: JSON.stringify({ issueId: 'REVOPS-202', body: COMMENT_TEXT }),
+  },
+};
+
+/** The run's actions: the thread reply, the DM to the manager, the ticket comment. */
+const ACTIONS = [THREAD_REPLY, MANAGER_DM, TICKET_COMMENT];
+
+/** The DM to the manager, which the real gate applies on its own under supervision. */
+const DM_LANDED = {
+  tool: 'http.request',
+  ok: true,
+  effect: `Sent you a DM in Slack: “${DM_TEXT}”`,
+  providerId: '1790000000.000299',
+  authority: 'standing',
+};
+
+const REPLY_LANDED = {
+  tool: 'http.request',
+  ok: true,
+  effect: `Replied in #revops-asks: “${REPLY_TEXT}”`,
+  providerId: '1790000000.000300',
+  authority: 'manager',
+};
+
+const COMMENT_LANDED = {
+  tool: 'mcp.call',
+  ok: true,
+  effect: `Commented on REVOPS-202: “${COMMENT_TEXT}”`,
+  providerId: 'comment-41',
+  authority: 'manager',
 };
 
 /** The plan the pages draw. */
@@ -125,9 +187,11 @@ export const QUESTION = {
   charterId: 'c-mira',
 } as unknown as Doc<'managerQuestions'>;
 
-const HELD = [
-  { disposition: 'held', reason: 'a post in a shared channel is held for you' },
-  { disposition: 'held', reason: 'a message to you is held while supervised' },
+/** The real gate's verdicts on the run, supervised: the DM applies, the other two wait. */
+const VERDICTS = [
+  { disposition: 'held', reason: HELD_PUBLIC_POST },
+  { disposition: 'auto' },
+  { disposition: 'held', reason: HELD_MUTATION },
 ];
 
 const REJECTION = 'Do not DM me about drafts; keep it in the thread.';
@@ -175,8 +239,8 @@ export const DRAWN = {
     state: 'actions-pending',
     plan: PLAN,
     pendingRunId: 'run-held' as Id<'events'>,
-    output: { draft: DRAFT, notes: '', actions: [THREAD_REPLY, MANAGER_DM] },
-    actionVerdicts: HELD,
+    output: { draft: DRAFT, notes: '', actions: ACTIONS, applied: [DM_LANDED] },
+    actionVerdicts: VERDICTS,
     decision: {
       id: 'ab3xyz',
       kind: 'actions',
@@ -195,11 +259,8 @@ export const DRAWN = {
     output: {
       draft: DRAFT,
       notes: '',
-      actions: [THREAD_REPLY, MANAGER_DM],
-      applied: [
-        { tool: 'http.request', ok: true, effect: `Replied in #revops-asks: “${REPLY_TEXT}”`, providerId: '1790000000.000300', authority: 'manager' },
-        { tool: 'http.request', ok: true, effect: `Sent you a DM in Slack: “${DM_TEXT}”`, providerId: '1790000000.000301', authority: 'manager' },
-      ],
+      actions: ACTIONS,
+      applied: [REPLY_LANDED, DM_LANDED, COMMENT_LANDED],
     },
     decision: {
       id: 'ab3xyz',
@@ -221,10 +282,17 @@ export const DRAWN = {
     output: {
       draft: DRAFT,
       notes: '',
-      actions: [THREAD_REPLY, MANAGER_DM],
+      actions: ACTIONS,
       applied: [
-        { tool: 'http.request', ok: true, effect: `Replied in #revops-asks: “${REPLY_TEXT}”`, providerId: '1790000000.000300', authority: 'manager' },
-        { tool: 'http.request', ok: false, held: true, effect: `Send you a DM in Slack: “${DM_TEXT}”`, reason: 'not approved by the manager' },
+        REPLY_LANDED,
+        DM_LANDED,
+        {
+          tool: 'mcp.call',
+          ok: false,
+          held: true,
+          effect: `Comment on REVOPS-202: “${COMMENT_TEXT}”`,
+          reason: HELD_NOT_APPROVED,
+        },
       ],
     },
     decision: {
@@ -246,7 +314,8 @@ export const DRAWN = {
     plan: PLAN,
     skipReason: `rejected by the manager: ${REJECTION}`,
     managerFeedback: { reason: REJECTION, at: minute(22), kind: 'rejection', runId: 'run-held' },
-    output: { draft: DRAFT, notes: '', actions: [THREAD_REPLY, MANAGER_DM] },
+    // Both writes were held and nothing had applied: the run is rejected whole.
+    output: { draft: DRAFT, notes: '', actions: [THREAD_REPLY, TICKET_COMMENT] },
     rejectedAt: minute(22),
   }),
   /** `work-retried.html`: a plan redrafted after the manager cancelled the first, from their note. */

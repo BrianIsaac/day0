@@ -6,12 +6,12 @@ import {
   VerdictSection,
   type ItemVerdict,
 } from '../../../../../app/agent/[agentId]/work/VerdictSection';
-import { AT, DRAWN, SLACK } from '../../../../fixtures/work/drawn-states';
+import { AT, DRAWN, SURFACES } from '../../../../fixtures/work/drawn-states';
 
 function verdict(state: Doc<'workItems'>['state'], value: ItemVerdict, fields = {}): string {
   const item = { ...DRAWN.planPending, state, verdict: value, ...fields } as Doc<'workItems'>;
   return renderToStaticMarkup(
-    <VerdictSection item={item} verdict={value} surfaces={[SLACK]} now={AT} />,
+    <VerdictSection item={item} verdict={value} surfaces={SURFACES} now={AT} />,
   );
 }
 

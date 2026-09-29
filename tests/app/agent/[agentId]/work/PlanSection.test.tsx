@@ -2,11 +2,11 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { Doc } from '../../../../../convex/_generated/dataModel';
 import { type ItemPlan, PlanSection } from '../../../../../app/agent/[agentId]/work/PlanSection';
-import { DRAWN, PLAN, SLACK } from '../../../../fixtures/work/drawn-states';
+import { DRAWN, PLAN, SURFACES } from '../../../../fixtures/work/drawn-states';
 
 function section(item: Doc<'workItems'>, plan: ItemPlan = PLAN): string {
   return renderToStaticMarkup(
-    <PlanSection item={item} plan={plan} surfaces={[SLACK]} corrections={[]} />,
+    <PlanSection item={item} plan={plan} surfaces={SURFACES} corrections={[]} />,
   );
 }
 

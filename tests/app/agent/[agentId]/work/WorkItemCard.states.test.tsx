@@ -12,7 +12,7 @@ import {
   EMPLOYEE,
   PLAN,
   QUESTION,
-  SLACK,
+  SURFACES,
   THREAD_REPLY,
   ZONE,
 } from '../../../../fixtures/work/drawn-states';
@@ -52,7 +52,7 @@ function card(
     <AgentZoneContext value={ZONE}>
       <WorkItemCard
         item={item}
-        surfaces={[SLACK]}
+        surfaces={SURFACES}
         autonomousActions={options.autonomous ?? false}
         employeeName={EMPLOYEE}
         questions={options.questions ?? []}
@@ -207,9 +207,13 @@ describe('write held for you (work-held.html, work-held-withheld.html)', (): voi
   it('ticks every held write, withholds one, counts the ticks on Approve and sends only what is ticked', async (): Promise<void> => {
     const view = card(DRAWN.held);
     expect(chip(view.container)).toBe('Write held for you');
-    expect(view.text()).toContain(
-      '2 actions awaiting your approval · nothing has reached a surface',
-    );
+    // Supervised, the real gate applied the DM to the manager and holds the other two.
+    expect(view.text()).toContain('1 applied automatically · 2 actions awaiting your approval');
+    expect(view.text()).toContain('Landed: Sent you a DM in Slack');
+    expect(view.text()).toContain('Public post held for you.');
+    expect(view.text()).toContain('System-of-record mutation held for you.');
+    // The whole reply is read in words, not only in the payload.
+    expect(view.text()).toContain('the Looker tile is stale (REVOPS-202).');
     const summaries = [...view.container.querySelectorAll('input[type="checkbox"]')].map(
       (box) => (box as HTMLInputElement).checked,
     );
@@ -219,16 +223,16 @@ describe('write held for you (work-held.html, work-held-withheld.html)', (): voi
       'Exact payload',
     );
 
-    const dm = [...view.container.querySelectorAll('button')].find((candidate) =>
-      candidate.getAttribute('aria-label')?.startsWith('Withhold this one: Send Sam a Slack DM'),
+    const comment = [...view.container.querySelectorAll('button')].find((candidate) =>
+      candidate.getAttribute('aria-label')?.startsWith('Withhold this one: Comment on REVOPS-202'),
     );
-    if (!dm) throw new Error('the DM has no Withhold this one');
-    await act(async (): Promise<void> => dm.click());
+    if (!comment) throw new Error('the comment has no Withhold this one');
+    await act(async (): Promise<void> => comment.click());
     expect(view.text()).toContain('· 1 withheld by you');
     expect(view.text()).toContain('Withheld by you: it will not be sent, and stays in the record.');
     expect(
       [...view.container.querySelectorAll('button')].some((candidate) =>
-        candidate.getAttribute('aria-label')?.startsWith('Include it again: Send Sam a Slack DM'),
+        candidate.getAttribute('aria-label')?.startsWith('Include it again: Comment on REVOPS-202'),
       ),
     ).toBe(true);
 
@@ -245,7 +249,7 @@ describe('write held for you (work-held.html, work-held-withheld.html)', (): voi
     );
     await act(async (): Promise<void> => withhold?.click());
     await press(view.container, 'Approve all');
-    expect(view.calls).toEqual([['approveActions', [0, 1]]]);
+    expect(view.calls).toEqual([['approveActions', [0, 2]]]);
     expect(
       [...view.container.querySelectorAll('input[type="checkbox"]')].map(
         (box) => (box as HTMLInputElement).checked,
@@ -258,7 +262,9 @@ describe('write held for you (work-held.html, work-held-withheld.html)', (): voi
     await press(view.container, 'Reject the run');
     const reason = field(view.container, 'Reason for rejecting');
     expect(document.activeElement).toBe(reason);
-    expect(view.text()).toContain('Kept with the item and shown to Mira on a retry.');
+    expect(view.text()).toContain(
+      "Kept with the item. A retry reads it as Mira's direction, unless you give a note in its place.",
+    );
     typeInto(reason, 'Do not DM me about drafts; keep it in the thread.');
     await press(view.container, 'Reject with this reason');
     expect(view.calls).toEqual([
@@ -276,7 +282,7 @@ describe('landed (work-landed.html)', (): void => {
     const view = card(DRAWN.landed);
     expect(chip(view.container)).toBe('Landed');
     expect(view.text()).toContain(
-      '2 changes reached the work environment · approved from the day0 dashboard at 29 Sep 2026, 15:02',
+      '3 changes reached the work environment · approved from the day0 dashboard at 29 Sep 2026, 15:02',
     );
     expect(view.text()).toContain('Landed: Replied in #revops-asks');
     const send = (): HTMLButtonElement | undefined =>
@@ -293,7 +299,7 @@ describe('landed (work-landed.html)', (): void => {
     expect(view.text()).toContain('Provider reconciliation required');
     expect(send()?.disabled).toBe(true);
     const ticks = [...view.container.querySelectorAll('label input[type="checkbox"]')];
-    expect(ticks).toHaveLength(2);
+    expect(ticks).toHaveLength(3);
     expect(() => button(view.container, 'Confirm reconciliation')).toThrow();
     for (const tick of ticks)
       await act(async (): Promise<void> => (tick as HTMLInputElement).click());
@@ -328,8 +334,8 @@ describe('landed (work-landed.html)', (): void => {
 describe('landed partial (work-landed-partial.html)', (): void => {
   it('keeps the withheld action in the record beside what landed', (): void => {
     const view = card(DRAWN.landedPartial);
-    expect(view.text()).toContain('1 change reached the work environment · 1 withheld by you');
-    expect(view.text()).toContain('Not sent: Send you a DM in Slack');
+    expect(view.text()).toContain('2 changes reached the work environment · 1 withheld by you');
+    expect(view.text()).toContain('Not sent: Comment on REVOPS-202');
     expect(view.text()).toContain('withheld by you; never sent, kept in the record');
   });
 });

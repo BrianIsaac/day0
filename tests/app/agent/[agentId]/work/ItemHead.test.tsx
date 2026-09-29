@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import type { Doc } from '../../../../../convex/_generated/dataModel';
 import type { SurfaceRecord } from '../../../../../src/surfaces/types';
 import { ItemHead } from '../../../../../app/agent/[agentId]/work/ItemHead';
-import { AT, DRAWN, SLACK, ZONE } from '../../../../fixtures/work/drawn-states';
+import { AT, DRAWN, SLACK, SURFACES, ZONE } from '../../../../fixtures/work/drawn-states';
 
 function head(
   item: Doc<'workItems'>,
@@ -14,7 +14,7 @@ function head(
   return renderToStaticMarkup(
     <ItemHead
       item={item}
-      surfaces={fields.surfaces ?? [SLACK]}
+      surfaces={fields.surfaces ?? SURFACES}
       now={fields.now ?? AT}
       zone={ZONE}
       busy={false}

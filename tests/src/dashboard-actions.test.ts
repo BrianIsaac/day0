@@ -119,7 +119,7 @@ describe('dashboard exact-action gate', (): void => {
       /<p[^>]*>Send Sam a Slack DM: &quot;Draft ready\.&quot;<\/p><p[^>]*>System-of-record mutation held for you\.<\/p>/,
     );
     expect(html).toMatch(
-      /<p[^>]*>Post to Slack channel C0PUBLIC: &quot;x{120}…&quot;<\/p><p[^>]*>Refused by Day0&#x27;s gate: no grant \(slack:write\)\. It cannot be sent\.<\/p>/,
+      /<p[^>]*>Post to Slack channel C0PUBLIC: &quot;x{240}&quot;<\/p><p[^>]*>Refused by Day0&#x27;s gate: no grant \(slack:write\)\. It cannot be sent\.<\/p>/,
     );
     expect(html.indexOf('Send Sam a Slack DM')).toBeLessThan(
       html.indexOf('&quot;tool&quot;: &quot;http.request&quot;'),

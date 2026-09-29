@@ -1557,14 +1557,19 @@ describe('a work item that lands while the page is open (v3 section 5.2)', (): v
       },
       actionVerdicts: [{ disposition: 'held', reason: 'system-of-record mutation held' }],
     } as unknown as Doc<'workItems'>;
+    // Completion flattens the two phases into one ledger (`flattenedDependentOutput`):
+    // the prerequisite first, at the place it held while the closing set waited.
     const closed = {
       ...held,
       state: 'completed',
       pendingRunId: undefined,
       actionVerdicts: undefined,
       output: {
-        ...(held.output as object),
+        draft: 'Closing from the ledger.',
+        notes: '',
+        actions: [],
         applied: [
+          prerequisite,
           { tool: 'linear.save_comment', ok: true, effect: 'Commented on REVOPS-5' },
           { tool: 'linear.save_issue', ok: true, effect: 'Moved REVOPS-5 to Done' },
         ],

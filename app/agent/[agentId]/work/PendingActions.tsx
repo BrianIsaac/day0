@@ -178,7 +178,13 @@ export function PendingActions({
               const verdict = verdicts[index];
               const refused = verdict?.disposition === 'refused';
               const on = selected.has(index);
+              // The short form names the tick; the row itself reads the whole message, so the
+              // manager approves what they have read in words, not only in the payload.
               const summary = summariseAction(action, surfaces, { replyTarget });
+              const words = summariseAction(action, surfaces, {
+                replyTarget,
+                textLimit: HELD_TEXT_LIMIT,
+              });
               return (
                 <li
                   key={index}
@@ -202,7 +208,7 @@ export function PendingActions({
                           : 'font-medium text-[var(--color-fg)]'
                       }`}
                     >
-                      {summary}
+                      {words}
                     </p>
                     <p className="text-[13px] text-[var(--color-muted)]">
                       {refused
@@ -279,7 +285,7 @@ export function PendingActions({
           <div id={`${id}-reject`} className="grid gap-3">
             <Field
               label="Reason for rejecting"
-              hint={`Kept with the item and shown to ${employeeName} on a retry.`}
+              hint={`Kept with the item. A retry reads it as ${employeeName}'s direction, unless you give a note in its place.`}
             >
               {(control) => (
                 <input
@@ -317,6 +323,9 @@ export function PendingActions({
     </>
   );
 }
+
+/** How much of a held message the row reads out: the whole of any message intake could take. */
+const HELD_TEXT_LIMIT = 4_000;
 
 /** Why Approve all is disabled while the gate refuses a row, beside the button and for its hover. */
 const APPROVE_ALL_REFUSED =

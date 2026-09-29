@@ -14,7 +14,7 @@ import {
   DRAWN_ORDER,
   EMPLOYEE,
   QUESTION,
-  SLACK,
+  SURFACES,
   ZONE,
 } from '../../../../fixtures/work/drawn-states';
 
@@ -66,7 +66,7 @@ async function workTab(): Promise<ReturnType<typeof mount>> {
           agentId={'a-mira' as Id<'agents'>}
           workItems={DRAWN_ORDER.map((state) => DRAWN[state])}
           openQuestions={[QUESTION]}
-          surfaces={[SLACK]}
+          surfaces={SURFACES}
           registeredSkillCount={1}
           charterApproved
           autonomousActions={false}
