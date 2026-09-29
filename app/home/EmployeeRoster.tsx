@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { avatarById } from '@/agent/avatar-pets';
-import { EMPLOYEE_STATE_LABEL } from './employee-state';
+import { employeeStateWords } from '@/work/state-labels';
 import { AgentPixelAvatar, agentStateTone } from './PixelAvatar';
 import type { RosterRow } from './types';
 
@@ -173,7 +173,7 @@ function RosterRowView({
         <span
           className={`inline-block whitespace-nowrap rounded-full border px-2.5 py-0.5 text-xs font-medium ${tone.border} ${tone.bg} ${tone.text}`}
         >
-          {EMPLOYEE_STATE_LABEL[employee.state]}
+          {employeeStateWords(employee.state).text}
         </span>
       </Cell>
       <Cell column="Role" className="max-sm:col-span-2">
