@@ -1,6 +1,11 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { FirstWeekRail, type RailStep } from '../../../app/components/FirstWeekRail';
+import {
+  FirstWeekRail,
+  RAIL_CELL,
+  RailStepText,
+  type RailStep,
+} from '../../../app/components/FirstWeekRail';
 
 const STEPS: readonly RailStep[] = [
   { title: 'Deployed', detail: 'today 14:02', status: 'done' },
@@ -45,5 +50,23 @@ describe('FirstWeekRail', () => {
 
   it('runs across the page and stacks on a phone', () => {
     expect(html).toMatch(/class="rail [^"]*\bflex-col\b[^"]*\bmd:flex-row\b/);
+  });
+});
+
+describe('RAIL_CELL and RailStepText, one step drawn on its own as in the rail (review m8)', () => {
+  it('lays a step out the same in the rail and on its own: beside its detail on a phone, above it from md up', () => {
+    expect(RAIL_CELL).toMatch(/(^|\s)grid-cols-\[auto_minmax\(0,1fr\)\](\s|$)/);
+    expect(RAIL_CELL).toMatch(/(^|\s)md:grid-cols-1(\s|$)/);
+    const rail = renderToStaticMarkup(<FirstWeekRail steps={STEPS} />);
+    expect(rail).toContain(`class="rail-step now ${RAIL_CELL} `);
+  });
+
+  it('says a step’s title with its standing in words, then its detail', () => {
+    const html = renderToStaticMarkup(<RailStepText step={STEPS[3] as RailStep} />);
+    expect(html).toMatch(
+      /^<span class="rail-title [^"]*">First supervised write<span class="sr-only">, now<\/span><\/span><span class="[^"]*">held for you<\/span>$/,
+    );
+    const next = renderToStaticMarkup(<RailStepText step={STEPS[4] as RailStep} />);
+    expect(next).toContain('Working<span class="sr-only">, not yet</span>');
   });
 });
