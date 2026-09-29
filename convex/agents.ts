@@ -389,12 +389,19 @@ export const rosterForUser = query({
 
 /**
  * Public, owner-guarded by `ownedAgentOrNull`: one employee, or null once it is gone (retired,
- * or never there), so the employee page can say so. Another owner's employee is refused.
+ * or never there), so the employee page can say so. Another owner's employee is refused. The id
+ * is taken as the address gave it, so a malformed or truncated link reads as no employee rather
+ * than as a validation failure the page could only show as a crash.
  */
 export const get = query({
-  args: { agentId: v.id('agents') },
+  args: { agentId: v.string() },
   handler: async (ctx, args) => {
-    return await ownedAgentOrNull(ctx, args.agentId);
+    const agentId = ctx.db.normalizeId('agents', args.agentId);
+    if (agentId === null) {
+      await getCallerOrThrow(ctx);
+      return null;
+    }
+    return await ownedAgentOrNull(ctx, agentId);
   },
 });
 

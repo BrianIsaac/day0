@@ -86,6 +86,17 @@ describe('agents.get, the employee page read (ownedAgentOrNull)', (): void => {
     expect(isEmployeeNotYours(refusal)).toBe(true);
   });
 
+  it('answers null for an address that names no employee at all, a truncated link included', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity({ subject: 'owner' });
+    const agentId = await owner.mutation(api.agents.deploy, { bossEmail: 'boss@example.com' });
+    await expect(owner.query(api.agents.get, { agentId: 'foo' })).resolves.toBeNull();
+    await expect(
+      owner.query(api.agents.get, { agentId: agentId.slice(0, -3) }),
+    ).resolves.toBeNull();
+    await expect(harness.query(api.agents.get, { agentId: 'foo' })).rejects.toThrow();
+  });
+
   it('refuses an anonymous caller before it reads the row', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const owner = harness.withIdentity({ subject: 'owner' });
