@@ -147,7 +147,7 @@ describe('recordWords', (): void => {
         { name: 'Mira', item: 'Refresh pipeline coverage view' },
       ),
     ).toBe(
-      'You dismissed “Refresh pipeline coverage view”: it is out of your inbox and stays on the Work tab, where Retry still sends it back.',
+      'You dismissed “Refresh pipeline coverage view” from your inbox. It stays on the Work tab, where Retry runs it again.',
     );
   });
 

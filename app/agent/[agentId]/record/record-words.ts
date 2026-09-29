@@ -486,7 +486,7 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
   'work.cancelled': (p, subject) =>
     `${itemOf(subject)} was cancelled${decidedFrom(p.decidedVia)}${because(p.reason)}`,
   'work.dismissed': (_, subject) =>
-    `You dismissed ${itemOf(subject)}: it is out of your inbox and stays on the Work tab, where Retry still sends it back`,
+    `You dismissed ${itemOf(subject)} from your inbox. It stays on the Work tab, where Retry runs it again`,
   'work.execution-claimed': (_, subject) => `${subject.name} started the run${forItem(subject)}`,
   'work.dependent-authoring': (_, subject) =>
     `${subject.name} wrote the closing actions${forItem(subject)} from what the first phase landed`,
