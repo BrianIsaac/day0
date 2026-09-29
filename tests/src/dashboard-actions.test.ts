@@ -22,11 +22,11 @@ import {
 } from '../../app/agent/[agentId]/work/RunDetails';
 import { MetricsCard } from '../../app/agent/[agentId]/record/MetricsCard';
 import { NotificationModeControl } from '../../app/agent/[agentId]/manage/NotificationModeControl';
+import { PendingActions } from '../../app/agent/[agentId]/work/PendingActions';
 import {
-  PendingActions,
   pendingDecisionMembers,
   PendingDecisionsPanel,
-} from '../../app/agent/[agentId]/work/PendingActions';
+} from '../../app/agent/[agentId]/work/PendingDecisionsPanel';
 import { PermissionRows } from '../../app/agent/[agentId]/surfaces/PermissionsCard';
 import { formatMetricDuration } from '../../app/metric-format';
 import type { AgentMetrics } from '../../src/metrics/types';

@@ -21,7 +21,7 @@ import { act } from 'react';
 import { button, focusedName, mount, press, said, settle } from '../../../fixtures/dom/press';
 import { cancelPlanRequest } from '../../../../app/agent/[agentId]/work/WorkQueue';
 import { ManagerFeedbackNote } from '../../../../app/agent/[agentId]/work/RunDetails';
-import { PlanApprovalForm } from '../../../../app/agent/[agentId]/work/PendingActions';
+import { PlanApprovalForm } from '../../../../app/agent/[agentId]/work/PlanApproval';
 import { WorkItemCard } from '../../../../app/agent/[agentId]/work/WorkItemCard';
 
 /**

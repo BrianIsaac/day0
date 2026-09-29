@@ -9,7 +9,8 @@ import {
   autonomyTurnedOnAfterDraft,
   autonomyTurnedOnAfterDraftNote,
 } from '@/work/autonomy';
-import { type PlanApproval, PlanApprovalForm, PendingActions } from './PendingActions';
+import { PendingActions } from './PendingActions';
+import { type PlanApproval, PlanApprovalForm } from './PlanApproval';
 import { useNow, useAgentZone, clockTimeWithSeconds, clockTime } from '../time';
 import { useRef, useState, type CSSProperties } from 'react';
 import { useChange } from '../../../components/use-change';

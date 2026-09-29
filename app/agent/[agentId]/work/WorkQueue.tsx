@@ -12,11 +12,8 @@ import type { AutonomyChange } from '@/work/autonomy';
 import { useMemo, useRef, useCallback, useEffect } from 'react';
 import { useArrival } from '../../../arrival';
 import { Card } from '../../../components/Card';
-import {
-  PendingDecisionsPanel,
-  pendingDecisionMembers,
-  planApprovalRequest,
-} from './PendingActions';
+import { PendingDecisionsPanel, pendingDecisionMembers } from './PendingDecisionsPanel';
+import { planApprovalRequest } from './PlanApproval';
 import { WorkItemCard } from './WorkItemCard';
 
 /**
