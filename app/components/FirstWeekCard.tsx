@@ -266,13 +266,15 @@ function WholeWeek({
         className="fixed right-0 left-0 mx-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] overflow-y-auto rounded-xl shadow-[0_1px_2px_rgba(0,0,0,0.4),0_16px_40px_-16px_rgba(0,0,0,0.8)] outline-none sm:w-[min(77rem,calc(100%-3rem))]"
       >
         <FirstWeekRail steps={steps} />
+        {/* At the week's top right whether shown or not: hidden, it still has a box, and one at
+            its static place, the week's foot, made the week scroll by a pixel (review M1). */}
         <button
           type="button"
           onClick={(event) => {
             event.stopPropagation();
             onClose();
           }}
-          className="sr-only rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] px-3 text-[13px] font-medium text-[var(--color-fg)] focus-visible:not-sr-only focus-visible:absolute focus-visible:top-2 focus-visible:right-2 focus-visible:inline-flex focus-visible:min-h-11 focus-visible:items-center"
+          className="sr-only top-2 right-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] px-3 text-[13px] font-medium text-[var(--color-fg)] focus-visible:not-sr-only focus-visible:absolute focus-visible:inline-flex focus-visible:min-h-11 focus-visible:items-center"
         >
           Close the whole week
         </button>

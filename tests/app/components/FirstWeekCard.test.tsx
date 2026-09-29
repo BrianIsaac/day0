@@ -157,6 +157,8 @@ describe('FirstWeekCard', () => {
     expect(close?.textContent).toBe('Close the whole week');
     expect(close?.className).toMatch(/\bsr-only\b.*\bfocus-visible:not-sr-only\b/);
     expect(close?.className).toMatch(/\bfocus-visible:min-h-11\b/);
+    // Placed at the week's top right while hidden too, never at its foot (review M1).
+    expect(close?.className).toMatch(/(^|\s)top-2 right-2(\s|$)/);
     close?.focus();
     const tab = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
     act((): void => {
