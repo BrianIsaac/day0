@@ -1222,8 +1222,9 @@ body {
                          cell, 320 ms.
    [data-land]           a work item's landed ledger, just shown: it settles as its lines rise,
                          `--i` (up to 3) 70 ms apart, 570 ms in all.
-   .rail[data-advanced]  the first-week rail, just moved on: the fill slides into `.now` and the
-                         dot before it (its `.rail-title::before`) fills (`FirstWeekRail`).
+   .rail[data-advanced]  the first-week rail, just moved on: the fill slides into `.now` (down the
+                         column on a phone) and the dot before it (its `.rail-title::before`)
+                         fills (`FirstWeekRail`).
    [data-dialog]         a dialog or popover: it scales in from 0.96 at its own transform origin;
                          [data-dialog-backdrop] fades behind it.
    --------------------------------------------------------------------------------------------- */
@@ -1264,6 +1265,19 @@ body {
 @keyframes day0-rail-slide {
   from {
     transform: translateX(-100%);
+  }
+}
+
+@keyframes day0-rail-drop {
+  from {
+    transform: translateY(-100%);
+  }
+}
+
+/* The rail runs across the page and stacks on a phone, where its fill drops down the column. */
+@media (max-width: 767px) {
+  .rail {
+    --rail-slide: day0-rail-drop;
   }
 }
 
@@ -1368,7 +1382,7 @@ body {
     inset: 0;
     z-index: -1;
     background: color-mix(in oklab, var(--color-accent) 12%, transparent);
-    animation: day0-rail-slide 280ms var(--ease-move) 150ms both;
+    animation: var(--rail-slide, day0-rail-slide) 280ms var(--ease-move) 150ms both;
   }
 
   .rail[data-advanced] .rail-step.done:has(+ .now) .rail-title::before {

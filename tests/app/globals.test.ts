@@ -276,7 +276,7 @@ describe('the product-surface moments (v3 section 5.2, v4 section 2)', () => {
     ],
     [
       '.rail[data-advanced] .rail-step.now::after',
-      /day0-rail-slide 280ms var\(--ease-move\) 150ms/,
+      /var\(--rail-slide, day0-rail-slide\) 280ms var\(--ease-move\) 150ms/,
     ],
     [
       '.rail[data-advanced] .rail-step.done:has(+ .now) .rail-title::before',
@@ -311,6 +311,14 @@ describe('the product-surface moments (v3 section 5.2, v4 section 2)', () => {
     expect(rulesFor(noPreference, "[data-cards='rows']")[0]).toMatch(/--arrive-after:\s*200ms/);
   });
 
+  it("drops the first-week rail's fill down its column on a phone, where the rail stacks", () => {
+    const [phone] = blocks('@media (max-width: 767px) {').filter((block) =>
+      block.includes('--rail-slide'),
+    );
+    expect(phone).toMatch(/\.rail\s*\{\s*--rail-slide:\s*day0-rail-drop;/);
+    expect(blocks('@keyframes day0-rail-drop ')[0]).toMatch(/translateY\(-100%\)/);
+  });
+
   it('shows only the new value of a rolled count or a swapped chip under reduced motion', () => {
     expect(reduce).toMatch(/\.roll > \.from,\s*\.chip-swap > \.from\s*\{\s*display:\s*none;/);
   });
@@ -323,6 +331,7 @@ describe('the product-surface moments (v3 section 5.2, v4 section 2)', () => {
       'roll-out',
       'roll-in',
       'rail-slide',
+      'rail-drop',
       'dot-fill',
       'dialog-in',
     ]) {
