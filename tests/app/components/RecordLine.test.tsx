@@ -28,7 +28,7 @@ describe('RecordLine', () => {
       ['landed', '--color-ok', 'Landed'],
       ['refused', '--color-danger', 'Refused'],
       ['withheld', '--color-muted', 'Withheld'],
-      ['held', '--color-warn', 'Held for you'],
+      ['held', '--color-warn', 'Held'],
       ['noted', '--color-accent', 'Noted'],
     ] as const;
     for (const [kind, colour, said] of cases) {

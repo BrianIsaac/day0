@@ -89,7 +89,7 @@ describe('RecordLines', () => {
     expect(html.match(/<li /g)).toHaveLength(2);
     expect(html).toContain('Close REVOPS-5');
     expect(html).toContain('<span class="sr-only">Landed: </span>');
-    expect(html).toContain('<span class="sr-only">Held for you: </span>');
+    expect(html).toContain('<span class="sr-only">Held: </span>');
     expect(html).toContain('>29 Sep 2026, 09:41</time>');
   });
 });

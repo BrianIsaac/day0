@@ -227,6 +227,12 @@ describe('what a record line says an event did', (): void => {
     expect(recordKindOf({ type: 'skill.proposed' })).toBe('held');
   });
 
+  it('notes a failed run and a past draft rather than calling them refused or still held', (): void => {
+    expect(recordKindOf({ type: 'work.failed' })).toBe('noted');
+    expect(recordKindOf({ type: 'work.plan-drafted' })).toBe('noted');
+    expect(recordKindOf({ type: 'charter.drafted' })).toBe('noted');
+  });
+
   it('notes every other event the contract lists, and one it does not know', (): void => {
     expect(recordKindOf({ type: 'agent.deployed' })).toBe('noted');
     expect(recordKindOf({ type: 'work.model-call' })).toBe('noted');

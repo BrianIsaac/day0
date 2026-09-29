@@ -16,7 +16,7 @@ const SAID: Readonly<Record<RecordKind, string>> = {
   landed: 'Landed',
   refused: 'Refused',
   withheld: 'Withheld',
-  held: 'Held for you',
+  held: 'Held',
   noted: 'Noted',
 };
 

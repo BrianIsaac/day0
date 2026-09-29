@@ -91,9 +91,9 @@ describe('DayZero', () => {
     expect(view.container.textContent).toContain('boss@day0.local');
     expect(view.container.textContent).toContain('the hosted mock office');
     expect(
-      [...view.container.querySelectorAll('a')].find((link) =>
-        link.textContent?.includes('hosted mock office'),
-      )?.getAttribute('href'),
+      [...view.container.querySelectorAll('a')]
+        .find((link) => link.textContent?.includes('hosted mock office'))
+        ?.getAttribute('href'),
     ).toBe('/agent/agent-1/surfaces');
     expect(view.container.textContent).toContain('read-docs');
     expect(view.container.textContent).toContain('1 of 2 written, 1.5 kB');

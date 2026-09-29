@@ -439,56 +439,43 @@ export function eventItemTitle(
   return typeof workItemId === 'string' ? titles.get(workItemId) : undefined;
 }
 
-/** The events that record something landing: a write, a registration, a connection, an approval. */
-const LANDED_TYPES: ReadonlySet<string> = new Set<EventType>([
-  'work.completed',
-  'work.provider-reconciled',
-  'charter.approved',
-  'skill.registered',
-  'skill.builtin-installed',
-  'surface.connected',
-]);
-
-/** The events that record a refusal: the manager's rejection, a gate's or a check's. */
-const REFUSED_TYPES: ReadonlySet<string> = new Set<EventType>([
-  'work.actions-rejected',
-  'work.claim-refused',
-  'work.failed',
-  'skill.rejected',
-  'skill.authoring-refused',
-  'skill.verification-failed',
-  'skill.failed',
-  'surface.rejected',
-]);
-
-/** The events that record something set aside and never sent. */
-const WITHHELD_TYPES: ReadonlySet<string> = new Set<EventType>([
-  'work.conditional-writes-withheld',
-  'work.skipped',
-  'work.withdrawn',
-  'work.cancelled',
-]);
-
-/** The events that record something waiting on the manager. */
-const HELD_TYPES: ReadonlySet<string> = new Set<EventType>([
-  'work.actions-pending',
-  'work.plan-drafted',
-  'work.plan-held',
-  'skill.proposed',
-  'surface.proposed',
-  'charter.drafted',
-]);
+/**
+ * What a record line's dot says each event did, for the events that did more than note
+ * something: landed, refused, set aside, or held for the manager. Typed over the contract, so a
+ * name that is not an event fails the typecheck. A run that failed is noted rather than refused:
+ * most failures are the run stopping, not anyone refusing it; a draft is noted too, since the
+ * line outlives the decision it waited for.
+ */
+const RECORD_KINDS: Readonly<Partial<Record<EventType, Exclude<RecordKind, 'noted'>>>> = {
+  'work.completed': 'landed',
+  'work.provider-reconciled': 'landed',
+  'charter.approved': 'landed',
+  'skill.registered': 'landed',
+  'skill.builtin-installed': 'landed',
+  'surface.connected': 'landed',
+  'work.actions-rejected': 'refused',
+  'work.claim-refused': 'refused',
+  'skill.rejected': 'refused',
+  'skill.authoring-refused': 'refused',
+  'skill.verification-failed': 'refused',
+  'surface.rejected': 'refused',
+  'work.conditional-writes-withheld': 'withheld',
+  'work.skipped': 'withheld',
+  'work.withdrawn': 'withheld',
+  'work.cancelled': 'withheld',
+  'work.actions-pending': 'held',
+  'work.plan-held': 'held',
+  'skill.proposed': 'held',
+  'surface.proposed': 'held',
+};
 
 /**
  * What a record line's dot says an event did: landed, refused, withheld, held for the manager,
- * or, for everything else, noted.
+ * or, for every other event, noted. A type the contract no longer lists (a row an older release
+ * wrote) is noted too.
  *
  * @param event - The stored event.
  */
 export function recordKindOf(event: Pick<Doc<'events'>, 'type'>): RecordKind {
-  if (LANDED_TYPES.has(event.type)) return 'landed';
-  if (REFUSED_TYPES.has(event.type)) return 'refused';
-  if (WITHHELD_TYPES.has(event.type)) return 'withheld';
-  if (HELD_TYPES.has(event.type)) return 'held';
-  return 'noted';
+  return (isEventType(event.type) ? RECORD_KINDS[event.type] : undefined) ?? 'noted';
 }
