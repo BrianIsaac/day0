@@ -31,7 +31,7 @@ export const WORK_GEN_SYSTEM = [
   '',
   '2. Action item — sourceSystem MUST be one of "spreadsheet" / "ticket" / "social" / "slack" — pick whichever surface best fits the charter\'s role. The task requires a write action (append a row, update a ticket, post a reply, post a message) on a surface that exists in the snapshot. This will trigger the propose-new-skill flow.',
   '',
-  "3. Out-of-scope item — sourceSystem can be anything. A task that is plausibly forwarded by a colleague but lies outside the role described in the charter. Make the mismatch clear from the charter's runtime willDo and willNotDo clauses without assuming a particular team or profession. The evaluator should skip this. May or may not reference an existing surface.",
+  "3. Out-of-scope item — sourceSystem can be anything. A task that is plausibly forwarded by a colleague but lies outside the role described in the charter. Make the mismatch clear from the charter's runtime willDo and willNotDo clauses without assuming a particular team or profession. May or may not reference an existing surface.",
   '',
   'Discipline:',
   '  - Each contentSummary is 2-3 sentences and includes a direct quoted request from a named person (the named collaborators in the charter, or "Manager" for the boss).',
@@ -39,6 +39,7 @@ export const WORK_GEN_SYSTEM = [
   '  - externalIds are unique stable strings derived from the surface and topic (e.g. "docs-<slug>", "sheet-<slug>", "tweet-<slug>", "ticket-<slug>").',
   '  - Vary priorities: ideally one P1, one P2, one low.',
   "  - requesterLabel is a person's name or role; never the agent itself.",
+  '  - The title and contentSummary are the request as its sender wrote it, and the manager reads them on the work card: never say how the request should be handled (no "skip this", "route this back", "out of scope") and never mention the agent, the evaluator or Day0.',
   '  - Titles are 8-14 words.',
   '  - sourceCategory is one of "ticket-queue", "inbox", or "social-mention".',
 ].join('\n');

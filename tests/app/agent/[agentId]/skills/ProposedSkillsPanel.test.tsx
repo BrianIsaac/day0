@@ -4,6 +4,7 @@ import { act } from 'react';
 import { getFunctionName } from 'convex/server';
 import { describe, expect, it, vi } from 'vitest';
 import type { Doc } from '../../../../../convex/_generated/dataModel';
+import { firstNeededSentence } from '../../../../../src/work/skill-rationale';
 import { ProposedSkillsPanel } from '../../../../../app/agent/[agentId]/skills/ProposedSkillsPanel';
 import { focusedName, mount, press, said, settle } from '../../../../fixtures/dom/press';
 
@@ -207,6 +208,37 @@ describe('ProposedSkillsPanel', (): void => {
     for (const control of view.container.querySelectorAll('button')) {
       expect(control.className).toMatch(/\bmin-h-11\b/);
     }
+    view.unmount();
+  });
+
+  it("names the item that first needed a skill once, the evaluator's own sentence taken out (m15)", (): void => {
+    const proposed = {
+      _id: 'skill-2',
+      _creationTime: 0,
+      agentId: 'agent-1',
+      name: 'chat-thread-reply',
+      description: 'reply in a thread',
+      sourceType: 'agent-authored',
+      createdAt: 0,
+      state: 'proposed',
+      requiredScopes: [],
+      proposedFor: 'item-1',
+      rationale: `No registered skill covers a threaded reply on a chat surface. ${firstNeededSentence('Draft response for new tier-two RevOps ask', 'slack')}`,
+    } as unknown as Doc<'skills'>;
+    const view = mount(
+      <ProposedSkillsPanel
+        skills={[proposed]}
+        surfaces={[]}
+        onAuthoringAttempt={noop}
+        name="Mira"
+        itemTitles={new Map([['item-1', 'Draft response for new tier-two RevOps ask']])}
+      />,
+    );
+    const text = view.container.textContent ?? '';
+    expect(text.match(/First needed by/g)).toHaveLength(1);
+    expect(text).toContain(
+      'First needed by \u201cDraft response for new tier-two RevOps ask\u201d. No registered skill covers a threaded reply on a chat surface. The skill is a reusable procedure',
+    );
     view.unmount();
   });
 
