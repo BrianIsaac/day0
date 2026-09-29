@@ -41,6 +41,13 @@ export function railFigures(
   ];
 }
 
+/** What the newest lines of the record are drawn from. */
+export interface RecordLinesProps {
+  readonly events: readonly Doc<'events'>[];
+  readonly titles: ReadonlyMap<string, string>;
+  readonly lines: number;
+}
+
 /**
  * The newest events as record lines: a dot for what happened, the event in words with the work
  * item it is about, and its time in the employee's zone.
@@ -49,15 +56,7 @@ export function railFigures(
  * @param titles - The employee's work item titles by id.
  * @param lines - How many to list.
  */
-export function RecordLines({
-  events,
-  titles,
-  lines,
-}: {
-  events: readonly Doc<'events'>[];
-  titles: ReadonlyMap<string, string>;
-  lines: number;
-}) {
+export function RecordLines({ events, titles, lines }: RecordLinesProps) {
   const zone = useAgentZone();
   return (
     <ul className="grid gap-1.5">

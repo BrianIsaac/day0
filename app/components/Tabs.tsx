@@ -43,6 +43,14 @@ export function nextTabIndex(key: string, index: number, count: number): number 
   }
 }
 
+/** What a strip of tabs is drawn from. */
+export interface TabsProps {
+  readonly label: string;
+  readonly items: readonly TabItem[];
+  readonly selected: string;
+  readonly panelId: string;
+}
+
 /**
  * A strip of tabs, each its own address (a route segment), so the address names the tab and a
  * tab can be linked to. It is the ARIA tabs pattern with manual activation: the strip is one tab
@@ -55,17 +63,7 @@ export function nextTabIndex(key: string, index: number, count: number): number 
  * @param selected - The key of the tab whose panel is showing.
  * @param panelId - The id of the `TabPanel` the selected tab controls.
  */
-export function Tabs({
-  label,
-  items,
-  selected,
-  panelId,
-}: {
-  label: string;
-  items: readonly TabItem[];
-  selected: string;
-  panelId: string;
-}) {
+export function Tabs({ label, items, selected, panelId }: TabsProps) {
   const strip = useRef<HTMLDivElement>(null);
   // The strip is one tab stop: the selected tab, or the first when the key names none (a page
   // under a tab, such as reorientation under Needs you, selects the tab it sits under).
@@ -145,6 +143,13 @@ export function Tabs({
   );
 }
 
+/** What a tab's panel is drawn from. */
+export interface TabPanelProps {
+  readonly id: string;
+  readonly selected: string;
+  readonly children: ReactNode;
+}
+
 /**
  * The panel a strip of tabs controls: named by the selected tab, and focusable so a skip to it
  * lands on its content.
@@ -152,15 +157,7 @@ export function Tabs({
  * @param id - The id the tabs' `aria-controls` names.
  * @param selected - The key of the selected tab.
  */
-export function TabPanel({
-  id,
-  selected,
-  children,
-}: {
-  id: string;
-  selected: string;
-  children: ReactNode;
-}) {
+export function TabPanel({ id, selected, children }: TabPanelProps) {
   return (
     <div id={id} role="tabpanel" aria-labelledby={tabId(id, selected)} tabIndex={-1}>
       {children}

@@ -122,6 +122,12 @@ export function onDayZero(
   return charter === null && (agent.state === 'deployed' || agent.state === 'day-one-in-progress');
 }
 
+/** What the employee page's shell is given. */
+export interface EmployeeShellProps {
+  readonly agentId: Id<'agents'>;
+  readonly children: ReactNode;
+}
+
 /**
  * The employee page (round two section 3.3 and 3.9): the employee's name, state and zone, the
  * first-week rail (one card in the header once the employee is working), and either the day-zero
@@ -134,13 +140,7 @@ export function onDayZero(
  *
  * @param agentId - The employee, from the route.
  */
-export function EmployeeShell({
-  agentId,
-  children,
-}: {
-  agentId: Id<'agents'>;
-  children: ReactNode;
-}) {
+export function EmployeeShell({ agentId, children }: EmployeeShellProps) {
   const agent = useQuery(api.agents.get, { agentId });
   // The employee's other reads wait on it: each refuses an employee that is gone, so once a
   // retire lands they are dropped in the same render that learns it, and the page says so.

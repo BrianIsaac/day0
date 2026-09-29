@@ -30,6 +30,12 @@ const NUMERIC: ReadonlySet<(typeof COLUMNS)[number]> = new Set([
   'Landed this month',
 ]);
 
+/** What the roster of employees is drawn from. */
+export interface EmployeeRosterProps {
+  readonly employees: readonly RosterRow[] | undefined;
+  readonly waiting: ReadonlyMap<string, number> | undefined;
+}
+
 /**
  * The owner's employees as a table: who each is, its state, role and
  * autonomy, what waits on the manager, the work in progress and what it
@@ -39,13 +45,7 @@ const NUMERIC: ReadonlySet<(typeof COLUMNS)[number]> = new Set([
  * @param employees - The roster, undefined while it loads.
  * @param waiting - The needs-you inbox's count per employee, undefined while it loads.
  */
-export function EmployeeRoster({
-  employees,
-  waiting,
-}: {
-  employees: readonly RosterRow[] | undefined;
-  waiting: ReadonlyMap<string, number> | undefined;
-}) {
+export function EmployeeRoster({ employees, waiting }: EmployeeRosterProps) {
   const staffed = employees !== undefined && employees.length > 0;
   return (
     <section className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-card)]">
@@ -101,16 +101,15 @@ export function EmployeeRoster({
   );
 }
 
+/** One cell of a roster row. */
+interface CellProps {
+  readonly column: (typeof COLUMNS)[number];
+  readonly children: ReactNode;
+  readonly className?: string;
+}
+
 /** One cell, with the label a stacked row prints above its value. */
-function Cell({
-  column,
-  children,
-  className = '',
-}: {
-  column: (typeof COLUMNS)[number];
-  children: ReactNode;
-  className?: string;
-}) {
+function Cell({ column, children, className = '' }: CellProps) {
   return (
     <td
       role="cell"
@@ -125,15 +124,14 @@ function Cell({
   );
 }
 
-function RosterRowView({
-  employee,
-  waiting,
-  loaded,
-}: {
-  employee: RosterRow;
-  waiting: number | undefined;
-  loaded: boolean;
-}) {
+/** What one row of the roster is drawn from. */
+interface RosterRowViewProps {
+  readonly employee: RosterRow;
+  readonly waiting: number | undefined;
+  readonly loaded: boolean;
+}
+
+function RosterRowView({ employee, waiting, loaded }: RosterRowViewProps) {
   const words = employeeStateWords(employee.state);
   const tone = toneClasses(words.tone);
   const waitingOnManager = waiting ?? 0;
@@ -213,8 +211,13 @@ function RosterRowView({
   );
 }
 
+/** Whether an employee acts on its own, for the roster's autonomy column. */
+interface AutonomyBadgeProps {
+  readonly autonomous: boolean;
+}
+
 /** Whether the employee acts on connected systems on its own or asks first. */
-function AutonomyBadge({ autonomous }: { autonomous: boolean }) {
+function AutonomyBadge({ autonomous }: AutonomyBadgeProps) {
   return (
     <span
       title={
