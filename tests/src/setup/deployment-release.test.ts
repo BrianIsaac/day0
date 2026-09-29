@@ -84,4 +84,23 @@ describe('reading the stamp', (): void => {
     await expect(readDeploymentRelease(env, refused)).resolves.toBeNull();
     printed.mockRestore();
   });
+
+  it('returns nothing when the deployment answers with a server error or a body that is not JSON (review m21)', async (): Promise<void> => {
+    const env = { NEXT_PUBLIC_CONVEX_URL: 'http://127.0.0.1:3210' };
+    const printed = vi.spyOn(console, 'log').mockImplementation((): void => undefined);
+    const badGateway = vi.fn(
+      async (): Promise<Response> =>
+        new Response('<html>Bad Gateway</html>', {
+          status: 502,
+          headers: { 'content-type': 'text/html' },
+        }),
+    );
+    await expect(readDeploymentRelease(env, badGateway)).resolves.toBeNull();
+    const malformed = vi.fn(
+      async (): Promise<Response> =>
+        new Response('{', { status: 200, headers: { 'content-type': 'application/json' } }),
+    );
+    await expect(readDeploymentRelease(env, malformed)).resolves.toBeNull();
+    printed.mockRestore();
+  });
 });
