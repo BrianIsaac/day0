@@ -50,16 +50,24 @@ export async function postCharterSynthesis(
   request: CharterSynthesisRequest,
   deadlineMs: number = SYNTHESIS_DEADLINE_MS,
 ): Promise<CharterSynthesisOutcome> {
+  // The deadline runs on the page's own clock (a timer, not `AbortSignal.timeout`), so it is the
+  // one clock the room and its tests both read.
+  const deadline = new AbortController();
+  let late = false;
+  const timer = setTimeout((): void => {
+    late = true;
+    deadline.abort();
+  }, deadlineMs);
   let response: Response;
   try {
     response = await fetch('/api/onboarding/synthesise', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(request),
-      signal: AbortSignal.timeout(deadlineMs),
+      signal: deadline.signal,
     });
-  } catch (err: unknown) {
-    const late = err instanceof DOMException && err.name === 'TimeoutError';
+  } catch {
+    // Either the deadline aborted the post or the page could not reach Day0; `late` says which.
     return {
       ok: false,
       late,
@@ -67,6 +75,8 @@ export async function postCharterSynthesis(
         ? `drafting has taken longer than ${Math.round(deadlineMs / 1000)} seconds`
         : 'the page could not reach Day0',
     };
+  } finally {
+    clearTimeout(timer);
   }
   if (response.ok) return { ok: true };
   return { ok: false, late: false, reason: await refusalOf(response) };

@@ -13,6 +13,7 @@ const request = {
 };
 
 afterEach((): void => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -73,6 +74,7 @@ describe('the charter synthesis post', (): void => {
   });
 
   it('stops waiting at the deadline and says drafting is taking longer, the post marked late', async (): Promise<void> => {
+    vi.useFakeTimers();
     vi.stubGlobal(
       'fetch',
       (_url: string, init: RequestInit): Promise<Response> =>
@@ -82,11 +84,34 @@ describe('the charter synthesis post', (): void => {
           });
         }),
     );
-    expect(await postCharterSynthesis(request, 20)).toEqual({
+    let outcome: unknown;
+    // Read as it settles, so the test can say it had not settled a millisecond before the
+    // deadline; the post never rejects, so nothing is left to land anywhere.
+    void postCharterSynthesis(request).then((settled) => {
+      outcome = settled;
+    });
+    await vi.advanceTimersByTimeAsync(SYNTHESIS_DEADLINE_MS - 1);
+    expect(outcome).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(outcome).toEqual({
       ok: false,
       late: true,
-      reason: 'drafting has taken longer than 0 seconds',
+      reason: 'drafting has taken longer than 90 seconds',
     });
     expect(SYNTHESIS_DEADLINE_MS).toBe(90_000);
+  });
+
+  it('says the page could not reach Day0 when the post fails before the deadline, not that it was late', async (): Promise<void> => {
+    vi.useFakeTimers();
+    vi.stubGlobal('fetch', async (): Promise<Response> => {
+      throw new TypeError('Failed to fetch');
+    });
+    expect(await postCharterSynthesis(request)).toEqual({
+      ok: false,
+      late: false,
+      reason: 'the page could not reach Day0',
+    });
+    // The deadline's timer went with the post, so nothing fires after it.
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
