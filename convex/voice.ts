@@ -11,6 +11,7 @@ import { internal } from './_generated/api';
 import { assertOwnsAgent, assertOwnsVoiceSession } from './ownership';
 import { commitCharterAndWorkspace, workspaceFileValidator } from './charters';
 import { appendEvent } from './eventLog';
+import { MAX_FINALISATION_RECOVERIES } from '../src/agent/one-to-one-phase';
 
 /**
  * Voice + chat session lifecycle. The agent itself asks the boss
@@ -229,12 +230,12 @@ const CLAIM_LEASE_MS = 5 * 60 * 1000;
 const RECOVERY_DELAY_MS = 15 * 1000;
 
 /**
- * How many times the deployment will re-drive one session on its own. Each
- * attempt costs two model calls, so a model that is failing for a reason time
- * will not fix must stop costing them. Reaching this leaves the row `active`
- * and says so in the feed: a genuine later delivery is still free to try.
+ * How many times the deployment will re-drive one session on its own. Reaching
+ * this leaves the row `active` and says so in the feed: a genuine later
+ * delivery is still free to try. Shared with the rooms, which say the draft
+ * failed only once no retry is coming.
  */
-const MAX_RECOVERY_ATTEMPTS = 3;
+const MAX_RECOVERY_ATTEMPTS = MAX_FINALISATION_RECOVERIES;
 
 /** What a finisher was given to work from, and what recovery inherits. */
 interface FinalisationMaterial {
