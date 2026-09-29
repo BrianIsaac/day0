@@ -65,7 +65,7 @@ describe('what sits beside the charter', (): void => {
       createdAt: Date.UTC(2026, 8, 30, 9, 0),
     });
     const html = render(<CharterVersions versions={[amended, first]} current={amended} />);
-    const lines = [...html.matchAll(/<\/span>(v0\.[^<]+)<\/span>/g)].map((m) => m[1]);
+    const lines = [...html.matchAll(/<\/span>(v0\.[^<]+)<\/div>/g)].map((m) => m[1]);
     expect(lines).toEqual([
       'v0.1 amended by you · in force',
       'v0.0 approved by you, 1 rule struck',
