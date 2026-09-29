@@ -1,22 +1,25 @@
 'use client';
 
-import {
-  type ProvisioningPresentation,
-  PROVISION_LABEL,
-  type CredentialPresentation,
-} from '@/surfaces/credential-presentation';
+import { type ProvisioningPresentation, PROVISION_LABEL } from '@/surfaces/credential-presentation';
 import type { SurfaceDiscoveryEvidence } from '@/docs/system-discovery';
-import {
-  type ScopeValue,
-  type IntakeScope,
-  presentIntakeScope,
-  presentScopeDrift,
-} from '@/surfaces/intake-scope';
-import type { FormEvent } from 'react';
+import { type ScopeValue, type IntakeScope, presentIntakeScope } from '@/surfaces/intake-scope';
+import { useId, type FormEvent } from 'react';
 import { pageLinkFromQuote } from '@/surfaces/evidence';
+import { Button } from '../../../components/Button';
+import { Card } from '../../../components/Card';
+import { INPUT_CLASS } from '../../../components/Field';
 
 /** The one control that approves a proposed card (Q10); the rehearsal driver clicks it by name. */
 export const APPROVE_CARD = 'Approve';
+
+/** Q10's line under the one approval: real mode has one subject, so no second approver is named. */
+export const ONE_APPROVER = 'You approve; there is no second approver.';
+
+/** A quoted page line on a card: the source and page it came from above the words it says. */
+const QUOTE = 'border-l-2 border-[var(--color-border-2)] pl-3';
+
+/** One inset block of a card: what orientation found, what intake reads, how a rung was tried. */
+const INSET = 'rounded-lg bg-[var(--color-inset)] p-3 text-sm';
 
 /** The Slack provisioning row's inputs: the token handler, its error and the presentation. */
 export interface ProvisioningRowProps {
@@ -37,8 +40,8 @@ export function DiscoveryProvenance({
 }): React.ReactNode {
   if (evidence.length === 0) return null;
   return (
-    <div className="mt-3 rounded border border-[var(--color-border)] p-2 text-xs">
-      <p className="font-medium">System discovered from</p>
+    <div className={INSET}>
+      <p className="font-medium text-[var(--color-fg)]">System discovered from</p>
       {evidence.map((item, index): React.ReactNode => {
         const source =
           item.kind === 'charter'
@@ -50,7 +53,7 @@ export function DiscoveryProvenance({
         return (
           <blockquote
             key={`${item.kind}-${item.sourceId ?? 'manager'}-${index}`}
-            className="mt-2 border-l border-[var(--color-border)] pl-2"
+            className={`mt-2 ${QUOTE}`}
           >
             {item.url ? (
               <a
@@ -105,9 +108,10 @@ export function PageLine({ text }: { text: string }): React.ReactNode {
   );
 }
 
-/** The intake scope row's inputs: the scope, its drift and the re-orientation handler. */
+/** The intake scope row's inputs: the scope, what changed on its pages, and source labels. */
 export interface IntakeScopeRowProps {
-  drift: readonly ScopeValue[];
+  /** What the server found changed on the scope's pages since the proposal (`scopeChange`, D D4). */
+  changed?: string;
   scope: IntakeScope;
   sourceLabels: ReadonlyMap<string, string>;
   surfaceClass: string;
@@ -126,7 +130,6 @@ export interface IntakeScopeRowProps {
  */
 export function IntakeScopeRow(props: IntakeScopeRowProps): React.ReactNode {
   const presentation = presentIntakeScope(props.system, props.surfaceClass, props.scope);
-  const changed = presentScopeDrift(props.scope, props.drift);
   const queues =
     props.surfaceClass === 'kanban'
       ? [props.scope.project, ...(props.scope.projects ?? [])]
@@ -136,8 +139,14 @@ export function IntakeScopeRow(props: IntakeScopeRowProps): React.ReactNode {
   // The reads line already names a single queue; the list is for telling several apart.
   const listed = queues.length > 1 ? queues : [];
   return (
-    <div className="mt-3 rounded border border-[var(--color-border)] p-2 text-xs">
-      <p className={presentation.empty ? 'font-medium text-[var(--color-warn)]' : 'font-medium'}>
+    <div className={INSET}>
+      <p
+        className={
+          presentation.empty
+            ? 'font-medium text-[var(--color-warn)]'
+            : 'font-medium text-[var(--color-fg)]'
+        }
+      >
         {presentation.line}
       </p>
       {listed.length > 0 ? (
@@ -151,20 +160,17 @@ export function IntakeScopeRow(props: IntakeScopeRowProps): React.ReactNode {
         const source =
           (value.sourceId && props.sourceLabels.get(value.sourceId)) || 'documentation';
         return (
-          <blockquote
-            key={`${value.ref}-${value.value}-${index}`}
-            className="mt-2 border-l border-[var(--color-border)] pl-2"
-          >
+          <blockquote key={`${value.ref}-${value.value}-${index}`} className={`mt-2 ${QUOTE}`}>
             <span className="text-[var(--color-muted)]">{`${source} / ${value.ref}`}</span>
             <br />
             <PageLine text={value.quote} />
           </blockquote>
         );
       })}
-      {changed ? <p className="mt-2 text-[var(--color-warn)]">{changed}</p> : null}
+      {props.changed ? <p className="mt-2 text-[var(--color-warn)]">{props.changed}</p> : null}
       {presentation.notes.map(
         (note: string, index: number): React.ReactNode => (
-          <p key={`note-${index}`} className="mt-1 text-[10px] text-[var(--color-muted)]">
+          <p key={`note-${index}`} className="mt-1 text-[13px] text-[var(--color-muted)]">
             <PageLine text={note} />
           </p>
         ),
@@ -192,27 +198,20 @@ export interface UnnamedSystemsRowProps {
 }
 
 /**
- * List the documented systems this role's charter does not name, collapsed
- * under the cards, each one click from a card of its own.
+ * The documented systems this role's charter does not name, as a card beside the others, each
+ * one click from a card of its own (a proposal the manager still approves).
  *
- * Args:
- *   props: The systems, their source labels and the propose callback.
- *
- * Returns:
- *   The collapsed row, or nothing when every documented system is named.
+ * @returns The card, or nothing when every documented system is named.
  */
 export function UnnamedSystemsRow(props: UnnamedSystemsRowProps): React.ReactNode {
   if (props.systems.length === 0) return null;
   return (
-    <details className="rounded-lg border border-[var(--color-border)] p-3 text-xs">
-      <summary className="min-h-11 py-3 cursor-pointer text-[var(--color-muted)]">
-        {`Documented in the company, not named in this role's charter (${props.systems.length})`}
-      </summary>
-      <p className="mt-2 text-[var(--color-muted)]">
+    <Card title="Documented, not named in the charter" meta={props.systems.length}>
+      <p className="text-sm text-[var(--color-fg-2)]">
         Cards are proposed for the systems the charter names. Propose one of these to file its card;
         you still approve it, and a charter amendment names it for good.
       </p>
-      <ul className="mt-2 space-y-2">
+      <ul className="mt-3 grid gap-3">
         {props.systems.map((system: UnnamedSystem): React.ReactNode => {
           const documented = (system.discoveryEvidence ?? []).find(
             (item: SurfaceDiscoveryEvidence): boolean =>
@@ -225,38 +224,39 @@ export function UnnamedSystemsRow(props: UnnamedSystemsRowProps): React.ReactNod
           return (
             <li
               key={system._id}
-              className="flex flex-wrap items-start justify-between gap-2 border-t border-[var(--color-border)] pt-2"
+              className="grid gap-2 border-t border-[var(--color-border)] pt-3 text-sm"
             >
-              <div className="min-w-0 flex-1">
-                <p className="font-medium">
-                  {system.displayName}{' '}
-                  <span className="text-[10px] font-normal text-[var(--color-muted)]">
-                    {system.class}
-                  </span>
+              <p className="font-medium text-[var(--color-fg)]">
+                {system.displayName}{' '}
+                <span className="text-[13px] font-normal text-[var(--color-muted)]">
+                  {system.class}
+                </span>
+              </p>
+              {documented ? (
+                <p className="text-[13px] text-[var(--color-muted)]">
+                  {`${source} / ${documented.ref}`}: <EvidenceQuote quote={documented.quote} />
                 </p>
-                {documented ? (
-                  <p className="mt-1 text-[var(--color-muted)]">
-                    {`${source} / ${documented.ref}`}: <EvidenceQuote quote={documented.quote} />
-                  </p>
-                ) : null}
-                {props.error?.surfaceId === system._id ? (
-                  <p role="alert" className="mt-1 text-[var(--color-danger)]">
-                    {props.error.message}
-                  </p>
-                ) : null}
+              ) : null}
+              <div>
+                <Button
+                  size="small"
+                  aria-label={`Propose ${system.displayName}`}
+                  onClick={(): void => props.onPropose(system._id)}
+                  disabled={proposing}
+                >
+                  {proposing ? 'Proposing…' : 'Propose'}
+                </Button>
               </div>
-              <button
-                onClick={(): void => props.onPropose(system._id)}
-                disabled={proposing}
-                className="min-h-11 rounded border px-3 text-xs disabled:opacity-50"
-              >
-                {proposing ? 'Proposing...' : 'Propose'}
-              </button>
+              {props.error?.surfaceId === system._id ? (
+                <p role="alert" className="text-[var(--color-danger)]">
+                  {props.error.message}
+                </p>
+              ) : null}
             </li>
           );
         })}
       </ul>
-    </details>
+    </Card>
   );
 }
 
@@ -264,8 +264,10 @@ export function UnnamedSystemsRow(props: UnnamedSystemsRowProps): React.ReactNod
 export interface ApprovalRowProps {
   /** The decision in flight, if any. */
   readonly pending?: 'approve' | 'reject';
-  /** The card cannot be approved on this deployment yet (its browser component is absent). */
+  /** The card cannot be approved yet: its reason is `refusal`, or the component status is loading. */
   readonly blocked: boolean;
+  /** Why Approve is disabled, said beside it (the server's `approvalRefusal`, E-63). */
+  readonly refusal?: string;
   /** Why the last decision was refused, in the backend's words. */
   readonly error?: string;
   /** Approve the card. */
@@ -293,45 +295,48 @@ export function probeOutcomeText(
 }
 
 /**
- * The proposed card's one approval (Q10): Approve, Reject, the refusal of the
- * last decision, and the line that says the probe follows.
- *
- * Args:
- *   props: The decision's state and the two controls' handlers.
- *
- * Returns:
- *   The row.
+ * The proposed card's one approval (Q10): Approve and Reject, why Approve is disabled when it
+ * is, the refusal of the last decision, and the line that says the manager is the one approver
+ * and the probe follows.
  */
 export function ApprovalRow(props: ApprovalRowProps): React.ReactNode {
+  const reasonId = useId();
+  const refused = props.blocked || props.refusal !== undefined;
   return (
-    <>
-      <div className="mt-4 flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          disabled={props.blocked || props.pending !== undefined}
+    <div className="grid gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          variant="approve"
+          size="small"
+          disabled={refused || props.pending !== undefined}
+          aria-describedby={props.refusal !== undefined ? reasonId : undefined}
           onClick={props.onApprove}
-          className="min-h-11 rounded border px-3 text-xs disabled:opacity-50"
         >
           {props.pending === 'approve' ? 'Approving...' : APPROVE_CARD}
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button
+          variant="quiet"
+          size="small"
           disabled={props.pending !== undefined}
           onClick={props.onReject}
-          className="min-h-11 px-3 text-xs text-[var(--color-danger)] disabled:opacity-50"
         >
           Reject
-        </button>
+        </Button>
         {props.error ? (
-          <span role="alert" className="text-xs text-[var(--color-danger)]">
+          <span role="alert" className="text-sm text-[var(--color-danger)]">
             {props.error}
           </span>
         ) : null}
       </div>
-      <p className="mt-2 text-[10px] text-[var(--color-muted)]">
-        Probe runs automatically once you approve.
+      {props.refusal !== undefined ? (
+        <p id={reasonId} className="text-sm text-[var(--color-warn)]">
+          {props.refusal}
+        </p>
+      ) : null}
+      <p className="text-[13px] text-[var(--color-muted)]">
+        {ONE_APPROVER} Probe runs automatically once you approve.
       </p>
-    </>
+    </div>
   );
 }
 
@@ -363,9 +368,9 @@ export function ProvisioningRow(props: ProvisioningRowProps): React.ReactNode {
   if (props.presentation.stage === 'not-applicable') return null;
 
   return (
-    <div className="mt-3 rounded border border-[var(--color-border)] p-2 text-xs">
-      <p className="font-medium">{props.presentation.title}</p>
-      <p className="mt-1 text-[var(--color-muted)]">{props.presentation.note}</p>
+    <div className={INSET}>
+      <p className="font-medium text-[var(--color-fg)]">{props.presentation.title}</p>
+      <p className="mt-1 text-[var(--color-fg-2)]">{props.presentation.note}</p>
       {props.presentation.installUrl ? (
         <p className="mt-2 break-all">
           <a
@@ -379,26 +384,26 @@ export function ProvisioningRow(props: ProvisioningRowProps): React.ReactNode {
         </p>
       ) : null}
       {props.presentation.offerProvisioning ? (
-        <form onSubmit={onSubmit} className="mt-2 flex flex-wrap gap-2">
-          <label className="sr-only" htmlFor={`configuration-token-${props.surfaceSlug}`}>
-            App configuration token for {props.surfaceSlug}
-          </label>
-          <input
-            id={`configuration-token-${props.surfaceSlug}`}
-            name="configurationToken"
-            type="password"
-            autoComplete="new-password"
-            required
-            placeholder="Paste the app configuration token"
-            className="min-h-11 min-w-48 flex-1 rounded border bg-transparent px-2"
-          />
-          <button
-            type="submit"
-            disabled={props.provisioning}
-            className="min-h-11 rounded border px-3 disabled:opacity-50"
+        <form onSubmit={onSubmit} className="mt-3 grid gap-1.5">
+          <label
+            htmlFor={`configuration-token-${props.surfaceSlug}`}
+            className="text-[13px] font-medium text-[var(--color-fg-2)]"
           >
-            {props.provisioning ? 'Registering the app...' : PROVISION_LABEL}
-          </button>
+            App configuration token
+          </label>
+          <div className="flex flex-wrap gap-2">
+            <input
+              id={`configuration-token-${props.surfaceSlug}`}
+              name="configurationToken"
+              type="password"
+              autoComplete="new-password"
+              required
+              className={`${INPUT_CLASS} min-w-48 flex-1`}
+            />
+            <Button type="submit" size="small" disabled={props.provisioning}>
+              {props.provisioning ? 'Registering the app...' : PROVISION_LABEL}
+            </Button>
+          </div>
         </form>
       ) : null}
       {props.error ? (
@@ -410,90 +415,6 @@ export function ProvisioningRow(props: ProvisioningRowProps): React.ReactNode {
   );
 }
 
-/** The credential row's inputs: the label, the landing handler, its state and error. */
-export interface CredentialRowProps {
-  credentialLabel: string;
-  error?: string;
-  landing: boolean;
-  onLand: (plaintext: string) => void;
-  presentation: CredentialPresentation;
-  /** What the store says of the stored credential, when it is not simply live. */
-  status?: string;
-}
-
-/**
- * Render safe credential metadata and an uncontrolled write-only landing form.
- *
- * Args:
- *   props: Presentation copy, operation state and landing callback.
- *
- * Returns:
- *   Credential metadata that never places plaintext in React state.
- */
-export function CredentialRow(props: CredentialRowProps): React.ReactNode {
-  function onSubmit(event: FormEvent<HTMLFormElement>): void {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const value = new FormData(form).get('credential');
-    form.reset();
-    if (typeof value === 'string' && value.trim()) props.onLand(value);
-  }
-
-  return (
-    <div className="mt-3 rounded border border-[var(--color-border)] p-2 text-xs">
-      <p>
-        <span className="text-[var(--color-muted)]">Credential: </span>
-        {props.presentation.label ? `${props.presentation.label} - ` : ''}
-        {props.presentation.text}
-      </p>
-      {props.presentation.kind === 'oauth' ? (
-        <p className="mt-1 text-[var(--color-muted)]">
-          OAuth approval procedure
-          {props.presentation.detail ? `: ${props.presentation.detail}` : ''}
-        </p>
-      ) : null}
-      {props.status ? (
-        <p className="mt-1 text-[var(--color-warn)]">Status: {props.status}</p>
-      ) : null}
-      {props.presentation.governanceFinding ? (
-        <p className="mt-1 text-[var(--color-warn)]">{props.presentation.governanceFinding}</p>
-      ) : null}
-      {props.presentation.canLand && props.presentation.landingNote ? (
-        <p className="mt-1 text-[var(--color-muted)]">{props.presentation.landingNote}</p>
-      ) : null}
-      {props.presentation.canLand ? (
-        <form onSubmit={onSubmit} className="mt-2 flex flex-wrap gap-2">
-          <label className="sr-only" htmlFor={`credential-${props.credentialLabel}`}>
-            Credential value for {props.credentialLabel}
-          </label>
-          <input
-            id={`credential-${props.credentialLabel}`}
-            name="credential"
-            type="password"
-            autoComplete="new-password"
-            required
-            placeholder="Enter credential"
-            className="min-h-11 min-w-48 flex-1 rounded border bg-transparent px-2"
-          />
-          <button
-            type="submit"
-            disabled={props.landing}
-            className="min-h-11 rounded border px-3 disabled:opacity-50"
-          >
-            {props.landing ? 'Landing...' : (props.presentation.landingLabel ?? 'Land credential')}
-          </button>
-        </form>
-      ) : null}
-      {props.error ? (
-        <p role="alert" className="mt-1 text-[var(--color-danger)]">
-          {props.error}
-        </p>
-      ) : null}
-    </div>
-  );
-}
-
-/** Render evidence-backed connection requests and absence verdicts. */
 /**
  * One evidence quote: an index tag becomes the page title linked to the page,
  * anything else is shown as stored.
@@ -532,7 +453,7 @@ export interface SurfaceLadderProps {
 export function SurfaceLadder({ candidates, attempts }: SurfaceLadderProps): React.ReactNode {
   if (!candidates?.length && !attempts?.length) return null;
   return (
-    <div className="mt-2 rounded border border-[var(--color-border)] p-2 text-[10px]">
+    <div className={INSET}>
       {candidates?.length ? (
         <p>
           <span className="text-[var(--color-muted)]">Approved ladder: </span>

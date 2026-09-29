@@ -1,176 +1,11 @@
 'use client';
 
 import type { Doc } from '@convex/_generated/dataModel';
-import { useAgentZone, clockTime } from '../time';
 import { useState, useRef } from 'react';
-import { type ChangeOutcome, refusalText } from '../../../components/use-change';
+import { Button } from '../../../components/Button';
+import { INPUT_CLASS } from '../../../components/Field';
 import { StatusRegion } from '../../../components/StatusRegion';
-
-/** Q5's access length, in days: what a renewal offers until the manager types another. */
-export const DEFAULT_ACCESS_DAYS = 90;
-
-/** How long before the end date the card warns, as the server's notice does (Q5). */
-const EXPIRY_WARNING_MS = 7 * 24 * 60 * 60 * 1000;
-
-/** The verdicts of an approved card, whose access runs on a clock. */
-const ACCESS_VERDICTS: ReadonlySet<string> = new Set([
-  'approved',
-  'connected',
-  'ungranted',
-  'listed-dead',
-]);
-
-/** Who set the end date, in the manager's words. */
-const ACCESS_SET_BY_WORDS: Readonly<Record<NonNullable<Doc<'surfaces'>['accessSetBy']>, string>> = {
-  approval: 'set when you approved the card',
-  manager: 'set by you',
-  upgrade: 'set by the upgrade',
-};
-
-/** A surface as the access row reads it. */
-export type AccessSurface = Pick<
-  Doc<'surfaces'>,
-  '_id' | 'displayName' | 'verdict' | 'expiresAt' | 'accessSetBy' | 'reason'
->;
-
-/**
- * The card's access line (Q5): when access ends, in the employee's zone, who
- * set the date, and the control that sets it again, which is also the
- * explicit renewal of an access that has ended (`surfaces.setAccessDays`).
- *
- * A probe never moves the date and nothing renews on its own, so the line is
- * the one place the manager keeps a connection alive. The outcome is announced
- * in the row's live region and focus returns to the control.
- *
- * Args:
- *   props: The surface, the instant to judge the warning against, and the setter.
- *
- * Returns:
- *   The row, or nothing for a card whose access has not started.
- */
-export function AccessRow({
-  surface,
-  now,
-  onSetDays,
-}: {
-  surface: AccessSurface;
-  now: number;
-  onSetDays: (days: number) => Promise<{ expiresAt: number }>;
-}): React.ReactNode {
-  const zone = useAgentZone();
-  const [editing, setEditing] = useState(false);
-  const [days, setDays] = useState(String(DEFAULT_ACCESS_DAYS));
-  const [busy, setBusy] = useState(false);
-  const [outcome, setOutcome] = useState<ChangeOutcome | null>(null);
-  const toggle = useRef<HTMLButtonElement>(null);
-  if (!ACCESS_VERDICTS.has(surface.verdict) || surface.expiresAt === undefined) return null;
-  // The hourly sweep marks an ended card `expired`; until it runs, and on a
-  // card whose reason a later failure replaced, the passed date says it.
-  const ended = surface.reason === 'expired' || surface.expiresAt <= now;
-  const endingSoon = !ended && surface.expiresAt - now <= EXPIRY_WARNING_MS;
-  const fieldId = `access-days-${surface._id}`;
-  const close = (): void => {
-    setEditing(false);
-    toggle.current?.focus();
-  };
-  const save = (): void => {
-    setBusy(true);
-    setOutcome(null);
-    // The chain ends in its own catch, which says the refusal in the live region.
-    void onSetDays(Number(days))
-      .then((result) => {
-        setOutcome({
-          tone: 'done',
-          text: `${ended ? 'Access renewed' : 'Access length set'}: ${surface.displayName} access now ends ${clockTime(result.expiresAt, zone)}.`,
-        });
-        close();
-      })
-      .catch((err: unknown) =>
-        setOutcome({ tone: 'refused', text: refusalText(err, 'The access length was not set.') }),
-      )
-      .finally(() => setBusy(false));
-  };
-  return (
-    <div
-      className={`mt-3 rounded border p-2 text-xs ${
-        ended || endingSoon ? 'border-[var(--color-warn)]/40' : 'border-[var(--color-border)]'
-      }`}
-    >
-      <p className={ended || endingSoon ? 'text-[var(--color-warn)]' : undefined}>
-        {ended ? 'Access ended ' : 'Access ends '}
-        <time dateTime={new Date(surface.expiresAt).toISOString()}>
-          {clockTime(surface.expiresAt, zone)}
-        </time>
-        {surface.accessSetBy ? ` · ${ACCESS_SET_BY_WORDS[surface.accessSetBy]}` : ''}
-        {ended
-          ? '. Nothing is read or sent through this card until you renew it.'
-          : endingSoon
-            ? '. That is within a week; renew it to keep the connection.'
-            : '.'}
-      </p>
-      <button
-        ref={toggle}
-        type="button"
-        aria-expanded={editing}
-        aria-controls={`${fieldId}-form`}
-        onClick={() => {
-          setOutcome(null);
-          setEditing(!editing);
-        }}
-        className="mt-2 min-h-11 rounded border px-3 text-xs"
-      >
-        {ended ? 'Renew access' : 'Change the end date'}
-      </button>
-      {editing ? (
-        <form
-          id={`${fieldId}-form`}
-          className="mt-2 flex flex-wrap items-center gap-2"
-          onSubmit={(event) => {
-            event.preventDefault();
-            save();
-          }}
-        >
-          <label htmlFor={fieldId}>Days from now</label>
-          <input
-            id={fieldId}
-            type="number"
-            inputMode="numeric"
-            min={1}
-            step={1}
-            required
-            autoFocus
-            value={days}
-            disabled={busy}
-            onChange={(event) => setDays(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Escape') {
-                event.preventDefault();
-                close();
-              }
-            }}
-            className="min-h-11 w-24 rounded border bg-transparent px-2"
-          />
-          <button
-            type="submit"
-            disabled={busy || days.trim() === ''}
-            className="min-h-11 rounded border px-3 disabled:opacity-50"
-          >
-            {busy ? 'Saving…' : ended ? 'Renew' : 'Set'}
-          </button>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={close}
-            className="min-h-11 rounded border px-3 disabled:opacity-50"
-          >
-            Cancel
-          </button>
-        </form>
-      ) : null}
-      <StatusRegion outcome={outcome} />
-    </div>
-  );
-}
+import { type ChangeOutcome, refusalText } from '../../../components/use-change';
 
 /** A surface as the tools row reads it. */
 export type ToolsSurface = Pick<
@@ -261,36 +96,39 @@ export function ToolsRow({
       .finally(() => setBusy(false));
   };
   return (
-    <div className="mt-3 rounded border border-[var(--color-border)] p-2 text-xs">
-      <p>
-        <span className="text-[var(--color-muted)]">Scopes: </span>
-        {calls.length > 0 ? calls.join(', ') : 'no tool the provider offers is approved'}
-      </p>
+    <div className="grid gap-2 text-sm">
+      <div className="grid gap-1 sm:grid-cols-[9rem_minmax(0,1fr)] sm:gap-4">
+        <p className="text-[13px] text-[var(--color-muted)]">May call</p>
+        <p className="font-mono text-[13px] break-words text-[var(--color-fg-2)]">
+          {calls.length > 0 ? calls.join(', ') : 'no tool the provider offers is approved'}
+        </p>
+      </div>
       {notOffered.length > 0 ? (
-        <p className="mt-1 text-[var(--color-muted)]">
+        <p className="text-[13px] text-[var(--color-muted)]">
           Approved, not offered by the provider at the last check: {notOffered.join(', ')}
         </p>
       ) : null}
       {keptBack.length > 0 ? (
-        <p className="mt-1 text-[var(--color-warn)]">
+        <p className="text-[var(--color-warn)]">
           Withheld, outside your approval: {keptBack.join(', ')}. Approve them here to let the
           employee call them.
         </p>
       ) : null}
-      <button
-        ref={toggle}
-        type="button"
-        aria-expanded={editing}
-        aria-controls={formId}
-        onClick={() => (editing ? close() : open())}
-        className="mt-2 min-h-11 rounded border px-3 text-xs"
-      >
-        Change approved tools
-      </button>
+      <div>
+        <Button
+          ref={toggle}
+          size="small"
+          aria-expanded={editing}
+          aria-controls={formId}
+          onClick={() => (editing ? close() : open())}
+        >
+          Change approved tools
+        </Button>
+      </div>
       {editing ? (
         <form
           id={formId}
-          className="mt-2 space-y-2"
+          className="grid gap-3"
           onSubmit={(event) => {
             event.preventDefault();
             save();
@@ -303,15 +141,16 @@ export function ToolsRow({
           }}
         >
           <fieldset>
-            <legend className="text-[var(--color-muted)]">
+            <legend className="text-[13px] font-medium text-[var(--color-fg-2)]">
               Tools {surface.displayName} may call
             </legend>
-            <ul className="mt-1 space-y-1">
+            <ul className="mt-1 grid gap-0.5">
               {options.map((tool) => (
                 <li key={tool}>
-                  <label className="inline-flex min-h-11 items-center gap-2 font-mono">
+                  <label className="inline-flex min-h-11 items-center gap-2.5 font-mono text-[13px]">
                     <input
                       type="checkbox"
+                      className="size-[18px] accent-[var(--color-accent)]"
                       checked={chosen.has(tool)}
                       disabled={busy}
                       onChange={(event) => {
@@ -330,46 +169,44 @@ export function ToolsRow({
               ))}
             </ul>
           </fieldset>
-          <div className="flex flex-wrap items-center gap-2">
-            <label htmlFor={`${formId}-add`}>Another tool, by its name</label>
-            <input
-              id={`${formId}-add`}
-              value={typed}
-              disabled={busy}
-              onChange={(event) => setTyped(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  event.preventDefault();
-                  addTyped();
-                }
-              }}
-              className="min-h-11 min-w-0 flex-1 rounded border bg-transparent px-2 font-mono"
-            />
-            <button
-              type="button"
-              disabled={busy || typed.trim() === ''}
-              onClick={addTyped}
-              className="min-h-11 rounded border px-3 disabled:opacity-50"
+          <div className="grid gap-1.5">
+            <label
+              htmlFor={`${formId}-add`}
+              className="text-[13px] font-medium text-[var(--color-fg-2)]"
             >
-              Add
-            </button>
+              Another tool, by its name
+            </label>
+            <div className="flex flex-wrap gap-2">
+              <input
+                id={`${formId}-add`}
+                value={typed}
+                disabled={busy}
+                onChange={(event) => setTyped(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    addTyped();
+                  }
+                }}
+                className={`${INPUT_CLASS} flex-1 font-mono`}
+              />
+              <Button size="small" disabled={busy || typed.trim() === ''} onClick={addTyped}>
+                Add
+              </Button>
+            </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            <button
+            <Button
               type="submit"
+              size="small"
+              variant="primary"
               disabled={busy || chosen.size === 0}
-              className="min-h-11 rounded border px-3 disabled:opacity-50"
             >
               {busy ? 'Saving…' : 'Save approved tools'}
-            </button>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={close}
-              className="min-h-11 rounded border px-3 disabled:opacity-50"
-            >
+            </Button>
+            <Button size="small" variant="quiet" disabled={busy} onClick={close}>
               Cancel
-            </button>
+            </Button>
           </div>
         </form>
       ) : null}

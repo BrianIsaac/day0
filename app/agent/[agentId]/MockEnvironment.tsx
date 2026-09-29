@@ -1,179 +1,213 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
+import type { SurfaceMode } from '@/surfaces/types';
 import { DocsTab } from './mock/DocsTab';
 import { SpreadsheetTab } from './mock/SpreadsheetTab';
 import { SlackTab } from './mock/SlackTab';
 import { TwitterTab } from './mock/TwitterTab';
 import { TicketsTab } from './mock/TicketsTab';
 import { SurfaceCards } from './surfaces/SurfaceCards';
+import { PermissionsCard } from './surfaces/PermissionsCard';
+import { Card } from '../../components/Card';
+import { Columns } from '../../components/Columns';
 import { RollingCount } from '../../components/RollingCount';
+import { nextTabIndex, tabId } from '../../components/Tabs';
+import { ENVIRONMENT_FRAME, PanelLoading } from './PanelLoading';
 import {
   activeTabForEnvironment,
   ENVIRONMENT_PANEL_ID,
   tabFromHash,
-  tabIsAvailable,
-  type EnvironmentMode,
   type TabKey,
 } from './environment-hash';
 
-const CAPTIONS: Record<EnvironmentMode, string> = {
-  mock: 'Mock surfaces - when the employee runs a skill, edits land here in real time',
-  real: 'Documentation day0 can read, and the connection status of every system it has discovered',
-};
-
-/** Tab strip; each sublabel names the content available in that mode. */
-const TABS: Array<{
-  key: TabKey;
-  label: string;
-  sublabel: Partial<Record<EnvironmentMode, string>>;
-}> = [
-  { key: 'slack', label: 'Slack', sublabel: { mock: 'channels + DMs' } },
-  { key: 'spreadsheet', label: 'Spreadsheet', sublabel: { mock: 'Q4 Revenue Tracker' } },
-  {
-    key: 'docs',
-    label: 'Docs',
-    sublabel: { mock: 'team wiki + how-tos', real: 'linked documentation' },
-  },
-  { key: 'tweet', label: 'Twitter', sublabel: { mock: 'mentions + drafts' } },
-  { key: 'tickets', label: 'Tickets', sublabel: { mock: 'Linear-style queue' } },
-  { key: 'surfaces', label: 'Surfaces', sublabel: { real: 'connections + evidence' } },
+/** The office's surfaces, one tab each, in the order the office draws them. */
+const OFFICE_TABS: ReadonlyArray<{ readonly key: TabKey; readonly label: string }> = [
+  { key: 'slack', label: 'Slack' },
+  { key: 'spreadsheet', label: 'Spreadsheet' },
+  { key: 'docs', label: 'Docs' },
+  { key: 'tickets', label: 'Tickets' },
+  { key: 'tweet', label: 'Social' },
 ];
 
+/** What the mock office says of itself beside its title. */
+export const OFFICE_CAPTION = 'the seeded workplace this employee works in';
+
+/** The id of the real-mode documentation card, which a `#docs` hash scrolls to. */
+const DOCS_CARD_ID = 'docs';
+
 /**
- * The office the employee works in, on the Surfaces tab: the hosted mock's five surfaces, or in
- * real mode the documentation it reads and its connections, one tab each, with a count that rolls
- * when it changes. A location hash naming a tab selects it and scrolls here once.
+ * The work environment on the Surfaces tab. In mock mode, the seeded office the employee works in
+ * (round two section 3.9 and UX 8 (a)): its five surfaces as tabs, opening on Slack, whose count
+ * rolls when it changes. In real mode, the cards of the systems it reads and writes, then the
+ * documentation it reads and the permissions it holds. A location hash naming a tab (the Slack
+ * OAuth redirect's `#surfaces`, a card's link) selects it and scrolls here once.
+ *
+ * @param agentId - The employee.
+ * @param mode - The deployment's surface mode, as the page read it; undefined while it loads.
+ * @param arriving - Whether the page's cards are still arriving (`Columns`).
  */
-export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
+export function MockEnvironment({
+  agentId,
+  mode,
+  arriving = false,
+}: {
+  agentId: Id<'agents'>;
+  mode: SurfaceMode | undefined;
+  arriving?: boolean;
+}) {
   const [active, setActive] = useState<TabKey>('slack');
   const scrolledToHash = useRef(false);
 
-  // Pre-fetch counts for tab badges
-  const docs = useQuery(api.mock.listDocs, { agentId });
-  const channels = useQuery(api.mock.listChannels, { agentId });
-  const tweets = useQuery(api.mock.listTweets, { agentId });
-  const tickets = useQuery(api.mock.listTickets, { agentId });
-  const spreadsheets = useQuery(api.mock.listSpreadsheets, { agentId });
-  const config = useQuery(api.config.surfaceMode);
-  // The Surfaces tab exists only in real mode; the hosted mock keeps its
-  // five synthetic surfaces and never asks for connection verdicts.
-  const isReal = config?.mode === 'real';
-  const mode: EnvironmentMode = isReal ? 'real' : 'mock';
-  const surfaces = useQuery(api.surfaces.listForAgent, isReal ? { agentId } : 'skip');
-  const tabs = TABS.filter((tab) => tabIsAvailable(tab.key, isReal));
-  const displayedActive = activeTabForEnvironment(active, '', isReal);
-
   useEffect(() => {
+    // The mode decides which tabs a hash can name; until it resolves, no hash names one.
+    if (mode === undefined) return;
+    const isReal = mode === 'real';
     const follow = (): void => {
       setActive(
         (current): TabKey => activeTabForEnvironment(current, window.location.hash, isReal),
       );
     };
     follow();
-    // A cold load (the Slack OAuth redirect's `#surfaces`) performs its one
-    // fragment scroll while the dashboard still reads "loading employee", before
-    // this panel exists, and the Surfaces tab is named only once the mode has
-    // resolved. So the first time the hash names a tab, scroll here once; a
+    // A cold load (the Slack OAuth redirect's `#surfaces`) performs its one fragment scroll
+    // before this chunk exists, so the first time the hash names a tab, scroll here once; a
     // later hash change finds the panel present and the browser scrolls.
-    if (!scrolledToHash.current && tabFromHash(window.location.hash, isReal)) {
+    const named = tabFromHash(window.location.hash, isReal);
+    if (!scrolledToHash.current && named) {
       scrolledToHash.current = true;
-      document.getElementById(ENVIRONMENT_PANEL_ID)?.scrollIntoView();
+      document
+        .getElementById(isReal && named === 'docs' ? DOCS_CARD_ID : ENVIRONMENT_PANEL_ID)
+        ?.scrollIntoView();
     }
     window.addEventListener('hashchange', follow);
     return (): void => window.removeEventListener('hashchange', follow);
-  }, [isReal]);
+  }, [mode]);
 
-  const counts: Record<TabKey, number | undefined> = {
+  if (mode === undefined) {
+    return <PanelLoading label="the work environment" frame={ENVIRONMENT_FRAME} />;
+  }
+  if (mode === 'real') {
+    return (
+      <SurfaceCards agentId={agentId} arriving={arriving}>
+        <div id={DOCS_CARD_ID} className="scroll-mt-24">
+          <Card title="Documentation it reads">
+            <div
+              tabIndex={0}
+              role="region"
+              aria-label="Linked documentation"
+              className="@container max-h-[40rem] min-h-[16rem] overflow-y-auto"
+            >
+              <DocsTab agentId={agentId} mode="real" />
+            </div>
+          </Card>
+        </div>
+        <PermissionsCard agentId={agentId} />
+      </SurfaceCards>
+    );
+  }
+  return (
+    <Columns arriving={arriving}>
+      <MockOffice agentId={agentId} active={active} onPick={setActive} />
+    </Columns>
+  );
+}
+
+/**
+ * The mock office as a card: the product's own Slack shape and the office's other surfaces, a
+ * strip of tabs over one panel, the ARIA tabs pattern with the strip one tab stop.
+ */
+function MockOffice({
+  agentId,
+  active,
+  onPick,
+}: {
+  agentId: Id<'agents'>;
+  active: TabKey;
+  onPick: (key: TabKey) => void;
+}) {
+  const strip = useRef<HTMLDivElement>(null);
+  const docs = useQuery(api.mock.listDocs, { agentId });
+  const channels = useQuery(api.mock.listChannels, { agentId });
+  const tweets = useQuery(api.mock.listTweets, { agentId });
+  const tickets = useQuery(api.mock.listTickets, { agentId });
+  const spreadsheets = useQuery(api.mock.listSpreadsheets, { agentId });
+  const counts: Partial<Record<TabKey, number>> = {
     slack: channels?.length,
     spreadsheet: spreadsheets?.length,
     docs: docs?.length,
     tweet: tweets?.length,
     tickets: tickets?.length,
-    surfaces: surfaces?.length,
   };
+  const selected = OFFICE_TABS.find((tab) => tab.key === active) ?? OFFICE_TABS[0];
+
+  function onKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number): void {
+    const next = nextTabIndex(event.key, index, OFFICE_TABS.length);
+    if (next === undefined) return;
+    event.preventDefault();
+    const tab = OFFICE_TABS[next];
+    onPick(tab.key);
+    strip.current?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus();
+  }
 
   return (
-    /* Every width question in this panel is about the panel, not the window:
-       it sits in a column whose width the viewport does not predict. Hence a
-       container, and `@` variants below rather than `lg:`/`xl:`. */
-    <section className="@container bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--color-border)]">
-        <div>
-          <h2 className="text-sm font-semibold tracking-tight">
-            {isReal ? 'Enterprise context' : 'Mock work environment'}
-          </h2>
-          <p className="text-[10px] text-[var(--color-muted)]">{CAPTIONS[mode]}</p>
-        </div>
-      </div>
-
-      {/* Wraps rather than scrolls. A tab strip that overflows hides whole
-          surfaces behind a gesture nothing on the page suggests, and the two
-          it hid here - Twitter and Tickets - are two fifths of the environment
-          the agent works in. */}
-      <nav
-        aria-label="Work environment"
-        className="flex flex-wrap gap-1 px-2 pt-2 border-b border-[var(--color-border)]"
+    <Card title="Mock office" meta={OFFICE_CAPTION}>
+      {/* Wraps rather than scrolls: a strip that overflows hides whole surfaces behind a gesture
+          nothing on the page suggests. */}
+      <div
+        ref={strip}
+        role="tablist"
+        aria-label="Mock office"
+        className="-mt-1 flex flex-wrap gap-0.5 border-b border-[var(--color-border)]"
       >
-        {tabs.map((t) => {
-          const isActive = displayedActive === t.key;
-          const count = counts[t.key];
-          const sublabel = t.sublabel[mode];
+        {OFFICE_TABS.map((tab, index) => {
+          const current = tab.key === selected.key;
+          const count = counts[tab.key];
           return (
             <button
-              key={t.key}
+              key={tab.key}
+              id={tabId(ENVIRONMENT_PANEL_ID, tab.key)}
               type="button"
-              aria-pressed={isActive}
-              onClick={() => setActive(t.key)}
-              className={`min-h-11 px-3 py-2 rounded-t-md text-xs flex items-center gap-1.5 transition border-b-2 ${
-                isActive
-                  ? 'border-[var(--color-accent)] text-[var(--color-fg)] bg-[var(--color-bg)]'
+              role="tab"
+              aria-selected={current}
+              aria-controls={current ? ENVIRONMENT_PANEL_ID : undefined}
+              tabIndex={current ? 0 : -1}
+              onClick={() => onPick(tab.key)}
+              onKeyDown={(event) => onKeyDown(event, index)}
+              className={`-mb-px inline-flex h-11 items-center gap-2 border-b-2 px-3 text-sm font-medium ${
+                current
+                  ? 'border-[var(--color-accent)] text-[var(--color-fg)]'
                   : 'border-transparent text-[var(--color-muted)] hover:text-[var(--color-fg)]'
               }`}
             >
-              <span className="font-medium">{t.label}</span>
+              {tab.label}
+              {count !== undefined ? ' ' : null}
               {count !== undefined ? (
-                <span
-                  className={`text-[9px] px-1.5 py-0.5 rounded-full font-mono ${
-                    isActive
-                      ? 'bg-[var(--color-accent)]/20 text-[var(--color-accent)]'
-                      : 'bg-[var(--color-border)]/40 text-[var(--color-muted)]'
-                  }`}
-                >
+                <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full border border-[var(--color-border)] bg-[var(--color-card)] px-1.5 text-xs font-semibold text-[var(--color-muted)] tabular-nums">
                   <RollingCount value={count} />
-                </span>
-              ) : null}
-              {sublabel ? (
-                <span className="hidden @3xl:inline text-[10px] text-[var(--color-muted)]">
-                  {sublabel}
                 </span>
               ) : null}
             </button>
           );
         })}
-      </nav>
-
-      {/* The panel carries the id the card links name, so `#surfaces` scrolls
-          here as well as selecting the tab above. */}
+      </div>
+      {/* The panel carries the id the card links name, so `#surfaces` scrolls here as well as
+          selecting the tab above. */}
       <div
         id={ENVIRONMENT_PANEL_ID}
+        role="tabpanel"
         tabIndex={0}
-        role="region"
-        aria-label={`${tabs.find((tab) => tab.key === displayedActive)?.label ?? 'Environment'} tab`}
-        className="p-4 min-h-[24rem] max-h-[40rem] overflow-y-auto"
+        aria-labelledby={tabId(ENVIRONMENT_PANEL_ID, selected.key)}
+        className="@container mt-4 max-h-[40rem] min-h-[24rem] scroll-mt-24 overflow-y-auto"
       >
-        {displayedActive === 'docs' ? <DocsTab agentId={agentId} mode={mode} /> : null}
-        {/* The four below are mock-only, so they are never reached with a real
-            deployment mode and take none. */}
-        {displayedActive === 'spreadsheet' ? <SpreadsheetTab agentId={agentId} /> : null}
-        {displayedActive === 'slack' ? <SlackTab agentId={agentId} /> : null}
-        {displayedActive === 'tweet' ? <TwitterTab agentId={agentId} /> : null}
-        {displayedActive === 'tickets' ? <TicketsTab agentId={agentId} /> : null}
-        {displayedActive === 'surfaces' && isReal ? <SurfaceCards agentId={agentId} /> : null}
+        {selected.key === 'slack' ? <SlackTab agentId={agentId} /> : null}
+        {selected.key === 'spreadsheet' ? <SpreadsheetTab agentId={agentId} /> : null}
+        {selected.key === 'docs' ? <DocsTab agentId={agentId} mode="mock" /> : null}
+        {selected.key === 'tickets' ? <TicketsTab agentId={agentId} /> : null}
+        {selected.key === 'tweet' ? <TwitterTab agentId={agentId} /> : null}
       </div>
-    </section>
+    </Card>
   );
 }

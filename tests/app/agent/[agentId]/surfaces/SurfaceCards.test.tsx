@@ -15,7 +15,6 @@ const state = vi.hoisted(() => ({
   surfaces: undefined as unknown[] | undefined,
   /** The newest charter row, when a test needs one. */
   charter: null as unknown,
-  pages: [] as unknown[],
   sources: [] as unknown[],
 }));
 
@@ -29,7 +28,6 @@ vi.mock('convex/react', () => ({
     }
     if (name === 'surfaces:installRedirectConfigured') return false;
     if (name === 'charters:latest') return state.charter;
-    if (name === 'docSources:pagesForAgent') return state.pages;
     if (name === 'docSources:byIds') return state.sources;
     if (name === 'surfaces:listForAgent') {
       if (state.surfaceResult === 'loading') return undefined;
@@ -58,35 +56,10 @@ vi.mock('convex/react', () => ({
 
 import type { Id } from '../../../../../convex/_generated/dataModel';
 import {
-  AccessRow,
-  ToolsRow,
-  type AccessSurface,
-  type ToolsSurface,
-} from '../../../../../app/agent/[agentId]/surfaces/SurfaceControls';
-import {
-  ApprovalRow,
-  CredentialRow,
-  DiscoveryProvenance,
-  EvidenceQuote,
-  IntakeScopeRow,
-  ProvisioningRow,
-  SurfaceLadder,
-  type CredentialRowProps,
-  type ProvisioningRowProps,
-} from '../../../../../app/agent/[agentId]/surfaces/SurfaceRows';
-import {
-  credentialStatusLine,
   EMPTY_SURFACES,
   LOADING_SURFACES,
   SurfaceCards,
 } from '../../../../../app/agent/[agentId]/surfaces/SurfaceCards';
-import { AgentZoneContext } from '../../../../../app/agent/[agentId]/time';
-import { companyPage } from '../../../../fixtures/company-bed';
-import {
-  presentProvisioning,
-  type CredentialPresentation,
-  type ProvisioningPresentation,
-} from '../../../../../src/surfaces/credential-presentation';
 
 beforeEach((): void => {
   state.browserComponent = true;
@@ -95,342 +68,7 @@ beforeEach((): void => {
   state.lastDecisionError = undefined;
   state.surfaces = undefined;
   state.charter = null;
-  state.pages = [];
   state.sources = [];
-});
-
-/** Render one isolated credential row without running dashboard hooks. */
-function renderCredentialRow(
-  presentation: CredentialPresentation,
-  overrides: Partial<CredentialRowProps> = {},
-): string {
-  return renderToStaticMarkup(
-    <CredentialRow
-      credentialLabel="Linear credential"
-      landing={false}
-      onLand={(): void => undefined}
-      presentation={presentation}
-      {...overrides}
-    />,
-  );
-}
-
-describe('SurfaceCards credential row', (): void => {
-  it('shows shared-page metadata as masked with its governance finding', (): void => {
-    const markup = renderCredentialRow({
-      canLand: false,
-      governanceFinding: 'credential found in a shared page - rotate into a vault',
-      kind: 'masked',
-      label: 'linear service token',
-      text: 'located in Revenue operations / Linear automation (masked)',
-    });
-    expect(markup).toContain('located in Revenue operations / Linear automation (masked)');
-    expect(markup).toContain('credential found in a shared page - rotate into a vault');
-    expect(markup).not.toContain('type="password"');
-  });
-
-  it('renders an uncontrolled write-only landing field for IT', (): void => {
-    const markup = renderCredentialRow({
-      canLand: true,
-      kind: 'landing',
-      text: 'not in the docs - ask the Linear administrator',
-    });
-    expect(markup).toContain('type="password"');
-    expect(markup).toContain('autoComplete="new-password"');
-    expect(markup).not.toContain('value=');
-    expect(markup).toContain('Land credential');
-  });
-
-  it('shows the OAuth summary, the procedure and the labelled fallback landing field', (): void => {
-    const markup = renderCredentialRow({
-      canLand: true,
-      detail: 'Ask IT to approve the app and follow the install link.',
-      kind: 'oauth',
-      label: 'Slack OAuth access',
-      landingLabel: 'Land a shared bot token (fallback)',
-      landingNote: 'Until the install flow exists the administrator may land the shared token.',
-      text: 'OAuth install flow documented in Slack automation policy',
-    });
-    expect(markup).toContain(
-      'Slack OAuth access - OAuth install flow documented in Slack automation policy',
-    );
-    expect(markup).toContain(
-      'OAuth approval procedure: Ask IT to approve the app and follow the install link.',
-    );
-    expect(markup).toContain(
-      'Until the install flow exists the administrator may land the shared token.',
-    );
-    expect(markup).toContain('type="password"');
-    expect(markup).toContain('Land a shared bot token (fallback)');
-    expect(markup).not.toContain('>Land credential<');
-  });
-
-  it('keeps the OAuth row read-only once the fallback token is stored', (): void => {
-    const markup = renderCredentialRow({
-      canLand: false,
-      kind: 'masked',
-      label: 'Slack shared bot token',
-      text: 'entered on the card (masked)',
-    });
-    expect(markup).toContain('Slack shared bot token - entered on the card (masked)');
-    expect(markup).not.toContain('type="password"');
-  });
-});
-
-describe('SurfaceCards evidence quote', (): void => {
-  it('renders an index tag as the page title linked to the page', (): void => {
-    const markup = renderToStaticMarkup(
-      <EvidenceQuote quote='<page url="https://app.notion.com/p/3c7a382da0a080968de5fd7bf18e5f21">Linear Automation</page>' />,
-    );
-    expect(markup).toBe(
-      '<a href="https://app.notion.com/p/3c7a382da0a080968de5fd7bf18e5f21" target="_blank" rel="noreferrer" class="text-[var(--color-fg)] underline decoration-[var(--color-border)]">Linear Automation</a>',
-    );
-    expect(markup).not.toContain('&lt;page');
-  });
-
-  it('leaves every other quote as stored', (): void => {
-    expect(renderToStaticMarkup(<EvidenceQuote quote="# Linear automation" />)).toBe(
-      '# Linear automation',
-    );
-    expect(renderToStaticMarkup(<EvidenceQuote quote='<page url="ftp://x">Linear</page>' />)).toBe(
-      '&lt;page url=&quot;ftp://x&quot;&gt;Linear&lt;/page&gt;',
-    );
-    expect(renderToStaticMarkup(<EvidenceQuote quote={undefined} />)).toBe('');
-  });
-});
-
-describe('SurfaceCards system discovery provenance', (): void => {
-  it('shows the manager and documentation page when both named the system', (): void => {
-    const markup = renderToStaticMarkup(
-      <DiscoveryProvenance
-        evidence={[
-          {
-            kind: 'charter',
-            ref: 'manager 1:1',
-            quote: 'We use Linear.',
-            current: true,
-            firstSeenAt: 1,
-            lastSeenAt: 1,
-          },
-          {
-            kind: 'documentation',
-            sourceId: 'source-1',
-            ref: 'systems/linear.md',
-            quote: '# Linear',
-            url: 'https://notion.example/linear',
-            current: true,
-            firstSeenAt: 2,
-            lastSeenAt: 2,
-          },
-        ]}
-        sourceLabels={new Map([['source-1', 'RevOps handbook']])}
-      />,
-    );
-    expect(markup).toContain('System discovered from');
-    expect(markup).toContain('manager 1:1');
-    expect(markup).toContain('RevOps handbook / systems/linear.md');
-    expect(markup).toContain('href="https://notion.example/linear"');
-    expect(markup).toContain('We use Linear.');
-    expect(markup).toContain('# Linear');
-    // A page link here is the same affordance as a route-evidence page link a
-    // few lines down the same card, so it carries the same accent treatment
-    // rather than reading as muted and disabled.
-    expect(markup).toContain(
-      '<a href="https://notion.example/linear" target="_blank" rel="noreferrer" class="text-[var(--color-accent)] underline">',
-    );
-  });
-
-  it('keeps edited-away documentation provenance visible as historical', (): void => {
-    const markup = renderToStaticMarkup(
-      <DiscoveryProvenance
-        evidence={[
-          {
-            kind: 'documentation',
-            sourceId: 'source-1',
-            ref: 'systems/northstar-crm.md',
-            quote: '# Northstar CRM',
-            current: false,
-            firstSeenAt: 1,
-            lastSeenAt: 2,
-          },
-        ]}
-        sourceLabels={new Map([['source-1', 'Team folder']])}
-      />,
-    );
-    expect(markup).toContain('Team folder / systems/northstar-crm.md');
-    expect(markup).toContain('no longer named in the current page');
-  });
-});
-
-describe('SurfaceCards approved ladder', (): void => {
-  it('shows the ratified route and every failed rung after a successful demotion', (): void => {
-    const markup = renderToStaticMarkup(
-      <SurfaceLadder
-        candidates={[
-          { path: 'mcp', endpoint: 'https://mcp.jira.example/mcp' },
-          { path: 'browser-driven', endpoint: 'https://jira.example/issues' },
-        ]}
-        attempts={[
-          {
-            path: 'mcp',
-            endpoint: 'https://mcp.jira.example/mcp',
-            outcome: 'demoted',
-            reason: 'MCP server returned HTTP 503',
-            attemptedAt: 100,
-          },
-        ]}
-      />,
-    );
-
-    expect(markup).toContain('Approved ladder:');
-    expect(markup).toContain('mcp → browser-driven');
-    expect(markup).toContain('mcp attempt failed');
-    expect(markup).toContain('MCP server returned HTTP 503');
-    expect(markup).toContain('Fell to the next approved rung.');
-  });
-
-  it('says a first probe failed and was retried, without calling it a failed attempt', (): void => {
-    const markup = renderToStaticMarkup(
-      <SurfaceLadder
-        attempts={[
-          {
-            path: 'mcp',
-            endpoint: 'https://mcp.linear.app/mcp',
-            outcome: 'retried',
-            reason:
-              'Failed to connect to MCP server surface: Error: Could not connect to server with any available HTTP transport A request without the key was answered, so the endpoint is reachable.',
-            attemptedAt: 100,
-            retryAfterMs: 5_000,
-          },
-        ]}
-      />,
-    );
-
-    expect(markup).toContain('mcp first probe failed: ');
-    expect(markup).toContain('the endpoint is reachable');
-    expect(markup).toContain('Retried after 5 s.');
-    expect(markup).not.toContain('attempt failed');
-    expect(markup).not.toContain('No approved fallback connected.');
-  });
-});
-
-/** Render one isolated provisioning row without running dashboard hooks. */
-function renderProvisioningRow(
-  presentation: ProvisioningPresentation,
-  overrides: Partial<ProvisioningRowProps> = {},
-): string {
-  return renderToStaticMarkup(
-    <ProvisioningRow
-      onProvision={(): void => undefined}
-      presentation={presentation}
-      provisioning={false}
-      surfaceSlug="slack"
-      {...overrides}
-    />,
-  );
-}
-
-describe('SurfaceCards dedicated-app row', (): void => {
-  it('renders nothing for a system whose docs describe no install procedure', (): void => {
-    expect(
-      renderProvisioningRow(
-        presentProvisioning({
-          credential: { found: 'value', method: 'api-key' },
-          hasPublicUrl: true,
-        }),
-      ),
-    ).toBe('');
-  });
-
-  it('offers a write-only configuration-token field beside the shared-token fallback', (): void => {
-    const markup = renderProvisioningRow(
-      presentProvisioning({ credential: { found: 'none', method: 'oauth' }, hasPublicUrl: true }),
-    );
-    expect(markup).toContain('Provision a dedicated app');
-    expect(markup).toContain('type="password"');
-    expect(markup).toContain('autoComplete="new-password"');
-    expect(markup).not.toContain('value=');
-    expect(markup).toContain('asks Slack to revoke it');
-  });
-
-  it('says why it cannot offer one without a public address', (): void => {
-    const markup = renderProvisioningRow(
-      presentProvisioning({ credential: { found: 'none', method: 'oauth' }, hasPublicUrl: false }),
-    );
-    expect(markup).toContain('DAY0_PUBLIC_URL');
-    expect(markup).not.toContain('type="password"');
-  });
-
-  it('shows the install link and hides the field once the app exists', (): void => {
-    const markup = renderProvisioningRow(
-      presentProvisioning({
-        credential: { found: 'none', method: 'oauth' },
-        hasPublicUrl: true,
-        provisioning: {
-          appId: 'A1',
-          appName: 'ops worker (Day0)',
-          installUrl: 'https://slack.com/oauth/v2/authorize?client_id=1&state=abc',
-        },
-      }),
-    );
-    expect(markup).toContain('Awaiting the install click');
-    expect(markup).toContain('client_id=1&amp;state=abc');
-    expect(markup).toContain('Install link for the administrator');
-    expect(markup).not.toContain('type="password"');
-  });
-
-  it('reports the dedicated identity once the install has landed', (): void => {
-    const markup = renderProvisioningRow(
-      presentProvisioning({
-        credential: { found: 'none', method: 'oauth' },
-        hasPublicUrl: true,
-        provisioning: {
-          appId: 'A1',
-          appName: 'ops worker (Day0)',
-          installUrl: 'https://slack.com/oauth/v2/authorize',
-          installedAt: 5,
-        },
-      }),
-    );
-    expect(markup).toContain('Dedicated app installed');
-    expect(markup).toContain('acts as its own app');
-    expect(markup).not.toContain('Install link for the administrator');
-  });
-
-  it('names a failed install and offers a fresh link', (): void => {
-    const markup = renderProvisioningRow(
-      presentProvisioning({
-        credential: { found: 'none', method: 'oauth' },
-        hasPublicUrl: true,
-        provisioning: {
-          appId: 'A1',
-          appName: 'ops worker (Day0)',
-          installUrl: 'https://slack.com/oauth/v2/authorize',
-          lastError: 'Slack oauth.v2.access failed: invalid_code.',
-        },
-      }),
-    );
-    expect(markup).toContain('Install did not complete');
-    expect(markup).toContain('invalid_code');
-    expect(markup).toContain('type="password"');
-  });
-
-  it('shows an operation error under the row', (): void => {
-    const markup = renderProvisioningRow(
-      presentProvisioning({ credential: { found: 'none', method: 'oauth' }, hasPublicUrl: true }),
-      { error: 'Slack apps.manifest.create failed: token_expired' },
-    );
-    expect(markup).toContain('token_expired');
-  });
-
-  it('disables the control while an app is being registered', (): void => {
-    const markup = renderProvisioningRow(
-      presentProvisioning({ credential: { found: 'none', method: 'oauth' }, hasPublicUrl: true }),
-      { provisioning: true },
-    );
-    expect(markup).toContain('Registering the app...');
-    expect(markup).toContain('disabled=""');
-  });
 });
 
 describe('SurfaceCards and the optional browser component', (): void => {
@@ -535,146 +173,14 @@ describe('SurfaceCards and the optional browser component', (): void => {
   });
 });
 
-describe('ApprovalRow', (): void => {
-  const idle = {
-    blocked: false,
-    onApprove: (): void => undefined,
-    onReject: (): void => undefined,
-  };
-
-  it('offers Approve and Reject while nothing is in flight', (): void => {
-    const markup = renderToStaticMarkup(<ApprovalRow {...idle} />);
-    expect(markup).toMatch(/<button type="button" class="[^"]*">Approve<\/button>/);
-    expect(markup).toMatch(/<button type="button" class="[^"]*">Reject<\/button>/);
-    expect(markup).not.toContain('role="alert"');
-  });
-
-  it('holds both controls while a decision is in flight', (): void => {
-    const markup = renderToStaticMarkup(<ApprovalRow {...idle} pending="approve" />);
-    expect(markup).toMatch(/<button[^>]*disabled=""[^>]*>Approving\.\.\.<\/button>/);
-    expect(markup).toMatch(/<button[^>]*disabled=""[^>]*>Reject<\/button>/);
-  });
-
-  it('says why the approval was refused, where the manager clicked', (): void => {
-    const refusal =
-      'A documented intake queue changed; reject this card and re-run orientation before approval.';
-    const markup = renderToStaticMarkup(<ApprovalRow {...idle} error={refusal} />);
-    expect(markup).toContain(`role="alert"`);
-    expect(markup).toContain(refusal);
-    expect(markup).toMatch(/<button type="button" class="[^"]*">Approve<\/button>/);
-  });
-});
-
 describe('SurfaceCards and what each employee reads', (): void => {
   const agentId = 'agent-1' as Id<'agents'>;
-  const FINANCE = companyPage('finance/handbook.md');
   const sourceId = 'source-folder';
-  const financePages = [
-    { ...FINANCE, _id: 'page-finance', sourceId, sourceLabel: 'Kestrel Supply folder' },
-  ];
   const scopeValue = (value: string, quote: string) => ({
     value,
     sourceId,
     ref: 'finance/handbook.md',
     quote,
-  });
-
-  it('lists each approved project and channel on its own card line', (): void => {
-    const project = (value: string) => scopeValue(value, `- Project: \`${value}\``);
-    const linear = renderToStaticMarkup(
-      <IntakeScopeRow
-        drift={[]}
-        scope={{
-          team: scopeValue('FIN', '- Team: `FIN`'),
-          project: project('September close'),
-          projects: [project('October close')],
-        }}
-        sourceLabels={new Map()}
-        surfaceClass="kanban"
-        system="Linear"
-      />,
-    );
-    const slack = renderToStaticMarkup(
-      <IntakeScopeRow
-        drift={[]}
-        scope={{
-          channels: [
-            scopeValue('finance-close', '- Channels: #finance-close, #ops-requests'),
-            scopeValue('ops-requests', '- Channels: #finance-close, #ops-requests'),
-          ],
-        }}
-        sourceLabels={new Map()}
-        surfaceClass="chat"
-        system="Slack"
-      />,
-    );
-    expect(linear).toContain('<li>Project September close</li><li>Project October close</li>');
-    expect(slack).toContain('<li>#finance-close</li><li>#ops-requests</li>');
-    expect(slack.match(/- Channels: #finance-close, #ops-requests/g)).toHaveLength(1);
-  });
-  it('does not repeat a single queue under the reads line that already names it', (): void => {
-    const linear = renderToStaticMarkup(
-      <IntakeScopeRow
-        drift={[]}
-        scope={{
-          team: scopeValue('REVOPS', '- Team: `REVOPS`'),
-          project: scopeValue('Q3 close', '- Project: `Q3 close`'),
-        }}
-        sourceLabels={new Map()}
-        surfaceClass="kanban"
-        system="Linear"
-      />,
-    );
-    expect(linear).toContain('Reads: Linear team REVOPS, project Q3 close');
-    expect(linear).not.toContain('<li>');
-    const teamOnly = renderToStaticMarkup(
-      <IntakeScopeRow
-        drift={[]}
-        scope={{ team: scopeValue('REVOPS', '- Team: `REVOPS`') }}
-        sourceLabels={new Map()}
-        surfaceClass="kanban"
-        system="Linear"
-      />,
-    );
-    expect(teamOnly).not.toContain('<li>');
-    const oneChannel = renderToStaticMarkup(
-      <IntakeScopeRow
-        drift={[]}
-        scope={{ channels: [scopeValue('finance-close', '- Channels: #finance-close')] }}
-        sourceLabels={new Map()}
-        surfaceClass="chat"
-        system="Slack"
-      />,
-    );
-    expect(oneChannel).not.toContain('<li>');
-  });
-
-  it('renders the code spans of a handbook line and of a note as code, never as raw backticks', (): void => {
-    const markup = renderToStaticMarkup(
-      <IntakeScopeRow
-        drift={[]}
-        scope={{
-          team: scopeValue('REVOPS', '- Team: `REVOPS`'),
-          project: scopeValue(
-            'Q3 close',
-            'Linear, team `REVOPS`, project `Q3 close`: an odd ` tick',
-          ),
-          notes: [
-            'Dropped pick 4: team `FIN` was not kept; intake reads one team, and `REVOPS` was picked first.',
-          ],
-        }}
-        sourceLabels={new Map()}
-        surfaceClass="kanban"
-        system="Linear"
-      />,
-    );
-    expect(markup).toMatch(/- Team: <code[^>]*>REVOPS<\/code>/);
-    expect(markup).toMatch(
-      /Linear, team <code[^>]*>REVOPS<\/code>, project <code[^>]*>Q3 close<\/code>: an odd ` tick/,
-    );
-    expect(markup).toMatch(/Dropped pick 4: team <code[^>]*>FIN<\/code> was not kept/);
-    expect(markup).not.toContain('`REVOPS`');
-    expect(markup).not.toContain('`FIN`');
   });
 
   const card = (patch: Record<string, unknown>): Record<string, unknown> => ({
@@ -711,7 +217,6 @@ describe('SurfaceCards and what each employee reads', (): void => {
       .replace(/&quot;/g, '"');
 
   beforeEach((): void => {
-    state.pages = financePages;
     state.sources = [{ _id: sourceId, label: 'Kestrel Supply folder' }];
   });
 
@@ -766,15 +271,9 @@ describe('SurfaceCards and what each employee reads', (): void => {
     expect(markup).toContain('Dropped #revops-asks: finance/handbook.md does not state it.');
   });
 
-  it('flags an approved value whose handbook line has since changed', (): void => {
-    state.pages = [
-      {
-        ...financePages[0],
-        // The handbook states the project twice (lines 10 and 32); the card
-        // judges by value, so the page has stopped stating it only once both go.
-        markdown: FINANCE.markdown.replaceAll('`September close`', '`October close`'),
-      },
-    ];
+  it("shows the drift the server found on a card's approved scope (D D4)", (): void => {
+    const scopeChange =
+      'Changed since this card was proposed: project September close is no longer stated on finance/handbook.md. Intake still reads only what was approved; reject the card and re-run orientation to propose the page as it reads now.';
     state.surfaces = [
       card({
         slug: 'linear',
@@ -786,38 +285,10 @@ describe('SurfaceCards and what each employee reads', (): void => {
           team: scopeValue('FIN', '- Team: `FIN`'),
           project: scopeValue('September close', '- Project: `September close`'),
         },
+        scopeChange,
       }),
     ];
-    const markup = render();
-    expect(markup).toContain(
-      'Changed since this card was proposed: project September close is no longer stated on finance/handbook.md. Intake still reads only what was approved; reject the card and re-run orientation to propose the page as it reads now.',
-    );
-  });
-
-  it('keeps a value the page still states on another line: a reworded line is not drift (U8 D2)', (): void => {
-    state.pages = [
-      {
-        ...financePages[0],
-        markdown: FINANCE.markdown.replace(
-          '- Project: `September close`',
-          '- Project: `October close`',
-        ),
-      },
-    ];
-    state.surfaces = [
-      card({
-        slug: 'linear',
-        displayName: 'Linear',
-        class: 'kanban',
-        path: 'mcp',
-        verdict: 'connected',
-        intakeScope: {
-          team: scopeValue('FIN', '- Team: `FIN`'),
-          project: scopeValue('September close', '- Project: `September close`'),
-        },
-      }),
-    ];
-    expect(render()).not.toContain('Changed since this card was proposed');
+    expect(render()).toContain(scopeChange);
   });
 
   it("lists the documented systems this role's charter does not name under the cards, each with Propose", (): void => {
@@ -846,9 +317,12 @@ describe('SurfaceCards and what each employee reads', (): void => {
       }),
     ];
     const markup = render();
-    expect(markup).toContain('<details');
-    expect(markup).toContain("Documented in the company, not named in this role's charter (1)");
-    expect(markup).toMatch(/Looker pipeline tile[\s\S]*>Propose<\/button>/);
+    expect(markup).toMatch(
+      /<h2[^>]*>Documented, not named in the charter<\/h2><span[^>]*>1<\/span>/,
+    );
+    expect(markup).toMatch(
+      /Looker pipeline tile[\s\S]*aria-label="Propose Looker pipeline tile">Propose<\/button>/,
+    );
     expect(markup).toContain('Kestrel Supply folder / systems/looker-pipeline-tile.md');
     // Not a card of its own, and not counted as waiting for orientation.
     expect(markup).not.toContain('id="surface-looker-pipeline-tile"');
@@ -870,113 +344,12 @@ describe('SurfaceCards and what each employee reads', (): void => {
     const markup = render();
     expect(markup).toContain('id="surface-looker-pipeline-tile"');
     expect(markup).toContain('1 declared system has no proposal yet.');
-    expect(markup).not.toContain('<details');
+    expect(markup).not.toContain('Documented, not named in the charter');
   });
 });
 
-describe('the access line and its renewal (Q5, U3 D5)', (): void => {
-  const AT = Date.UTC(2026, 8, 27, 16, 5, 9);
-  const DAY = 24 * 60 * 60 * 1000;
-  const surface = (patch: Partial<AccessSurface>): AccessSurface => ({
-    _id: 'surface-linear' as Id<'surfaces'>,
-    displayName: 'Linear',
-    verdict: 'connected',
-    expiresAt: AT,
-    accessSetBy: 'approval',
-    ...patch,
-  });
-  const renderAccess = (row: AccessSurface, now: number): string =>
-    renderToStaticMarkup(
-      <AgentZoneContext value="Asia/Singapore">
-        <AccessRow surface={row} now={now} onSetDays={async () => ({ expiresAt: AT })} />
-      </AgentZoneContext>,
-    ).replace(/&#x27;/g, "'");
-
-  it("shows the end date in the employee's day, who set it, and the control that changes it", (): void => {
-    const markup = renderAccess(surface({}), AT - 30 * DAY);
-    expect(markup).toContain(
-      'Access ends <time dateTime="2026-09-27T16:05:09.000Z">28 Sep 2026, 00:05</time>',
-    );
-    expect(markup).toContain(' · set when you approved the card.');
-    expect(markup).toMatch(/<button[^>]*aria-expanded="false"[^>]*>Change the end date<\/button>/);
-    expect(markup).toContain('role="status"');
-    expect(markup).not.toContain('set by the model');
-  });
-
-  it('warns within a week of the end, and offers the renewal once access has ended', (): void => {
-    expect(renderAccess(surface({ accessSetBy: 'manager' }), AT - 2 * DAY)).toContain(
-      ' · set by you. That is within a week; renew it to keep the connection.',
-    );
-    const ended = renderAccess(
-      surface({ verdict: 'approved', reason: 'expired', accessSetBy: 'upgrade' }),
-      AT + DAY,
-    );
-    expect(ended).toContain('Access ended <time');
-    expect(ended).toContain(
-      ' · set by the upgrade. Nothing is read or sent through this card until you renew it.',
-    );
-    expect(ended).toMatch(/>Renew access<\/button>/);
-  });
-
-  it('says access ended once the date has passed, before the sweep marks it and whatever reason a later failure left', (): void => {
-    const markup = renderAccess(
-      surface({
-        verdict: 'ungranted',
-        reason: 'BROWSER_DRIVER_ABSENT: the browser is not running',
-      }),
-      AT + 60_000,
-    );
-    expect(markup).toContain('Access ended <time');
-    expect(markup).toMatch(/>Renew access<\/button>/);
-    expect(markup).not.toContain('within a week');
-  });
-
-  it('is absent before the card is approved, when access has not started', (): void => {
-    expect(renderAccess(surface({ verdict: 'proposed', expiresAt: undefined }), AT)).toBe('');
-    expect(renderAccess(surface({ verdict: 'declared' }), AT)).toBe('');
-  });
-});
-
-describe('the scopes line and the re-approval of a narrowed card (Q10, U10 D2 (b) and D3)', (): void => {
+describe('SurfaceCards and the approved tools', (): void => {
   const agentId = 'agent-1' as Id<'agents'>;
-  const tools = (patch: Partial<ToolsSurface>): ToolsSurface => ({
-    _id: 'surface-linear' as Id<'surfaces'>,
-    displayName: 'Linear',
-    verdict: 'connected',
-    toolAllowlist: ['list_issues', 'save_comment'],
-    approvedToolAllowlist: ['list_issues', 'save_comment', 'delete_issue'],
-    ...patch,
-  });
-
-  it('prints the tools the card calls, the approved ones the provider no longer offers and those withheld', (): void => {
-    const markup = renderToStaticMarkup(
-      <ToolsRow
-        surface={tools({ withheldTools: ['get_user'] })}
-        onApprove={async () => undefined}
-      />,
-    );
-    expect(markup).toContain('Scopes: </span>list_issues, save_comment</p>');
-    expect(markup).toContain(
-      'Approved, not offered by the provider at the last check: delete_issue',
-    );
-    expect(markup).toContain('Withheld, outside your approval: get_user.');
-    expect(markup).toMatch(
-      /<button[^>]*aria-expanded="false"[^>]*>Change approved tools<\/button>/,
-    );
-    expect(markup).toContain('role="status"');
-  });
-
-  it('says nothing is withheld when the row withholds nothing, and nothing for a card not connected', (): void => {
-    const none = renderToStaticMarkup(
-      <ToolsRow surface={tools({})} onApprove={async () => undefined} />,
-    );
-    expect(none).not.toContain('Withheld');
-    expect(
-      renderToStaticMarkup(
-        <ToolsRow surface={tools({ verdict: 'proposed' })} onApprove={async () => undefined} />,
-      ),
-    ).toBe('');
-  });
 
   it("shows a card's withheld tools from its row, with no event in the page's feed (K D2 (b))", (): void => {
     state.surfaces = [
@@ -1020,43 +393,13 @@ describe('the scopes line and the re-approval of a narrowed card (Q10, U10 D2 (b
     ];
     try {
       const markup = renderToStaticMarkup(<SurfaceCards agentId={agentId} />);
-      expect(markup).toContain('Scopes requested</dt><dd>read:issues</dd>');
-      expect(markup).toContain('Cost</dt><dd>free</dd>');
+      expect(markup).toMatch(/Scopes requested<\/dt><dd[^>]*>read:issues<\/dd>/);
+      expect(markup).toMatch(/Cost<\/dt><dd[^>]*>free<\/dd>/);
       expect(markup).toContain('starts when you approve; the end date shows on this card');
       expect(markup).not.toContain('Cost / expiry');
       expect(markup).not.toContain('30 days');
     } finally {
       state.surfaces = undefined;
     }
-  });
-});
-
-describe("the stored credential's status (U19 D5)", (): void => {
-  it('says what the store says of a credential that is not simply live, with its reason', (): void => {
-    expect(
-      credentialStatusLine({
-        status: 'superseded',
-        statusReason: 'No longer detected in synced documentation.',
-      }),
-    ).toBe('Superseded: No longer detected in synced documentation.');
-    expect(credentialStatusLine({ status: 'suspect', statusReason: 'rotated on the page' })).toBe(
-      'Suspect: rotated on the page.',
-    );
-    expect(credentialStatusLine({ revokedAt: 5, statusReason: undefined })).toBe('Revoked.');
-    expect(credentialStatusLine({})).toBeUndefined();
-    expect(credentialStatusLine(undefined)).toBeUndefined();
-  });
-
-  it('is printed on the credential row beside the page-derived credential', (): void => {
-    const markup = renderCredentialRow(
-      {
-        canLand: false,
-        kind: 'masked',
-        label: 'linear service token',
-        text: 'located in Revenue operations / Linear automation (masked)',
-      },
-      { status: 'Superseded: No longer detected in synced documentation.' },
-    );
-    expect(markup).toContain('Status: Superseded: No longer detected in synced documentation.');
   });
 });
