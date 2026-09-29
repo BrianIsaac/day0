@@ -83,13 +83,6 @@ describe('FirstWeekCard', () => {
     );
   });
 
-  it('plays the rail’s advance when the week has just moved on to it', () => {
-    expect(renderToStaticMarkup(<FirstWeekCard steps={WORKING} />)).not.toContain('data-advanced');
-    expect(renderToStaticMarkup(<FirstWeekCard steps={WORKING} advanced />)).toMatch(
-      /^<div class="rail [^"]*" data-advanced="">/,
-    );
-  });
-
   it('draws nothing when no step is now', () => {
     const done = WORKING.map((step): RailStep => ({ ...step, status: 'done' }));
     expect(renderToStaticMarkup(<FirstWeekCard steps={done} />)).toBe('');

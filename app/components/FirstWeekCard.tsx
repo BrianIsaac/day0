@@ -98,16 +98,8 @@ export function placeWeek({ anchor, panel, nowTop, windowHeight }: WeekLayout): 
  * has no Escape; any other press closes it (light dismiss).
  *
  * @param steps - The steps, in order; the card draws the one that is now.
- * @param advanced - Whether the week has just moved on to this step, on this page: the card plays
- *   the rail's advance (`.rail[data-advanced]`).
  */
-export function FirstWeekCard({
-  steps,
-  advanced = false,
-}: {
-  steps: readonly RailStep[];
-  advanced?: boolean;
-}) {
+export function FirstWeekCard({ steps }: { steps: readonly RailStep[] }) {
   const card = useRef<HTMLButtonElement>(null);
   const weekId = useId();
   // Set while the whole week is on the page, open or shrinking back.
@@ -134,7 +126,7 @@ export function FirstWeekCard({
 
   return (
     <>
-      <div className="rail w-full sm:w-60" data-advanced={advanced ? '' : undefined}>
+      <div className="rail w-full sm:w-60">
         <button
           ref={card}
           type="button"
