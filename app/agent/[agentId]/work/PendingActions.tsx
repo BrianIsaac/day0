@@ -248,7 +248,8 @@ export function PendingActions({
         <Button
           variant="approve"
           size="large"
-          disabled={busy || actions.length === 0}
+          // With every write withheld there is nothing to approve: Reject is how nothing is sent.
+          disabled={busy || selected.size === 0}
           onClick={() => onApprove([...selected].sort((a, b) => a - b))}
         >
           Approve selected ({selected.size})

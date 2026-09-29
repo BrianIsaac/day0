@@ -248,6 +248,20 @@ describe('write held for you (work-held.html, work-held-withheld.html)', (): voi
     expect(focusedName()).toBe('Approve selected (1)');
   });
 
+  it('offers no Approve selected once every held write is withheld, Reject being how nothing is sent (D5)', async (): Promise<void> => {
+    const view = card(DRAWN.held);
+    for (const withhold of [...view.container.querySelectorAll('button')].filter((candidate) =>
+      candidate.getAttribute('aria-label')?.startsWith('Withhold this one'),
+    )) {
+      await act(async (): Promise<void> => (withhold as HTMLButtonElement).click());
+    }
+    const approve = [...view.container.querySelectorAll('button')].find(
+      (candidate) => candidate.textContent === 'Approve selected (0)',
+    );
+    expect(approve?.disabled).toBe(true);
+    expect(button(view.container, 'Reject the run')).toBeTruthy();
+  });
+
   it('ticks every held write again when Approve all sends them, a withheld one included', async (): Promise<void> => {
     const view = card(DRAWN.held);
     const withhold = [...view.container.querySelectorAll('button')].find((candidate) =>
