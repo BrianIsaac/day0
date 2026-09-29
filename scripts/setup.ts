@@ -67,6 +67,7 @@ import { createInterface, type Interface } from 'node:readline';
 import { Writable } from 'node:stream';
 import { pathToFileURL } from 'node:url';
 import { DEFAULT_DOCS_HOST_DIR, ensureDocsHostDir } from '../src/docs/host-dir';
+import { CRONS_PAUSED_FLAG, cronsPauseReason } from '../src/lib/crons-pause';
 import {
   FIRST_SUCCESS,
   MOCK_FIRST_SUCCESS,
@@ -156,9 +157,18 @@ export type SandboxChoice = 'local' | 'daytona';
 
 /**
  * The lifecycle verbs: stop for the day, come back, throw the project away,
- * copy its data out, put a copy back, or upgrade to the checkout's release.
+ * copy its data out, put a copy back, upgrade to the checkout's release, or
+ * hold and release the deployment's scheduled jobs.
  */
-export type SetupCommand = 'stop' | 'resume' | 'clear' | 'backup' | 'restore' | 'upgrade';
+export type SetupCommand =
+  | 'stop'
+  | 'resume'
+  | 'clear'
+  | 'backup'
+  | 'restore'
+  | 'upgrade'
+  | 'pause'
+  | 'unpause';
 
 /** The verbs, as the command line spells them. */
 const SETUP_COMMANDS: readonly SetupCommand[] = [
@@ -168,6 +178,8 @@ const SETUP_COMMANDS: readonly SetupCommand[] = [
   'backup',
   'restore',
   'upgrade',
+  'pause',
+  'unpause',
 ];
 
 /**
@@ -275,6 +287,12 @@ export interface SetupOptions {
    * and the components derive keeps the file's value.
    */
   resumed?: ResumeArguments;
+  /**
+   * Set by `upgrade`, never on the command line: the reason it pauses the
+   * deployment's scheduled jobs with before its push, and lifts once the check
+   * passes.
+   */
+  upgradePause?: string;
   /** Take the default answer to every question that has one. */
   assumeYes: boolean;
   /** Print usage and do nothing. */
@@ -353,7 +371,7 @@ export class ProtectedProjectError extends Error {
 }
 
 const USAGE = `Usage: pnpm setup:local [options]
-       pnpm setup:local stop | resume | clear | backup | upgrade [options]
+       pnpm setup:local stop | resume | clear | backup | upgrade | pause | unpause [options]
        pnpm setup:local restore <backup.tar.gz> [options]
 
   --mode <mock|real>            mock (default here): the seeded office, for the
@@ -410,7 +428,13 @@ Keep a copy, put it back, or move to the checkout's release:
   ./setup.sh restore <backup.tar.gz>      replace the data volume with a backup, adopt its credential
                                           key, then resume; asks first unless --yes
   ./setup.sh upgrade                      after a git pull: a backup, pnpm install, then resume, which
-                                          refuses to skip a release and runs the migrations
+                                          refuses to skip a release and runs the migrations; the
+                                          scheduled jobs are paused from before the push until the
+                                          check passes
+
+Hold the deployment's scheduled jobs (the polls, the digests, the sweeps and the sync):
+  ./setup.sh pause                        every job skips until unpause; an upgrade leaves it so
+  ./setup.sh unpause                      each job runs again at its next turn
 
 The Convex-cloud-plus-Clerk route is not automated here; it needs accounts and
 a dashboard task. README.md has it, linked from the end of a successful run.`;
@@ -1238,6 +1262,11 @@ export interface SequenceInput {
    * deployment's env at the push and refuses one with no identity provider.
    */
   empty?: boolean;
+  /**
+   * An upgrade: the scheduled jobs are paused once the backend is up, before
+   * anything is read or pushed, and released after the check.
+   */
+  upgrade?: boolean;
 }
 
 /**
@@ -1264,12 +1293,14 @@ export function sequenceSteps(route: SetupRoute, input: SequenceInput = {}): str
     ...(real && input.sandbox === 'daytona' ? [] : ['sandbox:up']),
     ...(real ? ['redactor:up'] : []),
     'admin-key',
+    ...(input.upgrade ? ['crons:pause'] : []),
     ...(input.existing ? ['release:check'] : []),
     ...(input.existing && !input.empty
       ? ['convex dev --once', 'migrations', 'release:stamp', 'sync:env']
       : ['sync:env', 'convex dev --once', 'migrations', 'release:stamp']),
     'convex:restart',
     'check:setup',
+    ...(input.upgrade ? ['crons:unpause'] : []),
     ...(real && input.company ? ['company bed docs', 'company bed check'] : []),
   ];
 }
@@ -1647,6 +1678,8 @@ export interface StepContext {
   release?: string;
   /** The commit it was pushed from, when git could say. */
   commit?: string;
+  /** An upgrade: the reason its pause of the scheduled jobs carries. */
+  pauseReason?: string;
 }
 
 /** One command the setup runs, as the plan prints it and the runner executes it. */
@@ -1718,6 +1751,13 @@ export function stepCommands(step: string, context: StepContext): PlannedCommand
       ];
     case 'convex:restart':
       return [{ command: 'pnpm', args: ['run', 'convex:restart'] }];
+    case 'crons:pause':
+      return [{ command: 'npx', args: pauseArguments(context.pauseReason ?? '<reason>') }];
+    case 'crons:unpause':
+      return [
+        { command: 'npx', args: [...UNPAUSE_ARGUMENTS] },
+        { command: 'pnpm', args: ['run', 'convex:restart'] },
+      ];
     case 'check:setup':
       return [{ command: 'pnpm', args: ['run', 'check:setup'] }];
     case 'company bed docs':
@@ -1802,6 +1842,12 @@ export function planLines(input: PlanInput): string[] {
     if (step === 'release:check') {
       lines.push('     (refuses to skip a release, or to push older functions over newer rows;');
       lines.push('     a deployment with no tables yet takes the env before the push)');
+    }
+    if (step === 'crons:pause') {
+      lines.push('     (unless they are paused already; a pause set by hand is left as it is)');
+    }
+    if (step === 'crons:unpause') {
+      lines.push('     (only once the check passes, and never a pause set by hand)');
     }
     if (step === 'redactor:up' && input.redactor) lines.push(`     ${input.redactor.reason}`);
   });
@@ -2949,6 +2995,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       pull,
       company: options.company,
       existing: existingDeployment,
+      upgrade: options.upgradePause !== undefined,
     };
     let steps = sequenceSteps(route, sequence);
     let deploymentHasRows = existingDeployment;
@@ -2969,6 +3016,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
         : undefined,
       release: checkoutRelease.release,
       ...(commit !== undefined ? { commit } : {}),
+      ...(options.upgradePause !== undefined ? { pauseReason: options.upgradePause } : {}),
     };
     const venvVolume = `${resolvedProject}_${REDACTOR_VOLUME_SUFFIXES[0]}`;
     // The clone module refuses a protected project on either side; better
@@ -3331,6 +3379,19 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     }
     io.log('    URL, admin key and Compose service are the same backend');
 
+    if (options.upgradePause !== undefined) {
+      io.log(
+        `[${steps.indexOf('crons:pause') + 1}/${steps.length}] the scheduled jobs, paused for the upgrade`,
+      );
+      const hold = holdScheduledJobs(io, environment, options.upgradePause);
+      if ('failure' in hold) {
+        io.log('');
+        io.log(`error: nothing was pushed, because ${hold.failure}`);
+        return 1;
+      }
+      io.log(`    ${holdLine(hold, options)}`);
+    }
+
     if (existingDeployment) {
       io.log(
         `[${steps.indexOf('release:check') + 1}/${steps.length}] the release this deployment's rows are at`,
@@ -3481,6 +3542,20 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       checkerCommand.args,
       streamed,
     );
+    if (options.upgradePause !== undefined && checker.status === 0) {
+      io.log(
+        `[${steps.indexOf('crons:unpause') + 1}/${steps.length}] the scheduled jobs, released`,
+      );
+      const released = await releaseScheduledJobs(io, environment, ports.backend, options);
+      if ('failure' in released) {
+        io.log('');
+        io.log(
+          `error: the upgrade is done, but its pause on the scheduled jobs was not lifted: ${released.failure}`,
+        );
+        return 1;
+      }
+      io.log(`    ${released.line}`);
+    }
 
     if (real && options.company) {
       io.log('');
@@ -4069,33 +4144,356 @@ function readManifest(path: string): Partial<BackupManifest> | undefined {
   }
 }
 
+/** What the upgrade learns before it backs up anything: a refusal, or its target. */
+type UpgradePreflight =
+  | { readonly refusal: string }
+  | {
+      readonly target: LifecycleTarget;
+      /** Whether the backend is running, so its scheduled jobs are too. */
+      readonly running: boolean;
+      /** The reason the upgrade's pause of the scheduled jobs carries. */
+      readonly pauseReason: string;
+    };
+
 /**
- * Why an upgrade is refused before it backs up or installs, when the backend
- * is already running and its release stamp says so; undefined otherwise. A
- * stopped backend is checked by the resume, before anything is pushed.
+ * Why an upgrade is refused before it backs up or installs, or what it acts
+ * on. The release stamp is read here only when the backend is already
+ * running; a stopped backend is checked by the resume, before anything is
+ * pushed.
  *
  * @param options - The command line.
  * @param io - The setup environment.
  */
-function upgradeRefusedEarly(options: SetupOptions, io: SetupIo): string | undefined {
+function upgradePreflight(options: SetupOptions, io: SetupIo): UpgradePreflight {
   let target: LifecycleTarget | string;
   try {
     target = lifecycleTarget(io, options, 'upgrade');
   } catch (error) {
-    if (!(error instanceof ProtectedProjectError)) return errorMessage(error);
-    return (
-      `${error.project} is protected: it holds a real run, and only the primary checkout, whose own ` +
-      `${ENV_FILE} names it, may upgrade it: check out the tag there, run ` +
-      `\`${verbCommand('upgrade', options.mode)}\`, then check out your branch again, one tag at a time ` +
-      '(README.md, "Backup, restore and upgrade").'
-    );
+    if (!(error instanceof ProtectedProjectError)) return { refusal: errorMessage(error) };
+    return {
+      refusal:
+        `${error.project} is protected: it holds a real run, and only the primary checkout, whose own ` +
+        `${ENV_FILE} names it, may upgrade it: check out the tag there, run ` +
+        `\`${verbCommand('upgrade', options.mode)}\`, then check out your branch again, one tag at a time ` +
+        '(README.md, "Backup, restore and upgrade").',
+    };
   }
-  if (typeof target === 'string') return target;
-  if (!(runningServices(io, target.project) ?? []).includes('backend')) return undefined;
+  if (typeof target === 'string') return { refusal: target };
   const checkout = checkoutReleases(io.cwd, io.newestMigrationRelease);
-  if ('reason' in checkout) return `this checkout's release cannot be read: ${checkout.reason}.`;
+  if ('reason' in checkout) {
+    return { refusal: `this checkout's release cannot be read: ${checkout.reason}.` };
+  }
+  const pauseReason = upgradePauseReason(checkout.release, io.now?.() ?? Date.now());
+  if (!(runningServices(io, target.project) ?? []).includes('backend')) {
+    return { target, running: false, pauseReason };
+  }
   const verdict = releaseCheck(io, target.environment, checkout);
-  return verdict.allowed ? undefined : verdict.reason;
+  return verdict.allowed ? { target, running: true, pauseReason } : { refusal: verdict.reason };
+}
+
+/** How an upgrade's own pause begins, so a later upgrade can tell it from one set by hand. */
+const UPGRADE_PAUSE_PREFIX = 'upgrade to ';
+
+/** `npx convex env` arguments that lift the pause on the scheduled jobs. */
+export const UNPAUSE_ARGUMENTS: readonly string[] = ['convex', 'env', 'remove', CRONS_PAUSED_FLAG];
+
+/**
+ * `npx convex env` arguments that pause the scheduled jobs, saying why.
+ *
+ * @param reason - What each skipped job logs.
+ */
+export function pauseArguments(reason: string): string[] {
+  // `--` before the value, as `sync:env` does: the CLI reads a leading dash as an option.
+  return ['convex', 'env', 'set', CRONS_PAUSED_FLAG, '--', reason];
+}
+
+/**
+ * The reason an upgrade pauses the scheduled jobs with.
+ *
+ * @param release - The release the upgrade moves to.
+ * @param at - When, in milliseconds since the epoch.
+ */
+export function upgradePauseReason(release: string, at: number): string {
+  return `${UPGRADE_PAUSE_PREFIX}${release} at ${isoSeconds(at)}`;
+}
+
+/**
+ * Whether a pause is an upgrade's own, which the upgrade that completes lifts,
+ * rather than one set by hand, which only `unpause` lifts.
+ *
+ * @param reason - The pause's reason, as the deployment holds it.
+ */
+export function isUpgradePause(reason: string): boolean {
+  return reason.startsWith(UPGRADE_PAUSE_PREFIX);
+}
+
+/** A moment as an ISO 8601 timestamp to the second. */
+function isoSeconds(at: number): string {
+  return new Date(at).toISOString().replace(/\.\d{3}Z$/, 'Z');
+}
+
+/** What the deployment's env says of the pause, or why it could not be read. */
+type PauseState = { readonly reason: string | undefined } | { readonly failure: string };
+
+/**
+ * Read the pause off the deployment, where the scheduled jobs read it.
+ *
+ * @param io - The setup environment.
+ * @param environment - The child environment naming the deployment.
+ */
+function readCronsPause(io: SetupIo, environment: Record<string, string>): PauseState {
+  const listed = io.run('npx', ['convex', 'env', 'list'], {
+    env: environment,
+    timeoutMs: 120_000,
+  });
+  if (listed.status !== 0) {
+    return {
+      failure: `the deployment's env could not be read: ${firstLine(listed.stderr) || `exit ${listed.status ?? 'unknown'}`}`,
+    };
+  }
+  const value = new RegExp(`^${CRONS_PAUSED_FLAG}=(.*)$`, 'm').exec(listed.stdout)?.[1];
+  return { reason: cronsPauseReason({ [CRONS_PAUSED_FLAG]: value }) };
+}
+
+/**
+ * Run one `npx convex env` change against the deployment.
+ *
+ * @returns Undefined once made, else why it was not.
+ */
+function changeCronsPause(
+  io: SetupIo,
+  environment: Record<string, string>,
+  args: readonly string[],
+): string | undefined {
+  const changed = io.run('npx', args, { env: environment, timeoutMs: 120_000 });
+  if (changed.status === 0) return undefined;
+  return `\`npx ${args.slice(0, 4).join(' ')}\` failed: ${firstLine(changed.stderr) || `exit ${changed.status ?? 'unknown'}`}`;
+}
+
+/**
+ * Restart the backend so a module that kept the env it was first evaluated
+ * with reads the pause as it now is, and wait for it to answer.
+ *
+ * @returns Undefined once it answers, else why not.
+ */
+async function restartBackend(
+  io: SetupIo,
+  environment: Record<string, string>,
+  port: number,
+): Promise<string | undefined> {
+  const restarted = io.run('pnpm', ['run', 'convex:restart'], {
+    env: environment,
+    inherit: true,
+    timeoutMs: 600_000,
+  });
+  if (restarted.status !== 0) {
+    return `\`pnpm convex:restart\` failed (status ${restarted.status}); its output is above`;
+  }
+  if ((await io.waitForBackend(port, 180_000)) === undefined) {
+    return `the backend did not answer on 127.0.0.1:${port} after the restart; \`docker compose logs backend\` says why`;
+  }
+  return undefined;
+}
+
+/** Where an upgrade found the pause: set by it now, already its own, an earlier upgrade's, or set by hand. */
+type Hold =
+  | { readonly failure: string }
+  | { readonly held: 'set' | 'this' | 'upgrade' | 'hand'; readonly reason: string };
+
+/**
+ * Pause the scheduled jobs for an upgrade, unless they are paused already.
+ *
+ * @param io - The setup environment.
+ * @param environment - The child environment naming the deployment.
+ * @param reason - The upgrade's own reason.
+ */
+function holdScheduledJobs(io: SetupIo, environment: Record<string, string>, reason: string): Hold {
+  const state = readCronsPause(io, environment);
+  if ('failure' in state)
+    return { failure: `${state.failure}, so its scheduled jobs were not paused` };
+  if (state.reason !== undefined) {
+    if (state.reason === reason) return { held: 'this', reason };
+    return { held: isUpgradePause(state.reason) ? 'upgrade' : 'hand', reason: state.reason };
+  }
+  const failure = changeCronsPause(io, environment, pauseArguments(reason));
+  return failure === undefined
+    ? { held: 'set', reason }
+    : { failure: `the scheduled jobs could not be paused: ${failure}` };
+}
+
+/**
+ * The sentence an upgrade prints about the pause it holds.
+ *
+ * @param hold - What `holdScheduledJobs` found.
+ * @param options - The command line, for the verb's entry point.
+ */
+function holdLine(
+  hold: Exclude<Hold, { readonly failure: string }>,
+  options: SetupOptions,
+): string {
+  switch (hold.held) {
+    case 'set':
+      return `Paused the scheduled jobs (${CRONS_PAUSED_FLAG}=${hold.reason}); each skips until the check passes.`;
+    case 'this':
+      return 'The scheduled jobs are already paused by this upgrade.';
+    case 'upgrade':
+      return (
+        `The scheduled jobs are still paused by an upgrade that did not finish (${hold.reason}); ` +
+        'this one lifts the pause when it completes.'
+      );
+    case 'hand':
+      return (
+        `The scheduled jobs are paused (${hold.reason}); the upgrade leaves them so, and ` +
+        `\`${verbCommand('unpause', options.mode)}\` lifts it.`
+      );
+  }
+}
+
+/**
+ * After a passing check, lift the pause an upgrade set and restart the
+ * backend; a pause set by hand stays.
+ *
+ * @param io - The setup environment.
+ * @param environment - The child environment naming the deployment.
+ * @param port - The backend's host port.
+ * @param options - The command line, for the verb's entry point.
+ *
+ * @returns The line to print, or why the pause was not lifted.
+ */
+async function releaseScheduledJobs(
+  io: SetupIo,
+  environment: Record<string, string>,
+  port: number,
+  options: SetupOptions,
+): Promise<{ readonly line: string } | { readonly failure: string }> {
+  const state = readCronsPause(io, environment);
+  if ('failure' in state) return state;
+  if (state.reason === undefined) return { line: 'the scheduled jobs are not paused' };
+  if (!isUpgradePause(state.reason)) {
+    return {
+      line: `left paused as it was before the upgrade (${state.reason}); \`${verbCommand('unpause', options.mode)}\` lifts it`,
+    };
+  }
+  const failure =
+    changeCronsPause(io, environment, UNPAUSE_ARGUMENTS) ??
+    (await restartBackend(io, environment, port));
+  if (failure !== undefined) return { failure };
+  return {
+    line: 'lifted the pause and restarted the backend; each job runs again at its next turn',
+  };
+}
+
+/**
+ * Pause or release the deployment's scheduled jobs by hand.
+ *
+ * The pause is a deployment env value (`DAY0_CRONS_PAUSED`) the jobs read at
+ * the top of every run, so the backend has to be up to change it, and is
+ * restarted afterwards for the reason `restartBackend` gives.
+ *
+ * @param options - The command line.
+ * @param io - The setup environment.
+ * @param verb - `pause` or `unpause`.
+ *
+ * @returns 0 when the jobs are as asked, 1 otherwise.
+ */
+async function switchScheduledJobs(
+  options: SetupOptions,
+  io: SetupIo,
+  verb: 'pause' | 'unpause',
+): Promise<number> {
+  try {
+    const target = lifecycleTarget(io, options, verb);
+    if (typeof target === 'string') {
+      io.log(`error: ${target}`);
+      return 1;
+    }
+    const { project, environment, ports } = target;
+    const services = runningServices(io, project);
+    if (services === undefined) {
+      io.log(
+        'error: Docker did not say whether the backend is running; nothing was changed. `docker ps` says why.',
+      );
+      return 1;
+    }
+    if (!services.includes('backend')) {
+      io.log(
+        `error: ${project}'s backend is not running, so neither are its scheduled jobs. The pause is a ` +
+          `value on the deployment, changed with the backend up: \`${verbCommand('resume', options.mode)}\`, ` +
+          `then \`${verbCommand(verb, options.mode)}\`. Nothing was changed.`,
+      );
+      return 1;
+    }
+    const state = readCronsPause(io, environment);
+    if ('failure' in state) {
+      io.log(`error: ${state.failure}; nothing was changed.`);
+      return 1;
+    }
+    if (verb === 'pause' && state.reason !== undefined) {
+      io.log(
+        `${project}'s scheduled jobs are already paused (${state.reason}); nothing was changed.`,
+      );
+      return 0;
+    }
+    if (verb === 'unpause' && state.reason === undefined) {
+      io.log(`${project}'s scheduled jobs are not paused; nothing was changed.`);
+      return 0;
+    }
+    const args =
+      verb === 'pause'
+        ? pauseArguments(`paused by hand at ${isoSeconds(io.now?.() ?? Date.now())}`)
+        : [...UNPAUSE_ARGUMENTS];
+    if (options.dryRun) {
+      io.log('Would run:');
+      io.log(`  npx ${args.join(' ')}`);
+      io.log('  pnpm run convex:restart');
+      io.log('');
+      io.log('Nothing was changed.');
+      return 0;
+    }
+    const failure =
+      changeCronsPause(io, environment, args) ??
+      (await restartBackend(io, environment, ports.backend));
+    if (failure !== undefined) {
+      io.log(`error: ${failure}.`);
+      return 1;
+    }
+    io.log(
+      verb === 'pause'
+        ? `Paused ${project}'s scheduled jobs: the intake and decision polls, the digests, the sweeps and ` +
+            `the documentation sync skip until \`${verbCommand('unpause', options.mode)}\`. Work they ` +
+            'scheduled before now runs to its end.'
+        : `Lifted the pause on ${project}'s scheduled jobs: each runs again at its next turn, and the ` +
+            'polls start from where they stopped.',
+    );
+    return 0;
+  } catch (error) {
+    io.log(`error: ${errorMessage(error)}`);
+    return 1;
+  }
+}
+
+/**
+ * Hold the deployment's scheduled jobs until `unpause`.
+ *
+ * @param options - The command line.
+ * @param io - The setup environment.
+ *
+ * @returns 0 when they are paused, 1 otherwise.
+ */
+export async function runPause(options: SetupOptions, io: SetupIo): Promise<number> {
+  return await switchScheduledJobs(options, io, 'pause');
+}
+
+/**
+ * Let the deployment's scheduled jobs run again.
+ *
+ * @param options - The command line.
+ * @param io - The setup environment.
+ *
+ * @returns 0 when they run, 1 otherwise.
+ */
+export async function runUnpause(options: SetupOptions, io: SetupIo): Promise<number> {
+  return await switchScheduledJobs(options, io, 'unpause');
 }
 
 /**
@@ -4388,38 +4786,86 @@ export async function runRestore(options: SetupOptions, io: SetupIo): Promise<nu
  * the release stamp before it pushes, runs the migrations and stamps the new
  * release.
  *
+ * The deployment's scheduled jobs are paused from before the push until the
+ * check passes, so a deployment wired to real workspaces reads and posts
+ * nothing while it changes; a pause set by hand beforehand is left in place.
+ *
  * @param options - The command line.
  * @param io - The setup environment.
  *
  * @returns What the resume returns, or the backup's or the install's failure.
  */
 export async function runUpgrade(options: SetupOptions, io: SetupIo): Promise<number> {
-  const early = upgradeRefusedEarly(options, io);
-  if (early !== undefined) {
-    io.log(`error: nothing was backed up, installed or pushed, because ${early}`);
+  try {
+    const preflight = upgradePreflight(options, io);
+    if ('refusal' in preflight) {
+      io.log(`error: nothing was backed up, installed or pushed, because ${preflight.refusal}`);
+      return 1;
+    }
+    const { target, running, pauseReason } = preflight;
+    // A running backend's jobs are paused before the backup, whose restart
+    // then starts it paused; a stopped one is paused by the resume as soon as
+    // its backend is up.
+    if (running && options.dryRun) {
+      io.log(
+        `Would pause the scheduled jobs first, unless they are paused already: npx ${pauseArguments(pauseReason).join(' ')}`,
+      );
+    } else if (running) {
+      const hold = holdScheduledJobs(io, target.environment, pauseReason);
+      if ('failure' in hold) {
+        io.log(`error: nothing was backed up, installed or pushed, because ${hold.failure}.`);
+        return 1;
+      }
+      io.log(holdLine(hold, options));
+    }
+    const backedUp = await runBackup({ ...options, command: 'backup' }, io);
+    if (backedUp !== 0) {
+      io.log('The upgrade stops here: nothing is installed or pushed without a backup.');
+      unfinishedPauseNote(io, target, options);
+      return backedUp;
+    }
+    const resume: SetupOptions = { ...options, command: 'resume', upgradePause: pauseReason };
+    if (options.dryRun) {
+      io.log('  pnpm install --frozen-lockfile');
+      return await runResume(resume, io);
+    }
+    io.log('');
+    io.log('Installing the dependencies this checkout names (pnpm install --frozen-lockfile).');
+    const installed = io.run('pnpm', ['install', '--frozen-lockfile'], {
+      inherit: true,
+      timeoutMs: 1_800_000,
+    });
+    if (installed.status !== 0) {
+      io.log(`error: pnpm install failed (status ${installed.status}); nothing was pushed.`);
+      unfinishedPauseNote(io, target, options);
+      return 1;
+    }
+    io.log('');
+    const resumed = await runResume(resume, io);
+    if (resumed !== 0) unfinishedPauseNote(io, target, options);
+    return resumed;
+  } catch (error) {
+    io.log(`error: ${errorMessage(error)}`);
     return 1;
   }
-  const backedUp = await runBackup({ ...options, command: 'backup' }, io);
-  if (backedUp !== 0) {
-    io.log('The upgrade stops here: nothing is installed or pushed without a backup.');
-    return backedUp;
-  }
-  if (options.dryRun) {
-    io.log('  pnpm install --frozen-lockfile');
-    return await runResume({ ...options, command: 'resume' }, io);
-  }
-  io.log('');
-  io.log('Installing the dependencies this checkout names (pnpm install --frozen-lockfile).');
-  const installed = io.run('pnpm', ['install', '--frozen-lockfile'], {
-    inherit: true,
-    timeoutMs: 1_800_000,
-  });
-  if (installed.status !== 0) {
-    io.log(`error: pnpm install failed (status ${installed.status}); nothing was pushed.`);
-    return 1;
-  }
-  io.log('');
-  return await runResume({ ...options, command: 'resume' }, io);
+}
+
+/**
+ * Say so when an upgrade that stopped leaves its pause on the scheduled jobs.
+ *
+ * @param io - The setup environment.
+ * @param target - The installation.
+ * @param options - The command line, for the verbs' entry point.
+ */
+function unfinishedPauseNote(io: SetupIo, target: LifecycleTarget, options: SetupOptions): void {
+  if (!(runningServices(io, target.project) ?? []).includes('backend')) return;
+  const state = readCronsPause(io, target.environment);
+  if ('failure' in state || state.reason === undefined || !isUpgradePause(state.reason)) return;
+  io.log(
+    `The scheduled jobs stay paused while the upgrade is unfinished (${state.reason}): ` +
+      `\`${verbCommand('upgrade', options.mode)}\` again lifts the pause when it completes, and ` +
+      `\`${verbCommand('unpause', options.mode)}\` lifts it now.`,
+  );
 }
 
 /**
@@ -4446,6 +4892,10 @@ export async function runCommand(options: SetupOptions, io: SetupIo): Promise<nu
       return runRestore(options, io);
     case 'upgrade':
       return runUpgrade(options, io);
+    case 'pause':
+      return runPause(options, io);
+    case 'unpause':
+      return runUnpause(options, io);
     case undefined:
       return runSetup(options, io);
   }

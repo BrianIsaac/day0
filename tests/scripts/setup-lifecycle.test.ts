@@ -752,6 +752,62 @@ describe('a rerun over a volume nothing was pushed to', (): void => {
   });
 });
 
+describe('pausing the scheduled jobs', (): void => {
+  it('pause sets the flag with its reason and restarts the backend; a second pause changes nothing', async (): Promise<void> => {
+    const h = configured({ services: ['backend', 'sandbox', 'redactor'] });
+    expect(await runCommand(verb('pause'), h.io)).toBe(0);
+    expect(h.deploymentEnv().DAY0_CRONS_PAUSED).toMatch(/^paused by hand at \d{4}-\d{2}-\d{2}T/);
+    const lines = ran(h).split('\n');
+    const at = (text: string): number => lines.findIndex((line) => line.includes(text));
+    expect(at('convex env set DAY0_CRONS_PAUSED')).toBeGreaterThanOrEqual(0);
+    expect(at('convex env set DAY0_CRONS_PAUSED')).toBeLessThan(at('run convex:restart'));
+    expect(h.output.join('\n')).toContain('skip until `./setup.sh unpause`');
+
+    const again = configured({
+      services: ['backend'],
+      deploymentEnv: 'DAY0_CRONS_PAUSED=paused by hand at 2026-09-29T13:00:00Z\n',
+    });
+    expect(await runCommand(verb('pause'), again.io)).toBe(0);
+    expect(again.output.join('\n')).toContain(
+      'already paused (paused by hand at 2026-09-29T13:00:00Z); nothing was changed',
+    );
+    expect(ran(again)).not.toContain('convex env set');
+    expect(ran(again)).not.toContain('convex:restart');
+  });
+
+  it('unpause removes the flag and restarts the backend; with none set it changes nothing', async (): Promise<void> => {
+    const h = configured({
+      services: ['backend'],
+      deploymentEnv: 'DAY0_CRONS_PAUSED=paused by hand at 2026-09-29T13:00:00Z\n',
+    });
+    expect(await runCommand(verb('unpause'), h.io)).toBe(0);
+    expect(h.deploymentEnv().DAY0_CRONS_PAUSED).toBeUndefined();
+    expect(ran(h)).toContain('run convex:restart');
+
+    const running = configured({ services: ['backend'] });
+    expect(await runCommand(verb('unpause'), running.io)).toBe(0);
+    expect(running.output.join('\n')).toContain('not paused; nothing was changed');
+    expect(ran(running)).not.toContain('convex env remove');
+  });
+
+  it('refuses a stopped stack, whose jobs are not running either, and changes nothing', async (): Promise<void> => {
+    for (const command of ['pause', 'unpause'] as const) {
+      const h = configured({ services: [] });
+      expect(await runCommand(verb(command), h.io)).toBe(1);
+      expect(h.output.join('\n')).toContain(`${PROJECT}'s backend is not running`);
+      expect(ran(h)).not.toContain('convex env');
+    }
+  });
+
+  it('prints the commands and changes nothing on --dry-run', async (): Promise<void> => {
+    const h = configured({ services: ['backend'] });
+    expect(await runCommand(verb('pause', { dryRun: true }), h.io)).toBe(0);
+    expect(h.output.join('\n')).toContain('npx convex env set DAY0_CRONS_PAUSED --');
+    expect(h.deploymentEnv().DAY0_CRONS_PAUSED).toBeUndefined();
+    expect(ran(h)).not.toContain('convex:restart');
+  });
+});
+
 describe('backup, restore and upgrade (step 15)', (): void => {
   /** A home directory outside the checkout for the default backup location. */
   function home(): string {
@@ -885,6 +941,80 @@ describe('backup, restore and upgrade (step 15)', (): void => {
     expect(await runCommand(verb('backup'), h.io)).toBe(1);
     expect(h.output.join('\n')).toContain('a tar of a live database is not a backup');
     expect(ran(h)).not.toContain('tar czf');
+    rmSync(homeDirectory, { recursive: true, force: true });
+  });
+
+  it('pauses the scheduled jobs before its backup and push, and lifts its own pause once the check passes', async (): Promise<void> => {
+    const homeDirectory = home();
+    const h = configured({ services: ['backend'], environment: { HOME: homeDirectory } });
+    expect(await runCommand(verb('upgrade'), h.io)).toBe(0);
+    const lines = ran(h).split('\n');
+    const at = (text: string): number => lines.findIndex((line) => line.includes(text));
+    const paused = lines.find((line) => line.includes('convex env set DAY0_CRONS_PAUSED'));
+    expect(paused).toMatch(/-- upgrade to 0\.3\.0 at \d{4}-/);
+    expect(at('convex env set DAY0_CRONS_PAUSED')).toBeLessThan(at('tar czf'));
+    expect(at('tar czf')).toBeLessThan(at('convex dev --once'));
+    expect(at('run check:setup')).toBeLessThan(at('convex env remove DAY0_CRONS_PAUSED'));
+    expect(lines.slice(at('convex env remove DAY0_CRONS_PAUSED')).join('\n')).toContain(
+      'run convex:restart',
+    );
+    expect(h.deploymentEnv().DAY0_CRONS_PAUSED).toBeUndefined();
+    rmSync(homeDirectory, { recursive: true, force: true });
+  });
+
+  it('pauses a stopped stack as soon as its backend is up, before the release check and the push', async (): Promise<void> => {
+    const homeDirectory = home();
+    const h = configured({
+      services: ['backend', 'sandbox', 'redactor'],
+      servicesBeforeUp: [],
+      environment: { HOME: homeDirectory },
+    });
+    expect(await runCommand(verb('upgrade'), h.io)).toBe(0);
+    const lines = ran(h).split('\n');
+    const at = (text: string): number => lines.findIndex((line) => line.includes(text));
+    expect(at('run convex:up')).toBeLessThan(at('convex env set DAY0_CRONS_PAUSED'));
+    expect(at('convex env set DAY0_CRONS_PAUSED')).toBeLessThan(at('npx convex data'));
+    expect(at('convex env set DAY0_CRONS_PAUSED')).toBeLessThan(at('convex dev --once'));
+    expect(h.deploymentEnv().DAY0_CRONS_PAUSED).toBeUndefined();
+    rmSync(homeDirectory, { recursive: true, force: true });
+  });
+
+  it('leaves a pause set by hand as it found it', async (): Promise<void> => {
+    const homeDirectory = home();
+    const h = configured({
+      services: ['backend'],
+      environment: { HOME: homeDirectory },
+      deploymentEnv: 'DAY0_CRONS_PAUSED=paused by hand at 2026-09-29T13:00:00Z\n',
+    });
+    expect(await runCommand(verb('upgrade'), h.io)).toBe(0);
+    expect(h.deploymentEnv().DAY0_CRONS_PAUSED).toBe('paused by hand at 2026-09-29T13:00:00Z');
+    expect(ran(h)).not.toContain('convex env set DAY0_CRONS_PAUSED');
+    expect(ran(h)).not.toContain('convex env remove DAY0_CRONS_PAUSED');
+    expect(h.output.join('\n')).toContain('`./setup.sh unpause` lifts it');
+    rmSync(homeDirectory, { recursive: true, force: true });
+  });
+
+  it('keeps its pause when the check fails, and lifts one an unfinished upgrade left once it completes', async (): Promise<void> => {
+    const homeDirectory = home();
+    const failed = configured({
+      services: ['backend'],
+      environment: { HOME: homeDirectory },
+      failing: [{ match: 'run check:setup', status: 1, stderr: 'the redactor is not healthy' }],
+    });
+    expect(await runCommand(verb('upgrade'), failed.io)).toBe(1);
+    const left = failed.deploymentEnv().DAY0_CRONS_PAUSED;
+    expect(left).toMatch(/^upgrade to 0\.3\.0 at /);
+    expect(failed.output.join('\n')).toContain(
+      'The scheduled jobs stay paused while the upgrade is unfinished',
+    );
+
+    const again = configured({
+      services: ['backend'],
+      environment: { HOME: homeDirectory },
+      deploymentEnv: `DAY0_CRONS_PAUSED=${left}\n`,
+    });
+    expect(await runCommand(verb('upgrade'), again.io)).toBe(0);
+    expect(again.deploymentEnv().DAY0_CRONS_PAUSED).toBeUndefined();
     rmSync(homeDirectory, { recursive: true, force: true });
   });
 

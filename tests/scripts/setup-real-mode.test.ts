@@ -361,6 +361,33 @@ describe('where the Featherless key comes from', (): void => {
 });
 
 describe('the order the real-mode helpers run in', (): void => {
+  it('pauses the scheduled jobs of an upgrade once the admin key works, and releases them after the check', (): void => {
+    const steps = sequenceSteps('featherless', { mode: 'real', existing: true, upgrade: true });
+    expect(steps.slice(steps.indexOf('admin-key'), steps.indexOf('admin-key') + 3)).toEqual([
+      'admin-key',
+      'crons:pause',
+      'release:check',
+    ]);
+    expect(steps.slice(steps.indexOf('check:setup'))).toEqual(['check:setup', 'crons:unpause']);
+    expect(sequenceSteps('featherless', { mode: 'real', existing: true })).not.toContain(
+      'crons:pause',
+    );
+    expect(
+      stepCommands('crons:pause', {
+        mode: 'real',
+        route: 'featherless',
+        profiles: [],
+        project: 'p',
+        pauseReason: 'upgrade to 0.9.0',
+      }),
+    ).toEqual([
+      {
+        command: 'npx',
+        args: ['convex', 'env', 'set', 'DAY0_CRONS_PAUSED', '--', 'upgrade to 0.9.0'],
+      },
+    ]);
+  });
+
   it('adds the warm copy before the first up, the redactor after the sandbox, and reset first', (): void => {
     expect(
       sequenceSteps('featherless', { mode: 'real', warm: true, sandbox: 'local', reset: true }),
