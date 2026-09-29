@@ -281,6 +281,7 @@ function WholeWeek({ id, steps, anchor, open, card, onClose, onClosed }: WholeWe
         // While it shrinks back it is no longer modal: the page is live and focus is on the card.
         aria-modal={open ? 'true' : undefined}
         aria-hidden={open ? undefined : 'true'}
+        inert={!open}
         aria-label="The whole first week"
         tabIndex={-1}
         data-week={state}
@@ -294,6 +295,11 @@ function WholeWeek({ id, steps, anchor, open, card, onClose, onClosed }: WholeWe
           keepTabInside(event, event.currentTarget);
         }}
         onTransitionEnd={(event: TransitionEvent<HTMLDivElement>): void => {
+          if (!open && event.target === event.currentTarget) onClosed();
+        }}
+        // A shrink can be cancelled rather than end (reduced motion switched on part way), and
+        // nothing else would take the week away then.
+        onTransitionCancel={(event: TransitionEvent<HTMLDivElement>): void => {
           if (!open && event.target === event.currentTarget) onClosed();
         }}
         className="fixed right-0 left-0 mx-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] overflow-y-auto rounded-xl shadow-[0_1px_2px_rgba(0,0,0,0.4),0_16px_40px_-16px_rgba(0,0,0,0.8)] outline-none sm:w-[min(77rem,calc(100%-3rem))]"

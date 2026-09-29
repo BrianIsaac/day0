@@ -45,14 +45,17 @@ function key(name: string): void {
  * End an element's CSS transition. jsdom has no `TransitionEvent`, so React may listen for it
  * under a vendor name: each spelling is sent, as a browser sends the one it uses.
  */
-function transitionEnds(element: Element | null | undefined): void {
+function transitionEnds(
+  element: Element | null | undefined,
+  names: readonly string[] = [
+    'transitionend',
+    'webkitTransitionEnd',
+    'mozTransitionEnd',
+    'oTransitionEnd',
+  ],
+): void {
   act((): void => {
-    for (const name of [
-      'transitionend',
-      'webkitTransitionEnd',
-      'mozTransitionEnd',
-      'oTransitionEnd',
-    ]) {
+    for (const name of names) {
       element?.dispatchEvent(new Event(name, { bubbles: true }));
     }
   });
@@ -289,6 +292,20 @@ describe('FirstWeekCard', () => {
       transitionEnds(week?.querySelector('li'));
       expect(document.querySelector('[data-week]')).not.toBeNull();
       transitionEnds(week);
+      expect(document.querySelector('[data-week]')).toBeNull();
+    });
+  });
+
+  it('leaves when its shrink is cancelled rather than ended, and holds no focusable control as it goes (second pass)', async () => {
+    await withMotion(async () => {
+      const view = mount(page());
+      await press(view.container, NAME);
+      key('Escape');
+      const week = document.querySelector<HTMLElement>('[data-week]');
+      // Shrinking, the week is hidden from assistive technology and nothing in it takes focus.
+      expect(week?.hasAttribute('inert')).toBe(true);
+      // Reduced motion switched on mid-shrink cancels the transition: no end ever comes.
+      transitionEnds(week, ['transitioncancel']);
       expect(document.querySelector('[data-week]')).toBeNull();
     });
   });
