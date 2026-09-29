@@ -45,7 +45,7 @@ import { managerAnswersOf } from '../../../../convex/workActions';
 import {
   PlanApprovalForm,
   planApprovalRequest,
-} from '../../../../app/agent/[agentId]/work/PendingActions';
+} from '../../../../app/agent/[agentId]/work/PlanApproval';
 import { WorkItemCard } from '../../../../app/agent/[agentId]/work/WorkItemCard';
 import type { Charter } from '../../../../src/agent/charter';
 import { runSkill } from '../../../../src/work/execute-skill';

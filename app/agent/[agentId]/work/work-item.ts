@@ -72,6 +72,8 @@ export interface RunOutput {
   refusedClosing?: RefusedClosingRow;
   /** Actions an audit withheld after its one repair, never sent, with the reason. */
   withheldActions?: WithheldActionRow[];
+  /** A first phase whose approval starts the closing phase. */
+  needsDependentPhase?: boolean;
 }
 
 /** An action withheld from a run and never sent, with the reason. */
@@ -92,7 +94,8 @@ export interface RefusedClosingRow {
   withheldActions?: WithheldActionRow[];
 }
 
-type PhasedLedgerRow = LedgerRow & { phase?: 'prerequisite' | 'closing' };
+/** A ledger row labelled with the phase that applied it, when the run had two. */
+export type PhasedLedgerRow = LedgerRow & { phase?: 'prerequisite' | 'closing' };
 
 /**
  * Every applied row of a run, prerequisite phase first, each labelled with the
@@ -188,6 +191,33 @@ export function colleagueHolding(
   }
   if (typeof holder?.agentId !== 'string' || typeof holder.name !== 'string') return undefined;
   return { agentId: holder.agentId, name: holder.name };
+}
+
+/**
+ * Where each landed row sits in the run's ledger (`phasedLedger`): the landing moment's key. A
+ * run's ledger only grows, prerequisite rows first, so a row keeps its place once it has landed
+ * and the rows new since the page last looked are the ones at places it did not hold (M7).
+ *
+ * @param ledger - The run's rows, as `phasedLedger` gives them.
+ * @returns The places of the rows that reached the work environment, in ledger order.
+ */
+export function landedPlaces(ledger: ReadonlyArray<Pick<LedgerRow, 'ok' | 'held'>>): number[] {
+  return ledger.flatMap((row, place) => (row.ok && !row.held ? [place] : []));
+}
+
+/**
+ * The landed rows the manager has not seen land: those at places the landed set did not hold a
+ * moment ago. Nothing is new on a card's first render, where no earlier set is known.
+ *
+ * @param before - The landed places as the page last showed them (`landedPlaces` joined by
+ *   commas), or undefined when no landing is playing.
+ * @param now - The landed places now.
+ * @returns The places that just landed.
+ */
+export function justLanded(before: string | undefined, now: readonly number[]): Set<number> {
+  if (before === undefined) return new Set();
+  const seen = new Set(before === '' ? [] : before.split(',').map(Number));
+  return new Set(now.filter((place) => !seen.has(place)));
 }
 
 /** A ledger list row shows the short form of a long read result; the exact payload holds it whole. */
@@ -311,8 +341,8 @@ export function failedItemReason(item: {
     // The run asked its question and withheld the writes that wait on the answer.
     if (questionOpen && isOpenQuestionStop(detail)) {
       return unconfirmed
-        ? `stopped with a question open for you, and the writes that wait on it were never sent; confirm what landed below, then answer it with Retry with a note: ${detail}`
-        : `stopped with a question open for you, and the writes that wait on it were never sent; answer it with Retry with a note: ${detail}`;
+        ? `stopped with a question open for you, and the writes that wait on it were never sent; confirm what landed below, then answer it with Answer and retry: ${detail}`
+        : `stopped with a question open for you, and the writes that wait on it were never sent; answer it below with Answer and retry: ${detail}`;
     }
     // Stopped for something else while a question is open: a note on this
     // Retry answers nothing (wave 1.5 review D2 (b)), and a stop at the

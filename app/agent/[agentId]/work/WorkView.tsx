@@ -13,6 +13,7 @@ import {
 } from '../corrections-panel';
 import { useEmployee } from '../employee-context';
 import { EmployeeRail } from '../EmployeeRail';
+import { StateGlossary } from './StateGlossary';
 import { WorkQueue } from './WorkQueue';
 
 /**
@@ -32,6 +33,17 @@ export function WorkView() {
   // Real mode only: the mock has no switch, so nothing there ever flips it.
   const autonomyChanges = useQuery(api.events.autonomyChanges, real ? { agentId } : 'skip');
   const retireCorrection = useMutation(api.corrections.retire);
+  // The inbox's own read, which the shell already holds: the Needs you filter is its rule set.
+  const inbox = useQuery(api.work.needsYouForAgent, { agentId });
+  const needsYou = useMemo(
+    (): ReadonlySet<string> =>
+      new Set(
+        (inbox?.entries ?? []).flatMap((entry) =>
+          'workItemId' in entry ? [entry.workItemId as string] : [],
+        ),
+      ),
+    [inbox],
+  );
   const itemTitles = useMemo(
     (): Map<string, string> => new Map((workItems ?? []).map((item) => [item._id, item.title])),
     [workItems],
@@ -66,7 +78,10 @@ export function WorkView() {
         corrections={corrections}
         autonomyChanges={autonomyChanges ?? []}
         loading={workItems === undefined}
+        employeeName={agent.name}
+        needsYou={needsYou}
       />
+      <StateGlossary />
     </Columns>
   );
 }

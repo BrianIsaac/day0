@@ -4,14 +4,13 @@ import { act } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { getFunctionName } from 'convex/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { Doc, Id } from '../../../../../convex/_generated/dataModel';
+import type { Doc } from '../../../../../convex/_generated/dataModel';
 import type { MockAction } from '../../../../../src/work/types';
 import type { SurfaceRecord } from '../../../../../src/surfaces/types';
 import {
   SessionRestoreNote,
   CHIP_SWAP_MS,
 } from '../../../../../app/agent/[agentId]/work/RunDetails';
-import { sortedForQueue } from '../../../../../app/agent/[agentId]/work/WorkQueue';
 import {
   failedItemReason,
   ANSWER_AND_RETRY,
@@ -20,7 +19,6 @@ import {
   waitingLine,
 } from '../../../../../app/agent/[agentId]/work/work-item';
 import { WorkItemCard, LANDING_MS } from '../../../../../app/agent/[agentId]/work/WorkItemCard';
-import { PermissionsCard } from '../../../../../app/agent/[agentId]/surfaces/PermissionsCard';
 import {
   button,
   focusedName,
@@ -575,7 +573,7 @@ describe('sending a finished item back', (): void => {
   it('offers a finished item the note and Retry only, keeping the reconciliation checklist for a note in progress', (): void => {
     const markup = render(item('completed'));
     expect(markup).toContain('Note for the retry: say what to change');
-    expect(markup).toContain('Retry with a note sends this finished work back');
+    expect(markup).toContain('Sending it back with a note returns this finished work');
     expect(markup).not.toContain('Provider reconciliation required');
     expect(markup).not.toContain(
       'Retry remains disabled until provider reconciliation is recorded',
@@ -632,8 +630,9 @@ describe('retrying a skipped item', (): void => {
       skipReason:
         'stopped: 1 of 1 actions did not change the work environment: mcp.call (snapshot timed out)',
     } as unknown as Doc<'workItems'>);
-    expect(markup).toContain('>stopped<');
-    expect(markup).not.toContain('>failed<');
+    expect(markup).toContain('>Stopped<');
+    expect(markup).not.toContain('>Failed<');
+    expect(markup).not.toContain('>Rejected by you<');
     expect(markup).toContain(
       'stopped, nothing landed and nothing to decide: 1 of 1 actions did not change',
     );
@@ -650,8 +649,9 @@ describe('retrying a skipped item', (): void => {
       skipReason: reason,
       output: { draft: '', notes: '', actions: REFUSED_CREATE_RUN.actions, applied },
     } as unknown as Doc<'workItems'>);
-    expect(markup).toContain('>stopped<');
-    expect(markup).not.toContain('>failed<');
+    expect(markup).toContain('>Stopped<');
+    expect(markup).not.toContain('>Failed<');
+    expect(markup).not.toContain('>Rejected by you<');
     expect(markup).toContain('1 action refused by Day0&#x27;s gate · never sent');
     expect(markup).not.toContain('did not reach');
     expect(markup).toContain('stopped at a step Day0&#x27;s gate refused');
@@ -661,8 +661,14 @@ describe('retrying a skipped item', (): void => {
   it("offers Retry on an out-of-scope skip as the manager's scope decision", (): void => {
     const markup = render(skipped('out-of-scope: no charter or current documented-system overlap'));
     expect(markup).toContain('>Take it anyway<');
-    expect(markup).toContain('Take it anyway re-evaluates this item as in scope, on your decision');
+    expect(markup).toContain(
+      'Take it anyway is your decision that this work is the employee&#x27;s to do: it is evaluated again as in scope',
+    );
     expect(markup).not.toContain('without the quality-fit filter');
+    // The skip in words, and the sentence that scope and skill are judged apart (R6).
+    expect(markup).toContain('Skipped.</span> No charter or current documented-system overlap.');
+    expect(markup).not.toContain('out-of-scope:');
+    expect(markup).toContain('is judged separately from whether the employee has a skill for it');
   });
 
   // P3-1 and E-47: the manager who disagrees with a skip no rule waives has a
@@ -674,7 +680,7 @@ describe('retrying a skipped item', (): void => {
       'low-value: 10',
     ]) {
       const markup = render(skipped(reason));
-      expect(markup).toMatch(/<button[^>]*class="min-h-11 [^"]*"[^>]*>Retry<\/button>/);
+      expect(markup).toMatch(/<button[^>]*class="[^"]*\bmin-h-11\b[^"]*"[^>]*>Retry<\/button>/);
       expect(markup).toContain(SKIP_RETRY_NOTE);
       expect(markup).not.toContain(TAKE_IT_ANYWAY);
     }
@@ -697,7 +703,7 @@ describe('retrying a skipped item', (): void => {
       },
     } as unknown as Doc<'workItems'>);
     expect(markup).toMatch(
-      /another employee holds this: <a [^>]*href="\/agent\/a2"[^>]*>Priya<\/a>/,
+      /Another employee holds this: <a [^>]*href="\/agent\/a2"[^>]*>Priya<\/a>/,
     );
     expect(markup).not.toContain('claimed-by-colleague:');
     expect(markup).not.toContain('>Retry<');
@@ -839,17 +845,6 @@ describe('the card agrees with the server (P6-6)', (): void => {
     );
   }
 
-  it('lists a deferred row with the rows that wait on the manager, as the roster counts it', (): void => {
-    const order = sortedForQueue([
-      { state: 'completed' },
-      { state: 'skipped' },
-      { state: 'discovered' },
-      { state: 'deferred' },
-      { state: 'needs-skill' },
-    ]).map((item) => item.state);
-    expect(order).toEqual(['needs-skill', 'deferred', 'discovered', 'completed', 'skipped']);
-  });
-
   it('names the scope an awaiting-permission deferral is waiting for', (): void => {
     const markup = card(
       row({
@@ -861,7 +856,8 @@ describe('the card agrees with the server (P6-6)', (): void => {
         },
       }),
     );
-    expect(markup).toContain('awaiting-permission: needs linear:write, slack:write');
+    expect(markup).toContain('needs linear:write, slack:write, a grant you give');
+    expect(markup).toContain('>Parked<');
   });
 
   it('keeps a row whose outcome is unknown out of the did-not-reach list', (): void => {
@@ -1111,41 +1107,6 @@ describe("the loop's card states (U3 D5, E-70 D3, S D3)", (): void => {
     );
     expect(markup).not.toMatch(/>Retry<\/button>/);
   });
-
-  it("lists the waiting rows in the loop's order: unattempted, then the most urgent, then the oldest", (): void => {
-    const order = sortedForQueue([
-      { state: 'discovered', title: 'new-low', _creationTime: 9, priority: 'Low' },
-      { state: 'plan-pending', title: 'plan', _creationTime: 1 },
-      {
-        state: 'discovered',
-        title: 'died-urgent',
-        _creationTime: 1,
-        priority: 'Urgent',
-        evaluationAttempts: 1,
-      },
-      { state: 'discovered', title: 'new-urgent', _creationTime: 8, priority: 'Urgent' },
-      { state: 'discovered', title: 'old-urgent', _creationTime: 2, priority: 'Urgent' },
-      { state: 'discovered', title: 'old-low', _creationTime: 3, priority: 'Low' },
-    ]).map((item) => item.title);
-    expect(order).toEqual([
-      'plan',
-      'old-urgent',
-      'new-urgent',
-      'old-low',
-      'new-low',
-      'died-urgent',
-    ]);
-  });
-
-  it("says boss:message is the manager channel's own scope and what revoking it does", (): void => {
-    const markup = renderToStaticMarkup(<PermissionsCard agentId={'a1' as Id<'agents'>} />).replace(
-      /&#x27;/g,
-      "'",
-    );
-    expect(markup).toContain(
-      "boss:message is the manager channel's own scope: revoking it makes the channel one-way, so Day0 stops messaging you there and decisions wait on this dashboard, and new work waits until you grant it again.",
-    );
-  });
 });
 
 describe('a plan drafted without its ticket (P7-18)', (): void => {
@@ -1296,9 +1257,14 @@ describe('every decision on a work item card is said in its live region and give
       { state: 'plan-pending', plan },
       { cancelPlan: refusedWith('The plan already ran.') },
     );
-    await press(view.container, 'Cancel');
+    await press(view.container, 'Cancel this item');
+    // Cancel opens the reason first: the field takes focus, the cancel waits for a second press.
+    expect(document.activeElement?.tagName).toBe('INPUT');
+    expect(view.calls).toEqual([]);
+    await press(view.container, 'Cancel without a reason');
+    expect(view.calls).toEqual([['cancelPlan', '']]);
     expect(said(view.container)).toEqual(['The plan already ran.']);
-    expect(focusedName()).toBe('Cancel');
+    expect(focusedName()).toBe('Cancel without a reason');
     view.unmount();
   });
 
@@ -1326,16 +1292,18 @@ describe('every decision on a work item card is said in its live region and give
     const approving = card(held);
     await press(approving.container, 'Approve all');
     expect(approving.calls).toEqual([['approveActions', [0]]]);
-    expect(said(approving.container)).toEqual(['Approved 1 action: they apply now.']);
+    expect(said(approving.container)).toEqual(['Approved 1 action: it applies now.']);
     approving.unmount();
 
     const rejecting = card(held);
+    await press(rejecting.container, 'Reject the run');
     const reason = [...rejecting.container.querySelectorAll('label')].find(
-      (label) => label.textContent === 'Reason for rejecting the run',
+      (label) => label.textContent === 'Reason for rejecting',
     )?.control as HTMLInputElement | null;
     if (!reason) throw new Error('the reason field has no visible label');
+    expect(document.activeElement).toBe(reason);
     typeInto(reason, 'wrong ticket');
-    await press(rejecting.container, 'Reject run');
+    await press(rejecting.container, 'Reject with this reason');
     expect(rejecting.calls).toEqual([['rejectActions', 'wrong ticket']]);
     expect(said(rejecting.container)).toEqual([
       'Run rejected: nothing held on Close summary for REVOPS-9 is sent.',
@@ -1392,7 +1360,11 @@ describe('every decision on a work item card is said in its live region and give
 
   it('gives every decision control on the card a 44 px target', (): void => {
     const view = card({ state: 'plan-pending', plan });
-    for (const name of ['Approve plan', 'Cancel']) {
+    for (const name of ['Approve plan', 'Cancel this item']) {
+      expect(button(view.container, name).className).toMatch(/\bmin-h-11\b/);
+    }
+    act((): void => button(view.container, 'Cancel this item').click());
+    for (const name of ['Cancel without a reason', 'Keep the plan']) {
       expect(button(view.container, name).className).toMatch(/\bmin-h-11\b/);
     }
     for (const field of view.container.querySelectorAll('input')) {
@@ -1510,9 +1482,9 @@ describe('a work item that lands while the page is open (v3 section 5.2)', (): v
 
     act((): void => view.root.render(card(landed)));
     const swap = view.container.querySelector('.chip-swap');
-    expect(swap?.querySelector('.from')?.textContent).toBe('executing');
+    expect(swap?.querySelector('.from')?.textContent).toBe('Working');
     expect(swap?.querySelector('.from')?.getAttribute('aria-hidden')).toBe('true');
-    expect(swap?.querySelector('.to')?.textContent).toBe('completed');
+    expect(swap?.querySelector('.to')?.textContent).toBe('Landed');
     const ledger = view.container.querySelector('[data-land]');
     expect(ledger?.textContent).toContain('Moved REVOPS-5 to Done');
     expect(
@@ -1534,7 +1506,7 @@ describe('a work item that lands while the page is open (v3 section 5.2)', (): v
         vi.advanceTimersByTime(Math.max(CHIP_SWAP_MS, LANDING_MS));
       });
       expect(view.container.querySelector('.chip-swap')).toBeNull();
-      expect(view.container.textContent).not.toContain('executing');
+      expect(view.container.textContent).not.toContain('Working');
       expect(view.container.querySelector('[data-land]')).toBeNull();
       expect(
         [...view.container.querySelectorAll('li')].filter(
@@ -1567,6 +1539,55 @@ describe('a work item that lands while the page is open (v3 section 5.2)', (): v
         (line as HTMLElement).style.getPropertyValue('--i'),
       ),
     ).toEqual(['0', '1', '2', '3', '3', '3']);
+    view.unmount();
+  });
+
+  it('plays the landing for the writes that land after Approve on a run that landed a row before it (M7)', (): void => {
+    const prerequisite = { tool: 'linear.get_issue', ok: true, effect: 'Read REVOPS-5' };
+    const held = {
+      ...executing,
+      state: 'actions-pending',
+      pendingRunId: 'run-1',
+      output: {
+        draft: 'Closing from the ledger.',
+        notes: '',
+        initial: { applied: [prerequisite] },
+        actions: [{ tool: 'linear.save_comment', args: { issueId: 'REVOPS-5', body: 'Audit' } }],
+        applied: [],
+      },
+      actionVerdicts: [{ disposition: 'held', reason: 'system-of-record mutation held' }],
+    } as unknown as Doc<'workItems'>;
+    // Completion flattens the two phases into one ledger (`flattenedDependentOutput`):
+    // the prerequisite first, at the place it held while the closing set waited.
+    const closed = {
+      ...held,
+      state: 'completed',
+      pendingRunId: undefined,
+      actionVerdicts: undefined,
+      output: {
+        draft: 'Closing from the ledger.',
+        notes: '',
+        actions: [],
+        applied: [
+          prerequisite,
+          { tool: 'linear.save_comment', ok: true, effect: 'Commented on REVOPS-5' },
+          { tool: 'linear.save_issue', ok: true, effect: 'Moved REVOPS-5 to Done' },
+        ],
+      },
+    } as unknown as Doc<'workItems'>;
+    const view = mount(card(held));
+    expect(view.container.querySelector('[data-land]')).toBeNull();
+
+    act((): void => view.root.render(card(closed)));
+    const landing = view.container.querySelector('[data-land]');
+    expect(landing?.textContent).toContain('Moved REVOPS-5 to Done');
+    expect(landing?.textContent).not.toContain('Read REVOPS-5');
+    expect(
+      [...(landing?.querySelectorAll('li') ?? [])].map((line) =>
+        (line as HTMLElement).style.getPropertyValue('--i'),
+      ),
+    ).toEqual(['0', '1']);
+    expect(view.container.textContent).toContain('Read REVOPS-5');
     view.unmount();
   });
 

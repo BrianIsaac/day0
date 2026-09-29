@@ -105,11 +105,14 @@ export function stoppedRowOffersMove(row: Doc<'workItems'>): boolean {
  * A run that stopped or failed leaves the next move to the manager: answer
  * what it asked, direct it, or send it again. A row the manager's own
  * rejection failed waits on nobody: Retry is there, but the last decision
- * was theirs.
+ * was theirs. Nor does a row the manager dismissed (N7): its Retry is still
+ * on its card.
  *
  * @param row - A failed row whose card offers a move.
  * @returns True when the row counts under needs-you.
  */
 export function stoppedRowNeedsManager(row: Doc<'workItems'>): boolean {
-  return row.skipReason?.startsWith(MANAGER_REJECTION_PREFIX) !== true;
+  return (
+    row.dismissedAt === undefined && row.skipReason?.startsWith(MANAGER_REJECTION_PREFIX) !== true
+  );
 }

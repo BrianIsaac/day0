@@ -159,9 +159,7 @@ describe(
       const sent: Array<string | undefined> = [];
       const markup = card(skipped, (feedback) => sent.push(feedback));
       expect(markup).toContain('>Take it anyway<');
-      expect(markup).toContain(
-        'Take it anyway re-evaluates this item as in scope, on your decision',
-      );
+      expect(markup).toContain('Take it anyway is your decision that this work is');
       expect(retryRequest(skipped._id, '  ')).toEqual({ workItemId });
       expect(retryRequest(skipped._id, 'The venue is ours to book.')).toEqual({
         workItemId,

@@ -38,6 +38,18 @@ vi.mock('convex/react', () => {
   };
 });
 
+describe('the permissions card’s words', (): void => {
+  it("says boss:message is the manager channel's own scope and what revoking it does", (): void => {
+    const markup = renderToStaticMarkup(<PermissionsCard agentId={'a1' as Id<'agents'>} />).replace(
+      /&#x27;/g,
+      "'",
+    );
+    expect(markup).toContain(
+      "boss:message is the manager channel's own scope: revoking it makes the channel one-way, so Day0 stops messaging you there and decisions wait on this dashboard, and new work waits until you grant it again.",
+    );
+  });
+});
+
 describe('revoking and granting a permission from the card (step 45, P6-7)', (): void => {
   it('gives two scopes that differ only in punctuation two button ids', (): void => {
     const markup = renderToStaticMarkup(

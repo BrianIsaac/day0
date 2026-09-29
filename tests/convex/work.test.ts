@@ -6878,6 +6878,143 @@ describe('work.needsYou', (): void => {
   });
 });
 
+describe('work.dismissFailed (N7)', (): void => {
+  async function stopped(harness: Harness): Promise<{
+    agentId: Id<'agents'>;
+    workItemId: Id<'workItems'>;
+  }> {
+    const { agentId, workItemId } = await seed(harness, 'failed');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        skipReason: 'stopped: nothing landed and nothing to decide',
+      });
+    });
+    return { agentId, workItemId };
+  }
+
+  it('takes a stopped item out of the inbox and keeps it, until a Retry sends it back', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await stopped(harness);
+    const inbox = async (): Promise<string[]> =>
+      (await harness.withIdentity(OWNER).query(api.work.needsYouForAgent, { agentId })).entries.map(
+        (entry) => entry.kind,
+      );
+    expect(await inbox()).toEqual(['stopped']);
+
+    await harness.withIdentity(OWNER).mutation(api.work.dismissFailed, { workItemId });
+
+    const dismissed = await readItem(harness, workItemId);
+    expect(dismissed.state).toBe('failed');
+    expect(dismissed.dismissedAt).toEqual(expect.any(Number));
+    expect(await inbox()).toEqual([]);
+
+    await harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId });
+    expect((await readItem(harness, workItemId)).dismissedAt).toBeUndefined();
+  });
+
+  it('refuses to dismiss a stop whose write may have landed until the provider is reconciled', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await seed(harness, 'failed');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        skipReason: 'stopped: a write may have landed',
+        output: {
+          draft: 'd',
+          notes: '',
+          actions: [pendingOutput.actions[0]],
+          applied: [
+            { tool: 'mcp.call', ok: false, outcomeUnknown: true, idempotencyKey: 'comment' },
+          ],
+        },
+      });
+    });
+    const refusal = harness.withIdentity(OWNER).mutation(api.work.dismissFailed, { workItemId });
+    await expect(refusal).rejects.toBeInstanceOf(ConvexError);
+    await expect(refusal).rejects.toMatchObject({
+      data: 'A write on this item may have landed: confirm it against the provider before you dismiss it.',
+    });
+    expect((await readItem(harness, workItemId)).dismissedAt).toBeUndefined();
+  });
+
+  it('dismisses once, and refuses an item that is not failed or not the caller’s', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await stopped(harness);
+    await harness.withIdentity(OWNER).mutation(api.work.dismissFailed, { workItemId });
+    const first = (await readItem(harness, workItemId)).dismissedAt;
+    await harness.withIdentity(OWNER).mutation(api.work.dismissFailed, { workItemId });
+    expect((await readItem(harness, workItemId)).dismissedAt).toBe(first);
+
+    await expect(
+      harness
+        .withIdentity({ subject: 'intruder' })
+        .mutation(api.work.dismissFailed, { workItemId }),
+    ).rejects.toThrow('forbidden');
+    const { workItemId: pending } = await seed(harness, 'plan-pending');
+    const refusal = harness
+      .withIdentity(OWNER)
+      .mutation(api.work.dismissFailed, { workItemId: pending });
+    await expect(refusal).rejects.toBeInstanceOf(ConvexError);
+    await expect(refusal).rejects.toMatchObject({
+      data: 'Only a stopped or rejected item can be dismissed; this one has moved on.',
+    });
+  });
+});
+
+describe('work.earlierPlan (round two 3.7, attempt two)', (): void => {
+  it('reads the plan drafted for the item before the manager cancelled it, and none of another item’s', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'plan-pending');
+    const other = await harness.run(async (ctx) => {
+      const draft = (id: Id<'workItems'>, summary: string) =>
+        ctx.db.insert('events', {
+          agentId,
+          type: 'work.plan-drafted',
+          payload: { workItemId: id, plan: { summary, steps: [`${summary} step`] } },
+          createdAt: 1,
+        });
+      await draft(workItemId, 'First plan');
+      const otherId = await ctx.db.insert('workItems', {
+        agentId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'REVOPS-2',
+        title: 'Another',
+        contentSummary: 's',
+        contentRefs: [],
+        state: 'plan-pending',
+        observedAt: 1,
+        createdAt: 1,
+      });
+      await draft(otherId, 'Another item’s plan');
+      return otherId;
+    });
+    // The cancel comes after the first plan; the redraft after the cancel.
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, { planRejectedAt: Date.now() + 1 });
+    });
+    vi.useRealTimers();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('events', {
+        agentId,
+        type: 'work.plan-drafted',
+        payload: { workItemId, plan: { summary: 'Redraft', steps: ['Redraft step'] } },
+        createdAt: 2,
+      });
+    });
+    const owner = harness.withIdentity(OWNER);
+    expect(await owner.query(api.work.earlierPlan, { workItemId })).toEqual({
+      summary: 'First plan',
+      steps: ['First plan step'],
+      draftedAt: expect.any(Number),
+    });
+    expect(await owner.query(api.work.earlierPlan, { workItemId: other })).toBeNull();
+    await expect(
+      harness.withIdentity({ subject: 'stranger' }).query(api.work.earlierPlan, { workItemId }),
+    ).rejects.toThrow('forbidden');
+  });
+});
+
 describe('work.needsYou, dating a wait', (): void => {
   async function employee(harness: Harness): Promise<Id<'agents'>> {
     return await harness.run(

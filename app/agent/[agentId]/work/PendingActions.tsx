@@ -4,23 +4,62 @@ import type { MockAction, ArgumentRepairAttempt } from '@/work/types';
 import { type ActionVerdict, HELD_WITHHELD_TRANSITION } from '@/surfaces/policy';
 import type { SurfaceRecord } from '@/surfaces/types';
 import { type ReplyTarget, summariseAction } from '@/surfaces/summary';
-import { useId, useMemo, useState } from 'react';
-import { pendingHeadline, type RunOutput, pendingVerdicts } from './work-item';
+import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { Button } from '../../../components/Button';
+import { Disclosure } from '../../../components/Disclosure';
+import { Field, INPUT_CLASS } from '../../../components/Field';
+import { type WorkGate, writesWhenRunFinishes } from '@/work/item-display';
+import { ItemFoot, ItemSection } from './ItemParts';
+import { pendingHeadline } from './work-item';
 import {
   HELD_WITHHELD_TRANSITION_NOTE,
   HELD_BEFORE_AUTONOMY_NOTE,
   HELD_WHILE_SUPERVISED_NOTE,
 } from '@/work/autonomy';
 import { ActionPayload, RepairNote } from './RunDetails';
-import type { Id, Doc } from '@convex/_generated/dataModel';
-import { useChange } from '../../../components/use-change';
-import { StatusRegion } from '../../../components/StatusRegion';
 
 /**
- * The exact-action gate: every row the ladder did not apply on its own,
- * verbatim, with a checkbox each. Rows classified `auto` were applied before
- * the manager saw the card and are listed with the changes that reached the
- * work environment; nothing else reaches a surface until it is approved here.
+ * The gate's reason for holding a row, as a sentence of its own and to the manager: "Held for you."
+ * for "held for the manager".
+ *
+ * @param reason - The verdict's reason.
+ */
+export function heldSentence(reason: string): string {
+  const text = reason.trim().replace(/\bthe manager\b/g, 'you');
+  const capital = `${text.charAt(0).toUpperCase()}${text.slice(1)}`;
+  return /[.!?]$/.test(capital) ? capital : `${capital}.`;
+}
+
+/**
+ * The consequence line under the held writes' controls: what each control sends, and for a run
+ * in two phases, that approving starts its closing phase.
+ *
+ * @param employeeName - Who authored the writes.
+ * @param closing - Whether this is a first phase whose approval starts the closing phase.
+ * @param autonomous - Whether autonomous actions are on, for what the closing phase applies.
+ * @param gate - The deployment's gate.
+ */
+export function heldActionsWhy(
+  employeeName: string,
+  closing: boolean,
+  autonomous = false,
+  gate: WorkGate = 'real',
+): string {
+  const send = `Approve selected sends the ticked writes as ${employeeName} wrote them; Approve all sends every held write.`;
+  const next = closing
+    ? ` Approving starts the closing phase; when it finishes, ${writesWhenRunFinishes(autonomous, gate)}.`
+    : '';
+  return `${send}${next} Rejecting ends this run with nothing held sent and keeps your reason on the item.`;
+}
+
+/**
+ * The exact-action gate, as round two section 3.7 draws it: on the warn ground, every row the
+ * ladder did not apply on its own, in words first with a tick each, the verbatim payload one
+ * 13 px disclosure away, and "Withhold this one" to leave a row out. Approve counts what is
+ * ticked, so "Approve selected (1)" and "Approve all" never mean the same thing; Reject opens
+ * a reason and reads "Reject with this reason", so the two are not twins. Rows classified
+ * `auto` were applied before the manager saw the card and are listed with the changes that
+ * reached the work environment; nothing else reaches a surface until it is approved here.
  */
 export function PendingActions({
   actions,
@@ -30,8 +69,12 @@ export function PendingActions({
   autonomousActions = false,
   repairs,
   busy = false,
+  employeeName = 'the employee',
+  closing = false,
+  gate = 'real',
   onApprove,
   onReject,
+  children,
 }: {
   actions: MockAction[];
   verdicts: ActionVerdict[];
@@ -43,12 +86,20 @@ export function PendingActions({
   repairs?: ArgumentRepairAttempt[];
   /** A decision on this card is in flight; the controls wait for it. */
   busy?: boolean;
+  /** Who authored the writes, as the consequence line names them. */
+  employeeName?: string;
+  /** Whether approving starts the run's closing phase. */
+  closing?: boolean;
+  /** The deployment's gate, for what the closing phase applies. */
+  gate?: WorkGate;
   /** Approve the rows; the card says what it came to in its live region. */
   onApprove: (approvedIndexes: number[]) => void;
   /** Reject the run with the manager's reason; said on the card too. */
   onReject: (reason: string) => void;
+  /** What the manager reads before deciding, between the held writes and the controls: the draft. */
+  children?: ReactNode;
 }) {
-  const reasonId = useId();
+  const id = useId();
   // The gate decided each row when it held the run: `auto` rows are already
   // applied and are not shown here; `refused` rows (a missing grant, an
   // unconnected surface, a forged trailer) cannot be ticked and the server
@@ -75,6 +126,17 @@ export function PendingActions({
   );
   const [selected, setSelected] = useState<Set<number>>(() => new Set(heldIndexes));
   const [reason, setReason] = useState('');
+  const [rejecting, setRejecting] = useState(false);
+  const reasonField = useRef<HTMLInputElement>(null);
+  const rejectControl = useRef<HTMLButtonElement>(null);
+  const opened = useRef(false);
+  // The reason is the next thing the manager writes once Reject opens it;
+  // closing it without rejecting gives focus back to Reject.
+  useEffect(() => {
+    if (rejecting) reasonField.current?.focus();
+    else if (opened.current) rejectControl.current?.focus();
+    opened.current = rejecting;
+  }, [rejecting]);
 
   function toggle(index: number, on: boolean): void {
     setSelected((current) => {
@@ -86,515 +148,185 @@ export function PendingActions({
   }
 
   const anyRefused = refusedIndexes.size > 0;
+  const withheld = heldIndexes.filter((index) => !selected.has(index)).length;
   return (
-    <div className="mt-3 p-2 rounded-md bg-[var(--color-warn)]/10 border border-[var(--color-warn)]/30 text-xs">
-      <p className="text-[var(--color-warn)] font-medium mb-1">{pendingHeadline(verdicts)}</p>
-      {heldIndexes.length > 0 ? (
-        <p className="text-[var(--color-muted)] mb-1">
-          {heldIndexes.every((index) => {
-            const verdict = verdicts[index];
-            return verdict?.disposition === 'held' && verdict.reason === HELD_WITHHELD_TRANSITION;
-          })
-            ? HELD_WITHHELD_TRANSITION_NOTE
-            : autonomousActions
-              ? HELD_BEFORE_AUTONOMY_NOTE
-              : HELD_WHILE_SUPERVISED_NOTE}
+    <>
+      <ItemSection tone="warn">
+        <p className="text-[15px] font-semibold text-[var(--color-warn)]">
+          {pendingHeadline(verdicts)}
+          {withheld > 0 ? ` · ${withheld} withheld by you` : ''}
         </p>
-      ) : null}
-      {actions.length === 0 ? (
-        <p className="text-[var(--color-muted)]">
-          The skill emitted no actions. Approving lands nothing; reject to send it back.
-        </p>
-      ) : (
-        <ul className="space-y-1.5">
-          {shown.map(({ action, index }) => {
-            const verdict = verdicts[index];
-            const refused = verdict?.disposition === 'refused';
-            const on = selected.has(index);
-            const summary = summariseAction(action, surfaces, { replyTarget });
-            return (
-              <li key={index} className="flex items-start gap-2">
-                <label className="flex min-h-11 min-w-11 shrink-0 items-center justify-center">
-                  <input
-                    type="checkbox"
-                    checked={on}
-                    disabled={busy || refused}
-                    onChange={(event) => toggle(index, event.target.checked)}
-                    aria-label={`approve: ${summary}`}
-                  />
-                </label>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs text-[var(--color-fg)] break-words">
-                    {summary}
-                    {refused ? (
-                      <span className="text-[var(--color-warn)]">
-                        {' '}
-                        · refused · {verdict.reason}
-                      </span>
-                    ) : verdict?.disposition === 'held' ? (
-                      <span className="text-[var(--color-muted)]"> · {verdict.reason}</span>
-                    ) : null}
-                  </p>
-                  <details className="mt-0.5">
-                    <summary className="min-h-11 py-3 text-[10px] text-[var(--color-muted)] cursor-pointer select-none">
-                      exact payload
-                    </summary>
-                    <ActionPayload action={action} />
-                  </details>
-                  <RepairNote repair={repairs?.find((attempt) => attempt.index === index)} />
-                  <div className="flex items-center gap-2 mt-0.5">
-                    {!refused && !on ? (
-                      <span className="text-[10px] text-[var(--color-muted)]">
-                        held · will not be sent
-                      </span>
-                    ) : null}
-                    {refused ? null : on ? (
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() => toggle(index, false)}
-                        aria-label={`reject this action: ${summary}`}
-                        className="min-h-11 px-1 text-[10px] text-[var(--color-danger)] underline"
-                      >
-                        reject this action
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() => toggle(index, true)}
-                        aria-label={`include: ${summary}`}
-                        className="min-h-11 px-1 text-[10px] text-[var(--color-accent)] underline"
-                      >
-                        include
-                      </button>
-                    )}
+        {heldIndexes.length > 0 ? (
+          <p className="text-[13px] text-[var(--color-fg-2)]">
+            {heldIndexes.every((index) => {
+              const verdict = verdicts[index];
+              return verdict?.disposition === 'held' && verdict.reason === HELD_WITHHELD_TRANSITION;
+            })
+              ? HELD_WITHHELD_TRANSITION_NOTE
+              : autonomousActions
+                ? HELD_BEFORE_AUTONOMY_NOTE
+                : HELD_WHILE_SUPERVISED_NOTE}
+          </p>
+        ) : null}
+        {actions.length === 0 ? (
+          <p className="text-sm text-[var(--color-fg-2)]">
+            The skill emitted no actions. Approving lands nothing; reject to send it back.
+          </p>
+        ) : (
+          <ul className="grid">
+            {shown.map(({ action, index }) => {
+              const verdict = verdicts[index];
+              const refused = verdict?.disposition === 'refused';
+              const on = selected.has(index);
+              // The short form names the tick; the row itself reads the whole message, so the
+              // manager approves what they have read in words, not only in the payload.
+              const summary = summariseAction(action, surfaces, { replyTarget });
+              const words = summariseAction(action, surfaces, {
+                replyTarget,
+                textLimit: HELD_TEXT_LIMIT,
+              });
+              return (
+                <li
+                  key={index}
+                  className="grid grid-cols-[44px_minmax(0,1fr)] gap-x-2 border-t border-[var(--color-warn-line)] py-3 first:border-t-0"
+                >
+                  <label className="flex min-h-11 min-w-11 items-start justify-center pt-3">
+                    <input
+                      type="checkbox"
+                      checked={on}
+                      disabled={busy || refused}
+                      onChange={(event) => toggle(index, event.target.checked)}
+                      aria-label={`approve: ${summary}`}
+                      className="size-[18px] accent-[var(--color-accent)]"
+                    />
+                  </label>
+                  <div className="min-w-0 pt-2.5">
+                    <p
+                      className={`text-[15px] break-words ${
+                        refused || !on
+                          ? 'text-[var(--color-muted)] line-through decoration-[var(--color-border-2)]'
+                          : 'font-medium text-[var(--color-fg)]'
+                      }`}
+                    >
+                      {words}
+                    </p>
+                    <p className="text-[13px] text-[var(--color-muted)]">
+                      {refused
+                        ? `Refused by Day0's gate: ${verdict.reason}. It cannot be sent.`
+                        : !on
+                          ? 'Withheld by you: it will not be sent, and stays in the record.'
+                          : verdict?.disposition === 'held' && verdict.reason
+                            ? heldSentence(verdict.reason)
+                            : null}
+                    </p>
+                    <div className="flex flex-wrap items-center gap-x-4">
+                      {refused ? null : (
+                        <Button
+                          variant="text"
+                          size="small"
+                          disabled={busy}
+                          onClick={() => toggle(index, !on)}
+                          aria-label={`${on ? 'Withhold this one' : 'Include it again'}: ${summary}`}
+                        >
+                          {on ? 'Withhold this one' : 'Include it again'}
+                        </Button>
+                      )}
+                      <Disclosure summary="Exact payload">
+                        <ActionPayload action={action} />
+                      </Disclosure>
+                    </div>
+                    <RepairNote repair={repairs?.find((attempt) => attempt.index === index)} />
                   </div>
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-      <div className="flex flex-wrap items-center gap-2 mt-2">
-        <button
-          type="button"
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </ItemSection>
+      {children}
+      <ItemFoot why={heldActionsWhy(employeeName, closing, autonomousActions, gate)}>
+        <Button
+          variant="approve"
+          size="large"
           disabled={busy || actions.length === 0}
           onClick={() => onApprove([...selected].sort((a, b) => a - b))}
-          className="min-h-11 px-3 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] text-xs font-medium disabled:opacity-50"
         >
           Approve selected ({selected.size})
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button
           disabled={busy || anyRefused || heldIndexes.length === 0}
           title={anyRefused ? APPROVE_ALL_REFUSED : undefined}
-          aria-describedby={anyRefused ? `${reasonId}-all` : undefined}
-          onClick={() => onApprove(heldIndexes)}
-          className="min-h-11 px-3 rounded-md border border-[var(--color-ok)]/40 text-[var(--color-ok)] text-xs disabled:opacity-40 disabled:cursor-not-allowed"
+          aria-describedby={anyRefused ? `${id}-all` : undefined}
+          onClick={() => {
+            // Every held write goes, so every one is shown ticked again.
+            setSelected(new Set(heldIndexes));
+            onApprove(heldIndexes);
+          }}
         >
           Approve all
-        </button>
+        </Button>
+        <Button
+          ref={rejectControl}
+          aria-expanded={rejecting}
+          aria-controls={rejecting ? `${id}-reject` : undefined}
+          disabled={busy}
+          onClick={() => setRejecting((open) => !open)}
+        >
+          Reject the run
+        </Button>
         {anyRefused ? (
-          <p id={`${reasonId}-all`} className="basis-full text-[10px] text-[var(--color-muted)]">
+          <p id={`${id}-all`} className="basis-full text-[13px] text-[var(--color-muted)]">
             {APPROVE_ALL_REFUSED}
           </p>
         ) : null}
-        <label htmlFor={reasonId} className="basis-full text-[10px] text-[var(--color-muted)]">
-          Reason for rejecting the run
-        </label>
-        <input
-          id={reasonId}
-          type="text"
-          value={reason}
-          disabled={busy}
-          onChange={(event) => setReason(event.target.value)}
-          className="min-h-11 flex-1 min-w-[10rem] px-2 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs"
-        />
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => onReject(reason)}
-          className="min-h-11 px-3 rounded-md border border-[var(--color-border)] hover:border-[var(--color-danger)] text-xs"
-        >
-          Reject run
-        </button>
-      </div>
-    </div>
+      </ItemFoot>
+      {rejecting ? (
+        <ItemSection>
+          <div id={`${id}-reject`} className="grid gap-3">
+            <Field
+              label="Reason for rejecting"
+              hint={`Kept with the item. A retry reads it as ${employeeName}'s direction, unless you give a note in its place.`}
+            >
+              {(control) => (
+                <input
+                  {...control}
+                  ref={reasonField}
+                  type="text"
+                  value={reason}
+                  disabled={busy}
+                  onChange={(event) => setReason(event.target.value)}
+                  className={`${INPUT_CLASS} w-full`}
+                />
+              )}
+            </Field>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="danger"
+                size="small"
+                disabled={busy}
+                onClick={() => onReject(reason)}
+              >
+                {reason.trim() ? 'Reject with this reason' : 'Reject without a reason'}
+              </Button>
+              <Button
+                variant="quiet"
+                size="small"
+                disabled={busy}
+                onClick={() => setRejecting(false)}
+              >
+                Keep it held
+              </Button>
+            </div>
+          </div>
+        </ItemSection>
+      ) : null}
+    </>
   );
 }
+
+/** How much of a held message the row reads out: the whole of any message intake could take. */
+const HELD_TEXT_LIMIT = 4_000;
 
 /** Why Approve all is disabled while the gate refuses a row, beside the button and for its hover. */
 const APPROVE_ALL_REFUSED =
   'A row in this run is refused by the gate and cannot be approved; approve the rest by selection.';
-
-/** What the manager decided with the plan: the answers given, and a note to the planner's own. */
-export interface PlanApproval {
-  answers: Array<{ questionId: Id<'managerQuestions'>; text: string }>;
-  note?: string;
-  /** N11: "this would have taken me about N minutes", when the manager gave it. */
-  manualEstimateMinutes?: number;
-}
-
-/**
- * What the approval form sends: the item, the answers given, the note and the
- * manager's estimate.
- *
- * Args:
- *   workItemId: The plan-pending item.
- *   decision: The answers and note as the form collected them.
- *
- * Returns:
- *   The arguments for `work.approvePlan`; nothing optional is sent empty.
- */
-export function planApprovalRequest(
-  workItemId: Id<'workItems'>,
-  decision: PlanApproval,
-): {
-  workItemId: Id<'workItems'>;
-  answers?: PlanApproval['answers'];
-  note?: string;
-  manualEstimateMinutes?: number;
-} {
-  return {
-    workItemId,
-    ...(decision.answers.length > 0 ? { answers: decision.answers } : {}),
-    ...(decision.note ? { note: decision.note } : {}),
-    ...(decision.manualEstimateMinutes !== undefined
-      ? { manualEstimateMinutes: decision.manualEstimateMinutes }
-      : {}),
-  };
-}
-
-/**
- * The minutes the manager typed into the plan card's estimate, read as the
- * server takes it: a whole number of minutes from 1, or nothing when the field
- * is empty.
- *
- * Args:
- *   typed: The field as typed.
- *
- * Returns:
- *   The minutes, undefined for an empty field, or null for text the server
- *   would refuse.
- */
-export function typedEstimateMinutes(typed: string): number | undefined | null {
-  const text = typed.trim();
-  if (text === '') return undefined;
-  if (!/^\d+$/.test(text)) return null;
-  const minutes = Number(text);
-  return minutes >= 1 ? minutes : null;
-}
-
-/**
- * The questions a pending plan raises and the manager's answers to them,
- * approved as one decision.
- *
- * The charter's open questions this plan touched come from their records;
- * the planner's own note (`riskNotes`) is shown and may be answered as free
- * text. Every answer reaches the run as approved evidence; a question left
- * blank is simply not answered and stays open.
- */
-export function PlanApprovalForm({
-  riskNotes,
-  questions,
-  onApprove,
-  onCancel,
-  busy = false,
-}: {
-  riskNotes: string;
-  questions: Doc<'managerQuestions'>[];
-  onApprove: (decision: PlanApproval) => void;
-  /** Cancels the plan with the manager's reason, empty when none was written. */
-  onCancel: (reason: string) => void;
-  /** Whether a decision on this plan is in flight. */
-  busy?: boolean;
-}) {
-  const [answers, setAnswers] = useState<Record<string, string>>({});
-  const [note, setNote] = useState('');
-  const [cancelReason, setCancelReason] = useState('');
-  const [estimate, setEstimate] = useState('');
-  const open = questions.filter((question) => !question.answer);
-  const planNote = riskNotes.trim();
-  const minutes = typedEstimateMinutes(estimate);
-  const estimateId = useId();
-  function decision(): PlanApproval {
-    return {
-      answers: open.flatMap((question) => {
-        const text = (answers[question._id] ?? '').trim();
-        return text ? [{ questionId: question._id, text }] : [];
-      }),
-      ...(note.trim() ? { note: note.trim() } : {}),
-      ...(typeof minutes === 'number' ? { manualEstimateMinutes: minutes } : {}),
-    };
-  }
-  return (
-    <div className="mt-2 space-y-2">
-      {open.length > 0 ? (
-        <div className="p-2 rounded-md border border-[var(--color-warn)]/30 bg-[var(--color-warn)]/10">
-          <p className="text-[var(--color-warn)] font-medium mb-1">
-            {open.length === 1
-              ? 'A question for you before this plan runs'
-              : `${open.length} questions for you before this plan runs`}
-          </p>
-          <ul className="space-y-1.5">
-            {open.map((question) => (
-              <li key={question._id}>
-                <label htmlFor={`${estimateId}-${question._id}`} className="text-[var(--color-fg)]">
-                  {question.question}
-                </label>
-                <p className="text-[10px] text-[var(--color-muted)]">
-                  from the charter · touched by the {question.context.touchedBy}
-                  {question.context.words.length > 0
-                    ? `: ${question.context.words.join(', ')}`
-                    : ''}
-                  {' · your answer is written into the charter with the approval (optional)'}
-                </p>
-                <input
-                  id={`${estimateId}-${question._id}`}
-                  type="text"
-                  value={answers[question._id] ?? ''}
-                  disabled={busy}
-                  onChange={(event) =>
-                    setAnswers((current) => ({ ...current, [question._id]: event.target.value }))
-                  }
-                  aria-label={`answer: ${question.question}`}
-                  className="mt-0.5 min-h-11 w-full px-2 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs"
-                />
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-      {planNote ? (
-        <div className="p-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)]">
-          <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)] mb-0.5">
-            Planner&apos;s note
-          </p>
-          <p className="text-[var(--color-fg)]">{planNote}</p>
-          <label
-            htmlFor={`${estimateId}-note`}
-            className="mt-1 block text-[10px] text-[var(--color-muted)]"
-          >
-            Your answer to the note, for this run (optional)
-          </label>
-          <input
-            id={`${estimateId}-note`}
-            type="text"
-            value={note}
-            disabled={busy}
-            onChange={(event) => setNote(event.target.value)}
-            className="min-h-11 w-full px-2 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs"
-          />
-        </div>
-      ) : null}
-      <div>
-        <label
-          htmlFor={`${estimateId}-cancel`}
-          className="block text-[10px] text-[var(--color-muted)]"
-        >
-          Reason, if you cancel (optional)
-        </label>
-        <input
-          id={`${estimateId}-cancel`}
-          type="text"
-          value={cancelReason}
-          disabled={busy}
-          onChange={(event) => setCancelReason(event.target.value)}
-          className="min-h-11 w-full px-2 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs"
-        />
-      </div>
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[var(--color-fg)]">
-        <label htmlFor={estimateId}>This would have taken me about</label>
-        <input
-          id={estimateId}
-          type="number"
-          inputMode="numeric"
-          min={1}
-          step={1}
-          value={estimate}
-          disabled={busy}
-          onChange={(event) => setEstimate(event.target.value)}
-          aria-describedby={`${estimateId}-hint`}
-          aria-invalid={minutes === null}
-          className="min-h-11 w-20 px-2 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs"
-        />
-        <span>minutes</span>
-        <span
-          id={`${estimateId}-hint`}
-          className="basis-full text-[10px] text-[var(--color-muted)]"
-        >
-          {minutes === null
-            ? 'A whole number of minutes, or leave it empty.'
-            : 'Optional. Summed over finished work as hours saved, a gauge for you, never a headline.'}
-        </span>
-      </div>
-      <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          onClick={() => onApprove(decision())}
-          disabled={busy || minutes === null}
-          className="min-h-11 px-3 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] text-xs disabled:opacity-50"
-        >
-          {open.length > 0 || planNote ? 'Approve plan with answers' : 'Approve plan'}
-        </button>
-        <button
-          type="button"
-          onClick={() => onCancel(cancelReason.trim())}
-          disabled={busy}
-          className="min-h-11 px-3 rounded-md border border-[var(--color-border)] text-xs disabled:opacity-50"
-        >
-          Cancel
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/** One member of the cross-item approval: the held rows of a parked run. */
-export interface PendingDecisionMember {
-  workItemId: Id<'workItems'>;
-  pendingRunId: Id<'events'>;
-  title: string;
-  actions: MockAction[];
-  heldIndexes: number[];
-  refused: number;
-}
-
-/**
- * The held action sets open across the queue, read from each parked item.
- *
- * Args:
- *   items: The work items.
- *
- * Returns:
- *   One member per item whose run is parked with rows awaiting the manager.
- */
-export function pendingDecisionMembers(
-  items: readonly Doc<'workItems'>[],
-): PendingDecisionMember[] {
-  return items.flatMap((item): PendingDecisionMember[] => {
-    if (
-      item.state !== 'actions-pending' ||
-      !item.pendingRunId ||
-      item.approvedIndexes !== undefined
-    ) {
-      return [];
-    }
-    const actions = ((item.output ?? {}) as RunOutput).actions ?? [];
-    const verdicts = pendingVerdicts(item.actionVerdicts, actions.length);
-    const heldIndexes = verdicts.flatMap((verdict, index) =>
-      verdict.disposition === 'held' ? [index] : [],
-    );
-    if (heldIndexes.length === 0) return [];
-    return [
-      {
-        workItemId: item._id,
-        pendingRunId: item.pendingRunId,
-        title: item.title,
-        actions,
-        heldIndexes,
-        refused: verdicts.filter((verdict) => verdict.disposition === 'refused').length,
-      },
-    ];
-  });
-}
-
-/**
- * Every held action set across the queue, approvable from one place.
- *
- * Each member is shown with the same literal payloads its own card shows,
- * and the one button sends the same exact approval per member that the
- * card's "Approve all" sends: the parked run and its held indexes. A member
- * with a refused row is listed but left to its card, as the card's own rule
- * is. Shown only when more than one item is waiting; one item is its card.
- */
-export function PendingDecisionsPanel({
-  members,
-  surfaces,
-  onApproveBatch,
-  fallback,
-}: {
-  members: PendingDecisionMember[];
-  surfaces: SurfaceRecord[];
-  onApproveBatch: (
-    members: Array<{
-      workItemId: Id<'workItems'>;
-      pendingRunId: Id<'events'>;
-      approvedIndexes: number[];
-    }>,
-  ) => Promise<unknown>;
-  /** Where focus goes when the approval empties the panel: the work queue. */
-  fallback?: React.RefObject<HTMLElement | null>;
-}) {
-  const change = useChange(fallback);
-  // The panel keeps its live region when an approval empties it, so what the
-  // approval came to is still said.
-  if (members.length < 2) return <StatusRegion outcome={change.outcome} />;
-  const eligible = members.filter((member) => member.refused === 0);
-  const heldCount = eligible.reduce((sum, member) => sum + member.heldIndexes.length, 0);
-  return (
-    <div className="mb-3 p-2 rounded-md bg-[var(--color-warn)]/10 border border-[var(--color-warn)]/30 text-xs">
-      <p className="text-[var(--color-warn)] font-medium mb-1">
-        {members.length} items have actions awaiting your approval
-      </p>
-      <ul className="space-y-1.5">
-        {members.map((member) => (
-          <li key={member.workItemId}>
-            <p className="text-[var(--color-fg)] font-medium">{member.title}</p>
-            {member.refused > 0 ? (
-              <p className="text-[10px] text-[var(--color-muted)]">
-                {member.refused} {member.refused === 1 ? 'row is' : 'rows are'} refused by the gate;
-                decide this one on its card.
-              </p>
-            ) : null}
-            <ul className="ml-3 space-y-0.5">
-              {member.heldIndexes.map((index) => (
-                <li key={index} className="text-[var(--color-fg)] break-words">
-                  {summariseAction(member.actions[index], surfaces)}
-                  <details className="mt-0.5">
-                    <summary className="min-h-11 py-3 text-[10px] text-[var(--color-muted)] cursor-pointer select-none">
-                      exact payload
-                    </summary>
-                    <ActionPayload action={member.actions[index]} />
-                  </details>
-                </li>
-              ))}
-            </ul>
-          </li>
-        ))}
-      </ul>
-      <div className="flex flex-wrap items-center gap-2 mt-2">
-        <button
-          type="button"
-          disabled={change.busy || eligible.length === 0}
-          onClick={() =>
-            change.run(
-              () =>
-                onApproveBatch(
-                  eligible.map((member) => ({
-                    workItemId: member.workItemId,
-                    pendingRunId: member.pendingRunId,
-                    approvedIndexes: member.heldIndexes,
-                  })),
-                ),
-              {
-                done: `Approved ${heldCount} held ${heldCount === 1 ? 'action' : 'actions'} across ${eligible.length} ${eligible.length === 1 ? 'item' : 'items'}: they apply now.`,
-                refused: 'Nothing was approved.',
-              },
-            )
-          }
-          className="min-h-11 px-3 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] text-xs font-medium disabled:opacity-50"
-        >
-          Approve {heldCount} held {heldCount === 1 ? 'action' : 'actions'} across {eligible.length}{' '}
-          {eligible.length === 1 ? 'item' : 'items'}
-        </button>
-        <span className="text-[10px] text-[var(--color-muted)]">
-          Each item is approved exactly as shown; if one has moved on, nothing is approved and the
-          list refreshes.
-        </span>
-      </div>
-      <StatusRegion outcome={change.outcome} />
-    </div>
-  );
-}
