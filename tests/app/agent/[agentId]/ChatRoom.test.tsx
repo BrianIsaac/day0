@@ -45,6 +45,7 @@ import {
 } from '../../../fixtures/dom/press';
 import {
   FinishControl,
+  REPLY_HELP,
   REPLY_MAX_CHARS,
   ReplyInput,
   TurnFailureNotice,
@@ -383,7 +384,7 @@ describe('finishing the 1:1 from the room', (): void => {
 });
 
 describe('the composer', (): void => {
-  it('bounds a reply and labels the field for everyone, with how to send', (): void => {
+  it('bounds a reply and labels the field for everyone, described by how to send', (): void => {
     const markup = renderToStaticMarkup(
       <ReplyInput
         value=""
@@ -391,17 +392,18 @@ describe('the composer', (): void => {
         onSend={() => {}}
         disabled={false}
         placeholder="type"
+        helpId="reply-help"
       />,
     );
 
     expect(REPLY_MAX_CHARS).toBe(4000);
     expect(markup).toContain(`maxLength="${REPLY_MAX_CHARS}"`);
-    const field = /<textarea[^>]*id="([^"]+)"[^>]*aria-describedby="([^"]+)"/.exec(markup);
+    const field = /<textarea[^>]*id="([^"]+)"[^>]*aria-describedby="reply-help"/.exec(markup);
     expect(field).not.toBeNull();
     expect(markup).toContain(`<label for="${field![1]}"`);
     expect(markup).toMatch(/<label[^>]*>Your reply<\/label>/);
-    expect(markup).toContain(
-      `id="${field![2]}" class="text-[13px] text-[var(--color-muted)]">Enter sends. Shift+Enter starts a new line.`,
+    expect(REPLY_HELP).toBe(
+      'Enter sends. Shift+Enter starts a new line. Short answers are enough.',
     );
   });
 });

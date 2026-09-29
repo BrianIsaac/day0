@@ -173,9 +173,14 @@ export function sendsReply(key: {
   return key.key === 'Enter' && !key.shiftKey && !key.isComposing && key.keyCode !== 229;
 }
 
+/** How to send a reply, said under the composer and read with the field. */
+export const REPLY_HELP = 'Enter sends. Shift+Enter starts a new line. Short answers are enough.';
+
 /**
  * The composer's field, labelled for everyone: Enter sends, Shift+Enter starts a new line, and a
  * reply is bounded at `REPLY_MAX_CHARS`.
+ *
+ * @param helpId - The id of the line that says how to send, which the field is described by.
  */
 export function ReplyInput({
   value,
@@ -183,16 +188,18 @@ export function ReplyInput({
   onSend,
   disabled,
   placeholder,
+  helpId,
 }: {
   value: string;
   onChange: (value: string) => void;
   onSend: () => void;
   disabled: boolean;
   placeholder: string;
+  helpId: string;
 }) {
   const id = useId();
   return (
-    <div className="grid min-w-0 flex-1 gap-1.5">
+    <div className="grid gap-1.5">
       <label htmlFor={id} className="text-[13px] font-medium text-[var(--color-fg-2)]">
         Your reply
       </label>
@@ -209,13 +216,10 @@ export function ReplyInput({
         }}
         disabled={disabled}
         placeholder={placeholder}
-        aria-describedby={`${id}-help`}
+        aria-describedby={helpId}
         enterKeyHint="send"
         className="min-h-11 w-full resize-none rounded-lg border border-[var(--color-border-2)] bg-[var(--color-bg)] px-3 py-2 text-[15px] text-[var(--color-fg)] placeholder:text-[var(--color-muted)] focus:border-[var(--color-accent)] disabled:opacity-50"
       />
-      <p id={`${id}-help`} className="text-[13px] text-[var(--color-muted)]">
-        Enter sends. Shift+Enter starts a new line. Short answers are enough.
-      </p>
     </div>
   );
 }
@@ -535,7 +539,7 @@ export function ChatRoom({
           />
         ) : (
           <form
-            className="flex flex-wrap items-end gap-2"
+            className="grid gap-2"
             onSubmit={(e) => {
               e.preventDefault();
               send();
@@ -547,8 +551,9 @@ export function ChatRoom({
               onSend={send}
               disabled={composerDisabled}
               placeholder={opened ? '' : `Waiting for ${name} to ask the first question`}
+              helpId={`${agentId}-reply-help`}
             />
-            <div className="flex gap-2">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
               <Button type="submit" variant="primary" disabled={composerDisabled || !draft.trim()}>
                 Send
               </Button>
@@ -556,6 +561,9 @@ export function ChatRoom({
                 disabled={!canFinish({ status, done, messages })}
                 onFinish={() => setConfirming('finish')}
               />
+              <p id={`${agentId}-reply-help`} className="text-[13px] text-[var(--color-muted)]">
+                {REPLY_HELP}
+              </p>
             </div>
           </form>
         )}
