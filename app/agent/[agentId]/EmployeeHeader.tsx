@@ -296,7 +296,12 @@ export function EmployeeHeader({
   return (
     <header className="flex flex-wrap items-start justify-between gap-4">
       <div className="flex min-w-0 items-start gap-3.5">
-        <AgentPixelAvatar avatar={avatarById(agent.avatarId)} state={shown} label={agent.name} />
+        <AgentPixelAvatar
+          avatar={avatarById(agent.avatarId)}
+          state={shown}
+          phase={phase}
+          label={agent.name}
+        />
         <div className="min-w-0">
           {/* Focus comes here when a modal closes and what opened it has left the page. */}
           <h1

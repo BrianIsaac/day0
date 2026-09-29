@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { avatarById } from '@/agent/avatar-pets';
 import { employeeStateWords } from '@/work/state-labels';
-import { AgentPixelAvatar, agentStateTone } from './PixelAvatar';
+import { AgentPixelAvatar, toneClasses } from './PixelAvatar';
 import type { RosterRow } from './types';
 
 /** What "parked" means on the roster, for the hover. */
@@ -134,7 +134,8 @@ function RosterRowView({
   waiting: number | undefined;
   loaded: boolean;
 }) {
-  const tone = agentStateTone(employee.state);
+  const words = employeeStateWords(employee.state);
+  const tone = toneClasses(words.tone);
   const waitingOnManager = waiting ?? 0;
   // Parked and stopped work hold no slot, so each is named under the open count and only when there is some.
   const aside = [
@@ -173,7 +174,7 @@ function RosterRowView({
         <span
           className={`inline-block whitespace-nowrap rounded-full border px-2.5 py-0.5 text-xs font-medium ${tone.border} ${tone.bg} ${tone.text}`}
         >
-          {employeeStateWords(employee.state).text}
+          {words.text}
         </span>
       </Cell>
       <Cell column="Role" className="max-sm:col-span-2">
