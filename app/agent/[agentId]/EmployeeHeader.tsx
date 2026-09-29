@@ -298,7 +298,13 @@ export function EmployeeHeader({
       <div className="flex min-w-0 items-start gap-3.5">
         <AgentPixelAvatar avatar={avatarById(agent.avatarId)} state={shown} label={agent.name} />
         <div className="min-w-0">
-          <h1 className="text-2xl font-semibold tracking-[-0.02em] break-words">{agent.name}</h1>
+          {/* Focus comes here when a modal closes and what opened it has left the page. */}
+          <h1
+            tabIndex={-1}
+            className="text-2xl font-semibold tracking-[-0.02em] break-words outline-none"
+          >
+            {agent.name}
+          </h1>
           <ManagerLine
             bossEmail={agent.bossEmail}
             lookupFailure={managerLookupFailure}

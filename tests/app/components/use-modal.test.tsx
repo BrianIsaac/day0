@@ -12,28 +12,64 @@ afterEach((): void => {
   document.documentElement.style.scrollbarGutter = '';
 });
 
-/** A page whose button opens a panel on the body; the panel's Close ends it being modal. */
-function Page({ controls = true }: { controls?: boolean }) {
+/** What the test page is given. */
+interface PageProps {
+  /** Whether the panel holds a control. */
+  readonly controls?: boolean;
+  /** Whether the panel is handed the Open button as where focus returns. */
+  readonly returnToOpen?: boolean;
+}
+
+/**
+ * A page under its heading whose button opens a panel on the body; the panel's Close ends it
+ * being modal, and its Remove takes the Open button off the page while it is modal.
+ */
+function Page({ controls = true, returnToOpen = false }: PageProps) {
   const [active, setActive] = useState(false);
+  const [opener, setOpener] = useState(true);
   const panel = useRef<HTMLDivElement>(null);
-  useModal({ panel, active });
+  const open = useRef<HTMLButtonElement>(null);
+  useModal({ panel, active, returnFocus: returnToOpen ? open : undefined });
   return (
     <>
-      <button type="button" onClick={() => setActive(true)}>
-        Open
-      </button>
+      <h1 tabIndex={-1}>The page</h1>
+      {opener ? (
+        <button ref={open} type="button" onClick={() => setActive(true)}>
+          Open
+        </button>
+      ) : null}
       {createPortal(
         <div ref={panel} tabIndex={-1} data-panel="">
           {controls ? (
-            <button type="button" onClick={() => setActive(false)}>
-              Close
-            </button>
+            <>
+              <button type="button" onClick={() => setActive(false)}>
+                Close
+              </button>
+              <button type="button" onClick={() => setOpener(false)}>
+                Remove
+              </button>
+            </>
           ) : null}
         </div>,
         document.body,
       )}
     </>
   );
+}
+
+/**
+ * Click a button the way Safari and Firefox on macOS do: the click lands, focus does not move.
+ *
+ * @param scope - Where to look.
+ * @param name - The button's text.
+ */
+function clickUnfocused(scope: ParentNode, name: string): void {
+  const target = [...scope.querySelectorAll('button')].find(
+    (candidate) => candidate.textContent === name,
+  );
+  act((): void => {
+    target?.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+  });
 }
 
 describe('useModal', () => {
@@ -62,6 +98,22 @@ describe('useModal', () => {
     expect(view.container.hasAttribute('inert')).toBe(false);
     expect(document.body.style.overflow).toBe('');
     expect(document.activeElement?.textContent).toBe('Open');
+  });
+
+  it('hands focus to the element it was given when the opener never took focus (review m5)', async () => {
+    const view = mount(<Page returnToOpen />);
+    clickUnfocused(view.container, 'Open');
+    expect(document.activeElement?.textContent).toBe('Close');
+    await press(document.body, 'Close');
+    expect(document.activeElement?.textContent).toBe('Open');
+  });
+
+  it('focuses the page’s heading when what focus would return to is gone (review m7)', async () => {
+    const view = mount(<Page returnToOpen />);
+    await press(view.container, 'Open');
+    await press(document.body, 'Remove');
+    await press(document.body, 'Close');
+    expect(document.activeElement?.tagName).toBe('H1');
   });
 
   it('focuses the panel itself when it holds no control', async () => {

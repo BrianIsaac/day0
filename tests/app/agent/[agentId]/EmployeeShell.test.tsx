@@ -723,6 +723,31 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     view.unmount();
   });
 
+  it('gives focus to the employee’s name when the card goes with the whole week open (review m7)', async (): Promise<void> => {
+    backend.queries = {
+      'agents:get': row('active'),
+      'charters:latest': approved,
+      'work:listForAgent': [],
+      'metrics:forAgent': dashboardMetrics(),
+    };
+    const view = mount(page());
+    await settle();
+    await press(view.container, 'First week: Working, in the queue. Show the whole week');
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    // The employee is reset from another tab: its week starts again, and the card goes.
+    backend.queries = {
+      ...backend.queries,
+      'agents:get': row('deployed'),
+      'charters:latest': null,
+    };
+    act((): void => view.root.render(page()));
+    await settle();
+    expect(view.container.querySelector('header button[aria-label^="First week"]')).toBeNull();
+    expect(document.activeElement?.tagName).toBe('H1');
+    expect(focusedName()).toBe('Mira');
+    view.unmount();
+  });
+
   it('draws neither the rail nor the card while the figures that say whether an active employee is working load', async (): Promise<void> => {
     backend.queries = { 'agents:get': row('active'), 'charters:latest': approved };
     const view = mount(page());

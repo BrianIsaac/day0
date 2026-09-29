@@ -48,30 +48,51 @@ export function keepTabInside(event: KeyboardEvent<HTMLElement>, panel: HTMLElem
   }
 }
 
+/** What `useModal` makes modal, and where focus goes on the way in and out. */
+export interface ModalOptions {
+  /** The panel; the child of the body that holds it stays live. */
+  readonly panel: RefObject<HTMLElement | null>;
+  /**
+   * Whether the panel is modal now. A panel that plays its way out after closing stops being
+   * modal as it starts to, so focus is back before the motion ends.
+   */
+  readonly active: boolean;
+  /**
+   * The element that takes focus; the panel's first control when absent, the panel itself when
+   * it has none.
+   */
+  readonly initialFocus?: RefObject<HTMLElement | null>;
+  /**
+   * The element focus returns to; whatever held focus as the panel opened when absent. A control
+   * that opens its own panel names itself: Safari and Firefox on macOS do not focus a button on a
+   * click, so what held focus then is the page's body.
+   */
+  readonly returnFocus?: RefObject<HTMLElement | null>;
+}
+
+/**
+ * Give focus to the page's heading, when focus has nowhere else on the page to go back to. The
+ * heading takes it only when it is focusable (`tabIndex={-1}`, as the employee page's is).
+ */
+function focusPageHeading(): void {
+  document.querySelector<HTMLElement>('h1')?.focus();
+}
+
 /**
  * Make a panel rendered on the document's body modal while `active`: the rest of the page inert
  * and still, focus moved into the panel, and, when it stops being modal, the page given back and
- * focus handed to whatever held it before. The page keeps its scrollbar's room while it is still,
- * so nothing behind the panel moves sideways.
+ * focus handed to `returnFocus`, else to whatever held it before, else, when that has left the
+ * page, to the page's heading. The page keeps its scrollbar's room while it is still, so nothing
+ * behind the panel moves sideways.
  *
- * @param panel - The panel; the child of the body that holds it stays live.
- * @param active - Whether the panel is modal now. A panel that plays its way out after closing
- *   stops being modal as it starts to, so focus is back before the motion ends.
- * @param initialFocus - The element that takes focus; the panel's first control when absent, the
- *   panel itself when it has none.
+ * @param options - The panel, whether it is modal, and where focus goes in and back.
  */
-export function useModal({
-  panel,
-  active,
-  initialFocus,
-}: {
-  panel: RefObject<HTMLElement | null>;
-  active: boolean;
-  initialFocus?: RefObject<HTMLElement | null>;
-}): void {
+export function useModal({ panel, active, initialFocus, returnFocus }: ModalOptions): void {
   useEffect(() => {
     if (!active) return;
-    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const held = document.activeElement;
+    const opener = held instanceof HTMLElement && held !== document.body ? held : null;
+    const back = returnFocus?.current ?? opener;
     const own = panel.current;
     const behind = [...document.body.children].filter(
       (element) => (own === null || !element.contains(own)) && !element.hasAttribute('inert'),
@@ -89,7 +110,8 @@ export function useModal({
       for (const element of behind) element.removeAttribute('inert');
       document.body.style.overflow = overflow;
       root.style.scrollbarGutter = gutter;
-      if (opener?.isConnected) opener.focus();
+      if (back?.isConnected) back.focus();
+      else focusPageHeading();
     };
-  }, [active, panel, initialFocus]);
+  }, [active, panel, initialFocus, returnFocus]);
 }

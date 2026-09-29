@@ -127,6 +127,15 @@ describe('FirstWeekCard', () => {
     ).toBe('false');
   });
 
+  it('gives focus back to the card where a click never focused it, as Safari and Firefox do (review m5)', () => {
+    const view = mount(page());
+    // The click lands on the card and focus stays on the page's body.
+    click(view.container.querySelector('button[aria-label^="First week"]'));
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    key('Escape');
+    expect(focusedName()).toBe(NAME);
+  });
+
   it('shrinks back on a press anywhere: the dimmed page, or the week itself', async () => {
     const view = mount(page());
     await press(view.container, NAME);

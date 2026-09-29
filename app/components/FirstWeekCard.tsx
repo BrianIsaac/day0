@@ -9,6 +9,7 @@ import {
   type AnimationEvent,
   type KeyboardEvent,
   type MouseEvent,
+  type RefObject,
 } from 'react';
 import { createPortal } from 'react-dom';
 import { FirstWeekRail, RAIL_CELL, RailStepText, type RailStep } from './FirstWeekRail';
@@ -153,6 +154,7 @@ export function FirstWeekCard({
           steps={steps}
           anchor={anchor}
           open={open}
+          card={card}
           onClose={hide}
           onClosed={closed}
         />
@@ -165,6 +167,7 @@ export function FirstWeekCard({
  * The whole week over a dimmed page, grown from the card and shrunk back into it.
  *
  * @param open - Whether it is open; false while it shrinks back, when it is no longer modal.
+ * @param card - The card it grew from, which focus returns to.
  * @param onClose - Close it: any press, or Escape.
  * @param onClosed - It has shrunk back and can leave the page.
  */
@@ -173,6 +176,7 @@ function WholeWeek({
   steps,
   anchor,
   open,
+  card,
   onClose,
   onClosed,
 }: {
@@ -180,12 +184,13 @@ function WholeWeek({
   steps: readonly RailStep[];
   anchor: Anchor;
   open: boolean;
+  card: RefObject<HTMLButtonElement | null>;
   onClose: () => void;
   onClosed: () => void;
 }) {
   const panel = useRef<HTMLDivElement>(null);
   // Focus lands on the week itself, so a screen reader says its name before the Close control.
-  useModal({ panel, active: open, initialFocus: panel });
+  useModal({ panel, active: open, initialFocus: panel, returnFocus: card });
 
   // Placed before the first paint, so the growth starts at the card and never flashes elsewhere.
   // Read from layout offsets, which the growth's transform does not scale.
