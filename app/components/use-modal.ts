@@ -71,19 +71,20 @@ export interface ModalOptions {
 }
 
 /**
- * Give focus to the page's heading, when focus has nowhere else on the page to go back to. The
- * heading takes it only when it is focusable (`tabIndex={-1}`, as the employee page's is).
+ * Give focus to the page's heading, when what focus was to return to has left the page. The
+ * heading takes it only when it is focusable (`tabIndex={-1}`, as the employee page's is), and the
+ * page does not scroll to it.
  */
 function focusPageHeading(): void {
-  document.querySelector<HTMLElement>('h1')?.focus();
+  document.querySelector<HTMLElement>('h1')?.focus({ preventScroll: true });
 }
 
 /**
  * Make a panel rendered on the document's body modal while `active`: the rest of the page inert
  * and still, focus moved into the panel, and, when it stops being modal, the page given back and
- * focus handed to `returnFocus`, else to whatever held it before, else, when that has left the
- * page, to the page's heading. The page keeps its scrollbar's room while it is still, so nothing
- * behind the panel moves sideways.
+ * focus handed to `returnFocus`, else to whatever held it before (nowhere when nothing did),
+ * and, when that has left the page, to the page's heading. The page keeps its scrollbar's room
+ * while it is still, so nothing behind the panel moves sideways.
  *
  * @param options - The panel, whether it is modal, and where focus goes in and back.
  */
@@ -110,8 +111,10 @@ export function useModal({ panel, active, initialFocus, returnFocus }: ModalOpti
       for (const element of behind) element.removeAttribute('inert');
       document.body.style.overflow = overflow;
       root.style.scrollbarGutter = gutter;
+      // Nothing to return to (a click that focused nothing, on Safari or Firefox) leaves focus
+      // where the browser puts it; only a target that has left the page hands it to the heading.
       if (back?.isConnected) back.focus();
-      else focusPageHeading();
+      else if (back !== null) focusPageHeading();
     };
   }, [active, panel, initialFocus, returnFocus]);
 }

@@ -116,6 +116,15 @@ describe('useModal', () => {
     expect(document.activeElement?.tagName).toBe('H1');
   });
 
+  it('moves focus nowhere on close when nothing held it at open, rather than to the heading (second pass M-a)', async () => {
+    const view = mount(<Page />);
+    clickUnfocused(view.container, 'Open');
+    await press(document.body, 'Close');
+    // Safari and Firefox focus no button on a click: a Dialog opened so leaves focus where the
+    // browser puts it, and never jumps the page to its heading.
+    expect(document.activeElement?.tagName).not.toBe('H1');
+  });
+
   it('focuses the panel itself when it holds no control', async () => {
     const view = mount(<Page controls={false} />);
     await press(view.container, 'Open');
