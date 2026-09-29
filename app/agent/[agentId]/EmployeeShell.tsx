@@ -11,6 +11,7 @@ import { agentZone } from '@/lib/zone';
 import { toSurfaceRecord } from '@/surfaces/records';
 import { isManagerLookupFailure } from '@/surfaces/manager-lookup';
 import type { SurfaceRecord } from '@/surfaces/types';
+import { needsYouItemIds, openWorkCount } from '@/work/state-display';
 import { shownEmployeeState } from '@/work/state-labels';
 import { useArrival } from '../../arrival';
 import { FirstWeekRail } from '../../components/FirstWeekRail';
@@ -54,17 +55,10 @@ interface SentBack {
 /** The rail's step while what it is read from is still loading. */
 const UNSETTLED = -1;
 
-/** The work states that are finished with: the Work tab counts every other. */
-const FINISHED_STATES: ReadonlySet<Doc<'workItems'>['state']> = new Set([
-  'completed',
-  'skipped',
-  'cancelled',
-  'failed',
-]);
-
 /**
- * The strip's tabs with their counts: what waits on the manager (in warn), the work under way,
- * the skills proposed. A tab with nothing to count draws no badge.
+ * The strip's tabs with their counts: what waits on the manager (in warn), the work still open
+ * (under the queue's Needs you and In progress filters), the skills proposed. A tab with nothing
+ * to count draws no badge.
  *
  * @param agentId - The employee.
  * @param counts - The counts, each undefined while its query loads.
@@ -242,7 +236,11 @@ export function EmployeeShell({
 
   const items = employeeTabItems(agentId, {
     needsYou: inbox?.total,
-    work: workItems?.filter((item) => !FINISHED_STATES.has(item.state)).length,
+    // The queue's own rule: a stopped run the inbox lists counts, as it does under Needs you.
+    work:
+      workItems === undefined || inbox === undefined
+        ? undefined
+        : openWorkCount(workItems, needsYouItemIds(inbox.entries)),
     skills: proposedSkills?.length,
   });
 

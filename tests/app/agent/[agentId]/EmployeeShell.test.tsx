@@ -425,6 +425,30 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     view.unmount();
   });
 
+  it('counts a stopped run the inbox lists, as the queue files it under Needs you (D7, m5)', async (): Promise<void> => {
+    backend.queries = {
+      'agents:get': row('active'),
+      'charters:latest': approved,
+      'work:needsYouForAgent': {
+        entries: [{ kind: 'stopped', agentId: 'agent-1', workItemId: 'w5' }],
+        total: 1,
+      },
+      'work:listForAgent': [
+        { _id: 'w2', state: 'executing' },
+        { _id: 'w3', state: 'completed' },
+        { _id: 'w5', state: 'failed' },
+        { _id: 'w6', state: 'failed' },
+      ],
+    };
+    const view = mount(page());
+    await settle();
+    const work = [...view.container.querySelectorAll('[role="tab"]')].find((candidate) =>
+      candidate.textContent?.startsWith('Work'),
+    );
+    expect(work?.textContent).toBe('Work 2');
+    view.unmount();
+  });
+
   it('sends a hash addressed to the environment to the Surfaces tab, and leaves any other hash be', async (): Promise<void> => {
     backend.queries = { 'agents:get': row('active'), 'charters:latest': approved };
     // A cold load: the hash is in the address before the page, and no hashchange fires for it.

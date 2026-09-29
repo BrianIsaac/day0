@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { Doc } from '../../../convex/_generated/dataModel';
-import { QUEUE_FILTERS, queueFilterOf, workItemGlossary } from '../../../src/work/state-display';
+import {
+  needsYouItemIds,
+  openWorkCount,
+  QUEUE_FILTERS,
+  queueFilterOf,
+  workItemGlossary,
+} from '../../../src/work/state-display';
 import { workItemStateLabel } from '../../../src/work/state-labels';
 
 type State = Doc<'workItems'>['state'];
@@ -47,6 +53,29 @@ describe('queueFilterOf', (): void => {
     expect(queueFilterOf({ _id: 'w-stopped', state: 'failed' }, inbox)).toBe('needs-you');
     expect(queueFilterOf({ _id: 'w-parked', state: 'deferred' }, inbox)).toBe('needs-you');
     expect(queueFilterOf({ _id: 'w-other', state: 'failed' }, inbox)).toBe('done');
+  });
+});
+
+describe('the Work badge (D7)', (): void => {
+  it('reads the items the inbox lists out of its entries, skipping entries about no item', (): void => {
+    expect([
+      ...needsYouItemIds([
+        { kind: 'stopped', workItemId: 'w1' },
+        { kind: 'charter', charterId: 'c1' },
+      ]),
+    ]).toEqual(['w1']);
+  });
+
+  it('counts what the queue files under Needs you and In progress, a listed stopped run included', (): void => {
+    const items = [
+      { _id: 'w1', state: 'plan-pending' as const },
+      { _id: 'w2', state: 'executing' as const },
+      { _id: 'w3', state: 'failed' as const },
+      { _id: 'w4', state: 'failed' as const },
+      { _id: 'w5', state: 'skipped' as const },
+    ];
+    expect(openWorkCount(items, new Set(['w3']))).toBe(3);
+    expect(openWorkCount(items, new Set())).toBe(2);
   });
 });
 
