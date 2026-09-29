@@ -1240,6 +1240,9 @@ button.rail-step:focus-visible {
    .rail[data-advanced]  the first-week rail, just moved on: the fill slides into `.now` (down the
                          column on a phone) and the dot before it (its `.rail-title::before`)
                          fills (`FirstWeekRail`).
+   [data-rail-leaving]   the rail once the week has moved on to Working: it fades out in 150 ms
+                         before the first week's card takes its place (`EmployeeShell`).
+   .rail[data-arriving]  that card, as it takes the rail's place: it settles in, 220 ms.
    [data-dialog]         a dialog or popover: it scales in from 0.96 at its own transform origin;
                          [data-dialog-backdrop] fades behind it.
    [data-week]           the whole first week opened from its card (`FirstWeekCard`), by
@@ -1408,6 +1411,14 @@ button.rail-step:focus-visible {
 
   .rail[data-advanced] .rail-step.done:has(+ .now) .rail-title::before {
     animation: day0-dot-fill 240ms var(--ease-arrive) 60ms both;
+  }
+
+  [data-rail-leaving] {
+    animation: day0-fade-out 150ms var(--ease-arrive) both;
+  }
+
+  .rail[data-arriving] {
+    animation: day0-settle 220ms var(--ease-arrive) both;
   }
 
   [data-dialog] {

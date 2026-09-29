@@ -87,6 +87,11 @@ export function placeWeek({ anchor, panel, nowTop, windowHeight }: WeekLayout): 
 export interface FirstWeekCardProps {
   /** The steps, in order; the card draws the one that is now. */
   readonly steps: readonly RailStep[];
+  /**
+   * Whether the card has just taken the rail's place in front of the manager: it settles in
+   * (`.rail[data-arriving]`) rather than appear in one frame.
+   */
+  readonly arriving?: boolean;
 }
 
 /**
@@ -98,9 +103,9 @@ export interface FirstWeekCardProps {
  * a Close control, shown when a keyboard reaches it, for a screen reader on a touch screen that
  * has no Escape; any other press closes it (light dismiss).
  *
- * @param props - The steps of the week.
+ * @param props - The steps of the week, and whether the card has just taken the rail's place.
  */
-export function FirstWeekCard({ steps }: FirstWeekCardProps) {
+export function FirstWeekCard({ steps, arriving = false }: FirstWeekCardProps) {
   const card = useRef<HTMLButtonElement>(null);
   const weekId = useId();
   // Set while the whole week is on the page, open or shrinking back.
@@ -125,7 +130,7 @@ export function FirstWeekCard({ steps }: FirstWeekCardProps) {
 
   return (
     <>
-      <div className="rail w-full sm:w-60">
+      <div className="rail w-full sm:w-60" data-arriving={arriving ? '' : undefined}>
         <button
           ref={card}
           type="button"

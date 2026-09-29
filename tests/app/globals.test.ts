@@ -359,6 +359,17 @@ describe('the product-surface moments (v3 section 5.2, v4 section 2)', () => {
     expect(CSS).not.toMatch(/@keyframes day0-week-/);
   });
 
+  it('fades the rail out before the first week’s card settles in where it was, only when motion is welcome (review m4)', () => {
+    expect(rulesFor(noPreference, '[data-rail-leaving]')[0]).toMatch(
+      /animation:\s*day0-fade-out 150ms var\(--ease-arrive\) both;/,
+    );
+    expect(rulesFor(noPreference, '.rail[data-arriving]')[0]).toMatch(
+      /animation:\s*day0-settle 220ms var\(--ease-arrive\) both;/,
+    );
+    expect(rulesFor(CSS, '[data-rail-leaving]')).toHaveLength(1);
+    expect(rulesFor(CSS, '.rail[data-arriving]')).toHaveLength(1);
+  });
+
   it('shows only the new value of a rolled count or a swapped chip under reduced motion', () => {
     expect(reduce).toMatch(/\.roll > \.from,\s*\.chip-swap > \.from\s*\{\s*display:\s*none;/);
   });

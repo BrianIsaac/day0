@@ -53,6 +53,16 @@ export function redraftingFromNote(name: string): string {
 /** How long the first-week rail's advance plays: its 150 ms pause and 280 ms slide. */
 export const RAIL_ADVANCE_MS = 430;
 
+/**
+ * How long the rail fades once the week has moved on to Working, before the card takes its place
+ * (`[data-rail-leaving]` in `app/globals.css`): the page's height still changes, as the transform
+ * rule allows no other way, but it no longer cuts.
+ */
+export const RAIL_EXIT_MS = 150;
+
+/** How long the card settles in where the rail was (`.rail[data-arriving]`). */
+export const CARD_SETTLE_MS = 220;
+
 /** A draft the manager sent back, and whether the employee is redrafting it. */
 interface SentBack {
   readonly charterId: Id<'charters'>;
@@ -61,6 +71,17 @@ interface SentBack {
 
 /** The rail's step while what it is read from is still loading. */
 const UNSETTLED = -1;
+
+/**
+ * Whether the week moved on in front of the manager: the step the page showed before is one it
+ * had read, and behind the current one.
+ *
+ * @param before - The step the page showed before, while the moment that starts from it plays.
+ * @param step - The current step.
+ */
+function movedOn(before: number | undefined, step: number): boolean {
+  return before !== undefined && before !== UNSETTLED && before < step;
+}
 
 /**
  * The strip's tabs with their counts: what waits on the manager (in warn), the work still open
@@ -178,8 +199,12 @@ export function EmployeeShell({
   const settled =
     agent !== undefined && latest !== undefined && workItems !== undefined && metrics !== undefined;
   const step = settled ? currentStep(steps) : UNSETTLED;
-  const stepBefore = usePreviousValue(step, RAIL_ADVANCE_MS);
-  const advanced = stepBefore !== undefined && stepBefore !== UNSETTLED && stepBefore < step;
+  const advanced = movedOn(usePreviousValue(step, RAIL_ADVANCE_MS), step);
+  const exiting = movedOn(usePreviousValue(step, RAIL_ADVANCE_MS + RAIL_EXIT_MS), step);
+  const settling = movedOn(
+    usePreviousValue(step, RAIL_ADVANCE_MS + RAIL_EXIT_MS + CARD_SETTLE_MS),
+    step,
+  );
   // Once the employee is working the week is one card in the header (the operator's ruling of
   // 30 September). Only an active employee can be working, and whether it is waits on the
   // figures that say a write landed: until they load its page draws neither, so a working
@@ -187,8 +212,11 @@ export function EmployeeShell({
   // is drawn at once, from the row until the charter is read, as it always was.
   const stageKnown = shownState !== 'active' || (latest !== undefined && metrics !== undefined);
   // The week moving on to Working in front of the manager plays on the whole rail first, where
-  // the step it moves from is on screen; the rail gives way to the card once that has played.
-  const working = stageKnown && steps.at(-1)?.status === 'now' && !advanced;
+  // the step it moves from is on screen; the rail then fades out, and the card settles in where
+  // it was, so the page does not cut from one to the other.
+  const atWorking = stageKnown && steps.at(-1)?.status === 'now';
+  const railLeaving = atWorking && !advanced && exiting;
+  const working = atWorking && !exiting;
   // What follows a draft sent back is the 1:1 again, or, when an approved
   // charter stands beneath the draft, that charter: only the first reopens
   // anything, so only then does the page say so and take focus. A charter
@@ -295,14 +323,14 @@ export function EmployeeShell({
                 (row) => row.class === 'chat' && isManagerLookupFailure(row.reason),
               )?.reason
             }
-            stage={working ? <FirstWeekCard steps={steps} /> : undefined}
+            stage={working ? <FirstWeekCard steps={steps} arriving={settling} /> : undefined}
           />
           {/* The page's own status keeps a gap under the header when it says something. */}
           <div className="mt-3 has-[>p:empty]:mt-0">
             <StatusRegion outcome={pageOutcome} />
           </div>
           {stageKnown && !working ? (
-            <div className="mt-5">
+            <div className="mt-5" data-rail-leaving={railLeaving ? '' : undefined}>
               <FirstWeekRail steps={steps} advanced={advanced} />
             </div>
           ) : null}

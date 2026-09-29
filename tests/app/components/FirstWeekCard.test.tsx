@@ -104,6 +104,13 @@ describe('FirstWeekCard', () => {
     );
   });
 
+  it('settles in only when it has just taken the rail’s place (review m4)', () => {
+    expect(renderToStaticMarkup(<FirstWeekCard steps={WORKING} />)).not.toContain('data-arriving');
+    expect(renderToStaticMarkup(<FirstWeekCard steps={WORKING} arriving />)).toMatch(
+      /^<div class="rail [^"]*" data-arriving="">/,
+    );
+  });
+
   it('draws nothing when no step is now', () => {
     const done = WORKING.map((step): RailStep => ({ ...step, status: 'done' }));
     expect(renderToStaticMarkup(<FirstWeekCard steps={done} />)).toBe('');

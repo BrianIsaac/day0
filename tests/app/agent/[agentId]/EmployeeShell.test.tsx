@@ -650,7 +650,9 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     // Re-pinned (unit S): a working employee's week is the card in the header, not the rail.
     const card = view.container.querySelector('header button[aria-label^="First week"]');
     expect(card?.textContent).toContain('Working');
-    expect(card?.closest('.rail')?.hasAttribute('data-advanced')).toBe(false);
+    // Re-pinned (review m4, m9): the card plays no advance of its own, and settles in only when
+    // it takes the rail's place in front of the manager, never as the page loads.
+    expect(card?.closest('.rail')?.hasAttribute('data-arriving')).toBe(false);
     expect(view.container.querySelector('ol[aria-label="First week"]')).toBeNull();
     view.unmount();
   });
@@ -757,7 +759,7 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     view.unmount();
   });
 
-  it('plays the advance on the rail when the first write lands in front of the manager, then turns it into the card', async (): Promise<void> => {
+  it('plays the advance on the rail when the first write lands in front of the manager, fades the rail, then settles the card in its place', async (): Promise<void> => {
     const noWrite = {
       ...dashboardMetrics(),
       actions: {
@@ -781,24 +783,47 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     ).toContain('First supervised write');
     expect(view.container.querySelector('header button[aria-label^="First week"]')).toBeNull();
 
-    backend.queries = { ...backend.queries, 'metrics:forAgent': dashboardMetrics() };
-    act((): void => view.root.render(page()));
-    await settle();
-    // Re-pinned (review M3): the advance plays on the whole rail, where the step it moves from is
-    // on screen, and the rail gives way to the card once it has played.
-    const rail = (): Element | null => view.container.querySelector('ol[aria-label="First week"]');
-    expect(rail()?.hasAttribute('data-advanced')).toBe(true);
-    expect(rail()?.querySelector('[aria-current="step"]')?.textContent).toContain('Working');
-    expect(view.container.querySelector('header button[aria-label^="First week"]')).toBeNull();
-    await vi.waitFor(
-      (): void => {
-        expect(rail()).toBeNull();
-      },
-      { timeout: 2_000 },
-    );
-    const card = view.container.querySelector('header button[aria-label^="First week"]');
-    expect(card?.textContent).toContain('Working');
-    view.unmount();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      backend.queries = { ...backend.queries, 'metrics:forAgent': dashboardMetrics() };
+      act((): void => view.root.render(page()));
+      await settle();
+      // Re-pinned (review M3, m4, m11): the advance plays on the whole rail, where the step it
+      // moves from is on screen, for its 430 ms; the rail then fades out for 150 ms and gives way
+      // to the card, which settles in over 220 ms. Timed to the millisecond on a fake clock.
+      const rail = (): Element | null =>
+        view.container.querySelector('ol[aria-label="First week"]');
+      const card = (): Element | null =>
+        view.container.querySelector('header button[aria-label^="First week"]');
+      const at = (ms: number): void => {
+        act((): void => {
+          vi.advanceTimersByTime(ms);
+        });
+      };
+      expect(rail()?.hasAttribute('data-advanced')).toBe(true);
+      expect(rail()?.querySelector('[aria-current="step"]')?.textContent).toContain('Working');
+      expect(card()).toBeNull();
+      at(429);
+      expect(rail()?.hasAttribute('data-advanced')).toBe(true);
+      expect(rail()?.closest('[data-rail-leaving]')).toBeNull();
+      at(1);
+      expect(rail()?.hasAttribute('data-advanced')).toBe(false);
+      expect(rail()?.closest('[data-rail-leaving]')).not.toBeNull();
+      expect(card()).toBeNull();
+      at(149);
+      expect(rail()).not.toBeNull();
+      at(1);
+      expect(rail()).toBeNull();
+      expect(card()?.textContent).toContain('Working');
+      expect(card()?.closest('.rail')?.hasAttribute('data-arriving')).toBe(true);
+      at(219);
+      expect(card()?.closest('.rail')?.hasAttribute('data-arriving')).toBe(true);
+      at(1);
+      expect(card()?.closest('.rail')?.hasAttribute('data-arriving')).toBe(false);
+    } finally {
+      vi.useRealTimers();
+      view.unmount();
+    }
   });
 
   it('draws a not-yet-working employee’s rail from the row before its charter is read (review M4)', async (): Promise<void> => {
