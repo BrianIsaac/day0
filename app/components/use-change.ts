@@ -92,7 +92,7 @@ export function returnFocus(origin: HTMLElement | null, fallback: HTMLElement | 
  *
  * @param fallback - The card or panel that takes focus when the control does not
  *   survive the change; it needs `tabIndex={-1}` and a name.
- * @returns The busy flag, the outcome for `LiveStatus`, and `run`.
+ * @returns The busy flag, the outcome for `StatusRegion`, and `run`.
  */
 export function useChange(fallback?: RefObject<HTMLElement | null>): Change {
   const [pending, setPending] = useState(0);
