@@ -196,23 +196,21 @@ export function SourceTable({
                   {column}
                 </th>
               ))}
-              <th scope="col" role="columnheader" className="px-3 py-2.5 last:pr-0">
-                <span className="sr-only">Controls</span>
-              </th>
             </tr>
           </thead>
-          <tbody role="rowgroup" className="max-sm:grid max-sm:gap-4">
-            {sources.map((source) => {
-              const status = sourceStatus(source, zone);
-              const credentialId = source.credentialId;
-              const open = confirming?.sourceId === source._id ? confirming : null;
-              const shown = pages?.selected === source._id;
-              return (
-                <tr
-                  key={source._id}
-                  role="row"
-                  className="border-b border-[var(--color-border)] last:border-b-0 max-sm:grid max-sm:gap-3 max-sm:pb-4"
-                >
+          {sources.map((source) => {
+            const status = sourceStatus(source, zone);
+            const credentialId = source.credentialId;
+            const open = confirming?.sourceId === source._id ? confirming : null;
+            const shown = pages?.selected === source._id;
+            return (
+              // One group per source: its facts, then its controls on a line of their own.
+              <tbody
+                key={source._id}
+                role="rowgroup"
+                className="border-b border-[var(--color-border)] last:border-b-0 max-sm:grid max-sm:gap-3 max-sm:py-4"
+              >
+                <tr role="row" className="max-sm:grid max-sm:gap-3">
                   <th
                     scope="row"
                     role="rowheader"
@@ -223,7 +221,7 @@ export function SourceTable({
                     </span>
                     <span className="block text-xs text-[var(--color-muted)]">
                       {KIND_NAMES[source.kind]} ·{' '}
-                      <span className="font-mono break-all">{source.locator}</span>
+                      <span className="font-mono [overflow-wrap:anywhere]">{source.locator}</span>
                     </span>
                     {/* Discovery runs after every completed sync and decides which systems this
                         source evidences. A failure leaves the last accepted set standing, so
@@ -257,8 +255,10 @@ export function SourceTable({
                       {reader.excluded.has(source._id) ? 'No, left out at deploy' : 'Yes'}
                     </Cell>
                   ) : null}
-                  <td role="cell" className="py-3 pl-3 align-top max-sm:p-0">
-                    <div className="flex flex-wrap gap-2 sm:justify-end">
+                </tr>
+                <tr role="row" className="max-sm:block">
+                  <td role="cell" colSpan={columns.length} className="pb-4 max-sm:block max-sm:p-0">
+                    <div className="flex flex-wrap gap-2">
                       {pages ? (
                         <Button
                           size="small"
@@ -321,7 +321,7 @@ export function SourceTable({
                     {source.credentialId && rotatingSourceId === source._id ? (
                       <form
                         onSubmit={(event) => onRotate(event, source)}
-                        className="mt-3 flex flex-wrap gap-2 sm:justify-end"
+                        className="mt-3 flex flex-wrap gap-2"
                       >
                         <label className="sr-only" htmlFor={`rotate-${source._id}`}>
                           {source.kind === 'mcp' ? 'New connection secret' : 'New reader secret'}
@@ -335,7 +335,7 @@ export function SourceTable({
                           placeholder={
                             source.kind === 'mcp' ? 'New connection secret' : 'New reader secret'
                           }
-                          className={`${INPUT_CLASS} w-full sm:w-64`}
+                          className={`${INPUT_CLASS} w-full sm:w-80`}
                         />
                         <Button type="submit" size="small" disabled={change.busy}>
                           {rotating === source._id ? 'Rotating…' : 'Save'}
@@ -371,9 +371,9 @@ export function SourceTable({
                     ) : null}
                   </td>
                 </tr>
-              );
-            })}
-          </tbody>
+              </tbody>
+            );
+          })}
         </table>
       )}
     </section>

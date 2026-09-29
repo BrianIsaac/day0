@@ -130,7 +130,10 @@ describe('DocumentationView', () => {
   it('lists every linked source with its state and whether this employee reads it', () => {
     populated();
     const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
-    const rows = [...view.container.querySelectorAll('tbody')][0]?.querySelectorAll('tr') ?? [];
+    // Each source is a row group: its facts, then its controls.
+    const rows = view.container.querySelectorAll(
+      'section[aria-label="Linked documentation"] tbody',
+    );
     const text = [...rows].map((row) => row.textContent ?? '');
 
     expect(text[0]).toContain('RevOps team wiki');
