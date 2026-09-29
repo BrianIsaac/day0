@@ -42,6 +42,15 @@ describe('the refused skill draft', (): void => {
     );
     expect(markup).toContain(`${' '.repeat(11)}^ the check refused line 2, column 12`);
     expect(markup).toContain('aria-label="Refused smoke.py: analytics-refresh-value"');
+    // Unwrapped with its own scroll, so the caret stays under its column on a phone, and the mark
+    // runs the width of the longest line; behind the page's chevron disclosure.
+    expect(markup).toMatch(/<pre[^>]*class="[^"]*\bwhitespace-pre\b[^"]*"/);
+    expect(markup).not.toMatch(/<pre[^>]*class="[^"]*\bwhitespace-pre-wrap\b/);
+    // The files' column is held to the card's width, so the unwrapped line scrolls in its box
+    // rather than widening the page.
+    expect(markup).toContain('<div class="grid grid-cols-1 gap-2"><div class="min-w-0">');
+    expect(markup).toMatch(/<span class="inline-block min-w-full">(<span class="block">|<span)/);
+    expect(markup).toMatch(/<summary[^>]*class="[^"]*\bmin-h-11\b[^"]*"><span aria-hidden="true"/);
   });
 
   it('marks nothing when the reason quotes a line the kept draft does not carry', (): void => {
