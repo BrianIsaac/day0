@@ -1,6 +1,7 @@
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { api } from '../../convex/_generated/api';
+import { RETIRE_PREVIEW_ROW_LIMIT } from '../../convex/reset';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import type schemaModule from '../../convex/schema';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
@@ -163,6 +164,51 @@ describe('retirePreview in real mode', (): void => {
     await owner.mutation(api.reset.retire, { agentId: retiring });
 
     await expect(owner.query(api.reset.retirePreview, { agentId: retiring })).resolves.toBeNull();
+  });
+
+  it('stops counting each table at its bound, the claims read item by item included, and says the count is a floor', async (): Promise<void> => {
+    const { harness, retiring } = await seed();
+    await harness.run(async (ctx) => {
+      for (let index = 0; index < RETIRE_PREVIEW_ROW_LIMIT + 5; index += 1) {
+        const item = await ctx.db.insert('workItems', {
+          agentId: retiring,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: `REVOPS-${100 + index}`,
+          title: `Item ${index}`,
+          contentSummary: 'Item.',
+          contentRefs: [],
+          state: 'completed',
+          observedAt: 1,
+          createdAt: 1,
+        });
+        await ctx.db.insert('externalClaims', {
+          userId: 'owner',
+          key: `linear:REVOPS-${100 + index}`,
+          agentId: retiring,
+          workItemId: item,
+          claimedAt: 1,
+        });
+      }
+    });
+
+    const preview = await harness
+      .withIdentity({ subject: 'owner' })
+      .query(api.reset.retirePreview, { agentId: retiring });
+
+    expect(preview?.atLeast).toBe(true);
+    expect(preview?.rowCounts.workItems).toBe(RETIRE_PREVIEW_ROW_LIMIT);
+    expect(preview?.rowCounts.externalClaims).toBe(RETIRE_PREVIEW_ROW_LIMIT);
+    expect(preview?.keptClaims).toBeLessThanOrEqual(RETIRE_PREVIEW_ROW_LIMIT);
+  });
+
+  it('says nothing about an id, gone or not, to a caller who is not signed in', async (): Promise<void> => {
+    const { harness, retiring } = await seed();
+    await harness
+      .withIdentity({ subject: 'owner' })
+      .mutation(api.reset.retire, { agentId: retiring });
+
+    await expect(harness.query(api.reset.retirePreview, { agentId: retiring })).rejects.toThrow();
   });
 
   it("refuses another owner's employee", async (): Promise<void> => {

@@ -83,8 +83,15 @@ async function byWorkItem<Row>(
   limit: number | undefined,
   read: (workItemId: Id<'workItems'>) => Promise<Row[]>,
 ): Promise<Row[]> {
-  const rows = (await Promise.all(keys.workItemIds.map(read))).flat();
-  return limit === undefined ? rows : rows.slice(0, limit);
+  if (limit === undefined) return (await Promise.all(keys.workItemIds.map(read))).flat();
+  // Bounded, the items are read one after another and the walk stops at the bound, so the
+  // preview never reads a claim or a listing past it.
+  const rows: Row[] = [];
+  for (const workItemId of keys.workItemIds) {
+    if (rows.length >= limit) break;
+    rows.push(...(await read(workItemId)).slice(0, limit - rows.length));
+  }
+  return rows;
 }
 
 /**
@@ -225,25 +232,50 @@ const EMPLOYEE_ROWS: Readonly<Record<AgentKeyedTable, RowReader>> = {
  *
  * @param db - Any database reader.
  * @param agentId - The employee.
+ * @param items - The employee's work items, read once by the caller: every one for the retire,
+ *   the first `limit` for the preview.
  * @param limit - The most rows read from each table.
  * @returns The ids of each table's rows.
  */
 async function employeeRows(
   db: DatabaseReader,
   agentId: Id<'agents'>,
+  items: readonly Doc<'workItems'>[],
   limit?: number,
 ): Promise<Map<AgentKeyedTable, string[]>> {
-  const workItemIds = (await EMPLOYEE_ROWS.workItems(db, { agentId, workItemIds: [] }, limit)).map(
-    (row) => row._id as Id<'workItems'>,
-  );
-  const keys: EmployeeKeys = { agentId, workItemIds };
+  const keys: EmployeeKeys = { agentId, workItemIds: items.map((item) => item._id) };
   const read = await Promise.all(
     AGENT_KEYED_TABLES.map(
       async (table) =>
-        [table, (await EMPLOYEE_ROWS[table](db, keys, limit)).map((row) => row._id)] as const,
+        [
+          table,
+          // The work items are already read; every other table is read by its own index.
+          table === 'workItems'
+            ? [...keys.workItemIds]
+            : (await EMPLOYEE_ROWS[table](db, keys, limit)).map((row) => row._id),
+        ] as const,
     ),
   );
   return new Map(read.filter(([, ids]) => ids.length > 0).map(([table, ids]) => [table, [...ids]]));
+}
+
+/**
+ * One employee's work items, every one or the first `limit`: the rows the retire's claims, its
+ * boundaries and the tables keyed by item are all read from.
+ *
+ * @param db - Any database reader.
+ * @param agentId - The employee.
+ * @param limit - The most items read.
+ */
+async function employeeWorkItems(
+  db: DatabaseReader,
+  agentId: Id<'agents'>,
+  limit?: number,
+): Promise<Doc<'workItems'>[]> {
+  return await upTo(
+    db.query('workItems').withIndex('by_agent', (q) => q.eq('agentId', agentId)),
+    limit,
+  );
 }
 
 /** The event a real-mode retire leaves on each employee's id, naming its `retirements` row. */
@@ -330,21 +362,15 @@ function credentialsBoundBy(surfaces: readonly Doc<'surfaces'>[]): Set<Id<'crede
  * or held actions is kept by the item's names (decision N3's sibling hold).
  *
  * @param db - The retire's or its preview's reader.
- * @param agent - The employee being retired.
+ * @param items - The employee's work items: every one for the retire, the first few for the preview.
  * @param now - When the retire happens, the settle time of a write-target claim it keeps.
- * @param limit - The most work items read, for the preview; every one for the retire.
  * @returns What its retirement keeps, and the claims to release.
  */
 async function boundariesOf(
   db: DatabaseReader,
-  agent: Doc<'agents'>,
+  items: readonly Doc<'workItems'>[],
   now: number,
-  limit?: number,
 ): Promise<Boundaries> {
-  const items = await upTo(
-    db.query('workItems').withIndex('by_agent', (q) => q.eq('agentId', agent._id)),
-    limit,
-  );
   const claims: RetiredClaim[] = [];
   const rejections: RetiredRejection[] = [];
   const released: Id<'externalClaims'>[] = [];
@@ -465,7 +491,7 @@ async function deleteEmployee(ctx: MutationCtx, agent: Doc<'agents'>): Promise<R
     .query('surfaces')
     .withIndex('by_agent', (q) => q.eq('agentId', agent._id))
     .collect();
-  const rows = await employeeRows(ctx.db, agent._id);
+  const rows = await employeeRows(ctx.db, agent._id, await employeeWorkItems(ctx.db, agent._id));
   const rowCounts: Record<string, number> = {};
   const deletedIds = new Set<string>([agent._id]);
   for (const [table, ids] of rows) {
@@ -640,7 +666,9 @@ async function retireEmployees(
   const keepsBoundaries = options.single && real;
   const boundaries = new Map<Id<'agents'>, Boundaries>();
   for (const agent of agents) {
-    const held = keepsBoundaries ? await boundariesOf(ctx.db, agent, now) : NO_BOUNDARIES;
+    const held = keepsBoundaries
+      ? await boundariesOf(ctx.db, await employeeWorkItems(ctx.db, agent._id), now)
+      : NO_BOUNDARIES;
     assertKeepable(held);
     boundaries.set(agent._id, held);
   }
@@ -701,9 +729,9 @@ async function retireEmployees(
 export const retire = mutation({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<{ agentName: string }> => {
+    const identity = await getCallerOrThrow(ctx);
     const agent = await assertOwnsAgent(ctx, args.agentId);
-    if (!agent.userId) throw new Error('forbidden: agent has no owner');
-    await retireEmployees(ctx, agent.userId, [agent], {
+    await retireEmployees(ctx, identity.ownerKey, [agent], {
       single: true,
       unlinkDocumentation: false,
     });
@@ -739,11 +767,12 @@ export const deleteMyData = mutation({
 });
 
 /**
- * The most rows of each table the preview counts; past it the count is "at least". Far past
- * an employee's own tables apart from its events, and inside one query's read limit across all
- * of them.
+ * The most rows of each table the preview counts; past it the count is "at least". Past an
+ * employee's own tables apart from a long-lived one's events and work items, and 4,600 rows
+ * across the 23 tables, well inside the 16,384 documents one query may read; the bytes depend
+ * on the rows, which is why the bound is this low.
  */
-export const RETIRE_PREVIEW_ROW_LIMIT = 500;
+export const RETIRE_PREVIEW_ROW_LIMIT = 200;
 
 /** One connection a retire revokes or keeps, by the name the Surfaces tab gives it. */
 const previewSurface = v.object({ slug: v.string(), displayName: v.string() });
@@ -770,19 +799,22 @@ const retirePreviewValidator = v.object({
  * confirms: the rows each table would lose, the connections whose credential would be revoked or
  * kept, the claims its retirement would keep and whether a tombstone stays. What waits on the
  * manager is `work.needsYouForAgent`'s answer, the inbox's own rule. Public, owner-guarded;
- * reads by index, at most `RETIRE_PREVIEW_ROW_LIMIT` rows a table; writes nothing. An employee
- * already gone answers `null`, as the dialog's last read after the retire does.
+ * reads by index, at most `RETIRE_PREVIEW_ROW_LIMIT` rows a table, the work items once for the
+ * counts and the claims; writes nothing. An employee already gone answers `null` to a signed-in
+ * caller, as the dialog's last read after the retire does.
  */
 export const retirePreview = query({
   args: { agentId: v.id('agents') },
   returns: v.union(v.null(), retirePreviewValidator),
   handler: async (ctx, args): Promise<Infer<typeof retirePreviewValidator> | null> => {
+    const identity = await getCallerOrThrow(ctx);
     if ((await ctx.db.get(args.agentId)) === null) return null;
     const agent = await assertOwnsAgent(ctx, args.agentId);
-    const rows = await employeeRows(ctx.db, agent._id, RETIRE_PREVIEW_ROW_LIMIT);
+    const items = await employeeWorkItems(ctx.db, agent._id, RETIRE_PREVIEW_ROW_LIMIT);
+    const rows = await employeeRows(ctx.db, agent._id, items, RETIRE_PREVIEW_ROW_LIMIT);
     const rowCounts = Object.fromEntries([...rows].map(([table, ids]) => [table, ids.length]));
     const atLeast = [...rows.values()].some((ids) => ids.length >= RETIRE_PREVIEW_ROW_LIMIT);
-    if (SURFACE_MODE !== 'real' || !agent.userId) {
+    if (SURFACE_MODE !== 'real') {
       return {
         mode: 'mock',
         rowCounts,
@@ -799,7 +831,7 @@ export const retirePreview = query({
       .take(RETIRE_PREVIEW_ROW_LIMIT);
     const { revoke, kept } = await sortCredentials(
       ctx.db,
-      agent.userId,
+      identity.ownerKey,
       credentialsBoundBy(surfaces),
       new Set([agent._id]),
     );
@@ -808,7 +840,7 @@ export const retirePreview = query({
       surfaces
         .filter((surface) => [...credentialsBoundBy([surface])].some(holds))
         .map((surface) => ({ slug: surface.slug, displayName: surface.displayName }));
-    const boundaries = await boundariesOf(ctx.db, agent, Date.now(), RETIRE_PREVIEW_ROW_LIMIT);
+    const boundaries = await boundariesOf(ctx.db, items, Date.now());
     return {
       mode: 'real',
       rowCounts,
