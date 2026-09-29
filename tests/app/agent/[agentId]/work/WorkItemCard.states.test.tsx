@@ -7,7 +7,14 @@ import type { Doc } from '../../../../../convex/_generated/dataModel';
 import { WorkItemCard } from '../../../../../app/agent/[agentId]/work/WorkItemCard';
 import { AgentZoneContext } from '../../../../../app/agent/[agentId]/time';
 import { button, focusedName, mount, press, said, typeInto } from '../../../../fixtures/dom/press';
-import { DRAWN, EMPLOYEE, QUESTION, SLACK, ZONE } from '../../../../fixtures/work/drawn-states';
+import {
+  DRAWN,
+  EMPLOYEE,
+  QUESTION,
+  SLACK,
+  THREAD_REPLY,
+  ZONE,
+} from '../../../../fixtures/work/drawn-states';
 
 const backend = vi.hoisted(() => ({
   /** What a query answers, by function name; undefined (loading) otherwise. */
@@ -355,6 +362,24 @@ describe('rejected by you (work-rejected.html)', (): void => {
     expect(dismissed.text()).toContain('Retry still sends it back.');
     expect(() => button(dismissed.container, 'Dismiss')).toThrow();
     expect(button(dismissed.container, 'Retry')).toBeTruthy();
+  });
+});
+
+describe('stopped with a write that may have landed', (): void => {
+  it('offers no Dismiss until the provider is reconciled, so the one prompt that something landed stays', (): void => {
+    const view = card({
+      ...DRAWN.rejected,
+      skipReason: 'stopped: a write may have landed',
+      managerFeedback: undefined,
+      output: {
+        draft: 'd',
+        notes: '',
+        actions: [THREAD_REPLY],
+        applied: [{ tool: 'http.request', ok: false, outcomeUnknown: true, idempotencyKey: 'w:0' }],
+      },
+    } as unknown as Doc<'workItems'>);
+    expect(view.text()).toContain('Provider reconciliation required');
+    expect(view.container.textContent).not.toContain('Dismiss');
   });
 });
 

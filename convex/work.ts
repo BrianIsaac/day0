@@ -4506,9 +4506,10 @@ export const reconcileFailed = mutation({
 
 /**
  * Public, owner-guarded (`assertOwnsWorkItem`): the manager dismisses a failed item (N7), which
- * takes it out of the needs-you inbox and the roster's count while it stays in the record and on
- * the Work tab, where Retry still sends it back. Writes `dismissedAt` once; a second dismissal
- * changes nothing. Refuses, as a `ConvexError` the card says, an item no longer failed.
+ * takes it out of the needs-you inbox and the roster's needs-you figure while it stays in the
+ * record and on the Work tab, where Retry still sends it back. Writes `dismissedAt` once; a second
+ * dismissal changes nothing. Refuses, as a `ConvexError` the card says, an item no longer failed
+ * and one whose write may have landed before the provider is reconciled.
  */
 export const dismissFailed = mutation({
   args: { workItemId: v.id('workItems') },
@@ -4520,6 +4521,16 @@ export const dismissFailed = mutation({
       );
     }
     if (row.dismissedAt !== undefined) return { ok: true, dismissedAt: row.dismissedAt };
+    // The inbox's entry is the one prompt that a write may have landed; it
+    // stays until the manager has checked the provider.
+    if (
+      retryRequiresProviderReconciliation(row.output, row.skipReason) &&
+      !row.providerReconciliation
+    ) {
+      throw new ConvexError(
+        'A write on this item may have landed: confirm it against the provider before you dismiss it.',
+      );
+    }
     const dismissedAt = Date.now();
     await ctx.db.patch(args.workItemId, { dismissedAt });
     return { ok: true, dismissedAt };

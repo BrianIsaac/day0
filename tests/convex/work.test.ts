@@ -6912,6 +6912,30 @@ describe('work.dismissFailed (N7)', (): void => {
     expect((await readItem(harness, workItemId)).dismissedAt).toBeUndefined();
   });
 
+  it('refuses to dismiss a stop whose write may have landed until the provider is reconciled', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await seed(harness, 'failed');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        skipReason: 'stopped: a write may have landed',
+        output: {
+          draft: 'd',
+          notes: '',
+          actions: [pendingOutput.actions[0]],
+          applied: [
+            { tool: 'mcp.call', ok: false, outcomeUnknown: true, idempotencyKey: 'comment' },
+          ],
+        },
+      });
+    });
+    const refusal = harness.withIdentity(OWNER).mutation(api.work.dismissFailed, { workItemId });
+    await expect(refusal).rejects.toBeInstanceOf(ConvexError);
+    await expect(refusal).rejects.toMatchObject({
+      data: 'A write on this item may have landed: confirm it against the provider before you dismiss it.',
+    });
+    expect((await readItem(harness, workItemId)).dismissedAt).toBeUndefined();
+  });
+
   it('dismisses once, and refuses an item that is not failed or not the caller’s', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { workItemId } = await stopped(harness);

@@ -455,7 +455,13 @@ export function WorkItemCard({
               'Could not record reconciliation.',
             )
           }
-          {...(item.state === 'failed' && onDismiss
+          {...(item.state === 'failed' &&
+          onDismiss &&
+          // A write that may have landed keeps the item in the inbox until it is reconciled.
+          !(
+            retryRequiresProviderReconciliation(output, item.skipReason) &&
+            !item.providerReconciliation
+          )
             ? {
                 dismiss: {
                   ...(item.dismissedAt !== undefined ? { at: item.dismissedAt } : {}),
