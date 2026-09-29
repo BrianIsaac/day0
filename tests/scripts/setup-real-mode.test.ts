@@ -13,11 +13,13 @@ import {
   parseSetupArguments,
   planLines,
   printableUpdate,
+  ProtectedProjectError,
   readEnvValues,
   REAL_MODE_PROFILES,
   REDACTOR_URL,
   resetArguments,
   runSetup,
+  sandboxChoice,
   sequenceSteps,
   serviceHealth,
   setupEnvUpdates,
@@ -86,7 +88,8 @@ describe('the real-mode flags', (): void => {
     const options = parseSetupArguments(['--route', 'key']);
     expect(options.mode).toBe('mock');
     expect(options.gpu).toBe('auto');
-    expect(options.sandbox).toBe('local');
+    // Unnamed: the file decides, as `sandboxChoice` says.
+    expect(options.sandbox).toBeUndefined();
     expect(options.dryRun).toBe(false);
     expect(options.reset).toBe(false);
     expect(options.warmFrom).toBeUndefined();
@@ -177,6 +180,88 @@ describe('the values written per route and mode', (): void => {
       sandbox: 'daytona',
     });
     expect(kept.DAYTONA_API_KEY).toBeUndefined();
+  });
+
+  it('takes the named sandbox, else Daytona only when the file holds its key', (): void => {
+    expect(sandboxChoice('local', { DAYTONA_API_KEY: 'dtn-hand-set' })).toBe('local');
+    expect(sandboxChoice('daytona', {})).toBe('daytona');
+    expect(sandboxChoice(undefined, { DAYTONA_API_KEY: 'dtn-hand-set' })).toBe('daytona');
+    expect(sandboxChoice(undefined, { DAYTONA_API_KEY: ' ' })).toBe('local');
+    expect(sandboxChoice(undefined, {})).toBe('local');
+  });
+
+  it('on a resume, keeps what the file holds of the derived values and writes only what it lacks', (): void => {
+    const existing = {
+      NEXT_PUBLIC_DEV_NO_AUTH: '',
+      OPENAI_BASE_URL: FEATHERLESS_SETTINGS.OPENAI_BASE_URL,
+      CONVEX_OPENAI_BASE_URL: 'http://host.docker.internal:48080/v1',
+      OPENAI_MAX_OUTPUT_TOKENS: '8192',
+      DAY0_REDACTOR_URL: 'http://172.17.0.1:48000',
+    };
+    const input = {
+      route: 'featherless' as const,
+      project: 'p',
+      ports,
+      existing,
+      mode: 'real' as const,
+      sandbox: 'daytona' as const,
+    };
+    const resumed = setupEnvUpdates({ ...input, resume: { endpoint: false, modelPort: false } });
+    for (const name of Object.keys(existing)) expect(resumed[name]).toBeUndefined();
+    // The file lacks these, so the resume writes them as the setup would.
+    expect(resumed.DAY0_BROWSER_MCP_URL).toBe(BROWSER_MCP_URL);
+    expect(resumed.OPENAI_JSON_MODE).toBe(FEATHERLESS_SETTINGS.OPENAI_JSON_MODE);
+    // The setup itself writes every derived value over the file.
+    expect(setupEnvUpdates(input)).toMatchObject({
+      NEXT_PUBLIC_DEV_NO_AUTH: 'true',
+      CONVEX_OPENAI_BASE_URL: FEATHERLESS_SETTINGS.OPENAI_BASE_URL,
+      OPENAI_MAX_OUTPUT_TOKENS: FEATHERLESS_SETTINGS.OPENAI_MAX_OUTPUT_TOKENS,
+      DAY0_REDACTOR_URL: REDACTOR_URL,
+    });
+  });
+
+  it('on a resume, fills a derived value the file holds empty, except the no-auth switch', (): void => {
+    const updates = setupEnvUpdates({
+      route: 'featherless',
+      project: 'p',
+      ports,
+      existing: { DAY0_REDACTOR_URL: '', DAY0_BROWSER_MCP_URL: ' ', NEXT_PUBLIC_DEV_NO_AUTH: '' },
+      mode: 'real',
+      sandbox: 'local',
+      resume: { endpoint: false, modelPort: false },
+    });
+    expect(updates.DAY0_REDACTOR_URL).toBe(REDACTOR_URL);
+    expect(updates.DAY0_BROWSER_MCP_URL).toBe(BROWSER_MCP_URL);
+    expect(updates.NEXT_PUBLIC_DEV_NO_AUTH).toBeUndefined();
+  });
+
+  it('on a resume, moves the two addresses only for the argument that names them', (): void => {
+    const endpoint = {
+      route: 'endpoint' as const,
+      project: 'p',
+      ports,
+      existing: {
+        OPENAI_BASE_URL: 'http://127.0.0.1:48080/v1',
+        CONVEX_OPENAI_BASE_URL: 'http://172.17.0.1:48080/v1',
+      },
+    };
+    expect(
+      setupEnvUpdates({
+        ...endpoint,
+        endpoint: 'http://127.0.0.1:48080/v1',
+        resume: { endpoint: false, modelPort: true },
+      }).CONVEX_OPENAI_BASE_URL,
+    ).toBeUndefined();
+    expect(
+      setupEnvUpdates({
+        ...endpoint,
+        endpoint: 'https://models.example.com/v1',
+        resume: { endpoint: true, modelPort: false },
+      }),
+    ).toMatchObject({
+      OPENAI_BASE_URL: 'https://models.example.com/v1',
+      CONVEX_OPENAI_BASE_URL: 'https://models.example.com/v1',
+    });
   });
 
   it('writes an explicit GPU choice and leaves auto to the file', (): void => {
@@ -291,6 +376,34 @@ describe('where the Featherless key comes from', (): void => {
 });
 
 describe('the order the real-mode helpers run in', (): void => {
+  it('pauses the scheduled jobs of an upgrade once its release is checked, before the push, and releases them after the check', (): void => {
+    const steps = sequenceSteps('featherless', { mode: 'real', existing: true, upgrade: true });
+    expect(steps.slice(steps.indexOf('admin-key'), steps.indexOf('admin-key') + 4)).toEqual([
+      'admin-key',
+      'release:check',
+      'crons:pause',
+      'convex dev --once',
+    ]);
+    expect(steps.slice(steps.indexOf('check:setup'))).toEqual(['check:setup', 'crons:unpause']);
+    expect(sequenceSteps('featherless', { mode: 'real', existing: true })).not.toContain(
+      'crons:pause',
+    );
+    expect(
+      stepCommands('crons:pause', {
+        mode: 'real',
+        route: 'featherless',
+        profiles: [],
+        project: 'p',
+        pauseReason: 'upgrade to 0.9.0',
+      }),
+    ).toEqual([
+      {
+        command: 'npx',
+        args: ['convex', 'env', 'set', 'DAY0_CRONS_PAUSED', '--', 'upgrade to 0.9.0'],
+      },
+    ]);
+  });
+
   it('adds the warm copy before the first up, the redactor after the sandbox, and reset first', (): void => {
     expect(
       sequenceSteps('featherless', { mode: 'real', warm: true, sandbox: 'local', reset: true }),
@@ -365,6 +478,9 @@ describe('the order the real-mode helpers run in', (): void => {
 describe('protected projects', (): void => {
   it('refuses day0 from anywhere but the primary checkout', (): void => {
     expect(() => assertLocalProject('day0')).toThrow('primary checkout');
+    // Typed, so the upgrade can say how a protected project is upgraded.
+    expect(() => assertLocalProject('day0')).toThrow(ProtectedProjectError);
+    expect(() => assertLocalProject('day0-redactor-warm')).not.toThrow(ProtectedProjectError);
     expect(() => assertLocalProject('day0', { mainWorktree: false, fileProject: 'day0' })).toThrow(
       'protected',
     );

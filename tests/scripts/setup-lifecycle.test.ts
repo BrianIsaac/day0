@@ -367,6 +367,58 @@ describe('resume', (): void => {
     expect(readEnvValues(join(h.directory, '.env.local')).OPENAI_MODEL).toBe('qwen3:8b');
   });
 
+  it('keeps a Daytona key and every value set by hand, and brings no bundled sandbox up', async (): Promise<void> => {
+    const handSet = {
+      DAYTONA_API_KEY: 'dtn-hand-set',
+      DAY0_REDACTOR_URL: 'http://172.17.0.1:48000',
+      DAY0_BROWSER_MCP_URL: 'http://172.17.0.1:48931/mcp',
+      NEXT_PUBLIC_DEV_NO_AUTH: '',
+      CONVEX_OPENAI_BASE_URL: 'http://host.docker.internal:48080/v1',
+      OPENAI_MAX_OUTPUT_TOKENS: '8192',
+      OPENAI_REASONING_EFFORT: 'medium',
+    };
+    const h = configured({ services: ['backend', 'redactor'], servicesBeforeUp: [] });
+    writeEnvValues(join(h.directory, '.env.local'), handSet);
+    expect(await runCommand(verb('resume'), h.io)).toBe(0);
+    const after = readEnvValues(join(h.directory, '.env.local'));
+    expect(after).toMatchObject(handSet);
+    expect(ran(h)).not.toContain('run sandbox:up');
+    expect(h.output.join('\n')).toContain(
+      'Kept as .env.local has them (a resume changes only what its own arguments name): ',
+    );
+    expect(h.output.join('\n')).not.toContain('dtn-hand-set');
+  });
+
+  it('writes what its own arguments change: --sandbox local empties the key, --model-port moves the addresses', async (): Promise<void> => {
+    const daytona = configured({ services: ['backend', 'sandbox', 'redactor'] });
+    writeEnvValues(join(daytona.directory, '.env.local'), { DAYTONA_API_KEY: 'dtn-hand-set' });
+    expect(await runCommand(verb('resume', { sandbox: 'local' }), daytona.io)).toBe(0);
+    expect(readEnvValues(join(daytona.directory, '.env.local')).DAYTONA_API_KEY).toBe('');
+    expect(ran(daytona)).toContain('run sandbox:up');
+
+    const local = CONFIGURED.replace(
+      `OPENAI_BASE_URL=${FEATHERLESS_SETTINGS.OPENAI_BASE_URL}`,
+      'OPENAI_BASE_URL=http://127.0.0.1:48191/v1',
+    )
+      .replace(
+        `CONVEX_OPENAI_BASE_URL=${FEATHERLESS_SETTINGS.OPENAI_BASE_URL}`,
+        'CONVEX_OPENAI_BASE_URL=http://model:11434/v1',
+      )
+      .replace('OPENAI_MODEL=zai-org/GLM-5.3-Flash', 'OPENAI_MODEL=qwen3:8b\nMODEL_PORT=48191');
+    const moved = configured({
+      envLocal: local,
+      services: ['backend', 'sandbox', 'redactor'],
+      volumes: [...OWN_VOLUMES, `${PROJECT}_model_data`],
+      manifestListing: 'registry.ollama.ai/library/qwen3/8b\t{"layers":[{"size":5225374496}]}\n',
+    });
+    expect(await runCommand(verb('resume', { ports: { model: 48192 } }), moved.io)).toBe(0);
+    expect(readEnvValues(join(moved.directory, '.env.local'))).toMatchObject({
+      MODEL_PORT: '48192',
+      OPENAI_BASE_URL: 'http://127.0.0.1:48192/v1',
+      CONVEX_OPENAI_BASE_URL: 'http://model:11434/v1',
+    });
+  });
+
   it('refuses without an installation, on a different --route, and with --reset', async (): Promise<void> => {
     const fresh = harness();
     expect(await runCommand(verb('resume'), fresh.io)).toBe(1);
@@ -700,6 +752,73 @@ describe('a rerun over a volume nothing was pushed to', (): void => {
   });
 });
 
+describe('pausing the scheduled jobs', (): void => {
+  it('pause sets the flag with its reason and restarts the backend; a second pause changes nothing', async (): Promise<void> => {
+    const h = configured({ services: ['backend', 'sandbox', 'redactor'] });
+    expect(await runCommand(verb('pause'), h.io)).toBe(0);
+    expect(h.deploymentEnv().DAY0_CRONS_PAUSED).toMatch(/^paused by hand at \d{4}-\d{2}-\d{2}T/);
+    const lines = ran(h).split('\n');
+    const at = (text: string): number => lines.findIndex((line) => line.includes(text));
+    expect(at('convex env set DAY0_CRONS_PAUSED')).toBeGreaterThanOrEqual(0);
+    expect(at('convex env set DAY0_CRONS_PAUSED')).toBeLessThan(at('run convex:restart'));
+    expect(h.output.join('\n')).toContain('skip until `./setup.sh unpause`');
+
+    const again = configured({
+      services: ['backend'],
+      deploymentEnv: 'DAY0_CRONS_PAUSED=paused by hand at 2026-09-29T13:00:00Z\n',
+    });
+    expect(await runCommand(verb('pause'), again.io)).toBe(0);
+    expect(again.output.join('\n')).toContain(
+      'already paused (paused by hand at 2026-09-29T13:00:00Z); nothing was changed',
+    );
+    expect(ran(again)).not.toContain('convex env set');
+    expect(ran(again)).not.toContain('convex:restart');
+  });
+
+  it('pause takes over the pause an unfinished upgrade left, as its own, so the next upgrade leaves it', async (): Promise<void> => {
+    const h = configured({
+      services: ['backend'],
+      deploymentEnv: 'DAY0_CRONS_PAUSED=upgrade to 0.3.0 at 2026-09-29T13:00:00Z\n',
+    });
+    expect(await runCommand(verb('pause'), h.io)).toBe(0);
+    expect(h.deploymentEnv().DAY0_CRONS_PAUSED).toMatch(/^paused by hand at /);
+    expect(h.output.join('\n')).toContain('now paused by hand');
+    expect(ran(h)).not.toContain('convex:restart');
+  });
+
+  it('unpause removes the flag and restarts the backend; with none set it changes nothing', async (): Promise<void> => {
+    const h = configured({
+      services: ['backend'],
+      deploymentEnv: 'DAY0_CRONS_PAUSED=paused by hand at 2026-09-29T13:00:00Z\n',
+    });
+    expect(await runCommand(verb('unpause'), h.io)).toBe(0);
+    expect(h.deploymentEnv().DAY0_CRONS_PAUSED).toBeUndefined();
+    expect(ran(h)).toContain('run convex:restart');
+
+    const running = configured({ services: ['backend'] });
+    expect(await runCommand(verb('unpause'), running.io)).toBe(0);
+    expect(running.output.join('\n')).toContain('not paused; nothing was changed');
+    expect(ran(running)).not.toContain('convex env remove');
+  });
+
+  it('refuses a stopped stack, whose jobs are not running either, and changes nothing', async (): Promise<void> => {
+    for (const command of ['pause', 'unpause'] as const) {
+      const h = configured({ services: [] });
+      expect(await runCommand(verb(command), h.io)).toBe(1);
+      expect(h.output.join('\n')).toContain(`${PROJECT}'s backend is not running`);
+      expect(ran(h)).not.toContain('convex env');
+    }
+  });
+
+  it('prints the commands and changes nothing on --dry-run', async (): Promise<void> => {
+    const h = configured({ services: ['backend'] });
+    expect(await runCommand(verb('pause', { dryRun: true }), h.io)).toBe(0);
+    expect(h.output.join('\n')).toContain('npx convex env set DAY0_CRONS_PAUSED --');
+    expect(h.deploymentEnv().DAY0_CRONS_PAUSED).toBeUndefined();
+    expect(ran(h)).not.toContain('convex:restart');
+  });
+});
+
 describe('backup, restore and upgrade (step 15)', (): void => {
   /** A home directory outside the checkout for the default backup location. */
   function home(): string {
@@ -781,6 +900,32 @@ describe('backup, restore and upgrade (step 15)', (): void => {
     rmSync(homeDirectory, { recursive: true, force: true });
   });
 
+  it('lifts the pause a backup taken by an upgrade carries, and keeps one set by hand', async (): Promise<void> => {
+    const homeDirectory = home();
+    const taken = configured({ services: ['backend'], environment: { HOME: homeDirectory } });
+    expect(await runCommand(verb('backup'), taken.io)).toBe(0);
+    const directory = join(homeDirectory, 'day0-backups', PROJECT);
+    const file = join(directory, readdirSync(directory).find((name) => name.endsWith('.tar.gz'))!);
+
+    const upgraded = configured({
+      services: ['backend'],
+      environment: { HOME: homeDirectory },
+      deploymentEnv: 'DAY0_CRONS_PAUSED=upgrade to 0.3.0 at 2026-09-29T13:00:00Z\n',
+    });
+    expect(await runCommand(verb('restore', { restoreFrom: file }), upgraded.io)).toBe(0);
+    expect(upgraded.deploymentEnv().DAY0_CRONS_PAUSED).toBeUndefined();
+    expect(upgraded.output.join('\n')).toContain("it carried that upgrade's pause");
+
+    const byHand = configured({
+      services: ['backend'],
+      environment: { HOME: homeDirectory },
+      deploymentEnv: 'DAY0_CRONS_PAUSED=paused by hand at 2026-09-29T13:00:00Z\n',
+    });
+    expect(await runCommand(verb('restore', { restoreFrom: file }), byHand.io)).toBe(0);
+    expect(byHand.deploymentEnv().DAY0_CRONS_PAUSED).toBe('paused by hand at 2026-09-29T13:00:00Z');
+    rmSync(homeDirectory, { recursive: true, force: true });
+  });
+
   it('refuses to restore onto the test profile, or a backup whose checksum does not match', async (): Promise<void> => {
     const homeDirectory = home();
     const taken = configured({ services: ['backend'], environment: { HOME: homeDirectory } });
@@ -836,6 +981,141 @@ describe('backup, restore and upgrade (step 15)', (): void => {
     rmSync(homeDirectory, { recursive: true, force: true });
   });
 
+  it('pauses the scheduled jobs before its backup and push, and lifts its own pause once the check passes', async (): Promise<void> => {
+    const homeDirectory = home();
+    const h = configured({ services: ['backend'], environment: { HOME: homeDirectory } });
+    expect(await runCommand(verb('upgrade'), h.io)).toBe(0);
+    const lines = ran(h).split('\n');
+    const at = (text: string): number => lines.findIndex((line) => line.includes(text));
+    const paused = lines.find((line) => line.includes('convex env set DAY0_CRONS_PAUSED'));
+    expect(paused).toMatch(/-- upgrade to 0\.3\.0 at \d{4}-/);
+    expect(at('convex env set DAY0_CRONS_PAUSED')).toBeLessThan(at('tar czf'));
+    expect(at('tar czf')).toBeLessThan(at('convex dev --once'));
+    expect(at('run check:setup')).toBeLessThan(at('convex env remove DAY0_CRONS_PAUSED'));
+    expect(lines.slice(at('convex env remove DAY0_CRONS_PAUSED')).join('\n')).toContain(
+      'run convex:restart',
+    );
+    expect(h.deploymentEnv().DAY0_CRONS_PAUSED).toBeUndefined();
+    rmSync(homeDirectory, { recursive: true, force: true });
+  });
+
+  it('pauses a stopped stack once its backend is up and its release checked, before the push', async (): Promise<void> => {
+    const homeDirectory = home();
+    const h = configured({
+      services: ['backend', 'sandbox', 'redactor'],
+      servicesBeforeUp: [],
+      environment: { HOME: homeDirectory },
+    });
+    expect(await runCommand(verb('upgrade'), h.io)).toBe(0);
+    const lines = ran(h).split('\n');
+    const at = (text: string): number => lines.findIndex((line) => line.includes(text));
+    expect(at('run convex:up')).toBeLessThan(at('convex env set DAY0_CRONS_PAUSED'));
+    expect(at('npx convex data')).toBeLessThan(at('convex env set DAY0_CRONS_PAUSED'));
+    expect(at('convex env set DAY0_CRONS_PAUSED')).toBeLessThan(at('convex dev --once'));
+    expect(h.deploymentEnv().DAY0_CRONS_PAUSED).toBeUndefined();
+    rmSync(homeDirectory, { recursive: true, force: true });
+  });
+
+  it('leaves the jobs running when the release check refuses a stopped stack', async (): Promise<void> => {
+    const homeDirectory = home();
+    const h = configured({
+      services: ['backend', 'sandbox', 'redactor'],
+      servicesBeforeUp: [],
+      environment: { HOME: homeDirectory },
+      releaseStamp: '0.1.0',
+    });
+    expect(await runCommand(verb('upgrade'), h.io)).toBe(1);
+    expect(h.output.join('\n')).toContain('skips 0.2.0');
+    expect(ran(h)).not.toContain('convex env set DAY0_CRONS_PAUSED');
+    expect(h.deploymentEnv().DAY0_CRONS_PAUSED).toBeUndefined();
+    rmSync(homeDirectory, { recursive: true, force: true });
+  });
+
+  it('refuses a backup directory inside the checkout before it pauses anything', async (): Promise<void> => {
+    const h = configured({ services: ['backend'] });
+    expect(await runCommand(verb('upgrade', { backupTo: 'backups' }), h.io)).toBe(1);
+    expect(h.output.join('\n')).toContain(
+      'error: nothing was backed up, installed or pushed, because',
+    );
+    expect(h.output.join('\n')).toContain('is inside this checkout');
+    expect(ran(h)).not.toContain('convex env set DAY0_CRONS_PAUSED');
+  });
+
+  it('says the pause may stand when the backend is down after a failed upgrade', async (): Promise<void> => {
+    const homeDirectory = home();
+    const h = configured({
+      services: [],
+      environment: { HOME: homeDirectory },
+      failing: [{ match: 'run convex:up', status: 1, stderr: 'port is already allocated' }],
+    });
+    expect(await runCommand(verb('upgrade'), h.io)).toBe(1);
+    expect(h.output.join('\n')).toContain(
+      'whether the scheduled jobs are paused cannot be read; if an upgrade paused them, they stay paused',
+    );
+    rmSync(homeDirectory, { recursive: true, force: true });
+  });
+
+  it('leaves a pause set by hand as it found it', async (): Promise<void> => {
+    const homeDirectory = home();
+    const h = configured({
+      services: ['backend'],
+      environment: { HOME: homeDirectory },
+      deploymentEnv: 'DAY0_CRONS_PAUSED=paused by hand at 2026-09-29T13:00:00Z\n',
+    });
+    expect(await runCommand(verb('upgrade'), h.io)).toBe(0);
+    expect(h.deploymentEnv().DAY0_CRONS_PAUSED).toBe('paused by hand at 2026-09-29T13:00:00Z');
+    expect(ran(h)).not.toContain('convex env set DAY0_CRONS_PAUSED');
+    expect(ran(h)).not.toContain('convex env remove DAY0_CRONS_PAUSED');
+    expect(h.output.join('\n')).toContain('`./setup.sh unpause` lifts it');
+    rmSync(homeDirectory, { recursive: true, force: true });
+  });
+
+  it('keeps its pause when the check fails, and lifts one an unfinished upgrade left once it completes', async (): Promise<void> => {
+    const homeDirectory = home();
+    const failed = configured({
+      services: ['backend'],
+      environment: { HOME: homeDirectory },
+      failing: [{ match: 'run check:setup', status: 1, stderr: 'the redactor is not healthy' }],
+    });
+    expect(await runCommand(verb('upgrade'), failed.io)).toBe(1);
+    const left = failed.deploymentEnv().DAY0_CRONS_PAUSED;
+    expect(left).toMatch(/^upgrade to 0\.3\.0 at /);
+    expect(failed.output.join('\n')).toContain(
+      'The scheduled jobs stay paused while the upgrade is unfinished',
+    );
+
+    const again = configured({
+      services: ['backend'],
+      environment: { HOME: homeDirectory },
+      deploymentEnv: `DAY0_CRONS_PAUSED=${left}\n`,
+    });
+    expect(await runCommand(verb('upgrade'), again.io)).toBe(0);
+    expect(again.deploymentEnv().DAY0_CRONS_PAUSED).toBeUndefined();
+    rmSync(homeDirectory, { recursive: true, force: true });
+  });
+
+  it('refuses a protected project from a linked worktree in its own words, with the way to upgrade it', async (): Promise<void> => {
+    const homeDirectory = home();
+    const h = harness({
+      envLocal: 'COMPOSE_PROJECT_NAME=day0\nOPENAI_API_KEY=x\nDAY0_SURFACE_MODE=real\n',
+      volumes: ['day0_convex_data'],
+      services: ['backend'],
+      environment: { HOME: homeDirectory },
+    });
+    expect(await runCommand(verb('upgrade'), h.io)).toBe(1);
+    const printed = h.output.join('\n');
+    expect(printed).toContain(
+      'error: nothing was backed up, installed or pushed, because day0 is protected: it holds a real run',
+    );
+    expect(printed).toContain(
+      'check out the tag there, run `./setup.sh upgrade`, then check out your branch again, one tag at a time',
+    );
+    expect(printed).not.toContain('Choose another name');
+    expect(ran(h)).not.toContain('tar czf');
+    expect(ran(h)).not.toContain('pnpm install');
+    rmSync(homeDirectory, { recursive: true, force: true });
+  });
+
   it('refuses an upgrade that would skip a release before it backs up or installs anything', async (): Promise<void> => {
     const homeDirectory = home();
     const h = configured({
@@ -881,5 +1161,49 @@ describe('backup, restore and upgrade (step 15)', (): void => {
     });
     expect(parseSetupArguments(['upgrade']).command).toBe('upgrade');
     expect(() => parseSetupArguments(['restore', 'a.tar.gz', 'b.tar.gz'])).toThrow('one backup');
+  });
+});
+
+describe("the README's upgrade section, in both languages", (): void => {
+  const readme = readFileSync(new URL('../../README.md', import.meta.url), 'utf8');
+
+  /** The section under a heading, up to the next heading of any level. */
+  function section(heading: string): string {
+    const start = readme.indexOf(`${heading}\n`);
+    expect(start).toBeGreaterThanOrEqual(0);
+    const rest = readme.slice(start + heading.length + 1);
+    const end = rest.search(/^#{1,4} /m);
+    return end < 0 ? rest : rest.slice(0, end);
+  }
+
+  const halves = [section('### Backup, restore and upgrade'), section('#### 备份、恢复与升级')];
+
+  it('names the cloud deployment on every command and pushes the way the hosted redeploy was rehearsed', (): void => {
+    for (const text of halves) {
+      expect(text).toContain('npx convex dev --once --typecheck enable --env-file');
+      expect(text).toContain('CONVEX_DEPLOYMENT=dev:<name>');
+      for (const verb of [
+        'run migrations:runPending',
+        'data deploymentVersions',
+        'env list',
+        'export',
+      ]) {
+        expect(text).toMatch(new RegExp(`npx convex ${verb} --deployment <name>`));
+      }
+      expect(text).not.toMatch(/`npx convex [^`]*--prod/);
+      expect(text).not.toMatch(/`npx convex deploy`[,，]/);
+    }
+  });
+
+  it('names only verbs the setup reads, pause and unpause among them, and the protected-project runbook', (): void => {
+    for (const text of halves) {
+      const verbs = [...text.matchAll(/\.\/setup\.sh ([a-z]+)/g)].map((match) => match[1]!);
+      expect(verbs).toEqual(expect.arrayContaining(['pause', 'unpause', 'upgrade']));
+      for (const named of new Set(verbs)) {
+        expect(parseSetupArguments([named]).command).toBe(named);
+      }
+      expect(text).toContain('DAY0_CRONS_PAUSED');
+      expect(text).toContain('day0-demo-7c65e7');
+    }
   });
 });

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import SetupPage from '../../../app/setup/page';
 import {
@@ -27,7 +27,12 @@ import { HOSTED_DEMO_SNAPSHOT, hostedBuildLine } from '../../../src/demo/hosted-
  * rather than what would sound good, and it must collect nothing: no key, no
  * address, no form of any kind reaches this route.
  */
-const html = renderToStaticMarkup(<SetupPage />);
+// No deployment is named, so the page renders from the tracked record alone
+// and nothing here reaches a network (the stamped line has its own test).
+vi.stubEnv('CONVEX_URL', '');
+vi.stubEnv('NEXT_PUBLIC_CONVEX_URL', '');
+const html = renderToStaticMarkup(await SetupPage());
+vi.unstubAllEnvs();
 
 /** The rendered text, with markup and entities out of the way. */
 const text = html
@@ -103,6 +108,8 @@ describe('the /setup guide', (): void => {
     expect(text).toContain('The product the hosted demo shows, running locally in real mode');
     expect(text).toContain(hostedBuildLine(HOSTED_DEMO_SNAPSHOT.recording));
     expect(text).not.toContain('the run it shows');
+    // With no deployment to ask, the record's dated build stands alone.
+    expect(text).not.toContain('The deployment behind this page');
   });
 
   it('says once, under the two local ways, that both are real mode, with the three verbs', (): void => {
