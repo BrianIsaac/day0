@@ -45,7 +45,7 @@ describe('what sits beside the charter', (): void => {
   it('keeps the transcript beside the draft, or says none was kept', (): void => {
     const kept = render(<WhatYouSaid transcript={TRANSCRIPT} />);
     expect(kept).toContain('What you said');
-    expect(kept).toContain('<span class="sr-only">You: </span><span>The close.</span>');
+    expect(kept).toContain('<span class="sr-only">You: </span>The close.');
     expect(kept).toMatch(/<ol tabindex="0" aria-label="Your answers in the one-to-one"/);
     expect(render(<WhatYouSaid transcript={null} />)).toContain('No transcript was kept');
     expect(render(<WhatYouSaid transcript={undefined} />)).toContain('Loading the one-to-one');

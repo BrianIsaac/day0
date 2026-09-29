@@ -1,7 +1,7 @@
 /*
- * One turn's words as the one-to-one draws them, live in the room and read back from a stored
- * transcript alike, so the manager never sees the model's markdown marks in one place and bold
- * text in the other.
+ * One of the employee's turns as the one-to-one draws it, live in the room and read back from a
+ * stored transcript alike, so the manager never sees the model's `**` marks in one place and bold
+ * text in the other. The manager's own turns are drawn as typed.
  */
 
 /**

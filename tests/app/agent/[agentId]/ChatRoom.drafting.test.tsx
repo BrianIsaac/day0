@@ -312,13 +312,15 @@ describe('a room that comes back to a one-to-one already over', (): void => {
       _id: 'session-1',
       state: 'synthesising',
       pendingTranscript:
-        'ASSISTANT: **Topic 1 - Why this hire:** what changed?\n\nUSER: The close.',
+        'ASSISTANT: **Topic 1 - Why this hire:** what changed?\n\nUSER: The **close**, mostly.',
     };
     const view = mount(<ChatRoom agentId={AGENT} bossLabel="Sam" />);
     await settle();
     const log = view.container.querySelector('[role="log"]');
     expect(log?.querySelector('strong')?.textContent).toBe('Topic 1 - Why this hire:');
-    expect(log?.textContent).not.toContain('**');
+    expect(log?.textContent).not.toContain('**Topic');
+    // The manager's own words are drawn as typed.
+    expect(log?.textContent).toContain('The **close**, mostly.');
     view.unmount();
   });
 

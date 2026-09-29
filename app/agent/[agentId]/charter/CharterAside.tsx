@@ -70,7 +70,7 @@ function TranscriptAnswers({ transcript }: { transcript: string }) {
           ) : null}
           <p className="rounded-xl rounded-br-[4px] border border-[var(--color-accent-line)] bg-[var(--color-accent-soft)] px-3.5 py-2.5 text-sm whitespace-pre-wrap text-[var(--color-fg)]">
             <span className="sr-only">You: </span>
-            <TurnText text={exchange.answer} />
+            {exchange.answer}
           </p>
         </li>
       ))}

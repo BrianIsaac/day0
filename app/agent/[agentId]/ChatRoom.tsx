@@ -715,7 +715,11 @@ function MessageBubble({ message, arrive }: { message: UIMessage; arrive: boolea
         if (part.type === 'text') {
           return (
             <span key={i}>
-              <TurnText text={(part as { type: 'text'; text: string }).text} />
+              {manager ? (
+                (part as { type: 'text'; text: string }).text
+              ) : (
+                <TurnText text={(part as { type: 'text'; text: string }).text} />
+              )}
             </span>
           );
         }
@@ -739,7 +743,7 @@ function StoredBubble({ turn }: { turn: TranscriptTurn }) {
   return (
     <div className={`${BUBBLE} ${manager ? MANAGER_BUBBLE : EMPLOYEE_BUBBLE}`}>
       <span className="sr-only">{manager ? 'You: ' : 'Employee: '}</span>
-      <TurnText text={turn.text} />
+      {manager ? turn.text : <TurnText text={turn.text} />}
     </div>
   );
 }
