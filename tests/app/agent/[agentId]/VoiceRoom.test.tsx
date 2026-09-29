@@ -117,6 +117,26 @@ describe('the voice room in the manager’s words (N29)', (): void => {
 });
 
 describe('a voice 1:1 that could not start (step 45, standard 7.3)', (): void => {
+  it('says a refused private call in the manager’s words, the provider’s detail to the log only (m24)', async (): Promise<void> => {
+    const logged = vi.spyOn(console, 'log').mockImplementation((): void => undefined);
+    const container = await renderVoiceRoom({
+      configured: true,
+      agentId: 'agent_voice',
+      signedUrl: null,
+      public: true,
+      warning: 'Voice could not open a private call with this employee',
+    });
+    const alert = container.querySelector('[role="alert"]')?.textContent ?? '';
+    expect(alert).toBe(
+      'Voice could not open a private call with this employee. The call may still connect. Switch to chat mode if voice setup is unavailable.',
+    );
+    expect(alert).not.toMatch(/\bagent\b|ElevenLabs|signed URL|public/i);
+    expect(logged.mock.calls.map(([line]) => String(line)).join('\n')).toContain(
+      'fell back to the public ElevenLabs agent',
+    );
+    logged.mockRestore();
+  });
+
   it("says why in the room's alert instead of dropping the refusal", async (): Promise<void> => {
     voice.startRefusal = new Error(
       '[CONVEX M(voice:start)] [Request ID: 1] Server Error\nUncaught Error: The employee is retired.\n    at handler (../convex/voice.ts:1:1)',
