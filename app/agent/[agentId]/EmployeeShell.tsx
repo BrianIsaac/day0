@@ -15,6 +15,7 @@ import { needsYouItemIds, openWorkCount } from '@/work/state-display';
 import { shownEmployeeState } from '@/work/state-labels';
 import { useArrival } from '../../arrival';
 import { FirstWeekCard } from '../../components/FirstWeekCard';
+import { CARD_SETTLE_MS, RAIL_ADVANCE_MS, RAIL_EXIT_MS } from '../../components/first-week-motion';
 import { FirstWeekRail } from '../../components/FirstWeekRail';
 import { usePreviousValue } from '../../components/previous-value';
 import { StatusRegion } from '../../components/StatusRegion';
@@ -49,19 +50,6 @@ export const ONBOARDING_REOPENED =
 export function redraftingFromNote(name: string): string {
   return `Sent back with your note: ${name} is redrafting the charter from your one-to-one.`;
 }
-
-/** How long the first-week rail's advance plays: its 150 ms pause and 280 ms slide. */
-export const RAIL_ADVANCE_MS = 430;
-
-/**
- * How long the rail fades once the week has moved on to Working, before the card takes its place
- * (`[data-rail-leaving]` in `app/globals.css`): the page's height still changes, as the transform
- * rule allows no other way, but it no longer cuts.
- */
-export const RAIL_EXIT_MS = 150;
-
-/** How long the card settles in where the rail was (`.rail[data-arriving]`). */
-export const CARD_SETTLE_MS = 220;
 
 /** A draft the manager sent back, and whether the employee is redrafting it. */
 interface SentBack {
