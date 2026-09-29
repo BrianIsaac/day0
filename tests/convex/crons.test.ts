@@ -13,7 +13,8 @@ import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 describe('scheduled documentation sync', (): void => {
   it('runs every fifteen minutes', (): void => {
     expect(crons.crons['sync documentation sources']).toMatchObject({
-      name: 'docSyncActions:syncAll',
+      name: 'crons:runScheduledJob',
+      args: [{ job: 'docSyncActions:syncAll' }],
       schedule: { type: 'interval', minutes: 15 },
     });
   });
@@ -22,28 +23,32 @@ describe('scheduled documentation sync', (): void => {
 describe('scheduled surface maintenance', (): void => {
   it('re-probes connected surfaces every hour', (): void => {
     expect(crons.crons['re-probe connected surfaces']).toMatchObject({
-      name: 'surfaceActions:reprobeAll',
+      name: 'crons:runScheduledJob',
+      args: [{ job: 'surfaceActions:reprobeAll' }],
       schedule: { type: 'interval', hours: 1 },
     });
   });
 
   it('polls connected surfaces for work every five minutes', (): void => {
     expect(crons.crons['poll connected surfaces for work']).toMatchObject({
-      name: 'intakeActions:pollAll',
+      name: 'crons:runScheduledJob',
+      args: [{ job: 'intakeActions:pollAll' }],
       schedule: { type: 'interval', minutes: 5 },
     });
   });
 
   it('polls manager decision replies every minute', (): void => {
     expect(crons.crons['poll manager decision replies']).toMatchObject({
-      name: 'intakeActions:pollDecisions',
+      name: 'crons:runScheduledJob',
+      args: [{ job: 'intakeActions:pollDecisions' }],
       schedule: { type: 'interval', seconds: 60 },
     });
   });
 
   it('checks for manager digests on every quarter hour of the clock, so each zone’s hour is met', (): void => {
     expect(crons.crons['send manager digests']).toMatchObject({
-      name: 'managerChannelActions:sendManagerDigests',
+      name: 'crons:runScheduledJob',
+      args: [{ job: 'managerChannelActions:sendManagerDigests' }],
       schedule: { type: 'cron', cron: '0,15,30,45 * * * *' },
     });
   });
@@ -94,6 +99,21 @@ async function scheduledSteps(harness: Harness): Promise<Array<[string, string]>
   ).map((job): [string, string] => [job.name, (job.args[0] as { workItemId: string }).workItemId]);
 }
 
+/**
+ * Run one cron's target the way the scheduler does: by its name and its arguments.
+ *
+ * Args:
+ *   harness: Convex test harness.
+ *   label: The cron's label in `crons.ts`.
+ *
+ * Returns:
+ *   What the target returned.
+ */
+async function runCron(harness: Harness, label: string): Promise<unknown> {
+  const cron = crons.crons[label] as { name: string; args: Array<Record<string, unknown>> };
+  return await harness.action(makeFunctionReference<'action'>(cron.name), cron.args[0] ?? {});
+}
+
 describe('the stalled-step sweep', (): void => {
   afterEach((): void => {
     vi.useRealTimers();
@@ -107,7 +127,8 @@ describe('the stalled-step sweep', (): void => {
 
   it('runs with the five-minute intake poll', (): void => {
     expect(crons.crons['resume stalled work steps']).toMatchObject({
-      name: 'work:resumeStalledSteps',
+      name: 'crons:runScheduledJob',
+      args: [{ job: 'work:resumeStalledSteps' }],
       schedule: { type: 'interval', minutes: 5 },
     });
   });
@@ -429,21 +450,6 @@ describe('the cron targets, run by the names they are scheduled under', (): void
     restoreSurfaceMode();
   });
 
-  /**
-   * Run one cron's target the way the scheduler does: by its name and its arguments.
-   *
-   * Args:
-   *   harness: Convex test harness.
-   *   label: The cron's label in `crons.ts`.
-   *
-   * Returns:
-   *   What the target returned.
-   */
-  async function runCron(harness: Harness, label: string): Promise<unknown> {
-    const cron = crons.crons[label] as { name: string; args: Array<Record<string, unknown>> };
-    return await harness.action(makeFunctionReference<'action'>(cron.name), cron.args[0] ?? {});
-  }
-
   it('polls, polls decisions, re-probes and syncs one connected surface with no read grant', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
@@ -490,5 +496,79 @@ describe('the cron targets, run by the names they are scheduled under', (): void
       sources: 0,
       passed: 0,
     });
+  });
+});
+
+describe('the crons pause switch', (): void => {
+  afterEach((): void => {
+    vi.unstubAllEnvs();
+    vi.useRealTimers();
+    restoreSurfaceMode();
+  });
+
+  it('puts every scheduled job behind the one gate, the voice sweep included', (): void => {
+    const jobs = Object.values(crons.crons);
+    expect(jobs).toHaveLength(7);
+    for (const job of jobs) expect(job.name).toBe('crons:runScheduledJob');
+    expect(crons.crons['recover stalled voice finalisations']).toMatchObject({
+      args: [{ job: 'voice:sweepStalledFinalisations' }],
+      schedule: { type: 'interval', minutes: 5 },
+    });
+  });
+
+  it('skips every job while the deployment is paused, reading and writing nothing, and resumes where it stood once the flag goes', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest({ schema, modules: allConvexModules(), transactionLimits: true });
+    const agentId = await seedAgent(harness, false);
+    const surfaceId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'linear',
+          displayName: 'Linear',
+          class: 'kanban',
+          verdict: 'connected',
+          whereFound: [],
+          managerApprovedAt: 1,
+          credentialLanded: true,
+          createdAt: 1,
+        }),
+    );
+    const lapsed = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('workItems', {
+          ...row(agentId, 'REVOPS-61', Date.now()),
+          state: 'claimed',
+          draftClaimedAt: Date.now() - LEASE_MS - 1,
+        }),
+    );
+    const before = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+
+    vi.stubEnv('DAY0_CRONS_PAUSED', 'upgrade to 0.9.0');
+    const printed = vi.spyOn(console, 'log').mockImplementation((): void => undefined);
+    for (const label of Object.keys(crons.crons)) {
+      await expect(runCron(harness, label)).resolves.toEqual({ paused: 'upgrade to 0.9.0' });
+    }
+    const lines = printed.mock.calls.map(
+      ([line]) => JSON.parse(String(line)) as Record<string, unknown>,
+    );
+    printed.mockRestore();
+    expect(lines).toHaveLength(7);
+    expect(lines[0]).toMatchObject({
+      msg: 'scheduled job skipped: crons paused',
+      reason: 'upgrade to 0.9.0',
+    });
+    expect(await harness.run(async (ctx) => await ctx.db.get(surfaceId))).toEqual(before);
+    expect(await scheduledSteps(harness)).toEqual([]);
+
+    vi.stubEnv('DAY0_CRONS_PAUSED', '');
+    await expect(runCron(harness, 'poll connected surfaces for work')).resolves.toMatchObject({
+      mode: 'real',
+      surfaces: 1,
+      skipped: 1,
+    });
+    await runCron(harness, 'resume stalled work steps');
+    expect(await scheduledSteps(harness)).toContainEqual(['workActions:draftPlanInternal', lapsed]);
   });
 });

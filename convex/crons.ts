@@ -1,6 +1,10 @@
 import { cronJobs } from 'convex/server';
 import type { FunctionReference } from 'convex/server';
+import { v } from 'convex/values';
 import { internal } from './_generated/api';
+import { internalAction, type ActionCtx } from './_generated/server';
+import { cronsPauseReason } from '../src/lib/crons-pause';
+import { log } from '../src/lib/logger';
 import { DIGEST_SCHEDULE } from '../src/work/manager-notes';
 
 const intakeInternal = internal as unknown as {
@@ -9,6 +13,57 @@ const intakeInternal = internal as unknown as {
     pollDecisions: FunctionReference<'action', 'internal', Record<string, never>, unknown>;
   };
 };
+
+/**
+ * Every job the deployment schedules for itself, by the function it runs.
+ *
+ * Each one reads or writes something outside a single request: the intake and
+ * decision polls read the connected workspaces, the digests post to them, the
+ * sweeps and the sync start work that does both. So every one of them runs
+ * through `runScheduledJob`, and a paused deployment starts none of them.
+ */
+const SCHEDULED_JOBS = {
+  'voice:sweepStalledFinalisations': async (ctx: ActionCtx): Promise<unknown> =>
+    await ctx.runMutation(internal.voice.sweepStalledFinalisations, {}),
+  'docSyncActions:syncAll': async (ctx: ActionCtx): Promise<unknown> =>
+    await ctx.runAction(internal.docSyncActions.syncAll, {}),
+  'surfaceActions:reprobeAll': async (ctx: ActionCtx): Promise<unknown> =>
+    await ctx.runAction(internal.surfaceActions.reprobeAll, {}),
+  'intakeActions:pollAll': async (ctx: ActionCtx): Promise<unknown> =>
+    await ctx.runAction(intakeInternal.intakeActions.pollAll, {}),
+  'work:resumeStalledSteps': async (ctx: ActionCtx): Promise<unknown> =>
+    await ctx.runMutation(internal.work.resumeStalledSteps, {}),
+  'intakeActions:pollDecisions': async (ctx: ActionCtx): Promise<unknown> =>
+    await ctx.runAction(intakeInternal.intakeActions.pollDecisions, {}),
+  'managerChannelActions:sendManagerDigests': async (ctx: ActionCtx): Promise<unknown> =>
+    await ctx.runAction(internal.managerChannelActions.sendManagerDigests, {}),
+} as const;
+
+/** A job `runScheduledJob` knows, named by the function it runs. */
+type ScheduledJob = keyof typeof SCHEDULED_JOBS;
+
+const scheduledJobNames = Object.keys(SCHEDULED_JOBS) as ScheduledJob[];
+
+/**
+ * Run one scheduled job, unless the deployment's jobs are paused.
+ *
+ * Internal: only the cron table below calls it. Paused (`DAY0_CRONS_PAUSED`
+ * set, by `./setup.sh pause` or an upgrade), it logs one line and returns
+ * before the job reads or writes anything, so the polls' cursors stay where
+ * they were and the next run after the pause picks up from them. Work a job
+ * scheduled before the pause is not held: it runs to its end.
+ */
+export const runScheduledJob = internalAction({
+  args: { job: v.union(...scheduledJobNames.map((job) => v.literal(job))) },
+  handler: async (ctx, { job }): Promise<unknown> => {
+    const reason = cronsPauseReason();
+    if (reason !== undefined) {
+      log.info('scheduled job skipped: crons paused', { job, reason });
+      return { paused: reason };
+    }
+    return await SCHEDULED_JOBS[job](ctx);
+  },
+});
 
 /**
  * Scheduled maintenance the deployment owes itself.
@@ -22,44 +77,40 @@ const intakeInternal = internal as unknown as {
  */
 const crons = cronJobs();
 
-crons.interval(
-  'recover stalled voice finalisations',
-  { minutes: 5 },
-  internal.voice.sweepStalledFinalisations,
-  {},
-);
+const gate = internal.crons.runScheduledJob;
 
-crons.interval('sync documentation sources', { minutes: 15 }, internal.docSyncActions.syncAll, {});
+crons.interval('recover stalled voice finalisations', { minutes: 5 }, gate, {
+  job: 'voice:sweepStalledFinalisations',
+});
+
+crons.interval('sync documentation sources', { minutes: 15 }, gate, {
+  job: 'docSyncActions:syncAll',
+});
 
 // Phase 2 Lane B surface maintenance.
-crons.interval('re-probe connected surfaces', { hours: 1 }, internal.surfaceActions.reprobeAll, {});
+crons.interval('re-probe connected surfaces', { hours: 1 }, gate, {
+  job: 'surfaceActions:reprobeAll',
+});
 
-crons.interval(
-  'poll connected surfaces for work',
-  { minutes: 5 },
-  intakeInternal.intakeActions.pollAll,
-  {},
-);
+crons.interval('poll connected surfaces for work', { minutes: 5 }, gate, {
+  job: 'intakeActions:pollAll',
+});
 
 // With the intake poll: the server-driven work loop's recovery for a step
 // that died (real mode only; the mutation returns at once in mock mode).
-crons.interval('resume stalled work steps', { minutes: 5 }, internal.work.resumeStalledSteps, {});
+crons.interval('resume stalled work steps', { minutes: 5 }, gate, {
+  job: 'work:resumeStalledSteps',
+});
 
-crons.interval(
-  'poll manager decision replies',
-  { seconds: 60 },
-  intakeInternal.intakeActions.pollDecisions,
-  {},
-);
+crons.interval('poll manager decision replies', { seconds: 60 }, gate, {
+  job: 'intakeActions:pollDecisions',
+});
 
 // Every quarter hour on the clock; each agent's digest goes at the top of its
 // own zone's hour (`digestDue`), and notes stranded by a switch to per run go
 // at the next run.
-crons.cron(
-  'send manager digests',
-  DIGEST_SCHEDULE,
-  internal.managerChannelActions.sendManagerDigests,
-  {},
-);
+crons.cron('send manager digests', DIGEST_SCHEDULE, gate, {
+  job: 'managerChannelActions:sendManagerDigests',
+});
 
 export default crons;
