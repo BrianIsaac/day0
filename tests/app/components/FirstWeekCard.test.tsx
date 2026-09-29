@@ -236,6 +236,35 @@ describe('FirstWeekCard', () => {
     ).toBe('false');
   });
 
+  it('keeps the second click of a double click on the dimmed page off the control beneath it (second pass H1)', async () => {
+    let pressed = 0;
+    let doubled = 0;
+    const view = mount(
+      <>
+        <button type="button" onClick={() => (pressed += 1)} onDoubleClick={() => (doubled += 1)}>
+          Approve all
+        </button>
+        <FirstWeekCard steps={WORKING} />
+      </>,
+    );
+    await press(view.container, NAME);
+    click(document.querySelector('[data-week-scrim]'));
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    const approve = [...view.container.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Approve all',
+    );
+    act((): void => {
+      approve?.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 2 }));
+      approve?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, detail: 2 }));
+    });
+    expect([pressed, doubled]).toEqual([0, 0]);
+    // A click of its own afterwards is the manager's, and lands.
+    act((): void => {
+      approve?.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+    });
+    expect(pressed).toBe(1);
+  });
+
   it('closes when the window is resized, rather than shrink to where the card was', async () => {
     const view = mount(page());
     await press(view.container, NAME);

@@ -7,7 +7,6 @@ import {
   useRef,
   useState,
   type KeyboardEvent,
-  type MouseEvent,
   type RefObject,
   type TransitionEvent,
 } from 'react';
@@ -17,6 +16,34 @@ import { keepTabInside, useModal } from './use-modal';
 
 /** The least room the whole week keeps from the window's edges, in CSS pixels. */
 const EDGE_PX = 16;
+
+/** How long after a click closes the week the rest of that double click is kept off the page. */
+const DOUBLE_CLICK_TAIL_MS = 500;
+
+/**
+ * Keep the rest of a double click off the page once its first click has closed the week: the
+ * second click (and the double click itself) would pass through the shrinking week, or land
+ * where it was under reduced motion, onto whatever is beneath, a button included. A click of its
+ * own, or the end of the window, ends the watch.
+ */
+function swallowDoubleClickTail(): void {
+  const swallow = (event: Event): void => {
+    if (event instanceof MouseEvent && event.detail > 1) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    stop();
+  };
+  const stop = (): void => {
+    clearTimeout(timer);
+    document.removeEventListener('click', swallow, true);
+    document.removeEventListener('dblclick', swallow, true);
+  };
+  const timer = setTimeout(stop, DOUBLE_CLICK_TAIL_MS);
+  document.addEventListener('click', swallow, true);
+  document.addEventListener('dblclick', swallow, true);
+}
 
 /** Where the card sat when it was pressed, in the window. */
 interface Anchor {
@@ -117,11 +144,7 @@ export function FirstWeekCard({ steps, arriving = false }: FirstWeekCardProps) {
   const current = steps.find((step) => step.status === 'now');
   if (current === undefined) return null;
 
-  const show = (event: MouseEvent<HTMLButtonElement>): void => {
-    // The second click of a double click is the tail of the gesture the first one made: when
-    // that closed the week, the second passes through it (shrinking, or already gone under
-    // reduced motion) to the card beneath, and must not open it again.
-    if (event.detail > 1) return;
+  const show = (): void => {
     const box = card.current?.getBoundingClientRect();
     if (!box) return;
     setAnchor({ top: box.top, left: box.left, width: box.width, height: box.height });
@@ -245,7 +268,9 @@ function WholeWeek({ id, steps, anchor, open, card, onClose, onClosed }: WholeWe
       }}
       onClick={(event) => {
         // The second click of a double click lands on the week just opened: it stays open.
-        if (open && event.detail < 2) onClose();
+        if (!open || event.detail > 1) return;
+        onClose();
+        swallowDoubleClickTail();
       }}
       className={`fixed inset-0 z-50 bg-[#0a0a0b]/55 ${open ? '' : 'pointer-events-none'}`}
     >
@@ -284,6 +309,7 @@ function WholeWeek({ id, steps, anchor, open, card, onClose, onClosed }: WholeWe
           onClick={(event) => {
             event.stopPropagation();
             onClose();
+            if (event.detail > 0) swallowDoubleClickTail();
           }}
           className="sr-only top-2 right-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] text-[13px] font-medium text-[var(--color-fg)] focus-visible:not-sr-only focus-visible:absolute focus-visible:inline-flex focus-visible:min-h-11 focus-visible:items-center focus-visible:px-3"
         >
