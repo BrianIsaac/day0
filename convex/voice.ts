@@ -1,4 +1,4 @@
-import { v } from 'convex/values';
+import { ConvexError, v } from 'convex/values';
 import {
   mutation,
   query,
@@ -180,6 +180,37 @@ export const attachConversationId = mutation({
       elevenLabsConversationId: args.elevenLabsConversationId,
     });
     return { ok: true, stamped: true };
+  },
+});
+
+/**
+ * Hold the one-to-one again on a session whose draft failed for good: the transcript it could not
+ * draft from, the notes earlier drafts were sent back with and the spent retry budget all belong
+ * to the conversation being set aside, so none of them rides into the next one's draft.
+ *
+ * Public, owner-guarded (`assertOwnsVoiceSession`). Refused while a finisher holds the session or
+ * after it produced a charter; a session with nothing to set aside is left as it is.
+ *
+ * @throws ConvexError with the refusal, which the room shows.
+ */
+export const restart = mutation({
+  args: { sessionId: v.id('voiceSessions') },
+  returns: v.object({ ok: v.literal(true) }),
+  handler: async (ctx, args): Promise<{ ok: true }> => {
+    const session = await assertOwnsVoiceSession(ctx, args.sessionId);
+    if (session.state === 'synthesising' || session.state === 'done') {
+      throw new ConvexError('The charter is being drafted from this one-to-one; wait for it.');
+    }
+    await ctx.db.patch(args.sessionId, {
+      state: 'active',
+      pendingTranscript: undefined,
+      pendingBossLabel: undefined,
+      changeRequests: undefined,
+      recoveryAttempts: undefined,
+      finalisationError: undefined,
+      finalisationFailedAt: undefined,
+    });
+    return { ok: true };
   },
 });
 
