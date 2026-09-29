@@ -4940,6 +4940,10 @@ describe('re-admitting pending work when the policy changes', (): void => {
       after: { skipped: expect.any(Number) },
     });
 
+    // Each readmitted row wakes the loop, which schedules its evaluation in workActions. The
+    // drain allows a fixed number of macrotask pumps, and the first import of that module on a
+    // busy runner can outlast them, so it is loaded before the drain waits on its actions.
+    await allConvexModules()['../../convex/workActions.ts']?.();
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
     const remaining = await harness.run(
       async (ctx) =>
