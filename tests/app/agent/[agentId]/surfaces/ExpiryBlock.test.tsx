@@ -1,3 +1,5 @@
+/** @vitest-environment jsdom */
+
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { Id } from '../../../../../convex/_generated/dataModel';
@@ -6,6 +8,7 @@ import {
   type ExpirySurface,
 } from '../../../../../app/agent/[agentId]/surfaces/ExpiryBlock';
 import { AgentZoneContext } from '../../../../../app/agent/[agentId]/time';
+import { focusedName, mount, press, said } from '../../../../fixtures/dom/press';
 
 describe('the access line and its renewal (Q5, U3 D5)', (): void => {
   const AT = Date.UTC(2026, 8, 27, 16, 5, 9);
@@ -70,5 +73,27 @@ describe('the access line and its renewal (Q5, U3 D5)', (): void => {
   it('is absent before the card is approved, when access has not started', (): void => {
     expect(renderAccess(surface({ verdict: 'proposed', expiresAt: undefined }), AT)).toBe('');
     expect(renderAccess(surface({ verdict: 'declared' }), AT)).toBe('');
+  });
+
+  it('says a renewal, and says an earlier end as an earlier end, never as a renewal (review m10)', async (): Promise<void> => {
+    const now = AT - 80 * DAY;
+    const block = (expiresAt: number) =>
+      mount(
+        <AgentZoneContext value="UTC">
+          <ExpiryBlock surface={surface({})} now={now} onSetDays={async () => ({ expiresAt })} />
+        </AgentZoneContext>,
+      );
+    const later = block(now + 90 * DAY);
+    await press(later.container, 'Renew for 90 days');
+    expect(said(later.container)).toEqual(['Renewed: Linear access now ends 7 Oct 2026, 16:05.']);
+    expect(focusedName()).toBe('Renew for 90 days');
+    later.unmount();
+
+    const earlier = block(now + 30 * DAY);
+    await press(earlier.container, 'Renew for 90 days');
+    expect(said(earlier.container)).toEqual([
+      'Linear access now ends 8 Aug 2026, 16:05, earlier than it did.',
+    ]);
+    earlier.unmount();
   });
 });

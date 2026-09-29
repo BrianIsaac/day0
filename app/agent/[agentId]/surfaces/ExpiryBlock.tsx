@@ -67,17 +67,23 @@ export function ExpiryBlock({
     </time>
   );
   const setBy = surface.accessSetBy ? ` (${SET_BY_WORDS[surface.accessSetBy]})` : '';
+  const before = standing.expiresAt;
   const renew = (): void => {
     setBusy(true);
     setOutcome(null);
     // The chain ends in its own catch, which says the refusal in the live region.
     void onSetDays(days)
-      .then((result) =>
+      .then((result) => {
+        const ends = clockTime(result.expiresAt, zone);
+        // A shorter period moves the end earlier: said as that, never as a renewal.
         setOutcome({
           tone: 'done',
-          text: `Renewed: ${surface.displayName} access now ends ${clockTime(result.expiresAt, zone)}.`,
-        }),
-      )
+          text:
+            result.expiresAt < before
+              ? `${surface.displayName} access now ends ${ends}, earlier than it did.`
+              : `Renewed: ${surface.displayName} access now ends ${ends}.`,
+        });
+      })
       .catch((err: unknown) =>
         setOutcome({ tone: 'refused', text: refusalText(err, 'The access was not renewed.') }),
       )
