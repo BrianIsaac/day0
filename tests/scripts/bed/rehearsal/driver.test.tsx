@@ -53,6 +53,7 @@ import {
   CREDENTIAL_INPUT,
   EMPLOYEE_TAB_SEGMENTS,
   lastEmployeeTurn,
+  nextTurnStep,
   REPLY_PLACEHOLDER,
   surfaceCard,
   TAKE_IT_ANYWAY,
@@ -72,7 +73,7 @@ import { AgentZoneContext } from '../../../../app/agent/[agentId]/time';
 import { WorkItemCard } from '../../../../app/agent/[agentId]/work/WorkItemCard';
 import { INIT_PROMPT } from '../../../../src/agent/day-one-turn';
 import { DRAWN, EMPLOYEE, QUESTION, SURFACES, ZONE } from '../../../fixtures/work/drawn-states';
-import { mount, press, settle } from '../../../fixtures/dom/press';
+import { mount, press, settle, unmountAll } from '../../../fixtures/dom/press';
 
 /*
  * The driver finds each control by its role and accessible name, as Playwright's `getByRole`
@@ -127,6 +128,7 @@ beforeEach((): void => {
 });
 
 afterEach((): void => {
+  unmountAll();
   backend.results = {};
   backend.queries = {};
   backend.messages = [];
@@ -149,18 +151,16 @@ describe('the dashboard driver', (): void => {
     }
   });
 
-  it('asks a failed turn again before it answers, and reads the room it types into', (): void => {
-    const chat = readFileSync('app/agent/[agentId]/ChatRoom.tsx', 'utf8');
+  it('asks a failed turn again before it answers, and never answers a question nobody put', (): void => {
     // A failed turn opens the composer too, so waiting for the composer alone
     // would type the next scripted answer under an empty or half-said turn.
+    expect(nextTurnStep({ complete: false, askAgain: true, composerOpen: true })).toBe('ask-again');
+    expect(nextTurnStep({ complete: false, askAgain: false, composerOpen: true })).toBe('reply');
+    expect(nextTurnStep({ complete: true, askAgain: true, composerOpen: true })).toBe('complete');
+    expect(nextTurnStep({ complete: false, askAgain: false, composerOpen: false })).toBe('wait');
+    // The room draws Ask again and the closing line under those words.
+    const chat = readFileSync('app/agent/[agentId]/ChatRoom.tsx', 'utf8');
     expect(chat).toMatch(new RegExp(`>\\s*${ASK_AGAIN}\\s*</(button|Button)>`));
-    const driver = readFileSync('scripts/bed/rehearsal/driver.ts', 'utf8');
-    const wait = driver.slice(
-      driver.indexOf('async waitForAgentTurn'),
-      driver.indexOf('async sendReply'),
-    );
-    expect(wait.indexOf('name: ASK_AGAIN')).toBeGreaterThan(-1);
-    expect(wait.indexOf('name: ASK_AGAIN')).toBeLessThan(wait.indexOf('composer.isEnabled()'));
     expect(chat).toContain(COMPLETE_LINE);
   });
 

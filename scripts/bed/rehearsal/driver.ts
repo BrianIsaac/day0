@@ -114,6 +114,26 @@ export function lastEmployeeTurn(turns: readonly string[]): string {
   return last === undefined ? '' : last.slice(EMPLOYEE_TURN.length).trim();
 }
 
+/** What the 1:1 shows at one look, as the wait for the employee's turn reads it. */
+export interface RoomLook {
+  readonly complete: boolean;
+  readonly askAgain: boolean;
+  readonly composerOpen: boolean;
+}
+
+/**
+ * What the wait for the employee's turn does next with what the room shows. A failed turn opens
+ * the composer as well, so Ask again is read before it: the manager asks again, and never answers
+ * a question that was not put.
+ *
+ * @param look - What the room shows now.
+ */
+export function nextTurnStep(look: RoomLook): 'complete' | 'ask-again' | 'reply' | 'wait' {
+  if (look.complete) return 'complete';
+  if (look.askAgain) return 'ask-again';
+  return look.composerOpen ? 'reply' : 'wait';
+}
+
 /** The chat composer's placeholder while the manager may type. */
 export const REPLY_PLACEHOLDER = 'type your reply…';
 /** The line the chat shows once the seventh topic is answered. */
@@ -215,17 +235,19 @@ export class PlaywrightDashboard implements Dashboard {
     const deadline = Date.now() + timeoutMs;
     let asked = 0;
     while (Date.now() < deadline) {
-      if (await complete.isVisible()) return 'complete';
-      // A failed turn opens the composer as well, so it is checked first: the
-      // manager asks again, and does not answer a question that was never put.
-      if (await askAgain.isVisible()) {
+      const step = nextTurnStep({
+        complete: await complete.isVisible(),
+        askAgain: await askAgain.isVisible(),
+        composerOpen: (await composer.count()) > 0 && (await composer.isEnabled()),
+      });
+      if (step === 'complete' || step === 'reply') return step;
+      if (step === 'ask-again') {
         if (asked === MAX_ASK_AGAIN)
           throw new Error(`the 1:1 failed a turn ${MAX_ASK_AGAIN + 1} times running`);
         asked += 1;
         await askAgain.click();
         continue;
       }
-      if ((await composer.count()) > 0 && (await composer.isEnabled())) return 'reply';
       await this.page.waitForTimeout(500);
     }
     throw new Error(
