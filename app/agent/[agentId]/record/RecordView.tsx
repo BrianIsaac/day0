@@ -43,8 +43,8 @@ export function RecordView() {
       <RecordList agentId={agentId} name={agent.name} view={shown} />
       <p className="text-[13px] text-[var(--color-muted)]">
         Times in {zone ?? 'your zone'}, dated; the export carries the same instants. The payload
-        behind each line is the event as it is stored; the export takes out the names and credential
-        shapes its policy lists.
+        behind each line is the event as it is stored, credential shapes taken out; the export also
+        takes out the names its policy lists and every value you store.
       </p>
     </Columns>
   );

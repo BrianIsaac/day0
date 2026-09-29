@@ -31,20 +31,30 @@ import { button, mount, press, said } from '../../../../fixtures/dom/press';
 const agentId = 'agent-1' as Id<'agents'>;
 
 /** The file the page handed the browser, read back from the Blob it made. */
-const saved: { blobs: Blob[]; names: string[] } = { blobs: [], names: [] };
+const saved: { blobs: Blob[]; names: string[]; revoked: number; revokedAtClick: number[] } = {
+  blobs: [],
+  names: [],
+  revoked: 0,
+  revokedAtClick: [],
+};
 
 beforeEach((): void => {
   saved.blobs = [];
   saved.names = [];
+  saved.revoked = 0;
+  saved.revokedAtClick = [];
   URL.createObjectURL = (blob: Blob): string => {
     saved.blobs.push(blob);
     return 'blob:trace';
   };
-  URL.revokeObjectURL = (): void => undefined;
+  URL.revokeObjectURL = (): void => {
+    saved.revoked += 1;
+  };
   vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (
     this: HTMLAnchorElement,
   ) {
     saved.names.push(this.download);
+    saved.revokedAtClick.push(saved.revoked);
   });
   backend.results = {
     'exportActions:exportForAgent': () => ({
@@ -91,6 +101,10 @@ describe('RecordExport', (): void => {
       'exportActions:exportPage',
     ]);
     expect(saved.names).toEqual(['day0-trace-mira-2026-09-29.json']);
+    // The file's URL outlives the click that starts the download, then is let go.
+    expect(saved.revokedAtClick).toEqual([0]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(saved.revoked).toBe(1);
     const trace = JSON.parse(await saved.blobs[0]!.text()) as {
       manifest: { counts: Record<string, number> };
       sections: { events: unknown[] };

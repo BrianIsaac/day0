@@ -35,7 +35,8 @@ import {
   RecordList,
   type RecordView,
 } from '../../../../../app/agent/[agentId]/record/RecordList';
-import { mount, press } from '../../../../fixtures/dom/press';
+import { focusedName, mount, press } from '../../../../fixtures/dom/press';
+import { act } from 'react';
 import { useState } from 'react';
 
 const agentId = 'agent-1' as Id<'agents'>;
@@ -161,9 +162,7 @@ describe('RecordList', (): void => {
     expect(
       [...view.container.querySelectorAll('[aria-pressed="true"]')].map((chip) => chip.textContent),
     ).toEqual(['Refused and withheld']);
-    expect(view.container.textContent).toContain(
-      'Nothing recorded under refused and withheld yet.',
-    );
+    expect(view.container.textContent).toContain('Nothing refused or withheld yet.');
     await press(view.container, 'All');
     expect(backend.args.at(-1)).toEqual({ agentId });
     view.unmount();
@@ -181,7 +180,61 @@ describe('RecordList', (): void => {
     const more = [...loading.container.querySelectorAll('button')].find(
       (control) => control.textContent === 'Loading older lines',
     );
-    expect(more?.disabled).toBe(true);
+    expect(more?.getAttribute('aria-disabled')).toBe('true');
     loading.unmount();
+  });
+
+  it('keeps focus on Show older while the page loads, and gives it to the record when the last page leaves the button behind', async (): Promise<void> => {
+    backend.entries = [entry('e2', 'work.completed', {}, 2)];
+    backend.status = 'CanLoadMore';
+    const view = mount(<Recorded />);
+    await press(view.container, 'Show older');
+    backend.status = 'LoadingMore';
+    act((): void => view.root.render(<Recorded />));
+    const loading = [...view.container.querySelectorAll('button')].find(
+      (control) => control.textContent === 'Loading older lines',
+    );
+    expect(loading?.disabled).toBe(false);
+    expect(loading?.getAttribute('aria-disabled')).toBe('true');
+    expect(focusedName()).toBe('Loading older lines');
+    loading?.click();
+    expect(backend.loads).toEqual([RECORD_PAGE]);
+    backend.entries = [entry('e2', 'work.completed', {}, 2), entry('e1', 'work.discovered', {}, 1)];
+    backend.status = 'Exhausted';
+    act((): void => view.root.render(<Recorded />));
+    expect(focusedName()).toBe('Every event');
+    expect(view.container.textContent).toContain('That is the whole record.');
+    view.unmount();
+  });
+
+  it('says a short page with more behind it is not the end, and each filter its own end', async (): Promise<void> => {
+    backend.status = 'CanLoadMore';
+    const short = mount(<Recorded />);
+    expect(short.container.textContent).toContain(
+      'Nothing under this filter among the newest events; Show older looks further back.',
+    );
+    short.unmount();
+    backend.status = 'Exhausted';
+    backend.entries = [entry('e1', 'charter.approved', { version: '0.1' }, 1)];
+    const ended = mount(<Recorded />);
+    await press(ended.container, 'Charter');
+    expect(ended.container.textContent).toContain("That is the charter's whole history.");
+    ended.unmount();
+  });
+
+  it('takes credential shapes out of a payload before it is drawn', (): void => {
+    backend.entries = [
+      entry(
+        'e1',
+        'surface.probe-failed',
+        { reason: 'GET https://probe:hunter2@looker.example/api failed' },
+        1,
+      ),
+    ];
+    const view = mount(<Recorded />);
+    const payload = view.container.querySelector('pre')?.textContent ?? '';
+    expect(payload).not.toContain('hunter2');
+    expect(payload).toContain('looker.example');
+    view.unmount();
   });
 });

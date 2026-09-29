@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { KnowledgeProjection } from '../../../../../app/agent/[agentId]/record/KnowledgeProjection';
-import { projectKnowledge } from '../../../../../src/memory/projection';
+import { PROJECTION_CUT_NOTE, projectKnowledge } from '../../../../../src/memory/projection';
 
 /** Mira's projection, made from rows by the projector the backend runs. */
 const projection = projectKnowledge({
@@ -34,15 +34,19 @@ describe('KnowledgeProjection', (): void => {
     expect(html).toMatch(/<pre[^>]*class="[^"]*\bwrap-anywhere\b/);
   });
 
-  it('says it is loading rather than drawing an empty projection, and says when one was cut', (): void => {
+  it('says it is loading rather than drawing an empty projection, and says once when one was cut', (): void => {
     const loading = renderToStaticMarkup(
       <KnowledgeProjection name="Mira" projection={undefined} />,
     );
     expect(loading).toContain('Loading the projection');
     expect(loading).not.toContain('Read the projection');
+    // The projector's own closing line says it was cut; the card does not say it twice.
     const cut = renderToStaticMarkup(
-      <KnowledgeProjection name="Mira" projection={{ text: 'Charter 0.1', cut: true }} />,
+      <KnowledgeProjection
+        name="Mira"
+        projection={{ text: `Charter 0.1\n${PROJECTION_CUT_NOTE}`, cut: true }}
+      />,
     );
-    expect(cut).toContain('Cut at 4,000 characters, the projection&#x27;s bound.');
+    expect(cut.match(/cut at 4,000 characters/gi)).toHaveLength(1);
   });
 });

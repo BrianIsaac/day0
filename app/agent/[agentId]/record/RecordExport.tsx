@@ -44,7 +44,8 @@ export function saveFile(fileName: string, text: string): void {
   document.body.append(link);
   link.click();
   link.remove();
-  URL.revokeObjectURL(url);
+  // Revoked on the next task: some browsers cancel a download whose URL goes before it starts.
+  setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 /**

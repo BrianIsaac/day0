@@ -36,11 +36,6 @@ export function KnowledgeProjection({
             >
               {projection.text}
             </pre>
-            {projection.cut ? (
-              <p className="mt-2 text-xs text-[var(--color-muted)]">
-                Cut at 4,000 characters, the projection&apos;s bound.
-              </p>
-            ) : null}
           </Disclosure>
         </div>
       )}
