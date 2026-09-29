@@ -53,16 +53,25 @@ describe('queueFilterOf', (): void => {
 describe('workItemGlossary', (): void => {
   it("lists every stored state in the chips' own words, a failed item both ways it reads", (): void => {
     const glossary = workItemGlossary();
-    expect(new Set(glossary.map((line) => line.state))).toEqual(new Set(STATES));
+    expect(new Set(glossary.flatMap((line) => line.states))).toEqual(new Set(STATES));
     for (const line of glossary) {
-      if (line.state !== 'failed')
-        expect(line.label).toEqual(workItemStateLabel({ state: line.state }));
+      for (const state of line.states) {
+        if (state !== 'failed') expect(line.label).toEqual(workItemStateLabel({ state }));
+      }
       // Read after the chip, so it runs on in lower case.
       expect(line.means).toMatch(/^[a-z]/);
     }
     expect(
-      glossary.filter((line) => line.state === 'failed').map((line) => line.label.text),
+      glossary.filter((line) => line.states.includes('failed')).map((line) => line.label.text),
     ).toEqual(['Rejected by you', 'Stopped']);
     expect(glossary.every((line) => line.label.tone !== ('danger' as never))).toBe(true);
+    // One chip, one line: Working is the plan being drafted or the run under way.
+    expect(glossary.filter((line) => line.label.text === 'Working')).toEqual([
+      {
+        label: { text: 'Working', tone: 'accent' },
+        means: 'drafting a plan for work judged part of the job, or running the approved plan',
+        states: ['claimed', 'executing'],
+      },
+    ]);
   });
 });

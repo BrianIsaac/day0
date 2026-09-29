@@ -71,23 +71,30 @@ function LedgerLine({
   );
 }
 
-/** The tool, the provider's id and the phase of a row, the line's small print. */
+/**
+ * The small print of a row: the provider's id, the phase, the earlier run it reuses. The effect
+ * above it already says what happened in words, so the transport's name is not repeated.
+ *
+ * @returns The line, or undefined when the row carries none of them.
+ */
 function rowMeta(row: PhasedLedgerRow): ReactNode {
-  return (
-    <>
-      <span className="font-mono">{row.tool}</span>
-      {row.providerId ? <span className="font-mono"> · id {row.providerId}</span> : null}
-      <PhaseLabel phase={row.phase} />
-      {row.reusedFrom ? (
-        <span>
-          {' · '}
-          {row.reusedFromRun
-            ? `reused from run ${row.reusedFromRun}`
-            : 'reused from an earlier run'}
-        </span>
-      ) : null}
-    </>
-  );
+  if (!row.providerId && !row.phase && !row.reusedFrom) return undefined;
+  const parts: ReactNode[] = [];
+  if (row.providerId)
+    parts.push(
+      <span key="id" className="font-mono">
+        id {row.providerId}
+      </span>,
+    );
+  if (row.phase) parts.push(<PhaseLabel key="phase" phase={row.phase} />);
+  if (row.reusedFrom) {
+    parts.push(
+      <span key="reused">
+        {row.reusedFromRun ? `reused from run ${row.reusedFromRun}` : 'reused from an earlier run'}
+      </span>,
+    );
+  }
+  return parts;
 }
 
 /**
@@ -100,6 +107,7 @@ function rowMeta(row: PhasedLedgerRow): ReactNode {
  * @param rows - The landed rows in ledger order.
  * @param fresh - The places of the rows that just landed; empty when nothing is playing.
  * @param decided - Who decided the run and where, when the manager did.
+ * @param withheld - How many rows the manager left out of the approval, said on the green line.
  * @param note - A line that explains the count, set under the headline: autonomous actions turned
  *   on after the plan was drafted, so its text predates the rows applied under the switch.
  */
@@ -108,11 +116,13 @@ export function LandedChanges({
   fresh,
   decided,
   note,
+  withheld = 0,
 }: {
   rows: readonly LandedRow[];
   fresh: ReadonlySet<number>;
   decided?: ReactNode;
   note?: ReactNode;
+  withheld?: number;
 }) {
   const standing = rows.filter((row) => !fresh.has(row.place));
   const arriving = rows.filter((row) => fresh.has(row.place));
@@ -127,7 +137,10 @@ export function LandedChanges({
   const headline = (
     <>
       <Note tone="ok">
-        <Lead>{landedHeadline(rows)}</Lead>
+        <Lead>
+          {landedHeadline(rows)}
+          {withheld > 0 ? ` · ${withheld} withheld by you` : ''}
+        </Lead>
         {decided ? <> · {decided}</> : null}
       </Note>
       {note}

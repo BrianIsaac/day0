@@ -245,10 +245,7 @@ describe('landed (work-landed.html)', (): void => {
     expect(send()?.disabled).toBe(true);
     expect(view.text()).not.toContain('Provider reconciliation required');
     typeInto(
-      field(
-        view.container,
-        'Note for the retry: say what to change or answer what the employee asked',
-      ),
+      field(view.container, 'Note for the retry: say what to change or answer what Mira asked'),
       'Add the escalation note.',
     );
     // The writes landed, so a send-back first asks for the provider check (U17 D1), one tick each.
@@ -275,7 +272,7 @@ describe('landed (work-landed.html)', (): void => {
     typeInto(
       field(
         reconciled.container,
-        'Note for the retry: say what to change or answer what the employee asked',
+        'Note for the retry: say what to change or answer what Mira asked',
       ),
       'Add the escalation note.',
     );
@@ -290,7 +287,7 @@ describe('landed (work-landed.html)', (): void => {
 describe('landed partial (work-landed-partial.html)', (): void => {
   it('keeps the withheld action in the record beside what landed', (): void => {
     const view = card(DRAWN.landedPartial);
-    expect(view.text()).toContain('1 change reached the work environment');
+    expect(view.text()).toContain('1 change reached the work environment · 1 withheld by you');
     expect(view.text()).toContain('Not sent: Send you a DM in Slack');
     expect(view.text()).toContain('withheld by you; never sent, kept in the record');
   });
@@ -310,7 +307,7 @@ describe('rejected by you (work-rejected.html)', (): void => {
     typeInto(
       field(
         view.container,
-        'Note for the retry (optional): answer what the employee asked, or say what to change',
+        'Note for the retry (optional): answer what Mira asked, or say what to change',
       ),
       'Reply only in the #revops-asks thread. No DM.',
     );
@@ -350,7 +347,7 @@ describe('plan to approve, attempt two (work-retried.html)', (): void => {
     const view = card(DRAWN.retried, { autonomous: true });
     expect(chip(view.container)).toBe('Plan to approve');
     expect(view.text()).toContain(
-      'This plan was redrafted after you cancelled an earlier plan from your retry note, given at 29 Sep 2026, 14:58.',
+      'You cancelled an earlier plan, and this one was redrafted from your retry note, given at 29 Sep 2026, 14:58.',
     );
     expect(view.text()).toContain('Reply only in the #revops-asks thread. No DM.');
     expect(view.text()).toContain(

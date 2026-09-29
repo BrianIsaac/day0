@@ -116,7 +116,7 @@ describe('dashboard exact-action gate', (): void => {
     expect(html).not.toContain(HELD_BEFORE_AUTONOMY_NOTE);
     // The plain line comes first, the reason beneath it, and the literal payload is folded away.
     expect(html).toMatch(
-      /<p[^>]*>Send Sam a Slack DM: &quot;Draft ready\.&quot;<\/p><p[^>]*>Held: system-of-record mutation held for the manager\.<\/p>/,
+      /<p[^>]*>Send Sam a Slack DM: &quot;Draft ready\.&quot;<\/p><p[^>]*>System-of-record mutation held for the manager\.<\/p>/,
     );
     expect(html).toMatch(
       /<p[^>]*>Post to Slack channel C0PUBLIC: &quot;x{120}…&quot;<\/p><p[^>]*>Refused by Day0&#x27;s gate: no grant \(slack:write\)\. It cannot be sent\.<\/p>/,

@@ -24,7 +24,8 @@ describe('what reached the work environment', (): void => {
     );
     expect(markup).toContain('1 change reached the work environment</span> · approved from Slack');
     expect(markup).toContain('<span class="sr-only">Landed: </span>Commented on REVOPS-5');
-    expect(markup).toContain('linear.save_comment');
+    // The words say what happened; the transport's name is not repeated beneath them.
+    expect(markup).not.toContain('linear.save_comment');
     expect(markup).not.toContain('data-land');
   });
 

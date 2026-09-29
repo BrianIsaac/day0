@@ -4,7 +4,7 @@ import type { MockAction, ArgumentRepairAttempt } from '@/work/types';
 import { type ActionVerdict, HELD_WITHHELD_TRANSITION } from '@/surfaces/policy';
 import type { SurfaceRecord } from '@/surfaces/types';
 import { type ReplyTarget, summariseAction } from '@/surfaces/summary';
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Button } from '../../../components/Button';
 import { Disclosure } from '../../../components/Disclosure';
 import { Field, INPUT_CLASS } from '../../../components/Field';
@@ -16,6 +16,18 @@ import {
   HELD_WHILE_SUPERVISED_NOTE,
 } from '@/work/autonomy';
 import { ActionPayload, RepairNote } from './RunDetails';
+
+/**
+ * The gate's reason for holding a row, as a sentence of its own: "A post in a shared channel is
+ * held for you."
+ *
+ * @param reason - The verdict's reason.
+ */
+export function heldSentence(reason: string): string {
+  const text = reason.trim();
+  const capital = `${text.charAt(0).toUpperCase()}${text.slice(1)}`;
+  return /[.!?]$/.test(capital) ? capital : `${capital}.`;
+}
 
 /**
  * The consequence line under the held writes' controls.
@@ -46,6 +58,7 @@ export function PendingActions({
   employeeName = 'the employee',
   onApprove,
   onReject,
+  children,
 }: {
   actions: MockAction[];
   verdicts: ActionVerdict[];
@@ -63,6 +76,8 @@ export function PendingActions({
   onApprove: (approvedIndexes: number[]) => void;
   /** Reject the run with the manager's reason; said on the card too. */
   onReject: (reason: string) => void;
+  /** What the manager reads before deciding, between the held writes and the controls: the draft. */
+  children?: ReactNode;
 }) {
   const id = useId();
   // The gate decided each row when it held the run: `auto` rows are already
@@ -169,8 +184,8 @@ export function PendingActions({
                         ? `Refused by Day0's gate: ${verdict.reason}. It cannot be sent.`
                         : !on
                           ? 'Withheld by you: it will not be sent, and stays in the record.'
-                          : verdict?.disposition === 'held'
-                            ? `Held: ${verdict.reason}.`
+                          : verdict?.disposition === 'held' && verdict.reason
+                            ? heldSentence(verdict.reason)
                             : null}
                     </p>
                     <div className="flex flex-wrap items-center gap-x-4">
@@ -197,6 +212,7 @@ export function PendingActions({
           </ul>
         )}
       </ItemSection>
+      {children}
       <ItemFoot why={heldActionsWhy(employeeName)}>
         <Button
           variant="approve"

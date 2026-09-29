@@ -3,7 +3,10 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { RepairNote } from '../../../../../app/agent/[agentId]/work/RunDetails';
-import { PendingActions } from '../../../../../app/agent/[agentId]/work/PendingActions';
+import {
+  heldSentence,
+  PendingActions,
+} from '../../../../../app/agent/[agentId]/work/PendingActions';
 import {
   HELD_BEFORE_AUTONOMY_NOTE,
   HELD_WITHHELD_TRANSITION_NOTE,
@@ -88,6 +91,8 @@ describe('a ticket state change the plan withholds', (): void => {
     );
     expect(markup).toContain(HELD_WITHHELD_TRANSITION_NOTE);
     expect(markup).not.toContain(HELD_BEFORE_AUTONOMY_NOTE);
-    expect(markup).toContain(HELD_WITHHELD_TRANSITION);
+    // The gate's reason, said as a sentence of its own under the row.
+    expect(markup).toContain(heldSentence(HELD_WITHHELD_TRANSITION));
+    expect(heldSentence('held for the manager')).toBe('Held for the manager.');
   });
 });

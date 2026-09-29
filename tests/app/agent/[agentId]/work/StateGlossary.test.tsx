@@ -12,6 +12,7 @@ describe('the states glossary', (): void => {
     );
     expect(markup).toContain('>Rejected by you<');
     expect(markup).toContain('>Stopped<');
-    expect(markup.match(/<dt/g)).toHaveLength(13);
+    expect(markup.match(/<dt/g)).toHaveLength(12);
+    expect(markup).toContain('(claimed, executing)');
   });
 });

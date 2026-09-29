@@ -172,7 +172,7 @@ export function SessionRestoreNote({ restore }: { restore: SessionRestoreRow | u
 export function PhaseLabel({ phase }: { phase?: 'prerequisite' | 'closing' }) {
   if (!phase) return null;
   return (
-    <span className="ml-1.5 text-xs font-medium tracking-[0.04em] text-[var(--color-muted)] uppercase">
+    <span className="ml-1.5 text-xs font-medium tracking-[0.04em] text-[var(--color-muted)] uppercase first:ml-0">
       {phase}
     </span>
   );
@@ -256,7 +256,7 @@ export function WorkingFromNote({
       <p className="rounded-lg border border-[var(--color-accent-line)] bg-[var(--color-accent-soft)] px-3.5 py-3 text-[15px] break-words text-[var(--color-accent)]">
         <span className="font-medium text-[var(--color-fg)]">
           {kind === 'redraft'
-            ? 'This plan was redrafted after you cancelled an earlier plan'
+            ? 'You cancelled an earlier plan, and this one was redrafted'
             : 'Running again'}
           {kind === 'rerun' && feedback ? ' with' : ''}
           {given}.

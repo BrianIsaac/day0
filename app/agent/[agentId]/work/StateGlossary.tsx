@@ -10,16 +10,16 @@ import { Chip } from '../../../components/Chip';
 export function StateGlossary() {
   return (
     <Card title="The states, in the manager's words" meta="the stored state stays in the export">
-      <dl className="grid gap-x-4 gap-y-2 text-sm sm:grid-cols-[max-content_minmax(0,1fr)]">
+      <dl className="grid gap-x-4 gap-y-1 text-sm sm:grid-cols-[max-content_minmax(0,1fr)] sm:gap-y-2">
         {workItemGlossary().map((line) => (
-          <div key={`${line.state}:${line.label.text}`} className="contents">
+          <div key={`${line.states.join(',')}:${line.label.text}`} className="contents">
             <dt className="pt-0.5">
               <Chip tone={line.label.tone}>{line.label.text}</Chip>
             </dt>
-            <dd className="text-[var(--color-fg-2)]">
+            <dd className="mb-2 text-[var(--color-fg-2)] sm:mb-0">
               {line.means}{' '}
               <span className="font-mono text-[13px] text-[var(--color-muted)]">
-                ({line.state})
+                ({line.states.join(', ')})
               </span>
             </dd>
           </div>

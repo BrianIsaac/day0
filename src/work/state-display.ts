@@ -57,17 +57,17 @@ export function queueFilterOf(
   }
 }
 
-/** One line of the glossary: the chip's words and tone, what they mean, and the stored state. */
+/** One line of the glossary: the chip's words and tone, what they mean, and the stored states. */
 export interface GlossaryLine {
   readonly label: StateLabel;
   readonly means: string;
-  readonly state: WorkItemState;
+  readonly states: readonly WorkItemState[];
 }
 
 /** What each stored state means, in the manager's words; `failed` is read in two ways below. */
 const MEANS: Readonly<Record<Exclude<WorkItemState, 'failed'>, string>> = {
   discovered: 'found in a connected system, not yet judged against the charter',
-  claimed: 'judged part of the job; a plan is being drafted',
+  claimed: 'drafting a plan for work judged part of the job',
   'plan-pending': 'a plan drafted, waiting on you',
   'plan-approved': 'you approved the plan; the run is starting',
   executing: 'running the approved plan',
@@ -95,24 +95,37 @@ const ORDER: readonly Exclude<WorkItemState, 'failed'>[] = [
 ];
 
 /**
- * Every state an item can be shown in, in the manager's words beside the stored state, for the
+ * Every state an item can be shown in, in the manager's words beside the stored states, for the
  * Work tab's glossary. The words are `workItemStateLabel`'s, so the glossary and the chips never
- * disagree; a failed item is listed twice, as the chip reads it.
+ * disagree; states one chip names share its line (Working is drafting or running), and a failed
+ * item is listed twice, as the chip reads it.
  */
 export function workItemGlossary(): GlossaryLine[] {
-  const lines = ORDER.map(
-    (state): GlossaryLine => ({ label: workItemStateLabel({ state }), means: MEANS[state], state }),
-  );
+  const lines: GlossaryLine[] = [];
+  for (const state of ORDER) {
+    const label = workItemStateLabel({ state });
+    const same = lines.findIndex((line) => line.label.text === label.text);
+    const found = lines[same];
+    if (found) {
+      lines[same] = {
+        label,
+        means: `${found.means}, or ${MEANS[state]}`,
+        states: [...found.states, state],
+      };
+    } else {
+      lines.push({ label, means: MEANS[state], states: [state] });
+    }
+  }
   const rejected: GlossaryLine = {
     label: workItemStateLabel({ state: 'failed', skipReason: MANAGER_REJECTION_PREFIX }),
     means: 'you rejected the run; nothing held was sent',
-    state: 'failed',
+    states: ['failed'],
   };
   const stopped: GlossaryLine = {
     label: workItemStateLabel({ state: 'failed' }),
     means: 'ended short of done; the card says why and what Retry does',
-    state: 'failed',
+    states: ['failed'],
   };
-  const landed = lines.findIndex((line) => line.state === 'completed');
+  const landed = lines.findIndex((line) => line.states.includes('completed'));
   return [...lines.slice(0, landed + 1), rejected, stopped, ...lines.slice(landed + 1)];
 }

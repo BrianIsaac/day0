@@ -2,7 +2,7 @@
 
 import { useRef } from 'react';
 import type { Doc } from '@convex/_generated/dataModel';
-import { isGateRefusal, isSurfaceTool } from '@/surfaces/policy';
+import { HELD_NOT_APPROVED, isGateRefusal, isSurfaceTool } from '@/surfaces/policy';
 import { summariseAction } from '@/surfaces/summary';
 import type { SurfaceRecord } from '@/surfaces/types';
 import {
@@ -241,6 +241,7 @@ export function WorkItemCard({
         <LandedChanges
           rows={landed}
           fresh={fresh}
+          withheld={held.filter((row) => row.reason === HELD_NOT_APPROVED).length}
           decided={
             item.state === 'completed' && decided ? (
               <DecisionStamp decision={item.decision} zone={zone} />
@@ -267,6 +268,19 @@ export function WorkItemCard({
       </ItemSection>
     ) : null;
   const leadsWithResult = item.state === 'completed' || rejection !== undefined;
+  // Writes held for the manager: the draft is read before the controls that decide them.
+  const holding =
+    item.state === 'actions-pending' && output !== undefined && item.approvedIndexes === undefined;
+  const runRecord = (
+    <RunRecord
+      output={output}
+      rows={ledger}
+      refused={refused}
+      failed={failed}
+      unknown={unknown}
+      title={item.title}
+    />
+  );
   const ticketNow =
     servedByLoop && item.sourceCategory === 'ticket-queue' && mode !== undefined ? (
       <TicketNowLine workItemId={item._id} zone={zone} />
@@ -380,7 +394,9 @@ export function WorkItemCard({
                 'The run was not rejected.',
               )
             }
-          />
+          >
+            {runRecord}
+          </PendingActions>
         </>
       ) : item.state === 'actions-pending' && item.approvedIndexes !== undefined ? (
         <ItemSection>
@@ -397,14 +413,7 @@ export function WorkItemCard({
           <NotSentLedger rows={held} />
         </ItemSection>
       ) : null}
-      <RunRecord
-        output={output}
-        rows={ledger}
-        refused={refused}
-        failed={failed}
-        unknown={unknown}
-        title={item.title}
-      />
+      {holding ? null : runRecord}
       {item.managerFeedback && !rejection && !from ? (
         <ItemSection>
           <ManagerFeedbackNote feedback={item.managerFeedback} />

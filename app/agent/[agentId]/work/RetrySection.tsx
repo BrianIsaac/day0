@@ -250,10 +250,10 @@ export function RetrySection({
     mode.kind === 'answer'
       ? `Your answer to: “${mode.question}”`
       : mode.kind === 'send-back'
-        ? 'Note for the retry: say what to change or answer what the employee asked'
+        ? `Note for the retry: say what to change or answer what ${employeeName} asked`
         : mode.kind === 'cancelled'
           ? 'Note for the new plan (optional)'
-          : 'Note for the retry (optional): answer what the employee asked, or say what to change';
+          : `Note for the retry (optional): answer what ${employeeName} asked, or say what to change`;
   const noteHelp =
     mode.kind === 'answer'
       ? `${capitalised(employeeName)} stopped on this question; the run goes on once you answer it.`
