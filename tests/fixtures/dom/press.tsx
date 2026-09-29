@@ -17,6 +17,9 @@ export interface Mounted {
   readonly unmount: () => void;
 }
 
+/** The trees mounted and not yet taken down, so a test that fails part way leaves none behind. */
+const stillMounted = new Set<Mounted>();
+
 /**
  * Mount a tree into a fresh container on the document.
  *
@@ -29,14 +32,26 @@ export function mount(node: ReactNode): Mounted {
   document.body.append(container);
   const root = createRoot(container);
   act((): void => root.render(node));
-  return {
+  const mounted: Mounted = {
     container,
     root,
     unmount: (): void => {
+      if (!stillMounted.delete(mounted)) return;
       act((): void => root.unmount());
       container.remove();
     },
   };
+  stillMounted.add(mounted);
+  return mounted;
+}
+
+/**
+ * Take down every tree a test mounted and left up, as a failed assertion does before its own
+ * unmount: a tree left mounted keeps its listeners (a hash change, a timer) and acts in the next
+ * test.
+ */
+export function unmountAll(): void {
+  for (const mounted of [...stillMounted]) mounted.unmount();
 }
 
 /**

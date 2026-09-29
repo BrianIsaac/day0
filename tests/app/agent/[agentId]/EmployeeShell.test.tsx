@@ -16,7 +16,15 @@ import {
 import { CharterView } from '../../../../app/agent/[agentId]/charter/CharterView';
 import { WorkView } from '../../../../app/agent/[agentId]/work/WorkView';
 import { ManageView } from '../../../../app/agent/[agentId]/manage/ManageView';
-import { focusedName, mount, press, said, settle, typeInto } from '../../../fixtures/dom/press';
+import {
+  focusedName,
+  mount,
+  press,
+  said,
+  settle,
+  typeInto,
+  unmountAll,
+} from '../../../fixtures/dom/press';
 import { ARRIVAL_MS } from '../../../../app/arrival';
 import { dashboardMetrics } from '../../../fixtures/dashboard/metrics';
 
@@ -147,6 +155,7 @@ describe('the page after a draft charter is sent back (step 45)', (): void => {
 
   afterEach((): void => {
     backend.queries = {};
+    unmountAll();
     document.body.replaceChildren();
   });
 
@@ -233,6 +242,7 @@ describe('the page after a draft charter is sent back (step 45)', (): void => {
 describe('the page in the layout (N29, UX 11)', (): void => {
   afterEach((): void => {
     backend.queries = {};
+    unmountAll();
     document.body.replaceChildren();
   });
 
@@ -292,6 +302,7 @@ describe('the cards arriving on first render (v4 section 1.3)', (): void => {
   afterEach((): void => {
     vi.useRealTimers();
     backend.queries = {};
+    unmountAll();
     document.body.replaceChildren();
   });
 
@@ -343,6 +354,7 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     route.segment = null;
     route.replaced.length = 0;
     window.history.replaceState(null, '', window.location.pathname);
+    unmountAll();
     document.body.replaceChildren();
   });
 
