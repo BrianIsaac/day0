@@ -22,8 +22,9 @@ const SAID: Readonly<Record<RecordKind, string>> = {
 
 /**
  * One line of the record: a dot for what happened (landed, refused, withheld, held for the
- * manager, or noted), the event in words, and its time at the end in tabular figures. Lines go in
- * a list (`<ul>` or `<ol>`), so a screen reader counts them.
+ * manager, or noted), the event in words, and beneath it its time, dated as every stamp on the
+ * page is, in tabular figures. Lines go in a list (`<ul>` or `<ol>`), so a screen reader counts
+ * them.
  *
  * @param kind - What happened, as the dot's colour and its spoken word.
  * @param time - When: the instant, for the `time` element's machine-readable value, and the time
@@ -39,7 +40,7 @@ export function RecordLine({
   children: ReactNode;
 }) {
   return (
-    <li className="grid grid-cols-[16px_minmax(0,1fr)_auto] items-baseline gap-2.5">
+    <li className="grid grid-cols-[16px_minmax(0,1fr)] items-baseline gap-x-2.5">
       <span
         aria-hidden="true"
         className={`size-[9px] justify-self-center rounded-full ${DOT[kind]}`}
@@ -51,7 +52,7 @@ export function RecordLine({
       {time !== undefined ? (
         <time
           dateTime={new Date(time.at).toISOString()}
-          className="text-[13px] whitespace-nowrap tabular-nums text-[var(--color-muted)]"
+          className="col-start-2 text-[13px] tabular-nums text-[var(--color-muted)]"
         >
           {time.label}
         </time>

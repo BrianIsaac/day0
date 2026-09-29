@@ -29,6 +29,13 @@ describe('Button', () => {
     expect(buttonClass()).toContain('disabled:opacity-50');
   });
 
+  it('sets a control inside a line of prose without side padding, underlined', () => {
+    expect(buttonClass('text', 'small')).not.toMatch(/\bpx-/);
+    expect(buttonClass('text', 'small')).toMatch(/\bunderline\b/);
+    expect(buttonClass('secondary', 'small')).toMatch(/\bpx-3\b/);
+    expect(buttonClass('secondary', 'small')).toMatch(/\bno-underline\b/);
+  });
+
   it('keeps a caller class beside its own', () => {
     expect(renderToStaticMarkup(<Button className="w-full">Go</Button>)).toMatch(/ w-full"/);
   });

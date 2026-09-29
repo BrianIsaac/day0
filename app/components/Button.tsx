@@ -9,6 +9,7 @@ export const BUTTON_VARIANTS = [
   'retry',
   'danger',
   'quiet',
+  'text',
 ] as const;
 
 /** One of the button looks. */
@@ -32,6 +33,7 @@ const VARIANT: Readonly<Record<ButtonVariant, string>> = {
   danger:
     'border-[var(--color-danger-line)] bg-transparent text-[var(--color-danger)] hover:border-[var(--color-danger)]',
   quiet: 'border-transparent bg-transparent text-[var(--color-muted)] hover:text-[var(--color-fg)]',
+  text: 'border-transparent bg-transparent text-[var(--color-fg-2)] underline decoration-[var(--color-border-2)] underline-offset-4 hover:decoration-[var(--color-accent)]',
 };
 
 const SIZE: Readonly<Record<ButtonSize, string>> = {
@@ -40,23 +42,33 @@ const SIZE: Readonly<Record<ButtonSize, string>> = {
   large: 'px-5 text-[15px]',
 };
 
+/** The type sizes of the `text` look, which takes no padding. */
+const TEXT_SIZE: Readonly<Record<ButtonSize, string>> = {
+  small: 'text-[13px]',
+  medium: 'text-sm',
+  large: 'text-[15px]',
+};
+
 /**
  * The classes of a button of this look and size, for a control that cannot be the `Button`
- * element itself. Pressing scales it to 0.97 in 120 ms where motion is welcome; hover changes
+ * element itself. The `text` look sits in a line of prose, so it takes no side padding: its
+ * target is the 44 px line it sits on. Pressing scales it to 0.97 in 120 ms where motion is welcome; hover changes
  * colour and border only; a disabled one is dimmed and says so to the pointer.
  *
  * @param variant - The look.
  * @param size - The room it takes.
  */
 export function buttonClass(variant: ButtonVariant = 'secondary', size: ButtonSize = 'medium') {
-  return `inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border font-medium whitespace-nowrap no-underline transition-[transform,border-color,background-color,opacity] duration-[120ms,180ms,180ms,180ms] ease-out motion-safe:active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 ${VARIANT[variant]} ${SIZE[size]}`;
+  const room = variant === 'text' ? TEXT_SIZE[size] : SIZE[size];
+  const underline = variant === 'text' ? '' : ' no-underline';
+  return `inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border font-medium whitespace-nowrap${underline} transition-[transform,border-color,background-color,opacity,text-decoration-color] duration-[120ms,180ms,180ms,180ms,180ms] ease-out motion-safe:active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 ${VARIANT[variant]} ${room}`;
 }
 
 /**
  * A button in one of the product's looks: `primary` for the page's one next step, `approve` and
  * `retry` for the manager's decisions, `danger` for what cannot be undone, `secondary` and
- * `quiet` for the rest. It is a `button` of type `button` unless told otherwise, so it never
- * submits a form by accident.
+ * `quiet` for the rest, `text` for a control inside a line of prose. It is a `button` of type
+ * `button` unless told otherwise, so it never submits a form by accident.
  */
 export function Button({
   variant = 'secondary',

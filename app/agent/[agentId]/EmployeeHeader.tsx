@@ -107,7 +107,7 @@ export function ManagerLine({
           </span>
           <Button
             ref={toggle}
-            variant="quiet"
+            variant="text"
             size="small"
             onClick={() => {
               setDraft(bossEmail);
@@ -190,7 +190,7 @@ export function ZoneLine({
         </span>
         <Button
           ref={toggle}
-          variant="quiet"
+          variant="text"
           size="small"
           aria-expanded={editing}
           aria-controls="zone-editor"
