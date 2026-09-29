@@ -8,6 +8,7 @@ import {
   useState,
   type AnimationEvent,
   type KeyboardEvent,
+  type MouseEvent,
 } from 'react';
 import { createPortal } from 'react-dom';
 import { FirstWeekRail, RAIL_CELL, RailStepText, type RailStep } from './FirstWeekRail';
@@ -119,7 +120,11 @@ export function FirstWeekCard({
   const current = steps.find((step) => step.status === 'now');
   if (current === undefined) return null;
 
-  const show = (): void => {
+  const show = (event: MouseEvent<HTMLButtonElement>): void => {
+    // The second click of a double click is the tail of the gesture the first one made: when
+    // that closed the week, the second passes through it (shrinking, or already gone under
+    // reduced motion) to the card beneath, and must not open it again.
+    if (event.detail > 1) return;
     const box = card.current?.getBoundingClientRect();
     if (!box) return;
     setAnchor({ top: box.top, left: box.left, width: box.width, height: box.height });

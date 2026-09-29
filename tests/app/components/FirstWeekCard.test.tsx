@@ -180,6 +180,25 @@ describe('FirstWeekCard', () => {
     expect(document.querySelector('[role="dialog"]')).not.toBeNull();
   });
 
+  it('closes on a double click on the week and stays closed (review M2)', async () => {
+    const view = mount(page());
+    await press(view.container, NAME);
+    // The first click closes the week; the second of the pair passes through the shrinking week
+    // to the card, which placement puts under the week's current step.
+    click(document.querySelector('[role="dialog"] [aria-current="step"]'));
+    act((): void => {
+      view.container
+        .querySelector('button[aria-label^="First week"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 2 }));
+    });
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(
+      view.container
+        .querySelector('button[aria-label^="First week"]')
+        ?.getAttribute('aria-expanded'),
+    ).toBe('false');
+  });
+
   it('closes when the window is resized, rather than shrink to where the card was', async () => {
     const view = mount(page());
     await press(view.container, NAME);
