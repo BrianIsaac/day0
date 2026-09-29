@@ -153,7 +153,7 @@ describe('DocumentationView', () => {
 
     expect(view.container.textContent).toContain('Pages · RevOps team wiki');
     expect(view.container.textContent).toContain(
-      'Last sync finished 29 Sep 2026, 14:05. 1 page it listed could not be read, and keeps its earlier version, marked below.',
+      'Last sync finished 29 Sep 2026, 14:05. 1 page it listed could not be read; where an earlier version was stored, it is kept. It is marked in the table.',
     );
     const link = view.container.querySelector<HTMLAnchorElement>(
       'a[href="https://wiki.example/overview"]',

@@ -25,10 +25,15 @@ export function readStateLine(state: ReadState, zone: string | undefined): strin
   if (state === null) return 'No sync of this source has finished yet.';
   const finished = `Last sync finished ${clockTime(state.completedAt, zone)}.`;
   if (state.unreadCount === 0) return `${finished} It read every page it listed.`;
-  const kept = `${state.unreadCount === 1 ? '1 page' : `${state.unreadCount} pages`} it listed could not be read, and ${state.unreadCount === 1 ? 'keeps its' : 'keep their'} earlier version`;
-  return state.unreadNamed < state.unreadCount
-    ? `${finished} ${kept}; the first ${state.unreadNamed} are marked below.`
-    : `${finished} ${kept}, marked below.`;
+  const one = state.unreadCount === 1;
+  const unread = `${one ? '1 page' : `${state.unreadCount} pages`} it listed could not be read; where an earlier version was stored, it is kept.`;
+  const marked =
+    state.unreadNamed < state.unreadCount
+      ? `The first ${state.unreadNamed} are marked in the table.`
+      : one
+        ? 'It is marked in the table.'
+        : 'Each is marked in the table.';
+  return `${finished} ${unread} ${marked}`;
 }
 
 /**
@@ -49,8 +54,8 @@ export function PageTable({ source, zone }: { source: LinkedSource; zone?: strin
   const state = useQuery(api.docPages.readState, { sourceId: source._id });
   // Every unread page is marked only when the run named all of them; otherwise an unmarked page
   // may be one it could not read, so the table does not call it read.
-  const allNamed =
-    state !== undefined && (state === null || state.unreadNamed >= state.unreadCount);
+  // Before any sync has finished, no page has been read by one.
+  const allNamed = state !== undefined && state !== null && state.unreadNamed >= state.unreadCount;
   return (
     <Card title={`Pages · ${source.label}`} meta={`${source.pageCount} stored`}>
       <div className="grid gap-3">
