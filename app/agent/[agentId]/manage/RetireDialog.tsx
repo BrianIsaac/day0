@@ -27,10 +27,19 @@ export function retirePhrase(name: string): string {
   return `retire ${name}`;
 }
 
-/** One line of the dialog's account of what a retire does: its term and what it covers. */
+/** One line of the dialog's account of what a retire does: its term and the sentences under it. */
 interface RetireLine {
   readonly term: string;
-  readonly detail: string;
+  readonly details: readonly string[];
+}
+
+/**
+ * A sentence from words that may start lower case: capitalised, with its full stop.
+ *
+ * @param words - The words.
+ */
+function sentence(words: string): string {
+  return `${words.charAt(0).toLocaleUpperCase('en-GB')}${words.slice(1)}.`;
 }
 
 /**
@@ -42,41 +51,47 @@ interface RetireLine {
  * @param waiting - What waits on the manager, in words; empty when nothing does.
  */
 export function retireLines(preview: RetirePreview, waiting: string): RetireLine[] {
-  const deleted = { term: 'Deleted', detail: deletedWords(preview) };
+  const deleted = { term: 'Deleted', details: [sentence(deletedWords(preview))] };
   const waits = {
     term: 'Waiting on you',
-    detail: waiting === '' ? 'nothing' : `${waiting}, discarded undecided`,
+    details: [waiting === '' ? 'Nothing.' : sentence(`${waiting}, discarded undecided`)],
   };
   if (preview.mode === 'mock') {
     return [
       deleted,
-      { term: 'Kept', detail: 'nothing: the hosted office keeps no record of a retired employee' },
+      {
+        term: 'Kept',
+        details: ['Nothing: the hosted office keeps no record of a retired employee.'],
+      },
       waits,
     ];
   }
   const kept = [
-    'one record under your account: the name, the rows each table lost and the date, so the audit export can say the employee existed',
+    'One record under your account: the name, the rows each table lost and the date, so the audit export can say the employee existed.',
     ...(preview.kept.length > 0
       ? [
-          `${credentialsWords(preview.kept)}, which another employee or a documentation source still uses`,
+          sentence(
+            `${credentialsWords(preview.kept)}, which another employee or a documentation source still uses`,
+          ),
         ]
       : []),
     ...(preview.keptClaims > 0
       ? [
-          `the claim on ${preview.keptClaims === 1 ? 'the item' : `${preview.keptClaims} items`} it may already have written, so no colleague repeats the write`,
+          `The claim on ${preview.keptClaims === 1 ? 'the item' : `${preview.keptClaims} items`} it may already have written, so no colleague repeats the write.`,
         ]
       : []),
   ];
   return [
     {
       term: 'Revoked',
-      detail:
+      details: [
         preview.revoked.length > 0
-          ? `${credentialsWords(preview.revoked)}, at once. A write reaching a system after this moment is refused.`
-          : 'nothing: no credential is bound only by this employee',
+          ? `${sentence(`${credentialsWords(preview.revoked)}, at once`)} A write reaching a system after this moment is refused.`
+          : 'Nothing: no credential is bound only by this employee.',
+      ],
     },
     deleted,
-    { term: 'Kept', detail: kept.join('; ') },
+    { term: 'Kept', details: kept },
     waits,
   ];
 }
@@ -145,7 +160,11 @@ export function RetireDialog({
         {retireLines(preview, waitingWords(inbox.entries, inbox.total)).map((line) => (
           <div key={line.term} className="contents">
             <dt className="font-medium text-[var(--color-fg)]">{line.term}</dt>
-            <dd className="mb-1 text-[var(--color-fg-2)] sm:mb-0">{line.detail}</dd>
+            <dd className="mb-1 grid gap-1 text-[var(--color-fg-2)] sm:mb-0">
+              {line.details.map((detail) => (
+                <span key={detail}>{detail}</span>
+              ))}
+            </dd>
           </div>
         ))}
       </dl>

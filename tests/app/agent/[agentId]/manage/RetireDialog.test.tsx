@@ -122,14 +122,26 @@ describe('RetireDialog: what retiring does, said before it is done (Q15, N1)', (
     expect(heading?.textContent).toBe('Retire Mira?');
     expect(dialog().getAttribute('aria-modal')).toBe('true');
     expect(focusedName()).toBe('Keep Mira');
-    const lines = [...dialog().querySelectorAll('dt')].map(
-      (term) => `${term.textContent}: ${term.nextElementSibling?.textContent}`,
-    );
+    const lines = [...dialog().querySelectorAll('dt')].map((term) => [
+      term.textContent,
+      ...[...(term.nextElementSibling?.children ?? [])].map((detail) => detail.textContent),
+    ]);
     expect(lines).toEqual([
-      'Revoked: the Linear credential, at once. A write reaching a system after this moment is refused.',
-      'Deleted: 2 charter versions, 3 work items, 3 skills, 2 connections, 1 correction and 41 events across 6 tables',
-      'Kept: one record under your account: the name, the rows each table lost and the date, so the audit export can say the employee existed; the Slack credential, which another employee or a documentation source still uses; the claim on the item it may already have written, so no colleague repeats the write',
-      'Waiting on you: 1 held write and 1 plan, discarded undecided',
+      [
+        'Revoked',
+        'The Linear credential, at once. A write reaching a system after this moment is refused.',
+      ],
+      [
+        'Deleted',
+        '2 charter versions, 3 work items, 3 skills, 2 connections, 1 correction and 41 events across 6 tables.',
+      ],
+      [
+        'Kept',
+        'One record under your account: the name, the rows each table lost and the date, so the audit export can say the employee existed.',
+        'The Slack credential, which another employee or a documentation source still uses.',
+        'The claim on the item it may already have written, so no colleague repeats the write.',
+      ],
+      ['Waiting on you', '1 held write and 1 plan, discarded undecided.'],
     ]);
     view.unmount();
   });
@@ -233,11 +245,15 @@ describe('RetireDialog: what retiring does, said before it is done (Q15, N1)', (
     expect(retireLines(mock, '')).toEqual([
       {
         term: 'Deleted',
-        detail:
-          '2 charter versions, 3 work items, 3 skills, 2 connections, 1 correction and 41 events across 6 tables',
+        details: [
+          '2 charter versions, 3 work items, 3 skills, 2 connections, 1 correction and 41 events across 6 tables.',
+        ],
       },
-      { term: 'Kept', detail: 'nothing: the hosted office keeps no record of a retired employee' },
-      { term: 'Waiting on you', detail: 'nothing' },
+      {
+        term: 'Kept',
+        details: ['Nothing: the hosted office keeps no record of a retired employee.'],
+      },
+      { term: 'Waiting on you', details: ['Nothing.'] },
     ]);
     backend.queries = { 'reset:retirePreview': mock, 'work:needsYouForAgent': INBOX };
     const { view } = open('mock');
@@ -251,10 +267,10 @@ describe('RetireDialog: what retiring does, said before it is done (Q15, N1)', (
     const lines = retireLines({ ...REAL_PREVIEW, revoked: [], kept: [], keptClaims: 0 }, '');
     expect(lines[0]).toEqual({
       term: 'Revoked',
-      detail: 'nothing: no credential is bound only by this employee',
+      details: ['Nothing: no credential is bound only by this employee.'],
     });
-    expect(lines[2]?.detail).toBe(
-      'one record under your account: the name, the rows each table lost and the date, so the audit export can say the employee existed',
-    );
+    expect(lines[2]?.details).toEqual([
+      'One record under your account: the name, the rows each table lost and the date, so the audit export can say the employee existed.',
+    ]);
   });
 });
