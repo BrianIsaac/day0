@@ -12,7 +12,7 @@ import { oneToOnePhase } from '@/agent/one-to-one-phase';
 import { answeredCount, transcriptTurns, type TranscriptTurn } from '@/agent/transcript-turns';
 import { postCharterSynthesis } from './charter-synthesis';
 import { refusalText } from '../../components/use-change';
-import { Button } from '../../components/Button';
+import { Button, buttonClass } from '../../components/Button';
 import { Dialog } from '../../components/Dialog';
 import { EmployeeContext } from './employee-context';
 import { ROOM_HEIGHT } from './room-frame';
@@ -173,6 +173,12 @@ export function sendsReply(key: {
   return key.key === 'Enter' && !key.shiftKey && !key.isComposing && key.keyCode !== 229;
 }
 
+/**
+ * The composer's placeholder once the employee has asked. The bed's rehearsal driver finds the
+ * composer by it (`scripts/bed/rehearsal/driver.ts`), so it changes with the driver.
+ */
+export const REPLY_PLACEHOLDER = 'type your reply…';
+
 /** How to send a reply, said under the composer and read with the field. */
 export const REPLY_HELP = 'Enter sends. Shift+Enter starts a new line. Short answers are enough.';
 
@@ -251,9 +257,10 @@ export function TurnFailureNotice({
       className="flex flex-wrap items-center gap-3 text-sm text-[var(--color-warn)]"
     >
       <span>{failure.replace(/\.$/, '')}.</span>
-      <Button variant="retry" size="small" onClick={onAskAgain}>
+      {/* A plain button, drawn as the shared one: the bed's rehearsal driver reads this control's markup. */}
+      <button type="button" className={buttonClass('retry', 'small')} onClick={onAskAgain}>
         Ask again
-      </Button>
+      </button>
     </div>
   );
 }
@@ -471,10 +478,10 @@ export function ChatRoom({
     >
       <header className="flex flex-wrap items-center justify-between gap-x-3 border-b border-[var(--color-border)] px-4 py-2 sm:px-5">
         <h2 id={`${agentId}-room-title`} className="py-2.5 text-[15px] font-semibold">
-          Day-1 one-to-one with {name} · chat
+          Day-1 1:1 · chat mode
         </h2>
         {over ? (
-          <span className="text-[13px] text-[var(--color-muted)]">complete</span>
+          <span className="text-[13px] text-[var(--color-muted)]">conversation complete</span>
         ) : onSwitchMode ? (
           <Button
             variant="text"
@@ -550,7 +557,7 @@ export function ChatRoom({
               onChange={setDraft}
               onSend={send}
               disabled={composerDisabled}
-              placeholder={opened ? '' : `Waiting for ${name} to ask the first question`}
+              placeholder={opened ? REPLY_PLACEHOLDER : `waiting for ${name}…`}
               helpId={`${agentId}-reply-help`}
             />
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1">

@@ -274,7 +274,7 @@ function VoiceRoomInner({
     >
       <header className="flex flex-wrap items-center justify-between gap-x-3 border-b border-[var(--color-border)] px-4 py-2 sm:px-5">
         <h2 id={`${agentId}-voice-title`} className="py-2.5 text-[15px] font-semibold">
-          Day-1 one-to-one with {name} · voice
+          Day-1 1:1 · voice mode
         </h2>
         {over ? (
           <span className="text-[13px] text-[var(--color-muted)]">complete</span>

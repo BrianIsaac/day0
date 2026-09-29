@@ -142,6 +142,7 @@ describe('the page after a draft charter is sent back (step 45)', (): void => {
       'charters:latest': draft,
       'charters:transcriptOf': null,
     };
+    backend.results = { 'charters:requestChanges': { ok: true, redrafting: false } };
     const view = mount(page(<CharterView />));
     await press(view.container, 'Send back');
     backend.queries = { 'agents:get': agent('deployed'), 'charters:latest': null };
@@ -162,6 +163,7 @@ describe('the page after a draft charter is sent back (step 45)', (): void => {
       'charters:latest': draft,
       'charters:transcriptOf': null,
     };
+    backend.results = { 'charters:requestChanges': { ok: true, redrafting: false } };
     const view = mount(page(<CharterView />));
     await press(view.container, 'Send back');
     backend.queries = {
