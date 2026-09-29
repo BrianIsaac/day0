@@ -77,4 +77,10 @@ describe('pageKey', (): void => {
     expect(pageKey('/sign-up/verify-email-address')).toBe('/sign-up');
     expect(pageKey(null)).toBe('');
   });
+
+  it("folds an employee's tabs into its page, so a tab change keeps the page and plays nothing", (): void => {
+    expect(pageKey('/agent/a1/work')).toBe('/agent/a1');
+    expect(pageKey('/agent/a1/charter')).toBe('/agent/a1');
+    expect(pageKey('/agent/a2/work')).toBe('/agent/a2');
+  });
 });
