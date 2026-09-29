@@ -17,7 +17,7 @@ import { Disclosure } from '../../../components/Disclosure';
 import { describeAction, reviewPayload } from '@/surfaces/policy';
 import { isWithheldForAnswer, planObligations, transitionWithheld } from '@/work/obligations';
 import type { ReconciliationEntry } from '@/work/reconciliation';
-import { useState } from 'react';
+import { type ReactNode, useState } from 'react';
 import type { Doc } from '@convex/_generated/dataModel';
 import { Button } from '../../../components/Button';
 import { Chip } from '../../../components/Chip';
@@ -230,13 +230,16 @@ function feedbackWords(feedback: Pick<ManagerFeedback, 'kind'>): string {
  *
  * @param kind - A redrafted plan, or a run going again.
  * @param feedback - The note or reason, with when it was given.
+ * @param earlier - The plan a redraft replaced, drawn behind a disclosure.
  */
 export function WorkingFromNote({
   kind,
   feedback,
+  earlier,
 }: {
   kind: 'redraft' | 'rerun';
   feedback?: ManagerFeedback;
+  earlier?: ReactNode;
 }) {
   const zone = useAgentZone();
   const given = feedback ? (
@@ -270,13 +273,8 @@ export function WorkingFromNote({
           ? `${feedback ? 'It was drafted with that as your direction. ' : ''}It waits for your approval even while autonomous actions are on.`
           : 'The run reads it as your direction.'}
       </p>
-      {kind === 'redraft' ? (
-        <Disclosure summary="The earlier plan">
-          <p className="text-sm text-[var(--color-fg-2)]">
-            You cancelled it. It was set aside when this plan was drafted, so it is not kept on the
-            item; the Record tab keeps when each plan was drafted and decided.
-          </p>
-        </Disclosure>
+      {kind === 'redraft' && earlier !== undefined ? (
+        <Disclosure summary="The earlier plan">{earlier}</Disclosure>
       ) : null}
     </div>
   );

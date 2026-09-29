@@ -10,6 +10,7 @@ import { button, focusedName, mount, press, said, typeInto } from '../../../../f
 import {
   DRAWN,
   EMPLOYEE,
+  PLAN,
   QUESTION,
   SLACK,
   THREAD_REPLY,
@@ -401,7 +402,12 @@ describe('stopped with a write that may have landed', (): void => {
 });
 
 describe('plan to approve, attempt two (work-retried.html)', (): void => {
-  it('says the plan was redrafted from the note, and keeps the earlier plan behind a disclosure', (): void => {
+  it('says the plan was redrafted from the note, opens onto the earlier plan, and approves the redraft', async (): Promise<void> => {
+    backend.queries['work:earlierPlan'] = {
+      summary: PLAN.summary,
+      steps: PLAN.steps,
+      draftedAt: DRAWN.planPending.planPendingAt,
+    };
     const view = card(DRAWN.retried, { autonomous: true });
     expect(chip(view.container)).toBe('Plan to approve');
     expect(view.text()).toContain(
@@ -415,8 +421,16 @@ describe('plan to approve, attempt two (work-retried.html)', (): void => {
       (details) => details.querySelector('summary')?.textContent === 'The earlier plan',
     );
     expect(earlier?.open).toBe(false);
-    expect(view.container.querySelectorAll('ol.list-decimal > li')).toHaveLength(3);
-    expect(button(view.container, 'Approve plan with answers')).toBeTruthy();
+    expect(earlier?.textContent).toContain('Drafted at 29 Sep 2026, 14:38 and cancelled by you.');
+    expect(earlier?.querySelectorAll('li')).toHaveLength(PLAN.steps.length);
+    expect(view.container.querySelectorAll('ol.list-decimal > li')).toHaveLength(
+      3 + PLAN.steps.length,
+    );
+    await press(view.container, 'Approve plan with answers');
+    expect(view.calls).toEqual([['approvePlan', { answers: [] }]]);
+    expect(said(view.container)).toEqual([
+      'Plan approved: Draft response for new tier-two RevOps ask.',
+    ]);
   });
 });
 

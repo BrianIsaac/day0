@@ -351,6 +351,48 @@ export const latestListing = query({
   },
 });
 
+/** How many of an employee's newest plan drafts the earlier-plan read walks. */
+const EARLIER_PLAN_READ_LIMIT = 200;
+
+/**
+ * The plan an item's current one replaced (round two section 3.7, "plan to approve, attempt
+ * two"): the newest plan drafted for the item before the manager last cancelled one, as its
+ * `work.plan-drafted` event keeps it. Public, to the item's owner only (`assertOwnsWorkItem`);
+ * writes nothing. Bounded: the employee's newest `EARLIER_PLAN_READ_LIMIT` drafts.
+ *
+ * @returns The plan's summary and steps and when it was drafted, or null for an item no plan of
+ *   which was cancelled, or whose earlier plan is past the bound.
+ */
+export const earlierPlan = query({
+  args: { workItemId: v.id('workItems') },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ summary: string; steps: string[]; draftedAt: number } | null> => {
+    const row = await assertOwnsWorkItem(ctx, args.workItemId);
+    const cancelledAt = row.planRejectedAt;
+    if (cancelledAt === undefined) return null;
+    const drafts = await eventsOfType(ctx, row.agentId, 'work.plan-drafted')
+      .order('desc')
+      .take(EARLIER_PLAN_READ_LIMIT);
+    for (const draft of drafts) {
+      if (draft._creationTime >= cancelledAt) continue;
+      const payload = draft.payload as { workItemId?: unknown; plan?: unknown };
+      if (payload.workItemId !== row._id) continue;
+      const plan = payload.plan as { summary?: unknown; steps?: unknown } | undefined;
+      const steps = Array.isArray(plan?.steps)
+        ? plan.steps.filter((step): step is string => typeof step === 'string')
+        : [];
+      return {
+        summary: typeof plan?.summary === 'string' ? plan.summary : '',
+        steps,
+        draftedAt: draft._creationTime,
+      };
+    }
+    return null;
+  },
+});
+
 /** Internal owner-free read for scheduler continuations already fenced by the work state. */
 export const getInternal = internalQuery({
   args: { workItemId: v.id('workItems') },

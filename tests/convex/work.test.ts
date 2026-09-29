@@ -6960,6 +6960,61 @@ describe('work.dismissFailed (N7)', (): void => {
   });
 });
 
+describe('work.earlierPlan (round two 3.7, attempt two)', (): void => {
+  it('reads the plan drafted for the item before the manager cancelled it, and none of another item’s', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'plan-pending');
+    const other = await harness.run(async (ctx) => {
+      const draft = (id: Id<'workItems'>, summary: string) =>
+        ctx.db.insert('events', {
+          agentId,
+          type: 'work.plan-drafted',
+          payload: { workItemId: id, plan: { summary, steps: [`${summary} step`] } },
+          createdAt: 1,
+        });
+      await draft(workItemId, 'First plan');
+      const otherId = await ctx.db.insert('workItems', {
+        agentId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'REVOPS-2',
+        title: 'Another',
+        contentSummary: 's',
+        contentRefs: [],
+        state: 'plan-pending',
+        observedAt: 1,
+        createdAt: 1,
+      });
+      await draft(otherId, 'Another item’s plan');
+      return otherId;
+    });
+    // The cancel comes after the first plan; the redraft after the cancel.
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, { planRejectedAt: Date.now() + 1 });
+    });
+    vi.useRealTimers();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('events', {
+        agentId,
+        type: 'work.plan-drafted',
+        payload: { workItemId, plan: { summary: 'Redraft', steps: ['Redraft step'] } },
+        createdAt: 2,
+      });
+    });
+    const owner = harness.withIdentity(OWNER);
+    expect(await owner.query(api.work.earlierPlan, { workItemId })).toEqual({
+      summary: 'First plan',
+      steps: ['First plan step'],
+      draftedAt: expect.any(Number),
+    });
+    expect(await owner.query(api.work.earlierPlan, { workItemId: other })).toBeNull();
+    await expect(
+      harness.withIdentity({ subject: 'stranger' }).query(api.work.earlierPlan, { workItemId }),
+    ).rejects.toThrow('forbidden');
+  });
+});
+
 describe('work.needsYou, dating a wait', (): void => {
   async function employee(harness: Harness): Promise<Id<'agents'>> {
     return await harness.run(

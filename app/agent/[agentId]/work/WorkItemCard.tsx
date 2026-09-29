@@ -24,6 +24,7 @@ import { StatusRegion } from '../../../components/StatusRegion';
 import { useChange } from '../../../components/use-change';
 import type { KeptCorrection } from '../corrections-panel';
 import { clockTime, clockTimeWithSeconds, useAgentZone, useNow } from '../time';
+import { EarlierPlan } from './EarlierPlan';
 import { DecisionStamp, ItemHead } from './ItemHead';
 import { ItemSection, Lead, Note } from './ItemParts';
 import { LandedChanges, NotSentLedger } from './LandedChanges';
@@ -330,7 +331,17 @@ export function WorkItemCard({
       ) : null}
       {leadsWithResult ? landedSection : null}
       {item.state === 'completed' ? ticketNow : null}
-      {from ? <WorkingFromNote kind={from.kind} feedback={from.feedback} /> : null}
+      {from ? (
+        <WorkingFromNote
+          kind={from.kind}
+          feedback={from.feedback}
+          earlier={
+            servedByLoop ? (
+              <EarlierPlan workItemId={item._id} employeeName={employeeName} zone={zone} />
+            ) : undefined
+          }
+        />
+      ) : null}
       {WORKING_STATES.has(item.state) ? (
         <ProgressSection item={item} autonomous={autonomousActions} gate={gate} />
       ) : null}
