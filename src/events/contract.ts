@@ -252,7 +252,10 @@ export interface CharterAmendedPayload {
 /** The payload of `charter.request_changes`. */
 export interface CharterRequestChangesPayload {
   readonly charterId: CharterId;
+  /** The manager's note, empty when the draft was sent back without one. */
   readonly notes: string;
+  /** Whether the employee redrafts from its transcript and the note; absent on events before the redraft existed. */
+  readonly redrafting?: boolean;
 }
 
 /** The payload of `charter.question-asked`. */

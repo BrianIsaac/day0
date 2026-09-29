@@ -2,20 +2,25 @@
 
 import {
   type CharterConstraint,
-  type StrikePreview,
+  type StruckClause,
   strikePreview,
 } from '@/agent/charter-constraints';
-import { synthesisNotes, managerOpenQuestions } from '@/agent/manager-questions';
-import { useState, useRef } from 'react';
-import type { Doc, Id } from '@convex/_generated/dataModel';
+import { synthesisNotes } from '@/agent/manager-questions';
+import { useRef } from 'react';
+import type { Doc } from '@convex/_generated/dataModel';
 import { useMutation } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { useChange } from '../../../components/use-change';
 import { StatusRegion } from '../../../components/StatusRegion';
 import { type CharterChange, nextCharterVersion } from '@/agent/charter-amendment';
+import { Button } from '../../../components/Button';
 import { Card } from '../../../components/Card';
-import { DISCLOSURE_SUMMARY } from '../../../components/Disclosure';
+import { clockTime, useAgentZone } from '../time';
 import { AmendCharterPanel } from './AmendCharterPanel';
+import { CharterDocument } from './CharterDocument';
+import { CHANGES_REQUEST_ID } from './ChangesRequest';
+import { ConstraintList } from './RuleRow';
+import { documentStrikes } from './charter-document';
 
 /** The charter body as the card reads it; `constraints` is absent on charters drafted before the list existed. */
 export interface CharterCardBody {
@@ -32,205 +37,54 @@ export interface CharterCardBody {
   constraints?: CharterConstraint[];
   answeredQuestions?: Array<{ question: string; answer: string; answeredAt: string }>;
   synthesisNotes?: string[];
-}
-
-const CONSTRAINT_KIND_LABEL: Record<CharterConstraint['kind'], string> = {
-  'candidate-property': 'what work qualifies',
-  'system-boundary': 'where I may act',
-  'reporting-line': 'who I report to',
-};
-
-/** The clauses a strike removes, quoted for the card. */
-function quotedClauses(clauses: readonly string[]): string {
-  return clauses.map((clause: string): string => `\u201c${clause}\u201d`).join('; ');
+  /** What the strikes changed at approval, kept for the record; absent on a draft. */
+  struckClauses?: StruckClause[];
 }
 
 /**
- * The confirm-or-strike list: every rule the draft will enforce, in the
- * manager's own words, beside the clause phrases that encode it.
- *
- * Before approval each row can be struck or restored; the clauses on the card
- * stay as drafted until Approve, which is when struck wording leaves them.
- * After approval the list is the record of what was confirmed and what was
- * struck. With `previewStrike` each row says what its strike would remove,
- * and a strike the effective charter refuses is disabled with the reason, so
- * nothing the card offers can fail at approval.
- */
-export function ConstraintList({
-  constraints,
-  approved,
-  onStrike,
-  onRestore,
-  previewStrike,
-  busy = false,
-}: {
-  constraints: CharterConstraint[];
-  approved: boolean;
-  /** A change to the charter is in flight; the controls wait for it. */
-  busy?: boolean;
-  /** Strike a confirmed rule; before approval a draft flag, after it an amendment. */
-  onStrike?: (index: number) => void;
-  /** Restore a struck rule; only a draft can, because a strike after approval has already left the clauses. */
-  onRestore?: (index: number) => void;
-  /** What striking a rule would do, computed as approval computes it. */
-  previewStrike?: (index: number) => StrikePreview;
-}) {
-  // A rule struck since the list first rendered is this visit's decision, and its line draws.
-  const [struckOnArrival] = useState(
-    (): ReadonlySet<number> =>
-      new Set(constraints.flatMap((constraint, index) => (constraint.struck ? [index] : []))),
-  );
-  if (constraints.length === 0) return null;
-  return (
-    <div className="text-xs">
-      <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">
-        {approved
-          ? 'Rules this charter enforces'
-          : 'These words will limit the work. Confirm or strike each one.'}
-      </div>
-      <ul className="space-y-1.5">
-        {constraints.map((constraint, index) => {
-          const preview =
-            !constraint.struck && onStrike && previewStrike ? previewStrike(index) : undefined;
-          return (
-            <li
-              key={index}
-              data-just={constraint.struck && !struckOnArrival.has(index) ? '' : undefined}
-              className={`flex items-start gap-2 p-2 rounded-md border ${
-                constraint.struck
-                  ? 'border-[var(--color-border)] text-[var(--color-muted)]'
-                  : 'border-[var(--color-warn)]/40'
-              }`}
-            >
-              <div className="flex-1 min-w-0">
-                <p
-                  data-strike=""
-                  className={constraint.struck ? 'line-through' : 'text-[var(--color-fg)]'}
-                >
-                  {/* A derived rule's quote is the clause itself, not a sentence
-                    the manager said, so it is not printed as a quotation. */}
-                  {constraint.origin === 'derived' ? (
-                    constraint.quote
-                  ) : (
-                    <>&ldquo;{constraint.quote}&rdquo;</>
-                  )}
-                </p>
-                <p className="text-[10px] text-[var(--color-muted)] mt-0.5">
-                  {CONSTRAINT_KIND_LABEL[constraint.kind]}
-                  {constraint.wording.length > 0 ? (
-                    <>
-                      {' · in the charter as '}
-                      {constraint.wording.map((phrase, i) => (
-                        <span key={i}>
-                          {i > 0 ? ', ' : ''}
-                          <span className="font-mono text-[var(--color-fg)]">{phrase}</span>
-                        </span>
-                      ))}
-                    </>
-                  ) : (
-                    ' · not verified: no clause carries these words, so striking it changes nothing'
-                  )}
-                  {constraint.origin === 'derived'
-                    ? " · found by checking the clauses (the charter's wording, not a sentence of yours)"
-                    : ''}
-                  {constraint.origin === 'manager' ? ' · added by you' : ''}
-                  {constraint.struck ? (
-                    <>
-                      {' '}
-                      <span data-struck-mark="">· struck</span>
-                    </>
-                  ) : null}
-                </p>
-                {preview?.refusal ? (
-                  <p className="text-[10px] text-[var(--color-warn)] mt-0.5">
-                    cannot be struck: {preview.refusal}
-                  </p>
-                ) : preview && preview.removedClauses.length > 0 ? (
-                  <p className="text-[10px] text-[var(--color-muted)] mt-0.5">
-                    {preview.removedClauses.length === 1
-                      ? 'strikes the clause: '
-                      : 'strikes the clauses: '}
-                    {quotedClauses(preview.removedClauses)}
-                  </p>
-                ) : null}
-                {preview && !preview.refusal
-                  ? preview.rewrittenClauses.map((pair, i) => (
-                      <p key={i} className="text-[10px] text-[var(--color-muted)] mt-0.5">
-                        {'rewrites the clause: '}
-                        {quotedClauses([pair.from])}
-                        {' to '}
-                        {quotedClauses([pair.to])}
-                      </p>
-                    ))
-                  : null}
-              </div>
-              {!constraint.struck && onStrike ? (
-                <button
-                  type="button"
-                  onClick={() => onStrike(index)}
-                  disabled={busy || preview?.refusal !== undefined}
-                  title={preview?.refusal}
-                  aria-label={`Strike: ${constraint.quote}`}
-                  className="shrink-0 min-h-11 px-3 rounded-md text-[10px] border border-[var(--color-border)] hover:border-[var(--color-warn)] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-[var(--color-border)]"
-                >
-                  Strike
-                </button>
-              ) : constraint.struck && onRestore ? (
-                <button
-                  type="button"
-                  onClick={() => onRestore(index)}
-                  disabled={busy}
-                  aria-label={`Restore: ${constraint.quote}`}
-                  className="shrink-0 min-h-11 px-3 rounded-md text-[10px] border border-[var(--color-border)] hover:border-[var(--color-ok)] disabled:opacity-50"
-                >
-                  Restore
-                </button>
-              ) : null}
-            </li>
-          );
-        })}
-      </ul>
-    </div>
-  );
-}
-
-/**
- * The charter as drafted or approved, with its rules, its notes and, once
- * approved, the amendment panel.
+ * The charter as drafted or approved (round two section 3.5, `agent-charter.html`): the document,
+ * the rules with their standing, the notes from drafting, and, on a draft, Approve with what it
+ * does and the way to ask for changes; once approved, Amend behind its disclosure.
  *
  * The manager it names is the agent row's, the one the header changes
  * (U9 D3 (b)): the charter has no approval chain of its own to edit here.
+ *
+ * @param name - The employee's name.
+ * @param autonomous - Whether the employee's writes go ahead without asking.
  */
 export function CharterCard({
   charter,
   manager,
-  onSentBack,
+  name = 'Your employee',
+  autonomous = false,
 }: {
   charter: Doc<'charters'>;
   /** The agent row's manager, who approves this employee's work. */
   manager?: string;
-  /** Told which draft was sent back, so the page can say what follows it. */
-  onSentBack?: (charterId: Id<'charters'>) => void;
+  name?: string;
+  autonomous?: boolean;
 }) {
   const approve = useMutation(api.charters.approve);
-  const requestChanges = useMutation(api.charters.requestChanges);
   const setConstraintStruck = useMutation(api.charters.setConstraintStruck);
   const amend = useMutation(api.charters.amend);
+  const zone = useAgentZone();
   const card = useRef<HTMLElement>(null);
   const change = useChange(card);
   const body = charter.body as CharterCardBody;
   const constraints = body.constraints ?? [];
   const struckCount = constraints.filter((constraint) => constraint.struck).length;
+  const struck =
+    struckCount === 0 ? '' : `${struckCount} ${struckCount === 1 ? 'rule' : 'rules'} struck`;
 
-  function toggleStrike(index: number, struck: boolean): void {
+  function toggleStrike(index: number, strike: boolean): void {
     const quote = constraints[index]?.quote ?? 'the rule';
     change.run(
       async (): Promise<void> => {
-        const result = await setConstraintStruck({ charterId: charter._id, index, struck });
+        const result = await setConstraintStruck({ charterId: charter._id, index, struck: strike });
         if (!result.ok) throw new Error(result.reason);
       },
       {
-        done: struck
+        done: strike
           ? `Struck “${quote}”: approval leaves its clauses out.`
           : `Restored “${quote}”.`,
         refused: 'The rule was not changed.',
@@ -266,138 +120,96 @@ export function CharterCard({
     );
   }
 
-  // Sending the draft back deletes it, and this card with it when no approved
-  // charter stands beneath it; the page says what follows and takes focus.
-  function onRequestChanges(): void {
-    change.run(() => requestChanges({ charterId: charter._id }), {
-      done: SENT_BACK,
-      refused: 'The charter was not sent back.',
-      after: () => onSentBack?.(charter._id),
-    });
+  /** Take the manager to the note that asks for changes, beside the transcript. */
+  function askForChanges(): void {
+    const form = document.getElementById(CHANGES_REQUEST_ID);
+    form?.scrollIntoView({ block: 'start' });
+    (form?.querySelector('textarea') ?? form)?.focus();
   }
 
   return (
     <Card
-      title={`Charter v${charter.version}${charter.approved ? ' · approved' : ' · awaiting approval'}`}
+      title={`${name}'s charter · version ${charter.version}`}
+      meta={
+        charter.approved
+          ? `approved by you${
+              charter.approvedAt !== undefined ? ` ${clockTime(charter.approvedAt, zone)}` : ''
+            }${struck ? ` · ${struck}` : ''}`
+          : struck || 'nothing struck yet'
+      }
       tone={charter.approved ? 'ok' : 'warn'}
       focusRef={card}
     >
-      <div className="space-y-3 text-sm">
-        <div>
-          <span className="text-[var(--color-muted)] text-xs uppercase tracking-wider">
-            Why this hire
-          </span>
-          <p className="text-[var(--color-fg)]">{body.whyThisHire}</p>
-        </div>
-        <div>
-          <span className="text-[var(--color-muted)] text-xs uppercase tracking-wider">
-            Proposed function
-          </span>
-          <p className="text-[var(--color-fg)]">{body.proposedFunction}</p>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
-          <Goal label="30-day" text={body.shortTermGoals.day30} />
-          <Goal label="60-day" text={body.shortTermGoals.day60} />
-          <Goal label="90-day" text={body.shortTermGoals.day90} />
-        </div>
-        <details className="text-xs">
-          <summary className={DISCLOSURE_SUMMARY}>
-            Boundaries · collaborators · open questions
-          </summary>
-          <div className="mt-2 space-y-2 pl-3 border-l border-[var(--color-border)]">
-            <BoundaryList
-              label="Reports to"
-              items={
-                manager ? [`${manager}, the manager named in the header; change it there`] : []
-              }
-            />
-            <BoundaryList label="Will do" items={body.proposedBoundaries.willDo} />
-            <BoundaryList label="Will NOT do" items={body.proposedBoundaries.willNotDo} />
-            <BoundaryList
-              label="Escalation triggers"
-              items={body.proposedBoundaries.escalationTriggers}
-            />
-            <BoundaryList
-              label="Systems named in the 1:1"
-              items={(body.namedSystems ?? []).map(
-                (system) => `${system.name} (${system.class}) - ${system.whereMentioned}`,
-              )}
-            />
-            <BoundaryList
-              label="Collaborators"
-              items={body.namedCollaborators.map((c) => `${c.name} - ${c.topic}`)}
-            />
-            <BoundaryList
-              label="Adjacent roles (work in their lane is out of scope)"
-              items={(body.adjacentRoles ?? []).map(
-                (role) => `${role.who} - ${role.staysOutOfTheirLaneBy}`,
-              )}
-            />
-            <BoundaryList label="Priority reading" items={body.priorityReading} />
-            <BoundaryList label="Open questions" items={managerOpenQuestions(body)} />
-          </div>
-        </details>
-        <ConstraintList
-          constraints={constraints}
-          approved={charter.approved}
-          busy={change.busy}
-          onStrike={(index) =>
-            charter.approved
-              ? sendAmendment({ kind: 'strike-constraint', index })
-              : toggleStrike(index, true)
-          }
-          onRestore={charter.approved ? undefined : (index) => toggleStrike(index, false)}
-          previewStrike={(index) => strikePreview(body, index)}
+      <div className="grid gap-6">
+        <CharterDocument
+          body={body}
+          manager={manager}
+          strikes={documentStrikes(body, charter.approved)}
         />
-        <SynthesisNotes notes={synthesisNotes(body)} />
-        {charter.approved ? (
-          <AmendCharterPanel
-            charter={charter}
-            body={body}
+        <div className="grid gap-4 border-t border-[var(--color-border)] pt-5">
+          <ConstraintList
+            constraints={constraints}
+            approved={charter.approved}
             busy={change.busy}
-            onAmend={sendAmendment}
+            onStrike={charter.approved ? undefined : (index) => toggleStrike(index, true)}
+            onRestore={charter.approved ? undefined : (index) => toggleStrike(index, false)}
+            previewStrike={(index) => strikePreview(body, index)}
           />
-        ) : null}
-        {!charter.approved ? (
-          <div className="flex flex-wrap gap-2 pt-1">
-            <button
-              type="button"
-              onClick={onApprove}
-              disabled={change.busy}
-              className="min-h-11 px-4 rounded-lg bg-[var(--color-ok)]/20 text-[var(--color-ok)] hover:bg-[var(--color-ok)]/30 text-sm font-medium disabled:opacity-50"
-            >
-              {struckCount > 0
-                ? `Approve, ${struckCount} ${struckCount === 1 ? 'rule' : 'rules'} struck`
-                : 'Approve'}
-            </button>
-            <button
-              type="button"
-              onClick={onRequestChanges}
-              disabled={change.busy}
-              className="min-h-11 px-4 rounded-lg border border-[var(--color-border)] hover:border-[var(--color-warn)] text-sm disabled:opacity-50"
-            >
-              Request changes
-            </button>
+          <SynthesisNotes notes={synthesisNotes(body)} />
+        </div>
+        {charter.approved ? (
+          <div className="border-t border-[var(--color-border)] pt-2">
+            <AmendCharterPanel
+              charter={charter}
+              body={body}
+              busy={change.busy}
+              onAmend={sendAmendment}
+            />
           </div>
-        ) : null}
+        ) : (
+          <div className="grid gap-3 border-t border-[var(--color-border)] pt-5">
+            <div className="flex flex-wrap gap-2">
+              <Button variant="approve" size="large" onClick={onApprove} disabled={change.busy}>
+                {struck ? `Approve charter, ${struck}` : 'Approve charter'}
+              </Button>
+              <Button size="large" onClick={askForChanges} disabled={change.busy}>
+                Ask {name} for changes
+              </Button>
+            </div>
+            <p className="text-[13px] text-[var(--color-muted)]">
+              {approvalConsequence({ name, struckCount, autonomous })}
+            </p>
+          </div>
+        )}
         <StatusRegion outcome={change.outcome} />
       </div>
     </Card>
   );
 }
 
-/** What the card says once the manager sends its draft back. */
-const SENT_BACK = 'Charter sent back: this draft is withdrawn.';
-
-function Goal({ label, text }: { label: string; text: string }) {
-  return (
-    <div className="bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg p-2">
-      <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">
-        {label}
-      </div>
-      <div className="text-[var(--color-fg)] leading-snug">{text}</div>
-    </div>
-  );
+/**
+ * What approving does, said beside Approve: what the strikes take out, that the employee starts on
+ * the work the charter implies, where its writes go, and that the charter stays amendable.
+ */
+export function approvalConsequence({
+  name,
+  struckCount,
+  autonomous,
+}: {
+  name: string;
+  struckCount: number;
+  autonomous: boolean;
+}): string {
+  const strikes =
+    struckCount === 0
+      ? ''
+      : struckCount === 1
+        ? 'The struck rule takes its clauses out of the charter. '
+        : `The ${struckCount} struck rules take their clauses out of the charter. `;
+  const writes = autonomous
+    ? 'Autonomous actions are on, so its writes go ahead without asking.'
+    : 'Every write still waits for you.';
+  return `${strikes}Approving lets ${name} read the office and start on the work the charter implies. ${writes} The charter can be amended later, by version.`;
 }
 
 /**
@@ -407,33 +219,13 @@ function Goal({ label, text }: { label: string; text: string }) {
 function SynthesisNotes({ notes }: { notes: string[] }) {
   if (notes.length === 0) return null;
   return (
-    <div className="text-xs">
-      <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">
+    <div className="grid gap-1.5">
+      <h3 className="text-[13px] font-semibold tracking-[0.02em] text-[var(--color-muted)]">
         Notes from drafting
-      </div>
-      <ul className="space-y-0.5">
+      </h3>
+      <ul className="grid list-disc gap-1 pl-5 text-sm text-[var(--color-fg-2)]">
         {notes.map((note) => (
-          <li key={note} className="text-[var(--color-muted)]">
-            – {note}
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-function BoundaryList({ label, items }: { label: string; items: string[] }) {
-  if (items.length === 0) return null;
-  return (
-    <div>
-      <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">
-        {label}
-      </div>
-      <ul className="space-y-0.5">
-        {items.map((it, i) => (
-          <li key={i} className="text-[var(--color-fg)]">
-            – {it}
-          </li>
+          <li key={note}>{note}</li>
         ))}
       </ul>
     </div>

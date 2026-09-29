@@ -5,6 +5,7 @@ import { ConvexError } from 'convex/values';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import { clipRoleLine } from '../../convex/agents';
+import { CHANGE_REQUEST_MAX_CHARS } from '../../convex/charters';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
@@ -232,6 +233,20 @@ describe('approving a charter with a struck constraint', (): void => {
     expect(body.constraints).toEqual([
       { ...runThroughBody().constraints![0], struck: true },
       runThroughBody().constraints![1],
+    ]);
+    // The record keeps what the strike changed, so the approved charter can show it struck.
+    const drafted = runThroughBody();
+    expect(body.struckClauses).toEqual([
+      {
+        field: 'proposedFunction',
+        text: drafted.proposedFunction,
+        rewrittenAs: body.proposedFunction,
+      },
+      {
+        field: 'willDo',
+        text: drafted.proposedBoundaries.willDo[0],
+        rewrittenAs: 'Handle Linear tickets in the Q3 close project.',
+      },
     ]);
 
     const identity = await workspaceFile(harness, agentId, 'IDENTITY.md');
@@ -926,5 +941,20 @@ describe('an amendment refusal reaches the card (step 4, 6.3)', (): void => {
       );
     expect(refusal).toBeInstanceOf(ConvexError);
     expect((refusal as ConvexError<string>).data).toMatch(/changes nothing/);
+  });
+});
+
+describe('sending a draft back with a note', (): void => {
+  it('refuses a note over the bound in words the card can show, and leaves the draft', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, charterId } = await seedDraft(harness);
+    const owner = harness.withIdentity({ subject: 'owner' });
+    const sent = owner.mutation(api.charters.requestChanges, {
+      charterId,
+      reason: 'x'.repeat(CHANGE_REQUEST_MAX_CHARS + 1),
+    });
+    await expect(sent).rejects.toBeInstanceOf(ConvexError);
+    await expect(sent).rejects.toThrow(`under ${CHANGE_REQUEST_MAX_CHARS} characters`);
+    expect((await latestCharter(harness, agentId))._id).toBe(charterId);
   });
 });

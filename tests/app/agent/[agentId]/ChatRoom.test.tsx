@@ -14,12 +14,14 @@ const room = vi.hoisted(() => ({
   sent: [] as unknown[],
 }));
 
-// The seams are the Convex client and the chat hook; the room's own logic runs.
+// The seams are the Convex client and the chat hook; the room's own logic runs. The session
+// query answers null: no one-to-one has been held yet.
 vi.mock('convex/react', () => ({
   useMutation: () => async (): Promise<{ sessionId: string }> => {
     if (room.startRefusal) throw room.startRefusal;
     return { sessionId: 'session-1' };
   },
+  useQuery: (): null => null,
 }));
 vi.mock('@ai-sdk/react', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@ai-sdk/react')>()),
@@ -27,6 +29,7 @@ vi.mock('@ai-sdk/react', async (importOriginal) => ({
     messages: room.messages,
     sendMessage: (message: unknown): void => void room.sent.push(message),
     regenerate: (): void => undefined,
+    setMessages: (): void => undefined,
     status: 'ready',
   }),
 }));
@@ -42,6 +45,7 @@ import {
 } from '../../../fixtures/dom/press';
 import {
   FinishControl,
+  REPLY_HELP,
   REPLY_MAX_CHARS,
   ReplyInput,
   TurnFailureNotice,
@@ -380,7 +384,7 @@ describe('finishing the 1:1 from the room', (): void => {
 });
 
 describe('the composer', (): void => {
-  it('bounds a reply and names the field', (): void => {
+  it('bounds a reply and labels the field for everyone, described by how to send', (): void => {
     const markup = renderToStaticMarkup(
       <ReplyInput
         value=""
@@ -388,12 +392,19 @@ describe('the composer', (): void => {
         onSend={() => {}}
         disabled={false}
         placeholder="type"
+        helpId="reply-help"
       />,
     );
 
     expect(REPLY_MAX_CHARS).toBe(4000);
     expect(markup).toContain(`maxLength="${REPLY_MAX_CHARS}"`);
-    expect(markup).toContain('aria-label="Your reply"');
+    const field = /<textarea[^>]*id="([^"]+)"[^>]*aria-describedby="reply-help"/.exec(markup);
+    expect(field).not.toBeNull();
+    expect(markup).toContain(`<label for="${field![1]}"`);
+    expect(markup).toMatch(/<label[^>]*>Your reply<\/label>/);
+    expect(REPLY_HELP).toBe(
+      'Enter sends. Shift+Enter starts a new line. Short answers are enough.',
+    );
   });
 });
 

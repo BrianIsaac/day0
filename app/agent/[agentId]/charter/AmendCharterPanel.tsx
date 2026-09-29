@@ -9,10 +9,7 @@ import {
 import { useState, useId, useRef } from 'react';
 import type { Doc } from '@convex/_generated/dataModel';
 import type { CharterCardBody } from './CharterCard';
-import { useQuery } from 'convex/react';
-import { api } from '@convex/_generated/api';
-import { useNow, useAgentZone, clockTimeWithSeconds, relativeTime } from '../time';
-import type { CharterConstraint } from '@/agent/charter-constraints';
+import { strikePreview, type CharterConstraint } from '@/agent/charter-constraints';
 import { type SystemClass, SYSTEM_CLASSES } from '@/agent/system-classes';
 import { managerOpenQuestions } from '@/agent/manager-questions';
 import { DISCLOSURE_SUMMARY } from '../../../components/Disclosure';
@@ -27,7 +24,7 @@ const AMEND_INPUT =
   'min-h-11 flex-1 min-w-0 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-md px-2 text-xs text-[var(--color-fg)]';
 
 const AMEND_BUTTON =
-  'shrink-0 min-h-11 px-3 rounded-md text-[10px] border border-[var(--color-border)] hover:border-[var(--color-accent)] disabled:opacity-50';
+  'shrink-0 min-h-11 px-3 rounded-md text-xs border border-[var(--color-border)] hover:border-[var(--color-accent)] disabled:opacity-50';
 
 /**
  * One line of text the manager can rewrite or remove; Save sends the
@@ -110,7 +107,7 @@ function AddLine({
   const field = useRef<HTMLInputElement>(null);
   return (
     <div className="flex flex-wrap items-center gap-1">
-      <label htmlFor={id} className="basis-full text-[10px] text-[var(--color-muted)]">
+      <label htmlFor={id} className="basis-full text-xs text-[var(--color-muted)]">
         {label}
       </label>
       <input
@@ -139,6 +136,54 @@ function AddLine({
   );
 }
 
+/**
+ * Strike a rule the approved charter enforces: an amendment, so it lives behind the disclosure
+ * with the other changes, and a strike the charter cannot take is offered disabled with why.
+ */
+function StrikeRules({
+  body,
+  busy,
+  onAmend,
+}: {
+  body: CharterCardBody;
+  busy: boolean;
+  onAmend: (change: CharterChange) => void;
+}) {
+  const standing = (body.constraints ?? []).flatMap((constraint, index) =>
+    constraint.struck ? [] : [{ constraint, index, refusal: strikePreview(body, index).refusal }],
+  );
+  if (standing.length === 0) return null;
+  return (
+    <div>
+      <div className="text-[var(--color-muted)] text-xs uppercase tracking-wider mb-1">
+        Strike a rule
+      </div>
+      <ul className="space-y-1">
+        {standing.map(({ constraint, index, refusal }) => (
+          <li key={index} className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="min-w-0 flex-1 text-[var(--color-fg)]">{constraint.quote}</span>
+            <button
+              type="button"
+              className={AMEND_BUTTON}
+              disabled={busy || refusal !== undefined}
+              title={refusal}
+              aria-label={`Strike: ${constraint.quote}`}
+              onClick={() => onAmend({ kind: 'strike-constraint', index })}
+            >
+              Strike
+            </button>
+            {refusal ? (
+              <span className="basis-full text-xs text-[var(--color-muted)]">
+                cannot be struck: {refusal}
+              </span>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 /** A sentence that forbids: the manager's "never", "don't", "no …" and the like. */
 const PROHIBITION =
   /^\s*no\b|\b(?:never|not|don['\u2019]t|doesn['\u2019]t|won['\u2019]t|mustn['\u2019]t|avoid|stop|without|forbidden|off-limits)\b/i;
@@ -156,8 +201,8 @@ export function defaultRuleClause(quote: string): ListClauseField {
 
 /**
  * Amend an approved charter from the card: each Save, Answer, Add or Remove
- * is one typed change and one new version. The list of versions below the
- * editors is the charter's history; nothing here edits a row in place.
+ * is one typed change and one new version. The versions list beside the card
+ * is the charter's history; nothing here edits a row in place.
  */
 export function AmendCharterPanel({
   charter,
@@ -173,9 +218,7 @@ export function AmendCharterPanel({
   onAmend: (change: CharterChange, after?: () => void, focus?: () => HTMLElement | null) => void;
 }) {
   const ruleId = useId();
-  const versions = useQuery(api.charters.listForAgent, { agentId: charter.agentId });
-  const now = useNow();
-  const zone = useAgentZone();
+  const next = nextCharterVersion(charter.version);
   const [rule, setRule] = useState<{
     quote: string;
     kind: CharterConstraint['kind'];
@@ -195,13 +238,15 @@ export function AmendCharterPanel({
   const answered = body.answeredQuestions ?? [];
   const openQuestions = managerOpenQuestions(body);
   return (
-    <details className="text-xs">
-      <summary className={DISCLOSURE_SUMMARY}>
-        Amend this charter · next version v{nextCharterVersion(charter.version)}
-      </summary>
-      <div className="mt-2 space-y-3 pl-3 border-l border-[var(--color-border)]">
+    <details className="text-sm">
+      <summary className={DISCLOSURE_SUMMARY}>Amend this charter · next version v{next}</summary>
+      <div className="mt-2 space-y-4 border-l border-[var(--color-border)] pl-3">
+        <p className="text-[13px] text-[var(--color-muted)]">
+          Each save writes version {next} as its own row and re-checks the work waiting on the
+          charter; every earlier version stays on the record.
+        </p>
         <div>
-          <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">
+          <div className="text-[var(--color-muted)] text-xs uppercase tracking-wider mb-1">
             Proposed function
           </div>
           <EditableLine
@@ -214,7 +259,7 @@ export function AmendCharterPanel({
         </div>
         {LIST_CLAUSE_FIELDS.map((field) => (
           <div key={field}>
-            <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">
+            <div className="text-[var(--color-muted)] text-xs uppercase tracking-wider mb-1">
               {CLAUSE_LIST_LABEL[field]}
             </div>
             <div className="space-y-1">
@@ -250,7 +295,7 @@ export function AmendCharterPanel({
         ))}
         {openQuestions.length > 0 || answered.length > 0 ? (
           <div>
-            <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">
+            <div className="text-[var(--color-muted)] text-xs uppercase tracking-wider mb-1">
               Open questions
             </div>
             <div className="space-y-1.5">
@@ -274,14 +319,15 @@ export function AmendCharterPanel({
             </div>
           </div>
         ) : null}
+        <StrikeRules body={body} busy={busy} onAmend={onAmend} />
         <div>
-          <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">
+          <div className="text-[var(--color-muted)] text-xs uppercase tracking-wider mb-1">
             Add a rule
           </div>
           <div className="flex flex-wrap items-center gap-1">
             <label
               htmlFor={`${ruleId}-quote`}
-              className="basis-full text-[10px] text-[var(--color-muted)]"
+              className="basis-full text-xs text-[var(--color-muted)]"
             >
               The rule, in your own words
             </label>
@@ -343,7 +389,7 @@ export function AmendCharterPanel({
           </div>
         </div>
         <div>
-          <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">
+          <div className="text-[var(--color-muted)] text-xs uppercase tracking-wider mb-1">
             Adjacent roles (work in their lane is out of scope)
           </div>
           <div className="space-y-1">
@@ -389,7 +435,7 @@ export function AmendCharterPanel({
           </div>
         </div>
         <div>
-          <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">
+          <div className="text-[var(--color-muted)] text-xs uppercase tracking-wider mb-1">
             Systems named
           </div>
           <div className="space-y-1">
@@ -412,7 +458,7 @@ export function AmendCharterPanel({
             <div className="flex flex-wrap items-center gap-1">
               <label
                 htmlFor={`${ruleId}-system`}
-                className="basis-full text-[10px] text-[var(--color-muted)]"
+                className="basis-full text-xs text-[var(--color-muted)]"
               >
                 System name
               </label>
@@ -425,7 +471,7 @@ export function AmendCharterPanel({
               />
               <label
                 htmlFor={`${ruleId}-system-kind`}
-                className="basis-full text-[10px] text-[var(--color-muted)]"
+                className="basis-full text-xs text-[var(--color-muted)]"
               >
                 Its kind
               </label>
@@ -444,7 +490,7 @@ export function AmendCharterPanel({
               </select>
               <label
                 htmlFor={`${ruleId}-system-where`}
-                className="basis-full text-[10px] text-[var(--color-muted)]"
+                className="basis-full text-xs text-[var(--color-muted)]"
               >
                 Where it is used, in your words
               </label>
@@ -470,26 +516,6 @@ export function AmendCharterPanel({
             </div>
           </div>
         </div>
-        {versions && versions.length > 1 ? (
-          <div>
-            <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">
-              Versions
-            </div>
-            <ul className="space-y-0.5 text-[var(--color-muted)]">
-              {versions.map((row) => (
-                <li key={row._id}>
-                  v{row.version}
-                  {row._id === charter._id ? ' · current' : ''}
-                  {row.supersedes ? ' · amendment' : ' · from the 1:1'}
-                  {' · '}
-                  <span title={clockTimeWithSeconds(row.createdAt, zone)}>
-                    {relativeTime(row.createdAt, now)}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ) : null}
       </div>
     </details>
   );

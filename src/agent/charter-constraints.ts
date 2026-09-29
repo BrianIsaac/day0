@@ -663,3 +663,78 @@ export function withoutClauseWording<T extends ClauseCharter>(
     },
   };
 }
+
+/** A clause a strike can change: the function, or an item of one of the lists. */
+export type StruckClauseField = 'proposedFunction' | (typeof LIST_FIELDS)[number];
+
+/**
+ * A clause the manager's strikes changed at approval, kept so the record can show it struck: taken
+ * out whole, or rewritten with the struck wording gone (`rewrittenAs`, what it reads now).
+ */
+export interface StruckClause {
+  readonly field: StruckClauseField;
+  readonly text: string;
+  readonly rewrittenAs?: string;
+}
+
+/** A clause's words, lower-cased, without punctuation. */
+function wordsOf(text: string): string[] {
+  return text.toLowerCase().match(/[\p{L}\p{N}'-]+/gu) ?? [];
+}
+
+/**
+ * Whether `to` is `from` with words taken out: a strike removes wording and never adds any, so a
+ * rewritten clause's words are the original's, in order. A will-do the strike emptied is dropped
+ * and never pairs with the next clause's rewrite.
+ */
+function isRewriteOf(from: string, to: string): boolean {
+  const remaining = wordsOf(to);
+  if (remaining.length === 0) return false;
+  let next = 0;
+  for (const word of wordsOf(from)) {
+    if (word === remaining[next]) next += 1;
+    if (next === remaining.length) return true;
+  }
+  return false;
+}
+
+/**
+ * What the strikes did to the clauses between a draft and its effective charter: each list clause
+ * taken out whole, each will-do rewritten in place (paired in order, as `strikePreview` pairs
+ * them), and the function when its wording changed.
+ *
+ * @param before - The charter as drafted.
+ * @param after - The same charter with its strikes applied (`strikeOutcome`).
+ */
+export function clauseChanges(before: ClauseCharter, after: ClauseCharter): StruckClause[] {
+  const changes: StruckClause[] = [];
+  if (before.proposedFunction !== after.proposedFunction) {
+    changes.push({
+      field: 'proposedFunction',
+      text: before.proposedFunction,
+      rewrittenAs: after.proposedFunction,
+    });
+  }
+  const willDoBefore = before.proposedBoundaries.willDo;
+  const willDoAfter = after.proposedBoundaries.willDo;
+  let position = 0;
+  for (const clause of willDoBefore) {
+    if (willDoAfter[position] === clause) {
+      position += 1;
+      continue;
+    }
+    const to = willDoAfter[position];
+    if (to !== undefined && !willDoBefore.includes(to) && isRewriteOf(clause, to)) {
+      changes.push({ field: 'willDo', text: clause, rewrittenAs: to });
+      position += 1;
+    } else {
+      changes.push({ field: 'willDo', text: clause });
+    }
+  }
+  for (const field of BOUNDING_FIELDS) {
+    for (const clause of before.proposedBoundaries[field]) {
+      if (!after.proposedBoundaries[field].includes(clause)) changes.push({ field, text: clause });
+    }
+  }
+  return changes;
+}

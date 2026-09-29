@@ -137,9 +137,14 @@ describe('the page after a draft charter is sent back (step 45)', (): void => {
 
   it('says the 1:1 is open again and gives it focus when the send-back reopened it', async (): Promise<void> => {
     route.segment = 'charter';
-    backend.queries = { 'agents:get': agent('charter-pending'), 'charters:latest': draft };
+    backend.queries = {
+      'agents:get': agent('charter-pending'),
+      'charters:latest': draft,
+      'charters:transcriptOf': null,
+    };
+    backend.results = { 'charters:requestChanges': { ok: true, redrafting: false } };
     const view = mount(page(<CharterView />));
-    await press(view.container, 'Request changes');
+    await press(view.container, 'Send back');
     backend.queries = { 'agents:get': agent('deployed'), 'charters:latest': null };
     act((): void => view.root.render(page(<CharterView />)));
     await settle();
@@ -153,9 +158,14 @@ describe('the page after a draft charter is sent back (step 45)', (): void => {
 
   it('says nothing reopened and moves no focus when an approved charter stands beneath the draft', async (): Promise<void> => {
     route.segment = 'charter';
-    backend.queries = { 'agents:get': agent('active'), 'charters:latest': draft };
+    backend.queries = {
+      'agents:get': agent('active'),
+      'charters:latest': draft,
+      'charters:transcriptOf': null,
+    };
+    backend.results = { 'charters:requestChanges': { ok: true, redrafting: false } };
     const view = mount(page(<CharterView />));
-    await press(view.container, 'Request changes');
+    await press(view.container, 'Send back');
     backend.queries = {
       'agents:get': agent('active'),
       'charters:latest': { ...draft, _id: 'charter-1', version: '0.1', approved: true },

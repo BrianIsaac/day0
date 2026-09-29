@@ -88,6 +88,27 @@ describe('applying charter changes', (): void => {
     );
   });
 
+  it('keeps on the record what an amendment strike changed, after what approval kept', (): void => {
+    const approved = {
+      ...approvedBody(),
+      struckClauses: [{ field: 'willNotDo' as const, text: 'Own the forecast.' }],
+    };
+    const { charter } = applyCharterChanges(approved, [{ kind: 'strike-constraint', index: 0 }]);
+    expect(charter.struckClauses).toEqual([
+      { field: 'willNotDo', text: 'Own the forecast.' },
+      {
+        field: 'proposedFunction',
+        text: 'Own routine revenue operations work from owned, prioritized Linear tickets.',
+        rewrittenAs: 'Own routine revenue operations work from Linear tickets.',
+      },
+      {
+        field: 'willDo',
+        text: 'Handle owned, prioritized Linear tickets in the Q3 close project.',
+        rewrittenAs: 'Handle Linear tickets in the Q3 close project.',
+      },
+    ]);
+  });
+
   it('adds a manager constraint as its own clause', (): void => {
     const { charter } = applyCharterChanges(approvedBody(), [
       {

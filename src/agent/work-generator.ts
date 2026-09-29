@@ -113,7 +113,8 @@ export async function generateWorkItemsFromCharter(
     agent: workGeneratorAgent,
     user: [
       'Charter:',
-      JSON.stringify(charter, null, 2),
+      // The clauses a strike took out are the record's, never work to generate from.
+      JSON.stringify({ ...charter, struckClauses: undefined }, null, 2),
       '',
       'Live mock environment snapshot (use these EXACT slugs in contentRefs):',
       renderMockSnapshot(mockEnv),

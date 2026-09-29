@@ -592,6 +592,15 @@ export default defineSchema({
     /** Why the last finalisation attempt gave up. Kept on a session that went
      * back to `active` so a failed run is visible rather than silent. */
     finalisationError: v.optional(v.string()),
+    /** The notes the manager sent this session's drafts back with, oldest
+     * first, each with the rules struck on the draft it came with. Every
+     * finisher drafts from the transcript and these together, so a redraft
+     * the deployment re-drives still carries them (`charters.requestChanges`). */
+    changeRequests: v.optional(
+      v.array(
+        v.object({ reason: v.string(), struck: v.array(v.string()), requestedAt: v.number() }),
+      ),
+    ),
     startedAt: v.number(),
     endedAt: v.optional(v.number()),
   })
