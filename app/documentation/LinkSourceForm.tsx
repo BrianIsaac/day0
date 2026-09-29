@@ -215,6 +215,7 @@ export function LinkSourceForm(): React.ReactNode {
           <input
             id="source-label"
             value={label}
+            placeholder="Location label"
             onChange={(event) => setLabel(event.target.value)}
             className={`${INPUT_CLASS} w-full`}
           />
