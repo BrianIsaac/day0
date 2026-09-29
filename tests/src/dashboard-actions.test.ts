@@ -533,8 +533,8 @@ describe('the supervision metrics card', (): void => {
       }),
     );
     expect(html).toContain('linear:read');
-    expect(html).toContain('granted - from surface');
-    expect(html).toContain('revoked - from skill');
+    expect(html).toContain('Granted with a surface card you approved');
+    expect(html).toContain('Revoked; it was granted with a skill you approved');
     expect(html).toContain('Confirm revoke');
     expect(html).toContain('Keep grant');
     expect(html).toContain('Re-grant');
