@@ -164,7 +164,9 @@ export function expectedCredential(
   }
   if (surface.path === 'browser-driven') {
     return {
-      label: `The ${documented ?? `${surface.displayName} sign-in`} the browser session signs in with`,
+      label: documented
+        ? `The ${documented} the browser session signs in with`
+        : `The ${surface.displayName} sign-in for the browser session`,
       hint: "The browser session types it only into the sign-in form's credential field. It is stored encrypted and never shown again.",
     };
   }

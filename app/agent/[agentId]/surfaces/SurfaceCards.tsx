@@ -184,7 +184,7 @@ export function SurfaceCards({
         }
       },
       {
-        done: 'Orientation is running again for the declared systems; their cards update here.',
+        done: 'Orientation is running again for the systems waiting on it; their cards update here.',
         refused: 'Orientation did not run again.',
       },
     );
@@ -343,7 +343,7 @@ export function SurfaceCards({
                 .join(' ')}
             </span>
             <Button size="small" onClick={onReorient} disabled={reorienting}>
-              {reorienting ? 'Re-running orientation...' : 'Re-run orientation'}
+              {reorienting ? 'Re-running orientation…' : 'Re-run orientation'}
             </Button>
             {reorientError ? (
               <span role="alert" className="text-[var(--color-danger)]">

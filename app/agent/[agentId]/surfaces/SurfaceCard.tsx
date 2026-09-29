@@ -203,13 +203,13 @@ export function SurfaceCard({
     path: surface.path,
     reason: surface.reason,
   });
-  // The server's refusal names the absent component by its code; the card says it in words once.
-  const refusal =
-    surface.approvalRefusal === undefined || browserFloor.absent
-      ? undefined
-      : surface.approvalRefusal.includes(BROWSER_DRIVER_ABSENT)
-        ? BROWSER_COMPONENT_CARD_MESSAGE
-        : surface.approvalRefusal;
+  // Why Approve is disabled, said beside it: the absent component in words (the server's refusal
+  // names it by its code), else the server's own refusal (E-63).
+  const refusal = browserFloor.absent
+    ? browserFloor.message
+    : surface.approvalRefusal?.includes(BROWSER_DRIVER_ABSENT)
+      ? BROWSER_COMPONENT_CARD_MESSAGE
+      : surface.approvalRefusal;
   const channelsNotJoined = presentChannelsNotJoined(
     surface.channelsNotJoined,
     provisioning?.appName,
@@ -242,7 +242,8 @@ export function SurfaceCard({
           {channelsNotJoined ? (
             <p className="text-sm text-[var(--color-warn)]">{channelsNotJoined}</p>
           ) : null}
-          {browserFloor.absent ? (
+          {/* A proposed card says it beside its disabled Approve instead. */}
+          {browserFloor.absent && surface.verdict !== 'proposed' ? (
             <p className="text-sm text-[var(--color-warn)]">{browserFloor.message}</p>
           ) : null}
           {surface.reason && !skipReason && surface.reason !== 'expired' ? (

@@ -156,8 +156,8 @@ describe('a decision on a surface card', (): void => {
   it('says a probe that did not run as not run, not as a check (P6-7)', (): void => {
     expect(
       probeOutcomeText('Linear', { verdict: 'skipped', reason: 'the card is not approved.' }),
-    ).toBe('The probe of Linear did not run: the card is not approved.');
-    expect(probeOutcomeText('Linear', { verdict: 'connected' })).toBe('Probed Linear: connected.');
+    ).toBe('The check of Linear did not run: the card is not approved.');
+    expect(probeOutcomeText('Linear', { verdict: 'connected' })).toBe('Checked Linear: connected.');
   });
 
   it("keeps one card's approval in flight when another card's rejection settles first", async (): Promise<void> => {
@@ -182,12 +182,12 @@ describe('a decision on a surface card', (): void => {
     });
     await press(card('notion'), 'Reject');
 
-    expect(card('linear').textContent).toContain('Approving...');
+    expect(card('linear').textContent).toContain('Approving…');
     await act(async (): Promise<void> => {
       release();
     });
     await settle();
-    expect(card('linear').textContent).not.toContain('Approving...');
+    expect(card('linear').textContent).not.toContain('Approving…');
     view.unmount();
   });
 

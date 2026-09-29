@@ -195,6 +195,7 @@ describe('the order of the listed cards (D D4)', (): void => {
 
   it('orders by class when no page the cards cite carries a systems table', async (): Promise<void> => {
     const { harness, agentId } = await seedOffice('Team: REVOPS');
+    // Inserted chat first, so the order below is the class rule's, not the insertion's.
     await card(harness, agentId, { slug: 'slack', displayName: 'Slack', class: 'chat' });
     await card(harness, agentId, { slug: 'linear', displayName: 'Linear', class: 'kanban' });
 

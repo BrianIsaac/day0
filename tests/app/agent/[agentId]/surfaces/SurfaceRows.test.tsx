@@ -266,7 +266,7 @@ describe('ProvisioningRow', (): void => {
       presentProvisioning({ credential: { found: 'none', method: 'oauth' }, hasPublicUrl: true }),
       { provisioning: true },
     );
-    expect(markup).toContain('Registering the app...');
+    expect(markup).toContain('Registering the app…');
     expect(markup).toContain('disabled=""');
   });
 });
@@ -287,7 +287,7 @@ describe('ApprovalRow', (): void => {
 
   it('holds both controls while a decision is in flight', (): void => {
     const markup = renderToStaticMarkup(<ApprovalRow {...idle} pending="approve" />);
-    expect(markup).toMatch(/<button[^>]*disabled=""[^>]*>Approving\.\.\.<\/button>/);
+    expect(markup).toMatch(/<button[^>]*disabled=""[^>]*>Approving…<\/button>/);
     expect(markup).toMatch(/<button[^>]*disabled=""[^>]*>Reject<\/button>/);
   });
 
@@ -316,7 +316,7 @@ describe('ApprovalRow', (): void => {
 
   it('says the manager is the one approver (Q10)', (): void => {
     expect(renderToStaticMarkup(<ApprovalRow {...idle} />)).toContain(
-      `${ONE_APPROVER} Probe runs automatically once you approve.`,
+      `${ONE_APPROVER} Day0 checks the connection as soon as you approve.`,
     );
   });
 });

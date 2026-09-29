@@ -202,6 +202,11 @@ describe('a surface card in each of its states (round two section 3.9)', (): voi
     expect(markup.match(/This system is reached through its web UI\./g)).toHaveLength(1);
     expect(markup).not.toContain('BROWSER_DRIVER_ABSENT');
     expect(markup).toMatch(/<button[^>]*disabled=""[^>]*>Approve<\/button>/);
+    // Said beside the disabled control, which names it as its description (review L9).
+    const reason = /aria-describedby="([^"]+)"[^>]*>Approve<\/button>/.exec(markup)?.[1];
+    expect(markup).toMatch(
+      new RegExp(`<p id="${reason}"[^>]*>This system is reached through its web UI\\.`),
+    );
   });
 
   it('carries the id, the verdict and the name the rehearsal driver and focus return read', (): void => {

@@ -23,11 +23,11 @@ const INSET = 'rounded-lg bg-[var(--color-inset)] p-3 text-sm';
 
 /** The Slack provisioning row's inputs: the token handler, its error and the presentation. */
 export interface ProvisioningRowProps {
-  error?: string;
-  onProvision: (configurationToken: string) => void;
-  presentation: ProvisioningPresentation;
-  provisioning: boolean;
-  surfaceSlug: string;
+  readonly error?: string;
+  readonly onProvision: (configurationToken: string) => void;
+  readonly presentation: ProvisioningPresentation;
+  readonly provisioning: boolean;
+  readonly surfaceSlug: string;
 }
 
 /** Where orientation found a system: the pages it cites, by source. */
@@ -111,11 +111,11 @@ export function PageLine({ text }: { text: string }): React.ReactNode {
 /** The intake scope row's inputs: the scope, what changed on its pages, and source labels. */
 export interface IntakeScopeRowProps {
   /** What the server found changed on the scope's pages since the proposal (`scopeChange`, D D4). */
-  changed?: string;
-  scope: IntakeScope;
-  sourceLabels: ReadonlyMap<string, string>;
-  surfaceClass: string;
-  system: string;
+  readonly changed?: string;
+  readonly scope: IntakeScope;
+  readonly sourceLabels: ReadonlyMap<string, string>;
+  readonly surfaceClass: string;
+  readonly system: string;
 }
 
 /**
@@ -181,20 +181,20 @@ export function IntakeScopeRow(props: IntakeScopeRowProps): React.ReactNode {
 
 /** A discovered system the charter did not name, awaiting a proposal. */
 export interface UnnamedSystem {
-  _id: string;
-  slug: string;
-  displayName: string;
-  class: string;
-  discoveryEvidence?: SurfaceDiscoveryEvidence[];
+  readonly _id: string;
+  readonly slug: string;
+  readonly displayName: string;
+  readonly class: string;
+  readonly discoveryEvidence?: SurfaceDiscoveryEvidence[];
 }
 
 /** The unnamed-systems row's inputs: the systems, the propose handler and its error. */
 export interface UnnamedSystemsRowProps {
-  error?: { surfaceId: string; message: string };
-  onPropose: (surfaceId: string) => void;
-  proposing?: string;
-  sourceLabels: ReadonlyMap<string, string>;
-  systems: readonly UnnamedSystem[];
+  readonly error?: { surfaceId: string; message: string };
+  readonly onPropose: (surfaceId: string) => void;
+  readonly proposing?: string;
+  readonly sourceLabels: ReadonlyMap<string, string>;
+  readonly systems: readonly UnnamedSystem[];
 }
 
 /**
@@ -289,9 +289,9 @@ export function probeOutcomeText(
   outcome: { verdict: string; reason?: string },
 ): string {
   if (outcome.verdict === 'skipped') {
-    return `The probe of ${system} did not run${outcome.reason ? `: ${outcome.reason.replace(/\.$/, '')}` : ''}.`;
+    return `The check of ${system} did not run${outcome.reason ? `: ${outcome.reason.replace(/\.$/, '')}` : ''}.`;
   }
-  return `Probed ${system}: ${outcome.verdict}${outcome.reason ? `, ${outcome.reason.replace(/\.$/, '')}` : ''}.`;
+  return `Checked ${system}: ${outcome.verdict}${outcome.reason ? `, ${outcome.reason.replace(/\.$/, '')}` : ''}.`;
 }
 
 /**
@@ -312,7 +312,7 @@ export function ApprovalRow(props: ApprovalRowProps): React.ReactNode {
           aria-describedby={props.refusal !== undefined ? reasonId : undefined}
           onClick={props.onApprove}
         >
-          {props.pending === 'approve' ? 'Approving...' : APPROVE_CARD}
+          {props.pending === 'approve' ? 'Approving…' : APPROVE_CARD}
         </Button>
         <Button
           variant="quiet"
@@ -334,7 +334,7 @@ export function ApprovalRow(props: ApprovalRowProps): React.ReactNode {
         </p>
       ) : null}
       <p className="text-[13px] text-[var(--color-muted)]">
-        {ONE_APPROVER} Probe runs automatically once you approve.
+        {ONE_APPROVER} Day0 checks the connection as soon as you approve.
       </p>
     </div>
   );
@@ -401,7 +401,7 @@ export function ProvisioningRow(props: ProvisioningRowProps): React.ReactNode {
               className={`${INPUT_CLASS} min-w-48 flex-1`}
             />
             <Button type="submit" size="small" disabled={props.provisioning}>
-              {props.provisioning ? 'Registering the app...' : PROVISION_LABEL}
+              {props.provisioning ? 'Registering the app…' : PROVISION_LABEL}
             </Button>
           </div>
         </form>
@@ -435,18 +435,18 @@ export function EvidenceQuote({ quote }: { quote?: string }): React.ReactNode {
 }
 
 interface SurfaceProbeAttempt {
-  path: string;
-  endpoint?: string;
-  outcome: 'demoted' | 'ungranted' | 'listed-dead' | 'retried';
-  reason: string;
-  attemptedAt: number;
-  retryAfterMs?: number;
+  readonly path: string;
+  readonly endpoint?: string;
+  readonly outcome: 'demoted' | 'ungranted' | 'listed-dead' | 'retried';
+  readonly reason: string;
+  readonly attemptedAt: number;
+  readonly retryAfterMs?: number;
 }
 
 /** The connection ladder's inputs: the candidate paths, the attempts and the verdict. */
 export interface SurfaceLadderProps {
-  candidates?: Array<{ path: string; endpoint: string }>;
-  attempts?: SurfaceProbeAttempt[];
+  readonly candidates?: Array<{ path: string; endpoint: string }>;
+  readonly attempts?: SurfaceProbeAttempt[];
 }
 
 /** Show exactly which routes were approved and what each failed probe established. */

@@ -107,7 +107,7 @@ describe('whose credential the field expects (Q10, B D6)', (): void => {
         { displayName: 'Looker', path: 'browser-driven', endpoint: undefined },
         undefined,
       ).label,
-    ).toBe('The Looker sign-in the browser session signs in with');
+    ).toBe('The Looker sign-in for the browser session');
   });
 
   it('asks any other card for the credential the documentation names', (): void => {

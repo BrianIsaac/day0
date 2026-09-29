@@ -166,7 +166,7 @@ describe('SurfaceCards and the optional browser component', (): void => {
     const markup = renderToStaticMarkup(<SurfaceCards agentId={agentId} />);
     expect(markup.match(/<button[^>]*>Approve<\/button>/g)).toHaveLength(1);
     expect(markup).toContain('data-verdict="proposed"');
-    expect(markup).toContain('Probe runs automatically once you approve.');
+    expect(markup).toContain('Day0 checks the connection as soon as you approve.');
     for (const gone of ['Approve as', 'IT approved', 'Manager approved', 'same operator', ' IT ']) {
       expect(markup).not.toContain(gone);
     }

@@ -47,9 +47,9 @@ export function CredentialField(props: CredentialFieldProps) {
         {presentation.label ? `${presentation.label}: ` : ''}
         {presentation.text}
       </p>
-      {presentation.kind === 'oauth' ? (
+      {presentation.kind === 'oauth' && presentation.detail ? (
         <p className="text-[13px] text-[var(--color-muted)]">
-          OAuth approval procedure{presentation.detail ? `: ${presentation.detail}` : ''}
+          OAuth approval procedure: {presentation.detail}
         </p>
       ) : null}
       {props.status ? <p className="text-[var(--color-warn)]">Status: {props.status}</p> : null}
