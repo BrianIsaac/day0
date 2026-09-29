@@ -40,7 +40,9 @@ import { ChatRoom, progressOf, sendsReply } from '../../../../app/agent/[agentId
 import type { Id } from '../../../../convex/_generated/dataModel';
 import { INIT_PROMPT } from '../../../../src/agent/day-one-turn';
 import { MAX_FINALISATION_RECOVERIES } from '../../../../src/agent/one-to-one-phase';
+import { axeViolations } from '../../../fixtures/dom/axe';
 import { mount, press, said, settle, typeInto } from '../../../fixtures/dom/press';
+import { underTarget } from '../../../fixtures/dom/targets';
 
 const AGENT = 'agent-1' as Id<'agents'>;
 
@@ -314,6 +316,31 @@ describe('a session that does not open', (): void => {
       await vi.advanceTimersByTimeAsync(0);
     });
     expect(room.sent).toEqual([{ text: INIT_PROMPT }]);
+    view.unmount();
+  });
+});
+
+describe('the chat room against the accessibility floor (N14)', (): void => {
+  it.each([
+    ['in conversation', null],
+    ['drafting', { _id: 'session-1', state: 'synthesising', pendingTranscript: 'USER: x' }],
+    [
+      'after the draft failed for good',
+      {
+        _id: 'session-1',
+        state: 'active',
+        pendingTranscript: 'ASSISTANT: Why?\n\nUSER: x',
+        finalisationError: 'the model timed out',
+        recoveryAttempts: MAX_FINALISATION_RECOVERIES,
+      },
+    ],
+  ] as const)('has no axe violation and 44 px targets %s', async (_state, session) => {
+    room.messages = session ? [] : CONVERSATION;
+    room.session = session;
+    const view = mount(<ChatRoom agentId={AGENT} bossLabel="Sam" onSwitchMode={() => undefined} />);
+    await settle();
+    expect(await axeViolations(view.container, ['region'])).toEqual([]);
+    expect(underTarget(view.container)).toEqual([]);
     view.unmount();
   });
 });
