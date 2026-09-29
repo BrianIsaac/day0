@@ -1,4 +1,5 @@
 import type { Doc } from '@convex/_generated/dataModel';
+import type { OneToOnePhase } from '@/agent/one-to-one-phase';
 import type { EmployeeState } from '@/work/state-labels';
 import type { RailStep } from '../../components/FirstWeekRail';
 import { clockTime } from './time';
@@ -8,6 +9,8 @@ export interface FirstWeekFacts {
   readonly deployedAt: number;
   /** The state the page shows (`shownEmployeeState`). */
   readonly state: EmployeeState;
+  /** Where the one-to-one stands (`oneToOnePhase`): drafting once the transcript is taken for a charter. */
+  readonly phase?: OneToOnePhase['kind'];
   readonly charter: Pick<Doc<'charters'>, 'version'> | null;
   /** Whether a write has landed: approved by the manager or, with autonomy on, on its own. */
   readonly writeLanded: boolean;
@@ -23,7 +26,9 @@ export interface FirstWeekFacts {
  * @param facts - What the page has read.
  */
 export function firstWeekSteps(facts: FirstWeekFacts): RailStep[] {
-  const talked = facts.state === 'charter-pending' || facts.state === 'active';
+  // A one-to-one whose transcript is being drafted is over: the charter step is the one under way.
+  const drafting = facts.state === 'day-one-in-progress' && facts.phase === 'drafting';
+  const talked = facts.state === 'charter-pending' || facts.state === 'active' || drafting;
   const approved = facts.state === 'active';
   // A write can only have landed under an approved charter; before one, the figures say nothing.
   const landed = approved && facts.writeLanded;
@@ -44,9 +49,11 @@ export function firstWeekSteps(facts: FirstWeekFacts): RailStep[] {
         ? facts.charter
           ? `version ${facts.charter.version}`
           : 'approved'
-        : talked
-          ? 'waiting for your review'
-          : 'after the one-to-one',
+        : drafting
+          ? 'being drafted'
+          : talked
+            ? 'waiting for your review'
+            : 'after the one-to-one',
       status: approved ? 'done' : talked ? 'now' : 'next',
     },
     {

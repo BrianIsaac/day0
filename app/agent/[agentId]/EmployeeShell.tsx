@@ -2,10 +2,11 @@
 
 import Link from 'next/link';
 import { useRouter, useSelectedLayoutSegment } from 'next/navigation';
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
+import { oneToOnePhase } from '@/agent/one-to-one-phase';
 import { agentZone } from '@/lib/zone';
 import { toSurfaceRecord } from '@/surfaces/records';
 import { isManagerLookupFailure } from '@/surfaces/manager-lookup';
@@ -18,7 +19,7 @@ import { StatusRegion } from '../../components/StatusRegion';
 import { TabPanel, Tabs, type TabItem } from '../../components/Tabs';
 import type { ChangeOutcome } from '../../components/use-change';
 import { DayZero } from './DayZero';
-import { EmployeeContext, type Employee } from './employee-context';
+import { EmployeeContext, type Employee, type SentBackOutcome } from './employee-context';
 import { addressesEnvironment } from './environment-hash';
 import {
   EMPLOYEE_TAB_LABELS,
@@ -37,8 +38,18 @@ import { AgentZoneContext } from './time';
 export const ONBOARDING_REOPENED =
   'The 1:1 is open again, so the employee can redraft the charter from what you tell it.';
 
+/** Said, with focus on the one-to-one, when a charter sent back with a note is being redrafted. */
+export const REDRAFTING_FROM_NOTE =
+  'Sent back with your note: the employee is redrafting the charter from your one-to-one.';
+
 /** How long the first-week rail's advance plays: its 150 ms pause and 280 ms slide. */
 export const RAIL_ADVANCE_MS = 430;
+
+/** A draft the manager sent back, and whether the employee is redrafting it. */
+interface SentBack {
+  readonly charterId: Id<'charters'>;
+  readonly redrafting: boolean;
+}
 
 /** The rail's step while what it is read from is still loading. */
 const UNSETTLED = -1;
@@ -122,6 +133,8 @@ export function EmployeeShell({
   const workItems = useQuery(api.work.listForAgent, present);
   const proposedSkills = useQuery(api.skills.proposed, present);
   const metrics = useQuery(api.metrics.forAgent, present);
+  const session = useQuery(api.voice.latest, present);
+  const phase = oneToOnePhase(session).kind;
   const segment = useSelectedLayoutSegment();
   const router = useRouter();
   const selected = tabOfSegment(segment);
@@ -130,8 +143,8 @@ export function EmployeeShell({
   // What a change said once the control that made it left the page with its
   // card (a charter sent back), and where focus goes after it.
   const [pageOutcome, setPageOutcome] = useState<ChangeOutcome | null>(null);
-  // The draft the manager sent back, until the page shows what follows it.
-  const [sentBack, setSentBack] = useState<Id<'charters'> | null>(null);
+  // The draft the manager sent back and what became of it, until the page shows what follows it.
+  const [sentBack, setSentBack] = useState<SentBack | null>(null);
   const onboarding = useRef<HTMLDivElement>(null);
   const arriving = useArrival(agent !== undefined && agent !== null);
   // The name the page last showed, so an employee retired while its page is open is named.
@@ -147,6 +160,7 @@ export function EmployeeShell({
     ? firstWeekSteps({
         deployedAt: agent.createdAt,
         state: shownEmployeeState(agent.state, charter),
+        phase,
         charter,
         writeLanded:
           metrics !== undefined && metrics.actions.approved + metrics.actions.automatic.writes > 0,
@@ -171,9 +185,12 @@ export function EmployeeShell({
     if (sentBack !== null && dayZero) {
       onboarding.current?.focus();
       // eslint-disable-next-line react-hooks/set-state-in-effect -- said once, when the 1:1 is back on the page after a draft was sent back
-      setPageOutcome({ tone: 'done', text: ONBOARDING_REOPENED });
+      setPageOutcome({
+        tone: 'done',
+        text: sentBack.redrafting ? REDRAFTING_FROM_NOTE : ONBOARDING_REOPENED,
+      });
       setSentBack(null);
-    } else if (sentBack !== null && charterId !== undefined && charterId !== sentBack) {
+    } else if (sentBack !== null && charterId !== undefined && charterId !== sentBack.charterId) {
       setSentBack(null);
     } else if (sentBack === null && charterId !== undefined) {
       setPageOutcome(null);
@@ -191,6 +208,11 @@ export function EmployeeShell({
     return (): void => window.removeEventListener('hashchange', follow);
   }, [agentId, router, segment]);
 
+  const reportSentBack = useCallback(
+    (sent: Id<'charters'>, outcome: SentBackOutcome): void =>
+      setSentBack({ charterId: sent, redrafting: outcome.redrafting }),
+    [setSentBack],
+  );
   const employee = useMemo(
     (): Employee | null =>
       agent
@@ -200,10 +222,10 @@ export function EmployeeShell({
             surfaceMode,
             surfaces,
             arriving,
-            reportSentBack: setSentBack,
+            reportSentBack,
           }
         : null,
-    [agent, charter, surfaceMode, surfaces, arriving],
+    [agent, charter, surfaceMode, surfaces, arriving, reportSentBack],
   );
 
   if (agent === null) {
@@ -245,6 +267,7 @@ export function EmployeeShell({
           <EmployeeHeader
             agent={agent}
             charter={charter}
+            phase={phase}
             managerLookupFailure={
               (surfaceRows ?? []).find(
                 (row) => row.class === 'chat' && isManagerLookupFailure(row.reason),

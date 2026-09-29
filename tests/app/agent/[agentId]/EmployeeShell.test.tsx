@@ -171,6 +171,42 @@ describe('the page after a draft charter is sent back (step 45)', (): void => {
     view.unmount();
   });
 
+  it('says the employee is redrafting from the note, and the pill and rail say the charter is being drafted', async (): Promise<void> => {
+    route.segment = 'charter';
+    backend.queries = {
+      'agents:get': agent('charter-pending'),
+      'charters:latest': draft,
+      'charters:transcriptOf': { transcript: 'Employee: Why this hire?\nManager: Close week.' },
+    };
+    backend.results = { 'charters:requestChanges': { ok: true, redrafting: true } };
+    const view = mount(page(<CharterView />));
+    typeInto(view.container.querySelector('textarea')!, 'Name the committee deck.');
+    await press(view.container, 'Send and redraft');
+    backend.queries = {
+      'agents:get': agent('day-one-in-progress'),
+      'charters:latest': null,
+      'voice:latest': {
+        _id: 'session-1',
+        mode: 'chat',
+        state: 'active',
+        pendingTranscript: 'Employee: Why this hire?\nManager: Close week.',
+      },
+    };
+    act((): void => view.root.render(page(<CharterView />)));
+    await settle();
+
+    expect(said(view.container)).toContain(
+      'Sent back with your note: the employee is redrafting the charter from your one-to-one.',
+    );
+    expect(said(view.container).join(' ')).not.toContain('The 1:1 is open again');
+    expect(focusedName()).toBe('The 1:1 that drafts the charter');
+    expect(view.container.querySelector('header')?.textContent).toContain('Drafting the charter');
+    expect(view.container.querySelector('header')?.textContent).not.toContain('In your one-to-one');
+    const rail = view.container.querySelector('ol[aria-label="First week"]');
+    expect(rail?.querySelector('[aria-current="step"]')?.textContent).toContain('Charter approved');
+    view.unmount();
+  });
+
   it('says nothing reopened and moves no focus when an approved charter stands beneath the draft', async (): Promise<void> => {
     route.segment = 'charter';
     backend.queries = {

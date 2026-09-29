@@ -8,6 +8,7 @@ import { RecordLine } from '../../../components/RecordLine';
 import { clockTime, useAgentZone } from '../time';
 import type { CharterCardBody } from './CharterCard';
 import { ChangesRequest } from './ChangesRequest';
+import type { SentBackOutcome } from '../employee-context';
 
 /** The answers of a transcript, each beside the question it answered. */
 export interface Exchange {
@@ -163,7 +164,7 @@ export function CharterVersions({
  *
  * @param transcript - The stored transcript; null when none was kept, undefined while it loads.
  * @param versions - Every version, newest first, once approved; undefined while it loads.
- * @param onSentBack - Told which draft the manager sent back.
+ * @param onSentBack - Told which draft the manager sent back, and whether it is being redrafted.
  */
 export function CharterAside({
   charter,
@@ -176,7 +177,7 @@ export function CharterAside({
   name: string;
   transcript: string | null | undefined;
   versions: readonly Doc<'charters'>[] | undefined;
-  onSentBack: (charterId: Id<'charters'>) => void;
+  onSentBack: (charterId: Id<'charters'>, outcome: SentBackOutcome) => void;
 }) {
   if (!charter.approved) {
     return (

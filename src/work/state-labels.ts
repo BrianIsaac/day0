@@ -1,4 +1,5 @@
 import type { Doc } from '../../convex/_generated/dataModel';
+import type { OneToOnePhase } from '../agent/one-to-one-phase';
 import { autonomyLabel } from './autonomy';
 import { MANAGER_REJECTION_PREFIX } from './needs-manager';
 
@@ -40,17 +41,26 @@ export function shownEmployeeState(
 }
 
 /**
- * An employee's state in the manager's words, for the pill beside its name.
+ * An employee's state in the manager's words, for the pill beside its name. An employee in its
+ * one-to-one whose transcript is being drafted into a charter (after the last answer, or a draft
+ * sent back with a note) says so: the conversation is over and nothing waits on the manager.
  *
  * @param state - The state the page shows (`shownEmployeeState`).
  * @param autonomous - Whether autonomous actions are on; an active employee says which it is.
+ * @param phase - Where the one-to-one stands (`oneToOnePhase`), when the page has read it.
  */
-export function employeeStateLabel(state: EmployeeState, autonomous: boolean): StateLabel {
+export function employeeStateLabel(
+  state: EmployeeState,
+  autonomous: boolean,
+  phase?: OneToOnePhase['kind'],
+): StateLabel {
   switch (state) {
     case 'deployed':
       return { text: 'Waiting for your one-to-one', tone: 'warn' };
     case 'day-one-in-progress':
-      return { text: 'In your one-to-one', tone: 'accent' };
+      return phase === 'drafting'
+        ? { text: 'Drafting the charter', tone: 'accent' }
+        : { text: 'In your one-to-one', tone: 'accent' };
     case 'charter-pending':
       return { text: 'Charter to review', tone: 'warn' };
     case 'active':

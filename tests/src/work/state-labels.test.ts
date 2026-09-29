@@ -55,6 +55,17 @@ describe('employeeStateLabel', () => {
   it('says whether an active employee is supervised or autonomous', () => {
     expect(employeeStateLabel('active', true).text).toBe('Active · Autonomous');
   });
+
+  it('says the charter is being drafted, not that the one-to-one is on, once its transcript is taken', () => {
+    expect(employeeStateLabel('day-one-in-progress', false, 'drafting')).toEqual({
+      text: 'Drafting the charter',
+      tone: 'accent',
+    });
+    expect(employeeStateLabel('day-one-in-progress', false, 'talking').text).toBe(
+      'In your one-to-one',
+    );
+    expect(employeeStateLabel('charter-pending', false, 'drafting').text).toBe('Charter to review');
+  });
 });
 
 describe('workItemStateLabel', () => {

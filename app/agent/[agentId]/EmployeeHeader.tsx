@@ -10,6 +10,7 @@ import { api } from '@convex/_generated/api';
 import { autonomousActionsOn } from '@/work/autonomy';
 import { employeeStateLabel, shownEmployeeState } from '@/work/state-labels';
 import { avatarById } from '@/agent/avatar-pets';
+import type { OneToOnePhase } from '@/agent/one-to-one-phase';
 import { Button } from '../../components/Button';
 import { INPUT_CLASS } from '../../components/Field';
 import { Pill } from '../../components/Pill';
@@ -268,22 +269,25 @@ export function ZoneLine({
  *
  * @param agent - The employee.
  * @param charter - What the page is showing, which outranks the row when the two disagree.
+ * @param phase - Where the one-to-one stands (`oneToOnePhase`), so the pill says when a charter is being drafted.
  * @param managerLookupFailure - A chat surface's reason when its probe could not find the manager.
  */
 export function EmployeeHeader({
   agent,
   charter,
+  phase,
   managerLookupFailure,
 }: {
   agent: Doc<'agents'>;
   charter: Doc<'charters'> | null;
+  phase?: OneToOnePhase['kind'];
   managerLookupFailure?: string;
 }) {
   const surfaceConfig = useQuery(api.config.surfaceMode);
   const setBossEmail = useMutation(api.agents.setBossEmail);
   const setZone = useMutation(api.agents.setZone);
   const shown = shownEmployeeState(agent.state, charter);
-  const status = employeeStateLabel(shown, autonomousActionsOn(agent));
+  const status = employeeStateLabel(shown, autonomousActionsOn(agent), phase);
   return (
     <header className="flex flex-wrap items-start justify-between gap-4 pb-5">
       <div className="flex min-w-0 items-start gap-3.5">
