@@ -29,13 +29,19 @@ vi.mock('@elevenlabs/react', () => ({
 const voice = vi.hoisted(() => ({
   /** What `voice.start` rejects with, when set. */
   startRefusal: undefined as Error | undefined,
+  /** Whether `voice.start` never answers, as on a lost connection. */
+  startHangs: false,
+  /** What `voice.latest` answers. */
+  session: null as Record<string, unknown> | null,
 }));
 
 vi.mock('convex/react', () => ({
   useMutation: (): (() => Promise<unknown>) => async (): Promise<unknown> => {
     if (voice.startRefusal) throw voice.startRefusal;
+    if (voice.startHangs) return await new Promise(() => undefined);
     return { sessionId: 'session-1', webhookToken: 'token-1' };
   },
+  useQuery: (): unknown => voice.session,
 }));
 
 import type { Id } from '../../../../convex/_generated/dataModel';
@@ -43,6 +49,9 @@ import { VoiceRoom } from '../../../../app/agent/[agentId]/VoiceRoom';
 import { ROOM_HEIGHT } from '../../../../app/agent/[agentId]/room-frame';
 
 afterEach((): void => {
+  voice.session = null;
+  voice.startHangs = false;
+  vi.useRealTimers();
   conversation.status = 'disconnected';
   conversation.isSpeaking = false;
   vi.unstubAllGlobals();
@@ -74,10 +83,10 @@ describe('the voice room', (): void => {
     });
 
     const room = container.querySelector('section');
-    expect(room?.textContent).toContain('Day-1 1:1 · voice mode');
+    expect(room?.textContent).toContain('Day-1 one-to-one with Your employee · voice');
     expect(room?.classList.contains(ROOM_HEIGHT)).toBe(true);
     const transcript = [...(room?.querySelectorAll('div') ?? [])].find((element) =>
-      element.textContent?.startsWith('live transcript will appear here'),
+      element.textContent?.startsWith('The live transcript appears here'),
     );
     expect(transcript?.classList.contains('flex-1')).toBe(true);
   });
@@ -132,5 +141,51 @@ describe('a voice 1:1 that could not start (step 45, standard 7.3)', (): void =>
       'The 1:1 so far',
     );
     voice.startRefusal = undefined;
+  });
+});
+
+describe('the voice room once the call is over (round two section 3.4)', (): void => {
+  it('shows a one-to-one already drafting from its stored transcript, with no call to start', async (): Promise<void> => {
+    voice.session = {
+      _id: 'session-1',
+      state: 'synthesising',
+      pendingTranscript: 'AGENT: Why this hire?\n\nUSER: The close.',
+    };
+    const container = await renderVoiceRoom({
+      configured: true,
+      agentId: 'agent_voice',
+      signedUrl: null,
+      public: true,
+    });
+    expect(container.querySelector('[role="log"]')?.textContent).toBe(
+      'employee: Why this hire?you: The close.',
+    );
+    expect(container.textContent).toContain('1 of 7 answered');
+    expect(container.querySelector('[role="status"]')?.textContent).toContain(
+      'Drafting your charter, usually under a minute.',
+    );
+    expect(
+      [...container.querySelectorAll('button')].some((b) => b.textContent === 'Start voice 1:1'),
+    ).toBe(false);
+  });
+
+  it('stops waiting for the session after fifteen seconds and says so in the alert', async (): Promise<void> => {
+    voice.startHangs = true;
+    const container = await renderVoiceRoom({
+      configured: true,
+      agentId: 'agent_voice',
+      signedUrl: null,
+      public: true,
+    });
+    vi.useFakeTimers();
+    await act(async (): Promise<void> => {
+      [...container.querySelectorAll('button')]
+        .find((b) => b.textContent === 'Start voice 1:1')
+        ?.click();
+      await vi.advanceTimersByTimeAsync(15_000);
+    });
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+      'Your employee did not answer within 15 seconds. Switch to chat mode if voice setup is unavailable.',
+    );
   });
 });
