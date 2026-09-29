@@ -1087,3 +1087,47 @@ describe('backup, restore and upgrade (step 15)', (): void => {
     expect(() => parseSetupArguments(['restore', 'a.tar.gz', 'b.tar.gz'])).toThrow('one backup');
   });
 });
+
+describe("the README's upgrade section, in both languages", (): void => {
+  const readme = readFileSync(new URL('../../README.md', import.meta.url), 'utf8');
+
+  /** The section under a heading, up to the next heading of any level. */
+  function section(heading: string): string {
+    const start = readme.indexOf(`${heading}\n`);
+    expect(start).toBeGreaterThanOrEqual(0);
+    const rest = readme.slice(start + heading.length + 1);
+    const end = rest.search(/^#{1,4} /m);
+    return end < 0 ? rest : rest.slice(0, end);
+  }
+
+  const halves = [section('### Backup, restore and upgrade'), section('#### 备份、恢复与升级')];
+
+  it('names the cloud deployment on every command and pushes the way the hosted redeploy was rehearsed', (): void => {
+    for (const text of halves) {
+      expect(text).toContain('npx convex dev --once --typecheck enable --env-file');
+      expect(text).toContain('CONVEX_DEPLOYMENT=dev:<name>');
+      for (const verb of [
+        'run migrations:runPending',
+        'data deploymentVersions',
+        'env list',
+        'export',
+      ]) {
+        expect(text).toMatch(new RegExp(`npx convex ${verb} --deployment <name>`));
+      }
+      expect(text).not.toMatch(/`npx convex [^`]*--prod/);
+      expect(text).not.toMatch(/`npx convex deploy`[,，]/);
+    }
+  });
+
+  it('names only verbs the setup reads, pause and unpause among them, and the protected-project runbook', (): void => {
+    for (const text of halves) {
+      const verbs = [...text.matchAll(/\.\/setup\.sh ([a-z]+)/g)].map((match) => match[1]!);
+      expect(verbs).toEqual(expect.arrayContaining(['pause', 'unpause', 'upgrade']));
+      for (const named of new Set(verbs)) {
+        expect(parseSetupArguments([named]).command).toBe(named);
+      }
+      expect(text).toContain('DAY0_CRONS_PAUSED');
+      expect(text).toContain('day0-demo-7c65e7');
+    }
+  });
+});
