@@ -26,11 +26,6 @@ interface Anchor {
   readonly height: number;
 }
 
-/** Whether the manager asked for less motion, so the week opens and closes at once. */
-function reducedMotion(): boolean {
-  return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
-}
-
 /**
  * How far down `container` an element inside it starts, by layout rather than by what a transform
  * draws; nothing when there is no element.
@@ -106,10 +101,8 @@ export function FirstWeekCard({ steps }: { steps: readonly RailStep[] }) {
   const [anchor, setAnchor] = useState<Anchor | null>(null);
   const [open, setOpen] = useState(false);
   const closed = useCallback((): void => setAnchor(null), []);
-  const hide = useCallback((): void => {
-    setOpen(false);
-    if (reducedMotion()) setAnchor(null);
-  }, []);
+  // Under reduced motion nothing plays, so the week leaves as soon as it closes (`WholeWeek`).
+  const hide = useCallback((): void => setOpen(false), []);
   const current = steps.find((step) => step.status === 'now');
   if (current === undefined) return null;
 
