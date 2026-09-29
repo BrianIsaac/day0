@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import {
@@ -43,5 +44,22 @@ describe('the topic progress line', (): void => {
     expect(html).toContain('>Question 1 of 7 · Why this hire</p>');
     expect(html).toMatch(/<div aria-hidden="true"[^>]*data-topic-progress=""/);
     expect(html.match(/data-segment=/g)).toHaveLength(7);
+  });
+});
+
+describe('the one-to-one in the browser bundle', (): void => {
+  it('reads its topic titles without the charter synthesiser, which cannot enter the browser', (): void => {
+    const sources = [
+      'app/agent/[agentId]/ChatRoom.tsx',
+      'app/agent/[agentId]/VoiceRoom.tsx',
+      'app/agent/[agentId]/one-to-one/TopicProgress.tsx',
+      'app/agent/[agentId]/one-to-one/NotedSoFar.tsx',
+      'app/agent/[agentId]/one-to-one/DraftingNotice.tsx',
+    ];
+    for (const source of sources) {
+      expect(readFileSync(source, 'utf8'), source).not.toMatch(
+        /^import (?!type )[^;]*from '@\/agent\/charter';/m,
+      );
+    }
   });
 });

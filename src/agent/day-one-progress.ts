@@ -16,6 +16,16 @@ export const DAY_ONE_TOPIC_TITLES: Readonly<Record<DayOneTopic, string>> = {
   'open-questions': 'Anything else',
 };
 
+/**
+ * The title of the question at an index (from 0, held to the seven), read from the one-to-one's
+ * own topic list. Client code reads titles here and never from `./charter`, whose synthesiser
+ * pulls the model client into the browser bundle.
+ */
+export function topicTitle(topicIndex: number): string {
+  const index = Math.max(0, Math.min(Math.floor(topicIndex), DAY_ONE_TOPIC_COUNT - 1));
+  return DAY_ONE_TOPIC_TITLES[DAY_ONE_TOPIC_SPECS[index].topic];
+}
+
 /** What the chat route says about a turn beside its words: the question it is on, from 0. */
 export interface DayOneTurnMetadata {
   readonly topicIndex: number;

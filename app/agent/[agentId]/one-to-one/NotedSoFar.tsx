@@ -1,6 +1,5 @@
 import type { UIMessage } from 'ai';
-import { DAY_ONE_TOPICS } from '@/agent/charter';
-import { DAY_ONE_TOPIC_TITLES, dayOneTurnMetadataOf } from '@/agent/day-one-progress';
+import { dayOneTurnMetadataOf, topicTitle } from '@/agent/day-one-progress';
 import { INIT_PROMPT } from '@/agent/day-one-turn';
 import { Card } from '../../../components/Card';
 
@@ -47,7 +46,7 @@ export function notedAnswers(messages: readonly UIMessage[]): NotedAnswer[] {
     const metadata = dayOneTurnMetadataOf(asked.metadata);
     return [
       {
-        topic: metadata ? DAY_ONE_TOPIC_TITLES[DAY_ONE_TOPICS[metadata.topicIndex]] : null,
+        topic: metadata ? topicTitle(metadata.topicIndex) : null,
         text: clipped(text),
       },
     ];

@@ -5,6 +5,7 @@ import {
   DAY_ONE_TOPIC_TITLES,
   dayOneTurnMetadataOf,
   topicIndexOf,
+  topicTitle,
   withTopicIndex,
 } from '../../../src/agent/day-one-progress';
 import { DAY_ONE_TOPICS } from '../../../src/agent/charter';
@@ -27,6 +28,13 @@ describe('the one-to-one progress', (): void => {
       'Anything immediate',
       'Anything else',
     ]);
+  });
+
+  it("names the question at an index from the one-to-one's own topics, held to the seven", (): void => {
+    expect(topicTitle(0)).toBe('Why this hire');
+    expect(topicTitle(6)).toBe('Anything else');
+    expect(topicTitle(9)).toBe('Anything else');
+    expect(topicTitle(-2)).toBe('Why this hire');
   });
 
   it('puts a turn on the question after the replies given, never past the seventh', (): void => {

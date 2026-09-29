@@ -7,12 +7,7 @@ import { useMutation, useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { INIT_PROMPT, managerReplies } from '@/agent/day-one-turn';
-import { DAY_ONE_TOPICS } from '@/agent/charter';
-import {
-  DAY_ONE_TOPIC_COUNT,
-  DAY_ONE_TOPIC_TITLES,
-  dayOneTurnMetadataOf,
-} from '@/agent/day-one-progress';
+import { DAY_ONE_TOPIC_COUNT, dayOneTurnMetadataOf, topicTitle } from '@/agent/day-one-progress';
 import { oneToOnePhase } from '@/agent/one-to-one-phase';
 import { answeredCount, transcriptTurns, type TranscriptTurn } from '@/agent/transcript-turns';
 import { postCharterSynthesis } from './charter-synthesis';
@@ -656,8 +651,7 @@ function TopicLabel({ message }: { message: UIMessage }) {
   if (!metadata) return null;
   return (
     <span className="mb-1 block text-xs font-semibold text-[var(--color-accent)]">
-      {metadata.topicIndex + 1} of {DAY_ONE_TOPIC_COUNT} ·{' '}
-      {DAY_ONE_TOPIC_TITLES[DAY_ONE_TOPICS[metadata.topicIndex]]}
+      {metadata.topicIndex + 1} of {DAY_ONE_TOPIC_COUNT} · {topicTitle(metadata.topicIndex)}
     </span>
   );
 }

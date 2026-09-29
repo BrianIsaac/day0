@@ -1,5 +1,4 @@
-import { DAY_ONE_TOPICS } from '@/agent/charter';
-import { DAY_ONE_TOPIC_COUNT, DAY_ONE_TOPIC_TITLES } from '@/agent/day-one-progress';
+import { DAY_ONE_TOPIC_COUNT, topicTitle } from '@/agent/day-one-progress';
 
 /**
  * Where the one-to-one stands: not yet asked, on a question (from 0, as the chat route numbers
@@ -35,7 +34,7 @@ export function topicProgressOf(progress: TopicProgressState): {
     case 'asking': {
       const index = Math.min(Math.max(progress.topicIndex, 0), DAY_ONE_TOPIC_COUNT - 1);
       return {
-        line: `Question ${index + 1} of ${DAY_ONE_TOPIC_COUNT} · ${DAY_ONE_TOPIC_TITLES[DAY_ONE_TOPICS[index]]}`,
+        line: `Question ${index + 1} of ${DAY_ONE_TOPIC_COUNT} · ${topicTitle(index)}`,
         segments: segments((i) => (i < index ? 'done' : i === index ? 'now' : 'next')),
       };
     }
