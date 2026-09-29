@@ -39,6 +39,9 @@ export const ONBOARDING_REOPENED =
 /** How long the first-week rail's advance plays: its 150 ms pause and 280 ms slide. */
 export const RAIL_ADVANCE_MS = 430;
 
+/** The rail's step while what it is read from is still loading. */
+const UNSETTLED = -1;
+
 /** The work states that are finished with: the Work tab counts every other. */
 const FINISHED_STATES: ReadonlySet<Doc<'workItems'>['state']> = new Set([
   'completed',
@@ -141,8 +144,13 @@ export function EmployeeShell({
         zone: agentZone(agent),
       })
     : [];
-  const step = currentStep(steps);
+  // The step counts once everything it is read from has loaded, so the rail filling in as the
+  // page loads is never played as the employee moving on.
+  const settled =
+    agent !== undefined && latest !== undefined && workItems !== undefined && metrics !== undefined;
+  const step = settled ? currentStep(steps) : UNSETTLED;
   const stepBefore = usePreviousValue(step, RAIL_ADVANCE_MS);
+  const advanced = stepBefore !== undefined && stepBefore !== UNSETTLED && stepBefore < step;
 
   // What follows a draft sent back is the 1:1 again, or, when an approved
   // charter stands beneath the draft, that charter: only the first reopens
@@ -230,7 +238,7 @@ export function EmployeeShell({
             }
           />
           <StatusRegion outcome={pageOutcome} />
-          <FirstWeekRail steps={steps} advanced={stepBefore !== undefined && stepBefore < step} />
+          <FirstWeekRail steps={steps} advanced={advanced} />
           {dayZero ? (
             <div className="mt-6">
               <DayZero onboarding={onboarding} arriving={arriving} />

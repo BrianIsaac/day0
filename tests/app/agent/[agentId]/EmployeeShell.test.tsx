@@ -17,6 +17,7 @@ import { CharterView } from '../../../../app/agent/[agentId]/charter/CharterView
 import { WorkView } from '../../../../app/agent/[agentId]/work/WorkView';
 import { focusedName, mount, press, said, settle } from '../../../fixtures/dom/press';
 import { ARRIVAL_MS } from '../../../../app/arrival';
+import { dashboardMetrics } from '../../../fixtures/dashboard/metrics';
 
 const backend = vi.hoisted(() => ({
   /** Mutations and actions that reject, by function name, with the text they reject with. */
@@ -420,10 +421,41 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     view.unmount();
   });
 
+  it('plays no advance as the page loads, the figures arriving after the employee', async (): Promise<void> => {
+    backend.queries = {};
+    const view = mount(page());
+    await settle();
+    backend.queries = { 'agents:get': row('active'), 'charters:latest': approved };
+    act((): void => view.root.render(page()));
+    await settle();
+    backend.queries = {
+      'agents:get': row('active'),
+      'charters:latest': approved,
+      'work:listForAgent': [],
+      'metrics:forAgent': dashboardMetrics(),
+    };
+    act((): void => view.root.render(page()));
+    await settle();
+    const rail = view.container.querySelector('ol[aria-label="First week"]');
+    expect(rail?.querySelector('[aria-current="step"]')?.textContent).toContain('Working');
+    expect(rail?.hasAttribute('data-advanced')).toBe(false);
+    view.unmount();
+  });
+
   it('moves the first-week rail on while the manager watches, and only then plays its advance', async (): Promise<void> => {
+    const noWrite = {
+      ...dashboardMetrics(),
+      actions: {
+        ...dashboardMetrics().actions,
+        approved: 0,
+        automatic: { reads: 0, managerMessages: 0, writes: 0 },
+      },
+    };
     backend.queries = {
       'agents:get': row('charter-pending'),
       'charters:latest': { ...approved, approved: false },
+      'work:listForAgent': [],
+      'metrics:forAgent': noWrite,
     };
     const view = mount(page());
     await settle();
@@ -433,7 +465,12 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
       'Charter approved',
     );
 
-    backend.queries = { 'agents:get': row('active'), 'charters:latest': approved };
+    backend.queries = {
+      'agents:get': row('active'),
+      'charters:latest': approved,
+      'work:listForAgent': [],
+      'metrics:forAgent': noWrite,
+    };
     act((): void => view.root.render(page()));
     await settle();
     expect(rail()?.hasAttribute('data-advanced')).toBe(true);
