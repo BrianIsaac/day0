@@ -4,7 +4,7 @@ import { AUTONOMY_WARNING } from '@/work/autonomy';
 import { useState, useRef, useId } from 'react';
 import { Button } from '../../../components/Button';
 import { Dialog } from '../../../components/Dialog';
-import { useChange } from '../../../components/use-change';
+import { useChange, type ChangeOutcome } from '../../../components/use-change';
 import { StatusRegion } from '../../../components/StatusRegion';
 
 /** What each state of the switch does, said under its name. */
@@ -22,15 +22,19 @@ export const AUTONOMY_TITLES: Readonly<Record<'off' | 'on', string>> = {
  * @param onConfirm - Turn the switch on.
  * @param onCancel - Leave it off.
  * @param busy - Whether the change is in flight.
+ * @param outcome - What the last attempt came to: a refusal is said here, inside the dialog, since
+ *   the page behind it is inert while it is open.
  */
 export function AutonomyConfirm({
   onConfirm,
   onCancel,
   busy = false,
+  outcome = null,
 }: {
   onConfirm: () => void;
   onCancel: () => void;
   busy?: boolean;
+  outcome?: ChangeOutcome | null;
 }) {
   const cancel = useRef<HTMLButtonElement>(null);
   return (
@@ -42,6 +46,7 @@ export function AutonomyConfirm({
       busy={busy}
     >
       <p className="leading-relaxed text-[var(--color-fg-2)]">{AUTONOMY_WARNING}</p>
+      <StatusRegion outcome={outcome} />
       <div className="flex flex-wrap justify-end gap-2">
         <Button ref={cancel} size="large" disabled={busy} onClick={onCancel}>
           Cancel
@@ -125,12 +130,16 @@ export function AutonomyControl({
       <p className="text-[13px] text-[var(--color-muted)]">
         Turning it on asks you to confirm first; turning it off takes effect at once.
       </p>
-      <StatusRegion outcome={change.outcome} />
+      <StatusRegion outcome={confirming ? null : change.outcome} />
       {confirming && !on ? (
         <AutonomyConfirm
           busy={change.busy}
+          outcome={change.outcome}
           onConfirm={() => persist(true)}
-          onCancel={() => setConfirming(false)}
+          onCancel={() => {
+            change.clear();
+            setConfirming(false);
+          }}
         />
       ) : null}
     </div>

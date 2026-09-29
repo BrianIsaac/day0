@@ -101,7 +101,11 @@ describe('the header controls say what each change came to and give focus back (
     await press(view.container, 'Autonomous actions');
     await press(document.body, 'Turn on');
 
-    expect(said(view.container)).toEqual(['Only the owner can change this.']);
+    // The page behind the open confirmation is inert, so the refusal is said inside it.
+    const dialog = document.querySelector<HTMLElement>('[role="alertdialog"]');
+    if (!dialog) throw new Error('the confirmation closed on a refusal');
+    expect(said(dialog)).toEqual(['Only the owner can change this.']);
+    expect(said(view.container)).toEqual([]);
     expect(focusedName()).toBe('Turn on');
     await press(document.body, 'Cancel');
     expect(focusedName()).toBe('Autonomous actions');
