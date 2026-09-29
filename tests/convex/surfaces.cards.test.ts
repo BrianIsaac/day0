@@ -5,6 +5,8 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { BROWSER_DRIVER_ABSENT } from '../../src/surfaces/browser';
 import { allConvexModules } from './all-modules';
+import { companyPage } from '../fixtures/company-bed';
+import type { ListedSurface } from '../../convex/surfaces';
 
 /**
  * What `surfaces.listForAgent` hands the Surfaces tab's cards beyond the stored row: the reason
@@ -126,5 +128,147 @@ describe('the approval refusal on a listed card (E-63)', (): void => {
       ['linear', undefined],
       ['jira', undefined],
     ]);
+  });
+});
+
+/** An onboarding page whose systems table names Slack before Linear. */
+const ONBOARDING = [
+  '# RevOps onboarding',
+  '',
+  '## Systems and access owners',
+  '',
+  '| System | Owner |',
+  '| --- | --- |',
+  '| Slack | Sara |',
+  '| Linear | Aman |',
+].join('\n');
+
+/** A page of the office's documentation, stored under the office's one source. */
+async function page(
+  harness: TestConvex<typeof schema>,
+  sourceId: Id<'docSources'>,
+  ref: string,
+  markdown: string,
+): Promise<void> {
+  await harness.run(async (ctx) => {
+    await ctx.db.insert('docPages', { sourceId, ref, title: ref, markdown, updatedAt: 1 });
+  });
+}
+
+/** The documentation evidence discovery records for a system found on one page. */
+function discoveredOn(sourceId: Id<'docSources'>, ref: string, quote: string) {
+  return [
+    {
+      kind: 'documentation' as const,
+      sourceId,
+      ref,
+      quote,
+      current: true,
+      firstSeenAt: 1,
+      lastSeenAt: 1,
+    },
+  ];
+}
+
+describe('the order of the listed cards (D D4)', (): void => {
+  it('lists the cards in the order the documented systems table gives, read on the server', async (): Promise<void> => {
+    const { harness, agentId, sourceId } = await seedOffice('Team: REVOPS');
+    await page(harness, sourceId, 'onboarding.md', ONBOARDING);
+    await card(harness, agentId, {
+      slug: 'linear',
+      displayName: 'Linear',
+      discoveryEvidence: discoveredOn(sourceId, 'onboarding.md', '| Linear | Aman |'),
+    });
+    await card(harness, agentId, {
+      slug: 'slack',
+      displayName: 'Slack',
+      class: 'chat',
+      discoveryEvidence: discoveredOn(sourceId, 'onboarding.md', '| Slack | Sara |'),
+    });
+
+    const listed = await harness
+      .withIdentity({ subject: 'owner' })
+      .query(api.surfaces.listForAgent, { agentId });
+
+    expect(listed.map((row) => row.slug)).toEqual(['slack', 'linear']);
+  });
+
+  it('orders by class when no page the cards cite carries a systems table', async (): Promise<void> => {
+    const { harness, agentId } = await seedOffice('Team: REVOPS');
+    await card(harness, agentId, { slug: 'slack', displayName: 'Slack', class: 'chat' });
+    await card(harness, agentId, { slug: 'linear', displayName: 'Linear', class: 'kanban' });
+
+    const listed = await harness
+      .withIdentity({ subject: 'owner' })
+      .query(api.surfaces.listForAgent, { agentId });
+
+    expect(listed.map((row) => row.slug)).toEqual(['linear', 'slack']);
+  });
+
+  it('reads no page of a source the employee was deployed without', async (): Promise<void> => {
+    const { harness, agentId, sourceId } = await seedOffice('Team: REVOPS');
+    await page(harness, sourceId, 'onboarding.md', ONBOARDING);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(agentId, { excludedDocSourceIds: [sourceId] });
+    });
+    await card(harness, agentId, {
+      slug: 'slack',
+      displayName: 'Slack',
+      class: 'chat',
+      discoveryEvidence: discoveredOn(sourceId, 'onboarding.md', '| Slack | Sara |'),
+    });
+    await card(harness, agentId, { slug: 'linear', displayName: 'Linear', class: 'kanban' });
+
+    const listed = await harness
+      .withIdentity({ subject: 'owner' })
+      .query(api.surfaces.listForAgent, { agentId });
+
+    expect(listed.map((row) => row.slug)).toEqual(['linear', 'slack']);
+  });
+});
+
+describe('the drift of an approved scope, as a server field (D D4)', (): void => {
+  const FINANCE = companyPage('finance/handbook.md').markdown;
+
+  /** A connected Linear card whose approved scope quotes the finance handbook. */
+  async function financeCard(markdown: string): Promise<ListedSurface | undefined> {
+    const { harness, agentId, sourceId } = await seedOffice('Team: REVOPS');
+    await page(harness, sourceId, 'finance/handbook.md', markdown);
+    const quoted = (value: string, quote: string) => ({
+      value,
+      sourceId,
+      ref: 'finance/handbook.md',
+      quote,
+    });
+    await card(harness, agentId, {
+      slug: 'linear',
+      verdict: 'connected',
+      intakeScope: {
+        team: quoted('FIN', '- Team: `FIN`'),
+        project: quoted('September close', '- Project: `September close`'),
+      },
+    });
+    const [linear] = await harness
+      .withIdentity({ subject: 'owner' })
+      .query(api.surfaces.listForAgent, { agentId });
+    return linear;
+  }
+
+  it('says which approved value its page no longer states, and what to do', async (): Promise<void> => {
+    // The handbook states the project twice (lines 10 and 32); the card judges
+    // by value, so the page has stopped stating it only once both go.
+    const linear = await financeCard(FINANCE.replaceAll('`September close`', '`October close`'));
+
+    expect(linear?.scopeChange).toBe(
+      'Changed since this card was proposed: project September close is no longer stated on finance/handbook.md. Intake still reads only what was approved; reject the card and re-run orientation to propose the page as it reads now.',
+    );
+  });
+
+  it('keeps a value the page still states on another line: a reworded line is not drift (U8 D2)', async (): Promise<void> => {
+    const linear = await financeCard(
+      FINANCE.replace('- Project: `September close`', '- Project: `October close`'),
+    );
+
+    expect(linear?.scopeChange).toBeUndefined();
   });
 });
