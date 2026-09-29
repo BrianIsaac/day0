@@ -9,6 +9,19 @@ import { StatusRegion } from '../components/StatusRegion';
 import { useChange } from '../components/use-change';
 
 /**
+ * What a reset came to, in the warning's own verbs. The count of employees is not said: the
+ * reset also clears evaluation agents the roster never shows, so a number would not match the
+ * page the manager just saw.
+ *
+ * @param unlinkedSources - How many documentation sources the reset unlinked.
+ */
+export function resetOutcome(unlinkedSources: number): string {
+  return unlinkedSources > 0
+    ? `Every employee and its data are deleted, and ${unlinkedSources} documentation ${unlinkedSources === 1 ? 'source is' : 'sources are'} unlinked.`
+    : 'Every employee and its data are deleted.';
+}
+
+/**
  * What the reset does, said in its confirmation.
  *
  * @param alsoUnlinkDocumentation - Whether the owner's documentation goes too.
@@ -22,8 +35,8 @@ export function resetWarning(alsoUnlinkDocumentation: boolean): string {
 /**
  * The demo reset: wipes every employee and what it made, and optionally unlinks the owner's
  * documentation. Disabled while there is nothing to wipe. Pressing it opens the shared
- * confirmation dialog, Keep everything focused first; what the reset came to is said beside the
- * button and focus comes back to it.
+ * confirmation dialog, Keep everything focused first; what the reset came to is said on the card
+ * and focus comes back to the button, or to the card once nothing is left for the button to wipe.
  *
  * @param hasEmployees - Whether the owner has any agent row, evaluation agents included.
  * @param hasDocumentation - Whether the owner has linked documentation.
@@ -40,7 +53,8 @@ export function ResetCard({
   const [confirming, setConfirming] = useState(false);
   const opener = useRef<HTMLButtonElement>(null);
   const keep = useRef<HTMLButtonElement>(null);
-  const change = useChange(opener);
+  const card = useRef<HTMLElement>(null);
+  const change = useChange(card);
 
   const close = (): void => {
     change.clear();
@@ -48,10 +62,17 @@ export function ResetCard({
   };
 
   return (
-    <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-5">
+    <section
+      ref={card}
+      tabIndex={-1}
+      aria-labelledby="reset-demo-title"
+      className="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-5 outline-none"
+    >
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="mb-1 text-sm font-semibold">Reset demo</h2>
+          <h2 id="reset-demo-title" className="mb-1 text-sm font-semibold">
+            Reset demo
+          </h2>
           <p className="text-sm text-[var(--color-muted)]">
             Wipe every employee and its workspace, charter, work items, skills and mock environment
             rows you’ve created. Useful between demos.
@@ -62,7 +83,7 @@ export function ResetCard({
               checked={alsoUnlinkDocumentation}
               onChange={(event) => setAlsoUnlinkDocumentation(event.target.checked)}
             />
-            Also unlink owner-level documentation locations
+            Also unlink your documentation sources
           </label>
         </div>
         <Button
@@ -102,14 +123,12 @@ export function ResetCard({
               disabled={change.busy}
               onClick={() =>
                 change.run(() => reset({ alsoUnlinkDocumentation }), {
-                  done: (result) =>
-                    `Reset: ${result.deleted} ${result.deleted === 1 ? 'employee' : 'employees'} wiped${
-                      result.unlinkedSources > 0
-                        ? `, ${result.unlinkedSources} documentation ${result.unlinkedSources === 1 ? 'source' : 'sources'} unlinked`
-                        : ''
-                    }.`,
+                  done: (result) => resetOutcome(result.unlinkedSources),
                   refused: 'Nothing was reset.',
                   after: () => setConfirming(false),
+                  // The button is disabled once nothing is left to wipe; the card takes focus then.
+                  focus: () =>
+                    opener.current && !opener.current.disabled ? opener.current : card.current,
                 })
               }
             >

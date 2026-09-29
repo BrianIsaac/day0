@@ -88,8 +88,24 @@ describe('ResetCard', (): void => {
     expect(reset).toHaveBeenCalledWith({ alsoUnlinkDocumentation: true });
     expect(document.querySelector('[role="alertdialog"]')).toBeNull();
     expect(said(view.container)).toEqual([
-      'Reset: 2 employees wiped, 1 documentation source unlinked.',
+      'Every employee and its data are deleted, and 1 documentation source is unlinked.',
     ]);
+  });
+
+  it('gives focus to the card once nothing is left for the button to wipe', async (): Promise<void> => {
+    const view = mount(<ResetCard hasEmployees hasDocumentation={false} />);
+    // Convex applies the emptied roster before the mutation resolves, as the page then draws it.
+    reset.mockImplementation(async (): Promise<{ deleted: number; unlinkedSources: number }> => {
+      view.root.render(<ResetCard hasEmployees={false} hasDocumentation={false} />);
+      return { deleted: 1, unlinkedSources: 0 };
+    });
+    await press(view.container, 'Reset everything');
+    const confirmAt = [...document.querySelectorAll('[role="alertdialog"] button')].find(
+      (control) => control.textContent === 'Reset everything',
+    ) as HTMLButtonElement;
+    await press(confirmAt.parentElement as HTMLElement, 'Reset everything');
+    expect(focusedName()).toBe('Reset demo');
+    expect(said(view.container)).toEqual(['Every employee and its data are deleted.']);
   });
 
   it('says why a reset failed inside the dialog and keeps it open', async (): Promise<void> => {
