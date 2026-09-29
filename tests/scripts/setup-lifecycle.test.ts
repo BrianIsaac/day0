@@ -367,6 +367,58 @@ describe('resume', (): void => {
     expect(readEnvValues(join(h.directory, '.env.local')).OPENAI_MODEL).toBe('qwen3:8b');
   });
 
+  it('keeps a Daytona key and every value set by hand, and brings no bundled sandbox up', async (): Promise<void> => {
+    const handSet = {
+      DAYTONA_API_KEY: 'dtn-hand-set',
+      DAY0_REDACTOR_URL: 'http://172.17.0.1:48000',
+      DAY0_BROWSER_MCP_URL: 'http://172.17.0.1:48931/mcp',
+      NEXT_PUBLIC_DEV_NO_AUTH: '',
+      CONVEX_OPENAI_BASE_URL: 'http://host.docker.internal:48080/v1',
+      OPENAI_MAX_OUTPUT_TOKENS: '8192',
+      OPENAI_REASONING_EFFORT: 'medium',
+    };
+    const h = configured({ services: ['backend', 'redactor'], servicesBeforeUp: [] });
+    writeEnvValues(join(h.directory, '.env.local'), handSet);
+    expect(await runCommand(verb('resume'), h.io)).toBe(0);
+    const after = readEnvValues(join(h.directory, '.env.local'));
+    expect(after).toMatchObject(handSet);
+    expect(ran(h)).not.toContain('run sandbox:up');
+    expect(h.output.join('\n')).toContain(
+      'Kept as .env.local has them (a resume changes only what its own arguments name): ',
+    );
+    expect(h.output.join('\n')).not.toContain('dtn-hand-set');
+  });
+
+  it('writes what its own arguments change: --sandbox local empties the key, --model-port moves the addresses', async (): Promise<void> => {
+    const daytona = configured({ services: ['backend', 'sandbox', 'redactor'] });
+    writeEnvValues(join(daytona.directory, '.env.local'), { DAYTONA_API_KEY: 'dtn-hand-set' });
+    expect(await runCommand(verb('resume', { sandbox: 'local' }), daytona.io)).toBe(0);
+    expect(readEnvValues(join(daytona.directory, '.env.local')).DAYTONA_API_KEY).toBe('');
+    expect(ran(daytona)).toContain('run sandbox:up');
+
+    const local = CONFIGURED.replace(
+      `OPENAI_BASE_URL=${FEATHERLESS_SETTINGS.OPENAI_BASE_URL}`,
+      'OPENAI_BASE_URL=http://127.0.0.1:48191/v1',
+    )
+      .replace(
+        `CONVEX_OPENAI_BASE_URL=${FEATHERLESS_SETTINGS.OPENAI_BASE_URL}`,
+        'CONVEX_OPENAI_BASE_URL=http://model:11434/v1',
+      )
+      .replace('OPENAI_MODEL=zai-org/GLM-5.3-Flash', 'OPENAI_MODEL=qwen3:8b\nMODEL_PORT=48191');
+    const moved = configured({
+      envLocal: local,
+      services: ['backend', 'sandbox', 'redactor'],
+      volumes: [...OWN_VOLUMES, `${PROJECT}_model_data`],
+      manifestListing: 'registry.ollama.ai/library/qwen3/8b\t{"layers":[{"size":5225374496}]}\n',
+    });
+    expect(await runCommand(verb('resume', { ports: { model: 48192 } }), moved.io)).toBe(0);
+    expect(readEnvValues(join(moved.directory, '.env.local'))).toMatchObject({
+      MODEL_PORT: '48192',
+      OPENAI_BASE_URL: 'http://127.0.0.1:48192/v1',
+      CONVEX_OPENAI_BASE_URL: 'http://model:11434/v1',
+    });
+  });
+
   it('refuses without an installation, on a different --route, and with --reset', async (): Promise<void> => {
     const fresh = harness();
     expect(await runCommand(verb('resume'), fresh.io)).toBe(1);

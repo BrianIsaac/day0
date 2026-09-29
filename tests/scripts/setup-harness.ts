@@ -484,7 +484,6 @@ export function realRoute(overrides: Partial<SetupOptions> = {}): SetupOptions {
     project: 'day0-setup-test',
     ports: {},
     gpu: 'auto',
-    sandbox: 'local',
     bossEmail: 'manager@example.com',
     dryRun: false,
     reset: false,

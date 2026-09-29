@@ -18,6 +18,7 @@ import {
   REDACTOR_URL,
   resetArguments,
   runSetup,
+  sandboxChoice,
   sequenceSteps,
   serviceHealth,
   setupEnvUpdates,
@@ -86,7 +87,8 @@ describe('the real-mode flags', (): void => {
     const options = parseSetupArguments(['--route', 'key']);
     expect(options.mode).toBe('mock');
     expect(options.gpu).toBe('auto');
-    expect(options.sandbox).toBe('local');
+    // Unnamed: the file decides, as `sandboxChoice` says.
+    expect(options.sandbox).toBeUndefined();
     expect(options.dryRun).toBe(false);
     expect(options.reset).toBe(false);
     expect(options.warmFrom).toBeUndefined();
@@ -177,6 +179,73 @@ describe('the values written per route and mode', (): void => {
       sandbox: 'daytona',
     });
     expect(kept.DAYTONA_API_KEY).toBeUndefined();
+  });
+
+  it('takes the named sandbox, else Daytona only when the file holds its key', (): void => {
+    expect(sandboxChoice('local', { DAYTONA_API_KEY: 'dtn-hand-set' })).toBe('local');
+    expect(sandboxChoice('daytona', {})).toBe('daytona');
+    expect(sandboxChoice(undefined, { DAYTONA_API_KEY: 'dtn-hand-set' })).toBe('daytona');
+    expect(sandboxChoice(undefined, { DAYTONA_API_KEY: ' ' })).toBe('local');
+    expect(sandboxChoice(undefined, {})).toBe('local');
+  });
+
+  it('on a resume, keeps what the file holds of the derived values and writes only what it lacks', (): void => {
+    const existing = {
+      NEXT_PUBLIC_DEV_NO_AUTH: '',
+      OPENAI_BASE_URL: FEATHERLESS_SETTINGS.OPENAI_BASE_URL,
+      CONVEX_OPENAI_BASE_URL: 'http://host.docker.internal:48080/v1',
+      OPENAI_MAX_OUTPUT_TOKENS: '8192',
+      DAY0_REDACTOR_URL: 'http://172.17.0.1:48000',
+    };
+    const input = {
+      route: 'featherless' as const,
+      project: 'p',
+      ports,
+      existing,
+      mode: 'real' as const,
+      sandbox: 'daytona' as const,
+    };
+    const resumed = setupEnvUpdates({ ...input, resume: { endpoint: false, modelPort: false } });
+    for (const name of Object.keys(existing)) expect(resumed[name]).toBeUndefined();
+    // The file lacks these, so the resume writes them as the setup would.
+    expect(resumed.DAY0_BROWSER_MCP_URL).toBe(BROWSER_MCP_URL);
+    expect(resumed.OPENAI_JSON_MODE).toBe(FEATHERLESS_SETTINGS.OPENAI_JSON_MODE);
+    // The setup itself writes every derived value over the file.
+    expect(setupEnvUpdates(input)).toMatchObject({
+      NEXT_PUBLIC_DEV_NO_AUTH: 'true',
+      CONVEX_OPENAI_BASE_URL: FEATHERLESS_SETTINGS.OPENAI_BASE_URL,
+      OPENAI_MAX_OUTPUT_TOKENS: FEATHERLESS_SETTINGS.OPENAI_MAX_OUTPUT_TOKENS,
+      DAY0_REDACTOR_URL: REDACTOR_URL,
+    });
+  });
+
+  it('on a resume, moves the two addresses only for the argument that names them', (): void => {
+    const endpoint = {
+      route: 'endpoint' as const,
+      project: 'p',
+      ports,
+      existing: {
+        OPENAI_BASE_URL: 'http://127.0.0.1:48080/v1',
+        CONVEX_OPENAI_BASE_URL: 'http://172.17.0.1:48080/v1',
+      },
+    };
+    expect(
+      setupEnvUpdates({
+        ...endpoint,
+        endpoint: 'http://127.0.0.1:48080/v1',
+        resume: { endpoint: false, modelPort: true },
+      }).CONVEX_OPENAI_BASE_URL,
+    ).toBeUndefined();
+    expect(
+      setupEnvUpdates({
+        ...endpoint,
+        endpoint: 'https://models.example.com/v1',
+        resume: { endpoint: true, modelPort: false },
+      }),
+    ).toMatchObject({
+      OPENAI_BASE_URL: 'https://models.example.com/v1',
+      CONVEX_OPENAI_BASE_URL: 'https://models.example.com/v1',
+    });
   });
 
   it('writes an explicit GPU choice and leaves auto to the file', (): void => {

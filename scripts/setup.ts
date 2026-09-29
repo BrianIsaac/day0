@@ -241,8 +241,12 @@ export interface SetupOptions {
   gpu: GpuChoice;
   /** A compose project whose redactor volumes are copied into this one. */
   warmFrom?: string;
-  /** What verifies authored skills in real mode. */
-  sandbox: SandboxChoice;
+  /**
+   * What verifies authored skills in real mode, when named. Unnamed, the file
+   * decides: a `DAYTONA_API_KEY` there is Daytona, as the deployment itself
+   * reads it (`config.modelSettings`), and anything else is the bundled one.
+   */
+  sandbox?: SandboxChoice;
   /** The manager's address, stored on the agent at deploy in real mode. */
   bossEmail?: string;
   /** Real mode: copy the company bed's pages in afterwards and print its hand steps. */
@@ -265,10 +269,24 @@ export interface SetupOptions {
    * stores stay readable.
    */
   adoptCredentialKey?: boolean;
+  /**
+   * Set by `resume`, never on the command line: which of the values the file
+   * already holds this run's own arguments name, so everything else the route
+   * and the components derive keeps the file's value.
+   */
+  resumed?: ResumeArguments;
   /** Take the default answer to every question that has one. */
   assumeYes: boolean;
   /** Print usage and do nothing. */
   help: boolean;
+}
+
+/** What a resume was told on its own command line, as against what it read from the file. */
+export interface ResumeArguments {
+  /** `--endpoint` was given, so the endpoint route's two addresses follow it. */
+  readonly endpoint: boolean;
+  /** `--model-port` was given, so the bundled route's two addresses follow it. */
+  readonly modelPort: boolean;
 }
 
 /** What a child process returned: its status and both output streams. */
@@ -347,7 +365,8 @@ const USAGE = `Usage: pnpm setup:local [options]
   --docs <dir>                  real mode: your documentation folder (default ${DEFAULT_DOCS_HOST_DIR})
   --gpu <auto|on|off>           the bundled model and the redactor on the GPU (default auto)
   --warm-from <project>         real mode: copy that project's redactor volumes, no download
-  --sandbox <local|daytona>     real mode: what verifies authored skills (default local)
+  --sandbox <local|daytona>     real mode: what verifies authored skills (default daytona
+                                when .env.local holds DAYTONA_API_KEY, else local)
   --boss-email <address>        real mode: the manager's address, stored on the agent at deploy
   --company                     real mode: then copy the company bed's pages into the
                                 documentation folder (scripts/bed/company.ts docs), print
@@ -398,7 +417,6 @@ export function parseSetupArguments(argv: readonly string[]): SetupOptions {
     mode: 'mock',
     ports: {},
     gpu: 'auto',
-    sandbox: 'local',
     dryRun: false,
     reset: false,
     purgeEnv: false,
@@ -1061,6 +1079,11 @@ export interface EnvPlanInput {
   bossEmail?: string;
   /** An explicit GPU choice is written; `auto` leaves the file's own value. */
   gpu?: GpuChoice;
+  /**
+   * A resume: what the route and the components derive keeps the value the
+   * file holds, unless one of these arguments moved it.
+   */
+  resume?: ResumeArguments;
 }
 
 /**
@@ -1076,6 +1099,13 @@ export interface EnvPlanInput {
  * through a hidden prompt or the environment and belongs to that base URL, and
  * a model, JSON mode, budget and effort left over from another route are what
  * the 12 September probe found returning nothing.
+ *
+ * A resume is different, because the file is then the reader's selection:
+ * what the route and the components derive (the two model addresses, the
+ * Featherless settings, the browser and redactor addresses, the no-auth
+ * switch) is written only where the file lacks the name, so a value set there
+ * by hand survives an upgrade. The resume's own `--model-port` or `--endpoint`
+ * moves the two addresses as the setup would.
  *
  * Args:
  *   input: Route, project, ports, the file as it stands and any answers given.
@@ -1095,10 +1125,16 @@ export function setupEnvUpdates(input: EnvPlanInput): Record<string, string> {
     NEXT_PUBLIC_CONVEX_URL: `http://127.0.0.1:${backend}`,
     NEXT_PUBLIC_CONVEX_SITE_URL: `http://127.0.0.1:${site}`,
     CONVEX_SELF_HOSTED_URL: `http://127.0.0.1:${backend}`,
-    NEXT_PUBLIC_DEV_NO_AUTH: 'true',
+  };
+  const derived: Record<string, string> = { NEXT_PUBLIC_DEV_NO_AUTH: 'true' };
+  const addressesMoved =
+    input.resume === undefined ||
+    (input.route === 'local' && input.resume.modelPort) ||
+    (input.route === 'endpoint' && input.resume.endpoint);
+  Object.assign(addressesMoved ? selected : derived, {
     OPENAI_BASE_URL: addresses.OPENAI_BASE_URL,
     CONVEX_OPENAI_BASE_URL: addresses.CONVEX_OPENAI_BASE_URL,
-  };
+  });
   if (input.route === 'local') selected.MODEL_PORT = String(model);
   if (input.appPortSelected || (input.existing.DAY0_APP_PORT ?? '') !== '') {
     selected.DAY0_APP_PORT = String(app);
@@ -1109,7 +1145,7 @@ export function setupEnvUpdates(input: EnvPlanInput): Record<string, string> {
     DAY0_SURFACE_MODE: 'mock',
   };
   if (input.route === 'featherless') {
-    Object.assign(selected, FEATHERLESS_SETTINGS);
+    Object.assign(derived, FEATHERLESS_SETTINGS);
     if (input.apiKey) selected.OPENAI_API_KEY = input.apiKey;
   } else if (input.apiKey) {
     whenMissing.OPENAI_API_KEY = input.apiKey;
@@ -1120,14 +1156,18 @@ export function setupEnvUpdates(input: EnvPlanInput): Record<string, string> {
   if (mode === 'real') {
     selected.DAY0_SURFACE_MODE = 'real';
     selected.DAY0_DOCS_HOST_DIR = input.docsHostDir ?? DEFAULT_DOCS_HOST_DIR;
-    selected.DAY0_BROWSER_MCP_URL = BROWSER_MCP_URL;
-    selected.DAY0_REDACTOR_URL = REDACTOR_URL;
+    derived.DAY0_BROWSER_MCP_URL = BROWSER_MCP_URL;
+    derived.DAY0_REDACTOR_URL = REDACTOR_URL;
     whenMissing.DAY0_DOCS_ROOT = '/docs';
     if ((input.sandbox ?? 'local') === 'local') selected.DAYTONA_API_KEY = '';
     if (input.bossEmail) selected.NEXT_PUBLIC_DEMO_BOSS_EMAIL = input.bossEmail;
   }
 
   const updates: Record<string, string> = { ...selected };
+  for (const [name, value] of Object.entries(derived)) {
+    if (name in selected) continue;
+    if (input.resume === undefined || !(name in input.existing)) updates[name] = value;
+  }
   for (const [name, value] of Object.entries(whenMissing)) {
     if (!(name in selected) && (input.existing[name] ?? '') === '') updates[name] = value;
   }
@@ -1135,6 +1175,24 @@ export function setupEnvUpdates(input: EnvPlanInput): Record<string, string> {
     if (input.existing[name] === updates[name]) delete updates[name];
   }
   return updates;
+}
+
+/**
+ * What verifies authored skills: the sandbox named on the command line, else
+ * the one the file already describes, read the way the deployment reads it.
+ *
+ * A resume or a rerun that names no sandbox therefore keeps a Daytona
+ * installation on Daytona rather than emptying its key for the bundled one.
+ *
+ * @param named - `--sandbox`, when given.
+ * @param existing - The env file as it stands.
+ */
+export function sandboxChoice(
+  named: SandboxChoice | undefined,
+  existing: Readonly<Record<string, string>>,
+): SandboxChoice {
+  if (named !== undefined) return named;
+  return (existing.DAYTONA_API_KEY ?? '').trim() !== '' ? 'daytona' : 'local';
 }
 
 /** What decides the order of the setup's steps. */
@@ -2488,6 +2546,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     const ports = resolvePorts(options.ports, existing);
     const docsHostDir =
       options.docs?.trim() || existing.DAY0_DOCS_HOST_DIR?.trim() || DEFAULT_DOCS_HOST_DIR;
+    const sandbox = sandboxChoice(options.sandbox, existing);
 
     const volumes = io.run('docker', ['volume', 'ls', '--format', '{{.Name}}']);
     if (volumes.status !== 0 && !options.dryRun) {
@@ -2780,7 +2839,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       io.log(
         '  acts on the systems those pages record. Nothing is read until you link the folder.',
       );
-      if (options.sandbox === 'daytona' && (existing.DAYTONA_API_KEY ?? '').trim() === '') {
+      if (sandbox === 'daytona' && (existing.DAYTONA_API_KEY ?? '').trim() === '') {
         io.log('');
         io.log(`error: --sandbox daytona needs DAYTONA_API_KEY in ${ENV_FILE}, and it is empty.`);
         io.log(
@@ -2832,7 +2891,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       return 1;
     }
     const exampleValues = createsEnv ? readEnvValues(examplePath) : existing;
-    const updates = setupEnvUpdates({
+    const planInput: EnvPlanInput = {
       route,
       project: resolvedProject,
       ports,
@@ -2843,10 +2902,19 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       mode: options.mode,
       appPortSelected: options.ports.app !== undefined,
       docsHostDir,
-      sandbox: options.sandbox,
+      sandbox,
       bossEmail: bossEmail || undefined,
       gpu: options.gpu,
-    });
+      resume: options.resumed,
+    };
+    const updates = setupEnvUpdates(planInput);
+    // Names only: what the setup itself would have written over the file.
+    const keptByResume =
+      options.resumed === undefined
+        ? []
+        : Object.keys(setupEnvUpdates({ ...planInput, resume: undefined })).filter(
+            (name: string): boolean => !(name in updates),
+          );
     if (existing.DAY0_SETUP_ROOT !== checkoutRoot) updates.DAY0_SETUP_ROOT = checkoutRoot;
 
     const profiles = real ? REAL_MODE_PROFILES : [];
@@ -2859,7 +2927,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     const sequence: SequenceInput = {
       mode: options.mode,
       warm,
-      sandbox: options.sandbox,
+      sandbox,
       reset: options.reset,
       pull,
       company: options.company,
@@ -2961,7 +3029,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       io.log(
         `Wrote ${named.join(', ')}${secrets.length > 0 ? ` and ${secrets.map((name) => printableUpdate(name, updates[name])).join(', ')}` : ''}.`,
       );
-      if (real && options.sandbox === 'local' && (existing.DAYTONA_API_KEY ?? '') !== '') {
+      if (real && sandbox === 'local' && (existing.DAYTONA_API_KEY ?? '') !== '') {
         io.log(
           '    DAYTONA_API_KEY was emptied so the bundled sandbox verifies skills; `--sandbox daytona` keeps it.',
         );
@@ -2969,6 +3037,12 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     } else {
       io.log('');
       io.log(`${ENV_FILE} already says all of this; nothing was changed in it.`);
+    }
+    if (keptByResume.length > 0) {
+      io.log(
+        `Kept as ${ENV_FILE} has them (a resume changes only what its own arguments name): ` +
+          `${keptByResume.join(', ')}. \`${entryCommand(options.mode)} --route <route>\` writes the defaults.`,
+      );
     }
 
     const environment = childEnvironment(resolvedProject, ports, checkoutRoot);
@@ -3692,6 +3766,10 @@ export async function runResume(options: SetupOptions, io: SetupIo): Promise<num
         mode,
         route: report.route,
         project: undefined,
+        resumed: {
+          endpoint: options.endpoint !== undefined,
+          modelPort: options.ports.model !== undefined,
+        },
         model:
           options.model ??
           (report.route === 'local' ? existing.OPENAI_MODEL?.trim() || undefined : undefined),
