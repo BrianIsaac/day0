@@ -32,24 +32,6 @@ const SKIP_PREFIXES = [
   CLAIMED_BY_COLLEAGUE_SKIP_PREFIX,
 ] as const;
 
-/**
- * Why the employee set an item aside, in its own words: the verdict's reason without the prefix
- * that files it, or nothing when the row carries none.
- *
- * @param item - A skipped work item.
- */
-export function skipReasonOf(item: Pick<Doc<'workItems'>, 'verdict'>): string | undefined {
-  const verdict: unknown = item.verdict;
-  const reason =
-    typeof verdict === 'object' && verdict !== null
-      ? (verdict as { reason?: unknown }).reason
-      : undefined;
-  if (typeof reason !== 'string' || reason.trim() === '') return undefined;
-  const prefix = SKIP_PREFIXES.find((candidate) => reason.startsWith(candidate));
-  const said = (prefix ? reason.slice(prefix.length) : reason).trim();
-  return said === '' ? undefined : said.charAt(0).toUpperCase() + said.slice(1);
-}
-
 /** The verdict's stored reason, prefix and all, or nothing when the row carries none. */
 function verdictReason(item: Pick<Doc<'workItems'>, 'verdict'>): string | undefined {
   const verdict: unknown = item.verdict;
@@ -58,6 +40,20 @@ function verdictReason(item: Pick<Doc<'workItems'>, 'verdict'>): string | undefi
       ? (verdict as { reason?: unknown }).reason
       : undefined;
   return typeof reason === 'string' ? reason : undefined;
+}
+
+/**
+ * Why the employee set an item aside, in its own words: the verdict's reason without the prefix
+ * that files it, or nothing when the row carries none.
+ *
+ * @param item - A skipped work item.
+ */
+export function skipReasonOf(item: Pick<Doc<'workItems'>, 'verdict'>): string | undefined {
+  const reason = verdictReason(item);
+  if (reason === undefined || reason.trim() === '') return undefined;
+  const prefix = SKIP_PREFIXES.find((candidate) => reason.startsWith(candidate));
+  const said = (prefix ? reason.slice(prefix.length) : reason).trim();
+  return said === '' ? undefined : said.charAt(0).toUpperCase() + said.slice(1);
 }
 
 /** Whether a skip is the employee's own judgement, which the manager can overrule on its card. */
@@ -96,8 +92,9 @@ export function skippedSentence(
 }
 
 /**
- * One item set aside: the sentence, then on a line of its own the link to its card, named with
- * the sentence so five of them are told apart, and the employee's own reason behind a disclosure.
+ * One item set aside: the sentence, the employee's own reason behind a disclosure under it (its
+ * text opening beneath the sentence, so nothing above it moves), then on a line of its own the
+ * link to its card, named with the sentence so five of them are told apart.
  *
  * @param item - A skipped work item.
  * @param name - The employee.
@@ -110,21 +107,19 @@ function SkippedLine({ item, name, work }: { item: Doc<'workItems'>; name: strin
   return (
     <RecordLine kind="withheld">
       <p id={sentenceId}>{skippedSentence(item, name)}</p>
-      <div className="flex flex-wrap items-start gap-x-5">
-        <ButtonLink
-          id={linkId}
-          href={`${work}#item-${item._id}`}
-          aria-labelledby={`${linkId} ${sentenceId}`}
-          variant="text"
-        >
-          {overrulable(item) ? `${TAKE_IT_ANYWAY} on the Work tab` : 'Open it on the Work tab'}
-        </ButtonLink>
-        {reason !== undefined ? (
-          <Disclosure summary={`Why ${name} skipped it`}>
-            <p className="text-[13px] text-[var(--color-fg-2)]">{reason}</p>
-          </Disclosure>
-        ) : null}
-      </div>
+      {reason !== undefined ? (
+        <Disclosure summary={`Why ${name} skipped it`}>
+          <p className="text-[13px] text-[var(--color-fg-2)]">{reason}</p>
+        </Disclosure>
+      ) : null}
+      <ButtonLink
+        id={linkId}
+        href={`${work}#item-${item._id}`}
+        aria-labelledby={`${linkId} ${sentenceId}`}
+        variant="text"
+      >
+        {overrulable(item) ? `${TAKE_IT_ANYWAY} on the Work tab` : 'Open it on the Work tab'}
+      </ButtonLink>
     </RecordLine>
   );
 }
