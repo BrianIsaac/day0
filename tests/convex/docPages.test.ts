@@ -133,7 +133,7 @@ describe('docPages.readState', (): void => {
 
     await expect(
       harness.withIdentity({ subject: 'owner' }).query(api.docPages.readState, { sourceId }),
-    ).resolves.toEqual({ completedAt: 5_000, unreadCount: 1 });
+    ).resolves.toEqual({ completedAt: 5_000, unreadCount: 1, unreadNamed: 1 });
   });
 
   it('answers null before any sync has completed, and for a source that is gone', async (): Promise<void> => {

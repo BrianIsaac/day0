@@ -107,21 +107,37 @@ export const listForSource = query({
   },
 });
 
+/** What a source's newest completed sync came to. */
+interface ReadState {
+  readonly completedAt: number;
+  /** How many pages it listed and could not read. */
+  readonly unreadCount: number;
+  /** How many of those it named, which `listForSource` marks; the run names the first ten. */
+  readonly unreadNamed: number;
+}
+
 /**
  * What a source's newest completed sync came to, for the line over its page table: when it
- * finished and how many listed pages it could not read. Public; the caller must own the source.
+ * finished, how many listed pages it could not read, and how many of those the table can mark. Public; the caller must own the source.
  * Reads the source and one run; writes nothing.
  *
  * @returns `null` when no sync of the source has completed yet, or the source is gone.
  */
 export const readState = query({
   args: { sourceId: v.id('docSources') },
-  returns: v.union(v.null(), v.object({ completedAt: v.number(), unreadCount: v.number() })),
-  handler: async (ctx, args): Promise<{ completedAt: number; unreadCount: number } | null> => {
+  returns: v.union(
+    v.null(),
+    v.object({ completedAt: v.number(), unreadCount: v.number(), unreadNamed: v.number() }),
+  ),
+  handler: async (ctx, args): Promise<ReadState | null> => {
     const source = await ownedSource(ctx, args.sourceId);
     if (source === null) return null;
     const run = source.lastCompletedSyncId ? await ctx.db.get(source.lastCompletedSyncId) : null;
     if (!run || run.completedAt === undefined) return null;
-    return { completedAt: run.completedAt, unreadCount: run.unread?.count ?? 0 };
+    return {
+      completedAt: run.completedAt,
+      unreadCount: run.unread?.count ?? 0,
+      unreadNamed: run.unread?.pages.length ?? 0,
+    };
   },
 });

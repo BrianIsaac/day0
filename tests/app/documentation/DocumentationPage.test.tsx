@@ -31,15 +31,15 @@ vi.mock('convex/react', () => ({
   },
 }));
 
+import { DocumentationPage } from '../../../app/documentation/DocumentationPage';
 import {
   AUTHOR_GUIDE_URL,
-  DocumentationPage,
   ReaderSecretField,
   SourceKindHelp,
   credentialForLink,
   linkFormAfterLink,
   locatorForSourceKind,
-} from '../../../app/documentation/DocumentationPage';
+} from '../../../app/documentation/LinkSourceForm';
 
 beforeEach((): void => {
   state.sources = [];
@@ -73,7 +73,7 @@ describe('a source whose system discovery failed', (): void => {
     const markup = renderToStaticMarkup(<DocumentationPage />);
     // The sync itself succeeded, so nothing else on the row would say the
     // newest pages were never read for systems.
-    expect(markup).toContain('synced');
+    expect(markup).toMatch(/<span[^>]*>Read<\/span>/);
     expect(markup).toContain('System discovery: Documentation discovery exceeds 500 pages.');
   });
 
