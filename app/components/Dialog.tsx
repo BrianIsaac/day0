@@ -31,6 +31,8 @@ export function focusableIn(panel: HTMLElement): HTMLElement[] {
  * in `app/globals.css`), and it is the only element with a shadow and no border.
  *
  * @param title - The dialog's heading, which names it.
+ * @param description - The sentence that says what the dialog is about, drawn under the heading
+ *   and bound as its description, so an assistive technology says it with the name on open.
  * @param onClose - Close it: Escape and a press on the dimmed page both ask, unless `busy`.
  * @param initialFocus - The element that takes focus on open; the first control when absent, so
  *   a dialog that asks for something destructive names its safe choice here.
@@ -39,6 +41,7 @@ export function focusableIn(panel: HTMLElement): HTMLElement[] {
  */
 export function Dialog({
   title,
+  description,
   onClose,
   initialFocus,
   role = 'dialog',
@@ -46,6 +49,7 @@ export function Dialog({
   children,
 }: {
   title: ReactNode;
+  description?: ReactNode;
   onClose: () => void;
   initialFocus?: RefObject<HTMLElement | null>;
   role?: 'dialog' | 'alertdialog';
@@ -53,6 +57,7 @@ export function Dialog({
   children: ReactNode;
 }) {
   const headingId = useId();
+  const descriptionId = useId();
   const panel = useRef<HTMLDivElement>(null);
 
   const backdrop = useRef<HTMLDivElement>(null);
@@ -108,7 +113,11 @@ export function Dialog({
       data-dialog-backdrop=""
       role="presentation"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget && !busy) onClose();
+        if (event.target !== event.currentTarget) return;
+        // A press on the dimmed page never takes focus out of the dialog, busy or not, so Escape
+        // still reaches the panel once the change settles.
+        event.preventDefault();
+        if (!busy) onClose();
       }}
       className="fixed inset-0 z-50 grid place-items-center bg-[#0a0a0b]/70 p-4"
     >
@@ -117,6 +126,7 @@ export function Dialog({
         role={role}
         aria-modal="true"
         aria-labelledby={headingId}
+        aria-describedby={description !== undefined ? descriptionId : undefined}
         tabIndex={-1}
         data-dialog=""
         onKeyDown={onKeyDown}
@@ -125,6 +135,11 @@ export function Dialog({
         <h2 id={headingId} className="text-lg font-semibold">
           {title}
         </h2>
+        {description !== undefined ? (
+          <p id={descriptionId} className="text-[15px] leading-relaxed text-[var(--color-fg-2)]">
+            {description}
+          </p>
+        ) : null}
         {children}
       </div>
     </div>

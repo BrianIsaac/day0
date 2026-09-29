@@ -181,14 +181,14 @@ export function RetireDialog({
       role="alertdialog"
       title={`Retire ${agent.name}?`}
       onClose={onClose}
+      description={
+        mode === 'mock'
+          ? `This removes ${agent.name} and everything it made in the hosted office. It cannot be undone.`
+          : `This ends ${agent.name}'s employment now. It cannot be undone.`
+      }
       initialFocus={keep}
       busy={change.busy}
     >
-      <p className="text-[var(--color-fg-2)]">
-        {mode === 'mock'
-          ? `This removes ${agent.name} and everything it made in the hosted office. It cannot be undone.`
-          : `This ends ${agent.name}'s employment now. It cannot be undone.`}
-      </p>
       {account}
       <form
         className="grid gap-4"

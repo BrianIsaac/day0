@@ -57,6 +57,31 @@ describe('Dialog', () => {
     view.unmount();
   });
 
+  it('binds its description, so the sentence under the title is said with its name (m2)', () => {
+    const view = mount(
+      <Dialog
+        role="alertdialog"
+        title="Retire Mira?"
+        description="It cannot be undone."
+        onClose={() => undefined}
+      >
+        <button type="button">Keep Mira</button>
+      </Dialog>,
+    );
+    const dialog = document.querySelector('[role="alertdialog"]');
+    expect(
+      document.getElementById(dialog?.getAttribute('aria-describedby') ?? '')?.textContent,
+    ).toBe('It cannot be undone.');
+    view.unmount();
+    const plain = mount(
+      <Dialog title="t" onClose={() => undefined}>
+        <button type="button">Inside</button>
+      </Dialog>,
+    );
+    expect(document.querySelector('[role="dialog"]')?.hasAttribute('aria-describedby')).toBe(false);
+    plain.unmount();
+  });
+
   it('moves focus to its first control on open, or to the safe choice it names', async () => {
     const view = mount(<Page />);
     await press(view.container, 'Retire Mira…');
@@ -110,6 +135,19 @@ describe('Dialog', () => {
       backdrop?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
     });
     expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    view.unmount();
+  });
+
+  it('keeps focus inside when the dimmed page is pressed while a change is in flight, so Escape still works (m1)', async () => {
+    const view = mount(<Page busy />);
+    await press(view.container, 'Retire Mira…');
+    const pressed = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+    act((): void => {
+      document.querySelector('[data-dialog-backdrop]')?.dispatchEvent(pressed);
+    });
+    // The browser moves focus to the body on a mousedown nobody prevented.
+    expect(pressed.defaultPrevented).toBe(true);
+    expect(document.querySelector('[role="dialog"]')?.contains(document.activeElement)).toBe(true);
     view.unmount();
   });
 

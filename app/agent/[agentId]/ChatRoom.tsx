@@ -635,11 +635,12 @@ export function ChatRoom({
         )}
       </div>
       {confirming === 'finish' ? (
-        <Dialog title="Finish the one-to-one now?" onClose={() => setConfirming(null)}>
-          <p className="text-[15px] text-[var(--color-fg-2)]">
-            {name} drafts your charter from what you have said so far.
-          </p>
-          <div className="mt-4 flex flex-wrap gap-2">
+        <Dialog
+          title="Finish the one-to-one now?"
+          description={`${name} drafts your charter from what you have said so far.`}
+          onClose={() => setConfirming(null)}
+        >
+          <div className="flex flex-wrap gap-2">
             <Button variant="primary" onClick={finish}>
               Finish and draft
             </Button>
@@ -648,12 +649,12 @@ export function ChatRoom({
         </Dialog>
       ) : null}
       {confirming === 'switch' && onSwitchMode ? (
-        <Dialog title="Switch to voice?" onClose={() => setConfirming(null)}>
-          <p className="text-[15px] text-[var(--color-fg-2)]">
-            The chat so far is not carried over: the voice one-to-one starts from the first
-            question.
-          </p>
-          <div className="mt-4 flex flex-wrap gap-2">
+        <Dialog
+          title="Switch to voice?"
+          description="The chat so far is not carried over: the voice one-to-one starts from the first question."
+          onClose={() => setConfirming(null)}
+        >
+          <div className="flex flex-wrap gap-2">
             <Button
               variant="primary"
               onClick={() => {
