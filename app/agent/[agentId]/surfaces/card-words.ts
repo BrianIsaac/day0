@@ -1,10 +1,8 @@
 import type { Doc } from '@convex/_generated/dataModel';
 import type { SurfacePath } from '@/surfaces/types';
 import { isSlackApiEndpoint } from '@/surfaces/slack-endpoint';
-import { deploymentZone, expiryNoticeDue } from '@/lib/zone';
+import { addDays, dayKey, deploymentZone, expiryNoticeDue } from '@/lib/zone';
 import type { Tone } from '../../../components/tone';
-
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** The verdicts of an approved card, whose access runs on a clock. */
 const ACCESS_VERDICTS: ReadonlySet<Doc<'surfaces'>['verdict']> = new Set([
@@ -55,10 +53,22 @@ export function accessStanding(
   }
   const { expiresAt } = surface;
   if (surface.reason === 'expired' || expiresAt <= now) return { kind: 'ended', expiresAt };
-  if (expiryNoticeDue(now, expiresAt, zone ?? deploymentZone())) {
-    return { kind: 'ending', expiresAt, daysLeft: Math.ceil((expiresAt - now) / DAY_MS) };
+  const day = zone ?? deploymentZone();
+  if (expiryNoticeDue(now, expiresAt, day)) {
+    return { kind: 'ending', expiresAt, daysLeft: calendarDaysBetween(now, expiresAt, day) };
   }
   return { kind: 'running', expiresAt };
+}
+
+/**
+ * The calendar days from one instant's day to a later one's, in a zone: 0 on the same day, 7 on
+ * the notice day of a week's notice. Counted, not divided, so a daylight-saving day counts once.
+ */
+function calendarDaysBetween(from: number, to: number, zone: string): number {
+  const end = dayKey(to, zone);
+  let days = 0;
+  for (let key = dayKey(from, zone); key < end; key = addDays(key, 1)) days += 1;
+  return days;
 }
 
 /** The rung a path names, or nothing for a card with no path yet. */
@@ -98,7 +108,10 @@ export function stateChip(
   if (access.kind === 'ended') return { text: 'Access ended', tone: 'warn' };
   if (access.kind === 'ending') {
     return {
-      text: `Expires in ${access.daysLeft} ${access.daysLeft === 1 ? 'day' : 'days'}`,
+      text:
+        access.daysLeft === 0
+          ? 'Expires today'
+          : `Expires in ${access.daysLeft} ${access.daysLeft === 1 ? 'day' : 'days'}`,
       tone: 'warn',
     };
   }

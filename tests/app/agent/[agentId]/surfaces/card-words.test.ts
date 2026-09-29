@@ -35,7 +35,7 @@ describe("where a card's access stands (Q5)", (): void => {
     );
     expect(
       accessStanding(surface({ expiresAt }), Date.UTC(2026, 8, 28, 23), 'America/Los_Angeles'),
-    ).toMatchObject({ kind: 'ending', daysLeft: 8 });
+    ).toMatchObject({ kind: 'ending', daysLeft: 7 });
   });
 
   it('is ended once the date passes, before the sweep marks it, and whenever the sweep has', (): void => {
@@ -63,6 +63,8 @@ describe('the state chip a card carries', (): void => {
     ['Not found', 'muted', surface({ verdict: 'absent', path: undefined })],
     ['Expires in 6 days', 'warn', surface({ expiresAt: NOW + 6 * DAY })],
     ['Access ended', 'warn', surface({ expiresAt: NOW - DAY })],
+    ['Expires today', 'warn', surface({ expiresAt: NOW + 60 * 60 * 1000 })],
+    ['Expires in 1 day', 'warn', surface({ expiresAt: NOW + DAY })],
   ])('says "%s" in the %s tone', (text, tone, row): void => {
     expect(stateChip(row, NOW, 'UTC')).toEqual({ text, tone });
   });
