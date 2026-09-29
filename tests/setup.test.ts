@@ -195,6 +195,20 @@ describe.skipIf(BASH === '')('setup.sh', (): void => {
     expect(outcome.stdout).toContain('A mock deployment upgrades with pnpm setup:local upgrade.');
   });
 
+  it('names pause and unpause in its usage, and what the pause holds', (): void => {
+    const outcome = runSetupSh({}, ['--help']);
+    expect(outcome.status).toBe(0);
+    expect(outcome.stdout).toContain('./setup.sh pause | unpause [--dry-run]');
+    expect(outcome.stdout).toContain('./setup.sh pause     the intake and decision polls');
+    expect(outcome.stdout).toContain('./setup.sh unpause   lift the pause');
+  });
+
+  it('names pause and unpause in its header, beside the other verbs', (): void => {
+    expect(readFileSync(SCRIPT, 'utf8')).toContain(
+      '#   ./setup.sh pause | unpause         hold the scheduled jobs, or let them run again',
+    );
+  });
+
   it('refuses an arm64 daemon before it installs anything, since the redactor wheel locks are x86_64 only', (): void => {
     const outcome = runSetupSh({ daemon: { ok: true, arch: 'aarch64' } }, ['--route', 'local']);
     expect(outcome.status).toBe(1);
