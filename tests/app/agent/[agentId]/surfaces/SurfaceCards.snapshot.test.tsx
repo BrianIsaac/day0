@@ -30,10 +30,10 @@ vi.mock('convex/react', () => ({
 }));
 
 import type { Id } from '../../../../../convex/_generated/dataModel';
-import { SurfacesTab } from '../../../../../app/agent/[agentId]/mock/SurfacesTab';
+import { SurfaceCards } from '../../../../../app/agent/[agentId]/surfaces/SurfaceCards';
 
-it('keeps the hosted mock surfaces tab output', () => {
+it("keeps the Surfaces tab's cards output", () => {
   expect(
-    renderToStaticMarkup(<SurfacesTab agentId={'mock-agent' as Id<'agents'>} />),
+    renderToStaticMarkup(<SurfaceCards agentId={'mock-agent' as Id<'agents'>} />),
   ).toMatchSnapshot();
 });

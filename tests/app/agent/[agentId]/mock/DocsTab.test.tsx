@@ -39,4 +39,17 @@ describe('the Docs pane', (): void => {
     expect(markup).toContain('grid grid-cols-1 @lg:grid-cols-[12rem_1fr]');
     expect(markup).toMatch(/<button type="button" aria-current="true" class="min-h-11 /);
   });
+
+  it('bounds its own two columns in the real-mode card, so the list and the page scroll apart, and fills the office panel in mock mode', (): void => {
+    const grid = (mode: 'mock' | 'real'): string =>
+      /<div class="(grid grid-cols-1[^"]*)"/.exec(
+        renderToStaticMarkup(<DocsTab agentId={agentId} mode={mode} />),
+      )?.[1] ?? '';
+    expect(grid('real')).toMatch(/(^|\s)@lg:max-h-\[32rem\](\s|$)/);
+    expect(grid('real')).not.toMatch(/(^|\s)h-full(\s|$)/);
+    expect(grid('mock')).toMatch(/(^|\s)h-full(\s|$)/);
+    for (const mode of ['mock', 'real'] as const) {
+      expect(grid(mode)).toContain('@lg:grid-rows-[minmax(0,1fr)]');
+    }
+  });
 });

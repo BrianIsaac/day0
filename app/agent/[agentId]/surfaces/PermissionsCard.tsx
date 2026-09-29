@@ -6,6 +6,7 @@ import { useQuery, useMutation } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { useChange } from '../../../components/use-change';
 import { StatusRegion } from '../../../components/StatusRegion';
+import { Button } from '../../../components/Button';
 import { Card } from '../../../components/Card';
 
 type PermissionSource = 'deploy' | 'manager' | 'skill' | 'surface';
@@ -19,11 +20,12 @@ export interface PermissionScopeView {
   revokedAt: number | null;
 }
 
-const PERMISSION_SOURCE_LABEL: Record<PermissionSource, string> = {
-  deploy: 'deploy',
-  manager: 'manager',
-  skill: 'skill',
-  surface: 'surface',
+/** Where a grant came from, in the manager's words. */
+const PERMISSION_SOURCE_WORDS: Readonly<Record<PermissionSource, string>> = {
+  deploy: 'at deploy',
+  manager: 'by you',
+  skill: 'with a skill you approved',
+  surface: 'with a surface card you approved',
 };
 
 /** The permission scopes with their revoke controls. */
@@ -46,60 +48,61 @@ export function PermissionRows({
 }) {
   const id = useId();
   return (
-    <ul className="space-y-2 text-xs">
+    <ul className="grid gap-2 text-sm">
       {scopes.map((row) => {
         const confirming = confirmingScope === row.scope;
         const busy = busyScope !== null;
         return (
-          <li key={row.scope} className="rounded-md border border-[var(--color-border)] p-2">
+          <li key={row.scope} className="rounded-lg bg-[var(--color-inset)] px-3 py-2">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
-                <p className="font-mono text-[var(--color-fg)] break-all">{row.scope}</p>
-                <p className="text-[10px] text-[var(--color-muted)]">
-                  {row.active ? 'granted' : 'revoked'} - from {PERMISSION_SOURCE_LABEL[row.source]}
+                <p className="font-mono text-[13px] break-all text-[var(--color-fg)]">
+                  {row.scope}
+                </p>
+                <p className="text-[13px] text-[var(--color-muted)]">
+                  {row.active
+                    ? `Granted ${PERMISSION_SOURCE_WORDS[row.source]}`
+                    : `Revoked; it was granted ${PERMISSION_SOURCE_WORDS[row.source]}`}
                 </p>
               </div>
               {/* One button whose word follows the grant, so focus stays on it
                   when a revoke or a re-grant flips the row. */}
-              <button
-                type="button"
+              <Button
                 id={permissionControlId(id, row.scope)}
+                size="small"
+                variant={row.active ? 'danger' : 'secondary'}
                 disabled={busy}
                 aria-label={`${row.active ? 'Revoke' : 'Re-grant'} ${row.scope}`}
                 aria-expanded={row.active ? confirming : undefined}
                 onClick={() => (row.active ? onAskRevoke(row.scope) : onRegrant(row.scope))}
-                className={`shrink-0 min-h-11 px-3 rounded border text-[10px] disabled:opacity-50 ${
-                  row.active
-                    ? 'border-[var(--color-danger)]/40 text-[var(--color-danger)]'
-                    : 'border-[var(--color-accent)]/40 text-[var(--color-accent)]'
-                }`}
+                className="shrink-0"
               >
                 {row.active ? 'Revoke' : 'Re-grant'}
-              </button>
+              </Button>
             </div>
             {confirming ? (
               <div
                 role="group"
                 aria-label={`Revoke ${row.scope}?`}
-                className="mt-2 pt-2 border-t border-[var(--color-border)]"
+                className="mt-2 border-t border-[var(--color-border)] pt-2"
               >
-                <p className="text-[10px] text-[var(--color-fg)] mb-2">
+                <p className="mb-2 text-sm text-[var(--color-fg-2)]">
                   Revoke {row.scope}? Day0 will stop queued and in-flight work that still needs this
                   standing scope at its final authority check. Actions already approved by you keep
                   their exact approval; a provider call past its final authority check may still
                   finish.
                 </p>
                 <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
+                  <Button
+                    size="small"
+                    variant="danger"
                     disabled={busy}
                     onClick={() => onRevoke(row.scope)}
-                    className="min-h-11 px-3 rounded bg-[var(--color-danger)]/20 text-[10px] text-[var(--color-danger)] disabled:opacity-50"
                   >
                     Confirm revoke
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    size="small"
                     autoFocus
                     disabled={busy}
                     onClick={() => {
@@ -112,10 +115,9 @@ export function PermissionRows({
                       onCancelRevoke();
                       document.getElementById(permissionControlId(id, row.scope))?.focus();
                     }}
-                    className="min-h-11 px-3 rounded border border-[var(--color-border)] text-[10px] disabled:opacity-50"
                   >
                     Keep grant
-                  </button>
+                  </Button>
                 </div>
               </div>
             ) : null}
@@ -188,13 +190,11 @@ export function PermissionsCard({ agentId }: { agentId: Id<'agents'> }) {
   const pending = change.busy ? busyScope : null;
   return (
     <Card title="Permissions" focusRef={card}>
-      <p className="text-[10px] text-[var(--color-muted)] mb-3 leading-relaxed">
-        {PERMISSIONS_NOTE}
-      </p>
+      <p className="mb-3 text-sm leading-relaxed text-[var(--color-fg-2)]">{PERMISSIONS_NOTE}</p>
       {scopes === undefined ? (
-        <p className="text-xs text-[var(--color-muted)]">loading permissions…</p>
+        <p className="text-sm text-[var(--color-muted)]">Loading the permissions…</p>
       ) : scopes.length === 0 ? (
-        <p className="text-xs text-[var(--color-muted)]">no permission history yet</p>
+        <p className="text-sm text-[var(--color-muted)]">No permission has been granted yet.</p>
       ) : (
         <PermissionRows
           scopes={scopes}

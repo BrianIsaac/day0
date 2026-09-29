@@ -16,9 +16,10 @@ const DASHBOARD = readdirSync('app/agent/[agentId]', { recursive: true, encoding
   .map((file) => readFileSync(`app/agent/[agentId]/${file}`, 'utf8'))
   .join('\n');
 const CHAT = readFileSync('app/agent/[agentId]/ChatRoom.tsx', 'utf8');
-// The Surfaces tab's cards are drawn by the tab and the rows and controls beside it.
-const SURFACES = ['SurfacesTab', 'SurfaceRows', 'SurfaceControls']
-  .map((file) => readFileSync(`app/agent/[agentId]/mock/${file}.tsx`, 'utf8'))
+// The Surfaces tab's cards are drawn by the modules of its page directory.
+const SURFACES = readdirSync('app/agent/[agentId]/surfaces', { encoding: 'utf8' })
+  .filter((file) => /\.tsx?$/.test(file))
+  .map((file) => readFileSync(`app/agent/[agentId]/surfaces/${file}`, 'utf8'))
   .join('\n');
 // The link form the Documentation page and tab share.
 const DOCUMENTATION = readFileSync('app/documentation/LinkSourceForm.tsx', 'utf8');
@@ -80,7 +81,7 @@ describe('the dashboard driver', (): void => {
       [SURFACES, `export const APPROVE_CARD = '${APPROVE_CARD}';`],
       [SURFACES, 'data-verdict={surface.verdict}'],
       [SURFACES, 'id={`surface-${surface.slug}`}'],
-      [SURFACES, 'id={`credential-${props.credentialLabel}`}'],
+      [SURFACES, 'const fieldId = `credential-${useId()}`;'],
       [DOCUMENTATION, 'placeholder="Location label"'],
       [DOCUMENTATION, 'Link location'],
       [DEPLOY_FORM, 'placeholder="worker 1"'],

@@ -1,5 +1,12 @@
 import { ConvexError, v } from 'convex/values';
-import { action, internalMutation, mutation, query, type MutationCtx } from './_generated/server';
+import {
+  action,
+  internalMutation,
+  mutation,
+  query,
+  type MutationCtx,
+  type QueryCtx,
+} from './_generated/server';
 import { internal } from './_generated/api';
 import { assertOwnsAgent, assertOwnsAgentAction } from './ownership';
 import { grantScopeInTransaction } from './agents';
@@ -22,7 +29,19 @@ import {
 } from './work';
 import schema from './schema';
 import { scheduleNextStep } from './workLoop';
-import { intakeScopeValues } from '../src/surfaces/intake-scope';
+import {
+  intakeScopeValues,
+  presentScopeDrift,
+  restatedScope,
+  type ScopePage,
+} from '../src/surfaces/intake-scope';
+import {
+  extractDocumentedSystemOrder,
+  orderSurfaceWaterfall,
+  waterfallEntry,
+} from '../src/surfaces/waterfall';
+import { cardPageRefs } from '../src/docs/card-pages';
+import { agentReadsSource } from './docSources';
 import { isManagerLookupFailure } from '../src/surfaces/manager-lookup';
 import { appendEvent, eventsOfType } from './eventLog';
 import { isEventOf, type EventOf, type EventType } from '../src/events/contract';
@@ -198,17 +217,124 @@ export async function backfillCharterProvenance(
   return updated;
 }
 
-/** List connection verdicts for one owned agent. */
+/**
+ * A surface as the Surfaces tab's card reads it: the stored row, its browser-driven state read
+ * against this deployment's component, why a proposed card cannot be approved now, and what has
+ * changed on the pages its approved scope quotes.
+ */
+export interface ListedSurface extends Doc<'surfaces'> {
+  /**
+   * Why `approve` would refuse this card now (a documented intake queue changed, or its browser
+   * component is absent), so the card disables Approve with the reason (E-63). Only on a
+   * proposed card.
+   */
+  readonly approvalRefusal?: string;
+  /**
+   * Which approved intake values their pages no longer state, and what to do about it, in the
+   * manager's words (D D4). Absent while every value is still stated.
+   */
+  readonly scopeChange?: string;
+}
+
+/** The most pages the cards' order and drift read, and the most bytes of them (D D4). */
+const CARD_PAGE_LIMIT = 100;
+const CARD_PAGE_BYTES = 8 * 1024 * 1024;
+
+/** A page the cards read: its body for the drift, its title for the documented order. */
+interface CardPage extends ScopePage {
+  readonly title: string;
+}
+
+/**
+ * Read the pages an employee's cards read (each approved scope value's page, then each system's
+ * evidence pages, `cardPageRefs`), by reference, from the sources the employee reads, up to the
+ * page and byte bounds, in the order the sources and their pages were created.
+ */
+async function readCardPages(
+  ctx: QueryCtx,
+  agent: Doc<'agents'>,
+  surfaces: readonly Doc<'surfaces'>[],
+): Promise<CardPage[]> {
+  const owner = agent.userId;
+  if (owner === undefined) return [];
+  const sources = (
+    await ctx.db
+      .query('docSources')
+      .withIndex('by_user', (index) => index.eq('userId', owner))
+      .collect()
+  ).filter((source) => agentReadsSource(agent, source._id));
+  const rank = new Map(sources.map((source, index) => [String(source._id), index]));
+  const encoder = new TextEncoder();
+  const pages: Array<Doc<'docPages'>> = [];
+  let bytes = 0;
+  for (const { sourceId, ref } of cardPageRefs(surfaces, new Set(rank.keys()), CARD_PAGE_LIMIT)) {
+    if (bytes >= CARD_PAGE_BYTES) break;
+    const page = await ctx.db
+      .query('docPages')
+      .withIndex('by_source_ref', (index) =>
+        index.eq('sourceId', sourceId as Id<'docSources'>).eq('ref', ref),
+      )
+      .unique();
+    if (!page) continue;
+    bytes += encoder.encode(page.markdown).length;
+    pages.push(page);
+  }
+  return pages
+    .sort(
+      (left, right): number =>
+        (rank.get(String(left.sourceId)) ?? 0) - (rank.get(String(right.sourceId)) ?? 0) ||
+        left._creationTime - right._creationTime,
+    )
+    .map(
+      (page): CardPage => ({
+        sourceId: page.sourceId,
+        ref: page.ref,
+        title: page.title,
+        markdown: page.markdown,
+      }),
+    );
+}
+
+/**
+ * List one owned agent's surfaces as their cards read them.
+ *
+ * Public, owner-guarded; reads, writes nothing. The rows come in the documented order (the
+ * systems table on the pages the cards cite, then class), each with its browser component's
+ * state, the refusal `approve` would give now on a proposed card (`approvalRefusal`), and what
+ * changed on its approved scope's pages (`scopeChange`). The pages are read here, so the browser
+ * is never sent them.
+ */
 export const listForAgent = query({
   args: { agentId: v.id('agents') },
-  handler: async (ctx, args): Promise<Doc<'surfaces'>[]> => {
-    await assertOwnsAgent(ctx, args.agentId);
+  handler: async (ctx, args): Promise<ListedSurface[]> => {
+    const agent = await assertOwnsAgent(ctx, args.agentId);
     const surfaces = await ctx.db
       .query('surfaces')
       .withIndex('by_agent', (index) => index.eq('agentId', args.agentId))
       .collect();
+    const pages = await readCardPages(ctx, agent, surfaces);
+    const documented = extractDocumentedSystemOrder(
+      pages.map((page) => waterfallEntry({ title: page.title, content: page.markdown })),
+    );
     const refusal = browserComponentRefusal(process.env.DAY0_BROWSER_MCP_URL);
-    return surfaces.map((surface) => withBrowserComponentState(surface, refusal));
+    return await Promise.all(
+      orderSurfaceWaterfall(surfaces, documented).map(async (surface): Promise<ListedSurface> => {
+        const listed = withBrowserComponentState(surface, refusal);
+        const scopeChange = listed.intakeScope
+          ? presentScopeDrift(listed.intakeScope, restatedScope(listed.intakeScope, pages).drift, {
+              // Only a proposed card offers Reject on the page.
+              canReject: listed.verdict === 'proposed',
+            })
+          : undefined;
+        const refused =
+          listed.verdict === 'proposed' ? await approvalRefusal(ctx, listed) : undefined;
+        return {
+          ...listed,
+          ...(refused === undefined ? {} : { approvalRefusal: refused }),
+          ...(scopeChange === undefined ? {} : { scopeChange }),
+        };
+      }),
+    );
   },
 });
 
@@ -2057,7 +2183,7 @@ export const recordIntake = internalMutation({
  * and a browser-driven card needs the component that drives it.
  */
 async function approvalRefusal(
-  ctx: MutationCtx,
+  ctx: QueryCtx,
   surface: Doc<'surfaces'>,
 ): Promise<string | undefined> {
   return (await intakeQueueRefusal(ctx, surface)) ?? browserRefusal(surface);
@@ -2075,7 +2201,7 @@ function browserRefusal(surface: Doc<'surfaces'>): string | undefined {
  * approval, or undefined when every queue still reads as quoted.
  */
 async function intakeQueueRefusal(
-  ctx: MutationCtx,
+  ctx: QueryCtx,
   surface: Doc<'surfaces'>,
 ): Promise<string | undefined> {
   for (const value of surface.intakeScope ? intakeScopeValues(surface.intakeScope) : []) {
