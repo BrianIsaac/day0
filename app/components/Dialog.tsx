@@ -1,26 +1,33 @@
 'use client';
 
 import { useEffect, useId, useRef, type ReactNode, type RefObject } from 'react';
+import { createPortal } from 'react-dom';
 
 /** What can take focus inside a dialog, in the order Tab reaches it. */
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
 
 /**
- * The controls a dialog's Tab cycles through: the focusable elements inside it that are shown.
+ * The controls a dialog's Tab cycles through: the focusable elements inside it that are shown,
+ * none inside a hidden or inert part of it.
  *
  * @param panel - The dialog.
  */
 export function focusableIn(panel: HTMLElement): HTMLElement[] {
   return [...panel.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
-    (element) => !element.hasAttribute('hidden') && element.getAttribute('aria-hidden') !== 'true',
+    (element) =>
+      element.closest('[hidden], [inert], [aria-hidden="true"]') === null &&
+      // `checkVisibility` also sees `display: none` from a stylesheet; jsdom has none to ask.
+      element.checkVisibility?.() !== false,
   );
 }
 
 /**
  * A modal dialog: centred over a dimmed page, focus moved into it when it opens and kept there
  * (Tab and Shift+Tab wrap at its ends), Escape closing it, and focus handed back to whatever held
- * it before it opened. It scales in from 0.96 as the product's one dialog motion (`[data-dialog]`
+ * it before it opened. It renders on the document's body, so no transformed ancestor (a card
+ * rising in) holds its fixed position, and while it is open the rest of the page is inert and does
+ * not scroll. It scales in from 0.96 as the product's one dialog motion (`[data-dialog]`
  * in `app/globals.css`), and it is the only element with a shadow and no border.
  *
  * @param title - The dialog's heading, which names it.
@@ -48,12 +55,23 @@ export function Dialog({
   const headingId = useId();
   const panel = useRef<HTMLDivElement>(null);
 
-  // Focus moves in once, when the dialog mounts, and back to where it came from when it goes.
+  const backdrop = useRef<HTMLDivElement>(null);
+
+  // Focus moves in once, when the dialog mounts, and back to where it came from when it goes. The
+  // page behind is inert and still for as long as the dialog is open.
   useEffect(() => {
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const behind = [...document.body.children].filter(
+      (element) => element !== backdrop.current && !element.hasAttribute('inert'),
+    );
+    for (const element of behind) element.setAttribute('inert', '');
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
     const first = initialFocus?.current ?? (panel.current ? focusableIn(panel.current)[0] : null);
     (first ?? panel.current)?.focus();
     return () => {
+      for (const element of behind) element.removeAttribute('inert');
+      document.body.style.overflow = overflow;
       if (opener?.isConnected) opener.focus();
     };
     // The focus moves belong to opening and closing only, not to a later render.
@@ -84,8 +102,9 @@ export function Dialog({
     }
   }
 
-  return (
+  const dialog = (
     <div
+      ref={backdrop}
       data-dialog-backdrop=""
       role="presentation"
       onMouseDown={(event) => {
@@ -110,4 +129,5 @@ export function Dialog({
       </div>
     </div>
   );
+  return typeof document === 'undefined' ? dialog : createPortal(dialog, document.body);
 }

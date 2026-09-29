@@ -145,4 +145,34 @@ describe('Dialog', () => {
     expect(document.querySelector('[data-dialog-backdrop]')).not.toBeNull();
     view.unmount();
   });
+
+  it('renders on the body, out of any transformed card, and makes the page behind it inert', async () => {
+    const view = mount(<Page />);
+    await press(view.container, 'Retire Mira…');
+    const backdrop = document.querySelector('[data-dialog-backdrop]');
+    expect(backdrop?.parentElement).toBe(document.body);
+    expect(view.container.contains(backdrop)).toBe(false);
+    expect(view.container.hasAttribute('inert')).toBe(true);
+    expect(document.body.style.overflow).toBe('hidden');
+    key('Escape');
+    expect(view.container.hasAttribute('inert')).toBe(false);
+    expect(document.body.style.overflow).toBe('');
+    view.unmount();
+  });
+
+  it('leaves a control inside a hidden part of the dialog out of the Tab cycle', () => {
+    const view = mount(
+      <Dialog title="t" onClose={() => undefined}>
+        <button type="button">Shown</button>
+        <div hidden>
+          <button type="button">Hidden</button>
+        </div>
+      </Dialog>,
+    );
+    const panel = document.querySelector<HTMLElement>('[role="dialog"]');
+    expect(panel ? focusableIn(panel).map((control) => control.textContent) : []).toEqual([
+      'Shown',
+    ]);
+    view.unmount();
+  });
 });
