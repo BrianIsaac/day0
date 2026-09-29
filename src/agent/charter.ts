@@ -215,7 +215,6 @@ export const charterSchema = z.object({
 
 type RawCharterPayload = z.infer<typeof charterSchema>;
 
-/** What charter synthesis takes: the answers by topic, the version to write and the clock. */
 /**
  * What the manager asked to change when sending a draft back, carried into the next draft
  * with the one-to-one it came from.
@@ -227,7 +226,10 @@ export interface ChangeRequest {
   readonly struck: readonly string[];
 }
 
-/** What a charter is drafted from: the seven answers, and any changes asked of earlier drafts. */
+/**
+ * What charter synthesis takes: the answers by topic, the version to write, the clock, and any
+ * changes asked of earlier drafts.
+ */
 export interface SynthesiseCharterArgs {
   answers: Record<DayOneTopic, string>;
   version: CharterVersion;

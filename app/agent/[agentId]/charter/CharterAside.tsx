@@ -120,8 +120,8 @@ function versionLines(
 
 /**
  * Every version of the charter, newest first (`agent-charter.html`): each amendment, the approval
- * with the rules it struck, and the draft the one-to-one wrote. Every row is kept, so this is the
- * charter's history.
+ * with the rules it struck, and the draft the one-to-one wrote. An approved version and every
+ * amendment are kept, so this is the charter's history; a draft sent back is not among them.
  *
  * @param versions - `charters.listForAgent`, newest first; undefined while it loads.
  */
