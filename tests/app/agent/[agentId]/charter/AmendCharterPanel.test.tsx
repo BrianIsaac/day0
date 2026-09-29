@@ -136,6 +136,6 @@ describe('amending an approved charter from the card', (): void => {
     const draft = { ...charter, approved: false, body } as unknown as Doc<'charters'>;
     const markup = renderToStaticMarkup(<CharterCard charter={draft} />);
     expect(markup).not.toContain('Amend this charter');
-    expect(markup).toContain('>Approve<');
+    expect(markup).toContain('>Approve charter<');
   });
 });

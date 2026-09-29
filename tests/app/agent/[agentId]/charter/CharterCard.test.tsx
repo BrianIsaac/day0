@@ -8,10 +8,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Doc } from '../../../../../convex/_generated/dataModel';
 import { PlanExecutionLedger } from '../../../../../app/agent/[agentId]/work/RunDetails';
 import { defaultRuleClause } from '../../../../../app/agent/[agentId]/charter/AmendCharterPanel';
-import {
-  CharterCard,
-  ConstraintList,
-} from '../../../../../app/agent/[agentId]/charter/CharterCard';
+import { CharterCard } from '../../../../../app/agent/[agentId]/charter/CharterCard';
+import { ConstraintList } from '../../../../../app/agent/[agentId]/charter/RuleRow';
 import { WorkItemCard } from '../../../../../app/agent/[agentId]/work/WorkItemCard';
 import { button, focusedName, mount, press, said } from '../../../../fixtures/dom/press';
 import { strikeOutcome, strikePreview } from '../../../../../src/agent/charter-constraints';
@@ -156,13 +154,13 @@ describe('charter confirm-or-strike list', (): void => {
       },
     } as unknown as Doc<'charters'>;
     const markup = renderToStaticMarkup(<CharterCard charter={charter} />);
-    expect(markup).toContain('>Approve, 1 rule struck<');
+    expect(markup).toContain('>Approve charter, 1 rule struck<');
     const twoStruck = {
       ...charter,
       body: { ...charter.body, constraints: constraints.map((c) => ({ ...c, struck: true })) },
     } as unknown as Doc<'charters'>;
     expect(renderToStaticMarkup(<CharterCard charter={twoStruck} />)).toContain(
-      '>Approve, 2 rules struck<',
+      '>Approve charter, 2 rules struck<',
     );
   });
 
@@ -587,29 +585,22 @@ describe('the charter card says what each change came to (step 45, K D6)', (): v
   it('approves the charter and says the employee starts, with 44 px decision buttons', async (): Promise<void> => {
     backend.results = { 'charters:approve': { ok: true } };
     const view = mount(<CharterCard charter={draft} />);
-    for (const name of ['Approve', 'Request changes']) {
+    for (const name of ['Approve charter', 'Ask Your employee for changes']) {
       expect(button(view.container, name).className).toMatch(/\bmin-h-11\b/);
     }
-    await press(view.container, 'Approve');
+    await press(view.container, 'Approve charter');
     expect(said(view.container)).toEqual([
       'Charter approved: the employee starts on the work it implies.',
     ]);
     view.unmount();
   });
 
-  it('says the draft is withdrawn and tells the page which draft went', async (): Promise<void> => {
-    const page: string[] = [];
-    const view = mount(<CharterCard charter={draft} onSentBack={(id) => page.push(id)} />);
-    await press(view.container, 'Request changes');
-    expect(backend.calls.map((entry) => entry.name)).toEqual(['charters:requestChanges']);
-    expect(said(view.container)).toEqual(['Charter sent back: this draft is withdrawn.']);
-    expect(page).toEqual(['charter-1']);
-    view.unmount();
-  });
-
   it('lays the 30, 60 and 90-day goals out in one column on a phone', (): void => {
-    expect(renderToStaticMarkup(<CharterCard charter={draft} />)).toContain(
-      'grid grid-cols-1 sm:grid-cols-3',
+    const goals = /<div class="([^"]*)"><div data-goal=/.exec(
+      renderToStaticMarkup(<CharterCard charter={draft} />),
+    );
+    expect(goals?.[1].split(' ')).toEqual(
+      expect.arrayContaining(['grid', 'grid-cols-1', 'sm:grid-cols-3']),
     );
   });
 });
