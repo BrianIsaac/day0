@@ -19,6 +19,8 @@ export interface RecordSubject {
   readonly name: string;
   /** The title of the work item the event names, when it names one that still exists. */
   readonly item?: string;
+  /** The name of the connection the event names, when it names one that still exists. */
+  readonly connection?: string;
 }
 
 /** One sentence per event type, built from the payload and its subject. */
@@ -77,6 +79,11 @@ function forItem(subject: RecordSubject): string {
 /** ` on "item"` for the actions of a run, when the event names its item. */
 function onItem(subject: RecordSubject): string {
   return subject.item ? ` on \u201c${subject.item}\u201d` : '';
+}
+
+/** The connection an event is about, by name, or a plain stand-in when it names none. */
+function connectionOf(subject: RecordSubject): string {
+  return subject.connection ? `the ${subject.connection} connection` : 'a connection';
 }
 
 /** What a decision request asks about. */
@@ -256,76 +263,88 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
       slugs ? `: ${slugs}` : ''
     }`;
   },
-  'surface.proposed': () => 'A connection was proposed for your approval',
-  'surface.oriented': (p, { name }) =>
+  'surface.proposed': (_, subject) => `${connectionOf(subject)} was proposed for your approval`,
+  'surface.oriented': (p, subject) =>
     p.verdict === 'absent'
-      ? `${name} found no way to reach a system${
+      ? `${subject.name} found no way to reach ${subject.connection ?? 'a system'}${
           listed(p.searched) ? ` after searching ${listed(p.searched)}` : ''
         }`
-      : `${name} proposed a connection`,
+      : `${subject.name} proposed ${connectionOf(subject)}`,
   'surface.proposal-requested': (p) =>
     `You asked for a connection card${text(p.slug) ? ` for ${p.slug}` : ''}`,
-  'surface.orientation-failed': (p) => `Finding a way to reach a system failed${because(p.reason)}`,
-  'surface.app-provisioned': (p) =>
-    `An app was registered${text(p.appName) ? `: ${p.appName}` : ''}`,
-  'surface.install-failed': (p) => `Installing the app failed${because(p.reason)}`,
-  'surface.shared-credential-retired': (p) => `A shared credential was retired${because(p.reason)}`,
+  'surface.orientation-failed': (p, subject) =>
+    `Finding a way to reach ${subject.connection ?? 'a system'} failed${because(p.reason)}`,
+  'surface.app-provisioned': (p, subject) =>
+    `An app was registered for ${connectionOf(subject)}${text(p.appName) ? `: ${p.appName}` : ''}`,
+  'surface.install-failed': (p, subject) =>
+    `Installing the app for ${connectionOf(subject)} failed${because(p.reason)}`,
+  'surface.shared-credential-retired': (p, subject) =>
+    `A shared credential of ${connectionOf(subject)} was retired${because(p.reason)}`,
   'credential.superseded': (p) => {
     const label = text(p.label);
     const page = text(p.page);
     const cards = counted(p.surfaceIds?.length, 'card');
-    return `The credential${label ? ` “${label}”` : ''} is no longer in the documentation${
+    return `The credential${label ? ` \u201c${label}\u201d` : ''} is no longer in the documentation${
       page ? ` (${page})` : ''
     }${cards ? `; land one again on ${cards}` : ''}`;
   },
-  'surface.reoriented': (_, { name }) =>
-    `You asked ${name} to look again for a way to reach the system`,
-  'surface.app-installed': () => 'The administrator installed the app',
-  'surface.probe-failed': (p) =>
-    `A connection check failed${p.verdict === 'listed-dead' ? ', with no route left' : ''}${because(
-      p.reason,
-    )}`,
-  'surface.probe-retried': (p) =>
-    `A connection check was tried again${
+  'surface.reoriented': (_, { name, connection }) =>
+    `You asked ${name} to look again for a way to reach ${connection ?? 'the system'}`,
+  'surface.app-installed': (_, subject) =>
+    `The administrator installed the app for ${connectionOf(subject)}`,
+  'surface.probe-failed': (p, subject) =>
+    `The check of ${connectionOf(subject)} failed${
+      p.verdict === 'listed-dead' ? ', with no route left' : ''
+    }${because(p.reason)}`,
+  'surface.probe-retried': (p, subject) =>
+    `The check of ${connectionOf(subject)} was tried again${
       duration(p.retryAfterMs) ? ` after ${duration(p.retryAfterMs)}` : ''
     }${because(p.reason)}`,
-  'surface.probe-demoted': (p) =>
-    `A connection fell back${text(p.from) ? ` from ${p.from}` : ''}${
+  'surface.probe-demoted': (p, subject) =>
+    `${connectionOf(subject)} fell back${text(p.from) ? ` from ${p.from}` : ''}${
       text(p.to) ? ` to ${p.to}` : ''
     }${because(p.reason)}`,
-  'surface.connected': (p) => {
+  'surface.connected': (p, subject) => {
     const withheld = listed(p.withheldTools);
-    return `A connection connected${
+    return `${connectionOf(subject)} connected${
       withheld ? `; tools outside your approval were withheld: ${withheld}` : ''
     }`;
   },
-  'surface.expired': () => "A connection's access ended; renew it on its card",
-  'surface.access-set': (p) => {
+  'surface.expired': (_, subject) =>
+    `Access to ${connectionOf(subject)} ended; renew it on its card`,
+  'surface.access-set': (p, subject) => {
     const days = counted(p.days, 'day');
-    if (p.by === 'upgrade') return `Access set by the upgrade${days ? ` to ${days}` : ''}`;
-    if (p.by === 'approval') return `Access started at your approval${days ? `, for ${days}` : ''}`;
-    return `You ${p.renewed === true ? 'renewed access' : 'set the access length'}${
-      days ? ` to ${days}` : ''
+    const to = `to ${connectionOf(subject)}`;
+    if (p.by === 'upgrade') return `Access ${to} set by the upgrade${days ? `, ${days}` : ''}`;
+    if (p.by === 'approval') {
+      return `Access ${to} started at your approval${days ? `, for ${days}` : ''}`;
+    }
+    return `You ${p.renewed === true ? 'renewed access' : 'set how long access lasts'} ${to}${
+      days ? `, ${days}` : ''
     }`;
   },
-  'surface.expiring': () => "A connection's access ends within a week; renew it on its card",
-  'surface.approved': () => 'You approved a connection',
-  'surface.rejected': (p) => `You rejected a connection${because(p.reason)}`,
-  'surface.tools-approved': (p) => {
+  'surface.expiring': (_, subject) =>
+    `Access to ${connectionOf(subject)} ends within a week; renew it on its card`,
+  'surface.approved': (_, subject) => `You approved ${connectionOf(subject)}`,
+  'surface.rejected': (p, subject) => `You rejected ${connectionOf(subject)}${because(p.reason)}`,
+  'surface.tools-approved': (p, subject) => {
     const changes = [
       listed(p.added) ? `added ${listed(p.added)}` : '',
       listed(p.removed) ? `removed ${listed(p.removed)}` : '',
     ].filter(Boolean);
-    return `You changed the approved tools${changes.length > 0 ? `: ${changes.join('; ')}` : ''}`;
+    return `You changed the approved tools of ${connectionOf(subject)}${
+      changes.length > 0 ? `: ${changes.join('; ')}` : ''
+    }`;
   },
-  'surface.reopened': (p) => `A connection was reopened${because(p.reason)}`,
-  'surface.scope-reapproval-required': () =>
-    'A queue page changed, so its connection needs your approval again',
-  'surface.configuration-token-revoked': (p) =>
+  'surface.reopened': (p, subject) => `${connectionOf(subject)} was reopened${because(p.reason)}`,
+  'surface.scope-reapproval-required': (_, subject) =>
+    `A queue page changed, so ${connectionOf(subject)} needs your approval again`,
+  'surface.configuration-token-revoked': (p, subject) =>
     p.atProvider === true
-      ? 'The app configuration token was revoked at the provider'
-      : `The app configuration token was dropped${because(p.reason)}`,
-  'surface.app-unrecorded': () => 'A registered app was not recorded; remove it at the provider',
+      ? `The app configuration token of ${connectionOf(subject)} was revoked at the provider`
+      : `The app configuration token of ${connectionOf(subject)} was dropped${because(p.reason)}`,
+  'surface.app-unrecorded': (_, subject) =>
+    `An app registered for ${connectionOf(subject)} was not recorded; remove it at the provider`,
   'plan.obligations-judged': (_, subject) =>
     `What the plan${forItem(subject)} must read and write was judged`,
   'plan.obligations-failed-open': (p, subject) =>
@@ -338,7 +357,10 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `The audit removed ${counted(p.removedIndices?.length, 'action') ?? 'actions'} from the run${forItem(
       subject,
     )}${because(p.reason)}`,
-  'work.listed': (_, subject) => `The tracker listed ${itemOf(subject)} again`,
+  'work.listed': (p, subject) =>
+    `The tracker shows ${itemOf(subject)} changed${
+      text(p.refused) ? `; intake did not take it${because(p.refused)}` : ''
+    }`,
   'work.withdrawn': (p, subject) => `${itemOf(subject)} was withdrawn${because(p.reason)}`,
   'work.returned': (p, subject) =>
     `${text(p.title) ? `“${text(p.title)}”` : itemOf(subject)} was handed back`,
@@ -527,7 +549,8 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
 function asSentence(words: string): string {
   const trimmed = words.trim();
   const capital = trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
-  return /[.!?]$/.test(capital) ? capital : `${capital}.`;
+  // A quoted title that ends with its own stop closes the sentence: "Why is ARR down?".
+  return /[.!?][\u201d)]?$/.test(capital) ? capital : `${capital}.`;
 }
 
 /**

@@ -128,6 +128,7 @@ export function RecordList({
               {recordWords(entry.event, {
                 name,
                 ...(entry.itemTitle !== undefined ? { item: entry.itemTitle } : {}),
+                ...(entry.connection !== undefined ? { connection: entry.connection } : {}),
               })}{' '}
               <details className="group/payload inline">
                 <summary className="inline-flex min-h-11 cursor-pointer list-none items-center gap-1.5 align-middle text-[13px] text-[var(--color-muted)] hover:text-[var(--color-fg)] [&::-webkit-details-marker]:hidden">
