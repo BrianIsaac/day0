@@ -11,6 +11,7 @@ import { Columns } from '../../components/Columns';
 import { useEmployee } from './employee-context';
 import { employeeTabHref } from './employee-tabs';
 import { RecordLines, RECENT_EVENTS } from './EmployeeRail';
+import { NotedSoFar, WhatThisBecomes, type NotedAnswer } from './one-to-one/NotedSoFar';
 import { PanelLoading, ROOM_FRAME } from './PanelLoading';
 
 /*
@@ -179,8 +180,10 @@ function DayZeroRecord() {
 
 /**
  * The employee page on day zero (round two section 3.3): the Day-1 one-to-one, first as the
- * choice of room and then as the room itself, beside what the employee knows so far and the
- * first lines of its record. No tabs are drawn: every one of them would be empty until the
+ * choice of room and then as the room itself. Beside the choice, what the employee knows so far
+ * and the first lines of its record; beside a room, what the one-to-one becomes, and in the chat
+ * room what the manager has answered so far (the voice room keeps no answers to list, so it
+ * keeps what the employee knows). No tabs are drawn: every one of them would be empty until the
  * charter is drafted.
  *
  * A reload mid-session goes back into the room it was in; a charter sent back returns the page
@@ -199,6 +202,7 @@ export function DayZero({
   const { agent } = useEmployee();
   const voiceSession = useQuery(api.voice.latest, { agentId: agent._id });
   const [room, setRoom] = useState<Room>('pick');
+  const [noted, setNoted] = useState<readonly NotedAnswer[]>([]);
 
   // Sync the room with the server. Two cases:
   //   1. Reload mid-session: route back into the room they were in
@@ -229,10 +233,22 @@ export function DayZero({
     <Columns
       arriving={arriving}
       aside={
-        <>
-          <WhatItKnows />
-          <DayZeroRecord />
-        </>
+        room === 'pick' ? (
+          <>
+            <WhatItKnows />
+            <DayZeroRecord />
+          </>
+        ) : room === 'chat' ? (
+          <>
+            <NotedSoFar answers={noted} />
+            <WhatThisBecomes name={agent.name} />
+          </>
+        ) : (
+          <>
+            <WhatThisBecomes name={agent.name} />
+            <WhatItKnows />
+          </>
+        )
       }
     >
       <div
@@ -254,6 +270,7 @@ export function DayZero({
             agentId={agent._id}
             bossLabel={agent.bossEmail}
             onSwitchMode={() => setRoom('voice')}
+            onNoted={setNoted}
           />
         )}
       </div>
