@@ -8,15 +8,24 @@ import { api } from '@convex/_generated/api';
 import { useNow } from '../time';
 import { useChange, refusalText } from '../../../components/use-change';
 import { StatusRegion } from '../../../components/StatusRegion';
+import { Button } from '../../../components/Button';
 import { Card } from '../../../components/Card';
 import { skillApprovalRefusal } from '@/surfaces/policy';
+import { AdoptionRow } from './AdoptionRow';
+import { plainSkillName, ScopeChips } from './skill-parts';
 
-/** The skills the agent proposed and the manager has not decided, each with Approve and Reject. */
+/**
+ * The skills the employee proposed and the manager has not decided, each with the item that
+ * first needs it, what approving grants, where adoption would be offered, and Approve and Reject.
+ * Every decision is said in the panel's one live region.
+ */
 export function ProposedSkillsPanel({
   skills,
   surfaces,
   onAuthoringAttempt,
   fallback,
+  name,
+  itemTitles,
 }: {
   skills: Doc<'skills'>[];
   /** The agent's surfaces in real mode; a skill targeting one that is not
@@ -28,6 +37,10 @@ export function ProposedSkillsPanel({
   onAuthoringAttempt: (attempt: AuthoringAttempt | null) => void;
   /** Where focus goes when the decided row leaves the panel: the Skills card it moves to. */
   fallback?: React.RefObject<HTMLElement | null>;
+  /** The employee's name. */
+  name: string;
+  /** The employee's work item titles by id, for the item that first needs each skill. */
+  itemTitles: ReadonlyMap<string, string>;
 }) {
   const approve = useMutation(api.skills.approve);
   const reject = useMutation(api.skills.reject);
@@ -59,45 +72,55 @@ export function ProposedSkillsPanel({
   // outcome of that decision is still said.
   if (skills.length === 0) return <StatusRegion outcome={change.outcome} />;
   return (
-    <Card title="Proposed skills · awaiting your call" tone="warn">
-      <div className="space-y-3">
+    <Card title="Proposed · waiting on you" meta={`${skills.length}`} tone="warn">
+      <ul className="grid gap-5">
         {skills.map((s) => {
           const refusal = skillApprovalRefusal(
             s.targetSurface,
             surfaces.find((surface) => surface.slug === s.targetSurface),
             now,
           );
+          const item = s.proposedFor ? itemTitles.get(s.proposedFor) : undefined;
           return (
-            <div key={s._id} className="border border-[var(--color-border)] rounded-lg p-3 text-sm">
-              <div className="flex flex-wrap items-center justify-between gap-x-2 mb-1">
-                <span className="font-medium text-[var(--color-fg)] break-words">{s.name}</span>
-                <span className="text-[10px] text-[var(--color-muted)]">
-                  requires: {(s.requiredScopes ?? []).join(', ')}
-                </span>
-              </div>
-              <p className="text-[var(--color-muted)] text-xs mb-2">
-                {s.rationale ?? s.description}
+            <li
+              key={s._id}
+              className="grid gap-2 border-t border-[var(--color-border)] pt-5 first:border-t-0 first:pt-0"
+            >
+              <p className="text-sm text-[var(--color-fg)] break-words">
+                <span className="font-medium">{s.name}</span>
+                <span className="text-[var(--color-fg-2)]"> · {plainSkillName(s)}</span>
               </p>
+              <p className="text-[13px] leading-relaxed text-[var(--color-fg-2)]">
+                {item ? <>First needed by &ldquo;{item}&rdquo;. </> : null}
+                {s.rationale ?? null}
+              </p>
+              {s.requiredScopes && s.requiredScopes.length > 0 ? (
+                <p className="text-xs leading-relaxed text-[var(--color-muted)]">
+                  <ScopeChips scopes={s.requiredScopes} lead="Approving grants" />
+                </p>
+              ) : null}
+              <AdoptionRow name={name} />
               {refusal ? (
-                <p className="text-[10px] text-[var(--color-warn)] mb-2">
+                <p className="text-[13px] text-[var(--color-warn)]">
                   Cannot approve yet: {refusal}{' '}
-                  <a href="#surfaces" className="underline">
+                  <a href="#surfaces" className="underline underline-offset-4">
                     Surfaces tab
                   </a>
                 </p>
               ) : null}
               <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
+                <Button
+                  variant="approve"
+                  size="small"
                   disabled={Boolean(refusal) || change.busy}
                   title={refusal}
                   onClick={() => onApprove(s)}
-                  className="min-h-11 px-3 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] hover:bg-[var(--color-ok)]/30 text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-[var(--color-ok)]/20"
                 >
                   Approve · author and verify
-                </button>
-                <button
-                  type="button"
+                </Button>
+                <Button
+                  variant="quiet"
+                  size="small"
                   disabled={change.busy}
                   aria-label={`Reject ${s.name}`}
                   onClick={() =>
@@ -106,14 +129,19 @@ export function ProposedSkillsPanel({
                       refused: `${s.name} was not rejected.`,
                     })
                   }
-                  className="min-h-11 px-3 rounded-md border border-[var(--color-border)] hover:border-[var(--color-danger)] text-xs disabled:opacity-50"
                 >
                   Reject
-                </button>
+                </Button>
               </div>
-            </div>
+            </li>
           );
         })}
+      </ul>
+      <p className="mt-4 text-xs leading-relaxed text-[var(--color-muted)]">
+        Approving writes the skill and checks it in a sandbox, then evaluates again the item that
+        needs it. Whether that work is within {name}&apos;s charter is judged separately.
+      </p>
+      <div className="mt-2">
         <StatusRegion outcome={change.outcome} />
       </div>
     </Card>

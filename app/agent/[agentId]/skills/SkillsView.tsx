@@ -1,20 +1,21 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { holdsLiveAuthoringClaim } from '@/lib/skill-authoring';
 import { Columns } from '../../../components/Columns';
 import { useEmployee } from '../employee-context';
-import { EmployeeRail } from '../EmployeeRail';
 import { useNow } from '../time';
 import type { AuthoringAttempt } from './authoring';
+import { HowSkillsAreMade } from './HowSkillsAreMade';
 import { ProposedSkillsPanel } from './ProposedSkillsPanel';
 import { RegisteredSkillsPanel } from './RegisteredSkillsPanel';
 
 /**
- * The Skills tab: the skills the employee proposed, waiting on the manager, and the ones it has,
- * with the verdict of the last authoring run the manager started from this tab.
+ * The Skills tab (round two section 3.9): the skills the employee proposed, waiting on the
+ * manager, the ones it can call, and the ones not callable yet, with the verdict of the last
+ * authoring run the manager started from this tab, beside how a skill is made.
  */
 export function SkillsView() {
   const { agent, surfaceMode, surfaces, arriving } = useEmployee();
@@ -23,6 +24,11 @@ export function SkillsView() {
   const registeredSkills = useQuery(api.skills.registered, { agentId });
   const unverifiedSkills = useQuery(api.skills.awaitingVerification, { agentId });
   const failedSkills = useQuery(api.skills.verificationFailed, { agentId });
+  const workItems = useQuery(api.work.listForAgent, { agentId });
+  const itemTitles = useMemo(
+    (): Map<string, string> => new Map((workItems ?? []).map((item) => [item._id, item.title])),
+    [workItems],
+  );
   const [lastAttempt, setLastAttempt] = useState<AuthoringAttempt | null>(null);
   // Ticks, so an authoring claim stops being described as live the moment it
   // stops being honoured rather than on the next thing the boss happens to do.
@@ -59,12 +65,14 @@ export function SkillsView() {
       : null;
 
   return (
-    <Columns arriving={arriving} aside={<EmployeeRail />}>
+    <Columns arriving={arriving} aside={<HowSkillsAreMade name={agent.name} />}>
       <ProposedSkillsPanel
         skills={proposedSkills ?? []}
         surfaces={surfaces}
         onAuthoringAttempt={setLastAttempt}
         fallback={skillsCard}
+        name={agent.name}
+        itemTitles={itemTitles}
       />
       <RegisteredSkillsPanel
         skills={registeredSkills ?? []}

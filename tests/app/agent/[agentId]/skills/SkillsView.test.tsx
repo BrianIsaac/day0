@@ -19,7 +19,7 @@ afterEach((): void => {
 });
 
 describe('SkillsView', () => {
-  it('sets the proposed and the registered skills beside the rail', () => {
+  it('sets the proposed and the registered skills beside how a skill is made, as drawn', () => {
     backend.queries = {
       'skills:proposed': [],
       'skills:registered': [
@@ -28,6 +28,7 @@ describe('SkillsView', () => {
     };
     const html = renderToStaticMarkup(asEmployee(<SkillsView />));
     expect(html).toContain('read-docs');
-    expect(html).toContain('>So far</h2>');
+    expect(html).toContain('>How a skill is made</h2>');
+    expect(html).not.toContain('>So far</h2>');
   });
 });

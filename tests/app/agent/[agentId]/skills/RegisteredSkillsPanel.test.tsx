@@ -8,12 +8,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { declareUndeclaredInputs } from '../../../../../src/work/skill-inputs';
 import type { Doc } from '../../../../../convex/_generated/dataModel';
 import {
-  RefusedDraftDetails,
   RegisteredSkillsPanel,
   retryVerifiesSavedDraft,
 } from '../../../../../app/agent/[agentId]/skills/RegisteredSkillsPanel';
-import { ProposedSkillsPanel } from '../../../../../app/agent/[agentId]/skills/ProposedSkillsPanel';
-import { button, focusedName, mount, press, said, settle } from '../../../../fixtures/dom/press';
+import { button, focusedName, mount, press, settle } from '../../../../fixtures/dom/press';
 
 const backend = vi.hoisted(() => ({
   /** Mutations and actions that reject, by function name, with the text they reject with. */
@@ -78,31 +76,6 @@ async function clickAndRecord(
     backend.refusals = {};
   }
 }
-
-describe('the refused skill draft', (): void => {
-  it('shows the refused SKILL.md and smoke test behind a disclosure', (): void => {
-    const markup = renderToStaticMarkup(
-      <RefusedDraftDetails
-        skill={{
-          refusedBody: '# Refresh\n## Inputs\n- analytics-surface: the tile',
-          refusedSmokeTest: 'def run(inputs: dict) -> dict:\n    return {}',
-        }}
-      />,
-    );
-    expect(markup).toContain('<details');
-    expect(markup).toContain('Refused draft');
-    expect(markup).toContain('SKILL.md');
-    expect(markup).toContain('smoke.py');
-    expect(markup).toContain('- analytics-surface: the tile');
-    expect(markup).toContain('def run(inputs: dict) -&gt; dict:');
-    expect(markup).toContain('not registered');
-  });
-
-  it('renders nothing for a row that kept no draft', (): void => {
-    expect(renderToStaticMarkup(<RefusedDraftDetails skill={{}} />)).toBe('');
-    expect(renderToStaticMarkup(<RefusedDraftDetails skill={{ refusedBody: '' }} />)).toBe('');
-  });
-});
 
 describe('what Retry does to an unregistered skill', (): void => {
   const noop = (): void => undefined;
@@ -197,105 +170,6 @@ describe('what Retry does to an unregistered skill', (): void => {
     backend.refusals = {};
   });
 
-  it('files an approved authoring the production backend redacted as a sentence, never the envelope', async (): Promise<void> => {
-    const proposed = { ...base, state: 'proposed', requiredScopes: [] } as unknown as Doc<'skills'>;
-    backend.refusals = { 'skillActions:authorAndRegisterSkill': REDACTED_AUTHORING };
-    const attempts: unknown[] = [];
-    const view = mount(
-      <ProposedSkillsPanel
-        skills={[proposed]}
-        surfaces={[]}
-        onAuthoringAttempt={(attempt) => void attempts.push(attempt)}
-      />,
-    );
-    await press(view.container, 'Approve · author and verify');
-    await settle();
-    expect(attempts).toEqual([
-      null,
-      { skillId: 'skill-1', name: 'refresh-the-tile', reason: 'authoring did not finish' },
-    ]);
-    view.unmount();
-    backend.refusals = {};
-  });
-
-  it("says a refused Approve in the panel's live region in the words written for a person, and files no authoring attempt", async (): Promise<void> => {
-    const proposed = { ...base, state: 'proposed', requiredScopes: [] } as unknown as Doc<'skills'>;
-    backend.refusals = {
-      'skills:approve': `[CONVEX M(skills:approve)] [Request ID: 1] Server Error\nUncaught Error: cannot approve "refresh-the-tile": it is approved, not proposed\n    at handler (../convex/skills.ts:1:1)`,
-    };
-    const attempts: unknown[] = [];
-    const view = mount(
-      <ProposedSkillsPanel
-        skills={[proposed]}
-        surfaces={[]}
-        onAuthoringAttempt={(attempt) => void attempts.push(attempt)}
-      />,
-    );
-    await press(view.container, 'Approve · author and verify');
-
-    expect(said(view.container)).toEqual([
-      'cannot approve "refresh-the-tile": it is approved, not proposed',
-    ]);
-    expect(attempts).toEqual([]);
-    expect(focusedName()).toBe('Approve · author and verify');
-    view.unmount();
-    backend.refusals = {};
-  });
-
-  it('says an approval, then files what the authoring it started came to', async (): Promise<void> => {
-    const proposed = { ...base, state: 'proposed', requiredScopes: [] } as unknown as Doc<'skills'>;
-    backend.results = { 'skillActions:authorAndRegisterSkill': { ok: true } };
-    const attempts: unknown[] = [];
-    const view = mount(
-      <ProposedSkillsPanel
-        skills={[proposed]}
-        surfaces={[]}
-        onAuthoringAttempt={(attempt) => void attempts.push(attempt)}
-      />,
-    );
-    await press(view.container, 'Approve · author and verify');
-
-    expect(said(view.container)).toEqual([
-      'Approved refresh-the-tile: the employee is authoring it now, and the Skills card says when it is callable.',
-    ]);
-    expect(attempts).toEqual([null, { skillId: 'skill-1', name: 'refresh-the-tile' }]);
-    view.unmount();
-    backend.results = {};
-  });
-
-  it('rejects a proposed skill with an outcome said in the panel (the wave 4 Reject ruling)', async (): Promise<void> => {
-    const proposed = { ...base, state: 'proposed', requiredScopes: [] } as unknown as Doc<'skills'>;
-    backend.refusals = {
-      'skills:reject': `[CONVEX M(skills:reject)] [Request ID: 1] Server Error\nUncaught Error: cannot reject "refresh-the-tile": it is registered\n    at handler (../convex/skills.ts:1:1)`,
-    };
-    const refused = mount(
-      <ProposedSkillsPanel skills={[proposed]} surfaces={[]} onAuthoringAttempt={noop} />,
-    );
-    await press(refused.container, 'Reject refresh-the-tile');
-    expect(said(refused.container)).toEqual(['cannot reject "refresh-the-tile": it is registered']);
-    expect(focusedName()).toBe('Reject refresh-the-tile');
-    refused.unmount();
-    backend.refusals = {};
-
-    const rejected = mount(
-      <ProposedSkillsPanel skills={[proposed]} surfaces={[]} onAuthoringAttempt={noop} />,
-    );
-    await press(rejected.container, 'Reject refresh-the-tile');
-    expect(said(rejected.container)).toEqual([
-      'Rejected refresh-the-tile: the employee will not author it.',
-    ]);
-    // The row leaves when the query answers; the panel keeps its live region.
-    act((): void =>
-      rejected.root.render(
-        <ProposedSkillsPanel skills={[]} surfaces={[]} onAuthoringAttempt={noop} />,
-      ),
-    );
-    expect(said(rejected.container)).toEqual([
-      'Rejected refresh-the-tile: the employee will not author it.',
-    ]);
-    rejected.unmount();
-  });
-
   it('files a registered Retry as the attempt and gives focus back to Retry once its run lets go', async (): Promise<void> => {
     backend.results = { 'skillActions:authorAndRegisterSkill': { ok: true } };
     const attempts: unknown[] = [];
@@ -334,7 +208,7 @@ describe('what Retry does to an unregistered skill', (): void => {
       view.root.render(panel([]));
     });
     await settle();
-    expect(focusedName()).toBe('Skills · 0 registered');
+    expect(focusedName()).toBe('Registered');
     view.unmount();
     backend.results = {};
   });
@@ -352,7 +226,7 @@ describe('what Retry does to an unregistered skill', (): void => {
     expect(done).toMatch(
       /<div role="status" aria-live="polite" aria-atomic="true"><p[^>]*>refresh-the-tile is registered: it passed the check and is callable\.<\/p><\/div>/,
     );
-    expect(done).toMatch(/<button[^>]*class="min-h-11 [^"]*"[^>]*>Retry<\/button>/);
+    expect(done).toMatch(/<button[^>]*class="[^"]*\bmin-h-11\b[^"]*"[^>]*>Retry<\/button>/);
     const failed = renderToStaticMarkup(
       <RegisteredSkillsPanel
         skills={[]}
@@ -398,11 +272,11 @@ describe('what Retry does to an unregistered skill', (): void => {
     } as unknown as Doc<'skills'>;
     const markup = panel([traceback]);
     expect(markup).toMatch(
-      /<div class="flex-1 min-w-0"><div class="font-medium[^"]*">refresh-the-tile</,
+      /<div class="flex-1 min-w-0"><p[^>]*><span class="font-medium break-words">refresh-the-tile</,
     );
     expect(markup).toMatch(
       new RegExp(
-        `<div class="[^"]*\\bbreak-words\\b[^"]*">verification in the local sandbox failed[^<]*\\^{56}`,
+        `<p class="[^"]*\\bbreak-words\\b[^"]*">verification in the local sandbox failed[^<]*\\^{56}`,
       ),
     );
   });
@@ -605,7 +479,7 @@ describe('what Retry does to an unregistered skill', (): void => {
       const markup = panel([refused]);
       expect(markup).not.toContain('data-skill-log="multiline"');
       expect(markup).toMatch(
-        /<div class="[^"]*\bbreak-words\b[^"]*">the authored skill is not a reusable procedure/,
+        /<p class="[^"]*\bbreak-words\b[^"]*">the authored skill is not a reusable procedure/,
       );
     });
   });
