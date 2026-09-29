@@ -1,26 +1,8 @@
 'use client';
 
-import { useEffect, useId, useRef, type ReactNode, type RefObject } from 'react';
+import { useId, useRef, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
-
-/** What can take focus inside a dialog, in the order Tab reaches it. */
-const FOCUSABLE =
-  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
-
-/**
- * The controls a dialog's Tab cycles through: the focusable elements inside it that are shown,
- * none inside a hidden or inert part of it.
- *
- * @param panel - The dialog.
- */
-export function focusableIn(panel: HTMLElement): HTMLElement[] {
-  return [...panel.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
-    (element) =>
-      element.closest('[hidden], [inert], [aria-hidden="true"]') === null &&
-      // `checkVisibility` also sees `display: none` from a stylesheet; jsdom has none to ask.
-      element.checkVisibility?.() !== false,
-  );
-}
+import { keepTabInside, useModal } from './use-modal';
 
 /**
  * A modal dialog: centred over a dimmed page, focus moved into it when it opens and kept there
@@ -60,56 +42,21 @@ export function Dialog({
   const descriptionId = useId();
   const panel = useRef<HTMLDivElement>(null);
 
-  const backdrop = useRef<HTMLDivElement>(null);
+  // Modal from mount to unmount: the page inert and still, focus in, and back where it came from.
+  useModal({ panel, active: true, initialFocus });
 
-  // Focus moves in once, when the dialog mounts, and back to where it came from when it goes. The
-  // page behind is inert and still for as long as the dialog is open.
-  useEffect(() => {
-    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const behind = [...document.body.children].filter(
-      (element) => element !== backdrop.current && !element.hasAttribute('inert'),
-    );
-    for (const element of behind) element.setAttribute('inert', '');
-    const overflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    const first = initialFocus?.current ?? (panel.current ? focusableIn(panel.current)[0] : null);
-    (first ?? panel.current)?.focus();
-    return () => {
-      for (const element of behind) element.removeAttribute('inert');
-      document.body.style.overflow = overflow;
-      if (opener?.isConnected) opener.focus();
-    };
-    // The focus moves belong to opening and closing only, not to a later render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs on mount and unmount only
-  }, []);
-
-  function onKeyDown(event: React.KeyboardEvent<HTMLDivElement>): void {
+  function onKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
     if (event.key === 'Escape') {
       event.preventDefault();
       event.stopPropagation();
       if (!busy) onClose();
       return;
     }
-    if (event.key !== 'Tab' || !panel.current) return;
-    const controls = focusableIn(panel.current);
-    const first = controls[0];
-    const last = controls[controls.length - 1];
-    if (!first || !last) {
-      event.preventDefault();
-      return;
-    }
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault();
-      first.focus();
-    }
+    if (panel.current) keepTabInside(event, panel.current);
   }
 
   const dialog = (
     <div
-      ref={backdrop}
       data-dialog-backdrop=""
       role="presentation"
       onMouseDown={(event) => {
