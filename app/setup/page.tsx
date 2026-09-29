@@ -1,7 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { PageMotion } from '../PageMotion';
-import { HOSTED_DEMO_SNAPSHOT, hostedBuildLine } from '@/demo/hosted-demo-snapshot';
 import { deploymentReleaseLine, readDeploymentRelease } from '@/setup/deployment-release';
 
 import {
@@ -142,10 +141,11 @@ export default async function SetupPage() {
             here too. The seeded mock office the hosted demo works in is mock mode, which the
             evaluation harness uses and which no local way runs.
           </p>
-          <p className="text-xs text-[var(--color-muted)] leading-relaxed mb-4">
-            {hostedBuildLine(HOSTED_DEMO_SNAPSHOT.recording)}
-            {stamp !== null ? ` ${deploymentReleaseLine(stamp)}` : ''}
-          </p>
+          {stamp !== null ? (
+            <p className="text-xs text-[var(--color-muted)] leading-relaxed mb-4">
+              {deploymentReleaseLine(stamp)}
+            </p>
+          ) : null}
           <div
             role="note"
             className="rounded-xl border border-[var(--color-accent)]/40 bg-[var(--color-accent)]/10 p-4"

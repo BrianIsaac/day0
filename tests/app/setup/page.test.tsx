@@ -18,7 +18,6 @@ import {
   TRAPS,
   WAY_NAMES,
 } from '../../../src/setup/quickstart';
-import { HOSTED_DEMO_SNAPSHOT, hostedBuildLine } from '../../../src/demo/hosted-demo-snapshot';
 
 /**
  * `/setup` is the page a signed-out visitor lands on from the landing page's
@@ -27,24 +26,54 @@ import { HOSTED_DEMO_SNAPSHOT, hostedBuildLine } from '../../../src/demo/hosted-
  * rather than what would sound good, and it must collect nothing: no key, no
  * address, no form of any kind reaches this route.
  */
-// No deployment is named, so the page renders from the tracked record alone
-// and nothing here reaches a network (the stamped line has its own test).
+// No deployment is named, so nothing here reaches a network; the stamped render
+// below answers the page's one read with a stubbed transport.
 vi.stubEnv('CONVEX_URL', '');
 vi.stubEnv('NEXT_PUBLIC_CONVEX_URL', '');
 const html = renderToStaticMarkup(await SetupPage());
 vi.unstubAllEnvs();
 
-/** The rendered text, with markup and entities out of the way. */
-const text = html
-  .replace(/<[^>]*>/g, ' ')
-  .replace(/&#x27;/g, "'")
-  .replace(/&quot;/g, '"')
-  .replace(/&amp;/g, '&')
-  .replace(/&lt;/g, '<')
-  .replace(/&gt;/g, '>')
-  .replace(/&rsquo;/g, '’')
-  .replace(/&ndash;/g, '–')
-  .replace(/\s+/g, ' ');
+/** The rendered text of a page, with markup and entities out of the way. */
+function textOf(markup: string): string {
+  return markup
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&#x27;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&rsquo;/g, '’')
+    .replace(/&ndash;/g, '–')
+    .replace(/\s+/g, ' ');
+}
+
+const text = textOf(html);
+
+/**
+ * The page as it renders when the deployment answers with its v0.9.0 stamp,
+ * recorded 29 September 2026 at 19:53:55 UTC (30 September in Singapore).
+ */
+async function renderStamped(): Promise<string> {
+  vi.stubEnv('CONVEX_URL', 'http://127.0.0.1:3210');
+  vi.stubGlobal(
+    'fetch',
+    async (): Promise<Response> =>
+      new Response(
+        JSON.stringify({
+          status: 'success',
+          value: { release: '0.9.0', since: Date.UTC(2026, 8, 29, 19, 53, 55) },
+          logLines: [],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+  );
+  try {
+    return textOf(renderToStaticMarkup(await SetupPage()));
+  } finally {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  }
+}
 
 describe('the /setup guide', (): void => {
   it('sets no type below the 12 px floor (m41)', (): void => {
@@ -108,12 +137,19 @@ describe('the /setup guide', (): void => {
     }
   });
 
-  it('dates the hosted build its parity claim refers to and says the product has moved on, naming no run it does not show (Q3, m12)', (): void => {
+  it('states nothing about the deployment it cannot read, and no build from a retired record (Q3, m12, 30 Sep)', (): void => {
     expect(text).toContain('The product the hosted demo shows, running locally in real mode');
-    expect(text).toContain(hostedBuildLine(HOSTED_DEMO_SNAPSHOT.recording));
     expect(text).not.toContain('the run it shows');
-    // With no deployment to ask, the record's dated build stands alone.
     expect(text).not.toContain('The deployment behind this page');
+    expect(text).not.toMatch(/serving build|last export|12 September 2026|3ed8779/);
+  });
+
+  it('dates the hosted demo by the release its deployment is stamped at, once, on the Singapore day (C1)', async (): Promise<void> => {
+    const stamped = await renderStamped();
+    const line =
+      'The deployment behind this page has been at v0.9.0 since 30 September 2026, Singapore time.';
+    expect(stamped.split(line)).toHaveLength(2);
+    expect(stamped).not.toMatch(/serving build|last export|12 September 2026|3ed8779/);
   });
 
   it('says once, under the two local ways, that both are real mode, with the three verbs', (): void => {
