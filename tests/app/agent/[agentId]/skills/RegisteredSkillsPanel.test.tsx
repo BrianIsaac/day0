@@ -483,6 +483,25 @@ describe('what Retry does to an unregistered skill', (): void => {
       );
     });
   });
+  it('offers no Retry while a run is writing the skill, and says why', (): void => {
+    const writing = {
+      ...refused,
+      state: 'authoring',
+      authoringRunId: 'run-1',
+      authoringClaimedAt: Date.now(),
+    } as unknown as Doc<'skills'>;
+    const markup = panel([writing]);
+    expect(markup).toMatch(/<button[^>]*disabled=""[^>]*aria-label="Retry refresh-the-tile"/);
+    expect(markup).toContain('A run is writing this skill now; Retry opens once it finishes');
+    expect(markup).toContain('>Being written<');
+  });
+
+  it('keeps the operator’s sandbox instructions behind a disclosure', (): void => {
+    const markup = panel([refused]);
+    expect(markup).toMatch(
+      /What Retry does, and starting a sandbox<\/summary>[\s\S]*pnpm sandbox:up/,
+    );
+  });
 });
 
 describe('loading is not the same as empty (P3-13, moved from the work queue suite)', (): void => {

@@ -68,82 +68,86 @@ export function ProposedSkillsPanel({
     });
   }
 
-  // The panel keeps its live region when the last row leaves it, so the
-  // outcome of that decision is still said.
-  if (skills.length === 0) return <StatusRegion outcome={change.outcome} />;
+  // One live region, outside the card and in the same place whether or not
+  // the card is drawn: the last row leaving takes the card, and a region put
+  // in anew already holding its words is not announced.
   return (
-    <Card title="Proposed · waiting on you" meta={`${skills.length}`} tone="warn">
-      <ul className="grid gap-5">
-        {skills.map((s) => {
-          const refusal = skillApprovalRefusal(
-            s.targetSurface,
-            surfaces.find((surface) => surface.slug === s.targetSurface),
-            now,
-          );
-          const item = s.proposedFor ? itemTitles.get(s.proposedFor) : undefined;
-          return (
-            <li
-              key={s._id}
-              className="grid gap-2 border-t border-[var(--color-border)] pt-5 first:border-t-0 first:pt-0"
-            >
-              <p className="text-sm text-[var(--color-fg)] break-words">
-                <span className="font-medium">{s.name}</span>
-                <span className="text-[var(--color-fg-2)]"> · {plainSkillName(s)}</span>
-              </p>
-              <p className="text-[13px] leading-relaxed text-[var(--color-fg-2)]">
-                {item ? <>First needed by &ldquo;{item}&rdquo;. </> : null}
-                {s.rationale ?? null}
-              </p>
-              {s.requiredScopes && s.requiredScopes.length > 0 ? (
-                <p className="text-xs leading-relaxed text-[var(--color-muted)]">
-                  <ScopeChips scopes={s.requiredScopes} lead="Approving grants" />
-                </p>
-              ) : null}
-              <AdoptionRow name={name} />
-              {refusal ? (
-                <p className="text-[13px] text-[var(--color-warn)]">
-                  Cannot approve yet: {refusal}{' '}
-                  <a href="#surfaces" className="underline underline-offset-4">
-                    Surfaces tab
-                  </a>
-                </p>
-              ) : null}
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  variant="approve"
-                  size="small"
-                  disabled={Boolean(refusal) || change.busy}
-                  title={refusal}
-                  onClick={() => onApprove(s)}
+    <>
+      {skills.length > 0 ? (
+        <Card title="Proposed · waiting on you" meta={`${skills.length}`} tone="warn">
+          <ul className="grid gap-5">
+            {skills.map((s) => {
+              const refusal = skillApprovalRefusal(
+                s.targetSurface,
+                surfaces.find((surface) => surface.slug === s.targetSurface),
+                now,
+              );
+              const item = s.proposedFor ? itemTitles.get(s.proposedFor) : undefined;
+              return (
+                <li
+                  key={s._id}
+                  className="grid gap-2 border-t border-[var(--color-border)] pt-5 first:border-t-0 first:pt-0"
                 >
-                  Approve · author and verify
-                </Button>
-                <Button
-                  variant="quiet"
-                  size="small"
-                  disabled={change.busy}
-                  aria-label={`Reject ${s.name}`}
-                  onClick={() =>
-                    change.run(() => reject({ skillId: s._id }), {
-                      done: `Rejected ${s.name}: the employee will not author it.`,
-                      refused: `${s.name} was not rejected.`,
-                    })
-                  }
-                >
-                  Reject
-                </Button>
-              </div>
-            </li>
-          );
-        })}
-      </ul>
-      <p className="mt-4 text-xs leading-relaxed text-[var(--color-muted)]">
-        Approving writes the skill and checks it in a sandbox, then evaluates again the item that
-        needs it. Whether that work is within {name}&apos;s charter is judged separately.
-      </p>
-      <div className="mt-2">
-        <StatusRegion outcome={change.outcome} />
-      </div>
-    </Card>
+                  <p className="text-sm text-[var(--color-fg)] break-words">
+                    <span className="font-medium">{s.name}</span>
+                    <span className="text-[var(--color-fg-2)]"> · {plainSkillName(s)}</span>
+                  </p>
+                  <p className="text-[13px] leading-relaxed text-[var(--color-fg-2)]">
+                    {item ? <>First needed by &ldquo;{item}&rdquo;. </> : null}
+                    {s.rationale ?? null}
+                  </p>
+                  {s.requiredScopes && s.requiredScopes.length > 0 ? (
+                    <p className="text-xs leading-relaxed text-[var(--color-muted)]">
+                      <ScopeChips scopes={s.requiredScopes} lead="Approving grants" />
+                    </p>
+                  ) : null}
+                  {refusal ? (
+                    <p className="text-[13px] text-[var(--color-warn)]">
+                      Cannot approve yet: {refusal}{' '}
+                      <a href="#surfaces" className="underline underline-offset-4">
+                        Surfaces tab
+                      </a>
+                    </p>
+                  ) : null}
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      variant="approve"
+                      size="small"
+                      disabled={Boolean(refusal) || change.busy}
+                      title={refusal}
+                      onClick={() => onApprove(s)}
+                    >
+                      Approve · author and verify
+                    </Button>
+                    <Button
+                      variant="quiet"
+                      size="small"
+                      disabled={change.busy}
+                      aria-label={`Reject ${s.name}`}
+                      onClick={() =>
+                        change.run(() => reject({ skillId: s._id }), {
+                          done: `Rejected ${s.name}: the employee will not author it.`,
+                          refused: `${s.name} was not rejected.`,
+                        })
+                      }
+                    >
+                      Reject
+                    </Button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+          <div className="mt-4">
+            <AdoptionRow name={name} />
+          </div>
+          <p className="mt-3 text-xs leading-relaxed text-[var(--color-muted)]">
+            Approving writes the skill and checks it in a sandbox, then evaluates again the item
+            that needs it. Whether that work is within {name}&apos;s charter is judged separately.
+          </p>
+        </Card>
+      ) : null}
+      <StatusRegion outcome={change.outcome} />
+    </>
   );
 }

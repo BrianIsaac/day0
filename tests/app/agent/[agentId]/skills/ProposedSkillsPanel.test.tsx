@@ -202,11 +202,48 @@ describe('ProposedSkillsPanel', (): void => {
       'slack:read',
       'slack:write',
     ]);
-    expect(text).toContain('approving writes this one for Mira alone');
+    expect(text).toContain('Each skill here is written and checked for Mira alone');
     expect(text).toContain("Whether that work is within Mira's charter is judged separately.");
     for (const control of view.container.querySelectorAll('button')) {
       expect(control.className).toMatch(/\bmin-h-11\b/);
     }
+    view.unmount();
+  });
+
+  it('says the adoption note once for the card, however many proposals wait', (): void => {
+    const proposed = { ...base, state: 'proposed', requiredScopes: [] } as unknown as Doc<'skills'>;
+    const view = mount(
+      <ProposedSkillsPanel
+        skills={[proposed, { ...proposed, _id: 'skill-2', name: 'another' } as Doc<'skills'>]}
+        surfaces={[]}
+        onAuthoringAttempt={noop}
+        name="Mira"
+        itemTitles={new Map()}
+      />,
+    );
+    expect(view.container.textContent?.match(/written and checked for Mira alone/g)).toHaveLength(
+      1,
+    );
+    view.unmount();
+  });
+
+  it('keeps one live region in place when the last proposal leaves, so its outcome is announced', async (): Promise<void> => {
+    const proposed = { ...base, state: 'proposed', requiredScopes: [] } as unknown as Doc<'skills'>;
+    const panel = (skills: Doc<'skills'>[]) => (
+      <ProposedSkillsPanel
+        skills={skills}
+        surfaces={[]}
+        onAuthoringAttempt={noop}
+        name="Mira"
+        itemTitles={new Map()}
+      />
+    );
+    const view = mount(panel([proposed]));
+    const region = view.container.querySelector('[role="status"]');
+    await press(view.container, 'Reject refresh-the-tile');
+    act((): void => view.root.render(panel([])));
+    expect(view.container.querySelector('[role="status"]')).toBe(region);
+    expect(region?.textContent).toBe('Rejected refresh-the-tile: the employee will not author it.');
     view.unmount();
   });
 });

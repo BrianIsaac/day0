@@ -10,6 +10,7 @@ import { refusalText, returnFocus } from '../../../components/use-change';
 import { Button } from '../../../components/Button';
 import { Card } from '../../../components/Card';
 import { Chip } from '../../../components/Chip';
+import { Disclosure } from '../../../components/Disclosure';
 import type { Tone } from '../../../components/tone';
 import { holdsLiveAuthoringClaim } from '@/lib/skill-authoring';
 import { RefusedDraft } from './RefusedDraft';
@@ -273,7 +274,7 @@ export function RegisteredSkillsPanel({
                       id={`${describedBy}-${s._id}`}
                       className="mt-1 text-xs text-[var(--color-muted)]"
                     >
-                      {retryVerifiesSavedDraft(s) ? RETRY_CHECKS_HINT : RETRY_AUTHORS_HINT}
+                      {retryHint(s, now)}
                     </p>
                     <RefusedDraft skill={s} />
                   </div>
@@ -284,8 +285,8 @@ export function RegisteredSkillsPanel({
                       // reauthor files every outcome as the attempt and never rejects.
                       void reauthor(s._id, s.name, false, event.currentTarget);
                     }}
-                    disabled={retrying === s._id}
-                    title={retryVerifiesSavedDraft(s) ? RETRY_CHECKS_HINT : RETRY_AUTHORS_HINT}
+                    disabled={retrying === s._id || holdsLiveAuthoringClaim(s, now)}
+                    title={retryHint(s, now)}
                     aria-label={`Retry ${s.name}`}
                     aria-describedby={`${describedBy}-${s._id}`}
                     className="shrink-0"
@@ -303,16 +304,21 @@ export function RegisteredSkillsPanel({
               is the difference between waiting on a sandbox and waiting on the
               model, so the text says which is which rather than claiming one
               for all of them. */}
-          <p className="mt-4 text-xs leading-relaxed text-[var(--color-muted)]">
-            Retry picks a skill up where it stopped. One parked because the check never ran - the
-            sandbox was busy, absent, or threw - keeps its body and smoke test and is checked again
-            as it stands, with no second authoring call; one the gate or the check itself turned
-            down is authored again, with the reason fed back. Either way it has to pass the check
-            before it is callable. If the sandbox was skipped, start one first: run pnpm sandbox:up
-            for the bundled local sandbox, or set DAYTONA_API_KEY on the deployment to use Daytona
-            instead. Only one authoring run holds a skill at a time, so a retry while one is still
-            running is refused until that run finishes or its claim lapses.
-          </p>
+          <div className="mt-3">
+            <Disclosure summary="What Retry does, and starting a sandbox">
+              <p className="text-xs leading-relaxed text-[var(--color-muted)]">
+                Retry picks a skill up where it stopped. One parked because the check never ran -
+                the sandbox was busy, absent, or threw - keeps its body and smoke test and is
+                checked again as it stands, with no second authoring call; one the gate or the check
+                itself turned down is authored again, with the reason fed back. Either way it has to
+                pass the check before it is callable. If the sandbox was skipped, start one first:
+                run pnpm sandbox:up for the bundled local sandbox, or set DAYTONA_API_KEY on the
+                deployment to use Daytona instead. Only one authoring run holds a skill at a time,
+                so a retry while one is still running is refused until that run finishes or its
+                claim lapses.
+              </p>
+            </Disclosure>
+          </div>
         </Card>
       ) : null}
     </>
@@ -329,3 +335,19 @@ const RETRY_CHECKS_HINT =
 
 /** What Retry does for every other row. */
 const RETRY_AUTHORS_HINT = 'Author this skill again, with the reason it stopped, then verify it';
+
+/** Why Retry waits on a row a run is writing now. */
+const RETRY_WAITS_HINT =
+  'A run is writing this skill now; Retry opens once it finishes or its hold lapses';
+
+/**
+ * What Retry does on an unregistered row: nothing while a run holds it, the check alone on a kept
+ * draft, a new authoring call otherwise.
+ *
+ * @param skill - The unregistered row.
+ * @param now - The page's clock, for whether a run's hold is live.
+ */
+function retryHint(skill: Doc<'skills'>, now: number): string {
+  if (holdsLiveAuthoringClaim(skill, now)) return RETRY_WAITS_HINT;
+  return retryVerifiesSavedDraft(skill) ? RETRY_CHECKS_HINT : RETRY_AUTHORS_HINT;
+}
