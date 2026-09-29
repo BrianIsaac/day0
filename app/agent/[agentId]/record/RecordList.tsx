@@ -195,7 +195,7 @@ export function RecordList({ agentId, name, view }: RecordListProps) {
                 ...(entry.connection !== undefined ? { connection: entry.connection } : {}),
               })}{' '}
               <details className="group/payload inline">
-                <summary className="-my-3 inline-flex min-h-11 cursor-pointer list-none items-center gap-1.5 align-middle text-[13px] text-[var(--color-muted)] hover:text-[var(--color-fg)] [&::-webkit-details-marker]:hidden">
+                <summary className="relative -my-3 inline-flex min-h-11 cursor-pointer list-none items-center gap-1.5 align-middle text-[13px] text-[var(--color-muted)] hover:text-[var(--color-fg)] [&::-webkit-details-marker]:hidden">
                   <span
                     aria-hidden="true"
                     className="inline-block size-[6px] -rotate-45 border-r-[1.5px] border-b-[1.5px] border-current transition-transform duration-[180ms] ease-out group-open/payload:rotate-45 motion-reduce:transition-none"
