@@ -83,13 +83,17 @@ describe('runProgress', (): void => {
       { name: 'Read and draft', status: 'now' },
       { name: 'Automatic writes', status: 'next' },
     ]);
-    expect(reading?.detail).toContain('every write it produces is held for you');
+    expect(reading?.detail).toBe(
+      'Nothing reaches a surface while it reads and drafts; then reads and messages to you apply on their own, and every other write waits for your approval.',
+    );
     const applying = runProgress(
       row({ state: 'executing', applyPhase: 'auto', approvedIndexes: [0, 2] }),
       true,
     );
     expect(applying?.title).toBe('Applying 2 actions autonomously');
-    expect(applying?.detail).toContain('the writes the gate allows apply');
+    expect(applying?.detail).toContain(
+      'then the writes the gate allows apply on their own, and any it holds wait for you.',
+    );
     const closing = runProgress(
       row({ state: 'executing', output: { initial: { applied: [] } } }),
       false,

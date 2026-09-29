@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useRef, useState } from 'react';
 import type { Id, Doc } from '@convex/_generated/dataModel';
+import { writesWhenRunFinishes } from '@/work/item-display';
 import { Button } from '../../../components/Button';
 import { Field, INPUT_CLASS } from '../../../components/Field';
 import { Help, ItemFoot, ItemSection } from './ItemParts';
@@ -72,9 +73,7 @@ export function typedEstimateMinutes(typed: string): number | undefined | null {
  * @param autonomous - Whether autonomous actions are on.
  */
 export function planApprovalWhy(autonomous: boolean): string {
-  return autonomous
-    ? 'Approving runs the plan. With autonomous actions on, the writes the gate allows apply on their own; any it holds wait for you.'
-    : 'Approving runs the plan. Every write it produces is still held for you.';
+  return `Approving runs the plan. When it finishes, ${writesWhenRunFinishes(autonomous)}.`;
 }
 
 /**

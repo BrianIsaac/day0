@@ -2,7 +2,7 @@
 
 import { useState, type ReactNode } from 'react';
 import type { Doc } from '@convex/_generated/dataModel';
-import { skipSentence } from '@/work/item-display';
+import { skipSentence, writesWhenRunFinishes } from '@/work/item-display';
 import type { ReconciliationEntry } from '@/work/reconciliation';
 import { Button } from '../../../components/Button';
 import { Field, INPUT_CLASS } from '../../../components/Field';
@@ -50,12 +50,10 @@ export interface RetryReconciliation {
  * @param autonomous - Whether autonomous actions are on.
  */
 export function retryWhy(mode: RetryMode, employeeName: string, autonomous: boolean): string {
-  const heldAgain = autonomous
-    ? 'the writes the gate allows then apply on their own, and any it holds wait for you'
-    : 'its writes are held for you again';
+  const heldAgain = `when it finishes, ${writesWhenRunFinishes(autonomous)}`;
   switch (mode.kind) {
     case 'send-back':
-      return `Sending it back with a note returns this finished work; the note reaches ${employeeName} as your direction, and ${autonomous ? 'the writes the gate allows apply on their own' : 'its writes are held again'}.`;
+      return `Sending it back with a note returns this finished work; the note reaches ${employeeName} as your direction, and ${heldAgain}.`;
     case 'answer':
       return `Your answer goes to ${employeeName} as the note on this retry; the writes that waited on it are authored from it, and ${heldAgain}.`;
     case 'retry-failed':

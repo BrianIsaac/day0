@@ -51,7 +51,7 @@ describe('a question at plan approval', (): void => {
     expect(markup).toContain('>Cancel this item<');
     // The consequence is said under the controls: approving still holds every write.
     expect(markup).toContain(
-      'Approving runs the plan. Every write it produces is still held for you.',
+      'Approving runs the plan. When it finishes, reads and messages to you apply on their own, and every other write waits for your approval.',
     );
   });
 

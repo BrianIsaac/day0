@@ -61,6 +61,21 @@ function sentence(text: string): string {
   return /[.!?”"]$/.test(capital) ? capital : `${capital}.`;
 }
 
+/**
+ * What happens to a run's writes when it finishes, as the gate applies them: supervised, reads
+ * and messages to the manager apply on their own and every other write waits (the wording the
+ * Deploy form and Manage give the switch); autonomous, the writes the gate allows apply and any
+ * it holds wait.
+ *
+ * @param autonomous - Whether autonomous actions are on.
+ * @returns A clause, lower case, with no full stop.
+ */
+export function writesWhenRunFinishes(autonomous: boolean): string {
+  return autonomous
+    ? 'the writes the gate allows apply on their own, and any it holds wait for you'
+    : 'reads and messages to you apply on their own, and every other write waits for your approval';
+}
+
 /** Which part of a run is under way, as far as the row knows it: the card's progress. */
 export interface RunProgress {
   /** The part under way, a short heading. */
@@ -120,9 +135,7 @@ export function runProgress(
   const current = item.state === 'plan-approved' ? -1 : twoPhase || applying ? 1 : 0;
   return {
     title: phase,
-    detail: autonomous
-      ? 'Nothing reaches a surface until the run finishes; then the writes the gate allows apply, and any it holds wait for you.'
-      : 'Nothing reaches a surface until the run finishes; then every write it produces is held for you.',
+    detail: `Nothing reaches a surface while it reads and drafts; then ${writesWhenRunFinishes(autonomous)}.`,
     parts: order.map((name, index) => ({
       name,
       status: index < current ? 'done' : index === current ? 'now' : 'next',

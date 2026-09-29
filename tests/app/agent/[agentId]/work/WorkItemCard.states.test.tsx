@@ -111,7 +111,7 @@ describe('plan to approve (work-plan-pending.html)', (): void => {
     expect(view.text()).toContain('Mira does not ask again');
     expect(view.text()).toContain("Planner's note");
     expect(view.text()).toContain(
-      'Approving runs the plan. Every write it produces is still held for you.',
+      'Approving runs the plan. When it finishes, reads and messages to you apply on their own, and every other write waits for your approval.',
     );
     typeInto(
       view.container.querySelector<HTMLInputElement>(
@@ -155,7 +155,7 @@ describe('plan to approve (work-plan-pending.html)', (): void => {
   it('says a plan approved with autonomous actions on applies what the gate allows', (): void => {
     const view = card(DRAWN.planPending, { autonomous: true });
     expect(view.text()).toContain(
-      'With autonomous actions on, the writes the gate allows apply on their own; any it holds wait for you.',
+      'Approving runs the plan. When it finishes, the writes the gate allows apply on their own, and any it holds wait for you.',
     );
   });
 });
@@ -168,7 +168,7 @@ describe('working (work-working.html)', (): void => {
     const now = view.container.querySelector('[aria-current="step"]');
     expect(now?.textContent).toBe('Read and draft, under way');
     expect(view.text()).toContain(
-      'Nothing reaches a surface until the run finishes; then every write it produces is held for you.',
+      'Nothing reaches a surface while it reads and drafts; then reads and messages to you apply on their own, and every other write waits for your approval.',
     );
     expect(view.text()).toContain('Answered at approval');
     expect(view.text()).toContain('Ad-hoc asks and anything about the on-call rota.');
