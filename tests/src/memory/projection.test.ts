@@ -107,4 +107,11 @@ describe('projectKnowledge', (): void => {
     expect(partial.startsWith('Working agreements: ')).toBe(true);
     expect(partial).toMatch(/\S$/);
   });
+
+  it('says a declared connection is being looked into, not waiting for the manager', (): void => {
+    const { text } = projectKnowledge(
+      mira({ surfaces: [{ displayName: 'Looker', verdict: 'declared' }] }),
+    );
+    expect(text).toContain('Connections: Looker (being looked into)');
+  });
 });

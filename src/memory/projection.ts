@@ -1,3 +1,4 @@
+import type { Doc } from '../../convex/_generated/dataModel';
 import { formatStamp } from '../lib/zone';
 
 /**
@@ -35,7 +36,7 @@ export interface ProjectedSkill {
 /** A connection, by its name and how far it has come. */
 export interface ProjectedSurface {
   readonly displayName: string;
-  readonly verdict: string;
+  readonly verdict: Doc<'surfaces'>['verdict'];
   readonly expiresAt?: number;
 }
 
@@ -146,18 +147,30 @@ function peopleLines(input: ProjectionInput): string[] {
   ];
 }
 
-/** How a connection stands, in a few words. */
+/** How a connection stands, in a few words, for every verdict a surface can hold. */
 function surfaceState(surface: ProjectedSurface, zone: string): string {
-  if (surface.verdict === 'connected') {
-    return surface.expiresAt !== undefined
-      ? `connected until ${day(surface.expiresAt, zone)}`
-      : 'connected';
+  switch (surface.verdict) {
+    case 'connected':
+      return surface.expiresAt !== undefined
+        ? `connected until ${day(surface.expiresAt, zone)}`
+        : 'connected';
+    case 'approved':
+      return 'approved, not connected yet';
+    case 'proposed':
+      return 'waiting for you';
+    case 'declared':
+      return 'being looked into';
+    case 'ungranted':
+      return 'not granted';
+    case 'listed-dead':
+      return 'no route left';
+    case 'absent':
+      return 'no way found';
+    default: {
+      const unknown: never = surface.verdict;
+      throw new Error(`unhandled surface verdict ${String(unknown)}`);
+    }
   }
-  if (surface.verdict === 'approved') return 'approved, not connected yet';
-  if (surface.verdict === 'proposed' || surface.verdict === 'declared') return 'waiting for you';
-  if (surface.verdict === 'ungranted') return 'not granted';
-  if (surface.verdict === 'listed-dead') return 'no route left';
-  return 'no way found';
 }
 
 /**
