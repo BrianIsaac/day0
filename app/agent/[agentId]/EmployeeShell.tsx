@@ -319,7 +319,7 @@ export function EmployeeShell({ agentId, children }: EmployeeShellProps) {
           </div>
           {stageKnown && !working ? (
             <div className="mt-5" data-rail-leaving={railLeaving ? '' : undefined}>
-              <FirstWeekRail steps={steps} advanced={advanced} />
+              <FirstWeekRail steps={steps} advanced={advanced || railLeaving} />
             </div>
           ) : null}
           {dayZero && segment === 'surfaces' ? (

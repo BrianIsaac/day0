@@ -807,7 +807,9 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
       expect(rail()?.hasAttribute('data-advanced')).toBe(true);
       expect(rail()?.closest('[data-rail-leaving]')).toBeNull();
       at(1);
-      expect(rail()?.hasAttribute('data-advanced')).toBe(false);
+      // Fading, the rail keeps the advance's fill, so the fade starts from the frame the advance
+      // ended on (second pass: dropping it swapped the fill for the cell's own tint for a frame).
+      expect(rail()?.hasAttribute('data-advanced')).toBe(true);
       expect(rail()?.closest('[data-rail-leaving]')).not.toBeNull();
       expect(card()).toBeNull();
       at(149);
