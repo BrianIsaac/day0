@@ -28,7 +28,9 @@ describe('the top of a work item', (): void => {
   it("says the state in the manager's words beside where it came from, the title and the ask", (): void => {
     const markup = head(DRAWN.held);
     expect(markup).toMatch(/>Write held for you<\/span>/);
-    expect(markup).toContain('>slack · event-stream · P2</span>');
+    // Where it came from, in words: a chat mention is the inbox, a ticket the ticket queue.
+    expect(markup).toContain('>slack · inbox · P2</span>');
+    expect(head(DRAWN.discovered)).toContain('>linear · ticket queue · low</span>');
     expect(markup).toMatch(
       /<h3 id="work-item-w-held"[^>]*>Draft response for new tier-two RevOps ask<\/h3>/,
     );

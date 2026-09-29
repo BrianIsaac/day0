@@ -53,6 +53,27 @@ describe('why an item that is not moving is where it is', (): void => {
     ).toContain('Cancelled.</span> plan cancelled by the manager: comment instead');
   });
 
+  it('says why a discovered item queued at the cap is not moving, and names any other verdict plainly', (): void => {
+    expect(
+      verdict('discovered', {
+        decision: 'queue',
+        reason: 'WIP cap reached: supervised cold-start limit is 1',
+      }),
+    ).toContain(
+      'Queued.</span> Waiting for a free slot: WIP cap reached: supervised cold-start limit is 1.',
+    );
+    expect(verdict('deferred', { decision: 'defer', reason: 'awaiting-something-new' })).toContain(
+      'Parked:</span> awaiting-something-new.',
+    );
+    expect(
+      verdict('deferred', {
+        decision: 'defer',
+        reason: 'awaiting-permission',
+        missingPermissions: [],
+      }),
+    ).toContain('Parked:</span> awaiting-permission.');
+  });
+
   it('says nothing of an item moving on its own', (): void => {
     expect(verdict('plan-pending', { decision: 'claim' })).toBe('');
   });

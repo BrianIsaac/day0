@@ -73,9 +73,10 @@ const MEANS: Readonly<Record<Exclude<WorkItemState, 'failed'>, string>> = {
   executing: 'running the approved plan',
   'actions-pending': 'the exact writes, held until you decide',
   'needs-skill': 'waiting on a skill you approve',
-  deferred: 'parked until a system is connected, a grant is given or the charter is approved',
-  completed: 'the approved writes reached the work environment',
-  skipped: 'set aside with the reason; you can give it back',
+  deferred:
+    'parked until a system is connected, a grant is given, the charter is approved or the scope check answers, or set aside once its evaluations kept failing',
+  completed: 'finished; the card lists what reached the work environment',
+  skipped: 'set aside with the reason; most skips you can give back',
   cancelled: 'you cancelled its plan or its skill; nothing runs',
 };
 

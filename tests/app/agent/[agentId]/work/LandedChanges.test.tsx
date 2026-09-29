@@ -29,6 +29,16 @@ describe('what reached the work environment', (): void => {
     expect(markup).not.toContain('data-land');
   });
 
+  it('names a landed row by its tool when it carries no effect of its own', (): void => {
+    const markup = renderToStaticMarkup(
+      <LandedChanges
+        rows={[{ tool: 'linear.save_issue', ok: true, place: 0 }]}
+        fresh={new Set()}
+      />,
+    );
+    expect(markup).toContain('Applied linear.save_issue');
+  });
+
   it('raises only the rows that just landed, beneath the rows already there (M7)', (): void => {
     const markup = renderToStaticMarkup(
       <LandedChanges

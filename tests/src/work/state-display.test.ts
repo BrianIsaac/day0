@@ -65,6 +65,13 @@ describe('workItemGlossary', (): void => {
       glossary.filter((line) => line.states.includes('failed')).map((line) => line.label.text),
     ).toEqual(['Rejected by you', 'Stopped']);
     expect(glossary.every((line) => line.label.tone !== ('danger' as never))).toBe(true);
+    // Nothing overclaimed: a landing may be of no write at all, parking has five causes, and a
+    // colleague's hold has no control to give it back.
+    const means = (text: string): string | undefined =>
+      glossary.find((line) => line.label.text === text)?.means;
+    expect(means('Landed')).toBe('finished; the card lists what reached the work environment');
+    expect(means('Parked')).toContain('its evaluations kept failing');
+    expect(means('Skipped')).toBe('set aside with the reason; most skips you can give back');
     // One chip, one line: Working is the plan being drafted or the run under way.
     expect(glossary.filter((line) => line.label.text === 'Working')).toEqual([
       {

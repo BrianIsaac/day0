@@ -96,8 +96,7 @@ export function QueueFilters({
           aria-pressed={filter === selected}
           onClick={() => onSelect(filter)}
         >
-          {QUEUE_FILTER_NAMES[filter]}
-          <span className="tabular-nums">{counts[filter]}</span>
+          {QUEUE_FILTER_NAMES[filter]} <span className="tabular-nums">{counts[filter]}</span>
         </Button>
       ))}
     </div>
@@ -105,21 +104,34 @@ export function QueueFilters({
 }
 
 /**
- * Bring the card an inbox link named into view once the queue has drawn it (U17 D13, A D8):
- * `/agent/<id>/work#item-<id>` lands on the item, and focus goes to it, so a keyboard or
- * screen-reader user starts where the link said. The cards arrive after the page, so the
- * browser's own jump to the fragment finds nothing to jump to.
+ * Bring the card an inbox link named into view (U17 D13, A D8): `/agent/<id>/work#item-<id>`
+ * lands on the item, and focus goes to it, so a keyboard or screen-reader user starts where the
+ * link said. The cards arrive after the page, so the browser's own jump to the fragment finds
+ * nothing to jump to; a later change of the fragment (back and forward, a link on the page)
+ * lands the same way, and a filter hiding the card is cleared first.
  *
  * @param ready - Whether the queue has drawn its cards.
+ * @param showAll - Clears the filter, so the named card is drawn.
  */
-function useItemAnchor(ready: boolean): void {
+function useItemAnchor(ready: boolean, showAll: () => void): void {
+  // Counts the fragment's changes, so each one lands again once the filter is cleared.
+  const [changes, setChanges] = useState(0);
+  useEffect(() => {
+    const changed = (): void => {
+      if (!window.location.hash.startsWith('#item-')) return;
+      showAll();
+      setChanges((count) => count + 1);
+    };
+    window.addEventListener('hashchange', changed);
+    return () => window.removeEventListener('hashchange', changed);
+  }, [showAll]);
   useEffect(() => {
     if (!ready || !window.location.hash.startsWith('#item-')) return;
     const card = document.getElementById(decodeURIComponent(window.location.hash.slice(1)));
     if (!card) return;
     card.scrollIntoView({ block: 'start' });
     card.focus({ preventScroll: true });
-  }, [ready]);
+  }, [ready, changes]);
 }
 
 // What needs the manager first: literal actions awaiting approval, then plans,
@@ -245,7 +257,8 @@ export function WorkQueue({
   const shown =
     filter === 'all' ? items : items.filter((item) => queueFilterOf(item, needsYou) === filter);
   const queue = useRef<HTMLElement>(null);
-  useItemAnchor(!loading && items.length > 0);
+  const showAll = useCallback((): void => setFilter('all'), []);
+  useItemAnchor(!loading && items.length > 0, showAll);
   // The items are the Work tab's rows (v4 section 1.3): a tier after the columns' cards.
   const arriving = useArrival(!loading && items.length > 0);
 

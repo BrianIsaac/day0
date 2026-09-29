@@ -5,7 +5,7 @@ import { StateGlossary } from '../../../../../app/agent/[agentId]/work/StateGlos
 describe('the states glossary', (): void => {
   it("pairs each chip's words with what they mean and the stored state the export keeps", (): void => {
     const markup = renderToStaticMarkup(<StateGlossary />);
-    expect(markup).toContain('The states, in the manager&#x27;s words');
+    expect(markup).toContain('>What each state means</h2>');
     expect(markup).toContain('the stored state stays in the export');
     expect(markup).toMatch(
       />Write held for you<\/span><\/dt><dd[^>]*>the exact writes, held until you decide <span[^>]*>\(actions-pending\)<\/span>/,

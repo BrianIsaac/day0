@@ -128,7 +128,7 @@ export function LandedChanges({
   const arriving = rows.filter((row) => fresh.has(row.place));
   const line = (row: LandedRow, rise?: number) => (
     <LedgerLine key={row.place} kind="landed" rise={rise} meta={rowMeta(row)}>
-      {clipLedgerRow(row.effect) ?? '(applied)'}
+      {clipLedgerRow(row.effect) ?? `Applied ${row.tool}`}
       <RepairNote repair={row.repair} />
       <SessionRestoreNote restore={row.sessionRestore} />
     </LedgerLine>

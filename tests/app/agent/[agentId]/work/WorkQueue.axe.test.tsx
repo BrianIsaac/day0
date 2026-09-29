@@ -108,18 +108,18 @@ describe('the Work tab against the accessibility floor (N14)', (): void => {
     view.unmount();
   }, 30_000);
 
-  it('filters the queue with the pressed state said, and lands nothing hidden behind a filter', async (): Promise<void> => {
+  it('filters the queue with the pressed state and its count said apart', async (): Promise<void> => {
     const view = await workTab();
     const pressed = (): string[] =>
       [...view.container.querySelectorAll('[aria-pressed="true"]')].map(
         (control) => control.textContent ?? '',
       );
-    expect(pressed()).toEqual([`All${DRAWN_ORDER.length}`]);
+    expect(pressed()).toEqual([`All ${DRAWN_ORDER.length}`]);
     const needsYou = [...view.container.querySelectorAll('button')].find((control) =>
-      control.textContent?.startsWith('Needs you'),
+      control.textContent?.startsWith('Needs you '),
     );
     await act(async (): Promise<void> => needsYou?.click());
-    expect(pressed()).toEqual(['Needs you3']);
+    expect(pressed()).toEqual(['Needs you 3']);
     expect(
       [...view.container.querySelectorAll('article h3')].map((title) => title.textContent),
     ).toEqual([DRAWN.held.title, DRAWN.planPending.title, DRAWN.retried.title]);

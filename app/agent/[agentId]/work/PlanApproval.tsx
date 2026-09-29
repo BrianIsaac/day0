@@ -121,9 +121,14 @@ export function PlanApprovalForm({
   const minutes = typedEstimateMinutes(estimate);
   const id = useId();
   const reasonField = useRef<HTMLInputElement>(null);
-  // The reason is the next thing the manager writes once Cancel opens it.
+  const cancelControl = useRef<HTMLButtonElement>(null);
+  const opened = useRef(false);
+  // The reason is the next thing the manager writes once Cancel opens it;
+  // closing it without cancelling gives focus back to Cancel.
   useEffect(() => {
     if (cancelling) reasonField.current?.focus();
+    else if (opened.current) cancelControl.current?.focus();
+    opened.current = cancelling;
   }, [cancelling]);
   function decision(): PlanApproval {
     return {
@@ -216,6 +221,7 @@ export function PlanApprovalForm({
           {open.length > 0 || planNote ? 'Approve plan with answers' : 'Approve plan'}
         </Button>
         <Button
+          ref={cancelControl}
           aria-expanded={cancelling}
           aria-controls={cancelling ? `${id}-cancel` : undefined}
           disabled={busy}

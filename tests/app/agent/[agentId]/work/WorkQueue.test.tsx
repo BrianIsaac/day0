@@ -1,9 +1,10 @@
 /** @vitest-environment jsdom */
 
+import { act } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { getFunctionName } from 'convex/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { Id } from '../../../../../convex/_generated/dataModel';
+import type { Doc, Id } from '../../../../../convex/_generated/dataModel';
 import { dashboardMetrics } from '../../../../fixtures/dashboard/metrics';
 import { PILOT_FIGURES } from '../../../../../app/CompanySupervision';
 import {
@@ -13,7 +14,7 @@ import {
 } from '../../../../../app/agent/[agentId]/work/WorkQueue';
 import { MetricsCard } from '../../../../../app/agent/[agentId]/record/MetricsCard';
 import { RegisteredSkillsPanel } from '../../../../../app/agent/[agentId]/skills/RegisteredSkillsPanel';
-import { button, focusedName, mount, press, said } from '../../../../fixtures/dom/press';
+import { button, focusedName, mount, press, said, settle } from '../../../../fixtures/dom/press';
 
 const backend = vi.hoisted(() => ({
   /** Mutations and actions that reject, by function name, with the text they reject with. */
@@ -150,5 +151,56 @@ describe('the order the queue lists its items in', (): void => {
       { state: 'skipped', title: 'skipped' },
     ]).map((item) => item.title);
     expect(order).toEqual(['stopped', 'skipped', 'cancelled', 'dismissed']);
+  });
+});
+
+describe('landing an inbox link on its card (U17 D13, A D8)', (): void => {
+  it('brings the named card into view and focus when the hash changes, clearing a filter that hides it', async (): Promise<void> => {
+    const scrolled: string[] = [];
+    Element.prototype.scrollIntoView = function (this: Element): void {
+      scrolled.push(this.id);
+    };
+    const items = [
+      { _id: 'w-plan', state: 'plan-pending', title: 'Plan' },
+      { _id: 'w-done', state: 'completed', title: 'Done' },
+    ].map(
+      (row) =>
+        ({
+          ...row,
+          _creationTime: 1,
+          agentId: 'a1',
+          sourceSystem: 'linear',
+          sourceCategory: 'ticket-queue',
+          externalId: row._id,
+          contentSummary: 's',
+          contentRefs: [],
+          observedAt: 1,
+        }) as unknown as Doc<'workItems'>,
+    );
+    const view = mount(
+      <WorkQueue
+        agentId={'a1' as Id<'agents'>}
+        workItems={items}
+        openQuestions={[]}
+        surfaces={[]}
+        registeredSkillCount={0}
+        charterApproved
+        autonomousActions={false}
+        surfaceMode="real"
+      />,
+    );
+    await press(view.container, 'Needs you 1');
+    expect(document.getElementById('item-w-done')).toBeNull();
+    await act(async (): Promise<void> => {
+      window.location.hash = '#item-w-done';
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+    });
+    await settle();
+    await vi.waitFor((): void => {
+      expect(document.activeElement?.id).toBe('item-w-done');
+    });
+    expect(scrolled).toContain('item-w-done');
+    view.unmount();
+    window.location.hash = '';
   });
 });

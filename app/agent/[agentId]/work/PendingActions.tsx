@@ -128,9 +128,14 @@ export function PendingActions({
   const [reason, setReason] = useState('');
   const [rejecting, setRejecting] = useState(false);
   const reasonField = useRef<HTMLInputElement>(null);
-  // The reason is the next thing the manager writes once Reject opens it.
+  const rejectControl = useRef<HTMLButtonElement>(null);
+  const opened = useRef(false);
+  // The reason is the next thing the manager writes once Reject opens it;
+  // closing it without rejecting gives focus back to Reject.
   useEffect(() => {
     if (rejecting) reasonField.current?.focus();
+    else if (opened.current) rejectControl.current?.focus();
+    opened.current = rejecting;
   }, [rejecting]);
 
   function toggle(index: number, on: boolean): void {
@@ -255,6 +260,7 @@ export function PendingActions({
           Approve all
         </Button>
         <Button
+          ref={rejectControl}
           aria-expanded={rejecting}
           aria-controls={rejecting ? `${id}-reject` : undefined}
           disabled={busy}

@@ -89,7 +89,7 @@ describe('discovered, then skipped (work-discovered.html)', (): void => {
   it('cites the clause, says scope and skill are judged apart, and hands the work back on one press', async (): Promise<void> => {
     const view = card(DRAWN.discovered);
     expect(chip(view.container)).toBe('Skipped');
-    expect(view.text()).toContain('linear · ticket-queue · low');
+    expect(view.text()).toContain('linear · ticket queue · low');
     expect(view.text()).toContain('Aman, on REVOPS-30: Please refresh the Q4 pipeline coverage');
     expect(view.text()).toContain(
       'Skipped. This is forecasting work assigned to Aman, which the charter says Mira will not own (“Own forecasting work assigned to Aman.”).',
@@ -155,6 +155,7 @@ describe('plan to approve (work-plan-pending.html)', (): void => {
     typeInto(reason, 'Keep it in the thread.');
     await press(view.container, 'Cancel with this reason');
     expect(view.calls).toEqual([['cancelPlan', 'Keep it in the thread.']]);
+    expect(focusedName()).toBe('Cancel with this reason');
     expect(said(view.container)).toEqual([
       'Plan cancelled: Draft response for new tier-two RevOps ask.',
     ]);
@@ -165,6 +166,21 @@ describe('plan to approve (work-plan-pending.html)', (): void => {
     expect(view.text()).toContain(
       'Approving runs the plan. When it finishes, the writes the gate allows apply on their own, and any it holds wait for you.',
     );
+  });
+});
+
+describe('closing a reason form without deciding', (): void => {
+  it('gives focus back to the control that opened it', async (): Promise<void> => {
+    const plan = card(DRAWN.planPending);
+    await press(plan.container, 'Cancel this item');
+    await press(plan.container, 'Keep the plan');
+    expect(focusedName()).toBe('Cancel this item');
+    plan.unmount();
+    const held = card(DRAWN.held);
+    await press(held.container, 'Reject the run');
+    await press(held.container, 'Keep it held');
+    expect(focusedName()).toBe('Reject the run');
+    expect(held.calls).toEqual([]);
   });
 });
 
@@ -247,6 +263,7 @@ describe('write held for you (work-held.html, work-held-withheld.html)', (): voi
     expect(view.calls).toEqual([
       ['rejectActions', 'Do not DM me about drafts; keep it in the thread.'],
     ]);
+    expect(focusedName()).toBe('Reject with this reason');
     expect(said(view.container)).toEqual([
       'Run rejected: nothing held on Draft response for new tier-two RevOps ask is sent.',
     ]);

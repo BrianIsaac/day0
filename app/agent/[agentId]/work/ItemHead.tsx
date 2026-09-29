@@ -11,6 +11,21 @@ import { Quote, Tag } from './ItemParts';
 import { StateChip } from './RunDetails';
 import { decisionAttribution } from './work-item';
 
+/** Where intake found an item, in words: a chat mention is the inbox, a ticket the ticket queue. */
+const SOURCE_WORDS: Readonly<Record<string, string>> = {
+  'event-stream': 'inbox',
+  'ticket-queue': 'ticket queue',
+};
+
+/**
+ * An intake category in words, or as the row keeps it when it has none.
+ *
+ * @param category - The row's `sourceCategory`.
+ */
+export function sourceWords(category: string): string {
+  return SOURCE_WORDS[category] ?? category;
+}
+
 /**
  * Who decided the item's plan or writes, where and when: "approved from Slack at 14:41". Every
  * stamp carries its time (N7).
@@ -92,7 +107,9 @@ export function ItemHead({
       (item.state === 'actions-pending' && item.approvedIndexes === undefined))
       ? connectedManagerChannel([...surfaces], now)
       : undefined;
-  const tag = [item.sourceSystem, item.sourceCategory, item.priority].filter(Boolean).join(' · ');
+  const tag = [item.sourceSystem, sourceWords(item.sourceCategory), item.priority]
+    .filter(Boolean)
+    .join(' · ');
   return (
     <div className="grid gap-2 px-4 pt-4 pb-3 sm:px-5">
       <div className="flex flex-wrap items-center gap-2">

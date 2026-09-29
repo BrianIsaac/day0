@@ -8,6 +8,12 @@ import { runProgress, type WorkGate } from '@/work/item-display';
 import { Help, ItemSection, Lead, Note } from './ItemParts';
 import { cancelledReason, colleagueHolding } from './work-item';
 
+/** A reason as the row keeps it, ending in a full stop. */
+function sentence(text: string): string {
+  const trimmed = text.trim();
+  return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
+}
+
 /** A verdict as the card reads it off the row. */
 export interface ItemVerdict {
   decision: string;
@@ -88,6 +94,16 @@ export function VerdictSection({
       </ItemSection>
     );
   }
+  if (item.state === 'discovered' && verdict?.decision === 'queue') {
+    return (
+      <ItemSection>
+        <Note>
+          <Lead>Queued.</Lead> Waiting for a free slot
+          {verdict.reason ? `: ${sentence(verdict.reason)}` : '.'}
+        </Note>
+      </ItemSection>
+    );
+  }
   if (item.state !== 'deferred' || !verdict || verdict.decision !== 'defer') return null;
   if (verdict.reason === 'awaiting-connection') {
     const surface = surfaces.find((candidate) => candidate.slug === verdict.missingSurface);
@@ -125,7 +141,14 @@ export function VerdictSection({
       </ItemSection>
     );
   }
-  return null;
+  // A reason the card has no words for is still said, as the row keeps it.
+  return (
+    <ItemSection>
+      <Note tone="warn">
+        <Lead>Parked:</Lead> {sentence(verdict.reason ?? 'no reason recorded')}
+      </Note>
+    </ItemSection>
+  );
 }
 
 /**
