@@ -231,7 +231,10 @@ describe('the drift of an approved scope, as a server field (D D4)', (): void =>
   const FINANCE = companyPage('finance/handbook.md').markdown;
 
   /** A connected Linear card whose approved scope quotes the finance handbook. */
-  async function financeCard(markdown: string): Promise<ListedSurface | undefined> {
+  async function financeCard(
+    markdown: string,
+    verdict: Doc<'surfaces'>['verdict'] = 'connected',
+  ): Promise<ListedSurface | undefined> {
     const { harness, agentId, sourceId } = await seedOffice('Team: REVOPS');
     await page(harness, sourceId, 'finance/handbook.md', markdown);
     const quoted = (value: string, quote: string) => ({
@@ -242,7 +245,7 @@ describe('the drift of an approved scope, as a server field (D D4)', (): void =>
     });
     await card(harness, agentId, {
       slug: 'linear',
-      verdict: 'connected',
+      verdict,
       intakeScope: {
         team: quoted('FIN', '- Team: `FIN`'),
         project: quoted('September close', '- Project: `September close`'),
@@ -257,10 +260,14 @@ describe('the drift of an approved scope, as a server field (D D4)', (): void =>
   it('says which approved value its page no longer states, and what to do', async (): Promise<void> => {
     // The handbook states the project twice (lines 10 and 32); the card judges
     // by value, so the page has stopped stating it only once both go.
-    const linear = await financeCard(FINANCE.replaceAll('`September close`', '`October close`'));
+    const drifted = FINANCE.replaceAll('`September close`', '`October close`');
 
-    expect(linear?.scopeChange).toBe(
+    expect((await financeCard(drifted, 'proposed'))?.scopeChange).toBe(
       'Changed since this card was proposed: project September close is no longer stated on finance/handbook.md. Intake still reads only what was approved; reject the card and re-run orientation to propose the page as it reads now.',
+    );
+    // Only a proposed card offers Reject, so a connected one is not told to reject it.
+    expect((await financeCard(drifted, 'connected'))?.scopeChange).toBe(
+      'Changed since this card was proposed: project September close is no longer stated on finance/handbook.md. Intake still reads only what was approved.',
     );
   });
 

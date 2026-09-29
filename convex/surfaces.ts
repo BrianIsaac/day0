@@ -321,7 +321,10 @@ export const listForAgent = query({
       orderSurfaceWaterfall(surfaces, documented).map(async (surface): Promise<ListedSurface> => {
         const listed = withBrowserComponentState(surface, refusal);
         const scopeChange = listed.intakeScope
-          ? presentScopeDrift(listed.intakeScope, restatedScope(listed.intakeScope, pages).drift)
+          ? presentScopeDrift(listed.intakeScope, restatedScope(listed.intakeScope, pages).drift, {
+              // Only a proposed card offers Reject on the page.
+              canReject: listed.verdict === 'proposed',
+            })
           : undefined;
         const refused =
           listed.verdict === 'proposed' ? await approvalRefusal(ctx, listed) : undefined;
