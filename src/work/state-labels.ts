@@ -22,6 +22,9 @@ export interface StateLabel {
   readonly tone: StateTone;
 }
 
+/** The newest charter's standing as the shown state reads it, or null before one is drafted. */
+export type CharterApproval = Pick<Doc<'charters'>, 'approved'> | null;
+
 /**
  * The state the page shows for an employee: its charter, when the page has one, outranks the
  * row. A drafted charter ends the one-to-one whatever the row still says, and an approved one
@@ -32,10 +35,7 @@ export interface StateLabel {
  * @param state - The agent row's state.
  * @param charter - The newest charter, or null before one is drafted.
  */
-export function shownEmployeeState(
-  state: EmployeeState,
-  charter: Pick<Doc<'charters'>, 'approved'> | null,
-): EmployeeState {
+export function shownEmployeeState(state: EmployeeState, charter: CharterApproval): EmployeeState {
   if (charter === null || state === 'active') return state;
   return charter.approved ? 'active' : 'charter-pending';
 }
