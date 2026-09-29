@@ -71,14 +71,15 @@ describe('firstWeekSteps', () => {
     expect(detail({ state: 'day-one-in-progress' }, 1)).toBe('in progress');
     expect(detail({ state: 'charter-pending' }, 2)).toBe('waiting for your review');
     expect(detail({ state: 'active', charter: { version: '2' } }, 2)).toBe('version 2');
+    expect(detail({ state: 'active', charter: null }, 2)).toBe('approved');
     expect(detail({ state: 'active', writeHeld: true }, 3)).toBe('held for you');
     expect(detail({ state: 'active' }, 3)).toBe('after the first plan');
     expect(detail({ state: 'active', writeLanded: true }, 3)).toBe('landed');
   });
 
-  it('marks exactly one step as the current one', () => {
+  it('marks exactly one step as the current one, whatever the figures say', () => {
     for (const state of ['deployed', 'day-one-in-progress', 'charter-pending', 'active'] as const) {
-      const steps = firstWeekSteps(facts({ state }));
+      const steps = firstWeekSteps(facts({ state, writeLanded: true }));
       expect(
         steps.filter((step) => step.status === 'now'),
         state,

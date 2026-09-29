@@ -36,6 +36,10 @@ describe('shownEmployeeState', () => {
     expect(shownEmployeeState('day-one-in-progress', { approved: false })).toBe('charter-pending');
     expect(shownEmployeeState('charter-pending', { approved: true })).toBe('active');
   });
+
+  it('keeps an active employee active while a newer draft of its charter waits for review', () => {
+    expect(shownEmployeeState('active', { approved: false })).toBe('active');
+  });
 });
 
 describe('employeeStateLabel', () => {

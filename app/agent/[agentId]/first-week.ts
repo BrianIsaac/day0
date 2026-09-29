@@ -25,6 +25,8 @@ export interface FirstWeekFacts {
 export function firstWeekSteps(facts: FirstWeekFacts): RailStep[] {
   const talked = facts.state === 'charter-pending' || facts.state === 'active';
   const approved = facts.state === 'active';
+  // A write can only have landed under an approved charter; before one, the figures say nothing.
+  const landed = approved && facts.writeLanded;
   return [
     { title: 'Deployed', detail: clockTime(facts.deployedAt, facts.zone), status: 'done' },
     {
@@ -39,7 +41,9 @@ export function firstWeekSteps(facts: FirstWeekFacts): RailStep[] {
     {
       title: 'Charter approved',
       detail: approved
-        ? `version ${facts.charter?.version ?? '1'}`
+        ? facts.charter
+          ? `version ${facts.charter.version}`
+          : 'approved'
         : talked
           ? 'waiting for your review'
           : 'after the one-to-one',
@@ -47,19 +51,19 @@ export function firstWeekSteps(facts: FirstWeekFacts): RailStep[] {
     },
     {
       title: 'First supervised write',
-      detail: facts.writeLanded
+      detail: landed
         ? 'landed'
         : !approved
           ? 'after approval'
           : facts.writeHeld
             ? 'held for you'
             : 'after the first plan',
-      status: facts.writeLanded ? 'done' : approved ? 'now' : 'next',
+      status: landed ? 'done' : approved ? 'now' : 'next',
     },
     {
       title: 'Working',
-      detail: facts.writeLanded ? 'in the queue' : '',
-      status: facts.writeLanded ? 'now' : 'next',
+      detail: landed ? 'in the queue' : '',
+      status: landed ? 'now' : 'next',
     },
   ];
 }

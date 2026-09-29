@@ -25,6 +25,8 @@ export interface StateLabel {
  * The state the page shows for an employee: its charter, when the page has one, outranks the
  * row. A drafted charter ends the one-to-one whatever the row still says, and an approved one
  * makes the employee active, so a pill reading "In your one-to-one" never sits above a charter.
+ * An active employee stays active while a newer draft waits for review: the approved charter
+ * it works under stays in force until the draft is approved.
  *
  * @param state - The agent row's state.
  * @param charter - The newest charter, or null before one is drafted.
@@ -33,7 +35,7 @@ export function shownEmployeeState(
   state: EmployeeState,
   charter: Pick<Doc<'charters'>, 'approved'> | null,
 ): EmployeeState {
-  if (charter === null) return state;
+  if (charter === null || state === 'active') return state;
   return charter.approved ? 'active' : 'charter-pending';
 }
 

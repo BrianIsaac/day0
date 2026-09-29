@@ -55,12 +55,16 @@ describe('ManageView: the manager DM setting waits for a manager channel (N7)', 
   /** The Manage tab as the shell hands it this employee. */
   function manage(
     surfaces: SurfaceRecord[],
-    options: { mode?: 'mock' | 'real'; charter?: Doc<'charters'> | null } = {},
+    options: {
+      mode?: 'mock' | 'real';
+      charter?: Doc<'charters'> | null;
+      state?: Doc<'agents'>['state'];
+    } = {},
   ): string {
     return renderToStaticMarkup(
       <EmployeeContext
         value={{
-          agent,
+          agent: { ...agent, state: options.state ?? agent.state },
           charter: options.charter === undefined ? approved : options.charter,
           surfaceMode: options.mode ?? 'real',
           surfaces,
@@ -96,8 +100,11 @@ describe('ManageView: the manager DM setting waits for a manager channel (N7)', 
   it('offers the autonomy switch once the charter is approved, in real mode only', (): void => {
     expect(manage([])).toContain('role="switch"');
     const drafted = { approved: false } as unknown as Doc<'charters'>;
-    expect(manage([], { charter: drafted })).not.toContain('role="switch"');
-    expect(manage([], { charter: drafted })).toContain('once Priya&#x27;s charter is approved');
+    const pending = { charter: drafted, state: 'charter-pending' as const };
+    expect(manage([], pending)).not.toContain('role="switch"');
+    expect(manage([], pending)).toContain('once Priya&#x27;s charter is approved');
+    // A newer draft over the approved charter leaves the employee active, and the switch with it.
+    expect(manage([], { charter: drafted })).toContain('role="switch"');
     const mock = manage([], { mode: 'mock' });
     expect(mock).not.toContain('role="switch"');
     expect(mock).toContain('every other write waits for your decision');
