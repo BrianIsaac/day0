@@ -146,6 +146,7 @@ const SYSTEM_PROMPT = [
   'Merge aliases and duplicates: Slack is one row for every Slack channel and DM; a Looker pipeline tile is one Looker row; reading artefacts belong only in priorityReading.',
   'Constraints: under constraints, list every rule the manager stated that limits which work you take or how you do it: a property a candidate must have (candidate-property), a system you must or must not touch (system-boundary), a person you report to or must not contact (reporting-line).',
   "For each, quote is the manager's own sentence, copied, and wording is the exact phrase or phrases in your proposedFunction, willDo, willNotDo or escalationTriggers that encode it. Leave constraints empty when the manager stated no such rule; never add one they did not state.",
+  'A [changes-requested] section after the answers is the manager, in their own words, on an earlier draft you wrote: apply every change it asks for, and where a change disagrees with an answer, the change wins. A rule it says to leave out appears in no clause and no constraint.',
 ].join('\n');
 
 const charterAgent = makeAgent('day0-charter', SYSTEM_PROMPT);
@@ -208,17 +209,57 @@ export const charterSchema = z.object({
 type RawCharterPayload = z.infer<typeof charterSchema>;
 
 /** What charter synthesis takes: the answers by topic, the version to write and the clock. */
+/**
+ * What the manager asked to change when sending a draft back, carried into the next draft
+ * with the one-to-one it came from.
+ */
+export interface ChangeRequest {
+  /** The manager's note, in their own words. */
+  readonly reason: string;
+  /** The rules the manager had struck on the draft sent back, by quote. */
+  readonly struck: readonly string[];
+}
+
+/** What a charter is drafted from: the seven answers, and any changes asked of earlier drafts. */
 export interface SynthesiseCharterArgs {
   answers: Record<DayOneTopic, string>;
   version: CharterVersion;
   bossLabel: string;
   createdAt?: Date;
+  /** The notes the manager sent earlier drafts back with, oldest first. */
+  changeRequests?: readonly ChangeRequest[];
 }
 
-function userPrompt(answers: Record<DayOneTopic, string>): string {
-  return DAY_ONE_TOPICS.map(
+/** The lines a draft sent back adds to the prompt: the note, then each rule struck on it. */
+function changeRequestLines(request: ChangeRequest): string[] {
+  return [
+    ...(request.reason.trim() ? [`- ${request.reason.trim()}`] : []),
+    ...request.struck.map(
+      (quote: string): string => `- Leave out the rule "${quote}": the manager struck it.`,
+    ),
+  ];
+}
+
+/**
+ * The model's input: the seven answers under their topics, then, for a redraft, the changes the
+ * manager asked of the drafts before it.
+ */
+export function userPrompt(
+  answers: Record<DayOneTopic, string>,
+  changeRequests: readonly ChangeRequest[] = [],
+): string {
+  const topics = DAY_ONE_TOPICS.map(
     (t) => `[${t}]\n${(answers[t] ?? '').trim() || '(no reply yet)'}\n`,
   ).join('\n');
+  const changes = changeRequests.flatMap(changeRequestLines);
+  if (changes.length === 0) return topics;
+  return [
+    topics,
+    '[changes-requested]',
+    'The manager read an earlier draft and sent it back asking for these changes, oldest first.',
+    ...changes,
+    '',
+  ].join('\n');
 }
 
 function ensureProvenance(items: EvidenceItem[]): EvidenceItem[] {
@@ -501,7 +542,7 @@ export async function synthesiseCharter(args: SynthesiseCharterArgs): Promise<Ch
   const createdAt = (args.createdAt ?? new Date()).toISOString();
   const raw = await agentJson<RawCharterPayload>({
     agent: charterAgent,
-    user: userPrompt(args.answers),
+    user: userPrompt(args.answers, args.changeRequests),
     schema: charterSchema,
   });
   return assemble(raw, args, createdAt);
