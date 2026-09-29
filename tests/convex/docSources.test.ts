@@ -1757,15 +1757,12 @@ describe('the documentation store under the transaction limits (step 49)', (): v
     ).resolves.toMatchObject({ status: 'synced', pageCount: LARGE_PAGES + 1 });
   });
 
-  it('sends the surface cards the pages they read, not every page body', async (): Promise<void> => {
+  it('reads a surface card the pages it cites, not every page body', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = limitedHarness();
-    const { agentId } = await largeSource(harness);
-    const pages = await harness
-      .withIdentity({ subject: 'owner' })
-      .query(api.docSources.pagesForAgent, { agentId });
+    const { surfaceId } = await largeSource(harness);
+    const pages = await harness.query(internal.docSources.cardPagesForSurface, { surfaceId });
     expect(pages.map((page) => page.ref)).toEqual(['handbook.md', 'runbooks/page-3.md']);
-    expect(pages[0]).toMatchObject({ sourceLabel: 'Large handbook', sourceKind: 'folder' });
   });
 
   it('finishes a generation whose pages and mirrors outgrow one transaction', async (): Promise<void> => {

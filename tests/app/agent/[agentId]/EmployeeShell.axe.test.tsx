@@ -339,7 +339,6 @@ function populated(): Record<string, unknown> {
       { scope: 'linear:write', active: true, source: 'deploy' },
       { scope: 'slack:write', active: false, source: 'manager' },
     ],
-    'docSources:pagesForAgent': [],
     'docSources:byIds': [],
   };
 }
