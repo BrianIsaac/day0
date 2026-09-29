@@ -275,16 +275,19 @@ function WholeWeek({ id, steps, anchor, open, card, onClose, onClosed }: WholeWe
       >
         <FirstWeekRail steps={steps} />
         {/* At the week's top right whether shown or not: hidden, it still has a box, and one at
-            its static place, the week's foot, made the week scroll by a pixel (review M1). */}
+            its static place, the week's foot, made the week scroll by a pixel (review M1). Shown,
+            it asks for its padding again, which `not-sr-only` resets, and says the one word, so
+            it clears the step it sits over at both widths. */}
         <button
           type="button"
+          aria-label="Close the whole week"
           onClick={(event) => {
             event.stopPropagation();
             onClose();
           }}
-          className="sr-only top-2 right-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] px-3 text-[13px] font-medium text-[var(--color-fg)] focus-visible:not-sr-only focus-visible:absolute focus-visible:inline-flex focus-visible:min-h-11 focus-visible:items-center"
+          className="sr-only top-2 right-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] text-[13px] font-medium text-[var(--color-fg)] focus-visible:not-sr-only focus-visible:absolute focus-visible:inline-flex focus-visible:min-h-11 focus-visible:items-center focus-visible:px-3"
         >
-          Close the whole week
+          Close
         </button>
       </div>
     </div>

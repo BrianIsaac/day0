@@ -175,9 +175,14 @@ describe('FirstWeekCard', () => {
     await press(view.container, NAME);
     const week = document.querySelector<HTMLElement>('[role="dialog"]');
     const close = week?.querySelector('button');
-    expect(close?.textContent).toBe('Close the whole week');
+    // Named for what it closes; shown as the one word, which starts that name (re-pinned: the
+    // whole sentence, drawn, ran over the week's first step on a phone).
+    expect(close?.getAttribute('aria-label')).toBe('Close the whole week');
+    expect(close?.textContent).toBe('Close');
     expect(close?.className).toMatch(/\bsr-only\b.*\bfocus-visible:not-sr-only\b/);
     expect(close?.className).toMatch(/\bfocus-visible:min-h-11\b/);
+    // `not-sr-only` sets padding to 0 above the plain `px-3`, so the shown control asks again.
+    expect(close?.className).toMatch(/(^|\s)focus-visible:px-3(\s|$)/);
     // Placed at the week's top right while hidden too, never at its foot (review M1).
     expect(close?.className).toMatch(/(^|\s)top-2 right-2(\s|$)/);
     close?.focus();
