@@ -72,8 +72,8 @@ vi.mock('convex/react', () => {
 });
 
 import type { Id } from '../../../../../convex/_generated/dataModel';
-import { probeOutcomeText } from '../../../../../app/agent/[agentId]/mock/SurfaceRows';
-import { SurfacesTab } from '../../../../../app/agent/[agentId]/mock/SurfacesTab';
+import { probeOutcomeText } from '../../../../../app/agent/[agentId]/surfaces/SurfaceRows';
+import { SurfaceCards } from '../../../../../app/agent/[agentId]/surfaces/SurfaceCards';
 import { focusedName, mount, press, said, settle } from '../../../../fixtures/dom/press';
 
 afterEach((): void => {
@@ -86,7 +86,7 @@ afterEach((): void => {
 
 describe('a decision on a surface card', (): void => {
   it('says the approval, and gives focus to the card once Approve has become its verdict', async (): Promise<void> => {
-    const view = mount(<SurfacesTab agentId={'agent-1' as Id<'agents'>} />);
+    const view = mount(<SurfaceCards agentId={'agent-1' as Id<'agents'>} />);
     const approve = [...view.container.querySelectorAll('button')].find(
       (candidate) => candidate.textContent === 'Approve',
     );
@@ -95,7 +95,7 @@ describe('a decision on a surface card', (): void => {
       approve?.click();
       // The subscription answers before the call settles: the card is approved.
       tab.verdict = 'approved';
-      view.root.render(<SurfacesTab agentId={'agent-1' as Id<'agents'>} />);
+      view.root.render(<SurfaceCards agentId={'agent-1' as Id<'agents'>} />);
     });
     await settle();
 
@@ -108,7 +108,7 @@ describe('a decision on a surface card', (): void => {
     tab.refusals = {
       'surfaces:approve': `[CONVEX M(surfaces:approve)] [Request ID: 1] Server Error\nUncaught Error: A documented intake queue changed; reject this card and re-run orientation before approval.\n    at handler (../convex/surfaces.ts:1:1)`,
     };
-    const view = mount(<SurfacesTab agentId={'agent-1' as Id<'agents'>} />);
+    const view = mount(<SurfaceCards agentId={'agent-1' as Id<'agents'>} />);
     await press(view.container, 'Approve');
 
     const refusal =
@@ -134,7 +134,7 @@ describe('a decision on a surface card', (): void => {
         release = resolve;
       }),
     };
-    const view = mount(<SurfacesTab agentId={'agent-1' as Id<'agents'>} />);
+    const view = mount(<SurfaceCards agentId={'agent-1' as Id<'agents'>} />);
     const card = (slug: string): HTMLElement => {
       const found = view.container.querySelector<HTMLElement>(`#surface-${slug}`);
       if (!found) throw new Error(`no card ${slug}`);

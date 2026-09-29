@@ -9,7 +9,7 @@ import { SpreadsheetTab } from './mock/SpreadsheetTab';
 import { SlackTab } from './mock/SlackTab';
 import { TwitterTab } from './mock/TwitterTab';
 import { TicketsTab } from './mock/TicketsTab';
-import { SurfacesTab } from './mock/SurfacesTab';
+import { SurfaceCards } from './surfaces/SurfaceCards';
 import { RollingCount } from '../../components/RollingCount';
 import {
   activeTabForEnvironment,
@@ -172,7 +172,7 @@ export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
         {displayedActive === 'slack' ? <SlackTab agentId={agentId} /> : null}
         {displayedActive === 'tweet' ? <TwitterTab agentId={agentId} /> : null}
         {displayedActive === 'tickets' ? <TicketsTab agentId={agentId} /> : null}
-        {displayedActive === 'surfaces' && isReal ? <SurfacesTab agentId={agentId} /> : null}
+        {displayedActive === 'surfaces' && isReal ? <SurfaceCards agentId={agentId} /> : null}
       </div>
     </section>
   );

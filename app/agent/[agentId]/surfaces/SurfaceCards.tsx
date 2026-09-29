@@ -101,8 +101,8 @@ export function credentialStatusLine(
   return undefined;
 }
 
-/** The Surfaces tab: every discovered system with its connection state, evidence and controls. */
-export function SurfacesTab({ agentId }: { agentId: Id<'agents'> }): React.ReactNode {
+/** The real-mode Surfaces tab's cards: every discovered system with its connection state, evidence and controls. */
+export function SurfaceCards({ agentId }: { agentId: Id<'agents'> }): React.ReactNode {
   const surfaces = useQuery(api.surfaces.listForAgent, { agentId });
   const pages = useQuery(api.docSources.pagesForAgent, { agentId });
   const charter = useQuery(api.charters.latest, { agentId });

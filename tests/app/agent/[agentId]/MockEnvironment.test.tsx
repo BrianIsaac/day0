@@ -69,7 +69,7 @@ vi.mock('convex/react', () => ({
 import type { Id } from '../../../../convex/_generated/dataModel';
 import { MockEnvironment } from '../../../../app/agent/[agentId]/MockEnvironment';
 import { ROLL_MS } from '../../../../app/components/RollingCount';
-import { LOADING_SURFACES } from '../../../../app/agent/[agentId]/mock/SurfacesTab';
+import { LOADING_SURFACES } from '../../../../app/agent/[agentId]/surfaces/SurfaceCards';
 
 const agentId = 'agent-1' as Id<'agents'>;
 
