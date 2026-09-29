@@ -189,7 +189,8 @@ export const attachConversationId = mutation({
  * to the conversation being set aside, so none of them rides into the next one's draft.
  *
  * Public, owner-guarded (`assertOwnsVoiceSession`). Refused while a finisher holds the session or
- * after it produced a charter; a session with nothing to set aside is left as it is.
+ * after it produced a charter. Any other session comes back `active` with those fields cleared,
+ * one with nothing to set aside included, so the room can open a new call on it.
  *
  * @throws ConvexError with the refusal, which the room shows.
  */

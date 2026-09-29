@@ -269,7 +269,6 @@ function VoiceRoomInner({
     if (text) postTranscript(text);
   }
 
-  /** Start over after a draft failed for good: a new call on the same session. */
   /**
    * Start over after a draft failed for good: the session sets the failed call aside
    * (`voice.restart`), and the room offers a new call on it.
