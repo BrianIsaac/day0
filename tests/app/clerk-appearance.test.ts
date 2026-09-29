@@ -37,7 +37,8 @@ describe('the Clerk appearance', () => {
     });
   });
 
-  it('keeps the neutral light, as a dark theme must for its borders and hovers to show', () => {
+  it('keeps the neutral light and leaves the borders to it, so the social button and divider show', () => {
     expect(clerkAppearance.variables.colorNeutral).toBe('#f4f4f5');
+    expect(clerkAppearance.variables).not.toHaveProperty('colorBorder');
   });
 });

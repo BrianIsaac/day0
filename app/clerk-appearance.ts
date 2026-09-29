@@ -19,9 +19,9 @@ export const clerkAppearance = {
     colorBackground: '#18181b',
     colorForeground: '#f4f4f5',
     colorMutedForeground: '#a1a1aa',
-    colorMuted: '#101012',
+    // The neutral is what Clerk derives its borders, dividers and hovers from, at its own
+    // alphas; a fixed border colour read as no border at all on the card (29 September shots).
     colorNeutral: '#f4f4f5',
-    colorBorder: '#3f3f46',
     colorInput: '#0a0a0b',
     colorInputForeground: '#f4f4f5',
     colorPrimary: '#22d3ee',
