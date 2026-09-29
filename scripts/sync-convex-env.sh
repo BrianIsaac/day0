@@ -114,6 +114,11 @@ CLEAR_WHEN_EMPTY=(
 # encrypted `credentials` table: a deployment that still carries them would
 # keep a provider token readable by any Node action long after the code
 # stopped asking for it.
+#
+# A name leaves KEYS for this list, never just leaves: the sync sets only what
+# it manages, so a name it stops managing would otherwise stay on every
+# deployment it was ever pushed to. EXA_API_KEY went with Exa (N19), and
+# OPENAI_IMAGE_MODEL when v0.7.0 found nothing read it.
 RETIRED=(
   CONVEX_BIND_ADDR
   DAY0_SECRET_REFS
@@ -122,6 +127,8 @@ RETIRED=(
   SLACK_BOT_TOKEN
   SLACK_MCP_API_KEY
   SLACK_MANAGER_DM_CHANNEL_ID
+  EXA_API_KEY
+  OPENAI_IMAGE_MODEL
 )
 
 if [ ! -f "$ENV_FILE" ]; then
