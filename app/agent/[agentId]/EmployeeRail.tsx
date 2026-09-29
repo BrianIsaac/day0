@@ -116,8 +116,11 @@ export function EmployeeRail() {
       <Card
         title="Record"
         meta={
-          <Link href={employeeTabHref(agentId, 'record')} className="text-[var(--color-fg)]">
-            All
+          <Link
+            href={employeeTabHref(agentId, 'record')}
+            className="inline-flex min-h-11 items-center text-[var(--color-fg)]"
+          >
+            All<span className="sr-only"> of the record</span>
           </Link>
         }
       >
