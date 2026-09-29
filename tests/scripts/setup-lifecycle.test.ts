@@ -888,6 +888,28 @@ describe('backup, restore and upgrade (step 15)', (): void => {
     rmSync(homeDirectory, { recursive: true, force: true });
   });
 
+  it('refuses a protected project from a linked worktree in its own words, with the way to upgrade it', async (): Promise<void> => {
+    const homeDirectory = home();
+    const h = harness({
+      envLocal: 'COMPOSE_PROJECT_NAME=day0\nOPENAI_API_KEY=x\nDAY0_SURFACE_MODE=real\n',
+      volumes: ['day0_convex_data'],
+      services: ['backend'],
+      environment: { HOME: homeDirectory },
+    });
+    expect(await runCommand(verb('upgrade'), h.io)).toBe(1);
+    const printed = h.output.join('\n');
+    expect(printed).toContain(
+      'error: nothing was backed up, installed or pushed, because day0 is protected: it holds a real run',
+    );
+    expect(printed).toContain(
+      'check out the tag there, run `./setup.sh upgrade`, then check out your branch again, one tag at a time',
+    );
+    expect(printed).not.toContain('Choose another name');
+    expect(ran(h)).not.toContain('tar czf');
+    expect(ran(h)).not.toContain('pnpm install');
+    rmSync(homeDirectory, { recursive: true, force: true });
+  });
+
   it('refuses an upgrade that would skip a release before it backs up or installs anything', async (): Promise<void> => {
     const homeDirectory = home();
     const h = configured({

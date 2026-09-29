@@ -337,6 +337,21 @@ export interface SetupIo {
 /** The reader stopped at a prompt. Nothing is undone; nothing was reset. */
 export class SetupCancelled extends Error {}
 
+/** A protected project, named from a checkout that may not act on it. */
+export class ProtectedProjectError extends Error {
+  /** The project the checkout named. */
+  readonly project: string;
+
+  /**
+   * @param project - The project the checkout named.
+   * @param message - The refusal, in the setup's words.
+   */
+  constructor(project: string, message: string) {
+    super(message);
+    this.project = project;
+  }
+}
+
 const USAGE = `Usage: pnpm setup:local [options]
        pnpm setup:local stop | resume | clear | backup | upgrade [options]
        pnpm setup:local restore <backup.tar.gz> [options]
@@ -858,8 +873,9 @@ export function composeProjectRefusal(project: string): string | undefined {
  *     no exception.
  *
  * Raises:
- *   Error: If the name, or either volume it implies, is protected and this is
- *     not the primary checkout, or the name is a read-only warm project.
+ *   ProtectedProjectError: If the name, or either volume it implies, is
+ *     protected and this is not the primary checkout.
+ *   Error: If the name is a read-only warm project.
  */
 export function assertLocalProject(project: string, claim?: CheckoutClaim): void {
   if (READ_ONLY_PROJECTS.includes(project)) {
@@ -875,7 +891,8 @@ export function assertLocalProject(project: string, claim?: CheckoutClaim): void
   );
   if (clash === undefined) return;
   if (claim?.mainWorktree === true && claim.fileProject.trim() === project) return;
-  throw new Error(
+  throw new ProtectedProjectError(
+    project,
     `"${project}" would use ${projectVolumes(project).join(' and ')}, and ${clash} is ` +
       'protected: it holds a real run. This helper never starts, writes to or removes it from anywhere but the ' +
       `primary checkout, whose own ${ENV_FILE} names it. Choose another name: ` +
@@ -4061,7 +4078,18 @@ function readManifest(path: string): Partial<BackupManifest> | undefined {
  * @param io - The setup environment.
  */
 function upgradeRefusedEarly(options: SetupOptions, io: SetupIo): string | undefined {
-  const target = lifecycleTarget(io, options, 'upgrade');
+  let target: LifecycleTarget | string;
+  try {
+    target = lifecycleTarget(io, options, 'upgrade');
+  } catch (error) {
+    if (!(error instanceof ProtectedProjectError)) return errorMessage(error);
+    return (
+      `${error.project} is protected: it holds a real run, and only the primary checkout, whose own ` +
+      `${ENV_FILE} names it, may upgrade it: check out the tag there, run ` +
+      `\`${verbCommand('upgrade', options.mode)}\`, then check out your branch again, one tag at a time ` +
+      '(README.md, "Backup, restore and upgrade").'
+    );
+  }
   if (typeof target === 'string') return target;
   if (!(runningServices(io, target.project) ?? []).includes('backend')) return undefined;
   const checkout = checkoutReleases(io.cwd, io.newestMigrationRelease);

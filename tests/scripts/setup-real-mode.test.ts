@@ -13,6 +13,7 @@ import {
   parseSetupArguments,
   planLines,
   printableUpdate,
+  ProtectedProjectError,
   readEnvValues,
   REAL_MODE_PROFILES,
   REDACTOR_URL,
@@ -434,6 +435,9 @@ describe('the order the real-mode helpers run in', (): void => {
 describe('protected projects', (): void => {
   it('refuses day0 from anywhere but the primary checkout', (): void => {
     expect(() => assertLocalProject('day0')).toThrow('primary checkout');
+    // Typed, so the upgrade can say how a protected project is upgraded.
+    expect(() => assertLocalProject('day0')).toThrow(ProtectedProjectError);
+    expect(() => assertLocalProject('day0-redactor-warm')).not.toThrow(ProtectedProjectError);
     expect(() => assertLocalProject('day0', { mainWorktree: false, fileProject: 'day0' })).toThrow(
       'protected',
     );
