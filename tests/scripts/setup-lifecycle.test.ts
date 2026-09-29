@@ -962,7 +962,7 @@ describe('backup, restore and upgrade (step 15)', (): void => {
     rmSync(homeDirectory, { recursive: true, force: true });
   });
 
-  it('pauses a stopped stack as soon as its backend is up, before the release check and the push', async (): Promise<void> => {
+  it('pauses a stopped stack once its backend is up and its release checked, before the push', async (): Promise<void> => {
     const homeDirectory = home();
     const h = configured({
       services: ['backend', 'sandbox', 'redactor'],
@@ -973,8 +973,23 @@ describe('backup, restore and upgrade (step 15)', (): void => {
     const lines = ran(h).split('\n');
     const at = (text: string): number => lines.findIndex((line) => line.includes(text));
     expect(at('run convex:up')).toBeLessThan(at('convex env set DAY0_CRONS_PAUSED'));
-    expect(at('convex env set DAY0_CRONS_PAUSED')).toBeLessThan(at('npx convex data'));
+    expect(at('npx convex data')).toBeLessThan(at('convex env set DAY0_CRONS_PAUSED'));
     expect(at('convex env set DAY0_CRONS_PAUSED')).toBeLessThan(at('convex dev --once'));
+    expect(h.deploymentEnv().DAY0_CRONS_PAUSED).toBeUndefined();
+    rmSync(homeDirectory, { recursive: true, force: true });
+  });
+
+  it('leaves the jobs running when the release check refuses a stopped stack', async (): Promise<void> => {
+    const homeDirectory = home();
+    const h = configured({
+      services: ['backend', 'sandbox', 'redactor'],
+      servicesBeforeUp: [],
+      environment: { HOME: homeDirectory },
+      releaseStamp: '0.1.0',
+    });
+    expect(await runCommand(verb('upgrade'), h.io)).toBe(1);
+    expect(h.output.join('\n')).toContain('skips 0.2.0');
+    expect(ran(h)).not.toContain('convex env set DAY0_CRONS_PAUSED');
     expect(h.deploymentEnv().DAY0_CRONS_PAUSED).toBeUndefined();
     rmSync(homeDirectory, { recursive: true, force: true });
   });

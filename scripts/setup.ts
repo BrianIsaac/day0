@@ -1263,8 +1263,9 @@ export interface SequenceInput {
    */
   empty?: boolean;
   /**
-   * An upgrade: the scheduled jobs are paused once the backend is up, before
-   * anything is read or pushed, and released after the check.
+   * An upgrade: the scheduled jobs are paused once the backend is up and its
+   * release is checked, before the env or the functions change, and released
+   * after the check. A release the check refuses leaves them running.
    */
   upgrade?: boolean;
 }
@@ -1293,8 +1294,8 @@ export function sequenceSteps(route: SetupRoute, input: SequenceInput = {}): str
     ...(real && input.sandbox === 'daytona' ? [] : ['sandbox:up']),
     ...(real ? ['redactor:up'] : []),
     'admin-key',
-    ...(input.upgrade ? ['crons:pause'] : []),
     ...(input.existing ? ['release:check'] : []),
+    ...(input.upgrade ? ['crons:pause'] : []),
     ...(input.existing && !input.empty
       ? ['convex dev --once', 'migrations', 'release:stamp', 'sync:env']
       : ['sync:env', 'convex dev --once', 'migrations', 'release:stamp']),
@@ -3379,19 +3380,6 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     }
     io.log('    URL, admin key and Compose service are the same backend');
 
-    if (options.upgradePause !== undefined) {
-      io.log(
-        `[${steps.indexOf('crons:pause') + 1}/${steps.length}] the scheduled jobs, paused for the upgrade`,
-      );
-      const hold = holdScheduledJobs(io, environment, options.upgradePause);
-      if ('failure' in hold) {
-        io.log('');
-        io.log(`error: nothing was pushed, because ${hold.failure}`);
-        return 1;
-      }
-      io.log(`    ${holdLine(hold, options)}`);
-    }
-
     if (existingDeployment) {
       io.log(
         `[${steps.indexOf('release:check') + 1}/${steps.length}] the release this deployment's rows are at`,
@@ -3419,6 +3407,19 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
         io.log(`error: nothing was pushed, because ${unread}.`);
         return 1;
       }
+    }
+
+    if (options.upgradePause !== undefined) {
+      io.log(
+        `[${steps.indexOf('crons:pause') + 1}/${steps.length}] the scheduled jobs, paused for the upgrade`,
+      );
+      const hold = holdScheduledJobs(io, environment, options.upgradePause);
+      if ('failure' in hold) {
+        io.log('');
+        io.log(`error: nothing was pushed, because ${hold.failure}`);
+        return 1;
+      }
+      io.log(`    ${holdLine(hold, options)}`);
     }
 
     const pushFunctions = (): boolean => {
@@ -4804,8 +4805,8 @@ export async function runUpgrade(options: SetupOptions, io: SetupIo): Promise<nu
     }
     const { target, running, pauseReason } = preflight;
     // A running backend's jobs are paused before the backup, whose restart
-    // then starts it paused; a stopped one is paused by the resume as soon as
-    // its backend is up.
+    // then starts it paused; a stopped one is paused by the resume once its
+    // backend is up and its release checked, before the push.
     if (running && options.dryRun) {
       io.log(
         `Would pause the scheduled jobs first, unless they are paused already: npx ${pauseArguments(pauseReason).join(' ')}`,

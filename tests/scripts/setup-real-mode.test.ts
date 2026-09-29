@@ -361,12 +361,13 @@ describe('where the Featherless key comes from', (): void => {
 });
 
 describe('the order the real-mode helpers run in', (): void => {
-  it('pauses the scheduled jobs of an upgrade once the admin key works, and releases them after the check', (): void => {
+  it('pauses the scheduled jobs of an upgrade once its release is checked, before the push, and releases them after the check', (): void => {
     const steps = sequenceSteps('featherless', { mode: 'real', existing: true, upgrade: true });
-    expect(steps.slice(steps.indexOf('admin-key'), steps.indexOf('admin-key') + 3)).toEqual([
+    expect(steps.slice(steps.indexOf('admin-key'), steps.indexOf('admin-key') + 4)).toEqual([
       'admin-key',
-      'crons:pause',
       'release:check',
+      'crons:pause',
+      'convex dev --once',
     ]);
     expect(steps.slice(steps.indexOf('check:setup'))).toEqual(['check:setup', 'crons:unpause']);
     expect(sequenceSteps('featherless', { mode: 'real', existing: true })).not.toContain(
