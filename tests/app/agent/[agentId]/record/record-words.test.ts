@@ -140,6 +140,17 @@ describe('recordWords', (): void => {
     );
   });
 
+  it('says a dismissal took the item out of the inbox and kept it on the Work tab (m16)', (): void => {
+    expect(
+      recordWords(
+        { type: 'work.dismissed', payload: { workItemId: 'w1' } },
+        { name: 'Mira', item: 'Refresh pipeline coverage view' },
+      ),
+    ).toBe(
+      'You dismissed “Refresh pipeline coverage view”: it is out of your inbox and stays on the Work tab, where Retry still sends it back.',
+    );
+  });
+
   it('says a plan approved under autonomous actions was not the manager pressing Approve', (): void => {
     expect(
       recordWords({ type: 'work.plan-approved', payload: { by: 'autonomous' } }, { name: 'Mira' }),

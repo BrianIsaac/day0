@@ -357,6 +357,7 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     `provider state confirmed${text(payload.actor) ? ` by ${payload.actor}` : ''}`,
   'work.cancelled': (payload) =>
     `cancelled${decidedFrom(payload.decidedVia)}${because(payload.reason)}`,
+  'work.dismissed': 'dismissed by the manager',
   'work.execution-claimed': 'run started',
   'work.dependent-authoring': 'closing actions written from what the first phase landed',
   'work.dependent-authoring-claimed': 'closing phase started',

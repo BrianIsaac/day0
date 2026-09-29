@@ -201,6 +201,12 @@ describe('the live feed labels', (): void => {
     );
   });
 
+  it('labels a dismissal as the manager setting a stopped item aside (m16)', (): void => {
+    expect(eventLabel({ type: 'work.dismissed', payload: { workItemId: 'w1' } })).toBe(
+      'dismissed by the manager',
+    );
+  });
+
   it('prints a type only an older release wrote as it was stored', (): void => {
     expect(eventLabel({ type: 'work.legacy-thing', payload: { x: 1 } })).toBe('work.legacy-thing');
   });
