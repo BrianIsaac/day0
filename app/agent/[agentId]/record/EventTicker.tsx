@@ -3,25 +3,7 @@
 import type { Doc } from '@convex/_generated/dataModel';
 import { useNow, useAgentZone, clockTimeWithSeconds, relativeTime } from '../time';
 import { Card } from '../../../components/Card';
-import { eventLabel } from '../event-labels';
-
-/**
- * The work item an event is about, by its title, when the page lists it.
- *
- * Args:
- *   event: The stored event.
- *   titles: The employee's work item titles by id.
- *
- * Returns:
- *   The title, or undefined for an event about no listed item.
- */
-export function eventItemTitle(
-  event: Pick<Doc<'events'>, 'payload'>,
-  titles: ReadonlyMap<string, string>,
-): string | undefined {
-  const workItemId = (event.payload as { workItemId?: unknown } | null | undefined)?.workItemId;
-  return typeof workItemId === 'string' ? titles.get(workItemId) : undefined;
-}
+import { eventItemTitle, eventLabel } from '../event-labels';
 
 /** The employee's newest events, newest first, each with the work item it is about. */
 export function EventTicker({

@@ -26,18 +26,16 @@ const SAID: Readonly<Record<RecordKind, string>> = {
  * a list (`<ul>` or `<ol>`), so a screen reader counts them.
  *
  * @param kind - What happened, as the dot's colour and its spoken word.
- * @param at - The event's instant, for the `time` element's machine-readable value.
- * @param when - The time as the page prints it, in the employee's zone.
+ * @param time - When: the instant, for the `time` element's machine-readable value, and the time
+ *   as the page prints it in the employee's zone. A line about a standing state has none.
  */
 export function RecordLine({
   kind,
-  at,
-  when,
+  time,
   children,
 }: {
   kind: RecordKind;
-  at: number;
-  when: string;
+  time?: { readonly at: number; readonly label: string };
   children: ReactNode;
 }) {
   return (
@@ -50,12 +48,14 @@ export function RecordLine({
         <span className="sr-only">{SAID[kind]}: </span>
         {children}
       </span>
-      <time
-        dateTime={new Date(at).toISOString()}
-        className="text-[13px] whitespace-nowrap tabular-nums text-[var(--color-muted)]"
-      >
-        {when}
-      </time>
+      {time !== undefined ? (
+        <time
+          dateTime={new Date(time.at).toISOString()}
+          className="text-[13px] whitespace-nowrap tabular-nums text-[var(--color-muted)]"
+        >
+          {time.label}
+        </time>
+      ) : null}
     </li>
   );
 }

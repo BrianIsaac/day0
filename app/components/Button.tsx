@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import type { ButtonHTMLAttributes, ComponentProps } from 'react';
+import type { ComponentProps } from 'react';
 
 /** What a button does, as its look says: the page's one next step, a decision, or the rest. */
 export const BUTTON_VARIANTS = [
@@ -64,7 +64,7 @@ export function Button({
   type = 'button',
   className,
   ...rest
-}: ButtonHTMLAttributes<HTMLButtonElement> & {
+}: ComponentProps<'button'> & {
   variant?: ButtonVariant;
   size?: ButtonSize;
 }) {

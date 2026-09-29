@@ -5,6 +5,7 @@ import {
   type EventType,
   type WorkPlanHeldPayload,
 } from '@/events/contract';
+import type { RecordKind } from '../../components/RecordLine';
 
 /**
  * A payload as the feed reads it: a row an older release wrote may lack any
@@ -418,4 +419,76 @@ export function eventLabel(event: Pick<Doc<'events'>, 'type' | 'payload'>): stri
   return (label as (payload: unknown) => string)(
     typeof payload === 'object' && payload !== null ? payload : {},
   );
+}
+
+/**
+ * The work item an event is about, by its title, when the page lists it.
+ *
+ * Args:
+ *   event: The stored event.
+ *   titles: The employee's work item titles by id.
+ *
+ * Returns:
+ *   The title, or undefined for an event about no listed item.
+ */
+export function eventItemTitle(
+  event: Pick<Doc<'events'>, 'payload'>,
+  titles: ReadonlyMap<string, string>,
+): string | undefined {
+  const workItemId = (event.payload as { workItemId?: unknown } | null | undefined)?.workItemId;
+  return typeof workItemId === 'string' ? titles.get(workItemId) : undefined;
+}
+
+/** The events that record something landing: a write, a registration, a connection, an approval. */
+const LANDED_TYPES: ReadonlySet<string> = new Set<EventType>([
+  'work.completed',
+  'work.provider-reconciled',
+  'charter.approved',
+  'skill.registered',
+  'skill.builtin-installed',
+  'surface.connected',
+]);
+
+/** The events that record a refusal: the manager's rejection, a gate's or a check's. */
+const REFUSED_TYPES: ReadonlySet<string> = new Set<EventType>([
+  'work.actions-rejected',
+  'work.claim-refused',
+  'work.failed',
+  'skill.rejected',
+  'skill.authoring-refused',
+  'skill.verification-failed',
+  'skill.failed',
+  'surface.rejected',
+]);
+
+/** The events that record something set aside and never sent. */
+const WITHHELD_TYPES: ReadonlySet<string> = new Set<EventType>([
+  'work.conditional-writes-withheld',
+  'work.skipped',
+  'work.withdrawn',
+  'work.cancelled',
+]);
+
+/** The events that record something waiting on the manager. */
+const HELD_TYPES: ReadonlySet<string> = new Set<EventType>([
+  'work.actions-pending',
+  'work.plan-drafted',
+  'work.plan-held',
+  'skill.proposed',
+  'surface.proposed',
+  'charter.drafted',
+]);
+
+/**
+ * What a record line's dot says an event did: landed, refused, withheld, held for the manager,
+ * or, for everything else, noted.
+ *
+ * @param event - The stored event.
+ */
+export function recordKindOf(event: Pick<Doc<'events'>, 'type'>): RecordKind {
+  if (LANDED_TYPES.has(event.type)) return 'landed';
+  if (REFUSED_TYPES.has(event.type)) return 'refused';
+  if (WITHHELD_TYPES.has(event.type)) return 'withheld';
+  if (HELD_TYPES.has(event.type)) return 'held';
+  return 'noted';
 }

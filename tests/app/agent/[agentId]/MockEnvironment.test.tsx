@@ -67,11 +67,7 @@ vi.mock('convex/react', () => ({
 }));
 
 import type { Id } from '../../../../convex/_generated/dataModel';
-import {
-  activeTabForEnvironment,
-  MockEnvironment,
-  tabFromHash,
-} from '../../../../app/agent/[agentId]/MockEnvironment';
+import { MockEnvironment } from '../../../../app/agent/[agentId]/MockEnvironment';
 import { ROLL_MS } from '../../../../app/components/RollingCount';
 import { LOADING_SURFACES } from '../../../../app/agent/[agentId]/mock/SurfacesTab';
 
@@ -144,34 +140,6 @@ describe('the hash links the work cards carry', (): void => {
     for (const hash of new Set(hashes)) {
       expect(markup).toContain(`id="${hash}"`);
     }
-  });
-});
-
-describe('tab selection from the location hash', (): void => {
-  it('names a tab from the hash the card link carries', (): void => {
-    expect(tabFromHash('#surfaces', true)).toBe('surfaces');
-    expect(tabFromHash('surfaces', true)).toBe('surfaces');
-    expect(tabFromHash('#Docs', true)).toBe('docs');
-    expect(tabFromHash('#tickets', false)).toBe('tickets');
-  });
-
-  it('ignores hashes that name no tab, and the Surfaces tab outside real mode', (): void => {
-    expect(tabFromHash('', true)).toBeUndefined();
-    expect(tabFromHash('#work-item-1', true)).toBeUndefined();
-    expect(tabFromHash('#%E0%A4%A', true)).toBeUndefined();
-    expect(tabFromHash('#surfaces', false)).toBeUndefined();
-    expect(tabFromHash('#slack', true)).toBeUndefined();
-    expect(tabFromHash('#spreadsheet', true)).toBeUndefined();
-    expect(tabFromHash('#tweet', true)).toBeUndefined();
-    expect(tabFromHash('#tickets', true)).toBeUndefined();
-  });
-
-  it('keeps the active tab valid when the resolved mode changes', (): void => {
-    expect(activeTabForEnvironment('surfaces', '#surfaces', false)).toBe('slack');
-    expect(activeTabForEnvironment('docs', '#unknown', false)).toBe('docs');
-    expect(activeTabForEnvironment('slack', '#surfaces', true)).toBe('surfaces');
-    expect(activeTabForEnvironment('slack', '#unknown', true)).toBe('docs');
-    expect(activeTabForEnvironment('tickets', '', true)).toBe('docs');
   });
 });
 

@@ -4,9 +4,10 @@ import { getFunctionName } from 'convex/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 /**
- * The whole dashboard rendered in a document with every panel populated, in
- * real mode, and checked with axe (step 45's gate, N14). The seams are the
- * Convex hooks: each query answers from the fixtures below, by function name.
+ * The whole employee page rendered in a document with every panel populated,
+ * in real mode, once per tab, and checked with axe (step 45's gate, N14). The
+ * seams are the Convex hooks, each query answering from the fixtures below by
+ * function name, and the router, which names the tab.
  */
 const backend = vi.hoisted(() => ({ queries: {} as Record<string, unknown> }));
 
@@ -17,8 +18,29 @@ vi.mock('convex/react', () => ({
   useAction: () => async (): Promise<void> => undefined,
 }));
 
+const route = vi.hoisted(() => ({
+  segment: null as string | null,
+  router: { replace: (): void => undefined },
+}));
+
+vi.mock('next/navigation', () => ({
+  useSelectedLayoutSegment: (): string | null => route.segment,
+  useRouter: () => route.router,
+}));
+
 import type { Doc } from '../../../../convex/_generated/dataModel';
-import { AgentDashboard } from '../../../../app/agent/[agentId]/AgentDashboard';
+import type { ReactNode } from 'react';
+import { EmployeeShell } from '../../../../app/agent/[agentId]/EmployeeShell';
+import { NeedsYouView } from '../../../../app/agent/[agentId]/NeedsYouView';
+import { WorkView } from '../../../../app/agent/[agentId]/work/WorkView';
+import { CharterView } from '../../../../app/agent/[agentId]/charter/CharterView';
+import { PeopleView } from '../../../../app/agent/[agentId]/people/PeopleView';
+import { DocumentationView } from '../../../../app/agent/[agentId]/documentation/DocumentationView';
+import { SkillsView } from '../../../../app/agent/[agentId]/skills/SkillsView';
+import { SurfacesView } from '../../../../app/agent/[agentId]/surfaces/SurfacesView';
+import { RecordView } from '../../../../app/agent/[agentId]/record/RecordView';
+import { ManageView } from '../../../../app/agent/[agentId]/manage/ManageView';
+import { ReorientationView } from '../../../../app/agent/[agentId]/reorientation/ReorientationView';
 import { dashboardMetrics } from '../../../fixtures/dashboard/metrics';
 import { axeViolations } from '../../../fixtures/dom/axe';
 import { mount, settle } from '../../../fixtures/dom/press';
@@ -109,6 +131,35 @@ function populated(): Record<string, unknown> {
     },
     'charters:listForAgent': [],
     'workspace:read': { 'AGENTS.md': '# Priya\nRevOps.' },
+    'work:needsYouForAgent': {
+      total: 2,
+      entries: [
+        {
+          kind: 'held',
+          key: 'held:w-held',
+          agentId,
+          employeeName: 'Priya',
+          zone: 'Europe/London',
+          subject: 'Item w-held',
+          waitingSince: 1,
+          waitingAtLeast: false,
+          workItemId: 'w-held',
+          heldWrites: 1,
+        },
+        {
+          kind: 'plan',
+          key: 'plan:w-plan',
+          agentId,
+          employeeName: 'Priya',
+          zone: 'Europe/London',
+          subject: 'Item w-plan',
+          waitingSince: 2,
+          waitingAtLeast: false,
+          workItemId: 'w-plan',
+          questions: 1,
+        },
+      ],
+    },
     'work:listForAgent': [
       item('w-plan', { state: 'plan-pending', plan, planPendingAt: 1 }),
       item('w-held', {
@@ -263,28 +314,60 @@ afterEach((): void => {
 /** The environment panel is its own chunk; under a full suite it can take seconds to arrive. */
 const CHUNK_WAIT = { timeout: 15_000 };
 
+/** Every page under the tabs: its name, its segment, its page, and a text that says it rendered. */
+const TABS: ReadonlyArray<readonly [string, string | null, () => ReactNode, string]> = [
+  ['Needs you', null, () => <NeedsYouView />, 'Nothing else is waiting on you'],
+  ['Work', 'work', () => <WorkView />, 'Item w-plan'],
+  ['Charter', 'charter', () => <CharterView />, 'Close week.'],
+  ['People', 'people', () => <PeopleView />, 'Named in the charter'],
+  ['Documentation', 'documentation', () => <DocumentationView />, 'Documentation page'],
+  ['Skills', 'skills', () => <SkillsView />, 'Skills'],
+  ['Surfaces', 'surfaces', () => <SurfacesView />, 'Enterprise context'],
+  ['Record', 'record', () => <RecordView />, 'Live event feed'],
+  ['Manage', 'manage', () => <ManageView />, 'Autonomous actions'],
+  ['reorientation', 'reorientation', () => <ReorientationView />, 'No reorientation card is open'],
+];
+
+/** The page with one tab open, rendered and settled, every disclosure opened. */
+async function openTab(
+  segment: string | null,
+  tab: () => ReactNode,
+  ready: string,
+): Promise<ReturnType<typeof mount>> {
+  route.segment = segment;
+  const view = mount(<EmployeeShell agentId={agentId}>{tab()}</EmployeeShell>);
+  await settle();
+  // The environment panel is its own chunk: wait for it, so its tabs are checked too.
+  await vi.waitFor((): void => {
+    expect(view.container.textContent).toContain(ready);
+  }, CHUNK_WAIT);
+  // Every disclosure open: the drafts, logs and payloads inside are checked
+  // too, and every scroll region among them has a name of its own.
+  for (const disclosure of view.container.querySelectorAll('details')) disclosure.open = true;
+  await settle();
+  return view;
+}
+
 describe('the dashboard against the accessibility floor (N14, step 45)', (): void => {
-  it('has no axe violation at the WCAG 2.2 AA tags and best practice with every panel populated', async (): Promise<void> => {
-    backend.queries = populated();
-    const view = mount(<AgentDashboard agentId={agentId} />);
-    await settle();
-    expect(view.container.textContent).toContain('Item w-plan');
-    // The environment panel is its own chunk: wait for it, so its tabs are checked too.
-    await vi.waitFor((): void => {
-      expect(view.container.textContent).toContain('Enterprise context');
-    }, CHUNK_WAIT);
-    expect(await axeViolations(view.container, ['region'])).toEqual([]);
-    // Every disclosure open: the drafts, logs and payloads inside are checked
-    // too, and every scroll region among them has a name of its own.
-    for (const disclosure of view.container.querySelectorAll('details')) disclosure.open = true;
-    await settle();
-    expect(await axeViolations(view.container, ['region'])).toEqual([]);
-    view.unmount();
-  }, 30_000);
+  it.each(TABS)(
+    'has no axe violation at the WCAG 2.2 AA tags and best practice with every panel of the %s page populated',
+    async (_name, segment, tab, ready): Promise<void> => {
+      backend.queries = populated();
+      const view = await openTab(segment, tab, ready);
+      expect(await axeViolations(view.container, ['region'])).toEqual([]);
+      view.unmount();
+    },
+    30_000,
+  );
 
   it('has no axe violation while every query is still loading', async (): Promise<void> => {
     backend.queries = { 'agents:get': populated()['agents:get'] };
-    const view = mount(<AgentDashboard agentId={agentId} />);
+    route.segment = null;
+    const view = mount(
+      <EmployeeShell agentId={agentId}>
+        <NeedsYouView />
+      </EmployeeShell>,
+    );
     await settle();
     expect(await axeViolations(view.container, ['region'])).toEqual([]);
     view.unmount();
@@ -313,18 +396,16 @@ function underTarget(root: Element): string[] {
 }
 
 describe("the dashboard's pointer targets (N14: 44 by 44 CSS pixels)", (): void => {
-  it('gives every control of the populated dashboard a 44 px target, the environment panel included', async (): Promise<void> => {
-    backend.queries = populated();
-    const view = mount(<AgentDashboard agentId={agentId} />);
-    await settle();
-    await vi.waitFor((): void => {
-      expect(view.container.textContent).toContain('Enterprise context');
-    }, CHUNK_WAIT);
-    for (const summary of view.container.querySelectorAll('details')) summary.open = true;
-    await settle();
-    expect(underTarget(view.container)).toEqual([]);
-    view.unmount();
-  }, 30_000);
+  it.each(TABS)(
+    'gives every control of the populated %s page a 44 px target, the environment panel included',
+    async (_name, segment, tab, ready): Promise<void> => {
+      backend.queries = populated();
+      const view = await openTab(segment, tab, ready);
+      expect(underTarget(view.container)).toEqual([]);
+      view.unmount();
+    },
+    30_000,
+  );
 });
 
 describe('the dashboard before the charter (N14: 44 by 44 CSS pixels)', (): void => {
@@ -334,7 +415,12 @@ describe('the dashboard before the charter (N14: 44 by 44 CSS pixels)', (): void
       'charters:latest': null,
       'config:surfaceMode': { mode: 'mock', label: 'mock mode' },
     };
-    const view = mount(<AgentDashboard agentId={agentId} />);
+    route.segment = null;
+    const view = mount(
+      <EmployeeShell agentId={agentId}>
+        <NeedsYouView />
+      </EmployeeShell>,
+    );
     await settle();
     await vi.waitFor((): void => {
       expect(view.container.textContent).toContain('Chat');

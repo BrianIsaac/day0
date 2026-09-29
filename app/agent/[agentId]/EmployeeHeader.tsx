@@ -7,13 +7,17 @@ import { isTimeZone, agentZone } from '@/lib/zone';
 import type { Doc } from '@convex/_generated/dataModel';
 import { useQuery, useMutation } from 'convex/react';
 import { api } from '@convex/_generated/api';
-import { SUPERVISED_LABEL, autonomousActionsOn } from '@/work/autonomy';
-import { NotificationModeControl } from './manage/NotificationModeControl';
-import { managerNotificationMode } from '@/work/manager-notes';
-import { AutonomyControl } from './manage/AutonomyControl';
+import { autonomousActionsOn } from '@/work/autonomy';
+import { employeeStateLabel, shownEmployeeState } from '@/work/state-labels';
+import { avatarById } from '@/agent/avatar-pets';
+import { Button } from '../../components/Button';
+import { INPUT_CLASS } from '../../components/Field';
+import { Pill } from '../../components/Pill';
+import { AgentPixelAvatar } from '../../home/PixelAvatar';
 
 /**
- * Who the agent reports to, and the control that changes it (Q6).
+ * Who the employee reports to, and the control that changes it (Q6), on the line under the
+ * employee's name.
  *
  * The address is the one the chat surface looks up to find the manager's DM,
  * so a manager who left, or whose account Slack no longer finds, is replaced
@@ -56,8 +60,8 @@ export function ManagerLine({
             save();
           }}
         >
-          <label className="text-2xl font-semibold tracking-tight" htmlFor="manager-email">
-            Employee reporting to
+          <label className="text-sm text-[var(--color-muted)]" htmlFor="manager-email">
+            Reports to
           </label>
           <input
             id="manager-email"
@@ -73,45 +77,47 @@ export function ManagerLine({
                 close();
               }
             }}
-            className="min-h-11 min-w-0 font-mono text-sm px-2 rounded border border-[var(--color-border)] bg-transparent"
+            className={`${INPUT_CLASS} flex-1 font-mono sm:max-w-80`}
           />
-          <button
+          <Button
             type="submit"
+            variant="primary"
+            size="small"
             disabled={change.busy || draft.trim() === ''}
-            className="min-h-11 text-xs px-3 rounded bg-[var(--color-accent)] text-[var(--color-bg)] disabled:opacity-50"
           >
             {change.busy ? 'Saving…' : 'Save'}
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            size="small"
             disabled={change.busy}
             onClick={() => {
               setDraft(bossEmail);
               change.clear();
               close();
             }}
-            className="min-h-11 text-xs px-3 rounded border border-[var(--color-border)]"
           >
             Cancel
-          </button>
+          </Button>
         </form>
       ) : (
-        <h1 className="text-2xl font-semibold tracking-tight">
-          Employee reporting to{' '}
-          <span className="font-mono break-all text-[var(--color-accent)]">{bossEmail}</span>{' '}
-          <button
+        <p className="flex flex-wrap items-center gap-x-2 text-sm text-[var(--color-muted)]">
+          <span className="min-w-0">
+            Reports to{' '}
+            <span className="font-mono break-all text-[var(--color-fg)]">{bossEmail}</span>
+          </span>
+          <Button
             ref={toggle}
-            type="button"
+            variant="quiet"
+            size="small"
             onClick={() => {
               setDraft(bossEmail);
               change.clear();
               setEditing(true);
             }}
-            className="min-h-11 align-middle text-xs font-normal px-3 rounded border border-[var(--color-border)] text-[var(--color-muted)]"
           >
             Change manager
-          </button>
-        </h1>
+          </Button>
+        </p>
       )}
       {editing ? (
         <p className="mt-1 text-xs text-[var(--color-muted)]">
@@ -176,15 +182,16 @@ export function ZoneLine({
     });
   };
   return (
-    <div className="mt-1 text-xs text-[var(--color-muted)]">
+    <div className="text-sm text-[var(--color-muted)]">
       <p className="flex flex-wrap items-center gap-x-2">
         <span>
           Times on this page are in <span className="text-[var(--color-fg)]">{zone}</span>, the
           employee&apos;s day.
         </span>
-        <button
+        <Button
           ref={toggle}
-          type="button"
+          variant="quiet"
+          size="small"
           aria-expanded={editing}
           aria-controls="zone-editor"
           onClick={() => {
@@ -192,10 +199,9 @@ export function ZoneLine({
             change.clear();
             setEditing(!editing);
           }}
-          className="min-h-11 px-2 rounded border border-[var(--color-border)] text-[var(--color-fg)] hover:border-[var(--color-accent)]"
         >
           Change zone
-        </button>
+        </Button>
       </p>
       {editing ? (
         <form
@@ -224,28 +230,24 @@ export function ZoneLine({
                 close();
               }
             }}
-            className="min-h-11 min-w-0 flex-1 font-mono px-2 rounded border border-[var(--color-border)] bg-transparent text-[var(--color-fg)]"
+            className={`${INPUT_CLASS} flex-1 font-mono sm:max-w-80`}
           />
           <datalist id="agent-zone-options">
             {zones.map((option) => (
               <option key={option} value={option} />
             ))}
           </datalist>
-          <button
+          <Button
             type="submit"
+            variant="primary"
+            size="small"
             disabled={busy || !valid || draft.trim() === zone}
-            className="min-h-11 px-3 rounded bg-[var(--color-accent)] text-[var(--color-bg)] font-medium disabled:opacity-50"
           >
             {busy ? 'Saving…' : 'Save'}
-          </button>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={close}
-            className="min-h-11 px-3 rounded border border-[var(--color-border)] text-[var(--color-fg)]"
-          >
+          </Button>
+          <Button size="small" disabled={busy} onClick={close}>
             Cancel
-          </button>
+          </Button>
           <p id="agent-zone-hint" className="basis-full">
             {valid
               ? 'A zone name such as Europe/London or Asia/Singapore.'
@@ -258,57 +260,36 @@ export function ZoneLine({
   );
 }
 
-/** The page header: the employee's name, state, zone, autonomy switch and manager channel control. */
-export function DashboardHeader({
+/**
+ * The employee page's header (round two section 3.3): the employee's face and name as the page's
+ * one h1, who it reports to with Change manager (U9), the zone every time on the page is in with
+ * its control (K), and beside them the office it works in and its state in the manager's words.
+ * The autonomy switch and the manager-DM setting are the Manage tab's.
+ *
+ * @param agent - The employee.
+ * @param charter - What the page is showing, which outranks the row when the two disagree.
+ * @param managerLookupFailure - A chat surface's reason when its probe could not find the manager.
+ */
+export function EmployeeHeader({
   agent,
   charter,
   managerLookupFailure,
-  managerChannel = false,
 }: {
   agent: Doc<'agents'>;
-  /** What the page is showing, which outranks the row when the two disagree. */
   charter: Doc<'charters'> | null;
-  /** A chat surface's failure reason when its probe could not find the manager. */
   managerLookupFailure?: string;
-  /** Whether a chat surface has found the manager's DM; the DM setting waits for one (N7). */
-  managerChannel?: boolean;
 }) {
   const surfaceConfig = useQuery(api.config.surfaceMode);
   const setBossEmail = useMutation(api.agents.setBossEmail);
-  const setAutonomousActions = useMutation(api.agents.setAutonomousActions);
-  const setManagerNotifications = useMutation(api.agents.setManagerNotifications);
   const setZone = useMutation(api.agents.setZone);
-  const stateLabel: Record<Doc<'agents'>['state'], { text: string; tone: string }> = {
-    deployed: {
-      text: 'Deployed · awaiting Day-1 1:1',
-      tone: 'bg-[var(--color-warn)]/15 text-[var(--color-warn)]',
-    },
-    'day-one-in-progress': {
-      text: 'Day-1 1:1 in progress',
-      tone: 'bg-[var(--color-accent)]/15 text-[var(--color-accent)]',
-    },
-    'charter-pending': {
-      text: 'Charter drafted · awaiting boss approval',
-      tone: 'bg-[var(--color-warn)]/15 text-[var(--color-warn)]',
-    },
-    active: {
-      text: `Active · ${SUPERVISED_LABEL}`,
-      tone: 'bg-[var(--color-ok)]/15 text-[var(--color-ok)]',
-    },
-  };
-  // A charter on the page is the more recent fact: a pill reading "Day-1 1:1
-  // in progress" above a drafted charter is wrong however the row got there.
-  const displayState: Doc<'agents'>['state'] = charter
-    ? charter.approved
-      ? 'active'
-      : 'charter-pending'
-    : agent.state;
-  const s = stateLabel[displayState];
+  const shown = shownEmployeeState(agent.state, charter);
+  const status = employeeStateLabel(shown, autonomousActionsOn(agent));
   return (
-    <header className="mb-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <header className="flex flex-wrap items-start justify-between gap-4 pb-5">
+      <div className="flex min-w-0 items-start gap-3.5">
+        <AgentPixelAvatar avatar={avatarById(agent.avatarId)} state={shown} label={agent.name} />
         <div className="min-w-0">
-          <p className="text-xs uppercase tracking-[0.2em] text-[var(--color-accent)] mb-1">Day0</p>
+          <h1 className="text-2xl font-semibold tracking-[-0.02em] break-words">{agent.name}</h1>
           <ManagerLine
             bossEmail={agent.bossEmail}
             lookupFailure={managerLookupFailure}
@@ -319,29 +300,12 @@ export function DashboardHeader({
             onChange={(zone) => setZone({ agentId: agent._id, zone })}
           />
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="px-2 py-1 rounded-full border border-[var(--color-border)] text-[10px]">
-            {surfaceConfig?.label || 'loading'}
-          </span>
-          {/* In real mode the chip is the manager's autonomous-actions
-              switch; the hosted mock has no gate for the switch to change, so
-              it keeps the static label. */}
-          {displayState === 'active' && surfaceConfig?.mode === 'real' && managerChannel ? (
-            <NotificationModeControl
-              mode={managerNotificationMode(agent)}
-              onChange={(mode) => setManagerNotifications({ agentId: agent._id, mode })}
-            />
-          ) : null}
-          {displayState === 'active' && surfaceConfig?.mode === 'real' ? (
-            <AutonomyControl
-              on={autonomousActionsOn(agent)}
-              tone={s.tone}
-              onChange={(on) => setAutonomousActions({ agentId: agent._id, on })}
-            />
-          ) : (
-            <span className={`px-3 py-1 rounded-full text-xs font-medium ${s.tone}`}>{s.text}</span>
-          )}
-        </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        {surfaceConfig ? (
+          <Pill>{surfaceConfig.mode === 'mock' ? 'mock office' : surfaceConfig.label}</Pill>
+        ) : null}
+        <Pill tone={status.tone}>{status.text}</Pill>
       </div>
     </header>
   );

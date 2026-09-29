@@ -70,7 +70,8 @@ describe('the dashboard driver', (): void => {
   it("clicks the dashboard's own control texts, so a copy change here fails before a run does", (): void => {
     expect(CHAT).toContain(`'${REPLY_PLACEHOLDER}'`);
     expect(CHAT).toContain(COMPLETE_LINE);
-    expect(DASHBOARD).toMatch(/>\s*Chat\s*<\/button>/);
+    // The day-zero picker draws its choices with the shared Button, a `<button>` when rendered.
+    expect(DASHBOARD).toMatch(/>\s*Chat\s*<\/(button|Button)>/);
     for (const [file, text] of [
       [DASHBOARD, 'Approve · author and verify'],
       [DASHBOARD, 'Approve plan'],

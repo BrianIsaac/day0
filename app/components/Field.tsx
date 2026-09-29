@@ -2,9 +2,12 @@
 
 import { useId, type ReactNode } from 'react';
 
-/** The classes of a text input, a select or a text area: 44 px tall, on the page's own ground. */
+/**
+ * The classes of a text input, a select or a text area: 44 px tall, on the page's own ground. The
+ * width is the caller's (`w-full` in a form column, `flex-1` in a row).
+ */
 export const INPUT_CLASS =
-  'min-h-11 w-full min-w-0 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-base text-[var(--color-fg)] placeholder:text-[var(--color-muted)] focus:border-[var(--color-accent)] disabled:opacity-60';
+  'min-h-11 min-w-0 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-base text-[var(--color-fg)] placeholder:text-[var(--color-muted)] focus:border-[var(--color-accent)] disabled:opacity-60';
 
 /** What a field hands its control so the label, the hint and the error read with it. */
 export interface FieldControlProps {

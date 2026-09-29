@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { eventLabel } from '../../../../app/agent/[agentId]/event-labels';
+import {
+  eventItemTitle,
+  eventLabel,
+  recordKindOf,
+} from '../../../../app/agent/[agentId]/event-labels';
 import { EVENT_TYPES } from '../../../../src/events/contract';
 
 describe('the live feed labels', (): void => {
@@ -199,5 +203,36 @@ describe('the live feed labels', (): void => {
 
   it('prints a type only an older release wrote as it was stored', (): void => {
     expect(eventLabel({ type: 'work.legacy-thing', payload: { x: 1 } })).toBe('work.legacy-thing');
+  });
+});
+
+describe('the live feed names the item an event is about', (): void => {
+  it("reads the item's title from the queue, and nothing for an event about no listed item", (): void => {
+    const titles = new Map([['w1', 'Close REVOPS-5']]);
+    expect(eventItemTitle({ payload: { workItemId: 'w1' } }, titles)).toBe('Close REVOPS-5');
+    expect(eventItemTitle({ payload: { workItemId: 'w9' } }, titles)).toBeUndefined();
+    expect(eventItemTitle({ payload: { surfaceId: 's1' } }, titles)).toBeUndefined();
+    expect(eventItemTitle({ payload: null }, titles)).toBeUndefined();
+  });
+});
+
+describe('what a record line says an event did', (): void => {
+  it('marks what landed, what was refused, what was set aside and what waits on the manager', (): void => {
+    expect(recordKindOf({ type: 'work.completed' })).toBe('landed');
+    expect(recordKindOf({ type: 'charter.approved' })).toBe('landed');
+    expect(recordKindOf({ type: 'work.actions-rejected' })).toBe('refused');
+    expect(recordKindOf({ type: 'skill.verification-failed' })).toBe('refused');
+    expect(recordKindOf({ type: 'work.skipped' })).toBe('withheld');
+    expect(recordKindOf({ type: 'work.actions-pending' })).toBe('held');
+    expect(recordKindOf({ type: 'skill.proposed' })).toBe('held');
+  });
+
+  it('notes every other event the contract lists, and one it does not know', (): void => {
+    expect(recordKindOf({ type: 'agent.deployed' })).toBe('noted');
+    expect(recordKindOf({ type: 'work.model-call' })).toBe('noted');
+    expect(recordKindOf({ type: 'not.a-type' })).toBe('noted');
+    for (const type of EVENT_TYPES) {
+      expect(['landed', 'refused', 'withheld', 'held', 'noted']).toContain(recordKindOf({ type }));
+    }
   });
 });

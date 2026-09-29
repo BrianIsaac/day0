@@ -198,6 +198,7 @@ export function FinishControl({ disabled, onFinish }: { disabled: boolean; onFin
   );
 }
 
+/** Why the employee's last turn did not arrive, with the control that asks it again. */
 export function TurnFailureNotice({
   failure,
   onAskAgain,
@@ -219,6 +220,7 @@ export function TurnFailureNotice({
   );
 }
 
+/** The Day-1 one-to-one held in text: the transcript, the composer, and the switch to voice. */
 export function ChatRoom({
   agentId,
   bossLabel,
