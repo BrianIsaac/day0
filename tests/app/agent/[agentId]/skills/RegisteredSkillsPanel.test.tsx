@@ -610,3 +610,19 @@ describe('what Retry does to an unregistered skill', (): void => {
     });
   });
 });
+
+describe('loading is not the same as empty (P3-13, moved from the work queue suite)', (): void => {
+  it('says the skills are loading rather than empty', (): void => {
+    const skills = renderToStaticMarkup(
+      <RegisteredSkillsPanel
+        skills={[]}
+        unregistered={[]}
+        authoringFailure={null}
+        onAuthoringAttempt={() => undefined}
+        loading={true}
+      />,
+    );
+    expect(skills).toContain('loading skills…');
+    expect(skills).not.toContain('none yet');
+  });
+});

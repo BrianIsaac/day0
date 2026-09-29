@@ -4,11 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { getFunctionName } from 'convex/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Id } from '../../../../../convex/_generated/dataModel';
-import { dashboardMetrics } from '../../../../fixtures/dashboard/metrics';
-import { PILOT_FIGURES } from '../../../../../app/CompanySupervision';
 import { CheckForNewWork, WorkQueue } from '../../../../../app/agent/[agentId]/work/WorkQueue';
-import { MetricsCard } from '../../../../../app/agent/[agentId]/record/MetricsCard';
-import { RegisteredSkillsPanel } from '../../../../../app/agent/[agentId]/skills/RegisteredSkillsPanel';
 import { button, focusedName, mount, press, said } from '../../../../fixtures/dom/press';
 
 const backend = vi.hoisted(() => ({
@@ -65,7 +61,7 @@ describe('checking for new work now (step 45)', (): void => {
 });
 
 describe('loading is not the same as empty (P3-13)', (): void => {
-  it('says the queue and the skills are loading rather than empty', (): void => {
+  it('says the queue is loading rather than empty', (): void => {
     const queue = renderToStaticMarkup(
       <WorkQueue
         agentId={'a1' as Id<'agents'>}
@@ -81,22 +77,5 @@ describe('loading is not the same as empty (P3-13)', (): void => {
     );
     expect(queue).toContain('loading the work queue…');
     expect(queue).not.toContain('no work seeded yet');
-    const skills = renderToStaticMarkup(
-      <RegisteredSkillsPanel
-        skills={[]}
-        unregistered={[]}
-        authoringFailure={null}
-        onAuthoringAttempt={() => undefined}
-        loading={true}
-      />,
-    );
-    expect(skills).toContain('loading skills…');
-    expect(skills).not.toContain('none yet');
-  });
-
-  it('puts every pilot figure definition in the page, not only in a hover', (): void => {
-    const markup = renderToStaticMarkup(<MetricsCard metrics={dashboardMetrics()} />);
-    for (const figure of PILOT_FIGURES) expect(markup).toContain(figure.definition);
-    expect(markup).toContain('What each pilot figure counts');
   });
 });

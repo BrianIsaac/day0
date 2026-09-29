@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AgentMetrics } from '../../../../../src/metrics/types';
 import { dashboardMetrics } from '../../../../fixtures/dashboard/metrics';
 import { MetricsCard } from '../../../../../app/agent/[agentId]/record/MetricsCard';
+import { PILOT_FIGURES } from '../../../../../app/CompanySupervision';
 
 const backend = vi.hoisted(() => ({
   /** Mutations and actions that reject, by function name, with the text they reject with. */
@@ -72,5 +73,13 @@ describe('dashboard decisions on the supervision card (P6-9)', (): void => {
     expect(markup).toMatch(/hours saved<span[^>]*>your estimates, internal gauge<\/span>/);
     expect(markup).toContain('1.3 h over 2 items');
     expect(markup).toContain('not measured yet');
+  });
+});
+
+describe('the figures card, loading and defined (P3-13, moved from the work queue suite)', (): void => {
+  it('puts every pilot figure definition in the page, not only in a hover', (): void => {
+    const markup = renderToStaticMarkup(<MetricsCard metrics={dashboardMetrics()} />);
+    for (const figure of PILOT_FIGURES) expect(markup).toContain(figure.definition);
+    expect(markup).toContain('What each pilot figure counts');
   });
 });
