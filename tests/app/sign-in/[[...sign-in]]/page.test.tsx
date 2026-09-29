@@ -2,7 +2,14 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HOSTED_DEMO_NOTICE } from '../../../../src/demo/hosted-notice';
 
-vi.mock('@clerk/nextjs', () => ({ SignIn: () => <div data-clerk-sign-in="" /> }));
+const clerk = vi.hoisted(() => ({ appearance: [] as unknown[] }));
+
+vi.mock('@clerk/nextjs', () => ({
+  SignIn: ({ appearance }: { appearance?: unknown }) => {
+    clerk.appearance.push(appearance);
+    return <div data-clerk-sign-in="" />;
+  },
+}));
 vi.mock('next/navigation', () => ({
   redirect: (to: string): never => {
     throw new Error(`redirect ${to}`);
@@ -61,6 +68,13 @@ describe('the sign-in page', () => {
 
   it("offers Clerk's sign-in beside the notice", async () => {
     expect(await render()).toContain('data-clerk-sign-in');
+  });
+
+  it("dresses Clerk's sign-in in the shared appearance, so its text reads on the dark page", async () => {
+    clerk.appearance.length = 0;
+    await render();
+    const { clerkAppearance } = await import('../../../../app/clerk-appearance');
+    expect(clerk.appearance).toEqual([clerkAppearance]);
   });
 
   it('sends the local manager home in no-auth dev mode, where there is nothing to sign in to', async () => {

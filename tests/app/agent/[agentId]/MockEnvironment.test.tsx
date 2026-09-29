@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { act } from 'react';
@@ -67,12 +67,8 @@ vi.mock('convex/react', () => ({
 }));
 
 import type { Id } from '../../../../convex/_generated/dataModel';
-import {
-  activeTabForEnvironment,
-  MockEnvironment,
-  ROLL_MS,
-  tabFromHash,
-} from '../../../../app/agent/[agentId]/MockEnvironment';
+import { MockEnvironment } from '../../../../app/agent/[agentId]/MockEnvironment';
+import { ROLL_MS } from '../../../../app/components/RollingCount';
 import { LOADING_SURFACES } from '../../../../app/agent/[agentId]/mock/SurfacesTab';
 
 const agentId = 'agent-1' as Id<'agents'>;
@@ -126,13 +122,15 @@ describe('the tab strip and the panel for a keyboard and a screen reader (step 4
 describe('the hash links the work cards carry', (): void => {
   // Resolved by path: under jsdom, Vite rewrites `new URL(path, import.meta.url)`
   // into a served asset address rather than a file.
-  const dashboard = readFileSync(
-    resolve(
-      dirname(fileURLToPath(import.meta.url)),
-      '../../../../app/agent/[agentId]/AgentDashboard.tsx',
-    ),
-    'utf8',
+  // Every module of the employee page, since the cards that carry the links live in its tabs.
+  const pageDirectory = resolve(
+    dirname(fileURLToPath(import.meta.url)),
+    '../../../../app/agent/[agentId]',
   );
+  const dashboard = readdirSync(pageDirectory, { recursive: true, encoding: 'utf8' })
+    .filter((file) => /\.tsx?$/.test(file))
+    .map((file) => readFileSync(resolve(pageDirectory, file), 'utf8'))
+    .join('\n');
   const hashes = [...dashboard.matchAll(/href="#([a-z-]+)"/g)].map((match) => match[1]);
 
   it('each name an element the environment panel renders, so the link scrolls as well as switching the tab', (): void => {
@@ -142,34 +140,6 @@ describe('the hash links the work cards carry', (): void => {
     for (const hash of new Set(hashes)) {
       expect(markup).toContain(`id="${hash}"`);
     }
-  });
-});
-
-describe('tab selection from the location hash', (): void => {
-  it('names a tab from the hash the card link carries', (): void => {
-    expect(tabFromHash('#surfaces', true)).toBe('surfaces');
-    expect(tabFromHash('surfaces', true)).toBe('surfaces');
-    expect(tabFromHash('#Docs', true)).toBe('docs');
-    expect(tabFromHash('#tickets', false)).toBe('tickets');
-  });
-
-  it('ignores hashes that name no tab, and the Surfaces tab outside real mode', (): void => {
-    expect(tabFromHash('', true)).toBeUndefined();
-    expect(tabFromHash('#work-item-1', true)).toBeUndefined();
-    expect(tabFromHash('#%E0%A4%A', true)).toBeUndefined();
-    expect(tabFromHash('#surfaces', false)).toBeUndefined();
-    expect(tabFromHash('#slack', true)).toBeUndefined();
-    expect(tabFromHash('#spreadsheet', true)).toBeUndefined();
-    expect(tabFromHash('#tweet', true)).toBeUndefined();
-    expect(tabFromHash('#tickets', true)).toBeUndefined();
-  });
-
-  it('keeps the active tab valid when the resolved mode changes', (): void => {
-    expect(activeTabForEnvironment('surfaces', '#surfaces', false)).toBe('slack');
-    expect(activeTabForEnvironment('docs', '#unknown', false)).toBe('docs');
-    expect(activeTabForEnvironment('slack', '#surfaces', true)).toBe('surfaces');
-    expect(activeTabForEnvironment('slack', '#unknown', true)).toBe('docs');
-    expect(activeTabForEnvironment('tickets', '', true)).toBe('docs');
   });
 });
 

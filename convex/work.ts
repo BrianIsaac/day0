@@ -7159,6 +7159,11 @@ async function needsYouOfEmployee(
   ];
 }
 
+/** The inbox's one order: the longest wait first, ties by key so the order is stable. */
+function longestWaitFirst(left: NeedsYouEntry, right: NeedsYouEntry): number {
+  return left.waitingSince - right.waitingSince || left.key.localeCompare(right.key);
+}
+
 /**
  * Public, owner-scoped: everything waiting on the manager across their
  * employees, longest wait first, for the needs-you inbox on the signed-in
@@ -7187,12 +7192,7 @@ export const needsYou = query({
     const perEmployee = await Promise.all(
       employees.map(async (agent) => await needsYouOfEmployee(ctx, agent, now)),
     );
-    const entries = perEmployee
-      .flat()
-      .sort(
-        (left, right) =>
-          left.waitingSince - right.waitingSince || left.key.localeCompare(right.key),
-      );
+    const entries = perEmployee.flat().sort(longestWaitFirst);
     return {
       entries: entries.slice(0, NEEDS_YOU_LIMIT),
       total: entries.length,
@@ -7201,5 +7201,31 @@ export const needsYou = query({
         waiting: perEmployee[index]?.length ?? 0,
       })),
     };
+  },
+});
+
+const needsYouForAgentValidator = v.object({
+  entries: v.array(needsYouEntryValidator),
+  total: v.number(),
+});
+
+/**
+ * Public, owner-guarded (`assertOwnsAgent`): what one employee waits on the
+ * manager for, longest wait first, for the Needs you tab of the employee's
+ * page (N7). The same rows, kinds and dating as `needsYou`, read by the same
+ * `needsYouOfEmployee`, so for an employee the home lists, the tab lists the
+ * same entries in the same order. The home leaves out evaluation agents and
+ * reads at most `NEEDS_YOU_EMPLOYEE_LIMIT` employees; the tab answers for the
+ * one employee its page is about, whichever it is. Writes nothing.
+ *
+ * @returns At most `NEEDS_YOU_LIMIT` entries and how many there are in all.
+ */
+export const needsYouForAgent = query({
+  args: { agentId: v.id('agents') },
+  returns: needsYouForAgentValidator,
+  handler: async (ctx, args): Promise<Infer<typeof needsYouForAgentValidator>> => {
+    const agent = await assertOwnsAgent(ctx, args.agentId);
+    const entries = (await needsYouOfEmployee(ctx, agent, Date.now())).sort(longestWaitFirst);
+    return { entries: entries.slice(0, NEEDS_YOU_LIMIT), total: entries.length };
   },
 });

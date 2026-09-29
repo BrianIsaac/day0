@@ -3,7 +3,8 @@
 import { useRef } from 'react';
 import type { Id } from '../../../convex/_generated/dataModel';
 import { managerFeedbackLabel, type ManagerFeedbackKind } from '../../../src/work/manager-feedback';
-import { LiveStatus, useChange } from './live-status';
+import { useChange } from '../../components/use-change';
+import { StatusRegion } from '../../components/StatusRegion';
 import { clockTime, clockTimeWithSeconds, useAgentZone } from './time';
 
 /**
@@ -137,7 +138,7 @@ export function KeptCorrectionsPanel({
           );
         })}
       </ul>
-      <LiveStatus outcome={change.outcome} />
+      <StatusRegion outcome={change.outcome} />
     </>
   );
 }

@@ -6,7 +6,7 @@ import { useMutation } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { postCharterSynthesis } from './charter-synthesis';
-import { refusalText } from './live-status';
+import { refusalText } from '../../components/use-change';
 import { ROOM_HEIGHT } from './room-frame';
 
 interface StartResponse {

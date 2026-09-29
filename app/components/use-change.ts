@@ -92,7 +92,7 @@ export function returnFocus(origin: HTMLElement | null, fallback: HTMLElement | 
  *
  * @param fallback - The card or panel that takes focus when the control does not
  *   survive the change; it needs `tabIndex={-1}` and a name.
- * @returns The busy flag, the outcome for `LiveStatus`, and `run`.
+ * @returns The busy flag, the outcome for `StatusRegion`, and `run`.
  */
 export function useChange(fallback?: RefObject<HTMLElement | null>): Change {
   const [pending, setPending] = useState(0);
@@ -105,7 +105,7 @@ export function useChange(fallback?: RefObject<HTMLElement | null>): Change {
   // latest says its outcome and moves focus.
   const latest = useRef(0);
   const run = useCallback(
-    <Result,>(call: () => Promise<Result> | Result, words: ChangeWords<Result>): void => {
+    <Result>(call: () => Promise<Result> | Result, words: ChangeWords<Result>): void => {
       const id = ++latest.current;
       origin.current =
         document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -153,26 +153,4 @@ export function useChange(fallback?: RefObject<HTMLElement | null>): Change {
     else returnFocus(from, fallback?.current ?? null);
   }, [settled, fallback]);
   return { busy: pending > 0, outcome, run, clear };
-}
-
-/**
- * The live region beside a dashboard control: rendered before anything is
- * said, so a screen reader announces the outcome of each change (N14), and
- * polite, because a change the manager just made is never an interruption.
- * Empty, it is visually hidden rather than removed, so it holds no space in a
- * spaced column and is still in the page when its first outcome arrives.
- */
-export function LiveStatus({ outcome }: { outcome: ChangeOutcome | null }) {
-  return (
-    <p
-      role="status"
-      aria-live="polite"
-      aria-atomic="true"
-      className={`empty:sr-only text-[11px] leading-snug ${
-        outcome?.tone === 'refused' ? 'text-[var(--color-danger)]' : 'text-[var(--color-muted)]'
-      }`}
-    >
-      {outcome?.text ?? ''}
-    </p>
-  );
 }

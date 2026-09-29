@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   agentIdFromUrl,
@@ -9,9 +9,17 @@ import {
   TAKE_IT_ANYWAY,
 } from '../../../../scripts/bed/rehearsal/driver';
 
-const DASHBOARD = readFileSync('app/agent/[agentId]/AgentDashboard.tsx', 'utf8');
+// The employee page is a layout and a page per tab over many modules; the driver clicks
+// whichever of them renders the control, so its texts are read across the whole directory.
+const DASHBOARD = readdirSync('app/agent/[agentId]', { recursive: true, encoding: 'utf8' })
+  .filter((file) => /\.tsx?$/.test(file))
+  .map((file) => readFileSync(`app/agent/[agentId]/${file}`, 'utf8'))
+  .join('\n');
 const CHAT = readFileSync('app/agent/[agentId]/ChatRoom.tsx', 'utf8');
-const SURFACES = readFileSync('app/agent/[agentId]/mock/SurfacesTab.tsx', 'utf8');
+// The Surfaces tab's cards are drawn by the tab and the rows and controls beside it.
+const SURFACES = ['SurfacesTab', 'SurfaceRows', 'SurfaceControls']
+  .map((file) => readFileSync(`app/agent/[agentId]/mock/${file}.tsx`, 'utf8'))
+  .join('\n');
 const DOCUMENTATION = readFileSync('app/documentation/DocumentationPage.tsx', 'utf8');
 const DEPLOY_FORM = readFileSync('app/home/DeployForm.tsx', 'utf8');
 const DRIVER = readFileSync('scripts/bed/rehearsal/driver.ts', 'utf8');
@@ -62,7 +70,8 @@ describe('the dashboard driver', (): void => {
   it("clicks the dashboard's own control texts, so a copy change here fails before a run does", (): void => {
     expect(CHAT).toContain(`'${REPLY_PLACEHOLDER}'`);
     expect(CHAT).toContain(COMPLETE_LINE);
-    expect(DASHBOARD).toMatch(/>\s*Chat\s*<\/button>/);
+    // The day-zero picker draws its choices with the shared Button, a `<button>` when rendered.
+    expect(DASHBOARD).toMatch(/>\s*Chat\s*<\/(button|Button)>/);
     for (const [file, text] of [
       [DASHBOARD, 'Approve · author and verify'],
       [DASHBOARD, 'Approve plan'],

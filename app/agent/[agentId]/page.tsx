@@ -1,7 +1,6 @@
-import { AgentDashboard } from './AgentDashboard';
-import type { Id } from '@convex/_generated/dataModel';
+import { NeedsYouView } from './NeedsYouView';
 
-export default async function AgentPage({ params }: { params: Promise<{ agentId: string }> }) {
-  const { agentId } = await params;
-  return <AgentDashboard agentId={agentId as Id<'agents'>} />;
+/** The employee page's default tab: what waits on the manager. */
+export default function NeedsYouPage() {
+  return <NeedsYouView />;
 }

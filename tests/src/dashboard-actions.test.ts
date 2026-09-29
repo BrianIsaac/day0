@@ -2,32 +2,32 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 
-vi.mock('../../app/agent/[agentId]/ChatRoom', () => ({ ChatRoom: (): null => null }));
-vi.mock('../../app/agent/[agentId]/VoiceRoom', () => ({ VoiceRoom: (): null => null }));
-vi.mock('../../app/agent/[agentId]/MockEnvironment', () => ({
-  MockEnvironment: (): null => null,
-}));
-
 import {
   AutonomyConfirm,
   AutonomyControl,
   cancelsAutonomyConfirm,
+} from '../../app/agent/[agentId]/manage/AutonomyControl';
+import {
   cancelledReason,
   decisionAttribution,
   failedItemReason,
   landedHeadline,
+  pendingHeadline,
+  pendingVerdicts,
+} from '../../app/agent/[agentId]/work/work-item';
+import {
   ManagerFeedbackNote,
-  MetricsCard,
-  NotificationModeControl,
+  PlanExecutionLedger,
+  ProviderReconciliationControl,
+} from '../../app/agent/[agentId]/work/RunDetails';
+import { MetricsCard } from '../../app/agent/[agentId]/record/MetricsCard';
+import { NotificationModeControl } from '../../app/agent/[agentId]/manage/NotificationModeControl';
+import {
   PendingActions,
   pendingDecisionMembers,
   PendingDecisionsPanel,
-  pendingHeadline,
-  PlanExecutionLedger,
-  pendingVerdicts,
-  PermissionRows,
-  ProviderReconciliationControl,
-} from '../../app/agent/[agentId]/AgentDashboard';
+} from '../../app/agent/[agentId]/work/PendingActions';
+import { PermissionRows } from '../../app/agent/[agentId]/surfaces/PermissionsCard';
 import { formatMetricDuration } from '../../app/metric-format';
 import type { AgentMetrics } from '../../src/metrics/types';
 import type { Doc } from '../../convex/_generated/dataModel';
@@ -636,7 +636,7 @@ describe('the cross-item approval panel', (): void => {
     );
     // Nothing to see, only the live region that says what the last batch came to.
     expect(html).toBe(
-      '<p role="status" aria-live="polite" aria-atomic="true" class="empty:sr-only text-[11px] leading-snug text-[var(--color-muted)]"></p>',
+      '<p role="status" aria-live="polite" aria-atomic="true" class="empty:sr-only text-xs leading-snug text-[var(--color-muted)]"></p>',
     );
   });
 });

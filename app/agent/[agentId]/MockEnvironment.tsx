@@ -10,14 +10,15 @@ import { SlackTab } from './mock/SlackTab';
 import { TwitterTab } from './mock/TwitterTab';
 import { TicketsTab } from './mock/TicketsTab';
 import { SurfacesTab } from './mock/SurfacesTab';
-import { usePreviousValue } from './previous-value';
-
-export type TabKey = 'slack' | 'spreadsheet' | 'docs' | 'tweet' | 'tickets' | 'surfaces';
-
-export type EnvironmentMode = 'mock' | 'real';
-
-/** The id the card links and the Slack OAuth redirect name in their hash. */
-const PANEL_ID = 'surfaces';
+import { RollingCount } from '../../components/RollingCount';
+import {
+  activeTabForEnvironment,
+  ENVIRONMENT_PANEL_ID,
+  tabFromHash,
+  tabIsAvailable,
+  type EnvironmentMode,
+  type TabKey,
+} from './environment-hash';
 
 const CAPTIONS: Record<EnvironmentMode, string> = {
   mock: 'Mock surfaces - when the employee runs a skill, edits land here in real time',
@@ -42,72 +43,11 @@ const TABS: Array<{
   { key: 'surfaces', label: 'Surfaces', sublabel: { real: 'connections + evidence' } },
 ];
 
-const TAB_KEYS = new Set<string>(TABS.map((tab): TabKey => tab.key));
-const AVAILABLE_TAB_KEYS: Record<EnvironmentMode, ReadonlySet<TabKey>> = {
-  mock: new Set<TabKey>(['slack', 'spreadsheet', 'docs', 'tweet', 'tickets']),
-  real: new Set<TabKey>(['docs', 'surfaces']),
-};
-
-function tabIsAvailable(key: TabKey, isReal: boolean): boolean {
-  return AVAILABLE_TAB_KEYS[isReal ? 'real' : 'mock'].has(key);
-}
-
 /**
- * Read the tab a location hash names.
- *
- * A card link such as `#surfaces` (the awaiting-connection deferral on a work
- * item) must switch the tab as well as scroll to the panel that carries the
- * id, so the hash is honoured on mount and on every `hashchange`. The
- * Surfaces tab exists only in real mode; elsewhere its hash names nothing.
- *
- * Args:
- *   hash: `window.location.hash`, with or without the leading `#`.
- *   isReal: Whether the deployment runs in real mode.
- *
- * Returns:
- *   The tab key the hash names, or undefined when it names no tab.
+ * The office the employee works in, on the Surfaces tab: the hosted mock's five surfaces, or in
+ * real mode the documentation it reads and its connections, one tab each, with a count that rolls
+ * when it changes. A location hash naming a tab selects it and scrolls here once.
  */
-export function tabFromHash(hash: string, isReal: boolean): TabKey | undefined {
-  let key: string;
-  try {
-    key = decodeURIComponent(hash.replace(/^#/, '')).trim().toLowerCase();
-  } catch {
-    return undefined;
-  }
-  if (!TAB_KEYS.has(key)) return undefined;
-  const tabKey = key as TabKey;
-  return tabIsAvailable(tabKey, isReal) ? tabKey : undefined;
-}
-
-/** Keep the selected tab valid as hashes and the resolved deployment mode change. */
-export function activeTabForEnvironment(active: TabKey, hash: string, isReal: boolean): TabKey {
-  const named = tabFromHash(hash, isReal);
-  if (named) return named;
-  if (tabIsAvailable(active, isReal)) return active;
-  return isReal ? 'docs' : 'slack';
-}
-
-/** How long a count's roll plays (`.roll` in `app/globals.css`). */
-export const ROLL_MS = 220;
-
-/**
- * A tab's count. When it changes on the page, the old figure rolls up and out as the new one
- * rolls in (v3 section 5.2); the first figure is simply there, and under reduced motion only
- * the new one shows.
- */
-export function RollingCount({ value }: { value: number }) {
-  const previous = usePreviousValue(value, ROLL_MS);
-  if (previous === undefined) return <>{value}</>;
-  return (
-    <span key={value} className="roll">
-      <span aria-hidden="true" className="from">
-        {previous}
-      </span>
-      <span className="to">{value}</span>
-    </span>
-  );
-}
-
 export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
   const [active, setActive] = useState<TabKey>('slack');
   const scrolledToHash = useRef(false);
@@ -141,7 +81,7 @@ export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
     // later hash change finds the panel present and the browser scrolls.
     if (!scrolledToHash.current && tabFromHash(window.location.hash, isReal)) {
       scrolledToHash.current = true;
-      document.getElementById(PANEL_ID)?.scrollIntoView();
+      document.getElementById(ENVIRONMENT_PANEL_ID)?.scrollIntoView();
     }
     window.addEventListener('hashchange', follow);
     return (): void => window.removeEventListener('hashchange', follow);
@@ -219,7 +159,7 @@ export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
       {/* The panel carries the id the card links name, so `#surfaces` scrolls
           here as well as selecting the tab above. */}
       <div
-        id={PANEL_ID}
+        id={ENVIRONMENT_PANEL_ID}
         tabIndex={0}
         role="region"
         aria-label={`${tabs.find((tab) => tab.key === displayedActive)?.label ?? 'Environment'} tab`}

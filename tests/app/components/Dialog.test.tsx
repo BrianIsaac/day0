@@ -1,0 +1,178 @@
+/** @vitest-environment jsdom */
+
+import { act, useRef, useState } from 'react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { Dialog, focusableIn } from '../../../app/components/Dialog';
+import { mount, press } from '../../fixtures/dom/press';
+
+afterEach((): void => {
+  document.body.replaceChildren();
+});
+
+/** A page with one button that opens a dialog of two buttons and a field. */
+function Page({ busy = false, safe = false }: { busy?: boolean; safe?: boolean }) {
+  const [open, setOpen] = useState(false);
+  const keep = useRef<HTMLButtonElement>(null);
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)}>
+        Retire Mira…
+      </button>
+      {open ? (
+        <Dialog
+          title="Retire Mira?"
+          onClose={() => setOpen(false)}
+          busy={busy}
+          initialFocus={safe ? keep : undefined}
+        >
+          <input aria-label="Confirm" />
+          <button ref={keep} type="button" onClick={() => setOpen(false)}>
+            Keep Mira
+          </button>
+          <button type="button">Retire</button>
+        </Dialog>
+      ) : null}
+    </>
+  );
+}
+
+/** Dispatch a key press on the element that holds focus. */
+function key(name: string, shiftKey = false): void {
+  act((): void => {
+    (document.activeElement ?? document.body).dispatchEvent(
+      new KeyboardEvent('keydown', { key: name, shiftKey, bubbles: true }),
+    );
+  });
+}
+
+describe('Dialog', () => {
+  it('is a modal named by its title', async () => {
+    const view = mount(<Page />);
+    await press(view.container, 'Retire Mira…');
+    const dialog = document.querySelector('[role="dialog"]');
+    expect(dialog?.getAttribute('aria-modal')).toBe('true');
+    expect(
+      document.getElementById(dialog?.getAttribute('aria-labelledby') ?? '')?.textContent,
+    ).toBe('Retire Mira?');
+    view.unmount();
+  });
+
+  it('moves focus to its first control on open, or to the safe choice it names', async () => {
+    const view = mount(<Page />);
+    await press(view.container, 'Retire Mira…');
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('Confirm');
+    view.unmount();
+    const safe = mount(<Page safe />);
+    await press(safe.container, 'Retire Mira…');
+    expect(document.activeElement?.textContent).toBe('Keep Mira');
+    safe.unmount();
+  });
+
+  it('keeps Tab inside it, wrapping at both ends', async () => {
+    const view = mount(<Page />);
+    await press(view.container, 'Retire Mira…');
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
+    const controls = dialog ? focusableIn(dialog) : [];
+    expect(
+      controls.map((control) => control.textContent || control.getAttribute('aria-label')),
+    ).toEqual(['Confirm', 'Keep Mira', 'Retire']);
+    controls[2]?.focus();
+    key('Tab');
+    expect(document.activeElement).toBe(controls[0]);
+    key('Tab', true);
+    expect(document.activeElement).toBe(controls[2]);
+    view.unmount();
+  });
+
+  it('closes on Escape and hands focus back to what opened it', async () => {
+    const view = mount(<Page />);
+    await press(view.container, 'Retire Mira…');
+    key('Escape');
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.activeElement?.textContent).toBe('Retire Mira…');
+    view.unmount();
+  });
+
+  it('hands focus back when a control inside closes it', async () => {
+    const view = mount(<Page />);
+    await press(view.container, 'Retire Mira…');
+    await press(document.body, 'Keep Mira');
+    expect(document.activeElement?.textContent).toBe('Retire Mira…');
+    view.unmount();
+  });
+
+  it('cannot be dismissed while a change is in flight', async () => {
+    const view = mount(<Page busy />);
+    await press(view.container, 'Retire Mira…');
+    key('Escape');
+    const backdrop = document.querySelector('[data-dialog-backdrop]');
+    act((): void => {
+      backdrop?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    });
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    view.unmount();
+  });
+
+  it('closes on a press on the dimmed page, not on a press inside it', async () => {
+    const onClose = vi.fn();
+    const view = mount(
+      <Dialog title="t" onClose={onClose}>
+        <button type="button">Inside</button>
+      </Dialog>,
+    );
+    act((): void => {
+      document
+        .querySelector('[role="dialog"]')
+        ?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    });
+    expect(onClose).not.toHaveBeenCalled();
+    act((): void => {
+      document
+        .querySelector('[data-dialog-backdrop]')
+        ?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    view.unmount();
+  });
+
+  it('plays the one dialog motion, the panel and the backdrop marked for it', () => {
+    const view = mount(
+      <Dialog title="t" onClose={() => undefined}>
+        x
+      </Dialog>,
+    );
+    expect(document.querySelector('[data-dialog]')?.getAttribute('role')).toBe('dialog');
+    expect(document.querySelector('[data-dialog-backdrop]')).not.toBeNull();
+    view.unmount();
+  });
+
+  it('renders on the body, out of any transformed card, and makes the page behind it inert', async () => {
+    const view = mount(<Page />);
+    await press(view.container, 'Retire Mira…');
+    const backdrop = document.querySelector('[data-dialog-backdrop]');
+    expect(backdrop?.parentElement).toBe(document.body);
+    expect(view.container.contains(backdrop)).toBe(false);
+    expect(view.container.hasAttribute('inert')).toBe(true);
+    expect(document.body.style.overflow).toBe('hidden');
+    key('Escape');
+    expect(view.container.hasAttribute('inert')).toBe(false);
+    expect(document.body.style.overflow).toBe('');
+    view.unmount();
+  });
+
+  it('leaves a control inside a hidden part of the dialog out of the Tab cycle', () => {
+    const view = mount(
+      <Dialog title="t" onClose={() => undefined}>
+        <button type="button">Shown</button>
+        <div hidden>
+          <button type="button">Hidden</button>
+        </div>
+      </Dialog>,
+    );
+    const panel = document.querySelector<HTMLElement>('[role="dialog"]');
+    expect(panel ? focusableIn(panel).map((control) => control.textContent) : []).toEqual([
+      'Shown',
+    ]);
+    view.unmount();
+  });
+});
