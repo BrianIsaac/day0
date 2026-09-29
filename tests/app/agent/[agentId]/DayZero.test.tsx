@@ -2,7 +2,7 @@
 
 import { createRef } from 'react';
 import { getFunctionName } from 'convex/server';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const backend = vi.hoisted(() => ({ queries: {} as Record<string, unknown> }));
 
@@ -30,6 +30,11 @@ vi.mock('@ai-sdk/react', async (importOriginal) => ({
 import { DayZero, ModePicker } from '../../../../app/agent/[agentId]/DayZero';
 import { EMPLOYEE_ROW, asEmployee } from '../../../fixtures/dom/employee';
 import { button, mount, press, settle } from '../../../fixtures/dom/press';
+
+beforeEach((): void => {
+  // jsdom lays nothing out and has no scrollTo; the chat room keeps its newest turn in view with it.
+  (globalThis as { Element: typeof Element }).Element.prototype.scrollTo = (): void => undefined;
+});
 
 afterEach((): void => {
   backend.queries = {};
