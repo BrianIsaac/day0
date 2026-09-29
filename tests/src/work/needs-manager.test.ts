@@ -64,6 +64,12 @@ describe('needs-manager rules', (): void => {
     expect(stoppedRowNeedsManager(row({ skipReason: 'the run stopped' }))).toBe(true);
   });
 
+  it('leaves a stopped row the manager dismissed with nobody (N7)', (): void => {
+    expect(stoppedRowNeedsManager(row({ skipReason: 'the run stopped', dismissedAt: 5 }))).toBe(
+      false,
+    );
+  });
+
   it('offers Retry on a stopped row whose ledger names nothing to reconcile', (): void => {
     expect(stoppedRowOffersMove(row({ skipReason: 'the run stopped' }))).toBe(true);
   });

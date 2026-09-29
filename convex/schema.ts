@@ -796,6 +796,11 @@ export default defineSchema({
         ),
       }),
     ),
+    /**
+     * When the manager dismissed this failed item (N7): it leaves the needs-you inbox and stays in
+     * the record, and Retry still sends it back. Cleared by Retry. Wave 6 B, additive.
+     */
+    dismissedAt: v.optional(v.number()),
     /** A single-use decision requested through the manager's main chat surface. */
     decision: v.optional(
       v.object({

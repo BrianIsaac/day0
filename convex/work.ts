@@ -4420,6 +4420,8 @@ export const retryFailed = mutation({
       applyAttemptId: undefined,
       applyClaimedAt: undefined,
       providerReconciliation: undefined,
+      // A dismissal was of the failure; the item Retry sends back is live again.
+      ...(row.dismissedAt !== undefined ? { dismissedAt: undefined } : {}),
       ...(waived === 'quality-fit' ? { qualityFitWaivedAt: Date.now() } : {}),
       ...(waived === 'scope' ? { scopeWaivedAt: Date.now() } : {}),
       ...(feedback
@@ -4499,6 +4501,28 @@ export const reconcileFailed = mutation({
       createdAt: confirmedAt,
     });
     return { ok: true, reconciledEntries: entries.length };
+  },
+});
+
+/**
+ * Public, owner-guarded (`assertOwnsWorkItem`): the manager dismisses a failed item (N7), which
+ * takes it out of the needs-you inbox and the roster's count while it stays in the record and on
+ * the Work tab, where Retry still sends it back. Writes `dismissedAt` once; a second dismissal
+ * changes nothing. Refuses, as a `ConvexError` the card says, an item no longer failed.
+ */
+export const dismissFailed = mutation({
+  args: { workItemId: v.id('workItems') },
+  handler: async (ctx, args) => {
+    const row = await assertOwnsWorkItem(ctx, args.workItemId);
+    if (row.state !== 'failed') {
+      throw new ConvexError(
+        'Only a stopped or rejected item can be dismissed; this one has moved on.',
+      );
+    }
+    if (row.dismissedAt !== undefined) return { ok: true, dismissedAt: row.dismissedAt };
+    const dismissedAt = Date.now();
+    await ctx.db.patch(args.workItemId, { dismissedAt });
+    return { ok: true, dismissedAt };
   },
 });
 
