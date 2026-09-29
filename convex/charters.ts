@@ -21,6 +21,7 @@ import {
 } from '../src/agent/charter-amendment';
 import {
   CONSTRAINT_KINDS,
+  clauseChanges,
   strikeOutcome,
   type CharterConstraint,
 } from '../src/agent/charter-constraints';
@@ -254,7 +255,11 @@ export const approve = mutation({
     if (struck.length > 0) {
       const outcome = strikeOutcome(drafted);
       if (!outcome.ok) return { ok: false, reason: outcome.reason };
-      const approved = outcome.charter;
+      // The clauses the strikes took out are kept on the body, so the approved
+      // record can show them struck.
+      const changed = clauseChanges(drafted, outcome.charter);
+      const approved: Charter =
+        changed.length > 0 ? { ...outcome.charter, struckClauses: changed } : outcome.charter;
       await ctx.db.patch(args.charterId, {
         body: approved,
         approved: true,

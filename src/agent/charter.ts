@@ -7,6 +7,7 @@ import {
   normaliseConstraints,
   withoutProvenanceSuffixes,
   type CharterConstraint,
+  type StruckClause,
 } from './charter-constraints';
 export type { CharterConstraint } from './charter-constraints';
 import { renderBullets } from './charter-workspace';
@@ -101,6 +102,12 @@ export interface Charter {
    * charter by an amendment. Absent until the first answer.
    */
   answeredQuestions?: AnsweredQuestion[];
+  /**
+   * The clauses the manager's strikes took out at approval, kept so the approved record can show
+   * them struck. Absent on a draft, and on a charter approved with nothing struck or before the
+   * record kept them.
+   */
+  struckClauses?: StruckClause[];
   /**
    * What the synthesis said about its own drafting, such as the evidence
    * guard reporting a clause it dropped. Shown on the card under the rules;

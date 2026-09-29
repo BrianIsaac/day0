@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Charter } from '../../../src/agent/charter';
 import {
   assertEditKeepsBoundaries,
+  clauseChanges,
   clauseTexts,
   deriveConstraints,
   effectiveCharter,
@@ -620,5 +621,45 @@ describe('assertEditKeepsBoundaries', (): void => {
         constraints: struck.constraints,
       }),
     ).not.toThrow();
+  });
+});
+
+describe('what the strikes changed, for the record', (): void => {
+  const before = {
+    proposedFunction: 'Own owned, prioritized tickets.',
+    proposedBoundaries: {
+      willDo: ['Handle owned, prioritized tickets.', 'Draft replies.', 'Read the runbook.'],
+      willNotDo: ['Post in public channels.', 'Edit Salesforce records.'],
+      escalationTriggers: ['A ticket outside the close.'],
+    },
+  };
+
+  it('lists each clause taken out whole and each rewritten in place, the function included', (): void => {
+    const after = {
+      proposedFunction: 'Own tickets.',
+      proposedBoundaries: {
+        willDo: ['Handle tickets.', 'Read the runbook.'],
+        willNotDo: ['Edit Salesforce records.'],
+        escalationTriggers: ['A ticket outside the close.'],
+      },
+    };
+    expect(clauseChanges(before, after)).toEqual([
+      {
+        field: 'proposedFunction',
+        text: 'Own owned, prioritized tickets.',
+        rewrittenAs: 'Own tickets.',
+      },
+      {
+        field: 'willDo',
+        text: 'Handle owned, prioritized tickets.',
+        rewrittenAs: 'Handle tickets.',
+      },
+      { field: 'willDo', text: 'Draft replies.' },
+      { field: 'willNotDo', text: 'Post in public channels.' },
+    ]);
+  });
+
+  it('lists nothing when the strikes changed no clause', (): void => {
+    expect(clauseChanges(before, before)).toEqual([]);
   });
 });

@@ -234,6 +234,20 @@ describe('approving a charter with a struck constraint', (): void => {
       { ...runThroughBody().constraints![0], struck: true },
       runThroughBody().constraints![1],
     ]);
+    // The record keeps what the strike changed, so the approved charter can show it struck.
+    const drafted = runThroughBody();
+    expect(body.struckClauses).toEqual([
+      {
+        field: 'proposedFunction',
+        text: drafted.proposedFunction,
+        rewrittenAs: body.proposedFunction,
+      },
+      {
+        field: 'willDo',
+        text: drafted.proposedBoundaries.willDo[0],
+        rewrittenAs: 'Handle Linear tickets in the Q3 close project.',
+      },
+    ]);
 
     const identity = await workspaceFile(harness, agentId, 'IDENTITY.md');
     expect(identity).toContain('Handle Linear tickets in the Q3 close project.');
