@@ -10,16 +10,25 @@ import { clockTime, clockTimeWithSeconds, useAgentZone } from '../time';
  * render it, so it has no real-mode copy to show. */
 export const EMPTY_CHANNELS = 'no channels seeded';
 
+/**
+ * The channel the office opens on: `#revops-asks`, where the asks the employee works arrive
+ * (UX 8 (a)). The rail sorts `#revops` above it, and that channel is empty until the employee
+ * posts there.
+ */
+export const OPENING_CHANNEL = 'revops-asks';
+
 export function SlackTab({ agentId }: { agentId: Id<'agents'> }) {
   const channels = useQuery(api.mock.listChannels, { agentId });
   const [pickedSlug, setPickedSlug] = useState<string | null>(null);
 
   /* listChannels reads the by_agent_slug index, so channels[0] is the
      alphabetically first slug - in the seeded office an empty DM three rows
-     down the rail. Open on the row the rail actually draws first instead. */
+     down the rail. Open on the intake channel, else the row the rail draws first. */
   const channelList = channels?.filter((c) => c.kind === 'channel') ?? [];
   const dmList = channels?.filter((c) => c.kind === 'dm') ?? [];
-  const activeSlug = pickedSlug ?? (channelList[0] ?? dmList[0])?.slug ?? null;
+  const opening =
+    channelList.find((channel) => channel.slug === OPENING_CHANNEL) ?? channelList[0] ?? dmList[0];
+  const activeSlug = pickedSlug ?? opening?.slug ?? null;
 
   const messages = useQuery(
     api.mock.listMessages,
