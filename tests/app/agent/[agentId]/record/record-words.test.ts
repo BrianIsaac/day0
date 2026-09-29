@@ -123,6 +123,23 @@ describe('recordWords', (): void => {
     ).toBe('Mira skipped “Refresh pipeline coverage view”: forecasting work assigned to Aman.');
   });
 
+  it('says the reason for a rejection once, not the stored prefix before it (m43)', (): void => {
+    const rejected = (reason: string): string =>
+      recordWords(
+        { type: 'work.actions-rejected', payload: { reason, decidedVia: 'dashboard' } },
+        { name: 'Mira' },
+      );
+    expect(rejected('rejected by the manager: Too long, five bullets at most.')).toBe(
+      'You rejected the held actions from the dashboard: Too long, five bullets at most.',
+    );
+    expect(rejected('rejected by the manager')).toBe(
+      'You rejected the held actions from the dashboard.',
+    );
+    expect(rejected('the plan changed')).toBe(
+      'You rejected the held actions from the dashboard: the plan changed.',
+    );
+  });
+
   it('says a plan approved under autonomous actions was not the manager pressing Approve', (): void => {
     expect(
       recordWords({ type: 'work.plan-approved', payload: { by: 'autonomous' } }, { name: 'Mira' }),
