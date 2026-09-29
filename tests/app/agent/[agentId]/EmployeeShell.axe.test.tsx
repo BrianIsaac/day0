@@ -14,6 +14,18 @@ const backend = vi.hoisted(() => ({ queries: {} as Record<string, unknown> }));
 vi.mock('convex/react', () => ({
   useQuery: (reference: unknown, args: unknown): unknown =>
     args === 'skip' ? undefined : backend.queries[getFunctionName(reference as never)],
+  // A paginated query answers its whole fixture as one exhausted page.
+  usePaginatedQuery: (reference: unknown) => {
+    const results = backend.queries[getFunctionName(reference as never)];
+    return Array.isArray(results)
+      ? { results, status: 'Exhausted', isLoading: false, loadMore: (): void => undefined }
+      : {
+          results: [],
+          status: 'LoadingFirstPage',
+          isLoading: true,
+          loadMore: (): void => undefined,
+        };
+  },
   useMutation: () => async (): Promise<void> => undefined,
   useAction: () => async (): Promise<void> => undefined,
 }));
@@ -259,6 +271,34 @@ function populated(): Record<string, unknown> {
         createdAt: 1,
       },
     ],
+    'events:record': [
+      {
+        event: {
+          _id: 'e2',
+          _creationTime: 2,
+          agentId,
+          type: 'work.actions-pending',
+          payload: { workItemId: 'w-held', heldIndexes: [0] },
+          createdAt: 2,
+        },
+        itemTitle: 'Item w-held',
+      },
+      {
+        event: {
+          _id: 'e1',
+          _creationTime: 1,
+          agentId,
+          type: 'work.discovered',
+          payload: { workItemId: 'w-plan', title: 'Item w-plan' },
+          createdAt: 1,
+        },
+        itemTitle: 'Item w-plan',
+      },
+    ],
+    'memoryProjection:forAgent': {
+      text: 'Charter 0.2, approved 1 Jan 1970: Own routine revenue operations work.',
+      cut: false,
+    },
     'metrics:forAgent': dashboardMetrics(),
     'voice:latest': null,
     'config:surfaceMode': { mode: 'real', label: 'real mode' },
@@ -323,7 +363,7 @@ const TABS: ReadonlyArray<readonly [string, string | null, () => ReactNode, stri
   ['Documentation', 'documentation', () => <DocumentationView />, 'Documentation page'],
   ['Skills', 'skills', () => <SkillsView />, 'Skills'],
   ['Surfaces', 'surfaces', () => <SurfacesView />, 'Enterprise context'],
-  ['Record', 'record', () => <RecordView />, 'Live event feed'],
+  ['Record', 'record', () => <RecordView />, 'Every event'],
   ['Manage', 'manage', () => <ManageView />, 'Autonomous actions'],
   ['reorientation', 'reorientation', () => <ReorientationView />, 'No reorientation card is open'],
 ];
