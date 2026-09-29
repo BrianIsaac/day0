@@ -7,6 +7,7 @@ import {
   sourceLine,
   ticketNowSentence,
   workingFrom,
+  writesWhenRunFinishes,
 } from '../../../src/work/item-display';
 
 /** A work item row with only the fields a test names. */
@@ -103,6 +104,15 @@ describe('runProgress', (): void => {
       { name: 'Prerequisites', status: 'done' },
       { name: 'Closing actions', status: 'now' },
     ]);
+  });
+
+  it('says the mock gate holds every write, and draws no automatic part it never runs', (): void => {
+    const mock = runProgress(row({ state: 'executing' }), false, 'mock');
+    expect(mock?.detail).toBe(
+      'Nothing reaches a surface while it reads and drafts; then every write waits for your approval.',
+    );
+    expect(mock?.parts.map((part) => part.name)).toEqual(['Read and draft']);
+    expect(writesWhenRunFinishes(true, 'mock')).toBe('every write waits for your approval');
   });
 
   it('has nothing to say of an item that is not working', (): void => {

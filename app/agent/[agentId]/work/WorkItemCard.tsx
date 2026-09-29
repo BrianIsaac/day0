@@ -214,6 +214,8 @@ export function WorkItemCard({
   const from = workingFrom(item);
   const decided = decisionAttribution(item.decision);
   const waiting = servedByLoop ? waitingLine(item, zone) : undefined;
+  // The page runs the mock loop until the deployment says it serves the real one.
+  const gate = servedByLoop ? 'real' : 'mock';
   const skipped =
     item.state === 'skipped' && verdictReason !== undefined && !colleagueHolding(item);
   // The per-action box already names every action that failed, so the
@@ -330,7 +332,7 @@ export function WorkItemCard({
       {item.state === 'completed' ? ticketNow : null}
       {from ? <WorkingFromNote kind={from.kind} feedback={from.feedback} /> : null}
       {WORKING_STATES.has(item.state) ? (
-        <ProgressSection item={item} autonomous={autonomousActions} />
+        <ProgressSection item={item} autonomous={autonomousActions} gate={gate} />
       ) : null}
       {plan ? (
         <PlanSection item={item} plan={plan} surfaces={surfaces} corrections={corrections} />
@@ -343,6 +345,7 @@ export function WorkItemCard({
           busy={deciding}
           employeeName={employeeName}
           autonomousActions={autonomousActions}
+          gate={gate}
           onApprove={(decision) =>
             decide(
               () => onApprovePlan(decision),
@@ -378,12 +381,16 @@ export function WorkItemCard({
             repairs={output.argumentRepairs}
             busy={deciding}
             employeeName={employeeName}
+            closing={output.needsDependentPhase === true}
+            gate={gate}
             onApprove={(approvedIndexes) =>
               decide(
                 () => onApproveActions(approvedIndexes),
                 approvedIndexes.length === 0
                   ? `Approved with nothing selected: ${item.title} lands nothing.`
-                  : `Approved ${approvedIndexes.length} ${approvedIndexes.length === 1 ? 'action' : 'actions'}: they apply now.`,
+                  : approvedIndexes.length === 1
+                    ? 'Approved 1 action: it applies now.'
+                    : `Approved ${approvedIndexes.length} actions: they apply now.`,
                 'The actions were not approved.',
               )
             }
@@ -432,6 +439,7 @@ export function WorkItemCard({
           }}
           employeeName={employeeName}
           autonomous={autonomousActions}
+          gate={gate}
           busy={deciding}
           onRetry={(note) =>
             decide(

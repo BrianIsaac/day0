@@ -4,7 +4,7 @@ import Link from 'next/link';
 import type { Doc } from '@convex/_generated/dataModel';
 import type { SurfaceRecord } from '@/surfaces/types';
 import { verdictFor } from '@/surfaces/verdict';
-import { runProgress } from '@/work/item-display';
+import { runProgress, type WorkGate } from '@/work/item-display';
 import { Help, ItemSection, Lead, Note } from './ItemParts';
 import { cancelledReason, colleagueHolding } from './work-item';
 
@@ -135,15 +135,18 @@ export function VerdictSection({
  *
  * @param item - A row in `claimed`, `plan-approved` or `executing`.
  * @param autonomous - Whether autonomous actions are on.
+ * @param gate - The deployment's gate.
  */
 export function ProgressSection({
   item,
   autonomous,
+  gate = 'real',
 }: {
   item: Doc<'workItems'>;
   autonomous: boolean;
+  gate?: WorkGate;
 }) {
-  const progress = runProgress(item, autonomous);
+  const progress = runProgress(item, autonomous, gate);
   if (!progress) return null;
   return (
     <ItemSection title={progress.title}>

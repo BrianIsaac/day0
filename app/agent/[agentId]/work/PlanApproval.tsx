@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useRef, useState } from 'react';
 import type { Id, Doc } from '@convex/_generated/dataModel';
-import { writesWhenRunFinishes } from '@/work/item-display';
+import { type WorkGate, writesWhenRunFinishes } from '@/work/item-display';
 import { Button } from '../../../components/Button';
 import { Field, INPUT_CLASS } from '../../../components/Field';
 import { Help, ItemFoot, ItemSection } from './ItemParts';
@@ -71,9 +71,10 @@ export function typedEstimateMinutes(typed: string): number | undefined | null {
  * for the manager whatever the switch says.
  *
  * @param autonomous - Whether autonomous actions are on.
+ * @param gate - The deployment's gate.
  */
-export function planApprovalWhy(autonomous: boolean): string {
-  return `Approving runs the plan. When it finishes, ${writesWhenRunFinishes(autonomous)}.`;
+export function planApprovalWhy(autonomous: boolean, gate: WorkGate = 'real'): string {
+  return `Approving runs the plan. When it finishes, ${writesWhenRunFinishes(autonomous, gate)}.`;
 }
 
 /**
@@ -94,6 +95,7 @@ export function PlanApprovalForm({
   busy = false,
   employeeName = 'the employee',
   autonomousActions = false,
+  gate = 'real',
 }: {
   riskNotes: string;
   questions: Doc<'managerQuestions'>[];
@@ -106,6 +108,8 @@ export function PlanApprovalForm({
   employeeName?: string;
   /** Whether autonomous actions are on, for the consequence line. */
   autonomousActions?: boolean;
+  /** The deployment's gate, for the consequence line. */
+  gate?: WorkGate;
 }) {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [note, setNote] = useState('');
@@ -202,7 +206,7 @@ export function PlanApprovalForm({
           </span>
         </div>
       </ItemSection>
-      <ItemFoot why={planApprovalWhy(autonomousActions)}>
+      <ItemFoot why={planApprovalWhy(autonomousActions, gate)}>
         <Button
           variant="approve"
           size="large"
@@ -225,7 +229,7 @@ export function PlanApprovalForm({
           <div id={`${id}-cancel`} className="grid gap-3">
             <Field
               label="Reason for cancelling (optional)"
-              hint="Kept with the item. Retry drafts a new plan and your reason goes with it."
+              hint="Kept with the item. Retry drafts a new plan from it, unless you give a note in its place."
             >
               {(control) => (
                 <input

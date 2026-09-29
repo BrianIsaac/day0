@@ -2,7 +2,7 @@
 
 import { useState, type ReactNode } from 'react';
 import type { Doc } from '@convex/_generated/dataModel';
-import { skipSentence, writesWhenRunFinishes } from '@/work/item-display';
+import { skipSentence, type WorkGate, writesWhenRunFinishes } from '@/work/item-display';
 import type { ReconciliationEntry } from '@/work/reconciliation';
 import { Button } from '../../../components/Button';
 import { Field, INPUT_CLASS } from '../../../components/Field';
@@ -48,9 +48,15 @@ export interface RetryReconciliation {
  * @param mode - What the controls are for.
  * @param employeeName - Who takes the item back.
  * @param autonomous - Whether autonomous actions are on.
+ * @param gate - The deployment's gate.
  */
-export function retryWhy(mode: RetryMode, employeeName: string, autonomous: boolean): string {
-  const heldAgain = `when it finishes, ${writesWhenRunFinishes(autonomous)}`;
+export function retryWhy(
+  mode: RetryMode,
+  employeeName: string,
+  autonomous: boolean,
+  gate: WorkGate = 'real',
+): string {
+  const heldAgain = `when it finishes, ${writesWhenRunFinishes(autonomous, gate)}`;
   switch (mode.kind) {
     case 'send-back':
       return `Sending it back with a note returns this finished work; the note reaches ${employeeName} as your direction, and ${heldAgain}.`;
@@ -58,13 +64,13 @@ export function retryWhy(mode: RetryMode, employeeName: string, autonomous: bool
       return `Your answer goes to ${employeeName} as the note on this retry; the writes that waited on it are authored from it, and ${heldAgain}.`;
     case 'retry-failed':
       return mode.rejected
-        ? `${capitalised(employeeName)} runs the approved plan again with your reason and this note. A note can change what is proposed; it cannot approve anything, and ${heldAgain}.`
+        ? `${capitalised(employeeName)} runs the approved plan again, reading your note as direction when you write one and your reason when you do not. A note can change what is proposed; it cannot approve anything, and ${heldAgain}.`
         : `Retry runs the item again, with your note when you write one; ${heldAgain}.`;
     case 'cancelled':
       return mode.hadPlan
         ? autonomous
-          ? 'Retry drafts a new plan and your reason goes with it; the plan comes back to you before anything runs, even while autonomous actions are on.'
-          : 'Retry drafts a new plan and your reason goes with it; the plan comes back to you before anything runs.'
+          ? 'Retry drafts a new plan from your note when you write one, and from your reason when you do not; the plan comes back to you before anything runs, even while autonomous actions are on.'
+          : 'Retry drafts a new plan from your note when you write one, and from your reason when you do not; the plan comes back to you before anything runs.'
         : 'Retry evaluates this item again from the start; if it still needs a skill, a new proposal comes to you.';
     case 'take':
       return mode.waived === 'scope'
@@ -73,7 +79,7 @@ export function retryWhy(mode: RetryMode, employeeName: string, autonomous: bool
     case 'skip-retry':
       return SKIP_RETRY_NOTE;
     case 'parked':
-      return 'Retry sends it back to be evaluated.';
+      return 'It takes no slot and waits for this Retry and nothing else.';
   }
 }
 
@@ -212,6 +218,7 @@ export function RetrySection({
   reconciliation,
   employeeName,
   autonomous,
+  gate = 'real',
   busy,
   onRetry,
   onReconcile,
@@ -223,6 +230,7 @@ export function RetrySection({
   reconciliation: RetryReconciliation;
   employeeName: string;
   autonomous: boolean;
+  gate?: WorkGate;
   busy: boolean;
   onRetry: (note: string) => void;
   onReconcile: () => void;
@@ -328,7 +336,7 @@ export function RetrySection({
       <ItemFoot
         why={
           <>
-            {retryWhy(mode, employeeName, autonomous)}
+            {retryWhy(mode, employeeName, autonomous, gate)}
             {blocked && (mode.kind !== 'send-back' || writing)
               ? ' Retry remains disabled until provider reconciliation is recorded.'
               : ''}

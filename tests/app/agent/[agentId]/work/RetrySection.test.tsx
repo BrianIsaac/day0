@@ -41,6 +41,19 @@ describe('what each settling control does', (): void => {
     );
   });
 
+  it('says a retry reads the note in place of the reason, never both (retryFailed keeps one)', (): void => {
+    expect(retryWhy({ kind: 'retry-failed', rejected: true }, 'Mira', false)).toBe(
+      'Mira runs the approved plan again, reading your note as direction when you write one and your reason when you do not. A note can change what is proposed; it cannot approve anything, and when it finishes, reads and messages to you apply on their own, and every other write waits for your approval.',
+    );
+    expect(retryWhy({ kind: 'cancelled', hadPlan: true }, 'Mira', false)).toBe(
+      'Retry drafts a new plan from your note when you write one, and from your reason when you do not; the plan comes back to you before anything runs.',
+    );
+    expect(retryWhy({ kind: 'parked' }, 'Mira', false)).not.toContain('Retry sends it back');
+    expect(retryWhy({ kind: 'send-back' }, 'Mira', false, 'mock')).toContain(
+      'every write waits for your approval',
+    );
+  });
+
   it('says what Dismiss does, which a rejection already half did', (): void => {
     expect(dismissWhy({ kind: 'retry-failed', rejected: true })).toContain(
       'already out of your inbox',

@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { RepairNote } from '../../../../../app/agent/[agentId]/work/RunDetails';
 import {
+  heldActionsWhy,
   heldSentence,
   PendingActions,
 } from '../../../../../app/agent/[agentId]/work/PendingActions';
@@ -93,6 +94,11 @@ describe('a ticket state change the plan withholds', (): void => {
     expect(markup).not.toContain(HELD_BEFORE_AUTONOMY_NOTE);
     // The gate's reason, said as a sentence of its own under the row.
     expect(markup).toContain(heldSentence(HELD_WITHHELD_TRANSITION));
-    expect(heldSentence('held for the manager')).toBe('Held for the manager.');
+    expect(heldSentence('held for the manager')).toBe('Held for you.');
+    // Approving sends the ticked writes; a first phase then runs its closing phase.
+    expect(heldActionsWhy('Mira', false)).not.toContain('nothing else');
+    expect(heldActionsWhy('Mira', true, false, 'real')).toContain(
+      'Approving starts the closing phase; when it finishes, reads and messages to you apply on their own',
+    );
   });
 });

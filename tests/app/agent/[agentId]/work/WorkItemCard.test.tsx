@@ -1292,7 +1292,7 @@ describe('every decision on a work item card is said in its live region and give
     const approving = card(held);
     await press(approving.container, 'Approve all');
     expect(approving.calls).toEqual([['approveActions', [0]]]);
-    expect(said(approving.container)).toEqual(['Approved 1 action: they apply now.']);
+    expect(said(approving.container)).toEqual(['Approved 1 action: it applies now.']);
     approving.unmount();
 
     const rejecting = card(held);

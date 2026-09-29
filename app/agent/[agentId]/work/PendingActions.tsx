@@ -8,6 +8,7 @@ import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from 'rea
 import { Button } from '../../../components/Button';
 import { Disclosure } from '../../../components/Disclosure';
 import { Field, INPUT_CLASS } from '../../../components/Field';
+import { type WorkGate, writesWhenRunFinishes } from '@/work/item-display';
 import { ItemFoot, ItemSection } from './ItemParts';
 import { pendingHeadline } from './work-item';
 import {
@@ -18,24 +19,37 @@ import {
 import { ActionPayload, RepairNote } from './RunDetails';
 
 /**
- * The gate's reason for holding a row, as a sentence of its own: "A post in a shared channel is
- * held for you."
+ * The gate's reason for holding a row, as a sentence of its own and to the manager: "Held for you."
+ * for "held for the manager".
  *
  * @param reason - The verdict's reason.
  */
 export function heldSentence(reason: string): string {
-  const text = reason.trim();
+  const text = reason.trim().replace(/\bthe manager\b/g, 'you');
   const capital = `${text.charAt(0).toUpperCase()}${text.slice(1)}`;
   return /[.!?]$/.test(capital) ? capital : `${capital}.`;
 }
 
 /**
- * The consequence line under the held writes' controls.
+ * The consequence line under the held writes' controls: what each control sends, and for a run
+ * in two phases, that approving starts its closing phase.
  *
  * @param employeeName - Who authored the writes.
+ * @param closing - Whether this is a first phase whose approval starts the closing phase.
+ * @param autonomous - Whether autonomous actions are on, for what the closing phase applies.
+ * @param gate - The deployment's gate.
  */
-export function heldActionsWhy(employeeName: string): string {
-  return `Approving sends exactly what is ticked, as ${employeeName} wrote it, and nothing else. Rejecting ends this run with nothing held sent and keeps your reason on the item for the retry.`;
+export function heldActionsWhy(
+  employeeName: string,
+  closing: boolean,
+  autonomous = false,
+  gate: WorkGate = 'real',
+): string {
+  const send = `Approve selected sends the ticked writes as ${employeeName} wrote them; Approve all sends every held write.`;
+  const next = closing
+    ? ` Approving starts the closing phase; when it finishes, ${writesWhenRunFinishes(autonomous, gate)}.`
+    : '';
+  return `${send}${next} Rejecting ends this run with nothing held sent and keeps your reason on the item.`;
 }
 
 /**
@@ -56,6 +70,8 @@ export function PendingActions({
   repairs,
   busy = false,
   employeeName = 'the employee',
+  closing = false,
+  gate = 'real',
   onApprove,
   onReject,
   children,
@@ -72,6 +88,10 @@ export function PendingActions({
   busy?: boolean;
   /** Who authored the writes, as the consequence line names them. */
   employeeName?: string;
+  /** Whether approving starts the run's closing phase. */
+  closing?: boolean;
+  /** The deployment's gate, for what the closing phase applies. */
+  gate?: WorkGate;
   /** Approve the rows; the card says what it came to in its live region. */
   onApprove: (approvedIndexes: number[]) => void;
   /** Reject the run with the manager's reason; said on the card too. */
@@ -213,7 +233,7 @@ export function PendingActions({
         )}
       </ItemSection>
       {children}
-      <ItemFoot why={heldActionsWhy(employeeName)}>
+      <ItemFoot why={heldActionsWhy(employeeName, closing, autonomousActions, gate)}>
         <Button
           variant="approve"
           size="large"
@@ -226,7 +246,11 @@ export function PendingActions({
           disabled={busy || anyRefused || heldIndexes.length === 0}
           title={anyRefused ? APPROVE_ALL_REFUSED : undefined}
           aria-describedby={anyRefused ? `${id}-all` : undefined}
-          onClick={() => onApprove(heldIndexes)}
+          onClick={() => {
+            // Every held write goes, so every one is shown ticked again.
+            setSelected(new Set(heldIndexes));
+            onApprove(heldIndexes);
+          }}
         >
           Approve all
         </Button>

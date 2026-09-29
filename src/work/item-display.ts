@@ -61,16 +61,21 @@ function sentence(text: string): string {
   return /[.!?”"]$/.test(capital) ? capital : `${capital}.`;
 }
 
+/** Which gate a deployment's runs pass: the real one's ladder, or the mock one that holds every action. */
+export type WorkGate = 'real' | 'mock';
+
 /**
- * What happens to a run's writes when it finishes, as the gate applies them: supervised, reads
- * and messages to the manager apply on their own and every other write waits (the wording the
- * Deploy form and Manage give the switch); autonomous, the writes the gate allows apply and any
- * it holds wait.
+ * What happens to a run's writes when it finishes, as the gate applies them. The real gate,
+ * supervised, applies reads and messages to the manager on their own and holds every other write
+ * (the wording the Deploy form and Manage give the switch); autonomous, it applies the writes it
+ * allows and holds the rest. The mock gate holds every action (`reviewHeldActions`).
  *
  * @param autonomous - Whether autonomous actions are on.
+ * @param gate - The deployment's gate.
  * @returns A clause, lower case, with no full stop.
  */
-export function writesWhenRunFinishes(autonomous: boolean): string {
+export function writesWhenRunFinishes(autonomous: boolean, gate: WorkGate = 'real'): string {
+  if (gate === 'mock') return 'every write waits for your approval';
   return autonomous
     ? 'the writes the gate allows apply on their own, and any it holds wait for you'
     : 'reads and messages to you apply on their own, and every other write waits for your approval';
@@ -97,11 +102,13 @@ export interface RunProgress {
  *
  * @param item - A row in `claimed`, `plan-approved` or `executing`.
  * @param autonomous - Whether autonomous actions are on, for how automatic writes are named.
+ * @param gate - The deployment's gate; the mock one applies nothing on its own.
  * @returns The progress, or undefined for a row in any other state.
  */
 export function runProgress(
   item: Pick<Doc<'workItems'>, 'state' | 'plan' | 'applyPhase' | 'approvedIndexes' | 'output'>,
   autonomous: boolean,
+  gate: WorkGate = 'real',
 ): RunProgress | undefined {
   if (item.state === 'claimed') {
     return {
@@ -131,11 +138,13 @@ export function runProgress(
   // holds for the manager at the end is the detail's to say.
   const order = twoPhase
     ? ['Prerequisites', 'Closing actions']
-    : ['Read and draft', 'Automatic writes'];
+    : gate === 'mock'
+      ? ['Read and draft']
+      : ['Read and draft', 'Automatic writes'];
   const current = item.state === 'plan-approved' ? -1 : twoPhase || applying ? 1 : 0;
   return {
     title: phase,
-    detail: `Nothing reaches a surface while it reads and drafts; then ${writesWhenRunFinishes(autonomous)}.`,
+    detail: `Nothing reaches a surface while it reads and drafts; then ${writesWhenRunFinishes(autonomous, gate)}.`,
     parts: order.map((name, index) => ({
       name,
       status: index < current ? 'done' : index === current ? 'now' : 'next',

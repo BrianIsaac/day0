@@ -26,7 +26,8 @@ afterEach((): void => {
 });
 
 /**
- * The card for one drawn state, in the employee's zone, with every decision recorded by name.
+ * The card for one drawn state, in the employee's zone, served by the real loop as the pages
+ * draw it (`loop: false` for the mock gate), with every decision recorded by name.
  * `refuse` names a decision that is refused with the sentence given.
  */
 function card(
@@ -55,7 +56,7 @@ function card(
         onRejectActions={record('rejectActions')}
         onResendDecision={record('resend')}
         onDismiss={record('dismiss')}
-        servedByLoop={options.loop ?? false}
+        servedByLoop={options.loop ?? true}
       />
     </AgentZoneContext>,
   );
@@ -142,7 +143,7 @@ describe('plan to approve (work-plan-pending.html)', (): void => {
     const reason = field(view.container, 'Reason for cancelling (optional)');
     expect(document.activeElement).toBe(reason);
     expect(view.text()).toContain(
-      'Kept with the item. Retry drafts a new plan and your reason goes with it.',
+      'Kept with the item. Retry drafts a new plan from it, unless you give a note in its place.',
     );
     typeInto(reason, 'Keep it in the thread.');
     await press(view.container, 'Cancel with this reason');
@@ -209,8 +210,23 @@ describe('write held for you (work-held.html, work-held-withheld.html)', (): voi
 
     await press(view.container, 'Approve selected (1)');
     expect(view.calls).toEqual([['approveActions', [0]]]);
-    expect(said(view.container)).toEqual(['Approved 1 action: they apply now.']);
+    expect(said(view.container)).toEqual(['Approved 1 action: it applies now.']);
     expect(focusedName()).toBe('Approve selected (1)');
+  });
+
+  it('ticks every held write again when Approve all sends them, a withheld one included', async (): Promise<void> => {
+    const view = card(DRAWN.held);
+    const withhold = [...view.container.querySelectorAll('button')].find((candidate) =>
+      candidate.getAttribute('aria-label')?.startsWith('Withhold this one'),
+    );
+    await act(async (): Promise<void> => withhold?.click());
+    await press(view.container, 'Approve all');
+    expect(view.calls).toEqual([['approveActions', [0, 1]]]);
+    expect(
+      [...view.container.querySelectorAll('input[type="checkbox"]')].map(
+        (box) => (box as HTMLInputElement).checked,
+      ),
+    ).toEqual([true, true]);
   });
 
   it('rejects the run with a reason, which Reject opens and focuses', async (): Promise<void> => {

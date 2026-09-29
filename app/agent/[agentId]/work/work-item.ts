@@ -72,6 +72,8 @@ export interface RunOutput {
   refusedClosing?: RefusedClosingRow;
   /** Actions an audit withheld after its one repair, never sent, with the reason. */
   withheldActions?: WithheldActionRow[];
+  /** A first phase whose approval starts the closing phase. */
+  needsDependentPhase?: boolean;
 }
 
 /** An action withheld from a run and never sent, with the reason. */
