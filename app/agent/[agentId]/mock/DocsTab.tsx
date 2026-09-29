@@ -51,8 +51,13 @@ export function DocsTab({
     return <div className="text-xs text-[var(--color-muted)]">{EMPTY_DOCS[mode]}</div>;
 
   return (
-    <div className="grid grid-cols-[12rem_1fr] gap-4 h-full">
-      <aside className="border-r border-[var(--color-border)] pr-3 -mr-1 overflow-y-auto">
+    // One column on a phone and in a narrow panel, the rail beside the page
+    // once the panel is wide enough for both (as the Slack tab does).
+    <div className="grid grid-cols-1 @lg:grid-cols-[12rem_1fr] gap-4 h-full">
+      <nav
+        aria-label="Documents"
+        className="@lg:border-r border-[var(--color-border)] @lg:pr-3 @lg:-mr-1 @lg:overflow-y-auto min-w-0"
+      >
         <div className="text-[10px] uppercase tracking-wider text-[var(--color-muted)] mb-2 mt-1">
           Team docs
         </div>
@@ -62,8 +67,10 @@ export function DocsTab({
             .map((d) => (
               <li key={d._id}>
                 <button
+                  type="button"
                   onClick={() => setActiveSlug(d.slug)}
-                  className={`w-full text-left px-2 py-1 rounded ${
+                  aria-current={active?.slug === d.slug ? 'true' : undefined}
+                  className={`min-h-11 w-full text-left px-2 py-1 rounded ${
                     active?.slug === d.slug
                       ? 'bg-[var(--color-accent)]/15 text-[var(--color-accent)]'
                       : 'text-[var(--color-fg)] hover:bg-[var(--color-bg)]'
@@ -88,8 +95,10 @@ export function DocsTab({
             .map((d) => (
               <li key={d._id}>
                 <button
+                  type="button"
                   onClick={() => setActiveSlug(d.slug)}
-                  className={`w-full text-left px-2 py-1 rounded ${
+                  aria-current={active?.slug === d.slug ? 'true' : undefined}
+                  className={`min-h-11 w-full text-left px-2 py-1 rounded ${
                     active?.slug === d.slug
                       ? 'bg-[var(--color-warn)]/15 text-[var(--color-warn)]'
                       : 'text-[var(--color-muted)] hover:text-[var(--color-fg)] hover:bg-[var(--color-bg)]'
@@ -105,7 +114,7 @@ export function DocsTab({
               </li>
             ))}
         </ul>
-      </aside>
+      </nav>
 
       <article
         className="overflow-y-auto pr-2"

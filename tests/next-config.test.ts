@@ -5,6 +5,21 @@ describe('next.config.mjs', (): void => {
   it('draws no development badge: the recording is taken from `next dev`, and the badge was in every frame', (): void => {
     expect(nextConfig.devIndicators).toBe(false);
   });
+
+  it('turns the View Transition on beside the server actions limit (N29, UX 11)', (): void => {
+    expect(nextConfig.experimental).toEqual({
+      viewTransition: true,
+      serverActions: { bodySizeLimit: '4mb' },
+    });
+  });
+});
+
+describe('the redirects', (): void => {
+  it('sends the old /demo to the walkthrough permanently, so the README links keep working (N29)', async (): Promise<void> => {
+    expect(await nextConfig.redirects?.()).toEqual([
+      { source: '/demo', destination: '/walkthrough', permanent: true },
+    ]);
+  });
 });
 
 describe('the security headers', (): void => {

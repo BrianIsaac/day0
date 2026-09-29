@@ -7,9 +7,16 @@ import {
 } from '@/work/types';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
-import { useState, useEffect, useId, useMemo, useRef, useCallback } from 'react';
+import {
+  useState,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useCallback,
+  type CSSProperties,
+} from 'react';
 import { useQuery, useMutation, useAction } from 'convex/react';
-import { ConvexError } from 'convex/values';
 import { api } from '../../../convex/_generated/api';
 import type { Doc, Id } from '../../../convex/_generated/dataModel';
 import {
@@ -93,12 +100,14 @@ import {
 } from './time';
 import { eventLabel } from './event-labels';
 import { ROOM_HEIGHT } from './room-frame';
+import { useArrival } from '../../arrival';
+import { usePreviousValue } from './previous-value';
 import {
   compareWaitingRows,
   EVALUATION_ATTEMPTS_SPENT,
   MAX_EVALUATION_ATTEMPTS,
 } from '../../../src/work/queue-order';
-import { LiveStatus, refusalText, type ChangeOutcome } from './live-status';
+import { LiveStatus, refusalText, returnFocus, useChange, type ChangeOutcome } from './live-status';
 import { agentZone, isTimeZone } from '../../../src/lib/zone';
 import { draftedWithoutLine, undeliveredDecisionReason } from '../../../src/work/manager-channel';
 import { managerFeedbackLabel, type ManagerFeedback } from '../../../src/work/manager-feedback';
@@ -116,8 +125,6 @@ import {
 import type { AgentMetrics } from '@/metrics/types';
 import { formatAuditTrail, formatMetricDuration } from '../../metric-format';
 import { PILOT_FIGURES, readsAndMessages } from '../../CompanySupervision';
-import { errorMessage } from '@/lib/errors';
-import { plainErrorMessage } from '@/lib/plain-error';
 
 interface Props {
   agentId: Id<'agents'>;
@@ -131,7 +138,8 @@ interface Props {
 interface AuthoringAttempt {
   skillId: Id<'skills'>;
   name: string;
-  reason: string;
+  /** Why it did not finish; absent when the attempt registered the skill. */
+  reason?: string;
 }
 
 /**
@@ -216,6 +224,13 @@ export function AgentDashboard({ agentId }: Props) {
 
   const [mode, setMode] = useState<'pick' | 'chat' | 'voice'>('pick');
   const [lastAttempt, setLastAttempt] = useState<AuthoringAttempt | null>(null);
+  // What a change said once the control that made it left the page with its
+  // card (a charter sent back), and where focus goes after it.
+  const [pageOutcome, setPageOutcome] = useState<ChangeOutcome | null>(null);
+  // The draft the manager sent back, until the page shows what follows it.
+  const [sentBack, setSentBack] = useState<Id<'charters'> | null>(null);
+  const onboarding = useRef<HTMLDivElement>(null);
+  const arriving = useArrival(agent !== undefined && agent !== null);
   // Ticks, so an authoring claim stops being described as live the moment it
   // stops being honoured rather than on the next thing the boss happens to do.
   const now = useNow();
@@ -236,13 +251,19 @@ export function AgentDashboard({ agentId }: Props) {
   // died is none of them: it is left on the row by a run that never came back,
   // so it is exactly the case the verdict is describing and must not hide it.
   const authoringFailure =
-    lastAttempt &&
+    lastAttempt?.reason !== undefined &&
     attemptedSkill &&
     !holdsLiveAuthoringClaim(attemptedSkill, now) &&
     attemptedSkill.state !== 'registered' &&
     attemptedSkill.state !== 'rejected'
       ? `${lastAttempt.name}: ${lastAttempt.reason}`
       : null;
+  // A registration the manager started is said once the row says it too.
+  const authoringRegistered =
+    lastAttempt && lastAttempt.reason === undefined && attemptedSkill?.state === 'registered'
+      ? lastAttempt.name
+      : null;
+  const skillsCard = useRef<HTMLElement>(null);
 
   // Sync local mode with server state. Two cases:
   //   1. Reload mid-session: route back into the room they were in
@@ -270,11 +291,31 @@ export function AgentDashboard({ agentId }: Props) {
     }
   }, [agent, voiceSession, mode]);
 
+  const onboardingShown =
+    !!agent && !charter && (agent.state === 'deployed' || agent.state === 'day-one-in-progress');
+  const charterId = charter?._id;
+  // What follows a draft sent back is the 1:1 again, or, when an approved
+  // charter stands beneath the draft, that charter: only the first reopens
+  // anything, so only then does the page say so and take focus. A charter
+  // drafted later retires the sentence.
+  useEffect(() => {
+    if (sentBack !== null && onboardingShown) {
+      onboarding.current?.focus();
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- said once, when the 1:1 is back on the page after a draft was sent back
+      setPageOutcome({ tone: 'done', text: ONBOARDING_REOPENED });
+      setSentBack(null);
+    } else if (sentBack !== null && charterId !== undefined && charterId !== sentBack) {
+      setSentBack(null);
+    } else if (sentBack === null && charterId !== undefined) {
+      setPageOutcome(null);
+    }
+  }, [sentBack, onboardingShown, charterId]);
+
   if (!agent) {
     return (
-      <main className="min-h-screen flex items-center justify-center text-[var(--color-muted)]">
-        loading agent…
-      </main>
+      <div className="min-h-screen flex items-center justify-center text-[var(--color-muted)]">
+        loading employee…
+      </div>
     );
   }
 
@@ -282,12 +323,11 @@ export function AgentDashboard({ agentId }: Props) {
   // room stayed open under the charter it had just produced (badge reading
   // "streaming", footer reading "drafting your charter…") because both were
   // keyed to a state the chat route never moved on.
-  const showOnboarding =
-    !charter && (agent.state === 'deployed' || agent.state === 'day-one-in-progress');
+  const showOnboarding = onboardingShown;
 
   return (
     <AgentZoneContext value={agentZone(agent)}>
-      <main className="min-h-screen px-6 py-8 max-w-7xl mx-auto">
+      <div className="min-h-screen px-6 py-8 max-w-7xl mx-auto">
         <DashboardHeader
           agent={agent}
           charter={charter ?? null}
@@ -296,34 +336,47 @@ export function AgentDashboard({ agentId }: Props) {
               (row) => row.class === 'chat' && isManagerLookupFailure(row.reason),
             )?.reason
           }
+          managerChannel={connectedManagerChannel(surfaces, now) !== undefined}
         />
 
+        <LiveStatus outcome={pageOutcome} />
+
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
-          <div className="lg:col-span-2 space-y-4">
+          <div data-cards={arriving ? '' : undefined} className="lg:col-span-2 space-y-4">
             {showOnboarding ? (
-              mode === 'pick' ? (
-                <ModePicker onPick={(m) => setMode(m)} />
-              ) : mode === 'voice' ? (
-                <VoiceRoom
-                  agentId={agentId}
-                  bossLabel={agent.bossEmail}
-                  onSwitchMode={() => setMode('chat')}
-                />
-              ) : (
-                <ChatRoom
-                  agentId={agentId}
-                  bossLabel={agent.bossEmail}
-                  onSwitchMode={() => setMode('voice')}
-                />
-              )
+              <div
+                ref={onboarding}
+                tabIndex={-1}
+                role="region"
+                aria-label="The 1:1 that drafts the charter"
+              >
+                {mode === 'pick' ? (
+                  <ModePicker onPick={(m) => setMode(m)} />
+                ) : mode === 'voice' ? (
+                  <VoiceRoom
+                    agentId={agentId}
+                    bossLabel={agent.bossEmail}
+                    onSwitchMode={() => setMode('chat')}
+                  />
+                ) : (
+                  <ChatRoom
+                    agentId={agentId}
+                    bossLabel={agent.bossEmail}
+                    onSwitchMode={() => setMode('voice')}
+                  />
+                )}
+              </div>
             ) : null}
 
-            {charter ? <CharterCard charter={charter} manager={agent.bossEmail} /> : null}
+            {charter ? (
+              <CharterCard charter={charter} manager={agent.bossEmail} onSentBack={setSentBack} />
+            ) : null}
 
             <ProposedSkillsPanel
               skills={proposedSkills ?? []}
               surfaces={surfaces}
               onAuthoringAttempt={setLastAttempt}
+              fallback={skillsCard}
             />
 
             <WorkQueue
@@ -337,17 +390,21 @@ export function AgentDashboard({ agentId }: Props) {
               surfaceMode={surfaceConfig?.mode}
               corrections={corrections}
               autonomyChanges={autonomyChanges ?? []}
+              loading={workItems === undefined}
             />
           </div>
 
-          <div className="space-y-4">
+          <div data-cards={arriving ? '' : undefined} className="space-y-4">
             <WorkspacePanel workspace={workspace ?? {}} />
             <RegisteredSkillsPanel
               skills={registeredSkills ?? []}
               unregistered={[...(unverifiedSkills ?? []), ...(failedSkills ?? [])]}
               authoringFailure={authoringFailure}
+              registered={authoringRegistered}
               onAuthoringAttempt={setLastAttempt}
               surfaceMode={surfaceConfig?.mode}
+              focusRef={skillsCard}
+              loading={registeredSkills === undefined}
             />
             {surfaceConfig?.mode === 'real' ? (
               <Card title={keptCorrectionsTitle(corrections)}>
@@ -360,7 +417,7 @@ export function AgentDashboard({ agentId }: Props) {
             ) : null}
             {surfaceConfig?.mode === 'real' ? <PermissionsCard agentId={agentId} /> : null}
             <MetricsCard metrics={metrics} />
-            <EventTicker events={events ?? []} titles={itemTitles} />
+            <EventTicker events={events} titles={itemTitles} />
           </div>
         </div>
 
@@ -368,7 +425,7 @@ export function AgentDashboard({ agentId }: Props) {
           surfaces, a channel list and a conversation do not fit in 400px, and
           this panel is the whole of what the agent's work is done against. */}
         <MockEnvironment agentId={agentId} />
-      </main>
+      </div>
     </AgentZoneContext>
   );
 }
@@ -376,7 +433,7 @@ export function AgentDashboard({ agentId }: Props) {
 /** What each state of the switch does, for its title. */
 const AUTONOMY_TITLES: Record<'off' | 'on', string> = {
   off: 'Supervised: reads and the DM to you apply on their own; every other action waits for your approval of the exact payload.',
-  on: 'Autonomous: the agent acts on connected systems without asking, within the connections and skills you have approved.',
+  on: 'Autonomous: the employee acts on connected systems without asking, within the connections and skills you have approved.',
 };
 
 /** Whether a key press should take the safe path out of the confirmation. */
@@ -405,17 +462,19 @@ export function AutonomyConfirm({
   busy?: boolean;
 }) {
   return (
+    // It scales in from the corner it hangs from, not its centre (v3 section 5.2).
     <div
       role="alertdialog"
       aria-modal="true"
       aria-label="Turn on autonomous actions"
+      data-dialog=""
       onKeyDown={(event) => {
         if (!cancelsAutonomyConfirm(event.key, busy)) return;
         event.preventDefault();
         event.stopPropagation();
         onCancel();
       }}
-      className="absolute right-0 top-full mt-2 w-80 p-3 rounded-lg border border-[var(--color-warn)]/40 bg-[var(--color-card)] shadow-lg text-left text-xs text-[var(--color-fg)] z-10"
+      className="absolute left-0 sm:left-auto sm:right-0 top-full mt-2 origin-top-left sm:origin-top-right w-80 max-w-[calc(100vw-3rem)] p-3 rounded-lg border border-[var(--color-warn)]/40 bg-[var(--color-card)] shadow-lg text-left text-xs text-[var(--color-fg)] z-10"
     >
       <p className="font-medium text-[var(--color-warn)] mb-1">Turn on autonomous actions?</p>
       <p className="mb-3 leading-relaxed">{AUTONOMY_WARNING}</p>
@@ -424,7 +483,7 @@ export function AutonomyConfirm({
           type="button"
           disabled={busy}
           onClick={onConfirm}
-          className="px-3 py-1 rounded-md bg-[var(--color-warn)] text-[var(--color-bg)] font-medium disabled:opacity-60"
+          className="min-h-11 px-3 rounded-md bg-[var(--color-warn)] text-[var(--color-bg)] font-medium disabled:opacity-60"
         >
           Turn on
         </button>
@@ -433,7 +492,7 @@ export function AutonomyConfirm({
           autoFocus
           disabled={busy}
           onClick={onCancel}
-          className="px-3 py-1 rounded-md border border-[var(--color-border)] disabled:opacity-60"
+          className="min-h-11 px-3 rounded-md border border-[var(--color-border)] disabled:opacity-60"
         >
           Cancel
         </button>
@@ -465,54 +524,69 @@ export function AutonomyControl({
   tone: string;
   onChange: (on: boolean) => Promise<unknown>;
 }) {
-  const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const toggle = useRef<HTMLButtonElement>(null);
+  const change = useChange(toggle);
+  const describedBy = useId();
 
   function persist(next: boolean): void {
-    setBusy(true);
-    setError(null);
-    onChange(next)
-      .then(() => setConfirming(false))
-      .catch((err: unknown) => setError(errorMessage(err)))
-      .finally(() => setBusy(false));
+    change.run(() => onChange(next), {
+      done: next
+        ? 'Autonomous actions are on: the employee acts on connected systems without asking.'
+        : 'Autonomous actions are off: every action but reads and the DM to you waits for your approval.',
+      refused: 'The switch was not changed.',
+      after: () => setConfirming(false),
+    });
   }
 
   return (
     <div className="relative">
       <div
-        className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium ${tone}`}
+        className={`flex items-center gap-2 pl-3 pr-1 rounded-full text-xs font-medium ${tone}`}
         title={AUTONOMY_TITLES[on ? 'on' : 'off']}
       >
         <span>Active · {autonomyLabel(on)}</span>
         <span className="text-[10px] font-normal opacity-80">Autonomous actions</span>
+        <span id={describedBy} className="sr-only">
+          {AUTONOMY_TITLES[on ? 'on' : 'off']}
+        </span>
         <button
+          ref={toggle}
           type="button"
           role="switch"
           aria-checked={on}
           aria-label="Autonomous actions"
-          disabled={busy}
+          aria-describedby={describedBy}
+          disabled={change.busy}
           onClick={() => {
             if (on) persist(false);
             else setConfirming(true);
           }}
-          className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors disabled:cursor-wait ${
-            on ? 'bg-[var(--color-warn)]' : 'bg-[var(--color-muted)]/40'
-          }`}
+          className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-full disabled:cursor-wait"
         >
           <span
-            className={`inline-block h-3 w-3 rounded-full bg-[var(--color-bg)] transition-transform ${
-              on ? 'translate-x-3.5' : 'translate-x-0.5'
+            aria-hidden="true"
+            className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${
+              on ? 'bg-[var(--color-warn)]' : 'bg-[var(--color-muted)]/40'
             }`}
-          />
+          >
+            <span
+              className={`inline-block h-3 w-3 rounded-full bg-[var(--color-bg)] transition-transform ${
+                on ? 'translate-x-3.5' : 'translate-x-0.5'
+              }`}
+            />
+          </span>
         </button>
-        {error ? <span className="text-[10px] text-[var(--color-danger)]">{error}</span> : null}
       </div>
+      <LiveStatus outcome={change.outcome} />
       {confirming && !on ? (
         <AutonomyConfirm
-          busy={busy}
+          busy={change.busy}
           onConfirm={() => persist(true)}
-          onCancel={() => setConfirming(false)}
+          onCancel={() => {
+            setConfirming(false);
+            toggle.current?.focus();
+          }}
         />
       ) : null}
     </div>
@@ -531,38 +605,47 @@ export function NotificationModeControl({
   mode: ManagerNotificationMode;
   onChange: (mode: ManagerNotificationMode) => Promise<unknown>;
 }) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const change = useChange();
+  const id = useId();
   return (
-    <label
-      className="flex items-center gap-1.5 px-3 py-1 rounded-full border border-[var(--color-border)] text-[10px] text-[var(--color-muted)]"
-      title="Decision requests go to your manager channel at once whenever one is connected. This sets how you hear that work landed or a run stopped."
-    >
-      <span>Manager DMs</span>
-      <select
-        aria-label="Manager DMs"
-        value={mode}
-        disabled={busy}
-        onChange={(event) => {
-          const next = event.target.value as ManagerNotificationMode;
-          setBusy(true);
-          setError(null);
-          onChange(next)
-            .catch((err: unknown) => setError(errorMessage(err)))
-            .finally(() => setBusy(false));
-        }}
-        className="bg-transparent text-xs text-[var(--color-fg)] disabled:cursor-wait"
+    <div>
+      <div
+        className="flex items-center gap-1.5 pl-3 pr-1 rounded-full border border-[var(--color-border)] text-[10px] text-[var(--color-muted)]"
+        title={NOTIFICATION_MODE_HINT}
       >
-        {(Object.keys(NOTIFICATION_MODE_LABELS) as ManagerNotificationMode[]).map((option) => (
-          <option key={option} value={option}>
-            {NOTIFICATION_MODE_LABELS[option]}
-          </option>
-        ))}
-      </select>
-      {error ? <span className="text-[var(--color-danger)]">{error}</span> : null}
-    </label>
+        <label htmlFor={`${id}-mode`}>Manager DMs</label>
+        <select
+          id={`${id}-mode`}
+          aria-describedby={`${id}-hint`}
+          value={mode}
+          disabled={change.busy}
+          onChange={(event) => {
+            const next = event.target.value as ManagerNotificationMode;
+            change.run(() => onChange(next), {
+              done: `Manager DMs: ${NOTIFICATION_MODE_LABELS[next]}.`,
+              refused: 'The manager DM setting was not changed.',
+            });
+          }}
+          className="min-h-11 bg-transparent text-xs text-[var(--color-fg)] disabled:cursor-wait"
+        >
+          {(Object.keys(NOTIFICATION_MODE_LABELS) as ManagerNotificationMode[]).map((option) => (
+            <option key={option} value={option}>
+              {NOTIFICATION_MODE_LABELS[option]}
+            </option>
+          ))}
+        </select>
+        <span id={`${id}-hint`} className="sr-only">
+          {NOTIFICATION_MODE_HINT}
+        </span>
+      </div>
+      <LiveStatus outcome={change.outcome} />
+    </div>
   );
 }
+
+/** What the manager DM setting does, beside the control and for its hover. */
+const NOTIFICATION_MODE_HINT =
+  'Decision requests go to your manager channel at once whenever one is connected. This sets how you hear that work landed or a run stopped.';
 
 /**
  * Who the agent reports to, and the control that changes it (Q6).
@@ -584,23 +667,19 @@ export function ManagerLine({
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(bossEmail);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const toggle = useRef<HTMLButtonElement>(null);
+  const change = useChange(toggle);
+  const close = (): void => {
+    setEditing(false);
+    toggle.current?.focus();
+  };
   const save = (): void => {
-    setBusy(true);
-    setError(null);
-    onChange(draft)
-      .then(() => setEditing(false))
-      .catch((err: unknown) =>
-        setError(
-          err instanceof ConvexError
-            ? String(err.data)
-            : err instanceof Error
-              ? err.message
-              : String(err),
-        ),
-      )
-      .finally(() => setBusy(false));
+    const next = draft.trim();
+    change.run(() => onChange(next), {
+      done: `The employee now reports to ${next}.`,
+      refused: 'The manager was not changed.',
+      after: () => setEditing(false),
+    });
   };
   return (
     <div>
@@ -613,47 +692,57 @@ export function ManagerLine({
           }}
         >
           <label className="text-2xl font-semibold tracking-tight" htmlFor="manager-email">
-            Agent reporting to
+            Employee reporting to
           </label>
           <input
             id="manager-email"
             type="email"
+            autoFocus
             value={draft}
-            disabled={busy}
+            disabled={change.busy}
             onChange={(event) => setDraft(event.target.value)}
-            className="font-mono text-sm px-2 py-1 rounded border border-[var(--color-border)] bg-transparent"
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                event.preventDefault();
+                setDraft(bossEmail);
+                close();
+              }
+            }}
+            className="min-h-11 min-w-0 font-mono text-sm px-2 rounded border border-[var(--color-border)] bg-transparent"
           />
           <button
             type="submit"
-            disabled={busy || draft.trim() === ''}
-            className="text-xs px-2 py-1 rounded bg-[var(--color-accent)] text-[var(--color-bg)] disabled:opacity-50"
+            disabled={change.busy || draft.trim() === ''}
+            className="min-h-11 text-xs px-3 rounded bg-[var(--color-accent)] text-[var(--color-bg)] disabled:opacity-50"
           >
-            Save
+            {change.busy ? 'Saving…' : 'Save'}
           </button>
           <button
             type="button"
-            disabled={busy}
+            disabled={change.busy}
             onClick={() => {
-              setEditing(false);
               setDraft(bossEmail);
-              setError(null);
+              change.clear();
+              close();
             }}
-            className="text-xs px-2 py-1 rounded border border-[var(--color-border)]"
+            className="min-h-11 text-xs px-3 rounded border border-[var(--color-border)]"
           >
             Cancel
           </button>
         </form>
       ) : (
         <h1 className="text-2xl font-semibold tracking-tight">
-          Agent reporting to{' '}
-          <span className="font-mono text-[var(--color-accent)]">{bossEmail}</span>{' '}
+          Employee reporting to{' '}
+          <span className="font-mono break-all text-[var(--color-accent)]">{bossEmail}</span>{' '}
           <button
+            ref={toggle}
             type="button"
             onClick={() => {
               setDraft(bossEmail);
+              change.clear();
               setEditing(true);
             }}
-            className="align-middle text-xs font-normal px-2 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-muted)]"
+            className="min-h-11 align-middle text-xs font-normal px-3 rounded border border-[var(--color-border)] text-[var(--color-muted)]"
           >
             Change manager
           </button>
@@ -671,7 +760,7 @@ export function ManagerLine({
           credential still works; change the manager to someone the workspace knows.
         </p>
       ) : null}
-      {error ? <p className="mt-1 text-xs text-[var(--color-danger)]">{error}</p> : null}
+      <LiveStatus outcome={change.outcome} />
     </div>
   );
 }
@@ -697,13 +786,14 @@ export function ZoneLine({
   onChange,
 }: {
   zone: string;
-  onChange: (zone: string) => Promise<unknown>;
+  /** Store the zone; the server answers with the zone it stored, in its canonical spelling. */
+  onChange: (zone: string) => Promise<{ zone: string } | void>;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(zone);
-  const [busy, setBusy] = useState(false);
-  const [outcome, setOutcome] = useState<ChangeOutcome | null>(null);
   const toggle = useRef<HTMLButtonElement>(null);
+  const change = useChange(toggle);
+  const busy = change.busy;
   const zones = useMemo((): string[] => knownZones(), []);
   const valid = isTimeZone(draft.trim());
   const close = (): void => {
@@ -712,21 +802,13 @@ export function ZoneLine({
   };
   const save = (): void => {
     const next = draft.trim();
-    setBusy(true);
-    setOutcome(null);
-    // The chain ends in its own catch, which says the refusal in the live region.
-    void onChange(next)
-      .then(() => {
-        setOutcome({
-          tone: 'done',
-          text: `The employee's day is now ${next}; every time on this page is in it.`,
-        });
-        close();
-      })
-      .catch((err: unknown) =>
-        setOutcome({ tone: 'refused', text: refusalText(err, 'The zone was not changed.') }),
-      )
-      .finally(() => setBusy(false));
+    change.run(() => onChange(next), {
+      // The stored zone, not the typed one: the server settles the spelling (m10).
+      done: (stored) =>
+        `The employee's day is now ${stored?.zone ?? next}; every time on this page is in it.`,
+      refused: 'The zone was not changed.',
+      after: () => setEditing(false),
+    });
   };
   return (
     <div className="mt-1 text-xs text-[var(--color-muted)]">
@@ -742,7 +824,7 @@ export function ZoneLine({
           aria-controls="zone-editor"
           onClick={() => {
             setDraft(zone);
-            setOutcome(null);
+            change.clear();
             setEditing(!editing);
           }}
           className="min-h-11 px-2 rounded border border-[var(--color-border)] text-[var(--color-fg)] hover:border-[var(--color-accent)]"
@@ -806,7 +888,7 @@ export function ZoneLine({
           </p>
         </form>
       ) : null}
-      <LiveStatus outcome={outcome} />
+      <LiveStatus outcome={change.outcome} />
     </div>
   );
 }
@@ -816,12 +898,15 @@ export function DashboardHeader({
   agent,
   charter,
   managerLookupFailure,
+  managerChannel = false,
 }: {
   agent: Doc<'agents'>;
   /** What the page is showing, which outranks the row when the two disagree. */
   charter: Doc<'charters'> | null;
   /** A chat surface's failure reason when its probe could not find the manager. */
   managerLookupFailure?: string;
+  /** Whether a chat surface has found the manager's DM; the DM setting waits for one (N7). */
+  managerChannel?: boolean;
 }) {
   const surfaceConfig = useQuery(api.config.surfaceMode);
   const setBossEmail = useMutation(api.agents.setBossEmail);
@@ -876,7 +961,7 @@ export function DashboardHeader({
           {/* In real mode the chip is the manager's autonomous-actions
               switch; the hosted mock has no gate for the switch to change, so
               it keeps the static label. */}
-          {displayState === 'active' && surfaceConfig?.mode === 'real' ? (
+          {displayState === 'active' && surfaceConfig?.mode === 'real' && managerChannel ? (
             <NotificationModeControl
               mode={managerNotificationMode(agent)}
               onChange={(mode) => setManagerNotifications({ agentId: agent._id, mode })}
@@ -901,11 +986,15 @@ function Card({
   title,
   children,
   tone,
+  focusRef,
 }: {
   title: string;
   children: React.ReactNode;
   tone?: 'default' | 'accent' | 'warn' | 'ok';
+  /** Makes the card the place focus returns to when a change removes the control that made it. */
+  focusRef?: React.Ref<HTMLElement>;
 }) {
+  const headingId = useId();
   const border = {
     default: 'border-[var(--color-border)]',
     accent: 'border-[var(--color-accent)]/40',
@@ -913,8 +1002,17 @@ function Card({
     ok: 'border-[var(--color-ok)]/40',
   }[tone ?? 'default'];
   return (
-    <section className={`bg-[var(--color-card)] border ${border} rounded-xl p-4`}>
-      <h2 className="text-sm font-semibold tracking-tight text-[var(--color-fg)] mb-3">{title}</h2>
+    <section
+      ref={focusRef}
+      {...(focusRef ? { tabIndex: -1, 'aria-labelledby': headingId } : {})}
+      className={`bg-[var(--color-card)] border ${border} rounded-xl p-4`}
+    >
+      <h2
+        id={focusRef ? headingId : undefined}
+        className="text-sm font-semibold tracking-tight text-[var(--color-fg)] mb-3"
+      >
+        {title}
+      </h2>
       {children}
     </section>
   );
@@ -952,7 +1050,7 @@ function ModePicker({ onPick }: { onPick: (mode: 'voice' | 'chat') => void }) {
           onClick={() => onPick('voice')}
           disabled={voiceOff}
           title={voiceOff ? 'ElevenLabs credentials not set on this deployment' : undefined}
-          className={`flex-1 px-4 py-3 rounded-lg font-medium ${
+          className={`flex-1 min-h-11 px-4 py-3 rounded-lg font-medium ${
             voiceOff
               ? 'border border-[var(--color-border)] text-[var(--color-muted)] cursor-not-allowed'
               : 'bg-[var(--color-accent)] text-[var(--color-bg)] hover:opacity-90'
@@ -962,7 +1060,7 @@ function ModePicker({ onPick }: { onPick: (mode: 'voice' | 'chat') => void }) {
         </button>
         <button
           onClick={() => onPick('chat')}
-          className={`flex-1 px-4 py-3 rounded-lg font-medium ${
+          className={`flex-1 min-h-11 px-4 py-3 rounded-lg font-medium ${
             voiceOff
               ? 'bg-[var(--color-accent)] text-[var(--color-bg)] hover:opacity-90'
               : 'border border-[var(--color-border)] hover:border-[var(--color-accent)]'
@@ -1026,9 +1124,12 @@ export function ConstraintList({
   onStrike,
   onRestore,
   previewStrike,
+  busy = false,
 }: {
   constraints: CharterConstraint[];
   approved: boolean;
+  /** A change to the charter is in flight; the controls wait for it. */
+  busy?: boolean;
   /** Strike a confirmed rule; before approval a draft flag, after it an amendment. */
   onStrike?: (index: number) => void;
   /** Restore a struck rule; only a draft can, because a strike after approval has already left the clauses. */
@@ -1036,6 +1137,11 @@ export function ConstraintList({
   /** What striking a rule would do, computed as approval computes it. */
   previewStrike?: (index: number) => StrikePreview;
 }) {
+  // A rule struck since the list first rendered is this visit's decision, and its line draws.
+  const [struckOnArrival] = useState(
+    (): ReadonlySet<number> =>
+      new Set(constraints.flatMap((constraint, index) => (constraint.struck ? [index] : []))),
+  );
   if (constraints.length === 0) return null;
   return (
     <div className="text-xs">
@@ -1051,6 +1157,7 @@ export function ConstraintList({
           return (
             <li
               key={index}
+              data-just={constraint.struck && !struckOnArrival.has(index) ? '' : undefined}
               className={`flex items-start gap-2 p-2 rounded-md border ${
                 constraint.struck
                   ? 'border-[var(--color-border)] text-[var(--color-muted)]'
@@ -1058,7 +1165,10 @@ export function ConstraintList({
               }`}
             >
               <div className="flex-1 min-w-0">
-                <p className={constraint.struck ? 'line-through' : 'text-[var(--color-fg)]'}>
+                <p
+                  data-strike=""
+                  className={constraint.struck ? 'line-through' : 'text-[var(--color-fg)]'}
+                >
                   {/* A derived rule's quote is the clause itself, not a sentence
                     the manager said, so it is not printed as a quotation. */}
                   {constraint.origin === 'derived' ? (
@@ -1086,7 +1196,12 @@ export function ConstraintList({
                     ? " · found by checking the clauses (the charter's wording, not a sentence of yours)"
                     : ''}
                   {constraint.origin === 'manager' ? ' · added by you' : ''}
-                  {constraint.struck ? ' · struck' : ''}
+                  {constraint.struck ? (
+                    <>
+                      {' '}
+                      <span data-struck-mark="">· struck</span>
+                    </>
+                  ) : null}
                 </p>
                 {preview?.refusal ? (
                   <p className="text-[10px] text-[var(--color-warn)] mt-0.5">
@@ -1113,17 +1228,22 @@ export function ConstraintList({
               </div>
               {!constraint.struck && onStrike ? (
                 <button
+                  type="button"
                   onClick={() => onStrike(index)}
-                  disabled={preview?.refusal !== undefined}
+                  disabled={busy || preview?.refusal !== undefined}
                   title={preview?.refusal}
-                  className="shrink-0 px-2 py-1 rounded-md text-[10px] border border-[var(--color-border)] hover:border-[var(--color-warn)] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-[var(--color-border)]"
+                  aria-label={`Strike: ${constraint.quote}`}
+                  className="shrink-0 min-h-11 px-3 rounded-md text-[10px] border border-[var(--color-border)] hover:border-[var(--color-warn)] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-[var(--color-border)]"
                 >
                   Strike
                 </button>
               ) : constraint.struck && onRestore ? (
                 <button
+                  type="button"
                   onClick={() => onRestore(index)}
-                  className="shrink-0 px-2 py-1 rounded-md text-[10px] border border-[var(--color-border)] hover:border-[var(--color-ok)]"
+                  disabled={busy}
+                  aria-label={`Restore: ${constraint.quote}`}
+                  className="shrink-0 min-h-11 px-3 rounded-md text-[10px] border border-[var(--color-border)] hover:border-[var(--color-ok)] disabled:opacity-50"
                 >
                   Restore
                 </button>
@@ -1146,73 +1266,83 @@ export function ConstraintList({
 export function CharterCard({
   charter,
   manager,
+  onSentBack,
 }: {
   charter: Doc<'charters'>;
   /** The agent row's manager, who approves this employee's work. */
   manager?: string;
+  /** Told which draft was sent back, so the page can say what follows it. */
+  onSentBack?: (charterId: Id<'charters'>) => void;
 }) {
   const approve = useMutation(api.charters.approve);
   const requestChanges = useMutation(api.charters.requestChanges);
   const setConstraintStruck = useMutation(api.charters.setConstraintStruck);
   const amend = useMutation(api.charters.amend);
-  const [posting, setPosting] = useState(false);
-  const [amendError, setAmendError] = useState<string | null>(null);
-  const [strikeError, setStrikeError] = useState<string | null>(null);
+  const card = useRef<HTMLElement>(null);
+  const change = useChange(card);
   const body = charter.body as CharterCardBody;
   const constraints = body.constraints ?? [];
   const struckCount = constraints.filter((constraint) => constraint.struck).length;
 
-  async function toggleStrike(index: number, struck: boolean): Promise<void> {
-    setStrikeError(null);
-    try {
-      const result = await setConstraintStruck({ charterId: charter._id, index, struck });
-      if (!result.ok) setStrikeError(result.reason);
-    } catch (failure: unknown) {
-      setStrikeError(plainErrorMessage(errorMessage(failure)));
-    }
+  function toggleStrike(index: number, struck: boolean): void {
+    const quote = constraints[index]?.quote ?? 'the rule';
+    change.run(
+      async (): Promise<void> => {
+        const result = await setConstraintStruck({ charterId: charter._id, index, struck });
+        if (!result.ok) throw new Error(result.reason);
+      },
+      {
+        done: struck
+          ? `Struck “${quote}”: approval leaves its clauses out.`
+          : `Restored “${quote}”.`,
+        refused: 'The rule was not changed.',
+      },
+    );
   }
 
-  async function sendAmendment(change: CharterChange): Promise<boolean> {
-    setAmendError(null);
-    try {
-      await amend({ agentId: charter.agentId, changes: [change] });
-      return true;
-    } catch (error: unknown) {
-      // The refusal's own words travel as the ConvexError's data; any other
-      // failure's text is stripped by the backend in production.
-      setAmendError(
-        error instanceof ConvexError
-          ? String(error.data)
-          : error instanceof Error
-            ? error.message
-            : 'The amendment was refused.',
-      );
-      return false;
-    }
+  function sendAmendment(
+    amendment: CharterChange,
+    after?: () => void,
+    focus?: () => HTMLElement | null,
+  ): void {
+    change.run(() => amend({ agentId: charter.agentId, changes: [amendment] }), {
+      done: `Charter amended: version ${nextCharterVersion(charter.version)} is the one in force.`,
+      refused: 'The amendment was refused.',
+      after,
+      focus,
+    });
   }
 
   // The approval seeds the work the charter implies on the server, in the
   // same transaction, so nothing here waits on or retries it.
   function onApprove(): void {
-    setPosting(true);
-    setStrikeError(null);
-    approve({ charterId: charter._id })
-      .then((result) => {
-        if (!result.ok) {
-          setStrikeError(result.reason);
-          setPosting(false);
-        }
-      })
-      .catch((err: unknown) => {
-        setStrikeError(err instanceof Error ? err.message : 'The approval was not recorded.');
-        setPosting(false);
-      });
+    change.run(
+      async (): Promise<void> => {
+        const result = await approve({ charterId: charter._id });
+        if (!result.ok) throw new Error(result.reason);
+      },
+      {
+        done: 'Charter approved: the employee starts on the work it implies.',
+        refused: 'The approval was not recorded.',
+      },
+    );
+  }
+
+  // Sending the draft back deletes it, and this card with it when no approved
+  // charter stands beneath it; the page says what follows and takes focus.
+  function onRequestChanges(): void {
+    change.run(() => requestChanges({ charterId: charter._id }), {
+      done: SENT_BACK,
+      refused: 'The charter was not sent back.',
+      after: () => onSentBack?.(charter._id),
+    });
   }
 
   return (
     <Card
       title={`Charter v${charter.version}${charter.approved ? ' · approved' : ' · awaiting approval'}`}
       tone={charter.approved ? 'ok' : 'warn'}
+      focusRef={card}
     >
       <div className="space-y-3 text-sm">
         <div>
@@ -1227,15 +1357,13 @@ export function CharterCard({
           </span>
           <p className="text-[var(--color-fg)]">{body.proposedFunction}</p>
         </div>
-        <div className="grid grid-cols-3 gap-3 text-xs">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
           <Goal label="30-day" text={body.shortTermGoals.day30} />
           <Goal label="60-day" text={body.shortTermGoals.day60} />
           <Goal label="90-day" text={body.shortTermGoals.day90} />
         </div>
         <details className="text-xs">
-          <summary className="cursor-pointer text-[var(--color-muted)] hover:text-[var(--color-accent)]">
-            Boundaries · collaborators · open questions
-          </summary>
+          <summary className={SUMMARY}>Boundaries · collaborators · open questions</summary>
           <div className="mt-2 space-y-2 pl-3 border-l border-[var(--color-border)]">
             <BoundaryList
               label="Reports to"
@@ -1272,43 +1400,47 @@ export function CharterCard({
         <ConstraintList
           constraints={constraints}
           approved={charter.approved}
+          busy={change.busy}
           onStrike={(index) =>
             charter.approved
-              ? void sendAmendment({ kind: 'strike-constraint', index })
-              : void toggleStrike(index, true)
+              ? sendAmendment({ kind: 'strike-constraint', index })
+              : toggleStrike(index, true)
           }
-          onRestore={charter.approved ? undefined : (index) => void toggleStrike(index, false)}
+          onRestore={charter.approved ? undefined : (index) => toggleStrike(index, false)}
           previewStrike={(index) => strikePreview(body, index)}
         />
-        {strikeError ? <p className="text-xs text-[var(--color-danger)]">{strikeError}</p> : null}
         <SynthesisNotes notes={synthesisNotes(body)} />
         {charter.approved ? (
           <AmendCharterPanel
             charter={charter}
             body={body}
-            error={amendError}
+            busy={change.busy}
             onAmend={sendAmendment}
           />
         ) : null}
         {!charter.approved ? (
-          <div className="flex gap-2 pt-1">
+          <div className="flex flex-wrap gap-2 pt-1">
             <button
+              type="button"
               onClick={onApprove}
-              disabled={posting}
-              className="px-4 py-2 rounded-lg bg-[var(--color-ok)]/20 text-[var(--color-ok)] hover:bg-[var(--color-ok)]/30 text-sm font-medium disabled:opacity-50"
+              disabled={change.busy}
+              className="min-h-11 px-4 rounded-lg bg-[var(--color-ok)]/20 text-[var(--color-ok)] hover:bg-[var(--color-ok)]/30 text-sm font-medium disabled:opacity-50"
             >
               {struckCount > 0
                 ? `Approve, ${struckCount} ${struckCount === 1 ? 'rule' : 'rules'} struck`
                 : 'Approve'}
             </button>
             <button
-              onClick={() => requestChanges({ charterId: charter._id })}
-              className="px-4 py-2 rounded-lg border border-[var(--color-border)] hover:border-[var(--color-warn)] text-sm"
+              type="button"
+              onClick={onRequestChanges}
+              disabled={change.busy}
+              className="min-h-11 px-4 rounded-lg border border-[var(--color-border)] hover:border-[var(--color-warn)] text-sm disabled:opacity-50"
             >
               Request changes
             </button>
           </div>
         ) : null}
+        <LiveStatus outcome={change.outcome} />
       </div>
     </Card>
   );
@@ -1321,9 +1453,20 @@ const CLAUSE_LIST_LABEL: Record<ListClauseField, string> = {
 };
 
 const AMEND_INPUT =
-  'flex-1 min-w-0 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-md px-2 py-1 text-xs text-[var(--color-fg)]';
+  'min-h-11 flex-1 min-w-0 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-md px-2 text-xs text-[var(--color-fg)]';
 const AMEND_BUTTON =
-  'shrink-0 px-2 py-1 rounded-md text-[10px] border border-[var(--color-border)] hover:border-[var(--color-accent)] disabled:opacity-50';
+  'shrink-0 min-h-11 px-3 rounded-md text-[10px] border border-[var(--color-border)] hover:border-[var(--color-accent)] disabled:opacity-50';
+
+/** A disclosure's summary with a 44 px target (N14). */
+const SUMMARY =
+  'min-h-11 py-3 cursor-pointer text-[var(--color-muted)] hover:text-[var(--color-accent)]';
+
+/** What the card says once the manager sends its draft back. */
+const SENT_BACK = 'Charter sent back: this draft is withdrawn.';
+
+/** What the page says when sending the draft back reopened the 1:1. */
+const ONBOARDING_REOPENED =
+  'The 1:1 is open again, so the employee can redraft the charter from what you tell it.';
 
 /**
  * One line of text the manager can rewrite or remove; Save sends the
@@ -1332,27 +1475,50 @@ const AMEND_BUTTON =
  */
 function EditableLine({
   text,
+  label,
+  busy,
   onSave,
   onRemove,
 }: {
   text: string;
+  /** What the line is, as the field's visible label. */
+  label: string;
+  busy: boolean;
   onSave: (text: string) => void;
   onRemove?: () => void;
 }) {
   const [draft, setDraft] = useState(text);
+  const id = useId();
   const changed = draft.trim() !== text.trim();
   return (
-    <div className="flex items-center gap-1">
-      <input className={AMEND_INPUT} value={draft} onChange={(e) => setDraft(e.target.value)} />
+    <div className="flex flex-wrap items-center gap-1">
+      <label htmlFor={id} className="sr-only">
+        {label}
+      </label>
+      <input
+        id={id}
+        className={AMEND_INPUT}
+        value={draft}
+        disabled={busy}
+        onChange={(e) => setDraft(e.target.value)}
+      />
       <button
+        type="button"
         className={AMEND_BUTTON}
-        disabled={!changed || !draft.trim()}
+        disabled={busy || !changed || !draft.trim()}
+        aria-label={`Save: ${label}`}
         onClick={() => onSave(draft)}
       >
         Save
       </button>
       {onRemove ? (
-        <button className={AMEND_BUTTON} onClick={onRemove}>
+        <button
+          type="button"
+          className={AMEND_BUTTON}
+          disabled={busy}
+          aria-label={`Remove: ${label}`}
+          onClick={onRemove}
+        >
           Remove
         </button>
       ) : null}
@@ -1360,36 +1526,53 @@ function EditableLine({
   );
 }
 
-/** A single input with a button, cleared when the submission is accepted. */
+/** A labelled input with a button, cleared when the change it sends lands. */
 function AddLine({
-  placeholder,
   label,
+  button,
+  busy,
   onAdd,
 }: {
-  placeholder: string;
+  /** The field's visible label. */
   label: string;
-  onAdd: (text: string) => Promise<boolean>;
+  /** The button's text. */
+  button: string;
+  busy: boolean;
+  /**
+   * Send the text; `clear` empties the field once the change lands, and the
+   * field, where the next entry goes, takes focus from the emptied button.
+   */
+  onAdd: (text: string, clear: () => void, field: () => HTMLElement | null) => void;
 }) {
   const [draft, setDraft] = useState('');
+  const id = useId();
+  const field = useRef<HTMLInputElement>(null);
   return (
-    <div className="flex items-center gap-1">
+    <div className="flex flex-wrap items-center gap-1">
+      <label htmlFor={id} className="basis-full text-[10px] text-[var(--color-muted)]">
+        {label}
+      </label>
       <input
+        ref={field}
+        id={id}
         className={AMEND_INPUT}
-        placeholder={placeholder}
         value={draft}
+        disabled={busy}
         onChange={(e) => setDraft(e.target.value)}
       />
       <button
+        type="button"
         className={AMEND_BUTTON}
-        disabled={!draft.trim()}
-        onClick={() => {
-          // onAdd never rejects: a refusal is shown on the panel.
-          void onAdd(draft).then((added) => {
-            if (added) setDraft('');
-          });
-        }}
+        disabled={busy || !draft.trim()}
+        onClick={() =>
+          onAdd(
+            draft,
+            () => setDraft(''),
+            () => field.current,
+          )
+        }
       >
-        {label}
+        {button}
       </button>
     </div>
   );
@@ -1418,14 +1601,17 @@ export function defaultRuleClause(quote: string): ListClauseField {
 export function AmendCharterPanel({
   charter,
   body,
-  error,
+  busy,
   onAmend,
 }: {
   charter: Doc<'charters'>;
   body: CharterCardBody;
-  error: string | null;
-  onAmend: (change: CharterChange) => Promise<boolean>;
+  /** An amendment is in flight; the editors wait for it. */
+  busy: boolean;
+  /** Send one typed change; `after` runs and `focus` takes focus once it lands. Its outcome is said on the card. */
+  onAmend: (change: CharterChange, after?: () => void, focus?: () => HTMLElement | null) => void;
 }) {
+  const ruleId = useId();
   const versions = useQuery(api.charters.listForAgent, { agentId: charter.agentId });
   const now = useNow();
   const zone = useAgentZone();
@@ -1449,11 +1635,10 @@ export function AmendCharterPanel({
   const openQuestions = managerOpenQuestions(body);
   return (
     <details className="text-xs">
-      <summary className="cursor-pointer text-[var(--color-muted)] hover:text-[var(--color-accent)]">
+      <summary className={SUMMARY}>
         Amend this charter · next version v{nextCharterVersion(charter.version)}
       </summary>
       <div className="mt-2 space-y-3 pl-3 border-l border-[var(--color-border)]">
-        {error ? <p className="text-[var(--color-warn)]">{error}</p> : null}
         <div>
           <div className="text-[var(--color-muted)] text-[10px] uppercase tracking-wider mb-1">
             Proposed function
@@ -1461,7 +1646,9 @@ export function AmendCharterPanel({
           <EditableLine
             key={body.proposedFunction}
             text={body.proposedFunction}
-            onSave={(text) => void onAmend({ kind: 'edit-function', text })}
+            label="Proposed function"
+            busy={busy}
+            onSave={(text) => onAmend({ kind: 'edit-function', text })}
           />
         </div>
         {LIST_CLAUSE_FIELDS.map((field) => (
@@ -1474,20 +1661,27 @@ export function AmendCharterPanel({
                 <EditableLine
                   key={`${index}:${item}`}
                   text={item}
-                  onSave={(text) => void onAmend({ kind: 'edit-clause', field, index, text })}
-                  onRemove={() => void onAmend({ kind: 'edit-clause', field, index, text: '' })}
+                  label={`${CLAUSE_LIST_LABEL[field]}, clause ${index + 1}`}
+                  busy={busy}
+                  onSave={(text) => onAmend({ kind: 'edit-clause', field, index, text })}
+                  onRemove={() => onAmend({ kind: 'edit-clause', field, index, text: '' })}
                 />
               ))}
               <AddLine
-                placeholder={`Add to ${CLAUSE_LIST_LABEL[field].toLowerCase()}`}
-                label="Add"
-                onAdd={(text) =>
-                  onAmend({
-                    kind: 'edit-clause',
-                    field,
-                    index: body.proposedBoundaries[field].length,
-                    text,
-                  })
+                label={`Add to ${CLAUSE_LIST_LABEL[field].toLowerCase()}`}
+                button="Add"
+                busy={busy}
+                onAdd={(text, clear, input) =>
+                  onAmend(
+                    {
+                      kind: 'edit-clause',
+                      field,
+                      index: body.proposedBoundaries[field].length,
+                      text,
+                    },
+                    clear,
+                    input,
+                  )
                 }
               />
             </div>
@@ -1501,11 +1695,13 @@ export function AmendCharterPanel({
             <div className="space-y-1.5">
               {openQuestions.map((question) => (
                 <div key={question}>
-                  <p className="text-[var(--color-fg)] mb-0.5">{question}</p>
                   <AddLine
-                    placeholder="Your answer"
-                    label="Answer"
-                    onAdd={(answer) => onAmend({ kind: 'answer-question', question, answer })}
+                    label={question}
+                    button="Answer"
+                    busy={busy}
+                    onAdd={(answer, clear, input) =>
+                      onAmend({ kind: 'answer-question', question, answer }, clear, input)
+                    }
                   />
                 </div>
               ))}
@@ -1522,14 +1718,26 @@ export function AmendCharterPanel({
             Add a rule
           </div>
           <div className="flex flex-wrap items-center gap-1">
+            <label
+              htmlFor={`${ruleId}-quote`}
+              className="basis-full text-[10px] text-[var(--color-muted)]"
+            >
+              The rule, in your own words
+            </label>
             <input
+              id={`${ruleId}-quote`}
               className={AMEND_INPUT}
-              placeholder="In your own words"
               value={rule.quote}
+              disabled={busy}
               onChange={(e) => setRule({ ...rule, quote: e.target.value })}
             />
+            <label htmlFor={`${ruleId}-kind`} className="sr-only">
+              What the rule limits
+            </label>
             <select
+              id={`${ruleId}-kind`}
               className={AMEND_INPUT}
+              disabled={busy}
               value={rule.kind}
               onChange={(e) =>
                 setRule({ ...rule, kind: e.target.value as CharterConstraint['kind'] })
@@ -1539,8 +1747,13 @@ export function AmendCharterPanel({
               <option value="system-boundary">where I may act</option>
               <option value="reporting-line">who I report to</option>
             </select>
+            <label htmlFor={`${ruleId}-clause`} className="sr-only">
+              The clause list it goes under
+            </label>
             <select
+              id={`${ruleId}-clause`}
               className={AMEND_INPUT}
+              disabled={busy}
               value={ruleClause}
               onChange={(e) => setRule({ ...rule, clause: e.target.value as ListClauseField })}
             >
@@ -1551,17 +1764,18 @@ export function AmendCharterPanel({
               ))}
             </select>
             <button
+              type="button"
               className={AMEND_BUTTON}
-              disabled={!rule.quote.trim()}
-              onClick={() => {
-                // onAmend never rejects: a refusal is shown on the panel.
-                void onAmend({
-                  kind: 'add-constraint',
-                  constraint: { kind: rule.kind, quote: rule.quote, clause: ruleClause },
-                }).then((amended) => {
-                  if (amended) setRule({ quote: '', kind: rule.kind });
-                });
-              }}
+              disabled={busy || !rule.quote.trim()}
+              onClick={() =>
+                onAmend(
+                  {
+                    kind: 'add-constraint',
+                    constraint: { kind: rule.kind, quote: rule.quote, clause: ruleClause },
+                  },
+                  () => setRule({ quote: '', kind: rule.kind }),
+                )
+              }
             >
               Add rule
             </button>
@@ -1578,10 +1792,12 @@ export function AmendCharterPanel({
                   {role.who} - {role.staysOutOfTheirLaneBy}
                 </span>
                 <button
+                  type="button"
                   className={AMEND_BUTTON}
+                  disabled={busy}
+                  aria-label={`Remove: ${role.who}`}
                   onClick={() =>
-                    // onAmend never rejects: a refusal is shown on the panel.
-                    void onAmend({
+                    onAmend({
                       kind: 'edit-adjacent-role',
                       index,
                       role: { who: '', staysOutOfTheirLaneBy: '' },
@@ -1593,15 +1809,20 @@ export function AmendCharterPanel({
               </div>
             ))}
             <AddLine
-              placeholder="Role - how I stay out of their lane"
-              label="Add"
-              onAdd={(text) => {
+              label="Add a role, as: role - how I stay out of their lane"
+              button="Add"
+              busy={busy}
+              onAdd={(text, clear, input) => {
                 const [who, ...rest] = text.split(' - ');
-                return onAmend({
-                  kind: 'edit-adjacent-role',
-                  index: (body.adjacentRoles ?? []).length,
-                  role: { who: who ?? '', staysOutOfTheirLaneBy: rest.join(' - ') },
-                });
+                onAmend(
+                  {
+                    kind: 'edit-adjacent-role',
+                    index: (body.adjacentRoles ?? []).length,
+                    role: { who: who ?? '', staysOutOfTheirLaneBy: rest.join(' - ') },
+                  },
+                  clear,
+                  input,
+                );
               }}
             />
           </div>
@@ -1617,22 +1838,40 @@ export function AmendCharterPanel({
                   {named.name} ({named.class})
                 </span>
                 <button
+                  type="button"
                   className={AMEND_BUTTON}
-                  onClick={() => void onAmend({ kind: 'remove-system', name: named.name })}
+                  disabled={busy}
+                  aria-label={`Remove: ${named.name}`}
+                  onClick={() => onAmend({ kind: 'remove-system', name: named.name })}
                 >
                   Remove
                 </button>
               </div>
             ))}
             <div className="flex flex-wrap items-center gap-1">
+              <label
+                htmlFor={`${ruleId}-system`}
+                className="basis-full text-[10px] text-[var(--color-muted)]"
+              >
+                System name
+              </label>
               <input
+                id={`${ruleId}-system`}
                 className={AMEND_INPUT}
-                placeholder="System name"
                 value={system.name}
+                disabled={busy}
                 onChange={(e) => setSystem({ ...system, name: e.target.value })}
               />
+              <label
+                htmlFor={`${ruleId}-system-kind`}
+                className="basis-full text-[10px] text-[var(--color-muted)]"
+              >
+                Its kind
+              </label>
               <select
+                id={`${ruleId}-system-kind`}
                 className={AMEND_INPUT}
+                disabled={busy}
                 value={system.class}
                 onChange={(e) => setSystem({ ...system, class: e.target.value as SystemClass })}
               >
@@ -1642,21 +1881,28 @@ export function AmendCharterPanel({
                   </option>
                 ))}
               </select>
+              <label
+                htmlFor={`${ruleId}-system-where`}
+                className="basis-full text-[10px] text-[var(--color-muted)]"
+              >
+                Where it is used, in your words
+              </label>
               <input
+                id={`${ruleId}-system-where`}
                 className={AMEND_INPUT}
-                placeholder="Where it is used, in your words"
                 value={system.whereMentioned}
+                disabled={busy}
                 onChange={(e) => setSystem({ ...system, whereMentioned: e.target.value })}
               />
               <button
+                type="button"
                 className={AMEND_BUTTON}
-                disabled={!system.name.trim() || !system.whereMentioned.trim()}
-                onClick={() => {
-                  // onAmend never rejects: a refusal is shown on the panel.
-                  void onAmend({ kind: 'add-system', system }).then((amended) => {
-                    if (amended) setSystem({ name: '', class: 'other', whereMentioned: '' });
-                  });
-                }}
+                disabled={busy || !system.name.trim() || !system.whereMentioned.trim()}
+                onClick={() =>
+                  onAmend({ kind: 'add-system', system }, () =>
+                    setSystem({ name: '', class: 'other', whereMentioned: '' }),
+                  )
+                }
               >
                 Add system
               </button>
@@ -1739,26 +1985,74 @@ function BoundaryList({ label, items }: { label: string; items: string[] }) {
   );
 }
 
+/** What an authoring attempt is filed as when neither its result nor its error carries words. */
+const AUTHORING_UNFINISHED = 'authoring did not finish';
+
+/**
+ * The chat surface the employee can reach its manager on now: a DM channel and the manager's
+ * user resolved, and the connection live by the six-hour rule. The Manager DMs setting and the
+ * work card's "ask again" both read this, so neither offers a channel that cannot deliver.
+ */
+export function connectedManagerChannel(
+  surfaces: readonly SurfaceRecord[],
+  now: number,
+): SurfaceRecord | undefined {
+  return surfaces.find(
+    (surface) =>
+      surface.class === 'chat' &&
+      !!surface.managerDmChannelId &&
+      !!surface.managerUserId &&
+      verdictFor(surface, now) === 'connected',
+  );
+}
+
 /** The skills the agent proposed and the manager has not decided, each with Approve and Reject. */
 export function ProposedSkillsPanel({
   skills,
   surfaces,
   onAuthoringAttempt,
+  fallback,
 }: {
   skills: Doc<'skills'>[];
   /** The agent's surfaces in real mode; a skill targeting one that is not
    *  connected cannot be approved yet, and the button says why. */
   surfaces: SurfaceRecord[];
-  /** Approving moves the row out of this panel, so its verdict has to be
-   *  reported somewhere that survives the unmount. `null` opens an attempt and
-   *  retires whatever the last one said. */
+  /** Approving moves the row out of this panel, so the authoring's verdict has
+   *  to be reported somewhere that survives the unmount. `null` opens an
+   *  attempt and retires whatever the last one said. */
   onAuthoringAttempt: (attempt: AuthoringAttempt | null) => void;
+  /** Where focus goes when the decided row leaves the panel: the Skills card it moves to. */
+  fallback?: React.RefObject<HTMLElement | null>;
 }) {
   const approve = useMutation(api.skills.approve);
   const reject = useMutation(api.skills.reject);
   const author = useAction(api.skillActions.authorAndRegisterSkill);
   const now = useNow();
-  if (skills.length === 0) return null;
+  const change = useChange(fallback);
+
+  // The approval is the manager's decision and is said here; the authoring it
+  // starts runs for minutes and files its verdict with the Skills card.
+  function onApprove(skill: Doc<'skills'>): void {
+    const file = (reason?: string): void =>
+      onAuthoringAttempt({ skillId: skill._id, name: skill.name, ...(reason ? { reason } : {}) });
+    change.run(() => approve({ skillId: skill._id }), {
+      done: `Approved ${skill.name}: the employee is authoring it now, and the Skills card says when it is callable.`,
+      refused: `${skill.name} was not approved.`,
+      after: () => {
+        onAuthoringAttempt(null);
+        // Discarded because both outcomes are handled here and filed as the
+        // attempt the Skills card shows in its live region.
+        void author({ skillId: skill._id }).then(
+          (result) => file(result.ok ? undefined : (result.reason ?? AUTHORING_UNFINISHED)),
+          (err: unknown) => file(refusalText(err, AUTHORING_UNFINISHED)),
+        );
+      },
+    });
+  }
+
+  // The panel keeps its live region when the last row leaves it, so the
+  // outcome of that decision is still said.
+  if (skills.length === 0) return <LiveStatus outcome={change.outcome} />;
   return (
     <Card title="Proposed skills · awaiting your call" tone="warn">
       <div className="space-y-3">
@@ -1770,8 +2064,8 @@ export function ProposedSkillsPanel({
           );
           return (
             <div key={s._id} className="border border-[var(--color-border)] rounded-lg p-3 text-sm">
-              <div className="flex items-center justify-between mb-1">
-                <span className="font-medium text-[var(--color-fg)]">{s.name}</span>
+              <div className="flex flex-wrap items-center justify-between gap-x-2 mb-1">
+                <span className="font-medium text-[var(--color-fg)] break-words">{s.name}</span>
                 <span className="text-[10px] text-[var(--color-muted)]">
                   requires: {(s.requiredScopes ?? []).join(', ')}
                 </span>
@@ -1787,35 +2081,27 @@ export function ProposedSkillsPanel({
                   </a>
                 </p>
               ) : null}
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <button
-                  disabled={Boolean(refusal)}
+                  type="button"
+                  disabled={Boolean(refusal) || change.busy}
                   title={refusal}
-                  onClick={() => {
-                    onAuthoringAttempt(null);
-                    const file = (reason: string): void =>
-                      onAuthoringAttempt({ skillId: s._id, name: s.name, reason });
-                    // Discarded because each step's rejection is handled here and
-                    // filed as the attempt on the row. The approval's refusals name
-                    // the approve themselves (`cannot approve "<skill>": ...`).
-                    void approve({ skillId: s._id }).then(
-                      () =>
-                        author({ skillId: s._id }).then(
-                          (result) => {
-                            if (!result.ok) file(result.reason ?? 'authoring did not finish');
-                          },
-                          (err: unknown) => file(plainErrorMessage(errorMessage(err))),
-                        ),
-                      (err: unknown) => file(plainErrorMessage(errorMessage(err))),
-                    );
-                  }}
-                  className="px-3 py-1.5 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] hover:bg-[var(--color-ok)]/30 text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-[var(--color-ok)]/20"
+                  onClick={() => onApprove(s)}
+                  className="min-h-11 px-3 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] hover:bg-[var(--color-ok)]/30 text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-[var(--color-ok)]/20"
                 >
                   Approve · author and verify
                 </button>
                 <button
-                  onClick={() => reject({ skillId: s._id })}
-                  className="px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:border-[var(--color-danger)] text-xs"
+                  type="button"
+                  disabled={change.busy}
+                  aria-label={`Reject ${s.name}`}
+                  onClick={() =>
+                    change.run(() => reject({ skillId: s._id }), {
+                      done: `Rejected ${s.name}: the employee will not author it.`,
+                      refused: `${s.name} was not rejected.`,
+                    })
+                  }
+                  className="min-h-11 px-3 rounded-md border border-[var(--color-border)] hover:border-[var(--color-danger)] text-xs disabled:opacity-50"
                 >
                   Reject
                 </button>
@@ -1823,6 +2109,7 @@ export function ProposedSkillsPanel({
             </div>
           );
         })}
+        <LiveStatus outcome={change.outcome} />
       </div>
     </Card>
   );
@@ -1856,10 +2143,15 @@ export function RegisteredSkillsPanel({
   skills,
   unregistered,
   authoringFailure,
+  registered = null,
   onAuthoringAttempt,
   surfaceMode,
+  focusRef,
+  loading = false,
 }: {
   skills: Doc<'skills'>[];
+  /** The registered skills' query has not answered yet. */
+  loading?: boolean;
   /**
    * Authored but never registered: `authoring` (a run is holding it now, or no
    * sandbox ran), `failed` (the sandbox said no), and `verified` (registration
@@ -1874,59 +2166,83 @@ export function RegisteredSkillsPanel({
    * it from sitting above a row that says something else.
    */
   authoringFailure: string | null;
+  /** The skill the manager's last attempt registered, said once its row is registered. */
+  registered?: string | null;
   /** Retries report here too, so the notice is never older than the last try. */
   onAuthoringAttempt: (attempt: AuthoringAttempt | null) => void;
   /** Real mode lists the inputs the executor binds for a skill that predates them. */
   surfaceMode?: 'mock' | 'real';
+  /** Makes the card the place focus goes when a decided skill leaves the proposed panel. */
+  focusRef?: React.Ref<HTMLElement>;
 }) {
   const author = useAction(api.skillActions.authorAndRegisterSkill);
   const requestRevision = useMutation(api.skills.requestRevision);
   const [retrying, setRetrying] = useState<Id<'skills'> | null>(null);
+  // The control that started a run, and the card that stands in for it once a
+  // registration moves its row out of this list.
+  const [returnTo, setReturnTo] = useState<{
+    control: HTMLElement;
+    card: HTMLElement | null;
+  } | null>(null);
   const now = useNow();
+  const describedBy = useId();
 
-  async function onRetry(skillId: Id<'skills'>, name: string) {
+  // A retry or a revision authors for minutes, so its verdict is filed as the
+  // attempt (said in the card's live region) rather than awaited by a hook.
+  async function reauthor(
+    skillId: Id<'skills'>,
+    name: string,
+    revise: boolean,
+    origin: HTMLElement,
+  ): Promise<void> {
     setRetrying(skillId);
+    setReturnTo({ control: origin, card: origin.closest<HTMLElement>('section[tabindex="-1"]') });
     onAuthoringAttempt(null);
     try {
+      if (revise) await requestRevision({ skillId });
       const result = await author({ skillId });
-      if (!result.ok) {
-        onAuthoringAttempt({ skillId, name, reason: result.reason ?? 'retry did not succeed' });
-      }
+      onAuthoringAttempt(
+        result.ok
+          ? { skillId, name }
+          : {
+              skillId,
+              name,
+              reason:
+                result.reason ?? (revise ? 'revision did not succeed' : 'retry did not succeed'),
+            },
+      );
     } catch (err) {
-      onAuthoringAttempt({ skillId, name, reason: plainErrorMessage(errorMessage(err)) });
+      onAuthoringAttempt({ skillId, name, reason: refusalText(err, AUTHORING_UNFINISHED) });
     } finally {
       setRetrying(null);
     }
   }
 
-  async function onRevise(skillId: Id<'skills'>, name: string) {
-    setRetrying(skillId);
-    onAuthoringAttempt(null);
-    try {
-      await requestRevision({ skillId });
-      const result = await author({ skillId });
-      if (!result.ok) {
-        onAuthoringAttempt({
-          skillId,
-          name,
-          reason: result.reason ?? 'revision did not succeed',
-        });
-      }
-    } catch (err) {
-      onAuthoringAttempt({ skillId, name, reason: plainErrorMessage(errorMessage(err)) });
-    } finally {
-      setRetrying(null);
-    }
-  }
+  // The button is disabled while its run holds it, so focus comes back to it
+  // once it is enabled again, unless the manager has moved on.
+  useEffect(() => {
+    if (retrying !== null || returnTo === null) return;
+    returnFocus(returnTo.control, returnTo.card);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the focus return happens once per settled run
+    setReturnTo(null);
+  }, [retrying, returnTo]);
 
   return (
-    <Card title={`Skills · ${skills.length} registered`}>
-      {authoringFailure ? (
-        <p className="mb-3 p-2 rounded-md bg-[var(--color-danger)]/10 border border-[var(--color-danger)]/30 text-xs text-[var(--color-danger)]">
-          Authoring did not finish: {authoringFailure}
-        </p>
-      ) : null}
-      {skills.length === 0 ? (
+    <Card title={`Skills · ${skills.length} registered`} focusRef={focusRef}>
+      <div role="status" aria-live="polite" aria-atomic="true">
+        {authoringFailure ? (
+          <p className="mb-3 p-2 rounded-md bg-[var(--color-danger)]/10 border border-[var(--color-danger)]/30 text-xs text-[var(--color-danger)]">
+            Authoring did not finish: {authoringFailure}
+          </p>
+        ) : registered ? (
+          <p className="mb-3 text-xs text-[var(--color-ok)]">
+            {registered} is registered: it passed the check and is callable.
+          </p>
+        ) : null}
+      </div>
+      {loading ? (
+        <p className="text-xs text-[var(--color-muted)]">loading skills…</p>
+      ) : skills.length === 0 ? (
         <p className="text-xs text-[var(--color-muted)]">none yet</p>
       ) : (
         <ul className="space-y-2 text-sm">
@@ -1950,10 +2266,16 @@ export function RegisteredSkillsPanel({
               </div>
               {s.sourceType === 'agent-authored' ? (
                 <button
-                  onClick={() => onRevise(s._id, s.name)}
+                  type="button"
+                  onClick={(event) => {
+                    // reauthor files every outcome as the attempt and never rejects.
+                    void reauthor(s._id, s.name, true, event.currentTarget);
+                  }}
                   disabled={retrying === s._id}
-                  title="Discard this body and author the skill again, then verify it - open only before its first execution"
-                  className="px-2.5 py-1 rounded-md border border-[var(--color-border)] hover:border-[var(--color-warn)] text-xs disabled:opacity-50 shrink-0"
+                  title={REVISE_HINT}
+                  aria-label={`Revise ${s.name}`}
+                  aria-describedby={`${describedBy}-revise`}
+                  className="min-h-11 px-3 rounded-md border border-[var(--color-border)] hover:border-[var(--color-warn)] text-xs disabled:opacity-50 shrink-0"
                 >
                   {retrying === s._id ? 'Revising…' : 'Revise'}
                 </button>
@@ -1962,6 +2284,11 @@ export function RegisteredSkillsPanel({
           ))}
         </ul>
       )}
+      {skills.some((skill) => skill.sourceType === 'agent-authored') ? (
+        <p id={`${describedBy}-revise`} className="mt-2 text-[10px] text-[var(--color-muted)]">
+          {REVISE_HINT}
+        </p>
+      ) : null}
 
       {unregistered.length > 0 ? (
         <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
@@ -1986,6 +2313,7 @@ export function RegisteredSkillsPanel({
                         it, which the lease has since released; and no run at
                         all, where the log is this skill's own verdict. */}
                     <SkillStatusLine
+                      skill={s.name}
                       text={
                         holdsLiveAuthoringClaim(s, now)
                           ? 'authoring now · a run holds this skill'
@@ -1995,17 +2323,25 @@ export function RegisteredSkillsPanel({
                       }
                     />
                     <SkillInputs body={s.body || s.refusedBody || ''} />
+                    <p
+                      id={`${describedBy}-${s._id}`}
+                      className="text-[10px] text-[var(--color-muted)]"
+                    >
+                      {retryVerifiesSavedDraft(s) ? RETRY_CHECKS_HINT : RETRY_AUTHORS_HINT}
+                    </p>
                     <RefusedDraftDetails skill={s} />
                   </div>
                   <button
-                    onClick={() => onRetry(s._id, s.name)}
+                    type="button"
+                    onClick={(event) => {
+                      // reauthor files every outcome as the attempt and never rejects.
+                      void reauthor(s._id, s.name, false, event.currentTarget);
+                    }}
                     disabled={retrying === s._id}
-                    title={
-                      retryVerifiesSavedDraft(s)
-                        ? 'Run the body and smoke test this skill already has through the sandbox check - no new authoring call'
-                        : 'Author this skill again, with the reason it stopped, then verify it'
-                    }
-                    className="px-2.5 py-1 rounded-md bg-[var(--color-warn)]/20 text-[var(--color-warn)] text-xs font-medium hover:bg-[var(--color-warn)]/30 disabled:opacity-50 shrink-0"
+                    title={retryVerifiesSavedDraft(s) ? RETRY_CHECKS_HINT : RETRY_AUTHORS_HINT}
+                    aria-label={`Retry ${s.name}`}
+                    aria-describedby={`${describedBy}-${s._id}`}
+                    className="min-h-11 px-3 rounded-md bg-[var(--color-warn)]/20 text-[var(--color-warn)] text-xs font-medium hover:bg-[var(--color-warn)]/30 disabled:opacity-50 shrink-0"
                   >
                     {retrying === s._id ? 'Retrying…' : 'Retry'}
                   </button>
@@ -2036,6 +2372,15 @@ export function RegisteredSkillsPanel({
   );
 }
 
+/** What Revise does, beside the registered list and for its hover. */
+const REVISE_HINT =
+  'Discard this body and author the skill again, then verify it - open only before its first execution, while the item it was proposed for still waits for it';
+/** What Retry does for a row whose draft is kept. */
+const RETRY_CHECKS_HINT =
+  'Run the body and smoke test this skill already has through the sandbox check - no new authoring call';
+/** What Retry does for every other row. */
+const RETRY_AUTHORS_HINT = 'Author this skill again, with the reason it stopped, then verify it';
+
 /**
  * What an unregistered skill's row says under its name.
  *
@@ -2044,12 +2389,15 @@ export function RegisteredSkillsPanel({
  * text cannot be read, and one left unbounded makes the card as tall as the
  * traceback. `break-words` still wraps a caret line, so Retry stays inside.
  */
-function SkillStatusLine({ text }: { text: string }) {
+function SkillStatusLine({ skill, text }: { skill: string; text: string }) {
   if (!text.includes('\n')) {
     return <div className="text-[var(--color-muted)] text-xs break-words">{text}</div>;
   }
   return (
     <div
+      tabIndex={0}
+      role="region"
+      aria-label={`Verification log: ${skill}`}
       className="mt-0.5 text-[var(--color-muted)] text-[11px] leading-snug font-mono whitespace-pre-wrap break-words max-h-40 overflow-y-auto rounded border border-[var(--color-border)] bg-[var(--color-bg)] p-2"
       data-skill-log="multiline"
     >
@@ -2119,7 +2467,7 @@ function SkillInputs({ body, surfaceMode }: { body: string; surfaceMode?: 'mock'
 export function RefusedDraftDetails({
   skill,
 }: {
-  skill: Pick<Doc<'skills'>, 'refusedBody' | 'refusedSmokeTest'>;
+  skill: Pick<Doc<'skills'>, 'refusedBody' | 'refusedSmokeTest'> & { name?: string };
 }) {
   const body = skill.refusedBody?.trim() ?? '';
   const smokeTest = skill.refusedSmokeTest?.trim() ?? '';
@@ -2130,14 +2478,19 @@ export function RefusedDraftDetails({
   ].filter((file) => file.content);
   return (
     <details className="mt-1 text-xs">
-      <summary className="cursor-pointer text-[var(--color-muted)] hover:text-[var(--color-accent)]">
+      <summary className={SUMMARY}>
         Refused draft · {files.map((file) => file.name).join(' and ')} · not registered
       </summary>
       <div className="mt-1 space-y-1">
         {files.map((file) => (
           <div key={file.name}>
             <div className="font-mono text-[10px] text-[var(--color-muted)]">{file.name}</div>
-            <pre className="text-[10px] text-[var(--color-muted)] whitespace-pre-wrap max-h-48 overflow-auto bg-[var(--color-bg)] p-2 rounded border border-[var(--color-border)]">
+            <pre
+              tabIndex={0}
+              role="region"
+              aria-label={`Refused ${file.name}${skill.name ? `: ${skill.name}` : ''}`}
+              className="text-[10px] text-[var(--color-muted)] whitespace-pre-wrap max-h-48 overflow-auto bg-[var(--color-bg)] p-2 rounded border border-[var(--color-border)]"
+            >
               {file.content}
             </pre>
           </div>
@@ -2169,34 +2522,30 @@ export function checkForWorkMessage(result: { scheduled: number; retryInMs?: num
 }
 
 /** Poll the employee's connected work surfaces now rather than at the next five-minute sweep. */
-function CheckForNewWork({ agentId }: { agentId: Id<'agents'> }) {
+export function CheckForNewWork({ agentId }: { agentId: Id<'agents'> }) {
   const check = useMutation(api.workLoop.checkForNewWork);
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const change = useChange();
   return (
     <div className="mb-3">
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-[10px] text-[var(--color-muted)]">
           Connected surfaces are polled every five minutes.
         </p>
         <button
-          disabled={busy}
-          onClick={() => {
-            setBusy(true);
-            setError(null);
-            check({ agentId })
-              .then((result) => setMessage(checkForWorkMessage(result)))
-              .catch((err: unknown) => setError(errorMessage(err)))
-              .finally(() => setBusy(false));
-          }}
-          className="shrink-0 px-2 py-1 rounded-md text-[10px] border border-[var(--color-border)] hover:border-[var(--color-accent)] disabled:opacity-50 disabled:cursor-not-allowed"
+          type="button"
+          disabled={change.busy}
+          onClick={() =>
+            change.run(() => check({ agentId }), {
+              done: checkForWorkMessage,
+              refused: 'The check did not start.',
+            })
+          }
+          className="shrink-0 min-h-11 px-3 rounded-md text-[10px] border border-[var(--color-border)] hover:border-[var(--color-accent)] disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {busy ? 'Checking…' : 'Check for new work'}
+          {change.busy ? 'Checking…' : 'Check for new work'}
         </button>
       </div>
-      {message ? <p className="mt-1 text-[10px] text-[var(--color-muted)]">{message}</p> : null}
-      {error ? <p className="mt-1 text-[10px] text-[var(--color-danger)]">{error}</p> : null}
+      <LiveStatus outcome={change.outcome} />
     </div>
   );
 }
@@ -2221,14 +2570,19 @@ function WorkspacePanel({ workspace }: { workspace: Record<string, string> }) {
           return (
             <details key={name}>
               <summary
-                className={`cursor-pointer px-2 py-1 rounded hover:bg-[var(--color-bg)] flex items-center justify-between ${
+                className={`min-h-11 cursor-pointer px-2 rounded hover:bg-[var(--color-bg)] flex items-center justify-between ${
                   empty ? 'text-[var(--color-muted)]' : 'text-[var(--color-fg)]'
                 }`}
               >
                 <span className="font-mono">{name}</span>
                 <span className="text-[10px]">{empty ? '∅' : `${content.length}b`}</span>
               </summary>
-              <pre className="mt-1 ml-2 text-[10px] text-[var(--color-muted)] whitespace-pre-wrap max-h-48 overflow-auto bg-[var(--color-bg)] p-2 rounded border border-[var(--color-border)]">
+              <pre
+                tabIndex={0}
+                role="region"
+                aria-label={name}
+                className="mt-1 ml-2 text-[10px] text-[var(--color-muted)] whitespace-pre-wrap max-h-48 overflow-auto bg-[var(--color-bg)] p-2 rounded border border-[var(--color-border)]"
+              >
                 {empty ? '(empty)' : content}
               </pre>
             </details>
@@ -2298,9 +2652,12 @@ export function WorkQueue({
   surfaceMode,
   corrections = [],
   autonomyChanges = [],
+  loading = false,
 }: {
   agentId: Id<'agents'>;
   workItems: Doc<'workItems'>[];
+  /** The queue's query has not answered yet, which is not the same as an empty queue. */
+  loading?: boolean;
   /** The charter's open questions still waiting on the manager, asked at a plan. */
   openQuestions: Doc<'managerQuestions'>[];
   surfaces: SurfaceRecord[];
@@ -2328,6 +2685,9 @@ export function WorkQueue({
   const resendDecision = useMutation(api.work.resendDecisionRequest);
 
   const items = useMemo(() => sortedForQueue(workItems), [workItems]);
+  const queue = useRef<HTMLElement>(null);
+  // The items are the Work tab's rows (v4 section 1.3): a tier after the columns' cards.
+  const arriving = useArrival(!loading && items.length > 0);
 
   // One in-flight call per (step, item). Strict Mode runs every effect twice
   // on mount, and a subscription update re-runs them before the first call has
@@ -2379,18 +2739,22 @@ export function WorkQueue({
         `Work queue · ${items.length} ${items.length === 1 ? 'item' : 'items'} · ` +
         `${registeredSkillCount} ${registeredSkillCount === 1 ? 'skill' : 'skills'} available`
       }
+      focusRef={queue}
     >
       {surfaceMode === 'real' && charterApproved ? <CheckForNewWork agentId={agentId} /> : null}
-      {items.length === 0 ? (
+      {loading ? (
+        <p className="text-xs text-[var(--color-muted)]">loading the work queue…</p>
+      ) : items.length === 0 ? (
         <p className="text-xs text-[var(--color-muted)]">
           {charterApproved ? 'no work seeded yet' : 'work queue lights up after charter approval'}
         </p>
       ) : (
-        <div className="space-y-3">
+        <div data-cards={arriving ? 'rows' : undefined} className="space-y-3">
           <PendingDecisionsPanel
             members={pendingDecisionMembers(items)}
             surfaces={surfaces}
             onApproveBatch={(members) => approveActionsBatch({ members })}
+            fallback={queue}
           />
           {items.map((item) => (
             <WorkItemCard
@@ -2428,6 +2792,39 @@ export function WorkQueue({
         </div>
       )}
     </Card>
+  );
+}
+
+/** How long a state chip's swap plays: the new chip's 100 ms offset and 220 ms fade. */
+export const CHIP_SWAP_MS = 320;
+
+/** How long a landing plays: the last line's 120 ms and three 70 ms steps, then its 240 ms rise. */
+export const LANDING_MS = 570;
+
+/** The ledger lines after the fourth rise with it, so a long ledger is not waited for. */
+const LANDING_STAGGER_CAP = 3;
+
+/**
+ * A work item's state chip. When the state changes on the page, the old chip fades out as the
+ * new one fades in, in the same cell (v3 section 5.2); the first state is simply there, and
+ * under reduced motion only the new one shows.
+ */
+export function StateChip({ state }: { state: string }) {
+  const previous = usePreviousValue(state, CHIP_SWAP_MS);
+  const chip = (shown: string, place?: 'from' | 'to') => (
+    <span
+      aria-hidden={place === 'from' ? true : undefined}
+      className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded ${stateColor(shown)}${place ? ` ${place}` : ''}`}
+    >
+      {shown}
+    </span>
+  );
+  if (previous === undefined) return chip(state);
+  return (
+    <span key={state} className="chip-swap">
+      {chip(previous, 'from')}
+      {chip(state, 'to')}
+    </span>
   );
 }
 
@@ -2539,7 +2936,7 @@ export function RepairNote({
   const stands = repair.repaired === false;
   return (
     <details className="mt-0.5">
-      <summary className="text-[10px] text-[var(--color-warn)] cursor-pointer select-none">
+      <summary className="min-h-11 py-3 text-[10px] text-[var(--color-warn)] cursor-pointer select-none">
         {stands
           ? 'argument names refused by the probed schema · the one repair produced nothing usable · first attempt stands'
           : 'arguments re-authored once before the hold · this payload is the second attempt'}
@@ -2608,7 +3005,7 @@ export function SessionRestoreNote({ restore }: { restore: SessionRestoreRow | u
   return (
     <details className="mt-0.5">
       <summary
-        className={`text-[10px] cursor-pointer select-none ${
+        className={`min-h-11 py-3 text-[10px] cursor-pointer select-none ${
           failed ? 'text-[var(--color-warn)]' : 'text-[var(--color-muted)]'
         }`}
       >
@@ -2661,14 +3058,21 @@ function PhaseLabel({ phase }: { phase?: 'prerequisite' | 'closing' }) {
  * was applied for a single-phase run, after the prerequisite ledger for a run
  * whose closing phase authored it from real results.
  */
-export function DraftDetails({ output }: { output: RunOutput }) {
+export function DraftDetails({ output, title }: { output: RunOutput; title?: string }) {
   const closingPhase = output.initial !== undefined || output.planStepOutcomes !== undefined;
   return (
     <details className="mt-2 text-xs">
-      <summary className="cursor-pointer text-[var(--color-accent)]">
-        Draft the agent wrote ({output.draft.length} chars)
+      <summary className="min-h-11 py-3 cursor-pointer text-[var(--color-accent)]">
+        Draft the employee wrote ({output.draft.length} chars)
       </summary>
-      <pre className="mt-2 p-2 rounded bg-[var(--color-bg)] border border-[var(--color-border)] whitespace-pre-wrap text-[var(--color-fg)]">
+      {/* Bounded and wrapped like the other long texts on the card (P9-2), and
+          reachable from the keyboard once it scrolls. */}
+      <pre
+        tabIndex={0}
+        role="region"
+        aria-label={title ? `Draft the employee wrote: ${title}` : 'Draft the employee wrote'}
+        className="mt-2 p-2 max-h-72 overflow-y-auto rounded bg-[var(--color-bg)] border border-[var(--color-border)] whitespace-pre-wrap break-words text-[var(--color-fg)]"
+      >
         {output.draft}
       </pre>
       {output.notes ? (
@@ -2677,13 +3081,12 @@ export function DraftDetails({ output }: { output: RunOutput }) {
       <p className="mt-1 text-[10px] text-[var(--color-muted)]">
         {closingPhase
           ? 'The closing draft, written after the prerequisite actions were applied and from their ledger. Only the changes listed above reached the work environment.'
-          : "The agent's own words, written before anything was applied. Only the changes listed above reached the work environment."}
+          : "The employee's own words, written before anything was applied. Only the changes listed above reached the work environment."}
       </p>
     </details>
   );
 }
 
-/** The approved plan's result-aware accounting, including promised work that could not run. */
 /**
  * The manager's written word on the item, in every state.
  *
@@ -2756,7 +3159,7 @@ export function RefusedClosingDetails({ refused }: { refused: RefusedClosingRow 
   if (!refused || refused.actions.length === 0) return null;
   return (
     <details className="mt-2 text-xs">
-      <summary className="cursor-pointer text-[var(--color-muted)] hover:text-[var(--color-accent)]">
+      <summary className={SUMMARY}>
         Refused closing set · {refused.actions.length}{' '}
         {refused.actions.length === 1 ? 'action' : 'actions'} · never sent
       </summary>
@@ -2814,7 +3217,7 @@ export function WithheldActionsDetails({
   const forAnswer = waiting.length > 0;
   return (
     <details className="mt-2 text-xs">
-      <summary className="cursor-pointer text-[var(--color-muted)] hover:text-[var(--color-accent)]">
+      <summary className={SUMMARY}>
         {forAnswer ? 'Waiting on your answer' : 'Withheld by the evidence check'} ·{' '}
         {withheld.length} {withheld.length === 1 ? 'action' : 'actions'} · never sent
       </summary>
@@ -3034,7 +3437,6 @@ export function colleagueHolding(
   return { agentId: holder.agentId, name: holder.name };
 }
 
-/** Show a manager's full rejection while keeping later failure reasons current. */
 /** A ledger list row shows the short form of a long read result; the exact payload holds it whole. */
 export function clipLedgerRow(text: string | undefined): string | undefined {
   if (text === undefined || text.length <= LEDGER_ROW_LENGTH) return text;
@@ -3072,18 +3474,34 @@ export function retryRequest(
   return { workItemId, ...(feedback?.trim() ? { feedback } : {}) };
 }
 
-/**
- * What the plan card's Cancel sends: the item and, when the manager wrote one, the reason.
- *
- * Args:
- *   workItemId: The item whose plan is cancelled.
- *   reason: The reason as typed; a blank reason is not sent.
- *
- * Returns:
- *   The arguments for `work.cancelPlan`.
- */
 /** The skipped row's control: the manager gives the agent an item it set aside. */
 export const TAKE_IT_ANYWAY = 'Take it anyway';
+
+/** The failed card's control when its run stopped on a question to the manager. */
+export const ANSWER_AND_RETRY = 'Answer and retry';
+
+/**
+ * The question a failed run stopped on, when the stop is the question stop and
+ * the question is still on the row; the card then asks for the answer.
+ *
+ * @param item - The work item row.
+ * @returns The question's text, or undefined for any other state or stop.
+ */
+export function heldQuestionOf(
+  item: Pick<Doc<'workItems'>, 'state' | 'skipReason' | 'output'>,
+): string | undefined {
+  if (item.state !== 'failed' || !item.skipReason || !isStopped(item.skipReason)) return undefined;
+  if (!isOpenQuestionStop(stopDetail(item.skipReason))) return undefined;
+  const output = item.output as
+    | { openQuestion?: { question?: unknown }; initial?: { openQuestion?: { question?: unknown } } }
+    | undefined;
+  const question = output?.openQuestion?.question ?? output?.initial?.openQuestion?.question;
+  return typeof question === 'string' && question.trim() !== '' ? question : undefined;
+}
+
+/** What Retry does on a skip no rule waives: the item is evaluated again from the start. */
+export const SKIP_RETRY_NOTE =
+  'Retry evaluates this item again from the start; the employee may set it aside again for the same reason.';
 
 /** A retry note as typed, with the run it was typed for. */
 export interface TypedRetryNote {
@@ -3123,7 +3541,16 @@ export function liveRetryNote(typed: TypedRetryNote, token: string): string {
   return typed.token === token ? typed.text : '';
 }
 
-/** The mutation arguments that cancel a plan with the manager's reason. */
+/**
+ * What the plan card's Cancel sends: the item and, when the manager wrote one, the reason.
+ *
+ * Args:
+ *   workItemId: The item whose plan is cancelled.
+ *   reason: The reason as typed; a blank reason is not sent.
+ *
+ * Returns:
+ *   The arguments for `work.cancelPlan`.
+ */
 export function cancelPlanRequest(
   workItemId: Id<'workItems'>,
   reason?: string,
@@ -3275,6 +3702,7 @@ export function PendingActions({
   replyTarget,
   autonomousActions = false,
   repairs,
+  busy = false,
   onApprove,
   onReject,
 }: {
@@ -3286,9 +3714,14 @@ export function PendingActions({
   autonomousActions?: boolean;
   /** The one repair each held write earned before the hold, by action index. */
   repairs?: ArgumentRepairAttempt[];
-  onApprove: (approvedIndexes: number[]) => Promise<unknown>;
-  onReject: (reason: string) => Promise<unknown>;
+  /** A decision on this card is in flight; the controls wait for it. */
+  busy?: boolean;
+  /** Approve the rows; the card says what it came to in its live region. */
+  onApprove: (approvedIndexes: number[]) => void;
+  /** Reject the run with the manager's reason; said on the card too. */
+  onReject: (reason: string) => void;
 }) {
+  const reasonId = useId();
   // The gate decided each row when it held the run: `auto` rows are already
   // applied and are not shown here; `refused` rows (a missing grant, an
   // unconnected surface, a forged trailer) cannot be ticked and the server
@@ -3315,20 +3748,6 @@ export function PendingActions({
   );
   const [selected, setSelected] = useState<Set<number>>(() => new Set(heldIndexes));
   const [reason, setReason] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function submit(call: () => Promise<unknown>): Promise<void> {
-    setBusy(true);
-    setError(null);
-    try {
-      await call();
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setBusy(false);
-    }
-  }
 
   function toggle(index: number, on: boolean): void {
     setSelected((current) => {
@@ -3365,19 +3784,21 @@ export function PendingActions({
             const verdict = verdicts[index];
             const refused = verdict?.disposition === 'refused';
             const on = selected.has(index);
+            const summary = summariseAction(action, surfaces, { replyTarget });
             return (
               <li key={index} className="flex items-start gap-2">
-                <input
-                  type="checkbox"
-                  className="mt-0.5"
-                  checked={on}
-                  disabled={busy || refused}
-                  onChange={(event) => toggle(index, event.target.checked)}
-                  aria-label={`approve action ${index + 1}`}
-                />
+                <label className="flex min-h-11 min-w-11 shrink-0 items-center justify-center">
+                  <input
+                    type="checkbox"
+                    checked={on}
+                    disabled={busy || refused}
+                    onChange={(event) => toggle(index, event.target.checked)}
+                    aria-label={`approve: ${summary}`}
+                  />
+                </label>
                 <div className="flex-1 min-w-0">
                   <p className="text-xs text-[var(--color-fg)] break-words">
-                    {summariseAction(action, surfaces, { replyTarget })}
+                    {summary}
                     {refused ? (
                       <span className="text-[var(--color-warn)]">
                         {' '}
@@ -3388,7 +3809,7 @@ export function PendingActions({
                     ) : null}
                   </p>
                   <details className="mt-0.5">
-                    <summary className="text-[10px] text-[var(--color-muted)] cursor-pointer select-none">
+                    <summary className="min-h-11 py-3 text-[10px] text-[var(--color-muted)] cursor-pointer select-none">
                       exact payload
                     </summary>
                     <ActionPayload action={action} />
@@ -3405,7 +3826,8 @@ export function PendingActions({
                         type="button"
                         disabled={busy}
                         onClick={() => toggle(index, false)}
-                        className="text-[10px] text-[var(--color-danger)] underline"
+                        aria-label={`reject this action: ${summary}`}
+                        className="min-h-11 px-1 text-[10px] text-[var(--color-danger)] underline"
                       >
                         reject this action
                       </button>
@@ -3414,7 +3836,8 @@ export function PendingActions({
                         type="button"
                         disabled={busy}
                         onClick={() => toggle(index, true)}
-                        className="text-[10px] text-[var(--color-accent)] underline"
+                        aria-label={`include: ${summary}`}
+                        className="min-h-11 px-1 text-[10px] text-[var(--color-accent)] underline"
                       >
                         include
                       </button>
@@ -3430,45 +3853,53 @@ export function PendingActions({
         <button
           type="button"
           disabled={busy || actions.length === 0}
-          onClick={() => submit(() => onApprove([...selected].sort((a, b) => a - b)))}
-          className="px-3 py-1 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] text-xs font-medium disabled:opacity-50"
+          onClick={() => onApprove([...selected].sort((a, b) => a - b))}
+          className="min-h-11 px-3 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] text-xs font-medium disabled:opacity-50"
         >
           Approve selected ({selected.size})
         </button>
         <button
           type="button"
           disabled={busy || anyRefused || heldIndexes.length === 0}
-          title={
-            anyRefused
-              ? 'A row in this run is refused by the gate and cannot be approved; approve the rest by selection.'
-              : undefined
-          }
-          onClick={() => submit(() => onApprove(heldIndexes))}
-          className="px-3 py-1 rounded-md border border-[var(--color-ok)]/40 text-[var(--color-ok)] text-xs disabled:opacity-40 disabled:cursor-not-allowed"
+          title={anyRefused ? APPROVE_ALL_REFUSED : undefined}
+          aria-describedby={anyRefused ? `${reasonId}-all` : undefined}
+          onClick={() => onApprove(heldIndexes)}
+          className="min-h-11 px-3 rounded-md border border-[var(--color-ok)]/40 text-[var(--color-ok)] text-xs disabled:opacity-40 disabled:cursor-not-allowed"
         >
           Approve all
         </button>
+        {anyRefused ? (
+          <p id={`${reasonId}-all`} className="basis-full text-[10px] text-[var(--color-muted)]">
+            {APPROVE_ALL_REFUSED}
+          </p>
+        ) : null}
+        <label htmlFor={reasonId} className="basis-full text-[10px] text-[var(--color-muted)]">
+          Reason for rejecting the run
+        </label>
         <input
+          id={reasonId}
           type="text"
           value={reason}
           disabled={busy}
           onChange={(event) => setReason(event.target.value)}
-          placeholder="reason for rejecting"
-          className="flex-1 min-w-[10rem] px-2 py-1 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs"
+          className="min-h-11 flex-1 min-w-[10rem] px-2 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs"
         />
         <button
           type="button"
           disabled={busy}
-          onClick={() => submit(() => onReject(reason))}
-          className="px-3 py-1 rounded-md border border-[var(--color-border)] hover:border-[var(--color-danger)] text-xs"
+          onClick={() => onReject(reason)}
+          className="min-h-11 px-3 rounded-md border border-[var(--color-border)] hover:border-[var(--color-danger)] text-xs"
         >
           Reject run
         </button>
       </div>
-      {error ? <p className="mt-1 text-[10px] text-[var(--color-danger)]">{error}</p> : null}
     </div>
   );
 }
+
+/** Why Approve all is disabled while the gate refuses a row, beside the button and for its hover. */
+const APPROVE_ALL_REFUSED =
+  'A row in this run is refused by the gate and cannot be approved; approve the rest by selection.';
 
 /** What the manager decided with the plan: the answers given, and a note to the planner's own. */
 export interface PlanApproval {
@@ -3582,22 +4013,26 @@ export function PlanApprovalForm({
           <ul className="space-y-1.5">
             {open.map((question) => (
               <li key={question._id}>
-                <p className="text-[var(--color-fg)]">{question.question}</p>
+                <label htmlFor={`${estimateId}-${question._id}`} className="text-[var(--color-fg)]">
+                  {question.question}
+                </label>
                 <p className="text-[10px] text-[var(--color-muted)]">
                   from the charter · touched by the {question.context.touchedBy}
                   {question.context.words.length > 0
                     ? `: ${question.context.words.join(', ')}`
                     : ''}
+                  {' · your answer is written into the charter with the approval (optional)'}
                 </p>
                 <input
+                  id={`${estimateId}-${question._id}`}
                   type="text"
                   value={answers[question._id] ?? ''}
+                  disabled={busy}
                   onChange={(event) =>
                     setAnswers((current) => ({ ...current, [question._id]: event.target.value }))
                   }
-                  placeholder="your answer, written into the charter with the approval (optional)"
                   aria-label={`answer: ${question.question}`}
-                  className="mt-0.5 w-full px-2 py-1 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs"
+                  className="mt-0.5 min-h-11 w-full px-2 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs"
                 />
               </li>
             ))}
@@ -3610,24 +4045,38 @@ export function PlanApprovalForm({
             Planner&apos;s note
           </p>
           <p className="text-[var(--color-fg)]">{planNote}</p>
+          <label
+            htmlFor={`${estimateId}-note`}
+            className="mt-1 block text-[10px] text-[var(--color-muted)]"
+          >
+            Your answer to the note, for this run (optional)
+          </label>
           <input
+            id={`${estimateId}-note`}
             type="text"
             value={note}
+            disabled={busy}
             onChange={(event) => setNote(event.target.value)}
-            placeholder="your answer to the note, for this run (optional)"
-            aria-label="answer to the planner's note"
-            className="mt-1 w-full px-2 py-1 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs"
+            className="min-h-11 w-full px-2 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs"
           />
         </div>
       ) : null}
-      <input
-        type="text"
-        value={cancelReason}
-        onChange={(event) => setCancelReason(event.target.value)}
-        placeholder="reason, if you cancel (optional)"
-        aria-label="reason for cancelling the plan"
-        className="w-full px-2 py-1 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs"
-      />
+      <div>
+        <label
+          htmlFor={`${estimateId}-cancel`}
+          className="block text-[10px] text-[var(--color-muted)]"
+        >
+          Reason, if you cancel (optional)
+        </label>
+        <input
+          id={`${estimateId}-cancel`}
+          type="text"
+          value={cancelReason}
+          disabled={busy}
+          onChange={(event) => setCancelReason(event.target.value)}
+          className="min-h-11 w-full px-2 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs"
+        />
+      </div>
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[var(--color-fg)]">
         <label htmlFor={estimateId}>This would have taken me about</label>
         <input
@@ -3653,18 +4102,20 @@ export function PlanApprovalForm({
             : 'Optional. Summed over finished work as hours saved, a gauge for you, never a headline.'}
         </span>
       </div>
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <button
+          type="button"
           onClick={() => onApprove(decision())}
           disabled={busy || minutes === null}
-          className="px-3 py-1 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] text-xs disabled:opacity-50"
+          className="min-h-11 px-3 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] text-xs disabled:opacity-50"
         >
           {open.length > 0 || planNote ? 'Approve plan with answers' : 'Approve plan'}
         </button>
         <button
+          type="button"
           onClick={() => onCancel(cancelReason.trim())}
           disabled={busy}
-          className="px-3 py-1 rounded-md border border-[var(--color-border)] text-xs disabled:opacity-50"
+          className="min-h-11 px-3 rounded-md border border-[var(--color-border)] text-xs disabled:opacity-50"
         >
           Cancel
         </button>
@@ -3735,6 +4186,7 @@ export function PendingDecisionsPanel({
   members,
   surfaces,
   onApproveBatch,
+  fallback,
 }: {
   members: PendingDecisionMember[];
   surfaces: SurfaceRecord[];
@@ -3745,10 +4197,13 @@ export function PendingDecisionsPanel({
       approvedIndexes: number[];
     }>,
   ) => Promise<unknown>;
+  /** Where focus goes when the approval empties the panel: the work queue. */
+  fallback?: React.RefObject<HTMLElement | null>;
 }) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  if (members.length < 2) return null;
+  const change = useChange(fallback);
+  // The panel keeps its live region when an approval empties it, so what the
+  // approval came to is still said.
+  if (members.length < 2) return <LiveStatus outcome={change.outcome} />;
   const eligible = members.filter((member) => member.refused === 0);
   const heldCount = eligible.reduce((sum, member) => sum + member.heldIndexes.length, 0);
   return (
@@ -3771,7 +4226,7 @@ export function PendingDecisionsPanel({
                 <li key={index} className="text-[var(--color-fg)] break-words">
                   {summariseAction(member.actions[index], surfaces)}
                   <details className="mt-0.5">
-                    <summary className="text-[10px] text-[var(--color-muted)] cursor-pointer select-none">
+                    <summary className="min-h-11 py-3 text-[10px] text-[var(--color-muted)] cursor-pointer select-none">
                       exact payload
                     </summary>
                     <ActionPayload action={member.actions[index]} />
@@ -3785,21 +4240,24 @@ export function PendingDecisionsPanel({
       <div className="flex flex-wrap items-center gap-2 mt-2">
         <button
           type="button"
-          disabled={busy || eligible.length === 0}
-          onClick={() => {
-            setBusy(true);
-            setError(null);
-            onApproveBatch(
-              eligible.map((member) => ({
-                workItemId: member.workItemId,
-                pendingRunId: member.pendingRunId,
-                approvedIndexes: member.heldIndexes,
-              })),
+          disabled={change.busy || eligible.length === 0}
+          onClick={() =>
+            change.run(
+              () =>
+                onApproveBatch(
+                  eligible.map((member) => ({
+                    workItemId: member.workItemId,
+                    pendingRunId: member.pendingRunId,
+                    approvedIndexes: member.heldIndexes,
+                  })),
+                ),
+              {
+                done: `Approved ${heldCount} held ${heldCount === 1 ? 'action' : 'actions'} across ${eligible.length} ${eligible.length === 1 ? 'item' : 'items'}: they apply now.`,
+                refused: 'Nothing was approved.',
+              },
             )
-              .catch((err: unknown) => setError(errorMessage(err)))
-              .finally(() => setBusy(false));
-          }}
-          className="px-3 py-1 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] text-xs font-medium disabled:opacity-50"
+          }
+          className="min-h-11 px-3 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] text-xs font-medium disabled:opacity-50"
         >
           Approve {heldCount} held {heldCount === 1 ? 'action' : 'actions'} across {eligible.length}{' '}
           {eligible.length === 1 ? 'item' : 'items'}
@@ -3809,7 +4267,7 @@ export function PendingDecisionsPanel({
           list refreshes.
         </span>
       </div>
-      {error ? <p className="mt-1 text-[10px] text-[var(--color-danger)]">{error}</p> : null}
+      <LiveStatus outcome={change.outcome} />
     </div>
   );
 }
@@ -3910,25 +4368,14 @@ export function WorkItemCard({
 }) {
   const now = useNow();
   const zone = useAgentZone();
-  const [outcome, setOutcome] = useState<ChangeOutcome | null>(null);
-  const [deciding, setDeciding] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
-  // A decision moves the row, and the control that made it goes with it, so
-  // the outcome is said in the card's own live region and focus comes back to
-  // the card rather than falling to the page.
-  const decide = (call: () => Promise<unknown> | void, done: string, refused: string): void => {
-    setDeciding(true);
-    setOutcome(null);
-    // The chain ends in its own catch, which says the refusal in the live region.
-    void Promise.resolve()
-      .then(call)
-      .then(() => {
-        setOutcome({ tone: 'done', text: done });
-        cardRef.current?.focus();
-      })
-      .catch((err: unknown) => setOutcome({ tone: 'refused', text: refusalText(err, refused) }))
-      .finally(() => setDeciding(false));
-  };
+  // A decision moves the row, and the control that made it often goes with it,
+  // so the outcome is said in the card's own live region and focus comes back
+  // to the control when it stayed, or to the card rather than the page.
+  const change = useChange(cardRef);
+  const deciding = change.busy;
+  const decide = (call: () => Promise<unknown> | void, done: string, refused: string): void =>
+    change.run(call, { done, refused });
   const verdict = item.verdict as
     | {
         decision: string;
@@ -3973,6 +4420,9 @@ export function WorkItemCard({
     (a) => !refusedActions.includes(a) && !unknownActions.includes(a),
   );
   const landedActions = appliedActions.filter((a) => a.ok && !a.held);
+  // A ledger that has just appeared is a landing the manager is watching (v3 section 5.2).
+  const landedBefore = usePreviousValue(landedActions.length > 0, LANDING_MS);
+  const freshLanding = landedBefore === false && landedActions.length > 0;
   const landedAutonomously = landedActions.filter((a) => a.authority === 'autonomous').length;
   const autonomyTurnedOnAt = autonomyTurnedOnAfterDraft(
     item.planPendingAt,
@@ -4003,8 +4453,17 @@ export function WorkItemCard({
       ? `${TAKE_IT_ANYWAY} re-evaluates this item as in scope, on your decision; its plan still needs your approval.`
       : undefined;
   // Refused at the claim: the colleague who holds the item works it, and the
-  // row comes back by itself if they let it go, so there is no Retry here.
+  // row comes back by itself if they let it go, so the control is the
+  // colleague's card, where the manager can let it go.
   const heldByColleague = colleagueHolding(item);
+  // Every other skip (a skill tried and found not to cover it, the employee's
+  // own claim elsewhere, a low value) is re-evaluated by Retry: the manager
+  // who disagrees always has a control (P3-1).
+  const skipRetryable = item.state === 'skipped' && !skipWaivable && !heldByColleague;
+  // A run that stopped on its own question is answered here: the note is the
+  // answer, and only a note on this stop answers it (review D2), so the
+  // control says so and waits for one (U2 decision 5).
+  const heldQuestion = heldQuestionOf(item);
   const noteToken = retryNoteToken(item);
   const [typedRetryNote, setTypedRetryNote] = useState<TypedRetryNote>({
     text: '',
@@ -4026,33 +4485,16 @@ export function WorkItemCard({
     item.state === 'plan-pending' || item.state === 'actions-pending'
       ? undeliveredDecisionReason(item.decision, now)
       : undefined;
-  const [askError, setAskError] = useState<string | null>(null);
-  // Resend and Ask share one mutation; its refusal is the card's to show.
-  const askAgain = (): void => {
-    setAskError(null);
-    onResendDecision().catch((err: unknown) =>
-      setAskError(
-        err instanceof ConvexError
-          ? String(err.data)
-          : err instanceof Error
-            ? err.message
-            : 'The request was not sent.',
-      ),
-    );
-  };
+  // Resend and Ask share one mutation; what it came to is the card's to say.
+  const askAgain = (surfaceName: string): void =>
+    decide(onResendDecision, `Asked again on ${surfaceName}.`, 'The request was not sent.');
   // A row that parked while no manager channel was connected was never asked;
   // once a channel is, the card can ask (the sweep also does, a lease later).
   const askableChannel =
     !item.decision &&
     (item.state === 'plan-pending' ||
       (item.state === 'actions-pending' && item.approvedIndexes === undefined))
-      ? surfaces.find(
-          (surface) =>
-            surface.class === 'chat' &&
-            !!surface.managerDmChannelId &&
-            !!surface.managerUserId &&
-            verdictFor(surface, now) === 'connected',
-        )
+      ? connectedManagerChannel(surfaces, now)
       : undefined;
   // A failed item whose run landed nothing and left nothing to decide is
   // shown as stopped: Retry stands, and the badge says no harm was done.
@@ -4072,11 +4514,7 @@ export function WorkItemCard({
       <div className="flex items-start justify-between mb-2">
         <div className="flex-1">
           <div className="flex items-center gap-2 mb-1">
-            <span
-              className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded ${stateColor(shownState)}`}
-            >
-              {shownState}
-            </span>
+            <StateChip state={shownState} />
             <span className="text-[10px] text-[var(--color-muted)]">
               {item.sourceSystem}/{item.sourceCategory}
             </span>
@@ -4098,30 +4536,33 @@ export function WorkItemCard({
       ) : null}
 
       {askableChannel ? (
-        <p className="mt-1 flex items-center gap-2 text-[10px] text-[var(--color-muted)]">
+        <p className="mt-1 flex flex-wrap items-center gap-2 text-[10px] text-[var(--color-muted)]">
           <span>
             {item.state === 'plan-pending' ? 'This plan was' : 'These actions were'} not asked on{' '}
             {askableChannel.displayName} yet: they parked while no manager channel was connected.
           </span>
           <button
-            onClick={askAgain}
-            className="px-2 py-0.5 rounded-md border border-[var(--color-border)] text-[10px] text-[var(--color-fg)]"
+            type="button"
+            disabled={deciding}
+            onClick={() => askAgain(askableChannel.displayName)}
+            className="min-h-11 px-3 rounded-md border border-[var(--color-border)] text-[10px] text-[var(--color-fg)] disabled:opacity-50"
           >
             Ask on {askableChannel.displayName}
           </button>
         </p>
       ) : null}
-      {askError ? <p className="mt-1 text-[10px] text-[var(--color-danger)]">{askError}</p> : null}
 
       {undelivered && item.decision ? (
-        <p className="mt-1 flex items-center gap-2 text-[10px] text-[var(--color-warn)]">
+        <p className="mt-1 flex flex-wrap items-center gap-2 text-[10px] text-[var(--color-warn)]">
           <span>
             {item.decision.surfaceName} request not delivered
             {undelivered === 'request not delivered' ? '' : ` (${undelivered})`}
           </span>
           <button
-            onClick={askAgain}
-            className="px-2 py-0.5 rounded-md border border-[var(--color-border)] text-[10px] text-[var(--color-fg)]"
+            type="button"
+            disabled={deciding}
+            onClick={() => askAgain(item.decision?.surfaceName ?? 'the manager channel')}
+            className="min-h-11 px-3 rounded-md border border-[var(--color-border)] text-[10px] text-[var(--color-fg)] disabled:opacity-50"
           >
             Resend
           </button>
@@ -4163,10 +4604,14 @@ export function WorkItemCard({
               skip · another employee holds this:{' '}
               <Link
                 href={`/agent/${heldByColleague.agentId}`}
-                className="text-[var(--color-accent)] underline"
+                className="inline-flex min-h-11 items-center text-[var(--color-accent)] underline"
               >
                 {heldByColleague.name}
               </Link>
+              <span className="block text-[10px] text-[var(--color-muted)]">
+                To give it to this employee instead, cancel it on {heldByColleague.name}&apos;s
+                card; it comes back here by itself once they let it go.
+              </span>
             </span>
           ) : (
             <span className="text-[var(--color-fg)]">
@@ -4295,8 +4740,23 @@ export function WorkItemCard({
           replyTarget={replyTargetFor(item)}
           autonomousActions={autonomousActions}
           repairs={output.argumentRepairs}
-          onApprove={onApproveActions}
-          onReject={onRejectActions}
+          busy={deciding}
+          onApprove={(approvedIndexes) =>
+            decide(
+              () => onApproveActions(approvedIndexes),
+              approvedIndexes.length === 0
+                ? `Approved with nothing selected: ${item.title} lands nothing.`
+                : `Approved ${approvedIndexes.length} ${approvedIndexes.length === 1 ? 'action' : 'actions'}: they apply now.`,
+              'The actions were not approved.',
+            )
+          }
+          onReject={(reason) =>
+            decide(
+              () => onRejectActions(reason),
+              `Run rejected: nothing held on ${item.title} is sent.`,
+              'The run was not rejected.',
+            )
+          }
         />
       ) : item.state === 'actions-pending' && item.approvedIndexes !== undefined ? (
         <p className="mt-2 text-xs text-[var(--color-muted)]">applying the approved actions…</p>
@@ -4315,11 +4775,21 @@ export function WorkItemCard({
       ) : null}
 
       {landedActions.length > 0 ? (
-        <div className="mt-3 p-2 rounded-md bg-[var(--color-ok)]/10 border border-[var(--color-ok)]/30 text-xs">
+        <div
+          data-land={freshLanding ? '' : undefined}
+          className="mt-3 p-2 rounded-md bg-[var(--color-ok)]/10 border border-[var(--color-ok)]/30 text-xs"
+        >
           <p className="text-[var(--color-ok)] font-medium mb-1">{landedHeadline(landedActions)}</p>
           <ul className="space-y-0.5 text-[var(--color-fg)]">
             {landedActions.map((a, i) => (
-              <li key={i}>
+              <li
+                key={i}
+                style={
+                  freshLanding
+                    ? ({ '--i': Math.min(i, LANDING_STAGGER_CAP) } as CSSProperties)
+                    : undefined
+                }
+              >
                 <span className="font-mono text-[10px] text-[var(--color-muted)]">{a.tool}</span>{' '}
                 {clipLedgerRow(a.effect) ?? '(applied)'}
                 {a.providerId ? (
@@ -4382,7 +4852,7 @@ export function WorkItemCard({
         ]}
       />
 
-      {output ? <DraftDetails output={output} /> : null}
+      {output ? <DraftDetails output={output} title={item.title} /> : null}
 
       {refusedActions.length > 0 ? (
         <div className="mt-2 p-2 rounded-md bg-[var(--color-warn)]/10 border border-[var(--color-warn)]/30 text-xs">
@@ -4444,6 +4914,7 @@ export function WorkItemCard({
       {item.state === 'failed' ||
       item.state === 'completed' ||
       skipWaivable ||
+      skipRetryable ||
       parkedForRetry ||
       item.state === 'cancelled' ? (
         <div className="mt-2">
@@ -4465,42 +4936,65 @@ export function WorkItemCard({
             <ProviderReconciliationControl
               entries={reconciliationEntries}
               reconciliation={item.providerReconciliation}
-              onConfirm={onReconcileFailed}
+              busy={deciding}
+              onConfirm={() =>
+                decide(
+                  () => onReconcileFailed(true),
+                  'Reconciliation recorded: Retry is enabled.',
+                  'Could not record reconciliation.',
+                )
+              }
             />
           ) : null}
           {item.state === 'failed' || item.state === 'completed' || cancelledPlan ? (
-            <input
-              type="text"
-              value={retryNote}
-              onChange={(event) =>
-                setTypedRetryNote({ text: event.target.value, token: noteToken })
-              }
-              placeholder={
-                item.state === 'completed'
-                  ? 'note for the retry: say what to change or answer what the agent asked'
-                  : cancelledPlan
-                    ? 'note for the new plan (optional)'
-                    : 'note for the retry (optional): answer what the agent asked, or say what to change'
-              }
-              aria-label="note for the retry"
-              className="w-full mb-1.5 px-2 py-1 rounded-md border border-[var(--color-border)] bg-transparent text-xs"
-            />
+            <>
+              <label
+                htmlFor={`retry-note-${item._id}`}
+                className="block text-[10px] text-[var(--color-muted)]"
+              >
+                {heldQuestion
+                  ? `Your answer to: “${heldQuestion}”`
+                  : item.state === 'completed'
+                    ? 'Note for the retry: say what to change or answer what the employee asked'
+                    : cancelledPlan
+                      ? 'Note for the new plan (optional)'
+                      : 'Note for the retry (optional): answer what the employee asked, or say what to change'}
+              </label>
+              <input
+                id={`retry-note-${item._id}`}
+                type="text"
+                value={retryNote}
+                disabled={deciding}
+                onChange={(event) =>
+                  setTypedRetryNote({ text: event.target.value, token: noteToken })
+                }
+                className="min-h-11 w-full mb-1.5 px-2 rounded-md border border-[var(--color-border)] bg-transparent text-xs"
+              />
+            </>
           ) : null}
           <button
+            type="button"
             onClick={() =>
               decide(
                 () => onRetryFailed(retryNote),
                 takeAnywayNote
                   ? `Taken: ${item.title} goes back to be evaluated.`
-                  : `Sent back: ${item.title}.`,
+                  : heldQuestion
+                    ? `Answer sent: ${item.title} runs again with it.`
+                    : `Sent back: ${item.title}.`,
                 'The item was not sent back.',
               )
             }
-            disabled={deciding || retryBlocked || (item.state === 'completed' && !sendingBack)}
+            disabled={
+              deciding ||
+              retryBlocked ||
+              (item.state === 'completed' && !sendingBack) ||
+              (heldQuestion !== undefined && retryNote.trim() === '')
+            }
             title={takeAnywayNote}
-            className="px-3 py-1 rounded-md bg-[var(--color-warn)]/20 text-[var(--color-warn)] text-xs font-medium hover:bg-[var(--color-warn)]/30 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="min-h-11 px-3 rounded-md bg-[var(--color-warn)]/20 text-[var(--color-warn)] text-xs font-medium hover:bg-[var(--color-warn)]/30 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {takeAnywayNote ? TAKE_IT_ANYWAY : 'Retry'}
+            {takeAnywayNote ? TAKE_IT_ANYWAY : heldQuestion ? ANSWER_AND_RETRY : 'Retry'}
           </button>
           {retryBlocked && (item.state !== 'completed' || sendingBack) ? (
             <p className="text-[10px] text-[var(--color-muted)] mt-1">
@@ -4509,7 +5003,7 @@ export function WorkItemCard({
           ) : null}
           {item.state === 'completed' ? (
             <p className="text-[10px] text-[var(--color-muted)] mt-1">
-              Retry with a note sends this finished work back; the note reaches the agent as your
+              Retry with a note sends this finished work back; the note reaches the employee as your
               direction, and its writes are held again unless autonomous actions are on.
             </p>
           ) : null}
@@ -4529,9 +5023,12 @@ export function WorkItemCard({
           {takeAnywayNote ? (
             <p className="text-[10px] text-[var(--color-muted)] mt-1">{takeAnywayNote}</p>
           ) : null}
+          {skipRetryable ? (
+            <p className="text-[10px] text-[var(--color-muted)] mt-1">{SKIP_RETRY_NOTE}</p>
+          ) : null}
         </div>
       ) : null}
-      <LiveStatus outcome={outcome} />
+      <LiveStatus outcome={change.outcome} />
     </div>
   );
 }
@@ -4540,29 +5037,18 @@ export function WorkItemCard({
 export function ProviderReconciliationControl({
   entries,
   reconciliation,
+  busy = false,
   onConfirm,
 }: {
   entries: readonly ReconciliationEntry[];
   reconciliation?: { actor: string; confirmedAt: number };
-  onConfirm: (confirmed: boolean) => Promise<unknown>;
+  /** A decision on the card is in flight; the confirmation waits for it. */
+  busy?: boolean;
+  /** Record the manager's confirmation; the card says what it came to. */
+  onConfirm: () => void;
 }) {
   const zone = useAgentZone();
   const [confirmed, setConfirmed] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const submit = async (): Promise<void> => {
-    if (!confirmed || busy || reconciliation) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await onConfirm(confirmed);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Could not record reconciliation.');
-    } finally {
-      setBusy(false);
-    }
-  };
 
   return (
     <div className="mb-2 p-2 rounded-md bg-[var(--color-warn)]/10 border border-[var(--color-warn)]/30 text-xs">
@@ -4610,7 +5096,7 @@ export function ProviderReconciliationControl({
         </p>
       ) : (
         <>
-          <label className="mt-2 flex items-start gap-2 text-[var(--color-fg)]">
+          <label className="mt-2 flex min-h-11 items-center gap-2 text-[var(--color-fg)]">
             <input
               type="checkbox"
               checked={confirmed}
@@ -4622,12 +5108,11 @@ export function ProviderReconciliationControl({
           <button
             type="button"
             disabled={!confirmed || busy || entries.length === 0}
-            onClick={() => void submit()}
-            className="mt-2 px-3 py-1 rounded-md border border-[var(--color-warn)]/40 text-[var(--color-warn)] text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+            onClick={onConfirm}
+            className="mt-2 min-h-11 px-3 rounded-md border border-[var(--color-warn)]/40 text-[var(--color-warn)] text-xs disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Confirm reconciliation
           </button>
-          {error ? <p className="mt-1 text-[var(--color-danger)]">{error}</p> : null}
         </>
       )}
     </div>
@@ -4670,62 +5155,75 @@ export function PermissionRows({
   onRevoke: (scope: string) => void;
   onRegrant: (scope: string) => void;
 }) {
+  const id = useId();
   return (
     <ul className="space-y-2 text-xs">
       {scopes.map((row) => {
         const confirming = confirmingScope === row.scope;
-        const busy = busyScope === row.scope;
+        const busy = busyScope !== null;
         return (
           <li key={row.scope} className="rounded-md border border-[var(--color-border)] p-2">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
-                <p className="font-mono text-[var(--color-fg)] truncate">{row.scope}</p>
+                <p className="font-mono text-[var(--color-fg)] break-all">{row.scope}</p>
                 <p className="text-[10px] text-[var(--color-muted)]">
                   {row.active ? 'granted' : 'revoked'} - from {PERMISSION_SOURCE_LABEL[row.source]}
                 </p>
               </div>
-              {row.active ? (
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => onAskRevoke(row.scope)}
-                  className="shrink-0 px-2 py-1 rounded border border-[var(--color-danger)]/40 text-[10px] text-[var(--color-danger)] disabled:opacity-50"
-                >
-                  Revoke
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => onRegrant(row.scope)}
-                  className="shrink-0 px-2 py-1 rounded border border-[var(--color-accent)]/40 text-[10px] text-[var(--color-accent)] disabled:opacity-50"
-                >
-                  Re-grant
-                </button>
-              )}
+              {/* One button whose word follows the grant, so focus stays on it
+                  when a revoke or a re-grant flips the row. */}
+              <button
+                type="button"
+                id={permissionControlId(id, row.scope)}
+                disabled={busy}
+                aria-label={`${row.active ? 'Revoke' : 'Re-grant'} ${row.scope}`}
+                aria-expanded={row.active ? confirming : undefined}
+                onClick={() => (row.active ? onAskRevoke(row.scope) : onRegrant(row.scope))}
+                className={`shrink-0 min-h-11 px-3 rounded border text-[10px] disabled:opacity-50 ${
+                  row.active
+                    ? 'border-[var(--color-danger)]/40 text-[var(--color-danger)]'
+                    : 'border-[var(--color-accent)]/40 text-[var(--color-accent)]'
+                }`}
+              >
+                {row.active ? 'Revoke' : 'Re-grant'}
+              </button>
             </div>
             {confirming ? (
-              <div className="mt-2 pt-2 border-t border-[var(--color-border)]">
+              <div
+                role="group"
+                aria-label={`Revoke ${row.scope}?`}
+                className="mt-2 pt-2 border-t border-[var(--color-border)]"
+              >
                 <p className="text-[10px] text-[var(--color-fg)] mb-2">
                   Revoke {row.scope}? Day0 will stop queued and in-flight work that still needs this
                   standing scope at its final authority check. Actions already approved by you keep
                   their exact approval; a provider call past its final authority check may still
                   finish.
                 </p>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
                     disabled={busy}
                     onClick={() => onRevoke(row.scope)}
-                    className="px-2 py-1 rounded bg-[var(--color-danger)]/20 text-[10px] text-[var(--color-danger)] disabled:opacity-50"
+                    className="min-h-11 px-3 rounded bg-[var(--color-danger)]/20 text-[10px] text-[var(--color-danger)] disabled:opacity-50"
                   >
                     Confirm revoke
                   </button>
                   <button
                     type="button"
+                    autoFocus
                     disabled={busy}
-                    onClick={onCancelRevoke}
-                    className="px-2 py-1 rounded border border-[var(--color-border)] text-[10px] disabled:opacity-50"
+                    onClick={() => {
+                      onCancelRevoke();
+                      document.getElementById(permissionControlId(id, row.scope))?.focus();
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'Escape') return;
+                      event.preventDefault();
+                      onCancelRevoke();
+                      document.getElementById(permissionControlId(id, row.scope))?.focus();
+                    }}
+                    className="min-h-11 px-3 rounded border border-[var(--color-border)] text-[10px] disabled:opacity-50"
                   >
                     Keep grant
                   </button>
@@ -4737,6 +5235,18 @@ export function PermissionRows({
       })}
     </ul>
   );
+}
+
+/**
+ * The id of a permission row's revoke or re-grant button, unique on the page:
+ * every character an id cannot hold is spelt by its code, so `a:b` and `a-b`
+ * stay two ids.
+ *
+ * @param list - The permission list's own id.
+ * @param scope - The row's scope.
+ */
+function permissionControlId(list: string, scope: string): string {
+  return `${list}-${scope.replace(/[^A-Za-z0-9]/g, (character) => `_${character.charCodeAt(0)}_`)}`;
 }
 
 /**
@@ -4755,31 +5265,40 @@ export function PermissionsCard({ agentId }: { agentId: Id<'agents'> }) {
   const grantScopes = useMutation(api.agents.grantScopes);
   const [confirmingScope, setConfirmingScope] = useState<string | null>(null);
   const [busyScope, setBusyScope] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const card = useRef<HTMLElement>(null);
+  const control = useRef<string | null>(null);
+  const change = useChange(card);
 
-  async function change(scope: string, kind: 'revoke' | 'grant'): Promise<void> {
+  function decide(scope: string, kind: 'revoke' | 'grant'): void {
     setBusyScope(scope);
-    setError(null);
-    try {
-      if (kind === 'revoke') {
-        await revokeScope({
-          agentId,
-          scope,
-          reason: 'Revoked by the manager from the agent dashboard.',
-        });
-        setConfirmingScope(null);
-      } else {
-        await grantScopes({ agentId, scopes: [scope] });
-      }
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setBusyScope(null);
-    }
+    // The confirmation closes with the revoke, so focus goes to the row's own
+    // button, which now reads Re-grant.
+    control.current = document.activeElement?.closest('li')?.querySelector('button')?.id ?? null;
+    change.run<unknown>(
+      () =>
+        kind === 'revoke'
+          ? revokeScope({
+              agentId,
+              scope,
+              reason: "Revoked by the manager from the employee's dashboard.",
+            })
+          : grantScopes({ agentId, scopes: [scope] }),
+      {
+        done:
+          kind === 'revoke'
+            ? `Revoked ${scope}: work that still needs it stops at its final authority check.`
+            : `Granted ${scope} again.`,
+        refused: kind === 'revoke' ? `${scope} was not revoked.` : `${scope} was not granted.`,
+        after: () => setConfirmingScope(null),
+        focus: () => (control.current ? document.getElementById(control.current) : null),
+      },
+    );
   }
 
+  // Busy follows the change, so the rows wait for it and let go together.
+  const pending = change.busy ? busyScope : null;
   return (
-    <Card title="Permissions">
+    <Card title="Permissions" focusRef={card}>
       <p className="text-[10px] text-[var(--color-muted)] mb-3 leading-relaxed">
         {PERMISSIONS_NOTE}
       </p>
@@ -4791,14 +5310,17 @@ export function PermissionsCard({ agentId }: { agentId: Id<'agents'> }) {
         <PermissionRows
           scopes={scopes}
           confirmingScope={confirmingScope}
-          busyScope={busyScope}
-          onAskRevoke={setConfirmingScope}
+          busyScope={pending}
+          onAskRevoke={(scope) => {
+            change.clear();
+            setConfirmingScope(scope);
+          }}
           onCancelRevoke={() => setConfirmingScope(null)}
-          onRevoke={(scope) => void change(scope, 'revoke')}
-          onRegrant={(scope) => void change(scope, 'grant')}
+          onRevoke={(scope) => decide(scope, 'revoke')}
+          onRegrant={(scope) => decide(scope, 'grant')}
         />
       )}
-      {error ? <p className="mt-2 text-[10px] text-[var(--color-danger)]">{error}</p> : null}
+      <LiveStatus outcome={change.outcome} />
     </Card>
   );
 }
@@ -4893,6 +5415,17 @@ export function MetricsCard({ metrics }: { metrics: AgentMetrics | undefined }) 
               </div>
             ))}
           </dl>
+          <details className="mt-1 text-[10px] text-[var(--color-muted)]">
+            <summary className={SUMMARY}>What each pilot figure counts</summary>
+            <dl className="space-y-1">
+              {PILOT_FIGURES.map((figure) => (
+                <div key={figure.label}>
+                  <dt className="inline text-[var(--color-fg)]">{figure.label}: </dt>
+                  <dd className="inline">{figure.definition}</dd>
+                </div>
+              ))}
+            </dl>
+          </details>
         </div>
       ) : null}
     </Card>
@@ -4917,43 +5450,51 @@ export function eventItemTitle(
   return typeof workItemId === 'string' ? titles.get(workItemId) : undefined;
 }
 
-function EventTicker({
+export function EventTicker({
   events,
   titles,
 }: {
-  events: Doc<'events'>[];
+  /** The newest events, or undefined while the query loads. */
+  events: Doc<'events'>[] | undefined;
   titles: ReadonlyMap<string, string>;
 }) {
   const now = useNow();
   const zone = useAgentZone();
   return (
     <Card title="Live event feed">
-      {/* Focusable, so a keyboard reaches the events below the fold. */}
-      <ul
-        tabIndex={0}
-        aria-label="Live event feed, newest first"
-        className="space-y-1 text-[10px] font-mono max-h-72 overflow-y-auto"
-      >
-        {events.map((e) => {
-          const title = eventItemTitle(e, titles);
-          return (
-            <li key={e._id} className="flex gap-2 text-[var(--color-muted)]">
-              {/* Was a UTC clock beside the Slack panel's local one: the same
+      {events === undefined ? (
+        <p className="text-xs text-[var(--color-muted)]">loading the feed…</p>
+      ) : events.length === 0 ? (
+        <p className="text-xs text-[var(--color-muted)]">no events yet</p>
+      ) : (
+        // Focusable, so a keyboard reaches the events below the fold.
+        <ul
+          tabIndex={0}
+          aria-label="Live event feed, newest first"
+          className="space-y-1 text-[10px] font-mono max-h-72 overflow-y-auto"
+        >
+          {events.map((e) => {
+            const title = eventItemTitle(e, titles);
+            return (
+              <li key={e._id} className="flex gap-2 text-[var(--color-muted)]">
+                {/* Was a UTC clock beside the Slack panel's local one: the same
                   event stamped eight hours apart on one page. */}
-              <span
-                className="shrink-0 tabular-nums"
-                title={clockTimeWithSeconds(e.createdAt, zone)}
-              >
-                {relativeTime(e.createdAt, now)}
-              </span>
-              <span className="min-w-0 break-words">
-                <span className="text-[var(--color-accent)]">{eventLabel(e)}</span>
-                {title ? <span className="text-[var(--color-fg)]"> · {title}</span> : null}
-              </span>
-            </li>
-          );
-        })}
-      </ul>
+                <time
+                  dateTime={new Date(e.createdAt).toISOString()}
+                  className="shrink-0 tabular-nums"
+                  title={clockTimeWithSeconds(e.createdAt, zone)}
+                >
+                  {relativeTime(e.createdAt, now)}
+                </time>
+                <span className="min-w-0 break-words">
+                  <span className="text-[var(--color-accent)]">{eventLabel(e)}</span>
+                  {title ? <span className="text-[var(--color-fg)]"> · {title}</span> : null}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </Card>
   );
 }

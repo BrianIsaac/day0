@@ -6494,3 +6494,441 @@ describe('the manager channel past its access end date (wave 2 review D4, M21)',
     ).resolves.toEqual({ prepared: false, reason: 'no connected manager chat channel' });
   });
 });
+
+describe('work.needsYou', (): void => {
+  /** Insert an employee of the owner's (or another subject's) with nothing waiting yet. */
+  async function employee(
+    harness: Harness,
+    name: string,
+    fields: Partial<WithoutSystemFields<Doc<'agents'>>> = {},
+  ): Promise<Id<'agents'>> {
+    return await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('agents', {
+          bossEmail: 'boss@day0.local',
+          name,
+          userId: 'owner',
+          state: 'active',
+          createdAt: 1,
+          ...fields,
+        }),
+    );
+  }
+
+  /** Insert one work item in a state, with the fields that state carries. */
+  async function item(
+    harness: Harness,
+    agentId: Id<'agents'>,
+    title: string,
+    state: Doc<'workItems'>['state'],
+    fields: Partial<WithoutSystemFields<Doc<'workItems'>>> = {},
+  ): Promise<Id<'workItems'>> {
+    return await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: title,
+          title,
+          contentSummary: 'Synthetic.',
+          contentRefs: [],
+          state,
+          observedAt: 1,
+          createdAt: 1,
+          ...fields,
+        }),
+    );
+  }
+
+  /** Record the event a transition writes, returning when it was stored. */
+  async function entered(
+    harness: Harness,
+    agentId: Id<'agents'>,
+    type: string,
+    payload: Record<string, unknown>,
+  ): Promise<number> {
+    return await harness.run(async (ctx) => {
+      const id = await ctx.db.insert('events', { agentId, type, payload, createdAt: Date.now() });
+      return (await ctx.db.get(id))!._creationTime;
+    });
+  }
+
+  it('lists what waits on the manager across employees, one entry per decision, longest wait first', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const mira = await employee(harness, 'Mira');
+    const aiko = await employee(harness, 'Aiko', { state: 'charter-pending' });
+
+    const charterId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('charters', {
+          agentId: aiko,
+          version: '1',
+          body: {},
+          approved: false,
+          createdAt: 1_000,
+        }),
+    );
+    const plan = await item(harness, mira, 'Draft the tier-two reply', 'plan-pending', {
+      planPendingAt: 2_000,
+    });
+    await harness.run(async (ctx) => {
+      for (const [key, answered] of [
+        ['owner', false],
+        ['deadline', true],
+      ] as const) {
+        await ctx.db.insert('managerQuestions', {
+          agentId: mira,
+          key,
+          question: `Who is the ${key}?`,
+          context: { touchedBy: 'plan', text: 'x', words: [] },
+          askedAt: 2_000,
+          workItemId: plan,
+          charterId,
+          ...(answered
+            ? { answer: { text: 'Sam', answeredAt: 2_500, via: 'plan-approval' as const } }
+            : {}),
+        });
+      }
+    });
+    const skillId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('skills', {
+          agentId: mira,
+          name: 'chat-thread-reply',
+          description: 'Reply in a thread.',
+          body: '',
+          sourceType: 'agent-authored',
+          rationale: 'So she can reply in a Slack thread.',
+          state: 'proposed',
+          createdAt: 3_000,
+        }),
+    );
+    await item(harness, mira, 'Reply to Priya', 'needs-skill', { proposedSkillId: skillId });
+    await item(harness, mira, 'Reply to Aman', 'needs-skill', { proposedSkillId: skillId });
+
+    const heldItem = await item(harness, mira, 'Post the escalation guidance', 'actions-pending', {
+      output: pendingOutput,
+      actionVerdicts: [{ disposition: 'held', reason: 'write' }, { disposition: 'auto' }],
+    });
+    const heldAt = await entered(harness, mira, 'work.actions-pending', { workItemId: heldItem });
+    await item(harness, mira, 'Already decided', 'actions-pending', {
+      output: pendingOutput,
+      approvedIndexes: [0],
+    });
+
+    const deferred = await item(harness, mira, 'Read the tracker', 'deferred', {
+      verdict: { decision: 'defer', reason: 'awaiting-connection', missingPermissions: [] },
+    });
+    const deferredAt = await entered(harness, mira, 'work.evaluated', { workItemId: deferred });
+    await item(harness, mira, 'Waits for the charter', 'deferred', {
+      verdict: { decision: 'defer', reason: 'awaiting-charter', missingPermissions: [] },
+    });
+
+    const failed = await item(harness, mira, 'Close REVOPS-9', 'failed', {
+      skipReason: 'the run stopped',
+    });
+    const failedAt = await entered(harness, mira, 'work.failed', { workItemId: failed });
+    await item(harness, mira, 'Rejected', 'failed', {
+      skipReason: 'rejected by the manager: not this week',
+    });
+
+    const surfaceId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('surfaces', {
+          agentId: aiko,
+          slug: 'looker',
+          displayName: 'Looker',
+          class: 'dashboard',
+          verdict: 'proposed',
+          credentialLanded: false,
+          whereFound: [],
+          createdAt: 1,
+        }),
+    );
+    const surfaceAt = await entered(harness, aiko, 'surface.proposed', {
+      surfaceId,
+      verdict: 'proposed',
+    });
+
+    const inbox = await harness.withIdentity(OWNER).query(api.work.needsYou, {});
+
+    expect(inbox.total).toBe(7);
+    expect(inbox.entries.map((entry) => [entry.kind, entry.employeeName, entry.subject])).toEqual([
+      ['charter', 'Aiko', 'charter'],
+      ['plan', 'Mira', 'Draft the tier-two reply'],
+      ['skill', 'Mira', 'chat-thread-reply'],
+      ['held', 'Mira', 'Post the escalation guidance'],
+      ['parked', 'Mira', 'Read the tracker'],
+      ['stopped', 'Mira', 'Close REVOPS-9'],
+      ['surface', 'Aiko', 'Looker'],
+    ]);
+    const [charter, planEntry, skill, held, parked, stopped, surface] = inbox.entries;
+    expect(charter.waitingSince).toBe(1_000);
+    expect(planEntry).toMatchObject({ waitingSince: 2_000, questions: 1, workItemId: plan });
+    expect(skill).toMatchObject({ waitingSince: 3_000, waitingItems: 2, skillId });
+    expect(held).toMatchObject({ waitingSince: heldAt, heldWrites: 1, workItemId: heldItem });
+    expect(parked).toMatchObject({ waitingSince: deferredAt, reason: 'connection' });
+    expect(stopped.waitingSince).toBe(failedAt);
+    expect(surface).toMatchObject({ waitingSince: surfaceAt, surfaceId, agentId: aiko });
+    expect(inbox.entries.every((entry) => !entry.waitingAtLeast)).toBe(true);
+    expect(inbox.waitingByEmployee).toEqual([
+      { agentId: aiko, waiting: 2 },
+      { agentId: mira, waiting: 5 },
+    ]);
+  });
+
+  it('shows the owner only their own employees and an anonymous caller nothing', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const mine = await employee(harness, 'Mira');
+    const theirs = await employee(harness, 'Stranger’s employee', { userId: 'stranger' });
+    await item(harness, mine, 'Mine', 'plan-pending', { planPendingAt: 1 });
+    await item(harness, theirs, 'Theirs', 'plan-pending', { planPendingAt: 1 });
+
+    const owner = await harness.withIdentity(OWNER).query(api.work.needsYou, {});
+    const stranger = await harness
+      .withIdentity({ subject: 'stranger' })
+      .query(api.work.needsYou, {});
+
+    expect(owner.entries.map((entry) => entry.subject)).toEqual(['Mine']);
+    expect(stranger.entries.map((entry) => entry.subject)).toEqual(['Theirs']);
+    await expect(harness.query(api.work.needsYou, {})).resolves.toEqual({
+      entries: [],
+      total: 0,
+      waitingByEmployee: [],
+    });
+  });
+
+  it('leaves evaluation agents out, as the roster does', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const evaluation = await employee(harness, 'Day0 evaluation 1', {
+      bossEmail: 'eval-day0-r1-1758000000000@day0.local',
+    });
+    await item(harness, evaluation, 'Evaluation item', 'plan-pending', { planPendingAt: 1 });
+
+    await expect(harness.withIdentity(OWNER).query(api.work.needsYou, {})).resolves.toEqual({
+      entries: [],
+      total: 0,
+      waitingByEmployee: [],
+    });
+  });
+
+  it('says a wait is at least as long as the bounded read reaches when the entry lies beyond it', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const mira = await employee(harness, 'Mira');
+    const held = await item(harness, mira, 'Old held write', 'actions-pending', {
+      output: pendingOutput,
+    });
+    await entered(harness, mira, 'work.actions-pending', { workItemId: held });
+    const others: number[] = [];
+    for (let index = 0; index < 100; index += 1) {
+      const other = await item(harness, mira, `Other ${index}`, 'completed');
+      others.push(await entered(harness, mira, 'work.actions-pending', { workItemId: other }));
+    }
+
+    const [entry] = (await harness.withIdentity(OWNER).query(api.work.needsYou, {})).entries;
+
+    expect(entry).toMatchObject({ kind: 'held', waitingAtLeast: true, waitingSince: others[0] });
+  });
+
+  it('lists a deployed employee’s Day-1 one-to-one as the manager’s to hold, dated from its deploy (D4 (b))', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const waiting = await employee(harness, 'Aiko', { state: 'deployed' });
+    const deployedAt = await entered(harness, waiting, 'agent.deployed', {});
+    await employee(harness, 'Mira', { state: 'day-one-in-progress' });
+    await employee(harness, 'Ren', { state: 'active' });
+
+    const inbox = await harness.withIdentity(OWNER).query(api.work.needsYou, {});
+
+    expect(inbox.entries).toEqual([
+      expect.objectContaining({
+        kind: 'one-to-one',
+        key: `one-to-one:${waiting}`,
+        agentId: waiting,
+        employeeName: 'Aiko',
+        subject: 'one-to-one',
+        waitingSince: deployedAt,
+        waitingAtLeast: false,
+      }),
+    ]);
+    expect(inbox.total).toBe(1);
+    expect(inbox.waitingByEmployee.find((row) => row.agentId === waiting)?.waiting).toBe(1);
+
+    await harness.run(async (ctx) => await ctx.db.patch(waiting, { state: 'day-one-in-progress' }));
+    expect((await harness.withIdentity(OWNER).query(api.work.needsYou, {})).total).toBe(0);
+  });
+
+  it('dates the one-to-one from a charter sent back, when that put the employee back to deployed', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const aiko = await employee(harness, 'Aiko', { state: 'deployed' });
+    await entered(harness, aiko, 'agent.deployed', {});
+    const sentBackAt = await entered(harness, aiko, 'charter.request_changes', {
+      charterId: 'charter-1',
+      notes: '',
+    });
+
+    const [entry] = (await harness.withIdentity(OWNER).query(api.work.needsYou, {})).entries;
+
+    expect(entry).toMatchObject({ kind: 'one-to-one', waitingSince: sentBackAt });
+  });
+
+  it('keeps the newest proposed system when an employee holds more systems than the read takes (m7)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const mira = await employee(harness, 'Mira');
+    await harness.run(async (ctx) => {
+      for (let index = 0; index < 100; index += 1) {
+        await ctx.db.insert('surfaces', {
+          agentId: mira,
+          slug: `connected-${index}`,
+          displayName: `Connected ${index}`,
+          class: 'dashboard',
+          verdict: 'connected',
+          credentialLanded: true,
+          whereFound: [],
+          createdAt: 1,
+        });
+      }
+      await ctx.db.insert('surfaces', {
+        agentId: mira,
+        slug: 'looker',
+        displayName: 'Looker',
+        class: 'dashboard',
+        verdict: 'proposed',
+        credentialLanded: false,
+        whereFound: [],
+        createdAt: 2,
+      });
+    });
+
+    const inbox = await harness.withIdentity(OWNER).query(api.work.needsYou, {});
+
+    expect(inbox.entries.map((entry) => [entry.kind, entry.subject])).toEqual([
+      ['surface', 'Looker'],
+    ]);
+  });
+
+  it('returns the fifty longest waits and says how many there are', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const mira = await employee(harness, 'Mira');
+    for (let index = 0; index < 55; index += 1) {
+      await item(harness, mira, `Plan ${index}`, 'plan-pending', { planPendingAt: 10_000 + index });
+    }
+
+    const inbox = await harness.withIdentity(OWNER).query(api.work.needsYou, {});
+
+    expect(inbox.total).toBe(55);
+    expect(inbox.entries).toHaveLength(50);
+    expect(inbox.waitingByEmployee).toEqual([{ agentId: mira, waiting: 55 }]);
+    expect(inbox.entries[0].subject).toBe('Plan 0');
+    expect(inbox.entries.at(-1)?.subject).toBe('Plan 49');
+  });
+});
+
+describe('work.needsYou, dating a wait', (): void => {
+  async function employee(harness: Harness): Promise<Id<'agents'>> {
+    return await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('agents', {
+          bossEmail: 'boss@day0.local',
+          name: 'Mira',
+          userId: 'owner',
+          state: 'active',
+          createdAt: 1,
+          zone: 'Asia/Singapore',
+        }),
+    );
+  }
+
+  async function row(
+    harness: Harness,
+    agentId: Id<'agents'>,
+    title: string,
+    state: Doc<'workItems'>['state'],
+    fields: Partial<WithoutSystemFields<Doc<'workItems'>>> = {},
+  ): Promise<Doc<'workItems'>> {
+    return await harness.run(async (ctx) => {
+      const id = await ctx.db.insert('workItems', {
+        agentId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: title,
+        title,
+        contentSummary: 'Synthetic.',
+        contentRefs: [],
+        state,
+        observedAt: 1,
+        createdAt: 1,
+        ...fields,
+      });
+      return (await ctx.db.get(id))!;
+    });
+  }
+
+  async function otherEvents(
+    harness: Harness,
+    agentId: Id<'agents'>,
+    count: number,
+  ): Promise<void> {
+    await harness.run(async (ctx) => {
+      for (let index = 0; index < count; index += 1) {
+        await ctx.db.insert('events', {
+          agentId,
+          type: 'work.actions-pending',
+          payload: { workItemId: `elsewhere-${index}` },
+          createdAt: Date.now(),
+        });
+      }
+    });
+  }
+
+  it('dates a row with no entering event by its insert when every event was read', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const mira = await employee(harness);
+    const held = await row(harness, mira, 'Seeded held write', 'actions-pending', {
+      output: pendingOutput,
+    });
+    await otherEvents(harness, mira, 100);
+
+    const [entry] = (await harness.withIdentity(OWNER).query(api.work.needsYou, {})).entries;
+
+    expect(entry).toMatchObject({ waitingSince: held._creationTime, waitingAtLeast: false });
+  });
+
+  it('never dates a wait before its row existed', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const mira = await employee(harness);
+    await otherEvents(harness, mira, 101);
+    const held = await row(harness, mira, 'Imported held write', 'actions-pending', {
+      output: pendingOutput,
+    });
+
+    const [entry] = (await harness.withIdentity(OWNER).query(api.work.needsYou, {})).entries;
+
+    expect(entry).toMatchObject({ waitingSince: held._creationTime, waitingAtLeast: false });
+  });
+
+  it('lists a new stop even when older rejected rows fill the stopped read', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const mira = await employee(harness);
+    for (let index = 0; index < 25; index += 1) {
+      await row(harness, mira, `Rejected ${index}`, 'failed', {
+        skipReason: 'rejected by the manager: not now',
+      });
+    }
+    await row(harness, mira, 'Stopped today', 'failed', { skipReason: 'the run stopped' });
+
+    const inbox = await harness.withIdentity(OWNER).query(api.work.needsYou, {});
+
+    expect(inbox.entries.map((entry) => entry.subject)).toEqual(['Stopped today']);
+  });
+
+  it('carries the employee’s zone, so the home stamps the wait in the employee’s day', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const mira = await employee(harness);
+    await row(harness, mira, 'Plan', 'plan-pending', { planPendingAt: 1 });
+
+    const [entry] = (await harness.withIdentity(OWNER).query(api.work.needsYou, {})).entries;
+
+    expect(entry?.zone).toBe('Asia/Singapore');
+  });
+});

@@ -52,6 +52,8 @@ export default defineConfig({
             'tests/src/**/*.test.ts',
             'tests/app/**/*.test.ts',
             'tests/app/**/*.test.tsx',
+            // The browser job's pure helpers; its specs are Playwright's (`*.spec.ts`).
+            'tests/browser/**/*.test.ts',
             'tests/evaluation/**/*.test.ts',
             'tests/scripts/**/*.test.ts',
             'tests/bed/**/*.test.ts',

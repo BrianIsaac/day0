@@ -26,12 +26,12 @@ export function HeaderAccount() {
       <Show when="signed-out">
         <div className="flex items-center gap-2">
           <SignInButton mode="modal">
-            <button className="text-xs px-3 py-1.5 rounded-lg border border-[var(--color-border)] hover:border-[var(--color-accent)]">
+            <button className="inline-flex min-h-11 items-center rounded-lg border border-[var(--color-border)] px-3 text-xs hover:border-[var(--color-accent)]">
               Sign in
             </button>
           </SignInButton>
           <SignUpButton mode="modal">
-            <button className="text-xs px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] font-medium hover:opacity-90">
+            <button className="inline-flex min-h-11 items-center rounded-lg bg-[var(--color-accent)] px-3 text-xs font-medium text-[var(--color-bg)] hover:opacity-90">
               Create account
             </button>
           </SignUpButton>

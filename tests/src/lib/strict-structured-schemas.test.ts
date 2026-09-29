@@ -15,11 +15,12 @@ import {
   executeSchemaForProcedureContract,
   procedureContractSchema,
 } from '../../../src/work/execute-skill';
-import { planSchema } from '../../../src/work/plan';
+import { planSchema, realPlanSchema } from '../../../src/work/plan';
+import { planObligationsSchema } from '../../../src/work/plan-obligations';
 import { qualityFitSchema } from '../../../src/work/quality-fit';
 import { scopeJudgementSchema } from '../../../src/work/scope';
 import { questionLabelSchema } from '../../../convex/onboarding';
-import { orientationSchema } from '../../../convex/orientationActions';
+import { intakeScopePickSchema, orientationSchema } from '../../../convex/orientationActions';
 import { authorSchema, realAuthorSchema } from '../../../convex/skillActions';
 
 /**
@@ -195,6 +196,11 @@ const MODEL_FACING_SCHEMAS: Array<{ agent: string; schema: unknown }> = [
   { agent: 'day0-quality-fit', schema: qualityFitSchema },
   { agent: 'day0-scope-judgement', schema: scopeJudgementSchema },
   { agent: 'day0-plan', schema: planSchema },
+  // The real planner, the obligations judgement and the intake pick were sent
+  // as response formats without being held to the strict subset (P6-13, C-8).
+  { agent: 'day0-plan real', schema: realPlanSchema },
+  { agent: 'day0-plan-obligations', schema: planObligationsSchema },
+  { agent: 'intake-scope', schema: intakeScopePickSchema },
   { agent: 'day0-work-generator', schema: workGenSchema },
   { agent: 'day0-skill-author', schema: authorSchema },
   { agent: 'day0-skill-author real', schema: realAuthorSchema },

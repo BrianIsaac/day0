@@ -1,13 +1,12 @@
 'use client';
 
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
 import { useAction, useMutation, useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { DOCS_NOTION_LOCATOR, serverKindHelp } from '@/docs/components';
-import { plainErrorMessage } from '@/lib/plain-error';
 import { REPOSITORY_URL } from '@/setup/quickstart';
-import { errorMessage } from '@/lib/errors';
+import { LiveStatus, refusalText, useChange } from '../agent/[agentId]/live-status';
 
 type SourceKind = 'folder' | 'git' | 'urls' | 'mcp';
 type ServerKind = 'notion' | 'confluence' | 'drive' | 'generic';
@@ -71,7 +70,7 @@ export function ReaderSecretField(props: { kind: SourceKind }): React.ReactNode 
         type="password"
         autoComplete="new-password"
         placeholder={props.kind === 'git' ? 'Access token, or user:token' : 'Access token'}
-        className="px-3 py-2 bg-[var(--color-bg)] border border-[var(--color-border)] rounded"
+        className="min-h-11 px-3 py-2 bg-[var(--color-bg)] border border-[var(--color-border)] rounded"
       />
       <p className="text-xs text-[var(--color-muted)]">
         {props.kind === 'git'
@@ -109,6 +108,60 @@ export function SourceKindHelp(props: {
   );
 }
 
+/**
+ * The second step of a destructive change to a linked source (P6-7): what it
+ * does, the change, and Keep, which takes focus so Enter does nothing harmful.
+ *
+ * @param props - What is being confirmed, for which source, and the two choices.
+ * @returns The confirmation row under the source.
+ */
+export function SourceConfirmation(props: {
+  kind: 'unlink' | 'revoke';
+  label: string;
+  busy: boolean;
+  onConfirm: () => void;
+  onKeep: () => void;
+}): React.ReactNode {
+  const unlinking = props.kind === 'unlink';
+  return (
+    <div
+      role="group"
+      aria-label={unlinking ? `Unlink ${props.label}?` : `Revoke the secret for ${props.label}?`}
+      className="basis-full border-t border-[var(--color-border)] pt-3 text-xs"
+      onKeyDown={(event) => {
+        if (event.key !== 'Escape') return;
+        event.preventDefault();
+        props.onKeep();
+      }}
+    >
+      <p className="mb-2 text-[var(--color-fg)]">
+        {unlinking
+          ? `Unlink ${props.label}? Its pages leave every employee's reading, and the systems only it documents lose their evidence.`
+          : `Revoke the secret for ${props.label}? Day0 stops reading this location until you rotate in a new secret.`}
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          disabled={props.busy}
+          onClick={props.onConfirm}
+          className="min-h-11 rounded px-3 bg-[var(--color-danger)]/20 text-[var(--color-danger)] disabled:opacity-50"
+        >
+          {unlinking ? 'Confirm unlink' : 'Confirm revoke'}
+        </button>
+        <button
+          type="button"
+          autoFocus
+          disabled={props.busy}
+          onClick={props.onKeep}
+          className="min-h-11 rounded px-3 border border-[var(--color-border)] disabled:opacity-50"
+        >
+          {unlinking ? 'Keep it linked' : 'Keep the secret'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /** Owner-level documentation source management. */
 export function DocumentationPage(): React.ReactNode {
   const config = useQuery(api.config.surfaceMode);
@@ -124,8 +177,34 @@ export function DocumentationPage(): React.ReactNode {
   const [serverKind, setServerKind] = useState<ServerKind>('notion');
   const [busy, setBusy] = useState(false);
   const [rotatingSourceId, setRotatingSourceId] = useState<string | null>(null);
-  const [busySourceId, setBusySourceId] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState<{
+    sourceId: Id<'docSources'>;
+    kind: 'unlink' | 'revoke';
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const list = useRef<HTMLElement>(null);
+  const change = useChange(list);
+  // Which source's rotation is in flight, so only its Save reads Rotating.
+  const [rotating, setRotating] = useState<string | null>(null);
+
+  /**
+   * One change to one linked source, said in the list's live region. A
+   * confirmation closes once the change lands, so a refusal leaves it open
+   * with focus on the control that met it; focus then goes to the row's own
+   * control, or to the list when the row went with the change.
+   */
+  function onSourceChange(
+    call: () => Promise<unknown>,
+    words: { done: string; refused: string; after?: () => void; focus?: () => HTMLElement | null },
+  ): void {
+    change.run(call, {
+      ...words,
+      after: () => {
+        setConfirming(null);
+        words.after?.();
+      },
+    });
+  }
 
   /** Link the submitted source and clear its write-only credential field. */
   async function onSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -148,39 +227,42 @@ export function DocumentationPage(): React.ReactNode {
       setLabel(cleared.label);
       setLocator(cleared.locator);
     } catch (failure) {
-      setError(plainErrorMessage(errorMessage(failure)));
+      setError(refusalText(failure, 'The location was not linked.'));
     } finally {
       setBusy(false);
     }
   }
 
   /** Rotate one source credential and clear its write-only input immediately. */
-  async function onRotate(
+  function onRotate(
     event: FormEvent<HTMLFormElement>,
-    sourceId: Id<'docSources'>,
-  ): Promise<void> {
+    source: { _id: Id<'docSources'>; label: string },
+  ): void {
     event.preventDefault();
     const form = event.currentTarget;
     const credential = String(new FormData(form).get('credential') || '');
     form.reset();
-    setBusySourceId(sourceId);
-    setError(null);
-    try {
-      await rotateCredential({
-        sourceId,
-        credential,
-      });
-      setRotatingSourceId(null);
-    } catch (failure) {
-      setError(plainErrorMessage(errorMessage(failure)));
-    } finally {
-      setBusySourceId(null);
-    }
+    setRotating(source._id);
+    onSourceChange(
+      async (): Promise<void> => {
+        try {
+          await rotateCredential({ sourceId: source._id, credential });
+        } finally {
+          setRotating(null);
+        }
+      },
+      {
+        done: `The secret for ${source.label} is replaced; the next sync reads with it.`,
+        refused: 'The secret was not replaced.',
+        after: () => setRotatingSourceId(null),
+        focus: () => document.getElementById(`rotate-control-${source._id}`),
+      },
+    );
   }
 
   const isReal = config?.mode === 'real';
   return (
-    <main className="max-w-5xl mx-auto w-full px-6 py-10">
+    <div className="max-w-5xl mx-auto w-full px-6 py-10">
       <div className="flex items-start justify-between gap-4 mb-8">
         <div>
           <h1 className="text-3xl font-semibold tracking-tight">Documentation</h1>
@@ -202,11 +284,17 @@ export function DocumentationPage(): React.ReactNode {
         </section>
       ) : (
         <>
-          <section className="space-y-3 mb-8">
+          <section
+            ref={list}
+            tabIndex={-1}
+            aria-label="Linked documentation"
+            className="space-y-3 mb-8"
+          >
+            <LiveStatus outcome={change.outcome} />
             {(sources || []).map((source) => (
               <article
                 key={source._id}
-                className="bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl p-4 flex items-center justify-between gap-4"
+                className="bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl p-4 flex flex-wrap items-center justify-between gap-4"
               >
                 <div>
                   <div className="flex items-center gap-2">
@@ -237,8 +325,8 @@ export function DocumentationPage(): React.ReactNode {
                 <div className="flex flex-wrap justify-end gap-2">
                   {source.credentialId && rotatingSourceId === source._id ? (
                     <form
-                      onSubmit={(event) => void onRotate(event, source._id)}
-                      className="flex gap-2"
+                      onSubmit={(event) => onRotate(event, source)}
+                      className="flex flex-wrap gap-2"
                     >
                       <label className="sr-only" htmlFor={`rotate-${source._id}`}>
                         {source.kind === 'mcp' ? 'New connection secret' : 'New reader secret'}
@@ -252,13 +340,13 @@ export function DocumentationPage(): React.ReactNode {
                         placeholder={
                           source.kind === 'mcp' ? 'New connection secret' : 'New reader secret'
                         }
-                        className="text-xs px-3 py-1.5 bg-[var(--color-bg)] border border-[var(--color-border)] rounded"
+                        className="min-h-11 text-xs px-3 bg-[var(--color-bg)] border border-[var(--color-border)] rounded"
                       />
                       <button
-                        disabled={busySourceId === source._id}
-                        className="text-xs border border-[var(--color-border)] rounded px-3 py-1.5 disabled:opacity-50"
+                        disabled={change.busy}
+                        className="min-h-11 text-xs border border-[var(--color-border)] rounded px-3 disabled:opacity-50"
                       >
-                        {busySourceId === source._id ? 'Rotating...' : 'Save'}
+                        {rotating === source._id ? 'Rotating...' : 'Save'}
                       </button>
                     </form>
                   ) : null}
@@ -266,20 +354,24 @@ export function DocumentationPage(): React.ReactNode {
                     <>
                       <button
                         type="button"
+                        disabled={change.busy}
+                        id={`rotate-control-${source._id}`}
+                        aria-label={`Rotate the secret for ${source.label}`}
                         onClick={() => setRotatingSourceId(source._id)}
-                        className="text-xs border border-[var(--color-border)] rounded px-3 py-1.5"
+                        className="min-h-11 text-xs border border-[var(--color-border)] rounded px-3 disabled:opacity-50"
                       >
                         Rotate
                       </button>
                       <button
                         type="button"
-                        onClick={() => {
-                          revokeCredential({ credentialId: source.credentialId! }).catch(
-                            (failure: unknown) =>
-                              setError(plainErrorMessage(errorMessage(failure))),
-                          );
-                        }}
-                        className="text-xs border border-[var(--color-danger)]/40 text-[var(--color-danger)] rounded px-3 py-1.5"
+                        disabled={change.busy}
+                        id={`revoke-${source._id}`}
+                        aria-label={`Revoke the secret for ${source.label}`}
+                        aria-expanded={
+                          confirming?.sourceId === source._id && confirming.kind === 'revoke'
+                        }
+                        onClick={() => setConfirming({ sourceId: source._id, kind: 'revoke' })}
+                        className="min-h-11 text-xs border border-[var(--color-danger)]/40 text-[var(--color-danger)] rounded px-3 disabled:opacity-50"
                       >
                         Revoke
                       </button>
@@ -287,27 +379,58 @@ export function DocumentationPage(): React.ReactNode {
                   ) : null}
                   <button
                     type="button"
-                    onClick={() => {
-                      resync({ sourceId: source._id }).catch((failure: unknown) =>
-                        setError(plainErrorMessage(errorMessage(failure))),
-                      );
-                    }}
-                    className="text-xs border border-[var(--color-border)] rounded px-3 py-1.5"
+                    disabled={change.busy}
+                    aria-label={`Re-sync ${source.label}`}
+                    onClick={() =>
+                      onSourceChange(() => resync({ sourceId: source._id }), {
+                        done: `Re-syncing ${source.label}; its page count updates when the sync finishes.`,
+                        refused: 'The sync did not start.',
+                      })
+                    }
+                    className="min-h-11 text-xs border border-[var(--color-border)] rounded px-3 disabled:opacity-50"
                   >
                     Re-sync
                   </button>
                   <button
                     type="button"
-                    onClick={() => {
-                      unlink({ sourceId: source._id }).catch((failure: unknown) =>
-                        setError(plainErrorMessage(errorMessage(failure))),
-                      );
-                    }}
-                    className="text-xs border border-[var(--color-danger)]/40 text-[var(--color-danger)] rounded px-3 py-1.5"
+                    disabled={change.busy}
+                    id={`unlink-${source._id}`}
+                    aria-label={`Unlink ${source.label}`}
+                    aria-expanded={
+                      confirming?.sourceId === source._id && confirming.kind === 'unlink'
+                    }
+                    onClick={() => setConfirming({ sourceId: source._id, kind: 'unlink' })}
+                    className="min-h-11 text-xs border border-[var(--color-danger)]/40 text-[var(--color-danger)] rounded px-3 disabled:opacity-50"
                   >
                     Unlink
                   </button>
                 </div>
+                {confirming?.sourceId === source._id ? (
+                  <SourceConfirmation
+                    kind={confirming.kind}
+                    label={source.label}
+                    busy={change.busy}
+                    onConfirm={() =>
+                      confirming.kind === 'unlink'
+                        ? onSourceChange(() => unlink({ sourceId: source._id }), {
+                            done: `Unlinked ${source.label}: its pages leave every employee's reading.`,
+                            refused: `${source.label} was not unlinked.`,
+                          })
+                        : onSourceChange(
+                            () => revokeCredential({ credentialId: source.credentialId! }),
+                            {
+                              done: `Revoked the secret for ${source.label}; the next sync cannot read until you rotate in a new one.`,
+                              refused: 'The secret was not revoked.',
+                              focus: () => document.getElementById(`revoke-${source._id}`),
+                            },
+                          )
+                    }
+                    onKeep={() => {
+                      setConfirming(null);
+                      document.getElementById(`${confirming.kind}-${source._id}`)?.focus();
+                    }}
+                  />
+                ) : null}
               </article>
             ))}
             {sources?.length === 0 ? (
@@ -330,27 +453,39 @@ export function DocumentationPage(): React.ReactNode {
               describes, so day0 finds each system, address, credential and intake queue on them.
             </p>
             <form onSubmit={onSubmit} className="grid gap-3">
+              <label htmlFor="source-kind" className="text-xs text-[var(--color-muted)]">
+                Kind of location
+              </label>
               <select
+                id="source-kind"
                 value={kind}
                 onChange={(event) => {
                   const nextKind = event.target.value as SourceKind;
                   setKind(nextKind);
                   setLocator(locatorForSourceKind(nextKind));
                 }}
-                className="px-3 py-2 bg-[var(--color-bg)] border border-[var(--color-border)] rounded"
+                className="min-h-11 px-3 py-2 bg-[var(--color-bg)] border border-[var(--color-border)] rounded"
               >
                 <option value="folder">Folder of Markdown</option>
                 <option value="git">Git repository</option>
                 <option value="urls">List of URLs</option>
                 <option value="mcp">MCP server</option>
               </select>
+              <label htmlFor="source-label" className="text-xs text-[var(--color-muted)]">
+                Location label
+              </label>
               <input
+                id="source-label"
                 value={label}
                 onChange={(event) => setLabel(event.target.value)}
                 placeholder="Location label"
-                className="px-3 py-2 bg-[var(--color-bg)] border border-[var(--color-border)] rounded"
+                className="min-h-11 px-3 py-2 bg-[var(--color-bg)] border border-[var(--color-border)] rounded"
               />
+              <label htmlFor="source-locator" className="text-xs text-[var(--color-muted)]">
+                Where it is
+              </label>
               <textarea
+                id="source-locator"
                 value={locator}
                 onChange={(event) => setLocator(event.target.value)}
                 placeholder={
@@ -364,32 +499,40 @@ export function DocumentationPage(): React.ReactNode {
               />
               {kind === 'mcp' ? (
                 <div className="grid sm:grid-cols-2 gap-3">
-                  <select
-                    value={serverKind}
-                    onChange={(event) => setServerKind(event.target.value as typeof serverKind)}
-                    className="px-3 py-2 bg-[var(--color-bg)] border border-[var(--color-border)] rounded"
-                  >
-                    <option value="notion">Notion</option>
-                    <option value="confluence">Confluence</option>
-                    <option value="drive">Google Drive</option>
-                    <option value="generic">Generic resources</option>
-                  </select>
-                  <input
-                    name="credential"
-                    type="password"
-                    autoComplete="new-password"
-                    required
-                    placeholder="Connection secret"
-                    className="px-3 py-2 bg-[var(--color-bg)] border border-[var(--color-border)] rounded"
-                  />
+                  <label className="grid gap-1 text-xs text-[var(--color-muted)]">
+                    Server
+                    <select
+                      value={serverKind}
+                      onChange={(event) => setServerKind(event.target.value as typeof serverKind)}
+                      className="min-h-11 px-3 py-2 bg-[var(--color-bg)] border border-[var(--color-border)] rounded text-sm text-[var(--color-fg)]"
+                    >
+                      <option value="notion">Notion</option>
+                      <option value="confluence">Confluence</option>
+                      <option value="drive">Google Drive</option>
+                      <option value="generic">Generic resources</option>
+                    </select>
+                  </label>
+                  <label className="grid gap-1 text-xs text-[var(--color-muted)]">
+                    Connection secret
+                    <input
+                      name="credential"
+                      type="password"
+                      autoComplete="new-password"
+                      required
+                      placeholder="Connection secret"
+                      className="min-h-11 px-3 py-2 bg-[var(--color-bg)] border border-[var(--color-border)] rounded text-sm text-[var(--color-fg)]"
+                    />
+                  </label>
                 </div>
               ) : null}
               <ReaderSecretField kind={kind} />
               <SourceKindHelp kind={kind} serverKind={serverKind} />
-              {error ? <p className="text-xs text-[var(--color-danger)]">{error}</p> : null}
+              <p role="alert" className="text-xs text-[var(--color-danger)]">
+                {error ?? ''}
+              </p>
               <button
                 disabled={busy}
-                className="justify-self-start px-4 py-2 rounded bg-[var(--color-accent)] text-[var(--color-bg)] font-medium disabled:opacity-50"
+                className="min-h-11 justify-self-start px-4 py-2 rounded bg-[var(--color-accent)] text-[var(--color-bg)] font-medium disabled:opacity-50"
               >
                 {busy ? 'Linking...' : 'Link location'}
               </button>
@@ -397,6 +540,6 @@ export function DocumentationPage(): React.ReactNode {
           </section>
         </>
       )}
-    </main>
+    </div>
   );
 }

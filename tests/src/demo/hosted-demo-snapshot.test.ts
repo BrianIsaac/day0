@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   HOSTED_DEMO_SNAPSHOT,
   type HostedDemoSnapshot,
-  recordingProvenanceLine,
+  hostedBuildLine,
 } from '../../../src/demo/hosted-demo-snapshot';
 
 /**
@@ -68,9 +68,9 @@ describe('the committed hosted-demo snapshot', (): void => {
     expect(HOSTED_DEMO_SNAPSHOT.recording.revision).toMatch(/^[0-9a-f]{7,12}$/);
   });
 
-  it('dates the export, not the run, and says the run came before it (Q3)', (): void => {
-    expect(recordingProvenanceLine(HOSTED_DEMO_SNAPSHOT.recording)).toBe(
-      'Exported from the hosted deployment on 12 September 2026 (build 3ed8779, live since 13 August 2026); the run it shows took place before that and is told in offsets. The product has moved on since.',
+  it('dates the hosted build by the last export, and speaks of no run a page no longer shows (Q3, W D6 (a))', (): void => {
+    expect(hostedBuildLine(HOSTED_DEMO_SNAPSHOT.recording)).toBe(
+      'On 12 September 2026, the day of the last export taken from it, the hosted deployment was serving build 3ed8779, live since 13 August 2026. The product has moved on since.',
     );
   });
 

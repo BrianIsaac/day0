@@ -6,6 +6,7 @@ import { useMutation } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { postCharterSynthesis } from './charter-synthesis';
+import { refusalText } from './live-status';
 import { ROOM_HEIGHT } from './room-frame';
 
 interface StartResponse {
@@ -149,7 +150,16 @@ function VoiceRoomInner({
     }
   }, [start]);
 
-  async function onStart() {
+  /** Open the session row, then the call; a refusal of either is said in the room. */
+  function onStart(): void {
+    setError(null);
+    // The chain ends in its own catch, which says the refusal in the room's alert.
+    void startCall().catch((err: unknown) =>
+      setError(refusalText(err, 'The voice 1:1 could not start').replace(/\.$/, '')),
+    );
+  }
+
+  async function startCall(): Promise<void> {
     if (!start || !start.configured || !start.agentId) return;
     let current = session;
     if (!current) {
@@ -163,7 +173,7 @@ function VoiceRoomInner({
     // the post-call webhook, which is how that route proves the transcript
     // belongs to this session. Read from `current`, not state: the connection
     // can be up before React has committed the setState above.
-    conversation.startSession({
+    await conversation.startSession({
       ...(start.signedUrl ? { signedUrl: start.signedUrl } : { agentId: start.agentId }),
       dynamicVariables: {
         boss_label: bossLabel,
@@ -194,8 +204,9 @@ function VoiceRoomInner({
         </p>
         {onSwitchMode ? (
           <button
+            type="button"
             onClick={onSwitchMode}
-            className="px-4 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] font-medium text-sm hover:opacity-90"
+            className="min-h-11 px-4 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] font-medium text-sm hover:opacity-90"
           >
             Continue in chat
           </button>
@@ -216,8 +227,9 @@ function VoiceRoomInner({
           </span>
           {onSwitchMode && !isConnected ? (
             <button
+              type="button"
               onClick={onSwitchMode}
-              className="text-[10px] text-[var(--color-muted)] hover:text-[var(--color-accent)] underline underline-offset-2"
+              className="min-h-11 px-1 text-[10px] text-[var(--color-muted)] hover:text-[var(--color-accent)] underline underline-offset-2"
             >
               switch to chat
             </button>
@@ -225,18 +237,21 @@ function VoiceRoomInner({
         </div>
       </div>
 
-      {error ? (
-        <p className="text-xs text-[var(--color-danger)] mb-3 break-words">
-          {error}. Switch to chat mode if voice setup is unavailable.
-        </p>
-      ) : null}
+      <div role="alert">
+        {error ? (
+          <p className="text-xs text-[var(--color-danger)] mb-3 break-words">
+            {error}. Switch to chat mode if voice setup is unavailable.
+          </p>
+        ) : null}
+      </div>
 
       <div className="flex items-center gap-3 mb-3 flex-wrap">
         {!isConnected ? (
           <button
+            type="button"
             onClick={onStart}
             disabled={!start}
-            className="px-4 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] font-medium disabled:opacity-50 text-sm"
+            className="min-h-11 px-4 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg)] font-medium disabled:opacity-50 text-sm"
           >
             Start voice 1:1
           </button>
@@ -244,8 +259,9 @@ function VoiceRoomInner({
           <>
             <SpeakToggle muted={muted} onToggle={() => setMuted((m) => !m)} />
             <button
+              type="button"
               onClick={onStop}
-              className="px-4 py-2 rounded-lg border border-[var(--color-border)] text-sm"
+              className="min-h-11 px-4 py-2 rounded-lg border border-[var(--color-border)] text-sm"
             >
               End call
             </button>
@@ -261,6 +277,9 @@ function VoiceRoomInner({
 
       <div
         ref={transcriptRef}
+        tabIndex={0}
+        role="log"
+        aria-label="The 1:1 so far"
         className="bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg p-3 flex-1 min-h-0 overflow-y-auto text-xs space-y-1"
       >
         {transcript.length === 0 ? (
@@ -273,7 +292,7 @@ function VoiceRoomInner({
                   t.source === 'ai' ? 'text-[var(--color-accent)]' : 'text-[var(--color-fg)]'
                 }
               >
-                {t.source === 'ai' ? 'agent' : 'you'}:
+                {t.source === 'ai' ? 'employee' : 'you'}:
               </span>{' '}
               <span className="text-[var(--color-fg)]">{t.message}</span>
             </div>
@@ -287,9 +306,10 @@ function VoiceRoomInner({
 function SpeakToggle({ muted, onToggle }: { muted: boolean; onToggle: () => void }) {
   return (
     <button
+      type="button"
       onClick={onToggle}
       title={muted ? 'tap to start speaking' : 'tap to stop speaking'}
-      className={`px-5 py-2.5 rounded-lg font-medium text-sm transition flex items-center gap-2 ${
+      className={`min-h-11 px-5 py-2.5 rounded-lg font-medium text-sm transition flex items-center gap-2 ${
         muted
           ? 'bg-[var(--color-accent)] text-[var(--color-bg)] hover:opacity-90'
           : 'bg-[var(--color-ok)]/20 text-[var(--color-ok)] border border-[var(--color-ok)]/40'
@@ -323,7 +343,7 @@ function StatusPill({
       label = 'mic muted';
       tone = 'text-[var(--color-danger)]';
     } else if (isSpeaking) {
-      label = 'agent speaking…';
+      label = 'employee speaking…';
       tone = 'text-[var(--color-accent)]';
     } else if (isListening) {
       label = 'listening';

@@ -20,9 +20,15 @@ const nextConfig = {
   // The demo is recorded from `next dev`; the development badge was in every frame.
   devIndicators: false,
   experimental: {
+    // The page transition (`app/MainTransition.tsx`); 16.2.6 reads the key in its schema only.
+    viewTransition: true,
     serverActions: {
       bodySizeLimit: '4mb',
     },
+  },
+  // The walkthrough moved from `/demo` (N29); the README and older links keep working.
+  async redirects() {
+    return [{ source: '/demo', destination: '/walkthrough', permanent: true }];
   },
   async headers() {
     return [{ source: '/:path*', headers: securityHeaders }];

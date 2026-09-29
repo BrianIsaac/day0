@@ -7,7 +7,7 @@ export default function SignUpPage() {
   if (DEV_NO_AUTH) redirect('/');
 
   return (
-    <main className="min-h-screen flex items-center justify-center px-6 bg-[var(--color-bg)]">
+    <div className="min-h-screen flex items-center justify-center px-6 bg-[var(--color-bg)]">
       <div className="max-w-md w-full">
         <p className="text-xs uppercase tracking-[0.2em] text-[var(--color-accent)] mb-3 text-center">
           Day0
@@ -29,6 +29,6 @@ export default function SignUpPage() {
           />
         </div>
       </div>
-    </main>
+    </div>
   );
 }

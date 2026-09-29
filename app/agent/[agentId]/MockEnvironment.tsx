@@ -10,6 +10,7 @@ import { SlackTab } from './mock/SlackTab';
 import { TwitterTab } from './mock/TwitterTab';
 import { TicketsTab } from './mock/TicketsTab';
 import { SurfacesTab } from './mock/SurfacesTab';
+import { usePreviousValue } from './previous-value';
 
 export type TabKey = 'slack' | 'spreadsheet' | 'docs' | 'tweet' | 'tickets' | 'surfaces';
 
@@ -19,7 +20,7 @@ export type EnvironmentMode = 'mock' | 'real';
 const PANEL_ID = 'surfaces';
 
 const CAPTIONS: Record<EnvironmentMode, string> = {
-  mock: 'Mock surfaces - when the agent runs a skill, edits land here in real time',
+  mock: 'Mock surfaces - when the employee runs a skill, edits land here in real time',
   real: 'Documentation day0 can read, and the connection status of every system it has discovered',
 };
 
@@ -86,6 +87,27 @@ export function activeTabForEnvironment(active: TabKey, hash: string, isReal: bo
   return isReal ? 'docs' : 'slack';
 }
 
+/** How long a count's roll plays (`.roll` in `app/globals.css`). */
+export const ROLL_MS = 220;
+
+/**
+ * A tab's count. When it changes on the page, the old figure rolls up and out as the new one
+ * rolls in (v3 section 5.2); the first figure is simply there, and under reduced motion only
+ * the new one shows.
+ */
+export function RollingCount({ value }: { value: number }) {
+  const previous = usePreviousValue(value, ROLL_MS);
+  if (previous === undefined) return <>{value}</>;
+  return (
+    <span key={value} className="roll">
+      <span aria-hidden="true" className="from">
+        {previous}
+      </span>
+      <span className="to">{value}</span>
+    </span>
+  );
+}
+
 export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
   const [active, setActive] = useState<TabKey>('slack');
   const scrolledToHash = useRef(false);
@@ -113,7 +135,7 @@ export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
     };
     follow();
     // A cold load (the Slack OAuth redirect's `#surfaces`) performs its one
-    // fragment scroll while the dashboard still reads "loading agent", before
+    // fragment scroll while the dashboard still reads "loading employee", before
     // this panel exists, and the Surfaces tab is named only once the mode has
     // resolved. So the first time the hash names a tab, scroll here once; a
     // later hash change finds the panel present and the browser scrolls.
@@ -152,7 +174,10 @@ export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
           surfaces behind a gesture nothing on the page suggests, and the two
           it hid here - Twitter and Tickets - are two fifths of the environment
           the agent works in. */}
-      <nav className="flex flex-wrap gap-1 px-2 pt-2 border-b border-[var(--color-border)]">
+      <nav
+        aria-label="Work environment"
+        className="flex flex-wrap gap-1 px-2 pt-2 border-b border-[var(--color-border)]"
+      >
         {tabs.map((t) => {
           const isActive = displayedActive === t.key;
           const count = counts[t.key];
@@ -160,8 +185,10 @@ export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
           return (
             <button
               key={t.key}
+              type="button"
+              aria-pressed={isActive}
               onClick={() => setActive(t.key)}
-              className={`px-3 py-2 rounded-t-md text-xs flex items-center gap-1.5 transition border-b-2 ${
+              className={`min-h-11 px-3 py-2 rounded-t-md text-xs flex items-center gap-1.5 transition border-b-2 ${
                 isActive
                   ? 'border-[var(--color-accent)] text-[var(--color-fg)] bg-[var(--color-bg)]'
                   : 'border-transparent text-[var(--color-muted)] hover:text-[var(--color-fg)]'
@@ -176,7 +203,7 @@ export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
                       : 'bg-[var(--color-border)]/40 text-[var(--color-muted)]'
                   }`}
                 >
-                  {count}
+                  <RollingCount value={count} />
                 </span>
               ) : null}
               {sublabel ? (
@@ -191,7 +218,13 @@ export function MockEnvironment({ agentId }: { agentId: Id<'agents'> }) {
 
       {/* The panel carries the id the card links name, so `#surfaces` scrolls
           here as well as selecting the tab above. */}
-      <div id={PANEL_ID} className="p-4 min-h-[24rem] max-h-[40rem] overflow-y-auto">
+      <div
+        id={PANEL_ID}
+        tabIndex={0}
+        role="region"
+        aria-label={`${tabs.find((tab) => tab.key === displayedActive)?.label ?? 'Environment'} tab`}
+        className="p-4 min-h-[24rem] max-h-[40rem] overflow-y-auto"
+      >
         {displayedActive === 'docs' ? <DocsTab agentId={agentId} mode={mode} /> : null}
         {/* The four below are mock-only, so they are never reached with a real
             deployment mode and take none. */}

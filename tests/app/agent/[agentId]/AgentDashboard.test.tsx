@@ -7,36 +7,54 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { getFunctionName } from 'convex/server';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const backend = vi.hoisted(() => ({
   /** Mutations and actions that reject, by function name, with the text they reject with. */
   refusals: {} as Record<string, string>,
+  /** What a mutation or action resolves with, by function name; undefined otherwise. */
+  results: {} as Record<string, unknown>,
+  /** Every call made, by function name, with its arguments. */
+  calls: [] as Array<{ name: string; args: unknown }>,
+  /** What a query answers, by function name; undefined (loading) otherwise. */
+  queries: {} as Record<string, unknown>,
 }));
 
-vi.mock('convex/react', () => ({
-  useQuery: (): undefined => undefined,
-  useMutation:
-    (reference: unknown): (() => Promise<void>) =>
-    async (): Promise<void> => {
-      const refusal = backend.refusals[getFunctionName(reference as never)];
+vi.mock('convex/react', () => {
+  const call =
+    (reference: unknown): ((args?: unknown) => Promise<unknown>) =>
+    async (args?: unknown): Promise<unknown> => {
+      const name = getFunctionName(reference as never);
+      backend.calls.push({ name, args });
+      const refusal = backend.refusals[name];
       if (refusal !== undefined) throw new Error(refusal);
-    },
-  useAction:
-    (reference: unknown): (() => Promise<void>) =>
-    async (): Promise<void> => {
-      const refusal = backend.refusals[getFunctionName(reference as never)];
-      if (refusal !== undefined) throw new Error(refusal);
-    },
-}));
+      return backend.results[name];
+    };
+  return {
+    useQuery: (reference: unknown): unknown => backend.queries[getFunctionName(reference as never)],
+    useMutation: call,
+    useAction: call,
+  };
+});
 
 import { declareUndeclaredInputs } from '../../../../src/work/skill-inputs';
 import type { Doc, Id } from '../../../../convex/_generated/dataModel';
 import type { AgentMetrics } from '../../../../src/metrics/types';
+import { dashboardMetrics } from '../../../fixtures/dashboard/metrics';
+import type { MockAction } from '../../../../src/work/types';
+import { PILOT_FIGURES } from '../../../../app/CompanySupervision';
 import type { SurfaceRecord } from '../../../../src/surfaces/types';
 import {
   ActionPayload,
+  AgentDashboard,
   AmendCharterPanel,
+  AutonomyControl,
+  CheckForNewWork,
+  ZoneLine,
+  EventTicker,
+  WorkQueue,
+  NotificationModeControl,
+  PendingDecisionsPanel,
   CharterCard,
   ConstraintList,
   DashboardHeader,
@@ -60,20 +78,38 @@ import {
   RepairNote,
   SessionRestoreNote,
   WorkItemCard,
+  CHIP_SWAP_MS,
+  connectedManagerChannel,
+  LANDING_MS,
   sortedForQueue,
   phasedLedger,
+  PermissionRows,
   PermissionsCard,
   eventItemTitle,
   planApprovalRequest,
+  ANSWER_AND_RETRY,
+  SKIP_RETRY_NOTE,
+  TAKE_IT_ANYWAY,
   TICKET_REREAD_STOP,
   typedEstimateMinutes,
   waitingLine,
 } from '../../../../app/agent/[agentId]/AgentDashboard';
 import {
+  button,
+  choose,
+  focusedName,
+  mount,
+  press,
+  said,
+  settle,
+  typeInto,
+} from '../../../fixtures/dom/press';
+import {
   ticketRereadStopReason,
   withheldBeforeFirstWrite,
 } from '../../../../src/work/ticket-ownership';
 import { AgentZoneContext } from '../../../../app/agent/[agentId]/time';
+import { ARRIVAL_MS } from '../../../../app/arrival';
 import { DECISION_REQUEST_RECOVERY_MS } from '../../../../src/work/manager-channel';
 import {
   HELD_BEFORE_AUTONOMY_NOTE,
@@ -262,7 +298,10 @@ describe('a question at plan approval', (): void => {
     expect(markup).toContain('aria-label="answer: Who owns the Looker pipeline tile."');
     expect(markup).toContain('Planner');
     expect(markup).toContain('which figure to enter if the deck and the sheet disagree');
-    expect(markup).toContain('aria-label="answer to the planner');
+    expect(markup).toMatch(
+      /<label for="[^"]*-note"[^>]*>Your answer to the note, for this run \(optional\)<\/label>/,
+    );
+    expect(markup).not.toContain('aria-label="answer to the planner');
     expect(markup).toContain('Approve plan with answers');
     expect(markup).toContain('Cancel');
   });
@@ -522,6 +561,19 @@ describe('a run with two phases', (): void => {
       <DraftDetails output={{ draft: 'd', notes: '', applied: twoPhase.applied }} />,
     );
     expect(single).toContain('written before anything was applied');
+  });
+
+  it('calls the draft the employee’s, never the agent’s (N29)', (): void => {
+    const single = renderToStaticMarkup(
+      <DraftDetails
+        output={{ draft: 'd', notes: '', applied: twoPhase.applied }}
+        title="Close REVOPS-5"
+      />,
+    );
+    expect(single).toContain('Draft the employee wrote (1 chars)');
+    expect(single).toContain('aria-label="Draft the employee wrote: Close REVOPS-5"');
+    expect(single).toContain('The employee&#x27;s own words');
+    expect(single).not.toMatch(/\bagent\b/i);
   });
 });
 
@@ -1027,7 +1079,7 @@ describe('sending a finished item back', (): void => {
 
   it('offers a finished item the note and Retry only, keeping the reconciliation checklist for a note in progress', (): void => {
     const markup = render(item('completed'));
-    expect(markup).toContain('note for the retry');
+    expect(markup).toContain('Note for the retry: say what to change');
     expect(markup).toContain('Retry with a note sends this finished work back');
     expect(markup).not.toContain('Provider reconciliation required');
     expect(markup).not.toContain(
@@ -1120,7 +1172,8 @@ describe('the manager line', (): void => {
     const markup = renderToStaticMarkup(
       <ManagerLine bossEmail="boss@day0.local" onChange={async () => undefined} />,
     );
-    expect(markup).toContain('Agent reporting to');
+    expect(markup).toContain('Employee reporting to');
+    expect(markup).not.toMatch(/\bagent\b/i);
     expect(markup).toContain('boss@day0.local');
     expect(markup).toContain('Change manager');
     expect(markup).not.toContain('could not find this manager');
@@ -1218,9 +1271,19 @@ describe('retrying a skipped item', (): void => {
     expect(markup).not.toContain('without the quality-fit filter');
   });
 
-  it('keeps Retry off a skip that is neither the quality-fit filter nor the scope judgement', (): void => {
-    const markup = render(skipped('already-claimed: state=executing'));
-    expect(markup).not.toContain('>Retry<');
+  // P3-1 and E-47: the manager who disagrees with a skip no rule waives has a
+  // control too; Retry evaluates the item again and says it may be skipped again.
+  it('offers Retry on every skip no rule waives, saying the item is evaluated again', (): void => {
+    for (const reason of [
+      'already-claimed: state=executing',
+      'registered skill "update-linear-ticket" was tried and does not cover this item',
+      'low-value: 10',
+    ]) {
+      const markup = render(skipped(reason));
+      expect(markup).toMatch(/<button[^>]*class="min-h-11 [^"]*"[^>]*>Retry<\/button>/);
+      expect(markup).toContain(SKIP_RETRY_NOTE);
+      expect(markup).not.toContain(TAKE_IT_ANYWAY);
+    }
   });
 
   it('names the colleague who holds the item, links to their dashboard and offers no Retry', (): void => {
@@ -1244,6 +1307,10 @@ describe('retrying a skipped item', (): void => {
     );
     expect(markup).not.toContain('claimed-by-colleague:');
     expect(markup).not.toContain('>Retry<');
+    // The colleague's card is the control: cancelling there lets the item come back here.
+    expect(markup).toContain(
+      'To give it to this employee instead, cancel it on Priya&#x27;s card; it comes back here by itself once they let it go.',
+    );
   });
 });
 
@@ -1376,6 +1443,35 @@ describe('charter confirm-or-strike list', (): void => {
 
   it('renders nothing for a charter drafted before constraints existed', (): void => {
     expect(renderToStaticMarkup(<ConstraintList constraints={[]} approved={false} />)).toBe('');
+  });
+
+  it('draws the line through only a rule struck since the list rendered, and settles its mark', (): void => {
+    /** The quote of every row the list marks as struck just now. */
+    const just = (root: ParentNode): string[] =>
+      [...root.querySelectorAll('li[data-just]')].map(
+        (row) => row.querySelector('[data-strike]')?.textContent ?? '',
+      );
+    const list = (struck: boolean) => (
+      <ConstraintList
+        constraints={[{ ...constraints[0]!, struck }, constraints[1]!]}
+        approved={false}
+        onStrike={() => undefined}
+        onRestore={() => undefined}
+      />
+    );
+    const view = mount(list(false));
+    expect(just(view.container)).toEqual([]);
+    expect(view.container.querySelectorAll('[data-struck-mark]')).toHaveLength(1);
+
+    act((): void => view.root.render(list(true)));
+    expect(just(view.container)).toEqual(["“if it's a ticket it has an owner and a priority”"]);
+    expect(view.container.querySelector('li[data-just] [data-struck-mark]')?.textContent).toBe(
+      '· struck',
+    );
+
+    act((): void => view.root.render(list(false)));
+    expect(just(view.container)).toEqual([]);
+    view.unmount();
   });
 
   it('names the struck count on the Approve button', (): void => {
@@ -1672,7 +1768,7 @@ describe('amending an approved charter from the card', (): void => {
 
   it('offers every typed change: the function, each clause list, the open questions, a rule and the systems', (): void => {
     const markup = renderToStaticMarkup(
-      <AmendCharterPanel charter={charter} body={body} error={null} onAmend={async () => true} />,
+      <AmendCharterPanel charter={charter} body={body} busy={false} onAmend={() => undefined} />,
     );
     expect(markup).toContain('next version v0.2');
     expect(markup).toContain('value="Own routine revenue operations work from Linear tickets."');
@@ -1690,7 +1786,7 @@ describe('amending an approved charter from the card', (): void => {
 
   it("offers no approval chain of its own: the manager is the agent row's, changed from the header (U9 D3 (b))", (): void => {
     const panel = renderToStaticMarkup(
-      <AmendCharterPanel charter={charter} body={body} error={null} onAmend={async () => true} />,
+      <AmendCharterPanel charter={charter} body={body} busy={false} onAmend={() => undefined} />,
     );
     expect(panel.toLowerCase()).not.toMatch(/approval chain|approver|who approves/);
     const card = renderToStaticMarkup(
@@ -1699,16 +1795,40 @@ describe('amending an approved charter from the card', (): void => {
     expect(card).toContain('ana@kestrel.example, the manager named in the header; change it there');
   });
 
-  it('shows the refusal the backend returned', (): void => {
-    const markup = renderToStaticMarkup(
-      <AmendCharterPanel
-        charter={charter}
-        body={body}
-        error="the amendment changes nothing"
-        onAmend={async () => false}
-      />,
+  it("says the backend's refusal in the card's live region, with the panel closed or open, and keeps focus on the control", async (): Promise<void> => {
+    backend.refusals = {
+      'charters:amend': `[CONVEX M(charters:amend)] [Request ID: 1] Server Error\nUncaught Error: the amendment changes nothing\n    at handler (../convex/charters.ts:1:1)`,
+    };
+    const view = mount(<CharterCard charter={{ ...charter, body }} />);
+    await press(view.container, 'Remove: Linear');
+
+    expect(said(view.container)).toEqual(['the amendment changes nothing']);
+    expect(focusedName()).toBe('Remove: Linear');
+    view.unmount();
+    backend.refusals = {};
+  });
+
+  it('says the new version once an amendment lands, and empties the field it came from', async (): Promise<void> => {
+    const view = mount(<CharterCard charter={{ ...charter, body }} />);
+    const field = [...view.container.querySelectorAll<HTMLLabelElement>('label')].find(
+      (label) => label.textContent === 'Add to escalation triggers',
+    )?.control as HTMLInputElement | null;
+    if (!field) throw new Error('no field labelled for the escalation triggers');
+    typeInto(field, 'A close figure moves by more than 5 points.');
+    const add = [...view.container.querySelectorAll('button')].find(
+      (candidate) =>
+        candidate.textContent === 'Add' && candidate.parentElement?.contains(field) === true,
     );
-    expect(markup).toContain('the amendment changes nothing');
+    add?.focus();
+    await act(async (): Promise<void> => {
+      add?.click();
+    });
+    await settle();
+
+    expect(said(view.container)).toEqual(['Charter amended: version 0.2 is the one in force.']);
+    expect(field.value).toBe('');
+    expect(document.activeElement).toBe(field);
+    view.unmount();
   });
 
   it('is absent from a charter awaiting approval', (): void => {
@@ -1849,24 +1969,195 @@ describe('what Retry does to an unregistered skill', (): void => {
     ]);
   });
 
-  it('files a refused Approve in the words written for a person, the transport envelope stripped', async (): Promise<void> => {
-    const proposed = { ...base, state: 'proposed', requiredScopes: [] } as unknown as Doc<'skills'>;
-    const attempts = await clickAndRecord(
-      'Approve · author and verify',
-      'skills:approve',
-      'cannot approve "refresh-the-tile": it is approved, not proposed',
-      (record) => (
-        <ProposedSkillsPanel skills={[proposed]} surfaces={[]} onAuthoringAttempt={record} />
-      ),
+  /** What a production deployment sends for a plain `Error` thrown in the action: the envelope alone. */
+  const REDACTED_AUTHORING =
+    '[CONVEX A(skillActions:authorAndRegisterSkill)] [Request ID: 7f3a] Server Error';
+
+  it('files a Retry the production backend redacted as a sentence, never the envelope', async (): Promise<void> => {
+    backend.refusals = { 'skillActions:authorAndRegisterSkill': REDACTED_AUTHORING };
+    const attempts: unknown[] = [];
+    const view = mount(
+      <RegisteredSkillsPanel
+        skills={[]}
+        unregistered={[refused]}
+        authoringFailure={null}
+        onAuthoringAttempt={(attempt) => void attempts.push(attempt)}
+      />,
     );
+    await press(view.container, 'Retry refresh-the-tile');
     expect(attempts).toEqual([
       null,
-      {
-        skillId: 'skill-1',
-        name: 'refresh-the-tile',
-        reason: 'cannot approve "refresh-the-tile": it is approved, not proposed',
-      },
+      { skillId: 'skill-2', name: 'refresh-the-tile', reason: 'authoring did not finish' },
     ]);
+    view.unmount();
+    backend.refusals = {};
+  });
+
+  it('files an approved authoring the production backend redacted as a sentence, never the envelope', async (): Promise<void> => {
+    const proposed = { ...base, state: 'proposed', requiredScopes: [] } as unknown as Doc<'skills'>;
+    backend.refusals = { 'skillActions:authorAndRegisterSkill': REDACTED_AUTHORING };
+    const attempts: unknown[] = [];
+    const view = mount(
+      <ProposedSkillsPanel
+        skills={[proposed]}
+        surfaces={[]}
+        onAuthoringAttempt={(attempt) => void attempts.push(attempt)}
+      />,
+    );
+    await press(view.container, 'Approve · author and verify');
+    await settle();
+    expect(attempts).toEqual([
+      null,
+      { skillId: 'skill-1', name: 'refresh-the-tile', reason: 'authoring did not finish' },
+    ]);
+    view.unmount();
+    backend.refusals = {};
+  });
+
+  it("says a refused Approve in the panel's live region in the words written for a person, and files no authoring attempt", async (): Promise<void> => {
+    const proposed = { ...base, state: 'proposed', requiredScopes: [] } as unknown as Doc<'skills'>;
+    backend.refusals = {
+      'skills:approve': `[CONVEX M(skills:approve)] [Request ID: 1] Server Error\nUncaught Error: cannot approve "refresh-the-tile": it is approved, not proposed\n    at handler (../convex/skills.ts:1:1)`,
+    };
+    const attempts: unknown[] = [];
+    const view = mount(
+      <ProposedSkillsPanel
+        skills={[proposed]}
+        surfaces={[]}
+        onAuthoringAttempt={(attempt) => void attempts.push(attempt)}
+      />,
+    );
+    await press(view.container, 'Approve · author and verify');
+
+    expect(said(view.container)).toEqual([
+      'cannot approve "refresh-the-tile": it is approved, not proposed',
+    ]);
+    expect(attempts).toEqual([]);
+    expect(focusedName()).toBe('Approve · author and verify');
+    view.unmount();
+    backend.refusals = {};
+  });
+
+  it('says an approval, then files what the authoring it started came to', async (): Promise<void> => {
+    const proposed = { ...base, state: 'proposed', requiredScopes: [] } as unknown as Doc<'skills'>;
+    backend.results = { 'skillActions:authorAndRegisterSkill': { ok: true } };
+    const attempts: unknown[] = [];
+    const view = mount(
+      <ProposedSkillsPanel
+        skills={[proposed]}
+        surfaces={[]}
+        onAuthoringAttempt={(attempt) => void attempts.push(attempt)}
+      />,
+    );
+    await press(view.container, 'Approve · author and verify');
+
+    expect(said(view.container)).toEqual([
+      'Approved refresh-the-tile: the employee is authoring it now, and the Skills card says when it is callable.',
+    ]);
+    expect(attempts).toEqual([null, { skillId: 'skill-1', name: 'refresh-the-tile' }]);
+    view.unmount();
+    backend.results = {};
+  });
+
+  it('rejects a proposed skill with an outcome said in the panel (the wave 4 Reject ruling)', async (): Promise<void> => {
+    const proposed = { ...base, state: 'proposed', requiredScopes: [] } as unknown as Doc<'skills'>;
+    backend.refusals = {
+      'skills:reject': `[CONVEX M(skills:reject)] [Request ID: 1] Server Error\nUncaught Error: cannot reject "refresh-the-tile": it is registered\n    at handler (../convex/skills.ts:1:1)`,
+    };
+    const refused = mount(
+      <ProposedSkillsPanel skills={[proposed]} surfaces={[]} onAuthoringAttempt={noop} />,
+    );
+    await press(refused.container, 'Reject refresh-the-tile');
+    expect(said(refused.container)).toEqual(['cannot reject "refresh-the-tile": it is registered']);
+    expect(focusedName()).toBe('Reject refresh-the-tile');
+    refused.unmount();
+    backend.refusals = {};
+
+    const rejected = mount(
+      <ProposedSkillsPanel skills={[proposed]} surfaces={[]} onAuthoringAttempt={noop} />,
+    );
+    await press(rejected.container, 'Reject refresh-the-tile');
+    expect(said(rejected.container)).toEqual([
+      'Rejected refresh-the-tile: the employee will not author it.',
+    ]);
+    // The row leaves when the query answers; the panel keeps its live region.
+    act((): void =>
+      rejected.root.render(
+        <ProposedSkillsPanel skills={[]} surfaces={[]} onAuthoringAttempt={noop} />,
+      ),
+    );
+    expect(said(rejected.container)).toEqual([
+      'Rejected refresh-the-tile: the employee will not author it.',
+    ]);
+    rejected.unmount();
+  });
+
+  it('files a registered Retry as the attempt and gives focus back to Retry once its run lets go', async (): Promise<void> => {
+    backend.results = { 'skillActions:authorAndRegisterSkill': { ok: true } };
+    const attempts: unknown[] = [];
+    const view = mount(
+      <RegisteredSkillsPanel
+        skills={[]}
+        unregistered={[refused]}
+        authoringFailure={null}
+        onAuthoringAttempt={(attempt) => void attempts.push(attempt)}
+      />,
+    );
+    await press(view.container, 'Retry refresh-the-tile');
+    expect(attempts).toEqual([null, { skillId: 'skill-2', name: 'refresh-the-tile' }]);
+    expect(focusedName()).toBe('Retry refresh-the-tile');
+    view.unmount();
+    backend.results = {};
+  });
+
+  it('gives focus to the Skills card when a registered Retry takes its row out of the list', async (): Promise<void> => {
+    backend.results = { 'skillActions:authorAndRegisterSkill': { ok: true } };
+    const panel = (rows: Doc<'skills'>[]) => (
+      <RegisteredSkillsPanel
+        skills={[]}
+        unregistered={rows}
+        authoringFailure={null}
+        onAuthoringAttempt={noop}
+        focusRef={{ current: null }}
+      />
+    );
+    const view = mount(panel([refused]));
+    const retry = button(view.container, 'Retry refresh-the-tile');
+    retry.focus();
+    await act(async (): Promise<void> => {
+      retry.click();
+      // The row registers and leaves the list before the run's promise settles.
+      view.root.render(panel([]));
+    });
+    await settle();
+    expect(focusedName()).toBe('Skills · 0 registered');
+    view.unmount();
+    backend.results = {};
+  });
+
+  it('says a registration and an authoring failure in the Skills card live region, and gives each control a 44 px target', (): void => {
+    const done = renderToStaticMarkup(
+      <RegisteredSkillsPanel
+        skills={[]}
+        unregistered={[refused]}
+        authoringFailure={null}
+        registered="refresh-the-tile"
+        onAuthoringAttempt={noop}
+      />,
+    );
+    expect(done).toMatch(
+      /<div role="status" aria-live="polite" aria-atomic="true"><p[^>]*>refresh-the-tile is registered: it passed the check and is callable\.<\/p><\/div>/,
+    );
+    expect(done).toMatch(/<button[^>]*class="min-h-11 [^"]*"[^>]*>Retry<\/button>/);
+    const failed = renderToStaticMarkup(
+      <RegisteredSkillsPanel
+        skills={[]}
+        unregistered={[]}
+        authoringFailure="refresh-the-tile: the sandbox component is not running"
+        onAuthoringAttempt={noop}
+      />,
+    );
+    expect(failed).toMatch(/<div role="status"[^>]*><p[^>]*>Authoring did not finish: /);
   });
 
   it('offers a refused skill a fresh authoring call', (): void => {
@@ -2084,7 +2375,12 @@ describe('what Retry does to an unregistered skill', (): void => {
 
     it('keeps its line breaks, in a box bounded in height that scrolls, still wrapping a line with no spaces', (): void => {
       const markup = panel([{ ...refused, verificationLog: log } as unknown as Doc<'skills'>]);
-      const block = /<div class="([^"]*)" data-skill-log="multiline">([^<]*)<\/div>/.exec(markup);
+      const block =
+        /<div tabindex="0" role="region" aria-label="Verification log: refresh-the-tile" class="([^"]*)" data-skill-log="multiline">([^<]*)<\/div>/.exec(
+          markup,
+        );
+      // A scroll box is reachable from the keyboard and named, as axe's
+      // scrollable-region-focusable asks (X2's siblings).
       expect(block).not.toBeNull();
       const classes = block![1]!.split(' ');
       expect(classes).toEqual(
@@ -2307,55 +2603,7 @@ describe('what an outage leaves on the card (P7-18)', (): void => {
 });
 
 describe('dashboard decisions on the supervision card (P6-9)', (): void => {
-  const metrics = (): AgentMetrics =>
-    ({
-      charter: {
-        timeToFirstDraftedMs: 1,
-        timeToFirstApprovedMs: 2,
-        requestChanges: 0,
-      },
-      decisions: {
-        requested: 0,
-        approved: 2,
-        rejected: 1,
-        partiallyApproved: 0,
-        cancelled: 0,
-        medianLatencyMs: 60_000,
-        p90LatencyMs: 60_000,
-        byVia: {
-          dashboard: { decided: 3, medianLatencyMs: 60_000, p90LatencyMs: 60_000 },
-          channel: { decided: 0, medianLatencyMs: null, p90LatencyMs: null },
-        },
-      },
-      actions: {
-        autoApplied: 0,
-        automatic: { reads: 0, managerMessages: 0, writes: 0 },
-        sessionRestores: 0,
-        held: 3,
-        approved: 2,
-        rejected: 1,
-        refused: 0,
-        blockedAfterRevocation: null,
-        firstBlockAfterRevocationMs: null,
-      },
-      surfaces: { approved: 0, rejected: 0, absent: 0 },
-      skills: { approved: 0, rejected: 0 },
-      autonomyChanges: 0,
-      auditTrail: { complete: 3, total: 3, fraction: 1 },
-      pilot: {
-        skillReuse: { runs: 3, reused: 1, rate: 1 / 3 },
-        cycleTime: {
-          ended: 3,
-          medianToEndMs: 60_000,
-          completed: 2,
-          medianToCompletionMs: 120_000,
-          p90ToCompletionMs: 180_000,
-        },
-        reorientation: { answered: 1, amended: 1, rate: 1 },
-        hoursSaved: { estimatedItems: 0, hours: null },
-        retrieval: { tokens: null, recall: null },
-      },
-    }) as unknown as AgentMetrics;
+  const metrics = dashboardMetrics;
 
   it('counts decisions made on the dashboard when nothing was asked on a chat surface', (): void => {
     const markup = renderToStaticMarkup(<MetricsCard metrics={metrics()} />);
@@ -2794,5 +3042,1018 @@ describe('a plan drafted without its ticket (P7-18)', (): void => {
     expect(markup).toContain(
       'Drafted without reading the ticket: Linear was not connected. Day0 drafts the plan again when Linear is back; approving now runs it as drafted.',
     );
+  });
+});
+
+/** A backend refusal as it reaches the browser: the transport's envelope around the sentence. */
+function refusal(call: string, sentence: string): Error {
+  return new Error(
+    `[CONVEX M(${call})] [Request ID: 1] Server Error\nUncaught Error: ${sentence}\n    at handler (../convex/x.ts:1:1)`,
+  );
+}
+
+describe('the header controls say what each change came to and give focus back (step 45, K D6)', (): void => {
+  it('turns autonomy on through the confirmation, says so, and hands focus back to the switch', async (): Promise<void> => {
+    const calls: boolean[] = [];
+    const view = mount(
+      <AutonomyControl
+        on={false}
+        tone=""
+        onChange={async (next) => {
+          calls.push(next);
+        }}
+      />,
+    );
+    await press(view.container, 'Autonomous actions');
+    await press(view.container, 'Turn on');
+
+    expect(calls).toEqual([true]);
+    expect(said(view.container)).toEqual([
+      'Autonomous actions are on: the employee acts on connected systems without asking.',
+    ]);
+    expect(focusedName()).toBe('Autonomous actions');
+    expect(view.container.querySelector('[role="alertdialog"]')).toBeNull();
+    view.unmount();
+  });
+
+  it('keeps the confirmation open on a refusal, says why, and gives Cancel focus back to the switch', async (): Promise<void> => {
+    const view = mount(
+      <AutonomyControl
+        on={false}
+        tone=""
+        onChange={async () => {
+          throw refusal('agents:setAutonomousActions', 'Only the owner can change this.');
+        }}
+      />,
+    );
+    await press(view.container, 'Autonomous actions');
+    await press(view.container, 'Turn on');
+
+    expect(said(view.container)).toEqual(['Only the owner can change this.']);
+    expect(focusedName()).toBe('Turn on');
+    await press(view.container, 'Cancel');
+    expect(focusedName()).toBe('Autonomous actions');
+    view.unmount();
+  });
+
+  it('gives the switch a 44 px target around its drawn track', (): void => {
+    const view = mount(<AutonomyControl on={false} tone="" onChange={async () => undefined} />);
+    expect(button(view.container, 'Autonomous actions').className).toMatch(
+      /\bmin-h-11\b.*\bmin-w-11\b/,
+    );
+    view.unmount();
+  });
+
+  it('says the manager DM setting it saved, and the refusal when it did not', async (): Promise<void> => {
+    const saved = mount(
+      <NotificationModeControl mode="per-run" onChange={async () => undefined} />,
+    );
+    const select = saved.container.querySelector('select');
+    if (!select) throw new Error('no select');
+    await choose(select, 'digest');
+    expect(said(saved.container)).toEqual(['Manager DMs: hourly digest.']);
+    expect(document.activeElement).toBe(select);
+    saved.unmount();
+
+    const refused = mount(
+      <NotificationModeControl
+        mode="per-run"
+        onChange={async () => {
+          throw refusal('agents:setManagerNotifications', 'No manager channel is connected.');
+        }}
+      />,
+    );
+    const again = refused.container.querySelector('select');
+    if (!again) throw new Error('no select');
+    await choose(again, 'digest');
+    expect(said(refused.container)).toEqual(['No manager channel is connected.']);
+    refused.unmount();
+  });
+
+  it('changes the manager, says who the employee reports to now, and gives focus back to Change manager', async (): Promise<void> => {
+    const sent: string[] = [];
+    const view = mount(
+      <ManagerLine
+        bossEmail="boss@day0.local"
+        onChange={async (next) => {
+          sent.push(next);
+        }}
+      />,
+    );
+    await press(view.container, 'Change manager');
+    const field = view.container.querySelector<HTMLInputElement>('#manager-email');
+    if (!field) throw new Error('no field');
+    typeInto(field, ' lead@day0.local ');
+    await press(view.container, 'Save');
+
+    expect(sent).toEqual(['lead@day0.local']);
+    expect(said(view.container)).toEqual(['The employee now reports to lead@day0.local.']);
+    expect(focusedName()).toBe('Change manager');
+    view.unmount();
+  });
+
+  it('keeps the editor open on a refusal and says it without the envelope', async (): Promise<void> => {
+    const view = mount(
+      <ManagerLine
+        bossEmail="boss@day0.local"
+        onChange={async () => {
+          throw refusal('agents:setBossEmail', 'That is not an e-mail address.');
+        }}
+      />,
+    );
+    await press(view.container, 'Change manager');
+    await press(view.container, 'Save');
+
+    expect(said(view.container)).toEqual(['That is not an e-mail address.']);
+    expect(focusedName()).toBe('Save');
+    view.unmount();
+  });
+});
+
+describe('the charter card says what each change came to (step 45, K D6)', (): void => {
+  const draft = {
+    _id: 'charter-1',
+    _creationTime: 1,
+    agentId: 'agent-1',
+    version: '0.1',
+    approved: false,
+    createdAt: 1,
+    body: {
+      whyThisHire: 'Close week.',
+      proposedFunction: 'Own routine revenue operations work from Linear tickets.',
+      shortTermGoals: { day30: 'a', day60: 'b', day90: 'c' },
+      proposedBoundaries: { willDo: [], willNotDo: [], escalationTriggers: [] },
+      namedCollaborators: [],
+      priorityReading: [],
+      openQuestions: [],
+      constraints: [
+        {
+          kind: 'candidate-property',
+          quote: 'only the close tickets',
+          wording: ['close tickets'],
+          origin: 'manager-said',
+        },
+      ],
+    },
+  } as unknown as Doc<'charters'>;
+
+  beforeEach((): void => {
+    backend.calls = [];
+  });
+
+  afterEach((): void => {
+    backend.refusals = {};
+    backend.results = {};
+    backend.calls = [];
+  });
+
+  it('strikes a rule, says what approval will leave out, and keeps focus on the control', async (): Promise<void> => {
+    backend.results = { 'charters:setConstraintStruck': { ok: true } };
+    const view = mount(<CharterCard charter={draft} />);
+    await press(view.container, 'Strike: only the close tickets');
+
+    expect(backend.calls).toEqual([
+      {
+        name: 'charters:setConstraintStruck',
+        args: { charterId: 'charter-1', index: 0, struck: true },
+      },
+    ]);
+    expect(said(view.container)).toEqual([
+      'Struck “only the close tickets”: approval leaves its clauses out.',
+    ]);
+    expect(focusedName()).toBe('Strike: only the close tickets');
+    view.unmount();
+  });
+
+  it("says the strike the backend refused in the server's own words", async (): Promise<void> => {
+    backend.results = {
+      'charters:setConstraintStruck': { ok: false, reason: 'the rule is the only one on Linear' },
+    };
+    const view = mount(<CharterCard charter={draft} />);
+    await press(view.container, 'Strike: only the close tickets');
+    expect(said(view.container)).toEqual(['the rule is the only one on Linear']);
+    view.unmount();
+  });
+
+  it('approves the charter and says the employee starts, with 44 px decision buttons', async (): Promise<void> => {
+    backend.results = { 'charters:approve': { ok: true } };
+    const view = mount(<CharterCard charter={draft} />);
+    for (const name of ['Approve', 'Request changes']) {
+      expect(button(view.container, name).className).toMatch(/\bmin-h-11\b/);
+    }
+    await press(view.container, 'Approve');
+    expect(said(view.container)).toEqual([
+      'Charter approved: the employee starts on the work it implies.',
+    ]);
+    view.unmount();
+  });
+
+  it('says the draft is withdrawn and tells the page which draft went', async (): Promise<void> => {
+    const page: string[] = [];
+    const view = mount(<CharterCard charter={draft} onSentBack={(id) => page.push(id)} />);
+    await press(view.container, 'Request changes');
+    expect(backend.calls.map((entry) => entry.name)).toEqual(['charters:requestChanges']);
+    expect(said(view.container)).toEqual(['Charter sent back: this draft is withdrawn.']);
+    expect(page).toEqual(['charter-1']);
+    view.unmount();
+  });
+
+  it('lays the 30, 60 and 90-day goals out in one column on a phone', (): void => {
+    expect(renderToStaticMarkup(<CharterCard charter={draft} />)).toContain(
+      'grid grid-cols-1 sm:grid-cols-3',
+    );
+  });
+});
+
+describe('checking for new work now (step 45)', (): void => {
+  afterEach((): void => {
+    backend.refusals = {};
+    backend.results = {};
+  });
+
+  it('says what the check started, then the refusal of the next one in its place, keeping focus on the button', async (): Promise<void> => {
+    backend.results = { 'workLoop:checkForNewWork': { scheduled: 2 } };
+    const view = mount(<CheckForNewWork agentId={'agent-1' as Id<'agents'>} />);
+    expect(button(view.container, 'Check for new work').className).toMatch(/\bmin-h-11\b/);
+    await press(view.container, 'Check for new work');
+    expect(said(view.container)).toEqual([
+      'Checking 2 connected surfaces now; anything new appears here within a minute.',
+    ]);
+    expect(focusedName()).toBe('Check for new work');
+
+    backend.refusals = {
+      'workLoop:checkForNewWork': `[CONVEX M(workLoop:checkForNewWork)] [Request ID: 1] Server Error\nUncaught Error: The employee is retired.\n    at handler (../convex/workLoop.ts:1:1)`,
+    };
+    await press(view.container, 'Check for new work');
+    expect(said(view.container)).toEqual(['The employee is retired.']);
+    view.unmount();
+  });
+});
+
+describe('every decision on a work item card is said in its live region and gives focus back (step 45)', (): void => {
+  const base = {
+    _id: 'w-card',
+    _creationTime: 1,
+    agentId: 'a1',
+    title: 'Close summary for REVOPS-9',
+    contentSummary: 'Post the close summary.',
+    sourceSystem: 'linear',
+    sourceCategory: 'ticket-queue',
+    externalId: 'REVOPS-9',
+    observedAt: 1,
+    contentRefs: [],
+  };
+  const plan = {
+    summary: 'Comment then close.',
+    steps: ['comment', 'close'],
+    expectedOutputType: 'ticket-update',
+    riskNotes: '',
+    reversibility: 'reversible',
+    estimatedMinutes: 5,
+  };
+  const dmAction: MockAction = {
+    tool: 'http.request',
+    args: {
+      surface: 'slack',
+      method: 'POST',
+      path: '/chat.postMessage',
+      headersJson: '{"Authorization":"Bearer {{secret}}"}',
+      body: JSON.stringify({ channel: 'D0MANAGER', text: 'Draft ready.' }),
+    },
+  };
+  const refusedWith = (sentence: string) => async (): Promise<never> => {
+    throw refusal('work:x', sentence);
+  };
+
+  /** The card with every decision wired to a recorder, and one handler overridden. */
+  function card(
+    item: Record<string, unknown>,
+    handlers: Partial<Record<string, (...args: never[]) => Promise<unknown>>> = {},
+  ) {
+    const calls: Array<[string, unknown]> = [];
+    const record =
+      (name: string) =>
+      async (arg?: unknown): Promise<void> => {
+        calls.push([name, arg]);
+        await (handlers[name] as ((value?: unknown) => Promise<unknown>) | undefined)?.(arg);
+      };
+    const view = mount(
+      <WorkItemCard
+        item={{ ...base, ...item } as unknown as Doc<'workItems'>}
+        surfaces={[]}
+        autonomousActions={false}
+        onApprovePlan={record('approvePlan')}
+        onCancelPlan={record('cancelPlan')}
+        onRetryFailed={record('retry')}
+        onReconcileFailed={record('reconcile')}
+        onApproveActions={record('approveActions')}
+        onRejectActions={record('rejectActions')}
+        onResendDecision={record('resend')}
+      />,
+    );
+    return { ...view, calls };
+  }
+
+  it('approves a plan, says so, and keeps focus on the control while the row has not moved', async (): Promise<void> => {
+    const view = card({ state: 'plan-pending', plan });
+    await press(view.container, 'Approve plan');
+    expect(view.calls.map(([name]) => name)).toEqual(['approvePlan']);
+    expect(said(view.container)).toEqual(['Plan approved: Close summary for REVOPS-9.']);
+    expect(focusedName()).toBe('Approve plan');
+    view.unmount();
+  });
+
+  it('gives focus to the card when the decided control leaves with the row', async (): Promise<void> => {
+    const view = card({ state: 'plan-pending', plan });
+    const approve = button(view.container, 'Approve plan');
+    approve.focus();
+    await act(async (): Promise<void> => {
+      approve.click();
+      // The subscription answers before the call settles: the row has moved on.
+      view.root.render(
+        <WorkItemCard
+          item={{ ...base, state: 'plan-approved', plan } as unknown as Doc<'workItems'>}
+          surfaces={[]}
+          autonomousActions={false}
+          onApprovePlan={async () => undefined}
+          onCancelPlan={async () => undefined}
+          onRetryFailed={async () => undefined}
+          onReconcileFailed={async () => undefined}
+          onApproveActions={async () => undefined}
+          onRejectActions={async () => undefined}
+          onResendDecision={async () => undefined}
+        />,
+      );
+    });
+    await settle();
+    expect(focusedName()).toBe('Close summary for REVOPS-9');
+    view.unmount();
+  });
+
+  it('says a refused cancel without the envelope, and keeps focus on Cancel', async (): Promise<void> => {
+    const view = card(
+      { state: 'plan-pending', plan },
+      { cancelPlan: refusedWith('The plan already ran.') },
+    );
+    await press(view.container, 'Cancel');
+    expect(said(view.container)).toEqual(['The plan already ran.']);
+    expect(focusedName()).toBe('Cancel');
+    view.unmount();
+  });
+
+  it('says the refused Retry P8-1 names (another employee holds this) instead of dropping it', async (): Promise<void> => {
+    const view = card(
+      { state: 'failed', plan, skipReason: 'stopped: nothing landed' },
+      { retry: refusedWith('another employee holds this: Mateo holds REVOPS-9') },
+    );
+    await press(view.container, 'Retry');
+    expect(said(view.container)).toEqual(['another employee holds this: Mateo holds REVOPS-9']);
+    expect(focusedName()).toBe('Retry');
+    view.unmount();
+  });
+
+  it('approves and rejects held actions from the card, each said once', async (): Promise<void> => {
+    const held = {
+      state: 'actions-pending',
+      plan,
+      pendingRunId: 'run-1',
+      output: { draft: 'd', notes: '', actions: [dmAction] },
+      actionVerdicts: [
+        { disposition: 'held', reason: 'system-of-record mutation held for the manager' },
+      ],
+    };
+    const approving = card(held);
+    await press(approving.container, 'Approve all');
+    expect(approving.calls).toEqual([['approveActions', [0]]]);
+    expect(said(approving.container)).toEqual(['Approved 1 action: they apply now.']);
+    approving.unmount();
+
+    const rejecting = card(held);
+    const reason = [...rejecting.container.querySelectorAll('label')].find(
+      (label) => label.textContent === 'Reason for rejecting the run',
+    )?.control as HTMLInputElement | null;
+    if (!reason) throw new Error('the reason field has no visible label');
+    typeInto(reason, 'wrong ticket');
+    await press(rejecting.container, 'Reject run');
+    expect(rejecting.calls).toEqual([['rejectActions', 'wrong ticket']]);
+    expect(said(rejecting.container)).toEqual([
+      'Run rejected: nothing held on Close summary for REVOPS-9 is sent.',
+    ]);
+    rejecting.unmount();
+  });
+
+  it('resends an undelivered decision request and says where it asked', async (): Promise<void> => {
+    const view = card({
+      state: 'plan-pending',
+      plan,
+      decision: {
+        kind: 'plan',
+        surfaceName: 'Slack',
+        requestedAt: 1,
+        requestFailedAt: 2,
+        requestFailure: 'channel_not_found',
+      },
+    });
+    await press(view.container, 'Resend');
+    expect(view.calls.map(([name]) => name)).toEqual(['resend']);
+    expect(said(view.container)).toEqual(['Asked again on Slack.']);
+    expect(focusedName()).toBe('Resend');
+    view.unmount();
+  });
+
+  it('records a reconciliation and says Retry is enabled', async (): Promise<void> => {
+    const view = card({
+      state: 'failed',
+      plan,
+      skipReason: 'a write may have landed',
+      output: {
+        draft: 'd',
+        notes: '',
+        actions: [dmAction],
+        applied: [
+          {
+            tool: 'http.request',
+            ok: false,
+            outcomeUnknown: true,
+            reason: 'socket closed after the request',
+            idempotencyKey: 'w-card:run:0',
+          },
+        ],
+      },
+    });
+    const box = view.container.querySelector<HTMLInputElement>('input[type="checkbox"]');
+    act((): void => box?.click());
+    await press(view.container, 'Confirm reconciliation');
+    expect(view.calls).toEqual([['reconcile', true]]);
+    expect(said(view.container)).toEqual(['Reconciliation recorded: Retry is enabled.']);
+    view.unmount();
+  });
+
+  it('gives every decision control on the card a 44 px target', (): void => {
+    const view = card({ state: 'plan-pending', plan });
+    for (const name of ['Approve plan', 'Cancel']) {
+      expect(button(view.container, name).className).toMatch(/\bmin-h-11\b/);
+    }
+    for (const field of view.container.querySelectorAll('input')) {
+      expect(field.className).toMatch(/\bmin-h-11\b/);
+    }
+    view.unmount();
+  });
+});
+
+describe('approving held actions across items at once (step 45)', (): void => {
+  const action: MockAction = {
+    tool: 'http.request',
+    args: {
+      surface: 'slack',
+      method: 'POST',
+      path: '/chat.postMessage',
+      headersJson: '{"Authorization":"Bearer {{secret}}"}',
+      body: JSON.stringify({ channel: 'C0PUBLIC', text: 'Covered.' }),
+    },
+  };
+  const member = (id: string) => ({
+    workItemId: id as Id<'workItems'>,
+    pendingRunId: `run-${id}` as Id<'events'>,
+    title: `Answer ${id}`,
+    actions: [action],
+    heldIndexes: [0],
+    refused: 0,
+  });
+
+  it('says what the batch came to, and keeps saying it once the panel has emptied', async (): Promise<void> => {
+    const sent: unknown[] = [];
+    const panel = (members: ReturnType<typeof member>[]) => (
+      <PendingDecisionsPanel
+        members={members}
+        surfaces={[]}
+        onApproveBatch={async (batch) => {
+          sent.push(batch);
+        }}
+      />
+    );
+    const view = mount(panel([member('w1'), member('w2')]));
+    expect(button(view.container, 'Approve 2 held actions across 2 items').className).toMatch(
+      /\bmin-h-11\b/,
+    );
+    await press(view.container, 'Approve 2 held actions across 2 items');
+    expect(sent).toHaveLength(1);
+    act((): void => view.root.render(panel([])));
+    expect(said(view.container)).toEqual([
+      'Approved 2 held actions across 2 items: they apply now.',
+    ]);
+    view.unmount();
+  });
+});
+
+describe('revoking and granting a permission from the card (step 45, P6-7)', (): void => {
+  it('gives two scopes that differ only in punctuation two button ids', (): void => {
+    const markup = renderToStaticMarkup(
+      <PermissionRows
+        scopes={[
+          { scope: 'linear:write', active: true, source: 'deploy', grantedAt: 1, revokedAt: null },
+          { scope: 'linear-write', active: true, source: 'manager', grantedAt: 1, revokedAt: null },
+        ]}
+        confirmingScope={null}
+        busyScope={null}
+        onAskRevoke={() => undefined}
+        onCancelRevoke={() => undefined}
+        onRevoke={() => undefined}
+        onRegrant={() => undefined}
+      />,
+    );
+    const ids = [...markup.matchAll(/<button[^>]* id="([^"]+)"/g)].map((match) => match[1]);
+    expect(ids).toHaveLength(2);
+    expect(new Set(ids).size).toBe(2);
+  });
+
+  afterEach((): void => {
+    backend.queries = {};
+    backend.refusals = {};
+  });
+
+  it('confirms a revoke with focus on the safe choice, says what it did, and gives focus back to the row', async (): Promise<void> => {
+    backend.queries = {
+      'agents:permissionScopes': [{ scope: 'linear:write', active: true, source: 'deploy' }],
+    };
+    const view = mount(<PermissionsCard agentId={'agent-1' as Id<'agents'>} />);
+    await press(view.container, 'Revoke linear:write');
+    expect(focusedName()).toBe('Keep grant');
+    await press(view.container, 'Keep grant');
+    expect(focusedName()).toBe('Revoke linear:write');
+
+    await press(view.container, 'Revoke linear:write');
+    await press(view.container, 'Confirm revoke');
+    expect(said(view.container)).toEqual([
+      'Revoked linear:write: work that still needs it stops at its final authority check.',
+    ]);
+    expect(focusedName()).toBe('Revoke linear:write');
+    expect(view.container.querySelector('[role="group"]')).toBeNull();
+    view.unmount();
+  });
+
+  it('says a refused re-grant, and gives every control a 44 px target', async (): Promise<void> => {
+    backend.queries = {
+      'agents:permissionScopes': [{ scope: 'slack:write', active: false, source: 'manager' }],
+    };
+    backend.refusals = {
+      'agents:grantScopes': `[CONVEX M(agents:grantScopes)] [Request ID: 1] Server Error\nUncaught Error: slack:write is not a scope this employee can hold.\n    at handler (../convex/agents.ts:1:1)`,
+    };
+    const view = mount(<PermissionsCard agentId={'agent-1' as Id<'agents'>} />);
+    expect(button(view.container, 'Re-grant slack:write').className).toMatch(/\bmin-h-11\b/);
+    await press(view.container, 'Re-grant slack:write');
+    expect(said(view.container)).toEqual(['slack:write is not a scope this employee can hold.']);
+    expect(focusedName()).toBe('Re-grant slack:write');
+    view.unmount();
+  });
+});
+
+describe('loading is not the same as empty (P3-13)', (): void => {
+  it('says the feed is loading, then that it has no events, then lists them', (): void => {
+    expect(renderToStaticMarkup(<EventTicker events={undefined} titles={new Map()} />)).toContain(
+      'loading the feed…',
+    );
+    expect(renderToStaticMarkup(<EventTicker events={[]} titles={new Map()} />)).toContain(
+      'no events yet',
+    );
+  });
+
+  it('says the queue and the skills are loading rather than empty', (): void => {
+    const queue = renderToStaticMarkup(
+      <WorkQueue
+        agentId={'a1' as Id<'agents'>}
+        workItems={[]}
+        openQuestions={[]}
+        surfaces={[]}
+        registeredSkillCount={0}
+        charterApproved={true}
+        autonomousActions={false}
+        surfaceMode="real"
+        loading={true}
+      />,
+    );
+    expect(queue).toContain('loading the work queue…');
+    expect(queue).not.toContain('no work seeded yet');
+    const skills = renderToStaticMarkup(
+      <RegisteredSkillsPanel
+        skills={[]}
+        unregistered={[]}
+        authoringFailure={null}
+        onAuthoringAttempt={() => undefined}
+        loading={true}
+      />,
+    );
+    expect(skills).toContain('loading skills…');
+    expect(skills).not.toContain('none yet');
+  });
+
+  it('puts every pilot figure definition in the page, not only in a hover', (): void => {
+    const markup = renderToStaticMarkup(<MetricsCard metrics={dashboardMetrics()} />);
+    for (const figure of PILOT_FIGURES) expect(markup).toContain(figure.definition);
+    expect(markup).toContain('What each pilot figure counts');
+  });
+});
+
+describe('answering the question a run stopped on (U2 decision 5, N7)', (): void => {
+  const question = 'Which template should the notice use?';
+  const stopped = {
+    _id: 'w-q',
+    _creationTime: 1,
+    agentId: 'a1',
+    state: 'failed',
+    title: 'Customs hold notice',
+    contentSummary: 'Send the notice.',
+    sourceSystem: 'linear',
+    sourceCategory: 'ticket-queue',
+    externalId: 'LOG-1',
+    observedAt: 1,
+    contentRefs: [],
+    skipReason: `stopped: ${openQuestionStopReason({ question, steps: [2] })}`,
+    output: {
+      draft: '',
+      notes: '',
+      actions: [],
+      applied: [],
+      openQuestion: { question, steps: [2] },
+    },
+  } as unknown as Doc<'workItems'>;
+
+  it('asks for the answer by name, waits for one, and sends it as the retry note', async (): Promise<void> => {
+    const sent: unknown[] = [];
+    const view = mount(
+      <WorkItemCard
+        item={stopped}
+        surfaces={[]}
+        autonomousActions={false}
+        onApprovePlan={async () => undefined}
+        onCancelPlan={async () => undefined}
+        onRetryFailed={async (note) => {
+          sent.push(note);
+        }}
+        onReconcileFailed={async () => undefined}
+        onApproveActions={async () => undefined}
+        onRejectActions={async () => undefined}
+        onResendDecision={async () => undefined}
+      />,
+    );
+    const field = [...view.container.querySelectorAll('label')].find(
+      (label) => label.textContent === `Your answer to: “${question}”`,
+    )?.control as HTMLInputElement | null;
+    if (!field) throw new Error('the answer field is not labelled with the question');
+    expect(() => button(view.container, ANSWER_AND_RETRY)).toThrow();
+    typeInto(field, 'Delay notice B.');
+    await press(view.container, ANSWER_AND_RETRY);
+
+    expect(sent).toEqual(['Delay notice B.']);
+    expect(said(view.container)).toEqual(['Answer sent: Customs hold notice runs again with it.']);
+    view.unmount();
+  });
+});
+
+describe('the manager DM setting waits for a manager channel (N7)', (): void => {
+  afterEach((): void => {
+    backend.queries = {};
+  });
+
+  const agent = {
+    _id: 'a1',
+    _creationTime: 1,
+    bossEmail: 'boss@day0.local',
+    name: 'Priya',
+    userId: 'owner',
+    state: 'active',
+    createdAt: 1,
+  } as unknown as Doc<'agents'>;
+  const approved = { approved: true } as unknown as Doc<'charters'>;
+
+  it('is hidden until a chat surface has found the manager, then offered', (): void => {
+    backend.queries = { 'config:surfaceMode': { mode: 'real', label: 'real' } };
+    const without = renderToStaticMarkup(<DashboardHeader agent={agent} charter={approved} />);
+    expect(without).not.toContain('Manager DMs');
+    const withChannel = renderToStaticMarkup(
+      <DashboardHeader agent={agent} charter={approved} managerChannel={true} />,
+    );
+    expect(withChannel).toContain('Manager DMs');
+  });
+
+  it('counts a manager channel only while it is connected and knows the manager (m1)', (): void => {
+    const now = Date.UTC(2026, 8, 29, 9);
+    const live = {
+      slug: 'slack',
+      displayName: 'Slack',
+      class: 'chat',
+      verdict: 'connected',
+      credentialLanded: true,
+      lastVerifiedAt: now - 60_000,
+      managerDmChannelId: 'D0MANAGER',
+      managerUserId: 'UMANAGER',
+    } as unknown as SurfaceRecord;
+    expect(connectedManagerChannel([live], now)).toBe(live);
+    // Past the six-hour liveness window the row still names the channel, but nothing can be sent.
+    const lapsed = { ...live, lastVerifiedAt: now - 7 * 60 * 60 * 1_000 } as SurfaceRecord;
+    expect(connectedManagerChannel([lapsed], now)).toBeUndefined();
+    const noManager = { ...live, managerUserId: undefined } as SurfaceRecord;
+    expect(connectedManagerChannel([noManager], now)).toBeUndefined();
+  });
+});
+
+describe("the zone line's confirmation (wave 3.5 review m10)", (): void => {
+  it('says the zone the server stored, in its spelling, not the one typed, and gives focus back to Change zone', async (): Promise<void> => {
+    const view = mount(<ZoneLine zone="UTC" onChange={async () => ({ zone: 'Asia/Singapore' })} />);
+    await press(view.container, 'Change zone');
+    const field = view.container.querySelector<HTMLInputElement>('#agent-zone');
+    if (!field) throw new Error('no zone field');
+    typeInto(field, 'asia/singapore');
+    const save = [...view.container.querySelectorAll('button')].find(
+      (candidate) => candidate.textContent === 'Save',
+    );
+    save?.focus();
+    await act(async (): Promise<void> => {
+      save?.click();
+    });
+    await settle();
+    expect(said(view.container)).toEqual([
+      "The employee's day is now Asia/Singapore; every time on this page is in it.",
+    ]);
+    expect(focusedName()).toBe('Change zone');
+    view.unmount();
+  });
+});
+
+describe('the page after a draft charter is sent back (step 45)', (): void => {
+  const agent = (state: string) => ({
+    _id: 'agent-1',
+    _creationTime: 1,
+    bossEmail: 'boss@day0.local',
+    name: 'Priya',
+    userId: 'owner',
+    state,
+    createdAt: 1,
+  });
+  const draft = {
+    _id: 'charter-2',
+    _creationTime: 2,
+    agentId: 'agent-1',
+    version: '0.2',
+    approved: false,
+    createdAt: 2,
+    body: {
+      whyThisHire: 'Close week.',
+      proposedFunction: 'Own routine revenue operations work.',
+      shortTermGoals: { day30: 'a', day60: 'b', day90: 'c' },
+      proposedBoundaries: { willDo: [], willNotDo: [], escalationTriggers: [] },
+      namedCollaborators: [],
+      priorityReading: [],
+      openQuestions: [],
+    },
+  };
+
+  afterEach((): void => {
+    backend.queries = {};
+    document.body.replaceChildren();
+  });
+
+  it('says the 1:1 is open again and gives it focus when the send-back reopened it', async (): Promise<void> => {
+    backend.queries = { 'agents:get': agent('charter-pending'), 'charters:latest': draft };
+    const view = mount(<AgentDashboard agentId={'agent-1' as Id<'agents'>} />);
+    await press(view.container, 'Request changes');
+    backend.queries = { 'agents:get': agent('deployed'), 'charters:latest': null };
+    act((): void => view.root.render(<AgentDashboard agentId={'agent-1' as Id<'agents'>} />));
+    await settle();
+
+    expect(said(view.container)).toContain(
+      'The 1:1 is open again, so the employee can redraft the charter from what you tell it.',
+    );
+    expect(focusedName()).toBe('The 1:1 that drafts the charter');
+    view.unmount();
+  });
+
+  it('says nothing reopened and moves no focus when an approved charter stands beneath the draft', async (): Promise<void> => {
+    backend.queries = { 'agents:get': agent('active'), 'charters:latest': draft };
+    const view = mount(<AgentDashboard agentId={'agent-1' as Id<'agents'>} />);
+    await press(view.container, 'Request changes');
+    backend.queries = {
+      'agents:get': agent('active'),
+      'charters:latest': { ...draft, _id: 'charter-1', version: '0.1', approved: true },
+    };
+    act((): void => view.root.render(<AgentDashboard agentId={'agent-1' as Id<'agents'>} />));
+    await settle();
+
+    expect(said(view.container).join(' ')).not.toContain('The 1:1 is open again');
+    expect(focusedName()).not.toBe('The 1:1 that drafts the charter');
+    view.unmount();
+  });
+});
+
+describe('the page in the layout (N29, UX 11)', (): void => {
+  afterEach((): void => {
+    backend.queries = {};
+    document.body.replaceChildren();
+  });
+
+  it('leaves the one main landmark to the layout, loading and loaded', async (): Promise<void> => {
+    const view = mount(<AgentDashboard agentId={'agent-1' as Id<'agents'>} />);
+    expect(view.container.textContent).toContain('loading employee…');
+    expect(view.container.querySelector('main')).toBeNull();
+    backend.queries = {
+      'agents:get': {
+        _id: 'agent-1',
+        _creationTime: 1,
+        bossEmail: 'boss@day0.local',
+        name: 'Priya',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      },
+    };
+    act((): void => view.root.render(<AgentDashboard agentId={'agent-1' as Id<'agents'>} />));
+    await settle();
+    expect(view.container.textContent).toContain('Work queue');
+    expect(view.container.querySelector('main')).toBeNull();
+    view.unmount();
+  });
+});
+
+describe('the cards arriving on first render (v4 section 1.3)', (): void => {
+  const agentRow = {
+    _id: 'agent-1',
+    _creationTime: 1,
+    bossEmail: 'boss@day0.local',
+    name: 'Priya',
+    userId: 'owner',
+    state: 'active',
+    createdAt: 1,
+  };
+  const workItem = (id: string, state: string) => ({
+    _id: id,
+    _creationTime: 1,
+    agentId: 'agent-1',
+    sourceCategory: 'ticket-queue',
+    sourceSystem: 'linear',
+    externalId: id,
+    title: `Item ${id}`,
+    contentSummary: 'Triage it.',
+    contentRefs: [],
+    state,
+    observedAt: 1,
+    createdAt: 1,
+  });
+
+  beforeEach((): void => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  });
+
+  afterEach((): void => {
+    vi.useRealTimers();
+    backend.queries = {};
+    document.body.replaceChildren();
+  });
+
+  /** The arrival marks in the rendered page, in document order. */
+  const marks = (root: ParentNode): (string | null)[] =>
+    [...root.querySelectorAll('[data-cards]')].map((group) => group.getAttribute('data-cards'));
+
+  it('marks both columns, then the queue’s rows as the second tier, for the arrival only', async (): Promise<void> => {
+    backend.queries = {
+      'agents:get': agentRow,
+      'work:listForAgent': [workItem('w-1', 'discovered'), workItem('w-2', 'completed')],
+    };
+    const view = mount(<AgentDashboard agentId={'agent-1' as Id<'agents'>} />);
+    await settle();
+    expect(marks(view.container)).toEqual(['', 'rows', '']);
+    act((): void => {
+      vi.advanceTimersByTime(ARRIVAL_MS);
+    });
+    expect(marks(view.container)).toEqual([]);
+    view.unmount();
+  });
+
+  it('marks nothing while the employee is still loading', async (): Promise<void> => {
+    const view = mount(<AgentDashboard agentId={'agent-1' as Id<'agents'>} />);
+    await settle();
+    expect(marks(view.container)).toEqual([]);
+    view.unmount();
+  });
+});
+
+describe('a work item that lands while the page is open (v3 section 5.2)', (): void => {
+  const executing = {
+    _id: 'w1',
+    _creationTime: 1,
+    agentId: 'a1',
+    state: 'executing',
+    title: 'Close REVOPS-5',
+    contentSummary: 'Add the audit note and close the ticket.',
+    sourceSystem: 'linear',
+    sourceCategory: 'ticket-queue',
+    externalId: 'REVOPS-5',
+    observedAt: 1,
+    contentRefs: [],
+  } as unknown as Doc<'workItems'>;
+  const landed = {
+    ...executing,
+    state: 'completed',
+    output: {
+      draft: 'Closed with the audit note.',
+      applied: [
+        { tool: 'linear.save_comment', ok: true, effect: 'Commented on REVOPS-5' },
+        { tool: 'linear.save_issue', ok: true, effect: 'Moved REVOPS-5 to Done' },
+      ],
+    },
+  } as unknown as Doc<'workItems'>;
+
+  afterEach((): void => {
+    document.body.replaceChildren();
+  });
+
+  /** The card for one row, as the queue renders it. */
+  const card = (item: Doc<'workItems'>) => (
+    <WorkItemCard
+      item={item}
+      surfaces={[]}
+      autonomousActions={false}
+      onApprovePlan={(): void => undefined}
+      onCancelPlan={(): void => undefined}
+      onRetryFailed={(): void => undefined}
+      onReconcileFailed={async (): Promise<void> => undefined}
+      onApproveActions={async (): Promise<void> => undefined}
+      onRejectActions={async (): Promise<void> => undefined}
+      onResendDecision={async (): Promise<void> => undefined}
+    />
+  );
+
+  it('swaps the state chip in one cell, settles the ledger and lifts its lines 70 ms apart', (): void => {
+    const view = mount(card(executing));
+    expect(view.container.querySelector('.chip-swap')).toBeNull();
+
+    act((): void => view.root.render(card(landed)));
+    const swap = view.container.querySelector('.chip-swap');
+    expect(swap?.querySelector('.from')?.textContent).toBe('executing');
+    expect(swap?.querySelector('.from')?.getAttribute('aria-hidden')).toBe('true');
+    expect(swap?.querySelector('.to')?.textContent).toBe('completed');
+    const ledger = view.container.querySelector('[data-land]');
+    expect(ledger?.textContent).toContain('Moved REVOPS-5 to Done');
+    expect(
+      [...(ledger?.querySelectorAll('li') ?? [])].map((line) =>
+        (line as HTMLElement).style.getPropertyValue('--i'),
+      ),
+    ).toEqual(['0', '1']);
+    view.unmount();
+  });
+
+  it('drops the swap and the landing mark once they have played, so a card moved later replays nothing', (): void => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const view = mount(card(executing));
+      act((): void => view.root.render(card(landed)));
+      expect(view.container.querySelector('.chip-swap')).not.toBeNull();
+      expect(view.container.querySelector('[data-land]')).not.toBeNull();
+      act((): void => {
+        vi.advanceTimersByTime(Math.max(CHIP_SWAP_MS, LANDING_MS));
+      });
+      expect(view.container.querySelector('.chip-swap')).toBeNull();
+      expect(view.container.textContent).not.toContain('executing');
+      expect(view.container.querySelector('[data-land]')).toBeNull();
+      expect(
+        [...view.container.querySelectorAll('li')].filter(
+          (line) => (line as HTMLElement).style.getPropertyValue('--i') !== '',
+        ),
+      ).toEqual([]);
+      expect(view.container.textContent).toContain('Moved REVOPS-5 to Done');
+      view.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops the stagger of the ledger lines at the fourth line', (): void => {
+    const long = {
+      ...landed,
+      output: {
+        draft: 'Closed.',
+        applied: Array.from({ length: 6 }, (_, index) => ({
+          tool: 'linear.save_comment',
+          ok: true,
+          effect: `Comment ${index}`,
+        })),
+      },
+    } as unknown as Doc<'workItems'>;
+    const view = mount(card(executing));
+    act((): void => view.root.render(card(long)));
+    expect(
+      [...view.container.querySelectorAll('[data-land] li')].map((line) =>
+        (line as HTMLElement).style.getPropertyValue('--i'),
+      ),
+    ).toEqual(['0', '1', '2', '3', '3', '3']);
+    view.unmount();
+  });
+
+  it('shows a landing that was already there as it stands, with nothing to play', (): void => {
+    const view = mount(card(landed));
+    expect(view.container.textContent).toContain('Moved REVOPS-5 to Done');
+    expect(view.container.querySelector('.chip-swap')).toBeNull();
+    expect(view.container.querySelector('[data-land]')).toBeNull();
+    expect(view.container.querySelector('li[style]')).toBeNull();
+    view.unmount();
   });
 });

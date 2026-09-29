@@ -29,7 +29,11 @@ export function Providers({ children }: { children: ReactNode }) {
   // not restarting, once the setup has written it.
   if (!client) {
     return (
-      <main className="min-h-screen grid place-items-center px-6">
+      <main
+        id="main"
+        tabIndex={-1}
+        className="min-h-screen grid place-items-center px-6 outline-none"
+      >
         <p className="max-w-md text-center text-sm text-[var(--color-muted)]">
           Day0 is not configured yet. Complete the local setup, then build and start the app again.
         </p>
@@ -97,7 +101,11 @@ function DevNoAuthGate({ children }: { children: ReactNode }) {
   if (isAuthenticated) return <>{children}</>;
 
   return (
-    <main className="min-h-[calc(100vh-3.25rem)] grid place-items-center px-6">
+    <main
+      id="main"
+      tabIndex={-1}
+      className="min-h-[calc(100vh-3.25rem)] grid place-items-center px-6 outline-none"
+    >
       <p className="max-w-md text-center text-sm text-[var(--color-muted)]">
         {isLoading
           ? 'Unlocking this machine’s local session…'

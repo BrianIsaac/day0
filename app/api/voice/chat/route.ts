@@ -121,6 +121,6 @@ export async function POST(req: Request): Promise<Response> {
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: 'agent unavailable', detail: msg }, { status: 503 });
+    return Response.json({ error: 'employee unavailable', detail: msg }, { status: 503 });
   }
 }

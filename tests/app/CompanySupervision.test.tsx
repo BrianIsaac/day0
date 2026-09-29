@@ -244,12 +244,12 @@ describe('the company supervision card', (): void => {
     expect(titles).toContain('not a median of the employees');
     expect(titles).toContain('replayed browser calls included');
     expect(titles).toContain('never an automatic action');
-    expect(titles).toContain('Evaluation agents and baseline arms are left out');
+    expect(titles).toContain('Evaluation employees and baseline arms are left out');
   });
 
   it('says what the company row leaves out and what it counts beside the actions', (): void => {
     const html = renderToStaticMarkup(<CompanySupervisionCard figures={FIGURES} />);
-    expect(html).toContain('2 evaluation agents left out');
+    expect(html).toContain('2 evaluation employees left out');
     expect(html).toContain('3 browser calls replayed to sign in again');
     expect(html).not.toContain('most recent');
 
@@ -257,7 +257,7 @@ describe('the company supervision card', (): void => {
       <CompanySupervisionCard figures={{ ...FIGURES, excludedAgents: 0, omittedEmployees: 4 }} />,
     );
     expect(crowded).toContain('the 3 most recent employees; 4 earlier ones are not counted');
-    expect(crowded).not.toContain('evaluation agents left out');
+    expect(crowded).not.toContain('evaluation employees left out');
   });
 
   it('renders nothing until the owner has an employee', (): void => {
@@ -317,5 +317,77 @@ describe('the company supervision card', (): void => {
     const companyRow = rowOf(pilot, 'Company');
     expect(companyRow).toContain('not yet');
     expect(companyRow).toContain('no estimates yet');
+  });
+});
+
+describe('the company supervision card at a narrow width', (): void => {
+  const html = renderToStaticMarkup(<CompanySupervisionCard figures={FIGURES} />);
+
+  it('never scrolls sideways: no minimum table width and no horizontal scroller', (): void => {
+    expect(html).not.toContain('min-w-[640px]');
+    expect(html).not.toContain('overflow-x-auto');
+  });
+
+  it('stacks both tables below lg, each row a grid whose cells carry their column’s label', (): void => {
+    const tables = [...html.matchAll(/<table role="table" class="([^"]*)"/g)].map(
+      (match) => match[1],
+    );
+    expect(tables).toHaveLength(2);
+    for (const table of tables) expect(table).toContain('max-lg:block');
+    const heads = [...html.matchAll(/<thead role="rowgroup" class="([^"]*)"/g)].map(
+      (match) => match[1],
+    );
+    for (const head of heads) expect(head).toContain('max-lg:sr-only');
+    const bodyRows = [...html.matchAll(/<tbody[\s\S]*?<\/tbody>/g)].flatMap(
+      (body) => body[0].match(/<tr role="row" class="[^"]*"/g) ?? [],
+    );
+    expect(bodyRows).toHaveLength(8);
+    for (const row of bodyRows) expect(row).toContain('max-lg:grid');
+    const labels = [
+      ...html.matchAll(
+        /<span aria-hidden="true" class="[^"]*lg:hidden[^"]*"><span class="[^"]*">([^<]*)</g,
+      ),
+    ].map((match) => match[1]);
+    expect(labels.slice(0, 5)).toEqual([
+      'Charter',
+      'Decisions',
+      'Decision wait',
+      'Actions',
+      'Audit trail',
+    ]);
+    expect(labels).toContain('Skill reuse');
+  });
+
+  it('prints each stacked value’s unit beside its label, so a phone reader knows what 12 · 1 · 1 counts', (): void => {
+    const stacked = [
+      ...html.matchAll(
+        /<span aria-hidden="true" class="[^"]*lg:hidden[^"]*">([\s\S]*?)<\/span><\/span>/g,
+      ),
+    ].map((match) =>
+      match[1]
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim(),
+    );
+    expect(stacked).toContain('Actions automatic changes · approved · held · rejected · refused');
+    expect(stacked).toContain('Decisions approved / rejected');
+  });
+
+  it('keeps table semantics when the rows stack, with the stacked labels hidden from assistive technology', (): void => {
+    expect(html).toMatch(/<table role="table"/);
+    expect(html).toMatch(/<tbody role="rowgroup"/);
+    expect(html).toMatch(/<tr role="row"/);
+    expect(html).toMatch(/<th scope="row" role="rowheader"/);
+    expect(html).toMatch(/<td role="cell"/);
+    expect(html).toMatch(/<th scope="col" role="columnheader"/);
+  });
+
+  it('says "employee" in its manager-facing copy, never "agent" (N29)', (): void => {
+    expect(html.replace(/<[^>]+>/g, ' ')).not.toMatch(/\bagents?\b/i);
+    expect(html).not.toMatch(/title="[^"]*\bagents?\b/i);
+  });
+
+  it('sets no type below the 12 px floor', (): void => {
+    expect(html).not.toMatch(/text-\[(9|10|11)px\]/);
   });
 });

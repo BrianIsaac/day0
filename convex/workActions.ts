@@ -157,7 +157,7 @@ import {
 } from '../src/work/promised-reads';
 import { actionIdempotencyKey } from '../src/work/idempotency';
 import { ledgerPhases, providerReconciliationEntries } from '../src/work/reconciliation';
-import { redactTokenShapes, safeFailureMessage } from '../src/surfaces/redact';
+import { redactSecret, redactTokenShapes, safeFailureMessage } from '../src/surfaces/redact';
 import {
   grantRefusal,
   actionIntent,
@@ -177,7 +177,6 @@ import {
   toolRefusal,
   UNKNOWN_SURFACE,
 } from '../src/surfaces/policy';
-import { errorMessage } from '../src/lib/errors';
 
 /**
  * Node actions for the work loop - Layer-2 evaluation, Layer-3 plan
@@ -453,7 +452,8 @@ async function recordingModelCalls<T>(
  *
  * Returns:
  *   The stored decision, `scope-judgement-unavailable` when the row was left
- *   parked, or a `noop-` reason when the step was not this run's.
+ *   parked, or a `noop-` reason when the step was not this run's or the row
+ *   is gone.
  */
 async function evaluateWorkItemHandler(
   ctx: ActionCtx,
@@ -463,7 +463,9 @@ async function evaluateWorkItemHandler(
   const item: Doc<'workItems'> | null = internalCaller
     ? await ctx.runQuery(internal.work.getInternal, { workItemId: args.workItemId })
     : await ctx.runQuery(api.work.get, { workItemId: args.workItemId });
-  if (!item) throw new Error('workItem not found');
+  // A reset between the schedule and the run deletes the row: the step is no
+  // longer anyone's, as draftPlan and the apply recovery read it (P4-7).
+  if (!item) return { decision: 'noop-missing' };
   const agentId = item.agentId;
   // Race-tolerance: the dashboard's auto-progress useEffect can fire
   // evaluateWorkItem after the item already moved past `discovered`
@@ -941,10 +943,11 @@ async function refreshCarriedReads(
   const indexes = carriedReadIndexes(actions, applied, surfaces);
   if (indexes.length === 0) return { ok: true, output: args.resume };
   const reread = new Set(indexes);
+  let knownValues: readonly string[] = [];
   try {
     const agent = await ctx.runQuery(internal.agents.getInternal, { agentId: args.agentId });
     if (!agent) throw new Error('agent not found');
-    const knownValues = await knownValuesForAgent(ctx, agent);
+    knownValues = await knownValuesForAgent(ctx, agent);
     const grantRows: Doc<'permissionGrants'>[] = await ctx.runQuery(internal.agents.grantedScopes, {
       agentId: args.agentId,
     });
@@ -990,20 +993,45 @@ async function refreshCarriedReads(
       ? { ok: true, output: { ...args.resume, applied: refreshed.applied } }
       : refreshed;
   } catch (error) {
-    const surfaceNames = [...new Set(indexes.map((index) => String(actions[index]!.args.surface)))];
     return {
       ok: false,
-      failed: {
-        reason: rereadStopReason(
-          surfaceNames.join(', '),
-          error instanceof Error ? error.message : String(error),
-        ),
-        at: Date.now(),
-        actions: indexes.map((index) => actions[index]!),
-        applied: [],
-      },
+      failed: rereadFailure(
+        indexes.map((index) => actions[index]!),
+        error,
+        knownValues,
+        Date.now(),
+      ),
     };
   }
+}
+
+/**
+ * The failed re-read a resumed run stops on when the re-read itself threw:
+ * the surfaces it was for, and the failure scrubbed to one line the way every
+ * other failure path is, since it is the reason the card shows.
+ *
+ * @param actions - The carried reads that were to be taken again.
+ * @param error - What the attempt threw.
+ * @param knownValues - The owner's stored values, removed exactly.
+ * @param at - When the attempt stopped.
+ * @returns The failed re-read, with nothing applied.
+ */
+export function rereadFailure(
+  actions: readonly MockAction[],
+  error: unknown,
+  knownValues: readonly string[],
+  at: number,
+): FailedReread {
+  const surfaceNames = [...new Set(actions.map((action) => String(action.args.surface)))];
+  return {
+    reason: rereadStopReason(
+      surfaceNames.join(', '),
+      safeFailureMessage(error, '', 'the re-read failed', 300, knownValues),
+    ),
+    at,
+    actions: [...actions],
+    applied: [],
+  };
 }
 
 /** An output with the writes earlier runs landed on it, when there are any. */
@@ -1223,7 +1251,10 @@ async function holdDay0Actions(
           : "actions pending the manager's approval",
     });
   } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
+    // One scrubbed line for the card, the resume ladder and the caller alike:
+    // a provider error can echo the header it was sent, and a client library
+    // appends its stack.
+    const reason = safeFailureMessage(err, '', 'the execution failed');
     // A failure that is not about the item (a rate limit, an outage, a
     // timeout) goes through the resume ladder before the run stops, as a
     // draft's does; one about the item stops it now (`draftOrFail`'s rule).
@@ -1231,7 +1262,7 @@ async function holdDay0Actions(
       const resumed = await ctx.runMutation(internal.work.resumeExecution, {
         workItemId: args.workItemId,
         runId: args.runId,
-        reason: safeFailureMessage(err, '', 'the execution failed'),
+        reason,
       });
       if (resumed.outcome === 'resumed') {
         return result({ ok: false, reason: `execution will be tried again: ${reason}` });
@@ -2740,11 +2771,15 @@ export const authorDependentActions = internalAction({
             : "dependent actions pending the manager's approval",
       };
     } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
+      const gateRefusal = error instanceof ClosingGateRefusal;
+      // The gate's reason is Day0's own sentences, whole; any other failure is
+      // a model or provider message and is scrubbed to one line like the rest.
+      const reason = gateRefusal
+        ? redactSecret(error.message, '', knownValues)
+        : safeFailureMessage(error, '', 'the closing phase failed', 300, knownValues);
       // A set the obligation gate refused after its one repair stops the run:
       // the prerequisites landed and stay on the row, the refused set beside
       // its reason, and Retry resumes at the closing phase from that ledger.
-      const gateRefusal = error instanceof ClosingGateRefusal;
       const refused = gateRefusal ? error.output : authored;
       await ctx.runMutation(internal.work.setFailed, {
         workItemId: args.workItemId,
@@ -2956,6 +2991,8 @@ async function ticketRereadRefusal(
     /** What this run landed before this invocation; its status changes are Day0's own. */
     earlier: readonly LandedWrite[];
     surfaces: readonly SurfaceRecord[];
+    /** The owner's stored values, removed before a failure is cut to length. */
+    knownValues: readonly string[];
   },
 ): Promise<string | undefined> {
   const { item, surface } = args;
@@ -3029,7 +3066,7 @@ async function ticketRereadRefusal(
   } catch (error) {
     return withheldBeforeFirstWrite(
       ticket,
-      safeFailureMessage(error, bearer, 'the read failed'),
+      safeFailureMessage(error, bearer, 'the read failed', 300, args.knownValues),
       true,
     );
   } finally {
@@ -3067,6 +3104,7 @@ async function ticketReread(
     /** The rows this auto phase parks for the manager: asked about, never sent here. */
     deferredIndexes: readonly number[];
     surfaces: readonly SurfaceRecord[];
+    knownValues: readonly string[];
   },
 ): Promise<TicketReread | undefined> {
   if (SURFACE_MODE !== 'real') return undefined;
@@ -3101,6 +3139,7 @@ async function ticketReread(
         output: args.output,
         earlier,
         surfaces: args.surfaces,
+        knownValues: args.knownValues,
       }).then((reason) => (refusal = reason));
       return await found;
     },
@@ -3200,13 +3239,14 @@ export const applyApprovedActions = internalAction({
       workItemId: args.workItemId,
     });
     if (!claim.claimed) return { ok: false, reason: claim.reason };
+    let knownValues: readonly string[] = [];
     try {
       const agent = await ctx.runQuery(internal.agents.getInternal, { agentId: claim.agentId });
       if (!agent) throw new Error('agent not found');
       // Resolved once, before any transport: a run with many outcomes
       // decrypts once, and a list that cannot be produced fails the run
       // here rather than after a write has landed.
-      const knownValues = await knownValuesForAgent(ctx, agent);
+      knownValues = await knownValuesForAgent(ctx, agent);
       const surfaces = await loadSurfaces(ctx, claim.agentId);
       const grantRows: Doc<'permissionGrants'>[] = await ctx.runQuery(
         internal.agents.grantedScopes,
@@ -3235,6 +3275,7 @@ export const applyApprovedActions = internalAction({
         phase: claim.phase,
         deferredIndexes: claim.heldIndexes,
         surfaces,
+        knownValues,
       });
       const run = {
         agentId: claim.agentId,
@@ -3353,7 +3394,7 @@ export const applyApprovedActions = internalAction({
       }
       return await finishRun(ctx, args.workItemId, claim, output, applied, knownValues, surfaces);
     } catch (err) {
-      const reason = errorMessage(err);
+      const reason = safeFailureMessage(err, '', 'the apply failed', 300, knownValues);
       await ctx.runMutation(internal.work.recoverInterruptedApply, {
         workItemId: args.workItemId,
         pendingRunId: claim.pendingRunId,
@@ -3805,7 +3846,7 @@ async function readCandidateRecord(
     }
     return { record: { surface, tool, subject, text: applied.effect ?? `(empty ${subject})` } };
   } catch (error) {
-    return readFailed(error instanceof Error ? error.message : String(error));
+    return readFailed(safeFailureMessage(error, '', 'the read failed', 300, args.knownValues));
   }
 }
 
@@ -3960,7 +4001,7 @@ async function claimLandedTicketWrites(
     // the claim, which only keeps a colleague from repeating them.
     log.warn('landed ticket writes not claimed', {
       workItemId,
-      reason: error instanceof Error ? error.message : String(error),
+      reason: safeFailureMessage(error, '', 'the claim failed'),
     });
   }
 }

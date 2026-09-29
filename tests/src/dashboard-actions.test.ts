@@ -127,11 +127,16 @@ describe('dashboard exact-action gate', (): void => {
     expect(html).toMatch(/<details[^>]*><summary[^>]*>exact payload<\/summary><code/);
     expect(html).not.toMatch(/<details[^>]*open/);
     expect(html).toContain('{{secret}}');
-    expect(html).toMatch(/<input type="checkbox"[^>]*aria-label="approve action 1" checked=""/);
-    expect(html).toMatch(/<input type="checkbox"[^>]*disabled="" aria-label="approve action 2"\/>/);
+    // Each box is named for its row, not its position, so a screen reader hears what it approves.
+    expect(html).toMatch(
+      /<input type="checkbox"[^>]*aria-label="approve: Send Sam a Slack DM: &quot;Draft ready\.&quot;" checked=""/,
+    );
+    expect(html).toMatch(
+      /<input type="checkbox"[^>]*disabled="" aria-label="approve: Post to Slack channel C0PUBLIC[^"]*"\/>/,
+    );
     expect(html).toMatch(/<button[^>]*>Approve selected \(1\)<\/button>/);
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Approve all<\/button>/);
-    expect(html).not.toMatch(/approve action 2"[^]*?reject this action/);
+    expect(html).not.toMatch(/approve: Post to Slack channel C0PUBLIC[^]*?reject this action/);
   });
 
   it('lists only the rows that need the manager and says how many applied on their own', (): void => {
@@ -172,8 +177,10 @@ describe('dashboard exact-action gate', (): void => {
     expect(html).not.toContain('Read issue REVOPS-10');
     expect(html).not.toContain('Send Sam a Slack DM');
     expect(html).toContain('Reply in #revops-asks thread: &quot;Covered.&quot;');
-    expect(html).toMatch(/<input type="checkbox"[^>]*aria-label="approve action 3" checked=""/);
-    expect(html).not.toMatch(/aria-label="approve action 1"/);
+    expect(html).toMatch(
+      /<input type="checkbox"[^>]*aria-label="approve: Reply in #revops-asks thread: &quot;Covered\.&quot;" checked=""/,
+    );
+    expect(html).not.toMatch(/aria-label="approve: Read issue REVOPS-10/);
     expect(html).toMatch(/<button[^>]*>Approve selected \(1\)<\/button>/);
     expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>Approve all<\/button>/);
     expect(pendingHeadline(verdicts)).toBe(
@@ -232,6 +239,17 @@ describe('dashboard exact-action gate', (): void => {
     expect(on).not.toContain(AUTONOMY_WARNING);
   });
 
+  it('scales the confirmation in from the corner that meets the switch (v3 section 5.2)', (): void => {
+    const html = renderToStaticMarkup(
+      createElement(AutonomyConfirm, { onConfirm: vi.fn(), onCancel: vi.fn() }),
+    );
+    const dialog = /<div[^>]*role="alertdialog"[^>]*>/.exec(html)?.[0] ?? '';
+    expect(dialog).toContain('data-dialog=""');
+    // Anchored at its left edge on a phone and its right edge beside the switch from `sm` up.
+    expect(dialog).toMatch(/\bleft-0\b[^"]*\borigin-top-left\b/);
+    expect(dialog).toMatch(/\bsm:right-0\b[^"]*\bsm:origin-top-right\b/);
+  });
+
   it("renders the confirmation with the warning in the operator's words and its two buttons", (): void => {
     const html = renderToStaticMarkup(
       createElement(AutonomyConfirm, { onConfirm: vi.fn(), onCancel: vi.fn() }),
@@ -241,7 +259,7 @@ describe('dashboard exact-action gate', (): void => {
     );
     expect(html).toContain('Turn on autonomous actions?');
     expect(html).toContain(
-      'The agent will act on connected systems without asking - post, comment, change status - within the connections and skills you have approved.',
+      'The digital employee will act on connected systems without asking - post, comment, change status - within the connections and skills you have approved.',
     );
     expect(html).toContain('Turn this on only after its behaviour has been what you want.');
     expect(html).toContain('Skills and connections still need your approval either way.');
@@ -616,7 +634,10 @@ describe('the cross-item approval panel', (): void => {
         onApproveBatch: vi.fn(async (): Promise<void> => {}),
       }),
     );
-    expect(html).toBe('');
+    // Nothing to see, only the live region that says what the last batch came to.
+    expect(html).toBe(
+      '<p role="status" aria-live="polite" aria-atomic="true" class="empty:sr-only text-[11px] leading-snug text-[var(--color-muted)]"></p>',
+    );
   });
 });
 

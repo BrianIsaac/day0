@@ -69,4 +69,11 @@ describe('.gitignore', (): void => {
       expect(ignored('docs/research/typescript-code-hygiene.md')).toBe(true);
     },
   );
+
+  it.skipIf(!IN_WORK_TREE)(
+    'keeps a bare Playwright run’s results out of the tree (needs git, m22)',
+    (): void => {
+      expect(ignored('test-results/.last-run.json')).toBe(true);
+    },
+  );
 });

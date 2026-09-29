@@ -41,6 +41,24 @@ describe('application providers', () => {
     expect(recorded.clients).toHaveLength(0);
   });
 
+  it('gives the skip link its target when the shell stands in for the whole page', async () => {
+    vi.stubEnv('NEXT_PUBLIC_CONVEX_URL', undefined);
+    vi.stubEnv('NEXT_PUBLIC_DEV_NO_AUTH', undefined);
+    const { Providers } = await import('../../app/Providers');
+    const html = renderToStaticMarkup(<Providers>{null}</Providers>);
+    expect(html).toMatch(/^<main id="main" tabindex="-1"/);
+  });
+
+  it('gives the skip link its target while no-auth dev mode unlocks the local session', async () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    vi.stubEnv('NEXT_PUBLIC_DEV_NO_AUTH', 'true');
+    vi.stubEnv('NEXT_PUBLIC_CONVEX_URL', 'https://configured-test.convex.cloud');
+    const { Providers } = await import('../../app/Providers');
+    const html = renderToStaticMarkup(<Providers>{null}</Providers>);
+    expect(html).toContain('Unlocking this machine');
+    expect(html).toMatch(/^<main id="main" tabindex="-1"/);
+  });
+
   it('constructs the same real client and Clerk provider when configured', async () => {
     vi.stubEnv('NEXT_PUBLIC_CONVEX_URL', 'https://configured-test.convex.cloud');
     vi.stubEnv('NEXT_PUBLIC_DEV_NO_AUTH', undefined);

@@ -35,7 +35,7 @@ describe('the autonomous-actions switch', (): void => {
 
   it("warns in the operator's sense before the switch goes on", (): void => {
     expect(AUTONOMY_WARNING).toBe(
-      'The agent will act on connected systems without asking - post, comment, change status - within the connections and skills you have approved. Turn this on only after its behaviour has been what you want. Skills and connections still need your approval either way.',
+      'The digital employee will act on connected systems without asking - post, comment, change status - within the connections and skills you have approved. Turn this on only after its behaviour has been what you want. Skills and connections still need your approval either way.',
     );
     expect(HELD_WHILE_SUPERVISED_NOTE).toBe('held for your approval - autonomous actions are off');
     expect(HELD_BEFORE_AUTONOMY_NOTE).toContain('held before autonomous actions were turned on');

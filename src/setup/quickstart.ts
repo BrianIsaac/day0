@@ -118,10 +118,10 @@ export const RUN_WAYS: readonly RunWay[] = [
   {
     id: 'hosted',
     title: WAY_NAMES.hosted,
-    body: 'Nothing to install. Sign in and deploy an agent into the hosted mock office, which runs the product loop on synthetic content and reaches no system of yours; or open the walkthrough, a recording of one run that needs no sign-in at all.',
+    body: 'Nothing to install. Sign in and deploy an employee into the hosted mock office, which runs the product loop on synthetic content and reaches no system of yours; or open the walkthrough, a recording of one run that needs no sign-in at all.',
     links: [
-      { href: '/sign-in', label: 'Sign in and deploy an agent' },
-      { href: '/demo', label: 'Open the walkthrough' },
+      { href: '/sign-in', label: 'Sign in and deploy an employee' },
+      { href: '/walkthrough', label: 'Open the walkthrough' },
     ],
   },
   {

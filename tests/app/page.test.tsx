@@ -1,5 +1,8 @@
+/** @vitest-environment jsdom */
+
+import { act, type ReactNode } from 'react';
+import { createRoot } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
-import type { ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { getFunctionName, type FunctionReference } from 'convex/server';
 
@@ -13,11 +16,21 @@ const authState = vi.hoisted(() => ({ loaded: true, signedIn: false, rosterAvail
 vi.mock('@clerk/nextjs', () => ({
   Show: ({ when, children }: { when: string; children: ReactNode }): ReactNode =>
     authState.loaded && when === 'signed-out' ? children : null,
-  useUser: () => ({
-    user: authState.signedIn
-      ? { primaryEmailAddress: { emailAddress: 'boss@example.invalid' }, firstName: 'Boss' }
-      : undefined,
-  }),
+  // Clerk's own shape: no user and `isLoaded: false` until its script has answered.
+  useUser: () =>
+    !authState.loaded
+      ? { isLoaded: false, isSignedIn: undefined, user: undefined }
+      : authState.signedIn
+        ? {
+            isLoaded: true,
+            isSignedIn: true,
+            user: {
+              primaryEmailAddress: { emailAddress: 'boss@example.invalid' },
+              firstName: 'Boss',
+            },
+          }
+        : { isLoaded: true, isSignedIn: false, user: null },
+  useClerk: () => ({ status: authState.loaded ? 'ready' : 'loading' }),
 }));
 
 /** The signed-in owner's company as `agents.rosterForUser` returns it, newest first. */
@@ -33,6 +46,7 @@ const roster = [
     stoppedCount: 0,
     needsYou: 1,
     docSourceCount: 1,
+    landedThisMonth: { month: '2026-09', days: [], atLeast: false },
   },
   {
     agentId: 'synthetic-finance-agent',
@@ -45,6 +59,7 @@ const roster = [
     stoppedCount: 0,
     needsYou: 2,
     docSourceCount: 1,
+    landedThisMonth: { month: '2026-09', days: [], atLeast: false },
   },
   {
     agentId: 'synthetic-new-agent',
@@ -57,6 +72,7 @@ const roster = [
     stoppedCount: 0,
     needsYou: 0,
     docSourceCount: 0,
+    landedThisMonth: { month: '2026-09', days: [], atLeast: false },
   },
 ];
 let shownRoster = roster;
@@ -111,8 +127,8 @@ const oneEmployeeMetrics = {
   },
 };
 
-vi.mock('convex/react', () => ({
-  useQuery: (reference: FunctionReference<'query'>) => {
+vi.mock('convex/react', () => {
+  const answer = (reference: FunctionReference<'query'>): unknown => {
     if (!authState.signedIn) return undefined;
     const name = getFunctionName(reference);
     if (name === 'agents:listForUser') {
@@ -158,40 +174,51 @@ vi.mock('convex/react', () => ({
       };
     }
     if (name === 'docSources:listMine') return [{ _id: 'synthetic-doc-source', label: 'Handbook' }];
+    if (name === 'work:needsYou') return { entries: [], total: 0, waitingByEmployee: [] };
+    if (name === 'config:surfaceMode') return { mode: 'mock', label: 'mock' };
     return 0;
-  },
-  useMutation: (): (() => Promise<void>) => async (): Promise<void> => undefined,
-}));
+  };
+  return {
+    useQuery: answer,
+    // The home reads its inbox through `useQueries`, which answers a failed read as a value.
+    useQueries: (queries: Record<string, { query: FunctionReference<'query'> }>) =>
+      Object.fromEntries(Object.entries(queries).map(([key, { query }]) => [key, answer(query)])),
+    useMutation: (): (() => Promise<void>) => async (): Promise<void> => undefined,
+  };
+});
 
 vi.mock('next/navigation', () => ({
   useRouter: (): { push: () => void } => ({ push: (): void => undefined }),
 }));
 
-vi.mock('../../app/CursorToggle', () => ({
-  CursorToggle: (): null => null,
-}));
-
 import LandingPage from '../../app/page';
 
 describe('signed-out landing page', (): void => {
-  it('renders public entry links before the authentication script loads', () => {
+  it('serves a neutral shell before the authentication script loads, neither page nor dashboard', () => {
     authState.loaded = false;
     try {
       const pending = renderToStaticMarkup(<LandingPage />);
-      expect(pending).toContain('Try the demo');
-      expect(pending).toContain('Set up Day0');
+      expect(pending).not.toContain('Try the demo');
+      expect(pending).not.toContain('Your employees');
+      expect(pending).toMatch(/^<div class="[^"]*"><\/div>$/);
     } finally {
       authState.loaded = true;
     }
   });
 
   const html = renderToStaticMarkup(<LandingPage />);
+  /** The page's text with the markup stripped, so a sentence split by a tag still reads whole. */
+  const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
 
-  it('states the headline in agreement: plural employees, plural verb', (): void => {
-    expect(html).toContain('Enterprise digital employees');
-    expect(html).toContain('that just work.');
-    expect(html).not.toContain('just works');
-    expect(html).toContain('One name in. Everything else is learned state.');
+  it('states the claim with its answer in the accent, then the lede', (): void => {
+    expect(text).toContain(
+      'Every company that hires an agent pays a team to wire it in. Day0 is onboarded instead.',
+    );
+    expect(html).toMatch(
+      /<span class="[^"]*color-accent[^"]*">Day0 is onboarded instead\.<\/span>/,
+    );
+    expect(text).toContain('One name in. Day0 holds a five-minute one-to-one with its manager');
+    expect(html).not.toContain('Enterprise digital employees');
   });
 
   it('offers a stranger the hosted demo first, through sign-in, and setup second', (): void => {
@@ -206,15 +233,12 @@ describe('signed-out landing page', (): void => {
     expect(html).not.toContain('Deploy your first agent');
   });
 
-  it('keeps the recorded walkthrough as its own page, with a button below the loop', (): void => {
-    const walkthrough = /<a\b([^>]*)>Watch the recorded walkthrough<\/a>/.exec(html)?.[1] ?? '';
-    expect(walkthrough).toContain('href="/demo"');
-    // Below the hero and the four loop steps, not beside the two hero CTAs.
-    expect(html.indexOf('Watch the recorded walkthrough')).toBeGreaterThan(
-      html.indexOf('Skill creation'),
-    );
-    const hero = html.slice(html.indexOf('Try the demo'), html.indexOf('Set up Day0'));
-    expect(hero).not.toContain('href="/demo"');
+  it('links the recorded run as the walkthrough, below the hero and never at /demo', (): void => {
+    const walkthrough = /<a\b([^>]*)>Read the walkthrough<\/a>/.exec(html)?.[1] ?? '';
+    expect(walkthrough).toContain('href="/walkthrough"');
+    expect(html).not.toContain('href="/demo"');
+    const hero = html.slice(0, html.indexOf('id="problem"'));
+    expect(hero).not.toContain('href="/walkthrough"');
   });
 
   it('boxes the two hero CTAs identically, so neither sits a border taller', (): void => {
@@ -236,78 +260,75 @@ describe('signed-out landing page', (): void => {
     expect(primary).toContain('border-transparent');
   });
 
-  it('says what the demo is before the visitor spends a click on it', (): void => {
-    expect(html).toContain(
-      'Sign in, deploy an agent into the mock office, and hold its Day-1 1:1 yourself.',
+  it('says what the hosted demo is on its own card, and that the sign-in page says what it collects', (): void => {
+    // The sign-in page carries the hosted demo notice (N6), so the card says so as drawn.
+    expect(text).toContain(
+      'Sign in, name an employee, hold the one-to-one yourself. The office is seeded and synthetic; nothing you do reaches a real system. Before you type anything, the sign-in page says what the hosted demo collects and who receives it.',
     );
   });
 
-  it('keeps the source repository, smaller than the two routes into the product', (): void => {
-    expect(html).toContain('https://github.com/BrianIsaac/day0');
-    expect(html).toContain('>Source<');
+  it('links the repository by the GitHub name in the footer, never as "Source"', (): void => {
+    const footer = /<footer[\s\S]*?<\/footer>/.exec(html)?.[0] ?? '';
+    expect(footer).toMatch(
+      /<a [^>]*href="https:\/\/github\.com\/BrianIsaac\/day0"[^>]*>GitHub<\/a>/,
+    );
+    expect(html).not.toMatch(/<a\b[^>]*>Source<\/a>/);
     expect(html).not.toContain('View source');
   });
 
-  it('describes the charter without naming who writes it', (): void => {
-    expect(html).toContain(
-      'The conversation becomes a charter for the boss to review and approve.',
-    );
+  it('leaves the one main landmark to the layout', (): void => {
+    expect(html).not.toMatch(/<main[\s>]/);
+  });
+
+  it('says the charter is drafted by the employee and approved by the manager', (): void => {
+    expect(text).toContain('Drafts a charter the manager approves');
+    expect(text).toContain('drafts its own work charter (like a JD) for your approval');
   });
 
   it('names no model anywhere, because the operator picks the provider', (): void => {
-    for (const model of ['GPT-5.6', 'GPT-5.5', 'Terra', 'GLM', 'OpenAI', 'Gemini']) {
+    for (const model of ['GPT-5.6', 'GPT-5.5', 'Terra', 'GLM', 'Gemini', 'qwen']) {
       expect(html).not.toContain(model);
     }
+    // The protocol a model is reached by is not a model.
+    expect(html.replaceAll('OpenAI-compatible', '')).not.toContain('OpenAI');
+  });
+
+  it('calls what the manager deploys an employee, and "agent" only the industry\'s software', (): void => {
+    expect(text).toContain('name an employee');
+    expect(text).toContain('Give one employee a name');
+    const agentSentences = html
+      .split(/<[^>]+>/)
+      .flatMap((chunk) => chunk.split(/(?<=[.;:!?])\s+/))
+      .map((sentence) => sentence.trim())
+      .filter((sentence) => /\bagents?\b/i.test(sentence));
+    expect(agentSentences).toEqual([
+      'Every company that hires an agent pays a team to wire it in.',
+      'Today, deploying an agent means engineering one.',
+      'A generic agent becomes a bounded, auditable colleague through the four things every new hire gets.',
+    ]);
+    expect(text).not.toMatch(/\bboss\b/i);
   });
 });
 
 describe('landing footer', (): void => {
   const html = renderToStaticMarkup(<LandingPage />);
 
-  it('describes what Day0 runs on without naming a provider', (): void => {
+  it('says what Day0 is and what its figures are, without naming a provider', (): void => {
     const footer = /<footer[\s\S]*?<\/footer>/.exec(html)?.[0] ?? '';
-    expect(footer).toContain('Run Day0 with a compatible model provider or your own model server.');
+    expect(footer).toContain(
+      'Day0 is a working demonstration with no users and no production deployment. Figures are counts from single runs.',
+    );
+    expect(footer).toMatch(
+      /href="https:\/\/github\.com\/BrianIsaac\/day0#disclosures"[^>]*>Data and compliance</,
+    );
+    expect(footer).toMatch(/href="[^"]*\/CHANGELOG\.md"[^>]*>Changelog</);
     expect(footer).not.toContain('Cloudflare');
     expect(footer).not.toContain('ElevenLabs');
   });
 });
 
 describe('signed-in landing', () => {
-  it('keeps the owner dashboard agent and documentation links', () => {
-    authState.signedIn = true;
-    try {
-      const html = renderToStaticMarkup(<LandingPage />);
-      expect(html).toContain('href="/agent/synthetic-owner-agent"');
-      expect(html).toContain('href="/documentation"');
-    } finally {
-      authState.signedIn = false;
-    }
-  });
-});
-
-describe('the avatar picker', (): void => {
-  it('names each face by its number and no title carries a person', (): void => {
-    authState.signedIn = true;
-    try {
-      const html = renderToStaticMarkup(<LandingPage />);
-      const faces = [...html.matchAll(/<button[^>]*aria-label="(Face \d+)"/g)].map(
-        (match) => match[1],
-      );
-      expect(faces).toHaveLength(29);
-      expect(faces[0]).toBe('Face 1');
-      const titles = [...html.matchAll(/title="([^"]*)"/g)].map((match) => match[1]);
-      expect(titles.filter((title) => title.includes('@'))).toEqual([]);
-      expect(html).not.toContain('singapore-ai-builders');
-    } finally {
-      authState.signedIn = false;
-    }
-  });
-});
-
-describe('the employee list', (): void => {
-  /** The list as the manager reads it: the queue line is several unbreakable parts in the markup. */
-  const readAs = (markup: string): string => markup.replace(/<[^>]+>/g, '');
-
+  /** The page for the signed-in owner; the home's own pins are in tests/app/home/SignedInDashboard.test.tsx. */
   const signedIn = (): string => {
     authState.signedIn = true;
     try {
@@ -317,86 +338,26 @@ describe('the employee list', (): void => {
     }
   };
 
-  it('shows every employee above the office: role, queue, what needs the manager, autonomy', (): void => {
+  it('renders the owner’s company home, with the employee and documentation links', () => {
     const html = signedIn();
-    const list = html.slice(html.indexOf('Your employees'), html.indexOf('Mini office world'));
-    expect(html.indexOf('Your employees')).toBeGreaterThan(-1);
-    expect(html.indexOf('Your employees')).toBeLessThan(html.indexOf('Mini office world'));
-    for (const row of roster) {
-      expect(list).toContain(`href="/agent/${row.agentId}"`);
-      expect(list).toContain(row.name);
-      expect(list).toContain(row.roleLine);
-    }
-    expect(readAs(list)).toContain('3 open \u00b7 1 needs you');
-    expect(readAs(list)).toContain('2 open \u00b7 2 need you');
-    expect(readAs(list)).toContain('0 open \u00b7 0 need you');
-    expect(list.match(/acts on its own/g)).toHaveLength(1);
-    expect(list.match(/asks first/g)).toHaveLength(2);
+    expect(html).toContain('Your employees');
+    expect(html).toContain('href="/agent/synthetic-owner-agent"');
+    expect(html).toContain('href="/documentation"');
+    expect(html).not.toContain('Try the demo');
   });
 
-  it('puts the role line on each office name plate', (): void => {
-    const html = signedIn();
-    const office = html.slice(html.indexOf('Mini office world'), html.indexOf('Reset demo'));
-    for (const row of roster) expect(office).toContain(row.roleLine);
+  it('leaves the one main landmark to the layout', (): void => {
+    expect(signedIn()).not.toMatch(/<main[\s>]/);
   });
 
-  it('shows parked work beside open work, as the 19 Sep run left the company', (): void => {
-    shownRoster = [
-      { ...roster[0], name: 'Priya', openCount: 0, parkedCount: 3, needsYou: 2 },
-      { ...roster[1], name: 'Aiko', openCount: 0, parkedCount: 1, needsYou: 0 },
-      { ...roster[2], name: 'Mateo', openCount: 0, parkedCount: 0, needsYou: 0 },
-    ];
+  it('opens on the deploy form when the owner has nobody deployed', (): void => {
+    shownRoster = [];
     try {
       const html = signedIn();
-      const list = html.slice(html.indexOf('Your employees'), html.indexOf('Mini office world'));
-      expect(readAs(list)).toContain('0 open \u00b7 3 parked \u00b7 2 need you');
-      expect(readAs(list)).toContain('0 open \u00b7 1 parked \u00b7 0 need you');
-      expect(readAs(list)).toContain('0 open \u00b7 0 need you');
-      expect(list).toContain(
-        'Parked: waiting on a connection, a permission, a skill or a free slot',
-      );
+      expect(html).toContain('Deploy a new Day0 employee');
+      expect(html.match(/<button[^>]*aria-label="Face \d+"/g)).toHaveLength(29);
     } finally {
       shownRoster = roster;
-    }
-  });
-
-  it('shows stopped work that still waits on the manager, as the 19 Sep second run left the company', (): void => {
-    shownRoster = [
-      { ...roster[0], name: 'Priya', openCount: 0, parkedCount: 0, stoppedCount: 2, needsYou: 2 },
-      { ...roster[1], name: 'Aiko', openCount: 1, parkedCount: 1, stoppedCount: 1, needsYou: 1 },
-      { ...roster[2], name: 'Mateo', openCount: 0, parkedCount: 0, stoppedCount: 0, needsYou: 0 },
-    ];
-    try {
-      const html = signedIn();
-      const list = html.slice(html.indexOf('Your employees'), html.indexOf('Mini office world'));
-      expect(readAs(list)).toContain('0 open \u00b7 2 stopped \u00b7 2 need you');
-      expect(readAs(list)).toContain('1 open \u00b7 1 parked \u00b7 1 stopped \u00b7 1 needs you');
-      expect(readAs(list)).toContain('0 open \u00b7 0 need you');
-      expect(list).toContain(
-        'title="Stopped: ended short of done, with Retry on the card. The ones waiting on you count under need you."',
-      );
-      expect(list).toContain(
-        'title="Parked: waiting on a connection, a permission, a skill or a free slot. The ones only you can release count under need you. Stopped: ended short of done, with Retry on the card. The ones waiting on you count under need you."',
-      );
-      expect(list.match(/title="[^"]*Stopped/g)).toHaveLength(2);
-      expect(list).toContain(
-        '<span class="whitespace-nowrap">1 stopped \u00b7</span> <span class="whitespace-nowrap">1 needs you</span>',
-      );
-    } finally {
-      shownRoster = roster;
-    }
-  });
-
-  it('keeps the hosted one-employee landing under a snapshot', (): void => {
-    shownRoster = [roster[0]];
-    authState.signedIn = true;
-    try {
-      const html = renderToStaticMarkup(<LandingPage />);
-      expect(html).toContain('Company supervision');
-      expect(html).toMatchSnapshot();
-    } finally {
-      shownRoster = roster;
-      authState.signedIn = false;
     }
   });
 
@@ -412,5 +373,27 @@ describe('the employee list', (): void => {
       authState.rosterAvailable = true;
     }
     expect(renderToStaticMarkup(<LandingPage />)).toContain('Try the demo');
+  });
+
+  it('keeps the dashboard when the session re-resolves mid-visit, never swapping in the hero', () => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    document.cookie = '__client_uat=1759100000; path=/';
+    const host = document.createElement('div');
+    const root = createRoot(host);
+    authState.signedIn = true;
+    try {
+      act(() => root.render(<LandingPage />));
+      expect(host.textContent).toContain('Your employees');
+      // Clerk refreshing an expiring session answers "not loaded" again for a moment.
+      authState.loaded = false;
+      act(() => root.render(<LandingPage />));
+      expect(host.textContent).toContain('Your employees');
+      expect(host.textContent).not.toContain('Try the demo');
+    } finally {
+      act(() => root.unmount());
+      authState.loaded = true;
+      authState.signedIn = false;
+      document.cookie = '__client_uat=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/';
+    }
   });
 });

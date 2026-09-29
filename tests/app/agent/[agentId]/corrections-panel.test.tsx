@@ -1,3 +1,5 @@
+/** @vitest-environment jsdom */
+
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -15,6 +17,8 @@ import {
   type KeptCorrection,
 } from '../../../../app/agent/[agentId]/corrections-panel';
 import { AgentZoneContext } from '../../../../app/agent/[agentId]/time';
+import { act } from 'react';
+import { button, focusedName, mount, press, said, settle } from '../../../fixtures/dom/press';
 import {
   cancelPlanRequest,
   ManagerFeedbackNote,
@@ -198,7 +202,11 @@ describe('cancelling a plan with a reason, and retrying it', (): void => {
     const markup = renderToStaticMarkup(
       <PlanApprovalForm riskNotes="" questions={[]} onApprove={noop} onCancel={noop} />,
     );
-    expect(markup).toContain('aria-label="reason for cancelling the plan"');
+    // The field is named by its visible label, which an aria-label would override.
+    expect(markup).toMatch(
+      /<label for="[^"]*-cancel"[^>]*>Reason, if you cancel \(optional\)<\/label>/,
+    );
+    expect(markup).not.toContain('aria-label="reason for cancelling the plan"');
     expect(markup).toContain('>Cancel<');
     const workItemId = 'w5' as Id<'workItems'>;
     expect(cancelPlanRequest(workItemId, 'Comment instead.')).toEqual({
@@ -249,7 +257,10 @@ describe('cancelling a plan with a reason, and retrying it', (): void => {
     expect(markup).toContain('>Retry<');
     expect(markup).toContain('the plan comes back to you before anything runs');
     expect(markup).not.toContain('even while autonomous actions are on');
-    expect(markup).toContain('aria-label="note for the retry"');
+    expect(markup).toMatch(
+      /<label for="retry-note-[^"]*"[^>]*>Note for the new plan \(optional\)<\/label>/,
+    );
+    expect(markup).not.toContain('aria-label="note for the retry"');
     expect(markup).toContain('Plan cancel reason');
   });
 
@@ -325,5 +336,56 @@ describe("the corrections' stamps (N12)", (): void => {
     );
     expect(line).toContain('28 Sep 2026, 00:05');
     expect(line).not.toContain('27 Sep 2026, 16:05');
+  });
+});
+
+describe('retiring a kept correction (step 45)', (): void => {
+  it('says the retirement in a live region and gives focus to the list when Retire leaves the row', async (): Promise<void> => {
+    const retired: string[] = [];
+    const panel = (rows: readonly KeptCorrection[]) => (
+      <KeptCorrectionsPanel
+        corrections={rows}
+        titles={new Map()}
+        onRetire={async (id) => {
+          retired.push(id);
+        }}
+      />
+    );
+    const view = mount(panel([kept]));
+    const name = `Retire the correction from “${kept.itemTitle}”`;
+    expect(button(view.container, name).className).toMatch(/\bmin-h-11\b/);
+    const retire = button(view.container, name);
+    retire.focus();
+    await act(async (): Promise<void> => {
+      retire.click();
+      // The query answers with the row retired, and Retire leaves it.
+      view.root.render(panel([{ ...kept, retiredAt: 5 }]));
+    });
+    await settle();
+
+    expect(retired).toEqual(['c1']);
+    expect(said(view.container)).toEqual([
+      `Retired the correction from “${kept.itemTitle}”: no later plan reads it.`,
+    ]);
+    expect(focusedName()).toBe('Kept corrections');
+    view.unmount();
+  });
+
+  it('says a refused retirement and keeps focus on Retire', async (): Promise<void> => {
+    const view = mount(
+      <KeptCorrectionsPanel
+        corrections={[kept]}
+        titles={new Map()}
+        onRetire={async () => {
+          throw new Error(
+            '[CONVEX M(corrections:retire)] [Request ID: 1] Server Error\nUncaught Error: That correction is already retired.\n    at handler (../convex/corrections.ts:1:1)',
+          );
+        }}
+      />,
+    );
+    await press(view.container, `Retire the correction from “${kept.itemTitle}”`);
+    expect(said(view.container)).toEqual(['That correction is already retired.']);
+    expect(focusedName()).toBe(`Retire the correction from “${kept.itemTitle}”`);
+    view.unmount();
   });
 });

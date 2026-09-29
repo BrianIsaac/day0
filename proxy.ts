@@ -17,9 +17,10 @@ import {
  * page sends a signed-out visitor to, plus webhook endpoints called by
  * external services.
  *
- * `/demo` renders a recorded snapshot that ships with the build and
+ * `/walkthrough` renders a recorded run that ships with the build and
  * `/setup` is static prose; neither reads a row, so neither needs a
- * caller.
+ * caller. The old `/demo` needs no entry: `next.config.mjs` redirects it
+ * to the walkthrough before this proxy runs.
  *
  * `auth.protect()` only fires when Clerk has a real publishable key in
  * the environment. Keyless dev mode bootstraps keys on the client but
@@ -37,7 +38,7 @@ import {
  */
 const isPublicRoute = createRouteMatcher([
   '/',
-  '/demo',
+  '/walkthrough',
   '/setup',
   '/sign-in(.*)',
   '/sign-up(.*)',
