@@ -5,8 +5,9 @@ import {
   internalMutation,
   internalQuery,
   type MutationCtx,
+  type QueryCtx,
 } from './_generated/server';
-import type { Id } from './_generated/dataModel';
+import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { assertOwnsAgent, assertOwnsCharter } from './ownership';
 import { writeFileImpl } from './workspace';
@@ -540,41 +541,159 @@ async function recordCardAnswers(
   }
 }
 
+/** The most characters a note sending a draft back may carry; the prompt carries every one. */
+export const CHANGE_REQUEST_MAX_CHARS = 2000;
+
+/** How many sessions back the draft's own is looked for; a one-to-one is held once or twice. */
+const SESSIONS_SEARCHED = 20;
+
 /**
- * Reject only the current unapproved draft. An earlier approved charter stays
- * in force; without one, the employee returns to Day-1 for another 1:1.
+ * The session a draft was written from, when it is on the row: the chat and voice rooms end
+ * theirs by naming it, and the answers-first entry point has none.
+ */
+async function sessionOfCharter(
+  ctx: QueryCtx,
+  charter: Pick<Doc<'charters'>, '_id' | 'agentId'>,
+): Promise<Doc<'voiceSessions'> | null> {
+  const sessions = await ctx.db
+    .query('voiceSessions')
+    .withIndex('by_agent', (q) => q.eq('agentId', charter.agentId))
+    .order('desc')
+    .take(SESSIONS_SEARCHED);
+  return sessions.find((session) => session.charterId === charter._id) ?? null;
+}
+
+/**
+ * The first version of a charter: amendments supersede a row, so the chain ends at the draft the
+ * one-to-one wrote.
+ */
+async function firstVersionOf(ctx: QueryCtx, charter: Doc<'charters'>): Promise<Doc<'charters'>> {
+  let current = charter;
+  for (let hops = 0; current.supersedes && hops < SESSIONS_SEARCHED * 10; hops += 1) {
+    const previous = await ctx.db.get(current.supersedes);
+    if (!previous) break;
+    current = previous;
+  }
+  return current;
+}
+
+/**
+ * Public, owner-guarded (`assertOwnsCharter`): the one-to-one a charter was drafted from, as the
+ * room recorded it, kept beside every version it led to. Null for a charter drafted from answers
+ * handed straight in, which has no transcript.
+ */
+export const transcriptOf = query({
+  args: { charterId: v.id('charters') },
+  handler: async (ctx, args): Promise<{ transcript: string; endedAt: number | null } | null> => {
+    const charter = await assertOwnsCharter(ctx, args.charterId);
+    const session = await sessionOfCharter(ctx, await firstVersionOf(ctx, charter));
+    if (!session?.transcriptText) return null;
+    return { transcript: session.transcriptText, endedAt: session.endedAt ?? null };
+  },
+});
+
+/**
+ * Send the current unapproved draft back.
+ *
+ * Public, owner-guarded (`assertOwnsCharter`). Refuses an approved charter (amend it) and any
+ * draft but the latest. The draft is deleted either way, and `charter.request_changes` carries
+ * the manager's note.
+ *
+ * With a note and the transcript the draft was written from, the employee redrafts: the note and
+ * the rules struck on the draft join the session's change requests, the session is handed back
+ * with its transcript as a claim's material, and the deployment's own re-drive
+ * (`onboarding.recoverFinalisation`) is scheduled in this transaction, so the redraft has the
+ * claim, the retries and the sweep every finalisation has. An approved charter beneath the draft
+ * stays in force either way; with none, the employee stays in its one-to-one until the new draft
+ * lands, or, with no note or no transcript, returns to Day-1 for another one-to-one.
+ *
+ * @returns Whether a redraft was queued.
+ * @throws ConvexError with the refusal, which the card shows.
  */
 export const requestChanges = mutation({
-  args: { charterId: v.id('charters'), notes: v.optional(v.string()) },
-  handler: async (ctx, args) => {
+  args: { charterId: v.id('charters'), reason: v.optional(v.string()) },
+  returns: v.object({ ok: v.literal(true), redrafting: v.boolean() }),
+  handler: async (ctx, args): Promise<{ ok: true; redrafting: boolean }> => {
     const charter = await assertOwnsCharter(ctx, args.charterId);
     const agentId = charter.agentId;
-    if (charter.approved)
-      throw new Error('An approved charter cannot be sent back; amend it instead.');
+    if (charter.approved) {
+      throw new ConvexError('An approved charter cannot be sent back; amend it instead.');
+    }
     const latest = await ctx.db
       .query('charters')
       .withIndex('by_agent', (q) => q.eq('agentId', agentId))
       .order('desc')
       .first();
-    if (latest?._id !== charter._id) throw new Error('Only the latest draft can be sent back.');
+    if (latest?._id !== charter._id) {
+      throw new ConvexError('Only the latest draft can be sent back.');
+    }
+    const reason = (args.reason ?? '').replace(/\s+/g, ' ').trim();
+    if (reason.length > CHANGE_REQUEST_MAX_CHARS) {
+      throw new ConvexError(`Keep the note under ${CHANGE_REQUEST_MAX_CHARS} characters.`);
+    }
+    const session = reason ? await sessionOfCharter(ctx, charter) : null;
+    const redrafting = session?.transcriptText !== undefined && session.transcriptText !== '';
+    const now = Date.now();
+
+    await ctx.db.delete(args.charterId);
+    await appendEvent(ctx, {
+      agentId,
+      type: 'charter.request_changes',
+      payload: { charterId: args.charterId, notes: reason, redrafting },
+      createdAt: now,
+    });
     let approvedCharterRemains = false;
     for await (const previous of ctx.db
       .query('charters')
       .withIndex('by_agent', (q) => q.eq('agentId', agentId))
       .order('desc')) {
-      if (previous._id !== charter._id && previous.approved) {
+      if (previous.approved) {
         approvedCharterRemains = true;
         break;
       }
     }
-    await ctx.db.delete(args.charterId);
-    await ctx.db.patch(agentId, { state: approvedCharterRemains ? 'active' : 'deployed' });
-    await appendEvent(ctx, {
-      agentId,
-      type: 'charter.request_changes',
-      payload: { charterId: args.charterId, notes: args.notes ?? '' },
-      createdAt: Date.now(),
+    if (session && redrafting) await queueRedraft(ctx, { session, charter, reason, now });
+    await ctx.db.patch(agentId, {
+      state: approvedCharterRemains ? 'active' : redrafting ? 'day-one-in-progress' : 'deployed',
     });
-    return { ok: true };
+    return { ok: true, redrafting };
   },
 });
+
+/**
+ * Hand a session back to be finalised again with the manager's note and the rules struck on the
+ * draft: its transcript becomes the pending material, its record of a charter is cleared, its
+ * re-drive budget restarts, and the re-drive is scheduled now.
+ */
+async function queueRedraft(
+  ctx: MutationCtx,
+  args: {
+    session: Doc<'voiceSessions'>;
+    charter: Doc<'charters'>;
+    reason: string;
+    now: number;
+  },
+): Promise<void> {
+  const { session, charter, reason, now } = args;
+  const struck = ((charter.body as Charter).constraints ?? [])
+    .filter((constraint: CharterConstraint): boolean => constraint.struck === true)
+    .map((constraint: CharterConstraint): string => constraint.quote);
+  const agent = await ctx.db.get(charter.agentId);
+  await ctx.db.patch(session._id, {
+    state: 'active',
+    pendingTranscript: session.transcriptText,
+    pendingBossLabel: session.pendingBossLabel ?? agent?.bossEmail ?? 'boss',
+    changeRequests: [...(session.changeRequests ?? []), { reason, struck, requestedAt: now }],
+    charterId: undefined,
+    charterVersion: undefined,
+    endedAt: undefined,
+    claimToken: undefined,
+    claimedAt: undefined,
+    recoveryAttempts: 0,
+    finalisationError: undefined,
+    finalisationFailedAt: undefined,
+  });
+  await ctx.scheduler.runAfter(0, internal.onboarding.recoverFinalisation, {
+    sessionId: session._id,
+  });
+}

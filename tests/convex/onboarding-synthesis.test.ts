@@ -254,3 +254,134 @@ describe('the workspace a synthesised charter seeds', (): void => {
     expect(bootstrap).not.toMatch(/research/i);
   });
 });
+
+describe('a draft sent back with a note (round two section 3.5)', (): void => {
+  async function draftFromSession(): Promise<{
+    harness: TestConvex<typeof schema>;
+    agentId: Id<'agents'>;
+    sessionId: Id<'voiceSessions'>;
+    charterId: Id<'charters'>;
+  }> {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await deployAgent(harness);
+    const owner = harness.withIdentity({ subject: 'owner' });
+    const { sessionId } = await owner.mutation(api.voice.start, { agentId, mode: 'chat' });
+    const result = await owner.action(api.onboarding.synthesiseFromTranscript, {
+      agentId,
+      bossLabel: 'boss@day0.local',
+      transcript: DAY_ONE_TRANSCRIPT_2026_09_14,
+      voiceSessionId: sessionId,
+    });
+    if (result.outcome !== 'synthesised') throw new Error(`outcome ${result.outcome}`);
+    return { harness, agentId, sessionId, charterId: result.charterId as Id<'charters'> };
+  }
+
+  it('redrafts from the stored transcript with the note and the struck rules, and keeps the transcript beside the new draft', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    vi.useFakeTimers();
+    scripted.constraints = [
+      {
+        kind: 'system-boundary',
+        quote: 'Never post to public channels.',
+        wording: ['Post to public Slack channels.'],
+      },
+    ];
+    const { harness, agentId, sessionId, charterId } = await draftFromSession();
+    const owner = harness.withIdentity({ subject: 'owner' });
+    await owner.mutation(api.charters.setConstraintStruck, { charterId, index: 0, struck: true });
+
+    const sent = await owner.mutation(api.charters.requestChanges, {
+      charterId,
+      reason: '  The 30-day goal should name   the committee deck. ',
+    });
+    expect(sent).toEqual({ ok: true, redrafting: true });
+    expect(await harness.run(async (ctx) => await ctx.db.get(charterId))).toBeNull();
+    expect((await harness.run(async (ctx) => await ctx.db.get(agentId)))?.state).toBe(
+      'day-one-in-progress',
+    );
+    const queued = await harness.run(async (ctx) => await ctx.db.get(sessionId));
+    expect(queued).toMatchObject({
+      state: 'active',
+      pendingTranscript: DAY_ONE_TRANSCRIPT_2026_09_14,
+      recoveryAttempts: 0,
+      changeRequests: [
+        {
+          reason: 'The 30-day goal should name the committee deck.',
+          struck: ['Never post to public channels.'],
+        },
+      ],
+    });
+    expect(queued?.charterId).toBeUndefined();
+
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    vi.useRealTimers();
+
+    expect(scripted.charterPrompts).toHaveLength(2);
+    expect(scripted.charterPrompts[1]).toContain('[changes-requested]');
+    expect(scripted.charterPrompts[1]).toContain(
+      '- The 30-day goal should name the committee deck.',
+    );
+    expect(scripted.charterPrompts[1]).toContain(
+      '- Leave out the rule "Never post to public channels.": the manager struck it.',
+    );
+    const redraft = await owner.query(api.charters.latest, { agentId });
+    expect(redraft?._id).not.toBe(charterId);
+    expect(redraft?.approved).toBe(false);
+    expect((await harness.run(async (ctx) => await ctx.db.get(agentId)))?.state).toBe(
+      'charter-pending',
+    );
+    expect(await owner.query(api.charters.transcriptOf, { charterId: redraft!._id })).toEqual({
+      transcript: DAY_ONE_TRANSCRIPT_2026_09_14,
+      endedAt: expect.any(Number),
+    });
+    const events = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+          .collect(),
+    );
+    expect(
+      events.filter((event) => event.type === 'charter.request_changes').map((e) => e.payload),
+    ).toEqual([
+      { charterId, notes: 'The 30-day goal should name the committee deck.', redrafting: true },
+    ]);
+  });
+
+  it('keeps the transcript beside every version an approved redraft is amended into', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const { harness, agentId, charterId } = await draftFromSession();
+    const owner = harness.withIdentity({ subject: 'owner' });
+    await owner.mutation(api.charters.approve, { charterId });
+    const amended = await owner.mutation(api.charters.amend, {
+      agentId,
+      changes: [{ kind: 'edit-function', text: 'Own the finance close.' }],
+    });
+    expect(
+      (await owner.query(api.charters.transcriptOf, { charterId: amended.charterId }))?.transcript,
+    ).toBe(DAY_ONE_TRANSCRIPT_2026_09_14);
+  });
+
+  it('returns the employee to its one-to-one when the draft has no transcript to redraft from', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const charter = await synthesise();
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await deployAgent(harness);
+    const charterId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('charters', {
+          agentId,
+          version: '0.0',
+          body: charter.body,
+          approved: false,
+          createdAt: 2,
+        }),
+    );
+    const owner = harness.withIdentity({ subject: 'owner' });
+    expect(await owner.query(api.charters.transcriptOf, { charterId })).toBeNull();
+    expect(
+      await owner.mutation(api.charters.requestChanges, { charterId, reason: 'Name the deck.' }),
+    ).toEqual({ ok: true, redrafting: false });
+    expect((await harness.run(async (ctx) => await ctx.db.get(agentId)))?.state).toBe('deployed');
+  });
+});
