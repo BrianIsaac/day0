@@ -32,7 +32,9 @@ export function ManageView() {
   return (
     <Columns arriving={arriving} aside={<EmployeeRail />}>
       <Card title="Autonomous actions">
-        {real && active ? (
+        {surfaceMode === undefined ? (
+          <p className="text-sm text-[var(--color-muted)]">Loading the switch</p>
+        ) : real && active ? (
           <div className="flex flex-wrap">
             <AutonomyControl
               on={autonomousActionsOn(agent)}
@@ -43,7 +45,7 @@ export function ManageView() {
         ) : (
           <p className="text-sm text-[var(--color-fg-2)]">
             {!real
-              ? 'The hosted office keeps this switch off: reads and the DM to you apply on their own, and every other write waits for your decision before it lands in the mock office.'
+              ? 'The hosted office has no switch: the employee holds its writes for your decision, and what you approve lands in the mock office only.'
               : `The switch is here once ${agent.name}'s charter is approved.`}
           </p>
         )}
@@ -57,8 +59,9 @@ export function ManageView() {
             />
           ) : (
             <p className="text-sm text-[var(--color-fg-2)]">
-              Once a chat surface finds your DM, choose here how you hear that work landed or a run
-              stopped. Decision requests go to it at once either way.
+              {!active
+                ? `Once ${agent.name}'s charter is approved, choose here how you hear that work landed or a run stopped.`
+                : 'Once a chat surface finds your DM, choose here how you hear that work landed or a run stopped. Decision requests go to it at once either way.'}
             </p>
           )}
         </Card>

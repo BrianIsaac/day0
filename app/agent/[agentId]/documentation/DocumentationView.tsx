@@ -19,7 +19,9 @@ export function DocumentationView() {
   return (
     <Columns arriving={arriving} aside={<EmployeeRail />}>
       <Card title="What it reads">
-        {surfaceMode === 'real' ? (
+        {surfaceMode === undefined ? (
+          <p className="text-sm text-[var(--color-muted)]">Loading</p>
+        ) : surfaceMode === 'real' ? (
           <p className="text-sm text-[var(--color-fg-2)]">
             You link documentation once for all your employees, on the{' '}
             <Link href="/documentation" prefetch={false}>

@@ -131,7 +131,9 @@ export function EmployeeRail() {
       </Card>
       <Card title="Where decisions reach you">
         <p className="text-sm text-[var(--color-fg-2)]">
-          {surfaceMode === 'mock' ? (
+          {surfaceMode === undefined ? (
+            'Loading'
+          ) : surfaceMode === 'mock' ? (
             'Here only. The hosted office has no chat surface of yours to send them to.'
           ) : channel ? (
             'Here, and as a DM on the chat surface you connected.'

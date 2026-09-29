@@ -115,9 +115,11 @@ function WhatItKnows() {
     ['Manager', agent.bossEmail],
     [
       'Office',
-      surfaceMode === 'real'
-        ? 'your own systems, each connected only once you approve it'
-        : 'the hosted mock office',
+      surfaceMode === undefined
+        ? 'loading'
+        : surfaceMode === 'real'
+          ? 'your own systems, each connected only once you approve it'
+          : 'the hosted mock office',
     ],
     [
       'Skills',

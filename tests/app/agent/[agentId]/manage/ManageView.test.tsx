@@ -56,7 +56,7 @@ describe('ManageView: the manager DM setting waits for a manager channel (N7)', 
   function manage(
     surfaces: SurfaceRecord[],
     options: {
-      mode?: 'mock' | 'real';
+      mode?: 'mock' | 'real' | 'loading';
       charter?: Doc<'charters'> | null;
       state?: Doc<'agents'>['state'];
     } = {},
@@ -66,7 +66,7 @@ describe('ManageView: the manager DM setting waits for a manager channel (N7)', 
         value={{
           agent: { ...agent, state: options.state ?? agent.state },
           charter: options.charter === undefined ? approved : options.charter,
-          surfaceMode: options.mode ?? 'real',
+          surfaceMode: options.mode === 'loading' ? undefined : (options.mode ?? 'real'),
           surfaces,
           arriving: false,
           reportSentBack: () => undefined,
@@ -107,7 +107,21 @@ describe('ManageView: the manager DM setting waits for a manager channel (N7)', 
     expect(manage([], { charter: drafted })).toContain('role="switch"');
     const mock = manage([], { mode: 'mock' });
     expect(mock).not.toContain('role="switch"');
-    expect(mock).toContain('every other write waits for your decision');
+    expect(mock).toContain('holds its writes for your decision');
+    expect(mock).not.toContain('DM to you');
     expect(mock).not.toContain('Manager DMs');
+  });
+
+  it('says the charter is what the DM setting waits for when it is, not the chat surface', (): void => {
+    const drafted = { approved: false } as unknown as Doc<'charters'>;
+    const html = manage([channel()], { charter: drafted, state: 'charter-pending' });
+    expect(html).toContain('Once Priya&#x27;s charter is approved, choose here');
+    expect(html).not.toContain('Once a chat surface finds your DM');
+  });
+
+  it('says it is loading, not what mock mode offers, until the mode is known', (): void => {
+    const html = manage([], { mode: 'loading' });
+    expect(html).toContain('Loading the switch');
+    expect(html).not.toContain('hosted office');
   });
 });
