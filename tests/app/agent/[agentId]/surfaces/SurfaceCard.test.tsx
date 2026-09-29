@@ -210,9 +210,11 @@ describe('a surface card in each of its states (round two section 3.9)', (): voi
   });
 
   it('carries the id, the verdict and the name the rehearsal driver and focus return read', (): void => {
+    // The card is the one section, named by its heading: no article wrapped around it (m29).
     expect(render(listed({}))).toMatch(
-      /^<article id="surface-linear" tabindex="-1" aria-label="Linear" data-verdict="proposed"/,
+      /^<section id="surface-linear" aria-labelledby="[^"]+" tabindex="-1" data-verdict="proposed"/,
     );
+    expect(render(listed({}))).not.toContain('<article');
   });
 
   it('draws no empty facts list for a declared card', (): void => {

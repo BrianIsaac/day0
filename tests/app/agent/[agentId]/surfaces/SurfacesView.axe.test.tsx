@@ -321,7 +321,7 @@ describe('the real-mode Surfaces tab against the floor (N14)', (): void => {
     backend.queries = { ...OFFICE, ...SYSTEMS };
     const view = await openTab('real', 'How a system is reached');
     // The absent system and the one the charter does not name are listed beside the cards.
-    expect(view.container.querySelectorAll('article[id^="surface-"]')).toHaveLength(6);
+    expect(view.container.querySelectorAll('section[id^="surface-"]')).toHaveLength(6);
     expect(await axeViolations(view.container, ['region'])).toEqual([]);
     view.unmount();
   }, 30_000);
