@@ -111,7 +111,7 @@ export function ManageView() {
           ) : (
             <p className={COPY}>
               {real
-                ? `Ends ${agent.name}'s employment now. A credential only ${agent.name} binds is revoked at once, its working rows are deleted, and one record is kept so the audit export can say it existed.`
+                ? `Ends ${agent.name}'s employment now. Day0 deletes its copy of any credential only ${agent.name} uses and its working rows at once, and keeps one record so the audit export can say it existed.`
                 : `Removes ${agent.name} and everything it made in the hosted office. Nothing is kept.`}
             </p>
           )}

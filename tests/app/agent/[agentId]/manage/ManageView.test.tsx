@@ -146,7 +146,7 @@ describe('ManageView: the manager DM setting waits for a manager channel (N7)', 
   });
 
   it('says what retiring does in each mode, and waits for the mode before offering it', (): void => {
-    expect(manage([])).toContain('A credential only Priya binds is revoked at once');
+    expect(manage([])).toContain('Day0 deletes its copy of any credential only Priya uses');
     expect(manage([], { mode: 'mock' })).toContain(
       'Removes Priya and everything it made in the hosted office. Nothing is kept.',
     );

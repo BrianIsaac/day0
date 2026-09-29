@@ -23,10 +23,16 @@ const backend = vi.hoisted(() => ({
   calls: [] as Array<{ name: string; args: unknown }>,
   /** What a query answers, by function name; undefined (loading) otherwise. */
   queries: {} as Record<string, unknown>,
+  /** Every query asked, by function name, with its arguments. */
+  asked: [] as Array<{ name: string; args: unknown }>,
 }));
 
 vi.mock('convex/react', () => ({
-  useQuery: (reference: unknown): unknown => backend.queries[getFunctionName(reference as never)],
+  useQuery: (reference: unknown, args: unknown): unknown => {
+    const name = getFunctionName(reference as never);
+    backend.asked.push({ name, args });
+    return args === 'skip' ? undefined : backend.queries[name];
+  },
   useMutation:
     (reference: unknown) =>
     async (args?: unknown): Promise<unknown> => {
@@ -112,6 +118,17 @@ describe('RetireDialog: what retiring does, said before it is done (Q15, N1)', (
     backend.refusals = {};
     backend.results = {};
     backend.calls = [];
+    backend.asked = [];
+  });
+
+  it('stops asking for the inbox once the employee is gone, since the inbox refuses a missing one', (): void => {
+    backend.queries = { 'reset:retirePreview': null, 'work:needsYouForAgent': INBOX };
+    const { view } = open();
+
+    expect(backend.asked.filter((ask) => ask.name === 'work:needsYouForAgent')).toEqual([
+      { name: 'work:needsYouForAgent', args: 'skip' },
+    ]);
+    view.unmount();
   });
 
   it('opens on Keep, named for the employee, with the counts from the preview and what waits', (): void => {
@@ -129,7 +146,7 @@ describe('RetireDialog: what retiring does, said before it is done (Q15, N1)', (
     expect(lines).toEqual([
       [
         'Revoked',
-        'The Linear credential, at once. A write reaching a system after this moment is refused.',
+        'The Linear credential: Day0 deletes its copy at once, so no later run can use it. The token stays valid at the provider until you revoke it there.',
       ],
       [
         'Deleted',

@@ -86,7 +86,7 @@ export function retireLines(preview: RetirePreview, waiting: string): RetireLine
       term: 'Revoked',
       details: [
         preview.revoked.length > 0
-          ? `${sentence(`${credentialsWords(preview.revoked)}, at once`)} A write reaching a system after this moment is refused.`
+          ? `${sentence(`${credentialsWords(preview.revoked)}: Day0 deletes its copy at once, so no later run can use it`)} The token stays valid at the provider until you revoke it there.`
           : 'Nothing: no credential is bound only by this employee.',
       ],
     },
@@ -138,7 +138,12 @@ export function RetireDialog({
   onRetired: (name: string) => void;
 }) {
   const preview = useQuery(api.reset.retirePreview, { agentId: agent._id });
-  const inbox = useQuery(api.work.needsYouForAgent, { agentId: agent._id });
+  // Once the employee is gone the preview answers null; the inbox, which refuses a missing
+  // employee, is not asked again.
+  const inbox = useQuery(
+    api.work.needsYouForAgent,
+    preview === null ? 'skip' : { agentId: agent._id },
+  );
   const retire = useMutation(api.reset.retire);
   const [typed, setTyped] = useState('');
   const keep = useRef<HTMLButtonElement>(null);
