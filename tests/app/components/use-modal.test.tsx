@@ -1,9 +1,9 @@
 /** @vitest-environment jsdom */
 
-import { useRef, useState } from 'react';
+import { act, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { afterEach, describe, expect, it } from 'vitest';
-import { focusableIn, useModal } from '../../../app/components/use-modal';
+import { focusableIn, keepTabInside, useModal } from '../../../app/components/use-modal';
 import { mount, press, unmountAll } from '../../fixtures/dom/press';
 
 afterEach((): void => {
@@ -68,6 +68,32 @@ describe('useModal', () => {
     const view = mount(<Page controls={false} />);
     await press(view.container, 'Open');
     expect(document.activeElement).toBe(document.querySelector('[data-panel]'));
+  });
+
+  it('wraps Shift+Tab from the panel itself to its last control, so focus never leaves it (review m2)', () => {
+    const view = mount(
+      <div
+        tabIndex={-1}
+        data-panel=""
+        onKeyDown={(event): void => keepTabInside(event, event.currentTarget)}
+      >
+        <button type="button">First</button>
+        <button type="button">Last</button>
+      </div>,
+    );
+    const panel = view.container.querySelector<HTMLElement>('[data-panel]');
+    panel?.focus();
+    const shiftTab = new KeyboardEvent('keydown', {
+      key: 'Tab',
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    act((): void => {
+      panel?.dispatchEvent(shiftTab);
+    });
+    expect(shiftTab.defaultPrevented).toBe(true);
+    expect(document.activeElement?.textContent).toBe('Last');
   });
 
   it('leaves a hidden control out of what a panel’s Tab reaches', () => {

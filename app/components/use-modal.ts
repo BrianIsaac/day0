@@ -23,7 +23,8 @@ export function focusableIn(panel: HTMLElement): HTMLElement[] {
 
 /**
  * Keep Tab inside a modal: Tab and Shift+Tab wrap at its ends, and a modal with no control holds
- * focus where it is.
+ * focus where it is. The panel itself, which holds focus when it opens on itself, counts as the
+ * start, so Shift+Tab from it goes to the last control rather than out of the modal.
  *
  * @param event - The key pressed inside the modal.
  * @param panel - The modal.
@@ -37,7 +38,8 @@ export function keepTabInside(event: KeyboardEvent<HTMLElement>, panel: HTMLElem
     event.preventDefault();
     return;
   }
-  if (event.shiftKey && document.activeElement === first) {
+  const atStart = document.activeElement === first || document.activeElement === panel;
+  if (event.shiftKey && atStart) {
     event.preventDefault();
     last.focus();
   } else if (!event.shiftKey && document.activeElement === last) {
