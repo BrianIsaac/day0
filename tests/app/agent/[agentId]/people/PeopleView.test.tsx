@@ -153,6 +153,22 @@ describe('PeopleView', () => {
     expect(said(view.container)).toEqual([]);
     view.unmount();
   });
+
+  it('says nothing beside the button once a refused change is cancelled (m38)', async () => {
+    backend.refusals = {
+      'agents:setBossEmail':
+        '[CONVEX M(agents:setBossEmail)] [Request ID: 1] Server Error\nUncaught Error: The manager must be an email address, such as name@company.com.\n    at handler (../convex/agents.ts:1:1)',
+    };
+    const view = mount(asEmployee(<PeopleView />, { charter, surfaceMode: 'real' }));
+
+    await press(view.container, 'Change manager');
+    await press(document.body, 'Save');
+    await press(document.body, 'Cancel');
+
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(said(view.container)).toEqual([]);
+    view.unmount();
+  });
 });
 
 describe('managerChangeLines', () => {

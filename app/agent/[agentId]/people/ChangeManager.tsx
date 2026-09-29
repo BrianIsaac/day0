@@ -67,6 +67,12 @@ export function ChangeManager({
   const [draft, setDraft] = useState(agent.bossEmail);
   const opener = useRef<HTMLButtonElement>(null);
   const change = useChange(opener);
+  // Closing without a change leaves nothing said: a refusal inside the dialog is not repeated
+  // beside the button once the manager has cancelled.
+  const cancel = (): void => {
+    change.clear();
+    setOpen(false);
+  };
 
   return (
     <div className="grid justify-items-start gap-2">
@@ -84,7 +90,7 @@ export function ChangeManager({
       </Button>
       <StatusRegion outcome={open ? null : change.outcome} />
       {open ? (
-        <Dialog title="Change manager" onClose={() => setOpen(false)} busy={change.busy}>
+        <Dialog title="Change manager" onClose={cancel} busy={change.busy}>
           <form
             className="grid gap-4"
             onSubmit={(event) => {
@@ -125,7 +131,7 @@ export function ChangeManager({
             </div>
             <StatusRegion outcome={change.outcome} />
             <div className="flex flex-wrap justify-end gap-2">
-              <Button size="large" disabled={change.busy} onClick={() => setOpen(false)}>
+              <Button size="large" disabled={change.busy} onClick={cancel}>
                 Cancel
               </Button>
               <Button type="submit" variant="primary" size="large" disabled={change.busy}>
