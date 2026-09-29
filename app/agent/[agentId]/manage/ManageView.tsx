@@ -44,7 +44,7 @@ export function ManageView() {
   const channel = connectedManagerChannel(surfaces, now) !== undefined;
 
   const decisions = real ? (
-    <Card title="Manager DMs">
+    <Card title="Notifications">
       {active && channel ? (
         <NotificationModeControl
           mode={managerNotificationMode(agent)}
