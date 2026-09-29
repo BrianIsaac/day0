@@ -295,6 +295,21 @@ describe('a room that comes back to a one-to-one already over', (): void => {
     view.unmount();
   });
 
+  it('draws a stored turn as the live one was drawn: its emphasis bold, never its marks (m21)', async (): Promise<void> => {
+    room.session = {
+      _id: 'session-1',
+      state: 'synthesising',
+      pendingTranscript:
+        'ASSISTANT: **Topic 1 - Why this hire:** what changed?\n\nUSER: The close.',
+    };
+    const view = mount(<ChatRoom agentId={AGENT} bossLabel="Sam" />);
+    await settle();
+    const log = view.container.querySelector('[role="log"]');
+    expect(log?.querySelector('strong')?.textContent).toBe('Topic 1 - Why this hire:');
+    expect(log?.textContent).not.toContain('**');
+    view.unmount();
+  });
+
   it('waits for the session before deciding, rather than opening one it might not need', async (): Promise<void> => {
     room.session = undefined;
     const view = mount(<ChatRoom agentId={AGENT} bossLabel="Sam" />);

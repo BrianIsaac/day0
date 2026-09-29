@@ -3,6 +3,7 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import { transcriptTurns, type TranscriptTurn } from '@/agent/transcript-turns';
 import { Card } from '../../../components/Card';
+import { TurnText } from '../one-to-one/TurnText';
 import { Disclosure } from '../../../components/Disclosure';
 import { RecordLine } from '../../../components/RecordLine';
 import { clockTime, useAgentZone } from '../time';
@@ -64,12 +65,12 @@ function TranscriptAnswers({ transcript }: { transcript: string }) {
           {exchange.question ? (
             <p className="line-clamp-2 text-[13px] text-[var(--color-muted)]">
               <span className="sr-only">Asked: </span>
-              {exchange.question}
+              <TurnText text={exchange.question} />
             </p>
           ) : null}
           <p className="rounded-xl rounded-br-[4px] border border-[var(--color-accent-line)] bg-[var(--color-accent-soft)] px-3.5 py-2.5 text-sm whitespace-pre-wrap text-[var(--color-fg)]">
             <span className="sr-only">You: </span>
-            {exchange.answer}
+            <TurnText text={exchange.answer} />
           </p>
         </li>
       ))}
