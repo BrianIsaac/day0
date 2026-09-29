@@ -12,7 +12,7 @@ import {
 import { PendingActions } from './PendingActions';
 import { type PlanApproval, PlanApprovalForm } from './PlanApproval';
 import { useNow, useAgentZone, clockTimeWithSeconds, clockTime } from '../time';
-import { useRef, useState, type CSSProperties } from 'react';
+import { useRef, useState } from 'react';
 import { useChange } from '../../../components/use-change';
 import { StatusRegion } from '../../../components/StatusRegion';
 import {
@@ -29,9 +29,9 @@ import {
   waitingLine,
   cancelledReason,
   pendingVerdicts,
-  landedHeadline,
-  clipLedgerRow,
   failedItemReason,
+  landedPlaces,
+  justLanded,
   ANSWER_AND_RETRY,
   SKIP_RETRY_NOTE,
 } from './work-item';
@@ -62,13 +62,11 @@ import {
   ProviderReconciliationControl,
 } from './RunDetails';
 import { verdictFor } from '@/surfaces/verdict';
+import { LandedChanges } from './LandedChanges';
 import { replyTargetFor } from '@/work/reply-target';
 
 /** How long a landing plays: the last line's 120 ms and three 70 ms steps, then its 240 ms rise. */
 export const LANDING_MS = 570;
-
-/** The ledger lines after the fourth rise with it, so a long ledger is not waited for. */
-const LANDING_STAGGER_CAP = 3;
 
 /** One work item: its verdict, plan, held actions, ledger and the controls the state allows. */
 export function WorkItemCard({
@@ -159,10 +157,12 @@ export function WorkItemCard({
   const failedActions = unlandedActions.filter(
     (a) => !refusedActions.includes(a) && !unknownActions.includes(a),
   );
-  const landedActions = appliedActions.filter((a) => a.ok && !a.held);
-  // A ledger that has just appeared is a landing the manager is watching (v3 section 5.2).
-  const landedBefore = usePreviousValue(landedActions.length > 0, LANDING_MS);
-  const freshLanding = landedBefore === false && landedActions.length > 0;
+  const places = landedPlaces(appliedActions);
+  const landedActions = places.map((place) => ({ ...appliedActions[place]!, place }));
+  // Rows that land while the page is open are a landing the manager is
+  // watching (v3 section 5.2), whether or not the run landed a row before.
+  const landedBefore = usePreviousValue(places.join(','), LANDING_MS);
+  const freshPlaces = justLanded(landedBefore, places);
   const landedAutonomously = landedActions.filter((a) => a.authority === 'autonomous').length;
   const autonomyTurnedOnAt = autonomyTurnedOnAfterDraft(
     item.planPendingAt,
@@ -514,44 +514,7 @@ export function WorkItemCard({
         </p>
       ) : null}
 
-      {landedActions.length > 0 ? (
-        <div
-          data-land={freshLanding ? '' : undefined}
-          className="mt-3 p-2 rounded-md bg-[var(--color-ok)]/10 border border-[var(--color-ok)]/30 text-xs"
-        >
-          <p className="text-[var(--color-ok)] font-medium mb-1">{landedHeadline(landedActions)}</p>
-          <ul className="space-y-0.5 text-[var(--color-fg)]">
-            {landedActions.map((a, i) => (
-              <li
-                key={i}
-                style={
-                  freshLanding
-                    ? ({ '--i': Math.min(i, LANDING_STAGGER_CAP) } as CSSProperties)
-                    : undefined
-                }
-              >
-                <span className="font-mono text-[10px] text-[var(--color-muted)]">{a.tool}</span>{' '}
-                {clipLedgerRow(a.effect) ?? '(applied)'}
-                {a.providerId ? (
-                  <span className="ml-1 font-mono text-[10px] text-[var(--color-muted)]">
-                    id {a.providerId}
-                  </span>
-                ) : null}
-                <PhaseLabel phase={a.phase} />
-                {a.reusedFrom ? (
-                  <span className="ml-1 text-[10px] text-[var(--color-muted)]">
-                    {a.reusedFromRun
-                      ? `reused from run ${a.reusedFromRun}`
-                      : 'reused from an earlier run'}
-                  </span>
-                ) : null}
-                <RepairNote repair={a.repair} />
-                <SessionRestoreNote restore={a.sessionRestore} />
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
+      {landedActions.length > 0 ? <LandedChanges rows={landedActions} fresh={freshPlaces} /> : null}
 
       {/* Held is its own list, not a success and not a failure: the gate or the
           manager kept it back, and the ledger says so. */}

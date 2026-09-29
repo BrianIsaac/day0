@@ -1570,6 +1570,50 @@ describe('a work item that lands while the page is open (v3 section 5.2)', (): v
     view.unmount();
   });
 
+  it('plays the landing for the writes that land after Approve on a run that landed a row before it (M7)', (): void => {
+    const prerequisite = { tool: 'linear.get_issue', ok: true, effect: 'Read REVOPS-5' };
+    const held = {
+      ...executing,
+      state: 'actions-pending',
+      pendingRunId: 'run-1',
+      output: {
+        draft: 'Closing from the ledger.',
+        notes: '',
+        initial: { applied: [prerequisite] },
+        actions: [{ tool: 'linear.save_comment', args: { issueId: 'REVOPS-5', body: 'Audit' } }],
+        applied: [],
+      },
+      actionVerdicts: [{ disposition: 'held', reason: 'system-of-record mutation held' }],
+    } as unknown as Doc<'workItems'>;
+    const closed = {
+      ...held,
+      state: 'completed',
+      pendingRunId: undefined,
+      actionVerdicts: undefined,
+      output: {
+        ...(held.output as object),
+        applied: [
+          { tool: 'linear.save_comment', ok: true, effect: 'Commented on REVOPS-5' },
+          { tool: 'linear.save_issue', ok: true, effect: 'Moved REVOPS-5 to Done' },
+        ],
+      },
+    } as unknown as Doc<'workItems'>;
+    const view = mount(card(held));
+    expect(view.container.querySelector('[data-land]')).toBeNull();
+
+    act((): void => view.root.render(card(closed)));
+    const landing = view.container.querySelector('[data-land]');
+    expect(landing?.textContent).toContain('Moved REVOPS-5 to Done');
+    expect(landing?.textContent).not.toContain('Read REVOPS-5');
+    expect(
+      [...(landing?.querySelectorAll('li') ?? [])].map((line) =>
+        (line as HTMLElement).style.getPropertyValue('--i'),
+      ),
+    ).toEqual(['0', '1']);
+    expect(view.container.textContent).toContain('Read REVOPS-5');
+    view.unmount();
+  });
+
   it('shows a landing that was already there as it stands, with nothing to play', (): void => {
     const view = mount(card(landed));
     expect(view.container.textContent).toContain('Moved REVOPS-5 to Done');

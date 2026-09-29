@@ -92,7 +92,8 @@ export interface RefusedClosingRow {
   withheldActions?: WithheldActionRow[];
 }
 
-type PhasedLedgerRow = LedgerRow & { phase?: 'prerequisite' | 'closing' };
+/** A ledger row labelled with the phase that applied it, when the run had two. */
+export type PhasedLedgerRow = LedgerRow & { phase?: 'prerequisite' | 'closing' };
 
 /**
  * Every applied row of a run, prerequisite phase first, each labelled with the
@@ -188,6 +189,33 @@ export function colleagueHolding(
   }
   if (typeof holder?.agentId !== 'string' || typeof holder.name !== 'string') return undefined;
   return { agentId: holder.agentId, name: holder.name };
+}
+
+/**
+ * Where each landed row sits in the run's ledger (`phasedLedger`): the landing moment's key. A
+ * run's ledger only grows, prerequisite rows first, so a row keeps its place once it has landed
+ * and the rows new since the page last looked are the ones at places it did not hold (M7).
+ *
+ * @param ledger - The run's rows, as `phasedLedger` gives them.
+ * @returns The places of the rows that reached the work environment, in ledger order.
+ */
+export function landedPlaces(ledger: ReadonlyArray<Pick<LedgerRow, 'ok' | 'held'>>): number[] {
+  return ledger.flatMap((row, place) => (row.ok && !row.held ? [place] : []));
+}
+
+/**
+ * The landed rows the manager has not seen land: those at places the landed set did not hold a
+ * moment ago. Nothing is new on a card's first render, where no earlier set is known.
+ *
+ * @param before - The landed places as the page last showed them (`landedPlaces` joined by
+ *   commas), or undefined when no landing is playing.
+ * @param now - The landed places now.
+ * @returns The places that just landed.
+ */
+export function justLanded(before: string | undefined, now: readonly number[]): Set<number> {
+  if (before === undefined) return new Set();
+  const seen = new Set(before === '' ? [] : before.split(',').map(Number));
+  return new Set(now.filter((place) => !seen.has(place)));
 }
 
 /** A ledger list row shows the short form of a long read result; the exact payload holds it whole. */
