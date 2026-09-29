@@ -114,4 +114,27 @@ describe('the charter as one document', (): void => {
     );
     expect(html).toContain('<li>Whether dbt PR access is needed.</li>');
   });
+
+  it('shows no strike on a function an amendment has rewritten since, nor on a clause put back', (): void => {
+    const html = render(
+      <CharterDocument
+        body={{ ...body, proposedFunction: 'Own the finance close.' }}
+        strikes={{
+          pending: false,
+          changes: [
+            {
+              field: 'proposedFunction',
+              text: 'Own triage for owned, prioritized tier-2 asks.',
+              rewrittenAs: 'Own triage for tier-2 asks.',
+            },
+            { field: 'willNotDo', text: 'Edit Salesforce records.' },
+          ],
+        }}
+      />,
+    );
+    expect(html).toContain('<p>Own the finance close.</p>');
+    expect(html).not.toContain('before your strike');
+    expect(html).not.toMatch(/<s[^>]*>Edit Salesforce records\.<\/s>/);
+    expect(html).toContain('<li>Edit Salesforce records.</li>');
+  });
 });

@@ -10,6 +10,7 @@ import { SYSTEM_CLASSES } from './system-classes';
 import {
   CONSTRAINT_KINDS,
   assertEditKeepsBoundaries,
+  clauseChanges,
   clauseTexts,
   withoutConstraints,
   wordingPresent,
@@ -292,8 +293,11 @@ function applyOne(charter: Charter, change: CharterChange, now: Date): AppliedAm
       }
       if (target.struck) throw new Error('that constraint is already struck');
       constraints[change.index] = { ...target, struck: true };
+      const struck = withoutConstraints(charter, [target]);
+      // The record keeps what this strike changed, as approval keeps a draft's.
+      const struckClauses = [...(charter.struckClauses ?? []), ...clauseChanges(charter, struck)];
       return {
-        charter: { ...withoutConstraints(charter, [target]), constraints },
+        charter: { ...struck, constraints, struckClauses },
         systemsAdded: added,
         systemsRemoved: removed,
       };

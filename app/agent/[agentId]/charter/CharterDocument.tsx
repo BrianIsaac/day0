@@ -82,7 +82,10 @@ function ClauseList({
     changes.find((change) =>
       strikes.pending ? change.text === text : change.rewrittenAs === text,
     );
-  const removed = strikes.pending ? [] : changes.filter((c) => c.rewrittenAs === undefined);
+  // A clause an amendment has since put back is in force, not struck.
+  const removed = strikes.pending
+    ? []
+    : changes.filter((c) => c.rewrittenAs === undefined && !items.includes(c.text));
   if (items.length === 0 && removed.length === 0) {
     return <p className="text-[var(--color-muted)]">None.</p>;
   }
@@ -141,7 +144,13 @@ export function CharterDocument({
   strikes: DocumentStrikes;
 }) {
   const zone = useAgentZone();
-  const functionChange = changesTo(strikes, 'proposedFunction')[0];
+  // The record's change to the function counts only while the function still reads as the strike
+  // left it; an amendment that rewrote it since has its own version.
+  const functionChange = changesTo(strikes, 'proposedFunction').findLast((change) =>
+    strikes.pending
+      ? change.text === body.proposedFunction
+      : change.rewrittenAs === body.proposedFunction,
+  );
   const systems = body.namedSystems ?? [];
   const adjacent = body.adjacentRoles ?? [];
   const answered = body.answeredQuestions ?? [];
@@ -176,7 +185,7 @@ export function CharterDocument({
       </Section>
       {manager ? (
         <Section title="Reports to">
-          <p>{manager}, the manager named in the header; change it there</p>
+          <p>{manager}, the manager named in the header; change it there.</p>
         </Section>
       ) : null}
       {systems.length > 0 ? (
