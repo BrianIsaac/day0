@@ -18,7 +18,11 @@ import {
   TAKE_IT_ANYWAY,
   waitingLine,
 } from '../../../../../app/agent/[agentId]/work/work-item';
-import { WorkItemCard, LANDING_MS } from '../../../../../app/agent/[agentId]/work/WorkItemCard';
+import {
+  WorkItemCard,
+  LANDING_MS,
+  retryModeOf,
+} from '../../../../../app/agent/[agentId]/work/WorkItemCard';
 import {
   button,
   focusedName,
@@ -1598,5 +1602,17 @@ describe('a work item that lands while the page is open (v3 section 5.2)', (): v
     expect(view.container.querySelector('[data-land]')).toBeNull();
     expect(view.container.querySelector('li[style]')).toBeNull();
     view.unmount();
+  });
+});
+
+describe('retryModeOf', (): void => {
+  it('fails loudly on a state the union does not hold, never drawing a card with no controls (m13)', (): void => {
+    const stray = { state: 'archived' } as unknown as Doc<'workItems'>;
+    expect(() => retryModeOf(stray, undefined, undefined)).toThrow(
+      'no settling controls for a work item in state archived',
+    );
+    expect(retryModeOf({ state: 'executing' } as Doc<'workItems'>, undefined, undefined)).toBe(
+      undefined,
+    );
   });
 });
