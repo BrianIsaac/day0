@@ -205,7 +205,7 @@ function MessageRow({ m }: { m: Doc<'mockSlackMessages'> }) {
             </span>
           ) : null}
         </div>
-        <p className="mt-1 text-sm leading-relaxed whitespace-pre-wrap text-[var(--color-fg)]">
+        <p className="mt-1 max-w-[72ch] text-sm leading-relaxed whitespace-pre-wrap text-[var(--color-fg)]">
           {m.body}
         </p>
       </div>
