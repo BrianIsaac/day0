@@ -36,18 +36,23 @@ describe('a question at plan approval', (): void => {
         onCancel={noop}
       />,
     );
-    expect(markup).toContain('A question for you before this plan runs');
+    expect(markup).toContain('A question from your charter');
     expect(markup).toContain('Who owns the Looker pipeline tile.');
-    expect(markup).toContain('from the charter · touched by the plan: looker, pipeline, tile');
+    expect(markup).toContain('Asked because the plan touches it (looker, pipeline, tile).');
+    expect(markup).toContain('Your answer is written into the charter with the approval');
     expect(markup).toContain('aria-label="answer: Who owns the Looker pipeline tile."');
     expect(markup).toContain('Planner');
     expect(markup).toContain('which figure to enter if the deck and the sheet disagree');
     expect(markup).toMatch(
-      /<label for="[^"]*-note"[^>]*>Your answer to the note, for this run \(optional\)<\/label>/,
+      /<label for="[^"]+"[^>]*>Your answer to the note, for this run \(optional\)<\/label>/,
     );
     expect(markup).not.toContain('aria-label="answer to the planner');
     expect(markup).toContain('Approve plan with answers');
-    expect(markup).toContain('Cancel');
+    expect(markup).toContain('>Cancel this item<');
+    // The consequence is said under the controls: approving still holds every write.
+    expect(markup).toContain(
+      'Approving runs the plan. Every write it produces is still held for you.',
+    );
   });
 
   it('keeps the plain approve button when the plan raises nothing, and skips an answered question', (): void => {

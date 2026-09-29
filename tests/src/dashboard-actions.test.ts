@@ -114,29 +114,33 @@ describe('dashboard exact-action gate', (): void => {
     // The card says plainly why the row is waiting.
     expect(html).toContain(HELD_WHILE_SUPERVISED_NOTE);
     expect(html).not.toContain(HELD_BEFORE_AUTONOMY_NOTE);
-    // The plain line comes first, the reason on the same line, and the literal payload is folded away.
+    // The plain line comes first, the reason beneath it, and the literal payload is folded away.
     expect(html).toMatch(
-      /<p[^>]*>Send Sam a Slack DM: &quot;Draft ready\.&quot;<span[^>]*> · system-of-record mutation held for the manager<\/span><\/p>/,
+      /<p[^>]*>Send Sam a Slack DM: &quot;Draft ready\.&quot;<\/p><p[^>]*>Held: system-of-record mutation held for the manager\.<\/p>/,
     );
     expect(html).toMatch(
-      /<p[^>]*>Post to Slack channel C0PUBLIC: &quot;x{120}…&quot;<span[^>]*> · refused · no grant \(slack:write\)<\/span><\/p>/,
+      /<p[^>]*>Post to Slack channel C0PUBLIC: &quot;x{120}…&quot;<\/p><p[^>]*>Refused by Day0&#x27;s gate: no grant \(slack:write\)\. It cannot be sent\.<\/p>/,
     );
     expect(html.indexOf('Send Sam a Slack DM')).toBeLessThan(
       html.indexOf('&quot;tool&quot;: &quot;http.request&quot;'),
     );
-    expect(html).toMatch(/<details[^>]*><summary[^>]*>exact payload<\/summary><code/);
+    expect(html).toMatch(
+      /<details[^>]*><summary[^>]*><span[^>]*><\/span>Exact payload<\/summary><div[^>]*><code/,
+    );
     expect(html).not.toMatch(/<details[^>]*open/);
     expect(html).toContain('{{secret}}');
     // Each box is named for its row, not its position, so a screen reader hears what it approves.
     expect(html).toMatch(
-      /<input type="checkbox"[^>]*aria-label="approve: Send Sam a Slack DM: &quot;Draft ready\.&quot;" checked=""/,
+      /<input type="checkbox"[^>]*aria-label="approve: Send Sam a Slack DM: &quot;Draft ready\.&quot;"[^>]*checked=""/,
     );
     expect(html).toMatch(
-      /<input type="checkbox"[^>]*disabled="" aria-label="approve: Post to Slack channel C0PUBLIC[^"]*"\/>/,
+      /<input type="checkbox"[^>]*disabled=""[^>]*aria-label="approve: Post to Slack channel C0PUBLIC[^"]*"[^>]*\/>/,
     );
     expect(html).toMatch(/<button[^>]*>Approve selected \(1\)<\/button>/);
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Approve all<\/button>/);
-    expect(html).not.toMatch(/approve: Post to Slack channel C0PUBLIC[^]*?reject this action/);
+    // A refused row cannot be withheld or included: it is never sent either way.
+    expect(html).not.toContain('Withhold this one: Post to Slack channel C0PUBLIC');
+    expect(html).toContain('aria-label="Withhold this one: Send Sam a Slack DM');
   });
 
   it('lists only the rows that need the manager and says how many applied on their own', (): void => {
@@ -178,7 +182,7 @@ describe('dashboard exact-action gate', (): void => {
     expect(html).not.toContain('Send Sam a Slack DM');
     expect(html).toContain('Reply in #revops-asks thread: &quot;Covered.&quot;');
     expect(html).toMatch(
-      /<input type="checkbox"[^>]*aria-label="approve: Reply in #revops-asks thread: &quot;Covered\.&quot;" checked=""/,
+      /<input type="checkbox"[^>]*aria-label="approve: Reply in #revops-asks thread: &quot;Covered\.&quot;"[^>]*checked=""/,
     );
     expect(html).not.toMatch(/aria-label="approve: Read issue REVOPS-10/);
     expect(html).toMatch(/<button[^>]*>Approve selected \(1\)<\/button>/);
@@ -620,7 +624,9 @@ describe('the cross-item approval panel', (): void => {
     expect(html).toContain('Answer #revops');
     expect(html).toContain('Post to Slack channel C0PUBLIC: &quot;Reply for Answer #revops&quot;');
     expect(html).toContain('1 row is refused by the gate; decide this one on its card.');
-    expect(html).toMatch(/<details[^>]*><summary[^>]*>exact payload<\/summary><code/);
+    expect(html).toMatch(
+      /<details[^>]*><summary[^>]*><span[^>]*><\/span>Exact payload<\/summary><div[^>]*><code/,
+    );
     expect(html).toContain('Approve 1 held action across 1 item');
     expect(html).toContain('Each item is approved exactly as shown');
   });

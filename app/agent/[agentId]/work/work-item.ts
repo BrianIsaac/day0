@@ -339,8 +339,8 @@ export function failedItemReason(item: {
     // The run asked its question and withheld the writes that wait on the answer.
     if (questionOpen && isOpenQuestionStop(detail)) {
       return unconfirmed
-        ? `stopped with a question open for you, and the writes that wait on it were never sent; confirm what landed below, then answer it with Retry with a note: ${detail}`
-        : `stopped with a question open for you, and the writes that wait on it were never sent; answer it with Retry with a note: ${detail}`;
+        ? `stopped with a question open for you, and the writes that wait on it were never sent; confirm what landed below, then answer it with Answer and retry: ${detail}`
+        : `stopped with a question open for you, and the writes that wait on it were never sent; answer it below with Answer and retry: ${detail}`;
     }
     // Stopped for something else while a question is open: a note on this
     // Retry answers nothing (wave 1.5 review D2 (b)), and a stop at the

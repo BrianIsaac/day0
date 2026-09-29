@@ -6,7 +6,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Id } from '../../../../../convex/_generated/dataModel';
 import { dashboardMetrics } from '../../../../fixtures/dashboard/metrics';
 import { PILOT_FIGURES } from '../../../../../app/CompanySupervision';
-import { CheckForNewWork, WorkQueue } from '../../../../../app/agent/[agentId]/work/WorkQueue';
+import {
+  CheckForNewWork,
+  sortedForQueue,
+  WorkQueue,
+} from '../../../../../app/agent/[agentId]/work/WorkQueue';
 import { MetricsCard } from '../../../../../app/agent/[agentId]/record/MetricsCard';
 import { RegisteredSkillsPanel } from '../../../../../app/agent/[agentId]/skills/RegisteredSkillsPanel';
 import { button, focusedName, mount, press, said } from '../../../../fixtures/dom/press';
@@ -79,8 +83,8 @@ describe('loading is not the same as empty (P3-13)', (): void => {
         loading={true}
       />,
     );
-    expect(queue).toContain('loading the work queue…');
-    expect(queue).not.toContain('no work seeded yet');
+    expect(queue).toContain('Loading the work queue…');
+    expect(queue).not.toContain('Nothing has come in yet');
     const skills = renderToStaticMarkup(
       <RegisteredSkillsPanel
         skills={[]}
@@ -98,5 +102,53 @@ describe('loading is not the same as empty (P3-13)', (): void => {
     const markup = renderToStaticMarkup(<MetricsCard metrics={dashboardMetrics()} />);
     for (const figure of PILOT_FIGURES) expect(markup).toContain(figure.definition);
     expect(markup).toContain('What each pilot figure counts');
+  });
+});
+
+describe('the order the queue lists its items in', (): void => {
+  it('lists a deferred row with the rows that wait on the manager, as the roster counts it', (): void => {
+    const order = sortedForQueue([
+      { state: 'completed' },
+      { state: 'skipped' },
+      { state: 'discovered' },
+      { state: 'deferred' },
+      { state: 'needs-skill' },
+    ]).map((item) => item.state);
+    expect(order).toEqual(['needs-skill', 'deferred', 'discovered', 'completed', 'skipped']);
+  });
+
+  it("lists the waiting rows in the loop's order: unattempted, then the most urgent, then the oldest", (): void => {
+    const order = sortedForQueue([
+      { state: 'discovered', title: 'new-low', _creationTime: 9, priority: 'Low' },
+      { state: 'plan-pending', title: 'plan', _creationTime: 1 },
+      {
+        state: 'discovered',
+        title: 'died-urgent',
+        _creationTime: 1,
+        priority: 'Urgent',
+        evaluationAttempts: 1,
+      },
+      { state: 'discovered', title: 'new-urgent', _creationTime: 8, priority: 'Urgent' },
+      { state: 'discovered', title: 'old-urgent', _creationTime: 2, priority: 'Urgent' },
+      { state: 'discovered', title: 'old-low', _creationTime: 3, priority: 'Low' },
+    ]).map((item) => item.title);
+    expect(order).toEqual([
+      'plan',
+      'old-urgent',
+      'new-urgent',
+      'old-low',
+      'new-low',
+      'died-urgent',
+    ]);
+  });
+
+  it('files a failed item the manager dismissed at the foot, after every open state (N7)', (): void => {
+    const order = sortedForQueue([
+      { state: 'failed', title: 'dismissed', dismissedAt: 5 },
+      { state: 'cancelled', title: 'cancelled' },
+      { state: 'failed', title: 'stopped' },
+      { state: 'skipped', title: 'skipped' },
+    ]).map((item) => item.title);
+    expect(order).toEqual(['stopped', 'skipped', 'cancelled', 'dismissed']);
   });
 });

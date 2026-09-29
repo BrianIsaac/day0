@@ -1,7 +1,10 @@
 'use client';
 
-import { useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type { Id, Doc } from '@convex/_generated/dataModel';
+import { Button } from '../../../components/Button';
+import { Field, INPUT_CLASS } from '../../../components/Field';
+import { Help, ItemFoot, ItemSection } from './ItemParts';
 
 /** What the manager decided with the plan: the answers given, and a note to the planner's own. */
 export interface PlanApproval {
@@ -62,13 +65,27 @@ export function typedEstimateMinutes(typed: string): number | undefined | null {
 }
 
 /**
- * The questions a pending plan raises and the manager's answers to them,
- * approved as one decision.
+ * The consequence line under a plan's Approve: what approving starts, and whether its writes
+ * still wait for the manager. A plan redrafted after a cancel says on its own note that it waited
+ * for the manager whatever the switch says.
  *
- * The charter's open questions this plan touched come from their records;
- * the planner's own note (`riskNotes`) is shown and may be answered as free
- * text. Every answer reaches the run as approved evidence; a question left
- * blank is simply not answered and stays open.
+ * @param autonomous - Whether autonomous actions are on.
+ */
+export function planApprovalWhy(autonomous: boolean): string {
+  return autonomous
+    ? 'Approving runs the plan. With autonomous actions on, the writes the gate allows apply on their own; any it holds wait for you.'
+    : 'Approving runs the plan. Every write it produces is still held for you.';
+}
+
+/**
+ * A pending plan's decision, as round two section 3.7 draws it: each charter question the plan
+ * touched with its answer box, the planner's note with an answer for this run, the optional
+ * minutes (N11), then Approve and Cancel with the consequence beneath them. Cancel opens a
+ * reason, kept with the item and handed to the plan Retry drafts next.
+ *
+ * The charter's open questions come from their records; the planner's own note (`riskNotes`)
+ * may be answered as free text. Every answer reaches the run as approved evidence; a question
+ * left blank is simply not answered and stays open.
  */
 export function PlanApprovalForm({
   riskNotes,
@@ -76,6 +93,8 @@ export function PlanApprovalForm({
   onApprove,
   onCancel,
   busy = false,
+  employeeName = 'the employee',
+  autonomousActions = false,
 }: {
   riskNotes: string;
   questions: Doc<'managerQuestions'>[];
@@ -84,15 +103,25 @@ export function PlanApprovalForm({
   onCancel: (reason: string) => void;
   /** Whether a decision on this plan is in flight. */
   busy?: boolean;
+  /** Who drafted the plan, as the help under a question names them. */
+  employeeName?: string;
+  /** Whether autonomous actions are on, for the consequence line. */
+  autonomousActions?: boolean;
 }) {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [note, setNote] = useState('');
   const [cancelReason, setCancelReason] = useState('');
+  const [cancelling, setCancelling] = useState(false);
   const [estimate, setEstimate] = useState('');
   const open = questions.filter((question) => !question.answer);
   const planNote = riskNotes.trim();
   const minutes = typedEstimateMinutes(estimate);
-  const estimateId = useId();
+  const id = useId();
+  const reasonField = useRef<HTMLInputElement>(null);
+  // The reason is the next thing the manager writes once Cancel opens it.
+  useEffect(() => {
+    if (cancelling) reasonField.current?.focus();
+  }, [cancelling]);
   function decision(): PlanApproval {
     return {
       answers: open.flatMap((question) => {
@@ -104,124 +133,134 @@ export function PlanApprovalForm({
     };
   }
   return (
-    <div className="mt-2 space-y-2">
-      {open.length > 0 ? (
-        <div className="p-2 rounded-md border border-[var(--color-warn)]/30 bg-[var(--color-warn)]/10">
-          <p className="text-[var(--color-warn)] font-medium mb-1">
-            {open.length === 1
-              ? 'A question for you before this plan runs'
-              : `${open.length} questions for you before this plan runs`}
-          </p>
-          <ul className="space-y-1.5">
-            {open.map((question) => (
-              <li key={question._id}>
-                <label htmlFor={`${estimateId}-${question._id}`} className="text-[var(--color-fg)]">
-                  {question.question}
-                </label>
-                <p className="text-[10px] text-[var(--color-muted)]">
-                  from the charter · touched by the {question.context.touchedBy}
-                  {question.context.words.length > 0
-                    ? `: ${question.context.words.join(', ')}`
-                    : ''}
-                  {' · your answer is written into the charter with the approval (optional)'}
-                </p>
-                <input
-                  id={`${estimateId}-${question._id}`}
-                  type="text"
-                  value={answers[question._id] ?? ''}
-                  disabled={busy}
-                  onChange={(event) =>
-                    setAnswers((current) => ({ ...current, [question._id]: event.target.value }))
-                  }
-                  aria-label={`answer: ${question.question}`}
-                  className="mt-0.5 min-h-11 w-full px-2 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs"
-                />
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-      {planNote ? (
-        <div className="p-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)]">
-          <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)] mb-0.5">
-            Planner&apos;s note
-          </p>
-          <p className="text-[var(--color-fg)]">{planNote}</p>
-          <label
-            htmlFor={`${estimateId}-note`}
-            className="mt-1 block text-[10px] text-[var(--color-muted)]"
-          >
-            Your answer to the note, for this run (optional)
+    <>
+      {open.map((question) => (
+        <ItemSection key={question._id} title="A question from your charter">
+          <label htmlFor={`${id}-${question._id}`} className="text-[15px] text-[var(--color-fg)]">
+            {question.question}
           </label>
+          <Help id={`${id}-${question._id}-why`}>
+            Asked because the {question.context.touchedBy} touches it
+            {question.context.words.length > 0 ? ` (${question.context.words.join(', ')})` : ''}.
+            Your answer is written into the charter with the approval and {employeeName} does not
+            ask again. Optional: a question left blank stays open.
+          </Help>
           <input
-            id={`${estimateId}-note`}
+            id={`${id}-${question._id}`}
             type="text"
-            value={note}
+            value={answers[question._id] ?? ''}
             disabled={busy}
-            onChange={(event) => setNote(event.target.value)}
-            className="min-h-11 w-full px-2 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs"
+            onChange={(event) =>
+              setAnswers((current) => ({ ...current, [question._id]: event.target.value }))
+            }
+            aria-label={`answer: ${question.question}`}
+            aria-describedby={`${id}-${question._id}-why`}
+            className={`${INPUT_CLASS} w-full`}
           />
-        </div>
+        </ItemSection>
+      ))}
+      {planNote ? (
+        <ItemSection title="Planner's note">
+          <p className="text-sm text-[var(--color-fg-2)]">{planNote}</p>
+          <Field label="Your answer to the note, for this run (optional)">
+            {(control) => (
+              <input
+                {...control}
+                type="text"
+                value={note}
+                disabled={busy}
+                onChange={(event) => setNote(event.target.value)}
+                className={`${INPUT_CLASS} w-full`}
+              />
+            )}
+          </Field>
+        </ItemSection>
       ) : null}
-      <div>
-        <label
-          htmlFor={`${estimateId}-cancel`}
-          className="block text-[10px] text-[var(--color-muted)]"
-        >
-          Reason, if you cancel (optional)
-        </label>
-        <input
-          id={`${estimateId}-cancel`}
-          type="text"
-          value={cancelReason}
-          disabled={busy}
-          onChange={(event) => setCancelReason(event.target.value)}
-          className="min-h-11 w-full px-2 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs"
-        />
-      </div>
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[var(--color-fg)]">
-        <label htmlFor={estimateId}>This would have taken me about</label>
-        <input
-          id={estimateId}
-          type="number"
-          inputMode="numeric"
-          min={1}
-          step={1}
-          value={estimate}
-          disabled={busy}
-          onChange={(event) => setEstimate(event.target.value)}
-          aria-describedby={`${estimateId}-hint`}
-          aria-invalid={minutes === null}
-          className="min-h-11 w-20 px-2 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs"
-        />
-        <span>minutes</span>
-        <span
-          id={`${estimateId}-hint`}
-          className="basis-full text-[10px] text-[var(--color-muted)]"
-        >
-          {minutes === null
-            ? 'A whole number of minutes, or leave it empty.'
-            : 'Optional. Summed over finished work as hours saved, a gauge for you, never a headline.'}
-        </span>
-      </div>
-      <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
+      <ItemSection>
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-[var(--color-fg)]">
+          <label htmlFor={id}>This would have taken me about</label>
+          <input
+            id={id}
+            type="number"
+            inputMode="numeric"
+            min={1}
+            step={1}
+            value={estimate}
+            disabled={busy}
+            onChange={(event) => setEstimate(event.target.value)}
+            aria-describedby={`${id}-hint`}
+            aria-invalid={minutes === null}
+            className={`${INPUT_CLASS} w-24`}
+          />
+          <span>minutes</span>
+          <span
+            id={`${id}-hint`}
+            className={`basis-full text-[13px] ${minutes === null ? 'text-[var(--color-warn)]' : 'text-[var(--color-muted)]'}`}
+          >
+            {minutes === null
+              ? 'A whole number of minutes, or leave it empty.'
+              : 'Optional. Summed over finished work as hours saved, a gauge for you, never a headline.'}
+          </span>
+        </div>
+      </ItemSection>
+      <ItemFoot why={planApprovalWhy(autonomousActions)}>
+        <Button
+          variant="approve"
+          size="large"
           onClick={() => onApprove(decision())}
           disabled={busy || minutes === null}
-          className="min-h-11 px-3 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] text-xs disabled:opacity-50"
         >
           {open.length > 0 || planNote ? 'Approve plan with answers' : 'Approve plan'}
-        </button>
-        <button
-          type="button"
-          onClick={() => onCancel(cancelReason.trim())}
+        </Button>
+        <Button
+          aria-expanded={cancelling}
+          aria-controls={cancelling ? `${id}-cancel` : undefined}
           disabled={busy}
-          className="min-h-11 px-3 rounded-md border border-[var(--color-border)] text-xs disabled:opacity-50"
+          onClick={() => setCancelling((shown) => !shown)}
         >
-          Cancel
-        </button>
-      </div>
-    </div>
+          Cancel this item
+        </Button>
+      </ItemFoot>
+      {cancelling ? (
+        <ItemSection>
+          <div id={`${id}-cancel`} className="grid gap-3">
+            <Field
+              label="Reason for cancelling (optional)"
+              hint="Kept with the item. Retry drafts a new plan and your reason goes with it."
+            >
+              {(control) => (
+                <input
+                  {...control}
+                  ref={reasonField}
+                  type="text"
+                  value={cancelReason}
+                  disabled={busy}
+                  onChange={(event) => setCancelReason(event.target.value)}
+                  className={`${INPUT_CLASS} w-full`}
+                />
+              )}
+            </Field>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="danger"
+                size="small"
+                disabled={busy}
+                onClick={() => onCancel(cancelReason.trim())}
+              >
+                {cancelReason.trim() ? 'Cancel with this reason' : 'Cancel without a reason'}
+              </Button>
+              <Button
+                variant="quiet"
+                size="small"
+                disabled={busy}
+                onClick={() => setCancelling(false)}
+              >
+                Keep the plan
+              </Button>
+            </div>
+          </div>
+        </ItemSection>
+      ) : null}
+    </>
   );
 }

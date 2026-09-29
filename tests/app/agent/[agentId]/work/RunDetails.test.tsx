@@ -1,6 +1,8 @@
 /** @vitest-environment jsdom */
 
 import { renderToStaticMarkup } from 'react-dom/server';
+import { axeViolations } from '../../../../fixtures/dom/axe';
+import { mount } from '../../../../fixtures/dom/press';
 import { getFunctionName } from 'convex/server';
 import { describe, expect, it, vi } from 'vitest';
 import {
@@ -199,7 +201,8 @@ describe('actions an audit withheld', (): void => {
     expect(markup).toContain('Waiting on your answer · 2 actions · never sent');
     expect(markup).not.toContain('evidence check');
     expect(markup).toContain('leaves step 2 to the manager&#x27;s answer');
-    expect(markup).toContain('Retry with a note answers it');
+    // Named as the control that answers it is (U17 D5).
+    expect(markup).toContain('Answer and retry answers it');
     const mixed = renderToStaticMarkup(
       <WithheldActionsDetails
         withheld={[
@@ -212,7 +215,7 @@ describe('actions an audit withheld', (): void => {
     expect(mixed).toContain('Withheld by the evidence check · 1 action · never sent');
   });
 
-  it('reads a stop with the question open as one the manager answers with Retry', (): void => {
+  it('reads a stop with the question open as one the manager answers with Answer and retry (U17 D5)', (): void => {
     const reason = openQuestionStopReason({
       question: 'Which template should the notice use?',
       steps: [2, 3],
@@ -223,7 +226,7 @@ describe('actions an audit withheld', (): void => {
         output: { openQuestion: { question: 'q', steps: [2, 3] } },
       }),
     ).toBe(
-      `stopped with a question open for you, and the writes that wait on it were never sent; answer it with Retry with a note: ${reason}`,
+      `stopped with a question open for you, and the writes that wait on it were never sent; answer it below with Answer and retry: ${reason}`,
     );
     expect(failedItemReason({ skipReason: `stopped: ${reason}`, output: {} })).toBe(
       `stopped, nothing landed and nothing to decide: ${reason}`,
@@ -311,6 +314,24 @@ describe('a run with two phases', (): void => {
     expect(single).toContain('written before anything was applied');
   });
 
+  it('names each scrolling draft without making it a landmark, so two items of one title do not clash', async (): Promise<void> => {
+    const output = { draft: 'Closed with the audit note.', notes: '', applied: twoPhase.applied };
+    const view = mount(
+      <main>
+        <DraftDetails output={output} title="Slack mention in #ops-requests" />
+        <DraftDetails output={output} title="Slack mention in #ops-requests" />
+      </main>,
+    );
+    for (const disclosure of view.container.querySelectorAll('details')) disclosure.open = true;
+    const drafts = [...view.container.querySelectorAll('pre')];
+    expect(drafts.map((draft) => draft.getAttribute('tabindex'))).toEqual(['0', '0']);
+    expect(drafts[0]?.getAttribute('aria-label')).toBe(
+      'Draft the employee wrote: Slack mention in #ops-requests',
+    );
+    expect(await axeViolations(view.container)).toEqual([]);
+    view.unmount();
+  });
+
   it('calls the draft the employee’s, never the agent’s (N29)', (): void => {
     const single = renderToStaticMarkup(
       <DraftDetails
@@ -318,7 +339,7 @@ describe('a run with two phases', (): void => {
         title="Close REVOPS-5"
       />,
     );
-    expect(single).toContain('Draft the employee wrote (1 chars)');
+    expect(single).toContain('Draft the employee wrote (1 character)');
     expect(single).toContain('aria-label="Draft the employee wrote: Close REVOPS-5"');
     expect(single).toContain('The employee&#x27;s own words');
     expect(single).not.toMatch(/\bagent\b/i);

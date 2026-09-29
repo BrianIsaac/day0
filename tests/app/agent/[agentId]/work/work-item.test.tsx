@@ -4,6 +4,8 @@ import { getFunctionName } from 'convex/server';
 import { describe, expect, it, vi } from 'vitest';
 import {
   failedItemReason,
+  justLanded,
+  landedPlaces,
   TICKET_REREAD_STOP,
 } from '../../../../../app/agent/[agentId]/work/work-item';
 import {
@@ -62,5 +64,25 @@ describe('a stop with a question open that is not the question stop (wave 1.5 m1
     ).toBe(
       'stopped before its question could be answered, and a note does not answer it on this stop; retry, then answer the question when it is asked again: the model call failed after 5 attempts',
     );
+  });
+});
+
+describe('the landing moment’s key (M7)', (): void => {
+  it('keys each landed row on its place in the ledger, held and failed rows left out', (): void => {
+    expect(
+      landedPlaces([
+        { ok: true },
+        { ok: false },
+        { ok: false, held: true },
+        { ok: true },
+        { ok: true, held: true },
+      ]),
+    ).toEqual([0, 3]);
+  });
+
+  it('finds the rows new since the page last looked, and nothing on a first render', (): void => {
+    expect([...justLanded('0', [0, 2, 3])]).toEqual([2, 3]);
+    expect([...justLanded('', [0])]).toEqual([0]);
+    expect([...justLanded(undefined, [0, 1])]).toEqual([]);
   });
 });

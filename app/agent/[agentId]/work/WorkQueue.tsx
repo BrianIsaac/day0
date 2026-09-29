@@ -9,9 +9,16 @@ import { compareWaitingRows } from '@/work/queue-order';
 import type { SurfaceRecord } from '@/surfaces/types';
 import type { KeptCorrection } from '../corrections-panel';
 import type { AutonomyChange } from '@/work/autonomy';
-import { useMemo, useRef, useCallback, useEffect } from 'react';
+import { useMemo, useRef, useCallback, useEffect, useState } from 'react';
 import { useArrival } from '../../../arrival';
+import { Button } from '../../../components/Button';
 import { Card } from '../../../components/Card';
+import {
+  QUEUE_FILTERS,
+  QUEUE_FILTER_NAMES,
+  type QueueFilter,
+  queueFilterOf,
+} from '@/work/state-display';
 import { PendingDecisionsPanel, pendingDecisionMembers } from './PendingDecisionsPanel';
 import { planApprovalRequest } from './PlanApproval';
 import { WorkItemCard } from './WorkItemCard';
@@ -42,13 +49,10 @@ export function CheckForNewWork({ agentId }: { agentId: Id<'agents'> }) {
   const check = useMutation(api.workLoop.checkForNewWork);
   const change = useChange();
   return (
-    <div className="mb-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-[10px] text-[var(--color-muted)]">
-          Connected surfaces are polled every five minutes.
-        </p>
-        <button
-          type="button"
+    <div className="grid gap-1">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <Button
+          size="small"
           disabled={change.busy}
           onClick={() =>
             change.run(() => check({ agentId }), {
@@ -56,14 +60,66 @@ export function CheckForNewWork({ agentId }: { agentId: Id<'agents'> }) {
               refused: 'The check did not start.',
             })
           }
-          className="shrink-0 min-h-11 px-3 rounded-md text-[10px] border border-[var(--color-border)] hover:border-[var(--color-accent)] disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {change.busy ? 'Checking…' : 'Check for new work'}
-        </button>
+        </Button>
+        <p className="text-[13px] text-[var(--color-muted)]">
+          Connected surfaces are polled every five minutes.
+        </p>
       </div>
       <StatusRegion outcome={change.outcome} />
     </div>
   );
+}
+
+/**
+ * The Work tab's filters (`agent-work.html`): All, Needs you, In progress, Done and Skipped, each
+ * with its count, one pressed at a time. A filter that holds nothing is still offered, so the
+ * row never shifts under the pointer.
+ */
+export function QueueFilters({
+  counts,
+  selected,
+  onSelect,
+}: {
+  counts: Readonly<Record<QueueFilter, number>>;
+  selected: QueueFilter;
+  onSelect: (filter: QueueFilter) => void;
+}) {
+  return (
+    <div role="group" aria-label="Show" className="flex flex-wrap gap-2">
+      {QUEUE_FILTERS.map((filter) => (
+        <Button
+          key={filter}
+          size="small"
+          variant={filter === selected ? 'primary' : 'secondary'}
+          aria-pressed={filter === selected}
+          onClick={() => onSelect(filter)}
+        >
+          {QUEUE_FILTER_NAMES[filter]}
+          <span className="tabular-nums">{counts[filter]}</span>
+        </Button>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Bring the card an inbox link named into view once the queue has drawn it (U17 D13, A D8):
+ * `/agent/<id>/work#item-<id>` lands on the item, and focus goes to it, so a keyboard or
+ * screen-reader user starts where the link said. The cards arrive after the page, so the
+ * browser's own jump to the fragment finds nothing to jump to.
+ *
+ * @param ready - Whether the queue has drawn its cards.
+ */
+function useItemAnchor(ready: boolean): void {
+  useEffect(() => {
+    if (!ready || !window.location.hash.startsWith('#item-')) return;
+    const card = document.getElementById(decodeURIComponent(window.location.hash.slice(1)));
+    if (!card) return;
+    card.scrollIntoView({ block: 'start' });
+    card.focus({ preventScroll: true });
+  }, [ready]);
 }
 
 // What needs the manager first: literal actions awaiting approval, then plans,
@@ -101,17 +157,26 @@ export function sortedForQueue<
     _creationTime?: number;
     priority?: string;
     evaluationAttempts?: number;
+    dismissedAt?: number;
   },
 >(workItems: readonly T[]): T[] {
   // The rows waiting for a free slot are listed in the order the loop takes
   // them, so the top of the queue is the next one evaluated (U3 D5).
   const waiting = (row: T) => ({ ...row, _creationTime: row._creationTime ?? 0 });
+  // A failed row the manager dismissed is filed at the foot, after every open state (N7).
+  const rank = (row: T): number =>
+    row.state === 'failed' && row.dismissedAt !== undefined
+      ? QUEUE_ORDER.length
+      : QUEUE_ORDER.indexOf(row.state);
   return [...workItems].sort(
     (a, b) =>
-      QUEUE_ORDER.indexOf(a.state) - QUEUE_ORDER.indexOf(b.state) ||
+      rank(a) - rank(b) ||
       (a.state === 'discovered' ? compareWaitingRows(waiting(a), waiting(b)) : 0),
   );
 }
+
+/** No item is known to wait on the manager until the needs-you read answers. */
+const NO_ITEMS: ReadonlySet<string> = new Set();
 
 /** The employee's work items in the order that puts what needs the manager first. */
 export function WorkQueue({
@@ -126,8 +191,14 @@ export function WorkQueue({
   corrections = [],
   autonomyChanges = [],
   loading = false,
+  employeeName = 'the employee',
+  needsYou = NO_ITEMS,
 }: {
   agentId: Id<'agents'>;
+  /** The employee's name, for the cards' sentences. */
+  employeeName?: string;
+  /** The ids of the items the employee's needs-you inbox lists, for the Needs you filter. */
+  needsYou?: ReadonlySet<string>;
   workItems: Doc<'workItems'>[];
   /** The queue's query has not answered yet, which is not the same as an empty queue. */
   loading?: boolean;
@@ -156,9 +227,25 @@ export function WorkQueue({
   const approveActionsBatch = useMutation(api.work.approveActionsBatch);
   const rejectActions = useMutation(api.work.rejectActions);
   const resendDecision = useMutation(api.work.resendDecisionRequest);
+  const dismissFailed = useMutation(api.work.dismissFailed);
 
   const items = useMemo(() => sortedForQueue(workItems), [workItems]);
+  const [filter, setFilter] = useState<QueueFilter>('all');
+  const counts = useMemo((): Record<QueueFilter, number> => {
+    const tally: Record<QueueFilter, number> = {
+      all: items.length,
+      'needs-you': 0,
+      'in-progress': 0,
+      done: 0,
+      skipped: 0,
+    };
+    for (const item of items) tally[queueFilterOf(item, needsYou)] += 1;
+    return tally;
+  }, [items, needsYou]);
+  const shown =
+    filter === 'all' ? items : items.filter((item) => queueFilterOf(item, needsYou) === filter);
   const queue = useRef<HTMLElement>(null);
+  useItemAnchor(!loading && items.length > 0);
   // The items are the Work tab's rows (v4 section 1.3): a tier after the columns' cards.
   const arriving = useArrival(!loading && items.length > 0);
 
@@ -214,56 +301,78 @@ export function WorkQueue({
       }
       focusRef={queue}
     >
-      {surfaceMode === 'real' && charterApproved ? <CheckForNewWork agentId={agentId} /> : null}
-      {loading ? (
-        <p className="text-xs text-[var(--color-muted)]">loading the work queue…</p>
-      ) : items.length === 0 ? (
-        <p className="text-xs text-[var(--color-muted)]">
-          {charterApproved ? 'no work seeded yet' : 'work queue lights up after charter approval'}
-        </p>
-      ) : (
-        <div data-cards={arriving ? 'rows' : undefined} className="space-y-3">
-          <PendingDecisionsPanel
-            members={pendingDecisionMembers(items)}
-            surfaces={surfaces}
-            onApproveBatch={(members) => approveActionsBatch({ members })}
-            fallback={queue}
-          />
-          {items.map((item) => (
-            <WorkItemCard
-              key={item._id}
-              item={item}
+      <div className="grid gap-4">
+        {surfaceMode === 'real' && charterApproved ? <CheckForNewWork agentId={agentId} /> : null}
+        {loading ? (
+          <p className="text-sm text-[var(--color-muted)]">Loading the work queue…</p>
+        ) : items.length === 0 ? (
+          <p className="text-sm text-[var(--color-muted)]">
+            {charterApproved
+              ? 'Nothing has come in yet. New work appears here as it is found.'
+              : 'Work arrives once you approve the charter.'}
+          </p>
+        ) : (
+          <>
+            <QueueFilters counts={counts} selected={filter} onSelect={setFilter} />
+            <PendingDecisionsPanel
+              members={pendingDecisionMembers(items)}
               surfaces={surfaces}
-              autonomousActions={autonomousActions}
-              questions={openQuestions.filter((question) => question.workItemId === item._id)}
-              corrections={corrections}
-              autonomyChanges={autonomyChanges}
-              onApprovePlan={(decision) => approvePlan(planApprovalRequest(item._id, decision))}
-              onCancelPlan={(reason) => cancelPlan(cancelPlanRequest(item._id, reason))}
-              onRetryFailed={(feedback) => retryFailed(retryRequest(item._id, feedback))}
-              onReconcileFailed={(confirmed) =>
-                reconcileFailed({ workItemId: item._id, confirmed })
-              }
-              onApproveActions={(approvedIndexes) =>
-                item.pendingRunId
-                  ? approveActions({
-                      workItemId: item._id,
-                      pendingRunId: item.pendingRunId,
-                      approvedIndexes,
-                    })
-                  : Promise.reject(new Error('The pending run is missing. Refresh the work queue.'))
-              }
-              onRejectActions={(reason) =>
-                item.pendingRunId
-                  ? rejectActions({ workItemId: item._id, pendingRunId: item.pendingRunId, reason })
-                  : Promise.reject(new Error('The pending run is missing. Refresh the work queue.'))
-              }
-              onResendDecision={() => resendDecision({ workItemId: item._id })}
-              servedByLoop={surfaceMode === 'real'}
+              onApproveBatch={(members) => approveActionsBatch({ members })}
+              fallback={queue}
             />
-          ))}
-        </div>
-      )}
+            {shown.length === 0 ? (
+              <p className="text-sm text-[var(--color-muted)]">
+                Nothing under {QUEUE_FILTER_NAMES[filter]} now.
+              </p>
+            ) : null}
+            <div data-cards={arriving ? 'rows' : undefined} className="grid gap-4">
+              {shown.map((item) => (
+                <WorkItemCard
+                  key={item._id}
+                  item={item}
+                  surfaces={surfaces}
+                  autonomousActions={autonomousActions}
+                  questions={openQuestions.filter((question) => question.workItemId === item._id)}
+                  corrections={corrections}
+                  autonomyChanges={autonomyChanges}
+                  onApprovePlan={(decision) => approvePlan(planApprovalRequest(item._id, decision))}
+                  onCancelPlan={(reason) => cancelPlan(cancelPlanRequest(item._id, reason))}
+                  onRetryFailed={(feedback) => retryFailed(retryRequest(item._id, feedback))}
+                  onReconcileFailed={(confirmed) =>
+                    reconcileFailed({ workItemId: item._id, confirmed })
+                  }
+                  onApproveActions={(approvedIndexes) =>
+                    item.pendingRunId
+                      ? approveActions({
+                          workItemId: item._id,
+                          pendingRunId: item.pendingRunId,
+                          approvedIndexes,
+                        })
+                      : Promise.reject(
+                          new Error('The pending run is missing. Refresh the work queue.'),
+                        )
+                  }
+                  onRejectActions={(reason) =>
+                    item.pendingRunId
+                      ? rejectActions({
+                          workItemId: item._id,
+                          pendingRunId: item.pendingRunId,
+                          reason,
+                        })
+                      : Promise.reject(
+                          new Error('The pending run is missing. Refresh the work queue.'),
+                        )
+                  }
+                  onResendDecision={() => resendDecision({ workItemId: item._id })}
+                  onDismiss={() => dismissFailed({ workItemId: item._id })}
+                  employeeName={employeeName}
+                  servedByLoop={surfaceMode === 'real'}
+                />
+              ))}
+            </div>
+          </>
+        )}
+      </div>
     </Card>
   );
 }

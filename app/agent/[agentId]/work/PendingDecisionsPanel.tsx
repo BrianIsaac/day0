@@ -8,6 +8,8 @@ import { type RunOutput, pendingVerdicts } from './work-item';
 import { ActionPayload } from './RunDetails';
 import { useChange } from '../../../components/use-change';
 import { StatusRegion } from '../../../components/StatusRegion';
+import { Button } from '../../../components/Button';
+import { Disclosure } from '../../../components/Disclosure';
 
 /** One member of the cross-item approval: the held rows of a parked run. */
 export interface PendingDecisionMember {
@@ -92,39 +94,36 @@ export function PendingDecisionsPanel({
   const eligible = members.filter((member) => member.refused === 0);
   const heldCount = eligible.reduce((sum, member) => sum + member.heldIndexes.length, 0);
   return (
-    <div className="mb-3 p-2 rounded-md bg-[var(--color-warn)]/10 border border-[var(--color-warn)]/30 text-xs">
-      <p className="text-[var(--color-warn)] font-medium mb-1">
+    <div className="grid gap-3 rounded-xl border border-[var(--color-warn-line)] bg-[var(--color-warn-soft)] px-4 py-3.5 sm:px-5">
+      <p className="text-[15px] font-semibold text-[var(--color-warn)]">
         {members.length} items have actions awaiting your approval
       </p>
-      <ul className="space-y-1.5">
+      <ul className="grid gap-3">
         {members.map((member) => (
           <li key={member.workItemId}>
-            <p className="text-[var(--color-fg)] font-medium">{member.title}</p>
+            <p className="text-[15px] font-medium text-[var(--color-fg)]">{member.title}</p>
             {member.refused > 0 ? (
-              <p className="text-[10px] text-[var(--color-muted)]">
+              <p className="text-[13px] text-[var(--color-muted)]">
                 {member.refused} {member.refused === 1 ? 'row is' : 'rows are'} refused by the gate;
                 decide this one on its card.
               </p>
             ) : null}
-            <ul className="ml-3 space-y-0.5">
+            <ul className="ml-3 grid gap-1">
               {member.heldIndexes.map((index) => (
-                <li key={index} className="text-[var(--color-fg)] break-words">
+                <li key={index} className="text-sm break-words text-[var(--color-fg-2)]">
                   {summariseAction(member.actions[index], surfaces)}
-                  <details className="mt-0.5">
-                    <summary className="min-h-11 py-3 text-[10px] text-[var(--color-muted)] cursor-pointer select-none">
-                      exact payload
-                    </summary>
+                  <Disclosure summary="Exact payload">
                     <ActionPayload action={member.actions[index]} />
-                  </details>
+                  </Disclosure>
                 </li>
               ))}
             </ul>
           </li>
         ))}
       </ul>
-      <div className="flex flex-wrap items-center gap-2 mt-2">
-        <button
-          type="button"
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <Button
+          variant="approve"
           disabled={change.busy || eligible.length === 0}
           onClick={() =>
             change.run(
@@ -142,12 +141,11 @@ export function PendingDecisionsPanel({
               },
             )
           }
-          className="min-h-11 px-3 rounded-md bg-[var(--color-ok)]/20 text-[var(--color-ok)] text-xs font-medium disabled:opacity-50"
         >
           Approve {heldCount} held {heldCount === 1 ? 'action' : 'actions'} across {eligible.length}{' '}
           {eligible.length === 1 ? 'item' : 'items'}
-        </button>
-        <span className="text-[10px] text-[var(--color-muted)]">
+        </Button>
+        <span className="text-[13px] text-[var(--color-muted)]">
           Each item is approved exactly as shown; if one has moved on, nothing is approved and the
           list refreshes.
         </span>
