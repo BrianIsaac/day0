@@ -159,8 +159,11 @@ export function RecordList({
   // Show older leaves the page with the last of the record; the card, not the
   // body, takes the focus it held.
   useEffect(() => {
-    if (status !== 'Exhausted' || !askedForMore.current) return;
+    // The ask is answered by the first status after the load, whichever it is: a page with more
+    // behind it keeps the button, and a later chip's first page is not the answer to it.
+    if (!askedForMore.current || status === 'LoadingMore') return;
     askedForMore.current = false;
+    if (status !== 'Exhausted') return;
     const active = document.activeElement;
     if (active === null || active === document.body) card.current?.focus();
   }, [status]);

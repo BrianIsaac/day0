@@ -207,6 +207,23 @@ describe('RecordList', (): void => {
     view.unmount();
   });
 
+  it('forgets a Show older once its page has come, so a later last page takes no focus (m32)', async (): Promise<void> => {
+    backend.entries = [entry('e2', 'work.completed', {}, 2)];
+    backend.status = 'CanLoadMore';
+    const view = mount(<Recorded />);
+    await press(view.container, 'Show older');
+    backend.status = 'LoadingMore';
+    act((): void => view.root.render(<Recorded />));
+    backend.status = 'CanLoadMore';
+    act((): void => view.root.render(<Recorded />));
+    // The manager moves on; later the record under another filter ends on its first page.
+    (document.activeElement as HTMLElement | null)?.blur();
+    backend.status = 'Exhausted';
+    act((): void => view.root.render(<Recorded />));
+    expect(document.activeElement).toBe(document.body);
+    view.unmount();
+  });
+
   it('says a short page with more behind it is not the end, and each filter its own end', async (): Promise<void> => {
     backend.status = 'CanLoadMore';
     const short = mount(<Recorded />);
