@@ -895,7 +895,7 @@ export interface WorkProviderReconciledPayload extends WorkItemNamed {
   readonly entries: ReconciliationEntry[];
 }
 
-/** The payload of `work.dismissed`: a stopped or rejected item the manager set aside (N7). */
+/** The payload of `work.dismissed`: a failed item (stopped or rejected) the manager set aside (N7). */
 export type WorkDismissedPayload = WorkItemNamed;
 
 /** The payload of `work.cancelled`. */

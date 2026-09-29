@@ -49,7 +49,7 @@ export function Dialog({
   children,
 }: {
   title: ReactNode;
-  description?: ReactNode;
+  description?: string;
   onClose: () => void;
   initialFocus?: RefObject<HTMLElement | null>;
   role?: 'dialog' | 'alertdialog';
