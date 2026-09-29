@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { SignUp } from '@clerk/nextjs';
 import { DEV_NO_AUTH } from '@/lib/dev-auth';
+import { clerkAppearance } from '../../clerk-appearance';
 
 export default function SignUpPage() {
   // No accounts exist in no-auth dev mode, so there is nothing to create.
@@ -16,17 +17,7 @@ export default function SignUpPage() {
           Create an account
         </h1>
         <div className="flex justify-center">
-          <SignUp
-            appearance={{
-              variables: {
-                colorPrimary: '#22d3ee',
-                colorBackground: '#18181b',
-                colorText: '#f4f4f5',
-                colorInputBackground: '#0a0a0b',
-                colorInputText: '#f4f4f5',
-              },
-            }}
-          />
+          <SignUp appearance={clerkAppearance} />
         </div>
       </div>
     </div>

@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import { SignIn } from '@clerk/nextjs';
 import { DEV_NO_AUTH } from '@/lib/dev-auth';
+import { clerkAppearance } from '../../clerk-appearance';
 import { HostedDemoNotice } from '../../HostedDemoNotice';
 
 /** The tab's title: the hosted demo's way in. */
@@ -50,17 +51,7 @@ export default function SignInPage() {
         <HostedDemoNotice />
       </div>
       <div className="flex justify-center">
-        <SignIn
-          appearance={{
-            variables: {
-              colorPrimary: '#22d3ee',
-              colorBackground: '#18181b',
-              colorText: '#f4f4f5',
-              colorInputBackground: '#0a0a0b',
-              colorInputText: '#f4f4f5',
-            },
-          }}
-        />
+        <SignIn appearance={clerkAppearance} />
       </div>
     </div>
   );
