@@ -7,7 +7,7 @@ import { Button } from '../../../components/Button';
 import { Card } from '../../../components/Card';
 import { Chip } from '../../../components/Chip';
 import type { LinkedSource } from '../../../documentation/SourceTable';
-import { clockTime } from '../time';
+import { clockTime } from '../../../components/time';
 
 /** How many pages the table lists first, and adds on each "Show more". */
 export const PAGES_AT_A_TIME = 25;

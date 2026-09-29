@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import type { Doc, Id } from '../../../convex/_generated/dataModel';
 import { EmployeeContext, type Employee } from '../../../app/agent/[agentId]/employee-context';
-import { AgentZoneContext } from '../../../app/agent/[agentId]/time';
+import { AgentZoneContext } from '../../../app/components/time';
 
 /** The employee a tab's test renders it for: active, supervised, in UTC. */
 export const EMPLOYEE_ROW = {

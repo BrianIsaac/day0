@@ -68,7 +68,7 @@ import {
   EMPTY_CONVERSATION,
   SlackTab,
 } from '../../../../../app/agent/[agentId]/mock/SlackTab';
-import { AgentZoneContext } from '../../../../../app/agent/[agentId]/time';
+import { AgentZoneContext } from '../../../../../app/components/time';
 
 const agentId = 'agent-1' as Id<'agents'>;
 const ACTIVE = 'text-[var(--color-accent)]';

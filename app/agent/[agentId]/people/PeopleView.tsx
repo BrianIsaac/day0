@@ -7,7 +7,7 @@ import { Columns } from '../../../components/Columns';
 import { useEmployee } from '../employee-context';
 import { EmployeeRail } from '../EmployeeRail';
 import { connectedManagerChannel } from '../manager-channel';
-import { clockTime, useAgentZone, useNow } from '../time';
+import { clockTime, useAgentZone, useNow } from '../../../components/time';
 import { ChangeManager } from './ChangeManager';
 
 /** How the employee reaches a person the charter names, as the one-to-one settled it. */

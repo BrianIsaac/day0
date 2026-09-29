@@ -28,7 +28,7 @@ import {
   settle,
   typeInto,
 } from '../../../../fixtures/dom/press';
-import { AgentZoneContext } from '../../../../../app/agent/[agentId]/time';
+import { AgentZoneContext } from '../../../../../app/components/time';
 import { DECISION_REQUEST_RECOVERY_MS } from '../../../../../src/work/manager-channel';
 import { slackPhaseOne } from '../../../../fixtures/browser-phase-split-2026-09-16';
 import { REFUSED_CREATE_RUN } from '../../../../fixtures/refused-ticket-create-2026-09-19';

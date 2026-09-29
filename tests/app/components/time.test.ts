@@ -1,3 +1,6 @@
+import { readdirSync, readFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
@@ -7,7 +10,7 @@ import {
   clockTimeWithSeconds,
   relativeTime,
   useAgentZone,
-} from '../../../../app/agent/[agentId]/time';
+} from '../../../app/components/time';
 
 const AT = Date.UTC(2026, 8, 27, 16, 5, 9);
 
@@ -41,5 +44,25 @@ describe('the page clock', (): void => {
       ),
     ).toBe('27 Sep 2026, 21:35');
     expect(renderToStaticMarkup(createElement(Stamp))).toBe('27 Sep 2026, 16:05');
+  });
+
+  it('is one shared module the home, the inbox and every tab read, none through the route folder (A decision 13)', (): void => {
+    // Resolved by path: under Vite, `new URL(path, import.meta.url)` is an asset address.
+    const app = resolve(dirname(fileURLToPath(import.meta.url)), '../../../app');
+    const sources = (dir: string): string[] =>
+      readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
+        entry.isDirectory()
+          ? sources(join(dir, entry.name))
+          : /\.tsx?$/.test(entry.name)
+            ? [join(dir, entry.name)]
+            : [],
+      );
+    const throughRoute = sources(app).filter(
+      (file) =>
+        /from '[^']*(\[agentId\]\/|\.\/|\.\.\/)time'/.test(readFileSync(file, 'utf8')) &&
+        !file.startsWith(join(app, 'components')),
+    );
+    expect(throughRoute).toEqual([]);
+    expect(sources(join(app, 'agent'))).not.toContain(join(app, 'agent', '[agentId]', 'time.ts'));
   });
 });

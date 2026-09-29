@@ -3,7 +3,7 @@
 import { useId } from 'react';
 import type { FunctionReturnType } from 'convex/server';
 import type { api } from '@convex/_generated/api';
-import { clockTime } from '../agent/[agentId]/time';
+import { clockTime } from './time';
 import { ButtonLink } from './Button';
 
 /** One thing waiting on the manager, as `work.needsYou` and `work.needsYouForAgent` return it. */

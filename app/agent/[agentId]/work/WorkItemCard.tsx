@@ -23,7 +23,7 @@ import { usePreviousValue } from '../../../components/previous-value';
 import { StatusRegion } from '../../../components/StatusRegion';
 import { useChange } from '../../../components/use-change';
 import type { KeptCorrection } from '../corrections-panel';
-import { clockTime, clockTimeWithSeconds, useAgentZone, useNow } from '../time';
+import { clockTime, clockTimeWithSeconds, useAgentZone, useNow } from '../../../components/time';
 import { EarlierPlan } from './EarlierPlan';
 import { DecisionStamp, ItemHead } from './ItemHead';
 import { ItemSection, Lead, Note } from './ItemParts';

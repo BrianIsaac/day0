@@ -5,7 +5,7 @@ import type { SurfaceRecord } from '@/surfaces/types';
 import { type AuthoringAttempt, AUTHORING_UNFINISHED } from './authoring';
 import { useMutation, useAction } from 'convex/react';
 import { api } from '@convex/_generated/api';
-import { useNow } from '../time';
+import { useNow } from '../../../components/time';
 import { useChange, refusalText } from '../../../components/use-change';
 import { StatusRegion } from '../../../components/StatusRegion';
 import { Button } from '../../../components/Button';

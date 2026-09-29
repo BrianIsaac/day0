@@ -5,7 +5,7 @@ import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Id, Doc } from '@convex/_generated/dataModel';
 import { Chip } from '../../../components/Chip';
-import { clockTime, clockTimeWithSeconds, useAgentZone } from '../time';
+import { clockTime, clockTimeWithSeconds, useAgentZone } from '../../../components/time';
 
 /** What an empty channel list means. The tab is mock-only: real mode does not
  * render it, so it has no real-mode copy to show. */

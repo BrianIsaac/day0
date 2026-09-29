@@ -5,7 +5,7 @@ import type { Id } from '../../../convex/_generated/dataModel';
 import { managerFeedbackLabel, type ManagerFeedbackKind } from '../../../src/work/manager-feedback';
 import { useChange } from '../../components/use-change';
 import { StatusRegion } from '../../components/StatusRegion';
-import { clockTime, clockTimeWithSeconds, useAgentZone } from './time';
+import { clockTime, clockTimeWithSeconds, useAgentZone } from '../../components/time';
 
 /**
  * The manager's corrections on the employee's dashboard: what was kept, from

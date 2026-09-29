@@ -12,7 +12,7 @@ import { SourceTable } from '../../../documentation/SourceTable';
 import { useEmployee } from '../employee-context';
 import { EmployeeRail } from '../EmployeeRail';
 import { employeeTabHref } from '../employee-tabs';
-import { useAgentZone } from '../time';
+import { useAgentZone } from '../../../components/time';
 import { PageTable } from './PageTable';
 
 /**

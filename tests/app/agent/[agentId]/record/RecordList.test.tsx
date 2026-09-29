@@ -28,7 +28,7 @@ vi.mock('convex/react', () => ({
   },
 }));
 
-import { AgentZoneContext } from '../../../../../app/agent/[agentId]/time';
+import { AgentZoneContext } from '../../../../../app/components/time';
 import {
   RECORD_PAGE,
   RecordFilters,

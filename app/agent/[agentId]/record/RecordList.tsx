@@ -10,7 +10,7 @@ import { Button } from '../../../components/Button';
 import { Card } from '../../../components/Card';
 import { RecordLine } from '../../../components/RecordLine';
 import { recordKindOf } from '../event-labels';
-import { clockTime, useAgentZone } from '../time';
+import { clockTime, useAgentZone } from '../../../components/time';
 import { recordWords } from './record-words';
 
 /** How many lines the record shows at first, and how many more each Show older adds. */

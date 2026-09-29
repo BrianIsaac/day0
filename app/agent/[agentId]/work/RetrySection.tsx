@@ -6,7 +6,7 @@ import { skipSentence, type WorkGate, writesWhenRunFinishes } from '@/work/item-
 import type { ReconciliationEntry } from '@/work/reconciliation';
 import { Button } from '../../../components/Button';
 import { Field, INPUT_CLASS } from '../../../components/Field';
-import { clockTime, clockTimeWithSeconds, useAgentZone } from '../time';
+import { clockTime, clockTimeWithSeconds, useAgentZone } from '../../../components/time';
 import { Help, ItemFoot, ItemSection, Lead, Note, Quote } from './ItemParts';
 import { NotSentLedger } from './LandedChanges';
 import { ProviderReconciliationControl } from './RunDetails';

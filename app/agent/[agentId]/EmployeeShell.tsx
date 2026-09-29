@@ -34,7 +34,7 @@ import {
 import { EmployeeHeader } from './EmployeeHeader';
 import { EmployeeRetired, NoSuchEmployee } from './NoSuchEmployee';
 import { currentStep, firstWeekSteps } from './first-week';
-import { AgentZoneContext } from './time';
+import { AgentZoneContext } from '../../components/time';
 
 /** Said, with focus on the one-to-one, when a charter sent back returns the page to it. */
 export const ONBOARDING_REOPENED =

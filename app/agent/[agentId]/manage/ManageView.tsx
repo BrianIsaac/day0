@@ -15,7 +15,7 @@ import { Pill } from '../../../components/Pill';
 import { useEmployee } from '../employee-context';
 import { EmployeeRail } from '../EmployeeRail';
 import { connectedManagerChannel } from '../manager-channel';
-import { useNow } from '../time';
+import { useNow } from '../../../components/time';
 import { AutonomyControl } from './AutonomyControl';
 import { NotificationModeControl } from './NotificationModeControl';
 import { RetireDialog } from './RetireDialog';

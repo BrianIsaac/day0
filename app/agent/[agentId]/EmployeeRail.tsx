@@ -13,7 +13,7 @@ import { useEmployee } from './employee-context';
 import { employeeTabHref } from './employee-tabs';
 import { eventItemTitle, eventLabel, recordKindOf } from './event-labels';
 import { connectedManagerChannel } from './manager-channel';
-import { clockTime, useAgentZone, useNow } from './time';
+import { clockTime, useAgentZone, useNow } from '../../components/time';
 
 /** How many of the newest events the rail's record lists. */
 export const RAIL_RECORD_LINES = 5;

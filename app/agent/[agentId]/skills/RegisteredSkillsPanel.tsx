@@ -5,7 +5,7 @@ import { type AuthoringAttempt, AUTHORING_UNFINISHED } from './authoring';
 import { useAction, useMutation } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { type RefObject, useEffect, useId, useRef, useState } from 'react';
-import { clockTime, useAgentZone, useNow } from '../time';
+import { clockTime, useAgentZone, useNow } from '../../../components/time';
 import { refusalText, returnFocus } from '../../../components/use-change';
 import { Button } from '../../../components/Button';
 import { Card } from '../../../components/Card';

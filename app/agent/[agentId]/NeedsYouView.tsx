@@ -17,7 +17,7 @@ import { useEmployee } from './employee-context';
 import { employeeTabHref } from './employee-tabs';
 import { EmployeeRail } from './EmployeeRail';
 import { TAKE_IT_ANYWAY } from './work/work-item';
-import { useNow } from './time';
+import { useNow } from '../../components/time';
 
 /** How many skipped items the page names under what else is waiting. */
 export const SKIPPED_LINES = 5;

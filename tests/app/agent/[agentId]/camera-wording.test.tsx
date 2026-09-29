@@ -11,7 +11,7 @@ import type { Doc } from '../../../../convex/_generated/dataModel';
 import { WorkItemCard } from '../../../../app/agent/[agentId]/work/WorkItemCard';
 import { liveRetryNote, retryNoteToken } from '../../../../app/agent/[agentId]/work/work-item';
 import { sortedForQueue } from '../../../../app/agent/[agentId]/work/WorkQueue';
-import { clockTime } from '../../../../app/agent/[agentId]/time';
+import { clockTime } from '../../../../app/components/time';
 import type { AutonomyChange } from '../../../../src/work/autonomy';
 import rehearsal from '../../../fixtures/work/demo-rehearsal-2-2026-09-19.json';
 

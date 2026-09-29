@@ -15,7 +15,7 @@ import {
   ManagerLine,
 } from '../../../../app/agent/[agentId]/EmployeeHeader';
 import { focusedName, mount, press, said, settle, typeInto } from '../../../fixtures/dom/press';
-import { AgentZoneContext } from '../../../../app/agent/[agentId]/time';
+import { AgentZoneContext } from '../../../../app/components/time';
 
 const backend = vi.hoisted(() => ({
   /** Mutations and actions that reject, by function name, with the text they reject with. */

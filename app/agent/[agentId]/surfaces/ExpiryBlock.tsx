@@ -6,7 +6,7 @@ import { Button } from '../../../components/Button';
 import { INPUT_CLASS } from '../../../components/Field';
 import { StatusRegion } from '../../../components/StatusRegion';
 import { type ChangeOutcome, refusalText } from '../../../components/use-change';
-import { clockTime, useAgentZone } from '../time';
+import { clockTime, useAgentZone } from '../../../components/time';
 import { accessStanding } from './card-words';
 
 /** The access periods a renewal offers, in days; Q5's 90 is chosen until the manager picks another. */

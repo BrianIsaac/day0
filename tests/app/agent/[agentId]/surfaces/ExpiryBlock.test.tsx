@@ -7,7 +7,7 @@ import {
   ExpiryBlock,
   type ExpirySurface,
 } from '../../../../../app/agent/[agentId]/surfaces/ExpiryBlock';
-import { AgentZoneContext } from '../../../../../app/agent/[agentId]/time';
+import { AgentZoneContext } from '../../../../../app/components/time';
 import { focusedName, mount, press, said } from '../../../../fixtures/dom/press';
 
 describe('the access line and its renewal (Q5, U3 D5)', (): void => {

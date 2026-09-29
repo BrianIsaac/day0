@@ -6,7 +6,7 @@ import { api } from '@convex/_generated/api';
 import { holdsLiveAuthoringClaim } from '@/lib/skill-authoring';
 import { Columns } from '../../../components/Columns';
 import { useEmployee } from '../employee-context';
-import { useNow } from '../time';
+import { useNow } from '../../../components/time';
 import type { AuthoringAttempt } from './authoring';
 import { HowSkillsAreMade } from './HowSkillsAreMade';
 import { ProposedSkillsPanel } from './ProposedSkillsPanel';
