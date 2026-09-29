@@ -118,7 +118,7 @@ export function EmployeeRail() {
         meta={
           <Link
             href={employeeTabHref(agentId, 'record')}
-            className="inline-flex min-h-11 items-center text-[var(--color-fg)]"
+            className="inline-flex min-h-11 min-w-11 items-center justify-end text-[var(--color-fg)]"
           >
             All<span className="sr-only"> of the record</span>
           </Link>
