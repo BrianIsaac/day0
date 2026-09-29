@@ -169,6 +169,19 @@ describe('the voice room once the call is over (round two section 3.4)', (): voi
     ).toBe(false);
   });
 
+  it('shows the draft of a call held before this deployment lost its voice credentials', async (): Promise<void> => {
+    voice.session = {
+      _id: 'session-1',
+      state: 'synthesising',
+      pendingTranscript: 'AGENT: Why this hire?\n\nUSER: The close.',
+    };
+    const container = await renderVoiceRoom({ configured: false, reason: 'No credentials.' });
+    expect(container.textContent).not.toContain('voice unavailable');
+    expect(container.querySelector('[role="status"]')?.textContent).toContain(
+      'Drafting your charter',
+    );
+  });
+
   it('stops waiting for the session after fifteen seconds and says so in the alert', async (): Promise<void> => {
     voice.startHangs = true;
     const container = await renderVoiceRoom({

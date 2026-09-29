@@ -219,9 +219,12 @@ function VoiceRoomInner({
   const isSpeaking = conversation.isSpeaking;
   const isListening = conversation.isListening;
 
+  // The call ended and was posted, or the room came back to a one-to-one already drafting.
+  const over = post.kind !== 'idle' || (serverPhase.kind !== 'talking' && !heldAgain);
+
   // No ElevenLabs credentials on this deployment - say so plainly and
   // hand the boss to chat mode, which asks the same seven topics in text.
-  if (start && !start.configured) {
+  if (start && !start.configured && !over) {
     return (
       <section className="rounded-xl border border-[var(--color-warn-line)] bg-[var(--color-card)] p-4 sm:p-5">
         <h2 className="mb-2 text-[15px] font-semibold">Day-1 one-to-one · voice unavailable</h2>
@@ -253,8 +256,6 @@ function VoiceRoomInner({
     setHeldAgain(true);
   }
 
-  // The call ended and was posted, or the room came back to a one-to-one already drafting.
-  const over = post.kind !== 'idle' || (serverPhase.kind !== 'talking' && !heldAgain);
   const storedTurns =
     transcript.length === 0 && stored?.pendingTranscript
       ? transcriptTurns(stored.pendingTranscript)
