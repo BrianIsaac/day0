@@ -311,6 +311,29 @@ describe('the room on the chat hook it runs on (second pass M1)', (): void => {
   });
 });
 
+describe('an opening that failed (second pass A1)', (): void => {
+  it('keeps the composer shut until the session holds a question, and asks the opening again', async (): Promise<void> => {
+    answers = [EMPTY];
+    const view = mount(<ChatRoom agentId={AGENT} bossLabel="Sam" />);
+    await streamed();
+    expect(view.container.textContent).toContain('Day0 returned nothing');
+    // Nothing can be typed ahead of a question the session never kept.
+    expect(view.container.querySelector('textarea')?.disabled).toBe(true);
+
+    answers = [spoken('e0', 'Why was I hired?')];
+    await press(view.container, 'Ask again');
+    await streamed();
+    expect(posted.at(-1)?.request).toMatchObject({
+      kind: 'ask-again',
+      question: null,
+      replies: [],
+    });
+    expect(keptTexts()).toEqual(['employee:Why was I hired?']);
+    expect(view.container.querySelector('textarea')?.disabled).toBe(false);
+    view.unmount();
+  });
+});
+
 describe('a reply the room shows that never reached the session (review M2)', (): void => {
   const ASKED = [
     kept('e0', 'employee', 'Why this hire?'),

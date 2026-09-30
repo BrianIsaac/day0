@@ -16,6 +16,7 @@ import {
   conversationOf,
   conversationTranscript,
   isClosed,
+  isKeptAnswer,
   owesAnswer,
   repliesIn,
   uiMessagesOf,
@@ -602,11 +603,10 @@ export function ChatRoom({
     }).then((outcome) => setPost({ kind: 'settled', outcome }));
   }
 
-  // The opening turn is sent from an effect, so for a moment after mount the
-  // composer is live with nothing yet asked. A reply typed into that gap arrives
-  // ahead of the agent's own first turn and answers a question it has not put -
-  // an error surfaces instead, because then there is nothing else to wait for.
-  const opened = messages.some((m) => m.role === 'assistant') || !!streamError;
+  // The composer opens once the session holds a question to answer: a reply typed ahead of the
+  // opening, or after an opening that failed, answers nothing the session holds and would be
+  // refused on every send and every Ask again. A failed opening is asked again from its notice.
+  const opened = messages.some(isKeptAnswer);
   // A call in another window holds the session now: nothing this room writes belongs to it.
   const composerDisabled = composerLocked({ status, done: over, opened }) || movedToCall;
 

@@ -169,12 +169,19 @@ describe('the dashboard driver', (): void => {
     backend.queries = { 'voice:latest': null };
     backend.messages = [
       { id: 'u0', role: 'user', parts: [{ type: 'text', text: INIT_PROMPT }] },
-      { id: 'a1', role: 'assistant', parts: [{ type: 'text', text: 'Why this hire?' }] },
+      // Turns the session kept, as the room draws them (the composer opens on a kept question).
+      {
+        id: 'a1',
+        role: 'assistant',
+        parts: [{ type: 'text', text: 'Why this hire?' }],
+        metadata: { kept: true },
+      },
       { id: 'u1', role: 'user', parts: [{ type: 'text', text: 'Close week is heavy.' }] },
       {
         id: 'a2',
         role: 'assistant',
         parts: [{ type: 'text', text: 'What does **day one** hold?' }],
+        metadata: { kept: true },
       },
       { id: 'u2', role: 'user', parts: [{ type: 'text', text: 'The close tickets.' }] },
     ] satisfies UIMessage[];
