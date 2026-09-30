@@ -277,6 +277,16 @@ describe.skipIf(BASH === '')('setup.sh', (): void => {
     );
   });
 
+  it('says the cloud pause is for a real-mode deployment, and that it holds a mock one too', (): void => {
+    const outcome = runSetupSh({}, ['--help']);
+    expect(outcome.stdout).toContain(
+      "hold a deployment's jobs, or not (for real mode;\n                                             a mock one takes it too)",
+    );
+    expect(readFileSync(SCRIPT, 'utf8')).toContain(
+      "#                                      hold a cloud deployment's scheduled jobs (for\n#                                      real mode; a mock one takes the pause too)",
+    );
+  });
+
   it('installs on a real run and hands every flag to the typed entry in real mode', (): void => {
     expect(runSetupSh({}, ['--route', 'local']).pnpm).toEqual([
       'install --frozen-lockfile',

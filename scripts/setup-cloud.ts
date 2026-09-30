@@ -134,7 +134,8 @@ export interface CloudOptions {
   readonly help: boolean;
 }
 
-const USAGE = `Usage: ./setup.sh cloud <setup|upgrade|backup|pause|unpause> --target <file> [options]
+/** What `./setup.sh cloud --help` prints: every verb and flag. */
+export const CLOUD_USAGE = `Usage: ./setup.sh cloud <setup|upgrade|backup|pause|unpause> --target <file> [options]
 
 Day0 on Convex cloud and Vercel. Run it from a clean checkout of a release tag
 with no .env.local (git worktree add --detach <dir> v<release>), linked to the
@@ -152,8 +153,10 @@ and optionally DAY0_APP_URL=<the app's production address> and VERCEL_SCOPE.
             scheduled jobs are paused across it
   backup    an export with file storage, its sha256 and its row counts, mode
             600, beside the target file (--to <dir>, --name <file stem>)
-  pause     hold a real-mode deployment's scheduled jobs, pushing the stamped
-            release again so every module reads it
+  pause     hold the deployment's scheduled jobs, pushing the stamped
+            release again so every module reads it; it is for a
+            real-mode deployment, whose jobs reach the connected systems,
+            and a mock one takes it too (its jobs reach nothing outside)
   unpause   lift the pause, the same way
 
 Options:
@@ -1100,7 +1103,7 @@ async function main(): Promise<number> {
     return 2;
   }
   if (options.help) {
-    console.log(USAGE);
+    console.log(CLOUD_USAGE);
     return 0;
   }
   try {

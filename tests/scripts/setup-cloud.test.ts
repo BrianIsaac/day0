@@ -10,6 +10,7 @@ import {
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  CLOUD_USAGE,
   parseCloudArguments,
   runCloudBackup,
   runCloudCommand,
@@ -68,6 +69,17 @@ const SETTINGS = [
 function printed(c: Cloud): string {
   return c.output.join('\n');
 }
+
+describe('CLOUD_USAGE', (): void => {
+  it('says pause is for a real-mode deployment, and that a mock one takes it too', (): void => {
+    expect(CLOUD_USAGE).toContain(
+      "pause     hold the deployment's scheduled jobs, pushing the stamped\n" +
+        '            release again so every module reads it; it is for a\n' +
+        '            real-mode deployment, whose jobs reach the connected systems,\n' +
+        '            and a mock one takes it too (its jobs reach nothing outside)',
+    );
+  });
+});
 
 describe('parseCloudArguments', (): void => {
   it('reads a verb and its flags, the app host defaulting to Vercel', (): void => {
