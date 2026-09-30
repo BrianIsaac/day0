@@ -313,7 +313,7 @@ describe('finishing and drafting (round two section 3.4)', (): void => {
       await vi.advanceTimersByTimeAsync(START_DEADLINE_MS);
     });
     expect(view.container.querySelector('[role="alert"]')?.textContent).toBe(
-      'The one-to-one could not finish: Your employee did not answer within 15 seconds. Nothing you said is lost.',
+      'The one-to-one could not finish: Day0 could not be reached within 15 seconds. Nothing you said is lost.',
     );
     expect(view.container.querySelector('textarea')).not.toBeNull();
     view.unmount();

@@ -504,9 +504,13 @@ export function ChatRoom({
     if (!sessionId || conversation === null || over || waitingOnTurn) return;
     if (typing === keptDraft.current) return;
     const timer = setTimeout((): void => {
-      keptDraft.current = typing;
-      // The words are still on the page; a keep that fails costs only a crash's worth of typing.
-      void keepReplyDraft({ sessionId, conversation, text: typing, after }).catch(
+      // The chain ends in its own rejection handler. The words count as kept only once the session
+      // took them: a keep refused because another window replied is written again once the room
+      // has drawn that reply (`after` changes). A keep that fails costs a crash's worth of typing.
+      void keepReplyDraft({ sessionId, conversation, text: typing, after }).then(
+        (result): void => {
+          if (result.kept) keptDraft.current = typing;
+        },
         (err: unknown): void => {
           log.warn('reply being typed not kept', { reason: errorMessage(err) });
         },
@@ -616,6 +620,10 @@ export function ChatRoom({
     setStreamError(null);
     setFinishFailure(null);
     setRedrawNote(null);
+    // An answer that failed is not one the session holds; the reply answers the question before
+    // it, so the failed words leave the page rather than stand as the question being answered.
+    const last = messages.at(-1);
+    if (last?.role === 'assistant' && !isKeptAnswer(last)) setMessages(messages.slice(0, -1));
     // A turn that fails is reported through useChat's onError, which says it in the room.
     void sendMessage({ text: trimmed });
     setDraft('');
@@ -640,6 +648,8 @@ export function ChatRoom({
     setFinishFailure(null);
     const sessionId = sessionRef.current ?? session?._id;
     if (!sessionId || conversation === null) return;
+    // The page as it stood, so a Finish that fails puts back what the manager chose to leave out.
+    const shown = messages;
     if (withoutUnsent.length > 0) {
       const set = new Set(withoutUnsent.map((reply: SentReply): string => reply.id));
       setMessages(messages.filter((m: UIMessage): boolean => !set.has(m.id)));
@@ -650,11 +660,12 @@ export function ChatRoom({
     void withDeadline(
       finishSession({ sessionId, conversation, bossLabel }),
       START_DEADLINE_MS,
-      `${name} did not answer within ${START_DEADLINE_MS / 1000} seconds`,
+      `Day0 could not be reached within ${START_DEADLINE_MS / 1000} seconds`,
     ).then(
       (): void => undefined,
       (err: unknown): void => {
         setFinishing(false);
+        if (withoutUnsent.length > 0) setMessages(shown);
         const reason = refusalText(err, 'Day0 could not be reached').replace(/\.$/, '');
         setFinishFailure(`The one-to-one could not finish: ${reason}. Nothing you said is lost.`);
       },
@@ -857,8 +868,16 @@ export function ChatRoom({
       </div>
       {confirming === 'finish' && unsent.length > 0 ? (
         <Dialog
-          title={`Your last reply has not reached ${name}`}
-          description={`${name} drafts your charter from what reached it. Send the reply first, or finish without it.`}
+          title={
+            unsent.length > 1
+              ? `Your last replies have not reached ${name}`
+              : `Your last reply has not reached ${name}`
+          }
+          description={`${name} drafts your charter from what reached it. ${
+            repliesIn(kept ?? []) > 0
+              ? 'Send it first, then finish, or finish without it.'
+              : 'Send it first, then finish.'
+          }`}
           onClose={() => setConfirming(null)}
         >
           <blockquote className="mb-4 border-l-2 border-[var(--color-accent-line)] pl-3 text-sm whitespace-pre-wrap text-[var(--color-fg-2)]">
@@ -869,7 +888,9 @@ export function ChatRoom({
               Send it first
             </Button>
             {repliesIn(kept ?? []) > 0 ? (
-              <Button onClick={() => finish(unsent)}>Finish without it</Button>
+              <Button variant="danger" onClick={() => finish(unsent)}>
+                Finish without it
+              </Button>
             ) : null}
             <Button onClick={() => setConfirming(null)}>Keep talking</Button>
           </div>

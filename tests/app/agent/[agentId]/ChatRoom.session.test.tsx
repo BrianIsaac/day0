@@ -28,6 +28,8 @@ const backend = vi.hoisted(() => ({
   mode: 'chat' as 'chat' | 'elevenlabs',
   pendingTranscript: undefined as string | undefined,
   starts: 0,
+  /** Whether `oneToOne.finish` fails, as a Finish that never reached the deployment does. */
+  finishFails: false,
   /** What the subscription last told the room, while it has not caught up with the session. */
   lagging: undefined as Record<string, unknown> | undefined,
 }));
@@ -55,6 +57,7 @@ vi.mock('convex/react', async () => {
           return { kept: true };
         }
         if (name === 'oneToOne:finish') {
+          if (backend.finishFails) throw new Error('Failed to fetch');
           if (stale) throw new ConvexError('The one-to-one started again in another window.');
           if (repliesIn(backend.turns) === 0)
             throw new ConvexError('Answer at least one question.');
@@ -189,6 +192,7 @@ beforeEach((): void => {
   backend.pendingTranscript = undefined;
   backend.starts = 0;
   backend.lagging = undefined;
+  backend.finishFails = false;
   vi.stubGlobal('fetch', async (_url: string, init: RequestInit): Promise<Response> => {
     const body = JSON.parse(String(init.body)) as { request: TurnRequest };
     posted.push(body);
@@ -397,6 +401,24 @@ describe('a reply the room shows that never reached the session (review M2)', ()
     reopened.unmount();
   });
 
+  it('comes back to the page when Finish without it then fails, so nothing is lost (second pass minor 1)', async (): Promise<void> => {
+    backend.turns = ASKED;
+    backend.finishFails = true;
+    answers = ['unreachable'];
+    const view = mount(<ChatRoom agentId={AGENT} bossLabel="Sam" />);
+    await streamed();
+    await reply(view, 'Never contact customers directly.');
+    await press(view.container, 'Finish');
+    await press(document.body, 'Finish without it');
+    await streamed();
+    expect(view.container.querySelector('[role="alert"]')?.textContent).toContain(
+      'The one-to-one could not finish',
+    );
+    expect(logOf(view)).toContain('Never contact customers directly.');
+    expect(backend.pendingTranscript).toBeUndefined();
+    view.unmount();
+  });
+
   it('is delivered before a second Send, in the order written, and a reopened room draws both', async (): Promise<void> => {
     backend.turns = ASKED;
     answers = ['unreachable', spoken('e2', 'Noted both. Anything else?')];
@@ -447,6 +469,56 @@ describe('a reply the room shows that never reached the session (review M2)', ()
       'Never contact customers directly.\n\nAnd report weekly.',
     );
     reopened.unmount();
+  });
+});
+
+describe('an answer that failed, and the reply sent after it (second pass minors 2 and 3)', (): void => {
+  it('leaves the page with the reply, since the session never held it', async (): Promise<void> => {
+    backend.turns = [kept('e0', 'employee', 'Why this hire?'), kept('m0', 'manager', 'The close.')];
+    const cutOff = spoken('e1', 'Which customers should I never contact directly, and').slice(
+      0,
+      -1,
+    );
+    answers = [cutOff, spoken('e2', 'Noted. Who should I meet?')];
+    const view = mount(<ChatRoom agentId={AGENT} bossLabel="Sam" />);
+    await streamed();
+    expect(view.container.textContent).toContain('Day0 was cut off mid-reply');
+    await reply(view, 'Never contact Acme directly.');
+    expect(logOf(view)).not.toContain('Which customers should I never contact');
+    expect(keptTexts()).toEqual([
+      'employee:Why this hire?',
+      'manager:The close.',
+      'manager:Never contact Acme directly.',
+      'employee:Noted. Who should I meet?',
+    ]);
+    view.unmount();
+  });
+
+  it('keeps the reply being typed once the session takes it, after a keep another window refused', async (): Promise<void> => {
+    backend.turns = [kept('e0', 'employee', 'Why this hire?')];
+    const view = mount(<ChatRoom agentId={AGENT} bossLabel="Sam" />);
+    await streamed();
+    // Another window replies; this room has not heard, so its keep follows the wrong reply.
+    backend.lagging = { _id: 'session-1', state: 'active', mode: 'chat', turns: backend.turns };
+    backend.turns = [...backend.turns, kept('a1', 'manager', 'From the other window.')];
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      await typeInto(view.container.querySelector('textarea')!, 'A long considered reply.');
+      await act(async (): Promise<void> => {
+        await vi.advanceTimersByTimeAsync(800);
+      });
+      expect(backend.replyDraft).toBeUndefined();
+      // The subscription catches up: the keep follows the reply it now draws, and is taken.
+      backend.lagging = undefined;
+      act((): void => view.root.render(<ChatRoom agentId={AGENT} bossLabel="Sam" />));
+      await act(async (): Promise<void> => {
+        await vi.advanceTimersByTimeAsync(800);
+      });
+      expect(backend.replyDraft).toBe('A long considered reply.');
+    } finally {
+      vi.useRealTimers();
+      view.unmount();
+    }
   });
 });
 
