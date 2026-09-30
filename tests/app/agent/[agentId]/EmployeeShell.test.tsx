@@ -762,7 +762,7 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
       'agents:get': row('active'),
       'charters:latest': approved,
       'work:listForAgent': [],
-      'metrics:forAgent': dashboardMetrics(),
+      'metrics:forAgent': { ...dashboardMetrics(), workingSince: Date.UTC(2026, 8, 30, 6, 22) },
     };
     const view = mount(page());
     await settle();
@@ -770,7 +770,7 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     const card = header?.querySelector('button[aria-label^="First week"]');
     expect(card?.getAttribute('aria-expanded')).toBe('false');
     expect(card?.getAttribute('aria-label')).toBe(
-      'First week: Working, in the queue. Show the whole week',
+      'First week: Working, since 30 Sep 2026, 06:22. Show the whole week',
     );
     // Under the office and state pills, in the header's right column.
     const column = card?.closest('div.grid');
@@ -790,7 +790,7 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     };
     const view = mount(page());
     await settle();
-    await press(view.container, 'First week: Working, in the queue. Show the whole week');
+    await press(view.container, 'First week: Working. Show the whole week');
     expect(document.querySelector('[role="dialog"]')).not.toBeNull();
     // The employee is reset from another tab: its week starts again, and the card goes.
     backend.queries = {

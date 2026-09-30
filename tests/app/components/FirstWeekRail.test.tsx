@@ -12,7 +12,7 @@ const STEPS: readonly RailStep[] = [
   { title: 'Day-1 one-to-one', detail: 'done 14:18', status: 'done' },
   { title: 'Charter approved', detail: 'version 1, 14:23', status: 'done' },
   { title: 'First supervised write', detail: 'held for you', status: 'now' },
-  { title: 'Working', detail: 'in the queue', status: 'next' },
+  { title: 'Working', detail: 'since 30 Sep 2026, 14:22', status: 'next' },
 ];
 
 describe('FirstWeekRail', () => {

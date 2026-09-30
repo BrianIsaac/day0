@@ -196,6 +196,8 @@ export function EmployeeShell({ agentId, children }: EmployeeShellProps) {
         writeLanded:
           metrics !== undefined && metrics.actions.approved + metrics.actions.automatic.writes > 0,
         writeHeld: (workItems ?? []).some((item) => item.state === 'actions-pending'),
+        oneToOneEndedAt: session?.endedAt ?? session?.claimedAt,
+        workingSince: metrics?.workingSince,
         zone: agentZone(agent),
       })
     : [];

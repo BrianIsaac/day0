@@ -160,7 +160,7 @@ export function FirstWeekCard({ steps, arriving = false }: FirstWeekCardProps) {
           aria-expanded={open}
           // Only while the week is on the page: the control names an element that exists.
           aria-controls={anchor !== null ? weekId : undefined}
-          aria-label={`First week: ${current.title}, ${current.detail}. Show the whole week`}
+          aria-label={`First week: ${current.detail ? `${current.title}, ${current.detail}` : current.title}. Show the whole week`}
           onClick={show}
           className={`rail-step now ${RAIL_CELL} min-h-11 w-full cursor-pointer overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-accent-soft)] text-left transition-[transform,border-color] duration-[120ms,180ms] ease-out hover:border-[var(--color-accent-line)] motion-safe:active:scale-[0.98]`}
         >

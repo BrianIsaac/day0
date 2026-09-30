@@ -24,10 +24,10 @@ const TABS: readonly TabItem[] = [
 /** The rail's week as an employee at Working has it; the card is its one control. */
 const WEEK: readonly RailStep[] = [
   { title: 'Deployed', detail: '30 Sep 2026, 04:30', status: 'done' },
-  { title: 'Day-1 one-to-one', detail: 'done', status: 'done' },
+  { title: 'Day-1 one-to-one', detail: '30 Sep 2026, 04:52', status: 'done' },
   { title: 'Charter approved', detail: 'version 0.1', status: 'done' },
   { title: 'First supervised write', detail: 'landed', status: 'done' },
-  { title: 'Working', detail: 'in the queue', status: 'now' },
+  { title: 'Working', detail: 'since 30 Sep 2026, 14:22', status: 'now' },
 ];
 
 /**

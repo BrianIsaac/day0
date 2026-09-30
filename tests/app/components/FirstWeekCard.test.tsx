@@ -14,13 +14,13 @@ afterEach((): void => {
 
 const WORKING: readonly RailStep[] = [
   { title: 'Deployed', detail: '30 Sep 2026, 04:30', status: 'done' },
-  { title: 'Day-1 one-to-one', detail: 'done', status: 'done' },
+  { title: 'Day-1 one-to-one', detail: '30 Sep 2026, 04:52', status: 'done' },
   { title: 'Charter approved', detail: 'version 0.1', status: 'done' },
   { title: 'First supervised write', detail: 'landed', status: 'done' },
-  { title: 'Working', detail: 'in the queue', status: 'now' },
+  { title: 'Working', detail: 'since 30 Sep 2026, 14:22', status: 'now' },
 ];
 
-const NAME = 'First week: Working, in the queue. Show the whole week';
+const NAME = 'First week: Working, since 30 Sep 2026, 14:22. Show the whole week';
 
 /** The page: a control before the card, so what is behind the week can be seen to be inert. */
 function page() {
@@ -97,8 +97,15 @@ describe('FirstWeekCard', () => {
       /<button [^>]*class="rail-step now [^"]*bg-\[var\(--color-accent-soft\)\]/,
     );
     expect(html).toContain('Working<span class="sr-only">, now</span>');
-    expect(html).toContain('in the queue');
+    expect(html).toContain('since 30 Sep 2026, 14:22');
     expect(html).not.toContain('Deployed');
+  });
+
+  it('names a step with no detail yet without a stray comma (walk m12)', () => {
+    const undated = WORKING.map((step) => (step.status === 'now' ? { ...step, detail: '' } : step));
+    expect(renderToStaticMarkup(<FirstWeekCard steps={undated} />)).toContain(
+      'aria-label="First week: Working. Show the whole week"',
+    );
   });
 
   it('gives the card a 44 px target (N14)', () => {

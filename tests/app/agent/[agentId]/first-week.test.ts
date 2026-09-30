@@ -77,10 +77,36 @@ describe('firstWeekSteps', () => {
     expect(detail({ state: 'active', writeLanded: true }, 3)).toBe('landed');
   });
 
+  it('dates the one-to-one when it ended, never repeating the done the rail says (walk m11)', () => {
+    const ended = Date.UTC(2026, 8, 29, 6, 40);
+    const steps = firstWeekSteps(facts({ state: 'charter-pending', oneToOneEndedAt: ended }));
+    expect(steps[1]).toEqual({
+      title: 'Day-1 one-to-one',
+      detail: '29 Sep 2026, 14:40',
+      status: 'done',
+    });
+    expect(firstWeekSteps(facts({ state: 'charter-pending' }))[1]?.detail).toBe('');
+  });
+
+  it('says since when the employee has been working, in its zone, not that it is in a queue (walk m12)', () => {
+    const since = Date.UTC(2026, 8, 30, 6, 22);
+    const working = firstWeekSteps(
+      facts({ state: 'active', writeLanded: true, workingSince: since }),
+    )[4];
+    expect(working).toEqual({
+      title: 'Working',
+      detail: 'since 30 Sep 2026, 14:22',
+      status: 'now',
+    });
+    expect(
+      firstWeekSteps(facts({ state: 'active', writeLanded: true, workingSince: null }))[4]?.detail,
+    ).toBe('');
+  });
+
   it('moves on to the charter while the one-to-one is drafted into one, a send-back redraft included', () => {
     const steps = firstWeekSteps(facts({ state: 'day-one-in-progress', phase: 'drafting' }));
     expect(steps.map((step) => step.status)).toEqual(['done', 'done', 'now', 'next', 'next']);
-    expect(steps[1]?.detail).toBe('done');
+    expect(steps[1]?.detail).toBe('');
     expect(steps[2]?.detail).toBe('being drafted');
     expect(standings({ state: 'day-one-in-progress', phase: 'talking' })).toEqual([
       'done',
