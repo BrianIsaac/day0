@@ -130,6 +130,15 @@ describe('the header', (): void => {
     expect(/<a [^>]*aria-label="Day0 home"[^>]*>/.exec(html)?.[0]).toMatch(/\bmin-h-11\b/);
   });
 
+  it("reads the session hint in the head, before the header's account slot is painted", async (): Promise<void> => {
+    const { SESSION_HINT_SCRIPT } = await import('../../app/session-hint');
+    const html = await renderLayout();
+    const head = /<head>([\s\S]*?)<\/head>/.exec(html)?.[1] ?? '';
+    // Inline, with no `src`, `async`, `defer` or `type="module"`, so it blocks the parser and runs first.
+    expect(head).toContain(`<script>${SESSION_HINT_SCRIPT}</script>`);
+    expect(html.indexOf('<script>')).toBeLessThan(html.indexOf('<header'));
+  });
+
   it('holds every page in its one main landmark, after the header', async (): Promise<void> => {
     const html = await renderLayout();
     expect(html.match(/<main[\s>]/g)).toHaveLength(1);

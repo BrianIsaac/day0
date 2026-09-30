@@ -1536,6 +1536,14 @@ body {
   animation: none;
 }
 
+/* The header's account slot draws room for both of Clerk's controls until Clerk answers; the hint
+   the head's script wrote before the first paint (app/session-hint.ts) keeps the one Clerk will
+   mount, and with no script, the signed-out one. Unlayered, so it outranks the utilities. */
+html[data-session-hint='present'] [data-account-reserve='signed-out'],
+html:not([data-session-hint='present']) [data-account-reserve='signed-in'] {
+  display: none;
+}
+
 @media (prefers-reduced-motion: no-preference) {
   ::view-transition-old(.day0-main-exit) {
     animation: day0-page-out 90ms var(--ease-arrive) both;
