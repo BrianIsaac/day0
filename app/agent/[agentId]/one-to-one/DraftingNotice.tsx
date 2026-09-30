@@ -92,7 +92,7 @@ export function DraftingNotice({
         ref={focusRef}
         tabIndex={-1}
         data-drafting="failed"
-        className="grid gap-3 rounded-lg border border-[var(--color-warn-line)] bg-[var(--color-warn-soft)] px-3.5 py-3 text-[15px]"
+        className="grid gap-3 rounded-lg border border-[var(--color-warn-line)] outline-none bg-[var(--color-warn-soft)] px-3.5 py-3 text-[15px]"
       >
         <p>
           <span className="text-[var(--color-warn)]">{words.lead}</span>{' '}
@@ -114,7 +114,7 @@ export function DraftingNotice({
       ref={focusRef}
       tabIndex={-1}
       data-drafting="drafting"
-      className="rounded-lg border border-[var(--color-accent-line)] bg-[var(--color-accent-soft)] px-3.5 py-3 text-[15px] text-[var(--color-accent)]"
+      className="rounded-lg border border-[var(--color-accent-line)] outline-none bg-[var(--color-accent-soft)] px-3.5 py-3 text-[15px] text-[var(--color-accent)]"
     >
       <span className="text-[var(--color-fg)]">{words.lead}</span> {words.detail}
     </div>
