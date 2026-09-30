@@ -157,7 +157,8 @@ export function wordingPresent(phrase: string, clauses: readonly string[]): bool
  *   phrase: Whole words to remove, case-insensitive.
  *
  * Returns:
- *   The clause without the phrase; empty when the phrase was the clause.
+ *   The clause without the phrase; empty when the phrase was the clause; the
+ *   clause as written, spacing included, when the phrase is not in it.
  */
 export function removeWording(text: string, phrase: string): string {
   const trimmed = phrase.trim();
@@ -175,6 +176,9 @@ export function removeWording(text: string, phrase: string): string {
     'gi',
   );
   const removed = text.replace(withPreceding, ' ').replace(withFollowing, ' ');
+  // Tidying an unmatched clause would make a strike that removes nothing read
+  // as a change (and be recorded as one), so the clause stays as written.
+  if (removed === text) return text;
   return removed
     .replace(/\s+/g, ' ')
     .replace(/\s+([,.;:!?])/g, '$1')

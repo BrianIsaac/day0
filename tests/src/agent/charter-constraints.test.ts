@@ -91,6 +91,11 @@ describe('removeWording', (): void => {
     expect(removeWording('Keep the owner informed', 'owned')).toBe('Keep the owner informed');
   });
 
+  it('returns the clause as written, spacing and all, when no phrase matched', (): void => {
+    const doubled = 'Own  routine revenue operations work ,from Linear tickets.';
+    expect(removeWording(doubled, 'escalations')).toBe(doubled);
+  });
+
   it('returns an empty string when the phrase was the whole clause', (): void => {
     expect(removeWording('Post to public Slack channels.', 'Post to public Slack channels.')).toBe(
       '',
@@ -524,6 +529,23 @@ describe('striking a derived constraint', (): void => {
       rewrittenClauses: [],
       changes: false,
       refusal: reason,
+    });
+  });
+
+  it('offers no Strike for a rule whose words no clause carries, even beside a double-spaced clause', (): void => {
+    const uncarried: CharterConstraint = {
+      kind: 'candidate-property',
+      quote: 'Escalations go to the manager.',
+      wording: ['escalations'],
+      origin: 'synthesis',
+    };
+    const charter = runThrough([uncarried]);
+    charter.proposedFunction =
+      'Own  routine revenue operations work from owned, prioritized Linear tickets for the RevOps team.';
+    expect(strikePreview(charter, 0)).toEqual({
+      removedClauses: [],
+      rewrittenClauses: [],
+      changes: false,
     });
   });
 
