@@ -6,6 +6,7 @@ import SetupPage from '../../../app/setup/page';
 import {
   DETAILED_SECTIONS,
   FIRST_SUCCESS,
+  HOSTED_COPY,
   MEASURED_TIMINGS,
   MOCK_OFFICE_NOTE,
   MODEL_ROUTES,
@@ -188,6 +189,21 @@ describe('the /setup guide', (): void => {
     expect(text).toContain(RUN_WAY_VERBS_NOTE);
     expect(text.indexOf('./setup.sh stop')).toBeLessThan(text.indexOf('./setup.sh resume'));
     expect(text.indexOf('./setup.sh resume')).toBeLessThan(text.indexOf('./setup.sh clear'));
+  });
+
+  it('gives a reader who wants a hosted copy the one-command cloud form, after the local verbs', (): void => {
+    expect(html).toMatch(/<h3[^>]*id="hosted-copy"[^>]*>Your own hosted copy<\/h3>/);
+    expect(text).toContain(HOSTED_COPY.body);
+    expect(text).toContain(HOSTED_COPY.after);
+    const rendered = [...html.matchAll(/<span[^>]*>(.*?)<\/span>/gs)].map((match) => match[1]);
+    for (const command of HOSTED_COPY.commands) expect(rendered).toContain(command);
+    expect(HOSTED_COPY.commands.map((command) => command.split(' ').slice(0, 3).join(' '))).toEqual(
+      ['./setup.sh cloud setup', './setup.sh cloud upgrade', './setup.sh cloud backup'],
+    );
+    expect(html).toContain('aria-label="Commands: Your own hosted copy"');
+    const at = text.indexOf(HOSTED_COPY.title);
+    expect(at).toBeGreaterThan(text.indexOf(RUN_WAY_VERBS_NOTE));
+    expect(at).toBeLessThan(text.indexOf(MOCK_OFFICE_NOTE.title));
   });
 
   it('keeps the mock office as a note under an evaluation heading, not a card', (): void => {

@@ -9,6 +9,7 @@ import {
   DATA_LOCATION,
   DETAILED_SECTIONS,
   FIRST_SUCCESS,
+  HOSTED_COPY,
   MEASURED_TIMINGS,
   MOCK_OFFICE_NOTE,
   MODEL_ROUTES,
@@ -324,6 +325,30 @@ export default async function SetupPage() {
                 {RUN_WAY_VERBS_NOTE}
               </li>
             </ul>
+            <h3 id="hosted-copy" className="text-sm font-semibold tracking-tight mt-6 mb-2">
+              {HOSTED_COPY.title}
+            </h3>
+            <p className="text-sm text-[var(--color-muted)] leading-relaxed mb-3">
+              {HOSTED_COPY.body}
+            </p>
+            <Panel>
+              {/* Focusable so a keyboard can scroll it where a command runs wider than the panel. */}
+              <code
+                tabIndex={0}
+                role="region"
+                aria-label={`Commands: ${HOSTED_COPY.title}`}
+                className="font-mono text-xs text-[var(--color-accent)] leading-relaxed block overflow-x-auto whitespace-nowrap"
+              >
+                {HOSTED_COPY.commands.map((command) => (
+                  <span key={command} className="block">
+                    {command}
+                  </span>
+                ))}
+              </code>
+            </Panel>
+            <p className="text-sm text-[var(--color-muted)] leading-relaxed mt-3">
+              {HOSTED_COPY.after}
+            </p>
             <h3 id="mock-office" className="text-sm font-semibold tracking-tight mt-6 mb-2">
               {MOCK_OFFICE_NOTE.title}
             </h3>

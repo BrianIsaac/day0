@@ -182,6 +182,36 @@ export const REAL_MODE_VERBS: readonly RunWayVerb[] = [
 export const RUN_WAY_VERBS_NOTE =
   'Running the setup again is the same as resume, and --reset is clear followed by the setup.';
 
+/** Your own copy on Convex cloud and Vercel, as the hosted demo runs: the cloud verbs. */
+export interface HostedCopy {
+  readonly title: string;
+  /** What it takes, and what the commands promise. */
+  readonly body: string;
+  /** The first setup, then the two that follow it, each one command. */
+  readonly commands: readonly string[];
+  /** What every run ends with. */
+  readonly after: string;
+}
+
+/**
+ * The hosted demo's own form, for a reader who wants a copy of their own:
+ * `./setup.sh cloud`, run from a clean checkout of a release tag, with the
+ * target file outside it. The README's "Your own hosted copy" gives the same
+ * commands and what each does; `tests/src/setup/quickstart.test.ts` holds
+ * both halves of it to this list.
+ */
+export const HOSTED_COPY: HostedCopy = {
+  title: 'Your own hosted copy',
+  body: 'The hosted demo runs on a Convex production deployment and Vercel, and so can a copy of your own, one command per task from a clean checkout of a release tag. The Convex, Clerk and Vercel accounts come first; the target file sits outside the checkout and names the production deployment as CONVEX_DEPLOYMENT=prod:<name>, and the deployment’s keys are read from a private file or asked for in hidden prompts. Each command refuses a development deployment, proves its target with a dry run before it writes anything, and reads both halves back afterwards.',
+  commands: [
+    './setup.sh cloud setup --target ~/day0-cloud/prod-target.env --env-file ~/day0-cloud/prod.env',
+    './setup.sh cloud upgrade --target ~/day0-cloud/prod-target.env',
+    './setup.sh cloud backup --target ~/day0-cloud/prod-target.env',
+  ],
+  after:
+    'The upgrade takes an export first and moves one release at a time; every run ends with its rollback, filled in with what it read, and --dry-run runs every read and changes nothing.',
+};
+
 /**
  * Mock mode, as a note rather than a way: it is the seeded office the
  * evaluation harness and the hosted demo run on, and nobody cloning the
@@ -464,6 +494,11 @@ export const DETAILED_SECTIONS: readonly DetailedSection[] = [
     href: `${REPOSITORY_URL}#real-mode`,
     title: 'Real mode, what both local ways are',
     body: 'The components, linking your documentation, the first day of decisions, one deployment per workspace and the teardown. Local only, and deliberately unreachable from a hosted deployment.',
+  },
+  {
+    href: `${REPOSITORY_URL}#your-own-hosted-copy`,
+    title: 'Your own hosted copy',
+    body: 'The accounts it takes, what the cloud setup, upgrade and backup do step by step, what each refuses, and the rollback it prints.',
   },
   {
     href: `${REPOSITORY_URL}#evaluation-and-the-mock-office`,
