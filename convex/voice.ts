@@ -133,7 +133,10 @@ export const start = mutation({
           webhookToken,
           conversation,
           ...(open.mode !== args.mode ? { elevenLabsConversationId: undefined } : {}),
-          ...(leavesChat ? { turns: undefined, replyDraft: undefined } : {}),
+          // The call starts a conversation of its own: the chat's turns and its close go with it.
+          ...(leavesChat
+            ? { turns: undefined, replyDraft: undefined, conversationEndedAt: undefined }
+            : {}),
         });
       }
       // A session released by a failed finaliser is reusable while its agent has

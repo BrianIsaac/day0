@@ -183,9 +183,11 @@ export const MAX_KEPT_TURNS = 40;
 /**
  * The most bytes one conversation's words may take, as UTF-8 (`keptBytes`). The character bounds
  * below count UTF-16 units and Convex bounds a row in bytes: at those bounds a conversation in a
- * script of three bytes a character would be about 750 KB, and the transcript the draft is taken
- * from copies it onto the same session row (the second review's m4). Half of 1 MiB leaves the
- * row room for that copy; a reply is kept only while the answer it is owed still fits.
+ * script of three bytes a character would be about 750 KB (the second review's m4). The same
+ * session row also holds the transcript the draft is taken from (the words again, with a speaker
+ * label a turn), each turn's id and fields, the answers a call records, the reply being typed and
+ * the notes a draft was sent back with; half of 1 MiB for the words leaves the row that room. A
+ * reply is kept only while the answer it is owed still fits.
  */
 export const MAX_KEPT_BYTES = 480_000;
 

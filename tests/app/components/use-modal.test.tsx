@@ -228,6 +228,39 @@ describe('useModal', () => {
     expect(document.querySelectorAll('[inert]')).toHaveLength(0);
   });
 
+  it('keeps a lifted part lifted while a second modal is open in it, and puts it back after the last (second pass)', () => {
+    const part = document.createElement('div');
+    document.body.append(part);
+    /** A modal whose panel sits in the shared part of the page. */
+    function InPart({ active, name }: { readonly active: boolean; readonly name: string }) {
+      const panel = useRef<HTMLDivElement>(null);
+      useModal({ panel, active });
+      return createPortal(<div ref={panel} tabIndex={-1} data-held={name} />, part);
+    }
+    function Three({ a, b, c }: { readonly a: boolean; readonly b: boolean; readonly c: boolean }) {
+      return (
+        <>
+          <Held active={a} name="a" />
+          <InPart active={b} name="b" />
+          <InPart active={c} name="c" />
+        </>
+      );
+    }
+    const view = mount(<Three a={false} b={false} c={false} />);
+    act((): void => view.root.render(<Three a b={false} c={false} />));
+    expect(part.hasAttribute('inert')).toBe(true);
+    act((): void => view.root.render(<Three a b c={false} />));
+    act((): void => view.root.render(<Three a b c />));
+    expect(part.hasAttribute('inert')).toBe(false);
+    // The first to lift the part closes; the other modal in it is still open and must stay live.
+    act((): void => view.root.render(<Three a b={false} c />));
+    expect(part.hasAttribute('inert')).toBe(false);
+    act((): void => view.root.render(<Three a b={false} c={false} />));
+    expect(part.hasAttribute('inert')).toBe(true);
+    act((): void => view.root.render(<Three a={false} b={false} c={false} />));
+    expect(document.querySelectorAll('[inert]')).toHaveLength(0);
+  });
+
   it('leaves a part of the page something else made inert as it was', () => {
     const aside = document.createElement('aside');
     aside.setAttribute('inert', '');

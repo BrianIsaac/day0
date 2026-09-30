@@ -78,7 +78,7 @@ export function phoneSpots(rows: number): OfficePoint[] {
 /**
  * How far apart two phone figures' centres stand before they overlap, in the phone plan's units:
  * a figure is a third of the inner width less 6 px, under 33 percent at any phone width, and at
- * most 150 px tall.
+ * most 140 px tall, taken with 10 px to spare.
  */
 export const PHONE_FIGURE_SPAN: OfficePoint = { x: 33, y: 150 };
 

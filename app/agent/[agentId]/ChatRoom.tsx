@@ -484,8 +484,14 @@ function FinishDialog({
   );
 }
 
+/** What the switch confirmation is given: the two ways on. */
+interface SwitchDialogProps {
+  readonly onSwitch: () => void;
+  readonly onStay: () => void;
+}
+
 /** Confirm leaving the chat for a call, which starts from the first question. */
-function SwitchDialog({ onSwitch, onStay }: { onSwitch: () => void; onStay: () => void }) {
+function SwitchDialog({ onSwitch, onStay }: SwitchDialogProps) {
   return (
     <Dialog
       title="Switch to voice?"

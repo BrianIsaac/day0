@@ -41,7 +41,7 @@ function componentFiles(directory: string): string[] {
  * @param text - The component's source.
  * @returns `file:line <tag>` of each such element.
  */
-export function outlinesRemoved(name: string, text: string): string[] {
+function outlinesRemoved(name: string, text: string): string[] {
   const source = ts.createSourceFile(name, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const found: string[] = [];
   const visit = (node: ts.Node): void => {

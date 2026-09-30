@@ -85,7 +85,9 @@ describe('the owned page while Convex never confirms the sign-in', (): void => {
     expect(container.textContent).toBe('loading employee…');
 
     await advance(1);
-    expect(container.querySelector('h1')?.textContent).toBe('Day0 has not confirmed your sign-in');
+    expect(container.querySelector('h1')?.textContent).toBe(
+      'Still waiting for Day0 to confirm your sign-in',
+    );
     expect(container.textContent).not.toContain('loading employee…');
     expect(container.textContent).not.toContain('owned');
     expect([...container.querySelectorAll('button')].map((button) => button.textContent)).toEqual([
@@ -96,7 +98,9 @@ describe('the owned page while Convex never confirms the sign-in', (): void => {
   it('leaves the overdue line as soon as Convex answers, and times a later wait afresh', async (): Promise<void> => {
     const { container, waitMs } = await mountGate();
     await advance(waitMs);
-    expect(container.querySelector('h1')?.textContent).toBe('Day0 has not confirmed your sign-in');
+    expect(container.querySelector('h1')?.textContent).toBe(
+      'Still waiting for Day0 to confirm your sign-in',
+    );
 
     act((): void => auth.settle({ isLoading: false, isAuthenticated: false }));
     await advance(0);
@@ -107,7 +111,9 @@ describe('the owned page while Convex never confirms the sign-in', (): void => {
     await advance(waitMs - 1);
     expect(container.textContent).toBe('loading employee…');
     await advance(1);
-    expect(container.querySelector('h1')?.textContent).toBe('Day0 has not confirmed your sign-in');
+    expect(container.querySelector('h1')?.textContent).toBe(
+      'Still waiting for Day0 to confirm your sign-in',
+    );
   });
 
   it('starts no wait when Clerk failed to load, which lets the page through to say what it can', async (): Promise<void> => {

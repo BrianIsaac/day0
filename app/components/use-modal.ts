@@ -139,6 +139,9 @@ const INERT_HOLDS = 'data-modal-inert';
  */
 const INERT_LIFTED = 'data-modal-inert-lifted';
 
+/** How many open modals sit in a lifted part, so it goes back under the holds only after the last. */
+const INERT_LIFTERS = 'data-modal-inert-lifters';
+
 /**
  * Make the rest of the page inert under a modal: every child of the body but the one holding
  * the panel. Modals open at once share the hold on each child: a child is live again only when
@@ -153,11 +156,18 @@ const INERT_LIFTED = 'data-modal-inert-lifted';
 function holdPageInert(own: HTMLElement | null): () => void {
   const children = [...document.body.children];
   const mine = own === null ? undefined : children.find((element) => element.contains(own));
-  const lifted = mine?.hasAttribute(INERT_HOLDS) ? mine : undefined;
+  if (mine?.hasAttribute(INERT_HOLDS)) {
+    mine.setAttribute(INERT_LIFTED, mine.getAttribute(INERT_HOLDS) ?? '0');
+    mine.removeAttribute(INERT_HOLDS);
+    mine.removeAttribute('inert');
+  }
+  // A part lifted for this modal, or for another still open in it, which this one keeps lifted.
+  const lifted = mine?.hasAttribute(INERT_LIFTED) ? mine : undefined;
   if (lifted) {
-    lifted.setAttribute(INERT_LIFTED, lifted.getAttribute(INERT_HOLDS) ?? '0');
-    lifted.removeAttribute(INERT_HOLDS);
-    lifted.removeAttribute('inert');
+    lifted.setAttribute(
+      INERT_LIFTERS,
+      String(Number(lifted.getAttribute(INERT_LIFTERS) ?? '0') + 1),
+    );
   }
   const behind = children.filter(
     (element) =>
@@ -179,7 +189,8 @@ function holdPageInert(own: HTMLElement | null): () => void {
         element.removeAttribute('inert');
       }
     }
-    if (lifted?.hasAttribute(INERT_LIFTED)) {
+    // The last modal open in a lifted part puts it back under the holds still waiting for it.
+    if (lifted && countDown(lifted, INERT_LIFTERS) === 0 && lifted.hasAttribute(INERT_LIFTED)) {
       const waiting = lifted.getAttribute(INERT_LIFTED) ?? '0';
       lifted.removeAttribute(INERT_LIFTED);
       if (Number(waiting) > 0) {

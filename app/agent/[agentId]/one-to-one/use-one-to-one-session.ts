@@ -198,7 +198,7 @@ export interface OneToOneSessionOptions {
 }
 
 /** The one-to-one as the room draws it, and what the room can ask of it. */
-export interface OneToOneSession {
+export interface OneToOneRoom {
   /** The employee's newest session, undefined while it loads. */
   readonly session: Doc<'voiceSessions'> | null | undefined;
   readonly serverPhase: OneToOnePhase;
@@ -249,7 +249,7 @@ export function useOneToOneSession({
   name,
   employeeState,
   onHeldAgain,
-}: OneToOneSessionOptions): OneToOneSession {
+}: OneToOneSessionOptions): OneToOneRoom {
   const startSession = useMutation(api.voice.start);
   const restartSession = useMutation(api.voice.restart);
   const finishSession = useMutation(api.oneToOne.finish);

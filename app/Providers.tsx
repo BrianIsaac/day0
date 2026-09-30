@@ -196,8 +196,13 @@ function useOverdue(waiting: boolean, limitMs: number): boolean {
   return waiting && overdue;
 }
 
+/** What `SessionPending` is given: the line saying what loads. */
+export interface SessionPendingProps {
+  readonly children: ReactNode;
+}
+
 /** What an owned page shows while Convex confirms the sign-in: one quiet line saying what loads. */
-export function SessionPending({ children }: { readonly children: ReactNode }) {
+export function SessionPending({ children }: SessionPendingProps) {
   return (
     <div
       role="status"
@@ -218,7 +223,7 @@ export function SessionUnconfirmed() {
     // Inside the page's own `main` (`MainTransition`), as the owned page it stands in for is.
     <div className="grid min-h-[calc(100vh-3.25rem)] place-items-center px-6">
       <div className="grid max-w-md justify-items-center gap-4 text-center">
-        <h1 className="text-lg font-semibold">Day0 has not confirmed your sign-in</h1>
+        <h1 className="text-lg font-semibold">Still waiting for Day0 to confirm your sign-in</h1>
         <p className="text-sm text-[var(--color-muted)]">
           This is taking longer than it should: Day0 or the sign-in service is not answering. Check
           your connection, then try again. The page carries on by itself if the answer arrives.
