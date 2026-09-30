@@ -329,7 +329,9 @@ async function readSetup(options: CloudOptions, io: CloudIo): Promise<SetupReads
     const refusal = vercelRefusal(io) ?? toolRefusal(io, 'curl');
     if (refusal !== undefined) return refusal;
   }
-  const proven = proveTarget(io, target, true);
+  // The push itself is proved once the env is set: an empty deployment's auth
+  // config refuses every push, the dry run's included, until it has an identity.
+  const proven = proveTarget(io, target, 'target');
   if (proven !== undefined) return proven;
   io.log(
     `The target is ${target.deployment}, the project's default production deployment (dry run).`,
@@ -449,6 +451,8 @@ export async function runCloudSetup(options: CloudOptions, io: CloudIo): Promise
     );
   }
   io.log(`Set on ${target.deployment} and read back: ${toSet.join(', ') || 'nothing new'}.`);
+  const accepted = proveTarget(io, target, 'push');
+  if (accepted !== undefined) return stop(`${accepted.failure} Nothing was pushed.`);
 
   const pushed = pushFunctions(io, target, `v${checkout.release} ${checkout.commit} cloud setup`);
   if (pushed !== undefined) return stop(pushed.failure);
@@ -528,7 +532,7 @@ function readUpgrade(options: CloudOptions, io: CloudIo): UpgradeReads | Failure
   if (refusal !== undefined) return refusal;
   const place = backupDirectory(options.backupTo, io, target);
   if ('failure' in place) return place;
-  const proven = proveTarget(io, target, true);
+  const proven = proveTarget(io, target, 'push');
   if (proven !== undefined) return proven;
   io.log(
     `The target is ${target.deployment}, the project's default production deployment (dry run).`,
@@ -813,7 +817,7 @@ export async function runCloudPause(
   if ('failure' in checkout) return refuse(checkout.failure);
   const target = readTarget(options, io);
   if ('failure' in target) return refuse(target.failure);
-  const proven = proveTarget(io, target, true);
+  const proven = proveTarget(io, target, 'push');
   if (proven !== undefined) return refuse(proven.failure);
   const stampRead = convexOn(io, target, RELEASE_STAMP_ARGUMENTS);
   let stamped: string | undefined;

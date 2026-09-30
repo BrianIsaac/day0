@@ -29,9 +29,9 @@ function targetOf(c: Cloud): CloudTarget {
 describe('appConvexValues', (): void => {
   it('are the three values the app reads to find its deployment', (): void => {
     expect(Object.fromEntries(appConvexValues(DEPLOYMENT))).toEqual({
-      NEXT_PUBLIC_CONVEX_URL: 'https://happy-otter-123.convex.cloud',
-      NEXT_PUBLIC_CONVEX_SITE_URL: 'https://happy-otter-123.convex.site',
-      CONVEX_DEPLOYMENT: 'prod:happy-otter-123',
+      NEXT_PUBLIC_CONVEX_URL: 'https://brisk-heron-417.convex.cloud',
+      NEXT_PUBLIC_CONVEX_SITE_URL: 'https://brisk-heron-417.convex.site',
+      CONVEX_DEPLOYMENT: 'prod:brisk-heron-417',
     });
   });
 });
@@ -54,9 +54,9 @@ describe('setAppValues', (): void => {
     expect(setAppValues(c.io, targetOf(c), new Map(c.state.vercelEnv))).toBeUndefined();
     const sets = c.calls.filter((call) => call.args[0] === 'env' && call.args[1] === 'update');
     expect(sets.map((call) => call.input)).toEqual([
-      'https://happy-otter-123.convex.cloud',
-      'https://happy-otter-123.convex.site',
-      'prod:happy-otter-123',
+      'https://brisk-heron-417.convex.cloud',
+      'https://brisk-heron-417.convex.site',
+      'prod:brisk-heron-417',
     ]);
     expect(sets.every((call) => !call.args.some((arg) => arg.includes('convex.')))).toBe(true);
   });
@@ -84,7 +84,7 @@ describe('setAppValues', (): void => {
 
 describe('deployApp and readAppBack', (): void => {
   it('read back a new build that talks to the deployment and states the release', (): void => {
-    const c = cloud({ stamp: { release: '0.3.0', commit: 'x' } });
+    const c = cloud({ stamp: { release: '0.4.0', commit: 'x' } });
     const before = {
       id: 'dpl_Before1',
       target: 'production',
@@ -93,7 +93,7 @@ describe('deployApp and readAppBack', (): void => {
       aliases: [],
     };
     expect(deployApp(c.io, targetOf(c))).toEqual({ url: 'https://day0-after1.vercel.app' });
-    expect(readAppBack(c.io, targetOf(c), APP_URL, before, '0.3.0')).toMatchObject({
+    expect(readAppBack(c.io, targetOf(c), APP_URL, before, '0.4.0')).toMatchObject({
       id: 'dpl_After1',
     });
   });
@@ -101,8 +101,8 @@ describe('deployApp and readAppBack', (): void => {
   it('refuse a /setup that states another release', (): void => {
     const c = cloud();
     expect(deployApp(c.io, targetOf(c))).toMatchObject({ url: expect.any(String) });
-    expect(readAppBack(c.io, targetOf(c), APP_URL, undefined, '0.3.0')).toEqual({
-      failure: `${APP_URL}/setup does not say the deployment behind it is at v0.3.0`,
+    expect(readAppBack(c.io, targetOf(c), APP_URL, undefined, '0.4.0')).toEqual({
+      failure: `${APP_URL}/setup does not say the deployment behind it is at v0.4.0`,
     });
   });
 

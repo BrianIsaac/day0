@@ -38,22 +38,32 @@ function checkoutOf(c: Cloud): CheckoutState {
 describe('proveTarget', (): void => {
   it("accepts the project's default production deployment, named by the dry run", (): void => {
     const c = cloud();
-    expect(proveTarget(c.io, targetOf(c), true)).toBeUndefined();
-    expect(ran(c)[0]).toBe(`npx convex deploy --dry-run --typecheck enable --env-file ${c.target}`);
+    expect(proveTarget(c.io, targetOf(c), 'push')).toBeUndefined();
+    expect(ran(c)[1]).toBe(`npx convex deploy --dry-run --typecheck enable --env-file ${c.target}`);
   });
 
-  it('refuses a dry run that names nothing, in its own first words', (): void => {
+  it('refuses a dry run that names nothing, in its own words', (): void => {
     const c = cloud({ defaultProd: 'other-prod-789' });
-    expect(proveTarget(c.io, targetOf(c), true)?.failure).toContain(
-      'exit 1: ✖ Cannot prompt for input in non-interactive terminals.',
+    expect(proveTarget(c.io, targetOf(c), 'push')?.failure).toBe(
+      "the dry run of the push did not name brisk-heron-417 as the deployment it would reach (exit 1): ✖ Cannot prompt for input in non-interactive terminals. Only the project's default production deployment is pushed to; the Convex dashboard names it.",
     );
   });
 
-  it('refuses a dry run after which the checkout is changed', (): void => {
-    const c = cloud({ dirty: true });
-    expect(proveTarget(c.io, targetOf(c), true)?.failure).toContain(
-      'the dry run changed the checkout',
+  it('on an empty deployment, proves the target but not the push, which its auth config refuses', (): void => {
+    const c = cloud({ env: new Map() });
+    expect(proveTarget(c.io, targetOf(c), 'target')).toBeUndefined();
+    expect(proveTarget(c.io, targetOf(c), 'push')?.failure).toBe(
+      'the dry run reached brisk-heron-417 and the deployment refused the push (exit 1): AuthConfigMissingEnvironmentVariable: no identity provider is configured.',
     );
+  });
+
+  it('refuses a dry run after which the checkout is changed, and not a tree that was changed before it', (): void => {
+    const writes = cloud({ dryRunWrites: true });
+    expect(proveTarget(writes.io, targetOf(writes), 'push')?.failure).toBe(
+      'the dry run changed the checkout (M convex/_generated/api.d.ts).',
+    );
+    const dirty = cloud({ dirty: true });
+    expect(proveTarget(dirty.io, targetOf(dirty), 'target')).toBeUndefined();
   });
 });
 
@@ -68,8 +78,8 @@ describe('pushFunctions', (): void => {
         },
       ],
     });
-    const failure = pushFunctions(c.io, targetOf(c), 'v0.3.0 test')?.failure ?? '';
-    expect(failure).toContain('the push did not report deploying to happy-otter-123 (exit 1)');
+    const failure = pushFunctions(c.io, targetOf(c), 'v0.4.0 test')?.failure ?? '';
+    expect(failure).toContain('the push did not report deploying to brisk-heron-417 (exit 1)');
     expect(failure).toContain('  | InvalidAuthConfig: no provider');
     expect(ran(c).at(-1)).toBe('git checkout -- convex/_generated');
   });
@@ -96,7 +106,7 @@ describe('migrateAndStamp', (): void => {
         'migrated c: 3 row(s) changed',
       ],
     });
-    expect(c.state.stamp).toEqual({ release: '0.3.0', commit: COMMIT });
+    expect(c.state.stamp).toEqual({ release: '0.4.0', commit: COMMIT });
   });
 
   it('stops after twelve calls with the migrations still pending named', (): void => {
@@ -105,7 +115,7 @@ describe('migrateAndStamp', (): void => {
       failure:
         'migrations still pending after 12 calls (m12, m13); run the verb again, which resumes them',
     });
-    expect(c.state.stamp?.release).toBe('0.2.0');
+    expect(c.state.stamp?.release).toBe('0.3.0');
   });
 
   it('refuses a stamp that does not read back as written', (): void => {
@@ -115,12 +125,12 @@ describe('migrateAndStamp', (): void => {
           match: 'data deploymentVersions',
           status: 0,
           stderr: '',
-          stdout: '{"release":"0.2.0","commit":"x"}\n',
+          stdout: '{"release":"0.3.0","commit":"x"}\n',
         },
       ],
     });
     expect(migrateAndStamp(c.io, targetOf(c), checkoutOf(c))).toEqual({
-      failure: `the stamp reads 0.2.0 / x after stamping 0.3.0 / ${COMMIT}`,
+      failure: `the stamp reads 0.3.0 / x after stamping 0.4.0 / ${COMMIT}`,
     });
   });
 });
@@ -150,6 +160,6 @@ describe('the export', (): void => {
 
   it('is named by a sortable second', (): void => {
     expect(fileStamp(Date.UTC(2026, 9, 1, 2, 3, 4, 567))).toBe('20261001T020304Z');
-    expect(`${DEPLOYMENT}-${fileStamp(0)}`).toBe('happy-otter-123-19700101T000000Z');
+    expect(`${DEPLOYMENT}-${fileStamp(0)}`).toBe('brisk-heron-417-19700101T000000Z');
   });
 });

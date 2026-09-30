@@ -18,7 +18,7 @@ import {
 
 /** The first lines of a real dry run's output, with the colour codes the CLI prints. */
 const DRY_RUN = [
-  '- Deploying to https://happy-otter-123.convex.cloud... [dry run]',
+  '- Deploying to https://brisk-heron-417.convex.cloud... [dry run]',
   '',
   'Command would write file: /tmp/day0-tags/v0.10.1/convex/_generated/server.d.ts',
   '\u001b[36mA minor update is available for Convex\u001b[39m \u001b[2m(1.38.0 → 1.46.0)\u001b[22m',
@@ -55,23 +55,23 @@ const INSPECT = [
 
 describe('the deployment addresses', (): void => {
   it('are the cloud and site URLs of a generated name', (): void => {
-    expect(deploymentUrl('happy-otter-123')).toBe('https://happy-otter-123.convex.cloud');
-    expect(deploymentSiteUrl('happy-otter-123')).toBe('https://happy-otter-123.convex.site');
-    expect(DEPLOYMENT_NAME_PATTERN.test('happy-otter-123')).toBe(true);
-    expect(DEPLOYMENT_NAME_PATTERN.test('dev:happy-otter-123')).toBe(false);
+    expect(deploymentUrl('brisk-heron-417')).toBe('https://brisk-heron-417.convex.cloud');
+    expect(deploymentSiteUrl('brisk-heron-417')).toBe('https://brisk-heron-417.convex.site');
+    expect(DEPLOYMENT_NAME_PATTERN.test('brisk-heron-417')).toBe(true);
+    expect(DEPLOYMENT_NAME_PATTERN.test('dev:brisk-heron-417')).toBe(false);
     expect(DEPLOYMENT_NAME_PATTERN.test('production')).toBe(false);
   });
 });
 
 describe('pushTarget', (): void => {
   it('reads the deployment a dry run would push to, through the colour codes', (): void => {
-    expect(pushTarget(DRY_RUN, 'dry-run')).toBe('happy-otter-123');
+    expect(pushTarget(DRY_RUN, 'dry-run')).toBe('brisk-heron-417');
   });
 
   it('reads the deployment a push reached, and only from the line of its own phase', (): void => {
     const pushed =
-      '\u001b[32m✔\u001b[39m Deployed Convex functions to https://happy-otter-123.convex.cloud';
-    expect(pushTarget(pushed, 'push')).toBe('happy-otter-123');
+      '\u001b[32m✔\u001b[39m Deployed Convex functions to https://brisk-heron-417.convex.cloud';
+    expect(pushTarget(pushed, 'push')).toBe('brisk-heron-417');
     expect(pushTarget(pushed, 'dry-run')).toBeUndefined();
     expect(pushTarget(DRY_RUN, 'push')).toBeUndefined();
   });

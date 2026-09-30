@@ -33,6 +33,7 @@ import {
   deploymentEnv,
   deploymentUrl,
   exportLayout,
+  plainText,
   pushTarget,
   rowCount,
   type ExportCounts,
@@ -59,41 +60,75 @@ export function convexOn(
   });
 }
 
+/** How much of the dry run a verb needs to pass. */
+export type TargetProof =
+  /** The whole dry run: the push the verb is about to make would be accepted. */
+  | 'push'
+  /**
+   * Only the deployment it resolves to. A first setup's deployment has no
+   * identity setting yet, so its auth config refuses any push, the dry run's
+   * included; the setup proves the push itself once the env is set.
+   */
+  | 'target';
+
 /**
  * The dry run that proves the target file reaches the named production
- * deployment: `npx convex deploy` goes to the project's default production
- * deployment, and a file naming any other asks for confirmation it cannot get
- * here, so the dry run names the deployment or fails. It writes nothing,
- * which the clean tree after it confirms.
+ * deployment. `npx convex deploy` goes to the project's default production
+ * deployment, and a file naming any other asks for a confirmation it cannot
+ * get here, so the CLI prints "Deploying to <that deployment>" only once the
+ * target is the one the file names; the push request follows that line, dry
+ * run or not, and is judged by the deployment. It writes nothing, which git
+ * status, the same before and after it, confirms.
  *
  * @param io - The machine.
  * @param target - The deployment.
- * @param pushes - Whether the tree must still be clean after it.
+ * @param proof - Whether the push must be accepted too, or only the target resolved.
  */
 export function proveTarget(
   io: CloudIo,
   target: CloudTarget,
-  pushes: boolean,
+  proof: TargetProof,
 ): Failure | undefined {
+  const before = io.run('git', ['status', '--porcelain'], { timeoutMs: 30_000 }).stdout;
   const dry = io.run(
     'npx',
     ['convex', 'deploy', '--dry-run', '--typecheck', 'enable', '--env-file', target.file],
     { timeoutMs: 600_000 },
   );
   const named = pushTarget(`${dry.stdout}\n${dry.stderr}`, 'dry-run');
-  if (dry.status !== 0 || named !== target.deployment) {
+  if (named !== target.deployment) {
     return {
       failure:
         `the dry run of the push did not name ${target.deployment} as the deployment it would ` +
-        `reach (${named === undefined ? `exit ${dry.status ?? 'unknown'}: ${firstLine(dry.stderr) || firstLine(dry.stdout) || 'no output'}` : `it named ${named}`}). ` +
-        `Only the project's default production deployment is pushed to; the Convex dashboard names it.`,
+        `reach (${named === undefined ? `exit ${dry.status ?? 'unknown'}` : `it named ${named}`}): ` +
+        `${lastErrorLine(dry)}. Only the project's default production deployment is pushed to; ` +
+        'the Convex dashboard names it.',
     };
   }
-  if (!pushes) return undefined;
-  const status = io.run('git', ['status', '--porcelain'], { timeoutMs: 30_000 });
-  return status.stdout.trim() === ''
+  if (dry.status !== 0 && proof === 'push') {
+    return {
+      failure: `the dry run reached ${target.deployment} and the deployment refused the push (exit ${dry.status ?? 'unknown'}): ${lastErrorLine(dry)}.`,
+    };
+  }
+  const after = io.run('git', ['status', '--porcelain'], { timeoutMs: 30_000 }).stdout;
+  return after === before
     ? undefined
-    : { failure: `the dry run changed the checkout (${firstLine(status.stdout)}).` };
+    : { failure: `the dry run changed the checkout (${firstLine(after) || 'a change undone'}).` };
+}
+
+/**
+ * The line a failed CLI run explains itself with: its last, where the CLI
+ * prints the most specific cause.
+ *
+ * @param result - The run.
+ */
+function lastErrorLine(result: RunResult): string {
+  const line = plainText(`${result.stdout}\n${result.stderr}`)
+    .split('\n')
+    .map((candidate) => candidate.trim())
+    .filter(Boolean)
+    .at(-1);
+  return (line ?? 'no output').replace(/\.$/, '');
 }
 
 /**

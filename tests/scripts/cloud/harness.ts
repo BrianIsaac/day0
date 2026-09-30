@@ -14,7 +14,6 @@ import type { CloudIo } from '../../../scripts/cloud/checkout';
 import type { CloudOptions } from '../../../scripts/setup-cloud';
 import type { RunOptions, RunResult } from '../../../scripts/setup';
 import { RETIRED_DECLARATIONS } from '../../../scripts/releases';
-import { CHANGELOG } from '../setup-harness';
 
 /** The dotenv parser the Convex CLI reads `env set`'s stdin with. */
 const cliDotenv = createRequire(createRequire(import.meta.url).resolve('convex/package.json'))(
@@ -22,7 +21,7 @@ const cliDotenv = createRequire(createRequire(import.meta.url).resolve('convex/p
 ) as { parse(text: string): Record<string, string> };
 
 /** The production deployment the fake project holds. */
-export const DEPLOYMENT = 'happy-otter-123';
+export const DEPLOYMENT = 'brisk-heron-417';
 /** Another deployment of the same project: the development one. */
 export const DEV_DEPLOYMENT = 'quiet-lynx-456';
 /** The app's production address. */
@@ -33,6 +32,13 @@ export const COMMIT = '0123456789ab';
 export const SECRET = 'sk-synthetic-provider-key';
 
 const REPOSITORY = new URL('../../../', import.meta.url);
+
+/**
+ * The releases the disposable checkout records. It is at 0.4.0, past the
+ * release unstamped rows are taken to be at (0.3.0), so a deployment with
+ * rows and no stamp reads as older than the checkout, as a real one would.
+ */
+const CHANGELOG = ['# Changelog', '', '## v0.4.0', '', '## v0.3.0', '', '## v0.2.0', ''].join('\n');
 const ALL = RETIRED_DECLARATIONS.map(({ migration }) => migration);
 const directories: string[] = [];
 
@@ -65,6 +71,10 @@ export interface CloudState {
   vercelValues: Map<string, string>;
   /** The build serving the app's address, the deployment it talks to and the release /setup states. */
   served: { id: string; talksTo: string; release: string | undefined } | undefined;
+  /** Whether the dry run leaves the checkout changed, which a real one never should. */
+  dryRunWrites: boolean;
+  /** The Vercel project the served build belongs to. */
+  servedProject: string;
   /** Rows per table in an export. */
   rows: Record<string, number>;
   /** Tools that do not answer. */
@@ -97,10 +107,10 @@ export interface Cloud {
 const SCHEMA_TABLES = ['agents', 'deploymentVersions', 'migrations'];
 
 /**
- * A fake cloud: a tagged checkout of 0.3.0, a production deployment and a
+ * A fake cloud: a tagged checkout of 0.4.0, a production deployment and a
  * Vercel project, each overridable.
  *
- * @param overrides - What differs from a deployment at 0.2.0 serving an app at 0.2.0.
+ * @param overrides - What differs from a deployment at 0.3.0 serving an app at 0.3.0.
  * @param options.targetText - The target file's text; undefined writes none.
  * @param options.linked - Whether the checkout carries `.vercel/project.json`.
  */
@@ -113,7 +123,7 @@ export function cloud(
   directories.push(checkout, privateDir);
   mkdirSync(join(checkout, 'convex'));
   mkdirSync(join(checkout, 'scripts'));
-  writeFileSync(join(checkout, 'package.json'), '{"name":"day0","version":"0.3.0"}\n', 'utf8');
+  writeFileSync(join(checkout, 'package.json'), '{"name":"day0","version":"0.4.0"}\n', 'utf8');
   writeFileSync(join(checkout, 'CHANGELOG.md'), CHANGELOG, 'utf8');
   copyFileSync(
     new URL('scripts/sync-convex-env.sh', REPOSITORY),
@@ -121,7 +131,11 @@ export function cloud(
   );
   if (options.linked !== false) {
     mkdirSync(join(checkout, '.vercel'));
-    writeFileSync(join(checkout, '.vercel', 'project.json'), '{"projectId":"prj_x"}\n', 'utf8');
+    writeFileSync(
+      join(checkout, '.vercel', 'project.json'),
+      `${JSON.stringify({ projectId: 'prj_x', orgId: 'team_x', projectName: 'day0' })}\n`,
+      'utf8',
+    );
   }
   const target = join(privateDir, 'prod-target.env');
   const targetText =
@@ -132,7 +146,7 @@ export function cloud(
 
   const state: CloudState = {
     dirty: false,
-    tag: 'v0.3.0',
+    tag: 'v0.4.0',
     defaultProd: DEPLOYMENT,
     tables: [...SCHEMA_TABLES],
     env: new Map([
@@ -140,7 +154,7 @@ export function cloud(
       ['OPENAI_API_KEY', SECRET],
       ['DAY0_SURFACE_MODE', 'mock'],
     ]),
-    stamp: { release: '0.2.0', commit: 'aaaaaaaaaaaa' },
+    stamp: { release: '0.3.0', commit: 'aaaaaaaaaaaa' },
     pendingMigrations: [],
     vercelEnv: new Map([
       ['NEXT_PUBLIC_CONVEX_URL', 1],
@@ -150,7 +164,9 @@ export function cloud(
       ['CLERK_SECRET_KEY', 1],
     ]),
     vercelValues: new Map(),
-    served: { id: 'dpl_Before1', talksTo: DEPLOYMENT, release: '0.2.0' },
+    served: { id: 'dpl_Before1', talksTo: DEPLOYMENT, release: '0.3.0' },
+    dryRunWrites: false,
+    servedProject: 'day0',
     rows: { agents: 2, deploymentVersions: 1, migrations: 19 },
     missing: [],
     failing: [],
@@ -179,15 +195,22 @@ export function cloud(
       if (named !== state.defaultProd) {
         return fail('✖ Cannot prompt for input in non-interactive terminals.');
       }
-      if (args.includes('--dry-run')) {
-        return ok(
-          '',
-          `- Deploying to https://${named}.convex.cloud... [dry run]\n\u001b[32m✔\u001b[39m No indexes are deleted by this push\n`,
-        );
-      }
+      // The CLI names the deployment before the push request, and the dry run
+      // sends that request too: the deployment's auth config is judged either way.
+      const deploying = `- Deploying to https://${named}.convex.cloud...${args.includes('--dry-run') ? ' [dry run]' : ''}\n`;
       const identity =
         state.env.has('CLERK_JWT_ISSUER_DOMAIN') || state.env.has('DAY0_OIDC_ISSUER');
-      if (!identity) return fail('InvalidAuthConfig: no auth provider is configured');
+      if (!identity) {
+        return {
+          status: 1,
+          stdout: '',
+          stderr: `${deploying}✖ Error: Unable to start push to https://${named}.convex.cloud\nAuthConfigMissingEnvironmentVariable: no identity provider is configured\n`,
+        };
+      }
+      if (args.includes('--dry-run')) {
+        if (state.dryRunWrites) generatedDirty = true;
+        return ok('', `${deploying}\u001b[32m✔\u001b[39m No indexes are deleted by this push\n`);
+      }
       generatedDirty = true;
       for (const table of SCHEMA_TABLES)
         if (!state.tables.includes(table)) state.tables.push(table);
@@ -278,6 +301,7 @@ export function cloud(
           `Fetching deployment "${args[1]}"`,
           '  General',
           `    id\t\t${state.served.id}`,
+          `    name\t${state.servedProject}`,
           '    target\tproduction',
           '    status\t● Ready',
           `    url\t\thttps://day0-${state.served.id.toLowerCase()}.vercel.app`,
@@ -407,7 +431,7 @@ export function cloud(
       output.push(line);
     },
     now: (): number => Date.UTC(2026, 9, 1, 2, 3, 4),
-    newestMigrationRelease: '0.3.0',
+    newestMigrationRelease: '0.4.0',
   };
   return { io, state, calls, output, checkout, privateDir, target };
 }

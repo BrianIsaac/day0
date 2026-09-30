@@ -32,7 +32,7 @@ function empty(): Partial<Cloud['state']> {
     env: new Map<string, string>(),
     stamp: undefined,
     pendingMigrations: ['agents-owner', 'surfaces-access-clock'],
-    served: { id: 'dpl_OnDev', talksTo: DEV_DEPLOYMENT, release: '0.2.0' },
+    served: { id: 'dpl_OnDev', talksTo: DEV_DEPLOYMENT, release: '0.3.0' },
   };
 }
 
@@ -94,11 +94,11 @@ describe('cloud setup, the first push', (): void => {
     const order = writes(c);
     expect(order[0]).toBe(`npx convex env set --deployment ${DEPLOYMENT}`);
     expect(order[1]).toMatch(
-      /^npx convex deploy --typecheck enable --env-file .*prod-target\.env --message v0\.3\.0 0123456789ab cloud setup$/,
+      /^npx convex deploy --typecheck enable --env-file .*prod-target\.env --message v0\.4\.0 0123456789ab cloud setup$/,
     );
     expect(order.filter((line) => line.includes('migrations:runPending'))).toHaveLength(2);
     expect(order).toContain(
-      `npx convex run migrations:recordRelease {"release":"0.3.0","commit":"${COMMIT}"} --deployment ${DEPLOYMENT}`,
+      `npx convex run migrations:recordRelease {"release":"0.4.0","commit":"${COMMIT}"} --deployment ${DEPLOYMENT}`,
     );
     expect(order.slice(-4)).toEqual([
       'vercel env update NEXT_PUBLIC_CONVEX_URL production --yes',
@@ -114,15 +114,25 @@ describe('cloud setup, the first push', (): void => {
       DAY0_SURFACE_MODE: 'mock',
     });
     expect(c.state.pushedWithEnv[0]?.get('CLERK_JWT_ISSUER_DOMAIN')).toBeDefined();
-    expect(c.state.stamp).toEqual({ release: '0.3.0', commit: COMMIT });
+    // The target is proved before the env, the push itself once the env gives it an identity.
+    const lines = ran(c);
+    const set = lines.indexOf(`npx convex env set --deployment ${DEPLOYMENT}`);
+    const dryRuns = lines.flatMap((line, at) => (line.includes('deploy --dry-run') ? [at] : []));
+    expect(dryRuns).toHaveLength(2);
+    expect(dryRuns[0]).toBeLessThan(set);
+    expect(dryRuns[1]).toBeGreaterThan(set);
+    expect(dryRuns[1]).toBeLessThan(
+      lines.findIndex((line) => line.startsWith('npx convex deploy --typecheck')),
+    );
+    expect(c.state.stamp).toEqual({ release: '0.4.0', commit: COMMIT });
     expect(Object.fromEntries(c.state.vercelValues)).toEqual({
       NEXT_PUBLIC_CONVEX_URL: `https://${DEPLOYMENT}.convex.cloud`,
       NEXT_PUBLIC_CONVEX_SITE_URL: `https://${DEPLOYMENT}.convex.site`,
       CONVEX_DEPLOYMENT: `prod:${DEPLOYMENT}`,
     });
-    expect(c.state.served).toMatchObject({ talksTo: DEPLOYMENT, release: '0.3.0' });
+    expect(c.state.served).toMatchObject({ talksTo: DEPLOYMENT, release: '0.4.0' });
     expect(printed(c)).toContain(
-      `Read back: ${APP_URL} is dpl_After1, its client talks to ${DEPLOYMENT}, and /setup says v0.3.0.`,
+      `Read back: ${APP_URL} is dpl_After1, its client talks to ${DEPLOYMENT}, and /setup says v0.4.0.`,
     );
     expect(readFileSync(c.target, 'utf8')).toContain(`DAY0_APP_URL=${APP_URL}`);
   });
@@ -218,7 +228,7 @@ describe('cloud setup, the first push', (): void => {
     ]
   >([
     ['a dirty tree', { dirty: true }, {}, 'changes git has not committed'],
-    ['a checkout that is not the tag', { tag: undefined }, {}, 'is not the v0.3.0 tag'],
+    ['a checkout that is not the tag', { tag: undefined }, {}, 'is not the v0.4.0 tag'],
     [
       'a development deployment',
       {},
@@ -229,7 +239,7 @@ describe('cloud setup, the first push', (): void => {
       'a target that is not the default production deployment',
       { defaultProd: 'other-prod-789' },
       {},
-      'did not name happy-otter-123',
+      'did not name brisk-heron-417',
     ],
     [
       'a missing target file',
@@ -345,7 +355,7 @@ describe('cloud setup, the first push', (): void => {
       c.io,
     );
     expect(code).toBe(130);
-    expect(c.output).toContain('Push v0.3.0 to happy-otter-123 and deploy the app? [y/N] ');
+    expect(c.output).toContain('Push v0.4.0 to brisk-heron-417 and deploy the app? [y/N] ');
     expect(writes(c)).toEqual([]);
   });
 
@@ -358,7 +368,7 @@ describe('cloud setup, the first push', (): void => {
     expect(code).toBe(0);
     expect(ran(c).some((line) => line.startsWith('vercel'))).toBe(false);
     expect(c.output).toContain(`  NEXT_PUBLIC_CONVEX_URL=https://${DEPLOYMENT}.convex.cloud`);
-    expect(c.state.stamp?.release).toBe('0.3.0');
+    expect(c.state.stamp?.release).toBe('0.4.0');
   });
 
   it('stops with the rollback when the deployed app does not read back', async (): Promise<void> => {
@@ -391,18 +401,18 @@ describe('cloud upgrade', (): void => {
     const order = writes(c);
     expect(order[0]).toMatch(
       new RegExp(
-        `^npx convex export --include-file-storage --path .*before-v0\\.3\\.0-20261001T020304Z\\.zip --deployment ${DEPLOYMENT}$`,
+        `^npx convex export --include-file-storage --path .*before-v0\\.4\\.0-20261001T020304Z\\.zip --deployment ${DEPLOYMENT}$`,
       ),
     );
     expect(order[1]).toMatch(/^npx convex deploy --typecheck enable --env-file /);
     expect(order.at(-1)).toBe('vercel --prod --yes');
-    expect(c.state.stamp).toEqual({ release: '0.3.0', commit: COMMIT });
-    expect(printed(c)).toContain('Release check: 0.2.0 to 0.3.0.');
+    expect(c.state.stamp).toEqual({ release: '0.4.0', commit: COMMIT });
+    expect(printed(c)).toContain('Release check: 0.3.0 to 0.4.0.');
     expect(printed(c)).toContain('  migrated agents-owner: 3 row(s) changed');
-    expect(printed(c)).toContain(`Done: ${DEPLOYMENT} moved from v0.2.0 to v0.3.0.`);
+    expect(printed(c)).toContain(`Done: ${DEPLOYMENT} moved from v0.3.0 to v0.4.0.`);
     expect(printed(c)).toContain('vercel promote dpl_Before1');
     expect(printed(c)).toMatch(
-      /npx convex import --replace-all --deployment happy-otter-123 .*before-v0\.3\.0/,
+      /npx convex import --replace-all --deployment brisk-heron-417 .*before-v0\.4\.0/,
     );
     expect(ran(c).some((line) => line.includes(`env set DAY0_CRONS_PAUSED`))).toBe(false);
     expect(writes(c).some((line) => line.startsWith('vercel env'))).toBe(false);
@@ -411,13 +421,13 @@ describe('cloud upgrade', (): void => {
   it('writes the export owner-readable only, with its checksum and row counts beside it', async (): Promise<void> => {
     const c = cloud();
     expect(await runCloudUpgrade(verb(c, { verb: 'upgrade' }), c.io)).toBe(0);
-    const zip = join(c.privateDir, 'before-v0.3.0-20261001T020304Z.zip');
+    const zip = join(c.privateDir, 'before-v0.4.0-20261001T020304Z.zip');
     expect(statSync(zip).mode & 0o777).toBe(0o600);
     expect(readFileSync(`${zip}.sha256`, 'utf8')).toMatch(
-      /^[0-9a-f]{64} {2}before-v0\.3\.0-20261001T020304Z\.zip\n$/,
+      /^[0-9a-f]{64} {2}before-v0\.4\.0-20261001T020304Z\.zip\n$/,
     );
     expect(
-      readFileSync(join(c.privateDir, 'before-v0.3.0-20261001T020304Z.counts.txt'), 'utf8'),
+      readFileSync(join(c.privateDir, 'before-v0.4.0-20261001T020304Z.counts.txt'), 'utf8'),
     ).toBe('agents 2\ndeploymentVersions 1\nmigrations 19\nTOTAL 22 tables 3 stored_files 0\n');
     expect(statSync(`${zip}.sha256`).mode & 0o777).toBe(0o600);
   });
@@ -430,7 +440,7 @@ describe('cloud upgrade', (): void => {
     });
     expect(await runCloudUpgrade(verb(c, { verb: 'upgrade' }), c.io)).toBe(1);
     expect(printed(c)).toMatch(
-      /error: nothing was pushed or deployed, because the export did not finish: .*before-v0\.3\.0-20261001T020304Z\.zip was written \(sha256 [0-9a-f]{64}\) and its rows could not be counted/,
+      /error: nothing was pushed or deployed, because the export did not finish: .*before-v0\.4\.0-20261001T020304Z\.zip was written \(sha256 [0-9a-f]{64}\) and its rows could not be counted/,
     );
     expect(writes(c).filter((line) => !line.startsWith('npx convex export'))).toEqual([]);
   });
@@ -445,13 +455,13 @@ describe('cloud upgrade', (): void => {
     expect(await runCloudUpgrade(verb(c, { verb: 'upgrade' }), c.io)).toBe(0);
     const order = writes(c);
     const paused = order.indexOf(
-      `npx convex env set DAY0_CRONS_PAUSED upgrade to 0.3.0 at 2026-10-01T02:03:04Z --deployment ${DEPLOYMENT}`,
+      `npx convex env set DAY0_CRONS_PAUSED upgrade to 0.4.0 at 2026-10-01T02:03:04Z --deployment ${DEPLOYMENT}`,
     );
     const firstPush = order.findIndex((line) => line.startsWith('npx convex deploy'));
     expect(paused).toBeGreaterThan(0);
     expect(paused).toBeLessThan(firstPush);
     expect(c.state.pushedWithEnv[0]?.get('DAY0_CRONS_PAUSED')).toBe(
-      'upgrade to 0.3.0 at 2026-10-01T02:03:04Z',
+      'upgrade to 0.4.0 at 2026-10-01T02:03:04Z',
     );
     expect(
       order.indexOf(`npx convex env remove DAY0_CRONS_PAUSED --deployment ${DEPLOYMENT}`),
@@ -476,7 +486,7 @@ describe('cloud upgrade', (): void => {
     const unfinished = cloud({
       env: new Map([
         ['CLERK_JWT_ISSUER_DOMAIN', 'https://e.clerk.accounts.dev'],
-        ['DAY0_CRONS_PAUSED', 'upgrade to 0.2.0 at 2026-09-29T00:00:00Z'],
+        ['DAY0_CRONS_PAUSED', 'upgrade to 0.3.0 at 2026-09-29T00:00:00Z'],
       ]),
     });
     expect(await runCloudUpgrade(verb(unfinished, { verb: 'upgrade' }), unfinished.io)).toBe(0);
@@ -492,17 +502,17 @@ describe('cloud upgrade', (): void => {
       failing: [{ match: 'migrations:runPending', status: 1, stderr: 'Server error' }],
     });
     expect(await runCloudUpgrade(verb(c, { verb: 'upgrade' }), c.io)).toBe(1);
-    expect(c.state.env.get('DAY0_CRONS_PAUSED')).toMatch(/^upgrade to 0\.3\.0/);
+    expect(c.state.env.get('DAY0_CRONS_PAUSED')).toMatch(/^upgrade to 0\.4\.0/);
     expect(printed(c)).toContain(`./setup.sh cloud unpause --target ${c.target}`);
     expect(printed(c)).toContain('Rollback (nothing here is run for you):');
     expect(writes(c).some((line) => line.startsWith('vercel --prod'))).toBe(false);
   });
 
   it.each<[string, Partial<Cloud['state']>, string]>([
-    ['a release jump', { stamp: { release: '0.1.0', commit: 'x' } }, 'skips 0.2.0'],
+    ['a release jump', { stamp: { release: '0.2.0', commit: 'x' } }, 'skips 0.3.0'],
     [
       'older functions over newer rows',
-      { stamp: { release: '0.4.0', commit: 'x' } },
+      { stamp: { release: '0.5.0', commit: 'x' } },
       'a release this checkout',
     ],
     [
@@ -512,7 +522,7 @@ describe('cloud upgrade', (): void => {
     ],
     [
       'an app that talks to another deployment',
-      { served: { id: 'dpl_OnDev', talksTo: DEV_DEPLOYMENT, release: '0.2.0' } },
+      { served: { id: 'dpl_OnDev', talksTo: DEV_DEPLOYMENT, release: '0.3.0' } },
       'so this is a move, not an upgrade',
     ],
     ['no unzip to count the export with', { missing: ['unzip'] }, '`unzip` does not answer'],
@@ -541,7 +551,7 @@ describe('cloud upgrade', (): void => {
     expect(ran(c)).toContain(
       `curl -sS -L --max-time 30 -A Mozilla/5.0 (compatible; day0-setup-cloud read-back) -w \n%{http_code} ${APP_URL}/`,
     );
-    expect(existsSync(join(c.privateDir, 'before-v0.3.0-20261001T020304Z.zip'))).toBe(false);
+    expect(existsSync(join(c.privateDir, 'before-v0.4.0-20261001T020304Z.zip'))).toBe(false);
   });
 
   it('stops with the rollback when the new build is not what serves the address', async (): Promise<void> => {
@@ -573,15 +583,15 @@ describe('cloud backup', (): void => {
     const to = join(c.privateDir, 'audits');
     expect(
       await runCloudBackup(
-        verb(c, { verb: 'backup', backupTo: to, name: 'after-prod-v0.3.0' }),
+        verb(c, { verb: 'backup', backupTo: to, name: 'after-prod-v0.4.0' }),
         c.io,
       ),
     ).toBe(0);
     expect(statSync(to).mode & 0o777).toBe(0o700);
-    expect(existsSync(join(to, 'after-prod-v0.3.0.zip'))).toBe(true);
+    expect(existsSync(join(to, 'after-prod-v0.4.0.zip'))).toBe(true);
     expect(
       await runCloudBackup(
-        verb(c, { verb: 'backup', backupTo: to, name: 'after-prod-v0.3.0' }),
+        verb(c, { verb: 'backup', backupTo: to, name: 'after-prod-v0.4.0' }),
         c.io,
       ),
     ).toBe(1);
@@ -603,7 +613,7 @@ describe('cloud backup', (): void => {
 });
 
 describe('cloud pause and unpause', (): void => {
-  const stamped = { stamp: { release: '0.3.0', commit: COMMIT } };
+  const stamped = { stamp: { release: '0.4.0', commit: COMMIT } };
 
   it('pause sets the value by hand and pushes the stamped release again so every module reads it', async (): Promise<void> => {
     const c = cloud(stamped);
@@ -637,7 +647,7 @@ describe('cloud pause and unpause', (): void => {
   it('refuses when the checkout is not the release the deployment is stamped at', async (): Promise<void> => {
     const c = cloud();
     expect(await runCloudPause(verb(c, { verb: 'pause' }), c.io, 'pause')).toBe(1);
-    expect(printed(c)).toContain('is at v0.2.0 and this checkout is v0.3.0');
+    expect(printed(c)).toContain('is at v0.3.0 and this checkout is v0.4.0');
     expect(writes(c)).toEqual([]);
   });
 });

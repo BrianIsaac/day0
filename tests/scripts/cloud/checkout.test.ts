@@ -65,12 +65,12 @@ describe('readTarget', (): void => {
 describe('readCheckout', (): void => {
   it('reads the release and the commit of a clean tag checkout', (): void => {
     const c = cloud();
-    expect(readCheckout(c.io, true)).toMatchObject({ release: '0.3.0', commit: COMMIT });
+    expect(readCheckout(c.io, true)).toMatchObject({ release: '0.4.0', commit: COMMIT });
   });
 
   it('lets a verb that pushes nothing run from a checkout that is not a clean tag', (): void => {
     const c = cloud({ dirty: true, tag: undefined });
-    expect(readCheckout(c.io, false)).toMatchObject({ release: '0.3.0' });
+    expect(readCheckout(c.io, false)).toMatchObject({ release: '0.4.0' });
     expect(readCheckout(c.io, true)).toMatchObject({
       failure: expect.stringContaining('git has not committed'),
     });
