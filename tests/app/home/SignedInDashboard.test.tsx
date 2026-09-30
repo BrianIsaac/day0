@@ -343,13 +343,13 @@ describe('the company home', (): void => {
     expect(text).toContain('Recorded colleague · a write is held for you');
     expect(text).toContain('held since 26 Sep 2026, 06:39');
     expect(text).toContain('Recorded colleague Active');
-    expect(text).toContain('acts on its own 1 3 13');
+    expect(text).toContain('Autonomous 1 3 13');
     expect(text).toContain(
-      'Finance colleague Active Close the month for the finance team. asks first 2 2 1',
+      'Finance colleague Active Close the month for the finance team. Supervised 2 2 1',
     );
     // Re-pinned (unit S, m6): the roster prints the state in the words the employee's pill uses.
     expect(text).toContain(
-      'New colleague Waiting for your one-to-one charter pending asks first 0 0 0',
+      'New colleague Waiting for your one-to-one charter pending Supervised 0 0 0',
     );
   });
 
@@ -361,8 +361,8 @@ describe('the company home', (): void => {
       expect(list).toContain(row.name);
       expect(list).toContain(row.roleLine);
     }
-    expect(list.match(/acts on its own/g)).toHaveLength(1);
-    expect(list.match(/asks first/g)).toHaveLength(2);
+    expect(list.match(/>Autonomous</g)).toHaveLength(1);
+    expect(list.match(/>Supervised</g)).toHaveLength(2);
   });
 
   it('puts the role line on each office name plate', (): void => {
@@ -373,17 +373,27 @@ describe('the company home', (): void => {
 
   it('shows parked work beside open work, as the 19 Sep run left the company', (): void => {
     const page = render([
-      { ...roster[0], name: 'Priya', openCount: 0, parkedCount: 3 },
-      { ...roster[1], name: 'Aiko', openCount: 0, parkedCount: 1 },
+      {
+        ...roster[0],
+        name: 'Priya',
+        openCount: 0,
+        parkedCount: 3,
+        parkedStates: { deferred: 1, needsSkill: 2, discovered: 0 },
+      },
+      {
+        ...roster[1],
+        name: 'Aiko',
+        openCount: 0,
+        parkedCount: 1,
+        parkedStates: { deferred: 0, needsSkill: 0, discovered: 1 },
+      },
       { ...roster[2], name: 'Mateo' },
     ]);
     const text = readAs(page.slice(page.indexOf('>Roster<'), page.indexOf('Mini office world')));
     expect(text).toContain('Priya Active');
-    expect(text).toContain('1 0 3 parked 13');
-    expect(text).toContain('2 0 1 parked 1');
-    expect(page).toContain(
-      'title="Parked: waiting on a connection, a permission, a skill or a free slot',
-    );
+    expect(text).toContain('1 0 2 waiting on a skill · 1 parked 13');
+    expect(text).toContain('2 0 1 discovered 1');
+    expect(page).toContain('title="Waiting on a skill: waiting on a skill you approve.');
   });
 
   it('shows stopped work that still waits on the manager, as the 19 Sep second run left the company', (): void => {

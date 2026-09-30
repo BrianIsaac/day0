@@ -23,6 +23,7 @@ const roster = [
     roleLine: 'Owns triage for tier-2 asks in #revops-asks',
     openCount: 1,
     parkedCount: 2,
+    parkedStates: { deferred: 0, needsSkill: 2, discovered: 0 },
     stoppedCount: 1,
     needsYou: 4,
     docSourceCount: 2,
@@ -40,6 +41,7 @@ const roster = [
     roleLine: 'charter pending',
     openCount: 0,
     parkedCount: 0,
+    parkedStates: { deferred: 0, needsSkill: 0, discovered: 0 },
     stoppedCount: 0,
     needsYou: 1,
     docSourceCount: 0,
@@ -105,9 +107,10 @@ describe('EmployeeRoster', (): void => {
   it('prints each employee’s state, role, autonomy, what waits on the manager, work and landings', (): void => {
     const text = readAs(html);
     expect(html).toContain('href="/agent/synthetic-mira"');
-    expect(text).toContain('Mira Active Owns triage for tier-2 asks in #revops-asks asks first 3');
-    expect(text).toContain('1 2 parked · 1 stopped 13');
-    expect(text).toContain('Aiko Charter to review charter pending acts on its own 1 0 100+');
+    // Walk m10: the page's words, Supervised or Autonomous, and the Work tab's state words.
+    expect(text).toContain('Mira Active Owns triage for tier-2 asks in #revops-asks Supervised 3');
+    expect(text).toContain('1 2 waiting on a skill · 1 stopped 13');
+    expect(text).toContain('Aiko Charter to review charter pending Autonomous 1 0 100+');
   });
 
   it('says an employee not yet met is waiting for the one-to-one, in the warn hue the page’s pill uses (review m8)', (): void => {
@@ -121,9 +124,35 @@ describe('EmployeeRoster', (): void => {
     );
   });
 
-  it('explains parked and stopped work on hover', (): void => {
-    expect(html).toContain('title="Parked: waiting on a connection, a permission, a skill');
+  it("explains parked and stopped work on hover, in the Work tab glossary's words", (): void => {
+    expect(html).toContain(
+      'title="Waiting on a skill: waiting on a skill you approve. The ones only you can release are in Needs you."',
+    );
     expect(html).toContain('title="Stopped: ended short of done, with Retry on the card.');
+  });
+
+  it('names each kind of parked work by the state the Work tab shows it in (walk m10)', (): void => {
+    const parked = [
+      {
+        ...roster[0],
+        stoppedCount: 0,
+        parkedCount: 6,
+        parkedStates: { deferred: 1, needsSkill: 2, discovered: 3 },
+      },
+    ] as unknown as RosterRow[];
+    expect(
+      readAs(renderToStaticMarkup(<EmployeeRoster employees={parked} waiting={waiting} />)),
+    ).toContain('1 2 waiting on a skill · 1 parked · 3 discovered 13');
+  });
+
+  it('reads a row from functions pushed before the split as parked, never failing the page', (): void => {
+    const older = Object.fromEntries(
+      Object.entries(roster[0] as RosterRow).filter(([key]) => key !== 'parkedStates'),
+    );
+    const markup = renderToStaticMarkup(
+      <EmployeeRoster employees={[older as unknown as RosterRow]} waiting={waiting} />,
+    );
+    expect(readAs(markup)).toContain('1 2 parked · 1 stopped 13');
   });
 
   it('heads the card with the headcount and one manager', (): void => {
@@ -140,7 +169,7 @@ describe('EmployeeRoster', (): void => {
     const text = readAs(
       renderToStaticMarkup(<EmployeeRoster employees={roster} waiting={undefined} />),
     );
-    expect(text).toContain('asks first loading 1');
+    expect(text).toContain('Supervised loading 1');
   });
 
   it('sets no type below the 12 px floor', (): void => {
