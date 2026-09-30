@@ -117,9 +117,11 @@ export function EmployeeRail() {
       <Card
         title="Record"
         meta={
+          // The 44 px target (N14) reaches into the header's padding rather than growing the
+          // header past its neighbours' (walk m19): 11 px each way leaves a 22 px line.
           <Link
             href={employeeTabHref(agentId, 'record')}
-            className="inline-flex min-h-11 min-w-11 items-center justify-end text-[var(--color-fg)]"
+            className="-my-[11px] inline-flex min-h-11 min-w-11 items-center justify-end text-[var(--color-fg)]"
           >
             All<span className="sr-only"> of the record</span>
           </Link>

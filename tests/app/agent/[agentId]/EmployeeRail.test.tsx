@@ -128,6 +128,15 @@ describe('EmployeeRail', () => {
     expect(link).toMatch(/class="[^"]*\bjustify-end\b/);
   });
 
+  it('keeps the Record card header the height of its neighbours, the target reaching into its padding (walk m19)', () => {
+    backend.queries = { 'metrics:forAgent': dashboardMetrics(), 'events:recent': [] };
+    const link = /<a [^>]*href="\/agent\/agent-1\/record"[^>]*>/.exec(
+      renderToStaticMarkup(asEmployee(<EmployeeRail />)),
+    )?.[0];
+    // 44 px less 11 px each way is a 22 px line, inside the 22.5 px line of the card's title.
+    expect(link).toMatch(/class="[^"]*-my-\[11px\]/);
+  });
+
   it('says where decisions reach the manager in each mode, a connected chat surface included', () => {
     const where = (surfaceMode: 'mock' | 'real', surfaces: SurfaceRecord[] = []): string =>
       text(renderToStaticMarkup(asEmployee(<EmployeeRail />, { surfaceMode, surfaces })));
