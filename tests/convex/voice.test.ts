@@ -74,3 +74,26 @@ describe('holding the one-to-one again after its draft failed for good', (): voi
     );
   });
 });
+
+describe('opening the one-to-one on a session already under way', (): void => {
+  it('hands the room the conversation the session keeps, and the reply being typed', async (): Promise<void> => {
+    const { harness, agentId, sessionId } = await failedSession();
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(sessionId, {
+        pendingTranscript: undefined,
+        finalisationError: undefined,
+        recoveryAttempts: undefined,
+      });
+    });
+    const owner = harness.withIdentity({ subject: 'owner' });
+    expect(await owner.mutation(api.voice.start, { agentId, mode: 'chat' })).toMatchObject({
+      sessionId,
+      resumed: true,
+      turns: [
+        { id: 'e0', speaker: 'employee', text: 'Why?', topicIndex: 0, at: 1 },
+        { id: 'm0', speaker: 'manager', text: 'The close.', at: 2 },
+      ],
+      replyDraft: 'unsent',
+    });
+  });
+});

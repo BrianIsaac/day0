@@ -99,7 +99,9 @@ export const latest = query({
  * Returns the row id plus `webhookToken`, the capability the caller hands to
  * ElevenLabs so the post-call webhook can prove which session it is reporting on
  * - see `claimWebhookFinalisation`. Only the boss who owns the agent ever sees
- * it: this mutation is ownership-checked.
+ * it: this mutation is ownership-checked. With them, the chat conversation the
+ * session keeps (`turns`, and the reply being typed), so a room reopened on it
+ * carries on from where it stood rather than opening it again.
  */
 export const start = mutation({
   args: {
@@ -131,7 +133,13 @@ export const start = mutation({
       if (agent.state === 'deployed') {
         await ctx.db.patch(args.agentId, { state: 'day-one-in-progress' });
       }
-      return { sessionId: open._id, webhookToken, resumed: true };
+      return {
+        sessionId: open._id,
+        webhookToken,
+        resumed: true,
+        turns: open.turns ?? [],
+        replyDraft: open.replyDraft ?? null,
+      };
     }
 
     const webhookToken = crypto.randomUUID();
@@ -151,7 +159,7 @@ export const start = mutation({
       payload: { sessionId: id, mode: args.mode },
       createdAt: Date.now(),
     });
-    return { sessionId: id, webhookToken, resumed: false };
+    return { sessionId: id, webhookToken, resumed: false, turns: [], replyDraft: null };
   },
 });
 

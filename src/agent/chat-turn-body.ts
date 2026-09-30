@@ -1,11 +1,12 @@
 import type { TurnRequest } from './one-to-one-conversation';
 
 /**
- * What the chat room posts for one turn of the one-to-one: the session the turn belongs to, who
- * the manager is, and the turn itself. The room sends no history; the session holds it.
+ * What the chat room posts for one turn of the one-to-one: the employee whose one-to-one it is,
+ * who the manager is, and the turn itself. The room sends no history and names no session; the
+ * employee's held session keeps the conversation.
  */
 export interface ChatTurnBody {
-  readonly sessionId: string;
+  readonly agentId: string;
   readonly bossLabel: string;
   readonly request: TurnRequest;
 }
@@ -37,12 +38,12 @@ function turnRequestOf(value: unknown): TurnRequest | undefined {
  */
 export function chatTurnBodyOf(value: unknown): ChatTurnBody | undefined {
   if (typeof value !== 'object' || value === null) return undefined;
-  const sessionId = 'sessionId' in value ? value.sessionId : undefined;
+  const agentId = 'agentId' in value ? value.agentId : undefined;
   const request = turnRequestOf('request' in value ? value.request : undefined);
-  if (typeof sessionId !== 'string' || sessionId === '' || !request) return undefined;
+  if (typeof agentId !== 'string' || agentId === '' || !request) return undefined;
   const bossLabel = 'bossLabel' in value ? value.bossLabel : undefined;
   return {
-    sessionId,
+    agentId,
     bossLabel: typeof bossLabel === 'string' && bossLabel.trim() ? bossLabel : 'there',
     request,
   };

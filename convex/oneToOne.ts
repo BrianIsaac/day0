@@ -1,8 +1,8 @@
 import { ConvexError, v } from 'convex/values';
 import { mutation, type MutationCtx } from './_generated/server';
-import type { Doc } from './_generated/dataModel';
+import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
-import { assertOwnsVoiceSession } from './ownership';
+import { assertOwnsAgent, assertOwnsVoiceSession } from './ownership';
 import { oneToOneTurnValidator } from './schema';
 import {
   REPLY_MAX_CHARS,
@@ -74,19 +74,35 @@ async function queueDraft(
 }
 
 /**
- * Take a turn of the chat one-to-one before it is put to the employee, and hand back the
- * conversation the employee answers (`decideTurn`): the opening, the manager's reply (kept here,
- * and the reply being typed cleared), or a turn asked again.
+ * The employee's one-to-one being held: its newest session, which `voice.start` opened for the
+ * room. A turn names the employee, not the session, so the session decides which conversation it
+ * belongs to.
+ */
+async function heldSession(ctx: MutationCtx, agentId: Id<'agents'>): Promise<Doc<'voiceSessions'>> {
+  await assertOwnsAgent(ctx, agentId);
+  const session = await ctx.db
+    .query('voiceSessions')
+    .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+    .order('desc')
+    .first();
+  if (!session || session.state === 'done') refuse('The one-to-one has not opened yet.');
+  return session;
+}
+
+/**
+ * Take a turn of the employee's chat one-to-one before it is put to the employee, and hand back
+ * the session and the conversation the employee answers (`decideTurn`): the opening, the
+ * manager's reply (kept here, and the reply being typed cleared), or a turn asked again.
  *
- * Public, owner-guarded (`assertOwnsVoiceSession`); called by the chat route as the manager.
- * Writes the session's `turns` and `replyDraft`.
+ * Public, owner-guarded (`assertOwnsAgent`); called by the chat route as the manager. Writes the
+ * held session's `turns` and `replyDraft`.
  *
- * @throws ConvexError with the refusal the room shows: the one-to-one is over, or the turn does
- *   not follow the conversation as the session holds it.
+ * @throws ConvexError with the refusal the room shows: no one-to-one is open, it is over, or the
+ *   turn does not follow the conversation as the session holds it.
  */
 export const takeTurn = mutation({
   args: {
-    sessionId: v.id('voiceSessions'),
+    agentId: v.id('agents'),
     request: v.union(
       v.object({ kind: v.literal('open') }),
       v.object({ kind: v.literal('reply'), id: v.string(), text: v.string() }),
@@ -94,21 +110,30 @@ export const takeTurn = mutation({
     ),
   },
   returns: v.object({
+    sessionId: v.id('voiceSessions'),
     turns: v.array(oneToOneTurnValidator),
     answering: v.union(v.string(), v.null()),
   }),
-  handler: async (ctx, args): Promise<{ turns: OneToOneTurn[]; answering: string | null }> => {
-    const session = await assertOwnsVoiceSession(ctx, args.sessionId);
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    sessionId: Id<'voiceSessions'>;
+    turns: OneToOneTurn[];
+    answering: string | null;
+  }> => {
+    const session = await heldSession(ctx, args.agentId);
     assertTalking(session);
-    const decision = decideTurn(turnsOf(session), args.request, Date.now());
+    const current = turnsOf(session);
+    const decision = decideTurn(current, args.request, Date.now());
     if (!decision.ok) refuse(decision.refusal);
-    if (decision.turns !== turnsOf(session)) {
+    if (decision.turns !== current) {
       await ctx.db.patch(session._id, {
         turns: [...decision.turns],
         ...(args.request.kind === 'reply' ? { replyDraft: undefined } : {}),
       });
     }
-    return { turns: [...decision.turns], answering: decision.answering };
+    return { sessionId: session._id, turns: [...decision.turns], answering: decision.answering };
   },
 });
 
@@ -145,11 +170,12 @@ export const recordAnswer = mutation({
     if (oneToOnePhase(session).kind !== 'talking') {
       return { kept: false, refusal: 'The one-to-one is already over.' };
     }
-    const decision = decideAnswer(turnsOf(session), args.answer, Date.now());
+    const current = turnsOf(session);
+    const decision = decideAnswer(current, args.answer, Date.now());
     if (!decision.ok) return { kept: false, refusal: decision.refusal };
     if (decision.closed) {
       await queueDraft(ctx, session, { turns: decision.turns, bossLabel: args.bossLabel });
-    } else if (decision.turns !== turnsOf(session)) {
+    } else if (decision.turns !== current) {
       await ctx.db.patch(session._id, { turns: [...decision.turns] });
     }
     return { kept: true, closed: decision.closed };

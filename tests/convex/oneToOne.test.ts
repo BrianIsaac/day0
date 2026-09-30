@@ -74,13 +74,13 @@ async function answer(
 /** Hold the one-to-one through `replies` answers, each question answered and kept. */
 async function holdThrough(room: Room, replies: number): Promise<void> {
   await room.owner.mutation(api.oneToOne.takeTurn, {
-    sessionId: room.sessionId,
+    agentId: room.agentId,
     request: { kind: 'open' },
   });
   await answer(room, null, 'e0', 0);
   for (let index = 0; index < replies; index += 1) {
     const { answering } = await room.owner.mutation(api.oneToOne.takeTurn, {
-      sessionId: room.sessionId,
+      agentId: room.agentId,
       request: { kind: 'reply', id: `m${index}`, text: ANSWERS[index] },
     });
     if (index < 6) await answer(room, answering, `e${index + 1}`, index + 1);
@@ -126,7 +126,7 @@ describe('the chat one-to-one kept turn by turn (30 Sep, a one-to-one lost to a 
     expect(turns.filter((turn) => turn.speaker === 'manager')).toHaveLength(7);
     // The room reopened on it asks again: the employee answers the seventh reply, not question 1.
     const reopened = await room.owner.mutation(api.oneToOne.takeTurn, {
-      sessionId: room.sessionId,
+      agentId: room.agentId,
       request: { kind: 'ask-again' },
     });
     expect(reopened.answering).toBe('m6');
@@ -154,7 +154,7 @@ describe('the chat one-to-one kept turn by turn (30 Sep, a one-to-one lost to a 
     const room = await openRoom();
     await holdThrough(room, 5);
     await room.owner.mutation(api.oneToOne.takeTurn, {
-      sessionId: room.sessionId,
+      agentId: room.agentId,
       request: { kind: 'reply', id: 'm5', text: ANSWERS[5] },
     });
     // Six replies: the seventh question has not been asked, let alone answered.
@@ -180,17 +180,17 @@ describe('the chat one-to-one kept turn by turn (30 Sep, a one-to-one lost to a 
     const room = await openRoom();
     await holdThrough(room, 1);
     await room.owner.mutation(api.oneToOne.takeTurn, {
-      sessionId: room.sessionId,
+      agentId: room.agentId,
       request: { kind: 'reply', id: 'm1', text: ANSWERS[1] },
     });
     const again = await room.owner.mutation(api.oneToOne.takeTurn, {
-      sessionId: room.sessionId,
+      agentId: room.agentId,
       request: { kind: 'reply', id: 'm1', text: ANSWERS[1] },
     });
     expect(again.answering).toBe('m1');
     await expect(
       room.owner.mutation(api.oneToOne.takeTurn, {
-        sessionId: room.sessionId,
+        agentId: room.agentId,
         request: { kind: 'reply', id: 'm2', text: 'And another thing.' },
       }),
     ).rejects.toBeInstanceOf(ConvexError);
@@ -204,7 +204,7 @@ describe('the chat one-to-one kept turn by turn (30 Sep, a one-to-one lost to a 
     await holdThrough(room, 1);
     await expect(
       room.harness.withIdentity({ subject: 'stranger' }).mutation(api.oneToOne.takeTurn, {
-        sessionId: room.sessionId,
+        agentId: room.agentId,
         request: { kind: 'ask-again' },
       }),
     ).rejects.toThrow();
@@ -214,10 +214,34 @@ describe('the chat one-to-one kept turn by turn (30 Sep, a one-to-one lost to a 
     });
     await expect(
       room.owner.mutation(api.oneToOne.takeTurn, {
-        sessionId: room.sessionId,
+        agentId: room.agentId,
         request: { kind: 'reply', id: 'm9', text: 'One more.' },
       }),
     ).rejects.toBeInstanceOf(ConvexError);
+  });
+});
+
+describe('the one-to-one a turn belongs to', (): void => {
+  it("is the employee's held session, refused before one is open", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('agents', {
+          bossEmail: 'boss@day0.local',
+          name: 'Nia',
+          userId: 'owner',
+          state: 'deployed',
+          createdAt: 1,
+        }),
+    );
+    const owner = harness.withIdentity({ subject: 'owner' });
+    await expect(
+      owner.mutation(api.oneToOne.takeTurn, { agentId, request: { kind: 'open' } }),
+    ).rejects.toBeInstanceOf(ConvexError);
+    const { sessionId } = await owner.mutation(api.voice.start, { agentId, mode: 'chat' });
+    expect(
+      await owner.mutation(api.oneToOne.takeTurn, { agentId, request: { kind: 'open' } }),
+    ).toEqual({ sessionId, turns: [], answering: null });
   });
 });
 
@@ -271,7 +295,7 @@ describe('the reply being typed', (): void => {
     });
     expect((await sessionOf(room)).replyDraft).toHaveLength(4000);
     await room.owner.mutation(api.oneToOne.takeTurn, {
-      sessionId: room.sessionId,
+      agentId: room.agentId,
       request: { kind: 'reply', id: 'm1', text: ANSWERS[1] },
     });
     expect((await sessionOf(room)).replyDraft).toBeUndefined();
