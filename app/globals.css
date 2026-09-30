@@ -1240,12 +1240,17 @@ button.rail-step:focus-visible {
    .rail[data-advanced]  the first-week rail, just moved on: the fill slides into `.now` (down the
                          column on a phone) and the dot before it (its `.rail-title::before`)
                          fills (`FirstWeekRail`).
+   [data-rail-leaving]   the rail once the week has moved on to Working: it fades out in 150 ms
+                         before the first week's card takes its place (`EmployeeShell`).
+   .rail[data-arriving]  that card, as it takes the rail's place: it settles in, 220 ms.
    [data-dialog]         a dialog or popover: it scales in from 0.96 at its own transform origin;
                          [data-dialog-backdrop] fades behind it.
-   [data-week]           the whole first week opened from its card (`FirstWeekCard`): it grows
-                         from the card's size (`--week-from`) at the card (its inline transform
-                         origin) as [data-week-scrim] fades in, and on 'closing' shrinks back into
-                         the card as the scrim fades out, on the same curve.
+   [data-week]           the whole first week opened from its card (`FirstWeekCard`), by
+                         transitions so an interrupted open or close turns back from where it is:
+                         'placing' is its start, the card's size (`--week-from`) at the card (its
+                         inline transform origin) and transparent, set before the week opens;
+                         'open' grows it to full size as [data-week-scrim] fades in; 'closing'
+                         shrinks it back into the card as the scrim fades out, on the same curve.
    --------------------------------------------------------------------------------------------- */
 
 @keyframes day0-settle {
@@ -1311,20 +1316,6 @@ button.rail-step:focus-visible {
   from {
     opacity: 0;
     transform: scale(0.96);
-  }
-}
-
-@keyframes day0-week-grow {
-  from {
-    opacity: 0;
-    transform: scale(var(--week-from, 0.96));
-  }
-}
-
-@keyframes day0-week-shrink {
-  to {
-    opacity: 0;
-    transform: scale(var(--week-from, 0.96));
   }
 }
 
@@ -1422,6 +1413,14 @@ button.rail-step:focus-visible {
     animation: day0-dot-fill 240ms var(--ease-arrive) 60ms both;
   }
 
+  [data-rail-leaving] {
+    animation: day0-fade-out 150ms var(--ease-arrive) both;
+  }
+
+  .rail[data-arriving] {
+    animation: day0-settle 220ms var(--ease-arrive) both;
+  }
+
   [data-dialog] {
     animation: day0-dialog-in 200ms var(--ease-arrive) both;
   }
@@ -1430,20 +1429,36 @@ button.rail-step:focus-visible {
     animation: day0-fade-in 200ms var(--ease-arrive) both;
   }
 
+  [data-week='placing'] {
+    opacity: 0;
+    transform: scale(var(--week-from, 0.96));
+  }
+
   [data-week='open'] {
-    animation: day0-week-grow 260ms var(--ease-arrive) both;
+    transition:
+      transform 260ms var(--ease-arrive),
+      opacity 260ms var(--ease-arrive);
   }
 
   [data-week='closing'] {
-    animation: day0-week-shrink 200ms var(--ease-arrive) both;
+    opacity: 0;
+    transform: scale(var(--week-from, 0.96));
+    transition:
+      transform 200ms var(--ease-arrive),
+      opacity 200ms var(--ease-arrive);
+  }
+
+  [data-week-scrim='placing'] {
+    opacity: 0;
   }
 
   [data-week-scrim='open'] {
-    animation: day0-fade-in 200ms var(--ease-arrive) both;
+    transition: opacity 200ms var(--ease-arrive);
   }
 
   [data-week-scrim='closing'] {
-    animation: day0-fade-out 200ms var(--ease-arrive) both;
+    opacity: 0;
+    transition: opacity 200ms var(--ease-arrive);
   }
 }
 

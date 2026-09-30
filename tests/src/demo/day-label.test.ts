@@ -20,4 +20,8 @@ describe('dayLabelAt', () => {
     expect(dayLabelAt(AFTER_UTC_MIDNIGHT, 'Asia/Singapore')).toBe('30 September 2026');
     expect(dayLabelAt(AFTER_UTC_MIDNIGHT, 'UTC')).toBe('30 September 2026');
   });
+
+  it('throws a RangeError on a zone Intl does not know, as its TSDoc says (review m20)', () => {
+    expect(() => dayLabelAt(AFTER_UTC_MIDNIGHT, 'Mars/Olympus_Mons')).toThrow(RangeError);
+  });
 });

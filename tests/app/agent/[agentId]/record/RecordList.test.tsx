@@ -124,6 +124,12 @@ describe('RecordList', (): void => {
       payload?.parentElement?.querySelector('time'),
     );
     expect(payload?.querySelector('summary')?.className).toMatch(/\bmin-h-11\b/);
+    // Its 44 px box gives the 24 px over a line's height back as margin, so a sentence that wraps
+    // keeps its own line spacing rather than opening a gap around the control (review C4).
+    expect(payload?.querySelector('summary')?.className).toMatch(/(^|\s)-my-3(\s|$)/);
+    // Positioned, so the time a phone sets on the next row paints under its box, not over the
+    // bottom of the target (second pass M-b: 31 of 44 px answered a press on the bed at 390).
+    expect(payload?.querySelector('summary')?.className).toMatch(/(^|\s)relative(\s|$)/);
     expect(payload?.querySelector('pre')?.className).toMatch(/\bwrap-anywhere\b/);
     expect(payload?.querySelector('summary')?.textContent).toContain('Payload');
     expect(JSON.parse(payload?.querySelector('pre')?.textContent ?? '')).toEqual({

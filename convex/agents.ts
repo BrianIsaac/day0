@@ -27,7 +27,7 @@ import {
 import { agentReadsSource } from './docSources';
 import { isEvaluationAgent } from './metrics';
 import { isManagerLookupFailure } from '../src/surfaces/manager-lookup';
-import { shownEmployeeState } from '../src/work/state-labels';
+import { shownEmployeeState, type CharterApproval } from '../src/work/state-labels';
 import {
   managerNotificationMode,
   NOTIFICATIONS_CHANGE_REASON,
@@ -232,7 +232,7 @@ interface CharterStanding {
   /** Whether the newest charter is a draft the manager has not approved yet. */
   readonly draftAwaitsManager: boolean;
   /** The newest charter's standing, or null before one is drafted. */
-  readonly newest: { readonly approved: boolean } | null;
+  readonly newest: CharterApproval;
 }
 
 /**

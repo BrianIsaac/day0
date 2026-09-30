@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react';
 import { RollingCount } from './RollingCount';
+import { bringTabIntoView } from './strip-scroll';
 
 /** One tab: where it goes and what it counts. */
 export interface TabItem {
@@ -42,6 +43,14 @@ export function nextTabIndex(key: string, index: number, count: number): number 
   }
 }
 
+/** What a strip of tabs is drawn from. */
+export interface TabsProps {
+  readonly label: string;
+  readonly items: readonly TabItem[];
+  readonly selected: string;
+  readonly panelId: string;
+}
+
 /**
  * A strip of tabs, each its own address (a route segment), so the address names the tab and a
  * tab can be linked to. It is the ARIA tabs pattern with manual activation: the strip is one tab
@@ -54,17 +63,7 @@ export function nextTabIndex(key: string, index: number, count: number): number 
  * @param selected - The key of the tab whose panel is showing.
  * @param panelId - The id of the `TabPanel` the selected tab controls.
  */
-export function Tabs({
-  label,
-  items,
-  selected,
-  panelId,
-}: {
-  label: string;
-  items: readonly TabItem[];
-  selected: string;
-  panelId: string;
-}) {
+export function Tabs({ label, items, selected, panelId }: TabsProps) {
   const strip = useRef<HTMLDivElement>(null);
   // The strip is one tab stop: the selected tab, or the first when the key names none (a page
   // under a tab, such as reorientation under Needs you, selects the tab it sits under).
@@ -74,12 +73,7 @@ export function Tabs({
   useEffect(() => {
     const list = strip.current;
     const tab = list?.querySelector<HTMLElement>(`#${CSS.escape(tabId(panelId, selected))}`);
-    if (!list || !tab) return;
-    const left = tab.offsetLeft;
-    const right = left + tab.offsetWidth;
-    if (left < list.scrollLeft || right > list.scrollLeft + list.clientWidth) {
-      list.scrollLeft = Math.max(0, left - (list.clientWidth - tab.offsetWidth) / 2);
-    }
+    if (list && tab) bringTabIntoView({ list, tab });
   }, [panelId, selected]);
   function onKeyDown(event: KeyboardEvent<HTMLAnchorElement>, index: number): void {
     if (event.key === ' ') {
@@ -94,54 +88,66 @@ export function Tabs({
     strip.current?.querySelectorAll<HTMLAnchorElement>('[role="tab"]')[next]?.focus();
   }
   return (
-    // The strip's line is drawn inside its box, under the tabs, so the selected tab's underline
-    // covers it without reaching past the box: a tab hanging 1 px below made the strip scroll
-    // vertically, and a scroll box draws a scrollbar wherever one is not hidden.
-    <div
-      ref={strip}
-      role="tablist"
-      aria-label={label}
-      className="flex gap-0.5 overflow-x-auto overflow-y-hidden shadow-[inset_0_-1px_0_var(--color-border)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-    >
-      {items.map((item, index) => {
-        const current = item.key === selected;
-        const hot = item.hot === true && (item.count ?? 0) > 0;
-        return (
-          <Link
-            key={item.key}
-            id={tabId(panelId, item.key)}
-            href={item.href}
-            role="tab"
-            aria-selected={current}
-            // Only the selected tab's panel is on the page; the others name no element.
-            aria-controls={current ? panelId : undefined}
-            tabIndex={item.key === stop ? 0 : -1}
-            onKeyDown={(event) => onKeyDown(event, index)}
-            className={`inline-flex h-11 shrink-0 items-center gap-2 border-b-2 px-3 text-sm font-medium whitespace-nowrap no-underline ${
-              current
-                ? 'border-[var(--color-accent)] text-[var(--color-fg)]'
-                : 'border-transparent text-[var(--color-muted)] hover:text-[var(--color-fg)]'
-            }`}
-          >
-            {item.label}
-            {/* A space the flex layout ignores, so the name reads "Work 3", not "Work3". */}
-            {item.count !== undefined ? ' ' : null}
-            {item.count !== undefined ? (
-              <span
-                className={`inline-flex h-5 min-w-5 items-center justify-center rounded-full border px-1.5 text-xs font-semibold tabular-nums ${
-                  hot
-                    ? 'border-transparent bg-[var(--color-warn-soft)] text-[var(--color-warn)]'
-                    : 'border-[var(--color-border)] bg-[var(--color-card)] text-[var(--color-muted)]'
-                }`}
-              >
-                <RollingCount value={item.count} />
-              </span>
-            ) : null}
-          </Link>
-        );
-      })}
+    // The strip's line is a border under it, which snaps to whole device pixels as every other
+    // line on the page does (an inset shadow smeared over two rows at a ratio of 1.5). The strip
+    // overlaps it by a pixel, so the selected tab's underline covers the line, while every tab
+    // stays inside the strip's own box: a tab hanging below made the strip scroll vertically, and
+    // a scroll box draws a scrollbar wherever one is not hidden. The strip is positioned so its
+    // tabs' offsets are measured from it when a tab is brought into view.
+    <div className="border-b border-[var(--color-border)]">
+      <div
+        ref={strip}
+        role="tablist"
+        aria-label={label}
+        className="relative -mb-px flex gap-0.5 overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      >
+        {items.map((item, index) => {
+          const current = item.key === selected;
+          const hot = item.hot === true && (item.count ?? 0) > 0;
+          return (
+            <Link
+              key={item.key}
+              id={tabId(panelId, item.key)}
+              href={item.href}
+              role="tab"
+              aria-selected={current}
+              // Only the selected tab's panel is on the page; the others name no element.
+              aria-controls={current ? panelId : undefined}
+              tabIndex={item.key === stop ? 0 : -1}
+              onKeyDown={(event) => onKeyDown(event, index)}
+              className={`inline-flex h-11 shrink-0 items-center gap-2 border-b-2 px-3 text-sm font-medium whitespace-nowrap no-underline ${
+                current
+                  ? 'border-[var(--color-accent)] text-[var(--color-fg)]'
+                  : 'border-transparent text-[var(--color-muted)] hover:text-[var(--color-fg)]'
+              }`}
+            >
+              {item.label}
+              {/* A space the flex layout ignores, so the name reads "Work 3", not "Work3". */}
+              {item.count !== undefined ? ' ' : null}
+              {item.count !== undefined ? (
+                <span
+                  className={`inline-flex h-5 min-w-5 items-center justify-center rounded-full border px-1.5 text-xs font-semibold tabular-nums ${
+                    hot
+                      ? 'border-transparent bg-[var(--color-warn-soft)] text-[var(--color-warn)]'
+                      : 'border-[var(--color-border)] bg-[var(--color-card)] text-[var(--color-muted)]'
+                  }`}
+                >
+                  <RollingCount value={item.count} />
+                </span>
+              ) : null}
+            </Link>
+          );
+        })}
+      </div>
     </div>
   );
+}
+
+/** What a tab's panel is drawn from. */
+export interface TabPanelProps {
+  readonly id: string;
+  readonly selected: string;
+  readonly children: ReactNode;
 }
 
 /**
@@ -151,15 +157,7 @@ export function Tabs({
  * @param id - The id the tabs' `aria-controls` names.
  * @param selected - The key of the selected tab.
  */
-export function TabPanel({
-  id,
-  selected,
-  children,
-}: {
-  id: string;
-  selected: string;
-  children: ReactNode;
-}) {
+export function TabPanel({ id, selected, children }: TabPanelProps) {
   return (
     <div id={id} role="tabpanel" aria-labelledby={tabId(id, selected)} tabIndex={-1}>
       {children}

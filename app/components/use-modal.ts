@@ -23,7 +23,8 @@ export function focusableIn(panel: HTMLElement): HTMLElement[] {
 
 /**
  * Keep Tab inside a modal: Tab and Shift+Tab wrap at its ends, and a modal with no control holds
- * focus where it is.
+ * focus where it is. The panel itself, which holds focus when it opens on itself, counts as the
+ * start, so Shift+Tab from it goes to the last control rather than out of the modal.
  *
  * @param event - The key pressed inside the modal.
  * @param panel - The modal.
@@ -37,7 +38,8 @@ export function keepTabInside(event: KeyboardEvent<HTMLElement>, panel: HTMLElem
     event.preventDefault();
     return;
   }
-  if (event.shiftKey && document.activeElement === first) {
+  const atStart = document.activeElement === first || document.activeElement === panel;
+  if (event.shiftKey && atStart) {
     event.preventDefault();
     last.focus();
   } else if (!event.shiftKey && document.activeElement === last) {
@@ -46,30 +48,52 @@ export function keepTabInside(event: KeyboardEvent<HTMLElement>, panel: HTMLElem
   }
 }
 
+/** What `useModal` makes modal, and where focus goes on the way in and out. */
+export interface ModalOptions {
+  /** The panel; the child of the body that holds it stays live. */
+  readonly panel: RefObject<HTMLElement | null>;
+  /**
+   * Whether the panel is modal now. A panel that plays its way out after closing stops being
+   * modal as it starts to, so focus is back before the motion ends.
+   */
+  readonly active: boolean;
+  /**
+   * The element that takes focus; the panel's first control when absent, the panel itself when
+   * it has none.
+   */
+  readonly initialFocus?: RefObject<HTMLElement | null>;
+  /**
+   * The element focus returns to; whatever held focus as the panel opened when absent. A control
+   * that opens its own panel names itself: Safari and Firefox on macOS do not focus a button on a
+   * click, so what held focus then is the page's body.
+   */
+  readonly returnFocus?: RefObject<HTMLElement | null>;
+}
+
+/**
+ * Give focus to the page's heading, when what focus was to return to has left the page. The
+ * heading takes it only when it is focusable (`tabIndex={-1}`, as the employee page's is), and the
+ * page does not scroll to it.
+ */
+function focusPageHeading(): void {
+  document.querySelector<HTMLElement>('h1')?.focus({ preventScroll: true });
+}
+
 /**
  * Make a panel rendered on the document's body modal while `active`: the rest of the page inert
  * and still, focus moved into the panel, and, when it stops being modal, the page given back and
- * focus handed to whatever held it before. The page keeps its scrollbar's room while it is still,
- * so nothing behind the panel moves sideways.
+ * focus handed to `returnFocus`, else to whatever held it before (nowhere when nothing did),
+ * and, when that has left the page, to the page's heading. The page keeps its scrollbar's room
+ * while it is still, so nothing behind the panel moves sideways.
  *
- * @param panel - The panel; the child of the body that holds it stays live.
- * @param active - Whether the panel is modal now. A panel that plays its way out after closing
- *   stops being modal as it starts to, so focus is back before the motion ends.
- * @param initialFocus - The element that takes focus; the panel's first control when absent, the
- *   panel itself when it has none.
+ * @param options - The panel, whether it is modal, and where focus goes in and back.
  */
-export function useModal({
-  panel,
-  active,
-  initialFocus,
-}: {
-  panel: RefObject<HTMLElement | null>;
-  active: boolean;
-  initialFocus?: RefObject<HTMLElement | null>;
-}): void {
+export function useModal({ panel, active, initialFocus, returnFocus }: ModalOptions): void {
   useEffect(() => {
     if (!active) return;
-    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const held = document.activeElement;
+    const opener = held instanceof HTMLElement && held !== document.body ? held : null;
+    const back = returnFocus?.current ?? opener;
     const own = panel.current;
     const behind = [...document.body.children].filter(
       (element) => (own === null || !element.contains(own)) && !element.hasAttribute('inert'),
@@ -87,7 +111,10 @@ export function useModal({
       for (const element of behind) element.removeAttribute('inert');
       document.body.style.overflow = overflow;
       root.style.scrollbarGutter = gutter;
-      if (opener?.isConnected) opener.focus();
+      // Nothing to return to (a click that focused nothing, on Safari or Firefox) leaves focus
+      // where the browser puts it; only a target that has left the page hands it to the heading.
+      if (back?.isConnected) back.focus();
+      else if (back !== null) focusPageHeading();
     };
-  }, [active, panel, initialFocus]);
+  }, [active, panel, initialFocus, returnFocus]);
 }

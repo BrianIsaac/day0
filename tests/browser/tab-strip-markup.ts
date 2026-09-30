@@ -4,11 +4,12 @@ import { Tabs, type TabItem } from '../../app/components/Tabs';
 
 /**
  * Print the employee page's tab strip as markup, for the browser job to mount under the build's
- * stylesheet. It runs under `tsx` in its own process: Playwright compiles a spec's JSX for its
- * component runner, so a spec cannot render the product's components itself.
+ * stylesheet, with the tab its one argument names selected (the first when it names none). It
+ * runs under `tsx` in its own process: Playwright compiles a spec's JSX for its component runner,
+ * so a spec cannot render the product's components itself.
  */
 
-/** The employee page's nine tabs, with the counts the bed showed; the first is selected. */
+/** The employee page's nine tabs, with the counts the bed showed. */
 const ITEMS: readonly TabItem[] = [
   { key: 'needs-you', label: 'Needs you', href: '/a/needs-you', count: 1, hot: true },
   { key: 'work', label: 'Work', href: '/a/work', count: 2 },
@@ -26,7 +27,7 @@ process.stdout.write(
     createElement(Tabs, {
       label: 'Employee page',
       items: ITEMS,
-      selected: 'needs-you',
+      selected: process.argv[2] ?? 'needs-you',
       panelId: 'panel',
     }),
   ),

@@ -6,8 +6,9 @@ import {
   useLayoutEffect,
   useRef,
   useState,
-  type AnimationEvent,
   type KeyboardEvent,
+  type RefObject,
+  type TransitionEvent,
 } from 'react';
 import { createPortal } from 'react-dom';
 import { FirstWeekRail, RAIL_CELL, RailStepText, type RailStep } from './FirstWeekRail';
@@ -16,17 +17,40 @@ import { keepTabInside, useModal } from './use-modal';
 /** The least room the whole week keeps from the window's edges, in CSS pixels. */
 const EDGE_PX = 16;
 
+/** How long after a click closes the week the rest of that double click is kept off the page. */
+const DOUBLE_CLICK_TAIL_MS = 500;
+
+/**
+ * Keep the rest of a double click off the page once its first click has closed the week: the
+ * second click (and the double click itself) would pass through the shrinking week, or land
+ * where it was under reduced motion, onto whatever is beneath, a button included. A click of its
+ * own, or the end of the window, ends the watch.
+ */
+function swallowDoubleClickTail(): void {
+  const swallow = (event: Event): void => {
+    if (event instanceof MouseEvent && event.detail > 1) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    stop();
+  };
+  const stop = (): void => {
+    clearTimeout(timer);
+    document.removeEventListener('click', swallow, true);
+    document.removeEventListener('dblclick', swallow, true);
+  };
+  const timer = setTimeout(stop, DOUBLE_CLICK_TAIL_MS);
+  document.addEventListener('click', swallow, true);
+  document.addEventListener('dblclick', swallow, true);
+}
+
 /** Where the card sat when it was pressed, in the window. */
 interface Anchor {
   readonly top: number;
   readonly left: number;
   readonly width: number;
   readonly height: number;
-}
-
-/** Whether the manager asked for less motion, so the week opens and closes at once. */
-function reducedMotion(): boolean {
-  return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
 }
 
 /**
@@ -86,6 +110,17 @@ export function placeWeek({ anchor, panel, nowTop, windowHeight }: WeekLayout): 
   return { top, origin: `${originX}px ${originY}px`, from };
 }
 
+/** What the first week's card is drawn from. */
+export interface FirstWeekCardProps {
+  /** The steps, in order; the card draws the one that is now. */
+  readonly steps: readonly RailStep[];
+  /**
+   * Whether the card has just taken the rail's place in front of the manager: it settles in
+   * (`.rail[data-arriving]`) rather than appear in one frame.
+   */
+  readonly arriving?: boolean;
+}
+
 /**
  * The first week once the employee is working (round two section 3.3, the operator's ruling of
  * 30 September): one step's cell, the current one, drawn on its own in the header. Pressing it
@@ -95,27 +130,17 @@ export function placeWeek({ anchor, panel, nowTop, windowHeight }: WeekLayout): 
  * a Close control, shown when a keyboard reaches it, for a screen reader on a touch screen that
  * has no Escape; any other press closes it (light dismiss).
  *
- * @param steps - The steps, in order; the card draws the one that is now.
- * @param advanced - Whether the week has just moved on to this step, on this page: the card plays
- *   the rail's advance (`.rail[data-advanced]`).
+ * @param props - The steps of the week, and whether the card has just taken the rail's place.
  */
-export function FirstWeekCard({
-  steps,
-  advanced = false,
-}: {
-  steps: readonly RailStep[];
-  advanced?: boolean;
-}) {
+export function FirstWeekCard({ steps, arriving = false }: FirstWeekCardProps) {
   const card = useRef<HTMLButtonElement>(null);
   const weekId = useId();
   // Set while the whole week is on the page, open or shrinking back.
   const [anchor, setAnchor] = useState<Anchor | null>(null);
   const [open, setOpen] = useState(false);
   const closed = useCallback((): void => setAnchor(null), []);
-  const hide = useCallback((): void => {
-    setOpen(false);
-    if (reducedMotion()) setAnchor(null);
-  }, []);
+  // Under reduced motion nothing plays, so the week leaves as soon as it closes (`WholeWeek`).
+  const hide = useCallback((): void => setOpen(false), []);
   const current = steps.find((step) => step.status === 'now');
   if (current === undefined) return null;
 
@@ -128,7 +153,7 @@ export function FirstWeekCard({
 
   return (
     <>
-      <div className="rail w-full sm:w-60" data-advanced={advanced ? '' : undefined}>
+      <div className="rail w-full sm:w-60" data-arriving={arriving ? '' : undefined}>
         <button
           ref={card}
           type="button"
@@ -148,6 +173,7 @@ export function FirstWeekCard({
           steps={steps}
           anchor={anchor}
           open={open}
+          card={card}
           onClose={hide}
           onClosed={closed}
         />
@@ -156,31 +182,36 @@ export function FirstWeekCard({
   );
 }
 
+/** What the whole week is drawn from. */
+interface WholeWeekProps {
+  readonly id: string;
+  readonly steps: readonly RailStep[];
+  /** Where the card was when it was pressed. */
+  readonly anchor: Anchor;
+  /** Whether it is open; false while it shrinks back, when it is no longer modal. */
+  readonly open: boolean;
+  /** The card it grew from, which focus returns to. */
+  readonly card: RefObject<HTMLButtonElement | null>;
+  /** Close it: any press, or Escape. */
+  readonly onClose: () => void;
+  /** It has shrunk back and can leave the page. */
+  readonly onClosed: () => void;
+}
+
 /**
- * The whole week over a dimmed page, grown from the card and shrunk back into it.
+ * The whole week over a dimmed page, grown from the card and shrunk back into it. Its motion is a
+ * transition between three states (`[data-week]` in `app/globals.css`): its start, laid over the
+ * card at the card's size; open; and closing, back to the start. A transition runs from whatever
+ * is on screen, so a close in the middle of the growth, or a press on the card in the middle of
+ * the shrink, turns the week back from where it is.
  *
- * @param open - Whether it is open; false while it shrinks back, when it is no longer modal.
- * @param onClose - Close it: any press, or Escape.
- * @param onClosed - It has shrunk back and can leave the page.
+ * @param props - The week, where it grows from, and whether it is open.
  */
-function WholeWeek({
-  id,
-  steps,
-  anchor,
-  open,
-  onClose,
-  onClosed,
-}: {
-  id: string;
-  steps: readonly RailStep[];
-  anchor: Anchor;
-  open: boolean;
-  onClose: () => void;
-  onClosed: () => void;
-}) {
+function WholeWeek({ id, steps, anchor, open, card, onClose, onClosed }: WholeWeekProps) {
   const panel = useRef<HTMLDivElement>(null);
+  const [placed, setPlaced] = useState(false);
   // Focus lands on the week itself, so a screen reader says its name before the Close control.
-  useModal({ panel, active: open, initialFocus: panel });
+  useModal({ panel, active: open, initialFocus: panel, returnFocus: card });
 
   // Placed before the first paint, so the growth starts at the card and never flashes elsewhere.
   // Read from layout offsets, which the growth's transform does not scale.
@@ -198,15 +229,25 @@ function WholeWeek({
     element.style.setProperty('--week-from', String(place.from));
   }, [anchor]);
 
-  // A resize or a turned phone moves the card: the week closes rather than shrink to where the
-  // card no longer is.
+  // The week opens from its start, so the start has to be the style the browser last computed
+  // for it when it turns open: the read below computes it, with the scale just placed. The
+  // placement's own reads computed the week's first style before that scale was known, which is
+  // also why `@starting-style` cannot give the start.
+  useLayoutEffect(() => {
+    panel.current?.getBoundingClientRect();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the start is computed before the first paint, and the week opens from it
+    setPlaced(true);
+  }, []);
+
+  // A resize or a turned phone moves the card: the week closes, from where it is, rather than
+  // stay over a card that has moved.
   useLayoutEffect(() => {
     if (!open) return;
     window.addEventListener('resize', onClose);
     return (): void => window.removeEventListener('resize', onClose);
   }, [open, onClose]);
 
-  // Shrinking back ends when its motion does; with none to play (reduced motion, or no
+  // Shrinking back ends when its transition does; with none to play (reduced motion, or no
   // stylesheet), it leaves at once.
   useLayoutEffect(() => {
     if (open) return;
@@ -214,7 +255,7 @@ function WholeWeek({
     if (playing === 0) onClosed();
   }, [open, onClosed]);
 
-  const state = open ? 'open' : 'closing';
+  const state = !placed ? 'placing' : open ? 'open' : 'closing';
 
   const week = (
     <div
@@ -227,7 +268,9 @@ function WholeWeek({
       }}
       onClick={(event) => {
         // The second click of a double click lands on the week just opened: it stays open.
-        if (open && event.detail < 2) onClose();
+        if (!open || event.detail > 1) return;
+        onClose();
+        swallowDoubleClickTail();
       }}
       className={`fixed inset-0 z-50 bg-[#0a0a0b]/55 ${open ? '' : 'pointer-events-none'}`}
     >
@@ -238,6 +281,7 @@ function WholeWeek({
         // While it shrinks back it is no longer modal: the page is live and focus is on the card.
         aria-modal={open ? 'true' : undefined}
         aria-hidden={open ? undefined : 'true'}
+        inert={!open}
         aria-label="The whole first week"
         tabIndex={-1}
         data-week={state}
@@ -250,21 +294,32 @@ function WholeWeek({
           }
           keepTabInside(event, event.currentTarget);
         }}
-        onAnimationEnd={(event: AnimationEvent<HTMLDivElement>): void => {
+        onTransitionEnd={(event: TransitionEvent<HTMLDivElement>): void => {
+          if (!open && event.target === event.currentTarget) onClosed();
+        }}
+        // A shrink can be cancelled rather than end (reduced motion switched on part way), and
+        // nothing else would take the week away then.
+        onTransitionCancel={(event: TransitionEvent<HTMLDivElement>): void => {
           if (!open && event.target === event.currentTarget) onClosed();
         }}
         className="fixed right-0 left-0 mx-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] overflow-y-auto rounded-xl shadow-[0_1px_2px_rgba(0,0,0,0.4),0_16px_40px_-16px_rgba(0,0,0,0.8)] outline-none sm:w-[min(77rem,calc(100%-3rem))]"
       >
         <FirstWeekRail steps={steps} />
+        {/* At the week's top right whether shown or not: hidden, it still has a box, and one at
+            its static place, the week's foot, made the week scroll by a pixel (review M1). Shown,
+            it asks for its padding again, which `not-sr-only` resets, and says the one word, so
+            it clears the step it sits over at both widths. */}
         <button
           type="button"
+          aria-label="Close the whole week"
           onClick={(event) => {
             event.stopPropagation();
             onClose();
+            if (event.detail > 0) swallowDoubleClickTail();
           }}
-          className="sr-only rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] px-3 text-[13px] font-medium text-[var(--color-fg)] focus-visible:not-sr-only focus-visible:absolute focus-visible:top-2 focus-visible:right-2 focus-visible:inline-flex focus-visible:min-h-11 focus-visible:items-center"
+          className="sr-only top-2 right-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] text-[13px] font-medium text-[var(--color-fg)] focus-visible:not-sr-only focus-visible:absolute focus-visible:inline-flex focus-visible:min-h-11 focus-visible:items-center focus-visible:px-3"
         >
-          Close the whole week
+          Close
         </button>
       </div>
     </div>
