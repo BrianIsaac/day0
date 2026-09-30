@@ -147,8 +147,9 @@ export function readCheckout(io: CloudIo, pushes: boolean): CheckoutState | Fail
   if (existsSync(join(io.cwd, '.env.local'))) {
     return {
       failure:
-        'this checkout has a .env.local, and the Convex CLI reads it beside the target file. Work ' +
-        'from a clean checkout of the tag with none: git worktree add --detach <dir> v<release>.',
+        'this checkout has a .env.local, and the Convex CLI reads it beside the target file. `vercel ' +
+        'link` writes one when it is let pull the env, and a local setup writes one; work from a ' +
+        'clean checkout of the tag with none: git worktree add --detach <dir> v<release>.',
     };
   }
   const inherited = INHERITED_SELECTORS.filter((name) => (io.environment[name] ?? '') !== '');

@@ -167,7 +167,7 @@ Options:
   --yes               do not ask before the first write
   --help              print this
 
-Every run ends with the rollback runbook, filled in with what it read.`;
+Setup and upgrade end with the rollback runbook, filled in with what they read.`;
 
 /** The options a flag's value is read into. */
 type ValuedOption = 'target' | 'envFile' | 'appUrl' | 'scope' | 'backupTo' | 'name';
@@ -868,6 +868,8 @@ export async function runCloudBackup(options: CloudOptions, io: CloudIo): Promis
   if ('failure' in target) return refuse(target.failure);
   const unzip = toolRefusal(io, 'unzip');
   if (unzip !== undefined) return refuse(unzip.failure);
+  const proven = proveTarget(io, target, 'target');
+  if (proven !== undefined) return refuse(proven.failure);
   const place = backupDirectory(options.backupTo, io, target);
   if ('failure' in place) return refuse(place.failure);
   if (options.name !== undefined && !/^[A-Za-z0-9._-]+$/.test(options.name)) {

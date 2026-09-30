@@ -293,6 +293,7 @@ describe('cloud setup, the first push', (): void => {
       await runCloudSetup(verb(c, { verb: 'setup', envFile: settingsFile(c, SETTINGS) }), c.io),
     ).toBe(1);
     expect(printed(c)).toContain('this checkout has a .env.local');
+    expect(printed(c)).toContain('`vercel link` writes one when it is let pull the env');
     expect(writes(c)).toEqual([]);
   });
 
@@ -700,6 +701,9 @@ describe('cloud backup', (): void => {
   it('exports beside the target file, named by the deployment and the time', async (): Promise<void> => {
     const c = cloud();
     expect(await runCloudBackup(verb(c, { verb: 'backup' }), c.io)).toBe(0);
+    expect(ran(c).findIndex((line) => line.includes('deploy --dry-run'))).toBeLessThan(
+      ran(c).findIndex((line) => line.startsWith('npx convex export')),
+    );
     const zip = join(c.privateDir, `${DEPLOYMENT}-20261001T020304Z.zip`);
     expect(statSync(zip).mode & 0o777).toBe(0o600);
     expect(existsSync(`${zip}.sha256`)).toBe(true);
@@ -724,6 +728,15 @@ describe('cloud backup', (): void => {
       ),
     ).toBe(1);
     expect(printed(c)).toContain('exists already; nothing is written over a backup.');
+  });
+
+  it('refuses a target the dry run does not name, before it exports anything', async (): Promise<void> => {
+    const c = cloud({ defaultProd: 'other-prod-789' });
+    expect(await runCloudBackup(verb(c, { verb: 'backup' }), c.io)).toBe(1);
+    expect(printed(c)).toContain(
+      'error: nothing was exported, because the dry run of the push did not name',
+    );
+    expect(writes(c)).toEqual([]);
   });
 
   it('refuses a directory inside the checkout', async (): Promise<void> => {
