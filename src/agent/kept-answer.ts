@@ -1,6 +1,7 @@
 import type { UIMessageChunk } from 'ai';
 import { answerFailure, withKeptMark } from './one-to-one-conversation';
 import { errorMessage } from '../lib/errors';
+import { log } from '../lib/logger';
 
 /** An employee turn that stood, as the session keeps it. */
 export interface EmployeeAnswer {
@@ -13,7 +14,7 @@ export interface EmployeeAnswer {
 
 /**
  * Keep an answer on the session. Resolves to null once it is kept, or to the sentence the room
- * shows when the session would not keep it; a rejection is said the same way.
+ * shows when the session would not keep it; a rejection is logged and said as `ANSWER_NOT_KEPT`.
  */
 export type KeepAnswer = (answer: EmployeeAnswer) => Promise<string | null>;
 
@@ -61,7 +62,9 @@ export function keptAnswer(
         ...(closingLine === undefined ? {} : { closingLine }),
       });
     } catch (err: unknown) {
-      return `${ANSWER_NOT_KEPT}: ${errorMessage(err)}`;
+      // The server's own message is for the log; the room is told only that the answer was not kept.
+      log.warn('one-to-one answer not kept', { reason: errorMessage(err) });
+      return ANSWER_NOT_KEPT;
     }
   }
 

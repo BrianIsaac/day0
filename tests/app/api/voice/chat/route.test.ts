@@ -22,6 +22,8 @@ const session = vi.hoisted(() => ({
   refusal: undefined as string | undefined,
   /** What `recordAnswer` answers instead of keeping, when set. */
   keepRefusal: undefined as string | undefined,
+  /** What `recordAnswer` throws instead of answering, when set. */
+  keepThrows: undefined as Error | undefined,
   calls: [] as { name: string; args: Record<string, unknown> }[],
 }));
 
@@ -49,6 +51,7 @@ vi.mock('convex/browser', async () => {
           };
         }
         if (name === 'oneToOne:recordAnswer') {
+          if (session.keepThrows) throw session.keepThrows;
           if (session.keepRefusal) return { kept: false, refusal: session.keepRefusal };
           const decision = decideAnswer(session.turns, args.answer as never, 2);
           if (!decision.ok) return { kept: false, refusal: decision.refusal };
@@ -67,6 +70,7 @@ beforeEach((): void => {
   session.closed = false;
   session.refusal = undefined;
   session.keepRefusal = undefined;
+  session.keepThrows = undefined;
   session.calls = [];
 });
 
@@ -831,5 +835,21 @@ describe('the one-to-one kept on its session (30 Sep, a one-to-one lost to a clo
       },
       { type: 'finish', finishReason: 'stop' },
     ]);
+  });
+  it("says a keep the session refused outright in the session's words, and anything else as not kept (review m5)", async (): Promise<void> => {
+    const { ConvexError } = await import('convex/values');
+    const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
+    session.keepThrows = new ConvexError('The one-to-one started again in another window.');
+    let chunks = chunksOf(await (await POST(turnAfter(1))).text());
+    expect(chunks.at(-2)).toEqual({
+      type: 'error',
+      errorText: 'The one-to-one started again in another window.',
+    });
+
+    stubProvider([() => textCompletion('Noted.')]);
+    session.keepThrows = new Error('[Request ID: 1a2b] Server Error');
+    chunks = chunksOf(await (await POST(turnAfter(1))).text());
+    expect(chunks.at(-2)).toEqual({ type: 'error', errorText: 'Day0 could not keep that answer' });
+    expect(JSON.stringify(chunks)).not.toContain('Request ID');
   });
 });

@@ -131,14 +131,14 @@ describe('an employee turn kept as it finishes', (): void => {
     ]);
   });
 
-  it('says a keep that failed outright as not kept, with its reason', async (): Promise<void> => {
+  it("says a keep that failed outright as not kept, never with the server's own message (review m5)", async (): Promise<void> => {
     const { keep } = keeper(async () => {
       throw new Error('fetch failed');
     });
     const chunks = await read(
       keptAnswer(streamOf(QUESTION), { messageId: 'turn-9', topicIndex: 2, keep }),
     );
-    expect(chunks.at(-2)).toEqual({ type: 'error', errorText: `${ANSWER_NOT_KEPT}: fetch failed` });
+    expect(chunks.at(-2)).toEqual({ type: 'error', errorText: ANSWER_NOT_KEPT });
     // A turn the session did not keep carries no kept mark.
     expect(chunks.at(-1)).toEqual({ type: 'finish', finishReason: 'stop' });
   });

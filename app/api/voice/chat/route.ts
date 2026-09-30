@@ -21,7 +21,7 @@ import { INIT_PROMPT, dayOneTurnStream, managerReplies } from '@/agent/day-one-t
 import { topicIndexOf, withTopicIndex } from '@/agent/day-one-progress';
 import { uiMessagesOf, type OneToOneTurn } from '@/agent/one-to-one-conversation';
 import { chatTurnBodyOf } from '@/agent/chat-turn-body';
-import { keptAnswer, type KeepAnswer } from '@/agent/kept-answer';
+import { ANSWER_NOT_KEPT, keptAnswer, type KeepAnswer } from '@/agent/kept-answer';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -119,13 +119,20 @@ export async function POST(req: Request): Promise<Response> {
   const uiMessages: UIMessage[] = [PRIMING_TURN, ...uiMessagesOf(taken.turns)];
   const messages = await convertToModelMessages(uiMessages);
   const keep: KeepAnswer = async (answer) => {
-    const kept = await client.mutation(api.oneToOne.recordAnswer, {
-      sessionId: taken.sessionId,
-      conversation: taken.conversation,
-      bossLabel: body.bossLabel,
-      answer: { ...answer, answering: taken.answering },
-    });
-    return kept.kept ? null : kept.refusal;
+    try {
+      const kept = await client.mutation(api.oneToOne.recordAnswer, {
+        sessionId: taken.sessionId,
+        conversation: taken.conversation,
+        bossLabel: body.bossLabel,
+        answer: { ...answer, answering: taken.answering },
+      });
+      return kept.kept ? null : kept.refusal;
+    } catch (err: unknown) {
+      // A refusal the session words for the room is said as it is; anything else is said as the
+      // answer not kept, never as the server's own message, which is for the log.
+      log.warn('one-to-one answer not kept', { reason: errorMessage(err) });
+      return err instanceof ConvexError ? String(err.data) : ANSWER_NOT_KEPT;
+    }
   };
   try {
     // Resolved here, not inside the stream: a missing key is a 503 the room
