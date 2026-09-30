@@ -1,5 +1,8 @@
 /** @vitest-environment jsdom */
 
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { useRef } from 'react';
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -92,5 +95,13 @@ describe('a list whose cards glide to their new places (walk m21)', () => {
     reduced = true;
     act((): void => view.root.render(<List order={['a', 'c']} scope="needs-you" />));
     expect(moves).toEqual([]);
+  });
+
+  it("moves on the stylesheet's own curve for something moving on screen", () => {
+    const css = readFileSync(
+      resolve(dirname(fileURLToPath(import.meta.url)), '../../../app/globals.css'),
+      'utf8',
+    );
+    expect(css).toContain(`--ease-move: ${LIST_MOVE_EASE};`);
   });
 });
