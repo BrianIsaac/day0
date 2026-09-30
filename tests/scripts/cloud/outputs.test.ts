@@ -157,6 +157,7 @@ describe('parseFrameworkPreset', (): void => {
   it('reads no preset from an error or a preset the CLI could not name', (): void => {
     expect(parseFrameworkPreset('Error: Project not found')).toBeUndefined();
     expect(parseFrameworkPreset(PROJECT_INSPECT.replace('Next.js', 'undefined'))).toBeUndefined();
+    expect(parseFrameworkPreset(PROJECT_INSPECT.replace('Next.js', ''))).toBeUndefined();
   });
 });
 

@@ -157,7 +157,7 @@ export function parseVercelInspect(output: string): VercelDeployment | undefined
  * @returns The preset's name, or undefined when the output names none.
  */
 export function parseFrameworkPreset(output: string): string | undefined {
-  const preset = /^\s*Framework Preset\s+(.+?)\s*$/m.exec(plainText(output))?.[1];
+  const preset = /^[ \t]*Framework Preset[ \t]+(\S.*?)[ \t]*$/m.exec(plainText(output))?.[1];
   // The CLI prints `undefined` for a preset slug its framework list lacks.
   return preset === undefined || preset === 'undefined' ? undefined : preset;
 }

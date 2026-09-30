@@ -79,6 +79,39 @@ describe('proveTarget', (): void => {
     );
   });
 
+  it('passes over lines that only look like an error, and keeps a cause that begins with "at"', (): void => {
+    const c = cloud({
+      failing: [
+        {
+          match: 'deploy --dry-run',
+          status: 1,
+          stdout: '- Deploying to https://brisk-heron-417.convex.cloud... [dry run]\n',
+          stderr:
+            'at least one identity provider is required\n' +
+            '    at <anonymous> (../convex/auth.config.ts:60:15)\n',
+        },
+      ],
+    });
+    expect(proveTarget(c.io, targetOf(c), 'push')?.failure).toBe(
+      'the dry run reached brisk-heron-417 and the deployment refused the push (exit 1): at least one identity provider is required.',
+    );
+    const named = cloud({
+      failing: [
+        {
+          match: 'deploy --dry-run',
+          status: 1,
+          stdout: '- Deploying to https://brisk-heron-417.convex.cloud... [dry run]\n',
+          stderr:
+            '400 Bad Request: InvalidModules: at least one identity provider is required\n' +
+            'Bundling JavaScript: done\n',
+        },
+      ],
+    });
+    expect(proveTarget(named.io, targetOf(named), 'push')?.failure).toBe(
+      'the dry run reached brisk-heron-417 and the deployment refused the push (exit 1): 400 Bad Request: InvalidModules: at least one identity provider is required.',
+    );
+  });
+
   it('quotes the last line that is not a stack frame when no line names an error', (): void => {
     const c = cloud({
       failing: [
