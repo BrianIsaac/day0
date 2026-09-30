@@ -104,7 +104,23 @@ describe('a body from a room older than the route', (): void => {
     expect(
       isOutdatedTurnBody({ agentId: 'a1', request: { kind: 'reply', id: 'm1', text: 'Yes.' } }),
     ).toBe(true);
-    expect(isOutdatedTurnBody({ agentId: 'a1' })).toBe(false);
+    expect(
+      isOutdatedTurnBody({
+        agentId: 'a1',
+        request: { kind: 'ask-again', reply: null, discarding: null },
+      }),
+    ).toBe(true);
+    // Merely malformed is not outdated: it stays a 400 (second pass minor 6).
+    for (const malformed of [
+      { agentId: 'a1' },
+      { agentId: '', request: { kind: 'open' } },
+      { request: { kind: 'open' } },
+      { agentId: 'a1', request: { kind: 'reply', question: 'e0', replies: [] } },
+      { agentId: 'a1', request: { kind: 'bogus' } },
+      { agentId: 'a1', request: [] },
+    ]) {
+      expect(isOutdatedTurnBody(malformed), JSON.stringify(malformed)).toBe(false);
+    }
     expect(isOutdatedTurnBody(null)).toBe(false);
     expect(isOutdatedTurnBody('messages')).toBe(false);
   });
