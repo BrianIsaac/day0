@@ -94,6 +94,23 @@ async function settle(page: Page): Promise<void> {
   );
 }
 
+/**
+ * The width of the live account controls Clerk mounted, as one row: the room the slot must have
+ * held for them.
+ *
+ * @param page - The page, once Clerk has answered.
+ */
+async function liveControlsWidth(page: Page): Promise<number> {
+  return await page.evaluate(() => {
+    const header = document.querySelector('header');
+    const live = [...(header?.querySelectorAll('button') ?? [])].filter(
+      (button) => button.closest('[aria-hidden="true"]') === null,
+    );
+    const row = live[0]?.parentElement;
+    return row ? Math.round(row.getBoundingClientRect().width) : 0;
+  });
+}
+
 /** What the header's layout shifts moved, from navigation to now. */
 async function headerShifts(page: Page): Promise<string[]> {
   return await page.evaluate(() => (window as unknown as { headerShifts: string[] }).headerShifts);
@@ -121,6 +138,9 @@ for (const path of PAGES) {
 
       const after = await headerBoxes(page);
       for (const [name, box] of Object.entries(before)) expect(after[name], name).toEqual(box);
+      // On a phone the nav is hidden (`hidden md:flex`), so the cluster is the one part that could
+      // move: the room it held is the live controls' own, to the pixel (the second review's v3).
+      expect(before['account cluster']?.width).toBe(await liveControlsWidth(page));
       expect(await headerShifts(page)).toEqual([]);
     } finally {
       clerk.release();
@@ -150,4 +170,62 @@ test('keeps the header still when Clerk mounts the account menu of a signed-in m
   } finally {
     clerk.release();
   }
+});
+
+/**
+ * The head's hint is only a guess from a cookie; Clerk's answer overrules it (the second review's
+ * v2). Both ways it can be wrong end with the controls Clerk answered for, in their own room.
+ */
+test.describe('when the head script guessed wrong', () => {
+  test('draws Sign in and Create account in their own room when a stale cookie said signed in', async ({
+    page,
+  }) => {
+    await page.addInitScript(holdSessionCookie);
+    const clerk = await holdClerk(page, 'signed-out');
+    try {
+      await page.goto('/setup', { waitUntil: 'domcontentloaded' });
+      await clerk.requested;
+      await settle(page);
+      expect(await page.locator('html').getAttribute('data-session-hint')).toBe('present');
+      // The guess held the account menu's 44 px box.
+      expect((await headerBoxes(page))['account cluster']?.width).toBe(44);
+
+      clerk.release();
+      await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Create account' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Open user menu' })).toHaveCount(0);
+      await settle(page);
+
+      const after = await headerBoxes(page);
+      expect(after['account cluster']?.width).toBe(await liveControlsWidth(page));
+      const nav = after['nav Site'];
+      if (nav) expect(nav.x + nav.width).toBeLessThanOrEqual(after['account cluster']?.x ?? 0);
+    } finally {
+      clerk.release();
+    }
+  });
+
+  test('draws the account menu in its own 44 px box when no cookie said signed in', async ({
+    page,
+  }) => {
+    const clerk = await holdClerk(page, 'signed-in');
+    try {
+      await page.goto('/setup', { waitUntil: 'domcontentloaded' });
+      await clerk.requested;
+      await settle(page);
+      expect(await page.locator('html').getAttribute('data-session-hint')).toBe('none');
+      // No session to resolve: the slot held the visitor's controls' room.
+      expect((await headerBoxes(page))['account cluster']?.width).toBeGreaterThan(44);
+
+      clerk.release();
+      await expect(page.getByRole('button', { name: 'Open user menu' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Sign in' })).toHaveCount(0);
+      await expect(page.getByRole('button', { name: 'Create account' })).toHaveCount(0);
+      await settle(page);
+
+      expect((await headerBoxes(page))['account cluster']?.width).toBe(44);
+    } finally {
+      clerk.release();
+    }
+  });
 });
