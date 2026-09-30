@@ -9,7 +9,8 @@ const backend = vi.hoisted(() => ({ queries: {} as Record<string, unknown> }));
 vi.mock('convex/react', () => ({
   useQuery: (reference: unknown, args: unknown): unknown =>
     args === 'skip' ? undefined : backend.queries[getFunctionName(reference as never)],
-  useMutation: () => async (): Promise<void> => undefined,
+  // Every mutation the rooms call answers as `voice.start` does for a one-to-one with no turns.
+  useMutation: () => async () => ({ sessionId: 'session-1', turns: [], replyDraft: null }),
   useAction: () => async (): Promise<void> => undefined,
 }));
 
@@ -96,6 +97,8 @@ describe('DayZero', () => {
   it('sets the one-to-one beside what the employee knows so far and the first lines of its record', async () => {
     probe(true);
     backend.queries = {
+      // A deployed employee with no one-to-one held yet: the backend answers null (re-pinned).
+      'voice:latest': null,
       'skills:registered': [{ _id: 's1', name: 'read-docs' }],
       'workspace:read': { 'AGENTS.md': 'x'.repeat(1_500), 'SOUL.md': '' },
       'events:recent': [
@@ -192,6 +195,34 @@ describe('DayZero', () => {
     expect(view.container.textContent).toContain('What this becomes');
     expect(view.container.textContent).toContain('What Mira knows so far');
     expect(view.container.textContent).not.toContain('Noted so far');
+    view.unmount();
+  });
+});
+
+describe('DayZero reopened on a one-to-one under way (hosted walk m23)', () => {
+  it('never draws the chooser: the frame while the session is read, then the room it was in', async () => {
+    probe(true);
+    const seen: string[] = [];
+    const observer = new MutationObserver((): void => {
+      seen.push(document.body.textContent ?? '');
+    });
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    const page = <DayZero onboarding={createRef<HTMLDivElement>()} arriving={false} />;
+    const employee = {
+      agent: { ...EMPLOYEE_ROW, state: 'day-one-in-progress' as const },
+      charter: null,
+    };
+    const view = mount(asEmployee(page, employee));
+    await settle();
+    expect(view.container.querySelector('[role="status"]')?.textContent).toBe('Loading the 1:1');
+    backend.queries = { 'voice:latest': { _id: 'session-1', mode: 'chat', state: 'active' } };
+    view.root.render(asEmployee(page, employee));
+    await settle();
+    observer.disconnect();
+    expect(view.container.textContent).toContain('Day-1 1:1 · chat mode');
+    expect(
+      seen.some((text) => text.includes('Voice is off') || text.includes("I'd like a few minutes")),
+    ).toBe(false);
     view.unmount();
   });
 });

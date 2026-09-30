@@ -450,6 +450,8 @@ describe('the dashboard before the charter (N14: 44 by 44 CSS pixels)', (): void
     backend.queries = {
       'agents:get': { ...(populated()['agents:get'] as object), state: 'deployed' },
       'charters:latest': null,
+      // No one-to-one held yet: the session query answers null (re-pinned for m23).
+      'voice:latest': null,
       'config:surfaceMode': { mode: 'mock', label: 'mock mode' },
     };
     route.segment = null;

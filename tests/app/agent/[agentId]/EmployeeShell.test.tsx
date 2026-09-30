@@ -611,7 +611,12 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     expect(onDayZero({ state: 'deployed' }, { _id: 'charter-1' as Id<'charters'> })).toBe(false);
     expect(onDayZero({ state: 'active' }, null)).toBe(false);
 
-    backend.queries = { 'agents:get': row('deployed'), 'charters:latest': null };
+    // No one-to-one held yet: the session query answers null (re-pinned for m23).
+    backend.queries = {
+      'agents:get': row('deployed'),
+      'charters:latest': null,
+      'voice:latest': null,
+    };
     const view = mount(page(<p>a tab</p>));
     await settle();
     expect(view.container.querySelector('[role="tablist"]')).toBeNull();
