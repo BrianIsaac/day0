@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HOSTED_DEMO_NOTICE } from '../../../../src/demo/hosted-notice';
 
-const clerk = vi.hoisted(() => ({ appearance: [] as unknown[] }));
+const clerk = vi.hoisted(() => ({ appearance: [] as unknown[], pathname: '/sign-in' }));
 
 vi.mock('@clerk/nextjs', () => ({
   SignIn: ({ appearance }: { appearance?: unknown }) => {
@@ -14,6 +14,7 @@ vi.mock('next/navigation', () => ({
   redirect: (to: string): never => {
     throw new Error(`redirect ${to}`);
   },
+  usePathname: (): string => clerk.pathname,
 }));
 
 afterEach(() => {
@@ -21,7 +22,13 @@ afterEach(() => {
   vi.resetModules();
 });
 
-async function render(): Promise<string> {
+/**
+ * The page's markup on a Clerk step, which Clerk routes by path.
+ *
+ * @param pathname - The path Clerk's step is on.
+ */
+async function render(pathname = '/sign-in'): Promise<string> {
+  clerk.pathname = pathname;
   const { default: SignInPage } = await import('../../../../app/sign-in/[[...sign-in]]/page');
   return renderToStaticMarkup(<SignInPage />);
 }
@@ -74,13 +81,21 @@ describe('the sign-in page', () => {
     clerk.appearance.length = 0;
     await render();
     const { clerkAppearance } = await import('../../../../app/clerk-appearance');
-    expect(clerk.appearance).toEqual([clerkAppearance]);
+    expect(clerk.appearance).toEqual([expect.objectContaining(clerkAppearance)]);
   });
 
-  it('puts the widget where its first step leaves its own h1 out, so the page has one (walk m26)', async () => {
-    expect(await render()).toMatch(
-      /<div data-headed-clerk="" class="[^"]*"><div data-clerk-sign-in=""/,
-    );
+  it("leaves the card's title and subtitle out on the first step only, where the page's h1 says it, and keeps the mark (walk m26)", async () => {
+    clerk.appearance.length = 0;
+    await render();
+    await render('/sign-in/factor-one');
+    const { clerkAppearance } = await import('../../../../app/clerk-appearance');
+    const [first, later] = clerk.appearance;
+    expect(first).toMatchObject({
+      options: clerkAppearance.options,
+      elements: { headerTitle: { display: 'none' }, headerSubtitle: { display: 'none' } },
+    });
+    expect(first).not.toHaveProperty('elements.logoBox');
+    expect(later).toBe(clerkAppearance);
   });
 
   it('sends the local manager home in no-auth dev mode, where there is nothing to sign in to', async () => {

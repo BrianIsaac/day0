@@ -17,6 +17,18 @@ function rects(svg: string): string[] {
   );
 }
 
+/**
+ * The CSS-in-JS selector keys under a style object: a key starting with `&` is the kind Clerk
+ * reports as structural when it names another element.
+ */
+function selectorKeys(style: unknown): string[] {
+  if (typeof style !== 'object' || style === null) return [];
+  return Object.entries(style).flatMap(([key, value]) => [
+    ...(key.startsWith('&') ? [key] : []),
+    ...selectorKeys(value),
+  ]);
+}
+
 /** The names Clerk's Core 2 read and Core 3 ignores, which left the hosted widget unreadable. */
 const RETIRED_VARIABLES = [
   'colorText',
@@ -74,5 +86,26 @@ describe('the Clerk appearance', () => {
     expect(
       mark.match(new RegExp(`fill="${clerkAppearance.variables.colorBackground}"`, 'g')),
     ).toHaveLength(2);
+  });
+});
+
+describe('the appearance of a Clerk widget under a page heading', () => {
+  it("hides the first step's title and subtitle and the gap under the mark, through Clerk's own element styles", () => {
+    const first = headedClerkAppearance(true);
+    expect(first).toMatchObject({ ...clerkAppearance });
+    expect(first.elements).toEqual({
+      header: { gap: 0 },
+      headerTitle: { display: 'none' },
+      headerSubtitle: { display: 'none' },
+    });
+    expect(first.elements).not.toHaveProperty('logoBox');
+  });
+
+  it('keeps every later step as the shared appearance draws it, header and all', () => {
+    expect(headedClerkAppearance(false)).toBe(clerkAppearance);
+  });
+
+  it('names no selector Clerk reports as structural CSS', () => {
+    expect(selectorKeys(headedClerkAppearance(true).elements)).toEqual([]);
   });
 });

@@ -47,3 +47,28 @@ export const clerkAppearance = {
     borderRadius: '0.5rem',
   },
 } satisfies Appearance;
+
+/**
+ * The appearance of a Clerk widget drawn under a page's own h1: the sign-in and sign-up pages.
+ *
+ * Clerk draws every step's title as an h1, so on the first step, where the page's heading already
+ * says what the card is for, the title and its subtitle are left out and the mark stands alone
+ * above the form (the hosted walk's m26), with no header gap left under it. Later steps keep their
+ * headers: they say what to do ("Check your email") and to which address. All of it goes through
+ * Clerk's own element styles, never a stylesheet selector on its classes, which Clerk reports as
+ * structural CSS on every page.
+ *
+ * @param firstStep - Whether the widget is on its first step (`HeadedClerk.tsx` reads it off the
+ *   path, by which Clerk routes its steps).
+ */
+export function headedClerkAppearance(firstStep: boolean): Appearance {
+  if (!firstStep) return clerkAppearance;
+  return {
+    ...clerkAppearance,
+    elements: {
+      header: { gap: 0 },
+      headerTitle: { display: 'none' },
+      headerSubtitle: { display: 'none' },
+    },
+  };
+}
