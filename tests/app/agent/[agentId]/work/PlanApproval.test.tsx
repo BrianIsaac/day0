@@ -38,7 +38,9 @@ describe('a question at plan approval', (): void => {
     );
     expect(markup).toContain('A question from your charter');
     expect(markup).toContain('Who owns the Looker pipeline tile.');
-    expect(markup).toContain('Asked because the plan touches it (looker, pipeline, tile).');
+    // Walk m7: the matched words were printed as "(looker, pipeline, tile)".
+    expect(markup).toContain('Asked because the plan touches it. Your answer');
+    expect(markup).not.toContain('(looker');
     expect(markup).toContain('Your answer is written into the charter with the approval');
     expect(markup).toContain('aria-label="answer: Who owns the Looker pipeline tile."');
     expect(markup).toContain('Planner');
