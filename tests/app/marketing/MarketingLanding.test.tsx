@@ -80,6 +80,18 @@ describe('the marketing landing', () => {
     ]);
   });
 
+  it('underlines each inline link in the link line, turning accent on hover (second review w5)', () => {
+    // An inline link is the underlined one; the buttons and the nav draw no underline.
+    const inline = [...html.matchAll(/<a [^>]*class="(?:[^"]* )?underline [^"]*"[^>]*>/g)].map(
+      ([tag]) => tag,
+    );
+    expect(inline.length).toBeGreaterThanOrEqual(3);
+    for (const tag of inline) {
+      expect(tag).toContain('decoration-[var(--color-link-line)]');
+      expect(tag).toContain('hover:decoration-[var(--color-accent)]');
+    }
+  });
+
   it('gives the footer links a 44 px target (N14)', () => {
     const footer = /<footer[\s\S]*?<\/footer>/.exec(html)?.[0] ?? '';
     const links = [...footer.matchAll(/<a [^>]*>/g)].map(([tag]) => tag);

@@ -22,4 +22,10 @@ describe('HostedDemoNotice', () => {
       `>${HOSTED_DEMO_NOTICE.link.label}</a>${HOSTED_DEMO_NOTICE.link.after}</p>`,
     );
   });
+
+  it('underlines its link in the link line, turning accent on hover (second review w5)', () => {
+    const link = new RegExp(`<a href="${HOSTED_DEMO_NOTICE.link.href}"[^>]*>`).exec(html)?.[0];
+    expect(link).toContain('decoration-[var(--color-link-line)]');
+    expect(link).toContain('hover:decoration-[var(--color-accent)]');
+  });
 });
