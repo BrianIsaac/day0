@@ -47,6 +47,13 @@ describe('OfficeWorld', (): void => {
     expect(html).toContain('0 total');
   });
 
+  it("leaves each figure's link the base layer's focus ring, which no utility of its own removes (C1)", (): void => {
+    const html = renderToStaticMarkup(<OfficeWorld agents={[mira, idle]} settled />);
+    const figures = [...html.matchAll(/<a [^>]*class="day0-office-agent [^"]*"/g)];
+    expect(figures).toHaveLength(2);
+    for (const [figure] of figures) expect(figure).not.toMatch(/outline-(none|hidden)/);
+  });
+
   it('titles a figure with the employee and what it is doing, nothing else (N6)', (): void => {
     const html = renderToStaticMarkup(<OfficeWorld agents={[mira, idle]} settled />);
     expect(html).toContain('title="Mira, working at a desk"');

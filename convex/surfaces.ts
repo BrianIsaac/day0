@@ -37,11 +37,12 @@ import {
 } from '../src/surfaces/waterfall';
 import { cardPageRefs } from '../src/docs/card-pages';
 import { PROBE_LEASE_MS, probeInFlight } from '../src/surfaces/probe-lease';
-import { agentReadsSource } from './docSources';
+import { agentReadsSource } from '../src/docs/agent-sources';
 import { isManagerLookupFailure } from '../src/surfaces/manager-lookup';
 import { appendEvent, eventsOfType } from './eventLog';
 import { isEventOf, type EventOf, type EventType } from '../src/events/contract';
 import { agentZone, expiryNoticeDay, expiryNoticeDue } from '../src/lib/zone';
+import { SURFACE_ACCESS_DEFAULT_DAYS, SURFACE_ACCESS_MAX_DAYS } from '../src/surfaces/access';
 
 const MAX_LADDER_PATHS = 3;
 const MAX_PROBE_ATTEMPTS = 12;
@@ -1651,12 +1652,6 @@ export const recordConnected = internalMutation({
 });
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
-
-/** Q5's access length at approval, in days; only the manager sets another (`setAccessDays`). */
-export const SURFACE_ACCESS_DEFAULT_DAYS = 90;
-
-/** The longest access the manager can set, in days. */
-export const SURFACE_ACCESS_MAX_DAYS = 365;
 
 /** Surfaces one page of the access-clock migration reads. */
 const ACCESS_BACKFILL_BATCH = 100;

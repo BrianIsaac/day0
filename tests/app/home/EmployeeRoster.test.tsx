@@ -1,7 +1,10 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { EmployeeRoster } from '../../../app/home/EmployeeRoster';
+import { OfficeWorld } from '../../../app/home/OfficeWorld';
 import type { RosterRow } from '../../../app/home/types';
+import type { OneToOnePhase } from '../../../src/agent/one-to-one-phase';
+import { employeeStateWords, type EmployeeState } from '../../../src/work/state-labels';
 
 const month = (days: Array<[string, number]>, atLeast = false) => ({
   month: '2026-09',
@@ -15,6 +18,7 @@ const roster = [
     name: 'Mira',
     avatarId: 'face-05',
     state: 'active',
+    phase: 'drafted',
     autonomous: false,
     roleLine: 'Owns triage for tier-2 asks in #revops-asks',
     openCount: 1,
@@ -31,6 +35,7 @@ const roster = [
     agentId: 'synthetic-aiko',
     name: 'Aiko',
     state: 'charter-pending',
+    phase: 'drafted',
     autonomous: true,
     roleLine: 'charter pending',
     openCount: 0,
@@ -140,5 +145,38 @@ describe('EmployeeRoster', (): void => {
 
   it('sets no type below the 12 px floor', (): void => {
     expect(html).not.toMatch(/text-\[(9|10|11)px\]/);
+  });
+});
+
+describe('the roster, its faces and the pill in every phase of the one-to-one (C2)', (): void => {
+  const states: readonly EmployeeState[] = [
+    'deployed',
+    'day-one-in-progress',
+    'charter-pending',
+    'active',
+  ];
+  const phases: readonly OneToOnePhase['kind'][] = ['talking', 'drafting', 'failed', 'drafted'];
+  const cases = states.flatMap((state) => phases.map((phase) => [state, phase] as const));
+
+  it.each(cases)(
+    'an employee %s whose one-to-one is %s reads the same everywhere',
+    (state, phase) => {
+      const row = { ...roster[0], state, phase } as RosterRow;
+      const words = employeeStateWords(state, phase).text;
+      const table = renderToStaticMarkup(<EmployeeRoster employees={[row]} waiting={waiting} />);
+      expect(table).toMatch(new RegExp(`<span class="[^"]*rounded-full[^"]*">${words}</span>`));
+      expect(table).toContain(`title="Mira, ${words.toLowerCase()}"`);
+      const office = renderToStaticMarkup(<OfficeWorld agents={[row]} settled />);
+      expect(office).toContain(`title="Mira, ${words.toLowerCase()}"`);
+    },
+  );
+
+  it('says the charter is being drafted while the pill does, not that the one-to-one is on', (): void => {
+    const row = { ...roster[0], state: 'day-one-in-progress', phase: 'drafting' } as RosterRow;
+    const text = readAs(
+      renderToStaticMarkup(<EmployeeRoster employees={[row]} waiting={waiting} />),
+    );
+    expect(text).toContain('Drafting the charter');
+    expect(text).not.toContain('In your one-to-one');
   });
 });

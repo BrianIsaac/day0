@@ -43,6 +43,12 @@ describe('DeployForm', (): void => {
     expect(text).toContain('The name the team will see. It cannot be changed after deploy.');
   });
 
+  it("keeps the base layer's focus ring on the name field, which no utility of its own removes (C1)", (): void => {
+    const field = /<input[^>]*placeholder="worker 1"[^>]*>/.exec(html)?.[0] ?? '';
+    expect(field).toContain('focus:border-[var(--color-accent)]');
+    expect(field).not.toMatch(/outline-(none|hidden)/);
+  });
+
   it('states the three facts: who it reports to, where it works, how much it does alone', (): void => {
     expect(text).toContain('Reports to sam@revops.example (you)');
     expect(text).toContain(

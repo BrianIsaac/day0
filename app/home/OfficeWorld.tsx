@@ -350,7 +350,7 @@ function OfficeAgent({
   return (
     <Link
       href={`/agent/${agent.agentId}`}
-      className={`day0-office-agent absolute z-10 -translate-x-1/2 -translate-y-1/2 outline-none ${
+      className={`day0-office-agent absolute z-10 -translate-x-1/2 -translate-y-1/2 ${
         working ? 'day0-office-agent-seated' : 'day0-office-agent-walking'
       }`}
       style={style}
@@ -360,6 +360,7 @@ function OfficeAgent({
         <AgentPixelAvatar
           avatar={avatarById(agent.avatarId)}
           state={agent.state}
+          phase={agent.phase}
           label={agent.name}
         />
         <div className="day0-pixel-nameplate mt-1 max-w-36 px-2 py-1 text-center">

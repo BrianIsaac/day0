@@ -24,10 +24,11 @@ import {
   stoppedRowNeedsManager,
   stoppedRowOffersMove,
 } from '../src/work/needs-manager';
-import { agentReadsSource } from './docSources';
+import { agentReadsSource } from '../src/docs/agent-sources';
 import { isEvaluationAgent } from './metrics';
 import { isManagerLookupFailure } from '../src/surfaces/manager-lookup';
 import { shownEmployeeState, type CharterApproval } from '../src/work/state-labels';
+import { oneToOnePhase } from '../src/agent/one-to-one-phase';
 import {
   managerNotificationMode,
   NOTIFICATIONS_CHANGE_REASON,
@@ -176,11 +177,24 @@ async function landedThisMonth(
   };
 }
 
+/**
+ * Where the one-to-one stands, as `oneToOnePhase` names it. The roster's rows are typed from this
+ * validator, so a phase the function gains and this lacks fails the query's type check.
+ */
+const oneToOnePhaseKindValidator = v.union(
+  v.literal('talking'),
+  v.literal('drafting'),
+  v.literal('failed'),
+  v.literal('drafted'),
+);
+
 const rosterRowValidator = v.object({
   agentId: v.id('agents'),
   name: v.string(),
   avatarId: v.optional(v.string()),
   state: agentStateValidator,
+  /** Where the one-to-one stands, so the roster says "Drafting the charter" when the pill does. */
+  phase: oneToOnePhaseKindValidator,
   autonomous: v.boolean(),
   roleLine: v.string(),
   openCount: v.number(),
@@ -272,6 +286,21 @@ async function charterStanding(ctx: QueryCtx, agentId: Id<'agents'>): Promise<Ch
 }
 
 /**
+ * The employee's newest one-to-one session, the one its page reads the phase off
+ * (`voice.latest`): one indexed read, the first row newest first.
+ */
+async function newestSession(
+  ctx: QueryCtx,
+  agentId: Id<'agents'>,
+): Promise<Doc<'voiceSessions'> | null> {
+  return await ctx.db
+    .query('voiceSessions')
+    .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+    .order('desc')
+    .first();
+}
+
+/**
  * Count the employee's open work, its parked work, its stopped work, and the
  * part of the three waiting on the manager.
  *
@@ -340,9 +369,11 @@ async function workCounts(
 /**
  * The owner's employees, one row each, for the landing page: who they are,
  * their state as their own page shows it (`shownEmployeeState`: a charter
- * outranks the row), the role the manager approved, the open, parked and
- * stopped work, what waits on the manager, whether they act on their own,
- * how much documentation they read, and what they landed this month.
+ * outranks the row) and where their one-to-one stands (`oneToOnePhase`, off
+ * the newest session, as the page reads it), the role the manager approved,
+ * the open, parked and stopped work, what waits on the manager, whether they
+ * act on their own, how much documentation they read, and what they landed
+ * this month.
  *
  * Owner-scoped like `listForUser`; evaluation agents and the baseline arm
  * are left out. An anonymous caller gets an empty list.
@@ -372,10 +403,11 @@ export const rosterForUser = query({
     const now = Date.now();
     return await Promise.all(
       agents.map(async (agent): Promise<RosterRow> => {
-        const [charter, counts, landed] = await Promise.all([
+        const [charter, counts, landed, session] = await Promise.all([
           charterStanding(ctx, agent._id),
           workCounts(ctx, agent._id),
           landedThisMonth(ctx, agent, now),
+          newestSession(ctx, agent._id),
         ]);
         return {
           agentId: agent._id,
@@ -383,6 +415,7 @@ export const rosterForUser = query({
           ...(agent.avatarId !== undefined ? { avatarId: agent.avatarId } : {}),
           // The state the employee's own page shows, so the roster and its pill never disagree.
           state: shownEmployeeState(agent.state, charter.newest),
+          phase: oneToOnePhase(session).kind,
           autonomous: autonomousActionsOn(agent),
           roleLine: charter.roleLine,
           ...counts,

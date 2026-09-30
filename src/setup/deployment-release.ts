@@ -1,5 +1,5 @@
 import { ConvexHttpClient } from 'convex/browser';
-import { api } from '../../convex/_generated/api';
+import type { FunctionReference } from 'convex/server';
 import { dayLabelAt } from '../demo/day-label';
 import { log } from '../lib/logger';
 
@@ -9,6 +9,18 @@ export interface DeploymentRelease {
   /** When that release was first stamped, in milliseconds since the epoch. */
   readonly since: number;
 }
+
+/**
+ * The deployment's public release query (`api.config.release`). The page passes it in, so this
+ * module names no Convex function and holds no runtime import of the generated `api` (standard
+ * 10.1: `src/` depends on `convex/_generated` types only).
+ */
+export type ReleaseQuery = FunctionReference<
+  'query',
+  'public',
+  Record<string, never>,
+  DeploymentRelease | null
+>;
 
 /** How long a page waits for the stamp before it renders without it. */
 const READ_TIMEOUT_MS = 3_000;
@@ -44,10 +56,12 @@ export function deploymentReleaseLine(stamp: DeploymentRelease): string {
  * providers into a page that signs nobody in. A page renders
  * without the line rather than fail on it, so a failure is logged and `null`.
  *
+ * @param query - The deployment's release query, `api.config.release`.
  * @param env - The environment to read the address from.
  * @param fetchImpl - The transport; the global `fetch` by default, bounded by a timeout.
  */
 export async function readDeploymentRelease(
+  query: ReleaseQuery,
   env: Readonly<Record<string, string | undefined>> = process.env,
   fetchImpl: typeof fetch = fetch,
 ): Promise<DeploymentRelease | null> {
@@ -59,7 +73,7 @@ export async function readDeploymentRelease(
       fetch: async (input, init) =>
         await fetchImpl(input, { ...init, signal: AbortSignal.timeout(READ_TIMEOUT_MS) }),
     });
-    return await client.query(api.config.release, {});
+    return await client.query(query, {});
   } catch (error) {
     log.warn('deployment release not read; the page states no release', {
       reason: error instanceof Error ? error.message : String(error),

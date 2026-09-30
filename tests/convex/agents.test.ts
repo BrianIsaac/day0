@@ -13,6 +13,8 @@ import { STOPPED_PREFIX } from '../../src/work/stop';
 import type { WorkCandidate } from '../../src/work/types';
 import { asAgentId } from '../../src/lib/ids';
 import { runThroughBody } from '../fixtures/run-through-charter-2026-09-14';
+import { runtimeCycleThrough } from '../fixtures/import-graph';
+import { MAX_FINALISATION_RECOVERIES } from '../../src/agent/one-to-one-phase';
 
 afterEach((): void => {
   vi.useRealTimers();
@@ -1022,6 +1024,8 @@ describe('the employee roster', (): void => {
         name: 'Aiko',
         avatarId: 'avatar-aiko',
         state: 'charter-pending',
+        // No one-to-one has opened: the room is waiting to talk.
+        phase: 'talking',
         autonomous: false,
         roleLine: 'charter pending',
         openCount: 0,
@@ -1037,6 +1041,7 @@ describe('the employee roster', (): void => {
         name: 'Mateo',
         avatarId: 'avatar-mateo',
         state: 'active',
+        phase: 'talking',
         autonomous: true,
         roleLine: 'Close the month for the finance team.',
         openCount: 3,
@@ -1051,6 +1056,7 @@ describe('the employee roster', (): void => {
         name: 'Priya',
         avatarId: 'avatar-priya',
         state: 'active',
+        phase: 'talking',
         autonomous: false,
         roleLine:
           'Own routine revenue operations work from owned, prioritized Linear tickets for the RevOps\u2026',
@@ -1071,6 +1077,7 @@ describe('the employee roster', (): void => {
         name: 'Somebody else',
         avatarId: 'avatar-somebody else',
         state: 'deployed',
+        phase: 'talking',
         autonomous: false,
         roleLine: 'charter pending',
         openCount: 1,
@@ -1106,6 +1113,66 @@ describe('the employee roster', (): void => {
       Nia: 'charter-pending',
       Tomas: 'active',
       Mira: 'day-one-in-progress',
+    });
+  });
+
+  it("carries the one-to-one's phase on each row, read off the newest session as the employee's page reads it (C2)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    type Session = Pick<
+      Doc<'voiceSessions'>,
+      'state' | 'pendingTranscript' | 'finalisationError' | 'recoveryAttempts'
+    >;
+    // Each employee's sessions, oldest first: the newest is the one the page reads.
+    const sessions: Record<string, readonly Session[]> = {
+      Ana: [],
+      Ben: [{ state: 'active' }],
+      Cai: [{ state: 'active', pendingTranscript: 'the transcript' }],
+      Dev: [{ state: 'done' }, { state: 'synthesising', pendingTranscript: 'the transcript' }],
+      Eli: [
+        {
+          state: 'active',
+          pendingTranscript: 'the transcript',
+          finalisationError: 'model timed out',
+          recoveryAttempts: 1,
+        },
+      ],
+      Fay: [
+        {
+          state: 'active',
+          pendingTranscript: 'the transcript',
+          finalisationError: 'model timed out',
+          recoveryAttempts: MAX_FINALISATION_RECOVERIES,
+        },
+      ],
+      Gus: [{ state: 'done' }],
+    };
+    for (const [name, rows] of Object.entries(sessions)) {
+      const agentId = await deployEmployee(harness, 'owner', name);
+      await harness.run(async (ctx): Promise<void> => {
+        await ctx.db.patch(agentId, { state: 'day-one-in-progress' });
+        for (const [index, row] of rows.entries()) {
+          await ctx.db.insert('voiceSessions', {
+            agentId,
+            mode: 'chat',
+            answers: {},
+            startedAt: index + 1,
+            ...row,
+          });
+        }
+      });
+    }
+    const roster = await harness
+      .withIdentity({ subject: 'owner' })
+      .query(api.agents.rosterForUser, {});
+    const phases = Object.fromEntries(roster.map((row): [string, string] => [row.name, row.phase]));
+    expect(phases).toEqual({
+      Ana: 'talking',
+      Ben: 'talking',
+      Cai: 'drafting',
+      Dev: 'drafting',
+      Eli: 'drafting',
+      Fay: 'failed',
+      Gus: 'drafted',
     });
   });
 
@@ -1803,5 +1870,11 @@ describe('agents.setBossEmail', (): void => {
     ).rejects.toThrow('evaluation');
     const agent = await harness.run(async (ctx) => await ctx.db.get(agentId));
     expect(agent?.bossEmail).toBe('boss@day0.local');
+  });
+});
+
+describe("the module's runtime imports", (): void => {
+  it('never lead back to the module, so its initialisation order does not depend on load order (m25)', (): void => {
+    expect(runtimeCycleThrough('convex/agents.ts')).toBeNull();
   });
 });

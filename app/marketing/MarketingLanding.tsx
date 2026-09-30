@@ -22,7 +22,7 @@ const H2 =
 const LEDE = 'mt-3 max-w-[60ch] text-[17px] leading-relaxed text-[var(--color-muted)]';
 const CARD = 'rounded-xl border bg-[var(--color-card)] p-5';
 const INLINE_LINK =
-  'underline decoration-zinc-700 underline-offset-4 transition-colors hover:decoration-[var(--color-accent)]';
+  'underline decoration-[var(--color-link-line)] underline-offset-4 transition-colors hover:decoration-[var(--color-accent)]';
 
 const FRAMES = [
   <DocumentationFrame key="documentation" />,

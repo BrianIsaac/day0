@@ -1,7 +1,7 @@
 import { v } from 'convex/values';
 import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
-import { agentReadsSource } from './docSources';
+import { agentReadsSource } from '../src/docs/agent-sources';
 import { reevaluatePendingInTransaction } from './work';
 import {
   backfillCharterProvenance,

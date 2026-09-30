@@ -4,9 +4,14 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { Id } from '../../../../../convex/_generated/dataModel';
 import {
+  ACCESS_PERIODS,
   ExpiryBlock,
   type ExpirySurface,
 } from '../../../../../app/agent/[agentId]/surfaces/ExpiryBlock';
+import {
+  SURFACE_ACCESS_DEFAULT_DAYS,
+  SURFACE_ACCESS_MAX_DAYS,
+} from '../../../../../src/surfaces/access';
 import { AgentZoneContext } from '../../../../../app/components/time';
 import { focusedName, mount, press, said } from '../../../../fixtures/dom/press';
 
@@ -27,6 +32,15 @@ describe('the access line and its renewal (Q5, U3 D5)', (): void => {
         <ExpiryBlock surface={row} now={now} onSetDays={async () => ({ expiresAt: AT })} />
       </AgentZoneContext>,
     ).replace(/&#x27;/g, "'");
+
+  it('offers first the access length an approval gives, and no period the backend refuses (m25)', (): void => {
+    const markup = renderAccess(surface({}), AT - 30 * DAY);
+    expect(markup).toMatch(
+      new RegExp(`<option value="${SURFACE_ACCESS_DEFAULT_DAYS}" selected="">`),
+    );
+    expect(ACCESS_PERIODS).toContain(SURFACE_ACCESS_DEFAULT_DAYS);
+    expect(ACCESS_PERIODS.every((days) => days >= 1 && days <= SURFACE_ACCESS_MAX_DAYS)).toBe(true);
+  });
 
   it("shows the end date in the employee's day, who set it, Q5's rule and the one renewal", (): void => {
     const markup = renderAccess(surface({}), AT - 30 * DAY);
