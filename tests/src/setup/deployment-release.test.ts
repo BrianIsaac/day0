@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { api } from '../../../convex/_generated/api';
 import {
   deploymentReleaseLine,
   readDeploymentRelease,
@@ -55,14 +56,22 @@ describe('reading the stamp', (): void => {
         ),
     );
     await expect(
-      readDeploymentRelease({ NEXT_PUBLIC_CONVEX_URL: 'http://127.0.0.1:3210' }, fetch),
+      readDeploymentRelease(
+        api.config.release,
+        { NEXT_PUBLIC_CONVEX_URL: 'http://127.0.0.1:3210' },
+        fetch,
+      ),
     ).resolves.toEqual({ release: '0.8.0', since: STAMPED_AT });
     expect(String(fetch.mock.calls[0]?.[0])).toMatch(/^http:\/\/127\.0\.0\.1:3210\/api\/query/);
+    // The query is the one the caller passed in, so `src/` names no Convex function itself (m25).
+    expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toMatchObject({
+      path: 'config:release',
+    });
   });
 
   it('returns nothing, without a request, when no deployment is named', async (): Promise<void> => {
     const fetch = vi.fn();
-    await expect(readDeploymentRelease({}, fetch)).resolves.toBeNull();
+    await expect(readDeploymentRelease(api.config.release, {}, fetch)).resolves.toBeNull();
     expect(fetch).not.toHaveBeenCalled();
   });
 
@@ -76,12 +85,12 @@ describe('reading the stamp', (): void => {
           }),
       );
     const env = { NEXT_PUBLIC_CONVEX_URL: 'http://127.0.0.1:3210' };
-    await expect(readDeploymentRelease(env, answer(null))).resolves.toBeNull();
+    await expect(readDeploymentRelease(api.config.release, env, answer(null))).resolves.toBeNull();
     const refused = vi.fn(async (): Promise<Response> => {
       throw new TypeError('fetch failed');
     });
     const printed = vi.spyOn(console, 'log').mockImplementation((): void => undefined);
-    await expect(readDeploymentRelease(env, refused)).resolves.toBeNull();
+    await expect(readDeploymentRelease(api.config.release, env, refused)).resolves.toBeNull();
     printed.mockRestore();
   });
 
@@ -96,12 +105,12 @@ describe('reading the stamp', (): void => {
             headers: { 'content-type': 'text/html' },
           }),
       );
-      await expect(readDeploymentRelease(env, badGateway)).resolves.toBeNull();
+      await expect(readDeploymentRelease(api.config.release, env, badGateway)).resolves.toBeNull();
       const malformed = vi.fn(
         async (): Promise<Response> =>
           new Response('{', { status: 200, headers: { 'content-type': 'application/json' } }),
       );
-      await expect(readDeploymentRelease(env, malformed)).resolves.toBeNull();
+      await expect(readDeploymentRelease(api.config.release, env, malformed)).resolves.toBeNull();
     } finally {
       printed.mockRestore();
     }

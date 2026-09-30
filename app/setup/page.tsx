@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { PageMotion } from '../PageMotion';
+import { api } from '@convex/_generated/api';
 import { deploymentReleaseLine, readDeploymentRelease } from '@/setup/deployment-release';
 
 import {
@@ -117,7 +118,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 }
 
 export default async function SetupPage() {
-  const stamp = await readDeploymentRelease();
+  const stamp = await readDeploymentRelease(api.config.release);
   return (
     <PageMotion className="day0-public-motion day0-setup-motion" revealMargin="0px 0px 120px 0px">
       <div className="min-h-[calc(100vh-3.25rem)] px-6 py-12 max-w-3xl lg:max-w-6xl mx-auto w-full lg:grid lg:grid-cols-[14rem_minmax(0,1fr)] lg:gap-x-12">
