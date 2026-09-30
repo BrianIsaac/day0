@@ -349,7 +349,7 @@ export default async function SetupPage() {
                 </li>
               ))}
               <li className="text-sm text-[var(--color-muted)] leading-relaxed">
-                {RUN_WAY_VERBS_NOTE}
+                <Prose text={RUN_WAY_VERBS_NOTE} />
               </li>
             </ul>
             <h3 id="hosted-copy" className="text-sm font-semibold tracking-tight mt-6 mb-2">
@@ -508,14 +508,16 @@ export default async function SetupPage() {
               <ul className="space-y-3">
                 {MEASURED_TIMINGS.map((timing) => (
                   <li key={timing.phase} className="flex flex-col sm:flex-row sm:gap-4">
-                    <span className="font-mono text-sm sm:w-64 sm:shrink-0">{timing.phase}</span>
+                    <span className="font-mono text-sm sm:w-64 sm:shrink-0">
+                      <Prose text={timing.phase} />
+                    </span>
                     <span className="text-sm">
                       <span className="text-[var(--color-accent)] font-mono">
                         {timing.measured}
                       </span>
                       <span className="text-[var(--color-muted)] leading-relaxed">
                         {' '}
-                        {timing.excludes}
+                        <Prose text={timing.excludes} />
                       </span>
                     </span>
                   </li>

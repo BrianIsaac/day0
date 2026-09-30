@@ -204,7 +204,7 @@ describe('the /setup guide', (): void => {
       expect(html, flag).toContain(`<span class="whitespace-nowrap">${bare}`);
     }
     // No flag stands in the prose outside its unbreakable span.
-    const prose = [...html.matchAll(/<p(?:\s[^>]*)?>(.*?)<\/p>/gs)].map(([, body]) =>
+    const prose = [...html.matchAll(/<(p|li)(?:\s[^>]*)?>(.*?)<\/\1>/gs)].map(([, , body]) =>
       body!
         .replace(/<span class="whitespace-nowrap">[^<]*<\/span>/g, '')
         .replace(/<code[^>]*>.*?<\/code>/gs, '')
