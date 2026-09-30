@@ -1030,6 +1030,7 @@ describe('the employee roster', (): void => {
         roleLine: 'charter pending',
         openCount: 0,
         parkedCount: 0,
+        parkedStates: { deferred: 0, needsSkill: 0, discovered: 0 },
         stoppedCount: 0,
         // The drafted charter waits on the manager's approval.
         needsYou: 1,
@@ -1046,6 +1047,7 @@ describe('the employee roster', (): void => {
         roleLine: 'Close the month for the finance team.',
         openCount: 3,
         parkedCount: 0,
+        parkedStates: { deferred: 0, needsSkill: 0, discovered: 0 },
         stoppedCount: 0,
         needsYou: 1,
         docSourceCount: 2,
@@ -1063,6 +1065,8 @@ describe('the employee roster', (): void => {
         openCount: 3,
         // The discovered row waits for a free slot, unevaluated (U3 D5).
         parkedCount: 1,
+        // Named by its state on the roster, as the Work tab does (walk m10).
+        parkedStates: { deferred: 0, needsSkill: 0, discovered: 1 },
         stoppedCount: 1,
         needsYou: 3,
         docSourceCount: 2,
@@ -1082,6 +1086,7 @@ describe('the employee roster', (): void => {
         roleLine: 'charter pending',
         openCount: 1,
         parkedCount: 0,
+        parkedStates: { deferred: 0, needsSkill: 0, discovered: 0 },
         stoppedCount: 0,
         needsYou: 1,
         docSourceCount: 1,
@@ -1227,6 +1232,17 @@ describe('the employee roster', (): void => {
     });
     await seedParked(harness, mateo, 'FIN-2', 'discovered', {});
     expect(await counts()).toEqual({ Priya: [0, 3, 2], Mateo: [1, 2, 1], Aiko: [0, 1, 0] });
+    // The same parked rows by the state each is in, the words the roster says them in (walk m10).
+    const states = Object.fromEntries(
+      (await harness.withIdentity({ subject: 'owner' }).query(api.agents.rosterForUser, {})).map(
+        (row) => [row.name, row.parkedStates],
+      ),
+    );
+    expect(states).toEqual({
+      Priya: { deferred: 2, needsSkill: 1, discovered: 0 },
+      Mateo: { deferred: 0, needsSkill: 0, discovered: 2 },
+      Aiko: { deferred: 0, needsSkill: 1, discovered: 0 },
+    });
     // A row whose evaluation is running holds the slot it runs in; one whose
     // evaluation died waits again once the lease has passed.
     await seedParked(harness, mateo, 'FIN-3', 'discovered', {
