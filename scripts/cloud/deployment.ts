@@ -128,20 +128,21 @@ export function proveTarget(
 }
 
 /**
- * A stack frame the CLI prints after the server's cause, `at <name> (<file>:<line>:<column>)`:
- * never the explanation, while a cause that begins with the word "at" is kept.
+ * A stack frame the CLI prints after the server's cause, `at <name> (<file>:<line>:<column>)` or
+ * `at new Promise (<anonymous>)`: never the explanation, while a cause that begins with the word
+ * "at" is kept.
  */
-const STACK_FRAME = /^at\s.*:\d+:\d+\)?$/;
+const STACK_FRAME = /^at\s(?:.*:\d+:\d+\)?|.*\((?:<anonymous>|index \d+)\))$/;
 
 /**
  * A line that names an error: the CLI's cross or a leading `Error`, a word
  * ending in `Error` or `Exception` before a colon, or an exception code such
  * as `AuthConfigMissingEnvironmentVariable:` that opens the line or follows a
- * colon (`400 Bad Request: InvalidModules: ...`), so a heading such as
+ * colon or `Uncaught` (`400 Bad Request: InvalidModules: ...`), so a heading such as
  * `Bundling JavaScript: done` is not taken for one.
  */
 const NAMES_ERROR =
-  /^(?:\u2716|Error\b)|\b[A-Za-z]*(?:Error|Exception):|(?:^|:\s)[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]*)+:\s/;
+  /^(?:\u2716|Error\b)|\b[A-Za-z]*(?:Error|Exception):|(?:^|:\s|Uncaught\s)[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]*)+:\s/;
 
 /**
  * The line a failed CLI run explains itself with: the last that names an

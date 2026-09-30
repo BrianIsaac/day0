@@ -107,6 +107,21 @@ describe('proveTarget', (): void => {
         },
       ],
     });
+    const uncaught = cloud({
+      failing: [
+        {
+          match: 'deploy --dry-run',
+          status: 1,
+          stdout: '- Deploying to https://brisk-heron-417.convex.cloud... [dry run]\n',
+          stderr:
+            'Uncaught AuthConfigMissingEnvironmentVariable: no identity provider is configured\n' +
+            '    at new Promise (<anonymous>)\n',
+        },
+      ],
+    });
+    expect(proveTarget(uncaught.io, targetOf(uncaught), 'push')?.failure).toBe(
+      'the dry run reached brisk-heron-417 and the deployment refused the push (exit 1): Uncaught AuthConfigMissingEnvironmentVariable: no identity provider is configured.',
+    );
     expect(proveTarget(named.io, targetOf(named), 'push')?.failure).toBe(
       'the dry run reached brisk-heron-417 and the deployment refused the push (exit 1): 400 Bad Request: InvalidModules: at least one identity provider is required.',
     );

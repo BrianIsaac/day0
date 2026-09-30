@@ -425,12 +425,9 @@ describe('cloud setup, the first push', (): void => {
     expect(writes(c)).toEqual([]);
   });
 
-  it('finishes a stamped setup whose address has never served a build, as a stop before the first deploy leaves it', async (): Promise<void> => {
+  it('refuses a stamped setup whose address answers not found and names no build, a typo or a stale alias for all it can tell', async (): Promise<void> => {
     const c = cloud({
-      ...empty(),
-      tables: ['agents', 'deploymentVersions', 'migrations'],
       stamp: { release: '0.4.0', commit: COMMIT },
-      env: new Map([['CLERK_JWT_ISSUER_DOMAIN', 'https://example.clerk.accounts.dev']]),
       served: undefined,
     });
     expect(
@@ -438,9 +435,27 @@ describe('cloud setup, the first push', (): void => {
         verb(c, { verb: 'setup', envFile: settingsFile(c, SETTINGS), dryRun: true }),
         c.io,
       ),
-    ).toBe(0);
-    expect(printed(c)).toContain('finishing a first setup that stopped after its stamp.');
-    expect(printed(c)).toContain('  vercel --prod --yes\n');
+    ).toBe(1);
+    expect(printed(c)).toContain(
+      `${APP_URL} answers not found and \`vercel inspect\` names no build there, so it cannot be told whether it is the linked project's address:`,
+    );
+    expect(writes(c)).toEqual([]);
+  });
+
+  it('refuses a stamped setup whose address answers not found from a build of another project', async (): Promise<void> => {
+    const c = cloud({
+      stamp: { release: '0.4.0', commit: COMMIT },
+      served: { id: 'dpl_Other1', talksTo: DEPLOYMENT, release: '0.4.0' },
+      servedProject: 'someone-else',
+      failing: [{ match: `%{http_code} ${APP_URL}/`, status: 0, stderr: '', stdout: '\n404' }],
+    });
+    expect(
+      await runCloudSetup(
+        verb(c, { verb: 'setup', envFile: settingsFile(c, SETTINGS), dryRun: true }),
+        c.io,
+      ),
+    ).toBe(1);
+    expect(printed(c)).toContain('is served by the Vercel project someone-else');
     expect(writes(c)).toEqual([]);
   });
 
@@ -473,6 +488,7 @@ describe('cloud setup, the first push', (): void => {
     expect(printed(c)).toContain(
       'brisk-heron-417 is stamped v0.4.0 already, and a setup with --app none ends at its stamp, so it has finished:',
     );
+    expect(printed(c)).toContain(`\`./setup.sh cloud upgrade --target ${c.target} --app none\`.`);
     expect(writes(c)).toEqual([]);
   });
 

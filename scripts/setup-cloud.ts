@@ -379,17 +379,24 @@ interface StoppedApp {
 }
 
 /**
- * The upgrade command for this target, with the address and team the command
- * line gave, since the upgrade needs them too until the target file names them.
+ * The upgrade command for this target, with the host choice, the address and the team the
+ * command line gave (or a placeholder for an address nobody named), since the upgrade needs
+ * them too until the target file names them.
  *
  * @param options - The command line.
  * @param target - The target.
  */
 function upgradeCommand(options: CloudOptions, target: CloudTarget): string {
-  const appUrl =
-    options.appUrl === undefined ? '' : ` --app-url ${target.appUrl ?? options.appUrl}`;
+  const app =
+    options.app === 'none'
+      ? ' --app none'
+      : target.appUrl === undefined
+        ? ' --app-url https://<host>'
+        : options.appUrl === undefined
+          ? ''
+          : ` --app-url ${target.appUrl}`;
   const scope = options.scope === undefined ? '' : ` --scope ${options.scope}`;
-  return `\`./setup.sh cloud upgrade --target ${target.file}${appUrl}${scope}\``;
+  return `\`./setup.sh cloud upgrade --target ${target.file}${app}${scope}\``;
 }
 
 /**
@@ -399,8 +406,9 @@ function upgradeCommand(options: CloudOptions, target: CloudTarget): string {
  * it would push and redeploy with no export first. The address is required,
  * since without it a setup that stopped part way cannot be told from one that
  * finished (the setup writes it into the target file only once it has
- * finished). An address that answers not found is a setup that stopped
- * before its first build read back, which the setup finishes. With `--app
+ * finished). An address that answers not found from a build of the linked
+ * project is a setup that stopped before its first build read back, which the
+ * setup finishes; not found with no build proved there is refused. With `--app
  * none` the setup ends at its stamp, so a stamped deployment has finished.
  *
  * @param options - The command line.
@@ -443,9 +451,17 @@ function readStoppedApp(
         `which exports first: ${upgrade}.`,
     };
   }
+  // Not found is a stopped setup only at an address proved the linked project's: a typo or a
+  // stale alias answers not found too, and the writes would then reach the linked live project.
   const served = inspectApp(io, target, target.appUrl);
-  // No build at an address that answers not found: the stop came before the first deploy.
-  if ('failure' in served) return { previous: undefined };
+  if ('failure' in served) {
+    return {
+      failure:
+        `${target.appUrl} answers not found and \`vercel inspect\` names no build there, so it cannot be told ` +
+        "whether it is the linked project's address: check the address, and if the linked project has never " +
+        'deployed, deploy it once (`vercel --prod`) and run this again.',
+    };
+  }
   const elsewhere = projectRefusal(io, served, target.appUrl);
   return elsewhere ?? { previous: served };
 }
