@@ -9,6 +9,16 @@ import schema from '../../convex/schema';
 import { oneToOnePhase } from '../../src/agent/one-to-one-phase';
 import { allConvexModules } from './all-modules';
 
+// The model seam: the charter a close drafts is not this file's subject, so every attempt at it
+// is refused, and a drained draft ends the one-to-one failed once its re-drives are spent.
+vi.mock('../../src/lib/mastra', () => ({
+  makeAgent: (name: string): { name: string } => ({ name }),
+  agentJson: async (): Promise<never> => {
+    throw new Error('model unavailable in tests');
+  },
+  agentText: async (): Promise<string> => '',
+}));
+
 const ANSWERS = [
   'Tier-2 asks swamp the close.',
   'Own triage in month one.',
@@ -123,6 +133,16 @@ async function scheduledDrafts(room: Room): Promise<number> {
   return scheduled.filter((job) => job.name.includes('draftKeptConversation')).length;
 }
 
+/**
+ * Run the draft a close scheduled to its end, with whatever it schedules in turn (standard 11.5):
+ * the model double refuses every attempt, so the session is handed back each time until the
+ * deployment's re-drives are spent.
+ */
+async function drainDraft(room: Room): Promise<Doc<'voiceSessions'>> {
+  await room.harness.finishAllScheduledFunctions(vi.runAllTimers);
+  return await sessionOf(room);
+}
+
 afterEach((): void => {
   vi.useRealTimers();
 });
@@ -180,6 +200,7 @@ describe('the chat one-to-one kept turn by turn (30 Sep, a one-to-one lost to a 
     expect(session.pendingTranscript).toContain('ASSISTANT: Thanks, drafting now.');
     expect(session.pendingBossLabel).toBe('boss@day0.local');
     expect(await scheduledDrafts(room)).toBe(1);
+    expect(oneToOnePhase(await drainDraft(room)).kind).toBe('failed');
   });
 
   it('keeps a close that is not yet earned as a plain answer, and drafts nothing', async (): Promise<void> => {
@@ -244,6 +265,7 @@ describe('the chat one-to-one kept turn by turn (30 Sep, a one-to-one lost to a 
   });
 
   it('refuses a turn once the one-to-one is drafting, and refuses anyone but the owner', async (): Promise<void> => {
+    vi.useFakeTimers();
     const room = await openRoom();
     await holdThrough(room, 1);
     await expect(
@@ -263,6 +285,7 @@ describe('the chat one-to-one kept turn by turn (30 Sep, a one-to-one lost to a 
         request: reply('e1', ['m9', 'One more.']),
       }),
     ).rejects.toBeInstanceOf(ConvexError);
+    expect(oneToOnePhase(await drainDraft(room)).kind).toBe('failed');
   });
 });
 
@@ -312,6 +335,7 @@ describe("finishing the chat one-to-one at the manager's word", (): void => {
       bossLabel: 'boss@day0.local',
     });
     expect(await scheduledDrafts(room)).toBe(1);
+    expect(oneToOnePhase(await drainDraft(room)).kind).toBe('failed');
   });
 
   it('refuses before the manager has answered anything', async (): Promise<void> => {
@@ -598,6 +622,7 @@ describe('the bounds a direct call is held to', (): void => {
       bossLabel: 'x'.repeat(500_000),
     });
     expect((await sessionOf(room)).pendingBossLabel?.length).toBeLessThanOrEqual(320);
+    expect((await drainDraft(room)).pendingBossLabel?.length).toBeLessThanOrEqual(320);
   });
 
   for (const name of ['recordAnswer', 'finish', 'keepReplyDraft'] as const) {
