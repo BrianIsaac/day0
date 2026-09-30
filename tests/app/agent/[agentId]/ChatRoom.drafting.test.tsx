@@ -18,6 +18,8 @@ const room = vi.hoisted(() => ({
   replyDraft: null as string | null,
   /** What `oneToOne.finish` rejects with, when set. */
   finishRefusal: undefined as Error | undefined,
+  /** Whether `oneToOne.finish` never settles, as a client with no connection queues it. */
+  finishNever: false,
   /** Every `oneToOne` mutation the room called, by name. */
   calls: [] as { name: string; args: unknown }[],
   messages: [] as UIMessage[],
@@ -39,6 +41,9 @@ vi.mock('convex/react', () => ({
       if (name.startsWith('oneToOne:')) {
         room.calls.push({ name, args });
         if (name === 'oneToOne:finish' && room.finishRefusal) throw room.finishRefusal;
+        if (name === 'oneToOne:finish' && room.finishNever) {
+          return await new Promise(() => undefined);
+        }
         return name === 'oneToOne:finish' ? { ok: true } : { kept: true };
       }
       room.starts += 1;
@@ -72,7 +77,10 @@ import {
   sendsReply,
 } from '../../../../app/agent/[agentId]/ChatRoom';
 import { SYNTHESIS_DEADLINE_MS } from '../../../../app/agent/[agentId]/charter-synthesis';
-import { TURN_DEADLINE_MS } from '../../../../app/agent/[agentId]/one-to-one/deadline';
+import {
+  START_DEADLINE_MS,
+  TURN_DEADLINE_MS,
+} from '../../../../app/agent/[agentId]/one-to-one/deadline';
 import type { Id } from '../../../../convex/_generated/dataModel';
 import { INIT_PROMPT } from '../../../../src/agent/day-one-turn';
 import { MAX_FINALISATION_RECOVERIES } from '../../../../src/agent/one-to-one-phase';
@@ -113,6 +121,7 @@ beforeEach((): void => {
   room.kept = [];
   room.replyDraft = null;
   room.finishRefusal = undefined;
+  room.finishNever = false;
   room.calls = [];
   room.messages = [];
   room.status = 'ready';
@@ -274,6 +283,26 @@ describe('finishing and drafting (round two section 3.4)', (): void => {
     await settle();
     expect(room.calls.filter((call) => call.name === 'oneToOne:finish')).toHaveLength(2);
     expect(said(view.container).join(' ')).toContain('Drafting your charter');
+    view.unmount();
+  });
+
+  it('says Finish could not finish when the connection is down, rather than drafting for good (review m2)', async (): Promise<void> => {
+    room.finishNever = true;
+    room.messages = [...CONVERSATION.slice(0, 3)];
+    room.session = HOLDING_FIRST_REPLY;
+    const view = mount(<ChatRoom agentId={AGENT} bossLabel="Sam" />);
+    await settle();
+    vi.useFakeTimers();
+    await press(view.container, 'Finish');
+    await press(document.body, 'Finish and draft');
+    expect(said(view.container).join(' ')).toContain('Drafting your charter');
+    await act(async (): Promise<void> => {
+      await vi.advanceTimersByTimeAsync(START_DEADLINE_MS);
+    });
+    expect(view.container.querySelector('[role="alert"]')?.textContent).toBe(
+      'The one-to-one could not finish: Your employee did not answer within 15 seconds. Nothing you said is lost.',
+    );
+    expect(view.container.querySelector('textarea')).not.toBeNull();
     view.unmount();
   });
 

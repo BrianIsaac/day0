@@ -644,8 +644,13 @@ export function ChatRoom({
       setMessages(messages.filter((m: UIMessage): boolean => !set.has(m.id)));
     }
     setFinishing(true);
-    // The chain ends in its own rejection handler, which says the refusal in the room.
-    void finishSession({ sessionId, conversation, bossLabel }).then(
+    // The chain ends in its own rejection handler, which says the refusal in the room. A client
+    // that has lost its connection queues the mutation and would show "Drafting" for good.
+    void withDeadline(
+      finishSession({ sessionId, conversation, bossLabel }),
+      START_DEADLINE_MS,
+      `${name} did not answer within ${START_DEADLINE_MS / 1000} seconds`,
+    ).then(
       (): void => undefined,
       (err: unknown): void => {
         setFinishing(false);
