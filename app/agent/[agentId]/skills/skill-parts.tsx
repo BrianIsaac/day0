@@ -76,7 +76,9 @@ export function SkillInputs({
       {added.size > 0 ? (
         <span>
           {' '}
-          · The author used the input{plural ? 's' : ''} marked &quot;added by Day0&quot; without
+          {/* The quotes are a string, not entities: the build drops the space before "marked"
+              from a wrapped text holding an entity (tests/app/jsx-text-spacing.test.ts). */}
+          · The author used the input{plural ? 's' : ''} marked {'"added by Day0"'} without
           declaring {plural ? 'them' : 'it'}, so Day0 declared {plural ? 'them' : 'it'}: the
           executor reads {plural ? 'them' : 'it'} from the candidate or its runbook at run time.
         </span>
