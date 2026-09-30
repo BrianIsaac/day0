@@ -4,7 +4,7 @@ import { useContext, useEffect, useId, useMemo, useRef, useState, type Ref } fro
 import type { ChatStatus, UIMessage } from 'ai';
 import type { Id } from '@convex/_generated/dataModel';
 import { managerReplies } from '@/agent/day-one-turn';
-import { DAY_ONE_TOPIC_COUNT, dayOneTurnMetadataOf, topicTitle } from '@/agent/day-one-progress';
+import { dayOneTurnMetadataOf } from '@/agent/day-one-progress';
 import { answeredCount, transcriptTurns, type TranscriptTurn } from '@/agent/transcript-turns';
 import { REPLY_MAX_CHARS, repliesIn, type SentReply } from '@/agent/one-to-one-conversation';
 import { Button, buttonClass } from '../../components/Button';
@@ -520,18 +520,6 @@ const EMPLOYEE_BUBBLE =
 const MANAGER_BUBBLE =
   'justify-self-end rounded-br-[4px] border-[var(--color-accent-line)] bg-[var(--color-accent-soft)]';
 
-/** The question an employee turn put, as the chat route numbered it. */
-function TopicLabel({ message }: { message: UIMessage }) {
-  const metadata =
-    message.role === 'assistant' ? dayOneTurnMetadataOf(message.metadata) : undefined;
-  if (!metadata) return null;
-  return (
-    <span className="mb-1 block text-xs font-semibold text-[var(--color-accent)]">
-      {metadata.topicIndex + 1} of {DAY_ONE_TOPIC_COUNT} · {topicTitle(metadata.topicIndex)}
-    </span>
-  );
-}
-
 /**
  * One turn of the 1:1. `arrive` marks it among the newest, which rise in as they arrive (v3
  * section 5.2); the transcript above them stays still.
@@ -545,7 +533,6 @@ function MessageBubble({ message, arrive }: { message: UIMessage; arrive: boolea
     >
       {/* The side and the colour say who spoke to a sighted reader; this says it to everyone else. */}
       <span className="sr-only">{manager ? 'You: ' : 'Employee: '}</span>
-      <TopicLabel message={message} />
       {message.parts.map((part, i) => {
         if (part.type === 'text') {
           return (
