@@ -12,10 +12,19 @@ export interface FirstWeekFacts {
   /** Where the one-to-one stands (`oneToOnePhase`): drafting once the transcript is taken for a charter. */
   readonly phase?: OneToOnePhase['kind'];
   readonly charter: Pick<Doc<'charters'>, 'version'> | null;
-  /** Whether a write has landed: approved by the manager or, with autonomy on, on its own. */
+  /**
+   * Whether a supervised write has landed (`AgentMetrics.writeLanded`): its ledger row landed,
+   * under the manager's approval or, with autonomy on, on its own. An approval is not a landing.
+   */
   readonly writeLanded: boolean;
-  /** Whether a write is held for the manager now. */
+  /** Whether a write the manager approved is on its way: approved, and not yet landed or failed. */
+  readonly writeApproved: boolean;
+  /** Whether a write is held for the manager's decision now. */
   readonly writeHeld: boolean;
+  /** When the newest one-to-one ended (or was taken for drafting), once it has. */
+  readonly oneToOneEndedAt?: number;
+  /** When the first supervised write landed (`AgentMetrics.workingSince`), once one has. */
+  readonly workingSince?: number | null;
   readonly zone: string | undefined;
 }
 
@@ -32,12 +41,15 @@ export function firstWeekSteps(facts: FirstWeekFacts): RailStep[] {
   const approved = facts.state === 'active';
   // A write can only have landed under an approved charter; before one, the figures say nothing.
   const landed = approved && facts.writeLanded;
+  const at = (ms: number | null | undefined, words: (time: string) => string): string =>
+    ms === null || ms === undefined ? '' : words(clockTime(ms, facts.zone));
   return [
     { title: 'Deployed', detail: clockTime(facts.deployedAt, facts.zone), status: 'done' },
     {
       title: 'Day-1 one-to-one',
+      // Done says itself (the status the rail reads out); the detail is when (walk m11).
       detail: talked
-        ? 'done'
+        ? at(facts.oneToOneEndedAt, (time) => time)
         : facts.state === 'day-one-in-progress'
           ? 'in progress'
           : 'not started',
@@ -62,14 +74,17 @@ export function firstWeekSteps(facts: FirstWeekFacts): RailStep[] {
         ? 'landed'
         : !approved
           ? 'after approval'
-          : facts.writeHeld
-            ? 'held for you'
-            : 'after the first plan',
+          : facts.writeApproved
+            ? 'approved, not yet landed'
+            : facts.writeHeld
+              ? 'held for you'
+              : 'after the first plan',
       status: landed ? 'done' : approved ? 'now' : 'next',
     },
     {
       title: 'Working',
-      detail: landed ? 'in the queue' : '',
+      // Since when, not "in the queue", which read as if the employee waited in one (walk m12).
+      detail: landed ? at(facts.workingSince, (time) => `since ${time}`) : '',
       status: landed ? 'now' : 'next',
     },
   ];

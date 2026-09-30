@@ -43,10 +43,11 @@ describe('plan drafter action mode', (): void => {
     expect(planSystemPrompt(false).split(actionModeInstruction(false))).toHaveLength(2);
   });
 
-  it('states that every mock comparison action waits at the exact-action gate', (): void => {
+  it("states that every mock comparison action waits at the exact-action gate, in the manager's words (walk m6)", (): void => {
     const instruction = actionModeInstruction(true, 'mock');
-    expect(instruction).toContain('Mock comparison mode');
-    expect(instruction).toContain('every emitted action is held');
+    expect(instruction).not.toMatch(/comparison mode/i);
+    expect(instruction).toContain('waits for your approval');
+    expect(instruction).toContain('Every emitted action is held');
     expect(instruction).not.toContain('lands as emitted');
     expect(planSystemPrompt(false, 'mock')).toContain(instruction);
   });
@@ -283,7 +284,7 @@ describe('frozen planner text', (): void => {
         - 2-5 short concrete steps.
         - Two kinds of evidence may follow the candidate: the surfaces section says which systems are connected and by what path, and the loaded documentation carries the team's procedures, runbooks and facts. Plan the steps a documented procedure prescribes on a connected surface; plan no action on a system with no connected surface and name it as the gap instead. When the documentation or the candidate settles a question, plan the work rather than a step to clarify it.
 
-      Mock comparison mode: every emitted action is held for the manager's literal approval and only applied after that decision."
+      Every emitted action is held for the manager's literal approval and only applied after that decision. Where a step says so, word it as the manager reads it (\"waits for your approval\"), never by the name of a mode."
     `);
   });
 

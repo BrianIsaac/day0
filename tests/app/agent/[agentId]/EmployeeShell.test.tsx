@@ -611,7 +611,12 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     expect(onDayZero({ state: 'deployed' }, { _id: 'charter-1' as Id<'charters'> })).toBe(false);
     expect(onDayZero({ state: 'active' }, null)).toBe(false);
 
-    backend.queries = { 'agents:get': row('deployed'), 'charters:latest': null };
+    // No one-to-one held yet: the session query answers null (re-pinned for m23).
+    backend.queries = {
+      'agents:get': row('deployed'),
+      'charters:latest': null,
+      'voice:latest': null,
+    };
     const view = mount(page(<p>a tab</p>));
     await settle();
     expect(view.container.querySelector('[role="tablist"]')).toBeNull();
@@ -631,9 +636,61 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     await settle();
     expect(view.container.textContent).toContain('the environment');
     expect(view.container.querySelector('[role="tablist"]')).toBeNull();
+    const back = view.container.querySelector('a[href="/agent/agent-1"]');
+    expect(back?.textContent).toBe('Back to the one-to-one');
+    // The inline-link look the rest of the page's links in running text take (second review w4).
+    expect(back?.className).toContain('decoration-[var(--color-link-line)]');
+    view.unmount();
+  });
+
+  it('reaches Manage from day zero by a visible link naming the employee (walk M3)', async (): Promise<void> => {
+    for (const state of ['deployed', 'day-one-in-progress'] as const) {
+      backend.queries = { 'agents:get': row(state), 'charters:latest': null };
+      const view = mount(page(<p>a tab</p>));
+      await settle();
+      expect(view.container.querySelector('a[href="/agent/agent-1/manage"]')?.textContent).toBe(
+        'Manage or retire Mira',
+      );
+      view.unmount();
+    }
+  });
+
+  it('retires an employee at day zero from its Manage page, the dialog counting what it made (walk M3)', async (): Promise<void> => {
+    route.segment = 'manage';
+    backend.queries = {
+      'agents:get': row('day-one-in-progress'),
+      'charters:latest': null,
+      'config:surfaceMode': { mode: 'mock' },
+      'work:needsYouForAgent': { entries: [], total: 0 },
+      'reset:retirePreview': {
+        mode: 'mock',
+        rowCounts: { voiceSessions: 1, events: 2 },
+        atLeast: false,
+        revoked: [],
+        kept: [],
+        keptClaims: 0,
+        keptClaimsAtLeast: false,
+        tombstone: false,
+      },
+    };
+    backend.results = { 'reset:retire': { agentName: 'Mira' } };
+    const view = mount(page(<ManageView />));
+    await settle();
+    expect(view.container.textContent).not.toContain('Day-1 one-to-one: voice or chat?');
+    expect(view.container.querySelector('[role="tablist"]')).toBeNull();
     expect(view.container.querySelector('a[href="/agent/agent-1"]')?.textContent).toBe(
       'Back to the one-to-one',
     );
+
+    await press(view.container, 'Retire Mira…');
+    const dialog = document.querySelector('[role="alertdialog"]');
+    expect(dialog?.textContent).toContain('2 events and 1 other row across 2 tables.');
+    const field = dialog?.querySelector<HTMLInputElement>('input');
+    if (!field) throw new Error('no retire dialog');
+    typeInto(field, 'retire Mira');
+    await press(document.body, 'Retire Mira');
+    expect(backend.calls.at(-1)).toEqual({ name: 'reset:retire', args: { agentId: 'agent-1' } });
+    expect(route.replaced).toEqual(['/']);
     view.unmount();
   });
 
@@ -711,7 +768,7 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
       'agents:get': row('active'),
       'charters:latest': approved,
       'work:listForAgent': [],
-      'metrics:forAgent': dashboardMetrics(),
+      'metrics:forAgent': { ...dashboardMetrics(), workingSince: Date.UTC(2026, 8, 30, 6, 22) },
     };
     const view = mount(page());
     await settle();
@@ -719,7 +776,7 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     const card = header?.querySelector('button[aria-label^="First week"]');
     expect(card?.getAttribute('aria-expanded')).toBe('false');
     expect(card?.getAttribute('aria-label')).toBe(
-      'First week: Working, in the queue. Show the whole week',
+      'First week: Working, since 30 Sep 2026, 06:22. Show the whole week',
     );
     // Under the office and state pills, in the header's right column.
     const column = card?.closest('div.grid');
@@ -739,7 +796,7 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     };
     const view = mount(page());
     await settle();
-    await press(view.container, 'First week: Working, in the queue. Show the whole week');
+    await press(view.container, 'First week: Working. Show the whole week');
     expect(document.querySelector('[role="dialog"]')).not.toBeNull();
     // The employee is reset from another tab: its week starts again, and the card goes.
     backend.queries = {
@@ -767,6 +824,7 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
   it('plays the advance on the rail when the first write lands in front of the manager, fades the rail, then settles the card in its place', async (): Promise<void> => {
     const noWrite = {
       ...dashboardMetrics(),
+      writeLanded: false,
       actions: {
         ...dashboardMetrics().actions,
         approved: 0,
@@ -845,6 +903,7 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
   it('moves the first-week rail on while the manager watches, and only then plays its advance', async (): Promise<void> => {
     const noWrite = {
       ...dashboardMetrics(),
+      writeLanded: false,
       actions: {
         ...dashboardMetrics().actions,
         approved: 0,
@@ -878,5 +937,71 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
       'First supervised write',
     );
     view.unmount();
+  });
+
+  it('says a write approved and not yet landed, keeps Working for a landing, and a failed write after approval is not one (X finding 5)', async (): Promise<void> => {
+    const noWrite = {
+      ...dashboardMetrics(),
+      writeLanded: false,
+      actions: { ...dashboardMetrics().actions, approved: 1 },
+    };
+    const work = (state: string) => [
+      { _id: 'wi-1', _creationTime: 1, state, applyPhase: 'approved', approvedIndexes: [0] },
+    ];
+    backend.queries = {
+      'agents:get': row('active'),
+      'charters:latest': approved,
+      'work:listForAgent': work('executing'),
+      'metrics:forAgent': noWrite,
+    };
+    const view = mount(page());
+    await settle();
+    const current = (): string | undefined =>
+      view.container
+        .querySelector('ol[aria-label="First week"] [aria-current="step"]')
+        ?.textContent?.trim();
+    const card = (): Element | null =>
+      view.container.querySelector('header button[aria-label^="First week"]');
+    expect(current()).toContain('First supervised write');
+    expect(current()).toContain('approved, not yet landed');
+    expect(card()).toBeNull();
+
+    // A decision that let nothing through is not an approval (second pass minor 9).
+    backend.queries = {
+      ...backend.queries,
+      'work:listForAgent': [{ ...work('executing')[0], approvedIndexes: [] }],
+    };
+    act((): void => view.root.render(page()));
+    await settle();
+    expect(current()).toContain('after the first plan');
+
+    // The approved write's apply failed: nothing landed, and nothing is on its way.
+    backend.queries = { ...backend.queries, 'work:listForAgent': work('failed') };
+    act((): void => view.root.render(page()));
+    await settle();
+    expect(current()).toContain('after the first plan');
+    expect(card()).toBeNull();
+
+    // A write landed: the card, from the server's one figure, once S's advance and fade have run.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      backend.queries = {
+        ...backend.queries,
+        'work:listForAgent': work('completed'),
+        'metrics:forAgent': { ...dashboardMetrics(), workingSince: Date.UTC(2026, 8, 30, 6, 22) },
+      };
+      act((): void => view.root.render(page()));
+      await settle();
+      expect(card()).toBeNull();
+      act((): void => {
+        vi.advanceTimersByTime(580);
+      });
+      expect(card()?.getAttribute('aria-label')).toBe(
+        'First week: Working, since 30 Sep 2026, 06:22. Show the whole week',
+      );
+    } finally {
+      vi.useRealTimers();
+      view.unmount();
+    }
   });
 });

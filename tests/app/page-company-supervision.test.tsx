@@ -15,6 +15,7 @@ vi.mock('@clerk/nextjs', () => ({
     user: { primaryEmailAddress: { emailAddress: 'boss@example.invalid' }, firstName: 'Boss' },
   }),
   useClerk: () => ({ status: 'ready' }),
+  useAuth: () => ({ isLoaded: true, isSignedIn: true }),
 }));
 
 const EMPLOYEE_METRICS = {
@@ -114,6 +115,7 @@ vi.mock('convex/react', () => {
     useQueries: (queries: Record<string, { query: FunctionReference<'query'> }>) =>
       Object.fromEntries(Object.entries(queries).map(([key, { query }]) => [key, answer(query)])),
     useMutation: (): (() => Promise<void>) => async (): Promise<void> => undefined,
+    useConvexAuth: () => ({ isLoading: false, isAuthenticated: true }),
   };
 });
 

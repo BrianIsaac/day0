@@ -9,6 +9,7 @@ import { HERO } from './marketing/copy';
 import { SiteNav } from './marketing/SiteNav';
 import { Providers } from './Providers';
 import { RetiredNoticeProvider } from './RetiredNotice';
+import { SESSION_HINT_SCRIPT } from './session-hint';
 
 const description = HERO.lede;
 
@@ -35,7 +36,13 @@ export const viewport: Viewport = { themeColor: '#0a0a0b' };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en-GB">
+    // The head's script writes the session hint onto the element before React hydrates it.
+    <html lang="en-GB" suppressHydrationWarning>
+      <head>
+        {/* Inline and parser-blocking, so the header's account slot is sized before the first
+            paint (app/session-hint.ts). */}
+        <script dangerouslySetInnerHTML={{ __html: SESSION_HINT_SCRIPT }} />
+      </head>
       <body>
         {/* Held above the window at its full 44 px, not shrunk to a pixel, so it is the same
             target whether a keyboard has reached it or not; focus brings it down. */}

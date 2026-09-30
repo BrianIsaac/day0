@@ -148,10 +148,10 @@ export function PlanApprovalForm({
             {question.question}
           </label>
           <Help id={`${id}-${question._id}-why`}>
-            Asked because the {question.context.touchedBy} touches it
-            {question.context.words.length > 0 ? ` (${question.context.words.join(', ')})` : ''}.
-            Your answer is written into the charter with the approval and {employeeName} does not
-            ask again. Optional: a question left blank stays open.
+            {/* The words the match found are the matcher's, not the manager's: not printed. */}
+            Asked because the {question.context.touchedBy} touches it. Your answer is written into
+            the charter with the approval and {employeeName} does not ask again. Optional: a
+            question left blank stays open.
           </Help>
           <input
             id={`${id}-${question._id}`}

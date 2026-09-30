@@ -94,7 +94,9 @@ export function actionModeInstruction(
   surfaceMode: SurfaceMode = 'real',
 ): string {
   if (surfaceMode === 'mock') {
-    return "Mock comparison mode: every emitted action is held for the manager's literal approval and only applied after that decision.";
+    // The manager reads the plan's steps: a mode's name in them is the planner's jargon (the
+    // hosted walk's m6 read "... before posting (mock comparison mode).").
+    return 'Every emitted action is held for the manager\'s literal approval and only applied after that decision. Where a step says so, word it as the manager reads it ("waits for your approval"), never by the name of a mode.';
   }
   return autonomousActions
     ? 'Autonomous actions are ON: every allowed write lands as emitted; do not say an action is queued or awaiting approval.'

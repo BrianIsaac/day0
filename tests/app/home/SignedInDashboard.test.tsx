@@ -343,13 +343,13 @@ describe('the company home', (): void => {
     expect(text).toContain('Recorded colleague · a write is held for you');
     expect(text).toContain('held since 26 Sep 2026, 06:39');
     expect(text).toContain('Recorded colleague Active');
-    expect(text).toContain('acts on its own 1 3 13');
+    expect(text).toContain('Autonomous 1 3 13');
     expect(text).toContain(
-      'Finance colleague Active Close the month for the finance team. asks first 2 2 1',
+      'Finance colleague Active Close the month for the finance team. Supervised 2 2 1',
     );
     // Re-pinned (unit S, m6): the roster prints the state in the words the employee's pill uses.
     expect(text).toContain(
-      'New colleague Waiting for your one-to-one charter pending asks first 0 0 0',
+      'New colleague Waiting for your one-to-one charter pending Supervised 0 0 0',
     );
   });
 
@@ -361,8 +361,8 @@ describe('the company home', (): void => {
       expect(list).toContain(row.name);
       expect(list).toContain(row.roleLine);
     }
-    expect(list.match(/acts on its own/g)).toHaveLength(1);
-    expect(list.match(/asks first/g)).toHaveLength(2);
+    expect(list.match(/>Autonomous</g)).toHaveLength(1);
+    expect(list.match(/>Supervised</g)).toHaveLength(2);
   });
 
   it('puts the role line on each office name plate', (): void => {
@@ -373,17 +373,27 @@ describe('the company home', (): void => {
 
   it('shows parked work beside open work, as the 19 Sep run left the company', (): void => {
     const page = render([
-      { ...roster[0], name: 'Priya', openCount: 0, parkedCount: 3 },
-      { ...roster[1], name: 'Aiko', openCount: 0, parkedCount: 1 },
+      {
+        ...roster[0],
+        name: 'Priya',
+        openCount: 0,
+        parkedCount: 3,
+        parkedStates: { deferred: 1, needsSkill: 2, discovered: 0 },
+      },
+      {
+        ...roster[1],
+        name: 'Aiko',
+        openCount: 0,
+        parkedCount: 1,
+        parkedStates: { deferred: 0, needsSkill: 0, discovered: 1 },
+      },
       { ...roster[2], name: 'Mateo' },
     ]);
     const text = readAs(page.slice(page.indexOf('>Roster<'), page.indexOf('Mini office world')));
     expect(text).toContain('Priya Active');
-    expect(text).toContain('1 0 3 parked 13');
-    expect(text).toContain('2 0 1 parked 1');
-    expect(page).toContain(
-      'title="Parked: waiting on a connection, a permission, a skill or a free slot',
-    );
+    expect(text).toContain('1 0 2 waiting on a skill · 1 parked 13');
+    expect(text).toContain('2 0 1 discovered 1');
+    expect(page).toContain('title="Waiting on a skill: waiting on a skill you approve.');
   });
 
   it('shows stopped work that still waits on the manager, as the 19 Sep second run left the company', (): void => {
@@ -425,9 +435,23 @@ describe('the company home', (): void => {
 
   it('arrives the main column’s cards with the page and leaves the aside still (v4 section 1.3)', (): void => {
     const page = render(roster);
-    expect(page).toMatch(/<div data-cards="" class="flex min-w-0 flex-col gap-6"><section/);
-    expect(page.match(/data-cards=""/g)).toHaveLength(1);
-    expect(page).toMatch(/<aside class="flex flex-col gap-6">/);
+    expect(page).toMatch(
+      /<div data-cards="" class="flex min-w-0 flex-col gap-6 xl:col-start-1 xl:row-start-1"><section/,
+    );
+    // Re-pinned (walk m17): the main column's cards, then Reset under it.
+    expect(page.match(/data-cards=""/g)).toHaveLength(2);
+    expect(page).toMatch(/<aside class="flex flex-col gap-6[^"]*">/);
+  });
+
+  it('puts the aside before Reset in the page order, and Reset under the main column at xl (walk m17)', (): void => {
+    const page = render(roster);
+    // The page order is the reading, keyboard and phone order alike (second pass M2).
+    expect(page.indexOf('<aside')).toBeLessThan(page.indexOf('Reset demo'));
+    expect(page).toMatch(/<aside class="[^"]*xl:col-start-2 xl:row-span-2 xl:row-start-1"/);
+    expect(page).toMatch(
+      /<div data-cards="" class="min-w-0 xl:col-start-1 xl:row-start-2"><section[^>]*>(?:(?!<\/section>).)*Reset demo/s,
+    );
+    expect(page).not.toMatch(/\bcontents\b|\border-1\b/);
   });
 
   it('keeps the hosted one-employee home under a snapshot', (): void => {
@@ -442,7 +466,7 @@ describe('the company home', (): void => {
 });
 
 describe('Deploy another', (): void => {
-  it('opens the form above the inbox with the caret in the name, and closes it again', (): void => {
+  it('opens the form above the inbox with the caret in the name, hides itself, and comes back when the form closes', (): void => {
     vi.useRealTimers();
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     state.roster = roster;
@@ -457,6 +481,8 @@ describe('Deploy another', (): void => {
 
     act(() => toggle.click());
     expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    // Walk m27: the button that opened the form is not left on the page beside it.
+    expect(toggle.hidden).toBe(true);
     const form = host.querySelector('#deploy-form');
     expect(form).not.toBeNull();
     expect(host.innerHTML.indexOf('Deploy a new Day0 employee')).toBeLessThan(
@@ -471,6 +497,7 @@ describe('Deploy another', (): void => {
     act(() => cancel.click());
     expect(host.querySelector('#deploy-form')).toBeNull();
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(toggle.hidden).toBe(false);
     expect(document.activeElement).toBe(toggle);
 
     act(() => root.unmount());

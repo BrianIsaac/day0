@@ -1,6 +1,8 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { Fragment } from 'react';
 import { PageMotion } from '../PageMotion';
+import { api } from '@convex/_generated/api';
 import { deploymentReleaseLine, readDeploymentRelease } from '@/setup/deployment-release';
 
 import {
@@ -69,6 +71,25 @@ const SECTIONS = [
   { id: 'detail', title: 'Where the detail is' },
 ] as const;
 
+/**
+ * A command in running text, set as code, that wraps only between its words, so a flag such as
+ * `--endpoint` never breaks after its hyphens (the hosted walk's m24).
+ *
+ * @param command - The command, its words separated by single spaces.
+ */
+function InlineCommand({ command }: { command: string }) {
+  return (
+    <code className="font-mono text-[var(--color-fg)]">
+      {command.split(' ').map((word, index) => (
+        <Fragment key={index}>
+          {index > 0 ? ' ' : null}
+          <span className="whitespace-nowrap">{word}</span>
+        </Fragment>
+      ))}
+    </code>
+  );
+}
+
 function Section({
   id,
   index,
@@ -117,7 +138,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 }
 
 export default async function SetupPage() {
-  const stamp = await readDeploymentRelease();
+  const stamp = await readDeploymentRelease(api.config.release);
   return (
     <PageMotion className="day0-public-motion day0-setup-motion" revealMargin="0px 0px 120px 0px">
       <div className="min-h-[calc(100vh-3.25rem)] px-6 py-12 max-w-3xl lg:max-w-6xl mx-auto w-full lg:grid lg:grid-cols-[14rem_minmax(0,1fr)] lg:gap-x-12">
@@ -220,9 +241,7 @@ export default async function SetupPage() {
             </Panel>
             <p className="text-sm text-[var(--color-muted)] leading-relaxed mt-4">
               Move the backend ports and choose an installation name:{' '}
-              <code className="font-mono text-[var(--color-fg)]">
-                ./setup.sh --project day0-new --port 4210 --site-port 4211 --dashboard-port 4791
-              </code>
+              <InlineCommand command="./setup.sh --project day0-new --port 4210 --site-port 4211 --dashboard-port 4791" />
               . Two installations on one machine need different ports and different Compose project
               names, and the command refuses to attach a new installation to another one&rsquo;s
               data. Use --model-port for the local model server and --app-port for the app, which
@@ -336,17 +355,14 @@ export default async function SetupPage() {
             <p className="text-sm text-[var(--color-muted)] leading-relaxed mt-4">
               A third answer exists for a reader who already runs a compatible endpoint of their
               own:{' '}
-              <code className="font-mono text-[var(--color-fg)]">
-                ./setup.sh --route endpoint --endpoint https://your-server/v1
-              </code>
+              <InlineCommand command="./setup.sh --route endpoint --endpoint https://your-server/v1" />
               . It performs the same local setup and writes paired host/backend model addresses. Set
               OPENAI_MODEL and, if required, OPENAI_API_KEY in .env.local for that endpoint, then
               run pnpm sync:env before starting the app. A host-loopback endpoint must also be
               reachable from the backend container via host.docker.internal. The fourth answer,{' '}
-              <code className="font-mono text-[var(--color-fg)]">./setup.sh --route key</code>, is
-              an OpenAI key, or any key an OpenAI-compatible provider issues, asked for in the same
-              hidden prompt. All three are the cloud-model way; only{' '}
-              <code className="font-mono text-[var(--color-fg)]">--route local</code> runs the model
+              <InlineCommand command="./setup.sh --route key" />, is an OpenAI key, or any key an
+              OpenAI-compatible provider issues, asked for in the same hidden prompt. All three are
+              the cloud-model way; only <InlineCommand command="--route local" /> runs the model
               here.
             </p>
           </Section>
@@ -377,11 +393,10 @@ export default async function SetupPage() {
               your Slack DM is resolved from. Then it starts the backend, the sandbox, the redactor,
               the components and, on the local-model way, the model server; creates the
               documentation folder with a placeholder page; writes the values it generates into{' '}
-              <code className="font-mono text-[var(--color-fg)]">.env.local</code> instead of asking
-              you to paste them; pushes the backend functions; and finishes by running{' '}
-              <code className="font-mono text-[var(--color-fg)]">pnpm check:setup</code> and
-              printing the unlock URL. If it stops, it says which step stopped and what to run next.
-              It never deletes a volume to recover.
+              <InlineCommand command=".env.local" /> instead of asking you to paste them; pushes the
+              backend functions; and finishes by running{' '}
+              <InlineCommand command="pnpm check:setup" /> and printing the unlock URL. If it stops,
+              it says which step stopped and what to run next. It never deletes a volume to recover.
             </p>
           </Section>
 

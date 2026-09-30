@@ -1,6 +1,10 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { CompanySupervision, CompanySupervisionCard } from '../../app/CompanySupervision';
+import {
+  CompanySupervision,
+  CompanySupervisionCard,
+  decisionsCell,
+} from '../../app/CompanySupervision';
 import type { AgentMetrics, OwnerMetrics } from '../../src/metrics/types';
 import type { Id } from '../../convex/_generated/dataModel';
 
@@ -30,6 +34,8 @@ function agentMetrics(overrides: {
   const [reads, managerMessages] = overrides.alsoAutomatic ?? [0, 0];
   const [complete, total] = overrides.audit;
   return {
+    writeLanded: writes + approvedActions > 0,
+    workingSince: null,
     charter: {
       timeToFirstDraftedMs: overrides.approvedAfterMs,
       timeToFirstApprovedMs: overrides.approvedAfterMs,
@@ -317,6 +323,26 @@ describe('the company supervision card', (): void => {
     const companyRow = rowOf(pilot, 'Company');
     expect(companyRow).toContain('not yet');
     expect(companyRow).toContain('no estimates yet');
+  });
+});
+
+describe("a row's decisions", (): void => {
+  it('quotes decisions made on the dashboard when no chat surface was asked (walk m14)', (): void => {
+    const decisions = {
+      requested: 0,
+      approved: 2,
+      rejected: 1,
+      partiallyApproved: 0,
+      cancelled: 0,
+      medianLatencyMs: 60_000,
+      p90LatencyMs: 60_000,
+      byVia: {
+        dashboard: { decided: 3, medianLatencyMs: 60_000, p90LatencyMs: 60_000 },
+        channel: { decided: 0, medianLatencyMs: null, p90LatencyMs: null },
+      },
+    };
+    expect(decisionsCell(decisions)).toBe('2 / 1');
+    expect(decisionsCell({ ...decisions, approved: 0, rejected: 0 })).toBe('not yet');
   });
 });
 

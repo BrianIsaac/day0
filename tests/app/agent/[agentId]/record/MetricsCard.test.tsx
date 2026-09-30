@@ -44,6 +44,13 @@ describe('dashboard decisions on the supervision card (P6-9)', (): void => {
     expect(markup).toContain('2 / 1');
     expect(markup).toContain('3 / 0');
     expect(markup).toContain('0 asked on a chat surface');
+  });
+
+  it('joins the counts under the figures with middle dots, not hyphens (walk m28)', (): void => {
+    const markup = renderToStaticMarkup(<MetricsCard metrics={metrics()} />);
+    expect(markup).toMatch(
+      /<p>\d+ asked on a chat surface · \d+ partial · \d+ automatic changes? · \d+ held · \d+ refused<\/p>/,
+    );
     // Only the revocation row has no evidence yet.
     expect(markup.match(/not yet/g)).toHaveLength(1);
   });

@@ -1,13 +1,37 @@
 import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { avatarById } from '@/agent/avatar-pets';
-import { employeeStateWords } from '@/work/state-labels';
+import { autonomyLabel } from '@/work/autonomy';
+import { workItemGlossary } from '@/work/state-display';
+import { employeeStateWords, workItemStateLabel, type WorkItemState } from '@/work/state-labels';
 import { AgentPixelAvatar, toneClasses } from './PixelAvatar';
 import type { RosterRow } from './types';
 
-/** What "parked" means on the roster, for the hover. */
-const PARKED_TITLE =
-  'Parked: waiting on a connection, a permission, a skill or a free slot. The ones only you can release are in Needs you.';
+/** What the parked work waits on, in the order the roster names it, with the count it reads. */
+const PARKED_PARTS: ReadonlyArray<
+  readonly [state: WorkItemState, count: keyof RosterRow['parkedStates']]
+> = [
+  ['needs-skill', 'needsSkill'],
+  ['deferred', 'deferred'],
+  ['discovered', 'discovered'],
+];
+
+/**
+ * One kind of parked work in the Work tab's words ("2 waiting on a skill", "1 parked"), with what
+ * the glossary says it means for the hover (the hosted walk's m10: the roster said "2 parked" for
+ * items the page calls "Waiting on a skill").
+ *
+ * @param state - The state the rows are in.
+ * @param count - How many.
+ */
+function parkedPart(state: WorkItemState, count: number): { text: string; title: string } {
+  const label = workItemStateLabel({ state }).text;
+  const means = workItemGlossary().find((line) => line.states.includes(state))?.means;
+  return {
+    text: `${count} ${label.toLocaleLowerCase('en-GB')}`,
+    title: `${label}: ${means ?? label}. The ones only you can release are in Needs you.`,
+  };
+}
 
 /** What "stopped" means on the roster, for the hover. */
 const STOPPED_TITLE =
@@ -132,14 +156,20 @@ interface RosterRowViewProps {
 }
 
 function RosterRowView({ employee, waiting, loaded }: RosterRowViewProps) {
-  const words = employeeStateWords(employee.state);
+  const words = employeeStateWords(employee.state, employee.phase);
   const tone = toneClasses(words.tone);
   const waitingOnManager = waiting ?? 0;
   // Parked and stopped work hold no slot, so each is named under the open count and only when there is some.
+  // Functions pushed before this page have no split: their total reads as the parked it mostly is.
+  const states = employee.parkedStates as RosterRow['parkedStates'] | undefined;
   const aside = [
-    ...(employee.parkedCount > 0
-      ? [{ text: `${employee.parkedCount} parked`, title: PARKED_TITLE }]
-      : []),
+    ...(states === undefined
+      ? employee.parkedCount > 0
+        ? [parkedPart('deferred', employee.parkedCount)]
+        : []
+      : PARKED_PARTS.flatMap(([state, count]) =>
+          states[count] > 0 ? [parkedPart(state, states[count])] : [],
+        )),
     ...(employee.stoppedCount > 0
       ? [{ text: `${employee.stoppedCount} stopped`, title: STOPPED_TITLE }]
       : []),
@@ -162,6 +192,7 @@ function RosterRowView({ employee, waiting, loaded }: RosterRowViewProps) {
           <AgentPixelAvatar
             avatar={avatarById(employee.avatarId)}
             state={employee.state}
+            phase={employee.phase}
             label={employee.name}
             size="sm"
           />
@@ -231,7 +262,8 @@ function AutonomyBadge({ autonomous }: AutonomyBadgeProps) {
           : 'border-[var(--color-border)] text-[var(--color-fg)]/70'
       }`}
     >
-      {autonomous ? 'acts on its own' : 'asks first'}
+      {/* The page's, the pill's and the deploy form's word (walk m10). */}
+      {autonomyLabel(autonomous)}
     </span>
   );
 }

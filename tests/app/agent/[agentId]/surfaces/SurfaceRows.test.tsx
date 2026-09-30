@@ -21,7 +21,7 @@ describe('EvidenceQuote', (): void => {
       <EvidenceQuote quote='<page url="https://app.notion.com/p/3c7a382da0a080968de5fd7bf18e5f21">Linear Automation</page>' />,
     );
     expect(markup).toBe(
-      '<a href="https://app.notion.com/p/3c7a382da0a080968de5fd7bf18e5f21" target="_blank" rel="noreferrer" class="text-[var(--color-fg)] underline decoration-[var(--color-border)]">Linear Automation</a>',
+      '<a href="https://app.notion.com/p/3c7a382da0a080968de5fd7bf18e5f21" target="_blank" rel="noreferrer" class="text-[var(--color-fg)] underline decoration-[var(--color-link-line)] underline-offset-4 hover:decoration-[var(--color-accent)]">Linear Automation</a>',
     );
     expect(markup).not.toContain('&lt;page');
   });

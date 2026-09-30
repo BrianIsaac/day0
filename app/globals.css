@@ -24,6 +24,10 @@
   --color-ok-line: #396754;
   --color-danger-soft: #281d1f;
   --color-danger-line: #733937;
+  /* The line under a link: the accent mixed into transparent, as the focus ring is, so it keeps
+     3:1 or more on every surface a link sits on (3.4:1 on a tone's fill, 3.8:1 on a card). The
+     underline is the one cue that a link in a sentence is a link (WCAG 1.4.11). */
+  --color-link-line: color-mix(in oklab, var(--color-accent) 55%, transparent);
 }
 
 html,
@@ -80,6 +84,22 @@ body {
     scrollbar-width: thin;
     scrollbar-color: var(--color-border) transparent;
   }
+
+  /* The page keeps a scrollbar's room whether it scrolls or not, so a page that grows one (the
+     chat room) does not sit 5 px left of one that has none (the hosted walk's m31). A modal's
+     hold (app/components/use-modal.ts) writes the same value inline and gives it back. */
+  html {
+    scrollbar-gutter: stable;
+  }
+}
+
+/* A Clerk widget under a page's own h1 (the sign-in and sign-up pages) leaves out the header of its
+   first step, whose title Clerk draws as a second h1 (the hosted walk's m26). Only the first step:
+   later steps' headers say what to do ("Check your email", the address the code went to). Unlayered,
+   as Clerk's own styles are, and more specific than them. */
+[data-headed-clerk] .cl-signIn-start .cl-header,
+[data-headed-clerk] .cl-signUp-start .cl-header {
+  display: none;
 }
 
 /* Cross-browser fade on overflowing edges (subtle hint there's more) */
@@ -87,22 +107,44 @@ body {
   mask-image: linear-gradient(to bottom, black 88%, transparent 100%);
 }
 
-/* Drop a quiet inset ring on focusable surfaces so accessibility holds */
-:where(a, button, input, summary, textarea, [tabindex='0']):focus-visible {
-  outline: 2px solid color-mix(in oklab, var(--color-accent) 75%, transparent);
-  outline-offset: 1px;
-  border-radius: 6px;
-}
+/* The focus ring, in the base layer (C1): a control's own utility outranks it, so the
+   walkthrough frame's `focus-visible:outline-offset-[-3px]` applies and a control with its own
+   corners (`rounded-xl`, `rounded-full`) keeps them under the ring. A utility that removes the
+   outline removes the ring too, so a focusable control never carries one. */
+@layer base {
+  :where(a, button, input, select, summary, textarea, [tabindex='0']):focus-visible {
+    outline: 2px solid color-mix(in oklab, var(--color-accent) 75%, transparent);
+    outline-offset: 1px;
+    border-radius: 6px;
+  }
 
-/* A tab's ring is drawn inside it: the strip clips anything past its box, so a ring outside
-   would show its two sides only. */
-[role='tab']:focus-visible {
-  outline-offset: -2px;
-}
+  /* A tab's ring is drawn inside it: the strip clips anything past its box, so a ring outside
+     would show its two sides only. */
+  [role='tab']:focus-visible {
+    outline-offset: -2px;
+  }
 
-/* The first week's card keeps its own corners under the ring (`FirstWeekCard`). */
-button.rail-step:focus-visible {
-  border-radius: 0.75rem;
+  /* A link in running text is underlined (C3): the preflight leaves `a` looking like the text
+     around it, so a bare link inside a sentence read as prose. The look is `ButtonLink
+     variant="text"`'s: the link line under it, the accent on hover. Only a link with no class
+     takes it: a nav link, a card link, a `ButtonLink` and a tab each carry their own classes and
+     keep their own look, and a link that wants another look says so with a class. It sets no
+     size, so an inline link keeps the sentence's line. The selector is not wrapped in
+     `:where()`: the preflight's `a` rule shares this layer and would beat a zero-specificity
+     one; a utility still outranks it from its later layer. */
+  a[href]:not([class]) {
+    text-decoration-line: underline;
+    text-decoration-color: var(--color-link-line);
+    text-underline-offset: 4px;
+    transition: text-decoration-color 180ms ease-out;
+  }
+
+  /* Where a pointer can hover, as Tailwind's own `hover:` is, so a tapped link does not stay lit. */
+  @media (hover: hover) {
+    a[href]:not([class]):hover {
+      text-decoration-color: var(--color-accent);
+    }
+  }
 }
 
 .day0-pixel-office {
@@ -408,6 +450,34 @@ button.rail-step:focus-visible {
   transition:
     left var(--walk-duration, 2800ms) steps(8, end),
     top var(--walk-duration, 2800ms) steps(8, end);
+}
+
+/*
+ * Where the office places a figure, a desk or a chair (`OfficeWorld`'s `placeStyle`). At a desktop
+ * width, a share of the office kept `--inset` from either edge: half a name plate for a figure,
+ * half the widest desk and the frame for a desk, so neither is cut by the office's clipping. Below
+ * `sm`, the phone plan (`PHONE_PLAN`): a share of the width inside the 8 px frame, where a figure
+ * is at most a third of that width, so three stand side by side and none crosses the frame.
+ */
+.day0-office-at {
+  --inset: 3.5rem;
+  left: clamp(var(--inset), calc(var(--x) * 1%), calc(100% - var(--inset)));
+  top: calc(var(--y) * 1%);
+}
+
+.day0-office-agent.day0-office-at {
+  --inset: 4.5rem;
+}
+
+@media (width < 40rem) {
+  .day0-office-at {
+    left: calc(8px + (100% - 16px) * var(--px) / 100);
+    top: calc(var(--py) * 1%);
+  }
+
+  .day0-office-agent.day0-office-at {
+    width: min(110px, calc((100% - 16px) / 3 - 6px));
+  }
 }
 
 .day0-office-agent-walking {
@@ -1508,6 +1578,14 @@ button.rail-step:focus-visible {
 
 ::view-transition-new(site-header) {
   animation: none;
+}
+
+/* The header's account slot draws room for both of Clerk's controls until Clerk answers; the hint
+   the head's script wrote before the first paint (app/session-hint.ts) keeps the one Clerk will
+   mount, and with no script, the signed-out one. Unlayered, so it outranks the utilities. */
+html[data-session-hint='present'] [data-account-reserve='signed-out'],
+html:not([data-session-hint='present']) [data-account-reserve='signed-in'] {
+  display: none;
 }
 
 @media (prefers-reduced-motion: no-preference) {

@@ -126,6 +126,26 @@ function Goal({ label, text }: { label: string; text: string }) {
   );
 }
 
+/** The check an answered open question carries where the list draws its bullet. */
+function AnsweredMark() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 16 16"
+      className="absolute -left-5 top-[0.3em] size-3.5 text-[var(--color-ok)]"
+    >
+      <path
+        d="M3 8.5l3.2 3L13 4.5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 /**
  * The charter as one document (round two section 3.5): why this hire, the function, the three
  * goals (a checkpoint the manager named nothing for drawn as a gap), the boundaries open as its
@@ -227,17 +247,19 @@ export function CharterDocument({
             Asked when a plan first touches them; your answer is written into the charter.
           </p>
           <ul className="grid list-disc gap-1 pl-5">
+            {/* An answered question is settled, not struck: a check in the list's marker place,
+                the answer under it (walk m20). The strike is a struck rule's mark alone. */}
             {answered.map((entry) => (
-              <li key={`answered:${entry.question}`}>
-                <s className="text-[var(--color-muted)]">{entry.question}</s>{' '}
-                <span className="text-[var(--color-muted)]">
+              <li key={`answered:${entry.question}`} className="relative list-none">
+                <AnsweredMark />
+                {entry.question}
+                <span className="block text-[var(--color-muted)]">
                   answered by you
                   {Number.isNaN(Date.parse(entry.answeredAt))
                     ? ''
                     : ` at ${clockTime(Date.parse(entry.answeredAt), zone)}`}
-                  :
-                </span>{' '}
-                {entry.answer}
+                  : <span className="text-[var(--color-fg)]">{entry.answer}</span>
+                </span>
               </li>
             ))}
             {open.map((question) => (

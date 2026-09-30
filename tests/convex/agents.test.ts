@@ -13,6 +13,8 @@ import { STOPPED_PREFIX } from '../../src/work/stop';
 import type { WorkCandidate } from '../../src/work/types';
 import { asAgentId } from '../../src/lib/ids';
 import { runThroughBody } from '../fixtures/run-through-charter-2026-09-14';
+import { runtimeCycleThrough } from '../fixtures/import-graph';
+import { MAX_FINALISATION_RECOVERIES } from '../../src/agent/one-to-one-phase';
 
 afterEach((): void => {
   vi.useRealTimers();
@@ -1022,10 +1024,13 @@ describe('the employee roster', (): void => {
         name: 'Aiko',
         avatarId: 'avatar-aiko',
         state: 'charter-pending',
+        // No one-to-one has opened: the room is waiting to talk.
+        phase: 'talking',
         autonomous: false,
         roleLine: 'charter pending',
         openCount: 0,
         parkedCount: 0,
+        parkedStates: { deferred: 0, needsSkill: 0, discovered: 0 },
         stoppedCount: 0,
         // The drafted charter waits on the manager's approval.
         needsYou: 1,
@@ -1037,10 +1042,12 @@ describe('the employee roster', (): void => {
         name: 'Mateo',
         avatarId: 'avatar-mateo',
         state: 'active',
+        phase: 'talking',
         autonomous: true,
         roleLine: 'Close the month for the finance team.',
         openCount: 3,
         parkedCount: 0,
+        parkedStates: { deferred: 0, needsSkill: 0, discovered: 0 },
         stoppedCount: 0,
         needsYou: 1,
         docSourceCount: 2,
@@ -1051,12 +1058,15 @@ describe('the employee roster', (): void => {
         name: 'Priya',
         avatarId: 'avatar-priya',
         state: 'active',
+        phase: 'talking',
         autonomous: false,
         roleLine:
           'Own routine revenue operations work from owned, prioritized Linear tickets for the RevOps\u2026',
         openCount: 3,
         // The discovered row waits for a free slot, unevaluated (U3 D5).
         parkedCount: 1,
+        // Named by its state on the roster, as the Work tab does (walk m10).
+        parkedStates: { deferred: 0, needsSkill: 0, discovered: 1 },
         stoppedCount: 1,
         needsYou: 3,
         docSourceCount: 2,
@@ -1071,10 +1081,12 @@ describe('the employee roster', (): void => {
         name: 'Somebody else',
         avatarId: 'avatar-somebody else',
         state: 'deployed',
+        phase: 'talking',
         autonomous: false,
         roleLine: 'charter pending',
         openCount: 1,
         parkedCount: 0,
+        parkedStates: { deferred: 0, needsSkill: 0, discovered: 0 },
         stoppedCount: 0,
         needsYou: 1,
         docSourceCount: 1,
@@ -1106,6 +1118,66 @@ describe('the employee roster', (): void => {
       Nia: 'charter-pending',
       Tomas: 'active',
       Mira: 'day-one-in-progress',
+    });
+  });
+
+  it("carries the one-to-one's phase on each row, read off the newest session as the employee's page reads it (C2)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    type Session = Pick<
+      Doc<'voiceSessions'>,
+      'state' | 'pendingTranscript' | 'finalisationError' | 'recoveryAttempts'
+    >;
+    // Each employee's sessions, oldest first: the newest is the one the page reads.
+    const sessions: Record<string, readonly Session[]> = {
+      Ana: [],
+      Ben: [{ state: 'active' }],
+      Cai: [{ state: 'active', pendingTranscript: 'the transcript' }],
+      Dev: [{ state: 'done' }, { state: 'synthesising', pendingTranscript: 'the transcript' }],
+      Eli: [
+        {
+          state: 'active',
+          pendingTranscript: 'the transcript',
+          finalisationError: 'model timed out',
+          recoveryAttempts: 1,
+        },
+      ],
+      Fay: [
+        {
+          state: 'active',
+          pendingTranscript: 'the transcript',
+          finalisationError: 'model timed out',
+          recoveryAttempts: MAX_FINALISATION_RECOVERIES,
+        },
+      ],
+      Gus: [{ state: 'done' }],
+    };
+    for (const [name, rows] of Object.entries(sessions)) {
+      const agentId = await deployEmployee(harness, 'owner', name);
+      await harness.run(async (ctx): Promise<void> => {
+        await ctx.db.patch(agentId, { state: 'day-one-in-progress' });
+        for (const [index, row] of rows.entries()) {
+          await ctx.db.insert('voiceSessions', {
+            agentId,
+            mode: 'chat',
+            answers: {},
+            startedAt: index + 1,
+            ...row,
+          });
+        }
+      });
+    }
+    const roster = await harness
+      .withIdentity({ subject: 'owner' })
+      .query(api.agents.rosterForUser, {});
+    const phases = Object.fromEntries(roster.map((row): [string, string] => [row.name, row.phase]));
+    expect(phases).toEqual({
+      Ana: 'talking',
+      Ben: 'talking',
+      Cai: 'drafting',
+      Dev: 'drafting',
+      Eli: 'drafting',
+      Fay: 'failed',
+      Gus: 'drafted',
     });
   });
 
@@ -1160,6 +1232,17 @@ describe('the employee roster', (): void => {
     });
     await seedParked(harness, mateo, 'FIN-2', 'discovered', {});
     expect(await counts()).toEqual({ Priya: [0, 3, 2], Mateo: [1, 2, 1], Aiko: [0, 1, 0] });
+    // The same parked rows by the state each is in, the words the roster says them in (walk m10).
+    const states = Object.fromEntries(
+      (await harness.withIdentity({ subject: 'owner' }).query(api.agents.rosterForUser, {})).map(
+        (row) => [row.name, row.parkedStates],
+      ),
+    );
+    expect(states).toEqual({
+      Priya: { deferred: 2, needsSkill: 1, discovered: 0 },
+      Mateo: { deferred: 0, needsSkill: 0, discovered: 2 },
+      Aiko: { deferred: 0, needsSkill: 1, discovered: 0 },
+    });
     // A row whose evaluation is running holds the slot it runs in; one whose
     // evaluation died waits again once the lease has passed.
     await seedParked(harness, mateo, 'FIN-3', 'discovered', {
@@ -1803,5 +1886,11 @@ describe('agents.setBossEmail', (): void => {
     ).rejects.toThrow('evaluation');
     const agent = await harness.run(async (ctx) => await ctx.db.get(agentId));
     expect(agent?.bossEmail).toBe('boss@day0.local');
+  });
+});
+
+describe("the module's runtime imports", (): void => {
+  it('never lead back to the module, so its initialisation order does not depend on load order (m25)', (): void => {
+    expect(runtimeCycleThrough('convex/agents.ts')).toBeNull();
   });
 });

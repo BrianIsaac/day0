@@ -97,6 +97,25 @@ describe('the /setup guide', (): void => {
     expect(text.indexOf(PREREQUISITES[0].name)).toBeLessThan(text.indexOf('git clone'));
   });
 
+  it("wraps a command in running text only between its words, never after a flag's hyphens (walk m24)", (): void => {
+    const command =
+      /<code class="font-mono[^"]*">((?:(?!<\/code>).)*--endpoint(?:(?!<\/code>).)*)<\/code>/s.exec(
+        html,
+      )?.[1];
+    expect(command).toBeDefined();
+    const words = [
+      ...(command ?? '').matchAll(/<span class="whitespace-nowrap">([^<]*)<\/span>/g),
+    ].map((match) => match[1]);
+    expect(words).toEqual([
+      './setup.sh',
+      '--route',
+      'endpoint',
+      '--endpoint',
+      'https://your-server/v1',
+    ]);
+    expect(text).toContain('./setup.sh --route endpoint --endpoint https://your-server/v1');
+  });
+
   it('names the ports the installation publishes', (): void => {
     for (const port of ['3210', '3211', '6791', '3000', '11434']) expect(text).toContain(port);
   });

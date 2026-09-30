@@ -35,8 +35,11 @@ async function refusalOf(response: Response): Promise<string> {
   return `the drafting service answered ${response.status}`;
 }
 
-/** A post the deadline stopped, said in whole seconds. */
-function lateBy(deadlineMs: number): CharterSynthesisOutcome {
+/**
+ * A wait on a draft that outlasted its deadline, said in whole seconds: the room's post the
+ * deadline stopped, or the chat room's wait on a draft the session started. The draft carries on.
+ */
+export function lateBy(deadlineMs: number): CharterSynthesisOutcome {
   return {
     ok: false,
     late: true,

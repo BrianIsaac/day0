@@ -71,6 +71,111 @@ export interface ModalOptions {
 }
 
 /**
+ * The attributes on the document element that the modals open at once share their hold on the
+ * page through: how many hold it, and the page's own overflow and gutter from before the first
+ * (the gutter only when the hold set one). They live on the document, as the styles they guard
+ * do, so every modal sees the one count.
+ */
+const HOLDS = 'data-modal-holds';
+const OVERFLOW_BEFORE = 'data-modal-overflow';
+const GUTTER_BEFORE = 'data-modal-gutter';
+
+/**
+ * Hold the page still under a modal: the body stops scrolling and a page with a scrollbar keeps
+ * its room, so nothing behind moves sideways. Modals open at once share one hold: the first
+ * takes it and records the page's own styles, the last to let go gives them back, so one closing
+ * never unlocks the page under another (review m6). A style something else wrote while the page
+ * was held is that writer's, and is left as it is.
+ *
+ * @returns Let go of the hold; a second call does nothing.
+ */
+function holdPageStill(): () => void {
+  const root = document.documentElement;
+  const body = document.body;
+  const holds = Number(root.getAttribute(HOLDS) ?? '0');
+  if (holds === 0) {
+    root.setAttribute(OVERFLOW_BEFORE, body.style.overflow);
+    // A page with a scrollbar's room keeps it once it is still. The stylesheet already keeps it
+    // on every page (html's scrollbar-gutter, walk m31); written inline too, so the page holds
+    // still under a modal whatever a later rule says, and given back when the last hold goes.
+    if (window.innerWidth > root.clientWidth) {
+      root.setAttribute(GUTTER_BEFORE, root.style.scrollbarGutter);
+      root.style.scrollbarGutter = 'stable';
+    }
+    body.style.overflow = 'hidden';
+  }
+  root.setAttribute(HOLDS, String(holds + 1));
+  let held = true;
+  return (): void => {
+    if (!held) return;
+    held = false;
+    const left = Number(root.getAttribute(HOLDS) ?? '1') - 1;
+    if (left > 0) {
+      root.setAttribute(HOLDS, String(left));
+      return;
+    }
+    if (body.style.overflow === 'hidden') {
+      body.style.overflow = root.getAttribute(OVERFLOW_BEFORE) ?? '';
+    }
+    const gutter = root.getAttribute(GUTTER_BEFORE);
+    if (gutter !== null && root.style.scrollbarGutter === 'stable') {
+      root.style.scrollbarGutter = gutter;
+    }
+    for (const name of [HOLDS, OVERFLOW_BEFORE, GUTTER_BEFORE]) root.removeAttribute(name);
+  };
+}
+
+/**
+ * The attribute counting how many open modals hold one child of the body inert. Only a child
+ * a modal made inert carries it, so a part of the page something else made inert is never
+ * touched.
+ */
+const INERT_HOLDS = 'data-modal-inert';
+
+/**
+ * Make the rest of the page inert under a modal: every child of the body but the one holding
+ * the panel. Modals open at once share the hold on each child: a child is live again only when
+ * the last modal holding it lets go, so one closing never wakes the page under another (review
+ * m6). The panel's own child is lifted out of the hold, since a modal opened over another sits
+ * in a child the first made inert, and would take neither focus nor a click.
+ *
+ * @param own - The panel, or null when it has not rendered.
+ * @returns Let go of the hold; a second call does nothing.
+ */
+function holdPageInert(own: HTMLElement | null): () => void {
+  const children = [...document.body.children];
+  const mine = own === null ? undefined : children.find((element) => element.contains(own));
+  if (mine?.hasAttribute(INERT_HOLDS)) {
+    mine.removeAttribute(INERT_HOLDS);
+    mine.removeAttribute('inert');
+  }
+  const behind = children.filter(
+    (element) =>
+      element !== mine && (!element.hasAttribute('inert') || element.hasAttribute(INERT_HOLDS)),
+  );
+  for (const element of behind) {
+    element.setAttribute(INERT_HOLDS, String(Number(element.getAttribute(INERT_HOLDS) ?? '0') + 1));
+    element.setAttribute('inert', '');
+  }
+  let held = true;
+  return (): void => {
+    if (!held) return;
+    held = false;
+    for (const element of behind) {
+      // A hold lifted since (the child now holds a modal of its own) has no count left to take.
+      if (!element.hasAttribute(INERT_HOLDS)) continue;
+      const left = Number(element.getAttribute(INERT_HOLDS)) - 1;
+      if (left > 0) {
+        element.setAttribute(INERT_HOLDS, String(left));
+      } else {
+        element.removeAttribute(INERT_HOLDS);
+        element.removeAttribute('inert');
+      }
+    }
+  };
+}
+
+/**
  * Give focus to the page's heading, when what focus was to return to has left the page. The
  * heading takes it only when it is focusable (`tabIndex={-1}`, as the employee page's is), and the
  * page does not scroll to it.
@@ -95,22 +200,13 @@ export function useModal({ panel, active, initialFocus, returnFocus }: ModalOpti
     const opener = held instanceof HTMLElement && held !== document.body ? held : null;
     const back = returnFocus?.current ?? opener;
     const own = panel.current;
-    const behind = [...document.body.children].filter(
-      (element) => (own === null || !element.contains(own)) && !element.hasAttribute('inert'),
-    );
-    for (const element of behind) element.setAttribute('inert', '');
-    const root = document.documentElement;
-    const overflow = document.body.style.overflow;
-    const gutter = root.style.scrollbarGutter;
-    // A page with a scrollbar keeps its room once it is still; one without never gains any.
-    if (window.innerWidth > root.clientWidth) root.style.scrollbarGutter = 'stable';
-    document.body.style.overflow = 'hidden';
+    const wake = holdPageInert(own);
+    const letGo = holdPageStill();
     const target = initialFocus?.current ?? (own ? (focusableIn(own)[0] ?? own) : null);
     target?.focus();
     return () => {
-      for (const element of behind) element.removeAttribute('inert');
-      document.body.style.overflow = overflow;
-      root.style.scrollbarGutter = gutter;
+      wake();
+      letGo();
       // Nothing to return to (a click that focused nothing, on Safari or Firefox) leaves focus
       // where the browser puts it; only a target that has left the page hands it to the heading.
       if (back?.isConnected) back.focus();

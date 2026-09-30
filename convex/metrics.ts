@@ -298,6 +298,9 @@ function decisionTotals(
     byVia: { dashboard: [], channel: [] },
   };
   const pending = new Map<string, Doc<'events'>[]>();
+  // When each item began waiting on the manager, by `${workItemId}:${kind}`: the start of the
+  // wait for a decision made on the dashboard that no chat surface was asked for (walk m14).
+  const waitingSince = new Map<string, number>();
   const requestIds = new Set<string>();
   const resultIds = new Set<string>();
   const resentIds = new Map<string, string>();
@@ -330,6 +333,19 @@ function decisionTotals(
       pending.set(key, [...(pending.get(key) ?? []), event]);
       continue;
     }
+    if (isEventOf(event, 'work.plan-drafted')) {
+      const workItemId = asString(payload?.workItemId);
+      if (workItemId) waitingSince.set(`${workItemId}:plan`, event.createdAt);
+      continue;
+    }
+    if (isEventOf(event, 'work.actions-pending')) {
+      // Only a set holding something for the manager waits on them.
+      const workItemId = asString(payload?.workItemId);
+      if (workItemId && asIndexes(payload?.heldIndexes).length > 0) {
+        waitingSince.set(`${workItemId}:actions`, event.createdAt);
+      }
+      continue;
+    }
     if (isEventOf(event, 'work.plan-redrafting')) {
       // A re-draft withdraws the plan ask that was open: the manager is not
       // asked to decide it, so it is neither a request nor the start of the
@@ -343,6 +359,7 @@ function decisionTotals(
         if (withdrawnId) requestIds.delete(withdrawnId);
       }
       pending.delete(key);
+      waitingSince.delete(key);
       continue;
     }
     const result = decisionResult(event);
@@ -352,7 +369,18 @@ function decisionTotals(
     const queue = pending.get(key) ?? [];
     const request = queue.shift();
     pending.set(key, queue);
-    if (!request) continue;
+    const waitStart = waitingSince.get(key);
+    waitingSince.delete(key);
+    if (!request) {
+      // Decided on the dashboard with no ask on a chat surface: the manager's wait began when
+      // the item started waiting on them, so the page and the home both have one to quote.
+      if (waitStart !== undefined) {
+        const latency = Math.max(0, event.createdAt - waitStart);
+        totals.latencies.push(latency);
+        totals.byVia[result.via].push(latency);
+      }
+      continue;
+    }
     const decisionId = asString(asRecord(request.payload)?.decisionId);
     if (decisionId) resultIds.add(decisionId);
     const latency = Math.max(0, event.createdAt - request.createdAt);
@@ -443,6 +471,67 @@ function automaticKind(
   const surface = surfaces.find((row) => row.slug === parsed.action.surface);
   if (surface && isManagerDm(parsed.action, surface)) return 'manager-message';
   return actionIntent(parsed.action) === 'write' ? 'write' : 'read';
+}
+
+/**
+ * Whether a ledger row is one the employee applied on its own: landed, under standing or
+ * autonomous authority, and not a replayed sign-in. The one rule the automatic counts read.
+ */
+function isAutomaticRow(observation: LedgerObservation): boolean {
+  return (
+    observation.entry.ok === true &&
+    observation.entry.held !== true &&
+    observation.sessionRestoreOf === undefined &&
+    (observation.entry.authority === 'standing' || observation.entry.authority === 'autonomous')
+  );
+}
+
+/**
+ * Whether a ledger row is a write to a system that landed under an authority the ledger names:
+ * the manager's approval, a standing permission or autonomy. A replayed sign-in, a row held or
+ * waiting for approval, a failed apply, a message to the manager and a read are not; nor is a
+ * reconciliation copy, which carries no authority of its own (the full row it copies does).
+ */
+function isLandedWrite(
+  observation: LedgerObservation,
+  surfaces: readonly SurfaceRecord[],
+): boolean {
+  const { entry } = observation;
+  return (
+    entry.ok === true &&
+    entry.held !== true &&
+    entry.awaitingApproval !== true &&
+    observation.sessionRestoreOf === undefined &&
+    (entry.authority === 'manager' ||
+      entry.authority === 'standing' ||
+      entry.authority === 'autonomous') &&
+    automaticKind(observation, surfaces) === 'write'
+  );
+}
+
+/** The first week's Working, as one figure: whether a supervised write landed, and when. */
+interface FirstLandedWrite {
+  readonly landed: boolean;
+  /** When the first did: the first event that carried its row; null while none carries one. */
+  readonly at: number | null;
+}
+
+/**
+ * When the employee's first supervised write landed (the first week's "First supervised write:
+ * landed" and Working): the first write ledger row that actually landed, the manager's or its
+ * own, never an approval, whose apply may yet fail or wait. A row is timed by the first event
+ * that carried it; a row so far seen only on its work item has landed with no time yet, so the
+ * step is done and Working carries no date until an event carries the row.
+ */
+function firstLandedWriteOf(
+  ledger: readonly LedgerObservation[],
+  surfaces: readonly SurfaceRecord[],
+): FirstLandedWrite {
+  const writes = ledger.filter((observation) => isLandedWrite(observation, surfaces));
+  const times = writes.flatMap((observation) =>
+    observation.observedAt === null ? [] : [observation.observedAt],
+  );
+  return { landed: writes.length > 0, at: times.length > 0 ? Math.min(...times) : null };
 }
 
 function actionMetrics(
@@ -553,12 +642,7 @@ function actionMetrics(
     entry.ok === true && entry.held !== true;
   // A replayed sign-in repeats a call the run already landed; it is counted
   // as a replay, never as a second automatic action.
-  const automaticRows = ledger.filter(
-    (observation) =>
-      landed(observation) &&
-      observation.sessionRestoreOf === undefined &&
-      (observation.entry.authority === 'standing' || observation.entry.authority === 'autonomous'),
-  );
+  const automaticRows = ledger.filter(isAutomaticRow);
   const kinds = automaticRows.map((observation) => automaticKind(observation, surfaces));
   const count = (kind: AutomaticKind): number => kinds.filter((each) => each === kind).length;
   const sessionRestores = ledger.filter(
@@ -767,14 +851,18 @@ function agentFigures(
     deployedAt === undefined || at === undefined ? null : Math.max(0, at - deployedAt);
   const decisions = decisionTotals(events, workItems);
   const pilot = pilotTotals(events, workItems);
+  const surfaceRecords = surfaces.map(toSurfaceRecord);
+  const firstWrite = firstLandedWriteOf(ledger, surfaceRecords);
   const metrics: AgentMetrics = {
+    writeLanded: firstWrite.landed,
+    workingSince: firstWrite.at,
     charter: {
       timeToFirstDraftedMs: timeFromDeploy(firstDraftedAt),
       timeToFirstApprovedMs: timeFromDeploy(firstApprovedAt),
       requestChanges: events.filter((event) => isEventOf(event, 'charter.request_changes')).length,
     },
     decisions: summariseDecisions(decisions),
-    actions: actionMetrics(events, ledger, surfaces.map(toSurfaceRecord)),
+    actions: actionMetrics(events, ledger, surfaceRecords),
     surfaces: {
       approved: events.filter((event) => isEventOf(event, 'surface.approved')).length,
       rejected: events.filter((event) => isEventOf(event, 'surface.rejected')).length,

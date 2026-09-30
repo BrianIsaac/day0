@@ -23,9 +23,15 @@ const WORKS_IN = {
   real: 'the systems it finds in your documentation, each connected only once you approve it',
 } as const;
 
-/** How much a new employee does on its own: every deploy starts supervised. */
-const AUTONOMY =
-  'Supervised. Reads and messages to you apply on their own; every other action waits for your approval of the exact payload.';
+/**
+ * How much a new employee does on its own, by the deployment's surface mode: every deploy starts
+ * supervised. The hosted office holds every action, a message to the manager included, so the
+ * copy follows the gate there (the hosted walk's m4).
+ */
+const AUTONOMY = {
+  mock: 'Supervised. In the hosted office every action waits for you, a message to you included, and applies once you approve its exact payload.',
+  real: 'Supervised. Reads and messages to you apply on their own; every other action waits for your approval of the exact payload.',
+} as const;
 
 /** One documentation source the form offers to leave out. */
 interface DocSourceChoice {
@@ -157,7 +163,7 @@ export function DeployForm({
             value={name}
             onChange={(event) => setName(event.target.value)}
             aria-describedby={nameHelpId}
-            className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-2.5 text-sm focus:border-[var(--color-accent)] focus:outline-none"
+            className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-2.5 text-sm focus:border-[var(--color-accent)]"
           />
           <p id={nameHelpId} className="mt-1.5 text-xs text-[var(--color-muted)]">
             The name the team will see. It cannot be changed after deploy.
@@ -199,7 +205,7 @@ export function DeployForm({
         <dt className="text-[var(--color-muted)]">Works in</dt>
         <dd>{surfaceMode ? WORKS_IN[surfaceMode] : 'loading'}</dd>
         <dt className="text-[var(--color-muted)]">Autonomy</dt>
-        <dd>{AUTONOMY}</dd>
+        <dd>{surfaceMode ? AUTONOMY[surfaceMode] : 'loading'}</dd>
       </dl>
 
       <div className="flex flex-wrap items-center gap-3">

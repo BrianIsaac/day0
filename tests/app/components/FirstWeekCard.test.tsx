@@ -14,13 +14,13 @@ afterEach((): void => {
 
 const WORKING: readonly RailStep[] = [
   { title: 'Deployed', detail: '30 Sep 2026, 04:30', status: 'done' },
-  { title: 'Day-1 one-to-one', detail: 'done', status: 'done' },
+  { title: 'Day-1 one-to-one', detail: '30 Sep 2026, 04:52', status: 'done' },
   { title: 'Charter approved', detail: 'version 0.1', status: 'done' },
   { title: 'First supervised write', detail: 'landed', status: 'done' },
-  { title: 'Working', detail: 'in the queue', status: 'now' },
+  { title: 'Working', detail: 'since 30 Sep 2026, 14:22', status: 'now' },
 ];
 
-const NAME = 'First week: Working, in the queue. Show the whole week';
+const NAME = 'First week: Working, since 30 Sep 2026, 14:22. Show the whole week';
 
 /** The page: a control before the card, so what is behind the week can be seen to be inert. */
 function page() {
@@ -97,8 +97,15 @@ describe('FirstWeekCard', () => {
       /<button [^>]*class="rail-step now [^"]*bg-\[var\(--color-accent-soft\)\]/,
     );
     expect(html).toContain('Working<span class="sr-only">, now</span>');
-    expect(html).toContain('in the queue');
+    expect(html).toContain('since 30 Sep 2026, 14:22');
     expect(html).not.toContain('Deployed');
+  });
+
+  it('names a step with no detail yet without a stray comma (walk m12)', () => {
+    const undated = WORKING.map((step) => (step.status === 'now' ? { ...step, detail: '' } : step));
+    expect(renderToStaticMarkup(<FirstWeekCard steps={undated} />)).toContain(
+      'aria-label="First week: Working. Show the whole week"',
+    );
   });
 
   it('gives the card a 44 px target (N14)', () => {
@@ -266,6 +273,50 @@ describe('FirstWeekCard', () => {
       approve?.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
     });
     expect(pressed).toBe(1);
+  });
+
+  it('keeps the second press of a double click from taking focus off the card, beneath the week (walk m1)', async () => {
+    const view = mount(
+      <>
+        <main tabIndex={-1}>
+          <FirstWeekCard steps={WORKING} />
+        </main>
+      </>,
+    );
+    await press(view.container, NAME);
+    click(document.querySelector('[data-week-scrim]'));
+    expect(focusedName()).toBe(NAME);
+    const main = view.container.querySelector('main');
+    // The browser moves focus on a press it is not told to keep: the second press is kept.
+    const second = new MouseEvent('mousedown', { bubbles: true, cancelable: true, detail: 2 });
+    act((): void => {
+      main?.dispatchEvent(second);
+    });
+    expect(second.defaultPrevented).toBe(true);
+    expect(focusedName()).toBe(NAME);
+    // A press of its own afterwards is the manager's, and goes where it goes.
+    const own = new MouseEvent('mousedown', { bubbles: true, cancelable: true, detail: 1 });
+    act((): void => {
+      main?.dispatchEvent(own);
+    });
+    expect(own.defaultPrevented).toBe(false);
+  });
+
+  it('draws the card’s own words only while no week is on the page, so they are never doubled mid-grow (walk m2)', async () => {
+    const view = mount(page());
+    const card = (): Element | null =>
+      view.container.querySelector('button[aria-label^="First week"]');
+    expect(card()?.className).not.toMatch(/\bopacity-0\b/);
+    await press(view.container, NAME);
+    expect(card()?.className).toMatch(/\bopacity-0\b/);
+    await withMotion(async () => {
+      key('Escape');
+      // The week shrinks back and fades while the card fades in under it (second pass M1).
+      expect(document.querySelector('[data-week]')?.getAttribute('data-week')).toBe('closing');
+      expect(card()?.className).not.toMatch(/\bopacity-0\b/);
+      expect(card()?.className).toMatch(/transition-\[[^\]]*\bopacity\b[^\]]*\]/);
+    });
+    expect(focusedName()).toBe(NAME);
   });
 
   it('closes when the window is resized, rather than shrink to where the card was', async () => {

@@ -12,6 +12,7 @@ import { assertOwnsAgent, assertOwnsVoiceSession } from './ownership';
 import { commitCharterAndWorkspace, workspaceFileValidator } from './charters';
 import { appendEvent } from './eventLog';
 import { MAX_FINALISATION_RECOVERIES } from '../src/agent/one-to-one-phase';
+import { conversationOf } from '../src/agent/one-to-one-conversation';
 
 /**
  * Voice + chat session lifecycle. The agent itself asks the boss
@@ -99,7 +100,10 @@ export const latest = query({
  * Returns the row id plus `webhookToken`, the capability the caller hands to
  * ElevenLabs so the post-call webhook can prove which session it is reporting on
  * - see `claimWebhookFinalisation`. Only the boss who owns the agent ever sees
- * it: this mutation is ownership-checked.
+ * it: this mutation is ownership-checked. With them, the chat conversation the
+ * session keeps (`turns`, the reply being typed, and the stamp that names it,
+ * `conversation`), so a room reopened on it carries on from where it stood
+ * rather than opening it again. A switch away from chat moves the stamp on.
  */
 export const start = mutation({
   args: {
@@ -117,11 +121,19 @@ export const start = mutation({
       .first();
     if (open && open.state !== 'done') {
       const webhookToken = open.webhookToken ?? crypto.randomUUID();
+      // A call started over a chat still being held starts from the first question, as the
+      // switch says: the chat's turns are set aside, not drawn again over the call.
+      const leavesChat = open.mode === 'chat' && args.mode !== 'chat' && !open.pendingTranscript;
+      // Leaving chat moves the conversation on, so a chat write still in flight is refused.
+      const conversation =
+        conversationOf(open) + (open.mode === 'chat' && args.mode !== 'chat' ? 1 : 0);
       if (open.mode !== args.mode || !open.webhookToken) {
         await ctx.db.patch(open._id, {
           mode: args.mode,
           webhookToken,
+          conversation,
           ...(open.mode !== args.mode ? { elevenLabsConversationId: undefined } : {}),
+          ...(leavesChat ? { turns: undefined, replyDraft: undefined } : {}),
         });
       }
       // A session released by a failed finaliser is reusable while its agent has
@@ -131,7 +143,14 @@ export const start = mutation({
       if (agent.state === 'deployed') {
         await ctx.db.patch(args.agentId, { state: 'day-one-in-progress' });
       }
-      return { sessionId: open._id, webhookToken, resumed: true };
+      return {
+        sessionId: open._id,
+        webhookToken,
+        resumed: true,
+        conversation,
+        turns: leavesChat ? [] : (open.turns ?? []),
+        replyDraft: leavesChat ? null : (open.replyDraft ?? null),
+      };
     }
 
     const webhookToken = crypto.randomUUID();
@@ -151,7 +170,14 @@ export const start = mutation({
       payload: { sessionId: id, mode: args.mode },
       createdAt: Date.now(),
     });
-    return { sessionId: id, webhookToken, resumed: false };
+    return {
+      sessionId: id,
+      webhookToken,
+      resumed: false,
+      conversation: 0,
+      turns: [],
+      replyDraft: null,
+    };
   },
 });
 
@@ -184,9 +210,11 @@ export const attachConversationId = mutation({
 });
 
 /**
- * Hold the one-to-one again on a session whose draft failed for good: the transcript it could not
- * draft from, the notes earlier drafts were sent back with and the spent retry budget all belong
- * to the conversation being set aside, so none of them rides into the next one's draft.
+ * Hold the one-to-one again on a session whose draft failed for good: the conversation it kept,
+ * the transcript it could not draft from, the notes earlier drafts were sent back with and the
+ * spent retry budget all belong to the conversation being set aside, so none of them rides into
+ * the next one's draft or reopens in the next one's room. The conversation's stamp moves on, so
+ * a write still in flight for the one set aside is refused.
  *
  * Public, owner-guarded (`assertOwnsVoiceSession`). Refused while a finisher holds the session or
  * after it produced a charter. Any other session comes back `active` with those fields cleared,
@@ -204,6 +232,9 @@ export const restart = mutation({
     }
     await ctx.db.patch(args.sessionId, {
       state: 'active',
+      conversation: conversationOf(session) + 1,
+      turns: undefined,
+      replyDraft: undefined,
       pendingTranscript: undefined,
       pendingBossLabel: undefined,
       changeRequests: undefined,
@@ -300,9 +331,12 @@ export type FinalisationClaim =
 /**
  * Decide and write in one transaction. Convex runs a mutation serialisably, so
  * a second caller reading this row necessarily sees the first caller's patch -
- * which is the property a separate check-then-act pair cannot have.
+ * which is the property a separate check-then-act pair cannot have. Called by
+ * the three finishers here and by the chat one-to-one's close
+ * (`oneToOne.recordAnswer`, `oneToOne.finish`), which claims as the browser
+ * did when the room posted the transcript.
  */
-async function claimSession(
+export async function claimSession(
   ctx: MutationCtx,
   session: Doc<'voiceSessions'>,
   claimedBy: 'browser' | 'webhook' | 'recovery',

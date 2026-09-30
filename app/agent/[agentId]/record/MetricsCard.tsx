@@ -1,5 +1,5 @@
 import type { AgentMetrics } from '@/metrics/types';
-import { formatAuditTrail, formatMetricDuration } from '../../../metric-format';
+import { decidedCount, formatAuditTrail, formatMetricDuration } from '../../../metric-format';
 import { Card } from '../../../components/Card';
 import { readsAndMessages, PILOT_FIGURES } from '../../../CompanySupervision';
 import { DISCLOSURE_SUMMARY } from '../../../components/Disclosure';
@@ -8,14 +8,33 @@ function metricValue(value: string | undefined): string {
   return value ?? 'loading…';
 }
 
+/**
+ * The counts under the card's figures in one line, joined by the middle dot the rest of the page
+ * uses (the hosted walk's m28 read "0 asked on a chat surface - 0 partial - ...").
+ *
+ * @param metrics - The employee's figures.
+ */
+export function soFarLine(metrics: AgentMetrics): string {
+  const { decisions, actions } = metrics;
+  const restores = actions.sessionRestores;
+  return [
+    `${decisions.requested} asked on a chat surface`,
+    `${decisions.partiallyApproved} partial`,
+    `${actions.automatic.writes} automatic ${actions.automatic.writes === 1 ? 'change' : 'changes'}`,
+    `${actions.held} held`,
+    `${actions.refused} refused`,
+    ...(restores > 0
+      ? [`${restores} browser ${restores === 1 ? 'call' : 'calls'} replayed to sign in again`]
+      : []),
+  ].join(' · ');
+}
+
 /** The employee's supervision figures. */
 export function MetricsCard({ metrics }: { metrics: AgentMetrics | undefined }) {
   // A decision made on the dashboard is a decision whether or not a chat
   // surface was ever asked, so "not yet" means no decision at all (P6-9).
   const decisions = metrics?.decisions;
-  const decided = decisions
-    ? decisions.approved + decisions.rejected + decisions.partiallyApproved
-    : 0;
+  const decided = decisions ? decidedCount(decisions) : 0;
   const humanDecisions = decisions
     ? decided === 0
       ? 'not yet'
@@ -60,15 +79,7 @@ export function MetricsCard({ metrics }: { metrics: AgentMetrics | undefined }) 
       </dl>
       {metrics ? (
         <div className="mt-3 pt-2 border-t border-[var(--color-border)] text-xs text-[var(--color-muted)] leading-relaxed">
-          <p>
-            {metrics.decisions.requested} asked on a chat surface -{' '}
-            {metrics.decisions.partiallyApproved} partial - {metrics.actions.automatic.writes}{' '}
-            automatic {metrics.actions.automatic.writes === 1 ? 'change' : 'changes'} -{' '}
-            {metrics.actions.held} held - {metrics.actions.refused} refused
-            {metrics.actions.sessionRestores > 0
-              ? ` - ${metrics.actions.sessionRestores} browser ${metrics.actions.sessionRestores === 1 ? 'call' : 'calls'} replayed to sign in again`
-              : null}
-          </p>
+          <p>{soFarLine(metrics)}</p>
           <p>Also applied on their own: {readsAndMessages(metrics.actions.automatic)}.</p>
         </div>
       ) : null}

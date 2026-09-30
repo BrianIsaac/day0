@@ -1,6 +1,10 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { OfficeWorld } from '../../../app/home/OfficeWorld';
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { clearance, PHONE_FIGURE_SPAN } from '../../../app/home/office-places';
 import type { RosterRow } from '../../../app/home/types';
 
 const mira = {
@@ -18,6 +22,35 @@ const mira = {
 } as unknown as RosterRow;
 
 const idle = { ...mira, agentId: 'synthetic-idle', name: 'Aiko', openCount: 0 } as RosterRow;
+
+/** Where each figure stands in the markup, at a desktop width and on a phone. */
+function figuresOf(
+  html: string,
+): { desktop: { x: number; y: number }; phone: { x: number; y: number } }[] {
+  return [
+    ...html.matchAll(
+      /class="day0-office-agent [^"]*" style="--x:([\d.]+);--y:([\d.]+);--px:([\d.]+);--py:([\d.]+)/g,
+    ),
+  ].map((match) => ({
+    desktop: { x: Number(match[1]), y: Number(match[2]) },
+    phone: { x: Number(match[3]), y: Number(match[4]) },
+  }));
+}
+
+/** The hosted walk's roster when Ada's figure covered Cleo's: two idle, one waiting, two at desks. */
+const WALK = [
+  ['j5713xes6by9nefbwn731b00f58fdy75', 'Ada', 'active'],
+  ['j571jf4d2j098ha81d0mqwc4z18fdg78', 'Ben', 'active'],
+  ['j579sb6eh5qv6ks03bwzsfk69s8fdnpx', 'Cleo', 'deployed'],
+  ['j57bbxk2n8t35dq65tqydezd3h8fcse2', 'Dara', 'day-one-in-progress'],
+  ['j5792jaxjmh7xmc9mf2whktdvs8fc5fn', 'Eli', 'day-one-in-progress'],
+].map(([agentId, name, state]) => ({ ...mira, agentId, name, state, openCount: 0 }) as RosterRow);
+
+// By path: `fs` does not take jsdom's `URL`.
+const CSS = readFileSync(
+  resolve(dirname(fileURLToPath(import.meta.url)), '../../../app/globals.css'),
+  'utf8',
+);
 
 describe('OfficeWorld', (): void => {
   it('renders every room lit, with no light-up state, before the script runs', (): void => {
@@ -47,6 +80,13 @@ describe('OfficeWorld', (): void => {
     expect(html).toContain('0 total');
   });
 
+  it("leaves each figure's link the base layer's focus ring, which no utility of its own removes (C1)", (): void => {
+    const html = renderToStaticMarkup(<OfficeWorld agents={[mira, idle]} settled />);
+    const figures = [...html.matchAll(/<a [^>]*class="day0-office-agent [^"]*"/g)];
+    expect(figures).toHaveLength(2);
+    for (const [figure] of figures) expect(figure).not.toMatch(/outline-(none|hidden)/);
+  });
+
   it('titles a figure with the employee and what it is doing, nothing else (N6)', (): void => {
     const html = renderToStaticMarkup(<OfficeWorld agents={[mira, idle]} settled />);
     expect(html).toContain('title="Mira, working at a desk"');
@@ -58,52 +98,95 @@ describe('OfficeWorld', (): void => {
     const empty = renderToStaticMarkup(<OfficeWorld agents={[]} settled />);
     const staffed = renderToStaticMarkup(<OfficeWorld agents={[mira]} settled />);
     expect(`${empty}${staffed}`).not.toMatch(/text-\[(9|10|11)px\]/);
-    expect(staffed).toContain('reads 2 locations');
+    expect(staffed).toContain('<span class="max-sm:sr-only">reads </span>2 locations');
     expect(staffed).toContain(mira.roleLine);
   });
 
-  it('keeps a figure and its name plate inside the office at a phone width', (): void => {
+  it('hands both places to the stylesheet, which keeps a figure and a desk inside the office (re-pinned: the phone office)', (): void => {
     const html = renderToStaticMarkup(<OfficeWorld agents={[mira]} settled />);
-    expect(html).toContain('left:clamp(4.5rem, 14%, calc(100% - 4.5rem))');
+    expect(html).toMatch(/class="day0-office-agent day0-office-at [^"]*" style="--x:14;--y:25;/);
+    // The insets and the phone plan are the stylesheet's, since an inline style cannot follow a breakpoint.
+    expect(CSS).toContain(
+      'left: clamp(var(--inset), calc(var(--x) * 1%), calc(100% - var(--inset)));',
+    );
+    expect(CSS).toMatch(/\.day0-office-agent\.day0-office-at \{\s*--inset: 4\.5rem;/);
+    expect(CSS).toMatch(/\.day0-office-at \{\s*--inset: 3\.5rem;/);
   });
 
   it('seats working employees far apart first, so two name plates never overlap', (): void => {
     const second = { ...mira, agentId: 'synthetic-second', name: 'Aiko' } as RosterRow;
     const html = renderToStaticMarkup(<OfficeWorld agents={[mira, second]} settled />);
-    const seats = [...html.matchAll(/left:clamp\(4\.5rem, (\d+)%[^;]*;top:(\d+)%/g)].map(
-      (match) => [Number(match[1]), Number(match[2])],
-    );
-    expect(seats).toEqual([
+    expect(figuresOf(html).map(({ desktop }) => [desktop.x, desktop.y])).toEqual([
       [14, 25],
       [67, 25],
     ]);
   });
 
-  it('draws four desks on a phone, the ones the first four employees take (UX 12, option c)', (): void => {
-    const html = renderToStaticMarkup(<OfficeWorld agents={[]} settled />);
-    const desks = [...html.matchAll(/class="day0-pixel-desk ([^"]*)"/g)].map((match) => match[1]);
-    const chairs = [...html.matchAll(/class="day0-pixel-chair ([^"]*)"/g)].map((match) => match[1]);
-    expect(desks).toHaveLength(8);
-    const hidden = (classes: string[]): number[] =>
-      classes.flatMap((names, index) => (names.includes('max-sm:hidden') ? [index] : []));
-    expect(hidden(desks)).toEqual([1, 4, 5, 7]);
-    expect(hidden(chairs)).toEqual([1, 4, 5, 7]);
-    const staffed = renderToStaticMarkup(
-      <OfficeWorld
-        agents={Array.from(
-          { length: 6 },
-          (_, index) => ({ ...idle, agentId: `a${index}` }) as RosterRow,
-        )}
-        settled
-      />,
+  it('stands no idle employee on another, nor on one at a desk, as the walk’s five were (walk m18)', (): void => {
+    const figures = figuresOf(renderToStaticMarkup(<OfficeWorld agents={WALK} settled />)).map(
+      ({ desktop }) => desktop,
     );
-    expect(
-      hidden([...staffed.matchAll(/class="day0-pixel-desk ([^"]*)"/g)].map((match) => match[1])),
-    ).toEqual([4, 5]);
+    expect(figures).toHaveLength(5);
+    for (const [index, figure] of figures.entries()) {
+      expect(clearance(figure, figures.slice(index + 1)), `figure ${index}`).toBeGreaterThanOrEqual(
+        1,
+      );
+    }
   });
 
-  it('keeps every desk inside the office at a phone’s width', (): void => {
+  it('stands the walk’s five clear of each other on a phone, the first three side by side along the top (the phone office)', (): void => {
+    for (const roster of [
+      WALK,
+      WALK.map((agent) => ({ ...agent, state: 'active' }) as RosterRow),
+      WALK.map((agent) => ({ ...agent, openCount: 1 }) as RosterRow),
+    ]) {
+      const phone = figuresOf(renderToStaticMarkup(<OfficeWorld agents={roster} settled />)).map(
+        (figure) => figure.phone,
+      );
+      expect(phone).toHaveLength(5);
+      for (const [index, figure] of phone.entries()) {
+        expect(
+          clearance(figure, phone.slice(index + 1), PHONE_FIGURE_SPAN),
+          `figure ${index}`,
+        ).toBeGreaterThanOrEqual(1);
+      }
+    }
+    const seated = figuresOf(
+      renderToStaticMarkup(
+        <OfficeWorld
+          agents={WALK.map((agent) => ({ ...agent, openCount: 1 }) as RosterRow)}
+          settled
+        />,
+      ),
+    );
+    expect(seated.slice(0, 3).map(({ phone }) => phone.y)).toEqual([16, 16, 16]);
+  });
+
+  it('draws a phone figure at most a third of the office inside its frame, at the 110 px the ruling names', (): void => {
+    expect(CSS).toMatch(
+      /@media \(width < 40rem\) \{\s*\.day0-office-at \{\s*left: calc\(8px \+ \(100% - 16px\) \* var\(--px\) \/ 100\);\s*top: calc\(var\(--py\) \* 1%\);\s*\}\s*\.day0-office-agent\.day0-office-at \{\s*width: min\(110px, calc\(\(100% - 16px\) \/ 3 - 6px\)\);/,
+    );
+  });
+
+  it('draws no desk on a phone, where a figure covers the desk it sits at (re-pinned: the phone office supersedes UX 12, option c)', (): void => {
+    for (const agents of [
+      [],
+      Array.from({ length: 6 }, (_, index) => ({ ...idle, agentId: `a${index}` }) as RosterRow),
+    ]) {
+      const html = renderToStaticMarkup(<OfficeWorld agents={agents} settled />);
+      const desks = [...html.matchAll(/class="day0-pixel-desk ([^"]*)"/g)].map((match) => match[1]);
+      const chairs = [...html.matchAll(/class="day0-pixel-chair ([^"]*)"/g)].map(
+        (match) => match[1],
+      );
+      expect(desks).toHaveLength(8);
+      expect(desks.every((names) => names.includes('max-sm:hidden'))).toBe(true);
+      expect(chairs.every((names) => names.includes('max-sm:hidden'))).toBe(true);
+    }
+  });
+
+  it('keeps every desk where the desktop plan stands it, inside the office by its inset', (): void => {
     const html = renderToStaticMarkup(<OfficeWorld agents={[]} settled />);
-    expect(html).toContain('left:clamp(3.5rem, 86%, calc(100% - 3.5rem))');
+    const deskTwo = [...html.matchAll(/class="day0-pixel-desk [^"]*" style="([^"]*)"/g)][2]?.[1];
+    expect(deskTwo).toBe('--x:67;--y:17;--i:2');
   });
 });

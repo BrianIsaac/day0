@@ -20,11 +20,16 @@ const EDGE_PX = 16;
 /** How long after a click closes the week the rest of that double click is kept off the page. */
 const DOUBLE_CLICK_TAIL_MS = 500;
 
+/** The events the rest of a double click sends after the click that closed the week. */
+const DOUBLE_CLICK_TAIL = ['mousedown', 'click', 'dblclick'] as const;
+
 /**
  * Keep the rest of a double click off the page once its first click has closed the week: the
- * second click (and the double click itself) would pass through the shrinking week, or land
- * where it was under reduced motion, onto whatever is beneath, a button included. A click of its
- * own, or the end of the window, ends the watch.
+ * second press, the second click and the double click itself would pass through the shrinking
+ * week, or land where it was under reduced motion, onto whatever is beneath: a button, or a
+ * focusable box such as `main`, which the second press would take focus to from the card it was
+ * just given back to (the hosted walk's m1). A press or click of its own, or the end of the
+ * window, ends the watch.
  */
 function swallowDoubleClickTail(): void {
   const swallow = (event: Event): void => {
@@ -37,12 +42,10 @@ function swallowDoubleClickTail(): void {
   };
   const stop = (): void => {
     clearTimeout(timer);
-    document.removeEventListener('click', swallow, true);
-    document.removeEventListener('dblclick', swallow, true);
+    for (const type of DOUBLE_CLICK_TAIL) document.removeEventListener(type, swallow, true);
   };
   const timer = setTimeout(stop, DOUBLE_CLICK_TAIL_MS);
-  document.addEventListener('click', swallow, true);
-  document.addEventListener('dblclick', swallow, true);
+  for (const type of DOUBLE_CLICK_TAIL) document.addEventListener(type, swallow, true);
 }
 
 /** Where the card sat when it was pressed, in the window. */
@@ -160,9 +163,13 @@ export function FirstWeekCard({ steps, arriving = false }: FirstWeekCardProps) {
           aria-expanded={open}
           // Only while the week is on the page: the control names an element that exists.
           aria-controls={anchor !== null ? weekId : undefined}
-          aria-label={`First week: ${current.title}, ${current.detail}. Show the whole week`}
+          aria-label={`First week: ${current.detail ? `${current.title}, ${current.detail}` : current.title}. Show the whole week`}
           onClick={show}
-          className={`rail-step now ${RAIL_CELL} min-h-11 w-full cursor-pointer overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-accent-soft)] text-left transition-[transform,border-color] duration-[120ms,180ms] ease-out hover:border-[var(--color-accent-line)] motion-safe:active:scale-[0.98]`}
+          // While the week is open the card's own words are not drawn: the week grows out of the
+          // card, and the two sets of words read doubled mid-grow (the hosted walk's m2). As the
+          // week shrinks back the card fades in under it over the week's own 200 ms fade, so its
+          // place is never empty. Opacity, not visibility, so focus can come back to it.
+          className={`${open ? 'opacity-0 ' : ''}rail-step now ${RAIL_CELL} min-h-11 w-full cursor-pointer overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-accent-soft)] text-left transition-[transform,border-color,opacity] duration-[120ms,180ms,200ms] ease-out hover:border-[var(--color-accent-line)] motion-safe:active:scale-[0.98]`}
         >
           <RailStepText step={current} />
         </button>

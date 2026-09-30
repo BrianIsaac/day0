@@ -10,7 +10,6 @@ import {
   STALE_LISTING_PAGE,
   STALE_SYNC_MS,
   SUPERSEDED_CREDENTIAL_KEEP_MS,
-  agentReadsSource,
   validateLinkInput,
   validateReaderSecret,
 } from '../../convex/docSources';
@@ -219,49 +218,6 @@ describe('documentation source validation', (): void => {
         serverKind: 'notion',
       }),
     ).not.toThrow();
-  });
-
-  it('reads every owner source except the excluded ones', async (): Promise<void> => {
-    const harness = convexTest(schema, allConvexModules());
-    const result = await harness.run(async (ctx) => {
-      const first = await ctx.db.insert('docSources', {
-        userId: 'owner',
-        label: 'First',
-        kind: 'folder',
-        locator: '.',
-        status: 'synced',
-        createdAt: 1,
-        updatedAt: 1,
-      });
-      const second = await ctx.db.insert('docSources', {
-        userId: 'owner',
-        label: 'Second',
-        kind: 'folder',
-        locator: 'second',
-        status: 'synced',
-        createdAt: 1,
-        updatedAt: 1,
-      });
-      const base = {
-        _id: 'agent' as never,
-        _creationTime: 1,
-        bossEmail: 'boss@day0.local',
-        name: 'test',
-        userId: 'owner',
-        state: 'deployed' as const,
-        createdAt: 1,
-      };
-      return {
-        all: agentReadsSource(base, second),
-        excludedSecond: agentReadsSource({ ...base, excludedDocSourceIds: [second] }, second),
-        keptFirst: agentReadsSource({ ...base, excludedDocSourceIds: [second] }, first),
-      };
-    });
-    expect(result).toEqual({
-      all: true,
-      excludedSecond: false,
-      keptFirst: true,
-    });
   });
 });
 

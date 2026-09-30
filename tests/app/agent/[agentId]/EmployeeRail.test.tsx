@@ -50,6 +50,18 @@ describe('railFigures', () => {
     ]);
   });
 
+  it('counts a partial approval once, among the approvals (walk m14)', () => {
+    const metrics = dashboardMetrics();
+    const figures = railFigures({
+      ...metrics,
+      decisions: { ...metrics.decisions, approved: 2, rejected: 2, partiallyApproved: 1 },
+    });
+    expect(figures[0]).toEqual({
+      label: 'Decisions',
+      value: '4 by you (2 approved, 1 of them in part, 2 rejected)',
+    });
+  });
+
   it('says none yet before the first decision', () => {
     const metrics = dashboardMetrics();
     const none = railFigures({
@@ -92,6 +104,30 @@ describe('RecordLines', () => {
     expect(html).toContain('<span class="sr-only">Held: </span>');
     expect(html).toContain('>29 Sep 2026, 09:41</time>');
   });
+
+  it('names the item once on a line whose words name it already (walk m15)', () => {
+    const discovered = {
+      _id: 'e1',
+      _creationTime: 1,
+      agentId: 'agent-1',
+      type: 'work.discovered',
+      payload: { workItemId: 'w1', title: 'Close REVOPS-5' },
+      createdAt: Date.UTC(2026, 8, 29, 9, 41),
+    } as unknown as Doc<'events'>;
+    const html = text(
+      renderToStaticMarkup(
+        asEmployee(
+          <RecordLines
+            events={[discovered]}
+            titles={new Map([['w1', 'Close REVOPS-5']])}
+            lines={1}
+          />,
+        ),
+      ),
+    );
+    expect(html.match(/Close REVOPS-5/g)).toHaveLength(1);
+    expect(html).toContain('new work: Close REVOPS-5');
+  });
 });
 
 describe('EmployeeRail', () => {
@@ -114,6 +150,16 @@ describe('EmployeeRail', () => {
     expect(link).toMatch(/class="[^"]*\bmin-h-11\b/);
     expect(link).toMatch(/class="[^"]*\bmin-w-11\b/);
     expect(link).toMatch(/class="[^"]*\bjustify-end\b/);
+  });
+
+  it('keeps the Record card header the height of its neighbours, the target reaching into its padding (walk m19)', () => {
+    backend.queries = { 'metrics:forAgent': dashboardMetrics(), 'events:recent': [] };
+    const link = /<a [^>]*href="\/agent\/agent-1\/record"[^>]*>/.exec(
+      renderToStaticMarkup(asEmployee(<EmployeeRail />)),
+    )?.[0];
+    // 44 px less 13 px each way is 18 px, inside the 19.5 px line of the header's 13 px meta; on
+    // the bed the header is 51.5 px, as its neighbours' are (52.75 px at 11 px each way).
+    expect(link).toMatch(/class="[^"]*-my-\[13px\]/);
   });
 
   it('says where decisions reach the manager in each mode, a connected chat surface included', () => {

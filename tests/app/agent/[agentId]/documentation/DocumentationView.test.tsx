@@ -122,7 +122,8 @@ describe('DocumentationView', () => {
 
   it('says the hosted office reads its own wiki, and links no page mock mode does not have', () => {
     const html = renderToStaticMarkup(asEmployee(<DocumentationView />));
-    expect(html).toContain('reads the office&#x27;s wiki and how-to guides');
+    // Walk m3: the build dropped the space after the name ("Adareads").
+    expect(html).toContain('In the hosted office Mira reads the office’s wiki and how-to guides');
     expect(html).not.toContain('href="/documentation"');
     expect(html).not.toContain('Link a location');
   });

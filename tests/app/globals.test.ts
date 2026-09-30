@@ -62,6 +62,30 @@ describe('the theme tokens', () => {
     });
   });
 
+  it('draws the link underline at 3:1 or more on every surface a link sits on, the one cue it is a link (C3)', () => {
+    // The accent mixed into transparent, as the focus ring is, so the line keeps its contrast on
+    // each surface; the accent line (2.82:1 on a card) fell short of WCAG 1.4.11's 3:1.
+    const mix =
+      /--color-link-line:\s*color-mix\(in oklab, var\(--color-accent\) (\d+)%, transparent\);/.exec(
+        CSS,
+      );
+    expect(mix).not.toBeNull();
+    const alpha = Number(mix?.[1]) / 100;
+    const channels = (hex: string): number[] =>
+      [1, 3, 5].map((start) => Number.parseInt(hex.slice(start, start + 2), 16));
+    const over = (background: string): string =>
+      `#${channels(token('accent'))
+        .map((channel, index) =>
+          Math.round(alpha * channel + (1 - alpha) * (channels(background)[index] ?? 0))
+            .toString(16)
+            .padStart(2, '0'),
+        )
+        .join('')}`;
+    for (const surface of ['bg', 'card', 'inset', 'accent-soft', 'warn-soft']) {
+      expect(contrast(over(token(surface)), token(surface)), surface).toBeGreaterThanOrEqual(3);
+    }
+  });
+
   it('keeps card prose and the accent, warn and ok tones on their fills readable at WCAG AA', () => {
     expect(contrast(token('fg-2'), token('card'))).toBeGreaterThanOrEqual(4.5);
     // Danger on its own fill is 4.34:1, short of AA: the design's pair, recorded in the wave 6 A
@@ -88,6 +112,11 @@ function blocks(opener: string): string[] {
     }
   }
   return found;
+}
+
+/** The stylesheet with its comments and every `@layer base` block taken out. */
+function unlayered(): string {
+  return CSS.replace(/\/\*[\s\S]*?\*\//g, '').replace(/@layer base\s*\{[\s\S]*?\n\}/g, '');
 }
 
 /** The declarations of every top-level-or-nested rule whose selector list is exactly `selector`. */
@@ -201,15 +230,63 @@ describe('the public-page motion', () => {
     // Unlayered, the rule beat every Tailwind utility and the tab strip drew a scrollbar.
     const base = blocks('@layer base').join('\n');
     expect(rulesFor(base, '*').join('\n')).toMatch(/scrollbar-width:\s*thin/);
-    const unlayered = CSS.replace(/\/\*[\s\S]*?\*\//g, '').replace(
-      /@layer base\s*\{[\s\S]*?\n\}/g,
-      '',
-    );
-    expect(unlayered).not.toMatch(/scrollbar-(width|color)|::-webkit-scrollbar/);
+    expect(unlayered()).not.toMatch(/scrollbar-(width|color)|::-webkit-scrollbar/);
+  });
+
+  it("keeps a scrollbar's room on every page, in the base layer, so no page shifts sideways when it scrolls (walk m31)", () => {
+    const base = blocks('@layer base').join('\n');
+    expect(rulesFor(base, 'html').join('\n')).toMatch(/scrollbar-gutter:\s*stable/);
+    expect(unlayered()).not.toMatch(/scrollbar-gutter/);
+  });
+
+  it("hides only the first step's header of a Clerk widget under a page's own h1, unlayered (walk m26)", () => {
+    const rule =
+      /\[data-headed-clerk\] \.cl-signIn-start \.cl-header,\s*\[data-headed-clerk\] \.cl-signUp-start \.cl-header \{\s*display: none;/;
+    expect(unlayered()).toMatch(rule);
   });
 
   it("draws a tab's focus ring inside it, where the strip does not clip it", () => {
     expect(rulesFor(CSS, "[role='tab']:focus-visible")[0]).toMatch(/outline-offset:\s*-2px/);
+  });
+
+  it("keeps the focus ring in the base layer, so a control's own focus utility outranks it (C1)", () => {
+    // Unlayered, the ring beat every utility: `focus-visible:outline-offset-[-3px]` on the
+    // walkthrough's frame link and a control's own corners never applied.
+    const base = blocks('@layer base').join('\n');
+    const [ring] = rulesFor(
+      base,
+      ":where(a, button, input, select, summary, textarea, [tabindex='0']):focus-visible",
+    );
+    expect(ring).toMatch(
+      /outline:\s*2px solid color-mix\(in oklab, var\(--color-accent\) 75%, transparent\)/,
+    );
+    expect(ring).toMatch(/outline-offset:\s*1px/);
+    expect(rulesFor(base, "[role='tab']:focus-visible")[0]).toMatch(/outline-offset:\s*-2px/);
+    expect(unlayered()).not.toContain(':focus-visible');
+  });
+
+  it("underlines a link in running text in the link line, as ButtonLink's text look does, and only a link with no class of its own (C3)", () => {
+    // Tailwind's preflight sets `a` to inherit its text's colour and decoration, so a bare link
+    // inside a sentence read as prose.
+    const base = blocks('@layer base').join('\n');
+    const [link] = rulesFor(base, 'a[href]:not([class])');
+    // Not zero-specificity: the preflight's own `a` rule shares the layer and would win.
+    expect(base).not.toContain(':where(a[href]');
+    expect(link).toMatch(/text-decoration-line:\s*underline/);
+    expect(link).toMatch(/text-decoration-color:\s*var\(--color-link-line\)/);
+    expect(link).toMatch(/text-underline-offset:\s*4px/);
+    // No size: an inline link keeps the sentence's line, which the target floor exempts.
+    expect(link).not.toMatch(/(min-)?(height|width|padding|display)\s*:/);
+    const hover = blocks('@media (hover: hover)').join('\n');
+    expect(rulesFor(hover, 'a[href]:not([class]):hover')[0]).toMatch(
+      /text-decoration-color:\s*var\(--color-accent\)/,
+    );
+    // Nothing outside the base layer styles every link, which would outrank each link's own
+    // classes; a component's scoped rule (`.day0-setup-nav a`) styles its own links only.
+    const selectors = [...unlayered().matchAll(/(?:^|[;{}])\s*([^;{}@]+)\{/g)].flatMap((match) =>
+      (match[1] ?? '').split(',').map((part) => part.trim()),
+    );
+    expect(selectors.filter((selector) => /^(:where\()?a($|[\s:.[)])/.test(selector))).toEqual([]);
   });
 
   it('takes the scroll position from nobody and leaves no trace of the removed cursor', () => {

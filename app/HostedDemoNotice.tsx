@@ -19,7 +19,7 @@ export function HostedDemoNotice() {
         {HOSTED_DEMO_NOTICE.link.before}
         <a
           href={HOSTED_DEMO_NOTICE.link.href}
-          className="underline decoration-zinc-700 underline-offset-4 transition-colors hover:decoration-[var(--color-accent)]"
+          className="underline decoration-[var(--color-link-line)] underline-offset-4 transition-colors hover:decoration-[var(--color-accent)]"
         >
           {HOSTED_DEMO_NOTICE.link.label}
         </a>

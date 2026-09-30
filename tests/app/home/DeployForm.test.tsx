@@ -43,13 +43,20 @@ describe('DeployForm', (): void => {
     expect(text).toContain('The name the team will see. It cannot be changed after deploy.');
   });
 
+  it("keeps the base layer's focus ring on the name field, which no utility of its own removes (C1)", (): void => {
+    const field = /<input[^>]*placeholder="worker 1"[^>]*>/.exec(html)?.[0] ?? '';
+    expect(field).toContain('focus:border-[var(--color-accent)]');
+    expect(field).not.toMatch(/outline-(none|hidden)/);
+  });
+
   it('states the three facts: who it reports to, where it works, how much it does alone', (): void => {
     expect(text).toContain('Reports to sam@revops.example (you)');
     expect(text).toContain(
       'Works in the mock office: a Slack, the Q4 Revenue Tracker, a wiki, a ticket queue and one social mention',
     );
+    // Walk m4: the hosted office holds the manager DM too, so the mock copy says every action.
     expect(text).toContain(
-      'Autonomy Supervised. Reads and messages to you apply on their own; every other action waits for your approval of the exact payload.',
+      'Autonomy Supervised. In the hosted office every action waits for you, a message to you included, and applies once you approve its exact payload.',
     );
     const real = readAs(
       renderToStaticMarkup(
@@ -58,6 +65,9 @@ describe('DeployForm', (): void => {
     );
     expect(real).toContain(
       'Works in the systems it finds in your documentation, each connected only once you approve it',
+    );
+    expect(real).toContain(
+      'Autonomy Supervised. Reads and messages to you apply on their own; every other action waits for your approval of the exact payload.',
     );
   });
 

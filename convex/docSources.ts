@@ -24,6 +24,7 @@ import type { IntakeScope } from '../src/surfaces/intake-scope';
 import { assertCurrentGeneration } from '../src/docs/sync-generation';
 import { appendEvent } from './eventLog';
 import { mirroredDocSlug } from '../src/docs/types';
+import { agentReadsSource } from '../src/docs/agent-sources';
 import {
   endedShort,
   reasonWithoutLegacyRecord,
@@ -326,23 +327,6 @@ export function validateReaderSecret(input: LinkInput, secret: string | undefine
 /** What a source's own secret is called on its credential row. */
 function secretLabel(source: Pick<LinkInput, 'label' | 'kind'>): string {
   return `${source.label} ${source.kind === 'mcp' ? 'connection secret' : 'reader secret'}`;
-}
-
-/**
- * Check whether an agent inherits a source.
- *
- * An agent reads every source its owner links, before or after the deploy,
- * except the ones it excluded at deploy.
- *
- * Args:
- *   agent: Persisted agent row.
- *   sourceId: Owner-level source id.
- *
- * Returns:
- *   True when the source should be mirrored for the agent.
- */
-export function agentReadsSource(agent: Doc<'agents'>, sourceId: Id<'docSources'>): boolean {
-  return !agent.excludedDocSourceIds?.includes(sourceId);
 }
 
 /**
