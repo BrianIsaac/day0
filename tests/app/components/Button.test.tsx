@@ -36,6 +36,13 @@ describe('Button', () => {
     expect(buttonClass('secondary', 'small')).toMatch(/\bno-underline\b/);
   });
 
+  it('underlines the text look in the accent line, the look a bare link in a sentence takes (C3)', () => {
+    // The second hairline (1.7:1 on a card) left the line invisible, so the control read as prose.
+    expect(buttonClass('text')).toContain('decoration-[var(--color-accent-line)]');
+    expect(buttonClass('text')).toContain('underline-offset-4');
+    expect(buttonClass('text')).toContain('hover:decoration-[var(--color-accent)]');
+  });
+
   it('keeps a caller class beside its own', () => {
     expect(renderToStaticMarkup(<Button className="w-full">Go</Button>)).toMatch(/ w-full"/);
   });

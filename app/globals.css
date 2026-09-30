@@ -106,15 +106,16 @@ body {
 
   /* A link in running text is underlined (C3): the preflight leaves `a` looking like the text
      around it, so a bare link inside a sentence read as prose. The look is `ButtonLink
-     variant="text"`'s, the second hairline under it and the accent on hover. Only a link with no
-     class takes it: a nav link, a card link, a `ButtonLink` and a tab each carry their own
-     classes and keep their own look, and a link that wants another look says so with a class.
-     It sets no size, so an inline link keeps the sentence's line. Its selector is not wrapped in
-     `:where()`: the preflight's `a` rule sits in this layer too, and a zero-specificity rule
-     loses to it; a utility still outranks it, from its later layer. */
+     variant="text"`'s: the accent line under it, the accent on hover (the second hairline, at
+     1.7:1 on a card, left the line invisible). Only a link with no class takes it: a nav link, a
+     card link, a `ButtonLink` and a tab each carry their own classes and keep their own look,
+     and a link that wants another look says so with a class. It sets no size, so an inline link
+     keeps the sentence's line. The selector is not wrapped in `:where()`: the preflight's `a`
+     rule shares this layer and would beat a zero-specificity one; a utility still outranks it
+     from its later layer. */
   a[href]:not([class]) {
     text-decoration-line: underline;
-    text-decoration-color: var(--color-border-2);
+    text-decoration-color: var(--color-accent-line);
     text-underline-offset: 4px;
     transition: text-decoration-color 180ms ease-out;
   }

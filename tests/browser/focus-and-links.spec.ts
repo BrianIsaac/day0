@@ -149,15 +149,15 @@ test.describe('the focus ring (C1)', () => {
 });
 
 test.describe('the link in running text (C3)', () => {
-  test('underlines a bare link in a sentence in the second hairline, on the line it sits on', async ({
+  test('underlines a bare link in a sentence in the accent line, on the line it sits on', async ({
     page,
   }) => {
     await mountProbes(page);
     const link = page.locator('[data-probe="prose"] a');
     const look = await lookOf(link);
     expect(look.decorationLine).toBe('underline');
-    // `--color-border-2`, #3f3f46, as `ButtonLink variant="text"` draws it.
-    expect(look.decorationColour).toBe('rgb(63, 63, 70)');
+    // `--color-accent-line`, #376772, as `ButtonLink variant="text"` draws it.
+    expect(look.decorationColour).toBe('rgb(55, 103, 114)');
     expect(look.height).toBeLessThanOrEqual(look.lineHeight + 1);
     await link.hover();
     // `--color-accent`, #22d3ee, once the 180 ms colour change has run.
@@ -174,7 +174,7 @@ test.describe('the link in running text (C3)', () => {
     const text = await lookOf(page.locator('[data-probe="text-link"] a'));
     expect(text).toMatchObject({
       decorationLine: 'underline',
-      decorationColour: 'rgb(63, 63, 70)',
+      decorationColour: 'rgb(55, 103, 114)',
     });
     for (const tab of await page.locator('[data-probe="tabs"] [role="tab"]').all()) {
       expect((await lookOf(tab)).decorationLine).toBe('none');
