@@ -229,6 +229,27 @@ describe('the public-page motion', () => {
     expect(unlayered()).not.toContain(':focus-visible');
   });
 
+  it("underlines a link in running text as ButtonLink's text look does, and only a link with no class of its own (C3)", () => {
+    // Tailwind's preflight sets `a` to inherit its text's colour and decoration, so a bare link
+    // inside a sentence read as prose.
+    const base = blocks('@layer base').join('\n');
+    const [link] = rulesFor(base, ':where(a[href]:not([class]))');
+    expect(link).toMatch(/text-decoration-line:\s*underline/);
+    expect(link).toMatch(/text-decoration-color:\s*var\(--color-border-2\)/);
+    expect(link).toMatch(/text-underline-offset:\s*4px/);
+    // No size: an inline link keeps the sentence's line, which the target floor exempts.
+    expect(link).not.toMatch(/(min-)?(height|width|padding|display)\s*:/);
+    expect(rulesFor(base, ':where(a[href]:not([class])):hover')[0]).toMatch(
+      /text-decoration-color:\s*var\(--color-accent\)/,
+    );
+    // Nothing outside the base layer styles every link, which would outrank each link's own
+    // classes; a component's scoped rule (`.day0-setup-nav a`) styles its own links only.
+    const selectors = [...unlayered().matchAll(/(?:^|[;{}])\s*([^;{}@]+)\{/g)].flatMap((match) =>
+      (match[1] ?? '').split(',').map((part) => part.trim()),
+    );
+    expect(selectors.filter((selector) => /^(:where\()?a($|[\s:.[)])/.test(selector))).toEqual([]);
+  });
+
   it('takes the scroll position from nobody and leaves no trace of the removed cursor', () => {
     expect(CSS).not.toContain('scroll-behavior');
     expect(CSS).not.toContain('data-enter');

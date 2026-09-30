@@ -103,6 +103,23 @@ body {
   [role='tab']:focus-visible {
     outline-offset: -2px;
   }
+
+  /* A link in running text is underlined (C3): the preflight leaves `a` looking like the text
+     around it, so a bare link inside a sentence read as prose. The look is `ButtonLink
+     variant="text"`'s, the second hairline under it and the accent on hover. Only a link with no
+     class takes it: a nav link, a card link, a `ButtonLink` and a tab each carry their own
+     classes and keep their own look, and a link that wants another look says so with a class.
+     It sets no size, so an inline link keeps the sentence's line. */
+  :where(a[href]:not([class])) {
+    text-decoration-line: underline;
+    text-decoration-color: var(--color-border-2);
+    text-underline-offset: 4px;
+    transition: text-decoration-color 180ms ease-out;
+  }
+
+  :where(a[href]:not([class])):hover {
+    text-decoration-color: var(--color-accent);
+  }
 }
 
 .day0-pixel-office {
