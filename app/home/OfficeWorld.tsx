@@ -350,7 +350,7 @@ function OfficeAgent({
   return (
     <Link
       href={`/agent/${agent.agentId}`}
-      className={`day0-office-agent absolute z-10 -translate-x-1/2 -translate-y-1/2 outline-none ${
+      className={`day0-office-agent absolute z-10 -translate-x-1/2 -translate-y-1/2 ${
         working ? 'day0-office-agent-seated' : 'day0-office-agent-walking'
       }`}
       style={style}

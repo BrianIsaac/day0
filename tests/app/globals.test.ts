@@ -90,6 +90,11 @@ function blocks(opener: string): string[] {
   return found;
 }
 
+/** The stylesheet with its comments and every `@layer base` block taken out. */
+function unlayered(): string {
+  return CSS.replace(/\/\*[\s\S]*?\*\//g, '').replace(/@layer base\s*\{[\s\S]*?\n\}/g, '');
+}
+
 /** The declarations of every top-level-or-nested rule whose selector list is exactly `selector`. */
 function rulesFor(source: string, selector: string): string[] {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -201,15 +206,27 @@ describe('the public-page motion', () => {
     // Unlayered, the rule beat every Tailwind utility and the tab strip drew a scrollbar.
     const base = blocks('@layer base').join('\n');
     expect(rulesFor(base, '*').join('\n')).toMatch(/scrollbar-width:\s*thin/);
-    const unlayered = CSS.replace(/\/\*[\s\S]*?\*\//g, '').replace(
-      /@layer base\s*\{[\s\S]*?\n\}/g,
-      '',
-    );
-    expect(unlayered).not.toMatch(/scrollbar-(width|color)|::-webkit-scrollbar/);
+    expect(unlayered()).not.toMatch(/scrollbar-(width|color)|::-webkit-scrollbar/);
   });
 
   it("draws a tab's focus ring inside it, where the strip does not clip it", () => {
     expect(rulesFor(CSS, "[role='tab']:focus-visible")[0]).toMatch(/outline-offset:\s*-2px/);
+  });
+
+  it("keeps the focus ring in the base layer, so a control's own focus utility outranks it (C1)", () => {
+    // Unlayered, the ring beat every utility: `focus-visible:outline-offset-[-3px]` on the
+    // walkthrough's frame link and a control's own corners never applied.
+    const base = blocks('@layer base').join('\n');
+    const [ring] = rulesFor(
+      base,
+      ":where(a, button, input, select, summary, textarea, [tabindex='0']):focus-visible",
+    );
+    expect(ring).toMatch(
+      /outline:\s*2px solid color-mix\(in oklab, var\(--color-accent\) 75%, transparent\)/,
+    );
+    expect(ring).toMatch(/outline-offset:\s*1px/);
+    expect(rulesFor(base, "[role='tab']:focus-visible")[0]).toMatch(/outline-offset:\s*-2px/);
+    expect(unlayered()).not.toContain(':focus-visible');
   });
 
   it('takes the scroll position from nobody and leaves no trace of the removed cursor', () => {

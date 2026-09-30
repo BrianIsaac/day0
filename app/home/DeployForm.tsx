@@ -157,7 +157,7 @@ export function DeployForm({
             value={name}
             onChange={(event) => setName(event.target.value)}
             aria-describedby={nameHelpId}
-            className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-2.5 text-sm focus:border-[var(--color-accent)] focus:outline-none"
+            className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-2.5 text-sm focus:border-[var(--color-accent)]"
           />
           <p id={nameHelpId} className="mt-1.5 text-xs text-[var(--color-muted)]">
             The name the team will see. It cannot be changed after deploy.
