@@ -321,6 +321,11 @@ export interface RunOptions {
   /** Stream the child's output rather than capturing it. */
   inherit?: boolean;
   timeoutMs?: number;
+  /**
+   * What the child reads on stdin. A secret reaches a child this way, never
+   * on its command line, where `ps` and a shell's history would show it.
+   */
+  input?: string;
 }
 
 /**
@@ -5226,7 +5231,12 @@ export function consoleIo(cwd: string = process.cwd()): SetupIo {
         encoding: 'utf8',
         env: { ...process.env, ...(options.env ?? {}) },
         timeout: options.timeoutMs,
-        stdio: options.inherit ? ['ignore', 'inherit', 'inherit'] : ['ignore', 'pipe', 'pipe'],
+        input: options.input,
+        stdio: [
+          options.input === undefined ? 'ignore' : 'pipe',
+          options.inherit ? 'inherit' : 'pipe',
+          options.inherit ? 'inherit' : 'pipe',
+        ],
         maxBuffer: 32 * 1024 * 1024,
       });
       return { status: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };

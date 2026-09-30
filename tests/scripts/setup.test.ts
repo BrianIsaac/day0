@@ -1431,6 +1431,30 @@ describe('console input from a pipe', () => {
   });
 });
 
+describe('a child process run by the console environment', () => {
+  it('reads the input it is handed on stdin, so a secret never rides on its command line', () => {
+    const script = `
+      import { consoleIo } from './scripts/setup.ts';
+      const echoed = consoleIo().run(process.execPath, [
+        '-e',
+        'process.stdin.pipe(process.stdout)',
+      ], { input: 'synthetic-secret' });
+      process.stdout.write(JSON.stringify(echoed));
+    `;
+    const result = spawnSync(
+      process.execPath,
+      ['--import', 'tsx', '--input-type=module', '-e', script],
+      { cwd: ROOT, encoding: 'utf8', timeout: 10_000 },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      status: 0,
+      stdout: 'synthetic-secret',
+      stderr: '',
+    });
+  });
+});
+
 describe('mock mode says what it is for', (): void => {
   it('names the harness and the hosted demo, and the two real-mode ways by their entry', async (): Promise<void> => {
     const { io, output } = harness({
