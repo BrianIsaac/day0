@@ -6,7 +6,9 @@ import { ConvexProviderWithClerk } from 'convex/react-clerk';
 import { usePathname } from 'next/navigation';
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import { DEV_NO_AUTH } from '@/lib/dev-auth';
-import { ButtonLink } from './components/Button';
+import { errorMessage } from '@/lib/errors';
+import { log } from '@/lib/logger';
+import { Button, ButtonLink } from './components/Button';
 
 /**
  * Wraps with Clerk + Convex. Clerk auto-provisions keyless dev keys when
@@ -167,15 +169,30 @@ function ClerkSessionGate({ children, fallback }: SessionGateProps) {
   return <>{children}</>;
 }
 
+/** What `SignedOut` is told: whether Clerk still holds the session the deployment refused. */
+export interface SignedOutProps {
+  readonly refused: boolean;
+}
+
 /**
  * What an owned page shows once Convex has settled with nobody signed in: the manager signed out
  * (here or in another tab), or Clerk holds a session whose token the deployment refused. Either
  * way the page's rows are gone, and signing in again brings the manager back to this page.
  *
- * @param refused - Whether Clerk still holds a session, so the deployment refused its token.
+ * A refused session is ended first: Clerk's sign-in page sends a signed-in visitor straight on to
+ * `redirect_url`, which is this page, and Convex would refuse the same session again.
  */
-export function SignedOut({ refused }: { readonly refused: boolean }) {
+export function SignedOut({ refused }: SignedOutProps) {
   const pathname = usePathname();
+  const clerk = useClerk();
+  const signIn = `/sign-in?redirect_url=${encodeURIComponent(pathname)}`;
+  function signInAgain(): void {
+    // The chain ends in its own rejection handler: a sign-out that fails still leaves by a full load.
+    void clerk.signOut({ redirectUrl: signIn }).catch((err: unknown): void => {
+      log.warn('refused session not signed out', { reason: errorMessage(err) });
+      window.location.assign(signIn);
+    });
+  }
   return (
     // Inside the page's own `main` (`MainTransition`), as the owned page it stands in for was.
     <div className="grid min-h-[calc(100vh-3.25rem)] place-items-center px-6">
@@ -186,12 +203,15 @@ export function SignedOut({ refused }: { readonly refused: boolean }) {
         <p className="text-sm text-[var(--color-muted)]">
           Sign in again to carry on where you were.
         </p>
-        <ButtonLink
-          href={`/sign-in?redirect_url=${encodeURIComponent(pathname)}`}
-          variant="primary"
-        >
-          Sign in
-        </ButtonLink>
+        {refused ? (
+          <Button variant="primary" onClick={signInAgain}>
+            Sign in again
+          </Button>
+        ) : (
+          <ButtonLink href={signIn} variant="primary">
+            Sign in
+          </ButtonLink>
+        )}
       </div>
     </div>
   );
