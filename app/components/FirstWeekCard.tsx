@@ -165,10 +165,11 @@ export function FirstWeekCard({ steps, arriving = false }: FirstWeekCardProps) {
           aria-controls={anchor !== null ? weekId : undefined}
           aria-label={`First week: ${current.detail ? `${current.title}, ${current.detail}` : current.title}. Show the whole week`}
           onClick={show}
-          // While the week is on the page the card's own words are not drawn: the week grows out
-          // of the card and shrinks back into it, and the two sets of words read doubled mid-grow
-          // (the hosted walk's m2). Opacity, not visibility, so focus can still come back to it.
-          className={`${anchor !== null ? 'opacity-0 ' : ''}rail-step now ${RAIL_CELL} min-h-11 w-full cursor-pointer overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-accent-soft)] text-left transition-[transform,border-color] duration-[120ms,180ms] ease-out hover:border-[var(--color-accent-line)] motion-safe:active:scale-[0.98]`}
+          // While the week is open the card's own words are not drawn: the week grows out of the
+          // card, and the two sets of words read doubled mid-grow (the hosted walk's m2). As the
+          // week shrinks back the card fades in under it over the week's own 200 ms fade, so its
+          // place is never empty. Opacity, not visibility, so focus can come back to it.
+          className={`${open ? 'opacity-0 ' : ''}rail-step now ${RAIL_CELL} min-h-11 w-full cursor-pointer overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-accent-soft)] text-left transition-[transform,border-color,opacity] duration-[120ms,180ms,200ms] ease-out hover:border-[var(--color-accent-line)] motion-safe:active:scale-[0.98]`}
         >
           <RailStepText step={current} />
         </button>

@@ -309,9 +309,13 @@ describe('FirstWeekCard', () => {
     expect(card()?.className).not.toMatch(/\bopacity-0\b/);
     await press(view.container, NAME);
     expect(card()?.className).toMatch(/\bopacity-0\b/);
-    key('Escape');
-    expect(document.querySelector('[data-week]')).toBeNull();
-    expect(card()?.className).not.toMatch(/\bopacity-0\b/);
+    await withMotion(async () => {
+      key('Escape');
+      // The week shrinks back and fades while the card fades in under it (second pass M1).
+      expect(document.querySelector('[data-week]')?.getAttribute('data-week')).toBe('closing');
+      expect(card()?.className).not.toMatch(/\bopacity-0\b/);
+      expect(card()?.className).toMatch(/transition-\[[^\]]*\bopacity\b[^\]]*\]/);
+    });
     expect(focusedName()).toBe(NAME);
   });
 
