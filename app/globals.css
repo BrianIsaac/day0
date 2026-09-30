@@ -84,6 +84,13 @@ body {
     scrollbar-width: thin;
     scrollbar-color: var(--color-border) transparent;
   }
+
+  /* The page keeps a scrollbar's room whether it scrolls or not, so a page that grows one (the
+     chat room) does not sit 5 px left of one that has none (the hosted walk's m31). A modal's
+     hold (app/components/use-modal.ts) writes the same value inline and gives it back. */
+  html {
+    scrollbar-gutter: stable;
+  }
 }
 
 /* Cross-browser fade on overflowing edges (subtle hint there's more) */
