@@ -1285,6 +1285,34 @@ describe('applying surface actions', (): void => {
     expect(recorded.http).toHaveLength(0);
   });
 
+  it('stamps a mock office write that landed with the moment it landed, as a surface write is (the hosted demo runs these)', async (): Promise<void> => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(now);
+      // The mock office's own write, as its mutation answers a ticket that moved.
+      const office = {
+        runMutation: async (): Promise<{ changed: boolean }> => ({ changed: true }),
+      } as unknown as ActionCtx;
+      const applied = await applySurfaceActions(
+        office,
+        'mock',
+        [],
+        run,
+        [
+          { tool: 'ticket.update', args: { slug: 'T-1', comment: 'Noted.' } },
+          { tool: 'ticket.update', args: {} },
+        ],
+        { approvedIndexes: new Set([0, 1]) },
+      );
+      expect(applied[0]).toMatchObject({ ok: true, authority: 'manager', landedAt: now });
+      // A write that did not land carries no landing time.
+      expect(applied[1]).toMatchObject({ ok: false });
+      expect(applied[1]?.landedAt).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('reports the two surface verbs as unknown tools in mock mode', async (): Promise<void> => {
     const applied = await applySurfaceActions(ctx, 'mock', [], run, [comment]);
     expect(applied[0]).toMatchObject({
