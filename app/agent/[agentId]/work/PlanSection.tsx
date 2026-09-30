@@ -82,11 +82,14 @@ export function PlanSection({
           <h5 className="text-[13px] font-semibold text-[var(--color-muted)]">
             Answered at approval
           </h5>
-          <ul className="grid gap-1 text-sm text-[var(--color-fg-2)]">
+          <ul className="grid gap-2 text-sm text-[var(--color-fg-2)]">
             {item.managerAnswers.map((entry) => (
-              <li key={`${entry.question}:${entry.answeredAt}`}>
-                {entry.question}{' '}
-                <span className="font-medium text-[var(--color-fg)]">{entry.answer}</span>
+              <li key={`${entry.question}:${entry.answeredAt}`} className="grid gap-0.5">
+                <span>{entry.question}</span>
+                <span>
+                  <span className="text-[var(--color-muted)]">You: </span>
+                  <span className="font-medium text-[var(--color-fg)]">{entry.answer}</span>
+                </span>
               </li>
             ))}
           </ul>
