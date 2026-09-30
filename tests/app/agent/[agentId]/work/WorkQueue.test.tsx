@@ -122,7 +122,7 @@ describe('the order the queue lists its items in', (): void => {
     ]);
   });
 
-  it('keeps a run in its place from its plan to its held write, runs newest first (walk m21)', (): void => {
+  it('keeps a run in its place from its plan to its held write, runs oldest first (walk m21, second pass M5)', (): void => {
     const others = [
       { _id: 'skill', state: 'needs-skill', _creationTime: 3 },
       { _id: 'waiting', state: 'discovered', _creationTime: 4 },
@@ -135,7 +135,7 @@ describe('the order the queue lists its items in', (): void => {
       orderAt,
     );
     for (const place of places) expect(place).toEqual(places[0]);
-    expect(places[0]).toEqual(['run', 'older-run', 'skill', 'waiting', 'landed']);
+    expect(places[0]).toEqual(['older-run', 'run', 'skill', 'waiting', 'landed']);
     // Landing is a move the list must make: to the finished rows.
     expect(orderAt('completed').indexOf('run')).toBeGreaterThan(
       orderAt('completed').indexOf('waiting'),

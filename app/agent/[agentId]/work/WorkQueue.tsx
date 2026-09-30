@@ -153,8 +153,8 @@ const QUEUE_ORDER = [
 /**
  * The states of one run, from its claim to its last write held for the manager: an item keeps its
  * place through all of them, so a card the manager is watching does not jump down the list as it
- * starts working and back up when its write is held (the hosted walk's m21). Runs sit newest first,
- * as the rows of one state do.
+ * starts working and back up when its write is held (the hosted walk's m21). Runs sit oldest first,
+ * so the longest wait stays on top whatever state each run has reached (second pass M5).
  */
 const RUN_STATES: ReadonlySet<string> = new Set([
   'claimed',
@@ -195,7 +195,7 @@ export function sortedForQueue<
     (a, b) =>
       rank(a) - rank(b) ||
       (a.state === 'discovered' ? compareWaitingRows(waiting(a), waiting(b)) : 0) ||
-      (RUN_STATES.has(a.state) ? (b._creationTime ?? 0) - (a._creationTime ?? 0) : 0),
+      (RUN_STATES.has(a.state) ? (a._creationTime ?? 0) - (b._creationTime ?? 0) : 0),
   );
 }
 
