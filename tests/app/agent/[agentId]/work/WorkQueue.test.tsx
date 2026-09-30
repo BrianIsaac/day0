@@ -122,6 +122,26 @@ describe('the order the queue lists its items in', (): void => {
     ]);
   });
 
+  it('keeps a run in its place from its plan to its held write, runs newest first (walk m21)', (): void => {
+    const others = [
+      { _id: 'skill', state: 'needs-skill', _creationTime: 3 },
+      { _id: 'waiting', state: 'discovered', _creationTime: 4 },
+      { _id: 'older-run', state: 'executing', _creationTime: 1 },
+      { _id: 'landed', state: 'completed', _creationTime: 5 },
+    ];
+    const orderAt = (state: string): string[] =>
+      sortedForQueue([...others, { _id: 'run', state, _creationTime: 2 }]).map((item) => item._id);
+    const places = ['claimed', 'plan-pending', 'plan-approved', 'executing', 'actions-pending'].map(
+      orderAt,
+    );
+    for (const place of places) expect(place).toEqual(places[0]);
+    expect(places[0]).toEqual(['run', 'older-run', 'skill', 'waiting', 'landed']);
+    // Landing is a move the list must make: to the finished rows.
+    expect(orderAt('completed').indexOf('run')).toBeGreaterThan(
+      orderAt('completed').indexOf('waiting'),
+    );
+  });
+
   it('files a failed item the manager dismissed at the foot, after every open state (N7)', (): void => {
     const order = sortedForQueue([
       { state: 'failed', title: 'dismissed', dismissedAt: 5 },
