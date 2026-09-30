@@ -9,6 +9,7 @@ import {
 } from '../../../scripts/cloud/checkout';
 import {
   backupDirectory,
+  earliestUpgradeExport,
   fileStamp,
   migrateAndStamp,
   pauseReason,
@@ -156,6 +157,29 @@ describe('the export', (): void => {
       failure: 'the export failed (exit 1: Error: forbidden)',
     });
     expect(existsSync(join(c.privateDir, 'fresh.zip.sha256'))).toBe(false);
+  });
+
+  it("finds an upgrade's earliest export with a checksum beside it, and no other release's", (): void => {
+    const c = cloud();
+    const sha = (name: string): void =>
+      writeFileSync(join(c.privateDir, `${name}.sha256`), `${'a'.repeat(64)}  ${name}\n`);
+    for (const name of [
+      'before-v0.4.0-20261001T020000Z.zip',
+      'before-v0.4.0-20261001T010000Z.zip',
+      'before-v0.3.0-20260901T000000Z.zip',
+    ]) {
+      writeFileSync(join(c.privateDir, name), 'x');
+      sha(name);
+    }
+    writeFileSync(
+      join(c.privateDir, 'before-v0.4.0-20261001T000000Z.zip'),
+      'no checksum beside it',
+    );
+    expect(earliestUpgradeExport(c.privateDir, '0.4.0')).toEqual({
+      file: join(c.privateDir, 'before-v0.4.0-20261001T010000Z.zip'),
+      sha256: 'a'.repeat(64),
+    });
+    expect(earliestUpgradeExport(c.privateDir, '0.5.0')).toBeUndefined();
   });
 
   it('is named by a sortable second', (): void => {

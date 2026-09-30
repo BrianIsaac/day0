@@ -472,6 +472,18 @@ describe('cloud upgrade', (): void => {
     expect(statSync(`${zip}.sha256`).mode & 0o777).toBe(0o600);
   });
 
+  it('after an attempt that stopped part way, rolls back to the export taken when it first ran', async (): Promise<void> => {
+    const c = cloud({ stamp: { release: '0.4.0', commit: COMMIT } });
+    const first = join(c.privateDir, 'before-v0.4.0-20261001T010000Z.zip');
+    writeFileSync(first, 'the rows from before the upgrade');
+    writeFileSync(`${first}.sha256`, `${'e'.repeat(64)}  before-v0.4.0-20261001T010000Z.zip\n`);
+    expect(await runCloudUpgrade(verb(c, { verb: 'upgrade' }), c.io)).toBe(0);
+    expect(printed(c)).toContain(
+      `${first} (sha256 ${'e'.repeat(64)}) holds the rows from before the upgrade to v0.4.0, taken when that upgrade first ran.`,
+    );
+    expect(printed(c)).toContain(`Done: ${DEPLOYMENT} is at v0.4.0, pushed again.`);
+  });
+
   it('says where an export it could not count was written, and pushes nothing', async (): Promise<void> => {
     const c = cloud({
       failing: [

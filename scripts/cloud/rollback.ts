@@ -5,17 +5,27 @@
  */
 import { type CloudTarget } from './checkout';
 
+/** The export an upgrade's rollback puts back. */
+export interface RollbackExport {
+  readonly file: string;
+  readonly sha256: string;
+  /** Taken when this upgrade first ran, before an attempt that stopped part way. */
+  readonly earlier: boolean;
+}
+
 /** What the rollback runbook is filled in with. */
 export interface RollbackFacts {
   readonly target: CloudTarget;
   /** The app build that served production before this run, when there was one. */
   readonly previousApp?: string;
-  /** The release the deployment was stamped at before, or undefined for a first push. */
-  readonly previousRelease?: string;
-  /** The export taken first, when one was. */
-  readonly backup?: { readonly file: string; readonly sha256: string };
   /** The app's Convex values changed by this run, which a rollback puts back. */
   readonly appValuesChanged?: boolean;
+  /** An upgrade's release, the release before it when this run read it, and its export; absent for a first push. */
+  readonly upgrade?: {
+    readonly to: string;
+    readonly from: string | undefined;
+    readonly backup: RollbackExport;
+  };
 }
 
 /**
@@ -26,7 +36,7 @@ export interface RollbackFacts {
  * @param facts - What the run read.
  */
 export function rollbackLines(facts: RollbackFacts): string[] {
-  const { target } = facts;
+  const { target, upgrade } = facts;
   const scope = target.scope === undefined ? '' : ` --scope ${target.scope}`;
   const lines = ['Rollback (nothing here is run for you):'];
   lines.push(
@@ -41,17 +51,20 @@ export function rollbackLines(facts: RollbackFacts): string[] {
         `vercel env update <NAME> production --yes${scope}) before promoting the earlier build.`,
     );
   }
-  if (facts.previousRelease === undefined) {
+  if (upgrade === undefined) {
     lines.push(
       `  the deployment: ${target.deployment} held nothing before this run; an app that points away from it leaves it serving nobody.`,
     );
-  } else if (facts.backup !== undefined) {
-    lines.push(
-      `  the rows and functions: ${facts.backup.file} (sha256 ${facts.backup.sha256}) holds the rows at ` +
-        `v${facts.previousRelease}. From a clean checkout of v${facts.previousRelease}, take \`./setup.sh cloud backup\` ` +
-        `of what you replace, then npx convex import --replace-all --deployment ${target.deployment} ` +
-        `${facts.backup.file} and npx convex deploy --typecheck enable --env-file ${target.file}.`,
-    );
+    return lines;
   }
+  const { backup } = upgrade;
+  const before = upgrade.from === undefined ? 'the release before it' : `v${upgrade.from}`;
+  lines.push(
+    `  the rows and functions: ${backup.file} (sha256 ${backup.sha256}) holds the rows from before ` +
+      `the upgrade to v${upgrade.to}${backup.earlier ? ', taken when that upgrade first ran' : ''}. ` +
+      `From a clean checkout of ${before}, take \`./setup.sh cloud backup\` of what you replace, then ` +
+      `npx convex import --replace-all --deployment ${target.deployment} ${backup.file} and ` +
+      `npx convex deploy --typecheck enable --env-file ${target.file}.`,
+  );
   return lines;
 }

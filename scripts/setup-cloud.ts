@@ -62,6 +62,7 @@ import {
 import {
   backupDirectory,
   convexOn,
+  earliestUpgradeExport,
   fileStamp,
   migrateAndStamp,
   pauseReason,
@@ -735,6 +736,8 @@ export async function runCloudUpgrade(options: CloudOptions, io: CloudIo): Promi
     return 130;
   }
 
+  // Read before this run's export, which is later by its name.
+  const earlier = earliestUpgradeExport(reads.directory, checkout.release);
   const backup = takeBackup(io, target, reads.directory, stem);
   if ('failure' in backup) {
     io.log(
@@ -745,8 +748,14 @@ export async function runCloudUpgrade(options: CloudOptions, io: CloudIo): Promi
   const facts: RollbackFacts = {
     target,
     ...(previous !== undefined ? { previousApp: previous.id } : {}),
-    previousRelease: reads.from,
-    backup: { file: backup.file, sha256: backup.sha256 },
+    upgrade: {
+      to: checkout.release,
+      from: reads.from === checkout.release ? undefined : reads.from,
+      backup:
+        earlier === undefined
+          ? { file: backup.file, sha256: backup.sha256, earlier: false }
+          : { ...earlier, earlier: true },
+    },
   };
   let paused = held !== undefined && isUpgradePause(held);
   // Whether this run's functions reached the deployment: before that, the
@@ -821,7 +830,11 @@ export async function runCloudUpgrade(options: CloudOptions, io: CloudIo): Promi
     io.log('Lifted the pause on the scheduled jobs and pushed again so every module reads it.');
   }
   io.log('');
-  io.log(`Done: ${target.deployment} moved from v${reads.from} to v${checkout.release}.`);
+  io.log(
+    reads.from === checkout.release
+      ? `Done: ${target.deployment} is at v${checkout.release}, pushed again.`
+      : `Done: ${target.deployment} moved from v${reads.from} to v${checkout.release}.`,
+  );
   for (const line of rollbackLines(facts)) io.log(line);
   return 0;
 }

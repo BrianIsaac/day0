@@ -6,7 +6,7 @@
  * reach the target the dry run proved.
  */
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { CRONS_PAUSED_FLAG } from '../../src/lib/crons-pause';
 import { errorMessage } from '../../src/lib/errors';
@@ -361,6 +361,29 @@ export function takeBackup(
     io.log(`  note: ${directory} is readable by others; the export itself is not.`);
   }
   return { file, sha256, counts };
+}
+
+/**
+ * The earliest export an upgrade to a release took in a directory, with its
+ * checksum: after an attempt that stopped part way, it is the one that holds
+ * the rows from before the upgrade, which a later attempt's export does not.
+ *
+ * @param directory - Where the upgrade's exports go.
+ * @param release - The release upgraded to.
+ */
+export function earliestUpgradeExport(
+  directory: string,
+  release: string,
+): { readonly file: string; readonly sha256: string } | undefined {
+  if (!existsSync(directory)) return undefined;
+  const pattern = new RegExp(`^before-v${release.replace(/\./g, '\\.')}-\\d{8}T\\d{6}Z\\.zip$`);
+  const first = readdirSync(directory)
+    .filter((name) => pattern.test(name) && existsSync(join(directory, `${name}.sha256`)))
+    .sort()[0];
+  if (first === undefined) return undefined;
+  const file = join(directory, first);
+  const sha256 = readFileSync(`${file}.sha256`, 'utf8').trim().split(/\s+/)[0] ?? '';
+  return /^[0-9a-f]{64}$/.test(sha256) ? { file, sha256 } : undefined;
 }
 
 /**
