@@ -6,7 +6,7 @@
  * application's. A suffixed stamp therefore decides when there is one, and the bare one only when
  * there is none; with no deciding stamp above zero, this browser has no session to resolve.
  */
-const CLIENT_UAT = String.raw`(?:^|;\s*)__client_uat(_[^=]*)?=(\d+)`;
+const CLIENT_UAT = String.raw`(?:^|;\s*)__client_uat(_[^=;]*)?=(\d+)`;
 
 /**
  * Whether a document's cookies hold a Clerk session for Clerk to resolve.

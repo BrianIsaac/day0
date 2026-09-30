@@ -31,6 +31,8 @@ const COOKIES: ReadonlyArray<readonly [string, boolean]> = [
   ['__client_uat=1759100000; __client_uat_AbC12=0', false],
   ['__client_uat_AbC12=0; theme=dark', false],
   ['not__client_uat=1759100000', false],
+  // A suffix never runs across a cookie: this is a bare name with no stamp beside another cookie.
+  ['__client_uat_x; other=5', false],
 ];
 
 function clearCookies(): void {
