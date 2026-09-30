@@ -107,6 +107,31 @@ describe('the employee page layout', () => {
     expect((shell as { props: unknown }).props).toEqual({ agentId: 'j57agent', children: child });
   });
 
+  it("titles each tab's page by the tab's label, under the layout's template (walk m16)", async () => {
+    const tabs = [
+      'work',
+      'charter',
+      'people',
+      'documentation',
+      'skills',
+      'surfaces',
+      'record',
+      'manage',
+    ] as const;
+    const { EMPLOYEE_TAB_LABELS } = await import('../../../../app/agent/[agentId]/employee-tabs');
+    for (const tab of tabs) {
+      const page = (await import(`../../../../app/agent/[agentId]/${tab}/page.tsx`)) as {
+        metadata?: { title?: unknown };
+      };
+      expect(page.metadata?.title, tab).toBe(EMPLOYEE_TAB_LABELS[tab]);
+    }
+    const root = (await import('../../../../app/agent/[agentId]/page')) as {
+      metadata?: unknown;
+    };
+    // The page itself takes the layout's default, "<name> · Needs you · Day0".
+    expect(root.metadata).toBeUndefined();
+  });
+
   it('asks for the employee only once Convex holds the token, so a full load never reaches the error boundary (walk M2)', async () => {
     const server = syncServer((path, signedIn) => {
       if (path === 'config:surfaceMode') return { value: { mode: 'mock' } };
