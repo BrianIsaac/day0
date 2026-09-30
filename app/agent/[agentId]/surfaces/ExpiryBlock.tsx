@@ -2,7 +2,7 @@
 
 import { useId, useRef, useState } from 'react';
 import type { Doc } from '@convex/_generated/dataModel';
-import { SURFACE_ACCESS_DEFAULT_DAYS } from '@/surfaces/access';
+import { SURFACE_ACCESS_DEFAULT_DAYS, SURFACE_ACCESS_MAX_DAYS } from '@/surfaces/access';
 import { Button } from '../../../components/Button';
 import { INPUT_CLASS } from '../../../components/Field';
 import { StatusRegion } from '../../../components/StatusRegion';
@@ -14,7 +14,12 @@ import { accessStanding } from './card-words';
  * The access periods a renewal offers, in days; Q5's `SURFACE_ACCESS_DEFAULT_DAYS` is chosen until
  * the manager picks another.
  */
-export const ACCESS_PERIODS = [30, 90, 180, 365] as const;
+export const ACCESS_PERIODS = [
+  30,
+  SURFACE_ACCESS_DEFAULT_DAYS,
+  180,
+  SURFACE_ACCESS_MAX_DAYS,
+] as const;
 
 /** Who set the end date, in the manager's words. */
 const SET_BY_WORDS: Readonly<Record<NonNullable<Doc<'surfaces'>['accessSetBy']>, string>> = {
