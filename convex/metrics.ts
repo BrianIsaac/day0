@@ -473,6 +473,37 @@ function automaticKind(
   return actionIntent(parsed.action) === 'write' ? 'write' : 'read';
 }
 
+/**
+ * When the employee's first write landed: the first approval that let a held action through, or
+ * the first write it applied on its own, whichever came first. The same two counts the page's
+ * "a write landed" reads (`actions.approved` and `actions.automatic.writes`), so the time and the
+ * first week's step agree.
+ */
+function firstWriteLandedAt(
+  events: readonly Doc<'events'>[],
+  ledger: readonly LedgerObservation[],
+  surfaces: readonly SurfaceRecord[],
+): number | null {
+  const approvals = events.flatMap((event) =>
+    isEventOf(event, 'work.actions-approved') &&
+    asIndexes(asRecord(event.payload)?.approvedIndexes).length > 0
+      ? [event.createdAt]
+      : [],
+  );
+  const ownWrites = ledger.flatMap((observation) =>
+    observation.observedAt !== null &&
+    observation.entry.ok === true &&
+    observation.entry.held !== true &&
+    observation.sessionRestoreOf === undefined &&
+    (observation.entry.authority === 'standing' || observation.entry.authority === 'autonomous') &&
+    automaticKind(observation, surfaces) === 'write'
+      ? [observation.observedAt]
+      : [],
+  );
+  const times = [...approvals, ...ownWrites];
+  return times.length > 0 ? Math.min(...times) : null;
+}
+
 function actionMetrics(
   events: readonly Doc<'events'>[],
   ledger: readonly LedgerObservation[],
@@ -795,14 +826,16 @@ function agentFigures(
     deployedAt === undefined || at === undefined ? null : Math.max(0, at - deployedAt);
   const decisions = decisionTotals(events, workItems);
   const pilot = pilotTotals(events, workItems);
+  const surfaceRecords = surfaces.map(toSurfaceRecord);
   const metrics: AgentMetrics = {
+    workingSince: firstWriteLandedAt(events, ledger, surfaceRecords),
     charter: {
       timeToFirstDraftedMs: timeFromDeploy(firstDraftedAt),
       timeToFirstApprovedMs: timeFromDeploy(firstApprovedAt),
       requestChanges: events.filter((event) => isEventOf(event, 'charter.request_changes')).length,
     },
     decisions: summariseDecisions(decisions),
-    actions: actionMetrics(events, ledger, surfaces.map(toSurfaceRecord)),
+    actions: actionMetrics(events, ledger, surfaceRecords),
     surfaces: {
       approved: events.filter((event) => isEventOf(event, 'surface.approved')).length,
       rejected: events.filter((event) => isEventOf(event, 'surface.rejected')).length,

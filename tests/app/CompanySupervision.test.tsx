@@ -34,6 +34,7 @@ function agentMetrics(overrides: {
   const [reads, managerMessages] = overrides.alsoAutomatic ?? [0, 0];
   const [complete, total] = overrides.audit;
   return {
+    workingSince: null,
     charter: {
       timeToFirstDraftedMs: overrides.approvedAfterMs,
       timeToFirstApprovedMs: overrides.approvedAfterMs,

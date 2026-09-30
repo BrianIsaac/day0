@@ -5,6 +5,11 @@ export type DecisionVia = 'dashboard' | 'channel';
 
 /** One employee's supervision figures, computed from its ledger by `convex/metrics.ts`. */
 export interface AgentMetrics {
+  /**
+   * When the first write landed, approved by the manager or applied on its own: when the first
+   * week reached Working. Null before one has.
+   */
+  workingSince: number | null;
   charter: {
     timeToFirstDraftedMs: number | null;
     timeToFirstApprovedMs: number | null;
