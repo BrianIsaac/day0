@@ -377,6 +377,8 @@ export function ChatRoom({
   const [post, setPost] = useState<SynthesisPost>({ kind: 'idle' });
   const [confirming, setConfirming] = useState<Confirming>(null);
   const { messages, sendMessage, regenerate, setMessages, status, stop } = useChat({
+    // The hook keeps the chat it first made, transport and all, until its id changes.
+    id: `one-to-one-${agentId}`,
     transport,
     onError: (err) => {
       // Provider 503s and similar transient failures land here, and the hook

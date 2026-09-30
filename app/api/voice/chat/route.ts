@@ -36,7 +36,7 @@ export const maxDuration = 60;
  */
 const DAY_ONE_MAX_OUTPUT_TOKENS = 2000;
 
-/** One turn's body: a session id, a label and a reply of at most 4,000 characters. */
+/** One turn's body: an employee id, a label and a reply of at most 4,000 characters. */
 const CHAT_TURN_BODY_LIMIT_BYTES = 64 * 1024;
 
 /**
