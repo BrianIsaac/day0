@@ -1,7 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import type { CharterConstraint, StrikePreview } from '@/agent/charter-constraints';
+import {
+  listedRules,
+  type CharterConstraint,
+  type StrikePreview,
+} from '@/agent/charter-constraints';
 import { Button } from '../../../components/Button';
 import { Chip } from '../../../components/Chip';
 
@@ -12,18 +16,29 @@ const CONSTRAINT_KIND_LABEL: Record<CharterConstraint['kind'], string> = {
 };
 
 /** Where a rule stands, as its chip says it. */
-export type RuleStanding = 'confirmed' | 'struck' | 'kept';
+export type RuleStanding = 'confirmed' | 'struck' | 'kept' | 'unverified';
 
 /**
  * A rule's standing: struck by the manager, kept because the charter cannot do without it (a
- * strike the effective charter refuses), or confirmed.
+ * strike the effective charter refuses), not verified because no clause carries its words (so
+ * nothing in the charter enforces it by them), or confirmed.
  */
 export function ruleStanding(
-  constraint: Pick<CharterConstraint, 'struck'>,
+  constraint: Pick<CharterConstraint, 'struck' | 'wording'>,
   preview: StrikePreview | undefined,
 ): RuleStanding {
   if (constraint.struck) return 'struck';
-  return preview?.refusal !== undefined ? 'kept' : 'confirmed';
+  if (preview?.refusal !== undefined) return 'kept';
+  return constraint.wording.length === 0 ? 'unverified' : 'confirmed';
+}
+
+/**
+ * Whether the row offers Strike: a strike the charter refuses is offered disabled with why, a
+ * strike that would change nothing is not offered at all (the production walk's 6c), and a row
+ * with no preview to ask is offered it as before.
+ */
+export function offersStrike(preview: StrikePreview | undefined): boolean {
+  return preview === undefined || preview.refusal !== undefined || preview.changes;
 }
 
 /**
@@ -36,6 +51,7 @@ const STANDING_CHIP: Readonly<
   confirmed: { label: 'Confirmed', tone: 'ok' },
   struck: { label: 'Struck', tone: 'muted' },
   kept: { label: 'Kept', tone: 'you' },
+  unverified: { label: 'Not in the clauses', tone: 'muted' },
 };
 
 /** The clauses a strike removes, quoted for the row. */
@@ -130,7 +146,7 @@ export function RuleRow({
               ))}
             </>
           ) : (
-            ' · not verified: no clause carries these words, so striking it changes nothing'
+            ' · not verified: no clause carries these words'
           )}
           {constraint.origin === 'derived'
             ? " · found by checking the clauses (the charter's wording, not a sentence of yours)"
@@ -152,6 +168,10 @@ export function RuleRow({
             {preview.removedClauses.length === 1 ? 'strikes the clause: ' : 'strikes the clauses: '}
             {quotedClauses(preview.removedClauses)}
           </p>
+        ) : preview && !preview.changes && constraint.wording.length > 0 ? (
+          <p className="mt-1 text-[13px] text-[var(--color-muted)]">
+            nothing to strike: another struck rule already takes its words out
+          </p>
         ) : null}
         {preview && !preview.refusal
           ? preview.rewrittenClauses.map((pair, i) => (
@@ -171,7 +191,7 @@ export function RuleRow({
       </div>
       <div className="flex flex-wrap items-center gap-2 sm:grid sm:content-start sm:justify-items-end">
         <Chip tone={chip.tone}>{chip.label}</Chip>
-        {!constraint.struck && onStrike ? (
+        {!constraint.struck && onStrike && offersStrike(preview) ? (
           <Button
             size="small"
             onClick={() => onStrike(index)}
@@ -248,7 +268,7 @@ export function ConstraintList({
         )}
       </div>
       <ul className="grid gap-2.5">
-        {constraints.map((constraint, index) => (
+        {listedRules(constraints).map(({ constraint, index }) => (
           <RuleRow
             key={index}
             constraint={constraint}

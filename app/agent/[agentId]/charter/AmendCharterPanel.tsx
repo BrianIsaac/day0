@@ -9,7 +9,7 @@ import {
 import { useState, useId, useRef } from 'react';
 import type { Doc } from '@convex/_generated/dataModel';
 import type { CharterCardBody } from './CharterCard';
-import { strikePreview, type CharterConstraint } from '@/agent/charter-constraints';
+import { listedRules, strikePreview, type CharterConstraint } from '@/agent/charter-constraints';
 import { type SystemClass, SYSTEM_CLASSES } from '@/agent/system-classes';
 import { managerOpenQuestions } from '@/agent/manager-questions';
 import { DISCLOSURE_SUMMARY } from '../../../components/Disclosure';
@@ -149,9 +149,14 @@ function StrikeRules({
   busy: boolean;
   onAmend: (change: CharterChange) => void;
 }) {
-  const standing = (body.constraints ?? []).flatMap((constraint, index) =>
-    constraint.struck ? [] : [{ constraint, index, refusal: strikePreview(body, index).refusal }],
-  );
+  // One line per rule, and only a strike that changes the charter, or one it refuses, with why.
+  const standing = listedRules(body.constraints ?? []).flatMap(({ constraint, index }) => {
+    if (constraint.struck) return [];
+    const preview = strikePreview(body, index);
+    return preview.refusal === undefined && !preview.changes
+      ? []
+      : [{ constraint, index, refusal: preview.refusal }];
+  });
   if (standing.length === 0) return null;
   return (
     <div>
