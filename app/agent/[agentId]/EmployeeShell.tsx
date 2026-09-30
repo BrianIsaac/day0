@@ -110,6 +110,15 @@ export function onDayZero(
   return charter === null && (agent.state === 'deployed' || agent.state === 'day-one-in-progress');
 }
 
+/** What the employee page shows until the employee's row has loaded. */
+export function EmployeeLoading() {
+  return (
+    <div className="flex min-h-screen items-center justify-center text-[var(--color-muted)]">
+      loading employee…
+    </div>
+  );
+}
+
 /** What the employee page's shell is given. */
 export interface EmployeeShellProps {
   readonly agentId: Id<'agents'>;
@@ -266,13 +275,7 @@ export function EmployeeShell({ agentId, children }: EmployeeShellProps) {
     return shownName === null ? <NoSuchEmployee /> : <EmployeeRetired name={shownName} />;
   }
 
-  if (!agent || !employee) {
-    return (
-      <div className="flex min-h-screen items-center justify-center text-[var(--color-muted)]">
-        loading employee…
-      </div>
-    );
-  }
+  if (!agent || !employee) return <EmployeeLoading />;
 
   const items = employeeTabItems(agentId, {
     needsYou: inbox?.total,
