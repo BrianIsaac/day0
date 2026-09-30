@@ -5201,6 +5201,14 @@ let consoleReader: Interface | undefined;
 let hidden = false;
 let pipedAnswers: AsyncIterableIterator<string> | undefined;
 
+/**
+ * Close the terminal reader the console environment opened, if it opened one,
+ * so the process can exit once its command is done.
+ */
+export function closeConsoleInput(): void {
+  consoleReader?.close();
+}
+
 /** Attach the pipe iterator before input flows so answers survive between prompts and EOF. */
 function reader(): Interface {
   if (!consoleReader) {
@@ -5322,7 +5330,7 @@ async function main(): Promise<number> {
   try {
     return await runCommand(options, consoleIo());
   } finally {
-    consoleReader?.close();
+    closeConsoleInput();
   }
 }
 
