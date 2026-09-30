@@ -193,7 +193,14 @@ describe('the /setup guide', (): void => {
 
   it('gives a reader who wants a hosted copy the one-command cloud form, after the local verbs', (): void => {
     expect(html).toMatch(/<h3[^>]*id="hosted-copy"[^>]*>Your own hosted copy<\/h3>/);
-    expect(text).toContain(HOSTED_COPY.body);
+    for (const part of HOSTED_COPY.body.split(HOSTED_COPY.targetLine)) {
+      expect(text).toContain(part.trim());
+    }
+    // The target file's line wraps only between words, never after its colon (walk m24's rule).
+    expect(HOSTED_COPY.body.split(HOSTED_COPY.targetLine)).toHaveLength(2);
+    expect(html).toContain(
+      `<span class="whitespace-nowrap">${HOSTED_COPY.targetLine.replace('<', '&lt;').replace('>', '&gt;')}</span>`,
+    );
     expect(text).toContain(HOSTED_COPY.after);
     const rendered = [...html.matchAll(/<span[^>]*>(.*?)<\/span>/gs)].map((match) => match[1]);
     for (const command of HOSTED_COPY.commands) expect(rendered).toContain(command);

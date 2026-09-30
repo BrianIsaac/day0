@@ -185,8 +185,10 @@ export const RUN_WAY_VERBS_NOTE =
 /** Your own copy on Convex cloud and Vercel, as the hosted demo runs: the cloud verbs. */
 export interface HostedCopy {
   readonly title: string;
-  /** What it takes, and what the commands promise. */
+  /** What it takes, and what the commands promise; names `targetLine` once. */
   readonly body: string;
+  /** The target file's one required line, which the page sets as an unbreakable command. */
+  readonly targetLine: string;
   /** The first setup, then the two that follow it, each one command. */
   readonly commands: readonly string[];
   /** What every run ends with. */
@@ -202,6 +204,7 @@ export interface HostedCopy {
  */
 export const HOSTED_COPY: HostedCopy = {
   title: 'Your own hosted copy',
+  targetLine: 'CONVEX_DEPLOYMENT=prod:<name>',
   body: 'The hosted demo runs on a Convex production deployment and Vercel, and so can a copy of your own, one command per task from a clean checkout of a release tag. The Convex, Clerk and Vercel accounts come first; the target file sits outside the checkout and names the production deployment as CONVEX_DEPLOYMENT=prod:<name>, and the deployment’s keys are read from a private file or asked for in hidden prompts. Each command refuses a development deployment, proves its target with a dry run before it writes anything, and reads both halves back afterwards.',
   commands: [
     './setup.sh cloud setup --target ~/day0-cloud/prod-target.env --env-file ~/day0-cloud/prod.env',

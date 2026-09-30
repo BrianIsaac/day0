@@ -329,7 +329,9 @@ export default async function SetupPage() {
               {HOSTED_COPY.title}
             </h3>
             <p className="text-sm text-[var(--color-muted)] leading-relaxed mb-3">
-              {HOSTED_COPY.body}
+              {HOSTED_COPY.body.split(HOSTED_COPY.targetLine)[0]}
+              <InlineCommand command={HOSTED_COPY.targetLine} />
+              {HOSTED_COPY.body.split(HOSTED_COPY.targetLine)[1]}
             </p>
             <Panel>
               {/* Focusable so a keyboard can scroll it where a command runs wider than the panel. */}
