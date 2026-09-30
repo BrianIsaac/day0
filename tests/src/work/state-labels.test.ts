@@ -51,7 +51,7 @@ describe('employeeStateWords', () => {
     expect(EMPLOYEE_STATES.map((state) => employeeStateWords(state))).toEqual([
       { text: 'Waiting for your one-to-one', tone: 'warn' },
       { text: 'In your one-to-one', tone: 'accent' },
-      { text: 'Charter to review', tone: 'warn' },
+      { text: 'Charter to review', plural: 'Charters to review', tone: 'warn' },
       { text: 'Active', tone: 'ok' },
     ]);
   });
@@ -72,7 +72,7 @@ describe('employeeStateLabel', () => {
     expect(EMPLOYEE_STATES.map((state) => employeeStateLabel(state, false))).toEqual([
       { text: 'Waiting for your one-to-one', tone: 'warn' },
       { text: 'In your one-to-one', tone: 'accent' },
-      { text: 'Charter to review', tone: 'warn' },
+      { text: 'Charter to review', plural: 'Charters to review', tone: 'warn' },
       { text: 'Active · Supervised', tone: 'ok' },
     ]);
   });
@@ -148,6 +148,15 @@ describe('employeeStateTally', (): void => {
       { text: 'In your one-to-one', count: 1 },
       { text: 'Drafting the charter', count: 1 },
       { text: 'Waiting for your one-to-one', count: 1 },
+    ]);
+  });
+
+  it('counts more than one charter as charters to review (second pass)', (): void => {
+    expect(
+      employeeStateTally([{ state: 'charter-pending' }, { state: 'charter-pending' }]),
+    ).toEqual([{ text: 'Charters to review', count: 2 }]);
+    expect(employeeStateTally([{ state: 'charter-pending' }])).toEqual([
+      { text: 'Charter to review', count: 1 },
     ]);
   });
 

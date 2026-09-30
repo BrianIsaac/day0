@@ -19,6 +19,8 @@ export type StateTone = 'accent' | 'warn' | 'ok' | 'muted';
 /** A state in the manager's words, and the hue it is drawn in. */
 export interface StateLabel {
   readonly text: string;
+  /** The words for more than one, where they differ ("Charters to review"). */
+  readonly plural?: string;
   readonly tone: StateTone;
 }
 
@@ -62,7 +64,7 @@ export function employeeStateWords(
         ? { text: 'Drafting the charter', tone: 'accent' }
         : { text: 'In your one-to-one', tone: 'accent' };
     case 'charter-pending':
-      return { text: 'Charter to review', tone: 'warn' };
+      return { text: 'Charter to review', plural: 'Charters to review', tone: 'warn' };
     case 'active':
       return { text: 'Active', tone: 'ok' };
   }
@@ -70,24 +72,27 @@ export function employeeStateWords(
 
 /** How many employees stand at one state, in the words the roster's chip prints for it. */
 export interface StateCount {
+  /** The chip's words, for one or for more as the count needs. */
   readonly text: string;
   readonly count: number;
 }
 
-/** The states a tally lists, in the order the company line reads them: the working ones first. */
-const TALLY_ORDER: readonly string[] = [
-  employeeStateWords('active'),
-  employeeStateWords('day-one-in-progress'),
-  employeeStateWords('day-one-in-progress', 'drafting'),
-  employeeStateWords('deployed'),
-  employeeStateWords('charter-pending'),
-].map((words) => words.text);
+/**
+ * The order the company line reads the states in: the working ones first. A `Record` over the
+ * state union, so a state the union gains or loses fails its type rather than drop out of the line.
+ */
+const TALLY_RANK: Readonly<Record<EmployeeState, number>> = {
+  active: 0,
+  'day-one-in-progress': 1,
+  deployed: 2,
+  'charter-pending': 3,
+};
 
 /**
  * How many employees stand at each state, by the words their roster chips print
  * (`employeeStateWords`), so a line that counts the company and the roster it heads never
  * disagree (the production walk's 6d: "0 active" over an employee drawn in its one-to-one). A
- * state nobody is at is left out.
+ * state nobody is at is left out; a count over one takes the chip's plural where it has one.
  *
  * @param employees - The roster's rows: the state each shows, and where its one-to-one stands.
  */
@@ -97,15 +102,20 @@ export function employeeStateTally(
     readonly phase?: OneToOnePhase['kind'];
   }>,
 ): StateCount[] {
-  const counts = new Map<string, number>();
+  const tallies = new Map<string, { words: StateLabel; rank: number; count: number }>();
   for (const { state, phase } of employees) {
-    const { text } = employeeStateWords(state, phase);
-    counts.set(text, (counts.get(text) ?? 0) + 1);
+    const words = employeeStateWords(state, phase);
+    const earlier = tallies.get(words.text);
+    // A one-to-one being drafted reads after one being held: the same state, a phase on.
+    const rank = TALLY_RANK[state] + (phase === 'drafting' ? 0.5 : 0);
+    tallies.set(words.text, { words, rank, count: (earlier?.count ?? 0) + 1 });
   }
-  return TALLY_ORDER.flatMap((text) => {
-    const count = counts.get(text);
-    return count === undefined ? [] : [{ text, count }];
-  });
+  return [...tallies.values()]
+    .sort((left, right) => left.rank - right.rank)
+    .map(({ words, count }) => ({
+      text: count > 1 && words.plural ? words.plural : words.text,
+      count,
+    }));
 }
 
 /**
