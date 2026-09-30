@@ -145,13 +145,14 @@ describe("one Retry on the page at the run's one Retry", (): void => {
   it('sorts the stopped card that waits on the manager above the skipped rows', (): void => {
     const sorted = sortedForQueue([skipped, stopped] as never);
     expect(sorted.map((item) => item.state)).toEqual(['failed', 'skipped']);
-    // What needs a decision still comes first, and finished work stays above both.
+    // Runs under way still come first, each keeping its place whatever state it has reached
+    // (re-pinned, walk m21), and finished work stays above both.
     const states = ['skipped', 'failed', 'completed', 'plan-pending', 'actions-pending'].map(
       (state) => ({ ...skipped, state }),
     );
     expect(sortedForQueue(states as never).map((item) => item.state)).toEqual([
-      'actions-pending',
       'plan-pending',
+      'actions-pending',
       'completed',
       'failed',
       'skipped',
