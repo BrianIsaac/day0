@@ -474,6 +474,20 @@ function automaticKind(
 }
 
 /**
+ * Whether a ledger row is one the employee applied on its own: landed, under standing or
+ * autonomous authority, and not a replayed sign-in. The one rule the automatic counts and
+ * `workingSinceOf` read, so the two cannot drift.
+ */
+function isAutomaticRow(observation: LedgerObservation): boolean {
+  return (
+    observation.entry.ok === true &&
+    observation.entry.held !== true &&
+    observation.sessionRestoreOf === undefined &&
+    (observation.entry.authority === 'standing' || observation.entry.authority === 'autonomous')
+  );
+}
+
+/**
  * When the employee's first week reached Working: the first approval that let a held action
  * through, or the first write it applied on its own, whichever came first. The same two counts
  * the page's "a write landed" reads (`actions.approved` and `actions.automatic.writes`), so the
@@ -492,10 +506,7 @@ function workingSinceOf(
   );
   const ownWrites = ledger.flatMap((observation) =>
     observation.observedAt !== null &&
-    observation.entry.ok === true &&
-    observation.entry.held !== true &&
-    observation.sessionRestoreOf === undefined &&
-    (observation.entry.authority === 'standing' || observation.entry.authority === 'autonomous') &&
+    isAutomaticRow(observation) &&
     automaticKind(observation, surfaces) === 'write'
       ? [observation.observedAt]
       : [],
@@ -612,12 +623,7 @@ function actionMetrics(
     entry.ok === true && entry.held !== true;
   // A replayed sign-in repeats a call the run already landed; it is counted
   // as a replay, never as a second automatic action.
-  const automaticRows = ledger.filter(
-    (observation) =>
-      landed(observation) &&
-      observation.sessionRestoreOf === undefined &&
-      (observation.entry.authority === 'standing' || observation.entry.authority === 'autonomous'),
-  );
+  const automaticRows = ledger.filter(isAutomaticRow);
   const kinds = automaticRows.map((observation) => automaticKind(observation, surfaces));
   const count = (kind: AutomaticKind): number => kinds.filter((each) => each === kind).length;
   const sessionRestores = ledger.filter(

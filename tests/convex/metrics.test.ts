@@ -1097,6 +1097,42 @@ describe('the figures do not depend on the order the rows are read in', (): void
     });
   });
 
+  it('times a re-drafted plan from its new draft, and a dashboard decision on an ask from the ask (walk m14, second pass)', (): void => {
+    const minute = 60_000;
+    const redrafted = [
+      event(1, 'work.plan-drafted', { workItemId: 'w1', plan: {} }, 0),
+      event(
+        2,
+        'work.plan-redrafting',
+        { workItemId: 'w1', surfaceId: 's', slug: 'linear' },
+        minute,
+      ),
+      event(3, 'work.plan-drafted', { workItemId: 'w1', plan: {} }, 5 * minute),
+      event(4, 'work.plan-approved', { workItemId: 'w1', decidedVia: 'dashboard' }, 6 * minute),
+    ];
+    expect(computeAgentMetrics(redrafted, [], []).decisions).toMatchObject({
+      requested: 0,
+      approved: 1,
+      medianLatencyMs: minute,
+    });
+    const asked = [
+      event(1, 'work.plan-drafted', { workItemId: 'w2', plan: {} }, 0),
+      event(
+        2,
+        'work.decision-requesting',
+        { workItemId: 'w2', decisionId: 'd', kind: 'plan' },
+        2 * minute,
+      ),
+      event(3, 'work.plan-approved', { workItemId: 'w2', decidedVia: 'dashboard' }, 3 * minute),
+    ];
+    expect(computeAgentMetrics(asked, [], []).decisions).toMatchObject({
+      requested: 1,
+      approved: 1,
+      medianLatencyMs: minute,
+      byVia: { dashboard: { decided: 1 } },
+    });
+  });
+
   it('uses backend write order for duplicate ledger observations in reversed and shuffled reads', (): void => {
     const row = (effect?: string): Record<string, unknown> => ({
       tool: 'mcp.call',
