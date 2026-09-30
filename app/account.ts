@@ -3,6 +3,7 @@
 import { useState, useSyncExternalStore } from 'react';
 import { useClerk, useUser } from '@clerk/nextjs';
 import type { Boss } from './home/types';
+import { holdsClerkSession } from './session-hint';
 
 /**
  * Who `/` is for, as far as the browser knows: nobody yet, a visitor, or a signed-in manager.
@@ -16,19 +17,11 @@ export type Account =
 const RESOLVING: Account = { kind: 'resolving' };
 const SIGNED_OUT: Account = { kind: 'signed-out' };
 
-/**
- * Clerk's client cookie, `__client_uat` (suffixed per instance in newer SDKs), holds the time of
- * the browser's last sign-in and `0` once it has signed out. It is set by Clerk on this origin and
- * readable by script; with none above zero, this browser has no session for Clerk to resolve.
- */
-const CLIENT_UAT = /(?:^|;\s*)__client_uat(?:_[^=]*)?=(\d+)/g;
-
 /** Whether this browser holds a Clerk session to resolve: `unknown` until the page has hydrated. */
 type SessionHint = 'unknown' | 'none' | 'present';
 
 function readSessionHint(): SessionHint {
-  const stamps = [...document.cookie.matchAll(CLIENT_UAT)].map((match) => Number(match[1]));
-  return stamps.some((stamp) => stamp > 0) ? 'present' : 'none';
+  return holdsClerkSession(document.cookie) ? 'present' : 'none';
 }
 
 /** The server, and the first render that hydrates its HTML, cannot read a cookie. */
