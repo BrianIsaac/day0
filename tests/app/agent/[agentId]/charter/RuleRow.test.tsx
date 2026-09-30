@@ -70,6 +70,18 @@ describe('a rule of the charter (round two section 3.5)', (): void => {
     });
     const listed = [...html.matchAll(/<b[^>]*>([^<]*)<\/b>/g)].map((match) => match[1]);
     expect(listed).toEqual(['Answer routine asks from the team', 'Post in any Slack channel.']);
+    // A clause that opens on a name written in lower case keeps it (second review x10).
+    const named = row({
+      constraint: {
+        ...rule,
+        wording: ['dbt models for the close.', 'answer routine asks.', 'iPhone alerts.'],
+      },
+    });
+    expect([...named.matchAll(/<b[^>]*>([^<]*)<\/b>/g)].map((match) => match[1])).toEqual([
+      'dbt models for the close',
+      'Answer routine asks',
+      'iPhone alerts.',
+    ]);
     // One clause's words are left as the charter holds them.
     expect(row({ constraint: { ...rule, wording: ['owned, prioritized'] } })).toContain(
       '>owned, prioritized</b>',

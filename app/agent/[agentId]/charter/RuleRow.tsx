@@ -60,10 +60,25 @@ function quotedClauses(clauses: readonly string[]): string {
 }
 
 /**
+ * Whether a clause opens on a name written in lower case, which capitalising would misspell: a
+ * word with no vowel (`dbt`, `npm`, `sql`), with a capital after its first letter (`iPhone`), or
+ * with a digit or a dot, underscore or hyphen inside it (`s3`, `stripe.com`, `pg_dump`).
+ */
+function opensOnLowerCaseName(phrase: string): boolean {
+  const first = /^\S+/.exec(phrase)?.[0].replace(/[,;:]+$/, '') ?? '';
+  return (
+    /^[a-z]/.test(first) &&
+    (!/[aeiouy]/i.test(first) || /^.+[A-Z]/.test(first) || /[0-9._-]/.test(first.slice(1)))
+  );
+}
+
+/**
  * The clauses' words the rule's "in the charter as" list shows, one per clause. Several are
  * capitalised alike, so clauses the model wrote in mixed case read as one list (the hosted walk's
  * m22: "answer routine asks ...; Post in any Slack channel ..."), capitalised rather than lowered
- * since a clause may open on a name; one is left as written. Only the last keeps its full stop.
+ * since a clause may open on a name; a clause that opens on a name written in lower case keeps it
+ * (`dbt models ...`, the second review's x10), and one clause is left as written. Only the last
+ * keeps its full stop.
  *
  * @param wording - The clauses' words as the charter holds them.
  */
@@ -71,7 +86,9 @@ export function listedWording(wording: readonly string[]): string[] {
   if (wording.length <= 1) return [...wording];
   return wording.map((phrase, index) => {
     const words = index === wording.length - 1 ? phrase : phrase.replace(/\.$/, '');
-    return `${words.charAt(0).toLocaleUpperCase('en-GB')}${words.slice(1)}`;
+    return opensOnLowerCaseName(words)
+      ? words
+      : `${words.charAt(0).toLocaleUpperCase('en-GB')}${words.slice(1)}`;
   });
 }
 
