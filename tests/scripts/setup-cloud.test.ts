@@ -533,7 +533,7 @@ describe('cloud upgrade', (): void => {
     expect(unfinished.state.env.has('DAY0_CRONS_PAUSED')).toBe(false);
   });
 
-  it('keeps its pause when it stops part way, and says how to lift it', async (): Promise<void> => {
+  it('keeps its pause when it stops after its push, and sends the reader back to the upgrade', async (): Promise<void> => {
     const c = cloud({
       env: new Map([
         ['CLERK_JWT_ISSUER_DOMAIN', 'https://e.clerk.accounts.dev'],
@@ -543,9 +543,34 @@ describe('cloud upgrade', (): void => {
     });
     expect(await runCloudUpgrade(verb(c, { verb: 'upgrade' }), c.io)).toBe(1);
     expect(c.state.env.get('DAY0_CRONS_PAUSED')).toMatch(/^upgrade to 0\.4\.0/);
-    expect(printed(c)).toContain(`./setup.sh cloud unpause --target ${c.target}`);
+    expect(printed(c)).toContain(
+      `Run \`./setup.sh cloud upgrade --target ${c.target}\` again from this checkout: it resumes the migrations and lifts the pause when it completes.`,
+    );
+    expect(printed(c)).not.toContain('cloud unpause');
     expect(printed(c)).toContain('Rollback (nothing here is run for you):');
     expect(writes(c).some((line) => line.startsWith('vercel --prod'))).toBe(false);
+  });
+
+  it('takes its own pause off again when its push fails, since nothing changed', async (): Promise<void> => {
+    const c = cloud({
+      env: new Map([
+        ['CLERK_JWT_ISSUER_DOMAIN', 'https://e.clerk.accounts.dev'],
+        ['DAY0_SURFACE_MODE', 'real'],
+      ]),
+      failing: [
+        {
+          match: 'deploy --typecheck enable --env-file',
+          status: 1,
+          stderr: 'Schema validation failed',
+        },
+      ],
+    });
+    expect(await runCloudUpgrade(verb(c, { verb: 'upgrade' }), c.io)).toBe(1);
+    expect(c.state.env.has('DAY0_CRONS_PAUSED')).toBe(false);
+    expect(printed(c)).toContain(
+      'Nothing was pushed, so the pause this run set on the scheduled jobs is lifted again',
+    );
+    expect(printed(c)).not.toContain('The scheduled jobs stay paused');
   });
 
   it.each<[string, Partial<Cloud['state']>, string]>([
@@ -682,6 +707,19 @@ describe('cloud pause and unpause', (): void => {
       `${DEPLOYMENT}'s scheduled jobs are not paused; nothing was changed.`,
     );
     expect(writes(idle)).toEqual([]);
+  });
+
+  it("refuses to lift another release's unfinished upgrade by pushing this one", async (): Promise<void> => {
+    const c = cloud({
+      stamp: { release: '0.4.0', commit: COMMIT },
+      env: new Map([
+        ['CLERK_JWT_ISSUER_DOMAIN', 'https://e.clerk.accounts.dev'],
+        ['DAY0_CRONS_PAUSED', 'upgrade to 0.5.0 at 2026-10-01T00:00:00Z'],
+      ]),
+    });
+    expect(await runCloudPause(verb(c, { verb: 'unpause' }), c.io, 'unpause')).toBe(1);
+    expect(printed(c)).toContain('an upgrade to v0.5.0 did not finish');
+    expect(writes(c)).toEqual([]);
   });
 
   it('refuses when the checkout is not the release the deployment is stamped at', async (): Promise<void> => {

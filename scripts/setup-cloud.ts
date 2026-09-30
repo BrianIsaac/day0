@@ -749,11 +749,26 @@ export async function runCloudUpgrade(options: CloudOptions, io: CloudIo): Promi
     backup: { file: backup.file, sha256: backup.sha256 },
   };
   let paused = held !== undefined && isUpgradePause(held);
+  // Whether this run's functions reached the deployment: before that, the
+  // deployment runs the release it had, and this run's own pause is taken off
+  // again; after it, only the upgrade run again from this checkout may lift it.
+  let pushedHere = false;
+  let pausedHere = false;
   const stop = (what: string): number => {
     io.log(`error: ${what}`);
+    if (paused && pausedHere && !pushedHere) {
+      const lifted = convexOn(io, target, ['convex', 'env', 'remove', CRONS_PAUSED_FLAG]);
+      const read = readDeploymentEnv(io, target);
+      paused = lifted.status !== 0 || 'failure' in read || pauseReason(read) !== undefined;
+      if (!paused) {
+        io.log(
+          `Nothing was pushed, so the pause this run set on the scheduled jobs is lifted again (${CRONS_PAUSED_FLAG} removed and read back).`,
+        );
+      }
+    }
     if (paused) {
       io.log(
-        `The scheduled jobs stay paused (${CRONS_PAUSED_FLAG}); \`./setup.sh cloud upgrade\` lifts the pause when it completes, and \`./setup.sh cloud unpause --target ${target.file}\` lifts it now.`,
+        `The scheduled jobs stay paused (${CRONS_PAUSED_FLAG}). Run \`./setup.sh cloud upgrade --target ${target.file}\` again from this checkout: it resumes the migrations and lifts the pause when it completes.`,
       );
     }
     for (const line of rollbackLines(facts)) io.log(line);
@@ -766,6 +781,7 @@ export async function runCloudUpgrade(options: CloudOptions, io: CloudIo): Promi
       return stop('the scheduled jobs could not be paused; nothing was pushed.');
     }
     paused = true;
+    pausedHere = true;
     io.log(
       `Paused the scheduled jobs (${CRONS_PAUSED_FLAG}=${reason}); the push makes every module read it.`,
     );
@@ -774,6 +790,7 @@ export async function runCloudUpgrade(options: CloudOptions, io: CloudIo): Promi
   const message = `v${checkout.release} ${checkout.commit} cloud upgrade`;
   const pushed = pushFunctions(io, target, message);
   if (pushed !== undefined) return stop(pushed.failure);
+  pushedHere = true;
   const stamped = migrateAndStamp(io, target, checkout);
   if ('failure' in stamped) return stop(`${stamped.failure}.`);
 
@@ -853,6 +870,15 @@ export async function runCloudBackup(options: CloudOptions, io: CloudIo): Promis
 }
 
 /**
+ * The release an upgrade's pause names, or undefined for a pause set by hand.
+ *
+ * @param reason - The pause's reason, as the deployment holds it.
+ */
+export function upgradePauseRelease(reason: string): string | undefined {
+  return isUpgradePause(reason) ? /^upgrade to (\S+) at /.exec(reason)?.[1] : undefined;
+}
+
+/**
  * Pause or lift a cloud deployment's scheduled jobs, then push the stamped
  * release again so every module reads the change: a module keeps the env it
  * was first evaluated with.
@@ -893,6 +919,12 @@ export async function runCloudPause(
   const env = readDeploymentEnv(io, target);
   if ('failure' in env) return refuse(`${env.failure}.`);
   const current = pauseReason(env);
+  const unfinished = current === undefined ? undefined : upgradePauseRelease(current);
+  if (unfinished !== undefined && unfinished !== checkout.release) {
+    return refuse(
+      `an upgrade to v${unfinished} did not finish (${current}); its pause is lifted by running that upgrade again from a clean checkout of v${unfinished}, never by pushing this release over rows it may have migrated.`,
+    );
+  }
   const byHand = `paused by hand at ${new Date(io.now?.() ?? Date.now()).toISOString().replace(/\.\d{3}Z$/, 'Z')}`;
   if (verb === 'pause' && current !== undefined && !isUpgradePause(current)) {
     io.log(
