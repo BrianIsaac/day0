@@ -8,8 +8,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const room = vi.hoisted(() => ({
   /** What `voice.latest` answers; undefined while it loads. */
   session: null as Record<string, unknown> | null | undefined,
-  /** How `voice.start` answers: at once, never (a lost connection), or with a refusal. */
-  start: 'answer' as 'answer' | 'never',
+  /** How `voice.start` answers: at once, never (a lost connection), or as functions from
+   * before the session kept the conversation did, with no turns. */
+  start: 'answer' as 'answer' | 'never' | 'before-turns',
   starts: 0,
   /** What `voice.restart` was asked to set aside. */
   restarts: [] as unknown[],
@@ -48,6 +49,7 @@ vi.mock('convex/react', () => ({
       }
       room.starts += 1;
       if (room.start === 'never') return await new Promise(() => undefined);
+      if (room.start === 'before-turns') return { sessionId: 'session-1', resumed: true };
       return { sessionId: 'session-1', turns: room.kept, replyDraft: room.replyDraft };
     },
   useQuery: (): unknown => room.session,
@@ -228,6 +230,17 @@ describe('the composer and an input method', (): void => {
       field.dispatchEvent(enter(false));
     });
     expect(room.sent).toEqual([{ text: INIT_PROMPT }, { text: 'The close, mostly' }]);
+    view.unmount();
+  });
+});
+
+describe('a room opened on functions from before the conversation was kept (review m6)', (): void => {
+  it('opens the one-to-one rather than waiting for good on a start that names no turns', async (): Promise<void> => {
+    room.start = 'before-turns';
+    const view = mount(<ChatRoom agentId={AGENT} bossLabel="Sam" />);
+    await settle();
+    expect(room.sent).toEqual([{ text: INIT_PROMPT }]);
+    expect(view.container.querySelector('[role="alert"]')).toBeNull();
     view.unmount();
   });
 });

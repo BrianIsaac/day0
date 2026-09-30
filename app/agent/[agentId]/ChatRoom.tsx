@@ -457,21 +457,22 @@ export function ChatRoom({
   useEffect(() => {
     if (!startable) return;
     let cancelled = false;
-    withDeadline(
+    // The chain ends in its own rejection handler, which says why in the room: a start that failed
+    // or ran out of time, and a conversation the room could not draw.
+    void withDeadline(
       startSession({ agentId, mode: 'chat' }),
       START_DEADLINE_MS,
       `${name} did not answer within ${START_DEADLINE_MS / 1000} seconds`,
-    ).then(
-      (started) => {
+    )
+      .then((started): void => {
         sessionRef.current = started.sessionId;
         if (!cancelled) resume(started);
-      },
+      })
       // A 1:1 that could not start says why, with the way to try again,
       // rather than leaving the composer waiting for an opening that never comes.
-      (err: unknown) => {
+      .catch((err: unknown): void => {
         if (!cancelled) setStartFailure(refusalText(err, 'The 1:1 could not start.'));
-      },
-    );
+      });
     return () => {
       cancelled = true;
     };
