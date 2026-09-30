@@ -85,11 +85,52 @@ export const PHONE_FIGURE_SPAN: OfficePoint = { x: 33, y: 150 };
 /** Where an office stands its idle employees, and how far apart two must be not to overlap. */
 export interface OfficePlan {
   readonly spots: readonly OfficePoint[];
+  /**
+   * Where an idle employee stands when none of `spots` is clear of the others, tier by tier: the
+   * floor off the desks, then the floor over an empty desk. A figure over an empty desk reads
+   * better than two figures on each other.
+   */
+  readonly fallbacks?: readonly (readonly OfficePoint[])[];
   readonly span: OfficePoint;
 }
 
-/** The office at a desktop width: the corridors' and rooms' open floor. */
-export const DESKTOP_PLAN: OfficePlan = { spots: OFFICE_IDLE_SPOTS, span: FIGURE_SPAN };
+/**
+ * The desktop office's floor as a lattice, for when the seats in use and the other idle
+ * employees leave none of `OFFICE_IDLE_SPOTS` clear (the bed: two employees at desks left five
+ * clear spots for eight standing). Every point keeps a figure inside the frame.
+ */
+const DESKTOP_FLOOR: readonly OfficePoint[] = Array.from(
+  { length: 21 },
+  (_, column) => 10 + 4 * column,
+).flatMap((x) => Array.from({ length: 15 }, (_, row) => ({ x, y: 15 + 5 * row })));
+
+/** Whether a figure standing at `spot` would stand over one of the desks or chairs drawn. */
+function overDesk(spot: OfficePoint, drawn: readonly OfficePoint[]): boolean {
+  return drawn.some(
+    (desk) =>
+      Math.abs(desk.x - spot.x) < FIGURE_SPAN.x / 2 &&
+      Math.abs(desk.y - spot.y) < FIGURE_SPAN.y / 2,
+  );
+}
+
+/**
+ * The office at a desktop width for the desks it draws: the corridors' and rooms' open floor
+ * clear of them, then the rest of the floor off them, then over an empty one (the second pass: a
+ * spot stood over the tenth desk once ten were drawn).
+ *
+ * @param drawn - The centres of the desks and chairs drawn, as shares of the office.
+ */
+export function desktopPlan(drawn: readonly OfficePoint[]): OfficePlan {
+  const off = (spot: OfficePoint): boolean => !overDesk(spot, drawn);
+  return {
+    spots: OFFICE_IDLE_SPOTS.filter(off),
+    fallbacks: [DESKTOP_FLOOR.filter(off), DESKTOP_FLOOR.filter((spot) => !off(spot))],
+    span: FIGURE_SPAN,
+  };
+}
+
+/** The office at a desktop width with no desk drawn over its spots. */
+export const DESKTOP_PLAN: OfficePlan = desktopPlan([]);
 
 /**
  * The office on a phone: three across, as many rows as its employees need.
@@ -147,9 +188,10 @@ export interface IdleFigure {
  * Where each idle employee stands: one at a time, each on a spot clear of the figures already
  * placed (the seated ones first), and of those the one that leaves the most clear spots to the
  * employees still to place, so two figures overlap only once the office has no clear spot left
- * (the hosted walk's m18: Ada's figure stood on Cleo's). Between equally good spots the first
- * placement follows each employee's own seed; a roaming step takes `pick`'s choice, away from
- * where the employee stood.
+ * (the hosted walk's m18: Ada's figure stood on Cleo's). When the plan's spots have none clear
+ * left, the plan's floor (`OfficePlan.fallbacks`) is asked the same way, so two figures overlap
+ * only once the whole floor is full. Between equally good spots the first placement follows each
+ * employee's own seed; a roaming step takes `pick`'s choice, away from where the employee stood.
  *
  * @param idle - The idle employees, in roster order.
  * @param seated - Where the employees at desks sit.
@@ -163,36 +205,62 @@ export function idlePlaces(
   pick: (spots: readonly OfficePoint[]) => OfficePoint = (spots) => spots[0],
   plan: OfficePlan = DESKTOP_PLAN,
 ): Record<string, OfficePoint> {
-  const { spots, span } = plan;
   const placed: OfficePoint[] = [...seated];
   const places: Record<string, OfficePoint> = {};
+  const tiers = [plan.spots, ...(plan.fallbacks ?? [])].filter((tier) => tier.length > 0);
   for (const figure of idle) {
-    const { previous } = figure;
-    const away =
-      previous === undefined
-        ? []
-        : spots.filter(
-            (spot) => Math.abs(spot.x - previous.x) + Math.abs(spot.y - previous.y) > LEAST_STEP,
-          );
-    const reachable = away.length > 0 ? away : rotated(spots, figure.seed);
-    // The spots still clear of everyone placed: a spot that takes fewer of them from the
-    // employees still to place is the better of two clear ones.
-    const open = spots.filter((spot) => clearance(spot, placed, span) >= 1);
-    const scored = reachable.map((spot) => ({
-      spot,
-      clear: Math.min(1, clearance(spot, placed, span)),
-      blocks: open.filter((other) => other !== spot && clearance(other, [spot], span) < 1).length,
-    }));
-    const best = Math.max(...scored.map(({ clear }) => clear));
-    const clearest = scored.filter(({ clear }) => clear === best);
-    const fewest = Math.min(...clearest.map(({ blocks }) => blocks));
-    const spot = pick(
-      clearest.filter(({ blocks }) => blocks === fewest).map(({ spot: each }) => each),
-    );
-    places[figure.agentId] = spot;
-    placed.push(spot);
+    // Each tier is asked only when the ones before it have no clear spot left; the clearest
+    // spot any tier offered stands when none has one.
+    let chosen: OfficePoint | undefined;
+    for (const tier of tiers) {
+      const spot = bestSpot(figure, placed, tier, plan.span, pick);
+      if (
+        chosen === undefined ||
+        clearance(spot, placed, plan.span) > clearance(chosen, placed, plan.span)
+      ) {
+        chosen = spot;
+      }
+      if (clearance(chosen, placed, plan.span) >= 1) break;
+    }
+    if (chosen === undefined) continue;
+    places[figure.agentId] = chosen;
+    placed.push(chosen);
   }
   return places;
+}
+
+/**
+ * The spot of `spots` an idle employee takes: one clear of the figures already placed, and of
+ * those the one that leaves the most clear spots to the employees still to place; away from where
+ * it stood when it roams; the least crowded when none is clear.
+ */
+function bestSpot(
+  figure: IdleFigure,
+  placed: readonly OfficePoint[],
+  spots: readonly OfficePoint[],
+  span: OfficePoint,
+  pick: (spots: readonly OfficePoint[]) => OfficePoint,
+): OfficePoint {
+  const { previous } = figure;
+  const away =
+    previous === undefined
+      ? []
+      : spots.filter(
+          (spot) => Math.abs(spot.x - previous.x) + Math.abs(spot.y - previous.y) > LEAST_STEP,
+        );
+  const reachable = away.length > 0 ? away : rotated(spots, figure.seed);
+  // The spots still clear of everyone placed: a spot that takes fewer of them from the
+  // employees still to place is the better of two clear ones.
+  const open = spots.filter((spot) => clearance(spot, placed, span) >= 1);
+  const scored = reachable.map((spot) => ({
+    spot,
+    clear: Math.min(1, clearance(spot, placed, span)),
+    blocks: open.filter((other) => other !== spot && clearance(other, [spot], span) < 1).length,
+  }));
+  const best = Math.max(...scored.map(({ clear }) => clear));
+  const clearest = scored.filter(({ clear }) => clear === best);
+  const fewest = Math.min(...clearest.map(({ blocks }) => blocks));
+  return pick(clearest.filter(({ blocks }) => blocks === fewest).map(({ spot: each }) => each));
 }
 
 /** The spots in order from the one a seed names, so employees prefer spots of their own. */

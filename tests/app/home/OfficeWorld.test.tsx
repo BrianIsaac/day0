@@ -201,6 +201,29 @@ describe('OfficeWorld', (): void => {
     }
   });
 
+  it('stands eight idle employees clear of each other and of two at desks, as the bed’s roster did (second review x9)', (): void => {
+    const ten = Array.from(
+      { length: 10 },
+      (_, index) =>
+        ({
+          ...idle,
+          agentId: `bed-${index}`,
+          name: `Bed ${index}`,
+          // The bed's Ben and Lan: in the one-to-one, and with work open.
+          openCount: index === 5 || index === 9 ? 1 : 0,
+        }) as RosterRow,
+    );
+    const figures = figuresOf(renderToStaticMarkup(<OfficeWorld agents={ten} settled />)).map(
+      ({ desktop }) => desktop,
+    );
+    expect(figures).toHaveLength(10);
+    for (const [index, figure] of figures.entries()) {
+      expect(clearance(figure, figures.slice(index + 1)), `figure ${index}`).toBeGreaterThanOrEqual(
+        1,
+      );
+    }
+  });
+
   it('gives a tenth employee a phone seat of its own, in an office a row taller (pre-tag minor 10)', (): void => {
     const ten = Array.from(
       { length: 10 },

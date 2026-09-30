@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   clearance,
+  desktopPlan,
   FIGURE_SPAN,
   idlePlaces,
   OFFICE_IDLE_SPOTS,
@@ -87,6 +88,33 @@ describe('where the office stands its idle employees (walk m18)', () => {
       expect(clearance(place, places.slice(index + 1)), `figure ${index}`).toBeGreaterThanOrEqual(
         1,
       );
+    }
+  });
+
+  it('leaves out a spot over a desk the office draws, and stands a crowded figure on the floor rather than on another (second pass)', () => {
+    // The tenth desk and its chair, drawn once ten employees are.
+    const plan = desktopPlan([
+      { x: 90, y: 50 },
+      { x: 90, y: 58 },
+    ]);
+    expect(plan.spots).not.toContainEqual({ x: 88, y: 53 });
+    expect(plan.spots.length).toBe(OFFICE_IDLE_SPOTS.length - 1);
+    // Two seated where the bed had them leave the spots short; the floor takes the rest.
+    const seated = [
+      { x: 29, y: 25 },
+      { x: 90, y: 58 },
+    ];
+    const places = Object.values(
+      idlePlaces(
+        Array.from({ length: 8 }, (_, index) => ({ agentId: `a${index}`, seed: index * 7 })),
+        seated,
+        undefined,
+        plan,
+      ),
+    );
+    const all = [...seated, ...places];
+    for (const [index, place] of all.entries()) {
+      expect(clearance(place, all.slice(index + 1)), `figure ${index}`).toBeGreaterThanOrEqual(1);
     }
   });
 

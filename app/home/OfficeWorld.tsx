@@ -6,6 +6,7 @@ import type { Doc } from '@convex/_generated/dataModel';
 import { avatarById } from '@/agent/avatar-pets';
 import { useLightUpOnce } from './office-light-up';
 import {
+  desktopPlan,
   idlePlaces,
   phoneOfficeHeight,
   phonePlan,
@@ -84,6 +85,11 @@ const OFFICE_DESKS = [
  */
 const SEAT_ORDER = [0, 2, 6, 3, 7, 1, 4, 5] as const;
 
+/** How many desks the office draws for this many employees: eight at least, one each past them. */
+function deskCountFor(employees: number): number {
+  return Math.max(8, Math.min(OFFICE_DESKS.length, employees));
+}
+
 /** The desk the employee at this place on the roster sits at when working. */
 function deskFor(index: number): number {
   return (SEAT_ORDER[index] ?? index) % OFFICE_DESKS.length;
@@ -138,7 +144,7 @@ export function OfficeWorld({
   settled: boolean;
 }) {
   const visibleAgents = agents ?? [];
-  const deskCount = Math.max(8, Math.min(OFFICE_DESKS.length, visibleAgents.length));
+  const deskCount = deskCountFor(visibleAgents.length);
   const office = useRef<HTMLDivElement>(null);
   useLightUpOnce(office, settled);
   const layout = officeLayout(visibleAgents);
@@ -169,6 +175,7 @@ export function OfficeWorld({
               roster.idle.map((figure) => ({ ...figure, previous: from(figure.agentId)?.desktop })),
               roster.seated,
               pick,
+              roster.desktop,
             ),
             idlePlaces(
               roster.idle.map((figure) => ({ ...figure, previous: from(figure.agentId)?.phone })),
@@ -339,6 +346,8 @@ interface OfficeLayout {
   /** Where the same sitters sit on a phone. */
   readonly phoneSeated: readonly OfficePoint[];
   readonly idle: readonly IdleFigure[];
+  /** The desktop office's plan, clear of the desks it draws. */
+  readonly desktop: OfficePlan;
   /** The phone office's plan, with a row for every three employees. */
   readonly phone: OfficePlan;
   /** How tall the phone office is, in px, for those rows. */
@@ -379,7 +388,7 @@ function placesById(
 /** Where each idle employee opens, on both plans. */
 function idleOffice(layout: OfficeLayout): Record<string, OfficePlace> {
   return placesById(
-    idlePlaces(layout.idle, layout.seated),
+    idlePlaces(layout.idle, layout.seated, undefined, layout.desktop),
     idlePlaces(layout.idle, layout.phoneSeated, undefined, layout.phone),
   );
 }
@@ -406,11 +415,16 @@ function officeLayout(agents: readonly RosterRow[]): OfficeLayout {
     }
   });
   const rows = phoneRows(agents.length);
+  const drawn = OFFICE_DESKS.slice(0, deskCountFor(agents.length)).flatMap((desk) => [
+    { x: desk.x, y: desk.y },
+    { x: desk.seatX, y: desk.seatY },
+  ]);
   return {
     working,
     seated,
     phoneSeated,
     idle,
+    desktop: desktopPlan(drawn),
     phone: phonePlan(rows),
     phoneHeight: phoneOfficeHeight(rows),
   };
