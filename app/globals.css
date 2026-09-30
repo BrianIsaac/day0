@@ -87,7 +87,10 @@ body {
 
   /* The page keeps a scrollbar's room whether it scrolls or not, so a page that grows one (the
      chat room) does not sit 5 px left of one that has none (the hosted walk's m31). A modal's
-     hold (app/components/use-modal.ts) writes the same value inline and gives it back. */
+     hold (app/components/use-modal.ts) writes the same value inline and gives it back. The room
+     shows the root's background colour and nothing else: no element, shadow or background image
+     paints there, so the header's tint reaches the window's edge (the same colour) and its 1 px
+     rule stops at the room (the second review's x11, measured in Chromium 153). */
   html {
     scrollbar-gutter: stable;
   }
