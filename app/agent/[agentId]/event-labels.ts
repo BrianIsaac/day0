@@ -5,8 +5,8 @@ import {
   type EventType,
   type WorkPlanHeldPayload,
 } from '@/events/contract';
-import type { WorkVerdict } from '@/work/types';
 import type { RecordKind } from '../../components/RecordLine';
+import { judgedAs, REEVALUATION } from './verdict-words';
 
 /**
  * A payload as the feed reads it: a row an older release wrote may lack any
@@ -29,25 +29,13 @@ function because(value: unknown): string {
   return reason ? ` (${reason.replace(/\.$/, '')})` : '';
 }
 
-/**
- * What the evaluator decided about a piece of work, in the manager's words rather than the
- * verdict's name (the hosted walk's m15 read "evaluated: claim", "evaluated: needs-skill").
- */
-const EVALUATED_WORDS = {
-  claim: 'judged part of the job',
-  queue: 'judged part of the job, queued behind its open work',
-  skip: 'judged not part of the job',
-  defer: 'judged part of the job, waiting on a connection or a permission',
-  'needs-skill': 'judged part of the job, needs a skill first',
-} as const satisfies Record<WorkVerdict['decision'], string>;
-
 /** An evaluation's words, or the verdict's own name when an older row holds one no longer made. */
 function evaluatedWords(decision: unknown): string {
   const name = text(decision);
   if (name === undefined) return 'evaluated';
-  return Object.hasOwn(EVALUATED_WORDS, name)
-    ? EVALUATED_WORDS[name as keyof typeof EVALUATED_WORDS]
-    : `evaluated: ${name}`;
+  if (name === REEVALUATION) return 'to be judged again: its skill is ready';
+  const judged = judgedAs(name);
+  return judged === undefined ? `evaluated: ${name}` : `judged ${judged}`;
 }
 
 /** `3 tools`, `1 tool`. */

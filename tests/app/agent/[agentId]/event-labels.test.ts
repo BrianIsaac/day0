@@ -218,6 +218,7 @@ describe('the live feed labels', (): void => {
     expect(evaluated('defer')).toBe(
       'judged part of the job, waiting on a connection or a permission',
     );
+    expect(evaluated('pending-reevaluation')).toBe('to be judged again: its skill is ready');
     // A verdict no release makes any more is printed as stored; a row with none says evaluated.
     expect(evaluated('retired-verdict')).toBe('evaluated: retired-verdict');
     expect(evaluated(undefined)).toBe('evaluated');
