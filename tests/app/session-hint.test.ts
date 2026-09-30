@@ -27,6 +27,8 @@ const COOKIES: ReadonlyArray<readonly [string, boolean]> = [
   ['__client_uat=1759100000', true],
   ['__client_uat_AbC12=1759100000', true],
   ['__client_uat=0; __client_uat_AbC12=1759100000', true],
+  // Another Clerk application on the host left a bare stamp; this instance's own says signed out.
+  ['__client_uat=1759100000; __client_uat_AbC12=0', false],
   ['__client_uat_AbC12=0; theme=dark', false],
   ['not__client_uat=1759100000', false],
 ];
