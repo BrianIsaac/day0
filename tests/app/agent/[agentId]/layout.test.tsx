@@ -8,7 +8,11 @@ import { EmployeeShell } from '../../../../app/agent/[agentId]/EmployeeShell';
 import { SessionGate } from '../../../../app/Providers';
 import { mount, unmountAll } from '../../../fixtures/dom/press';
 import { EMPLOYEE_ROW } from '../../../fixtures/dom/employee';
-import { syncServer, type ClientMessage } from '../../../fixtures/convex/sync-socket';
+import {
+  syncServer,
+  type ClientMessage,
+  type SyncServer,
+} from '../../../fixtures/convex/sync-socket';
 
 /** Clerk as the page sees it: loading until the test says it has answered. */
 const clerk = vi.hoisted(() => {
@@ -19,14 +23,17 @@ const clerk = vi.hoisted(() => {
     readonly getToken: () => Promise<string>;
   }
   const listeners = new Set<() => void>();
-  // Clerk's `getToken` is one function from the first render, before its script has answered.
+  let auth: ClerkAuth;
+  // Clerk's `getToken` is one function from the first render, before its script has answered; it
+  // mints for whichever session Clerk holds when asked, `sess_b` being a second user.
   const getToken = async (): Promise<string> => {
     const part = (value: object): string =>
       Buffer.from(JSON.stringify(value)).toString('base64url');
     const now = Math.floor(Date.now() / 1000);
-    return `${part({ alg: 'RS256', typ: 'JWT' })}.${part({ sub: 'user_1', iat: now, exp: now + 3600 })}.c2ln`;
+    const sub = auth.sessionId === 'sess_b' ? 'user_2' : 'user_1';
+    return `${part({ alg: 'RS256', typ: 'JWT' })}.${part({ sub, iat: now, exp: now + 3600 })}.c2ln`;
   };
-  let auth: ClerkAuth = { isLoaded: false, getToken };
+  auth = { isLoaded: false, getToken };
   return {
     getToken,
     read: (): ClerkAuth => auth,
@@ -70,13 +77,23 @@ class Boundary extends Component<{ children: ReactNode }, { error: Error | null 
   }
 }
 
-/** Let the socket open and every message between the client and the deployment land. */
-async function exchange(): Promise<void> {
-  for (let turn = 0; turn < 8; turn += 1) {
+/** The most turns an exchange may take before the test calls it stuck. */
+const EXCHANGE_TURNS = 200;
+
+/**
+ * Let the socket open and every message between the client and the deployment land: turn the
+ * event loop until nothing is on the wire and a whole turn has passed with nothing new sent.
+ */
+async function exchange(server: SyncServer): Promise<void> {
+  let seen = -1;
+  for (let turn = 0; turn < EXCHANGE_TURNS; turn += 1) {
     await act(async (): Promise<void> => {
-      await new Promise((resolve) => setTimeout(resolve, 5));
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
+    if (server.quiet() && server.sent.length === seen) return;
+    seen = server.sent.length;
   }
+  throw new Error(`the exchange with the deployment was still going after ${EXCHANGE_TURNS} turns`);
 }
 
 function addsOf(message: ClientMessage): string[] {
@@ -156,12 +173,12 @@ describe('the employee page layout', () => {
       </Providers>,
     );
     // The page is served and hydrated while Clerk's script is still on its way.
-    await exchange();
+    await exchange(server);
     expect(container.textContent).not.toContain('This page did not load');
     expect(server.sent.flatMap(addsOf)).not.toContain('agents:get');
 
     act((): void => clerk.answer({ isLoaded: true, isSignedIn: true, getToken: clerk.getToken }));
-    await exchange();
+    await exchange(server);
 
     expect(container.textContent).not.toContain('This page did not load');
     expect(container.querySelector('nav[aria-label="Breadcrumb"]')?.textContent).toContain('Mira');
@@ -194,14 +211,14 @@ describe('the employee page layout', () => {
         <Boundary>{page}</Boundary>
       </Providers>,
     );
-    await exchange();
+    await exchange(server);
     const breadcrumb = (): string | undefined =>
       container.querySelector('nav[aria-label="Breadcrumb"]')?.textContent ?? undefined;
     expect(breadcrumb()).toContain('Mira');
 
     // Clerk refreshing an expiring session answers "not loaded" again for a moment.
     act((): void => clerk.answer({ isLoaded: false, getToken: clerk.getToken }));
-    await exchange();
+    await exchange(server);
 
     expect(breadcrumb()).toContain('Mira');
     expect(container.textContent).not.toContain('This page did not load');
@@ -212,11 +229,13 @@ describe('the employee page layout', () => {
     ).toEqual([]);
   });
 
-  it('takes the new session’s token when the signed-in session changes to another (second pass M4)', async () => {
-    const server = syncServer((path, signedIn) => {
+  it('draws the second user’s answer, never the first user’s employee, when the signed-in session changes to another (second pass M4, second review x3)', async () => {
+    // The deployment answers each user for their own rows: the employee is the first user's.
+    const server = syncServer((path, signedIn, subject) => {
       if (path === 'config:surfaceMode') return { value: { mode: 'mock' } };
       if (path !== 'agents:get') return undefined;
-      return signedIn ? { value: EMPLOYEE_ROW } : { error: 'not authenticated' };
+      if (!signedIn) return { error: 'not authenticated' };
+      return { value: subject === 'user_1' ? EMPLOYEE_ROW : null };
     });
     vi.stubGlobal('WebSocket', server.Socket);
     vi.stubEnv('NEXT_PUBLIC_CONVEX_URL', 'https://session-switch-test.convex.cloud');
@@ -239,21 +258,28 @@ describe('the employee page layout', () => {
         <Boundary>{page}</Boundary>
       </Providers>,
     );
-    await exchange();
-    const authenticated = (): number =>
-      server.sent.filter(
-        (message) => message.type === 'Authenticate' && message.tokenType === 'User',
-      ).length;
-    const before = authenticated();
-    expect(before).toBeGreaterThan(0);
+    await exchange(server);
+    expect(container.querySelector('nav[aria-label="Breadcrumb"]')?.textContent).toContain('Mira');
 
-    // Clerk moves the page to another session, answering "not loaded" between the two.
+    // Clerk moves the page to the second user's session, answering "not loaded" between the two.
     act((): void => clerk.answer({ isLoaded: false, getToken: clerk.getToken }));
     act((): void => clerk.answer(signedIn('sess_b')));
-    await exchange();
+    await exchange(server);
 
-    expect(authenticated()).toBeGreaterThan(before);
-    expect(container.querySelector('nav[aria-label="Breadcrumb"]')?.textContent).toContain('Mira');
+    const subjects = server.sent
+      .filter((message) => message.type === 'Authenticate' && message.tokenType === 'User')
+      .map((message) => {
+        const payload = String(message.value).split('.')[1] ?? '';
+        return (JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as { sub: string })
+          .sub;
+      });
+    expect(subjects.at(0)).toBe('user_1');
+    expect(subjects.at(-1)).toBe('user_2');
+    // The page is the second user's answer: no such employee, and nothing of the first user's.
+    expect(container.querySelector('h1')?.textContent).toBe('No such employee');
+    expect(container.querySelector('nav[aria-label="Breadcrumb"]')).toBeNull();
+    expect(container.textContent).not.toContain('Mira');
+    expect(container.textContent).not.toContain(EMPLOYEE_ROW.bossEmail);
     expect(container.textContent).not.toContain('This page did not load');
   });
 
@@ -285,12 +311,12 @@ describe('the employee page layout', () => {
         <Boundary>{page}</Boundary>
       </Providers>,
     );
-    await exchange();
+    await exchange(server);
     expect(container.querySelector('nav[aria-label="Breadcrumb"]')?.textContent).toContain('Mira');
 
     // The other tab signed out: Clerk here settles with no session, and Convex with nobody.
     act((): void => clerk.answer({ isLoaded: true, isSignedIn: false, getToken: clerk.getToken }));
-    await exchange();
+    await exchange(server);
 
     expect(container.querySelector('nav[aria-label="Breadcrumb"]')).toBeNull();
     expect(container.textContent).not.toContain('Mira');
