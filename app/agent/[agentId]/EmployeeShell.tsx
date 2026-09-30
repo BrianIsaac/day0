@@ -37,6 +37,7 @@ import { EmployeeHeader } from './EmployeeHeader';
 import { EmployeeRetired, NoSuchEmployee } from './NoSuchEmployee';
 import { currentStep, firstWeekSteps } from './first-week';
 import { AgentZoneContext } from '../../components/time';
+import { ButtonLink } from '../../components/Button';
 
 /** Said, with focus on the one-to-one, when a charter sent back returns the page to it. */
 export const ONBOARDING_REOPENED =
@@ -56,6 +57,13 @@ interface SentBack {
   readonly charterId: Id<'charters'>;
   readonly redrafting: boolean;
 }
+
+/**
+ * The tabs day zero can need, drawn alone with the way back: Surfaces, where a card's link or the
+ * Slack OAuth return lands before the one-to-one is held, and Manage, so an employee that never
+ * reaches a charter can still be retired (the hosted walk's M3, 30 September).
+ */
+const DAY_ZERO_TABS: ReadonlySet<EmployeeTab> = new Set(['surfaces', 'manage']);
 
 /** The rail's step while what it is read from is still loading. */
 const UNSETTLED = -1;
@@ -325,9 +333,7 @@ export function EmployeeShell({ agentId, children }: EmployeeShellProps) {
               <FirstWeekRail steps={steps} advanced={advanced || railLeaving} />
             </div>
           ) : null}
-          {dayZero && segment === 'surfaces' ? (
-            // The environment is the one tab day zero can need: a card's link or the Slack
-            // OAuth return lands here before the one-to-one is held.
+          {dayZero && segment !== null && DAY_ZERO_TABS.has(selected) ? (
             <div className="mt-6 grid gap-4">
               <Link
                 href={employeeTabHref(agentId, 'needs-you')}
@@ -340,6 +346,9 @@ export function EmployeeShell({ agentId, children }: EmployeeShellProps) {
           ) : dayZero ? (
             <div className="mt-6">
               <DayZero onboarding={onboarding} arriving={arriving} />
+              <ButtonLink href={employeeTabHref(agentId, 'manage')} variant="text" className="mt-4">
+                Manage or retire {agent.name}
+              </ButtonLink>
             </div>
           ) : (
             <>
