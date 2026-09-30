@@ -12,12 +12,25 @@
 #                                      keep a copy, put it back, or move to this checkout's release
 #   ./setup.sh pause | unpause         hold the scheduled jobs, or let them run again
 #
+#   ./setup.sh cloud setup --target <file>
+#                                      Convex cloud and Vercel: the first push to an empty
+#                                      production deployment, and the app deployed onto it
+#   ./setup.sh cloud upgrade --target <file>
+#                                      an export, then this tag pushed, migrated, stamped
+#                                      and deployed, both halves read back
+#   ./setup.sh cloud backup --target <file>
+#                                      an export with its checksum and row counts
+#   ./setup.sh cloud pause | unpause --target <file>
+#                                      hold a real-mode cloud deployment's scheduled jobs
+#
 # This checks the tools the setup needs (the Docker daemon itself, not only
 # its client), installs the dependencies if they are not there yet (never on
 # --dry-run), and hands everything else to the typed, tested entry:
 # `pnpm setup:local --mode real`. Every flag goes straight through, so
 # `pnpm setup:local --help` is the full list. Mock mode, the seeded office the
 # evaluation harness and the hosted demo run on, stays `pnpm setup:local`.
+# `cloud` needs no Docker: it checks Node and pnpm and hands its verb to
+# `scripts/setup-cloud.ts`, whose `./setup.sh cloud --help` is its full list.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")"
@@ -28,6 +41,7 @@ Usage: ./setup.sh --route <featherless|key|endpoint|local> [setup flags]
        ./setup.sh stop | resume | clear [--yes] [--purge-env]
        ./setup.sh backup | restore <file> | upgrade [--yes] [--to <dir>]
        ./setup.sh pause | unpause [--dry-run]
+       ./setup.sh cloud setup | upgrade | backup | pause | unpause --target <file>
 
 Real mode, on your own documentation and systems: day0 reads the pages you
 link and, once you approve a card, acts on the systems those pages record.
@@ -86,18 +100,24 @@ Hold the scheduled jobs, with the stack up:
                        runs to its end.
   ./setup.sh unpause   lift the pause; each job runs again at its next turn
 
+Your own copy on Convex cloud and Vercel, from a clean checkout of a release
+tag with no .env.local; <file> sits outside the checkout and holds
+CONVEX_DEPLOYMENT=prod:<name>, the production deployment:
+  ./setup.sh cloud setup --target <file>     the first push to an empty production
+                                             deployment, its settings from --env-file
+                                             or hidden prompts, and the app deployed
+  ./setup.sh cloud upgrade --target <file>   an export first, then this release pushed,
+                                             migrated, stamped and deployed, one
+                                             release at a time, both halves read back
+  ./setup.sh cloud backup --target <file>    an export with its checksum and row counts
+  ./setup.sh cloud pause | unpause --target <file>
+                                             hold a real-mode deployment's jobs, or not
+  Each ends with its rollback runbook; --dry-run runs every read and changes
+  nothing. The full list: ./setup.sh cloud --help
+
 Everything else, ports and project names included: pnpm setup:local --help
 USAGE
 }
-
-for argument in "$@"; do
-  case "$argument" in
-    -h | --help)
-      usage
-      exit 0
-      ;;
-  esac
-done
 
 major() {
   # The first integer in whatever a tool prints for --version, or nothing.
@@ -111,17 +131,80 @@ first_line() {
   printf '%s\n' "$1" | awk 'NF { print; exit }'
 }
 
+check_node_and_pnpm() {
+  # Sets missing=1 and says what to do for each of the two that is absent or old.
+  if ! command -v node >/dev/null 2>&1 || [ "$(major "$(node --version)")" -lt 22 ]; then
+    echo "gap  Node 22 or newer is needed; found: $(node --version 2>/dev/null || echo 'none on the path')." >&2
+    echo "     nvm install 22 && nvm use 22" >&2
+    missing=1
+  fi
+  if ! command -v pnpm >/dev/null 2>&1 || [ "$(major "$(pnpm --version)")" -lt 9 ]; then
+    echo "gap  pnpm 9 or newer is needed; found: $(pnpm --version 2>/dev/null || echo 'none on the path')." >&2
+    echo "     corepack enable && corepack prepare pnpm@9 --activate" >&2
+    missing=1
+  fi
+}
+
+install_dependencies() {
+  # install_dependencies <dry run 0|1> <the typed command it would hand over to>
+  if [ -d node_modules ]; then return 0; fi
+  if [ "$1" -eq 1 ]; then
+    # A dry run writes nothing, and an install writes node_modules; the full
+    # plan needs the dependencies, so it says what it would do and stops here.
+    echo "Dry run. The prerequisites above are in place. The dependencies are not installed yet, so the"
+    echo "plan cannot be printed without writing node_modules. The setup would run, in order:"
+    echo "  pnpm install --frozen-lockfile"
+    echo "  $2"
+    echo "Install them (pnpm install --frozen-lockfile) and run the dry run again for the full plan."
+    echo "Nothing was started and nothing was written."
+    exit 0
+  fi
+  echo "Installing dependencies (pnpm install --frozen-lockfile)..."
+  pnpm install --frozen-lockfile
+}
+
+dry_run=0
+for argument in "$@"; do
+  if [ "$argument" = "--dry-run" ]; then dry_run=1; fi
+done
+
 missing=0
-if ! command -v node >/dev/null 2>&1 || [ "$(major "$(node --version)")" -lt 22 ]; then
-  echo "gap  Node 22 or newer is needed; found: $(node --version 2>/dev/null || echo 'none on the path')." >&2
-  echo "     nvm install 22 && nvm use 22" >&2
-  missing=1
+if [ "${1:-}" = "cloud" ]; then
+  # Convex cloud and Vercel need no Docker, and `cloud --help` is the typed
+  # entry's own, so this comes before the local checks and the usage above.
+  shift
+  check_node_and_pnpm
+  if [ "$missing" -ne 0 ]; then
+    echo "" >&2
+    echo "Nothing was read, pushed or deployed." >&2
+    exit 1
+  fi
+  for argument in "$@"; do
+    case "$argument" in
+      -h | --help)
+        # The typed entry prints the cloud help, and it needs the dependencies;
+        # asking for help installs nothing.
+        [ -d node_modules ] && exec pnpm exec tsx scripts/setup-cloud.ts --help
+        echo "The cloud verbs' help comes from scripts/setup-cloud.ts, which needs the dependencies:"
+        echo "  pnpm install --frozen-lockfile && ./setup.sh cloud --help"
+        exit 0
+        ;;
+    esac
+  done
+  install_dependencies "$dry_run" "pnpm exec tsx scripts/setup-cloud.ts $*"
+  exec pnpm exec tsx scripts/setup-cloud.ts "$@"
 fi
-if ! command -v pnpm >/dev/null 2>&1 || [ "$(major "$(pnpm --version)")" -lt 9 ]; then
-  echo "gap  pnpm 9 or newer is needed; found: $(pnpm --version 2>/dev/null || echo 'none on the path')." >&2
-  echo "     corepack enable && corepack prepare pnpm@9 --activate" >&2
-  missing=1
-fi
+
+for argument in "$@"; do
+  case "$argument" in
+    -h | --help)
+      usage
+      exit 0
+      ;;
+  esac
+done
+
+check_node_and_pnpm
 if ! command -v docker >/dev/null 2>&1 || ! docker --version >/dev/null 2>&1; then
   echo "gap  Docker is needed and is not on the path. Install Docker Desktop or Docker Engine." >&2
   missing=1
@@ -163,25 +246,6 @@ if [ "$missing" -ne 0 ]; then
   exit 1
 fi
 
-dry_run=0
-for argument in "$@"; do
-  if [ "$argument" = "--dry-run" ]; then dry_run=1; fi
-done
-
-if [ ! -d node_modules ]; then
-  if [ "$dry_run" -eq 1 ]; then
-    # A dry run writes nothing, and an install writes node_modules; the full
-    # plan needs the dependencies, so it says what it would do and stops here.
-    echo "Dry run. The prerequisites above are in place. The dependencies are not installed yet, so the"
-    echo "plan cannot be printed without writing node_modules. The setup would run, in order:"
-    echo "  pnpm install --frozen-lockfile"
-    echo "  pnpm setup:local --mode real $*"
-    echo "Install them (pnpm install --frozen-lockfile) and run the dry run again for the full plan."
-    echo "Nothing was started and nothing was written."
-    exit 0
-  fi
-  echo "Installing dependencies (pnpm install --frozen-lockfile)..."
-  pnpm install --frozen-lockfile
-fi
+install_dependencies "$dry_run" "pnpm setup:local --mode real $*"
 
 exec pnpm setup:local --mode real "$@"
