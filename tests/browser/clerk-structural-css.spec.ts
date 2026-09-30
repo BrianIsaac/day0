@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { basename, dirname, join } from 'node:path';
 import { expect, test } from '@playwright/test';
@@ -18,6 +19,9 @@ const require = createRequire(import.meta.url);
 /** Clerk's detector module and its one relative import, in the installed `@clerk/ui`. */
 const CLERK_UI_UTILS = join(dirname(require.resolve('@clerk/ui/package.json')), 'dist', 'utils');
 
+/** The detector's file, outside `@clerk/ui`'s export map, so a release that moves it says so here. */
+const DETECTOR = join(CLERK_UI_UTILS, 'detectClerkStylesheetUsage.js');
+
 /** Where the page imports the detector from; the spec serves it from `CLERK_UI_UTILS`. */
 const DETECTOR_ROUTE = '/__clerk-ui-utils/';
 
@@ -25,7 +29,10 @@ const DETECTOR_ROUTE = '/__clerk-ui-utils/';
 const PAGES = ['/', '/sign-in'] as const;
 
 for (const path of PAGES) {
-  test(`${path} ships no CSS Clerk reports as structural`, async ({ page }) => {
+  test(`${path} ships no CSS Clerk reports as structural`, async ({ page }, testInfo) => {
+    // The detector walks every rule, media queries included, so one viewport says it all.
+    test.skip(testInfo.project.name === 'phone', 'the stylesheets are the same at every width');
+    expect(existsSync(DETECTOR), `Clerk's detector is no longer at ${DETECTOR}`).toBe(true);
     // The build carries a placeholder Clerk key and Convex address; their scripts never load.
     await page.route(/\.invalid\//, (route) => route.abort());
     await page.route(`**${DETECTOR_ROUTE}*.js`, (route) =>
