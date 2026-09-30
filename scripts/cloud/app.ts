@@ -128,6 +128,12 @@ export const CLERK_APP_KEYS: readonly string[] = [
 /** The user agent the public read-backs send, so the host's logs say what asked. */
 const READ_BACK_AGENT = 'Mozilla/5.0 (compatible; day0-setup-cloud read-back)';
 
+/** A page that did not answer 200: why, and the HTTP status when the host answered at all. */
+export interface PageFailure extends Failure {
+  /** The status the host answered with; undefined when nothing answered. */
+  readonly answered?: number;
+}
+
 /**
  * Fetch a public page of the app.
  *
@@ -136,7 +142,7 @@ const READ_BACK_AGENT = 'Mozilla/5.0 (compatible; day0-setup-cloud read-back)';
  *
  * @returns Its body when it answers 200, else why not.
  */
-export function fetchPage(io: CloudIo, url: string): { readonly body: string } | Failure {
+export function fetchPage(io: CloudIo, url: string): { readonly body: string } | PageFailure {
   const fetched = io.run(
     'curl',
     ['-sS', '-L', '--max-time', '30', '-A', READ_BACK_AGENT, '-w', '\n%{http_code}', url],
@@ -145,7 +151,10 @@ export function fetchPage(io: CloudIo, url: string): { readonly body: string } |
   const cut = fetched.stdout.lastIndexOf('\n');
   const code = fetched.stdout.slice(cut + 1).trim();
   if (fetched.status !== 0 || code !== '200') {
-    return { failure: `${url} answered ${code || `nothing (${firstLine(fetched.stderr)})`}` };
+    const failure = `${url} answered ${code || `nothing (${firstLine(fetched.stderr)})`}`;
+    // curl prints 000 when no response came back at all.
+    const answered = fetched.status === 0 && /^[1-9]\d{2}$/.test(code) ? Number(code) : undefined;
+    return answered === undefined ? { failure } : { failure, answered };
   }
   return { body: fetched.stdout.slice(0, Math.max(cut, 0)) };
 }
@@ -168,10 +177,47 @@ export function appTalksTo(
   deployment: string,
 ): { readonly talks: boolean } | Failure {
   const home = fetchPage(io, `${appUrl}/`);
-  if ('failure' in home) return home;
+  return 'failure' in home ? home : homeTalksTo(io, appUrl, home.body, deployment);
+}
+
+/**
+ * Whether the app is on the deployment already, for a setup deciding whether
+ * it may finish: a home that answers an HTTP error serves no app, so the app
+ * is not on it (a first build that stopped part way leaves exactly that),
+ * while an address that answers nothing at all cannot be told and is a failure.
+ *
+ * @param io - The machine.
+ * @param appUrl - The app's production address.
+ * @param deployment - The deployment.
+ */
+export function appOnDeployment(
+  io: CloudIo,
+  appUrl: string,
+  deployment: string,
+): { readonly on: boolean } | Failure {
+  const home = fetchPage(io, `${appUrl}/`);
+  if ('failure' in home) return home.answered === undefined ? home : { on: false };
+  const talks = homeTalksTo(io, appUrl, home.body, deployment);
+  return 'failure' in talks ? talks : { on: talks.talks };
+}
+
+/**
+ * Whether a home page, or one of the client chunks it loads, names the deployment's URL.
+ *
+ * @param io - The machine.
+ * @param appUrl - The app's production address.
+ * @param homeBody - The home page, fetched.
+ * @param deployment - The deployment.
+ */
+function homeTalksTo(
+  io: CloudIo,
+  appUrl: string,
+  homeBody: string,
+  deployment: string,
+): { readonly talks: boolean } | Failure {
   const address = deploymentUrl(deployment);
-  if (home.body.includes(address)) return { talks: true };
-  for (const path of clientChunkPaths(home.body).slice(0, CHUNKS_READ)) {
+  if (homeBody.includes(address)) return { talks: true };
+  for (const path of clientChunkPaths(homeBody).slice(0, CHUNKS_READ)) {
     const chunk = fetchPage(io, `${appUrl}${path}`);
     if ('failure' in chunk) return chunk;
     if (chunk.body.includes(address)) return { talks: true };

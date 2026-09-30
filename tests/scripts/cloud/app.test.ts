@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   appConvexValues,
+  appOnDeployment,
   appTalksTo,
   deployApp,
   linkedProject,
@@ -46,7 +47,39 @@ describe('appTalksTo', (): void => {
 
   it('fails on a page that does not answer 200', (): void => {
     const c = cloud({ served: undefined });
-    expect(appTalksTo(c.io, APP_URL, DEPLOYMENT)).toEqual({ failure: `${APP_URL}/ answered 404` });
+    expect(appTalksTo(c.io, APP_URL, DEPLOYMENT)).toEqual({
+      failure: `${APP_URL}/ answered 404`,
+      answered: 404,
+    });
+  });
+});
+
+describe('appOnDeployment', (): void => {
+  it('says the app is on the deployment when a client chunk names it, and not for another', (): void => {
+    expect(appOnDeployment(cloud().io, APP_URL, DEPLOYMENT)).toEqual({ on: true });
+    expect(appOnDeployment(cloud().io, APP_URL, DEV_DEPLOYMENT)).toEqual({ on: false });
+  });
+
+  it('reads a home that answers an HTTP error as no app on it', (): void => {
+    expect(appOnDeployment(cloud({ served: undefined }).io, APP_URL, DEPLOYMENT)).toEqual({
+      on: false,
+    });
+  });
+
+  it('fails when nothing answers, since then it cannot be told', (): void => {
+    const c = cloud({
+      failing: [
+        {
+          match: `%{http_code} ${APP_URL}/`,
+          status: 6,
+          stdout: '\n000',
+          stderr: 'curl: (6) Could not resolve host: day0-example.vercel.app',
+        },
+      ],
+    });
+    expect(appOnDeployment(c.io, APP_URL, DEPLOYMENT)).toEqual({
+      failure: `${APP_URL}/ answered 000`,
+    });
   });
 });
 

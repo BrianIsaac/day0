@@ -348,6 +348,71 @@ describe('cloud setup, the first push', (): void => {
     expect(stamped.state.served).toMatchObject({ talksTo: DEPLOYMENT, release: '0.4.0' });
   });
 
+  it('refuses a deployment stamped at this release that the app already talks to, and names the upgrade', async (): Promise<void> => {
+    const finished = (): Partial<Cloud['state']> => ({
+      stamp: { release: '0.4.0', commit: COMMIT },
+      served: { id: 'dpl_Live1', talksTo: DEPLOYMENT, release: '0.4.0' },
+    });
+    const refusal = `brisk-heron-417 is set up at v0.4.0 and ${APP_URL} serves it: this is the upgrade's, which exports first:`;
+    for (const dryRun of [false, true]) {
+      const c = cloud(finished());
+      expect(
+        await runCloudSetup(
+          verb(c, { verb: 'setup', envFile: settingsFile(c, SETTINGS), dryRun }),
+          c.io,
+        ),
+      ).toBe(1);
+      expect(printed(c)).toContain(refusal);
+      expect(printed(c)).not.toContain('finishing a first setup');
+      expect(writes(c)).toEqual([]);
+    }
+    const asked = cloud(finished());
+    expect(await runCloudSetup(verb(asked, { verb: 'setup' }), asked.io)).toBe(1);
+    expect(printed(asked)).toContain(refusal);
+    // Refused before the prompts, so nobody types a key into a setup that will not run.
+    expect(printed(asked)).not.toContain('CLERK_JWT_ISSUER_DOMAIN (');
+  });
+
+  it('refuses to finish a stamped setup while no app address says whether the app is on it yet', async (): Promise<void> => {
+    const c = cloud(
+      {
+        ...empty(),
+        stamp: { release: '0.4.0', commit: COMMIT },
+        tables: ['agents', 'deploymentVersions', 'migrations'],
+      },
+      { targetText: `CONVEX_DEPLOYMENT=prod:${DEPLOYMENT}\n` },
+    );
+    expect(
+      await runCloudSetup(
+        verb(c, { verb: 'setup', envFile: settingsFile(c, SETTINGS), dryRun: true }),
+        c.io,
+      ),
+    ).toBe(1);
+    expect(printed(c)).toContain(
+      'brisk-heron-417 is stamped v0.4.0 already, and no app address is named, so a first setup that stopped part way cannot be told from one that finished:',
+    );
+    expect(writes(c)).toEqual([]);
+  });
+
+  it('finishes a stamped setup whose address answers no page yet, as a stopped first build leaves it', async (): Promise<void> => {
+    const c = cloud({
+      ...empty(),
+      tables: ['agents', 'deploymentVersions', 'migrations'],
+      stamp: { release: '0.4.0', commit: COMMIT },
+      env: new Map([['CLERK_JWT_ISSUER_DOMAIN', 'https://example.clerk.accounts.dev']]),
+      served: { id: 'dpl_Stopped1', talksTo: DEPLOYMENT, release: '0.4.0' },
+      failing: [{ match: `%{http_code} ${APP_URL}/`, status: 0, stderr: '', stdout: '\n404' }],
+    });
+    expect(
+      await runCloudSetup(
+        verb(c, { verb: 'setup', envFile: settingsFile(c, SETTINGS), dryRun: true }),
+        c.io,
+      ),
+    ).toBe(0);
+    expect(printed(c)).toContain('finishing a first setup that stopped after its stamp.');
+    expect(writes(c)).toEqual([]);
+  });
+
   it('leaves unstamped rows from before the migrations table to the upgrade', async (): Promise<void> => {
     const c = cloud({ ...empty(), tables: ['agents'] });
     expect(

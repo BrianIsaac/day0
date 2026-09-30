@@ -39,6 +39,7 @@ import { CRONS_PAUSED_FLAG } from '../src/lib/crons-pause';
 import { errorMessage } from '../src/lib/errors';
 import {
   appConvexValues,
+  appOnDeployment,
   appTalksTo,
   CLERK_APP_KEYS,
   deployApp,
@@ -316,8 +317,9 @@ type FirstPushState =
  * Whether the first setup may push to this deployment: it is empty, or an
  * earlier first setup stopped part way, after its push and before its stamp
  * (tables, the migrations table among them, and no stamp), or after its stamp
- * and before the app was read back (stamped at this very release). Running
- * the setup again finishes either; anything else is the upgrade's.
+ * and before the app was read back (stamped at this very release, and the
+ * app not yet on it, which `readStoppedApp` reads). Running the setup again
+ * finishes either; anything else is the upgrade's.
  *
  * @param io - The machine.
  * @param target - The deployment.
@@ -367,6 +369,53 @@ function firstPushState(
   };
 }
 
+/**
+ * The build serving the app's address when a deployment is stamped at this
+ * release, refused unless the app is not on the deployment yet: a stamped
+ * deployment the app already talks to is a finished setup, and running the
+ * setup over it would push and redeploy with no export first. The address is
+ * required, since without it a setup that stopped part way cannot be told
+ * from one that finished (the setup writes it into the target file only once
+ * it has finished).
+ *
+ * @param io - The machine.
+ * @param target - The deployment.
+ * @param release - This checkout's release, the one the deployment is stamped at.
+ */
+function readStoppedApp(
+  io: CloudIo,
+  target: CloudTarget,
+  release: string,
+): VercelDeployment | Failure {
+  if (target.appUrl === undefined) {
+    return {
+      failure:
+        `${target.deployment} is stamped v${release} already, and no app address is named, so a first ` +
+        "setup that stopped part way cannot be told from one that finished: name the address the linked project's " +
+        'production is served at with --app-url https://<host>. A finished setup is upgraded instead: ' +
+        `\`./setup.sh cloud upgrade --target ${target.file}\`.`,
+    };
+  }
+  const served = inspectApp(io, target, target.appUrl);
+  if ('failure' in served) return { failure: `${served.failure}.` };
+  const elsewhere = projectRefusal(io, served, target.appUrl);
+  if (elsewhere !== undefined) return elsewhere;
+  const onIt = appOnDeployment(io, target.appUrl, target.deployment);
+  if ('failure' in onIt) {
+    return {
+      failure: `whether the app is on ${target.deployment} already could not be read (${onIt.failure}).`,
+    };
+  }
+  if (onIt.on) {
+    return {
+      failure:
+        `${target.deployment} is set up at v${release} and ${target.appUrl} serves it: this is the upgrade's, ` +
+        `which exports first: \`./setup.sh cloud upgrade --target ${target.file}\`.`,
+    };
+  }
+  return served;
+}
+
 /** What the first setup read before its first write. */
 interface SetupReads {
   readonly checkout: CheckoutState;
@@ -409,6 +458,13 @@ async function readSetup(options: CloudOptions, io: CloudIo): Promise<SetupReads
   );
   const resumed = firstPushState(io, target, checkout.release);
   if ('failure' in resumed) return resumed;
+  // Read before the settings are asked for, so nobody types a key into a
+  // setup that will not run.
+  const resumedApp =
+    resumed.state === 'stamped' && options.app === 'vercel'
+      ? readStoppedApp(io, target, checkout.release)
+      : undefined;
+  if (resumedApp !== undefined && 'failure' in resumedApp) return resumedApp;
   if (resumed.state !== 'empty') io.log(resumed.note);
   const held = readDeploymentEnv(io, target);
   if ('failure' in held) return { failure: `${held.failure}.` };
@@ -430,8 +486,8 @@ async function readSetup(options: CloudOptions, io: CloudIo): Promise<SetupReads
         `${missing.map((name) => `vercel env add ${name} production --sensitive`).join('; ')} (Vercel asks for each value).`,
     };
   }
-  let previous: VercelDeployment | undefined;
-  if (target.appUrl !== undefined) {
+  let previous: VercelDeployment | undefined = resumedApp;
+  if (previous === undefined && target.appUrl !== undefined) {
     const served = inspectApp(io, target, target.appUrl);
     if ('failure' in served) return { failure: `${served.failure}.` };
     const elsewhere = projectRefusal(io, served, target.appUrl);
