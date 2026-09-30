@@ -157,8 +157,9 @@ describe('EmployeeRail', () => {
     const link = /<a [^>]*href="\/agent\/agent-1\/record"[^>]*>/.exec(
       renderToStaticMarkup(asEmployee(<EmployeeRail />)),
     )?.[0];
-    // 44 px less 11 px each way is a 22 px line, inside the 22.5 px line of the card's title.
-    expect(link).toMatch(/class="[^"]*-my-\[11px\]/);
+    // 44 px less 13 px each way is 18 px, inside the 19.5 px line of the header's 13 px meta; on
+    // the bed the header is 51.5 px, as its neighbours' are (52.75 px at 11 px each way).
+    expect(link).toMatch(/class="[^"]*-my-\[13px\]/);
   });
 
   it('says where decisions reach the manager in each mode, a connected chat surface included', () => {

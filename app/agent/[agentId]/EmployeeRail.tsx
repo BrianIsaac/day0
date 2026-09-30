@@ -120,10 +120,11 @@ export function EmployeeRail() {
         title="Record"
         meta={
           // The 44 px target (N14) reaches into the header's padding rather than growing the
-          // header past its neighbours' (walk m19): 11 px each way leaves a 22 px line.
+          // header past its neighbours' (walk m19): 13 px each way leaves 18 px, inside the
+          // 19.5 px line the meta's 13 px text sets, so the link adds nothing to the header.
           <Link
             href={employeeTabHref(agentId, 'record')}
-            className="-my-[11px] inline-flex min-h-11 min-w-11 items-center justify-end text-[var(--color-fg)]"
+            className="-my-[13px] inline-flex min-h-11 min-w-11 items-center justify-end text-[var(--color-fg)]"
           >
             All<span className="sr-only"> of the record</span>
           </Link>
