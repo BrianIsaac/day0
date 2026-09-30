@@ -37,6 +37,7 @@ vi.unstubAllEnvs();
 /** The rendered text of a page, with markup and entities out of the way. */
 function textOf(markup: string): string {
   return markup
+    .replace(/<span class="whitespace-nowrap">([^<]*)<\/span>/g, '$1')
     .replace(/<[^>]*>/g, ' ')
     .replace(/&#x27;/g, "'")
     .replace(/&quot;/g, '"')
@@ -189,6 +190,28 @@ describe('the /setup guide', (): void => {
     expect(text).toContain(RUN_WAY_VERBS_NOTE);
     expect(text.indexOf('./setup.sh stop')).toBeLessThan(text.indexOf('./setup.sh resume'));
     expect(text.indexOf('./setup.sh resume')).toBeLessThan(text.indexOf('./setup.sh clear'));
+  });
+
+  it("keeps every flag in the page's prose whole, never broken after its hyphens (m24, 390 px)", (): void => {
+    for (const flag of [
+      '--dry-run',
+      '--route key',
+      '--model <id>',
+      '--purge-env',
+      '--app-port <n>',
+    ]) {
+      const bare = flag.split(' ')[0]!;
+      expect(html, flag).toContain(`<span class="whitespace-nowrap">${bare}`);
+    }
+    // No flag stands in the prose outside its unbreakable span.
+    const prose = [...html.matchAll(/<p(?:\s[^>]*)?>(.*?)<\/p>/gs)].map(([, body]) =>
+      body!
+        .replace(/<span class="whitespace-nowrap">[^<]*<\/span>/g, '')
+        .replace(/<code[^>]*>.*?<\/code>/gs, '')
+        .replace(/<[^>]*>/g, ' '),
+    );
+    expect(prose.length).toBeGreaterThan(10);
+    for (const paragraph of prose) expect(paragraph).not.toMatch(/(?<![\w/])--[a-z]/);
   });
 
   it('gives a reader who wants a hosted copy the one-command cloud form, after the local verbs', (): void => {
