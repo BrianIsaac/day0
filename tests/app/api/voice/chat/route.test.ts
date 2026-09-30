@@ -635,8 +635,11 @@ describe('closing the 1:1', (): void => {
     const body = await (await POST(turnAfter(6))).text();
 
     expect(closed(body)).toBe(false);
-    expect(said(body)).toContain('7/7');
-    expect(said(body)).toContain('open questions on the charter');
+    // The question's own words, never its "7/7" headline, which counts replies (review r2).
+    expect(said(body)).toBe(
+      "Anything you're unsure about, or things you'd like me to circle back on later? I'll capture them as open questions on the charter.",
+    );
+    expect(said(body)).not.toMatch(/\d\/7/);
     expect(sent).toHaveLength(1);
   });
 
@@ -647,7 +650,9 @@ describe('closing the 1:1', (): void => {
     const body = await (await POST(turnAfter(6))).text();
 
     expect(closed(body)).toBe(false);
-    expect(said(body)).toMatch(/^Understood, week one is the tracker\.\n\n7\/7/);
+    expect(said(body)).toMatch(
+      /^Understood, week one is the tracker\.\n\nAnything you're unsure about/,
+    );
     const types = chunksOf(body).map((c) => c.type);
     expect(types.filter((t) => t === 'text-start')).toHaveLength(1);
     expect(types.indexOf('text-end')).toBeGreaterThan(types.lastIndexOf('text-delta'));
@@ -673,7 +678,7 @@ describe('closing the 1:1', (): void => {
     const body = await (await POST(turnAfter(6))).text();
 
     expect(closed(body)).toBe(false);
-    expect(said(body)).toMatch(/^Week one is the tracker, then\.\s*7\/7/);
+    expect(said(body)).toMatch(/^Week one is the tracker, then\.\s*Anything you're unsure about/);
     expect(
       chunksOf(body)
         .map((c) => c.type)

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { DAY_ONE_TOPIC_SPECS, day1Script, defaultSoul } from '../../../src/agent/day-one-prompts';
+import {
+  DAY_ONE_TOPIC_SPECS,
+  day1Script,
+  defaultSoul,
+  questionBody,
+} from '../../../src/agent/day-one-prompts';
 
 describe('day1Script', (): void => {
   it('promises only what onboarding does after the 1:1, with no good-habits research (N19)', (): void => {
@@ -20,5 +25,15 @@ describe('the Day-1 questions', (): void => {
   it("leave the workspace's starting files without an em dash too", (): void => {
     expect(defaultSoul()).not.toContain('\u2014');
     expect(day1Script()).not.toContain('\u2014');
+  });
+});
+
+describe('questionBody', (): void => {
+  it('keeps the words a question asks and leaves out its numbered headline', (): void => {
+    for (const { question } of DAY_ONE_TOPIC_SPECS) {
+      expect(questionBody(question)).not.toMatch(/\d\/7/);
+      expect(question.endsWith(questionBody(question))).toBe(true);
+    }
+    expect(questionBody('One line only')).toBe('One line only');
   });
 });

@@ -72,6 +72,16 @@ export const DAY_ONE_TOPIC_SPECS: readonly DayOneTopicSpec[] = [
   },
 ];
 
+/**
+ * What a topic's question asks, without its "n/7" headline: the words said to the manager when a
+ * turn is handed the scripted question, and the words the system prompt lists. A headline would
+ * announce the topic by number and title, which the employee is asked never to do, and its number
+ * counts replies, which a follow-up leaves behind the topic (the round review's r2).
+ */
+export function questionBody(question: string): string {
+  return question.split('\n')[1] ?? question;
+}
+
 const TOPIC_LOOKUP = new Map(DAY_ONE_TOPIC_SPECS.map((s) => [s.topic, s]));
 
 /** The question the 1:1 asks for one topic. */

@@ -1,5 +1,5 @@
 import { DAY_ONE_TOPIC_TITLES } from './day-one-progress';
-import { DAY_ONE_TOPIC_SPECS } from './day-one-prompts';
+import { DAY_ONE_TOPIC_SPECS, questionBody } from './day-one-prompts';
 
 /**
  * The provider's prompt-cache key for the Day-1 system prompt. It names the prompt's shape, so a
@@ -7,11 +7,6 @@ import { DAY_ONE_TOPIC_SPECS } from './day-one-prompts';
  * titles, 30 September).
  */
 export const DAY_ONE_PROMPT_CACHE_KEY = 'day0-day1-system-v2';
-
-/** The words a topic's question asks, without its "n/7" headline. */
-function questionBody(question: string): string {
-  return question.split('\n')[1] ?? question;
-}
 
 /**
  * The system prompt of the Day-1 chat one-to-one, for one employee.
