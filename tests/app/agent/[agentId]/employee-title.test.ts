@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { redirect } from 'next/navigation';
 import { describe, expect, it } from 'vitest';
 import type { Id } from '../../../../convex/_generated/dataModel';
@@ -33,5 +36,18 @@ describe("the employee page's tab title (walk m16)", () => {
   it("hands Next's own redirect back to it rather than titling past it", async () => {
     const redirecting = async (): Promise<string> => redirect('/sign-in');
     await expect(employeeTitle(AGENT, redirecting)).rejects.toThrow('NEXT_REDIRECT');
+  });
+});
+
+describe('where the tab title is read', () => {
+  it('marks itself server-only, since it reads the deployment address and the session token (second review x10)', () => {
+    const source = readFileSync(
+      resolve(
+        dirname(fileURLToPath(import.meta.url)),
+        '../../../../app/agent/[agentId]/employee-title.ts',
+      ),
+      'utf8',
+    );
+    expect(source.split('\n')[0]).toBe("import 'server-only';");
   });
 });

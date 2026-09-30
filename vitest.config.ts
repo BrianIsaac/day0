@@ -39,6 +39,14 @@ export default defineConfig({
               replacement: fileURLToPath(new URL('./convex', import.meta.url)),
             },
             { find: '@', replacement: fileURLToPath(new URL('./src', import.meta.url)) },
+            // A server module marks itself `server-only`, which throws outside React's server
+            // build: a test imports it as the server does, through the marker's empty module.
+            {
+              find: /^server-only$/,
+              replacement: fileURLToPath(
+                new URL('./node_modules/server-only/empty.js', import.meta.url),
+              ),
+            },
           ],
         },
         test: {
