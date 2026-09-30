@@ -37,6 +37,7 @@ import type * as migrations from '../migrations.js';
 import type * as mock from '../mock.js';
 import type * as mockSeed from '../mockSeed.js';
 import type * as onboarding from '../onboarding.js';
+import type * as oneToOne from '../oneToOne.js';
 import type * as orientationActions from '../orientationActions.js';
 import type * as orientationData from '../orientationData.js';
 import type * as ownership from '../ownership.js';
@@ -91,6 +92,7 @@ declare const fullApi: ApiFromModules<{
   mock: typeof mock;
   mockSeed: typeof mockSeed;
   onboarding: typeof onboarding;
+  oneToOne: typeof oneToOne;
   orientationActions: typeof orientationActions;
   orientationData: typeof orientationData;
   ownership: typeof ownership;

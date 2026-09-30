@@ -184,9 +184,10 @@ export const attachConversationId = mutation({
 });
 
 /**
- * Hold the one-to-one again on a session whose draft failed for good: the transcript it could not
- * draft from, the notes earlier drafts were sent back with and the spent retry budget all belong
- * to the conversation being set aside, so none of them rides into the next one's draft.
+ * Hold the one-to-one again on a session whose draft failed for good: the conversation it kept,
+ * the transcript it could not draft from, the notes earlier drafts were sent back with and the
+ * spent retry budget all belong to the conversation being set aside, so none of them rides into
+ * the next one's draft or reopens in the next one's room.
  *
  * Public, owner-guarded (`assertOwnsVoiceSession`). Refused while a finisher holds the session or
  * after it produced a charter. Any other session comes back `active` with those fields cleared,
@@ -204,6 +205,8 @@ export const restart = mutation({
     }
     await ctx.db.patch(args.sessionId, {
       state: 'active',
+      turns: undefined,
+      replyDraft: undefined,
       pendingTranscript: undefined,
       pendingBossLabel: undefined,
       changeRequests: undefined,

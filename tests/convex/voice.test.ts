@@ -22,6 +22,11 @@ async function failedSession(state: 'active' | 'synthesising' = 'active') {
       mode: 'chat',
       state,
       answers: {},
+      turns: [
+        { id: 'e0', speaker: 'employee', text: 'Why?', topicIndex: 0, at: 1 },
+        { id: 'm0', speaker: 'manager', text: 'The close.', at: 2 },
+      ],
+      replyDraft: 'unsent',
       pendingTranscript: 'ASSISTANT: Why?\n\nUSER: The close.',
       pendingBossLabel: 'boss@day0.local',
       changeRequests: [{ reason: 'Name the deck.', struck: [], requestedAt: 2 }],
@@ -36,13 +41,15 @@ async function failedSession(state: 'active' | 'synthesising' = 'active') {
 }
 
 describe('holding the one-to-one again after its draft failed for good', (): void => {
-  it('sets aside the old transcript, the notes and the spent retries, so none reaches the next draft', async (): Promise<void> => {
+  it('sets aside the kept conversation, the old transcript, the notes and the spent retries, so none reaches the next draft or its room', async (): Promise<void> => {
     const { harness, sessionId } = await failedSession();
     const owner = harness.withIdentity({ subject: 'owner' });
     expect(await owner.mutation(api.voice.restart, { sessionId })).toEqual({ ok: true });
     const row = await harness.run(async (ctx) => await ctx.db.get(sessionId));
     expect(row).toMatchObject({ state: 'active' });
     for (const field of [
+      'turns',
+      'replyDraft',
       'pendingTranscript',
       'pendingBossLabel',
       'changeRequests',

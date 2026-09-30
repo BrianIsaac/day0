@@ -27,6 +27,20 @@ export const planDraftedWithoutValidator = v.object({
 });
 
 /**
+ * One turn of the chat one-to-one as its session keeps it (`OneToOneTurn` in
+ * `src/agent/one-to-one-conversation.ts`): the manager's reply when it is received, the
+ * employee's answer when it finishes.
+ */
+export const oneToOneTurnValidator = v.object({
+  id: v.string(),
+  speaker: v.union(v.literal('manager'), v.literal('employee')),
+  text: v.string(),
+  topicIndex: v.optional(v.number()),
+  closingLine: v.optional(v.string()),
+  at: v.number(),
+});
+
+/**
  * Day0 schema - one world per agent, by design.
  *
  * Every other table FK-points back at an `agents` row, the mock work
@@ -601,6 +615,12 @@ export default defineSchema({
         v.object({ reason: v.string(), struck: v.array(v.string()), requestedAt: v.number() }),
       ),
     ),
+    /** The chat one-to-one so far, turn by turn, kept as each turn is given
+     * (`convex/oneToOne.ts`), so a room closed at any point reopens on the same
+     * conversation. Absent on a session no chat turn was kept on. */
+    turns: v.optional(v.array(oneToOneTurnValidator)),
+    /** The reply the manager was typing and had not sent, kept as they type. */
+    replyDraft: v.optional(v.string()),
     startedAt: v.number(),
     endedAt: v.optional(v.number()),
   })
