@@ -5,6 +5,12 @@ export type DecisionVia = 'dashboard' | 'channel';
 
 /** One employee's supervision figures, computed from its ledger by `convex/metrics.ts`. */
 export interface AgentMetrics {
+  /**
+   * When the first week reached Working: the manager's first approval that let a held action
+   * through, or the employee's first write applied on its own. An approved action whose apply
+   * then fails still counts, as the page's "a write landed" does. Null before either.
+   */
+  workingSince: number | null;
   charter: {
     timeToFirstDraftedMs: number | null;
     timeToFirstApprovedMs: number | null;

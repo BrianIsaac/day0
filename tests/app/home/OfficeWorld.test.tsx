@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { OfficeWorld } from '../../../app/home/OfficeWorld';
+import { clearance } from '../../../app/home/office-places';
 import type { RosterRow } from '../../../app/home/types';
 
 const mira = {
@@ -84,6 +85,30 @@ describe('OfficeWorld', (): void => {
       [14, 25],
       [67, 25],
     ]);
+  });
+
+  it('stands no idle employee on another, nor on one at a desk, as the walk’s five were (walk m18)', (): void => {
+    // The hosted walk's roster when Ada's figure covered Cleo's: two idle, one waiting, two in
+    // their one-to-one at desks.
+    const walk = [
+      ['j5713xes6by9nefbwn731b00f58fdy75', 'Ada', 'active'],
+      ['j571jf4d2j098ha81d0mqwc4z18fdg78', 'Ben', 'active'],
+      ['j579sb6eh5qv6ks03bwzsfk69s8fdnpx', 'Cleo', 'deployed'],
+      ['j57bbxk2n8t35dq65tqydezd3h8fcse2', 'Dara', 'day-one-in-progress'],
+      ['j5792jaxjmh7xmc9mf2whktdvs8fc5fn', 'Eli', 'day-one-in-progress'],
+    ].map(
+      ([agentId, name, state]) => ({ ...mira, agentId, name, state, openCount: 0 }) as RosterRow,
+    );
+    const html = renderToStaticMarkup(<OfficeWorld agents={walk} settled />);
+    const figures = [...html.matchAll(/left:clamp\(4\.5rem, (\d+)%[^;]*;top:(\d+)%/g)].map(
+      (match) => ({ x: Number(match[1]), y: Number(match[2]) }),
+    );
+    expect(figures).toHaveLength(5);
+    for (const [index, figure] of figures.entries()) {
+      expect(clearance(figure, figures.slice(index + 1)), `figure ${index}`).toBeGreaterThanOrEqual(
+        1,
+      );
+    }
   });
 
   it('draws four desks on a phone, the ones the first four employees take (UX 12, option c)', (): void => {

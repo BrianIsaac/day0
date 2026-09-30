@@ -338,6 +338,7 @@ describe('dashboard exact-action gate', (): void => {
 });
 
 const completeMetrics: AgentMetrics = {
+  workingSince: null,
   charter: {
     timeToFirstDraftedMs: 120_000,
     timeToFirstApprovedMs: 208_000,

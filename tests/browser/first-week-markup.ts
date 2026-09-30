@@ -12,10 +12,10 @@ import type { RailStep } from '../../app/components/FirstWeekRail';
 /** The week of an employee at Working, as the bed showed it. */
 const WORKING: readonly RailStep[] = [
   { title: 'Deployed', detail: '30 Sep 2026, 04:30', status: 'done' },
-  { title: 'Day-1 one-to-one', detail: 'done', status: 'done' },
+  { title: 'Day-1 one-to-one', detail: '30 Sep 2026, 04:52', status: 'done' },
   { title: 'Charter approved', detail: 'version 0.1', status: 'done' },
   { title: 'First supervised write', detail: 'landed', status: 'done' },
-  { title: 'Working', detail: 'in the queue', status: 'now' },
+  { title: 'Working', detail: 'since 30 Sep 2026, 14:22', status: 'now' },
 ];
 
 const dom = new JSDOM('<!doctype html><html><head></head><body></body></html>', {

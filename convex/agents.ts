@@ -199,6 +199,8 @@ const rosterRowValidator = v.object({
   roleLine: v.string(),
   openCount: v.number(),
   parkedCount: v.number(),
+  /** The parked count by the state each row is in, so the roster says it in the page's words. */
+  parkedStates: v.object({ deferred: v.number(), needsSkill: v.number(), discovered: v.number() }),
   stoppedCount: v.number(),
   needsYou: v.number(),
   docSourceCount: v.number(),
@@ -318,12 +320,14 @@ async function newestSession(
  *   agentId: The employee.
  *
  * Returns:
- *   The open, parked and stopped counts and the needs-you count.
+ *   The open, parked and stopped counts, the parked count by state, and the needs-you count.
  */
 async function workCounts(
   ctx: QueryCtx,
   agentId: Id<'agents'>,
-): Promise<{ openCount: number; parkedCount: number; stoppedCount: number; needsYou: number }> {
+): Promise<
+  Pick<RosterRow, 'openCount' | 'parkedCount' | 'parkedStates' | 'stoppedCount' | 'needsYou'>
+> {
   const rowsIn = async (
     state: Doc<'workItems'>['state'],
     limit: number = OPEN_STATE_READ_LIMIT,
@@ -353,11 +357,19 @@ async function workCounts(
     ),
   );
   const now = Date.now();
+  const waitingDiscovered = discovered.filter(
+    (row) => !holdsLiveStepClaim(row, 'evaluation', now),
+  ).length;
+  const inState = (state: (typeof PARKED_WORK_STATES)[number]): number =>
+    parkedRows.filter((row) => row.state === state).length;
   return {
     openCount: openRows.length,
-    parkedCount:
-      parkedRows.length +
-      discovered.filter((row) => !holdsLiveStepClaim(row, 'evaluation', now)).length,
+    parkedCount: parkedRows.length + waitingDiscovered,
+    parkedStates: {
+      deferred: inState('deferred'),
+      needsSkill: inState('needs-skill'),
+      discovered: waitingDiscovered,
+    },
     stoppedCount: stoppedRows.length,
     needsYou:
       openRows.filter((row) => NEEDS_MANAGER_STATES.has(row.state)).length +

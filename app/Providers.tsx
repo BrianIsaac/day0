@@ -1,6 +1,6 @@
 'use client';
 
-import { ClerkProvider, useAuth } from '@clerk/nextjs';
+import { ClerkProvider, useAuth, useClerk } from '@clerk/nextjs';
 import { ConvexProviderWithAuth, ConvexReactClient, useConvexAuth } from 'convex/react';
 import { ConvexProviderWithClerk } from 'convex/react-clerk';
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
@@ -51,11 +51,109 @@ export function Providers({ children }: { children: ReactNode }) {
 
   return (
     <ClerkProvider>
-      <ConvexProviderWithClerk client={client} useAuth={useAuth}>
-        {children}
-      </ConvexProviderWithClerk>
+      <ClerkConvexProvider client={client}>{children}</ClerkConvexProvider>
     </ClerkProvider>
   );
+}
+
+/** The session the page last held, and how many times it has since changed to another. */
+interface SessionEpoch {
+  readonly last: string | null;
+  readonly changes: number;
+}
+
+/**
+ * Convex on Clerk's settled answer (`useSettledClerkAuth`), started afresh when the signed-in
+ * session changes to another.
+ *
+ * Holding Clerk's answer through a re-resolve also holds it through a switch from one session to
+ * another, where Clerk answers "not loaded" between the two: Convex would keep the first
+ * session's token until it next renewed it, under a page drawing the second (second pass M4). So
+ * a new session after an earlier one keys the provider anew, which clears the token and fetches
+ * the new session's; the first session of a visit and a sign-out change nothing here.
+ */
+function ClerkConvexProvider({
+  client,
+  children,
+}: {
+  readonly client: ConvexReactClient;
+  readonly children: ReactNode;
+}) {
+  const { sessionId } = useAuth();
+  const [epoch, setEpoch] = useState<SessionEpoch>({ last: null, changes: 0 });
+  // Kept from the previous render in state, as React's docs set out.
+  if (sessionId && sessionId !== epoch.last) {
+    setEpoch({ last: sessionId, changes: epoch.last === null ? epoch.changes : epoch.changes + 1 });
+  }
+  return (
+    <ConvexProviderWithClerk key={epoch.changes} client={client} useAuth={useSettledClerkAuth}>
+      {children}
+    </ConvexProviderWithClerk>
+  );
+}
+
+/** Clerk's answer about the session, as `useAuth` gives it. */
+type ClerkAuth = ReturnType<typeof useAuth>;
+
+/**
+ * Clerk's `useAuth` for Convex, holding its last settled answer while Clerk re-resolves a session
+ * mid-visit.
+ *
+ * Refreshing an expiring session, Clerk answers "not loaded" again for a moment. Handed on as it
+ * is, Convex takes that for a sign-out: it clears the token and reruns every query as nobody, so
+ * each owned one throws into the page's error boundary, or `SessionGate` takes the page away for
+ * the moment. Held, Convex keeps the token it has and fetches the next through the same
+ * `getToken`, as `useAccount` holds the dashboard. Only Clerk's own settled answer replaces it.
+ */
+function useSettledClerkAuth(): ClerkAuth {
+  const auth = useAuth();
+  const [settled, setSettled] = useState<ClerkAuth | null>(null);
+  // Kept from the previous render in state, as React's docs set out, so a re-resolve can use it.
+  if (auth.isLoaded && !sameSession(auth, settled)) setSettled(auth);
+  return auth.isLoaded || settled === null ? auth : settled;
+}
+
+/** Whether two of Clerk's answers name the same session, as far as Convex's token depends on it. */
+function sameSession(a: ClerkAuth, b: ClerkAuth | null): boolean {
+  return (
+    b !== null &&
+    a.isSignedIn === b.isSignedIn &&
+    a.sessionId === b.sessionId &&
+    a.orgId === b.orgId &&
+    a.orgRole === b.orgRole
+  );
+}
+
+/** What `SessionGate` is given: the owned page, and what stands in its place until it may run. */
+export interface SessionGateProps {
+  readonly children: ReactNode;
+  readonly fallback: ReactNode;
+}
+
+/**
+ * Holds a page that reads the manager's own rows until Convex holds the manager's token.
+ *
+ * Clerk's script loads after the page has hydrated, and until it has answered Convex has no token
+ * to send: a query the page subscribed to in the meantime runs as nobody, throws "not
+ * authenticated", and the page lands in its error boundary (the hosted walk's M2, 30 September;
+ * two full loads in fourteen). So an owned page renders `fallback` while Convex's own auth state
+ * is loading and mounts once it has answered, as `DevNoAuthGate` does for no-auth dev mode.
+ *
+ * It goes round the owned pages rather than the whole tree: the header and the public pages
+ * (`/setup`, `/walkthrough`, the marketing landing) read no owned row, and holding them would
+ * hide their served HTML from every visitor until Clerk loaded. In no-auth dev mode the whole tree
+ * is already held above, so the page passes straight through.
+ */
+export function SessionGate({ children, fallback }: SessionGateProps) {
+  if (DEV_NO_AUTH) return <>{children}</>;
+  return <ClerkSessionGate fallback={fallback}>{children}</ClerkSessionGate>;
+}
+
+function ClerkSessionGate({ children, fallback }: SessionGateProps) {
+  const { isLoading } = useConvexAuth();
+  // A Clerk that failed to load never answers; the page is let through to say what it can.
+  const { status } = useClerk();
+  return <>{isLoading && status !== 'error' ? fallback : children}</>;
 }
 
 /**

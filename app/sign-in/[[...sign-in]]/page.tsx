@@ -50,7 +50,8 @@ export default function SignInPage() {
         </ol>
         <HostedDemoNotice />
       </div>
-      <div className="flex justify-center">
+      {/* Clerk's first step leaves its own h1 out under the page's (app/globals.css). */}
+      <div data-headed-clerk="" className="flex justify-center">
         <SignIn appearance={clerkAppearance} />
       </div>
     </div>

@@ -6,6 +6,7 @@ import {
   type WorkPlanHeldPayload,
 } from '@/events/contract';
 import type { RecordKind } from '../../components/RecordLine';
+import { judgedAs, REEVALUATION } from './verdict-words';
 
 /**
  * A payload as the feed reads it: a row an older release wrote may lack any
@@ -26,6 +27,15 @@ function text(value: unknown): string | undefined {
 function because(value: unknown): string {
   const reason = text(value);
   return reason ? ` (${reason.replace(/\.$/, '')})` : '';
+}
+
+/** An evaluation's words, or the verdict's own name when an older row holds one no longer made. */
+function evaluatedWords(decision: unknown): string {
+  const name = text(decision);
+  if (name === undefined) return 'evaluated';
+  if (name === REEVALUATION) return 'to be judged again: its skill is ready';
+  const judged = judgedAs(name);
+  return judged === undefined ? `evaluated: ${name}` : `judged ${judged}`;
 }
 
 /** `3 tools`, `1 tool`. */
@@ -297,7 +307,7 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
       REQUEUE_TRIGGER_WORDS[text(payload.trigger) ?? ''] ?? 'a policy changed'
     }`,
   'work.claim-refused': 'not taken: another employee holds this ticket',
-  'work.evaluated': (payload) => `evaluated: ${text(payload.decision) ?? 'no verdict'}`,
+  'work.evaluated': (payload) => evaluatedWords(payload.decision),
   'work.skipped': (payload) => `skipped${because(payload.reason)}`,
   'work.scope-judgement-unavailable': (payload) =>
     `scope judgement unavailable${because(payload.cause)} · the item waits and is judged again`,

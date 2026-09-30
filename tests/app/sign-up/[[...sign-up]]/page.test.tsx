@@ -31,6 +31,10 @@ describe('the sign-up page', (): void => {
     expect(clerk.appearance).toEqual([clerkAppearance]);
   });
 
+  it('puts the widget where its first step leaves its own h1 out, so the page has one (walk m26)', (): void => {
+    expect(renderToStaticMarkup(<SignUpPage />)).toContain('<div data-headed-clerk=""');
+  });
+
   it('says what the page is in a TSDoc block on its default export, as the sign-in page does (m7)', (): void => {
     // Resolved by path: under Vite, `new URL(path, import.meta.url)` is an asset address.
     const source = readFileSync(

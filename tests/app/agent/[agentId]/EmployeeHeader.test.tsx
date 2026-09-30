@@ -77,7 +77,7 @@ describe('header state pill', (): void => {
     );
     expect(markup.match(/<h1[\s>]/g)).toHaveLength(1);
     expect(markup).toMatch(/<h1[^>]*>Mira<\/h1>/);
-    expect(markup).toMatch(/Reports to <span[^>]*>boss@day0\.local<\/span>/);
+    expect(markup).toMatch(/Reports to <span[^>]*>boss<wbr\/>@day0\.local<\/span>/);
     expect(markup).not.toContain('Employee reporting to');
   });
 
@@ -165,9 +165,20 @@ describe('the manager line', (): void => {
     );
     expect(markup).toContain('Reports to');
     expect(markup).not.toMatch(/\bagent\b/i);
-    expect(markup).toContain('boss@day0.local');
+    expect(markup).toContain('boss<wbr/>@day0.local');
     expect(markup).toContain('Change manager');
     expect(markup).not.toContain('could not find this manager');
+  });
+
+  it('wraps a long address after its plus and before its at, never mid-word (walk m32)', (): void => {
+    const markup = renderToStaticMarkup(
+      <ManagerLine
+        bossEmail="day0-walk-20260930+clerk_test@example.com"
+        onChange={async () => undefined}
+      />,
+    );
+    expect(markup).toContain('day0-walk-20260930+<wbr/>clerk_test<wbr/>@example.com');
+    expect(markup).not.toMatch(/\bbreak-all\b/);
   });
 
   it('says a failed manager lookup is the manager, not the credential', (): void => {

@@ -582,16 +582,14 @@ describe('the charter card says what each change came to (step 45, K D6)', (): v
     view.unmount();
   });
 
-  it('approves the charter and says the employee starts, with 44 px decision buttons', async (): Promise<void> => {
+  it('approves the charter and says the employee starts by name, with 44 px decision buttons (walk m13)', async (): Promise<void> => {
     backend.results = { 'charters:approve': { ok: true } };
-    const view = mount(<CharterCard charter={draft} />);
-    for (const name of ['Approve charter', 'Ask Your employee for changes']) {
+    const view = mount(<CharterCard charter={draft} name="Ada" />);
+    for (const name of ['Approve charter', 'Ask Ada for changes']) {
       expect(button(view.container, name).className).toMatch(/\bmin-h-11\b/);
     }
     await press(view.container, 'Approve charter');
-    expect(said(view.container)).toEqual([
-      'Charter approved: the employee starts on the work it implies.',
-    ]);
+    expect(said(view.container)).toEqual(['Charter approved: Ada starts on the work it implies.']);
     view.unmount();
   });
 

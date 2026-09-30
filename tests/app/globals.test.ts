@@ -233,6 +233,18 @@ describe('the public-page motion', () => {
     expect(unlayered()).not.toMatch(/scrollbar-(width|color)|::-webkit-scrollbar/);
   });
 
+  it("keeps a scrollbar's room on every page, in the base layer, so no page shifts sideways when it scrolls (walk m31)", () => {
+    const base = blocks('@layer base').join('\n');
+    expect(rulesFor(base, 'html').join('\n')).toMatch(/scrollbar-gutter:\s*stable/);
+    expect(unlayered()).not.toMatch(/scrollbar-gutter/);
+  });
+
+  it("hides only the first step's header of a Clerk widget under a page's own h1, unlayered (walk m26)", () => {
+    const rule =
+      /\[data-headed-clerk\] \.cl-signIn-start \.cl-header,\s*\[data-headed-clerk\] \.cl-signUp-start \.cl-header \{\s*display: none;/;
+    expect(unlayered()).toMatch(rule);
+  });
+
   it("draws a tab's focus ring inside it, where the strip does not clip it", () => {
     expect(rulesFor(CSS, "[role='tab']:focus-visible")[0]).toMatch(/outline-offset:\s*-2px/);
   });

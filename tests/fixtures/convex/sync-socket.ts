@@ -1,0 +1,151 @@
+/**
+ * A Convex deployment at the other end of the browser client's socket: the network seam of the
+ * real `ConvexReactClient`, for a test that must see what the client sends and in what order.
+ *
+ * It speaks just enough of the sync protocol for a page's queries: it records every message the
+ * client sends, tracks the query set and the identity the client has asked for, and answers each
+ * change with one `Transition` whose modifications the test's `answer` decides. A query the
+ * answer leaves out stays loading, as one the deployment is still running does.
+ */
+
+/** What the deployment answers a query with: its value, or the message it threw. */
+export type QueryAnswer = { readonly value: unknown } | { readonly error: string };
+
+/**
+ * How the deployment answers a query.
+ *
+ * @param udfPath - The query's path, `module:function`.
+ * @param signedIn - Whether the client has authenticated with a user token.
+ * @returns The answer, or undefined to leave the query loading.
+ */
+export type Answer = (udfPath: string, signedIn: boolean) => QueryAnswer | undefined;
+
+/** A message the client sent, as parsed from the wire. */
+export interface ClientMessage {
+  readonly type: string;
+  readonly [field: string]: unknown;
+}
+
+/** The deployment, and the socket class the client is to be given in place of `WebSocket`. */
+export interface SyncServer {
+  /** Every message the client sent, in order. */
+  readonly sent: readonly ClientMessage[];
+  /** Stands in for `WebSocket`; every instance talks to this deployment. */
+  readonly Socket: new (url: string) => unknown;
+}
+
+interface QueryAdd {
+  readonly type: 'Add';
+  readonly queryId: number;
+  readonly udfPath: string;
+}
+
+interface QueryRemove {
+  readonly type: 'Remove';
+  readonly queryId: number;
+}
+
+/** The protocol's timestamps are unsigned 64-bit integers, little-endian and base64 encoded. */
+function encodeTs(ts: number): string {
+  const bytes = Buffer.alloc(8);
+  bytes.writeBigUInt64LE(BigInt(ts));
+  return bytes.toString('base64');
+}
+
+function modificationFor(queryId: number, answer: QueryAnswer): Record<string, unknown> {
+  return 'error' in answer
+    ? { type: 'QueryFailed', queryId, errorMessage: answer.error, logLines: [], journal: null }
+    : { type: 'QueryUpdated', queryId, value: answer.value, logLines: [], journal: null };
+}
+
+/**
+ * Start a deployment that answers through `answer`.
+ *
+ * @param answer - How each query is answered, given whether the client is signed in.
+ */
+export function syncServer(answer: Answer): SyncServer {
+  const sent: ClientMessage[] = [];
+  const queries = new Map<number, string>();
+  let signedIn = false;
+  let version = { querySet: 0, identity: 0, ts: 0 };
+
+  const transition = (
+    next: { readonly querySet: number; readonly identity: number },
+    answered: readonly number[],
+  ): string => {
+    const start = version;
+    version = { ...next, ts: start.ts + 1 };
+    const modifications = answered.flatMap((queryId) => {
+      const path = queries.get(queryId);
+      const reply = path === undefined ? undefined : answer(path, signedIn);
+      return reply === undefined ? [] : [modificationFor(queryId, reply)];
+    });
+    return JSON.stringify({
+      type: 'Transition',
+      startVersion: { querySet: start.querySet, identity: start.identity, ts: encodeTs(start.ts) },
+      endVersion: {
+        querySet: version.querySet,
+        identity: version.identity,
+        ts: encodeTs(version.ts),
+      },
+      modifications,
+    });
+  };
+
+  const reply = (message: ClientMessage): string | undefined => {
+    if (message.type === 'ModifyQuerySet') {
+      const changes = message.modifications as ReadonlyArray<QueryAdd | QueryRemove>;
+      const added: number[] = [];
+      for (const change of changes) {
+        if (change.type === 'Add') {
+          queries.set(change.queryId, change.udfPath);
+          added.push(change.queryId);
+        } else {
+          queries.delete(change.queryId);
+        }
+      }
+      return transition({ querySet: message.newVersion as number, identity: version.identity }, added);
+    }
+    if (message.type === 'Authenticate') {
+      signedIn = message.tokenType === 'User';
+      // A new identity reruns every query the client holds.
+      return transition(
+        { querySet: version.querySet, identity: (message.baseVersion as number) + 1 },
+        [...queries.keys()],
+      );
+    }
+    return undefined;
+  };
+
+  class Socket {
+    onopen: (() => void) | null = null;
+    onmessage: ((event: { data: string }) => void) | null = null;
+    onclose: ((event: { code: number; reason: string }) => void) | null = null;
+    onerror: ((event: unknown) => void) | null = null;
+    readyState = 0;
+    readonly url: string;
+
+    constructor(url: string) {
+      this.url = url;
+      setTimeout(() => {
+        this.readyState = 1;
+        this.onopen?.();
+      }, 0);
+    }
+
+    send(data: string): void {
+      const message = JSON.parse(data) as ClientMessage;
+      sent.push(message);
+      const answerText = reply(message);
+      if (answerText === undefined) return;
+      setTimeout(() => this.onmessage?.({ data: answerText }), 0);
+    }
+
+    close(): void {
+      // The test ends the page; nothing reconnects to a deployment that is going away.
+      this.readyState = 3;
+    }
+  }
+
+  return { sent, Socket };
+}

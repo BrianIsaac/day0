@@ -1,6 +1,7 @@
 'use client';
 
 import { useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { useQueries, useQuery } from 'convex/react';
 import Link from 'next/link';
 import { api } from '@convex/_generated/api';
@@ -74,9 +75,12 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
           </p>
         </div>
         {staffed ? (
+          // Hidden while the form it opened is on the page, whose own Cancel closes it (walk m27);
+          // kept mounted, so the caret can come back to it.
           <button
             ref={deployToggle}
             type="button"
+            hidden={deploying}
             aria-expanded={deploying}
             aria-controls="deploy-form"
             onClick={() => setDeploying((open) => !open)}
@@ -88,8 +92,11 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
       </header>
       <RetiredNotice />
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_20rem] xl:items-start">
-        <div data-cards={arriving ? '' : undefined} className="flex min-w-0 flex-col gap-6">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-6 xl:grid-cols-[minmax(0,1fr)_20rem] xl:items-start">
+        <div
+          data-cards={arriving ? '' : undefined}
+          className="flex min-w-0 flex-col gap-6 xl:col-start-1 xl:row-start-1"
+        >
           {showDeployForm ? (
             <DeployForm
               boss={boss}
@@ -99,8 +106,9 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
               onCancel={
                 staffed
                   ? () => {
-                      setDeploying(false);
-                      // The form and its focus go; the caret returns to the button that opened it.
+                      // The form and its focus go; the caret returns to the button that opened
+                      // it, shown again first.
+                      flushSync(() => setDeploying(false));
                       deployToggle.current?.focus();
                     }
                   : undefined
@@ -118,15 +126,23 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
             <MonthCard roster={roster} figures={figures} waiting={inbox?.total ?? 0} now={now} />
           ) : null}
           <CompanySupervision />
+        </div>
+        <aside className="flex flex-col gap-6 xl:col-start-2 xl:row-span-2 xl:row-start-1">
+          {showDeployForm ? <AfterDeploy /> : null}
+          <DocumentationCard sources={docSources?.length} />
+        </aside>
+        {/* After the aside in the page's order, so on a phone, and for the keyboard and a screen
+            reader at any width, what Deploy does comes before the card that wipes (walk m17); at
+            xl it sits under the main column. */}
+        <div
+          data-cards={arriving ? '' : undefined}
+          className="min-w-0 xl:col-start-1 xl:row-start-2"
+        >
           <ResetCard
             hasEmployees={(agents?.length ?? 0) > 0}
             hasDocumentation={(docSources?.length ?? 0) > 0}
           />
         </div>
-        <aside className="flex flex-col gap-6">
-          {showDeployForm ? <AfterDeploy /> : null}
-          <DocumentationCard sources={docSources?.length} />
-        </aside>
       </div>
     </div>
   );

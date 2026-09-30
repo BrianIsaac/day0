@@ -16,6 +16,19 @@ import { INPUT_CLASS } from '../../components/Field';
 import { Pill } from '../../components/Pill';
 import { AgentPixelAvatar } from '../../home/PixelAvatar';
 
+/**
+ * An email address with the places a reader would split it marked as break opportunities: after
+ * a `+` and before the `@`. A narrow header then wraps it there, and only an address with no such
+ * place wider than the line breaks mid-word (the hosted walk's m32: "clerk" / "_test@...").
+ *
+ * @param address - The address.
+ */
+export function addressWithBreaks(address: string): ReactNode[] {
+  return address
+    .split(/(?<=\+)|(?=@)/)
+    .flatMap((part, index) => (index === 0 ? [part] : [<wbr key={index} />, part]));
+}
+
 /** What the line naming the employee's manager shows and changes. */
 export interface ManagerLineProps {
   readonly bossEmail: string;
@@ -103,7 +116,9 @@ export function ManagerLine({ bossEmail, lookupFailure, onChange }: ManagerLineP
         <p className="flex flex-wrap items-center gap-x-2 text-sm text-[var(--color-muted)]">
           <span className="min-w-0">
             Reports to{' '}
-            <span className="font-mono break-all text-[var(--color-fg)]">{bossEmail}</span>
+            <span className="font-mono text-[var(--color-fg)] [overflow-wrap:anywhere]">
+              {addressWithBreaks(bossEmail)}
+            </span>
           </span>
           <Button
             ref={toggle}

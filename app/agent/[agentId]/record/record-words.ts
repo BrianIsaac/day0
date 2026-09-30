@@ -7,6 +7,7 @@ import {
   type WorkPlanHeldPayload,
 } from '@/events/contract';
 import { MANAGER_REJECTION_PREFIX } from '@/work/needs-manager';
+import { judgedAs, REEVALUATION } from '../verdict-words';
 
 /**
  * A payload as the record reads it: a row an older release wrote may lack any field a newer
@@ -391,10 +392,16 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     }`,
   'work.claim-refused': (_, subject) =>
     `${subject.name} did not take ${itemOf(subject)}: another employee holds the ticket`,
-  'work.evaluated': (p, subject) =>
-    `${subject.name} evaluated ${itemOf(subject)}: ${
-      text(p.decision)?.replace(/-/g, ' ') ?? 'no verdict'
-    }`,
+  'work.evaluated': (p, subject) => {
+    const decision = text(p.decision);
+    if (decision === REEVALUATION) {
+      return `${subject.name} will judge ${itemOf(subject)} again: the skill it waited on is ready`;
+    }
+    const judged = decision === undefined ? undefined : judgedAs(decision);
+    return judged === undefined
+      ? `${subject.name} evaluated ${itemOf(subject)}: ${decision?.replace(/-/g, ' ') ?? 'no verdict'}`
+      : `${subject.name} judged ${itemOf(subject)} ${judged}`;
+  },
   'work.skipped': (p, subject) => `${subject.name} skipped ${itemOf(subject)}${because(p.reason)}`,
   'work.scope-judgement-unavailable': (p, subject) =>
     `The scope check on ${itemOf(subject)} could not be made${because(
@@ -446,9 +453,17 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     if (p.by === 'autonomous') {
       return `The plan${forItem(subject)} was approved under autonomous actions`;
     }
-    const answered = counted(p.answered?.length, 'charter question');
+    // A charter question's answer names its question row; any other answered the planner's note.
+    const charter = (p.answered ?? []).filter((entry) => entry.questionId !== undefined).length;
+    const note = (p.answered ?? []).length - charter;
+    const answered = [
+      ...(charter > 0 ? [counted(charter, 'charter question')] : []),
+      ...(note > 0
+        ? [note === 1 ? "the planner's note" : `${note} of the planner's questions`]
+        : []),
+    ];
     return `You approved the plan${forItem(subject)}${decidedFrom(p.decidedVia)}${
-      answered && p.answered?.length ? `, answering ${answered}` : ''
+      answered.length > 0 ? `, answering ${answered.join(' and ')}` : ''
     }`;
   },
   'work.decision-requesting': (p, subject) =>

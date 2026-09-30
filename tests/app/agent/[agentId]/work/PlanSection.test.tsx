@@ -34,6 +34,16 @@ describe("a work item's plan", (): void => {
     expect(section(DRAWN.planPending)).not.toContain('Answered at approval');
   });
 
+  it('puts each answer on its own line under its question, as yours (walk m8)', (): void => {
+    const answered = {
+      ...DRAWN.working,
+      managerAnswers: [{ question: 'Which channel?', answer: '#revops-asks', answeredAt: 1 }],
+    } as Doc<'workItems'>;
+    expect(section(answered)).toMatch(
+      /<li class="grid gap-0\.5"><span>Which channel\?<\/span><span><span[^>]*>You: <\/span><span[^>]*>#revops-asks<\/span><\/span><\/li>/,
+    );
+  });
+
   it('says a pending plan was drafted without its ticket, naming the system', (): void => {
     const drafted = {
       ...DRAWN.planPending,

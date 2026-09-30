@@ -35,6 +35,21 @@ describe('a rule of the charter (round two section 3.5)', (): void => {
     ).toBe('kept');
   });
 
+  it('capitalises the clauses it lists alike, so clauses written in mixed case read as one list (walk m22)', (): void => {
+    const html = row({
+      constraint: {
+        ...rule,
+        wording: ['answer routine asks from the team.', 'Post in any Slack channel.'],
+      },
+    });
+    const listed = [...html.matchAll(/<b[^>]*>([^<]*)<\/b>/g)].map((match) => match[1]);
+    expect(listed).toEqual(['Answer routine asks from the team', 'Post in any Slack channel.']);
+    // One clause's words are left as the charter holds them.
+    expect(row({ constraint: { ...rule, wording: ['owned, prioritized'] } })).toContain(
+      '>owned, prioritized</b>',
+    );
+  });
+
   it("says the manager's words, what they became, what a strike removes, and Confirmed", (): void => {
     const html = row();
     expect(html).toContain('>“just me for now, your boss”</p>');

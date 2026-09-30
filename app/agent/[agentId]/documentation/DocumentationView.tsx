@@ -43,9 +43,9 @@ export function DocumentationView() {
         <p className="text-sm text-[var(--color-fg-2)]">
           {surfaceMode === 'mock' ? (
             <>
-              In the hosted office {agent.name} reads the office&apos;s wiki and how-to guides, on
-              the <Link href={surfaces}>Surfaces tab</Link> under Docs. Linking your own
-              documentation is part of running Day0 on your own systems.
+              In the hosted office {agent.name} reads the office’s wiki and how-to guides, on the{' '}
+              <Link href={surfaces}>Surfaces tab</Link> under Docs. Linking your own documentation
+              is part of running Day0 on your own systems.
             </>
           ) : (
             <>

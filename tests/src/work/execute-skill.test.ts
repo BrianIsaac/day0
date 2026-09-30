@@ -1728,7 +1728,7 @@ describe('frozen prompt text', (): void => {
         - ticket.update        — { slug, status: value or null, comment: string or null }
 
       Discipline:
-        - Mock comparison mode: every emitted action is held for the manager's literal approval and only applied after that decision.
+        - Every emitted action is held for the manager's literal approval and only applied after that decision. Where a step says so, word it as the manager reads it ("waits for your approval"), never by the name of a mode.
         - Stay inside charter boundaries.
         - Never invent values you do not have. If a cell value is unknown, leave it blank in \`cells\` and flag the gap in \`notes\`.
         - Follow the loaded procedures for supplemental audit actions, destinations and state changes. Take every literal from those procedures, the approved candidate or the approved plan; do not invent an office policy."
@@ -1862,7 +1862,7 @@ describe('executor preamble by mode', (): void => {
 
   it('states the mock comparison gate even when autonomous actions are on', (): void => {
     expect(executorPreamble('mock', true)).toContain(
-      'Mock comparison mode: every emitted action is held for the manager',
+      'Every emitted action is held for the manager',
     );
     expect(executorPreamble('mock', true)).not.toContain('lands as emitted');
   });

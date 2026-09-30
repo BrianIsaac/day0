@@ -44,6 +44,22 @@ function quotedClauses(clauses: readonly string[]): string {
 }
 
 /**
+ * The clauses' words the rule's "in the charter as" list shows, one per clause. Several are
+ * capitalised alike, so clauses the model wrote in mixed case read as one list (the hosted walk's
+ * m22: "answer routine asks ...; Post in any Slack channel ..."), capitalised rather than lowered
+ * since a clause may open on a name; one is left as written. Only the last keeps its full stop.
+ *
+ * @param wording - The clauses' words as the charter holds them.
+ */
+export function listedWording(wording: readonly string[]): string[] {
+  if (wording.length <= 1) return [...wording];
+  return wording.map((phrase, index) => {
+    const words = index === wording.length - 1 ? phrase : phrase.replace(/\.$/, '');
+    return `${words.charAt(0).toLocaleUpperCase('en-GB')}${words.slice(1)}`;
+  });
+}
+
+/**
  * One rule the charter enforces (round two section 3.5): the manager's sentence, what it became
  * in the charter, what striking it would do, its standing, and Strike or Restore.
  *
@@ -106,12 +122,10 @@ export function RuleRow({
           {constraint.wording.length > 0 ? (
             <>
               {' · in the charter as '}
-              {constraint.wording.map((phrase, i) => (
+              {listedWording(constraint.wording).map((phrase, i) => (
                 <span key={i}>
                   {i > 0 ? '; ' : ''}
-                  <b className="font-semibold text-[var(--color-fg)]">
-                    {i < constraint.wording.length - 1 ? phrase.replace(/\.$/, '') : phrase}
-                  </b>
+                  <b className="font-semibold text-[var(--color-fg)]">{phrase}</b>
                 </span>
               ))}
             </>

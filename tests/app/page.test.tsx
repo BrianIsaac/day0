@@ -11,7 +11,14 @@ import { getFunctionName, type FunctionReference } from 'convex/server';
  * before sign-in. Clerk and Convex are replaced so the signed-out hero renders
  * exactly as it would for a stranger, and the copy can be checked as text.
  */
-const authState = vi.hoisted(() => ({ loaded: true, signedIn: false, rosterAvailable: true }));
+const authState = vi.hoisted(() => ({
+  loaded: true,
+  signedIn: false,
+  rosterAvailable: true,
+  // Whether Convex is still waiting on the manager's token once Clerk has answered.
+  tokenPending: false,
+  asked: [] as string[],
+}));
 
 vi.mock('@clerk/nextjs', () => ({
   Show: ({ when, children }: { when: string; children: ReactNode }): ReactNode =>
@@ -131,6 +138,7 @@ vi.mock('convex/react', () => {
   const answer = (reference: FunctionReference<'query'>): unknown => {
     if (!authState.signedIn) return undefined;
     const name = getFunctionName(reference);
+    authState.asked.push(name);
     if (name === 'agents:listForUser') {
       return shownRoster.map((row) => ({
         _id: row.agentId,
@@ -184,6 +192,12 @@ vi.mock('convex/react', () => {
     useQueries: (queries: Record<string, { query: FunctionReference<'query'> }>) =>
       Object.fromEntries(Object.entries(queries).map(([key, { query }]) => [key, answer(query)])),
     useMutation: (): (() => Promise<void>) => async (): Promise<void> => undefined,
+    // The providers hold Clerk's settled answer through a re-resolve, so Convex keeps its token
+    // (tests/app/agent/[agentId]/layout.test.tsx drives the real ones).
+    useConvexAuth: () => ({
+      isLoading: authState.tokenPending,
+      isAuthenticated: authState.signedIn && !authState.tokenPending,
+    }),
   };
 });
 
@@ -373,6 +387,21 @@ describe('signed-in landing', () => {
       authState.rosterAvailable = true;
     }
     expect(renderToStaticMarkup(<LandingPage />)).toContain('Try the demo');
+  });
+
+  it("asks for none of the manager's rows until Convex holds the token (walk M2)", () => {
+    authState.signedIn = true;
+    authState.tokenPending = true;
+    authState.asked.length = 0;
+    try {
+      const pending = renderToStaticMarkup(<LandingPage />);
+      expect(pending).not.toContain('Your employees');
+      expect(pending).not.toContain('Try the demo');
+      expect(authState.asked).toEqual([]);
+    } finally {
+      authState.signedIn = false;
+      authState.tokenPending = false;
+    }
   });
 
   it('keeps the dashboard when the session re-resolves mid-visit, never swapping in the hero', () => {

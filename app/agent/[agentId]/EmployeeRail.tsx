@@ -6,7 +6,7 @@ import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Doc } from '@convex/_generated/dataModel';
 import type { AgentMetrics } from '@/metrics/types';
-import { formatMetricDuration } from '../../metric-format';
+import { decidedCount, formatMetricDuration } from '../../metric-format';
 import { Card } from '../../components/Card';
 import { RecordLine } from '../../components/RecordLine';
 import { useEmployee } from './employee-context';
@@ -26,14 +26,16 @@ export function railFigures(
   metrics: AgentMetrics,
 ): ReadonlyArray<{ readonly label: string; readonly value: string }> {
   const { approved, rejected, partiallyApproved, medianLatencyMs } = metrics.decisions;
-  const decided = approved + rejected + partiallyApproved;
+  const decided = decidedCount(metrics.decisions);
+  // A partial approval is one of the approvals, not a decision of its own.
+  const inPart = partiallyApproved > 0 ? `, ${partiallyApproved} of them in part` : '';
   return [
     {
       label: 'Decisions',
       value:
         decided === 0
           ? 'none yet'
-          : `${decided} by you (${approved} approved, ${rejected} rejected${partiallyApproved > 0 ? `, ${partiallyApproved} in part` : ''})`,
+          : `${decided} by you (${approved} approved${inPart}, ${rejected} rejected)`,
     },
     { label: 'Median wait', value: formatMetricDuration(medianLatencyMs) },
     { label: 'Held', value: String(metrics.actions.held) },
@@ -61,6 +63,7 @@ export function RecordLines({ events, titles, lines }: RecordLinesProps) {
   return (
     <ul className="grid gap-1.5">
       {events.slice(0, lines).map((event) => {
+        const label = eventLabel(event);
         const title = eventItemTitle(event, titles);
         return (
           <RecordLine
@@ -68,8 +71,9 @@ export function RecordLines({ events, titles, lines }: RecordLinesProps) {
             kind={recordKindOf(event)}
             time={{ at: event.createdAt, label: clockTime(event.createdAt, zone) }}
           >
-            {eventLabel(event)}
-            {title ? ` · ${title}` : null}
+            {label}
+            {/* A label that names the item already (new work) is not followed by it again. */}
+            {title && !label.includes(title) ? ` · ${title}` : null}
           </RecordLine>
         );
       })}
@@ -115,9 +119,12 @@ export function EmployeeRail() {
       <Card
         title="Record"
         meta={
+          // The 44 px target (N14) reaches into the header's padding rather than growing the
+          // header past its neighbours' (walk m19): 13 px each way leaves 18 px, inside the
+          // 19.5 px line the meta's 13 px text sets, so the link adds nothing to the header.
           <Link
             href={employeeTabHref(agentId, 'record')}
-            className="inline-flex min-h-11 min-w-11 items-center justify-end text-[var(--color-fg)]"
+            className="-my-[13px] inline-flex min-h-11 min-w-11 items-center justify-end text-[var(--color-fg)]"
           >
             All<span className="sr-only"> of the record</span>
           </Link>

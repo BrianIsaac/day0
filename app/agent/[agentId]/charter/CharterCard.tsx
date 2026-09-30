@@ -105,8 +105,8 @@ export function CharterCard({
     });
   }
 
-  // The approval seeds the work the charter implies on the server, in the
-  // same transaction, so nothing here waits on or retries it.
+  // The approval schedules the work the charter implies on the server, so
+  // nothing here waits on or retries it.
   function onApprove(): void {
     change.run(
       async (): Promise<void> => {
@@ -114,7 +114,7 @@ export function CharterCard({
         if (!result.ok) throw new Error(result.reason);
       },
       {
-        done: 'Charter approved: the employee starts on the work it implies.',
+        done: `Charter approved: ${name} starts on the work it implies.`,
         refused: 'The approval was not recorded.',
       },
     );

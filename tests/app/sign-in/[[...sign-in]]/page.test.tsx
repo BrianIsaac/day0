@@ -77,6 +77,12 @@ describe('the sign-in page', () => {
     expect(clerk.appearance).toEqual([clerkAppearance]);
   });
 
+  it('puts the widget where its first step leaves its own h1 out, so the page has one (walk m26)', async () => {
+    expect(await render()).toMatch(
+      /<div data-headed-clerk="" class="[^"]*"><div data-clerk-sign-in=""/,
+    );
+  });
+
   it('sends the local manager home in no-auth dev mode, where there is nothing to sign in to', async () => {
     vi.stubEnv('NEXT_PUBLIC_DEV_NO_AUTH', 'true');
     vi.stubEnv('NODE_ENV', 'development');

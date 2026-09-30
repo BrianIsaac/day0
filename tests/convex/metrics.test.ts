@@ -224,6 +224,8 @@ describe('agent evaluation metrics', (): void => {
     ).rejects.toThrow('forbidden');
     const metrics = await harness.withIdentity(OWNER).query(api.metrics.forAgent, { agentId });
     expect(metrics).toEqual({
+      // The first approval that let a held action through (walk m12).
+      workingSince: 401_000,
       charter: {
         timeToFirstDraftedMs: 60_000,
         timeToFirstApprovedMs: 208_000,
@@ -1032,6 +1034,105 @@ describe('the figures do not depend on the order the rows are read in', (): void
     });
   });
 
+  it('dates Working from the first approval that let a write through, never a rejection (walk m12)', (): void => {
+    const decided = (creationTime: number, approvedIndexes: number[], at: number) =>
+      event(
+        creationTime,
+        'work.actions-approved',
+        {
+          workItemId: 'w1',
+          runId: `r${creationTime}`,
+          approvedIndexes,
+          rejectedIndexes: approvedIndexes.length > 0 ? [] : [0],
+          refusedIndexes: [],
+          autoIndexes: [],
+          decidedVia: 'dashboard',
+        },
+        at,
+      );
+    expect(computeAgentMetrics([], [], []).workingSince).toBeNull();
+    expect(computeAgentMetrics([decided(1, [], 5_000)], [], []).workingSince).toBeNull();
+    expect(
+      computeAgentMetrics([decided(1, [], 5_000), decided(2, [0], 9_000)], [], []).workingSince,
+    ).toBe(9_000);
+  });
+
+  it('times a dashboard decision no chat surface asked for from when the item began waiting (walk m14)', (): void => {
+    const minute = 60_000;
+    const held = (indexes: number[]) => ({
+      workItemId: 'w1',
+      runId: 'r1',
+      actionCount: 2,
+      autoIndexes: [],
+      heldIndexes: indexes,
+      refusedIndexes: [],
+    });
+    const events = [
+      event(1, 'work.plan-drafted', { workItemId: 'w1', plan: {} }, 0),
+      event(2, 'work.plan-approved', { workItemId: 'w1', decidedVia: 'dashboard' }, 2 * minute),
+      // A set holding nothing for the manager starts no wait.
+      event(3, 'work.actions-pending', held([]), 2 * minute),
+      event(4, 'work.actions-pending', held([0, 1]), 3 * minute),
+      event(
+        5,
+        'work.actions-approved',
+        {
+          workItemId: 'w1',
+          runId: 'r1',
+          approvedIndexes: [0, 1],
+          rejectedIndexes: [],
+          refusedIndexes: [],
+          autoIndexes: [],
+          decidedVia: 'dashboard',
+        },
+        7 * minute,
+      ),
+    ];
+    expect(computeAgentMetrics(events, [], []).decisions).toMatchObject({
+      requested: 0,
+      approved: 2,
+      rejected: 0,
+      medianLatencyMs: 3 * minute,
+      byVia: { dashboard: { decided: 2, medianLatencyMs: 3 * minute } },
+    });
+  });
+
+  it('times a re-drafted plan from its new draft, and a dashboard decision on an ask from the ask (walk m14, second pass)', (): void => {
+    const minute = 60_000;
+    const redrafted = [
+      event(1, 'work.plan-drafted', { workItemId: 'w1', plan: {} }, 0),
+      event(
+        2,
+        'work.plan-redrafting',
+        { workItemId: 'w1', surfaceId: 's', slug: 'linear' },
+        minute,
+      ),
+      event(3, 'work.plan-drafted', { workItemId: 'w1', plan: {} }, 5 * minute),
+      event(4, 'work.plan-approved', { workItemId: 'w1', decidedVia: 'dashboard' }, 6 * minute),
+    ];
+    expect(computeAgentMetrics(redrafted, [], []).decisions).toMatchObject({
+      requested: 0,
+      approved: 1,
+      medianLatencyMs: minute,
+    });
+    const asked = [
+      event(1, 'work.plan-drafted', { workItemId: 'w2', plan: {} }, 0),
+      event(
+        2,
+        'work.decision-requesting',
+        { workItemId: 'w2', decisionId: 'd', kind: 'plan' },
+        2 * minute,
+      ),
+      event(3, 'work.plan-approved', { workItemId: 'w2', decidedVia: 'dashboard' }, 3 * minute),
+    ];
+    expect(computeAgentMetrics(asked, [], []).decisions).toMatchObject({
+      requested: 1,
+      approved: 1,
+      medianLatencyMs: minute,
+      byVia: { dashboard: { decided: 1 } },
+    });
+  });
+
   it('uses backend write order for duplicate ledger observations in reversed and shuffled reads', (): void => {
     const row = (effect?: string): Record<string, unknown> => ({
       tool: 'mcp.call',
@@ -1317,6 +1418,40 @@ describe('the ledger walk and the pilot figures (step 29)', (): void => {
     const metrics = computeAgentMetrics(events, [], []);
     expect(metrics.decisions).toMatchObject({ approved: 0, rejected: 1, partiallyApproved: 0 });
     expect(metrics.actions).toMatchObject({ held: 2, approved: 0, rejected: 2 });
+  });
+
+  it('dates Working from a write the employee applied on its own when it came first, never a message to the manager (walk m12)', (): void => {
+    const completed = (channel: string, at: number): Doc<'events'> =>
+      event(
+        'work.completed',
+        {
+          workItemId: 'wi',
+          output: {
+            actions: [post(channel)],
+            applied: [row(`wi:run-${at}:0`, { authority: 'autonomous' })],
+          },
+        },
+        at,
+      );
+    const approved = event(
+      'work.actions-approved',
+      {
+        workItemId: 'wi2',
+        runId: 'run-2',
+        approvedIndexes: [0],
+        rejectedIndexes: [],
+        refusedIndexes: [],
+        autoIndexes: [],
+        decidedVia: 'dashboard',
+      },
+      9_000,
+    );
+    expect(
+      computeAgentMetrics([completed('C0TEAM', 3_000), approved], [], [], [slack]).workingSince,
+    ).toBe(3_000);
+    expect(
+      computeAgentMetrics([completed('D0MANAGER', 3_000)], [], [], [slack]).workingSince,
+    ).toBeNull();
   });
 
   it('splits the automatic rows into reads, messages to the manager and writes', (): void => {

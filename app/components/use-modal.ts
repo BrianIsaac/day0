@@ -95,8 +95,9 @@ function holdPageStill(): () => void {
   const holds = Number(root.getAttribute(HOLDS) ?? '0');
   if (holds === 0) {
     root.setAttribute(OVERFLOW_BEFORE, body.style.overflow);
-    // A page with a scrollbar keeps its room once it is still; one without never gains any, and
-    // then the gutter is not the hold's to give back.
+    // A page with a scrollbar's room keeps it once it is still. The stylesheet already keeps it
+    // on every page (html's scrollbar-gutter, walk m31); written inline too, so the page holds
+    // still under a modal whatever a later rule says, and given back when the last hold goes.
     if (window.innerWidth > root.clientWidth) {
       root.setAttribute(GUTTER_BEFORE, root.style.scrollbarGutter);
       root.style.scrollbarGutter = 'stable';

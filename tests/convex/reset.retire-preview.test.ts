@@ -275,4 +275,48 @@ describe('retirePreview in the hosted office', (): void => {
     expect(await retirements(harness)).toEqual([]);
     expect(await harness.run(async (ctx) => await ctx.db.get(retiring))).toBeNull();
   });
+
+  it('counts a day-zero employee in its one-to-one, with no charter, and the retire removes it (walk M3)', async (): Promise<void> => {
+    const [{ default: schema }, { allConvexModules }] = await Promise.all([
+      import('../../convex/schema'),
+      import('./all-modules'),
+    ]);
+    const harness = convexTest(schema, allConvexModules());
+    const retiring = await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'Cleo',
+        userId: 'owner',
+        state: 'day-one-in-progress',
+        createdAt: 1,
+      });
+      await ctx.db.insert('voiceSessions', {
+        agentId,
+        mode: 'chat',
+        state: 'active',
+        answers: {},
+        startedAt: 1,
+      });
+      for (const type of ['agent.deployed', 'voice.started']) {
+        await ctx.db.insert('events', { agentId, type, payload: {}, createdAt: 1 });
+      }
+      return agentId;
+    });
+    const owner = harness.withIdentity({ subject: 'owner' });
+
+    const preview = await owner.query(api.reset.retirePreview, { agentId: retiring });
+
+    expect(preview).toMatchObject({
+      mode: 'mock',
+      rowCounts: { voiceSessions: 1, events: 2 },
+      atLeast: false,
+      tombstone: false,
+    });
+    expect(preview?.rowCounts.charters ?? 0).toBe(0);
+    await owner.mutation(api.reset.retire, { agentId: retiring });
+    expect(await harness.run(async (ctx) => await ctx.db.get(retiring))).toBeNull();
+    expect(await harness.run(async (ctx) => await ctx.db.query('voiceSessions').collect())).toEqual(
+      [],
+    );
+  });
 });

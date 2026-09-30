@@ -3,6 +3,7 @@ import type { AgentMetrics } from '../../../src/metrics/types';
 /** A populated supervision card's figures, the P6-9 fixture. */
 export const dashboardMetrics = (): AgentMetrics =>
   ({
+    workingSince: null,
     charter: {
       timeToFirstDraftedMs: 1,
       timeToFirstApprovedMs: 2,

@@ -13,6 +13,7 @@ import { useMemo, useRef, useCallback, useEffect, useState } from 'react';
 import { useArrival } from '../../../arrival';
 import { Button } from '../../../components/Button';
 import { Card } from '../../../components/Card';
+import { useListMoves } from '../../../components/list-moves';
 import {
   QUEUE_FILTERS,
   QUEUE_FILTER_NAMES,
@@ -134,25 +135,34 @@ function useItemAnchor(ready: boolean, showAll: () => void): void {
   }, [ready, changes]);
 }
 
-// What needs the manager first: literal actions awaiting approval, then plans,
-// then skills, then deferrals, which wait on a grant or a connection the manager
-// gives and which the roster counts as needing them. A failed or stopped run
-// waits on the manager's Retry, so it sits above the skipped rows, which wait
-// on nobody.
+// A run under way first, then what else needs the manager: skills, then deferrals, which wait
+// on a grant or a connection the manager gives and which the roster counts as needing them. A
+// failed or stopped run waits on the manager's Retry, so it sits above the skipped rows, which
+// wait on nobody.
 const QUEUE_ORDER = [
-  'actions-pending',
-  'plan-pending',
+  'run',
   'needs-skill',
   'deferred',
   'discovered',
-  'claimed',
-  'plan-approved',
-  'executing',
   'completed',
   'failed',
   'skipped',
   'cancelled',
 ];
+
+/**
+ * The states of one run, from its claim to its last write held for the manager: an item keeps its
+ * place through all of them, so a card the manager is watching does not jump down the list as it
+ * starts working and back up when its write is held (the hosted walk's m21). Runs sit oldest first,
+ * so the longest wait stays on top whatever state each run has reached (second pass M5).
+ */
+const RUN_STATES: ReadonlySet<string> = new Set([
+  'claimed',
+  'plan-pending',
+  'plan-approved',
+  'executing',
+  'actions-pending',
+]);
 
 /**
  * The work queue in the order the page lists it.
@@ -161,7 +171,8 @@ const QUEUE_ORDER = [
  *   workItems: The employee's work items.
  *
  * Returns:
- *   A sorted copy; rows of one state keep their order.
+ *   A sorted copy; rows of one state keep their order, and runs under way keep theirs whatever
+ *   state each has reached.
  */
 export function sortedForQueue<
   T extends {
@@ -179,11 +190,12 @@ export function sortedForQueue<
   const rank = (row: T): number =>
     row.state === 'failed' && row.dismissedAt !== undefined
       ? QUEUE_ORDER.length
-      : QUEUE_ORDER.indexOf(row.state);
+      : QUEUE_ORDER.indexOf(RUN_STATES.has(row.state) ? 'run' : row.state);
   return [...workItems].sort(
     (a, b) =>
       rank(a) - rank(b) ||
-      (a.state === 'discovered' ? compareWaitingRows(waiting(a), waiting(b)) : 0),
+      (a.state === 'discovered' ? compareWaitingRows(waiting(a), waiting(b)) : 0) ||
+      (RUN_STATES.has(a.state) ? (a._creationTime ?? 0) - (b._creationTime ?? 0) : 0),
   );
 }
 
@@ -257,6 +269,10 @@ export function WorkQueue({
   const shown =
     filter === 'all' ? items : items.filter((item) => queueFilterOf(item, needsYou) === filter);
   const queue = useRef<HTMLElement>(null);
+  const cards = useRef<HTMLDivElement>(null);
+  const shownOrder = useMemo(() => shown.map((item) => item._id), [shown]);
+  // A card that must move (a run landing, a new ask above it) glides to its place (walk m21).
+  useListMoves(cards, shownOrder, filter);
   const showAll = useCallback((): void => setFilter('all'), []);
   useItemAnchor(!loading && items.length > 0, showAll);
   // The items are the Work tab's rows (v4 section 1.3): a tier after the columns' cards.
@@ -338,7 +354,11 @@ export function WorkQueue({
                 Nothing under {QUEUE_FILTER_NAMES[filter]} now.
               </p>
             ) : null}
-            <div data-cards={arriving ? 'rows' : undefined} className="grid gap-4">
+            <div
+              ref={cards}
+              data-cards={arriving ? 'rows' : undefined}
+              className="relative grid gap-4"
+            >
               {shown.map((item) => (
                 <WorkItemCard
                   key={item._id}

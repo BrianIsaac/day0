@@ -102,7 +102,10 @@ describe('recordWords', (): void => {
       recordWords(
         {
           type: 'work.plan-approved',
-          payload: { decidedVia: 'channel', answered: [{ question: 'Which topic?' }] },
+          payload: {
+            decidedVia: 'channel',
+            answered: [{ question: 'Which topic?', questionId: 'q1' }],
+          },
         },
         subject,
       ),
@@ -191,5 +194,43 @@ describe('recordWords', (): void => {
         { name: 'Mira', item: 'Why is ARR down?' },
       ),
     ).toBe('Mira finished \u201cWhy is ARR down?\u201d');
+  });
+});
+
+describe('what an evaluation and a plan approval say in the record (walk m15)', (): void => {
+  const subject = { name: 'Ada', item: 'Priya asks for tracker update' };
+
+  it("says what the evaluator judged in the manager's words, never the verdict's name", (): void => {
+    const evaluated = (decision: string): string =>
+      recordWords({ type: 'work.evaluated', payload: { decision } }, subject);
+    expect(evaluated('claim')).toBe('Ada judged “Priya asks for tracker update” part of the job.');
+    expect(evaluated('needs-skill')).toBe(
+      'Ada judged “Priya asks for tracker update” part of the job, needs a skill first.',
+    );
+    expect(evaluated('pending-reevaluation')).toBe(
+      'Ada will judge “Priya asks for tracker update” again: the skill it waited on is ready.',
+    );
+    expect(evaluated('retired-verdict')).toBe(
+      'Ada evaluated “Priya asks for tracker update”: retired verdict.',
+    );
+  });
+
+  it("counts a charter question only where the answer names one, and calls the rest the planner's note", (): void => {
+    const approved = (answered: Array<{ question: string; questionId?: string }>): string =>
+      recordWords(
+        { type: 'work.plan-approved', payload: { decidedVia: 'dashboard', answered } },
+        subject,
+      );
+    expect(approved([{ question: 'Discrepancies are flagged.' }])).toBe(
+      "You approved the plan for “Priya asks for tracker update” from the dashboard, answering the planner's note.",
+    );
+    expect(
+      approved([
+        { question: 'Which channel?', questionId: 'q1' },
+        { question: 'Discrepancies are flagged.' },
+      ]),
+    ).toBe(
+      "You approved the plan for “Priya asks for tracker update” from the dashboard, answering 1 charter question and the planner's note.",
+    );
   });
 });
