@@ -5,6 +5,7 @@ import Link from 'next/link';
 import type { Doc } from '@convex/_generated/dataModel';
 import { avatarById } from '@/agent/avatar-pets';
 import { useLightUpOnce } from './office-light-up';
+import { idlePlaces, type IdleFigure, type OfficePoint } from './office-places';
 import { AgentPixelAvatar } from './PixelAvatar';
 import type { RosterRow } from './types';
 
@@ -42,24 +43,6 @@ const OFFICE_SIGNALS = [
   { x: 58, y: 57, delay: 2.2 },
   { x: 49, y: 82, delay: 1.1 },
 ] as const;
-
-const OFFICE_IDLE_SPOTS = [
-  { x: 49, y: 17 },
-  { x: 49, y: 32 },
-  { x: 48, y: 48 },
-  { x: 49, y: 62 },
-  { x: 39, y: 57 },
-  { x: 58, y: 56 },
-  { x: 38, y: 83 },
-  { x: 50, y: 86 },
-  { x: 74, y: 37 },
-  { x: 19, y: 37 },
-] as const;
-
-interface OfficePoint {
-  x: number;
-  y: number;
-}
 
 const OFFICE_DESKS = [
   { x: 14, y: 17, seatX: 14, seatY: 25, variant: 'wide' },
@@ -145,25 +128,25 @@ export function OfficeWorld({
   const [agentDestinations, setAgentDestinations] = useState<Record<string, OfficePoint>>({});
   const office = useRef<HTMLDivElement>(null);
   useLightUpOnce(office, settled);
+  const layout = officeLayout(visibleAgents);
+  // Where each idle employee opens, stable between renders; the roaming below moves them on.
+  const opening = idlePlaces(layout.idle, layout.seated);
 
-  // Agents open at the deterministic idle spot `OfficeAgent` derives from their
-  // id and start roaming from the first tick, so no synchronous seeding here.
   useEffect(() => {
-    const currentAgents = agents ?? [];
-    if (!currentAgents.length) return;
-
+    const { idle, seated } = officeLayout(agents ?? []);
+    if (idle.length === 0) return;
+    const start = idlePlaces(idle, seated);
     const timer = window.setInterval(() => {
-      setAgentDestinations((current) => {
-        const next: Record<string, OfficePoint> = {};
-
-        for (const agent of currentAgents) {
-          if (!agentIsWorking(agent.state)) {
-            next[agent.agentId] = randomOfficePoint(current[agent.agentId]);
-          }
-        }
-
-        return next;
-      });
+      setAgentDestinations((current) =>
+        idlePlaces(
+          idle.map((figure) => ({
+            ...figure,
+            previous: current[figure.agentId] ?? start[figure.agentId],
+          })),
+          seated,
+          (spots) => spots[Math.floor(Math.random() * spots.length)] ?? spots[0],
+        ),
+      );
     }, 3400);
     return () => window.clearInterval(timer);
   }, [agents]);
@@ -211,14 +194,20 @@ export function OfficeWorld({
           </div>
         ) : null}
 
-        {visibleAgents.map((agent, index) => (
-          <OfficeAgent
-            key={agent.agentId}
-            agent={agent}
-            destination={agentDestinations[agent.agentId]}
-            index={index}
-          />
-        ))}
+        {visibleAgents.map((agent, index) => {
+          const seat = OFFICE_DESKS[deskFor(index)];
+          const point = layout.working.has(agent.agentId)
+            ? { x: seat.seatX, y: seat.seatY }
+            : (agentDestinations[agent.agentId] ?? opening[agent.agentId]);
+          return (
+            <OfficeAgent
+              key={agent.agentId}
+              agent={agent}
+              point={point}
+              working={layout.working.has(agent.agentId)}
+            />
+          );
+        })}
       </div>
     </section>
   );
@@ -324,27 +313,53 @@ function rectStyle(rect: { left: number; top: number; width: number; height: num
   };
 }
 
+/** Who is at a desk and who stands elsewhere, and where the desks' sitters sit. */
+interface OfficeLayout {
+  readonly working: ReadonlySet<string>;
+  readonly seated: readonly OfficePoint[];
+  readonly idle: readonly IdleFigure[];
+}
+
+/**
+ * Split the roster into the employees at their desks and the ones standing: an employee in its
+ * one-to-one or with work open sits at the desk its place on the roster gives it.
+ *
+ * @param agents - The roster, in order.
+ */
+function officeLayout(agents: readonly RosterRow[]): OfficeLayout {
+  const working = new Set<string>();
+  const seated: OfficePoint[] = [];
+  const idle: IdleFigure[] = [];
+  agents.forEach((agent, index) => {
+    if (agentIsWorking(agent.state, agent.openCount)) {
+      const seat = OFFICE_DESKS[deskFor(index)];
+      working.add(agent.agentId);
+      seated.push({ x: seat.seatX, y: seat.seatY });
+    } else {
+      idle.push({ agentId: agent.agentId, seed: figureSeed(agent) });
+    }
+  });
+  return { working, seated, idle };
+}
+
+/** A number of the employee's own, for its first spot and its walking pace. */
+function figureSeed(agent: Pick<RosterRow, 'agentId' | 'name'>): number {
+  return hashString(`${agent.agentId}:${agent.name}`);
+}
+
 function OfficeAgent({
   agent,
-  destination,
-  index,
+  point,
+  working,
 }: {
   agent: RosterRow;
-  destination: OfficePoint | undefined;
-  index: number;
+  point: OfficePoint;
+  working: boolean;
 }) {
-  const working = agentIsWorking(agent.state, agent.openCount);
-  const desk = OFFICE_DESKS[deskFor(index)];
-  const seed = hashString(`${agent.agentId}:${agent.name}`);
-  const idleSpot = OFFICE_IDLE_SPOTS[seed % OFFICE_IDLE_SPOTS.length];
-  const idleX = destination?.x ?? clamp(idleSpot.x + ((seed >> 5) % 13) - 6, 8, 92);
-  const idleY = destination?.y ?? clamp(idleSpot.y + ((seed >> 11) % 11) - 5, 12, 90);
-  const x = working ? desk.seatX : idleX;
-  const y = working ? desk.seatY : idleY;
   const style: OfficeStyle = {
-    left: insetLeft(x, FIGURE_EDGE_INSET),
-    top: `${y}%`,
-    '--walk-duration': `${2700 + (seed % 700)}ms`,
+    left: insetLeft(point.x, FIGURE_EDGE_INSET),
+    top: `${point.y}%`,
+    '--walk-duration': `${2700 + (figureSeed(agent) % 700)}ms`,
   };
 
   return (
@@ -384,26 +399,6 @@ function hashString(value: string): number {
     hash = Math.imul(hash, 16777619);
   }
   return hash >>> 0;
-}
-
-function clamp(value: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, value));
-}
-
-function randomOfficePoint(previous: OfficePoint | undefined): OfficePoint {
-  const candidates = previous
-    ? OFFICE_IDLE_SPOTS.filter(
-        (spot) => Math.abs(spot.x - previous.x) + Math.abs(spot.y - previous.y) > 18,
-      )
-    : OFFICE_IDLE_SPOTS;
-  const spot = candidates[Math.floor(Math.random() * candidates.length)] ?? OFFICE_IDLE_SPOTS[0];
-  const jitterX = Math.floor(Math.random() * 13) - 6;
-  const jitterY = Math.floor(Math.random() * 11) - 5;
-
-  return {
-    x: clamp(spot.x + jitterX, 8, 92),
-    y: clamp(spot.y + jitterY, 12, 90),
-  };
 }
 
 function agentIsWorking(state: Doc<'agents'>['state'], openWorkCount = 0) {
