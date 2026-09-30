@@ -302,6 +302,19 @@ describe('FirstWeekCard', () => {
     expect(own.defaultPrevented).toBe(false);
   });
 
+  it('draws the card’s own words only while no week is on the page, so they are never doubled mid-grow (walk m2)', async () => {
+    const view = mount(page());
+    const card = (): Element | null =>
+      view.container.querySelector('button[aria-label^="First week"]');
+    expect(card()?.className).not.toMatch(/\bopacity-0\b/);
+    await press(view.container, NAME);
+    expect(card()?.className).toMatch(/\bopacity-0\b/);
+    key('Escape');
+    expect(document.querySelector('[data-week]')).toBeNull();
+    expect(card()?.className).not.toMatch(/\bopacity-0\b/);
+    expect(focusedName()).toBe(NAME);
+  });
+
   it('closes when the window is resized, rather than shrink to where the card was', async () => {
     const view = mount(page());
     await press(view.container, NAME);
