@@ -13,13 +13,25 @@ import { answeredCount, transcriptTurns, type TranscriptTurn } from '@/agent/tra
 import {
   REPLY_MAX_CHARS,
   answerFailure,
+  conversationOf,
   conversationTranscript,
   isClosed,
   owesAnswer,
+  repliesIn,
   uiMessagesOf,
   type OneToOneTurn,
+  type SentReply,
   type TurnRequest,
 } from '@/agent/one-to-one-conversation';
+import {
+  lastKeptReply,
+  redrawn,
+  replyInProgress,
+  roomBehind,
+  roomPosition,
+  textOf,
+  unkeptReplies,
+} from '@/agent/one-to-one-room';
 import { errorMessage } from '@/lib/errors';
 import { log } from '@/lib/logger';
 import { SYNTHESIS_DEADLINE_MS, lateBy, postCharterSynthesis } from './charter-synthesis';
@@ -39,13 +51,6 @@ import { notedAnswers, notedFromTranscript, type NotedAnswer } from './one-to-on
 import { TopicProgress, type TopicProgressState } from './one-to-one/TopicProgress';
 import { START_DEADLINE_MS, TURN_DEADLINE_MS, withDeadline } from './one-to-one/deadline';
 import { TurnText } from './one-to-one/TurnText';
-
-function textOf(message: UIMessage): string {
-  return message.parts
-    .filter((p) => p.type === 'text')
-    .map((p) => (p as { type: 'text'; text: string }).text)
-    .join('');
-}
 
 /** The turns that rise in as they arrive: the manager's last reply and the answer to it. */
 const ARRIVING_TURNS = 2;
@@ -140,8 +145,10 @@ export async function askAgain(
 
 /**
  * The turn a send asks the session for. The room posts only this, never its copy of the history:
- * the session keeps the conversation and answers from its own (`oneToOne.takeTurn`). A turn asked
- * again names the reply it answers, so a reply whose send never reached the session is kept then.
+ * the session keeps the conversation and answers from its own (`oneToOne.takeTurn`). A reply, and
+ * a turn asked again, names the question it answers (`roomPosition`) and carries every reply the
+ * room drew since, so a reply whose send never reached the session is delivered first, in order,
+ * and a reply is never filed under a question this room did not draw.
  *
  * @param messages - The room's conversation with the send's own message last.
  * @param trigger - Whether the send is a new message or the last turn asked again.
@@ -152,21 +159,10 @@ export function turnRequestFor(
   trigger: 'submit-message' | 'regenerate-message',
   discarding: string | null,
 ): TurnRequest {
-  const last = messages.at(-1);
-  const text = last ? textOf(last) : '';
-  const reply = last && last.role === 'user' && text.trim() !== INIT_PROMPT ? last : undefined;
-  if (trigger === 'regenerate-message') {
-    return { kind: 'ask-again', reply: reply ? { id: reply.id, text } : null, discarding };
-  }
-  return reply ? { kind: 'reply', id: reply.id, text } : { kind: 'open' };
-}
-
-/** The last reply the room drew, which a reply being typed follows; null before the first. */
-function lastReplyId(messages: readonly UIMessage[]): string | null {
-  const reply = messages.findLast(
-    (m: UIMessage): boolean => m.role === 'user' && textOf(m).trim() !== INIT_PROMPT,
-  );
-  return reply?.id ?? null;
+  // The answer being set aside is no longer where the room stands.
+  const position = roomPosition(messages.filter((m: UIMessage): boolean => m.id !== discarding));
+  if (trigger === 'regenerate-message') return { kind: 'ask-again', ...position, discarding };
+  return position.replies.length > 0 ? { kind: 'reply', ...position } : { kind: 'open' };
 }
 
 /**
@@ -372,6 +368,10 @@ export function ChatRoom({
   // because they must see the id the mount effect obtained, not whatever a stale render closed
   // over.
   const sessionRef = useRef<Id<'voiceSessions'> | null>(null);
+  // The conversation this room draws (`conversationOf`), from the start that opened it; null until
+  // then. Finish and the reply keeper name it, so the session refuses them once it has set the
+  // conversation aside, and the room starts again when it sees the session has.
+  const [conversation, setConversation] = useState<number | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const noticeRef = useRef<HTMLDivElement>(null);
   const replyRef = useRef<HTMLTextAreaElement>(null);
@@ -425,23 +425,27 @@ export function ChatRoom({
   /**
    * Carry the conversation on from where the session holds it, or open it when it holds none. The
    * employee still owes an answer when the manager's reply is the last kept turn (the room closed
-   * while it answered), so that turn is asked for again.
+   * while it answered), so that turn is asked for again. A session from before the conversation
+   * was kept names no turns and no stamp, and is read as the first conversation with none kept.
    */
-  function resume(conversation: {
-    readonly turns: readonly OneToOneTurn[];
-    readonly replyDraft: string | null;
+  function resume(started: {
+    readonly conversation?: number;
+    readonly turns?: readonly OneToOneTurn[];
+    readonly replyDraft?: string | null;
   }): void {
-    if (conversation.turns.length === 0) {
+    const turns = started.turns ?? [];
+    setConversation(started.conversation ?? 0);
+    if (turns.length === 0) {
       // A turn that fails is reported through useChat's onError, which says it in the room.
       void sendMessage({ text: INIT_PROMPT });
       return;
     }
-    setMessages(uiMessagesOf(conversation.turns));
-    const typed = conversation.replyDraft ?? '';
+    setMessages(uiMessagesOf(turns));
+    const typed = started.replyDraft ?? '';
     keptDraft.current = typed;
     if (typed) setDraft((current) => current || typed);
     // As above: a turn asked again that fails is said in the room by onError.
-    if (owesAnswer(conversation.turns)) void regenerate();
+    if (owesAnswer(turns)) void regenerate();
   }
 
   // Open the one-to-one once the session row exists, or carry on the one the session holds.
@@ -480,24 +484,67 @@ export function ChatRoom({
     setMessages(uiMessagesOf(kept));
   }, [startable, kept, messages.length, setMessages]);
 
-  // Keep the reply being typed once the composer rests, so a room closed mid-reply reopens with it.
-  const after = lastReplyId(messages);
-  useEffect(() => {
-    const sessionId = sessionRef.current;
-    if (!sessionId || over || draft === keptDraft.current) return;
-    const timer = setTimeout((): void => {
-      keptDraft.current = draft;
-      // The reply is still in the field; a keep that fails costs only a crash's worth of typing.
-      void keepReplyDraft({ sessionId, text: draft, after }).catch((err: unknown): void => {
-        log.warn('reply being typed not kept', { reason: errorMessage(err) });
-      });
-    }, REPLY_DRAFT_KEEP_MS);
-    return () => clearTimeout(timer);
-  }, [draft, over, after, keepReplyDraft]);
-
   // A turn that never answers stops being waited on, with Ask again (hosted walk m30): the reply
   // is kept on the session, so asking again answers it.
   const waitingOnTurn = status === 'submitted' || status === 'streaming';
+
+  // The replies the room shows that never reached the session. They are delivered before anything
+  // else is: the next Send carries them first, Finish names them, and the keeper keeps them.
+  const unsent = unkeptReplies(messages, kept ?? []);
+
+  // Keep the reply being typed once the composer rests, so a room closed mid-reply reopens with it,
+  // and with any reply the room shows that never reached the session. It follows the last reply
+  // the session kept; while a turn is in flight the session is about to move, so it waits.
+  const typing = replyInProgress(unsent, draft);
+  const after = lastKeptReply(kept ?? []);
+  useEffect(() => {
+    const sessionId = sessionRef.current;
+    if (!sessionId || conversation === null || over || waitingOnTurn) return;
+    if (typing === keptDraft.current) return;
+    const timer = setTimeout((): void => {
+      keptDraft.current = typing;
+      // The words are still on the page; a keep that fails costs only a crash's worth of typing.
+      void keepReplyDraft({ sessionId, conversation, text: typing, after }).catch(
+        (err: unknown): void => {
+          log.warn('reply being typed not kept', { reason: errorMessage(err) });
+        },
+      );
+    }, REPLY_DRAFT_KEEP_MS);
+    return () => clearTimeout(timer);
+  }, [typing, over, waitingOnTurn, after, conversation, keepReplyDraft]);
+
+  // Why the room was drawn again from the session, while that is worth saying.
+  const [redrawNote, setRedrawNote] = useState<string | null>(null);
+
+  // The session moved past this room: another window replied, an answer the room lost on the way
+  // was kept, or the one-to-one started again. The room is drawn again from what the session
+  // holds, rather than offering a turn the session would refuse. A turn in flight settles first.
+  const behind = !over && !waitingOnTurn && conversation !== null && !!session;
+  const startedAgain = behind && conversationOf(session) !== conversation;
+  const movedToCall = startedAgain && session.mode !== 'chat';
+  const drawnBehind = behind && !startedAgain && roomBehind(messages, kept ?? []);
+  useEffect(() => {
+    if (!startedAgain || movedToCall) return;
+    // The conversation this room drew was set aside elsewhere: open the one the session holds.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the server set the conversation aside under the room
+    setConversation(null);
+    setMessages([]);
+    setStreamError(null);
+    setStartAttempt((attempt) => attempt + 1);
+  }, [startedAgain, movedToCall, setMessages]);
+  useEffect(() => {
+    if (!drawnBehind || !kept) return;
+    const drawn = redrawn(messages, kept);
+    setMessages(drawn.messages);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the server moved the conversation on under the room
+    setStreamError(null);
+    if (drawn.unsent.length > 0) {
+      setDraft((current) => [...drawn.unsent, current].filter((text) => text.trim()).join('\n\n'));
+      setRedrawNote(
+        'The one-to-one moved on in another window. What you had not sent is back in your reply.',
+      );
+    }
+  }, [drawnBehind, kept, messages, setMessages]);
   useEffect(() => {
     if (!waitingOnTurn) return;
     const timer = setTimeout((): void => {
@@ -559,13 +606,15 @@ export function ChatRoom({
   // ahead of the agent's own first turn and answers a question it has not put -
   // an error surfaces instead, because then there is nothing else to wait for.
   const opened = messages.some((m) => m.role === 'assistant') || !!streamError;
-  const composerDisabled = composerLocked({ status, done: over, opened });
+  // A call in another window holds the session now: nothing this room writes belongs to it.
+  const composerDisabled = composerLocked({ status, done: over, opened }) || movedToCall;
 
   function send() {
     const trimmed = draft.trim().slice(0, REPLY_MAX_CHARS);
     if (!trimmed || composerDisabled) return;
     setStreamError(null);
     setFinishFailure(null);
+    setRedrawNote(null);
     // A turn that fails is reported through useChat's onError, which says it in the room.
     void sendMessage({ text: trimmed });
     setDraft('');
@@ -579,16 +628,24 @@ export function ChatRoom({
     void askAgain({ messages, regenerate, sendMessage });
   }
 
-  /** End the one-to-one at the manager's word: the session drafts from what it kept. */
-  function finish(): void {
+  /**
+   * End the one-to-one at the manager's word: the session drafts from what it kept. A reply the
+   * room shows that never reached the session is not left out silently: the manager chose to
+   * finish without it (`withoutUnsent`), and it leaves the page with the choice.
+   */
+  function finish(withoutUnsent: readonly SentReply[] = []): void {
     setConfirming(null);
     setStreamError(null);
     setFinishFailure(null);
     const sessionId = sessionRef.current ?? session?._id;
-    if (!sessionId) return;
+    if (!sessionId || conversation === null) return;
+    if (withoutUnsent.length > 0) {
+      const set = new Set(withoutUnsent.map((reply: SentReply): string => reply.id));
+      setMessages(messages.filter((m: UIMessage): boolean => !set.has(m.id)));
+    }
     setFinishing(true);
     // The chain ends in its own rejection handler, which says the refusal in the room.
-    void finishSession({ sessionId, bossLabel }).then(
+    void finishSession({ sessionId, conversation, bossLabel }).then(
       (): void => undefined,
       (err: unknown): void => {
         setFinishing(false);
@@ -596,6 +653,12 @@ export function ChatRoom({
         setFinishFailure(`The one-to-one could not finish: ${reason}. Nothing you said is lost.`);
       },
     );
+  }
+
+  /** Deliver the replies the room shows that never reached the session, as Ask again does. */
+  function sendUnsent(): void {
+    setConfirming(null);
+    retryTurn();
   }
 
   /** Draft again from what was said: the transcript the session drafts from. */
@@ -617,6 +680,8 @@ export function ChatRoom({
       `${name} did not answer within ${START_DEADLINE_MS / 1000} seconds`,
     ).then(
       () => {
+        // The session's stamp has moved on; the start that follows reads the new one.
+        setConversation(null);
         setMessages([]);
         setFinishing(false);
         setFinishFailure(null);
@@ -727,6 +792,16 @@ export function ChatRoom({
             {finishFailure}
           </p>
         ) : null}
+        {movedToCall ? (
+          <p role="status" className="text-sm text-[var(--color-muted)]">
+            The one-to-one moved to a call in another window. Reload to carry on.
+          </p>
+        ) : null}
+        {redrawNote && !over ? (
+          <p role="status" className="text-sm text-[var(--color-muted)]">
+            {redrawNote}
+          </p>
+        ) : null}
       </div>
       <div className="border-t border-[var(--color-border)] px-4 py-3 sm:px-5">
         {/* On the page before the words change, so the drafting line is said as it changes. */}
@@ -764,7 +839,7 @@ export function ChatRoom({
                 Send
               </Button>
               <FinishControl
-                disabled={!canFinish({ status, done: over, messages })}
+                disabled={movedToCall || !canFinish({ status, done: over, messages })}
                 onFinish={() => setConfirming('finish')}
               />
               <p id={`${agentId}-reply-help`} className="text-[13px] text-[var(--color-muted)]">
@@ -774,14 +849,33 @@ export function ChatRoom({
           </form>
         )}
       </div>
-      {confirming === 'finish' ? (
+      {confirming === 'finish' && unsent.length > 0 ? (
+        <Dialog
+          title={`Your last reply has not reached ${name}`}
+          description={`${name} drafts your charter from what reached it. Send the reply first, or finish without it.`}
+          onClose={() => setConfirming(null)}
+        >
+          <blockquote className="mb-4 border-l-2 border-[var(--color-accent-line)] pl-3 text-sm whitespace-pre-wrap text-[var(--color-fg-2)]">
+            {unsent.map((reply) => reply.text).join('\n\n')}
+          </blockquote>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="primary" onClick={sendUnsent}>
+              Send it first
+            </Button>
+            {repliesIn(kept ?? []) > 0 ? (
+              <Button onClick={() => finish(unsent)}>Finish without it</Button>
+            ) : null}
+            <Button onClick={() => setConfirming(null)}>Keep talking</Button>
+          </div>
+        </Dialog>
+      ) : confirming === 'finish' ? (
         <Dialog
           title="Finish the one-to-one now?"
           description={`${name} drafts your charter from what you have said so far.`}
           onClose={() => setConfirming(null)}
         >
           <div className="flex flex-wrap gap-2">
-            <Button variant="primary" onClick={finish}>
+            <Button variant="primary" onClick={() => finish()}>
               Finish and draft
             </Button>
             <Button onClick={() => setConfirming(null)}>Keep talking</Button>

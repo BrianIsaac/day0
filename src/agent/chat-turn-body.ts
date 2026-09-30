@@ -1,4 +1,4 @@
-import type { SentReply, TurnRequest } from './one-to-one-conversation';
+import { MAX_KEPT_TURNS, type SentReply, type TurnRequest } from './one-to-one-conversation';
 
 /** A reply's id and words, when the value carries both. */
 function sentReplyOf(value: unknown): SentReply | undefined {
@@ -6,6 +6,21 @@ function sentReplyOf(value: unknown): SentReply | undefined {
   const id = 'id' in value ? value.id : undefined;
   const text = 'text' in value ? value.text : undefined;
   return typeof id === 'string' && id !== '' && typeof text === 'string' ? { id, text } : undefined;
+}
+
+/**
+ * The replies a turn carries, oldest first, when every one is a reply. More than a conversation
+ * can keep reads as none: the session would refuse them, and the body is not read further.
+ */
+function sentRepliesOf(value: unknown): readonly SentReply[] | undefined {
+  if (!Array.isArray(value) || value.length > MAX_KEPT_TURNS) return undefined;
+  const replies = value.map(sentReplyOf);
+  return replies.every((reply): reply is SentReply => reply !== undefined) ? replies : undefined;
+}
+
+/** A string or null, the shape of a turn id a request may leave out; anything else is undefined. */
+function turnIdOrNull(value: unknown): string | null | undefined {
+  return value === null || typeof value === 'string' ? value : undefined;
 }
 
 /**
@@ -22,22 +37,22 @@ export interface ChatTurnBody {
 /** The turn a body asks for, when it is one of the three shapes; anything else reads as none. */
 function turnRequestOf(value: unknown): TurnRequest | undefined {
   if (typeof value !== 'object' || value === null || !('kind' in value)) return undefined;
+  const question = turnIdOrNull('question' in value ? value.question : undefined);
+  const replies = sentRepliesOf('replies' in value ? value.replies : undefined);
   switch (value.kind) {
     case 'open':
       return { kind: 'open' };
     case 'ask-again': {
-      const reply = 'reply' in value ? value.reply : undefined;
-      const discarding = 'discarding' in value ? value.discarding : undefined;
-      const sent = reply === null ? null : sentReplyOf(reply);
-      if (sent === undefined || (discarding !== null && typeof discarding !== 'string')) {
+      const discarding = turnIdOrNull('discarding' in value ? value.discarding : undefined);
+      if (question === undefined || replies === undefined || discarding === undefined) {
         return undefined;
       }
-      return { kind: 'ask-again', reply: sent, discarding };
+      return { kind: 'ask-again', question, replies, discarding };
     }
-    case 'reply': {
-      const sent = sentReplyOf(value);
-      return sent ? { kind: 'reply', ...sent } : undefined;
-    }
+    case 'reply':
+      return question === undefined || replies === undefined || replies.length === 0
+        ? undefined
+        : { kind: 'reply', question, replies };
     default:
       return undefined;
   }

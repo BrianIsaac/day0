@@ -6,6 +6,7 @@ import { assertOwnsAgent, assertOwnsVoiceSession } from './ownership';
 import { oneToOneTurnValidator } from './schema';
 import {
   REPLY_MAX_CHARS,
+  conversationOf,
   conversationTranscript,
   decideAnswer,
   decideTurn,
@@ -46,6 +47,22 @@ function assertTalking(session: Doc<'voiceSessions'>): void {
   if (oneToOnePhase(session).kind !== 'talking') {
     refuse('The one-to-one is over; the charter is drafted from it.');
   }
+}
+
+/** Said to a chat room whose session a call now holds: nothing it writes belongs to the call. */
+const MOVED_TO_CALL = 'The one-to-one moved to a call in another window. Reload to carry on.';
+
+/** Said to a room writing to a conversation the session has set aside and started again. */
+const STARTED_AGAIN = 'The one-to-one started again in another window. Reload to carry on.';
+
+/**
+ * Why a chat write for conversation `conversation` does not belong to this session's one-to-one,
+ * or null when it does: the session is held in chat, and it still holds that conversation.
+ */
+function staleWrite(session: Doc<'voiceSessions'>, conversation: number): string | null {
+  if (session.mode !== 'chat') return MOVED_TO_CALL;
+  if (conversationOf(session) !== conversation) return STARTED_AGAIN;
+  return null;
 }
 
 /**
@@ -94,30 +111,37 @@ async function heldSession(ctx: MutationCtx, agentId: Id<'agents'>): Promise<Doc
 
 /**
  * Take a turn of the employee's chat one-to-one before it is put to the employee, and hand back
- * the session and the conversation the employee answers (`decideTurn`): the opening, the
- * manager's reply (kept here, and the reply being typed cleared), or a turn asked again.
+ * the session, the conversation the employee answers (`decideTurn`) and the stamp that names it:
+ * the opening, the manager's replies (kept here, and the reply being typed cleared), or a turn
+ * asked again.
  *
  * Public, owner-guarded (`assertOwnsAgent`); called by the chat route as the manager. Writes the
  * held session's `turns` and `replyDraft`.
  *
- * @throws ConvexError with the refusal the room shows: no one-to-one is open, it is over, or the
- *   turn does not follow the conversation as the session holds it.
+ * @throws ConvexError with the refusal the room shows: no one-to-one is open, a call holds it, it
+ *   is over, or the turn does not follow the conversation as the session holds it.
  */
 export const takeTurn = mutation({
   args: {
     agentId: v.id('agents'),
     request: v.union(
       v.object({ kind: v.literal('open') }),
-      v.object({ kind: v.literal('reply'), id: v.string(), text: v.string() }),
+      v.object({
+        kind: v.literal('reply'),
+        question: v.union(v.string(), v.null()),
+        replies: v.array(v.object({ id: v.string(), text: v.string() })),
+      }),
       v.object({
         kind: v.literal('ask-again'),
-        reply: v.union(v.object({ id: v.string(), text: v.string() }), v.null()),
+        question: v.union(v.string(), v.null()),
+        replies: v.array(v.object({ id: v.string(), text: v.string() })),
         discarding: v.union(v.string(), v.null()),
       }),
     ),
   },
   returns: v.object({
     sessionId: v.id('voiceSessions'),
+    conversation: v.number(),
     turns: v.array(oneToOneTurnValidator),
     answering: v.union(v.string(), v.null()),
   }),
@@ -126,10 +150,12 @@ export const takeTurn = mutation({
     args,
   ): Promise<{
     sessionId: Id<'voiceSessions'>;
+    conversation: number;
     turns: OneToOneTurn[];
     answering: string | null;
   }> => {
     const session = await heldSession(ctx, args.agentId);
+    if (session.mode !== 'chat') refuse(MOVED_TO_CALL);
     assertTalking(session);
     const current = turnsOf(session);
     const decision = decideTurn(current, args.request, Date.now());
@@ -137,16 +163,24 @@ export const takeTurn = mutation({
     if (decision.turns !== current) {
       await ctx.db.patch(session._id, {
         turns: [...decision.turns],
-        ...(args.request.kind === 'reply' ? { replyDraft: undefined } : {}),
+        // A reply kept, by a send or by Ask again, is no longer the reply being typed.
+        ...(decision.replied ? { replyDraft: undefined } : {}),
       });
     }
-    return { sessionId: session._id, turns: [...decision.turns], answering: decision.answering };
+    return {
+      sessionId: session._id,
+      conversation: conversationOf(session),
+      turns: [...decision.turns],
+      answering: decision.answering,
+    };
   },
 });
 
 /**
- * Keep the employee's answer (`decideAnswer`) as its turn finishes. An answer that earns the
- * close starts the draft in the same transaction (`queueDraft`).
+ * Keep the employee's answer (`decideAnswer`) as its turn finishes, on the conversation the turn
+ * was taken on (`conversation`, from `takeTurn`): an answer in flight when the one-to-one started
+ * again or moved to a call is not kept. An answer that earns the close starts the draft in the
+ * same transaction (`queueDraft`).
  *
  * Public, owner-guarded (`assertOwnsVoiceSession`); called by the chat route as the manager.
  * Writes the session's `turns`, and on a close its pending material and the scheduled draft.
@@ -156,6 +190,7 @@ export const takeTurn = mutation({
 export const recordAnswer = mutation({
   args: {
     sessionId: v.id('voiceSessions'),
+    conversation: v.number(),
     bossLabel: v.string(),
     answer: v.object({
       answering: v.union(v.string(), v.null()),
@@ -174,6 +209,8 @@ export const recordAnswer = mutation({
     args,
   ): Promise<{ kept: true; closed: boolean } | { kept: false; refusal: string }> => {
     const session = await assertOwnsVoiceSession(ctx, args.sessionId);
+    const stale = staleWrite(session, args.conversation);
+    if (stale !== null) return { kept: false, refusal: stale };
     if (oneToOnePhase(session).kind !== 'talking') {
       return { kept: false, refusal: 'The one-to-one is already over.' };
     }
@@ -190,20 +227,24 @@ export const recordAnswer = mutation({
 });
 
 /**
- * End the chat one-to-one at the manager's word and draft the charter from what they have said
+ * End the chat one-to-one at the manager's word and draft the charter from what the session kept
  * (`queueDraft`). A session already drafting is left as it is, so a Finish sent again after a
- * lost connection starts nothing twice.
+ * lost connection starts nothing twice. A Finish from a room drawing a conversation the session
+ * has set aside (`conversation`) finishes nothing.
  *
  * Public, owner-guarded (`assertOwnsVoiceSession`). Writes the session's pending material and
  * schedules the draft.
  *
- * @throws ConvexError when the manager has answered nothing yet, or the one-to-one was drafted.
+ * @throws ConvexError when the manager has answered nothing yet, the one-to-one was drafted, a
+ *   call holds it, or it started again.
  */
 export const finish = mutation({
-  args: { sessionId: v.id('voiceSessions'), bossLabel: v.string() },
+  args: { sessionId: v.id('voiceSessions'), conversation: v.number(), bossLabel: v.string() },
   returns: v.object({ ok: v.literal(true) }),
   handler: async (ctx, args): Promise<{ ok: true }> => {
     const session = await assertOwnsVoiceSession(ctx, args.sessionId);
+    const stale = staleWrite(session, args.conversation);
+    if (stale !== null) refuse(stale);
     const phase = oneToOnePhase(session).kind;
     if (phase === 'drafting') return { ok: true };
     if (phase !== 'talking') refuse('The one-to-one is over; the charter is drafted from it.');
@@ -217,19 +258,22 @@ export const finish = mutation({
 /**
  * Keep the reply the manager is typing, so a room closed mid-reply reopens with it in the
  * composer. Bounded as a reply is; an empty field clears it. Nothing is kept once the one-to-one
- * is over, or once a reply after `after` (the last reply the room had drawn) has been kept.
+ * is over, for a conversation it has set aside (`conversation`), or once a reply after `after`
+ * (the last reply the session had kept when the room wrote) has been kept.
  *
  * Public, owner-guarded (`assertOwnsVoiceSession`). Writes the session's `replyDraft`.
  */
 export const keepReplyDraft = mutation({
   args: {
     sessionId: v.id('voiceSessions'),
+    conversation: v.number(),
     text: v.string(),
     after: v.union(v.string(), v.null()),
   },
   returns: v.object({ kept: v.boolean() }),
   handler: async (ctx, args): Promise<{ kept: boolean }> => {
     const session = await assertOwnsVoiceSession(ctx, args.sessionId);
+    if (staleWrite(session, args.conversation) !== null) return { kept: false };
     if (oneToOnePhase(session).kind !== 'talking') return { kept: false };
     // A keep that arrives after the reply it was typing was sent would put the sent words back.
     const lastReply = turnsOf(session).findLast((turn) => turn.speaker === 'manager');

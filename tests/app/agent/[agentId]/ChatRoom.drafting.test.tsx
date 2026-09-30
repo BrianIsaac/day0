@@ -128,12 +128,28 @@ afterEach((): void => {
   document.body.replaceChildren();
 });
 
+/** An employee turn the session kept, as the room draws it: with the kept mark. */
+function kept(message: UIMessage): UIMessage {
+  return { ...message, metadata: { ...(message.metadata as object), kept: true } };
+}
+
 const CONVERSATION: UIMessage[] = [
   turn('0', 'user', INIT_PROMPT),
-  turn('1', 'assistant', 'Why this hire?', 0),
+  kept(turn('1', 'assistant', 'Why this hire?', 0)),
   turn('2', 'user', 'Tier-2 asks swamp the close.'),
-  turn('3', 'assistant', 'What does month one look like?', 1),
+  kept(turn('3', 'assistant', 'What does month one look like?', 1)),
 ];
+
+/** A one-to-one being held whose session keeps the conversation's first question and reply. */
+const HOLDING_FIRST_REPLY = {
+  _id: 'session-1',
+  state: 'active',
+  mode: 'chat',
+  turns: [
+    { id: '1', speaker: 'employee', text: 'Why this hire?', topicIndex: 0, at: 1 },
+    { id: '2', speaker: 'manager', text: 'Tier-2 asks swamp the close.', at: 2 },
+  ],
+};
 
 describe('the one-to-one progress (round two section 3.4)', (): void => {
   it('says the question the route numbered and draws seven segments, the current one lit', async (): Promise<void> => {
@@ -210,6 +226,7 @@ describe('the composer and an input method', (): void => {
 describe('finishing and drafting (round two section 3.4)', (): void => {
   it('asks before finishing, then has the session draft from what it kept, the transcript kept on the page (re-pinned)', async (): Promise<void> => {
     room.messages = CONVERSATION.slice(0, 3);
+    room.session = HOLDING_FIRST_REPLY;
     const view = mount(<ChatRoom agentId={AGENT} bossLabel="Sam" />);
     await settle();
     await press(view.container, 'Finish');
@@ -220,7 +237,7 @@ describe('finishing and drafting (round two section 3.4)', (): void => {
 
     expect(room.calls).toContainEqual({
       name: 'oneToOne:finish',
-      args: { sessionId: 'session-1', bossLabel: 'Sam' },
+      args: { sessionId: 'session-1', conversation: 0, bossLabel: 'Sam' },
     });
     // The session drafts from the turns it kept; the room posts nothing that a closed tab could lose.
     expect(posts).toEqual([]);
@@ -238,6 +255,7 @@ describe('finishing and drafting (round two section 3.4)', (): void => {
   it('says why the one-to-one could not finish, and keeps it open to finish again (re-pinned)', async (): Promise<void> => {
     room.finishRefusal = new Error('Failed to fetch');
     room.messages = [...CONVERSATION.slice(0, 3)];
+    room.session = HOLDING_FIRST_REPLY;
     const view = mount(<ChatRoom agentId={AGENT} bossLabel="Sam" />);
     await settle();
     await press(view.container, 'Finish');
@@ -358,7 +376,7 @@ describe('a room reopened on a one-to-one under way (30 Sep, a one-to-one lost t
     });
     expect(room.calls.at(-1)).toEqual({
       name: 'oneToOne:keepReplyDraft',
-      args: { sessionId: 'session-1', text: 'Priya in fin', after: 'm0' },
+      args: { sessionId: 'session-1', conversation: 0, text: 'Priya in fin', after: 'm0' },
     });
     view.unmount();
   });
@@ -587,6 +605,10 @@ describe('a turn that never answers (hosted walk m30)', (): void => {
     room.messages = CONVERSATION.slice(0, 3);
     room.status = 'submitted';
     const view = mount(<ChatRoom agentId={AGENT} bossLabel="Sam" />);
+    // The room opens on its session first; the turn is timed from there.
+    await act(async (): Promise<void> => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
     await act(async (): Promise<void> => {
       await vi.advanceTimersByTimeAsync(TURN_DEADLINE_MS - 1);
     });

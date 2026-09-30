@@ -41,7 +41,12 @@ vi.mock('convex/browser', async () => {
           const decision = decideTurn(session.turns, args.request as never, 1);
           if (!decision.ok) throw new ConvexError(decision.refusal);
           session.turns = [...decision.turns];
-          return { sessionId: 'session-1', turns: session.turns, answering: decision.answering };
+          return {
+            sessionId: 'session-1',
+            conversation: 3,
+            turns: session.turns,
+            answering: decision.answering,
+          };
         }
         if (name === 'oneToOne:recordAnswer') {
           if (session.keepRefusal) return { kept: false, refusal: session.keepRefusal };
@@ -220,7 +225,11 @@ function turnAfter(exchanges: number): Request {
     request:
       exchanges === 0
         ? { kind: 'open' }
-        : { kind: 'reply', id: `u${exchanges}`, text: `Answer ${exchanges}.` },
+        : {
+            kind: 'reply',
+            question: `a${exchanges}`,
+            replies: [{ id: `u${exchanges}`, text: `Answer ${exchanges}.` }],
+          },
   });
 }
 
@@ -421,7 +430,7 @@ describe('a turn the model answers normally', (): void => {
 
       data: {"type":"finish-step"}
 
-      data: {"type":"finish","finishReason":"stop"}
+      data: {"type":"finish","finishReason":"stop","messageMetadata":{"kept":true}}
 
       data: [DONE]
 
@@ -455,7 +464,7 @@ describe('a turn the model answers normally', (): void => {
 
       data: {"type":"finish-step"}
 
-      data: {"type":"finish","finishReason":"tool-calls"}
+      data: {"type":"finish","finishReason":"tool-calls","messageMetadata":{"kept":true}}
 
       data: [DONE]
 
@@ -630,7 +639,14 @@ describe('closing the 1:1', (): void => {
       await POST(
         day1Request({
           agentId: 'agent-1',
-          request: { kind: 'reply', id: 'u6b', text: 'And one more thing on that.' },
+          request: {
+            kind: 'reply',
+            question: 'a6',
+            replies: [
+              { id: 'u6', text: 'Answer 6.' },
+              { id: 'u6b', text: 'And one more thing on that.' },
+            ],
+          },
         }),
       )
     ).text();
@@ -746,7 +762,7 @@ describe('the one-to-one kept on its session (30 Sep, a one-to-one lost to a clo
       await POST(
         day1Request({
           agentId: 'agent-1',
-          request: { kind: 'reply', id: 'u2', text: 'Answer 2.' },
+          request: { kind: 'reply', question: 'a2', replies: [{ id: 'u2', text: 'Answer 2.' }] },
           messages: [{ id: 'x', role: 'user', parts: [{ type: 'text', text: 'Invented.' }] }],
         }),
       )
@@ -768,7 +784,12 @@ describe('the one-to-one kept on its session (30 Sep, a one-to-one lost to a clo
       await POST(
         day1Request({
           agentId: 'agent-1',
-          request: { kind: 'ask-again', reply: { id: 'u7', text: 'Answer 7.' }, discarding: null },
+          request: {
+            kind: 'ask-again',
+            question: 'a7',
+            replies: [{ id: 'u7', text: 'Answer 7.' }],
+            discarding: null,
+          },
         }),
       )
     ).text();
@@ -778,8 +799,9 @@ describe('the one-to-one kept on its session (30 Sep, a one-to-one lost to a clo
       speaker: 'employee',
       closingLine: 'I will draft the charter now.',
     });
+    // The answer is kept on the conversation the turn was taken on.
     expect(session.calls.find((call) => call.name === 'oneToOne:recordAnswer')?.args).toMatchObject(
-      { sessionId: 'session-1', bossLabel: 'there', answer: { answering: 'u7' } },
+      { sessionId: 'session-1', conversation: 3, bossLabel: 'there', answer: { answering: 'u7' } },
     );
   });
 

@@ -46,7 +46,8 @@ describe('holding the one-to-one again after its draft failed for good', (): voi
     const owner = harness.withIdentity({ subject: 'owner' });
     expect(await owner.mutation(api.voice.restart, { sessionId })).toEqual({ ok: true });
     const row = await harness.run(async (ctx) => await ctx.db.get(sessionId));
-    expect(row).toMatchObject({ state: 'active' });
+    // The conversation moves on, so a write still in flight for the one set aside is refused.
+    expect(row).toMatchObject({ state: 'active', conversation: 1 });
     for (const field of [
       'turns',
       'replyDraft',
@@ -94,6 +95,7 @@ describe('opening the one-to-one on a session already under way', (): void => {
         { id: 'm0', speaker: 'manager', text: 'The close.', at: 2 },
       ],
       replyDraft: 'unsent',
+      conversation: 0,
     });
   });
 });
@@ -112,9 +114,14 @@ describe('a call started over a chat one-to-one', (): void => {
     expect(await owner.mutation(api.voice.start, { agentId, mode: 'elevenlabs' })).toMatchObject({
       turns: [],
       replyDraft: null,
+      conversation: 1,
     });
     const row = await harness.run(async (ctx) => await ctx.db.get(sessionId));
     expect(row?.turns).toBeUndefined();
     expect(row?.replyDraft).toBeUndefined();
+    // Back in chat the stamp stays where leaving chat moved it: the new chat room is told it.
+    expect(await owner.mutation(api.voice.start, { agentId, mode: 'chat' })).toMatchObject({
+      conversation: 1,
+    });
   });
 });

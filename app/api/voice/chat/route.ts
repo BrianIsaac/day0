@@ -95,13 +95,18 @@ export async function POST(req: Request): Promise<Response> {
 
   let taken: {
     sessionId: Id<'voiceSessions'>;
+    conversation: number;
     turns: readonly OneToOneTurn[];
     answering: string | null;
   };
   try {
     taken = await client.mutation(api.oneToOne.takeTurn, {
       agentId: body.agentId as Id<'agents'>,
-      request: body.request,
+      // The validator's arrays are mutable; the parsed request's are read-only.
+      request:
+        body.request.kind === 'open'
+          ? body.request
+          : { ...body.request, replies: [...body.request.replies] },
     });
   } catch (err: unknown) {
     if (err instanceof ConvexError) {
@@ -116,6 +121,7 @@ export async function POST(req: Request): Promise<Response> {
   const keep: KeepAnswer = async (answer) => {
     const kept = await client.mutation(api.oneToOne.recordAnswer, {
       sessionId: taken.sessionId,
+      conversation: taken.conversation,
       bossLabel: body.bossLabel,
       answer: { ...answer, answering: taken.answering },
     });

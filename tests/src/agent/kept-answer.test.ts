@@ -56,8 +56,27 @@ describe('an employee turn kept as it finishes', (): void => {
     );
     expect(kept).toEqual([{ id: 'turn-9', text: 'Who should I meet?', topicIndex: 2 }]);
     expect(chunks[0]).toEqual({ type: 'start', messageId: 'turn-9' });
-    expect(chunks.at(-1)).toEqual({ type: 'finish', finishReason: 'stop' });
+    // The finish tells the room the session holds the turn it drew.
+    expect(chunks.at(-1)).toEqual({
+      type: 'finish',
+      finishReason: 'stop',
+      messageMetadata: { kept: true },
+    });
     expect(chunks.map((chunk) => chunk.type)).toEqual(QUESTION.map((chunk) => chunk.type));
+  });
+
+  it('keeps the question number the finish already carried beside the kept mark', async (): Promise<void> => {
+    const { keep } = keeper();
+    const chunks = await read(
+      keptAnswer(
+        streamOf([
+          ...QUESTION.slice(0, -1),
+          { type: 'finish', finishReason: 'stop', messageMetadata: { topicIndex: 2 } },
+        ]),
+        { messageId: 'turn-9', topicIndex: 2, keep },
+      ),
+    );
+    expect(chunks.at(-1)).toMatchObject({ messageMetadata: { topicIndex: 2, kept: true } });
   });
 
   it('keeps the closing line of a turn that closes the one-to-one', async (): Promise<void> => {
@@ -120,5 +139,7 @@ describe('an employee turn kept as it finishes', (): void => {
       keptAnswer(streamOf(QUESTION), { messageId: 'turn-9', topicIndex: 2, keep }),
     );
     expect(chunks.at(-2)).toEqual({ type: 'error', errorText: `${ANSWER_NOT_KEPT}: fetch failed` });
+    // A turn the session did not keep carries no kept mark.
+    expect(chunks.at(-1)).toEqual({ type: 'finish', finishReason: 'stop' });
   });
 });
