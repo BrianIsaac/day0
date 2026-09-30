@@ -360,6 +360,7 @@ function OfficeAgent({
         <AgentPixelAvatar
           avatar={avatarById(agent.avatarId)}
           state={agent.state}
+          phase={agent.phase}
           label={agent.name}
         />
         <div className="day0-pixel-nameplate mt-1 max-w-36 px-2 py-1 text-center">
