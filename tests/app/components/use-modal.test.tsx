@@ -211,6 +211,23 @@ describe('useModal', () => {
     expect(document.querySelectorAll('[inert]')).toHaveLength(0);
   });
 
+  it('puts a modal lifted out of another’s hold back under it when it closes first (second review w2)', () => {
+    const view = mount(<Pair first={false} second={false} />);
+    act((): void => view.root.render(<Pair first second={false} />));
+    const first = document.querySelector<HTMLElement>('[data-held="first"]');
+    const second = document.querySelector<HTMLElement>('[data-held="second"]');
+    expect(second?.hasAttribute('inert')).toBe(true);
+    act((): void => view.root.render(<Pair first second />));
+    expect(second?.hasAttribute('inert')).toBe(false);
+    act((): void => view.root.render(<Pair first second={false} />));
+    // The first is still open, and the part the second sat in is under its hold again.
+    expect(second?.hasAttribute('inert')).toBe(true);
+    expect(view.container.hasAttribute('inert')).toBe(true);
+    expect(first?.hasAttribute('inert')).toBe(false);
+    act((): void => view.root.render(<Pair first={false} second={false} />));
+    expect(document.querySelectorAll('[inert]')).toHaveLength(0);
+  });
+
   it('leaves a part of the page something else made inert as it was', () => {
     const aside = document.createElement('aside');
     aside.setAttribute('inert', '');
