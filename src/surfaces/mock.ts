@@ -108,8 +108,9 @@ class MockSurfaceAdapter implements SurfaceAdapter {
             agentId,
             channelSlug: args.channelSlug,
             threadKey: args.threadKey,
-            sender: 'Day0',
-            senderKind: args.channelSlug.startsWith('dm-') ? 'agent-posted' : 'agent-draft',
+            // The write landed: the employee posted it, in a channel as in a DM, under its own name.
+            sender: run.agentName,
+            senderKind: 'agent-posted',
             body: args.body,
           });
           effect = clipEffect(
@@ -161,7 +162,7 @@ class MockSurfaceAdapter implements SurfaceAdapter {
             slug: args.slug,
             status: args.status,
             comment: args.comment,
-            commentAuthor: 'Day0',
+            commentAuthor: run.agentName,
           });
           effect = clipEffect(
             [

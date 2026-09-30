@@ -1,5 +1,6 @@
 import { convexTest } from 'convex-test';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { Doc } from '../../../convex/_generated/dataModel';
 import type { ActionCtx } from '../../../convex/_generated/server';
 import schema from '../../../convex/schema';
 import { mockAdapter } from '../../../src/surfaces/mock';
@@ -111,6 +112,75 @@ describe('mock surface adapter', (): void => {
     await expect(apply({ tool: 'ticket.update', args: {} })).resolves.toMatchObject({
       ok: false,
       reason: 'missing slug',
+    });
+  });
+
+  describe('a write that lands', (): void => {
+    afterEach((): void => {
+      vi.useRealTimers();
+    });
+
+    it("posts in a channel as the employee, under its own name, never as Day0's draft (walk m5)", async (): Promise<void> => {
+      // The colleague's reply is scheduled seconds after the post; the clock stays put so it
+      // never runs outside this test.
+      vi.useFakeTimers();
+      const { harness, run } = await createRun();
+      await harness.run(async (ctx): Promise<void> => {
+        await ctx.db.insert('mockSlackChannels', {
+          agentId: run.agentId,
+          slug: 'revops-asks',
+          displayName: '#revops-asks',
+          kind: 'channel',
+          createdAt: 1,
+        });
+      });
+      const applied = await harness.action(
+        async (ctx) =>
+          await mockAdapter.apply(
+            ctx as unknown as ActionCtx,
+            run,
+            { tool: 'slack.postMessage', args: { channelSlug: 'revops-asks', body: 'Posted.' } },
+            0,
+            'run:0',
+          ),
+      );
+      expect(applied.ok).toBe(true);
+      const messages = await harness.run(
+        async (ctx) => await ctx.db.query('mockSlackMessages').collect(),
+      );
+      expect(messages.map(({ sender, senderKind }) => ({ sender, senderKind }))).toEqual([
+        { sender: 'adapter test', senderKind: 'agent-posted' },
+      ]);
+    });
+
+    it("comments on a ticket under the employee's own name", async (): Promise<void> => {
+      const { harness, run } = await createRun();
+      await harness.run(async (ctx): Promise<void> => {
+        await ctx.db.insert('mockTickets', {
+          agentId: run.agentId,
+          slug: 'REVOPS-1',
+          title: 'Refresh the figures',
+          body: 'x',
+          status: 'open',
+          comments: [],
+          updatedAt: 1,
+        });
+      });
+      const applied = await harness.action(
+        async (ctx) =>
+          await mockAdapter.apply(
+            ctx as unknown as ActionCtx,
+            run,
+            { tool: 'ticket.update', args: { slug: 'REVOPS-1', comment: 'Refreshed.' } },
+            0,
+            'run:0',
+          ),
+      );
+      expect(applied.ok).toBe(true);
+      const [ticket] = await harness.run(
+        async (ctx): Promise<Doc<'mockTickets'>[]> => await ctx.db.query('mockTickets').collect(),
+      );
+      expect(ticket.comments.map((comment) => comment.author)).toEqual(['adapter test']);
     });
   });
 });
