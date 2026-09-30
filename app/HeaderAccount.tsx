@@ -79,11 +79,12 @@ function AccountSlot(): React.ReactElement {
  * hold is exactly the live buttons' at every width and in every font; `hinted` while the head's
  * hint, not Clerk, decides whether they are the room to hold.
  */
-function SignedOutControls({
-  reserved,
-}: {
+/** What `SignedOutControls` is told: whether it is the reserved copy, and whether the hint picks it. */
+interface SignedOutControlsProps {
   readonly reserved?: { readonly hinted: boolean };
-}): React.ReactElement {
+}
+
+function SignedOutControls({ reserved }: SignedOutControlsProps): React.ReactElement {
   const signIn = (
     <button
       type="button"

@@ -55,6 +55,12 @@ afterEach((): void => {
   document.body.replaceChildren();
 });
 
+describe('the head script as shipped', (): void => {
+  it('declares with const and let, never var (second review v5)', (): void => {
+    expect(SESSION_HINT_SCRIPT).not.toMatch(/\bvar\b/);
+  });
+});
+
 describe('holdsClerkSession', (): void => {
   it.each(COOKIES)('reads %j as holding a session: %s', (cookie, holds): void => {
     expect(holdsClerkSession(cookie)).toBe(holds);
