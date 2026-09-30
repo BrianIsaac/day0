@@ -11,6 +11,7 @@ import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import type { Charter } from '../../src/agent/charter';
+import { STRIKE_CHANGES_NOTHING } from '../../src/agent/charter-constraints';
 import { runThroughBody } from '../fixtures/run-through-charter-2026-09-14';
 import { strikeRefusalBody } from '../fixtures/charter-strike-refusal-2026-09-15';
 
@@ -134,6 +135,30 @@ function boundedBody(struck?: boolean): Charter {
 
 const BOUNDED_REFUSAL =
   'strike refused: \u201cChange owned Linear tickets outside Q3 close.\u201d is the only clause that bounds Linear';
+
+describe('a strike that would change nothing (production walk 6c)', (): void => {
+  it('is refused at toggle time with the reason, and the flag is never set', async (): Promise<void> => {
+    const body = runThroughBody();
+    body.constraints = [
+      ...(body.constraints ?? []),
+      {
+        kind: 'reporting-line',
+        quote: 'Anything on the CRM comes to me.',
+        wording: [],
+        origin: 'synthesis',
+      },
+    ];
+    const index = body.constraints.length - 1;
+    const harness = convexTest(schema, allConvexModules());
+    const { charterId } = await seedDraft(harness, body);
+    const owner = harness.withIdentity({ subject: 'owner' });
+    expect(
+      await owner.mutation(api.charters.setConstraintStruck, { charterId, index, struck: true }),
+    ).toEqual({ ok: false, reason: STRIKE_CHANGES_NOTHING });
+    const after = (await charter(harness, charterId)).body as Charter;
+    expect(after.constraints?.[index]?.struck).toBeUndefined();
+  });
+});
 
 describe('a strike the effective charter cannot honour', (): void => {
   it('is refused at toggle time with the reason, and the draft is left unflagged', async (): Promise<void> => {

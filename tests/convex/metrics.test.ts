@@ -1525,6 +1525,90 @@ describe('the ledger walk and the pilot figures (step 29)', (): void => {
       ).toEqual({ landed: false, since: null });
     });
 
+    describe('dated by the landing time the apply path stamped on the row', (): void => {
+      it('is not a failed write, which carries no landing time', (): void => {
+        expect(
+          figure([
+            approvedAt(5_000),
+            finished(
+              'work.failed',
+              [row('wi:run-1:0', { ok: false, reason: 'provider said no' })],
+              6_000,
+            ),
+          ]),
+        ).toEqual({ landed: false, since: null });
+      });
+
+      it('is the moment a delayed write landed, not the later event that carried it', (): void => {
+        expect(
+          figure([
+            approvedAt(5_000),
+            finished('work.completed', [row('wi:run-1:0', { landedAt: 61_000 })], 90_000),
+          ]),
+        ).toEqual({ landed: true, since: 61_000 });
+      });
+
+      it('is the landed row of a partial approval, never the rest that was held', (): void => {
+        expect(
+          figure([
+            approvedAt(5_000),
+            finished(
+              'work.completed',
+              [
+                row('wi:run-1:0', { landedAt: 14_000 }),
+                row('wi:run-1:1', { held: true, reason: 'not approved by the manager' }),
+              ],
+              20_000,
+            ),
+          ]),
+        ).toEqual({ landed: true, since: 14_000 });
+      });
+
+      it('dates an auto-phase write whose held rest the manager then rejected, seen only on its work item', (): void => {
+        const rejected = event(
+          'work.actions-rejected',
+          { workItemId: 'wi', reason: 'rejected by the manager', decidedVia: 'dashboard' },
+          30_000,
+        );
+        const output = {
+          actions: [post('C0TEAM'), post('C0TEAM')],
+          applied: [
+            row('wi:run-1:0', { authority: 'autonomous', landedAt: 12_000 }),
+            row('wi:run-1:1', {
+              ok: true,
+              held: true,
+              authority: undefined,
+              reason: 'rejected by the manager',
+            }),
+          ],
+        };
+        expect(figure([rejected], [item('wi', { state: 'failed', output })])).toEqual({
+          landed: true,
+          since: 12_000,
+        });
+      });
+
+      it('takes the earliest landing across writes, whichever event carried each', (): void => {
+        const later = event(
+          'work.completed',
+          {
+            workItemId: 'wi2',
+            output: {
+              actions: [post('C0TEAM')],
+              applied: [row('wi2:run-2:0', { landedAt: 40_000 })],
+            },
+          },
+          41_000,
+        );
+        expect(
+          figure([
+            later,
+            finished('work.completed', [row('wi:run-1:0', { landedAt: 35_000 })], 50_000),
+          ]),
+        ).toEqual({ landed: true, since: 35_000 });
+      });
+    });
+
     it('has landed with no time while its row is seen only on its work item', (): void => {
       expect(
         figure(

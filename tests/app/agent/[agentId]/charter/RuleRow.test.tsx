@@ -15,7 +15,7 @@ function row(props: Partial<Parameters<typeof RuleRow>[0]> = {}): string {
       <RuleRow
         constraint={rule}
         index={0}
-        preview={{ removedClauses: ['Reports to Sam.'], rewrittenClauses: [] }}
+        preview={{ removedClauses: ['Reports to Sam.'], rewrittenClauses: [], changes: true }}
         justStruck={false}
         busy={false}
         onStrike={() => undefined}
@@ -27,12 +27,40 @@ function row(props: Partial<Parameters<typeof RuleRow>[0]> = {}): string {
 }
 
 describe('a rule of the charter (round two section 3.5)', (): void => {
-  it('stands confirmed, struck, or kept where the charter cannot do without it', (): void => {
-    expect(ruleStanding({}, { removedClauses: [], rewrittenClauses: [] })).toBe('confirmed');
-    expect(ruleStanding({ struck: true }, undefined)).toBe('struck');
+  it('stands confirmed, struck, kept where the charter cannot do without it, or not in the clauses', (): void => {
+    const words = { wording: ['Sam'] };
+    expect(ruleStanding(words, { removedClauses: [], rewrittenClauses: [], changes: true })).toBe(
+      'confirmed',
+    );
+    expect(ruleStanding({ ...words, struck: true }, undefined)).toBe('struck');
     expect(
-      ruleStanding({}, { removedClauses: [], rewrittenClauses: [], refusal: 'one reporting line' }),
+      ruleStanding(words, {
+        removedClauses: [],
+        rewrittenClauses: [],
+        changes: false,
+        refusal: 'one reporting line',
+      }),
     ).toBe('kept');
+    expect(ruleStanding({ wording: [] }, undefined)).toBe('unverified');
+  });
+
+  it('offers no Strike for a rule no clause carries, which would change nothing (production walk 6c)', (): void => {
+    const html = row({
+      constraint: { ...rule, wording: [] },
+      preview: { removedClauses: [], rewrittenClauses: [], changes: false },
+    });
+    expect(html).toContain('who I report to · not verified: no clause carries these words');
+    expect(html).toMatch(/<span[^>]*>Not in the clauses<\/span>/);
+    expect(html).not.toContain('>Strike<');
+    expect(html).not.toContain('>Confirmed<');
+  });
+
+  it('offers no Strike for a rule whose words no clause carries any more, whatever took them out', (): void => {
+    const html = row({ preview: { removedClauses: [], rewrittenClauses: [], changes: false } });
+    expect(html).toContain('nothing to strike: no clause carries these words any more');
+    expect(html).toMatch(/<span[^>]*>Not in the clauses<\/span>/);
+    expect(html).not.toContain('>Strike<');
+    expect(html).not.toContain('>Confirmed<');
   });
 
   it('capitalises the clauses it lists alike, so clauses written in mixed case read as one list (walk m22)', (): void => {
@@ -44,6 +72,30 @@ describe('a rule of the charter (round two section 3.5)', (): void => {
     });
     const listed = [...html.matchAll(/<b[^>]*>([^<]*)<\/b>/g)].map((match) => match[1]);
     expect(listed).toEqual(['Answer routine asks from the team', 'Post in any Slack channel.']);
+    // A clause that opens on a name written in lower case keeps it (second review x10).
+    const named = row({
+      constraint: {
+        ...rule,
+        wording: ['dbt models for the close.', 'answer routine asks.', 'iPhone alerts.'],
+      },
+    });
+    expect([...named.matchAll(/<b[^>]*>([^<]*)<\/b>/g)].map((match) => match[1])).toEqual([
+      'dbt models for the close',
+      'Answer routine asks',
+      'iPhone alerts.',
+    ]);
+    // A hyphenated word and a word ending its sentence are words, and are capitalised alike.
+    const words = row({
+      constraint: {
+        ...rule,
+        wording: ['follow-up on stalled tickets', 'stripe.com refunds', 'sync.'],
+      },
+    });
+    expect([...words.matchAll(/<b[^>]*>([^<]*)<\/b>/g)].map((match) => match[1])).toEqual([
+      'Follow-up on stalled tickets',
+      'stripe.com refunds',
+      'Sync.',
+    ]);
     // One clause's words are left as the charter holds them.
     expect(row({ constraint: { ...rule, wording: ['owned, prioritized'] } })).toContain(
       '>owned, prioritized</b>',
@@ -67,6 +119,7 @@ describe('a rule of the charter (round two section 3.5)', (): void => {
       preview: {
         removedClauses: [],
         rewrittenClauses: [],
+        changes: false,
         refusal: 'a charter needs one reporting line',
       },
     });

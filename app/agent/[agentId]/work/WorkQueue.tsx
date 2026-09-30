@@ -153,9 +153,11 @@ const QUEUE_ORDER = [
 /**
  * The states of one run, from its claim to its last write held for the manager: an item keeps its
  * place through all of them, so a card the manager is watching does not jump down the list as it
- * starts working and back up when its write is held (the hosted walk's m21). Runs sit oldest item
- * first, by when the item was found, whatever state each run has reached (second pass M5); which
- * key the order should take is recorded for the queue's next change (second review x4).
+ * starts working and back up when its write is held (the hosted walk's m21). Runs sit by when
+ * each run began (`claimedAt`), the longest-running first, whatever state each has reached
+ * (second pass M5): the run that has waited longest stays on top, never one found earlier but
+ * claimed later (the second review's x4, decision 4). A row claimed before the claim was
+ * recorded sorts by when it was found.
  */
 const RUN_STATES: ReadonlySet<string> = new Set([
   'claimed',
@@ -168,17 +170,14 @@ const RUN_STATES: ReadonlySet<string> = new Set([
 /**
  * The work queue in the order the page lists it.
  *
- * Args:
- *   workItems: The employee's work items.
- *
- * Returns:
- *   A sorted copy; rows of one state keep their order, and runs under way keep theirs whatever
- *   state each has reached.
+ * @returns A sorted copy; rows of one state keep their order, and runs under way keep theirs
+ *   whatever state each has reached, the longest-running first.
  */
 export function sortedForQueue<
   T extends {
     state: string;
     _creationTime?: number;
+    claimedAt?: number;
     priority?: string;
     evaluationAttempts?: number;
     dismissedAt?: number;
@@ -192,11 +191,12 @@ export function sortedForQueue<
     row.state === 'failed' && row.dismissedAt !== undefined
       ? QUEUE_ORDER.length
       : QUEUE_ORDER.indexOf(RUN_STATES.has(row.state) ? 'run' : row.state);
+  const runBegan = (row: T): number => row.claimedAt ?? row._creationTime ?? 0;
   return [...workItems].sort(
     (a, b) =>
       rank(a) - rank(b) ||
       (a.state === 'discovered' ? compareWaitingRows(waiting(a), waiting(b)) : 0) ||
-      (RUN_STATES.has(a.state) ? (a._creationTime ?? 0) - (b._creationTime ?? 0) : 0),
+      (RUN_STATES.has(a.state) ? runBegan(a) - runBegan(b) : 0),
   );
 }
 

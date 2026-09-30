@@ -16,9 +16,15 @@ export type QueryAnswer = { readonly value: unknown } | { readonly error: string
  *
  * @param udfPath - The query's path, `module:function`.
  * @param signedIn - Whether the client has authenticated with a user token.
+ * @param subject - The `sub` of that token, so two users can be answered apart; null when
+ *   signed out or the token carries none.
  * @returns The answer, or undefined to leave the query loading.
  */
-export type Answer = (udfPath: string, signedIn: boolean) => QueryAnswer | undefined;
+export type Answer = (
+  udfPath: string,
+  signedIn: boolean,
+  subject: string | null,
+) => QueryAnswer | undefined;
 
 /** A message the client sent, as parsed from the wire. */
 export interface ClientMessage {
@@ -32,6 +38,8 @@ export interface SyncServer {
   readonly sent: readonly ClientMessage[];
   /** Stands in for `WebSocket`; every instance talks to this deployment. */
   readonly Socket: new (url: string) => unknown;
+  /** Whether nothing is on the wire: every socket opened and every answer delivered. */
+  quiet(): boolean;
 }
 
 interface QueryAdd {
@@ -52,6 +60,22 @@ function encodeTs(ts: number): string {
   return bytes.toString('base64');
 }
 
+/** The `sub` of a JWT's payload, read without checking its signature (the deployment's job). */
+function subjectOf(token: unknown): string | null {
+  if (typeof token !== 'string') return null;
+  const payload = token.split('.')[1];
+  if (payload === undefined) return null;
+  try {
+    const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as {
+      sub?: unknown;
+    };
+    return typeof claims.sub === 'string' ? claims.sub : null;
+  } catch {
+    // Not a JWT this double can read: the client is signed in as nobody it can name.
+    return null;
+  }
+}
+
 function modificationFor(queryId: number, answer: QueryAnswer): Record<string, unknown> {
   return 'error' in answer
     ? { type: 'QueryFailed', queryId, errorMessage: answer.error, logLines: [], journal: null }
@@ -67,6 +91,8 @@ export function syncServer(answer: Answer): SyncServer {
   const sent: ClientMessage[] = [];
   const queries = new Map<number, string>();
   let signedIn = false;
+  let subject: string | null = null;
+  let inFlight = 0;
   let version = { querySet: 0, identity: 0, ts: 0 };
 
   const transition = (
@@ -77,7 +103,7 @@ export function syncServer(answer: Answer): SyncServer {
     version = { ...next, ts: start.ts + 1 };
     const modifications = answered.flatMap((queryId) => {
       const path = queries.get(queryId);
-      const reply = path === undefined ? undefined : answer(path, signedIn);
+      const reply = path === undefined ? undefined : answer(path, signedIn, subject);
       return reply === undefined ? [] : [modificationFor(queryId, reply)];
     });
     return JSON.stringify({
@@ -108,6 +134,7 @@ export function syncServer(answer: Answer): SyncServer {
     }
     if (message.type === 'Authenticate') {
       signedIn = message.tokenType === 'User';
+      subject = signedIn ? subjectOf(message.value) : null;
       // A new identity reruns every query the client holds.
       return transition(
         { querySet: version.querySet, identity: (message.baseVersion as number) + 1 },
@@ -127,7 +154,9 @@ export function syncServer(answer: Answer): SyncServer {
 
     constructor(url: string) {
       this.url = url;
+      inFlight += 1;
       setTimeout(() => {
+        inFlight -= 1;
         this.readyState = 1;
         this.onopen?.();
       }, 0);
@@ -138,7 +167,11 @@ export function syncServer(answer: Answer): SyncServer {
       sent.push(message);
       const answerText = reply(message);
       if (answerText === undefined) return;
-      setTimeout(() => this.onmessage?.({ data: answerText }), 0);
+      inFlight += 1;
+      setTimeout(() => {
+        inFlight -= 1;
+        this.onmessage?.({ data: answerText });
+      }, 0);
     }
 
     close(): void {
@@ -147,5 +180,5 @@ export function syncServer(answer: Answer): SyncServer {
     }
   }
 
-  return { sent, Socket };
+  return { sent, Socket, quiet: (): boolean => inFlight === 0 };
 }

@@ -2,6 +2,7 @@
 
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import { transcriptTurns, type TranscriptTurn } from '@/agent/transcript-turns';
+import { listedRules } from '@/agent/charter-constraints';
 import { Card } from '../../../components/Card';
 import { TurnText } from '../one-to-one/TurnText';
 import { Disclosure } from '../../../components/Disclosure';
@@ -80,8 +81,9 @@ function TranscriptAnswers({ transcript }: { transcript: string }) {
 
 /** How many rules a charter's strikes took out, in words. */
 function struckWords(charter: Doc<'charters'>): string {
-  const struck = ((charter.body as CharterCardBody).constraints ?? []).filter(
-    (constraint) => constraint.struck,
+  // Counted over the rules the card lists: a copy of a rule with no words of its own is not one.
+  const struck = listedRules((charter.body as CharterCardBody).constraints ?? []).filter(
+    ({ constraint }) => constraint.struck,
   ).length;
   return struck === 0 ? '' : `, ${struck} ${struck === 1 ? 'rule' : 'rules'} struck`;
 }

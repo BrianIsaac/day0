@@ -189,13 +189,12 @@ export function removeWording(text: string, phrase: string): string {
  * dropped. Wording the clauses do not carry is dropped from the constraint,
  * because striking it would then change nothing while looking as if it had.
  * Wording is stripped of any provenance suffix first, as the clauses were.
+ * A sentence listed twice is one rule for each kind it makes with words the
+ * clauses carry, and a copy with none is dropped.
  *
- * Args:
- *   raw: The constraints as the model returned them.
- *   charter: The assembled charter whose clauses they should name.
- *
- * Returns:
- *   The verified constraints, tagged as synthesised.
+ * @param raw - The constraints as the model returned them.
+ * @param charter - The assembled charter whose clauses they should name.
+ * @returns The verified constraints, tagged as synthesised.
  */
 export function normaliseConstraints(
   raw: readonly RawConstraint[],
@@ -213,9 +212,69 @@ export function normaliseConstraints(
           .filter((phrase: string): boolean => wordingPresent(phrase, clauses)),
       ),
     ];
-    out.push({ kind: item.kind, quote, wording, origin: 'synthesis' });
+    // A sentence the model lists twice (the production walk's 6c) is one rule for each kind it
+    // makes with words the clauses carry; a copy with none left once verified is no rule.
+    const rule: CharterConstraint = { kind: item.kind, quote, wording, origin: 'synthesis' };
+    const said = (listed: CharterConstraint): boolean => sameQuote(listed.quote, quote);
+    const bare = out.findIndex((listed) => said(listed) && listed.wording.length === 0);
+    const sameKind = out.findIndex((listed) => said(listed) && listed.kind === item.kind);
+    if (!out.some(said)) {
+      out.push(rule);
+    } else if (wording.length === 0) {
+      continue;
+    } else if (bare !== -1) {
+      out[bare] = rule;
+    } else if (sameKind !== -1) {
+      const earlier = out[sameKind]!;
+      out[sameKind] = { ...earlier, wording: [...new Set([...earlier.wording, ...wording])] };
+    } else {
+      out.push(rule);
+    }
   }
   return out;
+}
+
+/** A sentence as a rule is told apart by: its words, case and closing punctuation aside. */
+function quoteKey(quote: string): string {
+  return quote
+    .toLocaleLowerCase('en-GB')
+    .replace(/[\u201c\u201d"]/g, '')
+    .replace(/\s+/g, ' ')
+    .replace(/[\s.;!]+$/, '')
+    .trim();
+}
+
+/** Whether two rules quote the same sentence. */
+function sameQuote(left: string, right: string): boolean {
+  return quoteKey(left) === quoteKey(right);
+}
+
+/** One rule the card lists: the constraint and its index, which strikes and restores address. */
+export interface ListedRule {
+  readonly constraint: CharterConstraint;
+  readonly index: number;
+}
+
+/**
+ * The rules to list, one line per rule: a constraint whose sentence another constraint quotes
+ * with the clauses' words is the same rule with none of its own, and is left out, struck or not,
+ * since its strike changed nothing. A draft synthesised before `normaliseConstraints` merged
+ * such pairs still holds both (the production walk's 6c).
+ *
+ * @param constraints - The charter's constraints, in their stored order.
+ * @returns The rules to draw, each with its stored index.
+ */
+export function listedRules(constraints: readonly CharterConstraint[]): ListedRule[] {
+  return constraints.flatMap((constraint, index): ListedRule[] => {
+    if (constraint.wording.length > 0) return [{ constraint, index }];
+    const other = constraints.findIndex(
+      (candidate, at) =>
+        at !== index &&
+        sameQuote(candidate.quote, constraint.quote) &&
+        (candidate.wording.length > 0 || at < index),
+    );
+    return other === -1 ? [{ constraint, index }] : [];
+  });
 }
 
 /** Whether a listed constraint's wording already covers a word. */
@@ -558,9 +617,18 @@ export interface StrikePreview {
   removedClauses: string[];
   /** Will-do clauses the strike keeps with the wording gone, as they read before and after. */
   rewrittenClauses: Array<{ from: string; to: string }>;
+  /**
+   * Whether the strike changes the charter at all: a rule whose words no clause carries, or whose
+   * clauses another strike already takes, changes nothing, and is offered no Strike.
+   */
+  changes: boolean;
   /** Why the strike cannot be applied; when set, nothing is removed. */
   refusal?: string;
 }
+
+/** Why a strike that would change nothing is refused, on the card and at the server alike. */
+export const STRIKE_CHANGES_NOTHING =
+  'no clause carries its words any more, so striking it changes nothing';
 
 function listClauses(charter: ClauseCharter): string[] {
   return LIST_FIELDS.flatMap((field): string[] => charter.proposedBoundaries[field]);
@@ -573,21 +641,21 @@ function listClauses(charter: ClauseCharter): string[] {
  * a refusal here is the refusal the toggle would give and a strike previewed
  * as allowed is one approval will apply.
  *
- * Args:
- *   charter: The charter as drafted, other strikes flagged.
- *   index: The constraint to strike.
- *
- * Returns:
- *   The clauses the strike would remove, or the reason it is refused.
+ * @param charter - The charter as drafted, other strikes flagged.
+ * @param index - The constraint to strike.
+ * @returns The clauses the strike would remove and whether it changes the charter at all, or the
+ *   reason it is refused.
  */
 export function strikePreview(charter: ClauseCharter, index: number): StrikePreview {
   const constraints = [...(charter.constraints ?? [])];
   const target = constraints[index];
-  if (!target) return { removedClauses: [], rewrittenClauses: [] };
+  if (!target) return { removedClauses: [], rewrittenClauses: [], changes: false };
   constraints[index] = { ...target, struck: true };
   const before = strikeOutcome(charter);
   const after = strikeOutcome({ ...charter, constraints });
-  if (!after.ok) return { removedClauses: [], rewrittenClauses: [], refusal: after.reason };
+  if (!after.ok) {
+    return { removedClauses: [], rewrittenClauses: [], changes: false, refusal: after.reason };
+  }
   const base = before.ok ? before.charter : charter;
   const remaining = listClauses(after.charter);
   const kept = new Set(remaining);
@@ -614,6 +682,8 @@ export function strikePreview(charter: ClauseCharter, index: number): StrikePrev
   return {
     removedClauses: gone.filter((clause: string): boolean => !rewritten.has(clause)),
     rewrittenClauses,
+    // The function is not one of the lists above, so what changes is asked of the whole charter.
+    changes: clauseChanges(base, after.charter).length > 0,
   };
 }
 

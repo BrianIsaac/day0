@@ -9,6 +9,7 @@ import type {
 import { SYSTEM_CLASSES } from './system-classes';
 import {
   CONSTRAINT_KINDS,
+  STRIKE_CHANGES_NOTHING,
   assertEditKeepsBoundaries,
   clauseChanges,
   clauseTexts,
@@ -294,8 +295,11 @@ function applyOne(charter: Charter, change: CharterChange, now: Date): AppliedAm
       if (target.struck) throw new Error('that constraint is already struck');
       constraints[change.index] = { ...target, struck: true };
       const struck = withoutConstraints(charter, [target]);
+      const changed = clauseChanges(charter, struck);
+      // A rule whose words no clause carries is one the card offers no Strike for (6c).
+      if (changed.length === 0) throw new Error(STRIKE_CHANGES_NOTHING);
       // The record keeps what this strike changed, as approval keeps a draft's.
-      const struckClauses = [...(charter.struckClauses ?? []), ...clauseChanges(charter, struck)];
+      const struckClauses = [...(charter.struckClauses ?? []), ...changed];
       return {
         charter: { ...struck, constraints, struckClauses },
         systemsAdded: added,

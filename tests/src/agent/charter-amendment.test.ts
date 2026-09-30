@@ -5,6 +5,7 @@ import {
   charterDiff,
   nextCharterVersion,
 } from '../../../src/agent/charter-amendment';
+import { STRIKE_CHANGES_NOTHING } from '../../../src/agent/charter-constraints';
 
 function approvedBody(): Charter {
   return {
@@ -85,6 +86,26 @@ describe('applying charter changes', (): void => {
     });
     expect(() => applyCharterChanges(charter, [{ kind: 'strike-constraint', index: 0 }])).toThrow(
       /already struck/,
+    );
+  });
+
+  it('refuses to strike a rule whose words no clause carries, which would change nothing (production walk 6c)', (): void => {
+    const approved = approvedBody();
+    const unverified = {
+      ...approved,
+      constraints: [
+        ...(approved.constraints ?? []),
+        {
+          kind: 'reporting-line' as const,
+          quote: 'Anything on the CRM comes to me.',
+          wording: [],
+          origin: 'synthesis' as const,
+        },
+      ],
+    };
+    const index = unverified.constraints.length - 1;
+    expect(() => applyCharterChanges(unverified, [{ kind: 'strike-constraint', index }])).toThrow(
+      STRIKE_CHANGES_NOTHING,
     );
   });
 

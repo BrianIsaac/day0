@@ -28,6 +28,19 @@ export type OneToOnePhase =
   | { readonly kind: 'failed'; readonly reason: string }
   | { readonly kind: 'drafted' };
 
+/** Each phase kind once: a kind the union gains or loses fails this object's type. */
+const PHASE_KINDS: Readonly<Record<OneToOnePhase['kind'], true>> = {
+  talking: true,
+  drafting: true,
+  failed: true,
+  drafted: true,
+};
+
+/** Every kind a one-to-one's phase can be, for a validator that must name each (`rosterForUser`). */
+export const ONE_TO_ONE_PHASE_KINDS = Object.keys(PHASE_KINDS) as ReadonlyArray<
+  OneToOnePhase['kind']
+>;
+
 /**
  * Read the one-to-one's phase off its session row.
  *

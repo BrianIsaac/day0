@@ -81,6 +81,12 @@ describe('useAccount', (): void => {
     expect(render()).toBe('signed-out');
   });
 
+  it("answers signed-out at once when another application's stale bare cookie sits beside this one's signed-out stamp (second review v1, v5)", (): void => {
+    document.cookie = '__client_uat=1759100000; path=/';
+    document.cookie = '__client_uat_AbC12=0; path=/';
+    expect(render()).toBe('signed-out');
+  });
+
   it('answers signed-out when Clerk failed to load, rather than holding the shell', (): void => {
     document.cookie = '__client_uat=1759100000; path=/';
     clerk.status = 'error';

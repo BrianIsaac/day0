@@ -158,6 +158,26 @@ describe('amending an approved charter from the card', (): void => {
     backend.calls = [];
   });
 
+  it('offers no amendment strike for a rule no clause carries, nor a second line for its sentence (production walk 6c)', (): void => {
+    const sentence = 'Never post to public channels.';
+    const ruled = {
+      ...body,
+      constraints: [
+        {
+          kind: 'system-boundary',
+          quote: sentence,
+          wording: ['Post to public Slack channels.'],
+          origin: 'synthesis',
+        },
+        { kind: 'reporting-line', quote: sentence, wording: [], origin: 'synthesis' },
+        { kind: 'candidate-property', quote: 'Only Q3 work.', wording: [], origin: 'synthesis' },
+      ],
+    };
+    const markup = renderToStaticMarkup(<CharterCard charter={{ ...charter, body: ruled }} />);
+    const strikes = [...markup.matchAll(/aria-label="Strike: ([^"]*)"/g)].map(([, quote]) => quote);
+    expect(strikes).toEqual([sentence]);
+  });
+
   it('is absent from a charter awaiting approval', (): void => {
     const draft = { ...charter, approved: false, body } as unknown as Doc<'charters'>;
     const markup = renderToStaticMarkup(<CharterCard charter={draft} />);

@@ -65,7 +65,12 @@ describe('what sits beside the charter', (): void => {
     const first = row({
       approved: true,
       approvedAt: Date.UTC(2026, 8, 29, 14, 23),
-      body: { constraints: [{ quote: 'x', struck: true }, { quote: 'y' }] },
+      body: {
+        constraints: [
+          { quote: 'x', wording: ['x'], struck: true },
+          { quote: 'y', wording: ['y'] },
+        ],
+      },
     });
     const amended = row({
       _id: 'charter-2' as Doc<'charters'>['_id'],

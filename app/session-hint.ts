@@ -30,18 +30,18 @@ export const SESSION_HINT_ATTRIBUTE = 'data-session-hint';
  * `holdsClerkSession` in the page's own words, over the same pattern and the same rule.
  */
 export const SESSION_HINT_SCRIPT = `(function () {
-  var pattern = new RegExp(${JSON.stringify(CLIENT_UAT)}, 'g');
-  var bare = false;
-  var suffixed = false;
-  var anySuffixed = false;
-  var match;
+  const pattern = new RegExp(${JSON.stringify(CLIENT_UAT)}, 'g');
+  let bare = false;
+  let suffixed = false;
+  let anySuffixed = false;
+  let match;
   while ((match = pattern.exec(document.cookie)) !== null) {
-    var live = Number(match[2]) > 0;
+    const live = Number(match[2]) > 0;
     if (match[1]) {
       anySuffixed = true;
       if (live) suffixed = true;
     } else if (live) bare = true;
   }
-  var hint = (anySuffixed ? suffixed : bare) ? 'present' : 'none';
+  const hint = (anySuffixed ? suffixed : bare) ? 'present' : 'none';
   document.documentElement.setAttribute(${JSON.stringify(SESSION_HINT_ATTRIBUTE)}, hint);
 })();`;
