@@ -422,6 +422,19 @@ describe('cloud upgrade', (): void => {
     expect(statSync(`${zip}.sha256`).mode & 0o777).toBe(0o600);
   });
 
+  it('says where an export it could not count was written, and pushes nothing', async (): Promise<void> => {
+    const c = cloud({
+      failing: [
+        { match: 'unzip -Z1', status: 9, stderr: 'End-of-central-directory signature not found' },
+      ],
+    });
+    expect(await runCloudUpgrade(verb(c, { verb: 'upgrade' }), c.io)).toBe(1);
+    expect(printed(c)).toMatch(
+      /error: nothing was pushed or deployed, because the export did not finish: .*before-v0\.3\.0-20261001T020304Z\.zip was written \(sha256 [0-9a-f]{64}\) and its rows could not be counted/,
+    );
+    expect(writes(c).filter((line) => !line.startsWith('npx convex export'))).toEqual([]);
+  });
+
   it("pauses a real-mode deployment's jobs before the push and lifts them, pushing again, once read back", async (): Promise<void> => {
     const c = cloud({
       env: new Map([

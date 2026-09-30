@@ -312,7 +312,11 @@ export function takeBackup(
   const sha256 = createHash('sha256').update(readFileSync(file)).digest('hex');
   writePrivateEnv(`${file}.sha256`, `${sha256}  ${basename(file)}\n`);
   const counts = exportCounts(io, file);
-  if ('failure' in counts) return counts;
+  if ('failure' in counts) {
+    return {
+      failure: `${file} was written (sha256 ${sha256}) and its rows could not be counted: ${counts.failure}`,
+    };
+  }
   writePrivateEnv(`${file.replace(/\.zip$/, '')}.counts.txt`, countsText(counts));
   const rows = counts.tables.reduce((sum, [, n]) => sum + n, 0);
   io.log(

@@ -158,6 +158,9 @@ Options:
 
 Every run ends with the rollback runbook, filled in with what it read.`;
 
+/** The options a flag's value is read into. */
+type ValuedOption = 'target' | 'envFile' | 'appUrl' | 'scope' | 'backupTo' | 'name';
+
 /**
  * Read the cloud command line: the verb, then its flags.
  *
@@ -167,12 +170,12 @@ Every run ends with the rollback runbook, filled in with what it read.`;
  */
 export function parseCloudArguments(argv: readonly string[]): CloudOptions {
   let verb: CloudVerb | undefined;
-  const values: Record<string, string> = {};
+  const values: { -readonly [Key in ValuedOption]?: string } = {};
   let app: AppHost = 'vercel';
   let dryRun = false;
   let assumeYes = false;
   let help = false;
-  const valued: Readonly<Record<string, string>> = {
+  const valued: Readonly<Record<string, ValuedOption>> = {
     '--target': 'target',
     '--env-file': 'envFile',
     '--app-url': 'appUrl',
@@ -566,7 +569,12 @@ export async function runCloudUpgrade(options: CloudOptions, io: CloudIo): Promi
   }
 
   const backup = takeBackup(io, target, place.directory, stem);
-  if ('failure' in backup) return refuse(`the export was not taken: ${backup.failure}`);
+  if ('failure' in backup) {
+    io.log(
+      `error: nothing was pushed or deployed, because the export did not finish: ${backup.failure}`,
+    );
+    return 1;
+  }
   const facts: RollbackFacts = {
     target,
     ...(previous !== undefined ? { previousApp: previous.id } : {}),
