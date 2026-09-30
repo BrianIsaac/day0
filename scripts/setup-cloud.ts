@@ -54,7 +54,9 @@ import {
   readTarget,
   toolRefusal,
   vercelRefusal,
+  type CheckoutState,
   type CloudIo,
+  type CloudTarget,
   type Failure,
 } from './cloud/checkout';
 import {
@@ -294,6 +296,84 @@ async function firstSettings(
   return refusal === undefined ? pinned : { failure: refusal };
 }
 
+/** What the first setup read before its first write. */
+interface SetupReads {
+  readonly checkout: CheckoutState;
+  readonly target: CloudTarget;
+  /** The settings to give the deployment, judged and pinned. */
+  readonly settings: ReadonlyMap<string, string>;
+  /** The names the deployment lacks, which the setup sets. */
+  readonly toSet: readonly string[];
+  /** The names the deployment holds already, which the setup leaves as they are. */
+  readonly kept: readonly string[];
+  /** When each Vercel production name was last written, before. */
+  readonly appBefore: ReadonlyMap<string, number>;
+  /** The build serving the app's address before, when the address is known. */
+  readonly previous: VercelDeployment | undefined;
+}
+
+/**
+ * Every refusal and every read the first setup makes before it writes: the
+ * checkout, the target and its proof, an empty deployment, the settings, and
+ * the Vercel project's names.
+ *
+ * @param options - The command line.
+ * @param io - The machine.
+ */
+async function readSetup(options: CloudOptions, io: CloudIo): Promise<SetupReads | Failure> {
+  const checkout = readCheckout(io, true);
+  if ('failure' in checkout) return checkout;
+  const target = readTarget(options, io);
+  if ('failure' in target) return target;
+  if (options.app === 'vercel') {
+    const refusal = vercelRefusal(io) ?? toolRefusal(io, 'curl');
+    if (refusal !== undefined) return refusal;
+  }
+  const proven = proveTarget(io, target, true);
+  if (proven !== undefined) return proven;
+  io.log(
+    `The target is ${target.deployment}, the project's default production deployment (dry run).`,
+  );
+  const tables = convexOn(io, target, ['convex', 'data']);
+  if (tables.status !== 0) {
+    return {
+      failure: `the deployment's tables could not be listed (${firstLine(tables.stderr)}).`,
+    };
+  }
+  if (listedTables(tables.stdout).length > 0) {
+    return {
+      failure: `${target.deployment} already holds tables, so this is not its first push: \`./setup.sh cloud upgrade --target ${target.file}\` moves it to this release.`,
+    };
+  }
+  const held = readDeploymentEnv(io, target);
+  if ('failure' in held) return { failure: `${held.failure}.` };
+  const settings = await firstSettings(options, io);
+  if ('failure' in settings) return settings;
+  const toSet = [...settings.keys()].filter((name) => !held.has(name));
+  const kept = [...settings.keys()].filter((name) => held.has(name));
+  if (options.app === 'none') {
+    return { checkout, target, settings, toSet, kept, appBefore: new Map(), previous: undefined };
+  }
+  const appBefore = readAppEnv(io, target);
+  if ('failure' in appBefore) return { failure: `${appBefore.failure}.` };
+  const clerk = settings.has('CLERK_JWT_ISSUER_DOMAIN') || held.has('CLERK_JWT_ISSUER_DOMAIN');
+  const missing = clerk ? CLERK_APP_KEYS.filter((name) => !appBefore.has(name)) : [];
+  if (missing.length > 0) {
+    return {
+      failure:
+        `Vercel production has no ${missing.join(' or ')}, so the app could not sign anyone in: ` +
+        `${missing.map((name) => `vercel env add ${name} production --sensitive`).join('; ')} (Vercel asks for each value).`,
+    };
+  }
+  let previous: VercelDeployment | undefined;
+  if (target.appUrl !== undefined) {
+    const served = inspectApp(io, target, target.appUrl);
+    if ('failure' in served) return { failure: `${served.failure}.` };
+    previous = served;
+  }
+  return { checkout, target, settings, toSet, kept, appBefore, previous };
+}
+
 /**
  * The first push to an empty production deployment, and the app deployed onto it.
  *
@@ -303,60 +383,12 @@ async function firstSettings(
  * @returns 0 once both halves are read back, 130 when declined, 1 otherwise.
  */
 export async function runCloudSetup(options: CloudOptions, io: CloudIo): Promise<number> {
-  const refuse = (reason: string): number => {
-    io.log(`error: nothing was set, pushed or deployed, because ${reason}`);
+  const reads = await readSetup(options, io);
+  if ('failure' in reads) {
+    io.log(`error: nothing was set, pushed or deployed, because ${reads.failure}`);
     return 1;
-  };
-  const checkout = readCheckout(io, true);
-  if ('failure' in checkout) return refuse(checkout.failure);
-  const target = readTarget(options, io);
-  if ('failure' in target) return refuse(target.failure);
-  const vercel = options.app === 'vercel' ? vercelRefusal(io) : undefined;
-  if (vercel !== undefined) return refuse(vercel.failure);
-  const curl = options.app === 'vercel' ? toolRefusal(io, 'curl') : undefined;
-  if (curl !== undefined) return refuse(curl.failure);
-
-  const proven = proveTarget(io, target, true);
-  if (proven !== undefined) return refuse(proven.failure);
-  io.log(
-    `The target is ${target.deployment}, the project's default production deployment (dry run).`,
-  );
-  const tables = convexOn(io, target, ['convex', 'data']);
-  if (tables.status !== 0)
-    return refuse(`the deployment's tables could not be listed (${firstLine(tables.stderr)}).`);
-  if (listedTables(tables.stdout).length > 0) {
-    return refuse(
-      `${target.deployment} already holds tables, so this is not its first push: \`./setup.sh cloud upgrade --target ${target.file}\` moves it to this release.`,
-    );
   }
-  const held = readDeploymentEnv(io, target);
-  if ('failure' in held) return refuse(`${held.failure}.`);
-  const settings = await firstSettings(options, io);
-  if ('failure' in settings) return refuse(settings.failure);
-  const toSet = [...settings.keys()].filter((name) => !held.has(name));
-  const kept = [...settings.keys()].filter((name) => held.has(name));
-
-  let appBefore: ReadonlyMap<string, number> = new Map();
-  let previous: VercelDeployment | undefined;
-  if (options.app === 'vercel') {
-    const appEnv = readAppEnv(io, target);
-    if ('failure' in appEnv) return refuse(`${appEnv.failure}.`);
-    appBefore = appEnv;
-    const clerk = settings.has('CLERK_JWT_ISSUER_DOMAIN') || held.has('CLERK_JWT_ISSUER_DOMAIN');
-    const missing = clerk ? CLERK_APP_KEYS.filter((name) => !appEnv.has(name)) : [];
-    if (missing.length > 0) {
-      return refuse(
-        `Vercel production has no ${missing.join(' or ')}, so the app could not sign anyone in: ` +
-          `${missing.map((name) => `vercel env add ${name} production --sensitive`).join('; ')} (Vercel asks for each value).`,
-      );
-    }
-    if (target.appUrl !== undefined) {
-      const served = inspectApp(io, target, target.appUrl);
-      if ('failure' in served) return refuse(`${served.failure}.`);
-      previous = served;
-    }
-  }
-
+  const { checkout, target, settings, toSet, kept, appBefore, previous } = reads;
   io.log('');
   io.log(`Plan for ${target.deployment}, release ${checkout.release} (${checkout.commit}):`);
   io.log(
@@ -370,21 +402,14 @@ export async function runCloudSetup(options: CloudOptions, io: CloudIo): Promise
     );
     io.log(`  vercel --prod --yes${previous ? ` (replacing ${previous.id})` : ''}`);
   }
-  const facts: RollbackFacts = {
-    target,
-    ...(previous !== undefined ? { previousApp: previous.id } : {}),
-    appValuesChanged: options.app === 'vercel',
-  };
-  // Built before the question, so a value no dotenv line holds is refused
-  // before anything is written.
-  const stream = options.dryRun
-    ? ''
-    : toSet.map((name) => `${dotenvLine(name, settings.get(name)!)}\n`).join('');
   if (options.dryRun) {
     io.log('');
     io.log('Dry run: every read above ran; nothing was set, pushed or deployed.');
     return 0;
   }
+  // Built before the question, so a value no dotenv line holds is refused
+  // before anything is written.
+  const stream = toSet.map((name) => `${dotenvLine(name, settings.get(name)!)}\n`).join('');
   try {
     await confirm(
       io,
@@ -397,6 +422,11 @@ export async function runCloudSetup(options: CloudOptions, io: CloudIo): Promise
     return 130;
   }
 
+  const facts: RollbackFacts = {
+    target,
+    ...(previous !== undefined ? { previousApp: previous.id } : {}),
+    appValuesChanged: options.app === 'vercel',
+  };
   const stop = (what: string): number => {
     io.log(`error: ${what}`);
     for (const line of rollbackLines(facts)) io.log(line);
@@ -404,18 +434,20 @@ export async function runCloudSetup(options: CloudOptions, io: CloudIo): Promise
   };
   if (toSet.length > 0) {
     const set = convexOn(io, target, ['convex', 'env', 'set'], { input: stream });
-    if (set.status !== 0)
+    if (set.status !== 0) {
       return stop(
         `the deployment's env was not set (exit ${set.status ?? 'unknown'}); nothing was pushed.`,
       );
+    }
   }
   const after = readDeploymentEnv(io, target);
   if ('failure' in after) return stop(`${after.failure}; nothing was pushed.`);
   const absent = [...settings.keys()].filter((name) => !after.has(name));
-  if (absent.length > 0)
+  if (absent.length > 0) {
     return stop(
       `the deployment's env does not list ${absent.join(', ')} after setting it; nothing was pushed.`,
     );
+  }
   io.log(`Set on ${target.deployment} and read back: ${toSet.join(', ') || 'nothing new'}.`);
 
   const pushed = pushFunctions(io, target, `v${checkout.release} ${checkout.commit} cloud setup`);
@@ -453,6 +485,152 @@ export async function runCloudSetup(options: CloudOptions, io: CloudIo): Promise
   return 0;
 }
 
+/** What the upgrade read before its first write. */
+interface UpgradeReads {
+  readonly checkout: CheckoutState;
+  readonly target: CloudTarget;
+  /** Where the export goes. */
+  readonly directory: string;
+  /** The release the deployment is stamped at now. */
+  readonly from: string;
+  /** What the release check said. */
+  readonly note: string;
+  /** Whether the deployment runs in real mode, whose jobs are paused across the push. */
+  readonly realMode: boolean;
+  /** The pause the deployment holds now, if any. */
+  readonly held: string | undefined;
+  /** The build serving the app's address now. */
+  readonly previous: VercelDeployment | undefined;
+}
+
+/**
+ * Every refusal and every read the upgrade makes before it writes: the
+ * checkout, the target and its proof, the release check, the deployment's
+ * mode and pause, and the app that serves it now.
+ *
+ * @param options - The command line.
+ * @param io - The machine.
+ */
+function readUpgrade(options: CloudOptions, io: CloudIo): UpgradeReads | Failure {
+  const checkout = readCheckout(io, true);
+  if ('failure' in checkout) return checkout;
+  const target = readTarget(options, io);
+  if ('failure' in target) return target;
+  if (options.app === 'vercel' && target.appUrl === undefined) {
+    return {
+      failure:
+        "the app's production address is not named: --app-url https://<host>, or DAY0_APP_URL in the target file (the first setup writes it).",
+    };
+  }
+  const refusal =
+    toolRefusal(io, 'unzip') ??
+    (options.app === 'vercel' ? (toolRefusal(io, 'curl') ?? vercelRefusal(io)) : undefined);
+  if (refusal !== undefined) return refusal;
+  const place = backupDirectory(options.backupTo, io, target);
+  if ('failure' in place) return place;
+  const proven = proveTarget(io, target, true);
+  if (proven !== undefined) return proven;
+  io.log(
+    `The target is ${target.deployment}, the project's default production deployment (dry run).`,
+  );
+  const verdict = readReleaseVerdict((args) => convexOn(io, target, args), checkout);
+  if (!verdict.allowed) return { failure: verdict.reason };
+  if (verdict.from === undefined) {
+    return {
+      failure: `nothing was ever pushed to ${target.deployment}: its first push is \`./setup.sh cloud setup --target ${target.file}\`.`,
+    };
+  }
+  io.log(`Release check: ${verdict.note}.`);
+  const env = readDeploymentEnv(io, target);
+  if ('failure' in env) return { failure: `${env.failure}.` };
+  const reads = {
+    checkout,
+    target,
+    directory: place.directory,
+    from: verdict.from,
+    note: verdict.note,
+    realMode: env.get('DAY0_SURFACE_MODE') === 'real',
+    held: pauseReason(env),
+  };
+  if (options.app === 'none' || target.appUrl === undefined) {
+    return { ...reads, previous: undefined };
+  }
+  const served = readServingApp(io, target, target.appUrl);
+  return 'failure' in served ? served : { ...reads, previous: served };
+}
+
+/**
+ * The build serving the app's address, refused unless the app already talks
+ * to the deployment through the three names setup sets.
+ *
+ * @param io - The machine.
+ * @param target - The target.
+ * @param appUrl - The app's production address.
+ */
+function readServingApp(
+  io: CloudIo,
+  target: CloudTarget,
+  appUrl: string,
+): VercelDeployment | Failure {
+  const appEnv = readAppEnv(io, target);
+  if ('failure' in appEnv) return { failure: `${appEnv.failure}.` };
+  const missing = [...appConvexValues(target.deployment).keys()].filter(
+    (name) => !appEnv.has(name),
+  );
+  if (missing.length > 0) {
+    return {
+      failure: `Vercel production has no ${missing.join(', ')}; an app is moved onto a deployment by \`./setup.sh cloud setup\`.`,
+    };
+  }
+  const served = inspectApp(io, target, appUrl);
+  if ('failure' in served) return { failure: `${served.failure}.` };
+  const talks = appTalksTo(io, appUrl, target.deployment);
+  if ('failure' in talks) return { failure: `${talks.failure}.` };
+  if (!talks.talks) {
+    return {
+      failure: `the app at ${appUrl} does not talk to ${target.deployment} now (no client chunk names ${deploymentUrl(target.deployment)}), so this is a move, not an upgrade.`,
+    };
+  }
+  io.log(`The app at ${appUrl} is ${served.id} and talks to ${target.deployment}.`);
+  return served;
+}
+
+/**
+ * Print what the upgrade will do, read by read.
+ *
+ * @param io - The machine.
+ * @param options - The command line.
+ * @param reads - What the upgrade read.
+ * @param steps - The export's path and the pause's reason this run would use.
+ */
+function printUpgradePlan(
+  io: CloudIo,
+  options: CloudOptions,
+  reads: UpgradeReads,
+  steps: { readonly exportFile: string; readonly reason: string },
+): void {
+  const { target, checkout, held, previous } = reads;
+  io.log('');
+  io.log(`Plan for ${target.deployment}, ${reads.note} (${checkout.commit}):`);
+  io.log(
+    `  npx convex export --include-file-storage --path ${steps.exportFile} --deployment ${target.deployment}`,
+  );
+  if (reads.realMode && held === undefined) {
+    io.log(
+      `  npx convex env set ${CRONS_PAUSED_FLAG} "${steps.reason}" --deployment ${target.deployment}`,
+    );
+  } else if (held !== undefined) {
+    io.log(
+      `  the scheduled jobs are paused already (${held}); ${isUpgradePause(held) ? 'this upgrade lifts it when it completes' : 'the upgrade leaves a pause set by hand'}`,
+    );
+  }
+  io.log(`  npx convex deploy --typecheck enable --env-file ${target.file}`);
+  io.log('  migrations:runPending until none is pending, then migrations:recordRelease');
+  if (options.app === 'vercel') {
+    io.log(`  vercel --prod --yes (replacing ${previous?.id ?? 'nothing'})`);
+  }
+}
+
 /**
  * Move to this checkout's release: an export first, the release check, a
  * pause of a real-mode deployment's scheduled jobs, the push, the
@@ -464,93 +642,19 @@ export async function runCloudSetup(options: CloudOptions, io: CloudIo): Promise
  * @returns 0 once both halves are read back, 130 when declined, 1 otherwise.
  */
 export async function runCloudUpgrade(options: CloudOptions, io: CloudIo): Promise<number> {
-  const refuse = (reason: string): number => {
-    io.log(`error: nothing was backed up, pushed or deployed, because ${reason}`);
+  const reads = readUpgrade(options, io);
+  if ('failure' in reads) {
+    io.log(`error: nothing was backed up, pushed or deployed, because ${reads.failure}`);
     return 1;
-  };
-  const checkout = readCheckout(io, true);
-  if ('failure' in checkout) return refuse(checkout.failure);
-  const target = readTarget(options, io);
-  if ('failure' in target) return refuse(target.failure);
-  if (options.app === 'vercel' && target.appUrl === undefined) {
-    return refuse(
-      "the app's production address is not named: --app-url https://<host>, or DAY0_APP_URL in the target file (the first setup writes it).",
-    );
   }
-  const tools: readonly ('unzip' | 'curl')[] =
-    options.app === 'vercel' ? ['unzip', 'curl'] : ['unzip'];
-  for (const tool of tools) {
-    const missing = toolRefusal(io, tool);
-    if (missing !== undefined) return refuse(missing.failure);
-  }
-  const vercel = options.app === 'vercel' ? vercelRefusal(io) : undefined;
-  if (vercel !== undefined) return refuse(vercel.failure);
-  const place = backupDirectory(options.backupTo, io, target);
-  if ('failure' in place) return refuse(place.failure);
-
-  const proven = proveTarget(io, target, true);
-  if (proven !== undefined) return refuse(proven.failure);
-  io.log(
-    `The target is ${target.deployment}, the project's default production deployment (dry run).`,
-  );
-  const verdict = readReleaseVerdict((args) => convexOn(io, target, args), checkout);
-  if (!verdict.allowed) return refuse(verdict.reason);
-  if (verdict.from === undefined) {
-    return refuse(
-      `nothing was ever pushed to ${target.deployment}: its first push is \`./setup.sh cloud setup --target ${target.file}\`.`,
-    );
-  }
-  io.log(`Release check: ${verdict.note}.`);
-  const env = readDeploymentEnv(io, target);
-  if ('failure' in env) return refuse(`${env.failure}.`);
-  const realMode = env.get('DAY0_SURFACE_MODE') === 'real';
-  const held = pauseReason(env);
-
-  let previous: VercelDeployment | undefined;
-  if (options.app === 'vercel' && target.appUrl !== undefined) {
-    const appEnv = readAppEnv(io, target);
-    if ('failure' in appEnv) return refuse(`${appEnv.failure}.`);
-    const missing = [...appConvexValues(target.deployment).keys()].filter(
-      (name) => !appEnv.has(name),
-    );
-    if (missing.length > 0) {
-      return refuse(
-        `Vercel production has no ${missing.join(', ')}; an app is moved onto a deployment by \`./setup.sh cloud setup\`.`,
-      );
-    }
-    const served = inspectApp(io, target, target.appUrl);
-    if ('failure' in served) return refuse(`${served.failure}.`);
-    previous = served;
-    const talks = appTalksTo(io, target.appUrl, target.deployment);
-    if ('failure' in talks) return refuse(`${talks.failure}.`);
-    if (!talks.talks) {
-      return refuse(
-        `the app at ${target.appUrl} does not talk to ${target.deployment} now (no client chunk names ${deploymentUrl(target.deployment)}), so this is a move, not an upgrade.`,
-      );
-    }
-    io.log(`The app at ${target.appUrl} is ${served.id} and talks to ${target.deployment}.`);
-  }
-
-  const stem = `before-v${checkout.release}-${fileStamp(io.now?.() ?? Date.now())}`;
-  const reason = upgradePauseReason(checkout.release, io.now?.() ?? Date.now());
-  io.log('');
-  io.log(`Plan for ${target.deployment}, ${verdict.note} (${checkout.commit}):`);
-  io.log(
-    `  npx convex export --include-file-storage --path ${join(place.directory, `${stem}.zip`)} --deployment ${target.deployment}`,
-  );
-  if (realMode && held === undefined) {
-    io.log(
-      `  npx convex env set ${CRONS_PAUSED_FLAG} "${reason}" --deployment ${target.deployment}`,
-    );
-  } else if (held !== undefined) {
-    io.log(
-      `  the scheduled jobs are paused already (${held}); ${isUpgradePause(held) ? 'this upgrade lifts it when it completes' : 'the upgrade leaves a pause set by hand'}`,
-    );
-  }
-  io.log(`  npx convex deploy --typecheck enable --env-file ${target.file}`);
-  io.log('  migrations:runPending until none is pending, then migrations:recordRelease');
-  if (options.app === 'vercel')
-    io.log(`  vercel --prod --yes (replacing ${previous?.id ?? 'nothing'})`);
+  const { checkout, target, held, previous } = reads;
+  const now = io.now?.() ?? Date.now();
+  const stem = `before-v${checkout.release}-${fileStamp(now)}`;
+  const reason = upgradePauseReason(checkout.release, now);
+  printUpgradePlan(io, options, reads, {
+    exportFile: join(reads.directory, `${stem}.zip`),
+    reason,
+  });
   if (options.dryRun) {
     io.log('');
     io.log('Dry run: every read above ran; nothing was exported, set, pushed or deployed.');
@@ -568,7 +672,7 @@ export async function runCloudUpgrade(options: CloudOptions, io: CloudIo): Promi
     return 130;
   }
 
-  const backup = takeBackup(io, target, place.directory, stem);
+  const backup = takeBackup(io, target, reads.directory, stem);
   if ('failure' in backup) {
     io.log(
       `error: nothing was pushed or deployed, because the export did not finish: ${backup.failure}`,
@@ -578,7 +682,7 @@ export async function runCloudUpgrade(options: CloudOptions, io: CloudIo): Promi
   const facts: RollbackFacts = {
     target,
     ...(previous !== undefined ? { previousApp: previous.id } : {}),
-    ...(verdict.from !== undefined ? { previousRelease: verdict.from } : {}),
+    previousRelease: reads.from,
     backup: { file: backup.file, sha256: backup.sha256 },
   };
   let paused = held !== undefined && isUpgradePause(held);
@@ -592,7 +696,7 @@ export async function runCloudUpgrade(options: CloudOptions, io: CloudIo): Promi
     for (const line of rollbackLines(facts)) io.log(line);
     return 1;
   };
-  if (realMode && held === undefined) {
+  if (reads.realMode && held === undefined) {
     const set = convexOn(io, target, ['convex', 'env', 'set', CRONS_PAUSED_FLAG, reason]);
     const read = readDeploymentEnv(io, target);
     if (set.status !== 0 || 'failure' in read || pauseReason(read) !== reason) {
@@ -614,8 +718,9 @@ export async function runCloudUpgrade(options: CloudOptions, io: CloudIo): Promi
     const deployed = deployApp(io, target);
     if ('failure' in deployed) return stop(deployed.failure);
     const read = readAppBack(io, target, target.appUrl, previous, checkout.release);
-    if ('failure' in read)
+    if ('failure' in read) {
       return stop(`the app was deployed and did not read back: ${read.failure}.`);
+    }
   } else {
     otherHostLines(io, target);
   }
@@ -636,7 +741,7 @@ export async function runCloudUpgrade(options: CloudOptions, io: CloudIo): Promi
     io.log('Lifted the pause on the scheduled jobs and pushed again so every module reads it.');
   }
   io.log('');
-  io.log(`Done: ${target.deployment} moved from v${verdict.from} to v${checkout.release}.`);
+  io.log(`Done: ${target.deployment} moved from v${reads.from} to v${checkout.release}.`);
   for (const line of rollbackLines(facts)) io.log(line);
   return 0;
 }
