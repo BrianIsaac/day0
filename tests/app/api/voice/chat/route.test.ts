@@ -22,6 +22,8 @@ const session = vi.hoisted(() => ({
   refusal: undefined as string | undefined,
   /** What `recordAnswer` answers instead of keeping, when set. */
   keepRefusal: undefined as string | undefined,
+  /** What `recordAnswer` throws instead of answering, when set. */
+  keepThrows: undefined as Error | undefined,
   calls: [] as { name: string; args: Record<string, unknown> }[],
 }));
 
@@ -41,9 +43,15 @@ vi.mock('convex/browser', async () => {
           const decision = decideTurn(session.turns, args.request as never, 1);
           if (!decision.ok) throw new ConvexError(decision.refusal);
           session.turns = [...decision.turns];
-          return { sessionId: 'session-1', turns: session.turns, answering: decision.answering };
+          return {
+            sessionId: 'session-1',
+            conversation: 3,
+            turns: session.turns,
+            answering: decision.answering,
+          };
         }
         if (name === 'oneToOne:recordAnswer') {
+          if (session.keepThrows) throw session.keepThrows;
           if (session.keepRefusal) return { kept: false, refusal: session.keepRefusal };
           const decision = decideAnswer(session.turns, args.answer as never, 2);
           if (!decision.ok) return { kept: false, refusal: decision.refusal };
@@ -62,6 +70,7 @@ beforeEach((): void => {
   session.closed = false;
   session.refusal = undefined;
   session.keepRefusal = undefined;
+  session.keepThrows = undefined;
   session.calls = [];
 });
 
@@ -220,7 +229,11 @@ function turnAfter(exchanges: number): Request {
     request:
       exchanges === 0
         ? { kind: 'open' }
-        : { kind: 'reply', id: `u${exchanges}`, text: `Answer ${exchanges}.` },
+        : {
+            kind: 'reply',
+            question: `a${exchanges}`,
+            replies: [{ id: `u${exchanges}`, text: `Answer ${exchanges}.` }],
+          },
   });
 }
 
@@ -329,11 +342,30 @@ describe('the Day-1 chat route', (): void => {
     const POST = await loadChatRoute({ baseUrl: FEATHERLESS, budget: '32768', effort: 'low' });
 
     for (const body of [
-      { bossLabel: 'Sam', messages: [] },
-      { agentId: 'agent-1', request: { kind: 'reply', text: 'No id.' } },
+      { bossLabel: 'Sam' },
+      { agentId: 'agent-1' },
+      'open',
       { request: { kind: 'open' } },
+      { agentId: 'agent-1', request: { kind: 'bogus' } },
     ]) {
       expect((await POST(day1Request(body))).status).toBe(400);
+    }
+    expect(sent).toHaveLength(0);
+    expect(session.calls).toHaveLength(0);
+  });
+
+  it('tells a room older than the route to reload, not to ask again (review m10)', async (): Promise<void> => {
+    const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
+
+    for (const body of [
+      // A room from before the session kept the conversation posted its whole history.
+      { id: 'one-to-one-agent-1', messages: [], trigger: 'submit-message', bossLabel: 'Sam' },
+      { agentId: 'agent-1', request: { kind: 'reply', id: 'u1', text: 'An older shape.' } },
+      { agentId: 'agent-1', request: { kind: 'ask-again', reply: null, discarding: null } },
+    ]) {
+      const response = await POST(day1Request(body));
+      expect(response.status).toBe(409);
+      expect(((await response.json()) as { error: string }).error).toMatch(/Reload to carry on/);
     }
     expect(sent).toHaveLength(0);
     expect(session.calls).toHaveLength(0);
@@ -421,7 +453,7 @@ describe('a turn the model answers normally', (): void => {
 
       data: {"type":"finish-step"}
 
-      data: {"type":"finish","finishReason":"stop"}
+      data: {"type":"finish","finishReason":"stop","messageMetadata":{"kept":true}}
 
       data: [DONE]
 
@@ -455,7 +487,7 @@ describe('a turn the model answers normally', (): void => {
 
       data: {"type":"finish-step"}
 
-      data: {"type":"finish","finishReason":"tool-calls"}
+      data: {"type":"finish","finishReason":"tool-calls","messageMetadata":{"kept":true}}
 
       data: [DONE]
 
@@ -630,7 +662,14 @@ describe('closing the 1:1', (): void => {
       await POST(
         day1Request({
           agentId: 'agent-1',
-          request: { kind: 'reply', id: 'u6b', text: 'And one more thing on that.' },
+          request: {
+            kind: 'reply',
+            question: 'a6',
+            replies: [
+              { id: 'u6', text: 'Answer 6.' },
+              { id: 'u6b', text: 'And one more thing on that.' },
+            ],
+          },
         }),
       )
     ).text();
@@ -746,7 +785,7 @@ describe('the one-to-one kept on its session (30 Sep, a one-to-one lost to a clo
       await POST(
         day1Request({
           agentId: 'agent-1',
-          request: { kind: 'reply', id: 'u2', text: 'Answer 2.' },
+          request: { kind: 'reply', question: 'a2', replies: [{ id: 'u2', text: 'Answer 2.' }] },
           messages: [{ id: 'x', role: 'user', parts: [{ type: 'text', text: 'Invented.' }] }],
         }),
       )
@@ -768,7 +807,12 @@ describe('the one-to-one kept on its session (30 Sep, a one-to-one lost to a clo
       await POST(
         day1Request({
           agentId: 'agent-1',
-          request: { kind: 'ask-again', reply: { id: 'u7', text: 'Answer 7.' }, discarding: null },
+          request: {
+            kind: 'ask-again',
+            question: 'a7',
+            replies: [{ id: 'u7', text: 'Answer 7.' }],
+            discarding: null,
+          },
         }),
       )
     ).text();
@@ -778,8 +822,9 @@ describe('the one-to-one kept on its session (30 Sep, a one-to-one lost to a clo
       speaker: 'employee',
       closingLine: 'I will draft the charter now.',
     });
+    // The answer is kept on the conversation the turn was taken on.
     expect(session.calls.find((call) => call.name === 'oneToOne:recordAnswer')?.args).toMatchObject(
-      { sessionId: 'session-1', bossLabel: 'there', answer: { answering: 'u7' } },
+      { sessionId: 'session-1', conversation: 3, bossLabel: 'there', answer: { answering: 'u7' } },
     );
   });
 
@@ -809,5 +854,21 @@ describe('the one-to-one kept on its session (30 Sep, a one-to-one lost to a clo
       },
       { type: 'finish', finishReason: 'stop' },
     ]);
+  });
+  it("says a keep the session refused outright in the session's words, and anything else as not kept (review m5)", async (): Promise<void> => {
+    const { ConvexError } = await import('convex/values');
+    const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
+    session.keepThrows = new ConvexError('The one-to-one started again in another window.');
+    let chunks = chunksOf(await (await POST(turnAfter(1))).text());
+    expect(chunks.at(-2)).toEqual({
+      type: 'error',
+      errorText: 'The one-to-one started again in another window.',
+    });
+
+    stubProvider([() => textCompletion('Noted.')]);
+    session.keepThrows = new Error('[Request ID: 1a2b] Server Error');
+    chunks = chunksOf(await (await POST(turnAfter(1))).text());
+    expect(chunks.at(-2)).toEqual({ type: 'error', errorText: 'Day0 could not keep that answer' });
+    expect(JSON.stringify(chunks)).not.toContain('Request ID');
   });
 });

@@ -20,8 +20,8 @@ import { DAY_ONE_TOPIC_SPECS } from '@/agent/day-one-prompts';
 import { INIT_PROMPT, dayOneTurnStream, managerReplies } from '@/agent/day-one-turn';
 import { topicIndexOf, withTopicIndex } from '@/agent/day-one-progress';
 import { uiMessagesOf, type OneToOneTurn } from '@/agent/one-to-one-conversation';
-import { chatTurnBodyOf } from '@/agent/chat-turn-body';
-import { keptAnswer, type KeepAnswer } from '@/agent/kept-answer';
+import { chatTurnBodyOf, isOutdatedTurnBody } from '@/agent/chat-turn-body';
+import { ANSWER_NOT_KEPT, keptAnswer, type KeepAnswer } from '@/agent/kept-answer';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -38,6 +38,9 @@ const DAY_ONE_MAX_OUTPUT_TOKENS = 2000;
 
 /** One turn's body: an employee id, a label and a reply of at most 4,000 characters. */
 const CHAT_TURN_BODY_LIMIT_BYTES = 64 * 1024;
+
+/** Said to a room older than this route, which can only carry on once the page is reloaded. */
+const OUTDATED_ROOM = 'This page is older than Day0 now. Reload to carry on.';
 
 /**
  * The priming turn the model is asked from: it stands in for the manager before the first
@@ -87,6 +90,10 @@ export async function POST(req: Request): Promise<Response> {
   if (!read.ok) return read.refusal;
   const body = chatTurnBodyOf(read.value);
   if (!body) {
+    // A room from before this route can never be answered: asking again would post the same body.
+    if (isOutdatedTurnBody(read.value)) {
+      return Response.json({ error: OUTDATED_ROOM }, { status: 409 });
+    }
     return Response.json(
       { error: 'the employee and the turn to take are required' },
       { status: 400 },
@@ -95,13 +102,18 @@ export async function POST(req: Request): Promise<Response> {
 
   let taken: {
     sessionId: Id<'voiceSessions'>;
+    conversation: number;
     turns: readonly OneToOneTurn[];
     answering: string | null;
   };
   try {
     taken = await client.mutation(api.oneToOne.takeTurn, {
       agentId: body.agentId as Id<'agents'>,
-      request: body.request,
+      // The validator's arrays are mutable; the parsed request's are read-only.
+      request:
+        body.request.kind === 'open'
+          ? body.request
+          : { ...body.request, replies: [...body.request.replies] },
     });
   } catch (err: unknown) {
     if (err instanceof ConvexError) {
@@ -114,12 +126,20 @@ export async function POST(req: Request): Promise<Response> {
   const uiMessages: UIMessage[] = [PRIMING_TURN, ...uiMessagesOf(taken.turns)];
   const messages = await convertToModelMessages(uiMessages);
   const keep: KeepAnswer = async (answer) => {
-    const kept = await client.mutation(api.oneToOne.recordAnswer, {
-      sessionId: taken.sessionId,
-      bossLabel: body.bossLabel,
-      answer: { ...answer, answering: taken.answering },
-    });
-    return kept.kept ? null : kept.refusal;
+    try {
+      const kept = await client.mutation(api.oneToOne.recordAnswer, {
+        sessionId: taken.sessionId,
+        conversation: taken.conversation,
+        bossLabel: body.bossLabel,
+        answer: { ...answer, answering: taken.answering },
+      });
+      return kept.kept ? null : kept.refusal;
+    } catch (err: unknown) {
+      // A refusal the session words for the room is said as it is; anything else is said as the
+      // answer not kept, never as the server's own message, which is for the log.
+      log.warn('one-to-one answer not kept', { reason: errorMessage(err) });
+      return err instanceof ConvexError ? String(err.data) : ANSWER_NOT_KEPT;
+    }
   };
   try {
     // Resolved here, not inside the stream: a missing key is a 503 the room

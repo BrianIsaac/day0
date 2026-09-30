@@ -424,27 +424,54 @@ describe('the turns arriving in the 1:1 (v3 section 5.2)', (): void => {
 
 describe('a turn as the room sends it (30 Sep, a one-to-one lost to a closed tab)', (): void => {
   const opening: UIMessage[] = [turn('0', 'user', said(INIT_PROMPT))];
-  const replied: UIMessage[] = [
-    turn('1', 'assistant', said('Why this hire?')),
-    turn('2', 'user', said('To close the books faster.')),
-  ];
+  // The question as the session kept it: the room reads the kept mark off it.
+  const asked: UIMessage = {
+    ...turn('1', 'assistant', said('Why this hire?')),
+    metadata: { kept: true },
+  };
+  const replied: UIMessage[] = [asked, turn('2', 'user', said('To close the books faster.'))];
 
-  it('names the turn it wants: the opening, the reply by its id, or the reply to answer again', (): void => {
+  it('names the turn it wants: the opening, the reply to the question it drew, or the reply to answer again (re-pinned: review M1)', (): void => {
     expect(turnRequestFor(opening, 'submit-message', null)).toEqual({ kind: 'open' });
     expect(turnRequestFor(replied, 'submit-message', null)).toEqual({
       kind: 'reply',
-      id: '2',
-      text: 'To close the books faster.',
+      question: '1',
+      replies: [{ id: '2', text: 'To close the books faster.' }],
     });
     expect(turnRequestFor(replied, 'regenerate-message', 'a9')).toEqual({
       kind: 'ask-again',
-      reply: { id: '2', text: 'To close the books faster.' },
+      question: '1',
+      replies: [{ id: '2', text: 'To close the books faster.' }],
       discarding: 'a9',
     });
     expect(turnRequestFor(opening, 'regenerate-message', null)).toEqual({
       kind: 'ask-again',
-      reply: null,
+      question: null,
+      replies: [],
       discarding: null,
+    });
+  });
+
+  it('carries a reply whose send failed ahead of the one typed after it (review M2)', (): void => {
+    const second = [...replied, turn('3', 'user', said('And report weekly.'))];
+    expect(turnRequestFor(second, 'submit-message', null)).toEqual({
+      kind: 'reply',
+      question: '1',
+      replies: [
+        { id: '2', text: 'To close the books faster.' },
+        { id: '3', text: 'And report weekly.' },
+      ],
+    });
+  });
+
+  it('never names an answer that failed as the question a reply answers', (): void => {
+    const afterFailure = [
+      ...replied,
+      turn('f', 'assistant', said('Cut off mid-')),
+      turn('3', 'user', said('Again, then.')),
+    ];
+    expect(turnRequestFor(afterFailure, 'submit-message', null)).toMatchObject({
+      question: '1',
     });
   });
 
@@ -469,7 +496,11 @@ describe('a turn as the room sends it (30 Sep, a one-to-one lost to a closed tab
       {
         agentId: 'agent-1',
         bossLabel: 'Sam',
-        request: { kind: 'reply', id: '2', text: 'To close the books faster.' },
+        request: {
+          kind: 'reply',
+          question: '1',
+          replies: [{ id: '2', text: 'To close the books faster.' }],
+        },
       },
     ]);
   });

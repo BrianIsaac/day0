@@ -15,6 +15,7 @@ vi.mock('@clerk/nextjs', () => ({
     user: { primaryEmailAddress: { emailAddress: 'boss@example.invalid' }, firstName: 'Boss' },
   }),
   useClerk: () => ({ status: 'ready' }),
+  useAuth: () => ({ isLoaded: true, isSignedIn: true }),
 }));
 
 const EMPLOYEE_METRICS = {

@@ -77,10 +77,42 @@ export function conversationTranscript(turns: readonly OneToOneTurn[]): string {
     .join('\n\n');
 }
 
+/** The mark an employee turn carries in the room once the session holds it. */
+interface KeptMark {
+  readonly kept: true;
+}
+
+/**
+ * A turn's message metadata with the kept mark added, whatever else it carried (the question
+ * number): what the route puts on a kept answer's `finish`, which the chat hook merges into the
+ * turn it drew.
+ */
+export function withKeptMark(metadata: unknown): Record<string, unknown> & KeptMark {
+  return typeof metadata === 'object' && metadata !== null
+    ? { ...metadata, kept: true }
+    : { kept: true };
+}
+
+/**
+ * Whether the room's message is an employee turn the session holds: one drawn from the kept
+ * turns, or one whose stream finished after the session kept it (`keptAnswer`). A turn that
+ * failed, was cut off or was refused carries no mark.
+ */
+export function isKeptAnswer(message: Pick<UIMessage, 'role' | 'metadata'>): boolean {
+  const metadata = message.metadata;
+  return (
+    message.role === 'assistant' &&
+    typeof metadata === 'object' &&
+    metadata !== null &&
+    'kept' in metadata &&
+    metadata.kept === true
+  );
+}
+
 /**
  * The kept turns as the chat hook holds messages, so a reopened room draws them as the live
  * conversation drew them: the question number on an employee turn and its closing line as the
- * close's tool part.
+ * close's tool part, and the kept mark.
  */
 export function uiMessagesOf(turns: readonly OneToOneTurn[]): UIMessage[] {
   return turns.map((turn: OneToOneTurn): UIMessage => {
@@ -104,7 +136,7 @@ export function uiMessagesOf(turns: readonly OneToOneTurn[]): UIMessage[] {
       id: turn.id,
       role: 'assistant',
       parts,
-      ...(turn.topicIndex === undefined ? {} : { metadata: { topicIndex: turn.topicIndex } }),
+      metadata: withKeptMark(turn.topicIndex === undefined ? {} : { topicIndex: turn.topicIndex }),
     };
   });
 }
@@ -142,9 +174,11 @@ export function answerFailure(ending: AnswerEnding): string | null {
 }
 
 /**
- * The most turns one conversation keeps: twenty exchanges, three times the seven questions. With
- * the bounds below, the turns, the transcript drafted from them and the drafted answers stay well
- * inside a session row's size. A one-to-one that reaches it is finished from what was said.
+ * The most turns one conversation keeps, the employee's answer to the last reply included:
+ * twenty exchanges, three times the seven questions. A reply is kept only while there is room for
+ * the answer it is owed. With the bounds below, the turns, the transcript drafted from them and
+ * the drafted answers stay well inside a session row's size. A one-to-one that reaches it is
+ * finished from what was said.
  */
 export const MAX_KEPT_TURNS = 40;
 
@@ -160,14 +194,26 @@ export interface SentReply {
   readonly text: string;
 }
 
-/** What a room asks of the session before its turn is put to the employee. */
+/**
+ * What a room asks of the session before its turn is put to the employee.
+ *
+ * A reply names the question it answers (`question`, the last employee turn the room drew that
+ * the session kept) and carries every reply the room drew since, oldest first: a reply whose send
+ * never reached the session is delivered with the next one, in the order the manager wrote them.
+ */
 export type TurnRequest =
   | { readonly kind: 'open' }
-  | ({ readonly kind: 'reply' } & SentReply)
+  | {
+      readonly kind: 'reply';
+      readonly question: string | null;
+      readonly replies: readonly SentReply[];
+    }
   | {
       readonly kind: 'ask-again';
-      /** The room's last reply, which the employee answers again; null for the opening. */
-      readonly reply: SentReply | null;
+      /** The question the replies answer; null for the opening. */
+      readonly question: string | null;
+      /** The room's replies since that question, which the employee answers again; none for the opening. */
+      readonly replies: readonly SentReply[];
       /** The employee turn the room set aside to ask again, when it had one. */
       readonly discarding: string | null;
     };
@@ -179,52 +225,77 @@ export type TurnDecision =
       readonly turns: readonly OneToOneTurn[];
       /** The manager turn the employee answers, or null for the opening. */
       readonly answering: string | null;
+      /** Whether the turn kept a reply the session did not hold before it. */
+      readonly replied: boolean;
     }
   | { readonly ok: false; readonly refusal: string };
 
 /** The refusal for a room whose copy the kept conversation has moved past. */
-const MOVED_ON: TurnDecision = {
-  ok: false,
-  refusal: 'The one-to-one moved on in another window. Reload to carry on.',
-};
+export const MOVED_ON_REFUSAL = 'The one-to-one moved on in another window. Reload to carry on.';
+
+const MOVED_ON: TurnDecision = { ok: false, refusal: MOVED_ON_REFUSAL };
+
+/** The refusal for a turn past `MAX_KEPT_TURNS`, or a reply that would leave no room for its answer. */
+const TURN_BOUND_REFUSAL =
+  'The one-to-one is as long as it can be. Finish it to draft the charter.';
+
+/** Why a reply the session has not kept cannot be, or null for one it can keep. */
+function replyRefusal(reply: SentReply): string | null {
+  const text = reply.text.trim();
+  if (!text) return 'A reply needs some words.';
+  if (text.length > REPLY_MAX_CHARS) return `A reply is at most ${REPLY_MAX_CHARS} characters.`;
+  if (!reply.id || reply.id.length > TURN_ID_MAX_CHARS) return 'The reply carries no usable id.';
+  return null;
+}
 
 /**
- * Keep the manager's reply at the end of the conversation. A reply after one the employee has not
- * answered is kept too (it answers both, as the close gate counts it: once); the reply the
- * session already holds last (a send repeated after a lost connection) is taken as it stands.
+ * Keep the manager's replies to `question` at the end of the conversation.
+ *
+ * The question must be the conversation's last employee turn, so a room that drew an earlier one
+ * (a second window, a window from before the one-to-one started again) never has its reply filed
+ * under a question it did not see. The replies the session already holds after that question
+ * must be the first of the room's, in order; the rest are kept after them, so a reply whose send
+ * failed is kept before the one sent after it, and a send repeated after a lost connection is
+ * taken as it stands. Several replies in a row answer one question, as the close gate counts
+ * them: once.
  */
-function withReply(turns: readonly OneToOneTurn[], reply: SentReply, now: number): TurnDecision {
-  const last = turns.at(-1);
-  if (last?.speaker === 'manager' && last.id === reply.id) {
-    return { ok: true, turns, answering: last.id };
+function withReplies(
+  turns: readonly OneToOneTurn[],
+  question: string | null,
+  replies: readonly SentReply[],
+  now: number,
+): TurnDecision {
+  const asked = turns.findLastIndex((turn: OneToOneTurn): boolean => turn.speaker === 'employee');
+  if (asked === -1) return { ok: false, refusal: 'The one-to-one has not opened yet.' };
+  if (turns[asked].id !== question) return MOVED_ON;
+  const held = turns.slice(asked + 1);
+  if (held.length > replies.length || held.some((turn, index) => turn.id !== replies[index].id)) {
+    return MOVED_ON;
   }
-  if (turns.some((turn: OneToOneTurn): boolean => turn.id === reply.id)) return MOVED_ON;
-  const text = reply.text.trim();
-  if (!text) return { ok: false, refusal: 'A reply needs some words.' };
-  if (text.length > REPLY_MAX_CHARS) {
-    return { ok: false, refusal: `A reply is at most ${REPLY_MAX_CHARS} characters.` };
+  const fresh = replies.slice(held.length);
+  if (fresh.length === 0) {
+    return { ok: true, turns, answering: held.at(-1)?.id ?? null, replied: false };
   }
-  if (!reply.id || reply.id.length > TURN_ID_MAX_CHARS) {
-    return { ok: false, refusal: 'The reply carries no usable id.' };
+  const kept: OneToOneTurn[] = [...turns];
+  for (const reply of fresh) {
+    const refusal = replyRefusal(reply);
+    if (refusal !== null) return { ok: false, refusal };
+    if (kept.some((turn: OneToOneTurn): boolean => turn.id === reply.id)) return MOVED_ON;
+    kept.push({ id: reply.id, speaker: 'manager', text: reply.text.trim(), at: now });
   }
-  if (last === undefined) return { ok: false, refusal: 'The one-to-one has not opened yet.' };
-  if (turns.length >= MAX_KEPT_TURNS) {
-    return {
-      ok: false,
-      refusal: 'The one-to-one is as long as it can be. Finish it to draft the charter.',
-    };
-  }
-  const kept: OneToOneTurn = { id: reply.id, speaker: 'manager', text, at: now };
-  return { ok: true, turns: [...turns, kept], answering: kept.id };
+  // The answer these replies are owed is a turn too.
+  if (kept.length + 1 > MAX_KEPT_TURNS) return { ok: false, refusal: TURN_BOUND_REFUSAL };
+  return { ok: true, turns: kept, answering: kept[kept.length - 1].id, replied: true };
 }
 
 /**
  * Decide a turn against the kept conversation, which the session's own copy decides and never
- * the room's: a reopened or second room with a stale copy cannot fork it.
+ * the room's: a reopened or second room with a stale copy cannot fork it, and its replies are
+ * refused rather than filed under a question it never drew.
  *
  * - `open`: the employee's opening, only on a conversation with nothing kept yet.
- * - `reply`: the manager's reply, kept before the employee is asked (`withReply`).
- * - `ask-again`: the room's last reply is answered again. The employee turn the room set aside is
+ * - `reply`: the manager's replies, kept before the employee is asked (`withReplies`).
+ * - `ask-again`: the room's replies are answered again. The employee turn the room set aside is
  *   set aside here too, and only that one: an answer the room never saw is never dropped. A reply
  *   the session never received (the send failed on the way) is kept first, so asking again after
  *   a failed send loses neither it nor the answer before it.
@@ -240,26 +311,22 @@ export function decideTurn(
   switch (request.kind) {
     case 'open':
       return turns.length === 0
-        ? { ok: true, turns, answering: null }
+        ? { ok: true, turns, answering: null, replied: false }
         : { ok: false, refusal: 'The one-to-one has already begun. Reload to carry on.' };
     case 'reply':
-      return withReply(turns, request, now);
+      return request.replies.length === 0
+        ? { ok: false, refusal: 'A reply needs some words.' }
+        : withReplies(turns, request.question, request.replies, now);
     case 'ask-again': {
       const last = turns.at(-1);
       const kept =
         last?.speaker === 'employee' && last.id === request.discarding ? turns.slice(0, -1) : turns;
-      if (request.reply === null) {
-        return kept.length === 0 ? { ok: true, turns: kept, answering: null } : MOVED_ON;
+      if (request.replies.length === 0) {
+        return kept.length === 0 && request.question === null
+          ? { ok: true, turns: kept, answering: null, replied: false }
+          : MOVED_ON;
       }
-      const end = kept.at(-1);
-      if (
-        end?.speaker === 'employee' &&
-        request.discarding !== null &&
-        end.id !== request.discarding
-      ) {
-        return MOVED_ON;
-      }
-      return withReply(kept, request.reply, now);
+      return withReplies(kept, request.question, request.replies, now);
     }
     default: {
       const unknown: never = request;
@@ -297,8 +364,9 @@ export type AnswerDecision =
 /**
  * Keep an employee answer, when the conversation still ends where the answer began: an answer
  * to a reply the conversation has moved past (a second room, a room that asked again) is not
- * kept over the one that stands. The same answer offered twice is kept once. A closing line is
- * kept only on an earned close (`closeEarned`), whatever the route decided.
+ * kept over the one that stands. The same answer offered twice is kept once; an answer under the
+ * id of another kept turn, or past `MAX_KEPT_TURNS`, is not kept. A closing line is kept only on
+ * an earned close (`closeEarned`), whatever the route decided.
  *
  * @param now - When the answer is kept, in milliseconds.
  */
@@ -313,8 +381,13 @@ export function decideAnswer(
   }
   if (isClosed(turns)) return { ok: false, refusal: 'The one-to-one is already over.' };
   if (answeringOf(turns) !== answer.answering || (answer.answering === null && last)) {
-    return { ok: false, refusal: 'The one-to-one moved on in another window. Reload to carry on.' };
+    return { ok: false, refusal: MOVED_ON_REFUSAL };
   }
+  // An id a kept turn carries would draw two turns under one key and answer as either.
+  if (turns.some((turn: OneToOneTurn): boolean => turn.id === answer.id)) {
+    return { ok: false, refusal: "Day0's answer came back under an id already in use. Ask again." };
+  }
+  if (turns.length >= MAX_KEPT_TURNS) return { ok: false, refusal: TURN_BOUND_REFUSAL };
   if (
     !answer.id ||
     answer.id.length > TURN_ID_MAX_CHARS ||
@@ -339,4 +412,14 @@ export function decideAnswer(
     ...(closes ? { closingLine: answer.closingLine } : {}),
   };
   return { ok: true, turns: [...turns, kept], closed: closes };
+}
+
+/**
+ * Which conversation a session holds: a stamp the session moves on each time it sets one aside
+ * (`voice.restart`, and a switch away from chat), so a write composed against the conversation
+ * before it (an answer in flight, a Finish or a kept draft from a room still drawing the old one)
+ * is refused rather than kept on the new one. A session from before the stamp holds its first.
+ */
+export function conversationOf(session: { readonly conversation?: number }): number {
+  return session.conversation ?? 0;
 }

@@ -12,13 +12,18 @@ export interface FirstWeekFacts {
   /** Where the one-to-one stands (`oneToOnePhase`): drafting once the transcript is taken for a charter. */
   readonly phase?: OneToOnePhase['kind'];
   readonly charter: Pick<Doc<'charters'>, 'version'> | null;
-  /** Whether a write has landed: approved by the manager or, with autonomy on, on its own. */
+  /**
+   * Whether a supervised write has landed (`AgentMetrics.writeLanded`): its ledger row landed,
+   * under the manager's approval or, with autonomy on, on its own. An approval is not a landing.
+   */
   readonly writeLanded: boolean;
-  /** Whether a write is held for the manager now. */
+  /** Whether a write the manager approved is on its way: approved, and not yet landed or failed. */
+  readonly writeApproved: boolean;
+  /** Whether a write is held for the manager's decision now. */
   readonly writeHeld: boolean;
   /** When the newest one-to-one ended (or was taken for drafting), once it has. */
   readonly oneToOneEndedAt?: number;
-  /** When the first week reached Working (`AgentMetrics.workingSince`), once it has. */
+  /** When the first supervised write landed (`AgentMetrics.workingSince`), once one has. */
   readonly workingSince?: number | null;
   readonly zone: string | undefined;
 }
@@ -69,9 +74,11 @@ export function firstWeekSteps(facts: FirstWeekFacts): RailStep[] {
         ? 'landed'
         : !approved
           ? 'after approval'
-          : facts.writeHeld
-            ? 'held for you'
-            : 'after the first plan',
+          : facts.writeApproved
+            ? 'approved, not yet landed'
+            : facts.writeHeld
+              ? 'held for you'
+              : 'after the first plan',
       status: landed ? 'done' : approved ? 'now' : 'next',
     },
     {

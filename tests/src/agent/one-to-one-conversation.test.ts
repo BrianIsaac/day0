@@ -7,8 +7,12 @@ import {
   answerFailure,
   closeEarned,
   conversationTranscript,
+  MOVED_ON_REFUSAL,
+  conversationOf,
   decideAnswer,
   decideTurn,
+  isKeptAnswer,
+  withKeptMark,
   isClosed,
   owesAnswer,
   repliesIn,
@@ -82,7 +86,7 @@ describe('reading a kept conversation', (): void => {
         id: 'e0',
         role: 'assistant',
         parts: [{ type: 'text', text: 'Why this hire?' }],
-        metadata: { topicIndex: 0 },
+        metadata: { topicIndex: 0, kept: true },
       },
       { id: 'm0', role: 'user', parts: [{ type: 'text', text: 'The close.' }] },
       {
@@ -96,8 +100,24 @@ describe('reading a kept conversation', (): void => {
             input: { closingLine: 'Thanks.' },
           },
         ],
+        metadata: { kept: true },
       },
     ]);
+    // Every employee turn drawn from the session is one the session holds.
+    expect(messages.filter(isKeptAnswer).map((message) => message.id)).toEqual(['e0', 'e1']);
+  });
+
+  it('marks a kept answer whatever else its metadata carried, and reads the mark only there', (): void => {
+    expect(withKeptMark({ topicIndex: 3 })).toEqual({ topicIndex: 3, kept: true });
+    expect(withKeptMark(undefined)).toEqual({ kept: true });
+    expect(isKeptAnswer({ role: 'assistant', metadata: { topicIndex: 3 } })).toBe(false);
+    expect(isKeptAnswer({ role: 'assistant', metadata: { kept: 'yes' } })).toBe(false);
+    expect(isKeptAnswer({ role: 'user', metadata: { kept: true } })).toBe(false);
+  });
+
+  it('reads the conversation a session holds, the first for a session from before the stamp', (): void => {
+    expect(conversationOf({})).toBe(0);
+    expect(conversationOf({ conversation: 3 })).toBe(3);
   });
 });
 
@@ -120,106 +140,204 @@ describe('a turn that ends with nothing to answer', (): void => {
   });
 });
 
+/** A reply to `question`, with the replies drawn since it, as a room sends one. */
+function reply(question: string | null, ...replies: Array<[string, string]>) {
+  return {
+    kind: 'reply' as const,
+    question,
+    replies: replies.map(([id, text]) => ({ id, text })),
+  };
+}
+
 describe('deciding a turn against the kept conversation', (): void => {
   it('opens only a conversation with nothing kept', (): void => {
-    expect(decideTurn([], { kind: 'open' }, 5)).toEqual({ ok: true, turns: [], answering: null });
+    expect(decideTurn([], { kind: 'open' }, 5)).toEqual({
+      ok: true,
+      turns: [],
+      answering: null,
+      replied: false,
+    });
     expect(decideTurn(answered(0), { kind: 'open' }, 5)).toMatchObject({ ok: false });
   });
 
-  it('keeps a reply after a spoken question, and takes the same reply sent again as it stands', (): void => {
-    const decision = decideTurn(answered(1), { kind: 'reply', id: 'm1', text: '  Priya. ' }, 5);
-    expect(decision).toMatchObject({ ok: true, answering: 'm1' });
+  it('keeps a reply to the last question, and takes the same reply sent again as it stands', (): void => {
+    const decision = decideTurn(answered(1), reply('e1', ['m1', '  Priya. ']), 5);
+    expect(decision).toMatchObject({ ok: true, answering: 'm1', replied: true });
     if (!decision.ok) throw new Error(decision.refusal);
     expect(decision.turns.at(-1)).toEqual({ id: 'm1', speaker: 'manager', text: 'Priya.', at: 5 });
-    expect(decideTurn(decision.turns, { kind: 'reply', id: 'm1', text: 'Priya.' }, 6)).toEqual({
+    expect(decideTurn(decision.turns, reply('e1', ['m1', 'Priya.']), 6)).toEqual({
       ok: true,
       turns: decision.turns,
       answering: 'm1',
+      replied: false,
     });
   });
 
-  it('refuses a reply before the opening, an empty or over-long one, an id past its bound, and one past the turn bound', (): void => {
-    const reply = (id: string, text = 'Yes.') => ({ kind: 'reply' as const, id, text });
-    expect(decideTurn([], reply('m0'), 5)).toMatchObject({ ok: false });
-    expect(decideTurn(answered(1), reply('m1', '   '), 5)).toMatchObject({ ok: false });
-    expect(decideTurn(answered(1), reply('m1', 'x'.repeat(REPLY_MAX_CHARS + 1)), 5)).toMatchObject({
+  it('refuses a reply to a question the conversation has moved past, from a second window (review F1)', (): void => {
+    // Window A answered question 1 and was asked question 2; window B still draws question 1.
+    const moved = [
+      ...answered(0),
+      manager('a1', 'Window A on question 1.'),
+      employee('e1', 'Q2?', 1),
+    ];
+    expect(decideTurn(moved, reply('e0', ['b1', 'Window B, also on question 1.']), 5)).toEqual({
+      ok: false,
+      refusal: MOVED_ON_REFUSAL,
+    });
+    // A question the conversation never held, as after the one-to-one started again.
+    expect(decideTurn(answered(1), reply('e-old', ['m1', 'Stale.']), 5)).toMatchObject({
       ok: false,
     });
-    expect(decideTurn(answered(1), reply('m'.repeat(TURN_ID_MAX_CHARS + 1)), 5)).toMatchObject({
+  });
+
+  it('refuses replies whose first the session does not hold where the room drew it', (): void => {
+    const owed = [...answered(1), manager('m1', 'Priya.')];
+    // Another window replied after the same question; this room never drew that reply.
+    expect(decideTurn(owed, reply('e1', ['m-mine', 'Omar.']), 5)).toEqual({
       ok: false,
+      refusal: MOVED_ON_REFUSAL,
     });
-    const atBound = answered((MAX_KEPT_TURNS - 2) / 2);
-    expect(atBound).toHaveLength(MAX_KEPT_TURNS - 1);
-    expect(decideTurn(atBound, reply('mX'), 5)).toMatchObject({ ok: true });
-    expect(
-      decideTurn([...atBound, manager('mX', 'a'), employee('eX', 'More?')], reply('mY'), 5),
-    ).toMatchObject({ ok: false });
+  });
+
+  it('keeps a reply whose send failed before the one sent after it, in the order they were written (review M2)', (): void => {
+    const decision = decideTurn(
+      answered(1),
+      reply(
+        'e1',
+        ['m1', 'FIRST: escalate anything over 50k.'],
+        ['m2', 'SECOND: report on Mondays.'],
+      ),
+      5,
+    );
+    expect(decision).toMatchObject({ ok: true, answering: 'm2', replied: true });
+    if (!decision.ok) throw new Error(decision.refusal);
+    expect(decision.turns.slice(-2).map((turn) => turn.text)).toEqual([
+      'FIRST: escalate anything over 50k.',
+      'SECOND: report on Mondays.',
+    ]);
+    // The close gate counts them once, as it counted the room's history before.
+    expect(repliesIn(decision.turns)).toBe(2);
   });
 
   it('keeps a second reply in a row, after an answer that never came, and answers both (second pass H2)', (): void => {
     const owed = [...answered(1), manager('m1', 'Priya.')];
-    const decision = decideTurn(owed, { kind: 'reply', id: 'm2', text: 'And Omar.' }, 5);
+    const decision = decideTurn(owed, reply('e1', ['m1', 'Priya.'], ['m2', 'And Omar.']), 5);
     expect(decision).toMatchObject({ ok: true, answering: 'm2' });
     if (!decision.ok) throw new Error(decision.refusal);
     expect(decision.turns.slice(-2).map((turn) => turn.id)).toEqual(['m1', 'm2']);
-    // The close gate counts it once, as it counted the room's history before.
-    expect(repliesIn(decision.turns)).toBe(2);
   });
 
-  it('refuses a reply whose id the conversation already answered', (): void => {
-    expect(decideTurn(answered(2), { kind: 'reply', id: 'm0', text: 'Again.' }, 5)).toMatchObject({
+  it('refuses a reply before the opening, an empty or over-long one, and an id past its bound', (): void => {
+    expect(decideTurn([], reply(null, ['m0', 'Yes.']), 5)).toMatchObject({ ok: false });
+    expect(decideTurn(answered(1), reply('e1'), 5)).toMatchObject({ ok: false });
+    expect(decideTurn(answered(1), reply('e1', ['m1', '   ']), 5)).toMatchObject({ ok: false });
+    expect(
+      decideTurn(answered(1), reply('e1', ['m1', 'x'.repeat(REPLY_MAX_CHARS + 1)]), 5),
+    ).toMatchObject({ ok: false });
+    expect(
+      decideTurn(answered(1), reply('e1', ['m'.repeat(TURN_ID_MAX_CHARS + 1), 'Yes.']), 5),
+    ).toMatchObject({ ok: false });
+  });
+
+  it('refuses a reply whose id the conversation already holds', (): void => {
+    expect(decideTurn(answered(2), reply('e2', ['m0', 'Again.']), 5)).toEqual({
+      ok: false,
+      refusal: MOVED_ON_REFUSAL,
+    });
+  });
+
+  it('keeps a reply only while there is room for the answer it is owed (first review m1: 39, 40, 41)', (): void => {
+    const thirtySeven = answered(18);
+    expect(thirtySeven).toHaveLength(37);
+    const replied = decideTurn(thirtySeven, reply('e18', ['m18', 'Yes.']), 5);
+    expect(replied).toMatchObject({ ok: true });
+    if (!replied.ok) throw new Error(replied.refusal);
+    const answeredLast = decideAnswer(
+      replied.turns,
+      { answering: 'm18', id: 'e19', text: 'More?', topicIndex: 6 },
+      6,
+    );
+    if (!answeredLast.ok) throw new Error(answeredLast.refusal);
+    // 39 kept: a reply would be the 40th, with nowhere to keep its answer.
+    expect(answeredLast.turns).toHaveLength(MAX_KEPT_TURNS - 1);
+    expect(decideTurn(answeredLast.turns, reply('e19', ['m19', 'Yes.']), 7)).toMatchObject({
       ok: false,
     });
+    // Two replies in a row at 37 make 39, and their answer is the 40th.
+    const two = decideTurn(thirtySeven, reply('e18', ['m18', 'a'], ['m18b', 'b']), 5);
+    if (!two.ok) throw new Error(two.refusal);
+    expect(
+      decideAnswer(two.turns, { answering: 'm18b', id: 'e19', text: 'More?', topicIndex: 6 }, 6),
+    ).toMatchObject({ ok: true });
   });
 });
 
 describe('asking a turn again against the kept conversation', (): void => {
-  const again = (reply: { id: string; text: string } | null, discarding: string | null = null) => ({
+  const again = (
+    question: string | null,
+    replies: Array<[string, string]>,
+    discarding: string | null = null,
+  ) => ({
     kind: 'ask-again' as const,
-    reply,
+    question,
+    replies: replies.map(([id, text]) => ({ id, text })),
     discarding,
   });
 
   it('answers the reply the manager is owed an answer to, as a reopened room asks', (): void => {
     const owed = [...answered(2), manager('m2', 'Third.')];
-    expect(decideTurn(owed, again({ id: 'm2', text: 'Third.' }), 5)).toEqual({
+    expect(decideTurn(owed, again('e2', [['m2', 'Third.']]), 5)).toEqual({
       ok: true,
       turns: owed,
       answering: 'm2',
+      replied: false,
     });
   });
 
   it('sets aside the answer the room set aside, and only that one', (): void => {
-    const decision = decideTurn(answered(2), again({ id: 'm1', text: 'Answer 2.' }, 'e2'), 5);
+    const decision = decideTurn(answered(2), again('e1', [['m1', 'Answer 2.']], 'e2'), 5);
     expect(decision).toMatchObject({ ok: true, answering: 'm1' });
     if (!decision.ok) throw new Error(decision.refusal);
     expect(decision.turns.at(-1)?.id).toBe('m1');
     // An answer kept since, which this room never saw, is not dropped by its Ask again.
-    expect(decideTurn(answered(2), again({ id: 'm1', text: 'Answer 2.' }, 'e-other'), 5)).toEqual(
+    expect(decideTurn(answered(2), again('e1', [['m1', 'Answer 2.']], 'e-other'), 5)).toEqual(
       expect.objectContaining({ ok: false }),
     );
   });
 
   it('keeps a reply whose send never reached the session, and keeps the answer before it (second pass H1)', (): void => {
-    const decision = decideTurn(answered(2), again({ id: 'm2', text: 'Third.' }), 5);
-    expect(decision).toMatchObject({ ok: true, answering: 'm2' });
+    const decision = decideTurn(answered(2), again('e2', [['m2', 'Third.']]), 5);
+    expect(decision).toMatchObject({ ok: true, answering: 'm2', replied: true });
     if (!decision.ok) throw new Error(decision.refusal);
     expect(decision.turns.slice(-2).map((turn) => turn.id)).toEqual(['e2', 'm2']);
   });
 
+  it('refuses to ask again a reply to a question the conversation has moved past', (): void => {
+    expect(decideTurn(answered(2), again('e1', [['m-late', 'Late.']]), 5)).toEqual({
+      ok: false,
+      refusal: MOVED_ON_REFUSAL,
+    });
+  });
+
   it('asks the opening again only while nothing but it was kept', (): void => {
-    expect(decideTurn([], again(null), 5)).toEqual({ ok: true, turns: [], answering: null });
-    expect(decideTurn(answered(0), again(null, 'e0'), 5)).toEqual({
+    expect(decideTurn([], again(null, []), 5)).toEqual({
       ok: true,
       turns: [],
       answering: null,
+      replied: false,
     });
-    expect(decideTurn(answered(1), again(null), 5)).toMatchObject({ ok: false });
+    expect(decideTurn(answered(0), again(null, [], 'e0'), 5)).toEqual({
+      ok: true,
+      turns: [],
+      answering: null,
+      replied: false,
+    });
+    expect(decideTurn(answered(1), again(null, []), 5)).toMatchObject({ ok: false });
   });
 
   it('refuses every turn once the conversation is closed', (): void => {
     const closed = [...answered(7), { ...employee('e8', ''), closingLine: 'Thanks.' }];
-    expect(decideTurn(closed, again({ id: 'm6', text: 'Answer 7.' }, 'e8'), 5)).toMatchObject({
+    expect(decideTurn(closed, again('e6', [['m6', 'Answer 7.']], 'e8'), 5)).toMatchObject({
       ok: false,
     });
   });
@@ -270,9 +388,31 @@ describe('deciding an answer against the kept conversation', (): void => {
     ).toMatchObject({ ok: false });
   });
 
+  it('refuses an answer under the id of a turn the conversation already holds (review m8)', (): void => {
+    const owed = [...answered(1), manager('m1', 'Priya.')];
+    expect(decideAnswer(owed, { ...offered, answering: 'm1', id: 'e0' }, 9)).toMatchObject({
+      ok: false,
+    });
+    expect(decideAnswer(owed, { ...offered, answering: 'm1', id: 'm1' }, 9)).toMatchObject({
+      ok: false,
+    });
+  });
+
+  it('refuses an answer that would keep more than the bound: 40 kept stays 40 (first review m1)', (): void => {
+    const forty = [...answered(19), manager('m19', 'a')];
+    expect(forty).toHaveLength(MAX_KEPT_TURNS);
+    expect(
+      decideAnswer(forty, { answering: 'm19', id: 'e20', text: 'More?', topicIndex: 6 }, 9),
+    ).toMatchObject({ ok: false });
+  });
+
   it('keeps a closing line only on an earned close, and drops a question number out of range', (): void => {
     const six = [...answered(5), manager('m5', 'Sixth.')];
-    const early = decideAnswer(six, { ...offered, answering: 'm5', closingLine: 'Bye.' }, 9);
+    const early = decideAnswer(
+      six,
+      { ...offered, id: 'e6', answering: 'm5', closingLine: 'Bye.' },
+      9,
+    );
     expect(early).toMatchObject({ ok: true, closed: false });
     if (!early.ok) throw new Error(early.refusal);
     expect(early.turns.at(-1)?.closingLine).toBeUndefined();

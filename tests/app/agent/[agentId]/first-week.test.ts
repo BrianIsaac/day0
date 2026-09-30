@@ -10,6 +10,7 @@ const facts = (overrides: Partial<FirstWeekFacts> = {}): FirstWeekFacts => ({
   state: 'deployed',
   charter: null,
   writeLanded: false,
+  writeApproved: false,
   writeHeld: false,
   zone: 'Asia/Singapore',
   ...overrides,
@@ -75,6 +76,22 @@ describe('firstWeekSteps', () => {
     expect(detail({ state: 'active', writeHeld: true }, 3)).toBe('held for you');
     expect(detail({ state: 'active' }, 3)).toBe('after the first plan');
     expect(detail({ state: 'active', writeLanded: true }, 3)).toBe('landed');
+  });
+
+  it('says a write the manager approved is not landed yet, and keeps Working until one lands (X finding 5)', () => {
+    const approvedNotLanded = firstWeekSteps(
+      facts({ state: 'active', writeApproved: true, writeHeld: true }),
+    );
+    expect(approvedNotLanded[3]).toEqual({
+      title: 'First supervised write',
+      detail: 'approved, not yet landed',
+      status: 'now',
+    });
+    expect(approvedNotLanded[4]?.status).toBe('next');
+    // Landed wins over an approval still on its way for another write.
+    expect(
+      firstWeekSteps(facts({ state: 'active', writeLanded: true, writeApproved: true }))[3]?.detail,
+    ).toBe('landed');
   });
 
   it('dates the one-to-one when it ended, never repeating the done the rail says (walk m11)', () => {

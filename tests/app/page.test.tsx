@@ -38,6 +38,11 @@ vi.mock('@clerk/nextjs', () => ({
           }
         : { isLoaded: true, isSignedIn: false, user: null },
   useClerk: () => ({ status: authState.loaded ? 'ready' : 'loading' }),
+  // What the session gate asks Clerk: whether it still holds a session (`SignedOut`).
+  useAuth: () => ({
+    isLoaded: authState.loaded,
+    isSignedIn: authState.loaded && authState.signedIn,
+  }),
 }));
 
 /** The signed-in owner's company as `agents.rosterForUser` returns it, newest first. */

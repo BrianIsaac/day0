@@ -411,6 +411,7 @@ describe('the draft of a chat one-to-one its session kept (30 Sep, a one-to-one 
         const closing = index === replies.length;
         await owner.mutation(api.oneToOne.recordAnswer, {
           sessionId,
+          conversation: 0,
           bossLabel: 'boss@day0.local',
           answer: {
             answering,
@@ -423,7 +424,11 @@ describe('the draft of a chat one-to-one its session kept (30 Sep, a one-to-one 
         if (closing) break;
         ({ answering } = await owner.mutation(api.oneToOne.takeTurn, {
           agentId,
-          request: { kind: 'reply', id: `m${index}`, text: replies[index] },
+          request: {
+            kind: 'reply',
+            question: `e${index}`,
+            replies: [{ id: `m${index}`, text: replies[index] }],
+          },
         }));
       }
       await harness.finishAllScheduledFunctions(vi.runAllTimers);

@@ -10,6 +10,7 @@ vi.mock('@clerk/nextjs', () => ({
   useAuth: () => ({}),
   useClerk: () => ({ status: recorded.clerkStatus }),
 }));
+vi.mock('next/navigation', () => ({ usePathname: (): string => '/agent/j57agent/charter' }));
 vi.mock('convex/react-clerk', () => ({
   ConvexProviderWithClerk: ({ client, children }: { client: unknown; children: ReactNode }) => {
     recorded.clients.push(client);
@@ -108,6 +109,29 @@ describe('application providers', () => {
       </ConvexProviderWithAuth>,
     );
     expect(html).toBe('<p>held</p>');
+  });
+
+  it('takes an owned page away once Convex settles with nobody signed in, and offers the way back (second review x1)', async () => {
+    vi.stubEnv('NEXT_PUBLIC_DEV_NO_AUTH', undefined);
+    recorded.clerkStatus = 'ready';
+    const { SessionGate } = await import('../../app/Providers');
+    const client = new ConvexReactClient('https://configured-test.convex.cloud');
+    recorded.clients.push(client);
+    const settledSignedOut = () => ({
+      isLoading: false,
+      isAuthenticated: false,
+      fetchAccessToken: async (): Promise<null> => null,
+    });
+    const html = renderToStaticMarkup(
+      <ConvexProviderWithAuth client={client} useAuth={settledSignedOut}>
+        <SessionGate fallback={<p>held</p>}>
+          <p>owned</p>
+        </SessionGate>
+      </ConvexProviderWithAuth>,
+    );
+    expect(html).not.toContain('owned');
+    expect(html).toContain('You are signed out');
+    expect(html).toContain('href="/sign-in?redirect_url=%2Fagent%2Fj57agent%2Fcharter"');
   });
 
   it('lets an owned page through when Clerk failed to load and will never answer', async () => {

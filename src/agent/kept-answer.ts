@@ -1,6 +1,7 @@
 import type { UIMessageChunk } from 'ai';
-import { answerFailure } from './one-to-one-conversation';
+import { answerFailure, withKeptMark } from './one-to-one-conversation';
 import { errorMessage } from '../lib/errors';
+import { log } from '../lib/logger';
 
 /** An employee turn that stood, as the session keeps it. */
 export interface EmployeeAnswer {
@@ -13,7 +14,7 @@ export interface EmployeeAnswer {
 
 /**
  * Keep an answer on the session. Resolves to null once it is kept, or to the sentence the room
- * shows when the session would not keep it; a rejection is said the same way.
+ * shows when the session would not keep it; a rejection is logged and said as `ANSWER_NOT_KEPT`.
  */
 export type KeepAnswer = (answer: EmployeeAnswer) => Promise<string | null>;
 
@@ -37,7 +38,8 @@ export interface KeptAnswerOptions {
  * kept: a room that saw a turn finish may be closed at once, and the answer must be on the server
  * by then. A turn that fails (`answerFailure`) or is cut off is not kept, so a reopened room asks
  * for it again, as Ask again does. When keeping fails, the room is told with an error chunk and
- * offers Ask again.
+ * offers Ask again. A kept turn's `finish` carries the kept mark (`withKeptMark`), so the room
+ * knows which of the answers it drew the session holds.
  *
  * @param stream - One turn's UI message chunks, the close already gated (`dayOneTurnStream`).
  * @returns The same chunks, the start carrying the id and the finish after the keep.
@@ -60,7 +62,9 @@ export function keptAnswer(
         ...(closingLine === undefined ? {} : { closingLine }),
       });
     } catch (err: unknown) {
-      return `${ANSWER_NOT_KEPT}: ${errorMessage(err)}`;
+      // The server's own message is for the log; the room is told only that the answer was not kept.
+      log.warn('one-to-one answer not kept', { reason: errorMessage(err) });
+      return ANSWER_NOT_KEPT;
     }
   }
 
@@ -89,11 +93,18 @@ export function keptAnswer(
           closed: closingLine !== undefined,
           finishReason: finish.finishReason,
         });
-        if (!broken && failure === null) {
-          const refusal = await keep();
-          if (refusal !== null) controller.enqueue({ type: 'error', errorText: refusal });
+        if (broken || failure !== null) {
+          controller.enqueue(finish);
+          return;
         }
-        controller.enqueue(finish);
+        const refusal = await keep();
+        if (refusal !== null) {
+          controller.enqueue({ type: 'error', errorText: refusal });
+          controller.enqueue(finish);
+          return;
+        }
+        // The room reads this mark off the turn: the session holds it (`isKeptAnswer`).
+        controller.enqueue({ ...finish, messageMetadata: withKeptMark(finish.messageMetadata) });
       },
     }),
   );

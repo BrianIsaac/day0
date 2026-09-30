@@ -8,8 +8,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const room = vi.hoisted(() => ({
   /** What `voice.latest` answers; undefined while it loads. */
   session: null as Record<string, unknown> | null | undefined,
-  /** How `voice.start` answers: at once, never (a lost connection), or with a refusal. */
-  start: 'answer' as 'answer' | 'never',
+  /** How `voice.start` answers: at once, never (a lost connection), or as functions from
+   * before the session kept the conversation did, with no turns. */
+  start: 'answer' as 'answer' | 'never' | 'before-turns',
   starts: 0,
   /** What `voice.restart` was asked to set aside. */
   restarts: [] as unknown[],
@@ -18,6 +19,8 @@ const room = vi.hoisted(() => ({
   replyDraft: null as string | null,
   /** What `oneToOne.finish` rejects with, when set. */
   finishRefusal: undefined as Error | undefined,
+  /** Whether `oneToOne.finish` never settles, as a client with no connection queues it. */
+  finishNever: false,
   /** Every `oneToOne` mutation the room called, by name. */
   calls: [] as { name: string; args: unknown }[],
   messages: [] as UIMessage[],
@@ -39,10 +42,14 @@ vi.mock('convex/react', () => ({
       if (name.startsWith('oneToOne:')) {
         room.calls.push({ name, args });
         if (name === 'oneToOne:finish' && room.finishRefusal) throw room.finishRefusal;
+        if (name === 'oneToOne:finish' && room.finishNever) {
+          return await new Promise(() => undefined);
+        }
         return name === 'oneToOne:finish' ? { ok: true } : { kept: true };
       }
       room.starts += 1;
       if (room.start === 'never') return await new Promise(() => undefined);
+      if (room.start === 'before-turns') return { sessionId: 'session-1', resumed: true };
       return { sessionId: 'session-1', turns: room.kept, replyDraft: room.replyDraft };
     },
   useQuery: (): unknown => room.session,
@@ -72,7 +79,10 @@ import {
   sendsReply,
 } from '../../../../app/agent/[agentId]/ChatRoom';
 import { SYNTHESIS_DEADLINE_MS } from '../../../../app/agent/[agentId]/charter-synthesis';
-import { TURN_DEADLINE_MS } from '../../../../app/agent/[agentId]/one-to-one/deadline';
+import {
+  START_DEADLINE_MS,
+  TURN_DEADLINE_MS,
+} from '../../../../app/agent/[agentId]/one-to-one/deadline';
 import type { Id } from '../../../../convex/_generated/dataModel';
 import { INIT_PROMPT } from '../../../../src/agent/day-one-turn';
 import { MAX_FINALISATION_RECOVERIES } from '../../../../src/agent/one-to-one-phase';
@@ -113,6 +123,7 @@ beforeEach((): void => {
   room.kept = [];
   room.replyDraft = null;
   room.finishRefusal = undefined;
+  room.finishNever = false;
   room.calls = [];
   room.messages = [];
   room.status = 'ready';
@@ -128,12 +139,28 @@ afterEach((): void => {
   document.body.replaceChildren();
 });
 
+/** An employee turn the session kept, as the room draws it: with the kept mark. */
+function kept(message: UIMessage): UIMessage {
+  return { ...message, metadata: { ...(message.metadata as object), kept: true } };
+}
+
 const CONVERSATION: UIMessage[] = [
   turn('0', 'user', INIT_PROMPT),
-  turn('1', 'assistant', 'Why this hire?', 0),
+  kept(turn('1', 'assistant', 'Why this hire?', 0)),
   turn('2', 'user', 'Tier-2 asks swamp the close.'),
-  turn('3', 'assistant', 'What does month one look like?', 1),
+  kept(turn('3', 'assistant', 'What does month one look like?', 1)),
 ];
+
+/** A one-to-one being held whose session keeps the conversation's first question and reply. */
+const HOLDING_FIRST_REPLY = {
+  _id: 'session-1',
+  state: 'active',
+  mode: 'chat',
+  turns: [
+    { id: '1', speaker: 'employee', text: 'Why this hire?', topicIndex: 0, at: 1 },
+    { id: '2', speaker: 'manager', text: 'Tier-2 asks swamp the close.', at: 2 },
+  ],
+};
 
 describe('the one-to-one progress (round two section 3.4)', (): void => {
   it('says the question the route numbered and draws seven segments, the current one lit', async (): Promise<void> => {
@@ -207,9 +234,21 @@ describe('the composer and an input method', (): void => {
   });
 });
 
+describe('a room opened on functions from before the conversation was kept (review m6)', (): void => {
+  it('opens the one-to-one rather than waiting for good on a start that names no turns', async (): Promise<void> => {
+    room.start = 'before-turns';
+    const view = mount(<ChatRoom agentId={AGENT} bossLabel="Sam" />);
+    await settle();
+    expect(room.sent).toEqual([{ text: INIT_PROMPT }]);
+    expect(view.container.querySelector('[role="alert"]')).toBeNull();
+    view.unmount();
+  });
+});
+
 describe('finishing and drafting (round two section 3.4)', (): void => {
   it('asks before finishing, then has the session draft from what it kept, the transcript kept on the page (re-pinned)', async (): Promise<void> => {
     room.messages = CONVERSATION.slice(0, 3);
+    room.session = HOLDING_FIRST_REPLY;
     const view = mount(<ChatRoom agentId={AGENT} bossLabel="Sam" />);
     await settle();
     await press(view.container, 'Finish');
@@ -220,7 +259,7 @@ describe('finishing and drafting (round two section 3.4)', (): void => {
 
     expect(room.calls).toContainEqual({
       name: 'oneToOne:finish',
-      args: { sessionId: 'session-1', bossLabel: 'Sam' },
+      args: { sessionId: 'session-1', conversation: 0, bossLabel: 'Sam' },
     });
     // The session drafts from the turns it kept; the room posts nothing that a closed tab could lose.
     expect(posts).toEqual([]);
@@ -238,6 +277,7 @@ describe('finishing and drafting (round two section 3.4)', (): void => {
   it('says why the one-to-one could not finish, and keeps it open to finish again (re-pinned)', async (): Promise<void> => {
     room.finishRefusal = new Error('Failed to fetch');
     room.messages = [...CONVERSATION.slice(0, 3)];
+    room.session = HOLDING_FIRST_REPLY;
     const view = mount(<ChatRoom agentId={AGENT} bossLabel="Sam" />);
     await settle();
     await press(view.container, 'Finish');
@@ -256,6 +296,26 @@ describe('finishing and drafting (round two section 3.4)', (): void => {
     await settle();
     expect(room.calls.filter((call) => call.name === 'oneToOne:finish')).toHaveLength(2);
     expect(said(view.container).join(' ')).toContain('Drafting your charter');
+    view.unmount();
+  });
+
+  it('says Finish could not finish when the connection is down, rather than drafting for good (review m2)', async (): Promise<void> => {
+    room.finishNever = true;
+    room.messages = [...CONVERSATION.slice(0, 3)];
+    room.session = HOLDING_FIRST_REPLY;
+    const view = mount(<ChatRoom agentId={AGENT} bossLabel="Sam" />);
+    await settle();
+    vi.useFakeTimers();
+    await press(view.container, 'Finish');
+    await press(document.body, 'Finish and draft');
+    expect(said(view.container).join(' ')).toContain('Drafting your charter');
+    await act(async (): Promise<void> => {
+      await vi.advanceTimersByTimeAsync(START_DEADLINE_MS);
+    });
+    expect(view.container.querySelector('[role="alert"]')?.textContent).toBe(
+      'The one-to-one could not finish: Day0 could not be reached within 15 seconds. Nothing you said is lost.',
+    );
+    expect(view.container.querySelector('textarea')).not.toBeNull();
     view.unmount();
   });
 
@@ -358,7 +418,7 @@ describe('a room reopened on a one-to-one under way (30 Sep, a one-to-one lost t
     });
     expect(room.calls.at(-1)).toEqual({
       name: 'oneToOne:keepReplyDraft',
-      args: { sessionId: 'session-1', text: 'Priya in fin', after: 'm0' },
+      args: { sessionId: 'session-1', conversation: 0, text: 'Priya in fin', after: 'm0' },
     });
     view.unmount();
   });
@@ -587,6 +647,10 @@ describe('a turn that never answers (hosted walk m30)', (): void => {
     room.messages = CONVERSATION.slice(0, 3);
     room.status = 'submitted';
     const view = mount(<ChatRoom agentId={AGENT} bossLabel="Sam" />);
+    // The room opens on its session first; the turn is timed from there.
+    await act(async (): Promise<void> => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
     await act(async (): Promise<void> => {
       await vi.advanceTimersByTimeAsync(TURN_DEADLINE_MS - 1);
     });

@@ -12,6 +12,7 @@ import { assertOwnsAgent, assertOwnsVoiceSession } from './ownership';
 import { commitCharterAndWorkspace, workspaceFileValidator } from './charters';
 import { appendEvent } from './eventLog';
 import { MAX_FINALISATION_RECOVERIES } from '../src/agent/one-to-one-phase';
+import { conversationOf } from '../src/agent/one-to-one-conversation';
 
 /**
  * Voice + chat session lifecycle. The agent itself asks the boss
@@ -100,8 +101,9 @@ export const latest = query({
  * ElevenLabs so the post-call webhook can prove which session it is reporting on
  * - see `claimWebhookFinalisation`. Only the boss who owns the agent ever sees
  * it: this mutation is ownership-checked. With them, the chat conversation the
- * session keeps (`turns`, and the reply being typed), so a room reopened on it
- * carries on from where it stood rather than opening it again.
+ * session keeps (`turns`, the reply being typed, and the stamp that names it,
+ * `conversation`), so a room reopened on it carries on from where it stood
+ * rather than opening it again. A switch away from chat moves the stamp on.
  */
 export const start = mutation({
   args: {
@@ -122,10 +124,14 @@ export const start = mutation({
       // A call started over a chat still being held starts from the first question, as the
       // switch says: the chat's turns are set aside, not drawn again over the call.
       const leavesChat = open.mode === 'chat' && args.mode !== 'chat' && !open.pendingTranscript;
+      // Leaving chat moves the conversation on, so a chat write still in flight is refused.
+      const conversation =
+        conversationOf(open) + (open.mode === 'chat' && args.mode !== 'chat' ? 1 : 0);
       if (open.mode !== args.mode || !open.webhookToken) {
         await ctx.db.patch(open._id, {
           mode: args.mode,
           webhookToken,
+          conversation,
           ...(open.mode !== args.mode ? { elevenLabsConversationId: undefined } : {}),
           ...(leavesChat ? { turns: undefined, replyDraft: undefined } : {}),
         });
@@ -141,6 +147,7 @@ export const start = mutation({
         sessionId: open._id,
         webhookToken,
         resumed: true,
+        conversation,
         turns: leavesChat ? [] : (open.turns ?? []),
         replyDraft: leavesChat ? null : (open.replyDraft ?? null),
       };
@@ -163,7 +170,14 @@ export const start = mutation({
       payload: { sessionId: id, mode: args.mode },
       createdAt: Date.now(),
     });
-    return { sessionId: id, webhookToken, resumed: false, turns: [], replyDraft: null };
+    return {
+      sessionId: id,
+      webhookToken,
+      resumed: false,
+      conversation: 0,
+      turns: [],
+      replyDraft: null,
+    };
   },
 });
 
@@ -199,7 +213,8 @@ export const attachConversationId = mutation({
  * Hold the one-to-one again on a session whose draft failed for good: the conversation it kept,
  * the transcript it could not draft from, the notes earlier drafts were sent back with and the
  * spent retry budget all belong to the conversation being set aside, so none of them rides into
- * the next one's draft or reopens in the next one's room.
+ * the next one's draft or reopens in the next one's room. The conversation's stamp moves on, so
+ * a write still in flight for the one set aside is refused.
  *
  * Public, owner-guarded (`assertOwnsVoiceSession`). Refused while a finisher holds the session or
  * after it produced a charter. Any other session comes back `active` with those fields cleared,
@@ -217,6 +232,7 @@ export const restart = mutation({
     }
     await ctx.db.patch(args.sessionId, {
       state: 'active',
+      conversation: conversationOf(session) + 1,
       turns: undefined,
       replyDraft: undefined,
       pendingTranscript: undefined,

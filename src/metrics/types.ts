@@ -6,9 +6,15 @@ export type DecisionVia = 'dashboard' | 'channel';
 /** One employee's supervision figures, computed from its ledger by `convex/metrics.ts`. */
 export interface AgentMetrics {
   /**
-   * When the first week reached Working: the manager's first approval that let a held action
-   * through, or the employee's first write applied on its own. An approved action whose apply
-   * then fails still counts, as the page's "a write landed" does. Null before either.
+   * Whether a supervised write has landed: a write ledger row that landed under the manager's
+   * approval or the employee's own authority. An approval alone is not one, nor a write whose
+   * apply failed or still waits. The first week's "First supervised write: landed" and Working.
+   */
+  writeLanded: boolean;
+  /**
+   * When the first supervised write landed (`writeLanded`), from the same rows: the first event
+   * that carried its ledger row. Null before one, and while the only one is seen on its work item
+   * with no event yet.
    */
   workingSince: number | null;
   charter: {

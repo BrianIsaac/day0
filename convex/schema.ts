@@ -621,6 +621,9 @@ export default defineSchema({
     turns: v.optional(v.array(oneToOneTurnValidator)),
     /** The reply the manager was typing and had not sent, kept as they type. */
     replyDraft: v.optional(v.string()),
+    /** Which conversation the session holds (`conversationOf`), moved on each time one is set
+     * aside, so a write composed against the one before is refused. Absent means the first. */
+    conversation: v.optional(v.number()),
     startedAt: v.number(),
     endedAt: v.optional(v.number()),
   })
