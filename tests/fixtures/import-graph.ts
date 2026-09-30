@@ -1,9 +1,10 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 
 /** The repository root, which every path this module takes and returns is relative to. */
-const ROOT = resolve(dirname(new URL(import.meta.url).pathname), '../..');
+const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 
 /** The extensions a relative specifier may leave off, in the order the bundlers try them. */
 const CANDIDATES = ['.ts', '.tsx', '/index.ts', '/index.tsx'] as const;
