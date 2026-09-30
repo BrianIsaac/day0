@@ -147,6 +147,16 @@ describe('ManageView: the manager DM setting waits for a manager channel (N7)', 
     expect(manage([])).not.toContain('Appearance');
   });
 
+  it('says at day zero that no work comes before the charter, not that the employee keeps working (second pass, walk M3)', (): void => {
+    for (const mode of ['mock', 'real'] as const) {
+      const page = manage([], { mode, charter: null, state: 'day-one-in-progress' });
+      expect(page).toContain(
+        'There is no pause for one employee: Priya takes on work only once its charter is approved, and every write waits for your decision until you say otherwise.',
+      );
+      expect(page).not.toContain('keeps working');
+    }
+  });
+
   it('says what retiring does in each mode, and waits for the mode before offering it', (): void => {
     expect(manage([])).toContain('Day0 deletes its copy of any credential only Priya uses');
     expect(manage([], { mode: 'mock' })).toContain(

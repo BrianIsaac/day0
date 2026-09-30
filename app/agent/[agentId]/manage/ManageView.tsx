@@ -101,9 +101,12 @@ export function ManageView() {
           <p className="text-sm text-[var(--color-muted)]">Loading</p>
         ) : (
           <p className={COPY}>
-            {real
-              ? `There is no pause for one employee: while ${agent.name} is employed it keeps reading its queue and working. To hold every write for your approval, leave autonomous actions off.`
-              : `There is no pause for one employee: ${agent.name} keeps working through the hosted office's queue, and every write waits for your decision.`}
+            {!active
+              ? // Reached from day zero too (walk M3): no charter yet means no work yet.
+                `There is no pause for one employee: ${agent.name} takes on work only once its charter is approved, and every write waits for your decision until you say otherwise.`
+              : real
+                ? `There is no pause for one employee: while ${agent.name} is employed it keeps reading its queue and working. To hold every write for your approval, leave autonomous actions off.`
+                : `There is no pause for one employee: ${agent.name} keeps working through the hosted office's queue, and every write waits for your decision.`}
           </p>
         )}
       </Card>
