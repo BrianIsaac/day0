@@ -5275,6 +5275,13 @@ describe('the autonomous-actions switch through the gate', (): void => {
     const row = await readItem(harness, workItemId);
     expect(row.state).toBe('failed');
     expect(row.skipReason).toBe('rejected by the manager: not in that thread');
+    // Each auto row keeps the moment it landed, which is what dates Working once
+    // no later event carries the row (pre-tag decision 5).
+    expect([0, 1, 3].map((index) => typeof ledger(parked)[index].landedAt)).toEqual([
+      'number',
+      'number',
+      'number',
+    ]);
     expect([0, 1, 3].map((index) => ledger(row)[index])).toEqual(
       [0, 1, 3].map((index) => ledger(parked)[index]),
     );

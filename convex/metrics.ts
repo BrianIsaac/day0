@@ -512,25 +512,37 @@ function isLandedWrite(
 /** The first week's Working, as one figure: whether a supervised write landed, and when. */
 interface FirstLandedWrite {
   readonly landed: boolean;
-  /** When the first did: the first event that carried its row; null while none carries one. */
+  /** When the first did, by its row's landing time; null while no landed row can be timed. */
   readonly at: number | null;
+}
+
+/**
+ * When a landed row landed: the time the apply path stamped on it (`landedAt`), or, for a row
+ * sent before the stamp was recorded, the first event that carried it; null for such an older
+ * row seen only on its work item.
+ */
+function landingTimeOf(observation: LedgerObservation): number | null {
+  const stamped = observation.entry.landedAt;
+  return typeof stamped === 'number' && Number.isFinite(stamped) ? stamped : observation.observedAt;
 }
 
 /**
  * When the employee's first supervised write landed (the first week's "First supervised write:
  * landed" and Working): the first write ledger row that actually landed, the manager's or its
- * own, never an approval, whose apply may yet fail or wait. A row is timed by the first event
- * that carried it; a row so far seen only on its work item has landed with no time yet, so the
- * step is done and Working carries no date until an event carries the row.
+ * own, never an approval, whose apply may yet fail or wait. A row is dated by its own landing
+ * time, so a write carried by a later event, or seen only on its work item (an auto-phase write
+ * whose held rest was then rejected), keeps the moment it landed; an older row with no stamp
+ * that no event carried has landed with no time.
  */
 function firstLandedWriteOf(
   ledger: readonly LedgerObservation[],
   surfaces: readonly SurfaceRecord[],
 ): FirstLandedWrite {
   const writes = ledger.filter((observation) => isLandedWrite(observation, surfaces));
-  const times = writes.flatMap((observation) =>
-    observation.observedAt === null ? [] : [observation.observedAt],
-  );
+  const times = writes.flatMap((observation) => {
+    const at = landingTimeOf(observation);
+    return at === null ? [] : [at];
+  });
   return { landed: writes.length > 0, at: times.length > 0 ? Math.min(...times) : null };
 }
 

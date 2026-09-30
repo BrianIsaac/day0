@@ -778,6 +778,7 @@ export async function applySurfaceActions(
             ...outcome,
             ...(rowAuthority ? { authority: rowAuthority } : {}),
             actionClass: actionClass(parsed.action, surface),
+            landedAt: Date.now(),
           }
         : outcome;
       applied.push(restored ? { ...stamped, sessionRestore: { steps: restored.steps } } : stamped);

@@ -252,6 +252,37 @@ describe('applying surface actions', (): void => {
     ]);
   });
 
+  it('stamps each landed row with the moment its adapter answered, and no time on a row that did not land', async (): Promise<void> => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(now);
+      const recorded: Recorded = { mcp: [], http: [] };
+      // Each provider call takes a minute, so a row stamped when the invocation
+      // started, or when the whole list finished, would read the wrong time.
+      const slow = (tool: string): unknown => {
+        vi.setSystemTime(Date.now() + 60_000);
+        return tool === 'save_issue'
+          ? { isError: true, content: [{ type: 'text', text: 'refused' }] }
+          : { content: [{ type: 'text', text: '{"id":"prov-1"}' }] };
+      };
+      const applied = await applySurfaceActions(
+        ctx,
+        'real',
+        [linear, slack],
+        run,
+        [comment, status, publicPost],
+        { deps: deps(recorded, slow), grants, approvedIndexes: new Set([0, 1]), now },
+      );
+      expect(applied.map((row) => [row.ok, row.held ?? false, row.landedAt])).toEqual([
+        [true, false, now + 60_000],
+        [false, false, undefined],
+        [true, true, undefined],
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('offsets dependent-phase idempotency keys without changing local action ordering', async (): Promise<void> => {
     const recorded: Recorded = { mcp: [], http: [] };
     const applied = await applySurfaceActions(ctx, 'real', [linear], run, [comment, status], {

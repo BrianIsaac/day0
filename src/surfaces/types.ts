@@ -125,6 +125,14 @@ export interface ActionOutcome {
    * (review M16). Absent on rows sent before it was recorded.
    */
   actionClass?: ActionClass;
+  /**
+   * When the row landed, in epoch milliseconds: stamped by the apply path the
+   * moment the adapter answered, so the first week's Working is dated by the
+   * write itself and never by the event or the work item that later carried
+   * it. Absent on a row that did not land and on rows sent before it was
+   * recorded.
+   */
+  landedAt?: number;
   providerId?: string;
   /**
    * The elements a browser action acted on, as the page offered them when the
