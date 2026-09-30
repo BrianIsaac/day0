@@ -2,14 +2,22 @@ import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const clerk = vi.hoisted(() => ({
-  signedIn: false,
-  appearance: {} as Record<string, unknown>,
-}));
+/** What Clerk answers: `user` is undefined until its script has loaded, null when signed out. */
+const clerk = vi.hoisted(
+  (): {
+    user: { primaryEmailAddress: { emailAddress: string }; firstName: string } | null | undefined;
+    appearance: Record<string, unknown>;
+  } => ({ user: undefined, appearance: {} }),
+);
 
 vi.mock('@clerk/nextjs', () => ({
+  useUser: () =>
+    clerk.user === undefined
+      ? { isLoaded: false, isSignedIn: undefined, user: undefined }
+      : { isLoaded: true, isSignedIn: clerk.user !== null, user: clerk.user },
+  useClerk: () => ({ status: clerk.user === undefined ? 'loading' : 'ready' }),
   Show: ({ when, children }: { when: string; children: ReactNode }): ReactNode =>
-    (when === 'signed-in') === clerk.signedIn ? children : null,
+    clerk.user !== undefined && (when === 'signed-in') === (clerk.user !== null) ? children : null,
   SignInButton: ({ children, appearance }: { children: ReactNode; appearance?: unknown }) => {
     clerk.appearance.signIn = appearance;
     return children;
@@ -24,39 +32,108 @@ vi.mock('@clerk/nextjs', () => ({
   }: {
     appearance?: unknown;
     userProfileProps?: { appearance?: unknown };
-  }): null => {
+  }): ReactNode => {
     clerk.appearance.account = appearance;
     clerk.appearance.profile = userProfileProps?.appearance;
-    return null;
+    return <button type="button">Open user menu</button>;
   },
 }));
 
 import { HeaderAccount } from '../../app/HeaderAccount';
 import { clerkAppearance } from '../../app/clerk-appearance';
 
+const MANAGER = {
+  primaryEmailAddress: { emailAddress: 'boss@example.invalid' },
+  firstName: 'Boss',
+};
+
+afterEach((): void => {
+  clerk.user = undefined;
+  clerk.appearance = {};
+});
+
+/** The header's account slot as the server, or a browser Clerk has answered, draws it. */
+function render(): string {
+  return renderToStaticMarkup(<HeaderAccount />);
+}
+
+/** The element that holds room for one of Clerk's controls, whole, or undefined when there is none. */
+function reservation(html: string, answer: 'signed-in' | 'signed-out'): string | undefined {
+  const open = new RegExp(`<div [^>]*data-account-reserve="${answer}"[^>]*>`).exec(html);
+  if (!open) return undefined;
+  const close = html.indexOf('</div>', open.index);
+  return html.slice(open.index, close + '</div>'.length);
+}
+
+/** The class list of the element a pattern finds, for comparing two elements' boxes. */
+function classOf(html: string, pattern: RegExp): string | undefined {
+  return pattern.exec(html)?.[1];
+}
+
 describe('the header account controls', (): void => {
   it('gives Sign in and Create account a 44 px target once Clerk has loaded (N14)', (): void => {
-    clerk.signedIn = false;
-    const buttons = [
-      ...renderToStaticMarkup(<HeaderAccount />).matchAll(/<button [^>]*>([^<]*)<\/button>/g),
-    ];
+    clerk.user = null;
+    const html = render();
+    const live = html.replace(reservation(html, 'signed-out') ?? '', '');
+    const buttons = [...live.matchAll(/<button [^>]*>([^<]*)<\/button>/g)];
     expect(buttons.map(([, label]) => label)).toEqual(['Sign in', 'Create account']);
     for (const [button] of buttons) expect(button).toMatch(/\bmin-h-11\b/);
   });
 
   it('opens the sign-in and create-account modals in the shared appearance', (): void => {
-    clerk.signedIn = false;
-    renderToStaticMarkup(<HeaderAccount />);
+    clerk.user = null;
+    render();
     expect(clerk.appearance.signIn).toBe(clerkAppearance);
     expect(clerk.appearance.signUp).toBe(clerkAppearance);
   });
 
   it('opens the account menu in the shared appearance once signed in', (): void => {
-    clerk.signedIn = true;
-    renderToStaticMarkup(<HeaderAccount />);
+    clerk.user = MANAGER;
+    render();
     expect(clerk.appearance.account).toBe(clerkAppearance);
     // Manage account opens the profile as a modal of its own, which takes the appearance too.
     expect(clerk.appearance.profile).toBe(clerkAppearance);
+  });
+});
+
+describe("the account slot's room (the header nav shift of 30 September)", (): void => {
+  it('holds room for both controls before Clerk answers, for the head script to choose between', (): void => {
+    const html = render();
+    expect(reservation(html, 'signed-out')).toBeDefined();
+    expect(reservation(html, 'signed-in')).toBeDefined();
+    expect(html).not.toContain('Open user menu');
+  });
+
+  it("holds the sign-in controls' room with the live buttons' own markup, out of reach", (): void => {
+    const waiting = reservation(render(), 'signed-out') ?? '';
+    expect(waiting).toMatch(/^<div aria-hidden="true" inert="" [^>]*class="[^"]*\binvisible\b/);
+
+    clerk.user = null;
+    const answered = render();
+    const held = reservation(answered, 'signed-out') ?? '';
+    const liveButtons = answered.replace(held, '').match(/<button [^>]*>[^<]*<\/button>/g);
+    expect(held.match(/<button [^>]*>[^<]*<\/button>/g)).toEqual(liveButtons);
+    expect(waiting.match(/<button [^>]*>[^<]*<\/button>/g)).toEqual(liveButtons);
+  });
+
+  it("holds only the sign-in controls' room once Clerk says signed out", (): void => {
+    clerk.user = null;
+    const html = render();
+    expect(reservation(html, 'signed-out')).toBeDefined();
+    expect(reservation(html, 'signed-in')).toBeUndefined();
+  });
+
+  it("holds only the account menu's room once signed in, the same box the avatar mounts in", (): void => {
+    clerk.user = MANAGER;
+    const html = render();
+    expect(reservation(html, 'signed-out')).toBeUndefined();
+    const held = classOf(
+      html,
+      /<div aria-hidden="true" data-account-reserve="signed-in" class="([^"]*)"/,
+    );
+    const live = classOf(html, /<div class="([^"]*)"><button type="button">Open user menu/);
+    expect(held).toMatch(/\bsize-11\b/);
+    expect(held).toBe(live);
   });
 });
 
