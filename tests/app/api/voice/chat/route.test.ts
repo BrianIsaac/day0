@@ -341,12 +341,25 @@ describe('the Day-1 chat route', (): void => {
   it('refuses a body with no employee or no turn before calling the model (re-pinned)', async (): Promise<void> => {
     const POST = await loadChatRoute({ baseUrl: FEATHERLESS, budget: '32768', effort: 'low' });
 
+    for (const body of [{ bossLabel: 'Sam' }, { agentId: 'agent-1' }, 'open']) {
+      expect((await POST(day1Request(body))).status).toBe(400);
+    }
+    expect(sent).toHaveLength(0);
+    expect(session.calls).toHaveLength(0);
+  });
+
+  it('tells a room older than the route to reload, not to ask again (review m10)', async (): Promise<void> => {
+    const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
+
     for (const body of [
-      { bossLabel: 'Sam', messages: [] },
-      { agentId: 'agent-1', request: { kind: 'reply', text: 'No id.' } },
+      // A room from before the session kept the conversation posted its whole history.
+      { id: 'one-to-one-agent-1', messages: [], trigger: 'submit-message', bossLabel: 'Sam' },
+      { agentId: 'agent-1', request: { kind: 'reply', id: 'u1', text: 'An older shape.' } },
       { request: { kind: 'open' } },
     ]) {
-      expect((await POST(day1Request(body))).status).toBe(400);
+      const response = await POST(day1Request(body));
+      expect(response.status).toBe(409);
+      expect(((await response.json()) as { error: string }).error).toMatch(/Reload to carry on/);
     }
     expect(sent).toHaveLength(0);
     expect(session.calls).toHaveLength(0);

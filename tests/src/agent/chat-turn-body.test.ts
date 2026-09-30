@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MAX_KEPT_TURNS } from '../../../src/agent/one-to-one-conversation';
-import { chatTurnBodyOf } from '../../../src/agent/chat-turn-body';
+import { chatTurnBodyOf, isOutdatedTurnBody } from '../../../src/agent/chat-turn-body';
 
 describe('a chat turn body', (): void => {
   it('reads the employee, the manager and each of the three turns', (): void => {
@@ -93,5 +93,19 @@ describe('a chat turn body', (): void => {
     ]) {
       expect(chatTurnBodyOf(value)).toBeUndefined();
     }
+  });
+});
+
+describe('a body from a room older than the route', (): void => {
+  it('is one that sent its history, or a turn in a shape the route no longer takes', (): void => {
+    expect(
+      isOutdatedTurnBody({ id: 'one-to-one-a1', messages: [], trigger: 'submit-message' }),
+    ).toBe(true);
+    expect(
+      isOutdatedTurnBody({ agentId: 'a1', request: { kind: 'reply', id: 'm1', text: 'Yes.' } }),
+    ).toBe(true);
+    expect(isOutdatedTurnBody({ agentId: 'a1' })).toBe(false);
+    expect(isOutdatedTurnBody(null)).toBe(false);
+    expect(isOutdatedTurnBody('messages')).toBe(false);
   });
 });

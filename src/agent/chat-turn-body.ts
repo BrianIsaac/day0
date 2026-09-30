@@ -74,3 +74,17 @@ export function chatTurnBodyOf(value: unknown): ChatTurnBody | undefined {
     request,
   };
 }
+
+/**
+ * Whether a body that is not a chat turn was posted by a room older than the route: one that
+ * sent its whole history (`messages`, before the session kept the conversation) or a turn in a
+ * shape the route no longer takes. Such a room can never be answered, so it is told to reload
+ * rather than offered an Ask again that cannot succeed.
+ */
+export function isOutdatedTurnBody(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return false;
+  return (
+    ('messages' in value && Array.isArray(value.messages)) ||
+    ('request' in value && typeof value.request === 'object' && value.request !== null)
+  );
+}

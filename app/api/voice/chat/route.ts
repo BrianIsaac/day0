@@ -20,7 +20,7 @@ import { DAY_ONE_TOPIC_SPECS } from '@/agent/day-one-prompts';
 import { INIT_PROMPT, dayOneTurnStream, managerReplies } from '@/agent/day-one-turn';
 import { topicIndexOf, withTopicIndex } from '@/agent/day-one-progress';
 import { uiMessagesOf, type OneToOneTurn } from '@/agent/one-to-one-conversation';
-import { chatTurnBodyOf } from '@/agent/chat-turn-body';
+import { chatTurnBodyOf, isOutdatedTurnBody } from '@/agent/chat-turn-body';
 import { ANSWER_NOT_KEPT, keptAnswer, type KeepAnswer } from '@/agent/kept-answer';
 
 export const runtime = 'nodejs';
@@ -38,6 +38,9 @@ const DAY_ONE_MAX_OUTPUT_TOKENS = 2000;
 
 /** One turn's body: an employee id, a label and a reply of at most 4,000 characters. */
 const CHAT_TURN_BODY_LIMIT_BYTES = 64 * 1024;
+
+/** Said to a room older than this route, which can only carry on once the page is reloaded. */
+const OUTDATED_ROOM = 'This page is older than Day0 now. Reload to carry on.';
 
 /**
  * The priming turn the model is asked from: it stands in for the manager before the first
@@ -87,6 +90,10 @@ export async function POST(req: Request): Promise<Response> {
   if (!read.ok) return read.refusal;
   const body = chatTurnBodyOf(read.value);
   if (!body) {
+    // A room from before this route can never be answered: asking again would post the same body.
+    if (isOutdatedTurnBody(read.value)) {
+      return Response.json({ error: OUTDATED_ROOM }, { status: 409 });
+    }
     return Response.json(
       { error: 'the employee and the turn to take are required' },
       { status: 400 },
