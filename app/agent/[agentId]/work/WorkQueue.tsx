@@ -153,8 +153,9 @@ const QUEUE_ORDER = [
 /**
  * The states of one run, from its claim to its last write held for the manager: an item keeps its
  * place through all of them, so a card the manager is watching does not jump down the list as it
- * starts working and back up when its write is held (the hosted walk's m21). Runs sit oldest first,
- * so the longest wait stays on top whatever state each run has reached (second pass M5).
+ * starts working and back up when its write is held (the hosted walk's m21). Runs sit oldest item
+ * first, by when the item was found, whatever state each run has reached (second pass M5); which
+ * key the order should take is recorded for the queue's next change (Fable x4).
  */
 const RUN_STATES: ReadonlySet<string> = new Set([
   'claimed',
