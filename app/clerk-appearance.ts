@@ -35,3 +35,14 @@ export const clerkAppearance = {
     borderRadius: '0.5rem',
   },
 } satisfies Appearance;
+
+/**
+ * The shared look for a Clerk widget on a page with a heading of its own (the sign-in and sign-up
+ * pages): the widget's header, whose title Clerk draws as an `h1`, is left out, so the page has
+ * one `h1` and it is the page's (the hosted walk's m26). The header's modals keep theirs: there
+ * the widget is the page's only heading.
+ */
+export const headedPageAppearance = {
+  ...clerkAppearance,
+  elements: { header: { display: 'none' } },
+} satisfies Appearance;

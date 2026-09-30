@@ -14,7 +14,7 @@ vi.mock('@clerk/nextjs', () => ({
 }));
 
 import SignUpPage from '../../../../app/sign-up/[[...sign-up]]/page';
-import { clerkAppearance } from '../../../../app/clerk-appearance';
+import { headedPageAppearance } from '../../../../app/clerk-appearance';
 
 describe('the sign-up page', (): void => {
   it('asks for an account under its own heading', (): void => {
@@ -25,10 +25,10 @@ describe('the sign-up page', (): void => {
     expect(renderToStaticMarkup(<SignUpPage />)).not.toMatch(/<main[\s>]/);
   });
 
-  it("dresses Clerk's sign-up in the shared appearance, so its text reads on the dark page", (): void => {
+  it("dresses Clerk's sign-up in the shared appearance without its own h1, so the page has one (walk m26)", (): void => {
     clerk.appearance.length = 0;
     renderToStaticMarkup(<SignUpPage />);
-    expect(clerk.appearance).toEqual([clerkAppearance]);
+    expect(clerk.appearance).toEqual([headedPageAppearance]);
   });
 
   it('says what the page is in a TSDoc block on its default export, as the sign-in page does (m7)', (): void => {

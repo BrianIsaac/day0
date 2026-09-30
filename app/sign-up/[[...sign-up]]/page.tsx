@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation';
 import { SignUp } from '@clerk/nextjs';
 import { DEV_NO_AUTH } from '@/lib/dev-auth';
-import { clerkAppearance } from '../../clerk-appearance';
+import { headedPageAppearance } from '../../clerk-appearance';
 
 /**
  * The hosted demo's account form: Clerk's sign-up under the page's own heading, in the shared
@@ -22,7 +22,7 @@ export default function SignUpPage() {
           Create an account
         </h1>
         <div className="flex justify-center">
-          <SignUp appearance={clerkAppearance} />
+          <SignUp appearance={headedPageAppearance} />
         </div>
       </div>
     </div>
