@@ -6,7 +6,7 @@ import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Doc } from '@convex/_generated/dataModel';
 import type { AgentMetrics } from '@/metrics/types';
-import { formatMetricDuration } from '../../metric-format';
+import { decidedCount, formatMetricDuration } from '../../metric-format';
 import { Card } from '../../components/Card';
 import { RecordLine } from '../../components/RecordLine';
 import { useEmployee } from './employee-context';
@@ -26,14 +26,16 @@ export function railFigures(
   metrics: AgentMetrics,
 ): ReadonlyArray<{ readonly label: string; readonly value: string }> {
   const { approved, rejected, partiallyApproved, medianLatencyMs } = metrics.decisions;
-  const decided = approved + rejected + partiallyApproved;
+  const decided = decidedCount(metrics.decisions);
+  // A partial approval is one of the approvals, not a decision of its own.
+  const inPart = partiallyApproved > 0 ? `, ${partiallyApproved} of them in part` : '';
   return [
     {
       label: 'Decisions',
       value:
         decided === 0
           ? 'none yet'
-          : `${decided} by you (${approved} approved, ${rejected} rejected${partiallyApproved > 0 ? `, ${partiallyApproved} in part` : ''})`,
+          : `${decided} by you (${approved} approved${inPart}, ${rejected} rejected)`,
     },
     { label: 'Median wait', value: formatMetricDuration(medianLatencyMs) },
     { label: 'Held', value: String(metrics.actions.held) },

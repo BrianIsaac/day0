@@ -1,6 +1,19 @@
 import type { AgentMetrics } from '@/metrics/types';
 
 /**
+ * How many decisions the manager made: every approval, a partial one among them, and every
+ * rejection. Made on the dashboard or through a chat surface alike, so the home and the
+ * employee's page count the same decisions (the hosted walk's m14).
+ *
+ * @param decisions - The approved and rejected counts.
+ */
+export function decidedCount(
+  decisions: Pick<AgentMetrics['decisions'], 'approved' | 'rejected'>,
+): number {
+  return decisions.approved + decisions.rejected;
+}
+
+/**
  * A supervision duration as the cards print it: seconds under a minute,
  * minutes and seconds under an hour, hours and minutes beyond.
  *

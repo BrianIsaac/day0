@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { AgentMetrics, OwnerMetrics, PilotFigures } from '@/metrics/types';
-import { formatAuditTrail, formatMetricDuration } from './metric-format';
+import { decidedCount, formatAuditTrail, formatMetricDuration } from './metric-format';
 
 const NUMBER_WORDS = [
   'zero',
@@ -79,9 +79,11 @@ function inWords(n: number): string {
   return NUMBER_WORDS[n] ?? String(n);
 }
 
-/** The decisions a row quotes: approved over rejected, or "not yet". */
+/** The decisions a row quotes: approved over rejected, or "not yet" before the first one. */
 export function decisionsCell(decisions: AgentMetrics['decisions']): string {
-  return decisions.requested === 0 ? 'not yet' : `${decisions.approved} / ${decisions.rejected}`;
+  return decidedCount(decisions) === 0
+    ? 'not yet'
+    : `${decisions.approved} / ${decisions.rejected}`;
 }
 
 /** The decision wait a row quotes: median over 90th percentile, or "not yet". */

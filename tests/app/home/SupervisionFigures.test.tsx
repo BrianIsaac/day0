@@ -57,13 +57,40 @@ describe('SupervisionFigures', (): void => {
         <SupervisionFigures
           company={{
             ...company,
-            decisions: { ...company.decisions, requested: 0, medianLatencyMs: null },
+            decisions: {
+              ...company.decisions,
+              requested: 0,
+              approved: 0,
+              rejected: 0,
+              partiallyApproved: 0,
+              medianLatencyMs: null,
+            },
           }}
         />,
       ),
     );
     expect(quiet).toContain('Decisions not yet |');
     expect(quiet).toContain('Decision wait median / p90 not yet |');
+  });
+
+  it('counts decisions made on the dashboard when no chat surface was asked, as the page does (walk m14)', (): void => {
+    const dashboardOnly = readAs(
+      renderToStaticMarkup(
+        <SupervisionFigures
+          company={{
+            ...company,
+            decisions: {
+              ...company.decisions,
+              requested: 0,
+              approved: 2,
+              rejected: 0,
+              partiallyApproved: 0,
+            },
+          }}
+        />,
+      ),
+    );
+    expect(dashboardOnly).toContain('Decisions 2 approved, 0 rejected |');
   });
 
   it('sets no type below the 12 px floor', (): void => {

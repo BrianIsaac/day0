@@ -50,6 +50,18 @@ describe('railFigures', () => {
     ]);
   });
 
+  it('counts a partial approval once, among the approvals (walk m14)', () => {
+    const metrics = dashboardMetrics();
+    const figures = railFigures({
+      ...metrics,
+      decisions: { ...metrics.decisions, approved: 2, rejected: 2, partiallyApproved: 1 },
+    });
+    expect(figures[0]).toEqual({
+      label: 'Decisions',
+      value: '4 by you (2 approved, 1 of them in part, 2 rejected)',
+    });
+  });
+
   it('says none yet before the first decision', () => {
     const metrics = dashboardMetrics();
     const none = railFigures({

@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import type { OwnerMetrics } from '@/metrics/types';
-import { formatAuditTrail } from '../metric-format';
+import { decidedCount, formatAuditTrail } from '../metric-format';
 import { DEFINITIONS, readsAndMessages, waitCell } from '../CompanySupervision';
 
 /** One term of the figures, with its definition as the term's tooltip. */
@@ -27,7 +27,7 @@ export function SupervisionFigures({ company }: { company: OwnerMetrics['company
       term: 'Decisions',
       definition: DEFINITIONS.decisions,
       value:
-        decisions.requested === 0
+        decidedCount(decisions) === 0
           ? 'not yet'
           : `${decisions.approved} approved, ${decisions.rejected} rejected`,
     },

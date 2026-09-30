@@ -1,5 +1,5 @@
 import type { AgentMetrics } from '@/metrics/types';
-import { formatAuditTrail, formatMetricDuration } from '../../../metric-format';
+import { decidedCount, formatAuditTrail, formatMetricDuration } from '../../../metric-format';
 import { Card } from '../../../components/Card';
 import { readsAndMessages, PILOT_FIGURES } from '../../../CompanySupervision';
 import { DISCLOSURE_SUMMARY } from '../../../components/Disclosure';
@@ -13,9 +13,7 @@ export function MetricsCard({ metrics }: { metrics: AgentMetrics | undefined }) 
   // A decision made on the dashboard is a decision whether or not a chat
   // surface was ever asked, so "not yet" means no decision at all (P6-9).
   const decisions = metrics?.decisions;
-  const decided = decisions
-    ? decisions.approved + decisions.rejected + decisions.partiallyApproved
-    : 0;
+  const decided = decisions ? decidedCount(decisions) : 0;
   const humanDecisions = decisions
     ? decided === 0
       ? 'not yet'
