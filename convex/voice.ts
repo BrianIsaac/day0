@@ -311,9 +311,12 @@ export type FinalisationClaim =
 /**
  * Decide and write in one transaction. Convex runs a mutation serialisably, so
  * a second caller reading this row necessarily sees the first caller's patch -
- * which is the property a separate check-then-act pair cannot have.
+ * which is the property a separate check-then-act pair cannot have. Called by
+ * the three finishers here and by the chat one-to-one's close
+ * (`oneToOne.recordAnswer`, `oneToOne.finish`), which claims as the browser
+ * did when the room posted the transcript.
  */
-async function claimSession(
+export async function claimSession(
   ctx: MutationCtx,
   session: Doc<'voiceSessions'>,
   claimedBy: 'browser' | 'webhook' | 'recovery',

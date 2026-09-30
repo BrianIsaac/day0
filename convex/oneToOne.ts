@@ -13,6 +13,7 @@ import {
   type OneToOneTurn,
 } from '../src/agent/one-to-one-conversation';
 import { oneToOnePhase } from '../src/agent/one-to-one-phase';
+import { claimSession } from './voice';
 
 /**
  * The chat one-to-one, kept on its session turn by turn.
@@ -48,28 +49,30 @@ function assertTalking(session: Doc<'voiceSessions'>): void {
 }
 
 /**
- * Start the draft from the kept conversation: it becomes the session's pending material and the
- * re-drive a redraft uses (`onboarding.recoverFinalisation`) is scheduled in this transaction, so
- * the draft runs whether or not any room is open. Stamped as a handed-back session is, so the
- * sweep's missed-retry arm re-drives it should the scheduled run never claim it.
+ * Start the draft from the kept conversation, in the transaction that ends it: the session is
+ * claimed for the manager's side as the room's own post of the transcript claimed it
+ * (`voice.claimSession`, `browser`), so the deployment's three re-drives still follow a failed
+ * first attempt, and the draft (`onboarding.draftKeptConversation`) is scheduled here, so it runs
+ * whether or not any room is open. A draft whose run never starts is re-driven by the sweep once
+ * its claim's lease has passed.
  */
 async function queueDraft(
   ctx: MutationCtx,
   session: Doc<'voiceSessions'>,
   draft: { readonly turns: readonly OneToOneTurn[]; readonly bossLabel: string },
 ): Promise<void> {
-  const now = Date.now();
-  await ctx.db.patch(session._id, {
-    turns: [...draft.turns],
-    replyDraft: undefined,
-    pendingTranscript: conversationTranscript(draft.turns),
-    pendingBossLabel: draft.bossLabel,
-    recoveryAttempts: 0,
-    finalisationError: undefined,
-    finalisationFailedAt: now,
+  await ctx.db.patch(session._id, { turns: [...draft.turns], replyDraft: undefined });
+  const claim = await claimSession(ctx, session, 'browser', {
+    transcript: conversationTranscript(draft.turns),
+    bossLabel: draft.bossLabel,
   });
-  await ctx.scheduler.runAfter(0, internal.onboarding.recoverFinalisation, {
+  // Only a session being held reaches here, and nothing else holds it: the claim is this one's.
+  if (claim.outcome !== 'claimed') {
+    throw new Error(`draft not claimed: the session is ${claim.outcome}`);
+  }
+  await ctx.scheduler.runAfter(0, internal.onboarding.draftKeptConversation, {
     sessionId: session._id,
+    claimToken: claim.claimToken,
   });
 }
 

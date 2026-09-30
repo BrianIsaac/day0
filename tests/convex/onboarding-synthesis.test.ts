@@ -387,3 +387,56 @@ describe('a draft sent back with a note (round two section 3.5)', (): void => {
     expect((await harness.run(async (ctx) => await ctx.db.get(agentId)))?.state).toBe('deployed');
   });
 });
+
+describe('the draft of a chat one-to-one its session kept (30 Sep, a one-to-one lost to a closed tab)', (): void => {
+  it('is drafted on the server from the turns the close claimed, with no room open', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    vi.useFakeTimers();
+    try {
+      const harness = convexTest(schema, allConvexModules());
+      const agentId = await deployAgent(harness);
+      const owner = harness.withIdentity({ subject: 'owner' });
+      const { sessionId } = await owner.mutation(api.voice.start, { agentId, mode: 'chat' });
+      const replies = [
+        'Tier-2 asks swamp the Q3 close.',
+        'Own routine tickets in month one.',
+        'Priya on pipeline.',
+        'The team overview.',
+        'Linear, team REVOPS.',
+        'The close tracker.',
+        'Northstar CRM access is open.',
+      ];
+      let answering: string | null = null;
+      for (let index = 0; index <= replies.length; index += 1) {
+        const closing = index === replies.length;
+        await owner.mutation(api.oneToOne.recordAnswer, {
+          sessionId,
+          bossLabel: 'boss@day0.local',
+          answer: {
+            answering,
+            id: `e${index}`,
+            text: closing ? '' : `Question ${index + 1}?`,
+            topicIndex: Math.min(index, 6),
+            ...(closing ? { closingLine: 'Thanks, drafting now.' } : {}),
+          },
+        });
+        if (closing) break;
+        ({ answering } = await owner.mutation(api.oneToOne.takeTurn, {
+          agentId,
+          request: { kind: 'reply', id: `m${index}`, text: replies[index] },
+        }));
+      }
+      await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+      const session = await harness.run(async (ctx) => await ctx.db.get(sessionId));
+      expect(session).toMatchObject({ state: 'done', claimedBy: 'browser' });
+      for (const reply of replies) expect(session?.transcriptText).toContain(`USER: ${reply}`);
+      expect(session?.charterId).toBeDefined();
+      expect((await harness.run(async (ctx) => await ctx.db.get(agentId)))?.state).toBe(
+        'charter-pending',
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

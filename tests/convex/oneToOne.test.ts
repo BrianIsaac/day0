@@ -91,7 +91,7 @@ async function scheduledDrafts(room: Room): Promise<number> {
   const scheduled = await room.harness.run(
     async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
   );
-  return scheduled.filter((job) => job.name.includes('recoverFinalisation')).length;
+  return scheduled.filter((job) => job.name.includes('draftKeptConversation')).length;
 }
 
 afterEach((): void => {
@@ -143,6 +143,9 @@ describe('the chat one-to-one kept turn by turn (30 Sep, a one-to-one lost to a 
     });
     const session = await sessionOf(room);
     expect(oneToOnePhase(session)).toEqual({ kind: 'drafting' });
+    // Claimed for the manager's side, as the room's post claimed it: every re-drive is still left.
+    expect(session).toMatchObject({ state: 'synthesising', claimedBy: 'browser' });
+    expect(session.recoveryAttempts).toBeUndefined();
     expect(session.turns?.at(-1)).toMatchObject({ closingLine: 'Thanks, drafting now.' });
     for (const reply of ANSWERS) expect(session.pendingTranscript).toContain(`USER: ${reply}`);
     expect(session.pendingTranscript).toContain('ASSISTANT: Thanks, drafting now.');
