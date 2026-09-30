@@ -1,7 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
   MAX_FINALISATION_RECOVERIES,
+  ONE_TO_ONE_PHASE_KINDS,
   oneToOnePhase,
+  type OneToOnePhase,
   type OneToOneSession,
 } from '../../../src/agent/one-to-one-phase';
 
@@ -56,5 +58,17 @@ describe('the one-to-one phase', (): void => {
 
   it('is drafted once the session produced a charter', (): void => {
     expect(oneToOnePhase(session({ state: 'done' }))).toEqual({ kind: 'drafted' });
+  });
+});
+
+describe('the one-to-one phase kinds', (): void => {
+  it('names every kind the phase can be, once, for the validators that must list them (second review w5)', (): void => {
+    expect([...ONE_TO_ONE_PHASE_KINDS].sort()).toEqual([
+      'drafted',
+      'drafting',
+      'failed',
+      'talking',
+    ]);
+    expectTypeOf(ONE_TO_ONE_PHASE_KINDS).items.toEqualTypeOf<OneToOnePhase['kind']>();
   });
 });

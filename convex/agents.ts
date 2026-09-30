@@ -28,7 +28,11 @@ import { agentReadsSource } from '../src/docs/agent-sources';
 import { isEvaluationAgent } from './metrics';
 import { isManagerLookupFailure } from '../src/surfaces/manager-lookup';
 import { shownEmployeeState, type CharterApproval } from '../src/work/state-labels';
-import { oneToOnePhase } from '../src/agent/one-to-one-phase';
+import {
+  ONE_TO_ONE_PHASE_KINDS,
+  oneToOnePhase,
+  type OneToOnePhase,
+} from '../src/agent/one-to-one-phase';
 import {
   managerNotificationMode,
   NOTIFICATIONS_CHANGE_REASON,
@@ -178,14 +182,11 @@ async function landedThisMonth(
 }
 
 /**
- * Where the one-to-one stands, as `oneToOnePhase` names it. The roster's rows are typed from this
- * validator, so a phase the function gains and this lacks fails the query's type check.
+ * Where the one-to-one stands, as `oneToOnePhase` names it: one literal for each of its kinds, so
+ * a kind the union gains or loses changes this validator with it.
  */
 const oneToOnePhaseKindValidator = v.union(
-  v.literal('talking'),
-  v.literal('drafting'),
-  v.literal('failed'),
-  v.literal('drafted'),
+  ...ONE_TO_ONE_PHASE_KINDS.map((kind: OneToOnePhase['kind']) => v.literal(kind)),
 );
 
 const rosterRowValidator = v.object({
@@ -390,8 +391,7 @@ async function workCounts(
  * Owner-scoped like `listForUser`; evaluation agents and the baseline arm
  * are left out. An anonymous caller gets an empty list.
  *
- * Returns:
- *   At most `ROSTER_LIMIT` rows, newest first.
+ * @returns At most `ROSTER_LIMIT` rows, newest first.
  */
 export const rosterForUser = query({
   args: {},
