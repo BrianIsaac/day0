@@ -966,6 +966,15 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     expect(current()).toContain('approved, not yet landed');
     expect(card()).toBeNull();
 
+    // A decision that let nothing through is not an approval (second pass minor 9).
+    backend.queries = {
+      ...backend.queries,
+      'work:listForAgent': [{ ...work('executing')[0], approvedIndexes: [] }],
+    };
+    act((): void => view.root.render(page()));
+    await settle();
+    expect(current()).toContain('after the first plan');
+
     // The approved write's apply failed: nothing landed, and nothing is on its way.
     backend.queries = { ...backend.queries, 'work:listForAgent': work('failed') };
     act((): void => view.root.render(page()));

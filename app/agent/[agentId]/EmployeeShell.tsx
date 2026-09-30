@@ -132,9 +132,13 @@ export function EmployeeLoading() {
  * waiting for its apply to be claimed, or being applied. A row that landed moves the item on; a
  * failed apply fails it.
  */
-function approvedNotLanded(item: Pick<Doc<'workItems'>, 'state' | 'applyPhase'>): boolean {
+function approvedNotLanded(
+  item: Pick<Doc<'workItems'>, 'state' | 'applyPhase' | 'approvedIndexes'>,
+): boolean {
+  // A decision that let nothing through is a rejection, as the metrics count it.
   return (
     item.applyPhase === 'approved' &&
+    (item.approvedIndexes?.length ?? 0) > 0 &&
     (item.state === 'actions-pending' || item.state === 'executing')
   );
 }
