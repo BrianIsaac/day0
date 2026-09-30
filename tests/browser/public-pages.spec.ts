@@ -147,7 +147,13 @@ for (const path of PAGES) {
       // scripts never load here, and the public pages render without them.
       await page.route(/\.invalid\//, (route) => route.abort());
       await page.goto(path, { waitUntil: 'load' });
-      await page.waitForLoadState('networkidle');
+      // The page's own content, drawn and hydrated (`/` draws its landing only once the browser
+      // knows who it has), and its fonts: a wait on what the checks read, where `networkidle`
+      // waited on any request a busy runner happened to hold open (the second review's decision 6).
+      await expect(page.locator('main h1').first()).toBeVisible();
+      await page.evaluate(async (): Promise<void> => {
+        await document.fonts.ready;
+      });
     });
 
     test('has no axe violation at the WCAG 2.2 AA tags beyond its known debt', async ({ page }) => {
