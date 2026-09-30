@@ -442,7 +442,7 @@ describe('the company home', (): void => {
 });
 
 describe('Deploy another', (): void => {
-  it('opens the form above the inbox with the caret in the name, and closes it again', (): void => {
+  it('opens the form above the inbox with the caret in the name, hides itself, and comes back when the form closes', (): void => {
     vi.useRealTimers();
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     state.roster = roster;
@@ -457,6 +457,8 @@ describe('Deploy another', (): void => {
 
     act(() => toggle.click());
     expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    // Walk m27: the button that opened the form is not left on the page beside it.
+    expect(toggle.hidden).toBe(true);
     const form = host.querySelector('#deploy-form');
     expect(form).not.toBeNull();
     expect(host.innerHTML.indexOf('Deploy a new Day0 employee')).toBeLessThan(
@@ -471,6 +473,7 @@ describe('Deploy another', (): void => {
     act(() => cancel.click());
     expect(host.querySelector('#deploy-form')).toBeNull();
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(toggle.hidden).toBe(false);
     expect(document.activeElement).toBe(toggle);
 
     act(() => root.unmount());

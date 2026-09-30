@@ -1,6 +1,7 @@
 'use client';
 
 import { useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { useQueries, useQuery } from 'convex/react';
 import Link from 'next/link';
 import { api } from '@convex/_generated/api';
@@ -74,9 +75,12 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
           </p>
         </div>
         {staffed ? (
+          // Hidden while the form it opened is on the page, whose own Cancel closes it (walk m27);
+          // kept mounted, so the caret can come back to it.
           <button
             ref={deployToggle}
             type="button"
+            hidden={deploying}
             aria-expanded={deploying}
             aria-controls="deploy-form"
             onClick={() => setDeploying((open) => !open)}
@@ -99,8 +103,9 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
               onCancel={
                 staffed
                   ? () => {
-                      setDeploying(false);
-                      // The form and its focus go; the caret returns to the button that opened it.
+                      // The form and its focus go; the caret returns to the button that opened
+                      // it, shown again first.
+                      flushSync(() => setDeploying(false));
                       deployToggle.current?.focus();
                     }
                   : undefined
