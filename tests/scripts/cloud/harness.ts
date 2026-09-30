@@ -77,6 +77,8 @@ export interface CloudState {
   dryRunWrites: boolean;
   /** The Vercel project the served build belongs to. */
   servedProject: string;
+  /** The linked project's framework preset, as `vercel project inspect` names it. */
+  framework: string;
   /** Rows per table in an export. */
   rows: Record<string, number>;
   /** Tools that do not answer. */
@@ -178,6 +180,7 @@ export function cloud(
     envSetMangles: false,
     dryRunWrites: false,
     servedProject: 'day0',
+    framework: 'Next.js',
     rows: { agents: 2, deploymentVersions: 1, migrations: 19 },
     missing: [],
     failing: [],
@@ -309,6 +312,25 @@ export function cloud(
       state.vercelEnv.set(name, clock);
       state.vercelValues.set(name, input ?? '');
       return ok('', `Updated Environment Variable ${name}\n`);
+    }
+    if (args[0] === 'project' && args[1] === 'inspect') {
+      if (args[2] !== 'day0') return fail(`Error: Project not found (${args[2] ?? 'no name'})`);
+      return ok(
+        '',
+        [
+          `> Found Project example-team/${args[2]} [312ms]`,
+          '',
+          '  General',
+          '',
+          '    ID\t\t\t\tprj_x',
+          `    Name\t\t\t${args[2]}`,
+          '',
+          '  Framework Settings',
+          '',
+          `    Framework Preset\t\t${state.framework}`,
+          '',
+        ].join('\n'),
+      );
     }
     if (args[0] === 'inspect') {
       if (state.served === undefined) return fail(`Error: Can't find the deployment "${args[1]}"`);

@@ -43,6 +43,7 @@ import {
   appTalksTo,
   CLERK_APP_KEYS,
   deployApp,
+  frameworkRefusal,
   inspectApp,
   otherHostLines,
   projectRefusal,
@@ -434,8 +435,8 @@ interface SetupReads {
 
 /**
  * Every refusal and every read the first setup makes before it writes: the
- * checkout, the target and its proof, an empty deployment, the settings, and
- * the Vercel project's names.
+ * checkout, the Vercel project's framework preset, the target and its proof,
+ * an empty deployment, the settings, and the Vercel project's names.
  *
  * @param options - The command line.
  * @param io - The machine.
@@ -446,7 +447,7 @@ async function readSetup(options: CloudOptions, io: CloudIo): Promise<SetupReads
   const target = readTarget(options, io);
   if ('failure' in target) return target;
   if (options.app === 'vercel') {
-    const refusal = vercelRefusal(io) ?? toolRefusal(io, 'curl');
+    const refusal = vercelRefusal(io) ?? toolRefusal(io, 'curl') ?? frameworkRefusal(io, target);
     if (refusal !== undefined) return refusal;
   }
   // The push itself is proved once the env is set: an empty deployment's auth

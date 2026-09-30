@@ -4,6 +4,7 @@ import {
   appOnDeployment,
   appTalksTo,
   deployApp,
+  frameworkRefusal,
   linkedProject,
   projectRefusal,
   readAppBack,
@@ -80,6 +81,29 @@ describe('appOnDeployment', (): void => {
     expect(appOnDeployment(c.io, APP_URL, DEPLOYMENT)).toEqual({
       failure: `${APP_URL}/ answered 000`,
     });
+  });
+});
+
+describe('frameworkRefusal', (): void => {
+  it('accepts a linked project built as Next.js and names any other preset', (): void => {
+    expect(frameworkRefusal(cloud().io, targetOf(cloud()))).toBeUndefined();
+    const other = cloud({ framework: 'Other' });
+    expect(frameworkRefusal(other.io, targetOf(other))?.failure).toContain(
+      'the Vercel project day0 has the framework preset Other',
+    );
+  });
+
+  it('refuses when the link names no project, or the project cannot be read', (): void => {
+    const unlinked = cloud({}, { linked: false });
+    expect(frameworkRefusal(unlinked.io, targetOf(unlinked))?.failure).toContain(
+      '.vercel/project.json does not name the linked project',
+    );
+    const unreadable = cloud({
+      failing: [{ match: 'vercel project inspect', status: 1, stderr: 'Error: Not authorized' }],
+    });
+    expect(frameworkRefusal(unreadable.io, targetOf(unreadable))?.failure).toBe(
+      '`vercel project inspect day0` named no framework preset (exit 1: Error: Not authorized).',
+    );
   });
 });
 

@@ -470,6 +470,39 @@ describe('cloud setup, the first push', (): void => {
     expect(writes(appKey)).toEqual([]);
   });
 
+  it('refuses a Vercel project whose framework preset is not Next.js, naming the setting, before any write', async (): Promise<void> => {
+    for (const dryRun of [false, true]) {
+      const c = cloud({ ...empty(), framework: 'Other' });
+      expect(
+        await runCloudSetup(
+          verb(c, { verb: 'setup', envFile: settingsFile(c, SETTINGS), dryRun }),
+          c.io,
+        ),
+      ).toBe(1);
+      expect(printed(c)).toContain(
+        "the Vercel project day0 has the framework preset Other, so Vercel would build the app and serve none of its pages: set the project's Framework Preset to Next.js",
+      );
+      expect(writes(c)).toEqual([]);
+      expect(ran(c)).toContain('vercel project inspect day0');
+    }
+  });
+
+  it('reads the preset of the project the checkout is linked to, in its team', async (): Promise<void> => {
+    const c = cloud(empty());
+    expect(
+      await runCloudSetup(
+        verb(c, {
+          verb: 'setup',
+          envFile: settingsFile(c, SETTINGS),
+          dryRun: true,
+          scope: 'example-team',
+        }),
+        c.io,
+      ),
+    ).toBe(0);
+    expect(ran(c)).toContain('vercel project inspect day0 --scope example-team');
+  });
+
   it('refuses while Vercel holds no Clerk keys, since the app could not sign anyone in', async (): Promise<void> => {
     const c = cloud({ ...empty(), vercelEnv: new Map() });
     expect(

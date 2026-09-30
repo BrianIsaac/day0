@@ -14,6 +14,7 @@ import {
   deploymentSiteUrl,
   deploymentUrl,
   pageNamesRelease,
+  parseFrameworkPreset,
   parseVercelInspect,
   vercelEnvNames,
   type VercelDeployment,
@@ -86,6 +87,47 @@ export function projectRefusal(
   if (linked !== undefined && served.name === linked) return undefined;
   return {
     failure: `${appUrl} is served by the Vercel project ${served.name ?? '(unnamed)'}, and this checkout is linked to ${linked ?? 'a project whose name .vercel/project.json does not give'}; the writes would reach the linked one. Link the project that serves it: vercel link.`,
+  };
+}
+
+/** The framework preset the app builds under; any other serves none of its pages. */
+const NEXT_PRESET = 'Next.js';
+
+/**
+ * Why the linked Vercel project cannot serve the app, or undefined when its
+ * framework preset is Next.js. `vercel link` sets the preset when it creates
+ * the project; one made in the dashboard or by `vercel project add` is left at
+ * "Other", and Vercel then runs `next build` and serves only `public/`, so
+ * every page answers 404 after the writes have been made.
+ *
+ * @param io - The machine.
+ * @param target - The target, for its scope.
+ */
+export function frameworkRefusal(io: CloudIo, target: CloudTarget): Failure | undefined {
+  const name = linkedProject(io);
+  if (name === undefined) {
+    return {
+      failure:
+        '.vercel/project.json does not name the linked project, so its framework preset cannot be read; run `vercel link` here.',
+    };
+  }
+  const inspected = io.run('vercel', vercelArgs(target, ['project', 'inspect', name]), {
+    timeoutMs: 120_000,
+  });
+  const preset =
+    inspected.status === 0
+      ? parseFrameworkPreset(`${inspected.stdout}\n${inspected.stderr}`)
+      : undefined;
+  if (preset === undefined) {
+    return {
+      failure: `\`vercel project inspect ${name}\` named no framework preset (exit ${inspected.status ?? 'unknown'}: ${firstLine(inspected.stderr) || firstLine(inspected.stdout)}).`,
+    };
+  }
+  if (preset === NEXT_PRESET) return undefined;
+  return {
+    failure:
+      `the Vercel project ${name} has the framework preset ${preset}, so Vercel would build the app and serve none of its pages: ` +
+      "set the project's Framework Preset to Next.js (the dashboard's project Settings, Build and Deployment), then run this again.",
   };
 }
 
