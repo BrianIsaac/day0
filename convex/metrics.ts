@@ -475,8 +475,7 @@ function automaticKind(
 
 /**
  * Whether a ledger row is one the employee applied on its own: landed, under standing or
- * autonomous authority, and not a replayed sign-in. The one rule the automatic counts and
- * `workingSinceOf` read, so the two cannot drift.
+ * autonomous authority, and not a replayed sign-in. The one rule the automatic counts read.
  */
 function isAutomaticRow(observation: LedgerObservation): boolean {
   return (
@@ -488,31 +487,51 @@ function isAutomaticRow(observation: LedgerObservation): boolean {
 }
 
 /**
- * When the employee's first week reached Working: the first approval that let a held action
- * through, or the first write it applied on its own, whichever came first. The same two counts
- * the page's "a write landed" reads (`actions.approved` and `actions.automatic.writes`), so the
- * time and the first week's step agree; an approval whose apply then fails counts in both.
+ * Whether a ledger row is a write to a system that landed under an authority the ledger names:
+ * the manager's approval, a standing permission or autonomy. A replayed sign-in, a row held or
+ * waiting for approval, a failed apply, a message to the manager and a read are not; nor is a
+ * reconciliation copy, which carries no authority of its own (the full row it copies does).
  */
-function workingSinceOf(
-  events: readonly Doc<'events'>[],
+function isLandedWrite(
+  observation: LedgerObservation,
+  surfaces: readonly SurfaceRecord[],
+): boolean {
+  const { entry } = observation;
+  return (
+    entry.ok === true &&
+    entry.held !== true &&
+    entry.awaitingApproval !== true &&
+    observation.sessionRestoreOf === undefined &&
+    (entry.authority === 'manager' ||
+      entry.authority === 'standing' ||
+      entry.authority === 'autonomous') &&
+    automaticKind(observation, surfaces) === 'write'
+  );
+}
+
+/** The first week's Working, as one figure: whether a supervised write landed, and when. */
+interface FirstLandedWrite {
+  readonly landed: boolean;
+  /** When the first did: the first event that carried its row; null while none carries one. */
+  readonly at: number | null;
+}
+
+/**
+ * When the employee's first supervised write landed (the first week's "First supervised write:
+ * landed" and Working): the first write ledger row that actually landed, the manager's or its
+ * own, never an approval, whose apply may yet fail or wait. A row is timed by the first event
+ * that carried it; a row so far seen only on its work item has landed with no time yet, so the
+ * step is done and Working carries no date until an event carries the row.
+ */
+function firstLandedWriteOf(
   ledger: readonly LedgerObservation[],
   surfaces: readonly SurfaceRecord[],
-): number | null {
-  const approvals = events.flatMap((event) =>
-    isEventOf(event, 'work.actions-approved') &&
-    asIndexes(asRecord(event.payload)?.approvedIndexes).length > 0
-      ? [event.createdAt]
-      : [],
+): FirstLandedWrite {
+  const writes = ledger.filter((observation) => isLandedWrite(observation, surfaces));
+  const times = writes.flatMap((observation) =>
+    observation.observedAt === null ? [] : [observation.observedAt],
   );
-  const ownWrites = ledger.flatMap((observation) =>
-    observation.observedAt !== null &&
-    isAutomaticRow(observation) &&
-    automaticKind(observation, surfaces) === 'write'
-      ? [observation.observedAt]
-      : [],
-  );
-  const times = [...approvals, ...ownWrites];
-  return times.length > 0 ? Math.min(...times) : null;
+  return { landed: writes.length > 0, at: times.length > 0 ? Math.min(...times) : null };
 }
 
 function actionMetrics(
@@ -833,8 +852,10 @@ function agentFigures(
   const decisions = decisionTotals(events, workItems);
   const pilot = pilotTotals(events, workItems);
   const surfaceRecords = surfaces.map(toSurfaceRecord);
+  const firstWrite = firstLandedWriteOf(ledger, surfaceRecords);
   const metrics: AgentMetrics = {
-    workingSince: workingSinceOf(events, ledger, surfaceRecords),
+    writeLanded: firstWrite.landed,
+    workingSince: firstWrite.at,
     charter: {
       timeToFirstDraftedMs: timeFromDeploy(firstDraftedAt),
       timeToFirstApprovedMs: timeFromDeploy(firstApprovedAt),

@@ -127,6 +127,18 @@ export function EmployeeLoading() {
   );
 }
 
+/**
+ * Whether a work item holds writes the manager approved that have not landed yet: approved and
+ * waiting for its apply to be claimed, or being applied. A row that landed moves the item on; a
+ * failed apply fails it.
+ */
+function approvedNotLanded(item: Pick<Doc<'workItems'>, 'state' | 'applyPhase'>): boolean {
+  return (
+    item.applyPhase === 'approved' &&
+    (item.state === 'actions-pending' || item.state === 'executing')
+  );
+}
+
 /** What the employee page's shell is given. */
 export interface EmployeeShellProps {
   readonly agentId: Id<'agents'>;
@@ -193,9 +205,11 @@ export function EmployeeShell({ agentId, children }: EmployeeShellProps) {
         state: shownEmployeeState(agent.state, charter),
         phase,
         charter,
-        writeLanded:
-          metrics !== undefined && metrics.actions.approved + metrics.actions.automatic.writes > 0,
-        writeHeld: (workItems ?? []).some((item) => item.state === 'actions-pending'),
+        writeLanded: metrics?.writeLanded === true,
+        writeApproved: (workItems ?? []).some(approvedNotLanded),
+        writeHeld: (workItems ?? []).some(
+          (item) => item.state === 'actions-pending' && !approvedNotLanded(item),
+        ),
         oneToOneEndedAt: session?.endedAt ?? session?.claimedAt,
         workingSince: metrics?.workingSince,
         zone: agentZone(agent),

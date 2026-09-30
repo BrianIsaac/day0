@@ -224,8 +224,10 @@ describe('agent evaluation metrics', (): void => {
     ).rejects.toThrow('forbidden');
     const metrics = await harness.withIdentity(OWNER).query(api.metrics.forAgent, { agentId });
     expect(metrics).toEqual({
-      // The first approval that let a held action through (walk m12).
-      workingSince: 401_000,
+      // The first write row that landed, carried by the run's completion; never the approval at
+      // 401_000, whose apply could yet have failed (re-pinned: X finding 5).
+      writeLanded: true,
+      workingSince: 650_000,
       charter: {
         timeToFirstDraftedMs: 60_000,
         timeToFirstApprovedMs: 208_000,
@@ -1034,7 +1036,7 @@ describe('the figures do not depend on the order the rows are read in', (): void
     });
   });
 
-  it('dates Working from the first approval that let a write through, never a rejection (walk m12)', (): void => {
+  it('dates Working from the first write that landed, never an approval alone (re-pinned: X finding 5)', (): void => {
     const decided = (creationTime: number, approvedIndexes: number[], at: number) =>
       event(
         creationTime,
@@ -1050,11 +1052,14 @@ describe('the figures do not depend on the order the rows are read in', (): void
         },
         at,
       );
-    expect(computeAgentMetrics([], [], []).workingSince).toBeNull();
-    expect(computeAgentMetrics([decided(1, [], 5_000)], [], []).workingSince).toBeNull();
-    expect(
-      computeAgentMetrics([decided(1, [], 5_000), decided(2, [0], 9_000)], [], []).workingSince,
-    ).toBe(9_000);
+    const none = computeAgentMetrics([], [], []);
+    expect([none.writeLanded, none.workingSince]).toEqual([false, null]);
+    const approvedOnly = computeAgentMetrics(
+      [decided(1, [], 5_000), decided(2, [0], 9_000)],
+      [],
+      [],
+    );
+    expect([approvedOnly.writeLanded, approvedOnly.workingSince]).toEqual([false, null]);
   });
 
   it('times a dashboard decision no chat surface asked for from when the item began waiting (walk m14)', (): void => {
@@ -1452,6 +1457,120 @@ describe('the ledger walk and the pilot figures (step 29)', (): void => {
     expect(
       computeAgentMetrics([completed('D0MANAGER', 3_000)], [], [], [slack]).workingSince,
     ).toBeNull();
+  });
+
+  describe('the first supervised write that landed (X finding 5)', (): void => {
+    const approvedAt = (at: number): Doc<'events'> =>
+      event(
+        'work.actions-approved',
+        {
+          workItemId: 'wi',
+          runId: 'run-1',
+          approvedIndexes: [0],
+          rejectedIndexes: [],
+          refusedIndexes: [],
+          autoIndexes: [],
+          decidedVia: 'dashboard',
+        },
+        at,
+      );
+    const finished = (type: string, applied: Record<string, unknown>[], at: number) =>
+      event(type, { workItemId: 'wi', output: { actions: [post('C0TEAM')], applied } }, at);
+    const figure = (events: Doc<'events'>[], items: Doc<'workItems'>[] = []) => {
+      const metrics = computeAgentMetrics(events, items, [], [slack]);
+      return { landed: metrics.writeLanded, since: metrics.workingSince };
+    };
+
+    it('is not an approval whose write then failed', (): void => {
+      expect(
+        figure([
+          approvedAt(5_000),
+          finished('work.failed', [row('wi:run-1:0', { ok: false, authority: undefined })], 6_000),
+        ]),
+      ).toEqual({ landed: false, since: null });
+    });
+
+    it('is the landing of a delayed write, not its approval', (): void => {
+      expect(
+        figure([approvedAt(5_000), finished('work.completed', [row('wi:run-1:0')], 90_000)]),
+      ).toEqual({ landed: true, since: 90_000 });
+    });
+
+    it('is the landed write of a partial approval, the rest held', (): void => {
+      expect(
+        figure([
+          approvedAt(5_000),
+          finished(
+            'work.completed',
+            [
+              row('wi:run-1:0'),
+              row('wi:run-1:1', { held: true, reason: 'not approved by the manager' }),
+            ],
+            20_000,
+          ),
+        ]),
+      ).toEqual({ landed: true, since: 20_000 });
+      // Held and waiting rows alone have landed nothing.
+      expect(
+        figure([
+          finished(
+            'work.completed',
+            [
+              row('wi:run-1:0', { held: true }),
+              row('wi:run-1:1', { awaitingApproval: true, authority: 'standing' }),
+            ],
+            20_000,
+          ),
+        ]),
+      ).toEqual({ landed: false, since: null });
+    });
+
+    it('has landed with no time while its row is seen only on its work item', (): void => {
+      expect(
+        figure(
+          [approvedAt(5_000)],
+          [item('wi', { output: { actions: [post('C0TEAM')], applied: [row('wi:run-1:0')] } })],
+        ),
+      ).toEqual({ landed: true, since: null });
+    });
+
+    it('is never a reconciliation copy, which carries no authority, nor a message to the manager', (): void => {
+      const reconciled = event(
+        'work.provider-reconciled',
+        {
+          workItemId: 'wi',
+          entries: [{ tool: 'http.request', outcome: 'landed', idempotencyKey: 'wi:run-9:0' }],
+        },
+        4_000,
+      );
+      // The copy is in the ledger (the audit counts it), and is still no supervised write.
+      expect(computeAgentMetrics([reconciled], [], [], [slack]).auditTrail.total).toBe(1);
+      expect(
+        figure([
+          event(
+            'work.provider-reconciled',
+            {
+              workItemId: 'wi',
+              entries: [{ tool: 'http.request', outcome: 'landed', idempotencyKey: 'wi:run-9:0' }],
+            },
+            4_000,
+          ),
+          finished('work.completed', [], 5_000),
+        ]),
+      ).toEqual({ landed: false, since: null });
+      expect(
+        figure([
+          event(
+            'work.completed',
+            {
+              workItemId: 'wi',
+              output: { actions: [post('D0MANAGER')], applied: [row('wi:run-2:0')] },
+            },
+            6_000,
+          ),
+        ]),
+      ).toEqual({ landed: false, since: null });
+    });
   });
 
   it('splits the automatic rows into reads, messages to the manager and writes', (): void => {
