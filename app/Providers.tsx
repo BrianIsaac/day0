@@ -151,7 +151,7 @@ export interface SessionGateProps {
  * Once Convex has answered that nobody is signed in, the owned page is taken away and the gate
  * says so (`SignedOut`): a sign-out in another tab, or a token the deployment would not accept,
  * would otherwise leave the manager's rows, address and controls drawn under a header that says
- * "Sign in" (Fable review x1).
+ * "Sign in" (the second review's x1).
  */
 export function SessionGate({ children, fallback }: SessionGateProps) {
   if (DEV_NO_AUTH) return <>{children}</>;

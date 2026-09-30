@@ -111,7 +111,7 @@ describe('application providers', () => {
     expect(html).toBe('<p>held</p>');
   });
 
-  it('takes an owned page away once Convex settles with nobody signed in, and offers the way back (Fable x1)', async () => {
+  it('takes an owned page away once Convex settles with nobody signed in, and offers the way back (second review x1)', async () => {
     vi.stubEnv('NEXT_PUBLIC_DEV_NO_AUTH', undefined);
     recorded.clerkStatus = 'ready';
     const { SessionGate } = await import('../../app/Providers');

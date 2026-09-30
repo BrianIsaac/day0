@@ -257,7 +257,7 @@ describe('the employee page layout', () => {
     expect(container.textContent).not.toContain('This page did not load');
   });
 
-  it('takes the drawn page away when the manager signs out in another tab (Fable x1)', async () => {
+  it('takes the drawn page away when the manager signs out in another tab (second review x1)', async () => {
     const server = syncServer((path, signedIn) => {
       if (path === 'config:surfaceMode') return { value: { mode: 'mock' } };
       if (path !== 'agents:get') return undefined;

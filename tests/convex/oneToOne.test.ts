@@ -371,7 +371,7 @@ async function keptTurns(room: Room): Promise<string[]> {
 
 describe('the turn fence: a write lands only on the conversation it was composed against (review M1)', (): void => {
   for (const transition of ['restart', 'voice'] as const) {
-    it(`refuses the opening answer still in flight when the one-to-one is ${transition === 'restart' ? 'started again' : 'moved to a call'} (codex repro)`, async (): Promise<void> => {
+    it(`refuses the opening answer still in flight when the one-to-one is ${transition === 'restart' ? 'started again' : 'moved to a call'} (first review reproducer)`, async (): Promise<void> => {
       const room = await openRoom();
       const taken = await room.owner.mutation(api.oneToOne.takeTurn, {
         agentId: room.agentId,
@@ -389,7 +389,7 @@ describe('the turn fence: a write lands only on the conversation it was composed
     });
   }
 
-  it("refuses a stale window's reply after the one-to-one started again, and keeps the new opening (codex repro)", async (): Promise<void> => {
+  it("refuses a stale window's reply after the one-to-one started again, and keeps the new opening (first review reproducer)", async (): Promise<void> => {
     const room = await openRoom();
     await answer(room, null, 'opening-a', 0);
     await room.owner.mutation(api.voice.restart, { sessionId: room.sessionId });
@@ -408,7 +408,7 @@ describe('the turn fence: a write lands only on the conversation it was composed
     expect(await keptTurns(room)).toEqual(['employee:opening-b']);
   });
 
-  it("refuses a second window's reply to a question the conversation has moved past (Fable F1)", async (): Promise<void> => {
+  it("refuses a second window's reply to a question the conversation has moved past (second review F1)", async (): Promise<void> => {
     const room = await openRoom();
     await answer(room, null, 'q1', 0);
     // Window A answers question 1 and is asked question 2; window B still draws question 1.
@@ -426,7 +426,7 @@ describe('the turn fence: a write lands only on the conversation it was composed
     expect(await keptTurns(room)).toEqual(['employee:q1', 'manager:a1', 'employee:q2']);
   });
 
-  it('refuses every chat write on a session a call now holds (Fable F2)', async (): Promise<void> => {
+  it('refuses every chat write on a session a call now holds (second review F2)', async (): Promise<void> => {
     const room = await openRoom();
     await room.owner.mutation(api.voice.start, { agentId: room.agentId, mode: 'elevenlabs' });
     await expect(
@@ -487,7 +487,7 @@ describe('the turn fence: a write lands only on the conversation it was composed
     expect(await scheduledDrafts(room)).toBe(0);
   });
 
-  it('keeps a reply whose send failed before the one sent after it, and clears the draft of both (Fable M2)', async (): Promise<void> => {
+  it('keeps a reply whose send failed before the one sent after it, and clears the draft of both (second review M2)', async (): Promise<void> => {
     const room = await openRoom();
     await holdThrough(room, 1);
     await room.owner.mutation(api.oneToOne.keepReplyDraft, {
@@ -515,7 +515,7 @@ describe('the turn fence: a write lands only on the conversation it was composed
 });
 
 describe('the reply being typed, once a reply is kept by Ask again (review M3)', (): void => {
-  it('is cleared when Ask again delivers the failed send, so the reopened composer is empty (codex repro)', async (): Promise<void> => {
+  it('is cleared when Ask again delivers the failed send, so the reopened composer is empty (first review reproducer)', async (): Promise<void> => {
     const room = await openRoom();
     await answer(room, null, 'opening', 0);
     await room.owner.mutation(api.oneToOne.keepReplyDraft, {
@@ -559,7 +559,7 @@ describe('the reply being typed, once a reply is kept by Ask again (review M3)',
 });
 
 describe('the bounds a direct call is held to', (): void => {
-  it('keeps no more than 40 turns, the last answer included: 40 stays 40 (codex m1)', async (): Promise<void> => {
+  it('keeps no more than 40 turns, the last answer included: 40 stays 40 (first review m1)', async (): Promise<void> => {
     const room = await openRoom();
     const turns = Array.from({ length: 40 }, (_, index) => ({
       id: `t${index}`,
@@ -572,7 +572,7 @@ describe('the bounds a direct call is held to', (): void => {
     expect((await sessionOf(room)).turns).toHaveLength(40);
   });
 
-  it('refuses an answer under the id of a turn it already keeps (Fable m8)', async (): Promise<void> => {
+  it('refuses an answer under the id of a turn it already keeps (second review m8)', async (): Promise<void> => {
     const room = await openRoom();
     await holdThrough(room, 1);
     await room.owner.mutation(api.oneToOne.takeTurn, {
@@ -588,7 +588,7 @@ describe('the bounds a direct call is held to', (): void => {
     ]);
   });
 
-  it("bounds the manager's label kept for the draft (Fable m3)", async (): Promise<void> => {
+  it("bounds the manager's label kept for the draft (second review m3)", async (): Promise<void> => {
     vi.useFakeTimers();
     const room = await openRoom();
     await holdThrough(room, 1);
@@ -601,7 +601,7 @@ describe('the bounds a direct call is held to', (): void => {
   });
 
   for (const name of ['recordAnswer', 'finish', 'keepReplyDraft'] as const) {
-    it(`refuses anyone but the owner at ${name}, and writes nothing (Fable m9)`, async (): Promise<void> => {
+    it(`refuses anyone but the owner at ${name}, and writes nothing (second review m9)`, async (): Promise<void> => {
       const room = await openRoom();
       await holdThrough(room, 1);
       const stranger = room.harness.withIdentity({ subject: 'stranger' });

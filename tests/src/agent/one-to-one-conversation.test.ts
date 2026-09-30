@@ -246,7 +246,7 @@ describe('deciding a turn against the kept conversation', (): void => {
     });
   });
 
-  it('keeps a reply only while there is room for the answer it is owed (codex m1: 39, 40, 41)', (): void => {
+  it('keeps a reply only while there is room for the answer it is owed (first review m1: 39, 40, 41)', (): void => {
     const thirtySeven = answered(18);
     expect(thirtySeven).toHaveLength(37);
     const replied = decideTurn(thirtySeven, reply('e18', ['m18', 'Yes.']), 5);
@@ -398,7 +398,7 @@ describe('deciding an answer against the kept conversation', (): void => {
     });
   });
 
-  it('refuses an answer that would keep more than the bound: 40 kept stays 40 (codex m1)', (): void => {
+  it('refuses an answer that would keep more than the bound: 40 kept stays 40 (first review m1)', (): void => {
     const forty = [...answered(19), manager('m19', 'a')];
     expect(forty).toHaveLength(MAX_KEPT_TURNS);
     expect(
