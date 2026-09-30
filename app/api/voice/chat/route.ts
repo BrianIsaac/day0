@@ -9,7 +9,7 @@ import {
 import { ConvexError } from 'convex/values';
 import { z } from 'zod';
 import { api } from '@convex/_generated/api';
-import type { Id } from '@convex/_generated/dataModel';
+import type { Doc, Id } from '@convex/_generated/dataModel';
 import { establishConvexCaller } from '@/lib/convex-caller';
 import { crossOriginRefusal, readJsonBody } from '@/lib/json-request';
 import { errorMessage } from '@/lib/errors';
@@ -92,29 +92,28 @@ export async function POST(req: Request): Promise<Response> {
     turns: readonly OneToOneTurn[];
     answering: string | null;
   };
-  let employee: { readonly name: string } | null;
+  let employee: Doc<'agents'> | null;
   try {
-    [taken, employee] = await Promise.all([
-      client.mutation(api.oneToOne.takeTurn, {
-        agentId,
-        // The validator's arrays are mutable; the parsed request's are read-only.
-        request:
-          body.request.kind === 'open'
-            ? body.request
-            : { ...body.request, replies: [...body.request.replies] },
-      }),
-      // The employee speaks as itself: its name is read from its row, never taken from the room.
-      client.query(api.agents.get, { agentId }),
-    ]);
+    // The employee speaks as itself: its name is read from its row, never taken from the room,
+    // and read first, so a reply is kept only once the employee to answer it is known.
+    employee = await client.query(api.agents.get, { agentId });
+    if (employee === null) {
+      return Response.json({ error: 'this employee no longer exists' }, { status: 404 });
+    }
+    taken = await client.mutation(api.oneToOne.takeTurn, {
+      agentId,
+      // The validator's arrays are mutable; the parsed request's are read-only.
+      request:
+        body.request.kind === 'open'
+          ? body.request
+          : { ...body.request, replies: [...body.request.replies] },
+    });
   } catch (err: unknown) {
     if (err instanceof ConvexError) {
       return Response.json({ error: String(err.data) }, { status: 409 });
     }
     log.warn('one-to-one turn not taken', { reason: errorMessage(err) });
     return Response.json({ error: 'Day0 could not reach your one-to-one' }, { status: 503 });
-  }
-  if (employee === null) {
-    return Response.json({ error: 'this employee no longer exists' }, { status: 404 });
   }
   const system = dayOneSystemPrompt(employee.name);
 

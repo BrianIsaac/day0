@@ -346,22 +346,21 @@ describe('the Day-1 chat route', (): void => {
     expect(system).not.toContain('Day0');
     expect(system).not.toMatch(/why-this-hire|role-and-goals|open-questions/);
     expect(system).not.toContain('\u2014');
-    expect(session.calls.find((call) => call.name === 'agents:get')?.args).toEqual({
-      agentId: 'agent-1',
-    });
   });
 
-  it("answers 404 without asking the model when the employee's row is gone", async (): Promise<void> => {
+  it("answers 404 without keeping the reply or asking the model when the employee's row is gone", async (): Promise<void> => {
     const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
     session.employee = null;
 
-    const response = await POST(turnAfter(0));
+    const response = await POST(turnAfter(1));
 
     expect(response.status).toBe(404);
     expect(((await response.json()) as { error: string }).error).toBe(
       'this employee no longer exists',
     );
     expect(sent).toHaveLength(0);
+    // Nothing was taken for an employee that is gone: the session holds only what it held.
+    expect(session.turns.map((turn) => turn.id)).toEqual(['a1']);
   });
 
   it('answers 503 before any stream opens when no model is configured', async (): Promise<void> => {
