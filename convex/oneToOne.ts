@@ -65,6 +65,9 @@ function staleWrite(session: Doc<'voiceSessions'>, conversation: number): string
   return null;
 }
 
+/** The most characters of the manager's label kept for the draft: an address, or a name. */
+const BOSS_LABEL_MAX_CHARS = 320;
+
 /**
  * Start the draft from the kept conversation, in the transaction that ends it: the session is
  * claimed for the manager's side as the room's own post of the transcript claimed it
@@ -81,7 +84,8 @@ async function queueDraft(
   await ctx.db.patch(session._id, { turns: [...draft.turns], replyDraft: undefined });
   const claim = await claimSession(ctx, session, 'browser', {
     transcript: conversationTranscript(draft.turns),
-    bossLabel: draft.bossLabel,
+    // Fed to the charter prompt and kept on the row: a direct call is bounded as the route is.
+    bossLabel: draft.bossLabel.slice(0, BOSS_LABEL_MAX_CHARS),
   });
   // Only a session being held reaches here, and nothing else holds it: the claim is this one's.
   if (claim.outcome !== 'claimed') {

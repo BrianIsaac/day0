@@ -588,6 +588,18 @@ describe('the bounds a direct call is held to', (): void => {
     ]);
   });
 
+  it("bounds the manager's label kept for the draft (Fable m3)", async (): Promise<void> => {
+    vi.useFakeTimers();
+    const room = await openRoom();
+    await holdThrough(room, 1);
+    await room.owner.mutation(api.oneToOne.finish, {
+      sessionId: room.sessionId,
+      conversation: 0,
+      bossLabel: 'x'.repeat(500_000),
+    });
+    expect((await sessionOf(room)).pendingBossLabel?.length).toBeLessThanOrEqual(320);
+  });
+
   for (const name of ['recordAnswer', 'finish', 'keepReplyDraft'] as const) {
     it(`refuses anyone but the owner at ${name}, and writes nothing (Fable m9)`, async (): Promise<void> => {
       const room = await openRoom();
