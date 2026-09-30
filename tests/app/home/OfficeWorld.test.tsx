@@ -256,6 +256,41 @@ describe('OfficeWorld', (): void => {
     }
   });
 
+  it('draws no desk of the first ten over the lounge table, in an 886 by 560 px office (review A-M1 follow-up)', (): void => {
+    const size: Record<string, { width: number; height: number }> = {
+      wide: { width: 88, height: 54 },
+      compact: { width: 66, height: 50 },
+      console: { width: 56, height: 60 },
+    };
+    const ten = Array.from(
+      { length: 10 },
+      (_, index) => ({ ...idle, agentId: `idle-${index}`, name: `Idle ${index}` }) as RosterRow,
+    );
+    const html = renderToStaticMarkup(<OfficeWorld agents={ten} settled />);
+    const table =
+      /class="day0-pixel-decor day0-pixel-table [^"]*" style="left:([\d.]+)%;top:([\d.]+)%/g;
+    const tables = [...html.matchAll(table)].map((match) => ({
+      x: (Number(match[1]) / 100) * 886,
+      y: (Number(match[2]) / 100) * 560,
+    }));
+    const lounge = tables.find((spot) => spot.y > 0.8 * 560);
+    expect(lounge).toBeDefined();
+    const desks = [
+      ...html.matchAll(
+        /class="day0-pixel-desk day0-pixel-desk-(\w+) [^"]*" style="--x:([\d.]+);--y:([\d.]+);/g,
+      ),
+    ];
+    expect(desks).toHaveLength(10);
+    for (const [, variant, x, y] of desks) {
+      const box = size[variant ?? ''];
+      expect(box).toBeDefined();
+      const dx = Math.abs((Number(x) / 100) * 886 - lounge!.x);
+      const dy = Math.abs((Number(y) / 100) * 560 - lounge!.y);
+      const apart = dx >= (box!.width + 62) / 2 || dy >= (box!.height + 42) / 2;
+      expect(apart, `desk at ${x},${y}`).toBe(true);
+    }
+  });
+
   it('stands ten employees clear of each other whichever six of them are in their one-to-ones (review A-M1)', (): void => {
     const sixOfTen = (mask: number): boolean =>
       mask

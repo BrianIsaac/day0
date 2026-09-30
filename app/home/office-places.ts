@@ -6,10 +6,11 @@ export interface OfficePoint {
 
 /**
  * The spots an employee not at a desk stands at, in the corridors and the rooms' open floor: ten,
- * every two clear of each other by a figure's span (`FIGURE_SPAN`), none over one of the eight
- * desks always drawn, their chairs or the décor, and every figure inside the office's frame, so
- * ten idle employees stand apart at a desktop width (the second review's x9: at most five of the
- * earlier ten were clear of each other).
+ * every two clear of each other by a figure's span (`FIGURE_SPAN`), none over the décor, and every
+ * figure inside the office's frame, so ten idle employees stand apart at a desktop width (the
+ * second review's x9: at most five of the earlier ten were clear of each other). They were placed
+ * off the desks drawn before the seats were re-ranked (the wave 8 review's A-M1); a spot a drawn
+ * desk or chair now covers is set aside by `desktopPlan`, and the floor stands the rest.
  */
 export const OFFICE_IDLE_SPOTS: readonly OfficePoint[] = [
   { x: 41, y: 16 },

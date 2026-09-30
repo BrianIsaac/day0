@@ -43,7 +43,8 @@ const OFFICE_DECOR = [
   { kind: 'console', x: 52, y: 18 },
   { kind: 'console', x: 52, y: 83 },
   { kind: 'table', x: 77, y: 53 },
-  { kind: 'table', x: 18, y: 84 },
+  // Between the lounge's two desks, clear of both: the first is drawn from the ninth employee.
+  { kind: 'table', x: 20.5, y: 84 },
 ] as const;
 
 const OFFICE_SIGNALS = [
