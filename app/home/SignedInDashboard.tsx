@@ -93,11 +93,9 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
       <RetiredNotice />
 
       <div className="grid grid-cols-[minmax(0,1fr)] gap-6 xl:grid-cols-[minmax(0,1fr)_20rem] xl:items-start">
-        {/* Below xl the column's cards join the page's one column, so Reset can follow the aside:
-            a manager on a phone reads what Deploy does before the card that wipes (walk m17). */}
         <div
           data-cards={arriving ? '' : undefined}
-          className="contents xl:flex xl:min-w-0 xl:flex-col xl:gap-6"
+          className="flex min-w-0 flex-col gap-6 xl:col-start-1 xl:row-start-1"
         >
           {showDeployForm ? (
             <DeployForm
@@ -128,17 +126,23 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
             <MonthCard roster={roster} figures={figures} waiting={inbox?.total ?? 0} now={now} />
           ) : null}
           <CompanySupervision />
-          <div className="order-1 min-w-0 xl:order-none">
-            <ResetCard
-              hasEmployees={(agents?.length ?? 0) > 0}
-              hasDocumentation={(docSources?.length ?? 0) > 0}
-            />
-          </div>
         </div>
-        <aside className="flex flex-col gap-6">
+        <aside className="flex flex-col gap-6 xl:col-start-2 xl:row-span-2 xl:row-start-1">
           {showDeployForm ? <AfterDeploy /> : null}
           <DocumentationCard sources={docSources?.length} />
         </aside>
+        {/* After the aside in the page's order, so on a phone, and for the keyboard and a screen
+            reader at any width, what Deploy does comes before the card that wipes (walk m17); at
+            xl it sits under the main column. */}
+        <div
+          data-cards={arriving ? '' : undefined}
+          className="min-w-0 xl:col-start-1 xl:row-start-2"
+        >
+          <ResetCard
+            hasEmployees={(agents?.length ?? 0) > 0}
+            hasDocumentation={(docSources?.length ?? 0) > 0}
+          />
+        </div>
       </div>
     </div>
   );

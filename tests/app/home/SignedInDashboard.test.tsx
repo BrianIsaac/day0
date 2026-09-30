@@ -436,21 +436,22 @@ describe('the company home', (): void => {
   it('arrives the main column’s cards with the page and leaves the aside still (v4 section 1.3)', (): void => {
     const page = render(roster);
     expect(page).toMatch(
-      /<div data-cards="" class="contents xl:flex xl:min-w-0 xl:flex-col xl:gap-6"><section/,
+      /<div data-cards="" class="flex min-w-0 flex-col gap-6 xl:col-start-1 xl:row-start-1"><section/,
     );
-    expect(page.match(/data-cards=""/g)).toHaveLength(1);
-    expect(page).toMatch(/<aside class="flex flex-col gap-6">/);
+    // Re-pinned (walk m17): the main column's cards, then Reset under it.
+    expect(page.match(/data-cards=""/g)).toHaveLength(2);
+    expect(page).toMatch(/<aside class="flex flex-col gap-6[^"]*">/);
   });
 
-  it('puts the aside before Reset in the one column below xl, and Reset under the main column at xl (walk m17)', (): void => {
+  it('puts the aside before Reset in the page order, and Reset under the main column at xl (walk m17)', (): void => {
     const page = render(roster);
-    // Below xl the main column's cards are items of the page's one column, so an order moves Reset
-    // after the aside; at xl the column is a column again and Reset its last card.
-    expect(page).toMatch(/<div data-cards="" class="contents xl:flex /);
+    // The page order is the reading, keyboard and phone order alike (second pass M2).
+    expect(page.indexOf('<aside')).toBeLessThan(page.indexOf('Reset demo'));
+    expect(page).toMatch(/<aside class="[^"]*xl:col-start-2 xl:row-span-2 xl:row-start-1"/);
     expect(page).toMatch(
-      /<div class="order-1 min-w-0 xl:order-none"><section[^>]*>(?:(?!<\/section>).)*Reset demo/s,
+      /<div data-cards="" class="min-w-0 xl:col-start-1 xl:row-start-2"><section[^>]*>(?:(?!<\/section>).)*Reset demo/s,
     );
-    expect(page.indexOf('Reset demo')).toBeLessThan(page.indexOf('<aside'));
+    expect(page).not.toMatch(/\bcontents\b|\border-1\b/);
   });
 
   it('keeps the hosted one-employee home under a snapshot', (): void => {
