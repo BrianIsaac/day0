@@ -51,10 +51,44 @@ export function Providers({ children }: { children: ReactNode }) {
 
   return (
     <ClerkProvider>
-      <ConvexProviderWithClerk client={client} useAuth={useSettledClerkAuth}>
-        {children}
-      </ConvexProviderWithClerk>
+      <ClerkConvexProvider client={client}>{children}</ClerkConvexProvider>
     </ClerkProvider>
+  );
+}
+
+/** The session the page last held, and how many times it has since changed to another. */
+interface SessionEpoch {
+  readonly last: string | null;
+  readonly changes: number;
+}
+
+/**
+ * Convex on Clerk's settled answer (`useSettledClerkAuth`), started afresh when the signed-in
+ * session changes to another.
+ *
+ * Holding Clerk's answer through a re-resolve also holds it through a switch from one session to
+ * another, where Clerk answers "not loaded" between the two: Convex would keep the first
+ * session's token until it next renewed it, under a page drawing the second (second pass M4). So
+ * a new session after an earlier one keys the provider anew, which clears the token and fetches
+ * the new session's; the first session of a visit and a sign-out change nothing here.
+ */
+function ClerkConvexProvider({
+  client,
+  children,
+}: {
+  readonly client: ConvexReactClient;
+  readonly children: ReactNode;
+}) {
+  const { sessionId } = useAuth();
+  const [epoch, setEpoch] = useState<SessionEpoch>({ last: null, changes: 0 });
+  // Kept from the previous render in state, as React's docs set out.
+  if (sessionId && sessionId !== epoch.last) {
+    setEpoch({ last: sessionId, changes: epoch.last === null ? epoch.changes : epoch.changes + 1 });
+  }
+  return (
+    <ConvexProviderWithClerk key={epoch.changes} client={client} useAuth={useSettledClerkAuth}>
+      {children}
+    </ConvexProviderWithClerk>
   );
 }
 

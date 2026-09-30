@@ -15,6 +15,7 @@ const clerk = vi.hoisted(() => {
   interface ClerkAuth {
     readonly isLoaded: boolean;
     readonly isSignedIn?: boolean;
+    readonly sessionId?: string;
     readonly getToken: () => Promise<string>;
   }
   const listeners = new Set<() => void>();
@@ -208,5 +209,50 @@ describe('the employee page layout', () => {
         (message) => message.type === 'Authenticate' && message.tokenType === 'None',
       ),
     ).toEqual([]);
+  });
+
+  it('takes the new session’s token when the signed-in session changes to another (second pass M4)', async () => {
+    const server = syncServer((path, signedIn) => {
+      if (path === 'config:surfaceMode') return { value: { mode: 'mock' } };
+      if (path !== 'agents:get') return undefined;
+      return signedIn ? { value: EMPLOYEE_ROW } : { error: 'not authenticated' };
+    });
+    vi.stubGlobal('WebSocket', server.Socket);
+    vi.stubEnv('NEXT_PUBLIC_CONVEX_URL', 'https://session-switch-test.convex.cloud');
+    vi.stubEnv('NEXT_PUBLIC_DEV_NO_AUTH', undefined);
+    const { Providers } = await import('../../../../app/Providers');
+    const { default: Layout } = await import('../../../../app/agent/[agentId]/layout');
+    const page = await Layout({
+      children: <p>tab</p>,
+      params: Promise.resolve({ agentId: EMPLOYEE_ROW._id }),
+    });
+    const signedIn = (sessionId: string) => ({
+      isLoaded: true,
+      isSignedIn: true,
+      sessionId,
+      getToken: clerk.getToken,
+    });
+    act((): void => clerk.answer(signedIn('sess_a')));
+    const { container } = mount(
+      <Providers>
+        <Boundary>{page}</Boundary>
+      </Providers>,
+    );
+    await exchange();
+    const authenticated = (): number =>
+      server.sent.filter(
+        (message) => message.type === 'Authenticate' && message.tokenType === 'User',
+      ).length;
+    const before = authenticated();
+    expect(before).toBeGreaterThan(0);
+
+    // Clerk moves the page to another session, answering "not loaded" between the two.
+    act((): void => clerk.answer({ isLoaded: false, getToken: clerk.getToken }));
+    act((): void => clerk.answer(signedIn('sess_b')));
+    await exchange();
+
+    expect(authenticated()).toBeGreaterThan(before);
+    expect(container.querySelector('nav[aria-label="Breadcrumb"]')?.textContent).toContain('Mira');
+    expect(container.textContent).not.toContain('This page did not load');
   });
 });
