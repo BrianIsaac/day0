@@ -111,7 +111,9 @@ export function frameworkRefusal(io: CloudIo, target: CloudTarget): Failure | un
         '.vercel/project.json does not name the linked project, so its framework preset cannot be read; run `vercel link` here.',
     };
   }
-  const inspected = io.run('vercel', vercelArgs(target, ['project', 'inspect', name]), {
+  // Named by the link rather than by name, so the link's own team is asked whichever team the
+  // CLI has selected.
+  const inspected = io.run('vercel', vercelArgs(target, ['project', 'inspect']), {
     timeoutMs: 120_000,
   });
   const preset =
@@ -120,7 +122,7 @@ export function frameworkRefusal(io: CloudIo, target: CloudTarget): Failure | un
       : undefined;
   if (preset === undefined) {
     return {
-      failure: `\`vercel project inspect ${name}\` named no framework preset (exit ${inspected.status ?? 'unknown'}: ${firstLine(inspected.stderr) || firstLine(inspected.stdout)}).`,
+      failure: `\`vercel project inspect\` named no framework preset for ${name} (exit ${inspected.status ?? 'unknown'}: ${firstLine(inspected.stderr) || firstLine(inspected.stdout)}).`,
     };
   }
   if (preset === NEXT_PRESET) return undefined;
@@ -169,6 +171,9 @@ export const CLERK_APP_KEYS: readonly string[] = [
 
 /** The user agent the public read-backs send, so the host's logs say what asked. */
 const READ_BACK_AGENT = 'Mozilla/5.0 (compatible; day0-setup-cloud read-back)';
+
+/** The status a host answers for an address that serves nothing. */
+const NOT_FOUND = 404;
 
 /** A page that did not answer 200: why, and the HTTP status when the host answered at all. */
 export interface PageFailure extends Failure {
@@ -224,9 +229,10 @@ export function appTalksTo(
 
 /**
  * Whether the app is on the deployment already, for a setup deciding whether
- * it may finish: a home that answers an HTTP error serves no app, so the app
- * is not on it (a first build that stopped part way leaves exactly that),
- * while an address that answers nothing at all cannot be told and is a failure.
+ * it may finish: a home that answers not found serves no app, so the app is
+ * not on it (a first build that stopped part way, or none yet, leaves exactly
+ * that), while any other failure (an outage, a protected page, no answer at
+ * all) cannot be told and is a failure.
  *
  * @param io - The machine.
  * @param appUrl - The app's production address.
@@ -238,7 +244,7 @@ export function appOnDeployment(
   deployment: string,
 ): { readonly on: boolean } | Failure {
   const home = fetchPage(io, `${appUrl}/`);
-  if ('failure' in home) return home.answered === undefined ? home : { on: false };
+  if ('failure' in home) return home.answered === NOT_FOUND ? { on: false } : home;
   const talks = homeTalksTo(io, appUrl, home.body, deployment);
   return 'failure' in talks ? talks : { on: talks.talks };
 }

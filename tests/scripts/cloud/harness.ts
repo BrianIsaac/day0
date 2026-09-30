@@ -314,16 +314,18 @@ export function cloud(
       return ok('', `Updated Environment Variable ${name}\n`);
     }
     if (args[0] === 'project' && args[1] === 'inspect') {
-      if (args[2] !== 'day0') return fail(`Error: Project not found (${args[2] ?? 'no name'})`);
+      // With no name the CLI inspects the project the checkout is linked to.
+      const named = args[2]?.startsWith('--') === false ? args[2] : 'day0';
+      if (named !== 'day0') return fail(`Error: Project not found (${named})`);
       return ok(
         '',
         [
-          `> Found Project example-team/${args[2]} [312ms]`,
+          `> Found Project example-team/${named} [312ms]`,
           '',
           '  General',
           '',
           '    ID\t\t\t\tprj_x',
-          `    Name\t\t\t${args[2]}`,
+          `    Name\t\t\t${named}`,
           '',
           '  Framework Settings',
           '',

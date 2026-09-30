@@ -425,6 +425,82 @@ describe('cloud setup, the first push', (): void => {
     expect(writes(c)).toEqual([]);
   });
 
+  it('finishes a stamped setup whose address has never served a build, as a stop before the first deploy leaves it', async (): Promise<void> => {
+    const c = cloud({
+      ...empty(),
+      tables: ['agents', 'deploymentVersions', 'migrations'],
+      stamp: { release: '0.4.0', commit: COMMIT },
+      env: new Map([['CLERK_JWT_ISSUER_DOMAIN', 'https://example.clerk.accounts.dev']]),
+      served: undefined,
+    });
+    expect(
+      await runCloudSetup(
+        verb(c, { verb: 'setup', envFile: settingsFile(c, SETTINGS), dryRun: true }),
+        c.io,
+      ),
+    ).toBe(0);
+    expect(printed(c)).toContain('finishing a first setup that stopped after its stamp.');
+    expect(printed(c)).toContain('  vercel --prod --yes\n');
+    expect(writes(c)).toEqual([]);
+  });
+
+  it('refuses a stamped setup whose address answers an error other than not found, since then it cannot tell', async (): Promise<void> => {
+    const c = cloud({
+      stamp: { release: '0.4.0', commit: COMMIT },
+      served: { id: 'dpl_Live1', talksTo: DEPLOYMENT, release: '0.4.0' },
+      failing: [{ match: `%{http_code} ${APP_URL}/`, status: 0, stderr: '', stdout: '\n503' }],
+    });
+    expect(
+      await runCloudSetup(
+        verb(c, { verb: 'setup', envFile: settingsFile(c, SETTINGS), dryRun: true }),
+        c.io,
+      ),
+    ).toBe(1);
+    expect(printed(c)).toContain(
+      `whether the app is on brisk-heron-417 already could not be read (${APP_URL}/ answered 503).`,
+    );
+    expect(writes(c)).toEqual([]);
+  });
+
+  it('refuses a stamped deployment with --app none, whose setup ends at the stamp and so has finished', async (): Promise<void> => {
+    const c = cloud({ stamp: { release: '0.4.0', commit: COMMIT } });
+    expect(
+      await runCloudSetup(
+        verb(c, { verb: 'setup', envFile: settingsFile(c, SETTINGS), app: 'none' }),
+        c.io,
+      ),
+    ).toBe(1);
+    expect(printed(c)).toContain(
+      'brisk-heron-417 is stamped v0.4.0 already, and a setup with --app none ends at its stamp, so it has finished:',
+    );
+    expect(writes(c)).toEqual([]);
+  });
+
+  it('names the address and the team it was given in the upgrade it points to', async (): Promise<void> => {
+    const c = cloud(
+      {
+        stamp: { release: '0.4.0', commit: COMMIT },
+        served: { id: 'dpl_Live1', talksTo: DEPLOYMENT, release: '0.4.0' },
+      },
+      { targetText: `CONVEX_DEPLOYMENT=prod:${DEPLOYMENT}\n` },
+    );
+    expect(
+      await runCloudSetup(
+        verb(c, {
+          verb: 'setup',
+          envFile: settingsFile(c, SETTINGS),
+          dryRun: true,
+          appUrl: APP_URL,
+          scope: 'example-team',
+        }),
+        c.io,
+      ),
+    ).toBe(1);
+    expect(printed(c)).toContain(
+      `\`./setup.sh cloud upgrade --target ${c.target} --app-url ${APP_URL} --scope example-team\`.`,
+    );
+  });
+
   it('leaves unstamped rows from before the migrations table to the upgrade', async (): Promise<void> => {
     const c = cloud({ ...empty(), tables: ['agents'] });
     expect(
@@ -495,7 +571,7 @@ describe('cloud setup, the first push', (): void => {
         "the Vercel project day0 has the framework preset Other, so Vercel would build the app and serve none of its pages: set the project's Framework Preset to Next.js",
       );
       expect(writes(c)).toEqual([]);
-      expect(ran(c)).toContain('vercel project inspect day0');
+      expect(ran(c)).toContain('vercel project inspect');
     }
   });
 
@@ -512,7 +588,7 @@ describe('cloud setup, the first push', (): void => {
         c.io,
       ),
     ).toBe(0);
-    expect(ran(c)).toContain('vercel project inspect day0 --scope example-team');
+    expect(ran(c)).toContain('vercel project inspect --scope example-team');
   });
 
   it('refuses while Vercel holds no Clerk keys, since the app could not sign anyone in', async (): Promise<void> => {

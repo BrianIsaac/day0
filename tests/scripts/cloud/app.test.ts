@@ -61,10 +61,24 @@ describe('appOnDeployment', (): void => {
     expect(appOnDeployment(cloud().io, APP_URL, DEV_DEPLOYMENT)).toEqual({ on: false });
   });
 
-  it('reads a home that answers an HTTP error as no app on it', (): void => {
+  it('reads a home that answers not found as no app on it', (): void => {
     expect(appOnDeployment(cloud({ served: undefined }).io, APP_URL, DEPLOYMENT)).toEqual({
       on: false,
     });
+  });
+
+  it('fails on an HTTP error other than not found, an outage or a protected page, since then it cannot be told', (): void => {
+    for (const code of ['503', '401']) {
+      const c = cloud({
+        failing: [
+          { match: `%{http_code} ${APP_URL}/`, status: 0, stdout: `\n${code}`, stderr: '' },
+        ],
+      });
+      expect(appOnDeployment(c.io, APP_URL, DEPLOYMENT)).toEqual({
+        failure: `${APP_URL}/ answered ${code}`,
+        answered: Number(code),
+      });
+    }
   });
 
   it('fails when nothing answers, since then it cannot be told', (): void => {
@@ -102,7 +116,7 @@ describe('frameworkRefusal', (): void => {
       failing: [{ match: 'vercel project inspect', status: 1, stderr: 'Error: Not authorized' }],
     });
     expect(frameworkRefusal(unreadable.io, targetOf(unreadable))?.failure).toBe(
-      '`vercel project inspect day0` named no framework preset (exit 1: Error: Not authorized).',
+      '`vercel project inspect` named no framework preset for day0 (exit 1: Error: Not authorized).',
     );
   });
 });
