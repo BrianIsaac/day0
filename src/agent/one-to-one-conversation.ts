@@ -176,17 +176,38 @@ export function answerFailure(ending: AnswerEnding): string | null {
 /**
  * The most turns one conversation keeps, the employee's answer to the last reply included:
  * twenty exchanges, three times the seven questions. A reply is kept only while there is room for
- * the answer it is owed. With the bounds below, the turns, the transcript drafted from them and
- * the drafted answers stay well inside a session row's size. A one-to-one that reaches it is
- * finished from what was said.
+ * the answer it is owed. A one-to-one that reaches it is finished from what was said.
  */
 export const MAX_KEPT_TURNS = 40;
+
+/**
+ * The most bytes one conversation's words may take, as UTF-8 (`keptBytes`). The character bounds
+ * below count UTF-16 units and Convex bounds a row in bytes: at those bounds a conversation in a
+ * script of three bytes a character would be about 750 KB, and the transcript the draft is taken
+ * from copies it onto the same session row (the second review's m4). Half of 1 MiB leaves the
+ * row room for that copy; a reply is kept only while the answer it is owed still fits.
+ */
+export const MAX_KEPT_BYTES = 480_000;
 
 /** The longest id a kept turn may carry: the room's and the route's ids are 36 characters. */
 export const TURN_ID_MAX_CHARS = 128;
 
 /** The most characters an employee turn may keep: its 2,000-token output budget and some. */
 export const ANSWER_MAX_CHARS = 8000;
+
+/** The most bytes one employee answer may take: its text and its closing line, as UTF-8. */
+const ANSWER_MAX_BYTES = 2 * 3 * ANSWER_MAX_CHARS;
+
+const utf8 = new TextEncoder();
+
+/** How many bytes a conversation's words take, as UTF-8: what bounds a Convex row. */
+export function keptBytes(turns: readonly Pick<OneToOneTurn, 'text' | 'closingLine'>[]): number {
+  return turns.reduce(
+    (total, turn) =>
+      total + utf8.encode(turn.text).length + utf8.encode(turn.closingLine ?? '').length,
+    0,
+  );
+}
 
 /** A reply the room sent: the id it drew it under and the words. */
 export interface SentReply {
@@ -283,8 +304,10 @@ function withReplies(
     if (kept.some((turn: OneToOneTurn): boolean => turn.id === reply.id)) return MOVED_ON;
     kept.push({ id: reply.id, speaker: 'manager', text: reply.text.trim(), at: now });
   }
-  // The answer these replies are owed is a turn too.
-  if (kept.length + 1 > MAX_KEPT_TURNS) return { ok: false, refusal: TURN_BOUND_REFUSAL };
+  // The answer these replies are owed is a turn too, with its words.
+  if (kept.length + 1 > MAX_KEPT_TURNS || keptBytes(kept) + ANSWER_MAX_BYTES > MAX_KEPT_BYTES) {
+    return { ok: false, refusal: TURN_BOUND_REFUSAL };
+  }
   return { ok: true, turns: kept, answering: kept[kept.length - 1].id, replied: true };
 }
 
