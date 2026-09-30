@@ -109,8 +109,10 @@ describe('the charter as one document', (): void => {
     );
     expect(html).toMatch(/<li>Edit Salesforce records\.<\/li>/);
     expect(html).toMatch(/<s[^>]*>Own forecasting work assigned to Aman\.<\/s> struck by you/);
+    // Walk m20: an answered question carries a check and its answer, never the struck rule's mark.
+    expect(html).not.toMatch(/<s[^>]*>What topic Sara/);
     expect(html).toMatch(
-      /<s[^>]*>What topic Sara should be contacted about\.<\/s> <span[^>]*>answered by you at [^<]*14:38[^<]*:<\/span> Ad-hoc asks and the on-call rota\./,
+      /<li class="relative list-none"><svg aria-hidden="true"[^>]*>.*?<\/svg>What topic Sara should be contacted about\.<span[^>]*>answered by you at [^<]*14:38[^<]*: <span[^>]*>Ad-hoc asks and the on-call rota\.<\/span><\/span><\/li>/,
     );
     expect(html).toContain('<li>Whether dbt PR access is needed.</li>');
   });
