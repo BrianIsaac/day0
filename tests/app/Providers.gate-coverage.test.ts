@@ -23,8 +23,15 @@ const ROUTE_FILES = new Set([
   'default.tsx',
 ]);
 
-/** The Convex hooks that ask the deployment for a function by reference. */
-const DATA_HOOKS = ['useQuery', 'usePaginatedQuery', 'useMutation', 'useAction'] as const;
+/** The Convex hooks that ask the deployment for a function, by reference or through the client. */
+const DATA_HOOKS = [
+  'useQuery',
+  'useQueries',
+  'usePaginatedQuery',
+  'useMutation',
+  'useAction',
+  'useConvex',
+] as const;
 
 /** Functions a page may ask for before the gate opens, each with why it reads no identity. */
 const PUBLIC_FUNCTIONS: ReadonlyMap<string, string> = new Map([
@@ -32,7 +39,7 @@ const PUBLIC_FUNCTIONS: ReadonlyMap<string, string> = new Map([
 ]);
 
 /** Where the walk reads its files: the tree, or a test's own set. */
-export interface SourceTree {
+interface SourceTree {
   read(path: string): string | undefined;
   files(): readonly string[];
 }
@@ -84,20 +91,30 @@ function localNames(clause: string): string[] {
 
 function importsOf(tree: SourceTree, file: string, text: string): ImportEdge[] {
   const edges: ImportEdge[] = [];
+  const add = (spec: string, locals: readonly string[]): void => {
+    const target = resolveImport(tree, file, spec);
+    if (target) edges.push({ target, locals });
+  };
   for (const match of text.matchAll(/^import\s+(type\s+)?([^'";]*?)\s*from\s*['"]([^'"]+)['"]/gm)) {
-    if (match[1]) continue;
-    const target = resolveImport(tree, file, match[3]);
-    if (target) edges.push({ target, locals: localNames(match[2]) });
+    if (!match[1]) add(match[3], localNames(match[2]));
   }
-  for (const match of text.matchAll(/^import\s+['"]([^'"]+)['"]/gm)) {
-    const target = resolveImport(tree, file, match[1]);
-    if (target) edges.push({ target, locals: [] });
+  for (const match of text.matchAll(/^import\s+['"]([^'"]+)['"]/gm)) add(match[1], []);
+  // A module handed on (`export { X } from`, `export * from`) is reached with its re-exporter.
+  for (const match of text.matchAll(
+    /^export\s+(type\s+)?(?:\*|\{[^}]*\})\s*from\s*['"]([^'"]+)['"]/gm,
+  )) {
+    if (!match[1]) add(match[2], []);
   }
+  const named = new Set<string>();
   for (const match of text.matchAll(
     /const\s+(\w+)\s*=\s*dynamic\(\s*\(\)\s*=>\s*import\(\s*['"]([^'"]+)['"]\s*\)/g,
   )) {
-    const target = resolveImport(tree, file, match[2]);
-    if (target) edges.push({ target, locals: [match[1]] });
+    named.add(match[2]);
+    add(match[2], [match[1]]);
+  }
+  // Any other `import()` (a `lazy`, a load on demand) reaches its module whatever renders it.
+  for (const match of text.matchAll(/\bimport\(\s*['"]([^'"]+)['"]\s*\)/g)) {
+    if (!named.has(match[1])) add(match[1], []);
   }
   return edges;
 }
@@ -152,8 +169,10 @@ function isLeaf(text: string, name: string): boolean {
 
 function ownedRefsOf(text: string): string[] {
   const hooks = /import\s*\{([^}]*)\}\s*from\s*['"]convex\/react['"]/.exec(text)?.[1] ?? '';
+  // A namespace import reaches every hook the module has.
+  const everything = /import\s*\*\s*as\s+\w+\s+from\s*['"]convex\/react['"]/.test(text);
   const imported = DATA_HOOKS.filter((hook) => new RegExp(`\\b${hook}\\b`).test(hooks));
-  if (imported.length === 0) return [];
+  if (imported.length === 0 && !everything) return [];
   const refs = [...text.matchAll(/\bapi\.(\w+)\.(\w+)/g)].map((match) => `${match[1]}.${match[2]}`);
   // A data hook with no function named in the file asks for one handed in: unknown, so owned.
   if (refs.length === 0) return ['<a function handed in>'];
@@ -161,7 +180,7 @@ function ownedRefsOf(text: string): string[] {
 }
 
 /** Walk from every route file along ungated imports and report each owned hook reached. */
-export function ungatedOwnedHooks(tree: SourceTree): {
+function ungatedOwnedHooks(tree: SourceTree): {
   findings: Finding[];
   gatedFiles: string[];
 } {
@@ -240,7 +259,7 @@ describe('the owned pages behind the session gate', (): void => {
     ]);
   });
 
-  it('finds an owned hook on a route with no gate, and not one behind a gate, below a gated layout or in a fallback leaf', (): void => {
+  it('finds an owned hook on a route with no gate, however it is imported, and not one behind a gate, below a gated layout or in a fallback leaf', (): void => {
     const shell = [
       "import { useQuery } from 'convex/react';",
       "import { api } from '@convex/_generated/api';",
@@ -275,6 +294,31 @@ describe('the owned pages behind the session gate', (): void => {
         '',
       ].join('\n'),
       'app/gate.tsx': 'export function SessionGate() {\n  return null;\n}\n',
+      'app/many.tsx': [
+        "import { useQueries } from 'convex/react';",
+        "import { api } from '@convex/_generated/api';",
+        'export function Many() {',
+        '  return useQueries({ a: { query: api.work.needsYou, args: {} } });',
+        '}',
+        '',
+      ].join('\n'),
+      'app/every.tsx': [
+        "import * as convex from 'convex/react';",
+        "import { api } from '@convex/_generated/api';",
+        'export function Every() {',
+        '  return convex.useQuery(api.metrics.forOwner, {});',
+        '}',
+        '',
+      ].join('\n'),
+      'app/handed-on.ts': "export { Many } from './many';\n",
+      'app/queries/page.tsx': [
+        "import { Many } from '../handed-on';",
+        "import { Every } from '../every';",
+        'export default function Page() {',
+        '  return (<><Many /><Every /></>);',
+        '}',
+        '',
+      ].join('\n'),
       'app/room/layout.tsx': [
         "import { SessionGate } from '../gate';",
         'export default function Layout({ children }) {',
@@ -291,9 +335,18 @@ describe('the owned pages behind the session gate', (): void => {
       ].join('\n'),
     });
     const { findings, gatedFiles } = ungatedOwnedHooks(tree);
-    expect(findings).toEqual([
-      { file: 'app/shell.tsx', functionRef: 'agents.get', via: ['app/open/page.tsx'] },
-    ]);
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        { file: 'app/shell.tsx', functionRef: 'agents.get', via: ['app/open/page.tsx'] },
+        {
+          file: 'app/many.tsx',
+          functionRef: 'work.needsYou',
+          via: ['app/queries/page.tsx', 'app/handed-on.ts'],
+        },
+        { file: 'app/every.tsx', functionRef: 'metrics.forOwner', via: ['app/queries/page.tsx'] },
+      ]),
+    );
+    expect(findings).toHaveLength(3);
     expect(gatedFiles).toEqual(['app/held/page.tsx', 'app/room/layout.tsx']);
   });
 });
