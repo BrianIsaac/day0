@@ -58,6 +58,11 @@ vi.mock('@clerk/nextjs', async () => {
   };
 });
 
+// The server's read of the manager: signed in, with a Convex token (the title's seam).
+vi.mock('@clerk/nextjs/server', () => ({
+  auth: async () => ({ userId: 'user_1', getToken: async (): Promise<string> => 'token-1' }),
+}));
+
 vi.mock('next/navigation', () => ({
   useSelectedLayoutSegment: (): null => null,
   useRouter: () => ({ replace: (): void => undefined }),
@@ -149,6 +154,37 @@ describe('the employee page layout', () => {
     };
     // The page itself takes the layout's default, "<name> · Needs you · Day0".
     expect(root.metadata).toBeUndefined();
+  });
+
+  it('titles the tab by the employee the route names, read as the manager on the server (second review x8)', async () => {
+    vi.stubEnv('NEXT_PUBLIC_CONVEX_URL', 'https://title-test.convex.cloud');
+    vi.stubEnv('NEXT_PUBLIC_DEV_NO_AUTH', undefined);
+    const asked: Array<{ url: string; path: unknown; args: unknown; auth: string | null }> = [];
+    vi.stubGlobal('fetch', async (url: string, init: RequestInit): Promise<Response> => {
+      const body = JSON.parse(String(init.body)) as { path: unknown; args: unknown[] };
+      asked.push({
+        url,
+        path: body.path,
+        args: body.args[0],
+        auth: new Headers(init.headers).get('Authorization'),
+      });
+      return new Response(JSON.stringify({ status: 'success', value: EMPLOYEE_ROW }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    const { generateMetadata } = await import('../../../../app/agent/[agentId]/layout');
+    expect(
+      await generateMetadata({ params: Promise.resolve({ agentId: EMPLOYEE_ROW._id }) }),
+    ).toEqual({ title: { default: 'Mira · Needs you · Day0', template: 'Mira · %s · Day0' } });
+    expect(asked).toEqual([
+      {
+        url: 'https://title-test.convex.cloud/api/query',
+        path: 'agents:get',
+        args: { agentId: EMPLOYEE_ROW._id },
+        auth: 'Bearer token-1',
+      },
+    ]);
   });
 
   it('asks for the employee only once Convex holds the token, so a full load never reaches the error boundary (walk M2)', async () => {
