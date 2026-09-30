@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import { SignIn } from '@clerk/nextjs';
 import { DEV_NO_AUTH } from '@/lib/dev-auth';
-import { headedPageAppearance } from '../../clerk-appearance';
+import { clerkAppearance } from '../../clerk-appearance';
 import { HostedDemoNotice } from '../../HostedDemoNotice';
 
 /** The tab's title: the hosted demo's way in. */
@@ -50,8 +50,9 @@ export default function SignInPage() {
         </ol>
         <HostedDemoNotice />
       </div>
-      <div className="flex justify-center">
-        <SignIn appearance={headedPageAppearance} />
+      {/* Clerk's first step leaves its own h1 out under the page's (app/globals.css). */}
+      <div data-headed-clerk="" className="flex justify-center">
+        <SignIn appearance={clerkAppearance} />
       </div>
     </div>
   );

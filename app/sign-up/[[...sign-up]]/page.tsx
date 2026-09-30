@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation';
 import { SignUp } from '@clerk/nextjs';
 import { DEV_NO_AUTH } from '@/lib/dev-auth';
-import { headedPageAppearance } from '../../clerk-appearance';
+import { clerkAppearance } from '../../clerk-appearance';
 
 /**
  * The hosted demo's account form: Clerk's sign-up under the page's own heading, in the shared
@@ -21,8 +21,9 @@ export default function SignUpPage() {
         <h1 className="text-3xl font-semibold tracking-tight mb-6 text-center">
           Create an account
         </h1>
-        <div className="flex justify-center">
-          <SignUp appearance={headedPageAppearance} />
+        {/* Clerk's first step leaves its own h1 out under the page's (app/globals.css). */}
+        <div data-headed-clerk="" className="flex justify-center">
+          <SignUp appearance={clerkAppearance} />
         </div>
       </div>
     </div>

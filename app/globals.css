@@ -93,6 +93,15 @@ body {
   }
 }
 
+/* A Clerk widget under a page's own h1 (the sign-in and sign-up pages) leaves out the header of its
+   first step, whose title Clerk draws as a second h1 (the hosted walk's m26). Only the first step:
+   later steps' headers say what to do ("Check your email", the address the code went to). Unlayered,
+   as Clerk's own styles are, and more specific than them. */
+[data-headed-clerk] .cl-signIn-start .cl-header,
+[data-headed-clerk] .cl-signUp-start .cl-header {
+  display: none;
+}
+
 /* Cross-browser fade on overflowing edges (subtle hint there's more) */
 .fade-bottom {
   mask-image: linear-gradient(to bottom, black 88%, transparent 100%);

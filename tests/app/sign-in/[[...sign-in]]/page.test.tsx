@@ -70,11 +70,17 @@ describe('the sign-in page', () => {
     expect(await render()).toContain('data-clerk-sign-in');
   });
 
-  it("dresses Clerk's sign-in in the shared appearance without its own h1, so the page has one (walk m26)", async () => {
+  it("dresses Clerk's sign-in in the shared appearance, so its text reads on the dark page", async () => {
     clerk.appearance.length = 0;
     await render();
-    const { headedPageAppearance } = await import('../../../../app/clerk-appearance');
-    expect(clerk.appearance).toEqual([headedPageAppearance]);
+    const { clerkAppearance } = await import('../../../../app/clerk-appearance');
+    expect(clerk.appearance).toEqual([clerkAppearance]);
+  });
+
+  it('puts the widget where its first step leaves its own h1 out, so the page has one (walk m26)', async () => {
+    expect(await render()).toMatch(
+      /<div data-headed-clerk="" class="[^"]*"><div data-clerk-sign-in=""/,
+    );
   });
 
   it('sends the local manager home in no-auth dev mode, where there is nothing to sign in to', async () => {

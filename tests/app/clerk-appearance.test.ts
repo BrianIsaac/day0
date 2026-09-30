@@ -1,6 +1,6 @@
 import { dark } from '@clerk/themes';
 import { describe, expect, it } from 'vitest';
-import { clerkAppearance, headedPageAppearance } from '../../app/clerk-appearance';
+import { clerkAppearance } from '../../app/clerk-appearance';
 
 /** The names Clerk's Core 2 read and Core 3 ignores, which left the hosted widget unreadable. */
 const RETIRED_VARIABLES = [
@@ -40,13 +40,5 @@ describe('the Clerk appearance', () => {
   it('keeps the neutral light and leaves the borders to it, so the social button and divider show', () => {
     expect(clerkAppearance.variables.colorNeutral).toBe('#f4f4f5');
     expect(clerkAppearance.variables).not.toHaveProperty('colorBorder');
-  });
-
-  it('leaves out the header, and with it the h1, of a widget on a page with its own heading (walk m26)', () => {
-    expect(headedPageAppearance).toEqual({
-      ...clerkAppearance,
-      elements: { header: { display: 'none' } },
-    });
-    expect(clerkAppearance).not.toHaveProperty('elements');
   });
 });
