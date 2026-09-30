@@ -2655,6 +2655,7 @@ export async function applyVerdict(
   await ctx.db.patch(workItemId, {
     verdict: effective,
     state: nextState,
+    ...(nextState === 'claimed' ? { claimedAt: Date.now() } : {}),
     ...(skipReason ? { skipReason } : {}),
     // The verdict ends the evaluation step; a row queued at the cap must be
     // evaluable again the moment a slot frees, and counts no attempt.
@@ -4447,6 +4448,9 @@ export const retryFailed = mutation({
         : undefined;
     await ctx.db.patch(args.workItemId, {
       state: next,
+      // A retried item begins a new run, which the queue orders by (x4); one sent back to
+      // evaluation holds no run.
+      claimedAt: next === 'discovered' ? undefined : Date.now(),
       ...(resume ? { output: resume } : {}),
       ...(redraft
         ? {

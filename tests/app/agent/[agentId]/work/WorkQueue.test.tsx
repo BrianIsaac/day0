@@ -142,6 +142,18 @@ describe('the order the queue lists its items in', (): void => {
     );
   });
 
+  it('puts the run that began first on top, not the item found first and claimed later (second review x4)', (): void => {
+    const order = sortedForQueue([
+      // Found first, parked at the cap, claimed hours later and now executing.
+      { _id: 'found-first', state: 'executing', _creationTime: 1_000, claimedAt: 9_000 },
+      // Found later, claimed at once, and waiting on the manager since.
+      { _id: 'waiting-on-you', state: 'actions-pending', _creationTime: 2_000, claimedAt: 2_500 },
+      // Claimed before the claim was recorded: ordered by when it was found.
+      { _id: 'older-row', state: 'plan-pending', _creationTime: 1_500 },
+    ]).map((item) => item._id);
+    expect(order).toEqual(['older-row', 'waiting-on-you', 'found-first']);
+  });
+
   it('files a failed item the manager dismissed at the foot, after every open state (N7)', (): void => {
     const order = sortedForQueue([
       { state: 'failed', title: 'dismissed', dismissedAt: 5 },
