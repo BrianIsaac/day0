@@ -118,6 +118,22 @@ describe('cloudEnvRefusal', (): void => {
     );
   });
 
+  it('reads the identity and the mode from what the deployment holds as well', (): void => {
+    const held = new Map([['CLERK_JWT_ISSUER_DOMAIN', CLERK]]);
+    expect(cloudEnvRefusal(new Map([['OPENAI_API_KEY', 'x']]), ALLOWED, held)).toBeUndefined();
+    expect(
+      cloudEnvRefusal(
+        new Map([['OPENAI_API_KEY', 'x']]),
+        ALLOWED,
+        new Map([...held, ['DAY0_SURFACE_MODE', 'real']]),
+      ),
+    ).toContain('DAY0_SURFACE_MODE=real on a cloud deployment needs');
+    // A name the deployment holds is kept, not added, so the allowlist does not judge it.
+    expect(
+      cloudEnvRefusal(valid, ALLOWED, new Map([['SOMETHING_SET_BY_HAND', 'x']])),
+    ).toBeUndefined();
+  });
+
   it('lets real mode onto a cloud deployment only for a customer issuer with a credential key', (): void => {
     expect(cloudEnvRefusal(new Map([...valid, ['DAY0_SURFACE_MODE', 'real']]), ALLOWED)).toContain(
       'DAY0_CREDENTIAL_KEY, DAY0_OIDC_ISSUER, DAY0_PROFILE=customer-local',

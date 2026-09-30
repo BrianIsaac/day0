@@ -212,7 +212,7 @@ export function parseCloudArguments(argv: readonly string[]): CloudOptions {
         throw new Error(`--app "${value}" is not one of: vercel, none.`);
       }
       app = value;
-    } else if (argument in valued) values[valued[argument]!] = take();
+    } else if (Object.hasOwn(valued, argument)) values[valued[argument]!] = take();
     else if ((CLOUD_VERBS as readonly string[]).includes(argument)) {
       if (verb !== undefined && verb !== argument) {
         throw new Error(`"${verb}" and "${argument}" are two verbs; give one.`);
@@ -256,10 +256,12 @@ async function confirm(io: CloudIo, options: CloudOptions, question: string): Pr
  *
  * @param options - The command line.
  * @param io - The machine.
+ * @param held - What the deployment holds already, judged with the settings.
  */
 async function firstSettings(
   options: CloudOptions,
   io: CloudIo,
+  held: ReadonlyMap<string, string>,
 ): Promise<Map<string, string> | Failure> {
   const allowed = cloudEnvNames(
     syncScriptKeys(readFileSync(join(io.cwd, 'scripts', 'sync-convex-env.sh'), 'utf8')),
@@ -301,7 +303,7 @@ async function firstSettings(
     }
   }
   const pinned = withPinnedMode(values);
-  const refusal = cloudEnvRefusal(pinned, allowed);
+  const refusal = cloudEnvRefusal(pinned, allowed, held);
   return refusal === undefined ? pinned : { failure: refusal };
 }
 
@@ -410,7 +412,7 @@ async function readSetup(options: CloudOptions, io: CloudIo): Promise<SetupReads
   if (resumed.state !== 'empty') io.log(resumed.note);
   const held = readDeploymentEnv(io, target);
   if ('failure' in held) return { failure: `${held.failure}.` };
-  const settings = await firstSettings(options, io);
+  const settings = await firstSettings(options, io, held);
   if ('failure' in settings) return settings;
   const toSet = [...settings.keys()].filter((name) => !held.has(name));
   const kept = [...settings.keys()].filter((name) => held.has(name));
@@ -507,10 +509,13 @@ export async function runCloudSetup(options: CloudOptions, io: CloudIo): Promise
   }
   const after = readDeploymentEnv(io, target);
   if ('failure' in after) return stop(`${after.failure}; nothing was pushed.`);
-  const absent = [...settings.keys()].filter((name) => !after.has(name));
+  // The values just set are compared too, so a quoting the CLI read otherwise shows here.
+  const absent = [...settings.keys()].filter(
+    (name) => !after.has(name) || (toSet.includes(name) && after.get(name) !== settings.get(name)),
+  );
   if (absent.length > 0) {
     return stop(
-      `the deployment's env does not list ${absent.join(', ')} after setting it; nothing was pushed.`,
+      `the deployment's env does not hold ${absent.join(', ')} as set; nothing was pushed.`,
     );
   }
   io.log(`Set on ${target.deployment} and read back: ${toSet.join(', ') || 'nothing new'}.`);

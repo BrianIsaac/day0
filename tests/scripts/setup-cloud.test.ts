@@ -1,4 +1,12 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
@@ -82,6 +90,9 @@ describe('parseCloudArguments', (): void => {
     expect(() => parseCloudArguments(['backup', '--to'])).toThrow('--to needs a value.');
     expect(() => parseCloudArguments(['setup', 'upgrade'])).toThrow('two verbs');
     expect(() => parseCloudArguments(['setup', '--app', 'netlify'])).toThrow('vercel, none');
+    expect(() => parseCloudArguments(['setup', 'constructor', 'x'])).toThrow(
+      'Unknown option "constructor"',
+    );
   });
 });
 
@@ -345,6 +356,36 @@ describe('cloud setup, the first push', (): void => {
     expect(writes(c)).toEqual([]);
   });
 
+  it('judges what the deployment already holds with the file: a no-auth key there is refused', async (): Promise<void> => {
+    const c = cloud({ ...empty(), env: new Map([['NEXT_PUBLIC_DEV_NO_AUTH', 'true']]) });
+    expect(
+      await runCloudSetup(verb(c, { verb: 'setup', envFile: settingsFile(c, SETTINGS) }), c.io),
+    ).toBe(1);
+    expect(printed(c)).toContain(
+      'NEXT_PUBLIC_DEV_NO_AUTH is refused (the deployment holds it; remove it on the dashboard)',
+    );
+    expect(writes(c)).toEqual([]);
+  });
+
+  it('reads back the values it set, not only their names', async (): Promise<void> => {
+    const c = cloud({ ...empty(), envSetMangles: true });
+    expect(
+      await runCloudSetup(verb(c, { verb: 'setup', envFile: settingsFile(c, SETTINGS) }), c.io),
+    ).toBe(1);
+    expect(printed(c)).toContain("the deployment's env does not hold");
+    expect(printed(c)).not.toContain(SECRET);
+    expect(writes(c).some((line) => line.startsWith('npx convex deploy'))).toBe(false);
+  });
+
+  it('refuses dependencies installed from another lockfile, which a push would bundle with', async (): Promise<void> => {
+    const c = cloud(empty(), { staleDependencies: true });
+    expect(
+      await runCloudSetup(verb(c, { verb: 'setup', envFile: settingsFile(c, SETTINGS) }), c.io),
+    ).toBe(1);
+    expect(printed(c)).toContain('run pnpm install --frozen-lockfile first.');
+    expect(writes(c)).toEqual([]);
+  });
+
   it('refuses a settings file others can read, and an app key in it, by name only', async (): Promise<void> => {
     const open = cloud(empty());
     expect(
@@ -463,6 +504,11 @@ describe('cloud upgrade', (): void => {
     expect(await runCloudUpgrade(verb(c, { verb: 'upgrade' }), c.io)).toBe(0);
     const zip = join(c.privateDir, 'before-v0.4.0-20261001T020304Z.zip');
     expect(statSync(zip).mode & 0o777).toBe(0o600);
+    // Exported inside a directory only its owner enters, then moved beside the others.
+    expect(c.calls.find((call) => call.args[1] === 'export')?.args[4]).toMatch(
+      /\/\.export-[^/]+\/before-v0\.4\.0-/,
+    );
+    expect(readdirSync(c.privateDir).filter((name) => name.startsWith('.export-'))).toEqual([]);
     expect(readFileSync(`${zip}.sha256`, 'utf8')).toMatch(
       /^[0-9a-f]{64} {2}before-v0\.4\.0-20261001T020304Z\.zip\n$/,
     );

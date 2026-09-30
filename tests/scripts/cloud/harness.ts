@@ -71,6 +71,8 @@ export interface CloudState {
   vercelValues: Map<string, string>;
   /** The build serving the app's address, the deployment it talks to and the release /setup states. */
   served: { id: string; talksTo: string; release: string | undefined } | undefined;
+  /** Whether `env set` stores each value with a stray quote, as a misquoted stream would. */
+  envSetMangles: boolean;
   /** Whether the dry run leaves the checkout changed, which a real one never should. */
   dryRunWrites: boolean;
   /** The Vercel project the served build belongs to. */
@@ -113,10 +115,11 @@ const SCHEMA_TABLES = ['agents', 'deploymentVersions', 'migrations'];
  * @param overrides - What differs from a deployment at 0.3.0 serving an app at 0.3.0.
  * @param options.targetText - The target file's text; undefined writes none.
  * @param options.linked - Whether the checkout carries `.vercel/project.json`.
+ * @param options.staleDependencies - Whether the installed lockfile differs from the checkout's.
  */
 export function cloud(
   overrides: Partial<CloudState> = {},
-  options: { targetText?: string | null; linked?: boolean } = {},
+  options: { targetText?: string | null; linked?: boolean; staleDependencies?: boolean } = {},
 ): Cloud {
   const checkout = mkdtempSync(join(tmpdir(), 'day0-cloud-checkout-'));
   const privateDir = mkdtempSync(join(tmpdir(), 'day0-cloud-private-'));
@@ -125,6 +128,13 @@ export function cloud(
   mkdirSync(join(checkout, 'scripts'));
   writeFileSync(join(checkout, 'package.json'), '{"name":"day0","version":"0.4.0"}\n', 'utf8');
   writeFileSync(join(checkout, 'CHANGELOG.md'), CHANGELOG, 'utf8');
+  writeFileSync(join(checkout, 'pnpm-lock.yaml'), "lockfileVersion: '9.0'\n", 'utf8');
+  mkdirSync(join(checkout, 'node_modules', '.pnpm'), { recursive: true });
+  writeFileSync(
+    join(checkout, 'node_modules', '.pnpm', 'lock.yaml'),
+    options.staleDependencies ? "lockfileVersion: '6.0'\n" : "lockfileVersion: '9.0'\n",
+    'utf8',
+  );
   copyFileSync(
     new URL('scripts/sync-convex-env.sh', REPOSITORY),
     join(checkout, 'scripts', 'sync-convex-env.sh'),
@@ -165,6 +175,7 @@ export function cloud(
     ]),
     vercelValues: new Map(),
     served: { id: 'dpl_Before1', talksTo: DEPLOYMENT, release: '0.3.0' },
+    envSetMangles: false,
     dryRunWrites: false,
     servedProject: 'day0',
     rows: { agents: 2, deploymentVersions: 1, migrations: 19 },
@@ -237,7 +248,7 @@ export function cloud(
     }
     if (verb === 'env' && rest[0] === 'set' && rest[1] === '--deployment') {
       for (const [name, value] of Object.entries(cliDotenv.parse(input ?? ''))) {
-        state.env.set(name, value);
+        state.env.set(name, state.envSetMangles ? `'${value}` : value);
       }
       return ok('', '✔ Successfully set variables from stdin\n');
     }

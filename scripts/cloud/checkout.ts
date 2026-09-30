@@ -166,7 +166,7 @@ export function readCheckout(io: CloudIo, pushes: boolean): CheckoutState | Fail
   }
   const state = { ...releases, commit: head.stdout.trim() };
   if (!pushes) return state;
-  const refusal = checkoutRefusal(releases);
+  const refusal = checkoutRefusal(releases) ?? dependenciesRefusal(io);
   if (refusal !== undefined) return { failure: refusal };
   const status = io.run('git', ['status', '--porcelain'], { timeoutMs: 30_000 });
   if (status.status !== 0) return { failure: 'git cannot say whether this checkout is clean.' };
@@ -187,6 +187,26 @@ export function readCheckout(io: CloudIo, pushes: boolean): CheckoutState | Fail
     };
   }
   return state;
+}
+
+/**
+ * Why the installed dependencies are not this checkout's, or undefined when
+ * they are: pnpm keeps a copy of the lockfile it installed from, and a push
+ * bundles with whatever is installed, the Convex CLI among it.
+ *
+ * @param io - The machine.
+ */
+function dependenciesRefusal(io: CloudIo): string | undefined {
+  const installed = join(io.cwd, 'node_modules', '.pnpm', 'lock.yaml');
+  const wanted = join(io.cwd, 'pnpm-lock.yaml');
+  if (
+    existsSync(installed) &&
+    existsSync(wanted) &&
+    readFileSync(installed, 'utf8') === readFileSync(wanted, 'utf8')
+  ) {
+    return undefined;
+  }
+  return "the installed dependencies are not the ones this checkout's pnpm-lock.yaml names (a tag checked out after the last install); run pnpm install --frozen-lockfile first.";
 }
 
 /** The first non-empty line of some output. */

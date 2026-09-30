@@ -75,28 +75,50 @@ export function parsePrivateEnv(text: string): Map<string, string> {
 
 /**
  * Why these settings may not go onto a cloud deployment, or undefined when
- * they may. Every reason names variables only.
+ * they may. Every reason names variables only. What the deployment already
+ * holds is judged with them, since the setup keeps it: a refused name there
+ * is refused as well, and the identity and the mode are read from the two
+ * together; only the names being added must be ones a deployment takes.
  *
  * @param values - The settings, as the file or the prompts gave them.
  * @param allowed - The names a cloud deployment may be given.
+ * @param held - What the deployment holds already, which the setup keeps.
  */
 export function cloudEnvRefusal(
   values: ReadonlyMap<string, string>,
   allowed: ReadonlySet<string>,
+  held: ReadonlyMap<string, string> = new Map(),
 ): string | undefined {
-  const refused = [...values.keys()].filter((name) => name in REFUSED_ON_CLOUD);
+  const refused = [...new Set([...values.keys(), ...held.keys()])].filter(
+    (name) => name in REFUSED_ON_CLOUD,
+  );
   if (refused.length > 0) {
-    return refused.map((name) => `${name} is refused: ${REFUSED_ON_CLOUD[name]}`).join('; ');
+    return refused
+      .map(
+        (name) =>
+          `${name} is refused${values.has(name) ? '' : ' (the deployment holds it; remove it on the dashboard)'}: ${REFUSED_ON_CLOUD[name]}`,
+      )
+      .join('; ');
   }
   const unknown = [...values.keys()].filter((name) => !allowed.has(name));
   if (unknown.length > 0) {
     return (
       `${unknown.join(', ')} ${unknown.length === 1 ? 'is' : 'are'} not a deployment setting. ` +
       'The Convex deployment takes only what its functions read (the list in ' +
-      'scripts/sync-convex-env.sh, and the identity settings); the app’s own keys, Clerk’s ' +
+      'scripts/sync-convex-env.sh, and the identity settings); the app\u2019s own keys, Clerk\u2019s ' +
       'among them, are set on the app host.'
     );
   }
+  return combinedRefusal(new Map([...values, ...held]));
+}
+
+/**
+ * Why the settings a deployment would end up with do not hang together: its
+ * identity, and what real mode needs.
+ *
+ * @param combined - The settings and what the deployment keeps, the kept value winning.
+ */
+function combinedRefusal(values: ReadonlyMap<string, string>): string | undefined {
   const clerk = values.get('CLERK_JWT_ISSUER_DOMAIN');
   const oidc = values.has('DAY0_OIDC_ISSUER') && values.has('DAY0_OIDC_AUDIENCE');
   if (clerk === undefined && !oidc) {

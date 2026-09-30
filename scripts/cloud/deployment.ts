@@ -6,7 +6,18 @@
  * reach the target the dry run proved.
  */
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmdirSync,
+  rmSync,
+  statSync,
+} from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { CRONS_PAUSED_FLAG } from '../../src/lib/crons-pause';
 import { errorMessage } from '../../src/lib/errors';
@@ -331,19 +342,26 @@ export function takeBackup(
   if (existsSync(file))
     return { failure: `${file} exists already; nothing is written over a backup.` };
   mkdirSync(directory, { recursive: true, mode: 0o700 });
+  // Written into a directory only this user can enter, then moved beside the
+  // others, so the export is never readable by anyone else, whatever the umask.
+  const staging = mkdtempSync(join(directory, '.export-'));
+  const staged = join(staging, basename(file));
   io.log(`Exporting ${target.deployment} with its file storage to ${file}.`);
   const exported = convexOn(
     io,
     target,
-    ['convex', 'export', '--include-file-storage', '--path', file],
+    ['convex', 'export', '--include-file-storage', '--path', staged],
     { timeoutMs: 1_800_000 },
   );
-  if (exported.status !== 0 || !existsSync(file)) {
+  if (exported.status !== 0 || !existsSync(staged)) {
+    rmSync(staging, { recursive: true, force: true });
     return {
       failure: `the export failed (exit ${exported.status ?? 'unknown'}: ${firstLine(exported.stderr)})`,
     };
   }
-  chmodSync(file, 0o600);
+  chmodSync(staged, 0o600);
+  renameSync(staged, file);
+  rmdirSync(staging);
   const sha256 = createHash('sha256').update(readFileSync(file)).digest('hex');
   writePrivateEnv(`${file}.sha256`, `${sha256}  ${basename(file)}\n`);
   const counts = exportCounts(io, file);
