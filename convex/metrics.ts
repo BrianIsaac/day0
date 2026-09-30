@@ -474,12 +474,12 @@ function automaticKind(
 }
 
 /**
- * When the employee's first write landed: the first approval that let a held action through, or
- * the first write it applied on its own, whichever came first. The same two counts the page's
- * "a write landed" reads (`actions.approved` and `actions.automatic.writes`), so the time and the
- * first week's step agree.
+ * When the employee's first week reached Working: the first approval that let a held action
+ * through, or the first write it applied on its own, whichever came first. The same two counts
+ * the page's "a write landed" reads (`actions.approved` and `actions.automatic.writes`), so the
+ * time and the first week's step agree; an approval whose apply then fails counts in both.
  */
-function firstWriteLandedAt(
+function workingSinceOf(
   events: readonly Doc<'events'>[],
   ledger: readonly LedgerObservation[],
   surfaces: readonly SurfaceRecord[],
@@ -828,7 +828,7 @@ function agentFigures(
   const pilot = pilotTotals(events, workItems);
   const surfaceRecords = surfaces.map(toSurfaceRecord);
   const metrics: AgentMetrics = {
-    workingSince: firstWriteLandedAt(events, ledger, surfaceRecords),
+    workingSince: workingSinceOf(events, ledger, surfaceRecords),
     charter: {
       timeToFirstDraftedMs: timeFromDeploy(firstDraftedAt),
       timeToFirstApprovedMs: timeFromDeploy(firstApprovedAt),

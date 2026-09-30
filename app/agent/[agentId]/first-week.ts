@@ -18,7 +18,7 @@ export interface FirstWeekFacts {
   readonly writeHeld: boolean;
   /** When the newest one-to-one ended (or was taken for drafting), once it has. */
   readonly oneToOneEndedAt?: number;
-  /** When the first write landed (`AgentMetrics.workingSince`), once one has. */
+  /** When the first week reached Working (`AgentMetrics.workingSince`), once it has. */
   readonly workingSince?: number | null;
   readonly zone: string | undefined;
 }
