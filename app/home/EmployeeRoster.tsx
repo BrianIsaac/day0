@@ -19,17 +19,21 @@ const PARKED_PARTS: ReadonlyArray<
 /**
  * One kind of parked work in the Work tab's words ("2 waiting on a skill", "1 parked"), with what
  * the glossary says it means for the hover (the hosted walk's m10: the roster said "2 parked" for
- * items the page calls "Waiting on a skill").
+ * items the page calls "Waiting on a skill"). Only work the manager can release is pointed at
+ * Needs you: a discovered row waits on a free slot, which no one releases (the second review's
+ * x10).
  *
  * @param state - The state the rows are in.
- * @param count - How many.
  */
 function parkedPart(state: WorkItemState, count: number): { text: string; title: string } {
   const label = workItemStateLabel({ state }).text;
   const means = workItemGlossary().find((line) => line.states.includes(state))?.means;
+  const releasedByYou = state !== 'discovered';
   return {
     text: `${count} ${label.toLocaleLowerCase('en-GB')}`,
-    title: `${label}: ${means ?? label}. The ones only you can release are in Needs you.`,
+    title: `${label}: ${means ?? label}.${
+      releasedByYou ? ' The ones only you can release are in Needs you.' : ''
+    }`,
   };
 }
 
