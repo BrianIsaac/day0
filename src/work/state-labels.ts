@@ -68,6 +68,46 @@ export function employeeStateWords(
   }
 }
 
+/** How many employees stand at one state, in the words the roster's chip prints for it. */
+export interface StateCount {
+  readonly text: string;
+  readonly count: number;
+}
+
+/** The states a tally lists, in the order the company line reads them: the working ones first. */
+const TALLY_ORDER: readonly string[] = [
+  employeeStateWords('active'),
+  employeeStateWords('day-one-in-progress'),
+  employeeStateWords('day-one-in-progress', 'drafting'),
+  employeeStateWords('deployed'),
+  employeeStateWords('charter-pending'),
+].map((words) => words.text);
+
+/**
+ * How many employees stand at each state, by the words their roster chips print
+ * (`employeeStateWords`), so a line that counts the company and the roster it heads never
+ * disagree (the production walk's 6d: "0 active" over an employee drawn in its one-to-one). A
+ * state nobody is at is left out.
+ *
+ * @param employees - The roster's rows: the state each shows, and where its one-to-one stands.
+ */
+export function employeeStateTally(
+  employees: ReadonlyArray<{
+    readonly state: EmployeeState;
+    readonly phase?: OneToOnePhase['kind'];
+  }>,
+): StateCount[] {
+  const counts = new Map<string, number>();
+  for (const { state, phase } of employees) {
+    const { text } = employeeStateWords(state, phase);
+    counts.set(text, (counts.get(text) ?? 0) + 1);
+  }
+  return TALLY_ORDER.flatMap((text) => {
+    const count = counts.get(text);
+    return count === undefined ? [] : [{ text, count }];
+  });
+}
+
 /**
  * An employee's state for the pill beside its name: its words (`employeeStateWords`), and for an
  * active employee whether it is supervised or autonomous, which the roster gives a column of its

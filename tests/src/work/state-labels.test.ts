@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   employeeStateLabel,
+  employeeStateTally,
   employeeStateWords,
   shownEmployeeState,
   workItemStateLabel,
@@ -129,5 +130,31 @@ describe('workItemStateLabel', () => {
     for (const state of WORK_ITEM_STATES) {
       expect(workItemStateLabel({ state }).tone as string, state).not.toBe('danger');
     }
+  });
+});
+
+describe('employeeStateTally', (): void => {
+  it('counts each employee by the words its roster chip prints, working states first (production walk 6d)', (): void => {
+    expect(
+      employeeStateTally([
+        { state: 'deployed' },
+        { state: 'day-one-in-progress', phase: 'talking' },
+        { state: 'active' },
+        { state: 'day-one-in-progress', phase: 'drafting' },
+        { state: 'active' },
+      ]),
+    ).toEqual([
+      { text: 'Active', count: 2 },
+      { text: 'In your one-to-one', count: 1 },
+      { text: 'Drafting the charter', count: 1 },
+      { text: 'Waiting for your one-to-one', count: 1 },
+    ]);
+  });
+
+  it('leaves out a state nobody is at, so one employee in its one-to-one is not "0 active"', (): void => {
+    expect(employeeStateTally([{ state: 'day-one-in-progress', phase: 'failed' }])).toEqual([
+      { text: 'In your one-to-one', count: 1 },
+    ]);
+    expect(employeeStateTally([])).toEqual([]);
   });
 });
