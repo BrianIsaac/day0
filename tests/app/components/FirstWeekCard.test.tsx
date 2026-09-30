@@ -275,6 +275,33 @@ describe('FirstWeekCard', () => {
     expect(pressed).toBe(1);
   });
 
+  it('keeps the second press of a double click from taking focus off the card, beneath the week (walk m1)', async () => {
+    const view = mount(
+      <>
+        <main tabIndex={-1}>
+          <FirstWeekCard steps={WORKING} />
+        </main>
+      </>,
+    );
+    await press(view.container, NAME);
+    click(document.querySelector('[data-week-scrim]'));
+    expect(focusedName()).toBe(NAME);
+    const main = view.container.querySelector('main');
+    // The browser moves focus on a press it is not told to keep: the second press is kept.
+    const second = new MouseEvent('mousedown', { bubbles: true, cancelable: true, detail: 2 });
+    act((): void => {
+      main?.dispatchEvent(second);
+    });
+    expect(second.defaultPrevented).toBe(true);
+    expect(focusedName()).toBe(NAME);
+    // A press of its own afterwards is the manager's, and goes where it goes.
+    const own = new MouseEvent('mousedown', { bubbles: true, cancelable: true, detail: 1 });
+    act((): void => {
+      main?.dispatchEvent(own);
+    });
+    expect(own.defaultPrevented).toBe(false);
+  });
+
   it('closes when the window is resized, rather than shrink to where the card was', async () => {
     const view = mount(page());
     await press(view.container, NAME);

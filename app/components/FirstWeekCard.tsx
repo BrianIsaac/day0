@@ -20,11 +20,16 @@ const EDGE_PX = 16;
 /** How long after a click closes the week the rest of that double click is kept off the page. */
 const DOUBLE_CLICK_TAIL_MS = 500;
 
+/** The events the rest of a double click sends after the click that closed the week. */
+const DOUBLE_CLICK_TAIL = ['mousedown', 'click', 'dblclick'] as const;
+
 /**
  * Keep the rest of a double click off the page once its first click has closed the week: the
- * second click (and the double click itself) would pass through the shrinking week, or land
- * where it was under reduced motion, onto whatever is beneath, a button included. A click of its
- * own, or the end of the window, ends the watch.
+ * second press, the second click and the double click itself would pass through the shrinking
+ * week, or land where it was under reduced motion, onto whatever is beneath: a button, or a
+ * focusable box such as `main`, which the second press would take focus to from the card it was
+ * just given back to (the hosted walk's m1). A press or click of its own, or the end of the
+ * window, ends the watch.
  */
 function swallowDoubleClickTail(): void {
   const swallow = (event: Event): void => {
@@ -37,12 +42,10 @@ function swallowDoubleClickTail(): void {
   };
   const stop = (): void => {
     clearTimeout(timer);
-    document.removeEventListener('click', swallow, true);
-    document.removeEventListener('dblclick', swallow, true);
+    for (const type of DOUBLE_CLICK_TAIL) document.removeEventListener(type, swallow, true);
   };
   const timer = setTimeout(stop, DOUBLE_CLICK_TAIL_MS);
-  document.addEventListener('click', swallow, true);
-  document.addEventListener('dblclick', swallow, true);
+  for (const type of DOUBLE_CLICK_TAIL) document.addEventListener(type, swallow, true);
 }
 
 /** Where the card sat when it was pressed, in the window. */
