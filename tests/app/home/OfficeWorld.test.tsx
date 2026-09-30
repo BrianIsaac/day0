@@ -113,12 +113,12 @@ describe('OfficeWorld', (): void => {
     expect(CSS).toMatch(/\.day0-office-at \{\s*--inset: 3\.5rem;/);
   });
 
-  it('seats working employees far apart first, so two name plates never overlap', (): void => {
+  it('seats working employees far apart first, so two name plates never overlap (re-pinned: the seats re-ranked, review A-M1)', (): void => {
     const second = { ...mira, agentId: 'synthetic-second', name: 'Aiko' } as RosterRow;
     const html = renderToStaticMarkup(<OfficeWorld agents={[mira, second]} settled />);
     expect(figuresOf(html).map(({ desktop }) => [desktop.x, desktop.y])).toEqual([
       [14, 25],
-      [67, 25],
+      [86, 25],
     ]);
   });
 
@@ -224,6 +224,65 @@ describe('OfficeWorld', (): void => {
     }
   });
 
+  it('seats ten working employees every two clear of each other at a desktop width (review A-M1)', (): void => {
+    const ten = Array.from(
+      { length: 10 },
+      (_, index) =>
+        ({ ...mira, agentId: `working-${index}`, name: `Working ${index}` }) as RosterRow,
+    );
+    const figures = figuresOf(renderToStaticMarkup(<OfficeWorld agents={ten} settled />)).map(
+      ({ desktop }) => desktop,
+    );
+    expect(figures).toHaveLength(10);
+    for (const [index, figure] of figures.entries()) {
+      expect(clearance(figure, figures.slice(index + 1)), `figure ${index}`).toBeGreaterThanOrEqual(
+        1,
+      );
+    }
+  });
+
+  it('seats every employee of twenty inside the office, a 140 px figure clear of the 8 px frame of a 560 px office', (): void => {
+    const twenty = Array.from(
+      { length: 20 },
+      (_, index) =>
+        ({ ...mira, agentId: `working-${index}`, name: `Working ${index}` }) as RosterRow,
+    );
+    const figures = figuresOf(renderToStaticMarkup(<OfficeWorld agents={twenty} settled />));
+    expect(figures).toHaveLength(20);
+    for (const [index, { desktop }] of figures.entries()) {
+      const centre = (desktop.y / 100) * 560;
+      expect(centre + 70, `figure ${index}`).toBeLessThanOrEqual(560 - 8);
+      expect(centre - 70 - 2, `figure ${index}`).toBeGreaterThanOrEqual(8);
+    }
+  });
+
+  it('stands ten employees clear of each other whichever six of them are in their one-to-ones (review A-M1)', (): void => {
+    const sixOfTen = (mask: number): boolean =>
+      mask
+        .toString(2)
+        .split('')
+        .filter((bit) => bit === '1').length === 6;
+    const masks = Array.from({ length: 1 << 10 }, (_, mask) => mask).filter(sixOfTen);
+    expect(masks).toHaveLength(210);
+    const crowded = masks.filter((mask) => {
+      const ten = Array.from(
+        { length: 10 },
+        (_, index) =>
+          ({
+            ...idle,
+            agentId: `bed-${index}`,
+            name: `Bed ${index}`,
+            state: mask & (1 << index) ? 'day-one-in-progress' : 'active',
+          }) as RosterRow,
+      );
+      const figures = figuresOf(renderToStaticMarkup(<OfficeWorld agents={ten} settled />)).map(
+        ({ desktop }) => desktop,
+      );
+      return figures.some((figure, index) => clearance(figure, figures.slice(index + 1)) < 1);
+    });
+    expect(crowded.map((mask) => mask.toString(2).padStart(10, '0'))).toEqual([]);
+  });
+
   it('gives a tenth employee a phone seat of its own, in an office a row taller (pre-tag minor 10)', (): void => {
     const ten = Array.from(
       { length: 10 },
@@ -259,9 +318,9 @@ describe('OfficeWorld', (): void => {
     expect(walk).not.toMatch(/\b(left|top)\b/);
   });
 
-  it('keeps every desk where the desktop plan stands it, inside the office by its inset', (): void => {
+  it('keeps every desk where the desktop plan stands it, inside the office by its inset (re-pinned: the seats re-ranked, review A-M1)', (): void => {
     const html = renderToStaticMarkup(<OfficeWorld agents={[]} settled />);
     const deskTwo = [...html.matchAll(/class="day0-pixel-desk [^"]*" style="([^"]*)"/g)][2]?.[1];
-    expect(deskTwo).toBe('--x:67;--y:17;--i:2');
+    expect(deskTwo).toBe('--x:68;--y:31;--i:2');
   });
 });
