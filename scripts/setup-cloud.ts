@@ -82,7 +82,14 @@ import { deploymentUrl, listedTables, type VercelDeployment } from './cloud/outp
 import { rollbackLines, type RollbackFacts } from './cloud/rollback';
 import { syncScriptKeys, upsertEnvText } from './demo-bed';
 import { writePrivateEnv } from './private-env';
-import { parseReleaseStamp, readReleaseVerdict, RELEASE_STAMP_ARGUMENTS } from './releases';
+import {
+  MIGRATIONS_TABLE,
+  parseReleaseStamp,
+  readReleaseVerdict,
+  RELEASE_STAMP_ARGUMENTS,
+  RELEASE_TABLE,
+  TABLE_LISTING_ARGUMENTS,
+} from './releases';
 import {
   closeConsoleInput,
   consoleIo,
@@ -296,6 +303,66 @@ async function firstSettings(
   return refusal === undefined ? pinned : { failure: refusal };
 }
 
+/** Where a deployment stands for a first setup: empty, or a first setup that stopped part way. */
+type FirstPushState =
+  | { readonly state: 'empty' }
+  | { readonly state: 'unstamped' | 'stamped'; readonly note: string };
+
+/**
+ * Whether the first setup may push to this deployment: it is empty, or an
+ * earlier first setup stopped part way, after its push and before its stamp
+ * (tables, the migrations table among them, and no stamp), or after its stamp
+ * and before the app was read back (stamped at this very release). Running
+ * the setup again finishes either; anything else is the upgrade's.
+ *
+ * @param io - The machine.
+ * @param target - The deployment.
+ * @param release - This checkout's release.
+ */
+function firstPushState(
+  io: CloudIo,
+  target: CloudTarget,
+  release: string,
+): FirstPushState | Failure {
+  const tables = convexOn(io, target, TABLE_LISTING_ARGUMENTS);
+  if (tables.status !== 0) {
+    return {
+      failure: `the deployment's tables could not be listed (${firstLine(tables.stderr)}).`,
+    };
+  }
+  const listed = listedTables(tables.stdout);
+  if (listed.length === 0) return { state: 'empty' };
+  let stamp: string | undefined;
+  if (listed.includes(RELEASE_TABLE)) {
+    const read = convexOn(io, target, RELEASE_STAMP_ARGUMENTS);
+    if (read.status !== 0) {
+      return { failure: `the release stamp could not be read (${firstLine(read.stderr)}).` };
+    }
+    try {
+      stamp = parseReleaseStamp(read.stdout)?.release;
+    } catch (error) {
+      return { failure: `the release stamp could not be read: ${errorMessage(error)}.` };
+    }
+  }
+  if (stamp === release) {
+    return {
+      state: 'stamped',
+      note: `${target.deployment} is stamped v${release} already: finishing a first setup that stopped after its stamp.`,
+    };
+  }
+  if (stamp === undefined && listed.includes(MIGRATIONS_TABLE)) {
+    return {
+      state: 'unstamped',
+      note: `${target.deployment} holds a first setup's tables and no stamp: finishing a first setup that stopped after its push.`,
+    };
+  }
+  return {
+    failure:
+      `${target.deployment} already holds tables${stamp === undefined ? '' : ` at v${stamp}`}, so this ` +
+      `is not its first push: \`./setup.sh cloud upgrade --target ${target.file}\` moves it to this release.`,
+  };
+}
+
 /** What the first setup read before its first write. */
 interface SetupReads {
   readonly checkout: CheckoutState;
@@ -336,17 +403,9 @@ async function readSetup(options: CloudOptions, io: CloudIo): Promise<SetupReads
   io.log(
     `The target is ${target.deployment}, the project's default production deployment (dry run).`,
   );
-  const tables = convexOn(io, target, ['convex', 'data']);
-  if (tables.status !== 0) {
-    return {
-      failure: `the deployment's tables could not be listed (${firstLine(tables.stderr)}).`,
-    };
-  }
-  if (listedTables(tables.stdout).length > 0) {
-    return {
-      failure: `${target.deployment} already holds tables, so this is not its first push: \`./setup.sh cloud upgrade --target ${target.file}\` moves it to this release.`,
-    };
-  }
+  const resumed = firstPushState(io, target, checkout.release);
+  if ('failure' in resumed) return resumed;
+  if (resumed.state !== 'empty') io.log(resumed.note);
   const held = readDeploymentEnv(io, target);
   if ('failure' in held) return { failure: `${held.failure}.` };
   const settings = await firstSettings(options, io);

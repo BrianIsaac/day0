@@ -300,8 +300,48 @@ describe('cloud setup, the first push', (): void => {
       await runCloudSetup(verb(c, { verb: 'setup', envFile: settingsFile(c, SETTINGS) }), c.io),
     ).toBe(1);
     expect(printed(c)).toContain(
-      'already holds tables, so this is not its first push: `./setup.sh cloud upgrade',
+      'already holds tables at v0.3.0, so this is not its first push: `./setup.sh cloud upgrade',
     );
+    expect(writes(c)).toEqual([]);
+  });
+
+  it('finishes a first setup that stopped after its push, and one that stopped after its stamp', async (): Promise<void> => {
+    const pushed = cloud({
+      ...empty(),
+      tables: ['agents', 'migrations'],
+      env: new Map([['CLERK_JWT_ISSUER_DOMAIN', 'https://example.clerk.accounts.dev']]),
+    });
+    expect(
+      await runCloudSetup(
+        verb(pushed, { verb: 'setup', envFile: settingsFile(pushed, SETTINGS) }),
+        pushed.io,
+      ),
+    ).toBe(0);
+    expect(printed(pushed)).toContain('finishing a first setup that stopped after its push.');
+    expect(pushed.state.stamp).toEqual({ release: '0.4.0', commit: COMMIT });
+
+    const stamped = cloud({
+      ...empty(),
+      tables: ['agents', 'deploymentVersions', 'migrations'],
+      stamp: { release: '0.4.0', commit: COMMIT },
+      env: new Map([['CLERK_JWT_ISSUER_DOMAIN', 'https://example.clerk.accounts.dev']]),
+    });
+    expect(
+      await runCloudSetup(
+        verb(stamped, { verb: 'setup', envFile: settingsFile(stamped, SETTINGS) }),
+        stamped.io,
+      ),
+    ).toBe(0);
+    expect(printed(stamped)).toContain('finishing a first setup that stopped after its stamp.');
+    expect(stamped.state.served).toMatchObject({ talksTo: DEPLOYMENT, release: '0.4.0' });
+  });
+
+  it('leaves unstamped rows from before the migrations table to the upgrade', async (): Promise<void> => {
+    const c = cloud({ ...empty(), tables: ['agents'] });
+    expect(
+      await runCloudSetup(verb(c, { verb: 'setup', envFile: settingsFile(c, SETTINGS) }), c.io),
+    ).toBe(1);
+    expect(printed(c)).toContain('already holds tables, so this is not its first push');
     expect(writes(c)).toEqual([]);
   });
 
