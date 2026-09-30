@@ -5,7 +5,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { useRef } from 'react';
 import { act } from 'react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LIST_MOVE_EASE, LIST_MOVE_MS, useListMoves } from '../../../app/components/list-moves';
 import { mount, unmountAll } from '../../fixtures/dom/press';
 
@@ -32,6 +32,16 @@ function List({ order, scope, grow = 0 }: { order: string[]; scope: string; grow
 const moves: Array<{ key: string; keyframes: Keyframe[]; options: KeyframeAnimationOptions }> = [];
 let reduced = false;
 
+// jsdom's own, put back after each test so no other file inherits the stand-ins (second review x10).
+const ownOffsetTop = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetTop');
+const ownAnimate = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'animate');
+
+/** Put a prototype property back as jsdom had it, or take it off when jsdom had none. */
+function restore(name: 'offsetTop' | 'animate', descriptor: PropertyDescriptor | undefined): void {
+  if (descriptor) Object.defineProperty(HTMLElement.prototype, name, descriptor);
+  else Reflect.deleteProperty(HTMLElement.prototype, name);
+}
+
 beforeEach(() => {
   moves.length = 0;
   reduced = false;
@@ -57,6 +67,8 @@ beforeEach(() => {
 afterEach(() => {
   unmountAll();
   vi.unstubAllGlobals();
+  restore('offsetTop', ownOffsetTop);
+  restore('animate', ownAnimate);
 });
 
 describe('a list whose cards glide to their new places (walk m21)', () => {
@@ -104,4 +116,10 @@ describe('a list whose cards glide to their new places (walk m21)', () => {
     );
     expect(css).toContain(`--ease-move: ${LIST_MOVE_EASE};`);
   });
+});
+
+// The last test's stand-ins are gone once its own afterEach has run.
+afterAll(() => {
+  expect(Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetTop')).toEqual(ownOffsetTop);
+  expect(Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'animate')).toEqual(ownAnimate);
 });
