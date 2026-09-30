@@ -128,6 +128,13 @@ function sameSession(a: ClerkAuth, b: ClerkAuth | null): boolean {
   );
 }
 
+/**
+ * How long an owned page waits for Convex to confirm the manager's sign-in before it says so: a
+ * load takes one to four seconds on the hosted demo, and a deployment that does not answer, or a
+ * Clerk whose token endpoint keeps failing, never settles at all.
+ */
+export const SESSION_WAIT_MS = 20_000;
+
 /** What `SessionGate` is given: the owned page, and what stands in its place until it may run. */
 export interface SessionGateProps {
   readonly children: ReactNode;
@@ -162,11 +169,66 @@ function ClerkSessionGate({ children, fallback }: SessionGateProps) {
   const { isLoading, isAuthenticated } = useConvexAuth();
   const { status } = useClerk();
   const { isSignedIn } = useAuth();
+  const overdue = useOverdue(isLoading && status !== 'error', SESSION_WAIT_MS);
   // A Clerk that failed to load never answers; the page is let through to say what it can.
   if (status === 'error') return <>{children}</>;
-  if (isLoading) return <>{fallback}</>;
+  if (isLoading) return overdue ? <SessionUnconfirmed /> : <>{fallback}</>;
   if (!isAuthenticated) return <SignedOut refused={isSignedIn === true} />;
   return <>{children}</>;
+}
+
+/**
+ * Whether a wait has gone on longer than `limitMs`. False again as soon as the wait ends, and a
+ * later wait is timed afresh.
+ */
+function useOverdue(waiting: boolean, limitMs: number): boolean {
+  const [overdue, setOverdue] = useState(false);
+  // Kept from the previous render in state, as React's docs set out: a wait that ended forgets it.
+  if (!waiting && overdue) setOverdue(false);
+  useEffect(() => {
+    if (!waiting) return;
+    const timer = setTimeout(() => {
+      log.warn('sign-in not confirmed in time', { waitedMs: limitMs });
+      setOverdue(true);
+    }, limitMs);
+    return () => clearTimeout(timer);
+  }, [waiting, limitMs]);
+  return waiting && overdue;
+}
+
+/** What an owned page shows while Convex confirms the sign-in: one quiet line saying what loads. */
+export function SessionPending({ children }: { readonly children: ReactNode }) {
+  return (
+    <div
+      role="status"
+      className="flex min-h-[calc(100vh-3.25rem)] items-center justify-center px-6 text-sm text-[var(--color-muted)]"
+    >
+      {children}
+    </div>
+  );
+}
+
+/**
+ * What an owned page shows once Convex has not confirmed the sign-in within `SESSION_WAIT_MS`:
+ * the deployment is not answering, or Clerk's token endpoint keeps failing. The page still comes
+ * in by itself if the answer arrives; Try again loads it afresh.
+ */
+export function SessionUnconfirmed() {
+  return (
+    // Inside the page's own `main` (`MainTransition`), as the owned page it stands in for is.
+    <div className="grid min-h-[calc(100vh-3.25rem)] place-items-center px-6">
+      <div className="grid max-w-md justify-items-center gap-4 text-center">
+        <h1 className="text-lg font-semibold">Day0 has not confirmed your sign-in</h1>
+        <p className="text-sm text-[var(--color-muted)]">
+          This is taking longer than it should: Day0 or the sign-in service is not answering. Check
+          your connection, then try again. The page carries on by itself if the answer arrives.
+        </p>
+        <Button variant="primary" onClick={(): void => window.location.reload()}>
+          Try again
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 /** What `SignedOut` is told: whether Clerk still holds the session the deployment refused. */

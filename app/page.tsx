@@ -5,7 +5,7 @@ import { DEV_BOSS_EMAIL, DEV_BOSS_FIRST_NAME, DEV_NO_AUTH } from '@/lib/dev-auth
 import { useAccount } from './account';
 import { SignedInDashboard } from './home/SignedInDashboard';
 import { MarketingLanding } from './marketing/MarketingLanding';
-import { SessionGate } from './Providers';
+import { SessionGate, SessionPending } from './Providers';
 
 /**
  * `/` serves both audiences from one route (decision N29): the marketing page to a signed-out
@@ -32,10 +32,9 @@ function ClerkLanding(): ReactElement | null {
     case 'signed-out':
       return <MarketingLanding />;
     case 'signed-in':
-      // The dashboard reads the manager's rows; until Convex holds the token it stays the
-      // neutral shell `resolving` draws.
+      // The dashboard reads the manager's rows; until Convex holds the token it says what loads.
       return (
-        <SessionGate fallback={null}>
+        <SessionGate fallback={<SessionPending>loading your employees…</SessionPending>}>
           <SignedInDashboard boss={account.boss} />
         </SessionGate>
       );
