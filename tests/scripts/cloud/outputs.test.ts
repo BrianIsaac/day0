@@ -118,6 +118,7 @@ describe('parseVercelInspect', (): void => {
   it('reads the id, the target, the status, the URL and every alias', (): void => {
     expect(parseVercelInspect(INSPECT)).toEqual({
       id: 'dpl_Example123abc',
+      name: 'day0',
       target: 'production',
       ready: true,
       url: 'https://day0-abc123-example-team.vercel.app',

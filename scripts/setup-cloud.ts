@@ -44,6 +44,7 @@ import {
   deployApp,
   inspectApp,
   otherHostLines,
+  projectRefusal,
   readAppBack,
   readAppEnv,
   setAppValues,
@@ -431,6 +432,8 @@ async function readSetup(options: CloudOptions, io: CloudIo): Promise<SetupReads
   if (target.appUrl !== undefined) {
     const served = inspectApp(io, target, target.appUrl);
     if ('failure' in served) return { failure: `${served.failure}.` };
+    const elsewhere = projectRefusal(io, served, target.appUrl);
+    if (elsewhere !== undefined) return elsewhere;
     previous = served;
   }
   return { checkout, target, settings, toSet, kept, appBefore, previous };
@@ -648,6 +651,8 @@ function readServingApp(
   }
   const served = inspectApp(io, target, appUrl);
   if ('failure' in served) return { failure: `${served.failure}.` };
+  const elsewhere = projectRefusal(io, served, appUrl);
+  if (elsewhere !== undefined) return elsewhere;
   const talks = appTalksTo(io, appUrl, target.deployment);
   if ('failure' in talks) return { failure: `${talks.failure}.` };
   if (!talks.talks) {

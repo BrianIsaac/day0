@@ -603,6 +603,11 @@ describe('cloud upgrade', (): void => {
       'so this is a move, not an upgrade',
     ],
     ['no unzip to count the export with', { missing: ['unzip'] }, '`unzip` does not answer'],
+    [
+      'a checkout linked to another Vercel project',
+      { servedProject: 'day0-staging' },
+      'is served by the Vercel project day0-staging',
+    ],
   ])('refuses %s before anything is written', async (_label, state, words): Promise<void> => {
     const c = cloud(state);
     expect(await runCloudUpgrade(verb(c, { verb: 'upgrade' }), c.io)).toBe(1);

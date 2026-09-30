@@ -3,6 +3,8 @@ import {
   appConvexValues,
   appTalksTo,
   deployApp,
+  linkedProject,
+  projectRefusal,
   readAppBack,
   setAppValues,
 } from '../../../scripts/cloud/app';
@@ -87,6 +89,7 @@ describe('deployApp and readAppBack', (): void => {
     const c = cloud({ stamp: { release: '0.4.0', commit: 'x' } });
     const before = {
       id: 'dpl_Before1',
+      name: 'day0',
       target: 'production',
       ready: true,
       url: undefined,
@@ -119,6 +122,25 @@ describe('deployApp and readAppBack', (): void => {
     const failed = deployApp(c.io, targetOf(c));
     expect('failure' in failed && failed.failure).toContain(
       '  | Error: Command "pnpm run build" exited with 1',
+    );
+  });
+});
+
+describe('projectRefusal', (): void => {
+  it('accepts the build of the project the checkout is linked to, and refuses another', (): void => {
+    const c = cloud();
+    const served = {
+      id: 'dpl_X',
+      name: 'day0',
+      target: 'production',
+      ready: true,
+      url: undefined,
+      aliases: [],
+    };
+    expect(linkedProject(c.io)).toBe('day0');
+    expect(projectRefusal(c.io, served, APP_URL)).toBeUndefined();
+    expect(projectRefusal(c.io, { ...served, name: 'day0-staging' }, APP_URL)?.failure).toBe(
+      `${APP_URL} is served by the Vercel project day0-staging, and this checkout is linked to day0; the writes would reach the linked one. Link the project that serves it: vercel link.`,
     );
   });
 });

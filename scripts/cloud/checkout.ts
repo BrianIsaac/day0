@@ -115,12 +115,14 @@ export function readTarget(flags: TargetFlags, io: CloudIo): CloudTarget | Failu
   };
 }
 
-/** Names in the shell that would point the Convex CLI somewhere the target file does not. */
+/** Names in the shell that would point the Convex or Vercel CLI somewhere the target and the link do not. */
 export const INHERITED_SELECTORS: readonly string[] = [
   'CONVEX_DEPLOYMENT',
   'CONVEX_DEPLOY_KEY',
   'CONVEX_SELF_HOSTED_URL',
   'CONVEX_SELF_HOSTED_ADMIN_KEY',
+  'VERCEL_ORG_ID',
+  'VERCEL_PROJECT_ID',
 ];
 
 /** The release this checkout is, its commit, and the releases it knows. */

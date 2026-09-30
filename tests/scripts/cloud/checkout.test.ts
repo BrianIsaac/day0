@@ -81,7 +81,7 @@ describe('readCheckout', (): void => {
     const environment = Object.fromEntries(INHERITED_SELECTORS.map((name) => [name, 'x']));
     const refusal = readCheckout({ ...c.io, environment }, false);
     expect('failure' in refusal && refusal.failure).toBe(
-      'CONVEX_DEPLOYMENT and CONVEX_DEPLOY_KEY and CONVEX_SELF_HOSTED_URL and CONVEX_SELF_HOSTED_ADMIN_KEY are set in this shell and would choose the deployment instead of the target file; unset them.',
+      'CONVEX_DEPLOYMENT and CONVEX_DEPLOY_KEY and CONVEX_SELF_HOSTED_URL and CONVEX_SELF_HOSTED_ADMIN_KEY and VERCEL_ORG_ID and VERCEL_PROJECT_ID are set in this shell and would choose the deployment instead of the target file; unset them.',
     );
   });
 

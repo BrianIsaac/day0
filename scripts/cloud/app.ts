@@ -5,6 +5,8 @@
  * is the one place the values Vercel encrypts can be seen to be right: the
  * client inlines the deployment's address and `/setup` states its release.
  */
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { firstLine, tail, type CloudIo, type CloudTarget, type Failure } from './checkout';
 import {
   clientChunkPaths,
@@ -47,6 +49,44 @@ export function inspectApp(
     };
   }
   return deployment;
+}
+
+/**
+ * The project the checkout is linked to, as `vercel link` wrote it.
+ *
+ * @param io - The machine.
+ */
+export function linkedProject(io: CloudIo): string | undefined {
+  try {
+    const link = JSON.parse(readFileSync(join(io.cwd, '.vercel', 'project.json'), 'utf8')) as {
+      projectName?: unknown;
+    };
+    return typeof link.projectName === 'string' ? link.projectName : undefined;
+  } catch {
+    // No link, or not the link's shape: the caller refuses on undefined.
+    return undefined;
+  }
+}
+
+/**
+ * Why the app's address is not served by the project this checkout is
+ * linked to, whose env and production the Vercel writes change, or
+ * undefined when it is.
+ *
+ * @param io - The machine.
+ * @param served - The build serving the app's address.
+ * @param appUrl - That address.
+ */
+export function projectRefusal(
+  io: CloudIo,
+  served: VercelDeployment,
+  appUrl: string,
+): Failure | undefined {
+  const linked = linkedProject(io);
+  if (linked !== undefined && served.name === linked) return undefined;
+  return {
+    failure: `${appUrl} is served by the Vercel project ${served.name ?? '(unnamed)'}, and this checkout is linked to ${linked ?? 'a project whose name .vercel/project.json does not give'}; the writes would reach the linked one. Link the project that serves it: vercel link.`,
+  };
 }
 
 /**

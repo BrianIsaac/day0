@@ -104,6 +104,8 @@ function unquoted(value: string): string {
 export interface VercelDeployment {
   /** The deployment's id, `dpl_...`, which `vercel promote` takes. */
   readonly id: string;
+  /** The Vercel project it belongs to. */
+  readonly name: string | undefined;
   /** `production` for a production deployment. */
   readonly target: string | undefined;
   /** Whether its status reads Ready. */
@@ -139,6 +141,7 @@ export function parseVercelInspect(output: string): VercelDeployment | undefined
         ].map((match) => match[1]!);
   return {
     id,
+    name: field('name'),
     target: field('target'),
     ready: /\bReady\b/.test(field('status') ?? ''),
     url: field('url'),
