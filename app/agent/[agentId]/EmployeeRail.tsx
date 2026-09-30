@@ -63,6 +63,7 @@ export function RecordLines({ events, titles, lines }: RecordLinesProps) {
   return (
     <ul className="grid gap-1.5">
       {events.slice(0, lines).map((event) => {
+        const label = eventLabel(event);
         const title = eventItemTitle(event, titles);
         return (
           <RecordLine
@@ -70,8 +71,9 @@ export function RecordLines({ events, titles, lines }: RecordLinesProps) {
             kind={recordKindOf(event)}
             time={{ at: event.createdAt, label: clockTime(event.createdAt, zone) }}
           >
-            {eventLabel(event)}
-            {title ? ` · ${title}` : null}
+            {label}
+            {/* A label that names the item already (new work) is not followed by it again. */}
+            {title && !label.includes(title) ? ` · ${title}` : null}
           </RecordLine>
         );
       })}

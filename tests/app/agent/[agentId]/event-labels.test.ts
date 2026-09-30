@@ -208,6 +208,22 @@ describe('the live feed labels', (): void => {
     );
   });
 
+  it("says what an evaluation decided in the manager's words, not the verdict's name (walk m15)", (): void => {
+    const evaluated = (decision: unknown): string =>
+      eventLabel({ type: 'work.evaluated', payload: { workItemId: 'w1', decision } });
+    expect(evaluated('claim')).toBe('judged part of the job');
+    expect(evaluated('needs-skill')).toBe('judged part of the job, needs a skill first');
+    expect(evaluated('skip')).toBe('judged not part of the job');
+    expect(evaluated('queue')).toBe('judged part of the job, queued behind its open work');
+    expect(evaluated('defer')).toBe(
+      'judged part of the job, waiting on a connection or a permission',
+    );
+    // A verdict no release makes any more is printed as stored; a row with none says evaluated.
+    expect(evaluated('retired-verdict')).toBe('evaluated: retired-verdict');
+    expect(evaluated(undefined)).toBe('evaluated');
+    expect(evaluated('constructor')).toBe('evaluated: constructor');
+  });
+
   it('prints a type only an older release wrote as it was stored', (): void => {
     expect(eventLabel({ type: 'work.legacy-thing', payload: { x: 1 } })).toBe('work.legacy-thing');
   });

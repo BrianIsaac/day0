@@ -104,6 +104,30 @@ describe('RecordLines', () => {
     expect(html).toContain('<span class="sr-only">Held: </span>');
     expect(html).toContain('>29 Sep 2026, 09:41</time>');
   });
+
+  it('names the item once on a line whose words name it already (walk m15)', () => {
+    const discovered = {
+      _id: 'e1',
+      _creationTime: 1,
+      agentId: 'agent-1',
+      type: 'work.discovered',
+      payload: { workItemId: 'w1', title: 'Close REVOPS-5' },
+      createdAt: Date.UTC(2026, 8, 29, 9, 41),
+    } as unknown as Doc<'events'>;
+    const html = text(
+      renderToStaticMarkup(
+        asEmployee(
+          <RecordLines
+            events={[discovered]}
+            titles={new Map([['w1', 'Close REVOPS-5']])}
+            lines={1}
+          />,
+        ),
+      ),
+    );
+    expect(html.match(/Close REVOPS-5/g)).toHaveLength(1);
+    expect(html).toContain('new work: Close REVOPS-5');
+  });
 });
 
 describe('EmployeeRail', () => {
