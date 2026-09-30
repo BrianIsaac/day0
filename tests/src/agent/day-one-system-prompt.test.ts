@@ -45,6 +45,22 @@ describe('dayOneSystemPrompt', (): void => {
     );
   });
 
+  it('tells an employee with no name none, rather than an empty one', (): void => {
+    const prompt = dayOneSystemPrompt('  ');
+    expect(prompt.split('\n')[0]).toBe(
+      'You are a newly deployed workplace employee on your first day.',
+    );
+    expect(prompt).toContain('  - Lead with a short welcome on turn one, then ask topic 1.');
+    expect(prompt).not.toMatch(/You are ,|as ,/);
+  });
+
+  it('holds a long name to 80 characters', (): void => {
+    const prompt = dayOneSystemPrompt('A'.repeat(500));
+    expect(prompt.split('\n')[0]).toBe(
+      `You are ${'A'.repeat(80)}, a newly deployed workplace employee on your first day.`,
+    );
+  });
+
   it('moves the cache key on with the prompt', (): void => {
     expect(DAY_ONE_PROMPT_CACHE_KEY).toBe('day0-day1-system-v2');
   });

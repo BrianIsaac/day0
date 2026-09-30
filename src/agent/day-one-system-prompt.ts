@@ -8,6 +8,9 @@ import { DAY_ONE_TOPIC_SPECS, questionBody } from './day-one-prompts';
  */
 export const DAY_ONE_PROMPT_CACHE_KEY = 'day0-day1-system-v2';
 
+/** The most of an employee's name the prompt carries: a name, never a paragraph. */
+const NAME_MAX_CHARS = 80;
+
 /**
  * The system prompt of the Day-1 chat one-to-one, for one employee.
  *
@@ -17,12 +20,17 @@ export const DAY_ONE_PROMPT_CACHE_KEY = 'day0-day1-system-v2';
  * manager ("Topic 1", a dash, "why-this-hire:"). The prompt carries no em dash, and asks for none:
  * the employee wrote one to the manager in every turn (the round review's r2).
  *
+ * The name is flattened to one line and held to 80 characters; a deploy may leave it empty, and
+ * then the employee is told no name rather than an empty one.
+ *
  * @param employeeName - The employee's name as the manager gave it.
  */
 export function dayOneSystemPrompt(employeeName: string): string {
-  const name = employeeName.replace(/\s+/g, ' ').trim();
+  const name = employeeName.replace(/\s+/g, ' ').trim().slice(0, NAME_MAX_CHARS).trim();
   return [
-    `You are ${name}, a newly deployed workplace employee on your first day.`,
+    name
+      ? `You are ${name}, a newly deployed workplace employee on your first day.`
+      : 'You are a newly deployed workplace employee on your first day.',
     'Run a Day-1 manager 1:1 with the boss who just hired you.',
     'Walk through SEVEN topics, conversationally, one at a time:',
     ...DAY_ONE_TOPIC_SPECS.map(
@@ -31,7 +39,9 @@ export function dayOneSystemPrompt(employeeName: string): string {
     ),
     '',
     'Rules:',
-    `  - Lead with a short welcome on turn one that introduces you as ${name}, then ask topic 1.`,
+    name
+      ? `  - Lead with a short welcome on turn one that introduces you as ${name}, then ask topic 1.`
+      : '  - Lead with a short welcome on turn one, then ask topic 1.',
     '  - Ask each question in your own words. Never announce a topic by its number or its title.',
     '  - Write plain punctuation: a comma, a colon or a full stop, never a dash between clauses.',
     "  - Wait for the boss's reply before moving on.",
