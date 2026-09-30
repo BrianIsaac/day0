@@ -45,11 +45,18 @@ export function HeaderAccount(): React.ReactElement {
  */
 function AccountSlot(): React.ReactElement {
   const account = useAccount();
+  // Only an unanswered slot is the hint's to choose: signed in or out inside the page, the hint on
+  // <html> is stale and Clerk's answer is not.
+  const hinted = account.kind === 'resolving';
   return (
     <div className="grid items-center justify-items-end">
-      {account.kind !== 'signed-in' && <SignedOutControls reserved />}
+      {account.kind !== 'signed-in' && <SignedOutControls reserved={{ hinted }} />}
       {account.kind !== 'signed-out' && (
-        <div aria-hidden="true" data-account-reserve="signed-in" className={ACCOUNT_MENU_BOX} />
+        <div
+          aria-hidden="true"
+          data-account-reserve={hinted ? 'signed-in' : undefined}
+          className={ACCOUNT_MENU_BOX}
+        />
       )}
       <Show when="signed-out">
         <SignedOutControls />
@@ -69,12 +76,13 @@ function AccountSlot(): React.ReactElement {
 /**
  * Sign in and Create account, which open Clerk's modals. Reserved, the same two buttons are drawn
  * invisible and out of reach of a pointer, a keyboard and assistive technology, so the room they
- * hold is exactly the live buttons' at every width and in every font.
+ * hold is exactly the live buttons' at every width and in every font; `hinted` while the head's
+ * hint, not Clerk, decides whether they are the room to hold.
  */
 function SignedOutControls({
-  reserved = false,
+  reserved,
 }: {
-  readonly reserved?: boolean;
+  readonly reserved?: { readonly hinted: boolean };
 }): React.ReactElement {
   const signIn = (
     <button
@@ -97,7 +105,7 @@ function SignedOutControls({
       <div
         aria-hidden="true"
         inert
-        data-account-reserve="signed-out"
+        data-account-reserve={reserved.hinted ? 'signed-out' : undefined}
         className={`${SIGNED_OUT_ROW} invisible`}
       >
         {signIn}

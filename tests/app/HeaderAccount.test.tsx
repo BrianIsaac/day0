@@ -57,9 +57,15 @@ function render(): string {
   return renderToStaticMarkup(<HeaderAccount />);
 }
 
+/** How each reservation opens: the sign-in controls' copy is inert, the menu's box is empty. */
+const RESERVATION_OPENS = {
+  'signed-out': /<div aria-hidden="true" inert=""[^>]*>/,
+  'signed-in': /<div aria-hidden="true"[^>]*\bsize-11\b[^>]*><\/div>/,
+} as const;
+
 /** The element that holds room for one of Clerk's controls, whole, or undefined when there is none. */
 function reservation(html: string, answer: 'signed-in' | 'signed-out'): string | undefined {
-  const open = new RegExp(`<div [^>]*data-account-reserve="${answer}"[^>]*>`).exec(html);
+  const open = RESERVATION_OPENS[answer].exec(html);
   if (!open) return undefined;
   const close = html.indexOf('</div>', open.index);
   return html.slice(open.index, close + '</div>'.length);
@@ -123,14 +129,22 @@ describe("the account slot's room (the header nav shift of 30 September)", (): v
     expect(reservation(html, 'signed-in')).toBeUndefined();
   });
 
+  it("leaves the choice to the head's hint only until Clerk answers, then to Clerk", (): void => {
+    const waiting = render();
+    expect(reservation(waiting, 'signed-out')).toContain('data-account-reserve="signed-out"');
+    expect(reservation(waiting, 'signed-in')).toContain('data-account-reserve="signed-in"');
+    // Signed in or out inside the page, the hint on <html> is stale; Clerk's answer is not.
+    clerk.user = MANAGER;
+    expect(reservation(render(), 'signed-in')).not.toContain('data-account-reserve');
+    clerk.user = null;
+    expect(reservation(render(), 'signed-out')).not.toContain('data-account-reserve');
+  });
+
   it("holds only the account menu's room once signed in, the same box the avatar mounts in", (): void => {
     clerk.user = MANAGER;
     const html = render();
     expect(reservation(html, 'signed-out')).toBeUndefined();
-    const held = classOf(
-      html,
-      /<div aria-hidden="true" data-account-reserve="signed-in" class="([^"]*)"/,
-    );
+    const held = classOf(reservation(html, 'signed-in') ?? '', /class="([^"]*)"/);
     const live = classOf(html, /<div class="([^"]*)"><button type="button">Open user menu/);
     expect(held).toMatch(/\bsize-11\b/);
     expect(held).toBe(live);
