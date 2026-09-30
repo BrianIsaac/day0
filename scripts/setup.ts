@@ -441,8 +441,9 @@ Hold the deployment's scheduled jobs (the polls, the digests, the sweeps and the
   ./setup.sh pause                        every job skips until unpause; an upgrade leaves it so
   ./setup.sh unpause                      each job runs again at its next turn
 
-The Convex-cloud-plus-Clerk route is not automated here; it needs accounts and
-a dashboard task. README.md has it, linked from the end of a successful run.`;
+Your own copy on Convex cloud and Vercel, as the hosted demo runs, is the cloud
+verbs, which need no Docker: ./setup.sh cloud --help, and README.md, "Your own
+hosted copy".`;
 
 /**
  * Read the command line.
@@ -2967,9 +2968,11 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       );
       io.log(`  \`${SETUP_SCRIPT} --route local\` (${WAY_NAMES.local}); README.md, "Local dev".`);
       io.log(
-        '  Convex cloud plus Clerk, with a user per sign-in: README.md, "Convex cloud + Clerk".',
+        '  Convex cloud plus Clerk, with a user per sign-in: README.md, "Convex cloud + Clerk";',
       );
-      io.log('  That one is not automated here: it needs accounts and a dashboard task.');
+      io.log(
+        '  your own hosted copy on Convex cloud and Vercel is `./setup.sh cloud setup --target <file>`.',
+      );
     }
 
     const createsEnv = !existsSync(envPath);

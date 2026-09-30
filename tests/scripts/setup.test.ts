@@ -1468,5 +1468,9 @@ describe('mock mode says what it is for', (): void => {
     expect(printed).toContain(`\`${SETUP_SCRIPT} --route featherless\` (${WAY_NAMES.cloud})`);
     expect(printed).toContain(`\`${SETUP_SCRIPT} --route local\` (${WAY_NAMES.local})`);
     expect(printed).not.toContain('pnpm setup:local --mode real');
+    expect(printed).toContain(
+      'your own hosted copy on Convex cloud and Vercel is `./setup.sh cloud setup --target <file>`.',
+    );
+    expect(printed).not.toContain('not automated here');
   });
 });
