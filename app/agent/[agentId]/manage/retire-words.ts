@@ -28,7 +28,6 @@ export function listed(parts: readonly string[]): string {
 /**
  * A count with its noun: "1 skill", "3 skills".
  *
- * @param count - How many.
  * @param one - The noun for one.
  * @param many - The noun for more than one.
  */
