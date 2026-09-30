@@ -22,6 +22,7 @@ import {
   type TurnRequest,
 } from '@/agent/one-to-one-conversation';
 import {
+  answerSetAside,
   lastKeptReply,
   redrawn,
   replyInProgress,
@@ -176,6 +177,12 @@ export function chatTurnTransport(
       },
     }),
   });
+}
+
+/** The turn ids a room's subscription has reported, and the session and conversation they are of. */
+interface SeenTurns {
+  readonly for: string;
+  readonly ids: ReadonlySet<string>;
 }
 
 /** What the one-to-one's session wiring is given. */
@@ -389,13 +396,28 @@ export function useOneToOneSession({
   // Why the room was drawn again from the session, while that is worth saying.
   const [redrawNote, setRedrawNote] = useState<string | null>(null);
 
+  // Every turn the subscription has reported for this conversation: an answer reported and then
+  // gone was set aside (`answerSetAside`). Kept from the previous render in state, as React's docs
+  // set out; a new session or conversation starts the record afresh.
+  const seenFor = `${session?._id ?? ''}:${conversation ?? ''}`;
+  const [seen, setSeen] = useState<SeenTurns>({ for: seenFor, ids: new Set() });
+  const reported = kept ?? [];
+  if (seen.for !== seenFor || reported.some((turn) => !seen.ids.has(turn.id))) {
+    const earlier = seen.for === seenFor ? [...seen.ids] : [];
+    setSeen({ for: seenFor, ids: new Set([...earlier, ...reported.map((turn) => turn.id)]) });
+  }
+
   // The session moved past this room: another window replied, an answer the room lost on the way
-  // was kept, or the one-to-one started again. The room is drawn again from what the session
-  // holds, rather than offering a turn the session would refuse. A turn in flight settles first.
+  // was kept, another window set aside an answer the room drew, or the one-to-one started again.
+  // The room is drawn again from what the session holds, rather than offering a turn the session
+  // would refuse. A turn in flight settles first.
   const behind = !over && !waitingOnTurn && conversation !== null && !!session;
   const startedAgain = behind && conversationOf(session) !== conversation;
   const movedToCall = startedAgain && session.mode !== 'chat';
-  const drawnBehind = behind && !startedAgain && roomBehind(messages, kept ?? []);
+  const drawnBehind =
+    behind &&
+    !startedAgain &&
+    (roomBehind(messages, reported) || answerSetAside(messages, reported, seen.ids));
   useEffect(() => {
     if (!startedAgain || movedToCall) return;
     // The conversation this room drew was set aside elsewhere: open the one the session holds.

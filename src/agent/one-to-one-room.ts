@@ -83,6 +83,38 @@ export function roomBehind(
   });
 }
 
+/**
+ * Whether the session set aside an answer this room drew as kept: the room's own subscription once
+ * reported it (`seen`), the session holds it no longer, and every turn the session holds is one the
+ * room drew, in the same order. A query's results never go backwards, so an answer seen and then
+ * gone was discarded (another window asked again, and its new answer never came), never merely
+ * not reported yet: the room may draw the session again without drawing a turn away and back (the
+ * pre-tag pass's minor 7). An answer discarded before the subscription ever reported it is not
+ * seen here, and that room is still refused until it reloads or the conversation moves on.
+ *
+ * @param messages - The room's conversation.
+ * @param turns - What the session keeps.
+ * @param seen - Every turn id the room's subscription has reported for this conversation.
+ */
+export function answerSetAside(
+  messages: readonly UIMessage[],
+  turns: readonly OneToOneTurn[],
+  seen: ReadonlySet<string>,
+): boolean {
+  const answer = messages.findLast(
+    (message: UIMessage): boolean => message.role === 'assistant' && isKeptAnswer(message),
+  );
+  if (!answer || !seen.has(answer.id) || turns.some((turn) => turn.id === answer.id)) return false;
+  const drawnAt = new Map(messages.map((message, index): [string, number] => [message.id, index]));
+  let previous = -1;
+  for (const turn of turns) {
+    const at = drawnAt.get(turn.id);
+    if (at === undefined || at <= previous) return false;
+    previous = at;
+  }
+  return true;
+}
+
 /** The room drawn again from the session, and what it had not sent, for the composer. */
 export interface Redrawn {
   readonly messages: UIMessage[];

@@ -537,6 +537,54 @@ describe('an answer that failed, and the reply sent after it (second pass minors
   });
 });
 
+describe('an answer another window set aside, whose regeneration then failed (pre-tag pass minor 7)', (): void => {
+  it('draws the session again at once, with nothing refused and the next reply kept', async (): Promise<void> => {
+    backend.turns = [
+      kept('e0', 'employee', 'Why this hire?'),
+      kept('m0', 'manager', 'The close.'),
+      kept('x1', 'employee', 'Which customers matter most?'),
+    ];
+    const view = mount(<ChatRoom agentId={AGENT} bossLabel="Sam" />);
+    await streamed();
+    expect(logOf(view)).toContain('Which customers matter most?');
+    // Another window asked again: the session set the answer aside, and the new one failed.
+    backend.turns = backend.turns.slice(0, 2);
+    await redraw(view);
+    expect(logOf(view)).not.toContain('Which customers matter most?');
+    expect(view.container.textContent).not.toContain('moved on in another window. Reload');
+    answers = [spoken('e2', 'Noted. Who should I meet?')];
+    await reply(view, 'Acme and Globex.');
+    expect(keptTexts()).toEqual([
+      'employee:Why this hire?',
+      'manager:The close.',
+      'manager:Acme and Globex.',
+      'employee:Noted. Who should I meet?',
+    ]);
+    expect(view.container.textContent).not.toContain('Reload to carry on');
+    view.unmount();
+  });
+
+  it('keeps an answer the subscription has not reported yet, so a lag never draws it away and back', async (): Promise<void> => {
+    backend.turns = [kept('e0', 'employee', 'Why this hire?')];
+    const view = mount(<ChatRoom agentId={AGENT} bossLabel="Sam" />);
+    await streamed();
+    // The room streams and keeps its own answer; the subscription is a moment behind.
+    backend.lagging = {
+      _id: 'session-1',
+      state: 'active',
+      mode: 'chat',
+      conversation: 0,
+      turns: [kept('e0', 'employee', 'Why this hire?')],
+    };
+    answers = [spoken('e1', 'Noted. Who should I meet?')];
+    await reply(view, 'The close.');
+    await redraw(view);
+    expect(logOf(view)).toContain('Noted. Who should I meet?');
+    backend.lagging = undefined;
+    view.unmount();
+  });
+});
+
 describe('a room the session has moved past (review M1)', (): void => {
   it('has a reply to a question another window answered refused, then draws the session and hands the reply back', async (): Promise<void> => {
     backend.turns = [kept('e0', 'employee', 'Question 1?')];
