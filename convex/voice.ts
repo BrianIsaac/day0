@@ -119,11 +119,15 @@ export const start = mutation({
       .first();
     if (open && open.state !== 'done') {
       const webhookToken = open.webhookToken ?? crypto.randomUUID();
+      // A call started over a chat still being held starts from the first question, as the
+      // switch says: the chat's turns are set aside, not drawn again over the call.
+      const leavesChat = open.mode === 'chat' && args.mode !== 'chat' && !open.pendingTranscript;
       if (open.mode !== args.mode || !open.webhookToken) {
         await ctx.db.patch(open._id, {
           mode: args.mode,
           webhookToken,
           ...(open.mode !== args.mode ? { elevenLabsConversationId: undefined } : {}),
+          ...(leavesChat ? { turns: undefined, replyDraft: undefined } : {}),
         });
       }
       // A session released by a failed finaliser is reusable while its agent has
@@ -137,8 +141,8 @@ export const start = mutation({
         sessionId: open._id,
         webhookToken,
         resumed: true,
-        turns: open.turns ?? [],
-        replyDraft: open.replyDraft ?? null,
+        turns: leavesChat ? [] : (open.turns ?? []),
+        replyDraft: leavesChat ? null : (open.replyDraft ?? null),
       };
     }
 

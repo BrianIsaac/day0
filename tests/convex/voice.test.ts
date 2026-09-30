@@ -97,3 +97,24 @@ describe('opening the one-to-one on a session already under way', (): void => {
     });
   });
 });
+
+describe('a call started over a chat one-to-one', (): void => {
+  it('sets the chat turns aside, so switching back does not draw them over the call (second pass M2)', async (): Promise<void> => {
+    const { harness, agentId, sessionId } = await failedSession();
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(sessionId, {
+        pendingTranscript: undefined,
+        finalisationError: undefined,
+        recoveryAttempts: undefined,
+      });
+    });
+    const owner = harness.withIdentity({ subject: 'owner' });
+    expect(await owner.mutation(api.voice.start, { agentId, mode: 'elevenlabs' })).toMatchObject({
+      turns: [],
+      replyDraft: null,
+    });
+    const row = await harness.run(async (ctx) => await ctx.db.get(sessionId));
+    expect(row?.turns).toBeUndefined();
+    expect(row?.replyDraft).toBeUndefined();
+  });
+});
