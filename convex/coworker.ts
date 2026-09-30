@@ -49,15 +49,11 @@ const PROFILES: Readonly<Record<string, ResponderProfile>> = {
 };
 
 /**
- * The reply a channel's colleague gives to one message, or none.
+ * The reply a channel's colleague gives to one message, or none on a channel with no colleague.
  *
- * Args:
- *   channelSlug: The channel Day0 posted on.
- *   originalBody: What Day0 posted; it chooses among the colleague's replies.
- *   employee: The name of the employee who posted, which a reply may address.
- *
- * Returns:
- *   The responder and the reply, or undefined for a channel with no colleague.
+ * @param channelSlug - The channel the employee posted on.
+ * @param originalBody - What the employee posted; it chooses among the colleague's replies.
+ * @param employee - The name of the employee who posted, which a reply may address.
  */
 function pickReply(
   channelSlug: string,
