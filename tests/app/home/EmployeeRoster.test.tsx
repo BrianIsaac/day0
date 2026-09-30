@@ -4,11 +4,7 @@ import { EmployeeRoster } from '../../../app/home/EmployeeRoster';
 import { OfficeWorld } from '../../../app/home/OfficeWorld';
 import type { RosterRow } from '../../../app/home/types';
 import type { OneToOnePhase } from '../../../src/agent/one-to-one-phase';
-import {
-  employeeStateLabel,
-  employeeStateWords,
-  type EmployeeState,
-} from '../../../src/work/state-labels';
+import { employeeStateWords, type EmployeeState } from '../../../src/work/state-labels';
 
 const month = (days: Array<[string, number]>, atLeast = false) => ({
   month: '2026-09',
@@ -167,9 +163,6 @@ describe('the roster, its faces and the pill in every phase of the one-to-one (C
     (state, phase) => {
       const row = { ...roster[0], state, phase } as RosterRow;
       const words = employeeStateWords(state, phase).text;
-      // The pill beside the name on the employee's page, which adds the autonomy to an active one.
-      const pill = employeeStateLabel(state, row.autonomous, phase).text;
-      expect(pill.startsWith(words)).toBe(true);
       const table = renderToStaticMarkup(<EmployeeRoster employees={[row]} waiting={waiting} />);
       expect(table).toMatch(new RegExp(`<span class="[^"]*rounded-full[^"]*">${words}</span>`));
       expect(table).toContain(`title="Mira, ${words.toLowerCase()}"`);

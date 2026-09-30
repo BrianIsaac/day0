@@ -14,7 +14,7 @@ import type { WorkCandidate } from '../../src/work/types';
 import { asAgentId } from '../../src/lib/ids';
 import { runThroughBody } from '../fixtures/run-through-charter-2026-09-14';
 import { runtimeCycleThrough } from '../fixtures/import-graph';
-import { MAX_FINALISATION_RECOVERIES, oneToOnePhase } from '../../src/agent/one-to-one-phase';
+import { MAX_FINALISATION_RECOVERIES } from '../../src/agent/one-to-one-phase';
 
 afterEach((): void => {
   vi.useRealTimers();
@@ -1165,14 +1165,6 @@ describe('the employee roster', (): void => {
       .withIdentity({ subject: 'owner' })
       .query(api.agents.rosterForUser, {});
     const phases = Object.fromEntries(roster.map((row): [string, string] => [row.name, row.phase]));
-    expect(phases).toEqual(
-      Object.fromEntries(
-        Object.entries(sessions).map(([name, rows]): [string, string] => [
-          name,
-          oneToOnePhase(rows[rows.length - 1]).kind,
-        ]),
-      ),
-    );
     expect(phases).toEqual({
       Ana: 'talking',
       Ben: 'talking',

@@ -12,8 +12,6 @@ const CANDIDATES = ['.ts', '.tsx', '/index.ts', '/index.tsx'] as const;
 /**
  * Whether an import statement is erased at build time: `import type`, or named imports that are
  * every one `type`. An erased import never runs, so it cannot close a runtime cycle.
- *
- * @param statement - An import declaration.
  */
 function erased(statement: ts.ImportDeclaration): boolean {
   const clause = statement.importClause;

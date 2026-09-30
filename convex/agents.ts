@@ -288,9 +288,6 @@ async function charterStanding(ctx: QueryCtx, agentId: Id<'agents'>): Promise<Ch
 /**
  * The employee's newest one-to-one session, the one its page reads the phase off
  * (`voice.latest`): one indexed read, the first row newest first.
- *
- * @param ctx - Query context.
- * @param agentId - The employee.
  */
 async function newestSession(
   ctx: QueryCtx,
