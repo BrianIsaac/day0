@@ -7,7 +7,10 @@ export type ClerkAnswer = 'signed-in' | 'signed-out';
 export interface HeldClerk {
   /** Settles once the page has asked for Clerk's script, which it does only after hydrating. */
   readonly requested: Promise<void>;
-  /** Serves the double, so Clerk answers and mounts its controls. */
+  /**
+   * Serves the double, so Clerk answers and mounts its controls. Safe to call again: a spec calls
+   * it in a `finally` too, so one that fails before its own release leaves no route waiting.
+   */
   readonly release: () => void;
 }
 

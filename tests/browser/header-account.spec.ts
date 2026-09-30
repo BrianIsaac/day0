@@ -105,22 +105,26 @@ for (const path of PAGES) {
   }) => {
     await page.addInitScript(recordHeaderShifts);
     const clerk = await holdClerk(page, 'signed-out');
-    await page.goto(path, { waitUntil: 'domcontentloaded' });
-    await clerk.requested;
-    // The nav mounts once the page has hydrated and read that this browser holds no session.
-    await page.locator('header nav[aria-label="Site"]').waitFor({ state: 'attached' });
-    await settle(page);
-    const before = await headerBoxes(page);
-    expect(before).toHaveProperty(['account cluster']);
+    try {
+      await page.goto(path, { waitUntil: 'domcontentloaded' });
+      await clerk.requested;
+      // The nav mounts once the page has hydrated and read that this browser holds no session.
+      await page.locator('header nav[aria-label="Site"]').waitFor({ state: 'attached' });
+      await settle(page);
+      const before = await headerBoxes(page);
+      expect(before).toHaveProperty(['account cluster']);
 
-    clerk.release();
-    await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Create account' })).toBeVisible();
-    await settle(page);
+      clerk.release();
+      await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Create account' })).toBeVisible();
+      await settle(page);
 
-    const after = await headerBoxes(page);
-    for (const [name, box] of Object.entries(before)) expect(after[name], name).toEqual(box);
-    expect(await headerShifts(page)).toEqual([]);
+      const after = await headerBoxes(page);
+      for (const [name, box] of Object.entries(before)) expect(after[name], name).toEqual(box);
+      expect(await headerShifts(page)).toEqual([]);
+    } finally {
+      clerk.release();
+    }
   });
 }
 
@@ -130,16 +134,20 @@ test('keeps the header still when Clerk mounts the account menu of a signed-in m
   await page.addInitScript(recordHeaderShifts);
   await page.addInitScript(holdSessionCookie);
   const clerk = await holdClerk(page, 'signed-in');
-  await page.goto('/setup', { waitUntil: 'domcontentloaded' });
-  await clerk.requested;
-  await settle(page);
-  const before = await headerBoxes(page);
-  expect(before).toHaveProperty(['account cluster']);
+  try {
+    await page.goto('/setup', { waitUntil: 'domcontentloaded' });
+    await clerk.requested;
+    await settle(page);
+    const before = await headerBoxes(page);
+    expect(before).toHaveProperty(['account cluster']);
 
-  clerk.release();
-  await expect(page.getByRole('button', { name: 'Open user menu' })).toBeVisible();
-  await settle(page);
+    clerk.release();
+    await expect(page.getByRole('button', { name: 'Open user menu' })).toBeVisible();
+    await settle(page);
 
-  expect(await headerBoxes(page)).toEqual(before);
-  expect(await headerShifts(page)).toEqual([]);
+    expect(await headerBoxes(page)).toEqual(before);
+    expect(await headerShifts(page)).toEqual([]);
+  } finally {
+    clerk.release();
+  }
 });
