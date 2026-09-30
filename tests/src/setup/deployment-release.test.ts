@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { makeFunctionReference } from 'convex/server';
 import { api } from '../../../convex/_generated/api';
 import {
   deploymentReleaseLine,
@@ -66,6 +67,19 @@ describe('reading the stamp', (): void => {
     // The query is the one the caller passed in, so `src/` names no Convex function itself (m25).
     expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toMatchObject({
       path: 'config:release',
+    });
+    const elsewhere = makeFunctionReference<
+      'query',
+      Record<string, never>,
+      { release: string; since: number } | null
+    >('releases:stamped');
+    await readDeploymentRelease(
+      elsewhere,
+      { NEXT_PUBLIC_CONVEX_URL: 'http://127.0.0.1:3210' },
+      fetch,
+    );
+    expect(JSON.parse(String(fetch.mock.calls[1]?.[1]?.body))).toMatchObject({
+      path: 'releases:stamped',
     });
   });
 
