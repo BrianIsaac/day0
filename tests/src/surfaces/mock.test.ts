@@ -122,7 +122,7 @@ describe('mock surface adapter', (): void => {
 
     it("posts in a channel as the employee, under its own name, never as Day0's draft (walk m5)", async (): Promise<void> => {
       // The colleague's reply is scheduled seconds after the post; the clock stays put so it
-      // never runs outside this test.
+      // never runs outside this test, and the test reads it off the schedule instead.
       vi.useFakeTimers();
       const { harness, run } = await createRun();
       await harness.run(async (ctx): Promise<void> => {
@@ -150,6 +150,13 @@ describe('mock surface adapter', (): void => {
       );
       expect(messages.map(({ sender, senderKind }) => ({ sender, senderKind }))).toEqual([
         { sender: 'adapter test', senderKind: 'agent-posted' },
+      ]);
+      // A landed post is the one a colleague answers: its reply is scheduled, not yet run.
+      const scheduled = await harness.run(
+        async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
+      );
+      expect(scheduled.map(({ name, state }) => ({ name, state: state.kind }))).toEqual([
+        { name: 'coworker:replyToAgentMessage', state: 'pending' },
       ]);
     });
 
