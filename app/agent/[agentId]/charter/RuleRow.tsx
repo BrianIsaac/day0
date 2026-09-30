@@ -20,8 +20,8 @@ export type RuleStanding = 'confirmed' | 'struck' | 'kept' | 'unverified';
 
 /**
  * A rule's standing: struck by the manager, kept because the charter cannot do without it (a
- * strike the effective charter refuses), not verified because no clause carries its words (so
- * nothing in the charter enforces it by them), or confirmed.
+ * strike the effective charter refuses), not in the clauses because no clause carries its words
+ * (none were verified, or none are left, so a strike would change nothing), or confirmed.
  */
 export function ruleStanding(
   constraint: Pick<CharterConstraint, 'struck' | 'wording'>,
@@ -29,7 +29,8 @@ export function ruleStanding(
 ): RuleStanding {
   if (constraint.struck) return 'struck';
   if (preview?.refusal !== undefined) return 'kept';
-  return constraint.wording.length === 0 ? 'unverified' : 'confirmed';
+  const inClauses = constraint.wording.length > 0 && preview?.changes !== false;
+  return inClauses ? 'confirmed' : 'unverified';
 }
 
 /**
@@ -61,14 +62,18 @@ function quotedClauses(clauses: readonly string[]): string {
 
 /**
  * Whether a clause opens on a name written in lower case, which capitalising would misspell: a
- * word with no vowel (`dbt`, `npm`, `sql`), with a capital after its first letter (`iPhone`), or
- * with a digit or a dot, underscore or hyphen inside it (`s3`, `stripe.com`, `pg_dump`).
+ * word with no vowel (`dbt`, `npm`, `sql`), with a capital after its first letter (`iPhone`), with
+ * a digit (`s3`), or with a dot or underscore between its letters (`stripe.com`, `pg_dump`). A
+ * hyphenated word (`follow-up`) and a word ending a sentence (`sync.`) are words, not names.
  */
 function opensOnLowerCaseName(phrase: string): boolean {
-  const first = /^\S+/.exec(phrase)?.[0].replace(/[,;:]+$/, '') ?? '';
+  const first = /^\S+/.exec(phrase)?.[0].replace(/[,;:.!?]+$/, '') ?? '';
   return (
     /^[a-z]/.test(first) &&
-    (!/[aeiouy]/i.test(first) || /^.+[A-Z]/.test(first) || /[0-9._-]/.test(first.slice(1)))
+    (!/[aeiouy]/i.test(first) ||
+      /^.+[A-Z]/.test(first) ||
+      /[0-9]/.test(first) ||
+      /[a-z0-9][._][a-z0-9]/i.test(first))
   );
 }
 
@@ -187,7 +192,7 @@ export function RuleRow({
           </p>
         ) : preview && !preview.changes && constraint.wording.length > 0 ? (
           <p className="mt-1 text-[13px] text-[var(--color-muted)]">
-            nothing to strike: another struck rule already takes its words out
+            nothing to strike: no clause carries these words any more
           </p>
         ) : null}
         {preview && !preview.refusal

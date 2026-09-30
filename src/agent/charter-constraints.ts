@@ -189,7 +189,8 @@ export function removeWording(text: string, phrase: string): string {
  * dropped. Wording the clauses do not carry is dropped from the constraint,
  * because striking it would then change nothing while looking as if it had.
  * Wording is stripped of any provenance suffix first, as the clauses were.
- * One sentence is one rule: listed twice, it is kept once.
+ * A sentence listed twice is one rule for each kind it makes with words the
+ * clauses carry, and a copy with none is dropped.
  *
  * @param raw - The constraints as the model returned them.
  * @param charter - The assembled charter whose clauses they should name.
@@ -211,18 +212,23 @@ export function normaliseConstraints(
           .filter((phrase: string): boolean => wordingPresent(phrase, clauses)),
       ),
     ];
-    // One sentence is one rule (the production walk's 6c): the model can list it under two kinds,
-    // once with the clauses' words and once with none left once verified.
-    const same = out.findIndex((listed) => sameQuote(listed.quote, quote));
-    const earlier = out[same];
-    if (earlier === undefined) {
-      out.push({ kind: item.kind, quote, wording, origin: 'synthesis' });
-    } else if (earlier.wording.length === 0 && wording.length > 0) {
-      out[same] = { kind: item.kind, quote, wording, origin: 'synthesis' };
-    } else if (earlier.kind === item.kind) {
-      out[same] = { ...earlier, wording: [...new Set([...earlier.wording, ...wording])] };
-    } else if (wording.length > 0) {
-      out.push({ kind: item.kind, quote, wording, origin: 'synthesis' });
+    // A sentence the model lists twice (the production walk's 6c) is one rule for each kind it
+    // makes with words the clauses carry; a copy with none left once verified is no rule.
+    const rule: CharterConstraint = { kind: item.kind, quote, wording, origin: 'synthesis' };
+    const said = (listed: CharterConstraint): boolean => sameQuote(listed.quote, quote);
+    const bare = out.findIndex((listed) => said(listed) && listed.wording.length === 0);
+    const sameKind = out.findIndex((listed) => said(listed) && listed.kind === item.kind);
+    if (!out.some(said)) {
+      out.push(rule);
+    } else if (wording.length === 0) {
+      continue;
+    } else if (bare !== -1) {
+      out[bare] = rule;
+    } else if (sameKind !== -1) {
+      const earlier = out[sameKind]!;
+      out[sameKind] = { ...earlier, wording: [...new Set([...earlier.wording, ...wording])] };
+    } else {
+      out.push(rule);
     }
   }
   return out;

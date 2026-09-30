@@ -55,10 +55,12 @@ describe('a rule of the charter (round two section 3.5)', (): void => {
     expect(html).not.toContain('>Confirmed<');
   });
 
-  it('offers no Strike for a rule whose words another struck rule already takes out', (): void => {
+  it('offers no Strike for a rule whose words no clause carries any more, whatever took them out', (): void => {
     const html = row({ preview: { removedClauses: [], rewrittenClauses: [], changes: false } });
-    expect(html).toContain('nothing to strike: another struck rule already takes its words out');
+    expect(html).toContain('nothing to strike: no clause carries these words any more');
+    expect(html).toMatch(/<span[^>]*>Not in the clauses<\/span>/);
     expect(html).not.toContain('>Strike<');
+    expect(html).not.toContain('>Confirmed<');
   });
 
   it('capitalises the clauses it lists alike, so clauses written in mixed case read as one list (walk m22)', (): void => {
@@ -81,6 +83,18 @@ describe('a rule of the charter (round two section 3.5)', (): void => {
       'dbt models for the close',
       'Answer routine asks',
       'iPhone alerts.',
+    ]);
+    // A hyphenated word and a word ending its sentence are words, and are capitalised alike.
+    const words = row({
+      constraint: {
+        ...rule,
+        wording: ['follow-up on stalled tickets', 'stripe.com refunds', 'sync.'],
+      },
+    });
+    expect([...words.matchAll(/<b[^>]*>([^<]*)<\/b>/g)].map((match) => match[1])).toEqual([
+      'Follow-up on stalled tickets',
+      'stripe.com refunds',
+      'Sync.',
     ]);
     // One clause's words are left as the charter holds them.
     expect(row({ constraint: { ...rule, wording: ['owned, prioritized'] } })).toContain(

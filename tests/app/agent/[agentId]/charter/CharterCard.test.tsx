@@ -163,6 +163,20 @@ describe('charter confirm-or-strike list', (): void => {
     expect(renderToStaticMarkup(<CharterCard charter={twoStruck} />)).toContain(
       '>Approve charter, 2 rules struck<',
     );
+    // A struck copy of a listed rule with no words of its own is not listed, nor counted
+    // (second pass on the production walk's 6c).
+    const copyStruck = {
+      ...charter,
+      body: {
+        ...charter.body,
+        constraints: [
+          ...constraints,
+          { ...constraints[0]!, kind: 'reporting-line', wording: [], struck: true },
+        ],
+      },
+    } as unknown as Doc<'charters'>;
+    const copied = renderToStaticMarkup(<CharterCard charter={copyStruck} />);
+    expect(copied).toContain('>Approve charter, 1 rule struck<');
   });
 
   it.each([

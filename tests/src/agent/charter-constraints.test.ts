@@ -247,6 +247,21 @@ describe('one line per rule (the production walk 6c)', (): void => {
     ]);
   });
 
+  it('keeps a sentence that makes two rules with words of their own, and merges a third copy by its kind', (): void => {
+    const result = normaliseConstraints(
+      [
+        { kind: 'reporting-line', quote: sentence, wording: ['Change Northstar CRM records.'] },
+        { kind: 'system-boundary', quote: sentence, wording: ['Post to public Slack channels.'] },
+        { kind: 'system-boundary', quote: sentence, wording: ['Change Northstar CRM records.'] },
+      ],
+      runThrough(),
+    );
+    expect(result.map((rule) => [rule.kind, rule.wording])).toEqual([
+      ['reporting-line', ['Change Northstar CRM records.']],
+      ['system-boundary', ['Post to public Slack channels.', 'Change Northstar CRM records.']],
+    ]);
+  });
+
   it('lists a stored draft that still holds the pair once, at the verified rule’s index', (): void => {
     const stored: CharterConstraint[] = [
       { kind: 'reporting-line', quote: sentence, wording: [], origin: 'synthesis' },
