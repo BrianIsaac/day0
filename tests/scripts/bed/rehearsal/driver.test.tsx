@@ -165,7 +165,7 @@ describe('the dashboard driver', (): void => {
   });
 
   it("reads the employee's last turn out of the 1:1's rendered log, not the manager's", async (): Promise<void> => {
-    backend.results = { 'voice:start': { sessionId: 'session-1' } };
+    backend.results = { 'voice:start': { sessionId: 'session-1', turns: [], replyDraft: null } };
     backend.queries = { 'voice:latest': null };
     backend.messages = [
       { id: 'u0', role: 'user', parts: [{ type: 'text', text: INIT_PROMPT }] },
