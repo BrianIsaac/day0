@@ -24,6 +24,8 @@ const session = vi.hoisted(() => ({
   keepRefusal: undefined as string | undefined,
   /** What `recordAnswer` throws instead of answering, when set. */
   keepThrows: undefined as Error | undefined,
+  /** The employee's row as `agents.get` answers it; null once it is gone. */
+  employee: { name: 'Ada' } as { name: string } | null,
   calls: [] as { name: string; args: Record<string, unknown> }[],
 }));
 
@@ -61,6 +63,12 @@ vi.mock('convex/browser', async () => {
         }
         throw new Error(`unexpected mutation ${name}`);
       }
+      async query(reference: unknown, args: Record<string, unknown>): Promise<unknown> {
+        const name = getFunctionName(reference as never);
+        session.calls.push({ name, args });
+        if (name === 'agents:get') return session.employee;
+        throw new Error(`unexpected query ${name}`);
+      }
     },
   };
 });
@@ -71,6 +79,7 @@ beforeEach((): void => {
   session.refusal = undefined;
   session.keepRefusal = undefined;
   session.keepThrows = undefined;
+  session.employee = { name: 'Ada' };
   session.calls = [];
 });
 
@@ -270,7 +279,8 @@ describe('the Day-1 chat route', (): void => {
       stream: true,
       max_tokens: 32768,
       reasoning_effort: 'low',
-      prompt_cache_key: 'day0-day1-system-v1',
+      // Re-pinned from v1: the prompt now carries the employee's name and the topics' titles.
+      prompt_cache_key: 'day0-day1-system-v2',
     });
   });
 
@@ -321,6 +331,36 @@ describe('the Day-1 chat route', (): void => {
     expect(body.messages[0].content).toContain('SEVEN topics');
     expect(body.messages.slice(1)).toEqual([{ role: 'user', content: '__init__' }]);
     expect(body.tools.map((t) => t.function.name)).toContain('dayOneComplete');
+  });
+
+  it("tells the model the employee's own name and the topics' plain titles, never Day0, a slug or an em dash (walk m5)", async (): Promise<void> => {
+    const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
+
+    await (await POST(turnAfter(0))).text();
+
+    const system = (sent[0] as { messages: { content: string }[] }).messages[0].content;
+    expect(system).toContain('You are Ada,');
+    expect(system).toContain('introduces you as Ada');
+    expect(system).toContain('  1. Why this hire: What triggered the decision to bring me on?');
+    expect(system).toContain('  3. Who to talk to: ');
+    expect(system).not.toContain('Day0');
+    expect(system).not.toMatch(/why-this-hire|role-and-goals|open-questions/);
+    expect(system).not.toContain('\u2014');
+  });
+
+  it("answers 404 without keeping the reply or asking the model when the employee's row is gone", async (): Promise<void> => {
+    const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
+    session.employee = null;
+
+    const response = await POST(turnAfter(1));
+
+    expect(response.status).toBe(404);
+    expect(((await response.json()) as { error: string }).error).toBe(
+      'this employee no longer exists',
+    );
+    expect(sent).toHaveLength(0);
+    // Nothing was taken for an employee that is gone: the session holds only what it held.
+    expect(session.turns.map((turn) => turn.id)).toEqual(['a1']);
   });
 
   it('answers 503 before any stream opens when no model is configured', async (): Promise<void> => {
@@ -594,8 +634,11 @@ describe('closing the 1:1', (): void => {
     const body = await (await POST(turnAfter(6))).text();
 
     expect(closed(body)).toBe(false);
-    expect(said(body)).toContain('7/7');
-    expect(said(body)).toContain('open questions on the charter');
+    // The question's own words, never its "7/7" headline, which counts replies (review r2).
+    expect(said(body)).toBe(
+      "Anything you're unsure about, or things you'd like me to circle back on later? I'll capture them as open questions on the charter.",
+    );
+    expect(said(body)).not.toMatch(/\d\/7/);
     expect(sent).toHaveLength(1);
   });
 
@@ -606,7 +649,9 @@ describe('closing the 1:1', (): void => {
     const body = await (await POST(turnAfter(6))).text();
 
     expect(closed(body)).toBe(false);
-    expect(said(body)).toMatch(/^Understood, week one is the tracker\.\n\n7\/7/);
+    expect(said(body)).toMatch(
+      /^Understood, week one is the tracker\.\n\nAnything you're unsure about/,
+    );
     const types = chunksOf(body).map((c) => c.type);
     expect(types.filter((t) => t === 'text-start')).toHaveLength(1);
     expect(types.indexOf('text-end')).toBeGreaterThan(types.lastIndexOf('text-delta'));
@@ -632,7 +677,7 @@ describe('closing the 1:1', (): void => {
     const body = await (await POST(turnAfter(6))).text();
 
     expect(closed(body)).toBe(false);
-    expect(said(body)).toMatch(/^Week one is the tracker, then\.\s*7\/7/);
+    expect(said(body)).toMatch(/^Week one is the tracker, then\.\s*Anything you're unsure about/);
     expect(
       chunksOf(body)
         .map((c) => c.type)

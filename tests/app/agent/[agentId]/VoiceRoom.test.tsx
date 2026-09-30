@@ -84,7 +84,7 @@ describe('the voice room', (): void => {
 
     const room = container.querySelector('section');
     expect(room?.textContent).toContain('Day-1 1:1 · voice mode');
-    expect(room?.classList.contains(ROOM_HEIGHT)).toBe(true);
+    expect([...(room?.classList ?? [])]).toEqual(expect.arrayContaining(ROOM_HEIGHT.split(' ')));
     const transcript = [...(room?.querySelectorAll('div') ?? [])].find((element) =>
       element.textContent?.startsWith('The live transcript appears here'),
     );

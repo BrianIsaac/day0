@@ -1,4 +1,4 @@
-import { DAY_ONE_TOPIC_COUNT, topicTitle } from '@/agent/day-one-progress';
+import { DAY_ONE_TOPIC_COUNT, questionLine } from '@/agent/day-one-progress';
 
 /**
  * Where the one-to-one stands: not yet asked, on a question (from 0, as the chat route numbers
@@ -18,7 +18,10 @@ const SEGMENT_CLASS: Readonly<Record<Segment, string>> = {
   next: 'bg-[var(--color-border)]',
 };
 
-/** The seven segments for a state, and the sentence that says the same to everyone. */
+/**
+ * The seven segments for a state, and the sentence that says the same to everyone. The segments
+ * count the questions put and answered, as the close gate does, never the topics.
+ */
 export function topicProgressOf(progress: TopicProgressState): {
   readonly line: string;
   readonly segments: readonly Segment[];
@@ -34,7 +37,7 @@ export function topicProgressOf(progress: TopicProgressState): {
     case 'asking': {
       const index = Math.min(Math.max(progress.topicIndex, 0), DAY_ONE_TOPIC_COUNT - 1);
       return {
-        line: `Question ${index + 1} of ${DAY_ONE_TOPIC_COUNT} · ${topicTitle(index)}`,
+        line: questionLine(index),
         segments: segments((i) => (i < index ? 'done' : i === index ? 'now' : 'next')),
       };
     }

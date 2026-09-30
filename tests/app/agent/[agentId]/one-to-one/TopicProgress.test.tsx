@@ -7,20 +7,16 @@ import {
 } from '../../../../../app/agent/[agentId]/one-to-one/TopicProgress';
 
 describe('the topic progress line', (): void => {
-  it('says the question and its topic, the ones before it done and the rest to come', (): void => {
+  it('says which question it is and names no topic the employee may not be on, the ones before it done and the rest to come (review r2)', (): void => {
     expect(topicProgressOf({ kind: 'asking', topicIndex: 2 })).toEqual({
-      line: 'Question 3 of 7 · Who to talk to',
+      line: 'Question 3 of 7',
       segments: ['done', 'done', 'now', 'next', 'next', 'next', 'next'],
     });
   });
 
   it('holds an index past either end to the seven questions', (): void => {
-    expect(topicProgressOf({ kind: 'asking', topicIndex: 9 }).line).toBe(
-      'Question 7 of 7 · Anything else',
-    );
-    expect(topicProgressOf({ kind: 'asking', topicIndex: -1 }).line).toBe(
-      'Question 1 of 7 · Why this hire',
-    );
+    expect(topicProgressOf({ kind: 'asking', topicIndex: 9 }).line).toBe('Question 7 of 7');
+    expect(topicProgressOf({ kind: 'asking', topicIndex: -1 }).line).toBe('Question 1 of 7');
   });
 
   it('counts the answers once the one-to-one is over, and draws none lit before it opens', (): void => {
@@ -41,7 +37,7 @@ describe('the topic progress line', (): void => {
     const html = renderToStaticMarkup(
       <TopicProgress progress={{ kind: 'asking', topicIndex: 0 }} />,
     );
-    expect(html).toContain('>Question 1 of 7 · Why this hire</p>');
+    expect(html).toContain('>Question 1 of 7</p>');
     expect(html).toMatch(/<div aria-hidden="true"[^>]*data-topic-progress=""/);
     expect(html.match(/data-segment=/g)).toHaveLength(7);
   });

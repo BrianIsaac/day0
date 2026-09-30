@@ -26,6 +26,17 @@ export function topicTitle(topicIndex: number): string {
   return DAY_ONE_TOPIC_TITLES[DAY_ONE_TOPIC_SPECS[index].topic];
 }
 
+/**
+ * What the one-to-one's counter says for the question at an index (from 0, held to the seven):
+ * "Question n of 7". It counts the questions the employee has put, a follow-up among them, which
+ * is what the close gate counts (`topicIndexOf`), and names no topic: after a follow-up the
+ * employee may still be on an earlier one than the count reaches (the round review's r2).
+ */
+export function questionLine(topicIndex: number): string {
+  const index = Math.max(0, Math.min(Math.floor(topicIndex), DAY_ONE_TOPIC_COUNT - 1));
+  return `Question ${index + 1} of ${DAY_ONE_TOPIC_COUNT}`;
+}
+
 /** What the chat route says about a turn beside its words: the question it is on, from 0. */
 export interface DayOneTurnMetadata {
   readonly topicIndex: number;
