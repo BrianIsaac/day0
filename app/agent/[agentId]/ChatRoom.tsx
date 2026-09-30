@@ -37,7 +37,7 @@ import {
 import { StatusRegion } from '../../components/StatusRegion';
 import { notedAnswers, notedFromTranscript, type NotedAnswer } from './one-to-one/NotedSoFar';
 import { TopicProgress, type TopicProgressState } from './one-to-one/TopicProgress';
-import { START_DEADLINE_MS, withDeadline } from './one-to-one/deadline';
+import { START_DEADLINE_MS, TURN_DEADLINE_MS, withDeadline } from './one-to-one/deadline';
 import { TurnText } from './one-to-one/TurnText';
 
 function textOf(message: UIMessage): string {
@@ -376,7 +376,7 @@ export function ChatRoom({
   const [startAttempt, setStartAttempt] = useState(0);
   const [post, setPost] = useState<SynthesisPost>({ kind: 'idle' });
   const [confirming, setConfirming] = useState<Confirming>(null);
-  const { messages, sendMessage, regenerate, setMessages, status } = useChat({
+  const { messages, sendMessage, regenerate, setMessages, status, stop } = useChat({
     transport,
     onError: (err) => {
       // Provider 503s and similar transient failures land here, and the hook
@@ -483,6 +483,19 @@ export function ChatRoom({
     }, REPLY_DRAFT_KEEP_MS);
     return () => clearTimeout(timer);
   }, [draft, over, after, keepReplyDraft]);
+
+  // A turn that never answers stops being waited on, with Ask again (hosted walk m30): the reply
+  // is kept on the session, so asking again answers it.
+  const waitingOnTurn = status === 'submitted' || status === 'streaming';
+  useEffect(() => {
+    if (!waitingOnTurn) return;
+    const timer = setTimeout((): void => {
+      // Stopping settles the turn as aborted, which says nothing; the line below says why.
+      void stop();
+      setStreamError(`${name} did not answer within ${TURN_DEADLINE_MS / 1000} seconds`);
+    }, TURN_DEADLINE_MS);
+    return () => clearTimeout(timer);
+  }, [waitingOnTurn, stop, name]);
 
   // The session drafts on its own; the room says so once it has waited longer than usual.
   const waitingOnDraft = serverPhase.kind === 'drafting' && post.kind === 'idle';

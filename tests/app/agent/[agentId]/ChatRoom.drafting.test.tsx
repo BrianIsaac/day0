@@ -24,6 +24,7 @@ const room = vi.hoisted(() => ({
   status: 'ready' as string,
   sent: [] as unknown[],
   regenerated: 0,
+  stopped: 0,
 }));
 
 vi.mock('convex/react', () => ({
@@ -58,6 +59,9 @@ vi.mock('@ai-sdk/react', async (importOriginal) => ({
       room.messages = next;
     },
     status: room.status,
+    stop: async (): Promise<void> => {
+      room.stopped += 1;
+    },
   }),
 }));
 
@@ -68,6 +72,7 @@ import {
   sendsReply,
 } from '../../../../app/agent/[agentId]/ChatRoom';
 import { SYNTHESIS_DEADLINE_MS } from '../../../../app/agent/[agentId]/charter-synthesis';
+import { TURN_DEADLINE_MS } from '../../../../app/agent/[agentId]/one-to-one/deadline';
 import type { Id } from '../../../../convex/_generated/dataModel';
 import { INIT_PROMPT } from '../../../../src/agent/day-one-turn';
 import { MAX_FINALISATION_RECOVERIES } from '../../../../src/agent/one-to-one-phase';
@@ -113,6 +118,7 @@ beforeEach((): void => {
   room.status = 'ready';
   room.sent = [];
   room.regenerated = 0;
+  room.stopped = 0;
   answerPosts(async () => Response.json({ outcome: 'synthesised' }));
 });
 
@@ -571,6 +577,34 @@ describe('the chat room against the accessibility floor (N14)', (): void => {
     await settle();
     expect(await axeViolations(view.container, ['region'])).toEqual([]);
     expect(underTarget(view.container)).toEqual([]);
+    view.unmount();
+  });
+});
+
+describe('a turn that never answers (hosted walk m30)', (): void => {
+  it('stops waiting at the deadline and offers Ask again, which answers the kept reply', async (): Promise<void> => {
+    vi.useFakeTimers();
+    room.messages = CONVERSATION.slice(0, 3);
+    room.status = 'submitted';
+    const view = mount(<ChatRoom agentId={AGENT} bossLabel="Sam" />);
+    await act(async (): Promise<void> => {
+      await vi.advanceTimersByTimeAsync(TURN_DEADLINE_MS - 1);
+    });
+    expect(view.container.querySelector('[role="alert"]')).toBeNull();
+    await act(async (): Promise<void> => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(room.stopped).toBe(1);
+    room.status = 'ready';
+    act((): void => view.root.render(<ChatRoom agentId={AGENT} bossLabel="Sam" />));
+    expect(view.container.querySelector('[role="alert"]')?.textContent).toBe(
+      'Your employee did not answer within 75 seconds.Ask again',
+    );
+    await act(async (): Promise<void> => {
+      view.container.querySelector<HTMLButtonElement>('[role="alert"] button')!.click();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(room.regenerated).toBe(1);
     view.unmount();
   });
 });
