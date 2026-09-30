@@ -87,8 +87,16 @@ export function turnFailure(turn: {
 }
 
 /**
+ * What a browser says when a request never reached the server: Chromium, Firefox and Safari in
+ * turn. A developer's sentence, not a manager's.
+ */
+const UNREACHABLE =
+  /^(failed to fetch|networkerror when attempting to fetch resource\.?|load failed)$/i;
+
+/**
  * The line for a stream error. The route answers a failure it can name with
- * JSON, which the transport hands over as the error's message, braces and all.
+ * JSON, which the transport hands over as the error's message, braces and all;
+ * a request that never reached the route is said in the page's own words.
  */
 export function errorLine(err: Error): string {
   try {
@@ -97,6 +105,7 @@ export function errorLine(err: Error): string {
   } catch {
     // Not JSON: the message is the sentence.
   }
+  if (UNREACHABLE.test(err.message.trim())) return 'The page could not reach Day0';
   return err.message || 'employee unavailable';
 }
 

@@ -130,8 +130,18 @@ describe('a stream error', (): void => {
   });
 
   it('shows any other error as it reads, and never an empty line', (): void => {
-    expect(errorLine(new Error('Failed to fetch'))).toBe('Failed to fetch');
+    expect(errorLine(new Error('The model timed out'))).toBe('The model timed out');
     expect(errorLine(new Error(''))).toBe('employee unavailable');
+  });
+
+  it("says a request that never reached Day0 in the page's words, not the browser's (re-pinned)", (): void => {
+    for (const browser of [
+      'Failed to fetch',
+      'NetworkError when attempting to fetch resource.',
+      'Load failed',
+    ]) {
+      expect(errorLine(new TypeError(browser))).toBe('The page could not reach Day0');
+    }
   });
 });
 
