@@ -2,8 +2,8 @@
 
 import { convexTest } from 'convex-test';
 import { ConvexError } from 'convex/values';
-import { describe, expect, it } from 'vitest';
-import { api } from '../../convex/_generated/api';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { api, internal } from '../../convex/_generated/api';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 
@@ -33,6 +33,7 @@ async function failedSession(state: 'active' | 'synthesising' = 'active') {
       recoveryAttempts: 3,
       finalisationError: 'the model timed out',
       finalisationFailedAt: 3,
+      conversationEndedAt: 3,
       startedAt: 1,
     });
     return { agentId, sessionId };
@@ -57,6 +58,7 @@ describe('holding the one-to-one again after its draft failed for good', (): voi
       'recoveryAttempts',
       'finalisationError',
       'finalisationFailedAt',
+      'conversationEndedAt',
     ] as const) {
       expect(row?.[field], field).toBeUndefined();
     }
@@ -73,6 +75,39 @@ describe('holding the one-to-one again after its draft failed for good', (): voi
     expect((await harness.run(async (ctx) => await ctx.db.get(sessionId)))?.pendingTranscript).toBe(
       'ASSISTANT: Why?\n\nUSER: The close.',
     );
+  });
+});
+
+describe('when the conversation closed (second review x7)', (): void => {
+  afterEach((): void => {
+    vi.useRealTimers();
+  });
+
+  it('is the first claim of its transcript, kept when the draft is claimed again later', async (): Promise<void> => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const { harness, agentId, sessionId } = await failedSession();
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(sessionId, { conversationEndedAt: undefined, recoveryAttempts: 0 });
+    });
+    const closed = Date.UTC(2026, 8, 29, 9, 40);
+    vi.setSystemTime(closed);
+    const claim = { sessionId, expectedAgentId: agentId, transcript: 'T', bossLabel: 'boss' };
+    expect(await harness.mutation(internal.voice.claimFinalisation, claim)).toMatchObject({
+      outcome: 'claimed',
+    });
+    // Handed back (a failed draft, or one the manager sent back), then claimed a day later.
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(sessionId, {
+        state: 'active',
+        claimToken: undefined,
+        claimedAt: undefined,
+      });
+    });
+    vi.setSystemTime(Date.UTC(2026, 8, 30, 11, 5));
+    await harness.mutation(internal.voice.claimFinalisation, claim);
+    const row = await harness.run(async (ctx) => await ctx.db.get(sessionId));
+    expect(row?.conversationEndedAt).toBe(closed);
+    expect(row?.claimedAt).toBe(Date.UTC(2026, 8, 30, 11, 5));
   });
 });
 

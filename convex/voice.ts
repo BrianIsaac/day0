@@ -233,6 +233,7 @@ export const restart = mutation({
     await ctx.db.patch(args.sessionId, {
       state: 'active',
       conversation: conversationOf(session) + 1,
+      conversationEndedAt: undefined,
       turns: undefined,
       replyDraft: undefined,
       pendingTranscript: undefined,
@@ -365,10 +366,13 @@ export async function claimSession(
   }
 
   const claimToken = crypto.randomUUID();
+  const now = Date.now();
   await ctx.db.patch(session._id, {
     state: 'synthesising',
     claimToken,
-    claimedAt: Date.now(),
+    claimedAt: now,
+    // The conversation closed at its first claim; a re-drive or a redraft claims it again later.
+    ...(session.conversationEndedAt === undefined ? { conversationEndedAt: now } : {}),
     claimedBy,
     pendingTranscript: material.transcript,
     pendingBossLabel: material.bossLabel,

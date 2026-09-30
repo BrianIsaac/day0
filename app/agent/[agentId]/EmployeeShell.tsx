@@ -214,7 +214,8 @@ export function EmployeeShell({ agentId, children }: EmployeeShellProps) {
         writeHeld: (workItems ?? []).some(
           (item) => item.state === 'actions-pending' && !approvedNotLanded(item),
         ),
-        oneToOneEndedAt: session?.endedAt ?? session?.claimedAt,
+        // The conversation's own close, never the draft's commit a redraft moves (x7).
+        oneToOneEndedAt: session?.conversationEndedAt ?? session?.endedAt ?? session?.claimedAt,
         workingSince: metrics?.workingSince,
         zone: agentZone(agent),
       })
