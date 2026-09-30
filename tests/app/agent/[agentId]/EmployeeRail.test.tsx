@@ -106,6 +106,16 @@ describe('EmployeeRail', () => {
     expect(html).toContain('Where decisions reach you');
   });
 
+  it('gives the link to the whole record a 44 px target both ways, its word kept at the right (review C5)', () => {
+    backend.queries = { 'metrics:forAgent': dashboardMetrics(), 'events:recent': [] };
+    const link = /<a [^>]*href="\/agent\/agent-1\/record"[^>]*>/.exec(
+      renderToStaticMarkup(asEmployee(<EmployeeRail />)),
+    )?.[0];
+    expect(link).toMatch(/class="[^"]*\bmin-h-11\b/);
+    expect(link).toMatch(/class="[^"]*\bmin-w-11\b/);
+    expect(link).toMatch(/class="[^"]*\bjustify-end\b/);
+  });
+
   it('says where decisions reach the manager in each mode, a connected chat surface included', () => {
     const where = (surfaceMode: 'mock' | 'real', surfaces: SurfaceRecord[] = []): string =>
       text(renderToStaticMarkup(asEmployee(<EmployeeRail />, { surfaceMode, surfaces })));

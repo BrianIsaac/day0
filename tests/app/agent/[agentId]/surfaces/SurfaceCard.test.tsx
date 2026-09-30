@@ -7,7 +7,7 @@ import {
   type SurfaceCardActions,
   type SurfaceCardContext,
 } from '../../../../../app/agent/[agentId]/surfaces/SurfaceCard';
-import { AgentZoneContext } from '../../../../../app/agent/[agentId]/time';
+import { AgentZoneContext } from '../../../../../app/components/time';
 
 const DAY = 24 * 60 * 60 * 1000;
 /** 29 Sep 2026, 12:00 UTC. */

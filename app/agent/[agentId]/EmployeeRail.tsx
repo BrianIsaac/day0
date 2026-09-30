@@ -13,7 +13,7 @@ import { useEmployee } from './employee-context';
 import { employeeTabHref } from './employee-tabs';
 import { eventItemTitle, eventLabel, recordKindOf } from './event-labels';
 import { connectedManagerChannel } from './manager-channel';
-import { clockTime, useAgentZone, useNow } from './time';
+import { clockTime, useAgentZone, useNow } from '../../components/time';
 
 /** How many of the newest events the rail's record lists. */
 export const RAIL_RECORD_LINES = 5;
@@ -41,6 +41,13 @@ export function railFigures(
   ];
 }
 
+/** What the newest lines of the record are drawn from. */
+export interface RecordLinesProps {
+  readonly events: readonly Doc<'events'>[];
+  readonly titles: ReadonlyMap<string, string>;
+  readonly lines: number;
+}
+
 /**
  * The newest events as record lines: a dot for what happened, the event in words with the work
  * item it is about, and its time in the employee's zone.
@@ -49,15 +56,7 @@ export function railFigures(
  * @param titles - The employee's work item titles by id.
  * @param lines - How many to list.
  */
-export function RecordLines({
-  events,
-  titles,
-  lines,
-}: {
-  events: readonly Doc<'events'>[];
-  titles: ReadonlyMap<string, string>;
-  lines: number;
-}) {
+export function RecordLines({ events, titles, lines }: RecordLinesProps) {
   const zone = useAgentZone();
   return (
     <ul className="grid gap-1.5">
@@ -118,7 +117,7 @@ export function EmployeeRail() {
         meta={
           <Link
             href={employeeTabHref(agentId, 'record')}
-            className="inline-flex min-h-11 items-center text-[var(--color-fg)]"
+            className="inline-flex min-h-11 min-w-11 items-center justify-end text-[var(--color-fg)]"
           >
             All<span className="sr-only"> of the record</span>
           </Link>

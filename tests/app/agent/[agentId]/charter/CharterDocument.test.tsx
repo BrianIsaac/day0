@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { CharterCardBody } from '../../../../../app/agent/[agentId]/charter/CharterCard';
 import { CharterDocument } from '../../../../../app/agent/[agentId]/charter/CharterDocument';
-import { AgentZoneContext } from '../../../../../app/agent/[agentId]/time';
+import { AgentZoneContext } from '../../../../../app/components/time';
 
 const body: CharterCardBody = {
   whyThisHire: 'Small RevOps team needs relief from tier-2 asks.',

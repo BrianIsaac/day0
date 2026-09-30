@@ -12,7 +12,7 @@ import { isStopped, stopDetail, isGateRefusalStop, GATE_REFUSAL_STOP } from '@/w
 import { isOpenQuestionStop } from '@/work/obligations';
 import { retryRequiresProviderReconciliation } from '@/work/reconciliation';
 import { type ActionVerdict, normaliseActionVerdict } from '@/surfaces/policy';
-import { clockTime } from '../time';
+import { clockTime } from '../../../components/time';
 import { EVALUATION_ATTEMPTS_SPENT, MAX_EVALUATION_ATTEMPTS } from '@/work/queue-order';
 
 /** One row of the applied ledger as the card reads it. */

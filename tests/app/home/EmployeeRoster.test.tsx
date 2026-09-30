@@ -105,6 +105,17 @@ describe('EmployeeRoster', (): void => {
     expect(text).toContain('Aiko Charter to review charter pending acts on its own 1 0 100+');
   });
 
+  it('says an employee not yet met is waiting for the one-to-one, in the warn hue the page’s pill uses (review m8)', (): void => {
+    const deployed = [
+      { ...roster[0], agentId: 'synthetic-tomas', name: 'Tomas', state: 'deployed' },
+    ] as unknown as RosterRow[];
+    const markup = renderToStaticMarkup(<EmployeeRoster employees={deployed} waiting={waiting} />);
+    expect(readAs(markup)).toContain('Tomas Waiting for your one-to-one');
+    expect(markup).toMatch(
+      /<span class="[^"]*text-\[var\(--color-warn\)\][^"]*">Waiting for your one-to-one<\/span>/,
+    );
+  });
+
   it('explains parked and stopped work on hover', (): void => {
     expect(html).toContain('title="Parked: waiting on a connection, a permission, a skill');
     expect(html).toContain('title="Stopped: ended short of done, with Retry on the card.');

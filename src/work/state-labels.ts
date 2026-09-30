@@ -22,6 +22,9 @@ export interface StateLabel {
   readonly tone: StateTone;
 }
 
+/** The newest charter's standing as the shown state reads it, or null before one is drafted. */
+export type CharterApproval = Readonly<Pick<Doc<'charters'>, 'approved'>> | null;
+
 /**
  * The state the page shows for an employee: its charter, when the page has one, outranks the
  * row. A drafted charter ends the one-to-one whatever the row still says, and an approved one
@@ -32,26 +35,23 @@ export interface StateLabel {
  * @param state - The agent row's state.
  * @param charter - The newest charter, or null before one is drafted.
  */
-export function shownEmployeeState(
-  state: EmployeeState,
-  charter: Pick<Doc<'charters'>, 'approved'> | null,
-): EmployeeState {
+export function shownEmployeeState(state: EmployeeState, charter: CharterApproval): EmployeeState {
   if (charter === null || state === 'active') return state;
   return charter.approved ? 'active' : 'charter-pending';
 }
 
 /**
- * An employee's state in the manager's words, for the pill beside its name. An employee in its
- * one-to-one whose transcript is being drafted into a charter (after the last answer, or a draft
- * sent back with a note) says so: the conversation is over and nothing waits on the manager.
+ * An employee's state in the manager's words, the one set every surface prints: the roster's
+ * chip, the face's hover title and the pill beside the name. An employee in its one-to-one whose
+ * transcript is being drafted into a charter (after the last answer, or a draft sent back with a
+ * note) says so where the surface knows it: the conversation is over and nothing waits on the
+ * manager.
  *
  * @param state - The state the page shows (`shownEmployeeState`).
- * @param autonomous - Whether autonomous actions are on; an active employee says which it is.
- * @param phase - Where the one-to-one stands (`oneToOnePhase`), when the page has read it.
+ * @param phase - Where the one-to-one stands (`oneToOnePhase`), when the surface has read it.
  */
-export function employeeStateLabel(
+export function employeeStateWords(
   state: EmployeeState,
-  autonomous: boolean,
   phase?: OneToOnePhase['kind'],
 ): StateLabel {
   switch (state) {
@@ -64,8 +64,28 @@ export function employeeStateLabel(
     case 'charter-pending':
       return { text: 'Charter to review', tone: 'warn' };
     case 'active':
-      return { text: `Active · ${autonomyLabel(autonomous)}`, tone: 'ok' };
+      return { text: 'Active', tone: 'ok' };
   }
+}
+
+/**
+ * An employee's state for the pill beside its name: its words (`employeeStateWords`), and for an
+ * active employee whether it is supervised or autonomous, which the roster gives a column of its
+ * own.
+ *
+ * @param state - The state the page shows (`shownEmployeeState`).
+ * @param autonomous - Whether autonomous actions are on; an active employee says which it is.
+ * @param phase - Where the one-to-one stands (`oneToOnePhase`), when the page has read it.
+ */
+export function employeeStateLabel(
+  state: EmployeeState,
+  autonomous: boolean,
+  phase?: OneToOnePhase['kind'],
+): StateLabel {
+  const words = employeeStateWords(state, phase);
+  return state === 'active'
+    ? { ...words, text: `${words.text} · ${autonomyLabel(autonomous)}` }
+    : words;
 }
 
 /**

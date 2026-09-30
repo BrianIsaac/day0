@@ -347,7 +347,10 @@ describe('the company home', (): void => {
     expect(text).toContain(
       'Finance colleague Active Close the month for the finance team. asks first 2 2 1',
     );
-    expect(text).toContain('New colleague Deployed charter pending asks first 0 0 0');
+    // Re-pinned (unit S, m6): the roster prints the state in the words the employee's pill uses.
+    expect(text).toContain(
+      'New colleague Waiting for your one-to-one charter pending asks first 0 0 0',
+    );
   });
 
   it('shows every employee’s link, role and autonomy on the roster', (): void => {

@@ -197,6 +197,21 @@ describe('the public-page motion', () => {
     );
   });
 
+  it("keeps the shell's scrollbars in the base layer, so an element's own scrollbar utility outranks them", () => {
+    // Unlayered, the rule beat every Tailwind utility and the tab strip drew a scrollbar.
+    const base = blocks('@layer base').join('\n');
+    expect(rulesFor(base, '*').join('\n')).toMatch(/scrollbar-width:\s*thin/);
+    const unlayered = CSS.replace(/\/\*[\s\S]*?\*\//g, '').replace(
+      /@layer base\s*\{[\s\S]*?\n\}/g,
+      '',
+    );
+    expect(unlayered).not.toMatch(/scrollbar-(width|color)|::-webkit-scrollbar/);
+  });
+
+  it("draws a tab's focus ring inside it, where the strip does not clip it", () => {
+    expect(rulesFor(CSS, "[role='tab']:focus-visible")[0]).toMatch(/outline-offset:\s*-2px/);
+  });
+
   it('takes the scroll position from nobody and leaves no trace of the removed cursor', () => {
     expect(CSS).not.toContain('scroll-behavior');
     expect(CSS).not.toContain('data-enter');
@@ -317,6 +332,42 @@ describe('the product-surface moments (v3 section 5.2, v4 section 2)', () => {
     );
     expect(phone).toMatch(/\.rail\s*\{\s*--rail-slide:\s*day0-rail-drop;/);
     expect(blocks('@keyframes day0-rail-drop ')[0]).toMatch(/translateY\(-100%\)/);
+  });
+
+  it('moves the whole first week by transitions from its placed start, so an interrupted open or close turns back from where it is (review m1)', () => {
+    // Keyframes restart from their first frame when swapped; a transition starts from the value
+    // on screen. The start is the card: the week's size scaled to it, transparent, set before the
+    // week opens and never itself transitioned.
+    const [placing] = rulesFor(noPreference, "[data-week='placing']");
+    expect(placing).toMatch(/opacity:\s*0;/);
+    expect(placing).toMatch(/transform:\s*scale\(var\(--week-from/);
+    expect(placing).not.toMatch(/transition/);
+    const [open] = rulesFor(noPreference, "[data-week='open']");
+    expect(open).toMatch(
+      /transition:\s*transform 260ms var\(--ease-arrive\),\s*opacity 260ms var\(--ease-arrive\);/,
+    );
+    const [closing] = rulesFor(noPreference, "[data-week='closing']");
+    expect(closing).toMatch(/opacity:\s*0;/);
+    expect(closing).toMatch(/transform:\s*scale\(var\(--week-from/);
+    expect(closing).toMatch(
+      /transition:\s*transform 200ms var\(--ease-arrive\),\s*opacity 200ms var\(--ease-arrive\);/,
+    );
+    for (const state of ['placing', 'open', 'closing']) {
+      expect(rulesFor(noPreference, `[data-week-scrim='${state}']`)[0], state).toBeDefined();
+    }
+    expect(CSS).not.toMatch(/\[data-week[^\]]*\][^{]*\{[^}]*animation/);
+    expect(CSS).not.toMatch(/@keyframes day0-week-/);
+  });
+
+  it('fades the rail out before the first week’s card settles in where it was, only when motion is welcome (review m4)', () => {
+    expect(rulesFor(noPreference, '[data-rail-leaving]')[0]).toMatch(
+      /animation:\s*day0-fade-out 150ms var\(--ease-arrive\) both;/,
+    );
+    expect(rulesFor(noPreference, '.rail[data-arriving]')[0]).toMatch(
+      /animation:\s*day0-settle 220ms var\(--ease-arrive\) both;/,
+    );
+    expect(rulesFor(CSS, '[data-rail-leaving]')).toHaveLength(1);
+    expect(rulesFor(CSS, '.rail[data-arriving]')).toHaveLength(1);
   });
 
   it('shows only the new value of a rolled count or a swapped chip under reduced motion', () => {

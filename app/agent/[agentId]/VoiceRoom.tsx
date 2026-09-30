@@ -8,6 +8,7 @@ import type { Id } from '@convex/_generated/dataModel';
 import { oneToOnePhase } from '@/agent/one-to-one-phase';
 import { answeredCount, transcriptTurns, type TranscriptTurn } from '@/agent/transcript-turns';
 import { postCharterSynthesis } from './charter-synthesis';
+import { log } from '@/lib/logger';
 import { refusalText } from '../../components/use-change';
 import { Button } from '../../components/Button';
 import { EmployeeContext } from './employee-context';
@@ -152,9 +153,13 @@ function VoiceRoomInner({
           } else {
             setStart(data);
             if (data.warning) {
-              setError(
-                `${data.warning}. Falling back to public agent mode - voice will work if the agent is configured for public access.`,
+              // How the call falls back is the provider's detail, for the log; the room says
+              // what it means for the manager (N29, as N26 did for the start route).
+              log.warn(
+                'voice start fell back to the public ElevenLabs agent, which connects only if it allows public access',
+                { warning: data.warning },
               );
+              setError(`${data.warning}. The call may still connect`);
             }
           }
         })

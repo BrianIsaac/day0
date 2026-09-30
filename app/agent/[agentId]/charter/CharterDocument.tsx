@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import type { StruckClause, StruckClauseField } from '@/agent/charter-constraints';
 import { managerOpenQuestions } from '@/agent/manager-questions';
-import { clockTime, useAgentZone } from '../time';
+import { clockTime, useAgentZone } from '../../../components/time';
 import type { CharterCardBody } from './CharterCard';
 import { changesTo, goalIsGap, systemsLine, type DocumentStrikes } from './charter-document';
 

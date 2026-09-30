@@ -17,6 +17,34 @@ describe('RecordLine', () => {
     expect(html).toContain('>14:41</time>');
   });
 
+  it('sets its time in a right-hand column where the line has room, and under the words where it has not (E D12)', () => {
+    const html = renderToStaticMarkup(
+      <RecordLine kind="landed" time={{ at: AT, label: '26 Sep 2026, 14:41' }}>
+        One message posted to DM · Manager.
+      </RecordLine>,
+    );
+    expect(html).toMatch(/^<li class="@container"><div class="/);
+    const line = /^<li [^>]*><div class="([^"]*)"/.exec(html)?.[1].split(' ') ?? [];
+    expect(line).toEqual(
+      expect.arrayContaining([
+        'grid-cols-[16px_minmax(0,1fr)]',
+        '@md:grid-cols-[16px_minmax(0,1fr)_auto]',
+        'items-baseline',
+      ]),
+    );
+    const time = /<time [^>]*class="([^"]*)"/.exec(html)?.[1].split(' ') ?? [];
+    expect(time).toEqual(
+      expect.arrayContaining([
+        'col-start-2',
+        '@md:col-start-3',
+        '@md:row-start-1',
+        '@md:whitespace-nowrap',
+      ]),
+    );
+    // Read after the words, as it was: the column is drawn, not reordered.
+    expect(html.indexOf('One message')).toBeLessThan(html.indexOf('<time'));
+  });
+
   it('holds its body in a div, so a line can carry a disclosure (m3)', () => {
     const html = renderToStaticMarkup(
       <RecordLine kind="noted">

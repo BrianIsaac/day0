@@ -27,6 +27,7 @@ import {
 import { agentReadsSource } from './docSources';
 import { isEvaluationAgent } from './metrics';
 import { isManagerLookupFailure } from '../src/surfaces/manager-lookup';
+import { shownEmployeeState, type CharterApproval } from '../src/work/state-labels';
 import {
   managerNotificationMode,
   NOTIFICATIONS_CHANGE_REASON,
@@ -230,6 +231,8 @@ interface CharterStanding {
   readonly roleLine: string;
   /** Whether the newest charter is a draft the manager has not approved yet. */
   readonly draftAwaitsManager: boolean;
+  /** The newest charter's standing, or null before one is drafted. */
+  readonly newest: CharterApproval;
 }
 
 /**
@@ -259,9 +262,13 @@ async function charterStanding(ctx: QueryCtx, agentId: Id<'agents'>): Promise<Ch
       typeof proposedFunction === 'string' && proposedFunction.trim() !== ''
         ? clipRoleLine(proposedFunction)
         : ROLE_NOT_STATED;
-    return { roleLine, draftAwaitsManager };
+    return { roleLine, draftAwaitsManager, newest: { approved: !draftAwaitsManager } };
   }
-  return { roleLine: CHARTER_PENDING_ROLE_LINE, draftAwaitsManager: draftAwaitsManager ?? false };
+  return {
+    roleLine: CHARTER_PENDING_ROLE_LINE,
+    draftAwaitsManager: draftAwaitsManager ?? false,
+    newest: draftAwaitsManager === undefined ? null : { approved: false },
+  };
 }
 
 /**
@@ -332,9 +339,10 @@ async function workCounts(
 
 /**
  * The owner's employees, one row each, for the landing page: who they are,
- * the role the manager approved, the open, parked and stopped work, what
- * waits on the manager, whether they act on their own, how much
- * documentation they read, and what they landed this month.
+ * their state as their own page shows it (`shownEmployeeState`: a charter
+ * outranks the row), the role the manager approved, the open, parked and
+ * stopped work, what waits on the manager, whether they act on their own,
+ * how much documentation they read, and what they landed this month.
  *
  * Owner-scoped like `listForUser`; evaluation agents and the baseline arm
  * are left out. An anonymous caller gets an empty list.
@@ -373,7 +381,8 @@ export const rosterForUser = query({
           agentId: agent._id,
           name: agent.name,
           ...(agent.avatarId !== undefined ? { avatarId: agent.avatarId } : {}),
-          state: agent.state,
+          // The state the employee's own page shows, so the roster and its pill never disagree.
+          state: shownEmployeeState(agent.state, charter.newest),
           autonomous: autonomousActionsOn(agent),
           roleLine: charter.roleLine,
           ...counts,

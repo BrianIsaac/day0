@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useId } from 'react';
 import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Doc } from '@convex/_generated/dataModel';
@@ -9,15 +10,17 @@ import {
   OUT_OF_SCOPE_SKIP_PREFIX,
   QUALITY_FIT_SKIP_PREFIX,
 } from '@/work/types';
+import { ButtonLink } from '../../components/Button';
 import { Card } from '../../components/Card';
 import { Columns } from '../../components/Columns';
+import { Disclosure } from '../../components/Disclosure';
 import { InboxEntry } from '../../components/InboxEntry';
 import { RecordLine } from '../../components/RecordLine';
 import { useEmployee } from './employee-context';
 import { employeeTabHref } from './employee-tabs';
 import { EmployeeRail } from './EmployeeRail';
 import { TAKE_IT_ANYWAY } from './work/work-item';
-import { useNow } from './time';
+import { useNow } from '../../components/time';
 
 /** How many skipped items the page names under what else is waiting. */
 export const SKIPPED_LINES = 5;
@@ -29,6 +32,16 @@ const SKIP_PREFIXES = [
   CLAIMED_BY_COLLEAGUE_SKIP_PREFIX,
 ] as const;
 
+/** The verdict's stored reason, prefix and all, or nothing when the row carries none. */
+function verdictReason(item: Pick<Doc<'workItems'>, 'verdict'>): string | undefined {
+  const verdict: unknown = item.verdict;
+  const reason =
+    typeof verdict === 'object' && verdict !== null
+      ? (verdict as { reason?: unknown }).reason
+      : undefined;
+  return typeof reason === 'string' ? reason : undefined;
+}
+
 /**
  * Why the employee set an item aside, in its own words: the verdict's reason without the prefix
  * that files it, or nothing when the row carries none.
@@ -36,12 +49,8 @@ const SKIP_PREFIXES = [
  * @param item - A skipped work item.
  */
 export function skipReasonOf(item: Pick<Doc<'workItems'>, 'verdict'>): string | undefined {
-  const verdict: unknown = item.verdict;
-  const reason =
-    typeof verdict === 'object' && verdict !== null
-      ? (verdict as { reason?: unknown }).reason
-      : undefined;
-  if (typeof reason !== 'string' || reason.trim() === '') return undefined;
+  const reason = verdictReason(item);
+  if (reason === undefined || reason.trim() === '') return undefined;
   const prefix = SKIP_PREFIXES.find((candidate) => reason.startsWith(candidate));
   const said = (prefix ? reason.slice(prefix.length) : reason).trim();
   return said === '' ? undefined : said.charAt(0).toUpperCase() + said.slice(1);
@@ -49,21 +58,77 @@ export function skipReasonOf(item: Pick<Doc<'workItems'>, 'verdict'>): string | 
 
 /** Whether a skip is the employee's own judgement, which the manager can overrule on its card. */
 function overrulable(item: Pick<Doc<'workItems'>, 'verdict'>): boolean {
-  const verdict: unknown = item.verdict;
-  const reason =
-    typeof verdict === 'object' && verdict !== null
-      ? (verdict as { reason?: unknown }).reason
-      : undefined;
+  const reason = verdictReason(item);
   return (
-    typeof reason === 'string' &&
+    reason !== undefined &&
     (reason.startsWith(QUALITY_FIT_SKIP_PREFIX) || reason.startsWith(OUT_OF_SCOPE_SKIP_PREFIX))
   );
 }
 
 /**
- * What waits on nobody: each item the employee set aside, newest first, with why and the link to
- * its card on the Work tab, where the manager can give it the work anyway; and whether a
- * reorientation card is open (none can be yet, A11), with the page that says what it covers.
+ * What the employee set aside, in one short sentence of the manager's words: the item, and the
+ * kind of judgement that set it aside, never the evaluator's own prose, which is kept as it was
+ * recorded and shown one disclosure away.
+ *
+ * @param item - A skipped work item.
+ * @param name - The employee.
+ */
+export function skippedSentence(
+  item: Pick<Doc<'workItems'>, 'title' | 'verdict'>,
+  name: string,
+): string {
+  const reason = verdictReason(item) ?? '';
+  const skipped = `Skipped “${item.title}”`;
+  if (reason.startsWith(OUT_OF_SCOPE_SKIP_PREFIX)) {
+    return `${skipped}: it looked outside ${name}'s charter.`;
+  }
+  if (reason.startsWith(QUALITY_FIT_SKIP_PREFIX)) {
+    return `${skipped}: it did not look worth doing as it stands.`;
+  }
+  if (reason.startsWith(CLAIMED_BY_COLLEAGUE_SKIP_PREFIX)) {
+    return `${skipped}: a colleague is working it.`;
+  }
+  return `${skipped}.`;
+}
+
+/**
+ * One item set aside: the sentence, the employee's own reason behind a disclosure under it (its
+ * text opening beneath the sentence, so nothing above it moves), then on a line of its own the
+ * link to its card, named with the sentence so five of them are told apart.
+ *
+ * @param item - A skipped work item.
+ * @param name - The employee.
+ * @param work - The Work tab's address.
+ */
+function SkippedLine({ item, name, work }: { item: Doc<'workItems'>; name: string; work: string }) {
+  const sentenceId = useId();
+  const linkId = `${sentenceId}-link`;
+  const reason = skipReasonOf(item);
+  return (
+    <RecordLine kind="withheld">
+      <p id={sentenceId}>{skippedSentence(item, name)}</p>
+      {reason !== undefined ? (
+        <Disclosure summary={`Why ${name} skipped it`}>
+          <p className="text-[13px] text-[var(--color-fg-2)]">{reason}</p>
+        </Disclosure>
+      ) : null}
+      <ButtonLink
+        id={linkId}
+        href={`${work}#item-${item._id}`}
+        aria-labelledby={`${linkId} ${sentenceId}`}
+        variant="text"
+      >
+        {overrulable(item) ? `${TAKE_IT_ANYWAY} on the Work tab` : 'Open it on the Work tab'}
+      </ButtonLink>
+    </RecordLine>
+  );
+}
+
+/**
+ * What waits on nobody: each item the employee set aside, newest first, in a short sentence with
+ * the link to its card on the Work tab, where the manager can give it the work anyway, and the
+ * employee's reason a disclosure away; and whether a reorientation card is open (none can be
+ * yet, A11), with the page that says what it covers.
  */
 function SetAside({ title, skipped }: { title: string; skipped: readonly Doc<'workItems'>[] }) {
   const { agent } = useEmployee();
@@ -77,20 +142,9 @@ function SetAside({ title, skipped }: { title: string; skipped: readonly Doc<'wo
         {newest.length === 0 ? (
           <RecordLine kind="withheld">{agent.name} has set nothing aside.</RecordLine>
         ) : (
-          newest.slice(0, SKIPPED_LINES).map((item) => {
-            const reason = skipReasonOf(item);
-            return (
-              <RecordLine key={item._id} kind="withheld">
-                Skipped “{item.title}”{reason ? `: ${reason.replace(/\.$/, '')}` : ''}.{' '}
-                <Link href={`${work}#item-${item._id}`}>
-                  {overrulable(item)
-                    ? `${TAKE_IT_ANYWAY} on the Work tab`
-                    : 'Open it on the Work tab'}
-                </Link>
-                .
-              </RecordLine>
-            );
-          })
+          newest
+            .slice(0, SKIPPED_LINES)
+            .map((item) => <SkippedLine key={item._id} item={item} name={agent.name} work={work} />)
         )}
         <RecordLine kind="noted">
           No reorientation card is open.{' '}

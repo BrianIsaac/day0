@@ -134,6 +134,34 @@ describe('Tabs', () => {
     expect(html).not.toContain('--color-warn');
   });
 
+  it('holds every tab inside the strip, so the strip never scrolls downwards (re-pinned, review m13)', () => {
+    // The layout itself is proven in a browser (`tests/browser/tab-strip.spec.ts`); jsdom lays
+    // nothing out, so this pins the classes that keep it: no tab hangs below the strip, and the
+    // strip clips what does. Its line is drawn under it now, by the strip's parent.
+    const html = renderToStaticMarkup(strip());
+    const list = /<div role="tablist"[^>]*class="([^"]*)"/.exec(html)?.[1] ?? '';
+    expect(list.split(' ')).toEqual(
+      expect.arrayContaining(['overflow-x-auto', 'overflow-y-hidden', '[scrollbar-width:none]']),
+    );
+    expect(list).not.toMatch(/\bborder-b\b/);
+    for (const tab of html.match(/<a [^>]*>/g) ?? []) expect(tab).not.toContain('-mb-px');
+  });
+
+  it('draws the strip’s line as a border under it, which snaps to device pixels, the strip overlapping it (review m13)', () => {
+    // An inset shadow is drawn at the box's fractional edge, so at a device pixel ratio of 1.5
+    // it smears over two rows; a border is snapped to whole device pixels. The strip overlaps the
+    // line by its own pixel, so the selected tab's underline covers it, and the strip's own box
+    // still holds its tabs (the browser job measures both).
+    const html = renderToStaticMarkup(strip());
+    const [, line, list] =
+      /^<div class="([^"]*)"><div role="tablist"[^>]*class="([^"]*)"/.exec(html) ?? [];
+    expect(line?.split(' ')).toEqual(
+      expect.arrayContaining(['border-b', 'border-[var(--color-border)]']),
+    );
+    expect(list?.split(' ')).toEqual(expect.arrayContaining(['relative', '-mb-px']));
+    expect(list).not.toMatch(/shadow/);
+  });
+
   it('gives every tab a 44 px target (N14)', () => {
     for (const tab of renderToStaticMarkup(strip()).match(/<a [^>]*>/g) ?? []) {
       expect(tab).toMatch(/\bh-11\b/);

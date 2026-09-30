@@ -16,7 +16,7 @@ import {
   keptCorrectionsTitle,
   type KeptCorrection,
 } from '../../../../app/agent/[agentId]/corrections-panel';
-import { AgentZoneContext } from '../../../../app/agent/[agentId]/time';
+import { AgentZoneContext } from '../../../../app/components/time';
 import { act } from 'react';
 import {
   button,

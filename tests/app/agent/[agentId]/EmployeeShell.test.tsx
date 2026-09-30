@@ -14,6 +14,7 @@ import {
   onDayZero,
 } from '../../../../app/agent/[agentId]/EmployeeShell';
 import { CharterView } from '../../../../app/agent/[agentId]/charter/CharterView';
+import { useEmployee } from '../../../../app/agent/[agentId]/employee-context';
 import { WorkView } from '../../../../app/agent/[agentId]/work/WorkView';
 import { ManageView } from '../../../../app/agent/[agentId]/manage/ManageView';
 import { RetiredNotice, RetiredNoticeProvider } from '../../../../app/RetiredNotice';
@@ -212,6 +213,11 @@ describe('the page after a draft charter is sent back (step 45)', (): void => {
     expect(focusedName()).toBe('The 1:1 that drafts the charter');
     expect(view.container.querySelector('header')?.textContent).toContain('Drafting the charter');
     expect(view.container.querySelector('header')?.textContent).not.toContain('In your one-to-one');
+    // The face beside the pill says the same phase (review m3, second pass: pinned where the
+    // header hands it over).
+    expect(view.container.querySelector('header [title]')?.getAttribute('title')).toBe(
+      'Priya, drafting the charter',
+    );
     const rail = view.container.querySelector('ol[aria-label="First week"]');
     expect(rail?.querySelector('[aria-current="step"]')?.textContent).toContain('Charter approved');
     view.unmount();
@@ -646,9 +652,193 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     };
     act((): void => view.root.render(page()));
     await settle();
+    // Re-pinned (unit S): a working employee's week is the card in the header, not the rail.
+    const card = view.container.querySelector('header button[aria-label^="First week"]');
+    expect(card?.textContent).toContain('Working');
+    // Re-pinned (review m4, m9): the card plays no advance of its own, and settles in only when
+    // it takes the rail's place in front of the manager, never as the page loads.
+    expect(card?.closest('.rail')?.hasAttribute('data-arriving')).toBe(false);
+    expect(view.container.querySelector('ol[aria-label="First week"]')).toBeNull();
+    view.unmount();
+  });
+
+  it('keeps the Skills tab’s last authoring verdict when the manager leaves the tab and comes back (A D11)', async (): Promise<void> => {
+    backend.queries = {
+      'agents:get': row('active'),
+      'charters:latest': approved,
+      'work:listForAgent': [],
+      'metrics:forAgent': dashboardMetrics(),
+    };
+    /** The Skills tab's part: file what the authoring run came to. */
+    function Files() {
+      const { setLastAttempt } = useEmployee();
+      return (
+        <button
+          type="button"
+          onClick={() =>
+            setLastAttempt({
+              skillId: 'skill-1' as Id<'skills'>,
+              name: 'refresh-the-tile',
+              reason: 'authoring did not finish',
+            })
+          }
+        >
+          Approve · author and verify
+        </button>
+      );
+    }
+    /** The Skills tab again, reading what the shell kept. */
+    function Reads() {
+      const { lastAttempt } = useEmployee();
+      return <p>{lastAttempt ? `${lastAttempt.name}: ${lastAttempt.reason}` : 'nothing kept'}</p>;
+    }
+    route.segment = 'skills';
+    const view = mount(page(<Files />));
+    await settle();
+    await press(view.container, 'Approve · author and verify');
+    route.segment = 'work';
+    act((): void => view.root.render(page(<p>the Work tab</p>)));
+    await settle();
+    route.segment = 'skills';
+    act((): void => view.root.render(page(<Reads />)));
+    await settle();
+    expect(view.container.textContent).toContain('refresh-the-tile: authoring did not finish');
+    view.unmount();
+  });
+
+  it('draws a working employee’s week as one card in the header, with no rail under it', async (): Promise<void> => {
+    backend.queries = {
+      'agents:get': row('active'),
+      'charters:latest': approved,
+      'work:listForAgent': [],
+      'metrics:forAgent': dashboardMetrics(),
+    };
+    const view = mount(page());
+    await settle();
+    const header = view.container.querySelector('header');
+    const card = header?.querySelector('button[aria-label^="First week"]');
+    expect(card?.getAttribute('aria-expanded')).toBe('false');
+    expect(card?.getAttribute('aria-label')).toBe(
+      'First week: Working, in the queue. Show the whole week',
+    );
+    // Under the office and state pills, in the header's right column.
+    const column = card?.closest('div.grid');
+    expect(column?.firstElementChild?.textContent).toContain('Active · Supervised');
+    expect(column?.lastElementChild).toBe(card?.closest('.rail'));
+    expect(view.container.querySelector('ol[aria-label="First week"]')).toBeNull();
+    expect(view.container.querySelector('[role="tablist"]')).not.toBeNull();
+    view.unmount();
+  });
+
+  it('gives focus to the employee’s name when the card goes with the whole week open (review m7)', async (): Promise<void> => {
+    backend.queries = {
+      'agents:get': row('active'),
+      'charters:latest': approved,
+      'work:listForAgent': [],
+      'metrics:forAgent': dashboardMetrics(),
+    };
+    const view = mount(page());
+    await settle();
+    await press(view.container, 'First week: Working, in the queue. Show the whole week');
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    // The employee is reset from another tab: its week starts again, and the card goes.
+    backend.queries = {
+      ...backend.queries,
+      'agents:get': row('deployed'),
+      'charters:latest': null,
+    };
+    act((): void => view.root.render(page()));
+    await settle();
+    expect(view.container.querySelector('header button[aria-label^="First week"]')).toBeNull();
+    expect(document.activeElement?.tagName).toBe('H1');
+    expect(focusedName()).toBe('Mira');
+    view.unmount();
+  });
+
+  it('draws neither the rail nor the card while the figures that say whether an active employee is working load', async (): Promise<void> => {
+    backend.queries = { 'agents:get': row('active'), 'charters:latest': approved };
+    const view = mount(page());
+    await settle();
+    expect(view.container.querySelector('ol[aria-label="First week"]')).toBeNull();
+    expect(view.container.querySelector('header button[aria-label^="First week"]')).toBeNull();
+    view.unmount();
+  });
+
+  it('plays the advance on the rail when the first write lands in front of the manager, fades the rail, then settles the card in its place', async (): Promise<void> => {
+    const noWrite = {
+      ...dashboardMetrics(),
+      actions: {
+        ...dashboardMetrics().actions,
+        approved: 0,
+        automatic: { reads: 0, managerMessages: 0, writes: 0 },
+      },
+    };
+    backend.queries = {
+      'agents:get': row('active'),
+      'charters:latest': approved,
+      'work:listForAgent': [],
+      'metrics:forAgent': noWrite,
+    };
+    const view = mount(page());
+    await settle();
+    expect(
+      view.container
+        .querySelector('ol[aria-label="First week"]')
+        ?.querySelector('[aria-current="step"]')?.textContent,
+    ).toContain('First supervised write');
+    expect(view.container.querySelector('header button[aria-label^="First week"]')).toBeNull();
+
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      backend.queries = { ...backend.queries, 'metrics:forAgent': dashboardMetrics() };
+      act((): void => view.root.render(page()));
+      await settle();
+      // Re-pinned (review M3, m4, m11): the advance plays on the whole rail, where the step it
+      // moves from is on screen, for its 430 ms; the rail then fades out for 150 ms and gives way
+      // to the card, which settles in over 220 ms. Timed to the millisecond on a fake clock.
+      const rail = (): Element | null =>
+        view.container.querySelector('ol[aria-label="First week"]');
+      const card = (): Element | null =>
+        view.container.querySelector('header button[aria-label^="First week"]');
+      const at = (ms: number): void => {
+        act((): void => {
+          vi.advanceTimersByTime(ms);
+        });
+      };
+      expect(rail()?.hasAttribute('data-advanced')).toBe(true);
+      expect(rail()?.querySelector('[aria-current="step"]')?.textContent).toContain('Working');
+      expect(card()).toBeNull();
+      at(429);
+      expect(rail()?.hasAttribute('data-advanced')).toBe(true);
+      expect(rail()?.closest('[data-rail-leaving]')).toBeNull();
+      at(1);
+      // Fading, the rail keeps the advance's fill, so the fade starts from the frame the advance
+      // ended on (second pass: dropping it swapped the fill for the cell's own tint for a frame).
+      expect(rail()?.hasAttribute('data-advanced')).toBe(true);
+      expect(rail()?.closest('[data-rail-leaving]')).not.toBeNull();
+      expect(card()).toBeNull();
+      at(149);
+      expect(rail()).not.toBeNull();
+      at(1);
+      expect(rail()).toBeNull();
+      expect(card()?.textContent).toContain('Working');
+      expect(card()?.closest('.rail')?.hasAttribute('data-arriving')).toBe(true);
+      at(219);
+      expect(card()?.closest('.rail')?.hasAttribute('data-arriving')).toBe(true);
+      at(1);
+      expect(card()?.closest('.rail')?.hasAttribute('data-arriving')).toBe(false);
+    } finally {
+      vi.useRealTimers();
+      view.unmount();
+    }
+  });
+
+  it('draws a not-yet-working employee’s rail from the row before its charter is read (review M4)', async (): Promise<void> => {
+    backend.queries = { 'agents:get': row('deployed') };
+    const view = mount(page());
+    await settle();
     const rail = view.container.querySelector('ol[aria-label="First week"]');
-    expect(rail?.querySelector('[aria-current="step"]')?.textContent).toContain('Working');
-    expect(rail?.hasAttribute('data-advanced')).toBe(false);
+    expect(rail?.querySelector('[aria-current="step"]')?.textContent).toContain('Day-1 one-to-one');
     view.unmount();
   });
 

@@ -7,7 +7,7 @@ import type { Doc } from '../../../../../convex/_generated/dataModel';
 import { WorkItemCard } from '../../../../../app/agent/[agentId]/work/WorkItemCard';
 import { openQuestionStopReason } from '../../../../../src/work/obligations';
 import { EVALUATION_ATTEMPTS_SPENT } from '../../../../../src/work/queue-order';
-import { AgentZoneContext } from '../../../../../app/agent/[agentId]/time';
+import { AgentZoneContext } from '../../../../../app/components/time';
 import { button, focusedName, mount, press, said, typeInto } from '../../../../fixtures/dom/press';
 import {
   DRAWN,

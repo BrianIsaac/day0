@@ -10,7 +10,7 @@ import {
   WhatYouSaid,
   exchangesOf,
 } from '../../../../../app/agent/[agentId]/charter/CharterAside';
-import { AgentZoneContext } from '../../../../../app/agent/[agentId]/time';
+import { AgentZoneContext } from '../../../../../app/components/time';
 import { transcriptTurns } from '../../../../../src/agent/transcript-turns';
 
 const TRANSCRIPT =

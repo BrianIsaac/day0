@@ -1,6 +1,6 @@
 import type { Doc } from '@convex/_generated/dataModel';
 import type { Tone } from '../components/tone';
-import { clockTime } from '../agent/[agentId]/time';
+import { clockTime } from '../components/time';
 
 /** A linked source's state in the manager's words, with the tone its chip takes. */
 export interface SourceStatusWords {

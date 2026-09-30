@@ -15,7 +15,7 @@ import { StatusRegion } from '../../../components/StatusRegion';
 import { type CharterChange, nextCharterVersion } from '@/agent/charter-amendment';
 import { Button } from '../../../components/Button';
 import { Card } from '../../../components/Card';
-import { clockTime, useAgentZone } from '../time';
+import { clockTime, useAgentZone } from '../../../components/time';
 import { AmendCharterPanel } from './AmendCharterPanel';
 import { CharterDocument } from './CharterDocument';
 import { CHANGES_REQUEST_ID } from './ChangesRequest';

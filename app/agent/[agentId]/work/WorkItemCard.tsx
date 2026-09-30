@@ -23,7 +23,7 @@ import { usePreviousValue } from '../../../components/previous-value';
 import { StatusRegion } from '../../../components/StatusRegion';
 import { useChange } from '../../../components/use-change';
 import type { KeptCorrection } from '../corrections-panel';
-import { clockTime, clockTimeWithSeconds, useAgentZone, useNow } from '../time';
+import { clockTime, clockTimeWithSeconds, useAgentZone, useNow } from '../../../components/time';
 import { EarlierPlan } from './EarlierPlan';
 import { DecisionStamp, ItemHead } from './ItemHead';
 import { ItemSection, Lead, Note } from './ItemParts';
@@ -58,8 +58,12 @@ const WORKING_STATES: ReadonlySet<string> = new Set(['claimed', 'plan-approved',
 /**
  * What the item's settling controls are for, read from the row: none while it moves or waits
  * on its own.
+ *
+ * @throws When the row's state is one the union does not hold (standard 5.1: a state added to
+ *   the schema fails the build here, and a row from outside it fails loudly, not silently
+ *   controlless).
  */
-function retryModeOf(
+export function retryModeOf(
   item: Doc<'workItems'>,
   verdictReason: string | undefined,
   heldQuestion: string | undefined,
@@ -100,6 +104,10 @@ function retryModeOf(
     case 'needs-skill':
     case 'actions-pending':
       return undefined;
+    default: {
+      const unhandled: never = item.state;
+      throw new Error(`no settling controls for a work item in state ${String(unhandled)}`);
+    }
   }
 }
 

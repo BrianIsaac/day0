@@ -5,7 +5,7 @@ import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { Columns } from '../../../components/Columns';
 import { useEmployee } from '../employee-context';
-import { useAgentZone } from '../time';
+import { useAgentZone } from '../../../components/time';
 import { KnowledgeProjection } from './KnowledgeProjection';
 import { MetricsCard } from './MetricsCard';
 import { RecordExport } from './RecordExport';

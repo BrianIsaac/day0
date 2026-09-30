@@ -14,6 +14,8 @@ import type { SurfaceRecord } from '@/surfaces/types';
 import { needsYouItemIds, openWorkCount } from '@/work/state-display';
 import { shownEmployeeState } from '@/work/state-labels';
 import { useArrival } from '../../arrival';
+import { FirstWeekCard } from '../../components/FirstWeekCard';
+import { CARD_SETTLE_MS, RAIL_ADVANCE_MS, RAIL_EXIT_MS } from '../../components/first-week-motion';
 import { FirstWeekRail } from '../../components/FirstWeekRail';
 import { usePreviousValue } from '../../components/previous-value';
 import { StatusRegion } from '../../components/StatusRegion';
@@ -22,6 +24,7 @@ import type { ChangeOutcome } from '../../components/use-change';
 import { DayZero } from './DayZero';
 import { EmployeeContext, type Employee, type SentBackOutcome } from './employee-context';
 import { addressesEnvironment } from './environment-hash';
+import type { AuthoringAttempt } from './skills/authoring';
 import {
   EMPLOYEE_TAB_LABELS,
   EMPLOYEE_TAB_PANEL_ID,
@@ -33,7 +36,7 @@ import {
 import { EmployeeHeader } from './EmployeeHeader';
 import { EmployeeRetired, NoSuchEmployee } from './NoSuchEmployee';
 import { currentStep, firstWeekSteps } from './first-week';
-import { AgentZoneContext } from './time';
+import { AgentZoneContext } from '../../components/time';
 
 /** Said, with focus on the one-to-one, when a charter sent back returns the page to it. */
 export const ONBOARDING_REOPENED =
@@ -48,9 +51,6 @@ export function redraftingFromNote(name: string): string {
   return `Sent back with your note: ${name} is redrafting the charter from your one-to-one.`;
 }
 
-/** How long the first-week rail's advance plays: its 150 ms pause and 280 ms slide. */
-export const RAIL_ADVANCE_MS = 430;
-
 /** A draft the manager sent back, and whether the employee is redrafting it. */
 interface SentBack {
   readonly charterId: Id<'charters'>;
@@ -59,6 +59,17 @@ interface SentBack {
 
 /** The rail's step while what it is read from is still loading. */
 const UNSETTLED = -1;
+
+/**
+ * Whether the week moved on in front of the manager: the step the page showed before is one it
+ * had read, and behind the current one.
+ *
+ * @param before - The step the page showed before, while the moment that starts from it plays.
+ * @param step - The current step.
+ */
+function movedOn(before: number | undefined, step: number): boolean {
+  return before !== undefined && before !== UNSETTLED && before < step;
+}
 
 /**
  * The strip's tabs with their counts: what waits on the manager (in warn), the work still open
@@ -99,9 +110,16 @@ export function onDayZero(
   return charter === null && (agent.state === 'deployed' || agent.state === 'day-one-in-progress');
 }
 
+/** What the employee page's shell is given. */
+export interface EmployeeShellProps {
+  readonly agentId: Id<'agents'>;
+  readonly children: ReactNode;
+}
+
 /**
  * The employee page (round two section 3.3 and 3.9): the employee's name, state and zone, the
- * first-week rail, and either the day-zero state or the tab strip over the selected tab's page.
+ * first-week rail (one card in the header once the employee is working), and either the day-zero
+ * state or the tab strip over the selected tab's page.
  * Every tab reads the employee through `useEmployee`, so the page loads it once.
  *
  * A hash addressed to the work environment (`#surfaces`, which the Slack OAuth redirect and the
@@ -110,13 +128,7 @@ export function onDayZero(
  *
  * @param agentId - The employee, from the route.
  */
-export function EmployeeShell({
-  agentId,
-  children,
-}: {
-  agentId: Id<'agents'>;
-  children: ReactNode;
-}) {
+export function EmployeeShell({ agentId, children }: EmployeeShellProps) {
   const agent = useQuery(api.agents.get, { agentId });
   // The employee's other reads wait on it: each refuses an employee that is gone, so once a
   // retire lands they are dropped in the same render that learns it, and the page says so.
@@ -144,6 +156,8 @@ export function EmployeeShell({
   const [pageOutcome, setPageOutcome] = useState<ChangeOutcome | null>(null);
   // The draft the manager sent back and what became of it, until the page shows what follows it.
   const [sentBack, setSentBack] = useState<SentBack | null>(null);
+  // The Skills tab's last authoring verdict, here so it outlives the tab (A D11).
+  const [lastAttempt, setLastAttempt] = useState<AuthoringAttempt | null>(null);
   const onboarding = useRef<HTMLDivElement>(null);
   const arriving = useArrival(agent !== undefined && agent !== null);
   // The name the page last showed, so an employee retired while its page is open is named.
@@ -155,6 +169,7 @@ export function EmployeeShell({
     [surfaceRows],
   );
   const dayZero = agent ? onDayZero(agent, charter) : false;
+  const shownState = agent ? shownEmployeeState(agent.state, charter) : undefined;
   const steps = agent
     ? firstWeekSteps({
         deployedAt: agent.createdAt,
@@ -172,9 +187,24 @@ export function EmployeeShell({
   const settled =
     agent !== undefined && latest !== undefined && workItems !== undefined && metrics !== undefined;
   const step = settled ? currentStep(steps) : UNSETTLED;
-  const stepBefore = usePreviousValue(step, RAIL_ADVANCE_MS);
-  const advanced = stepBefore !== undefined && stepBefore !== UNSETTLED && stepBefore < step;
-
+  const advanced = movedOn(usePreviousValue(step, RAIL_ADVANCE_MS), step);
+  const exiting = movedOn(usePreviousValue(step, RAIL_ADVANCE_MS + RAIL_EXIT_MS), step);
+  const settling = movedOn(
+    usePreviousValue(step, RAIL_ADVANCE_MS + RAIL_EXIT_MS + CARD_SETTLE_MS),
+    step,
+  );
+  // Once the employee is working the week is one card in the header (the operator's ruling of
+  // 30 September). Only an active employee can be working, and whether it is waits on the
+  // figures that say a write landed: until they load its page draws neither, so a working
+  // employee's page never shows the whole rail and then takes it away. Any other employee's rail
+  // is drawn at once, from the row until the charter is read, as it always was.
+  const stageKnown = shownState !== 'active' || (latest !== undefined && metrics !== undefined);
+  // The week moving on to Working in front of the manager plays on the whole rail first, where
+  // the step it moves from is on screen; the rail then fades out, and the card settles in where
+  // it was, so the page does not cut from one to the other.
+  const atWorking = stageKnown && steps.at(-1)?.status === 'now';
+  const railLeaving = atWorking && !advanced && exiting;
+  const working = atWorking && !exiting;
   // What follows a draft sent back is the 1:1 again, or, when an approved
   // charter stands beneath the draft, that charter: only the first reopens
   // anything, so only then does the page say so and take focus. A charter
@@ -225,9 +255,11 @@ export function EmployeeShell({
             surfaces,
             arriving,
             reportSentBack,
+            lastAttempt,
+            setLastAttempt,
           }
         : null,
-    [agent, charter, surfaceMode, surfaces, arriving, reportSentBack],
+    [agent, charter, surfaceMode, surfaces, arriving, reportSentBack, lastAttempt, setLastAttempt],
   );
 
   if (agent === null) {
@@ -279,9 +311,17 @@ export function EmployeeShell({
                 (row) => row.class === 'chat' && isManagerLookupFailure(row.reason),
               )?.reason
             }
+            stage={working ? <FirstWeekCard steps={steps} arriving={settling} /> : undefined}
           />
-          <StatusRegion outcome={pageOutcome} />
-          <FirstWeekRail steps={steps} advanced={advanced} />
+          {/* The page's own status keeps a gap under the header when it says something. */}
+          <div className="mt-3 has-[>p:empty]:mt-0">
+            <StatusRegion outcome={pageOutcome} />
+          </div>
+          {stageKnown && !working ? (
+            <div className="mt-5" data-rail-leaving={railLeaving ? '' : undefined}>
+              <FirstWeekRail steps={steps} advanced={advanced || railLeaving} />
+            </div>
+          ) : null}
           {dayZero && segment === 'surfaces' ? (
             // The environment is the one tab day zero can need: a card's link or the Slack
             // OAuth return lands here before the one-to-one is held.

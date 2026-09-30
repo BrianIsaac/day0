@@ -11,7 +11,11 @@ vi.mock('convex/react', () => ({
   useAction: () => async (): Promise<void> => undefined,
 }));
 
-import { NeedsYouView, skipReasonOf } from '../../../../app/agent/[agentId]/NeedsYouView';
+import {
+  NeedsYouView,
+  skipReasonOf,
+  skippedSentence,
+} from '../../../../app/agent/[agentId]/NeedsYouView';
 import { asEmployee } from '../../../fixtures/dom/employee';
 
 afterEach((): void => {
@@ -46,6 +50,30 @@ const skipped = (id: string, reason?: string) => ({
 
 /** Markup with the React text separators taken out, so copy reads as it renders. */
 const text = (html: string): string => html.replace(/<!-- -->/g, '');
+
+describe('skippedSentence', () => {
+  const item = (reason?: string) => ({
+    title: 'Please email the Acme customer about their renewal pricing',
+    verdict: reason === undefined ? undefined : { decision: 'skip', reason },
+  });
+
+  it('says a skip in one short sentence of the manager’s words, never the evaluator’s prose', () => {
+    const prose =
+      'out-of-scope: No charter or current documented-system overlap \u2014 the request asks for customer email, which the charter does not name. Take it anyway on the Work tab.';
+    expect(skippedSentence(item(prose), 'Mira')).toBe(
+      "Skipped “Please email the Acme customer about their renewal pricing”: it looked outside Mira's charter.",
+    );
+    expect(skippedSentence(item('quality-fit-fail: Low value'), 'Mira')).toBe(
+      'Skipped “Please email the Acme customer about their renewal pricing”: it did not look worth doing as it stands.',
+    );
+    expect(skippedSentence(item('claimed-by-colleague: Priya has it'), 'Mira')).toBe(
+      'Skipped “Please email the Acme customer about their renewal pricing”: a colleague is working it.',
+    );
+    expect(skippedSentence(item(), 'Mira')).toBe(
+      'Skipped “Please email the Acme customer about their renewal pricing”.',
+    );
+  });
+});
 
 describe('skipReasonOf', () => {
   it("says why in the employee's words, without the prefix that files the skip", () => {
@@ -107,9 +135,21 @@ describe('NeedsYouView', () => {
     const html = text(renderToStaticMarkup(asEmployee(<NeedsYouView />)));
     expect(html).not.toContain('<ol');
     expect(html).toContain('>Nothing is waiting on you</h2>');
-    expect(html).toContain('Skipped “Item w3”: This is forecasting work for Aman.');
-    expect(html).toContain('href="/agent/agent-1/work#item-w3">Take it anyway on the Work tab</a>');
-    expect(html).toContain('href="/agent/agent-1/work#item-w4">Open it on the Work tab</a>');
+    // Re-pinned (unit S): one short sentence in the manager's words, the evaluator's reason a
+    // disclosure away, the control a link of its own.
+    expect(html).toContain('Skipped “Item w3”: it looked outside Mira&#x27;s charter.</p>');
+    const link = (item: string): string =>
+      new RegExp(`<a [^>]*href="/agent/agent-1/work#${item}"[^>]*>[^<]*</a>`).exec(html)?.[0] ?? '';
+    expect(link('item-w3')).toMatch(/>Take it anyway on the Work tab<\/a>$/);
+    for (const item of ['item-w3', 'item-w4']) {
+      expect(link(item)).toMatch(/aria-labelledby="[^" ]+-link [^" ]+"/);
+      // A control of its own: the text look of a button, with its 44 px target (N14).
+      expect(link(item)).toMatch(/class="inline-flex min-h-11 [^"]*\bunderline\b/);
+    }
+    expect(html).toContain('Why Mira skipped it');
+    expect(html).toContain('This is forecasting work for Aman.');
+    expect(html).toContain('Skipped “Item w4”: a colleague is working it.</p>');
+    expect(link('item-w4')).toMatch(/>Open it on the Work tab<\/a>$/);
     expect(html).not.toContain('Item w5');
   });
 

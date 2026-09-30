@@ -1084,6 +1084,31 @@ describe('the employee roster', (): void => {
     await expect(harness.query(api.agents.rosterForUser, {})).resolves.toEqual([]);
   });
 
+  it('gives each row the state the employee’s own page shows, a charter outranking the row (m6)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const drafted = await deployEmployee(harness, 'owner', 'Nia');
+    const approvedOnly = await deployEmployee(harness, 'owner', 'Tomas');
+    const talking = await deployEmployee(harness, 'owner', 'Mira');
+    await seedCharter(harness, drafted, runThroughBody(), false);
+    await seedCharter(harness, approvedOnly, runThroughBody(), true);
+    // Each row still says the one-to-one is on: the charter has moved ahead of it.
+    await harness.run(async (ctx): Promise<void> => {
+      for (const agentId of [drafted, approvedOnly, talking]) {
+        await ctx.db.patch(agentId, { state: 'day-one-in-progress' });
+      }
+    });
+    const states = Object.fromEntries(
+      (await harness.withIdentity({ subject: 'owner' }).query(api.agents.rosterForUser, {})).map(
+        (row): [string, string] => [row.name, row.state],
+      ),
+    );
+    expect(states).toEqual({
+      Nia: 'charter-pending',
+      Tomas: 'active',
+      Mira: 'day-one-in-progress',
+    });
+  });
+
   it('counts parked work beside open work, and under needs-you only what the manager alone can release (19 Sep run)', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();

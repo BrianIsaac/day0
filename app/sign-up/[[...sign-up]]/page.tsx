@@ -3,6 +3,11 @@ import { SignUp } from '@clerk/nextjs';
 import { DEV_NO_AUTH } from '@/lib/dev-auth';
 import { clerkAppearance } from '../../clerk-appearance';
 
+/**
+ * The hosted demo's account form: Clerk's sign-up under the page's own heading, in the shared
+ * appearance. In no-auth dev mode no account exists to create, and the page sends the local
+ * manager home.
+ */
 export default function SignUpPage() {
   // No accounts exist in no-auth dev mode, so there is nothing to create.
   if (DEV_NO_AUTH) redirect('/');

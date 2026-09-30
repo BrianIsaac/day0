@@ -10,7 +10,7 @@ import { Button } from '../../../components/Button';
 import { Card } from '../../../components/Card';
 import { RecordLine } from '../../../components/RecordLine';
 import { recordKindOf } from '../event-labels';
-import { clockTime, useAgentZone } from '../time';
+import { clockTime, useAgentZone } from '../../../components/time';
 import { recordWords } from './record-words';
 
 /** How many lines the record shows at first, and how many more each Show older adds. */
@@ -92,19 +92,19 @@ function payloadText(entry: RecordEntry): string {
   );
 }
 
+/** The record's filter chips: the one selected, and what a press on one does. */
+export interface RecordFiltersProps {
+  readonly selected: RecordView;
+  readonly onSelect: (view: RecordView) => void;
+}
+
 /**
  * The filter chips: one pressed at a time, the record redrawn under it.
  *
  * @param selected - The filter shown now.
  * @param onSelect - Shows another.
  */
-export function RecordFilters({
-  selected,
-  onSelect,
-}: {
-  selected: RecordView;
-  onSelect: (view: RecordView) => void;
-}) {
+export function RecordFilters({ selected, onSelect }: RecordFiltersProps) {
   return (
     <div role="group" aria-label="Show in the record" className="flex flex-wrap gap-1.5">
       {RECORD_CHIPS.map((chip) => {
@@ -129,6 +129,13 @@ export function RecordFilters({
   );
 }
 
+/** What the record's list of events is read for. */
+export interface RecordListProps {
+  readonly agentId: Id<'agents'>;
+  readonly name: string;
+  readonly view: RecordView;
+}
+
 /**
  * Every event of the employee's record in plain words, newest first, each with a dot for what it
  * did, its time in the employee's zone, and the stored event one disclosure away. The record is
@@ -138,15 +145,7 @@ export function RecordFilters({
  * @param name - The employee's name, as each sentence says it.
  * @param view - The filter the record is shown under.
  */
-export function RecordList({
-  agentId,
-  name,
-  view,
-}: {
-  agentId: Id<'agents'>;
-  name: string;
-  view: RecordView;
-}) {
+export function RecordList({ agentId, name, view }: RecordListProps) {
   const zone = useAgentZone();
   const { results, status, loadMore } = usePaginatedQuery(
     api.events.record,
@@ -196,7 +195,7 @@ export function RecordList({
                 ...(entry.connection !== undefined ? { connection: entry.connection } : {}),
               })}{' '}
               <details className="group/payload inline">
-                <summary className="inline-flex min-h-11 cursor-pointer list-none items-center gap-1.5 align-middle text-[13px] text-[var(--color-muted)] hover:text-[var(--color-fg)] [&::-webkit-details-marker]:hidden">
+                <summary className="relative -my-3 inline-flex min-h-11 cursor-pointer list-none items-center gap-1.5 align-middle text-[13px] text-[var(--color-muted)] hover:text-[var(--color-fg)] [&::-webkit-details-marker]:hidden">
                   <span
                     aria-hidden="true"
                     className="inline-block size-[6px] -rotate-45 border-r-[1.5px] border-b-[1.5px] border-current transition-transform duration-[180ms] ease-out group-open/payload:rotate-45 motion-reduce:transition-none"

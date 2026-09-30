@@ -3,7 +3,7 @@
 import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
-import { clockTime, clockTimeWithSeconds } from '../time';
+import { clockTime, clockTimeWithSeconds } from '../../../components/time';
 
 /**
  * The plan an item's current one replaced, as its draft event keeps it (`work.earlierPlan`):

@@ -23,7 +23,7 @@ import { Card } from '../../../components/Card';
 import { Chip } from '../../../components/Chip';
 import { Disclosure } from '../../../components/Disclosure';
 import type { Tone } from '../../../components/tone';
-import { clockTime, useAgentZone } from '../time';
+import { clockTime, useAgentZone } from '../../../components/time';
 import { expectedCredential, reachedWords, stateChip } from './card-words';
 import { CredentialField } from './CredentialField';
 import { ExpiryBlock } from './ExpiryBlock';

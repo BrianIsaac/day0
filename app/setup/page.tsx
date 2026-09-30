@@ -1,7 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { PageMotion } from '../PageMotion';
-import { HOSTED_DEMO_SNAPSHOT, hostedBuildLine } from '@/demo/hosted-demo-snapshot';
 import { deploymentReleaseLine, readDeploymentRelease } from '@/setup/deployment-release';
 
 import {
@@ -142,10 +141,11 @@ export default async function SetupPage() {
             here too. The seeded mock office the hosted demo works in is mock mode, which the
             evaluation harness uses and which no local way runs.
           </p>
-          <p className="text-xs text-[var(--color-muted)] leading-relaxed mb-4">
-            {hostedBuildLine(HOSTED_DEMO_SNAPSHOT.recording)}
-            {stamp !== null ? ` ${deploymentReleaseLine(stamp)}` : ''}
-          </p>
+          {stamp !== null ? (
+            <p className="text-xs text-[var(--color-muted)] leading-relaxed mb-4">
+              {deploymentReleaseLine(stamp)}
+            </p>
+          ) : null}
           <div
             role="note"
             className="rounded-xl border border-[var(--color-accent)]/40 bg-[var(--color-accent)]/10 p-4"
@@ -407,6 +407,8 @@ export default async function SetupPage() {
               ))}
             </ol>
             <figure>
+              {/* Lazy, as it sits far below the fold: an eager `<img>` makes React emit a preload
+                hint, which a prefetch of this route carried to the landing page (C2, 30 Sep). */}
               {/* eslint-disable-next-line @next/next/no-img-element -- this page is
                 prerendered and must serve its own bytes; the optimiser would put
                 a server request in front of the one picture a stuck reader needs. */}
@@ -414,6 +416,8 @@ export default async function SetupPage() {
                 src="/setup/first-success-day-one-chat.webp"
                 width={817}
                 height={447}
+                loading="lazy"
+                decoding="async"
                 alt="The Day-1 one-to-one in chat mode, the employee opening the conversation by asking what triggered the decision to bring it on and what the team is trying to make easier"
                 className="rounded-xl border border-[var(--color-border)] w-full h-auto"
               />

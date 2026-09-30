@@ -78,6 +78,8 @@ describe('ManageView: the manager DM setting waits for a manager channel (N7)', 
           surfaces,
           arriving: false,
           reportSentBack: () => undefined,
+          lastAttempt: null,
+          setLastAttempt: () => undefined,
         }}
       >
         <ManageView />
