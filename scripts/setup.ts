@@ -321,6 +321,11 @@ export interface RunOptions {
   /** Stream the child's output rather than capturing it. */
   inherit?: boolean;
   timeoutMs?: number;
+  /**
+   * What the child reads on stdin. A secret reaches a child this way, never
+   * on its command line, where `ps` and a shell's history would show it.
+   */
+  input?: string;
 }
 
 /**
@@ -436,8 +441,9 @@ Hold the deployment's scheduled jobs (the polls, the digests, the sweeps and the
   ./setup.sh pause                        every job skips until unpause; an upgrade leaves it so
   ./setup.sh unpause                      each job runs again at its next turn
 
-The Convex-cloud-plus-Clerk route is not automated here; it needs accounts and
-a dashboard task. README.md has it, linked from the end of a successful run.`;
+Your own copy on Convex cloud and Vercel, as the hosted demo runs, is the cloud
+verbs, which need no Docker: ./setup.sh cloud --help, and README.md, "Your own
+hosted copy".`;
 
 /**
  * Read the command line.
@@ -2962,9 +2968,11 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       );
       io.log(`  \`${SETUP_SCRIPT} --route local\` (${WAY_NAMES.local}); README.md, "Local dev".`);
       io.log(
-        '  Convex cloud plus Clerk, with a user per sign-in: README.md, "Convex cloud + Clerk".',
+        '  Convex cloud plus Clerk, with a user per sign-in: README.md, "Convex cloud + Clerk";',
       );
-      io.log('  That one is not automated here: it needs accounts and a dashboard task.');
+      io.log(
+        '  your own hosted copy on Convex cloud and Vercel is `./setup.sh cloud setup --target <file>`.',
+      );
     }
 
     const createsEnv = !existsSync(envPath);
@@ -5196,6 +5204,14 @@ let consoleReader: Interface | undefined;
 let hidden = false;
 let pipedAnswers: AsyncIterableIterator<string> | undefined;
 
+/**
+ * Close the terminal reader the console environment opened, if it opened one,
+ * so the process can exit once its command is done.
+ */
+export function closeConsoleInput(): void {
+  consoleReader?.close();
+}
+
 /** Attach the pipe iterator before input flows so answers survive between prompts and EOF. */
 function reader(): Interface {
   if (!consoleReader) {
@@ -5226,7 +5242,12 @@ export function consoleIo(cwd: string = process.cwd()): SetupIo {
         encoding: 'utf8',
         env: { ...process.env, ...(options.env ?? {}) },
         timeout: options.timeoutMs,
-        stdio: options.inherit ? ['ignore', 'inherit', 'inherit'] : ['ignore', 'pipe', 'pipe'],
+        input: options.input,
+        stdio: [
+          options.input === undefined ? 'ignore' : 'pipe',
+          options.inherit ? 'inherit' : 'pipe',
+          options.inherit ? 'inherit' : 'pipe',
+        ],
         maxBuffer: 32 * 1024 * 1024,
       });
       return { status: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
@@ -5312,7 +5333,7 @@ async function main(): Promise<number> {
   try {
     return await runCommand(options, consoleIo());
   } finally {
-    consoleReader?.close();
+    closeConsoleInput();
   }
 }
 

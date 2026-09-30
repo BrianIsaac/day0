@@ -6,6 +6,7 @@ import SetupPage from '../../../app/setup/page';
 import {
   DETAILED_SECTIONS,
   FIRST_SUCCESS,
+  HOSTED_COPY,
   MEASURED_TIMINGS,
   MOCK_OFFICE_NOTE,
   MODEL_ROUTES,
@@ -36,6 +37,7 @@ vi.unstubAllEnvs();
 /** The rendered text of a page, with markup and entities out of the way. */
 function textOf(markup: string): string {
   return markup
+    .replace(/<span class="whitespace-nowrap">([^<]*)<\/span>/g, '$1')
     .replace(/<[^>]*>/g, ' ')
     .replace(/&#x27;/g, "'")
     .replace(/&quot;/g, '"')
@@ -188,6 +190,50 @@ describe('the /setup guide', (): void => {
     expect(text).toContain(RUN_WAY_VERBS_NOTE);
     expect(text.indexOf('./setup.sh stop')).toBeLessThan(text.indexOf('./setup.sh resume'));
     expect(text.indexOf('./setup.sh resume')).toBeLessThan(text.indexOf('./setup.sh clear'));
+  });
+
+  it("keeps every flag in the page's prose whole, never broken after its hyphens (m24, 390 px)", (): void => {
+    for (const flag of [
+      '--dry-run',
+      '--route key',
+      '--model <id>',
+      '--purge-env',
+      '--app-port <n>',
+    ]) {
+      const bare = flag.split(' ')[0]!;
+      expect(html, flag).toContain(`<span class="whitespace-nowrap">${bare}`);
+    }
+    // No flag stands in the prose outside its unbreakable span.
+    const prose = [...html.matchAll(/<(p|li)(?:\s[^>]*)?>(.*?)<\/\1>/gs)].map(([, , body]) =>
+      body!
+        .replace(/<span class="whitespace-nowrap">[^<]*<\/span>/g, '')
+        .replace(/<code[^>]*>.*?<\/code>/gs, '')
+        .replace(/<[^>]*>/g, ' '),
+    );
+    expect(prose.length).toBeGreaterThan(10);
+    for (const paragraph of prose) expect(paragraph).not.toMatch(/(?<![\w/])--[a-z]/);
+  });
+
+  it('gives a reader who wants a hosted copy the one-command cloud form, after the local verbs', (): void => {
+    expect(html).toMatch(/<h3[^>]*id="hosted-copy"[^>]*>Your own hosted copy<\/h3>/);
+    for (const part of HOSTED_COPY.body.split(HOSTED_COPY.targetLine)) {
+      expect(text).toContain(part.trim());
+    }
+    // The target file's line wraps only between words, never after its colon (walk m24's rule).
+    expect(HOSTED_COPY.body.split(HOSTED_COPY.targetLine)).toHaveLength(2);
+    expect(html).toContain(
+      `<span class="whitespace-nowrap">${HOSTED_COPY.targetLine.replace('<', '&lt;').replace('>', '&gt;')}</span>`,
+    );
+    expect(text).toContain(HOSTED_COPY.after);
+    const rendered = [...html.matchAll(/<span[^>]*>(.*?)<\/span>/gs)].map((match) => match[1]);
+    for (const command of HOSTED_COPY.commands) expect(rendered).toContain(command);
+    expect(HOSTED_COPY.commands.map((command) => command.split(' ').slice(0, 3).join(' '))).toEqual(
+      ['./setup.sh cloud setup', './setup.sh cloud upgrade', './setup.sh cloud backup'],
+    );
+    expect(html).toContain('aria-label="Commands: Your own hosted copy"');
+    const at = text.indexOf(HOSTED_COPY.title);
+    expect(at).toBeGreaterThan(text.indexOf(RUN_WAY_VERBS_NOTE));
+    expect(at).toBeLessThan(text.indexOf(MOCK_OFFICE_NOTE.title));
   });
 
   it('keeps the mock office as a note under an evaluation heading, not a card', (): void => {
