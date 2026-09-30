@@ -233,13 +233,15 @@ describe('the public-page motion', () => {
     // Tailwind's preflight sets `a` to inherit its text's colour and decoration, so a bare link
     // inside a sentence read as prose.
     const base = blocks('@layer base').join('\n');
-    const [link] = rulesFor(base, ':where(a[href]:not([class]))');
+    const [link] = rulesFor(base, 'a[href]:not([class])');
+    // Not zero-specificity: the preflight's own `a` rule shares the layer and would win.
+    expect(base).not.toContain(':where(a[href]');
     expect(link).toMatch(/text-decoration-line:\s*underline/);
     expect(link).toMatch(/text-decoration-color:\s*var\(--color-border-2\)/);
     expect(link).toMatch(/text-underline-offset:\s*4px/);
     // No size: an inline link keeps the sentence's line, which the target floor exempts.
     expect(link).not.toMatch(/(min-)?(height|width|padding|display)\s*:/);
-    expect(rulesFor(base, ':where(a[href]:not([class])):hover')[0]).toMatch(
+    expect(rulesFor(base, 'a[href]:not([class]):hover')[0]).toMatch(
       /text-decoration-color:\s*var\(--color-accent\)/,
     );
     // Nothing outside the base layer styles every link, which would outrank each link's own

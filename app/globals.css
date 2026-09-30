@@ -109,15 +109,17 @@ body {
      variant="text"`'s, the second hairline under it and the accent on hover. Only a link with no
      class takes it: a nav link, a card link, a `ButtonLink` and a tab each carry their own
      classes and keep their own look, and a link that wants another look says so with a class.
-     It sets no size, so an inline link keeps the sentence's line. */
-  :where(a[href]:not([class])) {
+     It sets no size, so an inline link keeps the sentence's line. Its selector is not wrapped in
+     `:where()`: the preflight's `a` rule sits in this layer too, and a zero-specificity rule
+     loses to it; a utility still outranks it, from its later layer. */
+  a[href]:not([class]) {
     text-decoration-line: underline;
     text-decoration-color: var(--color-border-2);
     text-underline-offset: 4px;
     transition: text-decoration-color 180ms ease-out;
   }
 
-  :where(a[href]:not([class])):hover {
+  a[href]:not([class]):hover {
     text-decoration-color: var(--color-accent);
   }
 }
