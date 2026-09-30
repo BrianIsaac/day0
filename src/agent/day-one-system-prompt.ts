@@ -19,7 +19,8 @@ function questionBody(question: string): string {
  * The employee is told its own name, so it introduces itself as the employee the manager named
  * (the hosted walk's m5: every employee said "I'm Day0"), and each topic by the plain title the
  * room's progress line uses, never its slug or number, which the model printed back to the
- * manager ("Topic 1", a dash, "why-this-hire:").
+ * manager ("Topic 1", a dash, "why-this-hire:"). The prompt carries no em dash, and asks for none:
+ * the employee wrote one to the manager in every turn (the round review's r2).
  *
  * @param employeeName - The employee's name as the manager gave it.
  */
@@ -37,6 +38,7 @@ export function dayOneSystemPrompt(employeeName: string): string {
     'Rules:',
     `  - Lead with a short welcome on turn one that introduces you as ${name}, then ask topic 1.`,
     '  - Ask each question in your own words. Never announce a topic by its number or its title.',
+    '  - Write plain punctuation: a comma, a colon or a full stop, never a dash between clauses.',
     "  - Wait for the boss's reply before moving on.",
     '  - One question per turn. Brief follow-ups are fine.',
     "  - Do not summarise the boss's answers back in full.",

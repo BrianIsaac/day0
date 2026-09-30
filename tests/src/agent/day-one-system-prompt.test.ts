@@ -32,8 +32,10 @@ describe('dayOneSystemPrompt', (): void => {
     );
   });
 
-  it('carries no em dash (standard 13.3)', (): void => {
-    expect(dayOneSystemPrompt('Ada')).not.toContain('\u2014');
+  it('carries no em dash (standard 13.3) and asks the employee to write none (review r2)', (): void => {
+    const prompt = dayOneSystemPrompt('Ada');
+    expect(prompt).not.toContain('\u2014');
+    expect(prompt).toContain('never a dash between clauses');
   });
 
   it("keeps a name's line breaks out of the prompt", (): void => {
