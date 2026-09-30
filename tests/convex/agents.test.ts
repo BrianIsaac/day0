@@ -13,6 +13,7 @@ import { STOPPED_PREFIX } from '../../src/work/stop';
 import type { WorkCandidate } from '../../src/work/types';
 import { asAgentId } from '../../src/lib/ids';
 import { runThroughBody } from '../fixtures/run-through-charter-2026-09-14';
+import { runtimeCycleThrough } from '../fixtures/import-graph';
 
 afterEach((): void => {
   vi.useRealTimers();
@@ -1803,5 +1804,11 @@ describe('agents.setBossEmail', (): void => {
     ).rejects.toThrow('evaluation');
     const agent = await harness.run(async (ctx) => await ctx.db.get(agentId));
     expect(agent?.bossEmail).toBe('boss@day0.local');
+  });
+});
+
+describe("the module's runtime imports", (): void => {
+  it('never lead back to the module, so its initialisation order does not depend on load order (m25)', (): void => {
+    expect(runtimeCycleThrough('convex/agents.ts')).toBeNull();
   });
 });

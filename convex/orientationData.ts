@@ -1,6 +1,6 @@
 import { internalQuery } from './_generated/server';
 import { v } from 'convex/values';
-import { agentReadsSource } from './docSources';
+import { agentReadsSource } from '../src/docs/agent-sources';
 import type { Doc } from './_generated/dataModel';
 import { browserComponentRefusal, withBrowserComponentState } from '../src/surfaces/browser';
 import { isManagerLookupFailure } from '../src/surfaces/manager-lookup';

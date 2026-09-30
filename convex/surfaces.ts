@@ -37,7 +37,7 @@ import {
 } from '../src/surfaces/waterfall';
 import { cardPageRefs } from '../src/docs/card-pages';
 import { PROBE_LEASE_MS, probeInFlight } from '../src/surfaces/probe-lease';
-import { agentReadsSource } from './docSources';
+import { agentReadsSource } from '../src/docs/agent-sources';
 import { isManagerLookupFailure } from '../src/surfaces/manager-lookup';
 import { appendEvent, eventsOfType } from './eventLog';
 import { isEventOf, type EventOf, type EventType } from '../src/events/contract';

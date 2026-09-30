@@ -24,7 +24,7 @@ import {
   stoppedRowNeedsManager,
   stoppedRowOffersMove,
 } from '../src/work/needs-manager';
-import { agentReadsSource } from './docSources';
+import { agentReadsSource } from '../src/docs/agent-sources';
 import { isEvaluationAgent } from './metrics';
 import { isManagerLookupFailure } from '../src/surfaces/manager-lookup';
 import { shownEmployeeState, type CharterApproval } from '../src/work/state-labels';
