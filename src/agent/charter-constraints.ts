@@ -189,13 +189,11 @@ export function removeWording(text: string, phrase: string): string {
  * dropped. Wording the clauses do not carry is dropped from the constraint,
  * because striking it would then change nothing while looking as if it had.
  * Wording is stripped of any provenance suffix first, as the clauses were.
+ * One sentence is one rule: listed twice, it is kept once.
  *
- * Args:
- *   raw: The constraints as the model returned them.
- *   charter: The assembled charter whose clauses they should name.
- *
- * Returns:
- *   The verified constraints, tagged as synthesised.
+ * @param raw - The constraints as the model returned them.
+ * @param charter - The assembled charter whose clauses they should name.
+ * @returns The verified constraints, tagged as synthesised.
  */
 export function normaliseConstraints(
   raw: readonly RawConstraint[],
@@ -637,12 +635,10 @@ function listClauses(charter: ClauseCharter): string[] {
  * a refusal here is the refusal the toggle would give and a strike previewed
  * as allowed is one approval will apply.
  *
- * Args:
- *   charter: The charter as drafted, other strikes flagged.
- *   index: The constraint to strike.
- *
- * Returns:
- *   The clauses the strike would remove, or the reason it is refused.
+ * @param charter - The charter as drafted, other strikes flagged.
+ * @param index - The constraint to strike.
+ * @returns The clauses the strike would remove and whether it changes the charter at all, or the
+ *   reason it is refused.
  */
 export function strikePreview(charter: ClauseCharter, index: number): StrikePreview {
   const constraints = [...(charter.constraints ?? [])];
