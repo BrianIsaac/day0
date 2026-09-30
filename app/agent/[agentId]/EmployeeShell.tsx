@@ -337,12 +337,13 @@ export function EmployeeShell({ agentId, children }: EmployeeShellProps) {
           ) : null}
           {dayZero && segment !== null && DAY_ZERO_TABS.has(selected) ? (
             <div className="mt-6 grid gap-4">
-              <Link
+              <ButtonLink
                 href={employeeTabHref(agentId, 'needs-you')}
-                className="inline-flex min-h-11 items-center self-start text-sm"
+                variant="text"
+                className="self-start"
               >
                 Back to the one-to-one
-              </Link>
+              </ButtonLink>
               {children}
             </div>
           ) : dayZero ? (

@@ -636,9 +636,10 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     await settle();
     expect(view.container.textContent).toContain('the environment');
     expect(view.container.querySelector('[role="tablist"]')).toBeNull();
-    expect(view.container.querySelector('a[href="/agent/agent-1"]')?.textContent).toBe(
-      'Back to the one-to-one',
-    );
+    const back = view.container.querySelector('a[href="/agent/agent-1"]');
+    expect(back?.textContent).toBe('Back to the one-to-one');
+    // The inline-link look the rest of the page's links in running text take (Fable w4).
+    expect(back?.className).toContain('decoration-[var(--color-link-line)]');
     view.unmount();
   });
 
