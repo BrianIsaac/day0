@@ -43,6 +43,15 @@ describe('the sign-in page', () => {
     expect(html).not.toMatch(/\bagent\b/i);
   });
 
+  it("leaves the h1 to Clerk's title on a later step, keeping the heading's words and look", async () => {
+    const first = await render('/sign-in');
+    const heading = /<h1 class="([^"]+)">Sign in to deploy an employee<\/h1>/.exec(first);
+    expect(heading).not.toBeNull();
+    const later = await render('/sign-in/factor-one');
+    expect(later).not.toMatch(/<h1[\s>]/);
+    expect(later).toContain(`<p class="${heading?.[1]}">Sign in to deploy an employee</p>`);
+  });
+
   it('says what the hosted demo collects and who receives it before the sign-in (N6)', async () => {
     const html = text(await render());
     expect(html).toContain('role="note"');

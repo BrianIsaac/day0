@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 import { DEV_NO_AUTH } from '@/lib/dev-auth';
-import { HeadedSignUp } from '../../HeadedClerk';
+import { HeadedSignUp, StepHeading } from '../../HeadedClerk';
 
 /**
  * The hosted demo's account form: Clerk's sign-up under the page's own heading, in the shared
@@ -17,9 +17,12 @@ export default function SignUpPage() {
         <p className="text-xs uppercase tracking-[0.2em] text-[var(--color-accent)] mb-3 text-center">
           Day0
         </p>
-        <h1 className="text-3xl font-semibold tracking-tight mb-6 text-center">
+        <StepHeading
+          base="/sign-up"
+          className="text-3xl font-semibold tracking-tight mb-6 text-center"
+        >
           Create an account
-        </h1>
+        </StepHeading>
         <div className="flex justify-center">
           <HeadedSignUp />
         </div>

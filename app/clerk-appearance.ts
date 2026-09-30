@@ -54,7 +54,8 @@ export const clerkAppearance = {
  * Clerk draws every step's title as an h1, so on the first step, where the page's heading already
  * says what the card is for, the title and its subtitle are left out and the mark stands alone
  * above the form (the hosted walk's m26), with no header gap left under it. Later steps keep their
- * headers: they say what to do ("Check your email") and to which address. All of it goes through
+ * headers: they say what to do ("Check your email") and to which address, and the page's heading
+ * steps down to a paragraph there (`StepHeading`), so each step has one h1. All of it goes through
  * Clerk's own element styles, never a stylesheet selector on its classes, which Clerk reports as
  * structural CSS on every page.
  *
