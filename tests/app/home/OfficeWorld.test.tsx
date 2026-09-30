@@ -98,7 +98,7 @@ describe('OfficeWorld', (): void => {
     const empty = renderToStaticMarkup(<OfficeWorld agents={[]} settled />);
     const staffed = renderToStaticMarkup(<OfficeWorld agents={[mira]} settled />);
     expect(`${empty}${staffed}`).not.toMatch(/text-\[(9|10|11)px\]/);
-    expect(staffed).toContain('reads </span>2 locations');
+    expect(staffed).toContain('<span class="max-sm:sr-only">reads </span>2 locations');
     expect(staffed).toContain(mira.roleLine);
   });
 
@@ -168,33 +168,25 @@ describe('OfficeWorld', (): void => {
     );
   });
 
-  it('draws four desks on a phone, the ones the first four employees take (UX 12, option c)', (): void => {
-    const html = renderToStaticMarkup(<OfficeWorld agents={[]} settled />);
-    const desks = [...html.matchAll(/class="day0-pixel-desk ([^"]*)"/g)].map((match) => match[1]);
-    const chairs = [...html.matchAll(/class="day0-pixel-chair ([^"]*)"/g)].map((match) => match[1]);
-    expect(desks).toHaveLength(8);
-    const hidden = (classes: string[]): number[] =>
-      classes.flatMap((names, index) => (names.includes('max-sm:hidden') ? [index] : []));
-    expect(hidden(desks)).toEqual([1, 4, 5, 7]);
-    expect(hidden(chairs)).toEqual([1, 4, 5, 7]);
-    const staffed = renderToStaticMarkup(
-      <OfficeWorld
-        agents={Array.from(
-          { length: 6 },
-          (_, index) => ({ ...idle, agentId: `a${index}` }) as RosterRow,
-        )}
-        settled
-      />,
-    );
-    expect(
-      hidden([...staffed.matchAll(/class="day0-pixel-desk ([^"]*)"/g)].map((match) => match[1])),
-    ).toEqual([4, 5]);
+  it('draws no desk on a phone, where a figure covers the desk it sits at (re-pinned: the phone office supersedes UX 12, option c)', (): void => {
+    for (const agents of [
+      [],
+      Array.from({ length: 6 }, (_, index) => ({ ...idle, agentId: `a${index}` }) as RosterRow),
+    ]) {
+      const html = renderToStaticMarkup(<OfficeWorld agents={agents} settled />);
+      const desks = [...html.matchAll(/class="day0-pixel-desk ([^"]*)"/g)].map((match) => match[1]);
+      const chairs = [...html.matchAll(/class="day0-pixel-chair ([^"]*)"/g)].map(
+        (match) => match[1],
+      );
+      expect(desks).toHaveLength(8);
+      expect(desks.every((names) => names.includes('max-sm:hidden'))).toBe(true);
+      expect(chairs.every((names) => names.includes('max-sm:hidden'))).toBe(true);
+    }
   });
 
-  it('stands each desk on a phone just above the seat its sitter takes there', (): void => {
+  it('keeps every desk where the desktop plan stands it, inside the office by its inset', (): void => {
     const html = renderToStaticMarkup(<OfficeWorld agents={[]} settled />);
-    // Desk 2 is the second employee's (`SEAT_ORDER`): on a phone, the top row's middle.
     const deskTwo = [...html.matchAll(/class="day0-pixel-desk [^"]*" style="([^"]*)"/g)][2]?.[1];
-    expect(deskTwo).toBe('--x:67;--y:17;--px:50;--py:8;--i:2');
+    expect(deskTwo).toBe('--x:67;--y:17;--i:2');
   });
 });

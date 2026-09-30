@@ -86,15 +86,6 @@ function deskFor(index: number): number {
   return (SEAT_ORDER[index] ?? index) % OFFICE_DESKS.length;
 }
 
-/** The place on the roster whose employee sits at this desk, which a phone seats in that order. */
-function sitterOf(desk: number): number {
-  const index = SEAT_ORDER.indexOf(desk as (typeof SEAT_ORDER)[number]);
-  return index === -1 ? desk : index;
-}
-
-/** How far above its chair a desk stands, as a share of the office's height. */
-const DESK_ABOVE_SEAT = 8;
-
 type OfficeStyle = CSSProperties & {
   '--walk-duration'?: string;
   /** The element's place in the light-up stagger. */
@@ -127,9 +118,6 @@ function placeStyle(place: OfficePlace): OfficeStyle {
   };
 }
 
-/** The fewest desks a phone draws (UX 12, v3 option c): the ones the first four employees take. */
-const PHONE_DESK_MINIMUM = 4;
-
 /**
  * The mini office world: the employees at their desks or roaming the rooms.
  *
@@ -146,11 +134,6 @@ export function OfficeWorld({
 }) {
   const visibleAgents = agents ?? [];
   const deskCount = Math.max(8, Math.min(OFFICE_DESKS.length, visibleAgents.length));
-  const phoneDesks = new Set(
-    Array.from({ length: Math.max(PHONE_DESK_MINIMUM, visibleAgents.length) }, (_, index) =>
-      deskFor(index),
-    ),
-  );
   const [agentDestinations, setAgentDestinations] = useState<Record<string, OfficePlace>>({});
   const office = useRef<HTMLDivElement>(null);
   useLightUpOnce(office, settled);
@@ -215,12 +198,7 @@ export function OfficeWorld({
         ))}
 
         {OFFICE_DESKS.slice(0, deskCount).map((desk, index) => (
-          <OfficeDesk
-            key={`${desk.x}-${desk.y}-${index}`}
-            desk={desk}
-            index={index}
-            onPhone={phoneDesks.has(index)}
-          />
+          <OfficeDesk key={`${desk.x}-${desk.y}-${index}`} desk={desk} index={index} />
         ))}
 
         {visibleAgents.length === 0 ? (
@@ -297,38 +275,23 @@ function OfficeSignal({ signal }: { signal: (typeof OFFICE_SIGNALS)[number] }) {
   );
 }
 
-function OfficeDesk({
-  desk,
-  index,
-  onPhone,
-}: {
-  desk: (typeof OFFICE_DESKS)[number];
-  index: number;
-  onPhone: boolean;
-}) {
-  // On a phone the desk stands where its sitter's seat is (`phoneSeat`), just above the chair.
-  const seat = phoneSeat(sitterOf(index));
-  const chairStyle: OfficeStyle = {
-    ...placeStyle({ desktop: { x: desk.seatX, y: desk.seatY }, phone: seat }),
-    '--i': index,
-  };
-  const deskStyle: OfficeStyle = {
-    ...placeStyle({
-      desktop: { x: desk.x, y: desk.y },
-      phone: { x: seat.x, y: seat.y - DESK_ABOVE_SEAT },
-    }),
-    '--i': index,
-  };
-  const phone = onPhone ? '' : ' max-sm:hidden';
+/**
+ * A desk and its chair, at a desktop width only: a phone figure is a third of the office wide and
+ * covers the desk it sits at, and an idle one would stand on an empty desk, so a phone draws the
+ * figures alone (the phone office, superseding UX 12's four phone desks).
+ */
+function OfficeDesk({ desk, index }: { desk: (typeof OFFICE_DESKS)[number]; index: number }) {
+  const chairStyle: OfficeStyle = { '--x': desk.seatX, '--y': desk.seatY, '--i': index };
+  const deskStyle: OfficeStyle = { '--x': desk.x, '--y': desk.y, '--i': index };
   return (
     <>
       <div
-        className={`day0-pixel-chair day0-pixel-chair-${desk.variant} day0-office-at absolute -translate-x-1/2 -translate-y-1/2${phone}`}
+        className={`day0-pixel-chair day0-pixel-chair-${desk.variant} day0-office-at absolute -translate-x-1/2 -translate-y-1/2 max-sm:hidden`}
         style={chairStyle}
         aria-hidden="true"
       />
       <div
-        className={`day0-pixel-desk day0-pixel-desk-${desk.variant} day0-office-at absolute -translate-x-1/2 -translate-y-1/2${phone}`}
+        className={`day0-pixel-desk day0-pixel-desk-${desk.variant} day0-office-at absolute -translate-x-1/2 -translate-y-1/2 max-sm:hidden`}
         style={deskStyle}
         aria-hidden="true"
       >
@@ -448,7 +411,7 @@ function OfficeAgent({
         </div>
         <div className="mt-1 truncate rounded-full border border-[var(--color-border)] bg-[var(--color-card)]/90 px-2 py-0.5 text-center text-xs whitespace-nowrap text-[var(--color-muted)]">
           {/* A phone figure is a third of the office wide: the count says it without the verb. */}
-          <span className="max-sm:hidden">reads </span>
+          <span className="max-sm:sr-only">reads </span>
           {agent.docSourceCount} {agent.docSourceCount === 1 ? 'location' : 'locations'}
         </div>
       </div>
