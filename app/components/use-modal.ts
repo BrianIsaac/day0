@@ -71,6 +71,55 @@ export interface ModalOptions {
 }
 
 /**
+ * The attributes on the document element that the modals open at once share their hold on the
+ * page through: how many hold it, and the page's own overflow and gutter from before the first.
+ * They live on the document, as the styles they guard do, so every modal sees the one count.
+ */
+const HOLDS = 'data-modal-holds';
+const OVERFLOW_BEFORE = 'data-modal-overflow';
+const GUTTER_BEFORE = 'data-modal-gutter';
+
+/**
+ * Hold the page still under a modal: the body stops scrolling and a page with a scrollbar keeps
+ * its room, so nothing behind moves sideways. Modals open at once share one hold: the first
+ * takes it and records the page's own styles, the last to let go gives them back, so one closing
+ * never unlocks the page under another (review m6). A style something else wrote while the page
+ * was held is that writer's, and is left as it is.
+ *
+ * @returns Let go of the hold; a second call does nothing.
+ */
+function holdPageStill(): () => void {
+  const root = document.documentElement;
+  const body = document.body;
+  const holds = Number(root.getAttribute(HOLDS) ?? '0');
+  if (holds === 0) {
+    root.setAttribute(OVERFLOW_BEFORE, body.style.overflow);
+    root.setAttribute(GUTTER_BEFORE, root.style.scrollbarGutter);
+    // A page with a scrollbar keeps its room once it is still; one without never gains any.
+    if (window.innerWidth > root.clientWidth) root.style.scrollbarGutter = 'stable';
+    body.style.overflow = 'hidden';
+  }
+  root.setAttribute(HOLDS, String(holds + 1));
+  let held = true;
+  return (): void => {
+    if (!held) return;
+    held = false;
+    const left = Number(root.getAttribute(HOLDS) ?? '1') - 1;
+    if (left > 0) {
+      root.setAttribute(HOLDS, String(left));
+      return;
+    }
+    if (body.style.overflow === 'hidden') {
+      body.style.overflow = root.getAttribute(OVERFLOW_BEFORE) ?? '';
+    }
+    if (root.style.scrollbarGutter === 'stable') {
+      root.style.scrollbarGutter = root.getAttribute(GUTTER_BEFORE) ?? '';
+    }
+    for (const name of [HOLDS, OVERFLOW_BEFORE, GUTTER_BEFORE]) root.removeAttribute(name);
+  };
+}
+
+/**
  * Give focus to the page's heading, when what focus was to return to has left the page. The
  * heading takes it only when it is focusable (`tabIndex={-1}`, as the employee page's is), and the
  * page does not scroll to it.
@@ -99,18 +148,12 @@ export function useModal({ panel, active, initialFocus, returnFocus }: ModalOpti
       (element) => (own === null || !element.contains(own)) && !element.hasAttribute('inert'),
     );
     for (const element of behind) element.setAttribute('inert', '');
-    const root = document.documentElement;
-    const overflow = document.body.style.overflow;
-    const gutter = root.style.scrollbarGutter;
-    // A page with a scrollbar keeps its room once it is still; one without never gains any.
-    if (window.innerWidth > root.clientWidth) root.style.scrollbarGutter = 'stable';
-    document.body.style.overflow = 'hidden';
+    const letGo = holdPageStill();
     const target = initialFocus?.current ?? (own ? (focusableIn(own)[0] ?? own) : null);
     target?.focus();
     return () => {
       for (const element of behind) element.removeAttribute('inert');
-      document.body.style.overflow = overflow;
-      root.style.scrollbarGutter = gutter;
+      letGo();
       // Nothing to return to (a click that focused nothing, on Safari or Firefox) leaves focus
       // where the browser puts it; only a target that has left the page hands it to the heading.
       if (back?.isConnected) back.focus();

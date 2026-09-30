@@ -9,6 +9,7 @@ import { mount, press, unmountAll } from '../../fixtures/dom/press';
 afterEach((): void => {
   unmountAll();
   document.body.replaceChildren();
+  document.body.style.overflow = '';
   document.documentElement.style.scrollbarGutter = '';
 });
 
@@ -70,6 +71,33 @@ function clickUnfocused(scope: ParentNode, name: string): void {
   act((): void => {
     target?.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
   });
+}
+
+/**
+ * A panel on the body, modal while `active`, with nothing in it: one of two modals held at once.
+ */
+function Held({ active, name }: { readonly active: boolean; readonly name: string }) {
+  const panel = useRef<HTMLDivElement>(null);
+  useModal({ panel, active });
+  return createPortal(<div ref={panel} tabIndex={-1} data-held={name} />, document.body);
+}
+
+/** Two modals, each open or not as the test sets it. */
+function Pair({ first, second }: { readonly first: boolean; readonly second: boolean }) {
+  return (
+    <>
+      <Held active={first} name="first" />
+      <Held active={second} name="second" />
+    </>
+  );
+}
+
+/** The page's scroll lock as the two styles the modals write show it. */
+function pageLock(): { readonly overflow: string; readonly gutter: string } {
+  return {
+    overflow: document.body.style.overflow,
+    gutter: document.documentElement.style.scrollbarGutter,
+  };
 }
 
 describe('useModal', () => {
@@ -155,6 +183,34 @@ describe('useModal', () => {
     });
     expect(shiftTab.defaultPrevented).toBe(true);
     expect(document.activeElement?.textContent).toBe('Last');
+  });
+
+  it('keeps the page still under a second modal when the first closes before it (review m6)', () => {
+    const view = mount(<Pair first={false} second={false} />);
+    act((): void => view.root.render(<Pair first second={false} />));
+    act((): void => view.root.render(<Pair first second />));
+    act((): void => view.root.render(<Pair first={false} second />));
+    expect(pageLock()).toEqual({ overflow: 'hidden', gutter: 'stable' });
+    act((): void => view.root.render(<Pair first={false} second={false} />));
+    expect(pageLock()).toEqual({ overflow: '', gutter: '' });
+  });
+
+  it('gives the page back once when the modals close in the order they opened the other way round', () => {
+    const view = mount(<Pair first={false} second={false} />);
+    act((): void => view.root.render(<Pair first second={false} />));
+    act((): void => view.root.render(<Pair first second />));
+    act((): void => view.root.render(<Pair first second={false} />));
+    expect(pageLock()).toEqual({ overflow: 'hidden', gutter: 'stable' });
+    act((): void => view.root.render(<Pair first={false} second={false} />));
+    expect(pageLock()).toEqual({ overflow: '', gutter: '' });
+  });
+
+  it('leaves a style something else set while the modal was open, rather than restore over it', () => {
+    const view = mount(<Pair first={false} second={false} />);
+    act((): void => view.root.render(<Pair first second={false} />));
+    document.body.style.overflow = 'auto';
+    act((): void => view.root.render(<Pair first={false} second={false} />));
+    expect(pageLock()).toEqual({ overflow: 'auto', gutter: '' });
   });
 
   it('leaves a hidden control out of what a panel’s Tab reaches', () => {
