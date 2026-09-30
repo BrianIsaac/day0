@@ -62,6 +62,30 @@ describe('the theme tokens', () => {
     });
   });
 
+  it('draws the link underline at 3:1 or more on every surface a link sits on, the one cue it is a link (C3)', () => {
+    // The accent mixed into transparent, as the focus ring is, so the line keeps its contrast on
+    // each surface; the accent line (2.82:1 on a card) fell short of WCAG 1.4.11's 3:1.
+    const mix =
+      /--color-link-line:\s*color-mix\(in oklab, var\(--color-accent\) (\d+)%, transparent\);/.exec(
+        CSS,
+      );
+    expect(mix).not.toBeNull();
+    const alpha = Number(mix?.[1]) / 100;
+    const channels = (hex: string): number[] =>
+      [1, 3, 5].map((start) => Number.parseInt(hex.slice(start, start + 2), 16));
+    const over = (background: string): string =>
+      `#${channels(token('accent'))
+        .map((channel, index) =>
+          Math.round(alpha * channel + (1 - alpha) * (channels(background)[index] ?? 0))
+            .toString(16)
+            .padStart(2, '0'),
+        )
+        .join('')}`;
+    for (const surface of ['bg', 'card', 'inset', 'accent-soft', 'warn-soft']) {
+      expect(contrast(over(token(surface)), token(surface)), surface).toBeGreaterThanOrEqual(3);
+    }
+  });
+
   it('keeps card prose and the accent, warn and ok tones on their fills readable at WCAG AA', () => {
     expect(contrast(token('fg-2'), token('card'))).toBeGreaterThanOrEqual(4.5);
     // Danger on its own fill is 4.34:1, short of AA: the design's pair, recorded in the wave 6 A
@@ -229,7 +253,7 @@ describe('the public-page motion', () => {
     expect(unlayered()).not.toContain(':focus-visible');
   });
 
-  it("underlines a link in running text in the accent line, as ButtonLink's text look does, and only a link with no class of its own (C3)", () => {
+  it("underlines a link in running text in the link line, as ButtonLink's text look does, and only a link with no class of its own (C3)", () => {
     // Tailwind's preflight sets `a` to inherit its text's colour and decoration, so a bare link
     // inside a sentence read as prose.
     const base = blocks('@layer base').join('\n');
@@ -237,11 +261,12 @@ describe('the public-page motion', () => {
     // Not zero-specificity: the preflight's own `a` rule shares the layer and would win.
     expect(base).not.toContain(':where(a[href]');
     expect(link).toMatch(/text-decoration-line:\s*underline/);
-    expect(link).toMatch(/text-decoration-color:\s*var\(--color-accent-line\)/);
+    expect(link).toMatch(/text-decoration-color:\s*var\(--color-link-line\)/);
     expect(link).toMatch(/text-underline-offset:\s*4px/);
     // No size: an inline link keeps the sentence's line, which the target floor exempts.
     expect(link).not.toMatch(/(min-)?(height|width|padding|display)\s*:/);
-    expect(rulesFor(base, 'a[href]:not([class]):hover')[0]).toMatch(
+    const hover = blocks('@media (hover: hover)').join('\n');
+    expect(rulesFor(hover, 'a[href]:not([class]):hover')[0]).toMatch(
       /text-decoration-color:\s*var\(--color-accent\)/,
     );
     // Nothing outside the base layer styles every link, which would outrank each link's own

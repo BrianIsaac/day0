@@ -33,7 +33,7 @@ const VARIANT: Readonly<Record<ButtonVariant, string>> = {
   danger:
     'border-[var(--color-danger-line)] bg-transparent text-[var(--color-danger)] hover:border-[var(--color-danger)]',
   quiet: 'border-transparent bg-transparent text-[var(--color-muted)] hover:text-[var(--color-fg)]',
-  text: 'border-transparent bg-transparent text-[var(--color-fg-2)] underline decoration-[var(--color-accent-line)] underline-offset-4 hover:decoration-[var(--color-accent)]',
+  text: 'border-transparent bg-transparent text-[var(--color-fg-2)] underline decoration-[var(--color-link-line)] underline-offset-4 hover:decoration-[var(--color-accent)]',
 };
 
 const SIZE: Readonly<Record<ButtonSize, string>> = {

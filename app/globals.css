@@ -24,6 +24,10 @@
   --color-ok-line: #396754;
   --color-danger-soft: #281d1f;
   --color-danger-line: #733937;
+  /* The line under a link: the accent mixed into transparent, as the focus ring is, so it keeps
+     3:1 or more on every surface a link sits on (3.4:1 on a tone's fill, 3.8:1 on a card). The
+     underline is the one cue that a link in a sentence is a link (WCAG 1.4.11). */
+  --color-link-line: color-mix(in oklab, var(--color-accent) 55%, transparent);
 }
 
 html,
@@ -106,22 +110,24 @@ body {
 
   /* A link in running text is underlined (C3): the preflight leaves `a` looking like the text
      around it, so a bare link inside a sentence read as prose. The look is `ButtonLink
-     variant="text"`'s: the accent line under it, the accent on hover (the second hairline, at
-     1.7:1 on a card, left the line invisible). Only a link with no class takes it: a nav link, a
-     card link, a `ButtonLink` and a tab each carry their own classes and keep their own look,
-     and a link that wants another look says so with a class. It sets no size, so an inline link
-     keeps the sentence's line. The selector is not wrapped in `:where()`: the preflight's `a`
-     rule shares this layer and would beat a zero-specificity one; a utility still outranks it
-     from its later layer. */
+     variant="text"`'s: the link line under it, the accent on hover. Only a link with no class
+     takes it: a nav link, a card link, a `ButtonLink` and a tab each carry their own classes and
+     keep their own look, and a link that wants another look says so with a class. It sets no
+     size, so an inline link keeps the sentence's line. The selector is not wrapped in
+     `:where()`: the preflight's `a` rule shares this layer and would beat a zero-specificity
+     one; a utility still outranks it from its later layer. */
   a[href]:not([class]) {
     text-decoration-line: underline;
-    text-decoration-color: var(--color-accent-line);
+    text-decoration-color: var(--color-link-line);
     text-underline-offset: 4px;
     transition: text-decoration-color 180ms ease-out;
   }
 
-  a[href]:not([class]):hover {
-    text-decoration-color: var(--color-accent);
+  /* Where a pointer can hover, as Tailwind's own `hover:` is, so a tapped link does not stay lit. */
+  @media (hover: hover) {
+    a[href]:not([class]):hover {
+      text-decoration-color: var(--color-accent);
+    }
   }
 }
 

@@ -427,7 +427,7 @@ export function EvidenceQuote({ quote }: { quote?: string }): React.ReactNode {
       href={link.url}
       target="_blank"
       rel="noreferrer"
-      className="text-[var(--color-fg)] underline decoration-[var(--color-border)]"
+      className="text-[var(--color-fg)] underline decoration-[var(--color-link-line)] underline-offset-4 hover:decoration-[var(--color-accent)]"
     >
       {link.title}
     </a>

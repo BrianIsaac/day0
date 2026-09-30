@@ -60,6 +60,22 @@ async function lookOf(target: Locator): Promise<Look> {
 }
 
 /**
+ * The link line token as the page computes it, read off a probe element.
+ *
+ * @param page - The loaded page.
+ */
+async function linkLine(page: Page): Promise<string> {
+  return await page.evaluate(() => {
+    const probe = document.createElement('span');
+    probe.style.textDecorationColor = 'var(--color-link-line)';
+    document.body.append(probe);
+    const colour = getComputedStyle(probe).textDecorationColor;
+    probe.remove();
+    return colour;
+  });
+}
+
+/**
  * Focus an element as the keyboard does: a key is pressed first, so the browser shows the ring
  * for the focus the script then moves.
  *
@@ -149,15 +165,18 @@ test.describe('the focus ring (C1)', () => {
 });
 
 test.describe('the link in running text (C3)', () => {
-  test('underlines a bare link in a sentence in the accent line, on the line it sits on', async ({
+  test('underlines a bare link in a sentence in the link line, on the line it sits on', async ({
     page,
   }) => {
     await mountProbes(page);
     const link = page.locator('[data-probe="prose"] a');
     const look = await lookOf(link);
     expect(look.decorationLine).toBe('underline');
-    // `--color-accent-line`, #376772, as `ButtonLink variant="text"` draws it.
-    expect(look.decorationColour).toBe('rgb(55, 103, 114)');
+    // `--color-link-line`, as `ButtonLink variant="text"` draws it.
+    const line = await linkLine(page);
+    // An undefined token would leave both on the text's own colour and still compare equal.
+    expect(line).not.toBe(await page.evaluate(() => getComputedStyle(document.body).color));
+    expect(look.decorationColour).toBe(line);
     expect(look.height).toBeLessThanOrEqual(look.lineHeight + 1);
     await link.hover();
     // `--color-accent`, #22d3ee, once the 180 ms colour change has run.
@@ -174,7 +193,7 @@ test.describe('the link in running text (C3)', () => {
     const text = await lookOf(page.locator('[data-probe="text-link"] a'));
     expect(text).toMatchObject({
       decorationLine: 'underline',
-      decorationColour: 'rgb(55, 103, 114)',
+      decorationColour: await linkLine(page),
     });
     for (const tab of await page.locator('[data-probe="tabs"] [role="tab"]').all()) {
       expect((await lookOf(tab)).decorationLine).toBe('none');
