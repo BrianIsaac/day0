@@ -1,8 +1,69 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { OneToOneTurn } from '../../../../../src/agent/one-to-one-conversation';
 
 vi.mock('../../../../../src/lib/dev-auth-server', () => ({
   establishCaller: async () => ({ ok: true, userId: 'dev-no-auth-subject' }),
 }));
+vi.mock('@clerk/nextjs/server', () => ({
+  auth: async (): Promise<{ getToken: () => Promise<string> }> => ({
+    getToken: async (): Promise<string> => 'convex-token',
+  }),
+}));
+
+/**
+ * The session the route keeps the one-to-one on, behind the Convex transport: the turns it holds
+ * and the decisions it makes, which are the session's own (`decideTurn`, `decideAnswer`).
+ */
+const session = vi.hoisted(() => ({
+  turns: [] as OneToOneTurn[],
+  /** Whether the last answer kept closed the one-to-one. */
+  closed: false,
+  /** A refusal `takeTurn` throws as the session's `ConvexError`, when set. */
+  refusal: undefined as string | undefined,
+  /** What `recordAnswer` answers instead of keeping, when set. */
+  keepRefusal: undefined as string | undefined,
+  calls: [] as { name: string; args: Record<string, unknown> }[],
+}));
+
+vi.mock('convex/browser', async () => {
+  const { getFunctionName } = await import('convex/server');
+  const { ConvexError } = await import('convex/values');
+  const { decideAnswer, decideTurn } =
+    await import('../../../../../src/agent/one-to-one-conversation');
+  return {
+    ConvexHttpClient: class {
+      setAuth(): void {}
+      async mutation(reference: unknown, args: Record<string, unknown>): Promise<unknown> {
+        const name = getFunctionName(reference as never);
+        session.calls.push({ name, args });
+        if (name === 'oneToOne:takeTurn') {
+          if (session.refusal) throw new ConvexError(session.refusal);
+          const decision = decideTurn(session.turns, args.request as never, 1);
+          if (!decision.ok) throw new ConvexError(decision.refusal);
+          session.turns = [...decision.turns];
+          return { sessionId: 'session-1', turns: session.turns, answering: decision.answering };
+        }
+        if (name === 'oneToOne:recordAnswer') {
+          if (session.keepRefusal) return { kept: false, refusal: session.keepRefusal };
+          const decision = decideAnswer(session.turns, args.answer as never, 2);
+          if (!decision.ok) return { kept: false, refusal: decision.refusal };
+          session.turns = [...decision.turns];
+          session.closed = decision.closed;
+          return { kept: true, closed: decision.closed };
+        }
+        throw new Error(`unexpected mutation ${name}`);
+      }
+    },
+  };
+});
+
+beforeEach((): void => {
+  session.turns = [];
+  session.closed = false;
+  session.refusal = undefined;
+  session.keepRefusal = undefined;
+  session.calls = [];
+});
 
 const FEATHERLESS = 'https://api.featherless.ai/v1';
 const GLM = 'zai-org/GLM-5.3-Flash';
@@ -28,6 +89,7 @@ async function loadChatRoute(settings: {
 }): Promise<(req: Request) => Promise<Response>> {
   vi.resetModules();
   sent = [];
+  vi.stubEnv('NEXT_PUBLIC_CONVEX_URL', 'https://day0.convex.invalid');
   vi.stubEnv('OPENAI_API_KEY', 'test-key');
   vi.stubEnv('OPENAI_BASE_URL', settings.baseUrl ?? '');
   vi.stubEnv('OPENAI_MODEL', settings.model ?? GLM);
@@ -131,21 +193,35 @@ function chunksOf(body: string): { type: string; [key: string]: unknown }[] {
     .map((line) => JSON.parse(line) as { type: string });
 }
 
-function turn(role: 'user' | 'assistant', text: string, id: string): unknown {
-  return { id, role, parts: [{ type: 'text', text }] };
-}
+/** The id the route draws and keeps the next employee turn under. */
+const TURN_ID = '00000000-0000-4000-8000-000000000001';
 
 /**
- * The chat room's history after `exchanges` question-and-answer pairs: the
- * priming turn, then the agent's question and the manager's reply for each.
+ * The turn the chat room posts after `exchanges` question-and-answer pairs, with the session
+ * holding the conversation up to it: the employee's questions and the manager's replies, the last
+ * reply the one this turn sends. No exchanges is the opening.
  */
-function historyOf(exchanges: number): unknown[] {
-  const history: unknown[] = [turn('user', '__init__', 'm0')];
+function turnAfter(exchanges: number): Request {
+  const turns: OneToOneTurn[] = [];
   for (let i = 1; i <= exchanges; i += 1) {
-    history.push(turn('assistant', `Topic ${i}: what should I know?`, `a${i}`));
-    history.push(turn('user', `Answer ${i}.`, `u${i}`));
+    turns.push({
+      id: `a${i}`,
+      speaker: 'employee',
+      text: `Topic ${i}: what should I know?`,
+      topicIndex: Math.min(i - 1, 6),
+      at: i,
+    });
+    if (i < exchanges) turns.push({ id: `u${i}`, speaker: 'manager', text: `Answer ${i}.`, at: i });
   }
-  return history;
+  session.turns = turns;
+  return day1Request({
+    agentId: 'agent-1',
+    bossLabel: 'Sam',
+    request:
+      exchanges === 0
+        ? { kind: 'open' }
+        : { kind: 'reply', id: `u${exchanges}`, text: `Answer ${exchanges}.` },
+  });
 }
 
 function day1Request(body: unknown): Request {
@@ -156,7 +232,12 @@ function day1Request(body: unknown): Request {
   });
 }
 
+beforeEach((): void => {
+  vi.spyOn(crypto, 'randomUUID').mockReturnValue(TURN_ID);
+});
+
 afterEach((): void => {
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   vi.resetModules();
@@ -166,7 +247,7 @@ describe('the Day-1 chat route', (): void => {
   it('sends the configured budget and effort to a compatible endpoint', async (): Promise<void> => {
     const POST = await loadChatRoute({ baseUrl: FEATHERLESS, budget: '32768', effort: 'low' });
 
-    const response = await POST(day1Request({ messages: [], bossLabel: 'Sam' }));
+    const response = await POST(turnAfter(0));
     await response.text();
 
     expect(response.status).toBe(200);
@@ -183,7 +264,7 @@ describe('the Day-1 chat route', (): void => {
   it("keeps the route's own 2,000-token budget and sends no effort when neither knob is set", async (): Promise<void> => {
     const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
 
-    await (await POST(day1Request({ messages: [] }))).text();
+    await (await POST(turnAfter(0))).text();
 
     expect(sent[0]).toMatchObject({ max_tokens: 2000 });
     expect(sent[0]).not.toHaveProperty('reasoning_effort');
@@ -192,7 +273,7 @@ describe('the Day-1 chat route', (): void => {
   it('keeps the hosted Responses route on its existing budget', async (): Promise<void> => {
     const POST = await loadChatRoute({ baseUrl: '', model: 'gpt-5.6-terra' });
 
-    await (await POST(day1Request({ messages: [] }))).text();
+    await (await POST(turnAfter(0))).text();
 
     expect(sent[0]).toMatchObject({ model: 'gpt-5.6-terra', max_output_tokens: 2000 });
     expect(sent[0]).not.toHaveProperty('reasoning');
@@ -201,7 +282,7 @@ describe('the Day-1 chat route', (): void => {
   it('carries the configured effort onto the hosted Responses route too', async (): Promise<void> => {
     const POST = await loadChatRoute({ baseUrl: '', model: 'gpt-5.6-terra', effort: 'low' });
 
-    await (await POST(day1Request({ messages: [] }))).text();
+    await (await POST(turnAfter(0))).text();
 
     expect(sent[0]).toMatchObject({ reasoning: { effort: 'low' } });
   });
@@ -209,15 +290,15 @@ describe('the Day-1 chat route', (): void => {
   it('never puts the provider key in the request body', async (): Promise<void> => {
     const POST = await loadChatRoute({ baseUrl: FEATHERLESS, budget: '32768', effort: 'low' });
 
-    await (await POST(day1Request({ messages: [] }))).text();
+    await (await POST(turnAfter(0))).text();
 
     expect(JSON.stringify(sent[0])).not.toContain('test-key');
   });
 
-  it('still opens the seven-topic 1:1 and offers the completion tool', async (): Promise<void> => {
+  it('still opens the seven-topic 1:1 from the priming turn the room always sent, and offers the completion tool (re-pinned)', async (): Promise<void> => {
     const POST = await loadChatRoute({ baseUrl: FEATHERLESS, budget: '32768', effort: 'low' });
 
-    await (await POST(day1Request({ messages: [], bossLabel: 'Sam' }))).text();
+    await (await POST(turnAfter(0))).text();
 
     const body = sent[0] as {
       messages: { role: string; content: string }[];
@@ -225,7 +306,7 @@ describe('the Day-1 chat route', (): void => {
     };
     expect(body.messages[0].role).toBe('system');
     expect(body.messages[0].content).toContain('SEVEN topics');
-    expect(body.messages[1].content).toContain('Begin the Day-1 1:1');
+    expect(body.messages.slice(1)).toEqual([{ role: 'user', content: '__init__' }]);
     expect(body.tools.map((t) => t.function.name)).toContain('dayOneComplete');
   });
 
@@ -235,7 +316,7 @@ describe('the Day-1 chat route', (): void => {
     vi.resetModules();
     const { POST: unconfigured } = await import('../../../../../app/api/voice/chat/route');
 
-    const response = await unconfigured(day1Request({ messages: [] }));
+    const response = await unconfigured(turnAfter(0));
 
     expect(POST).toBeDefined();
     expect(response.status).toBe(503);
@@ -244,13 +325,27 @@ describe('the Day-1 chat route', (): void => {
     expect(sent).toHaveLength(0);
   });
 
-  it('refuses a body with no messages array before calling the model', async (): Promise<void> => {
+  it('refuses a body with no employee or no turn before calling the model (re-pinned)', async (): Promise<void> => {
     const POST = await loadChatRoute({ baseUrl: FEATHERLESS, budget: '32768', effort: 'low' });
 
-    const response = await POST(day1Request({ bossLabel: 'Sam' }));
-
-    expect(response.status).toBe(400);
+    for (const body of [
+      { bossLabel: 'Sam', messages: [] },
+      { agentId: 'agent-1', request: { kind: 'reply', text: 'No id.' } },
+      { request: { kind: 'open' } },
+    ]) {
+      expect((await POST(day1Request(body))).status).toBe(400);
+    }
     expect(sent).toHaveLength(0);
+    expect(session.calls).toHaveLength(0);
+  });
+
+  it("refuses another origin's page before reading the body", async (): Promise<void> => {
+    const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
+    const request = turnAfter(0);
+    request.headers.set('origin', 'http://localhost:4000');
+
+    expect((await POST(request)).status).toBe(403);
+    expect(session.calls).toHaveLength(0);
   });
 });
 
@@ -275,7 +370,7 @@ it('cancels a stalled provider at the 60-second route deadline', async () => {
     }),
   );
   try {
-    const response = await POST(day1Request({ messages: [] }));
+    const response = await POST(turnAfter(0));
     const body = response.text();
     await vi.advanceTimersByTimeAsync(59_999);
     expect(providerSignal?.aborted).toBe(false);
@@ -296,7 +391,7 @@ describe('a turn the model answers normally', (): void => {
   it("says on its start which of the seven questions the turn is on, by the close gate's count", async (): Promise<void> => {
     const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
     const topicOf = async (exchanges: number): Promise<unknown> => {
-      const body = await (await POST(day1Request({ messages: historyOf(exchanges) }))).text();
+      const body = await (await POST(turnAfter(exchanges))).text();
       const start = body.split('\n').find((line) => line.includes('"type":"start"'));
       return (JSON.parse(start!.slice('data: '.length)) as { messageMetadata?: unknown })
         .messageMetadata;
@@ -309,12 +404,12 @@ describe('a turn the model answers normally', (): void => {
   it('reaches the chat room as the SDK streams it, the question on its start', async (): Promise<void> => {
     const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
 
-    const response = await POST(day1Request({ messages: historyOf(0) }));
+    const response = await POST(turnAfter(0));
 
     expect(response.headers.get('content-type')).toBe('text/event-stream');
     expect(response.headers.get('x-vercel-ai-ui-message-stream')).toBe('v1');
     expect(await response.text()).toMatchInlineSnapshot(`
-      "data: {"type":"start","messageMetadata":{"topicIndex":0}}
+      "data: {"type":"start","messageMetadata":{"topicIndex":0},"messageId":"00000000-0000-4000-8000-000000000001"}
 
       data: {"type":"start-step"}
 
@@ -339,10 +434,10 @@ describe('a turn the model answers normally', (): void => {
     const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
     stubProvider([() => closingCompletion('Thanks, Aiko.', 'I will draft the charter now.')]);
 
-    const response = await POST(day1Request({ messages: historyOf(7) }));
+    const response = await POST(turnAfter(7));
 
     expect(await response.text()).toMatchInlineSnapshot(`
-      "data: {"type":"start","messageMetadata":{"topicIndex":6}}
+      "data: {"type":"start","messageMetadata":{"topicIndex":6},"messageId":"00000000-0000-4000-8000-000000000001"}
 
       data: {"type":"start-step"}
 
@@ -374,7 +469,7 @@ describe('an empty model turn', (): void => {
     const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
     stubProvider([emptyCompletion, () => textCompletion('Welcome aboard. Why this hire?')]);
 
-    const body = await (await POST(day1Request({ messages: historyOf(0) }))).text();
+    const body = await (await POST(turnAfter(0))).text();
 
     expect(sent).toHaveLength(2);
     expect(sent[1]).toEqual(sent[0]);
@@ -393,7 +488,7 @@ describe('an empty model turn', (): void => {
     const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
     stubProvider([() => textCompletion('\n\n'), () => textCompletion('Noted. Who should I meet?')]);
 
-    const body = await (await POST(day1Request({ messages: historyOf(2) }))).text();
+    const body = await (await POST(turnAfter(2))).text();
 
     expect(sent).toHaveLength(2);
     expect(
@@ -408,7 +503,7 @@ describe('an empty model turn', (): void => {
     const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
     stubProvider([emptyCompletion]);
 
-    const body = await (await POST(day1Request({ messages: historyOf(0) }))).text();
+    const body = await (await POST(turnAfter(0))).text();
 
     expect(sent).toHaveLength(2);
     const types = chunksOf(body).map((c) => c.type);
@@ -421,7 +516,7 @@ describe('an empty model turn', (): void => {
     const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
     stubProvider([() => closingCompletion('', 'I will draft the charter now.')]);
 
-    const body = await (await POST(day1Request({ messages: historyOf(7) }))).text();
+    const body = await (await POST(turnAfter(7))).text();
 
     expect(sent).toHaveLength(1);
     expect(chunksOf(body).map((c) => c.type)).toContain('tool-input-available');
@@ -441,7 +536,7 @@ describe('closing the 1:1', (): void => {
     const question = 'Last one: anything you are unsure about, or want me to circle back on?';
     stubProvider([() => closingCompletion(question, 'Thanks Aiko, drafting the charter.')]);
 
-    const body = await (await POST(day1Request({ messages: historyOf(6) }))).text();
+    const body = await (await POST(turnAfter(6))).text();
 
     expect(closed(body)).toBe(false);
     expect(said(body)).toBe(question);
@@ -454,7 +549,7 @@ describe('closing the 1:1', (): void => {
     const question = 'One more: who owns the Looker tile?';
     stubProvider([() => closingCompletion(question, 'Thanks, drafting the charter.')]);
 
-    const body = await (await POST(day1Request({ messages: historyOf(8) }))).text();
+    const body = await (await POST(turnAfter(8))).text();
 
     expect(closed(body)).toBe(false);
     expect(said(body)).toBe(question);
@@ -464,7 +559,7 @@ describe('closing the 1:1', (): void => {
     const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
     stubProvider([() => closingCompletion('', 'All set, drafting the charter.')]);
 
-    const body = await (await POST(day1Request({ messages: historyOf(6) }))).text();
+    const body = await (await POST(turnAfter(6))).text();
 
     expect(closed(body)).toBe(false);
     expect(said(body)).toContain('7/7');
@@ -476,7 +571,7 @@ describe('closing the 1:1', (): void => {
     const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
     stubProvider([() => closingCompletion('Understood, week one is the tracker.', 'Drafting.')]);
 
-    const body = await (await POST(day1Request({ messages: historyOf(6) }))).text();
+    const body = await (await POST(turnAfter(6))).text();
 
     expect(closed(body)).toBe(false);
     expect(said(body)).toMatch(/^Understood, week one is the tracker\.\n\n7\/7/);
@@ -502,7 +597,7 @@ describe('closing the 1:1', (): void => {
         ]),
     ]);
 
-    const body = await (await POST(day1Request({ messages: historyOf(6) }))).text();
+    const body = await (await POST(turnAfter(6))).text();
 
     expect(closed(body)).toBe(false);
     expect(said(body)).toMatch(/^Week one is the tracker, then\.\s*7\/7/);
@@ -520,26 +615,34 @@ describe('closing the 1:1', (): void => {
         closingCompletion('Noted "who owns the Looker tile?" as open.', 'Drafting the charter.'),
     ]);
 
-    const body = await (await POST(day1Request({ messages: historyOf(7) }))).text();
+    const body = await (await POST(turnAfter(7))).text();
 
     expect(closed(body)).toBe(true);
   });
 
-  it('does not count the priming turn or a second message in a row as a reply', async (): Promise<void> => {
+  it('never puts a second reply in a row to the model: the session refuses it first (re-pinned)', async (): Promise<void> => {
     const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
     stubProvider([() => closingCompletion('Thanks.', 'Drafting the charter.')]);
-    const history = [...historyOf(6), turn('user', 'And one more thing on that.', 'u6b')];
+    await (await POST(turnAfter(6))).text();
+    session.turns = session.turns.slice(0, -1);
+    sent = [];
 
-    const body = await (await POST(day1Request({ messages: history }))).text();
+    const response = await POST(
+      day1Request({
+        agentId: 'agent-1',
+        request: { kind: 'reply', id: 'u6b', text: 'And one more thing on that.' },
+      }),
+    );
 
-    expect(closed(body)).toBe(false);
+    expect(response.status).toBe(409);
+    expect(sent).toHaveLength(0);
   });
 
   it('honours the close once the manager has replied after topic 7', async (): Promise<void> => {
     const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
     stubProvider([() => closingCompletion('Thanks, Aiko.', 'I will draft the charter now.')]);
 
-    const body = await (await POST(day1Request({ messages: historyOf(7) }))).text();
+    const body = await (await POST(turnAfter(7))).text();
 
     expect(closed(body)).toBe(true);
     expect(chunksOf(body).find((c) => c.type === 'tool-input-available')).toMatchObject({
@@ -582,7 +685,7 @@ it('does not ask again once the 60-second deadline has cut a reply', async () =>
     }),
   );
   try {
-    const response = await POST(day1Request({ messages: historyOf(3) }));
+    const response = await POST(turnAfter(3));
     const body = response.text();
     await vi.advanceTimersByTimeAsync(60_000);
     const types = chunksOf(await body).map((c) => c.type);
@@ -594,4 +697,109 @@ it('does not ask again once the 60-second deadline has cut a reply', async () =>
     timeout.mockRestore();
     vi.useRealTimers();
   }
+});
+
+describe('the one-to-one kept on its session (30 Sep, a one-to-one lost to a closed tab)', (): void => {
+  it("keeps the manager's reply before the employee is asked, so a turn that never finishes loses it not", async (): Promise<void> => {
+    const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (): Promise<Response> => {
+        throw new TypeError('fetch failed');
+      }),
+    );
+
+    await (await POST(turnAfter(3))).text();
+
+    expect(session.turns.at(-1)).toEqual({
+      id: 'u3',
+      speaker: 'manager',
+      text: 'Answer 3.',
+      at: 1,
+    });
+    expect(session.turns.filter((turn) => turn.speaker === 'manager')).toHaveLength(3);
+  });
+
+  it('keeps the answer under the id the room draws it with, before the room hears it finished', async (): Promise<void> => {
+    const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
+    stubProvider([() => textCompletion('Noted. Who should I meet?')]);
+
+    const chunks = chunksOf(await (await POST(turnAfter(2))).text());
+
+    expect(chunks[0]).toMatchObject({ type: 'start', messageId: TURN_ID });
+    expect(session.turns.at(-1)).toEqual({
+      id: TURN_ID,
+      speaker: 'employee',
+      text: 'Noted. Who should I meet?',
+      topicIndex: 2,
+      at: 2,
+    });
+    expect(chunks.at(-1)).toMatchObject({ type: 'finish' });
+  });
+
+  it('asks the model from the conversation the session keeps, never from a history the room sends', async (): Promise<void> => {
+    const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
+    turnAfter(2);
+
+    await (
+      await POST(
+        day1Request({
+          agentId: 'agent-1',
+          request: { kind: 'reply', id: 'u2', text: 'Answer 2.' },
+          messages: [{ id: 'x', role: 'user', parts: [{ type: 'text', text: 'Invented.' }] }],
+        }),
+      )
+    ).text();
+
+    const said = JSON.stringify((sent[0] as { messages: unknown[] }).messages);
+    expect(said).not.toContain('Invented.');
+    expect(said).toContain('Answer 1.');
+    expect(said).toContain('Answer 2.');
+  });
+
+  it('asks again for the answer a reopened room is owed, from the reply the session kept', async (): Promise<void> => {
+    const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
+    turnAfter(7);
+    session.turns = [...session.turns, { id: 'u7', speaker: 'manager', text: 'Answer 7.', at: 7 }];
+    stubProvider([() => closingCompletion('Thanks, Sam.', 'I will draft the charter now.')]);
+
+    await (await POST(day1Request({ agentId: 'agent-1', request: { kind: 'ask-again' } }))).text();
+
+    expect(session.closed).toBe(true);
+    expect(session.turns.at(-1)).toMatchObject({
+      speaker: 'employee',
+      closingLine: 'I will draft the charter now.',
+    });
+    expect(session.calls.find((call) => call.name === 'oneToOne:recordAnswer')?.args).toMatchObject(
+      { sessionId: 'session-1', bossLabel: 'there', answer: { answering: 'u7' } },
+    );
+  });
+
+  it("refuses a turn the session will not take with the session's own sentence, before the model", async (): Promise<void> => {
+    const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
+    session.refusal = 'The one-to-one is over; the charter is drafted from it.';
+
+    const response = await POST(turnAfter(1));
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error: 'The one-to-one is over; the charter is drafted from it.',
+    });
+    expect(sent).toHaveLength(0);
+  });
+
+  it('tells the room, ahead of the finish, when the answer it was shown was not kept', async (): Promise<void> => {
+    const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
+    session.keepRefusal = 'The one-to-one moved on in another window. Reload to carry on.';
+
+    const chunks = chunksOf(await (await POST(turnAfter(1))).text());
+
+    expect(chunks.slice(-2)).toEqual([
+      {
+        type: 'error',
+        errorText: 'The one-to-one moved on in another window. Reload to carry on.',
+      },
+      { type: 'finish', finishReason: 'stop' },
+    ]);
+  });
 });
