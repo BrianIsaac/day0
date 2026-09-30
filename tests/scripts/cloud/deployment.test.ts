@@ -58,6 +58,44 @@ describe('proveTarget', (): void => {
     );
   });
 
+  it("quotes the refusal's cause, never the stack frame the CLI prints after it", (): void => {
+    const c = cloud({
+      failing: [
+        {
+          match: 'deploy --dry-run',
+          status: 1,
+          stdout: '- Deploying to https://brisk-heron-417.convex.cloud... [dry run]\n',
+          stderr:
+            '✖ Error fetching POST https://brisk-heron-417.convex.cloud/api/deploy2/start_push 400 Bad Request: InvalidModules: Loading the pushed modules encountered the following\n' +
+            '    error:\n' +
+            '    Failed to analyze auth.config.js: Uncaught Error: This deployment has no identity provider configured\n' +
+            '        at identityProviders (../convex/auth.config.ts:49:11)\n' +
+            '        at <anonymous> (../convex/auth.config.ts:60:15)\n',
+        },
+      ],
+    });
+    expect(proveTarget(c.io, targetOf(c), 'push')?.failure).toBe(
+      'the dry run reached brisk-heron-417 and the deployment refused the push (exit 1): Failed to analyze auth.config.js: Uncaught Error: This deployment has no identity provider configured.',
+    );
+  });
+
+  it('quotes the last line that is not a stack frame when no line names an error', (): void => {
+    const c = cloud({
+      failing: [
+        {
+          match: 'deploy --dry-run',
+          status: 1,
+          stdout: '- Deploying to https://brisk-heron-417.convex.cloud... [dry run]\n',
+          stderr:
+            'The push was not accepted.\n    at <anonymous> (../convex/auth.config.ts:60:15)\n',
+        },
+      ],
+    });
+    expect(proveTarget(c.io, targetOf(c), 'push')?.failure).toBe(
+      'the dry run reached brisk-heron-417 and the deployment refused the push (exit 1): The push was not accepted.',
+    );
+  });
+
   it('refuses a dry run after which the checkout is changed, and not a tree that was changed before it', (): void => {
     const writes = cloud({ dryRunWrites: true });
     expect(proveTarget(writes.io, targetOf(writes), 'push')?.failure).toBe(

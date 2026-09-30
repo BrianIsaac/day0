@@ -215,7 +215,13 @@ export function cloud(
         return {
           status: 1,
           stdout: '',
-          stderr: `${deploying}✖ Error: Unable to start push to https://${named}.convex.cloud\nAuthConfigMissingEnvironmentVariable: no identity provider is configured\n`,
+          // The CLI prints the server's stack frames after the cause, as it did
+          // against a real empty production deployment on 1 October.
+          stderr:
+            `${deploying}✖ Error: Unable to start push to https://${named}.convex.cloud\n` +
+            'AuthConfigMissingEnvironmentVariable: no identity provider is configured\n' +
+            '    at identityProviders (../convex/auth.config.ts:49:11)\n' +
+            '    at <anonymous> (../convex/auth.config.ts:60:15)\n',
         };
       }
       if (args.includes('--dry-run')) {
