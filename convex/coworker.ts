@@ -16,34 +16,35 @@ import { appendEvent } from './eventLog';
 interface ResponderProfile {
   readonly responder: string;
   readonly senderKind: 'manager' | 'teammate' | 'requester';
-  readonly replies: readonly string[];
+  /** The colleague's replies, given the name of the employee they answer. */
+  readonly replies: (employee: string) => readonly string[];
 }
 
 const PROFILES: Readonly<Record<string, ResponderProfile>> = {
   'dm-manager': {
     responder: 'Manager',
     senderKind: 'manager',
-    replies: ['Thanks, seen.', 'Got it, thanks.'],
+    replies: () => ['Thanks, seen.', 'Got it, thanks.'],
   },
   'dm-priya': {
     responder: 'Priya',
     senderKind: 'teammate',
-    replies: ['Thanks, I have it.', 'Seen, thanks.'],
+    replies: () => ['Thanks, I have it.', 'Seen, thanks.'],
   },
   'dm-aman': {
     responder: 'Aman',
     senderKind: 'teammate',
-    replies: ['Got it, thanks.'],
+    replies: () => ['Got it, thanks.'],
   },
   'revops-asks': {
     responder: 'Priya',
     senderKind: 'requester',
-    replies: ['Thanks, Day0.', 'Seen, thank you.'],
+    replies: (employee) => [`Thanks, ${employee}.`, 'Seen, thank you.'],
   },
   revops: {
     responder: 'Sara',
     senderKind: 'teammate',
-    replies: ['Noted, thanks.'],
+    replies: () => ['Noted, thanks.'],
   },
 };
 
@@ -53,6 +54,7 @@ const PROFILES: Readonly<Record<string, ResponderProfile>> = {
  * Args:
  *   channelSlug: The channel Day0 posted on.
  *   originalBody: What Day0 posted; it chooses among the colleague's replies.
+ *   employee: The name of the employee who posted, which a reply may address.
  *
  * Returns:
  *   The responder and the reply, or undefined for a channel with no colleague.
@@ -60,22 +62,25 @@ const PROFILES: Readonly<Record<string, ResponderProfile>> = {
 function pickReply(
   channelSlug: string,
   originalBody: string,
+  employee: string,
 ): { responder: string; senderKind: ResponderProfile['senderKind']; body: string } | undefined {
   const profile = PROFILES[channelSlug];
   if (!profile) return undefined;
   let seed = 0;
   for (const char of originalBody) seed = (seed + (char.codePointAt(0) ?? 0)) % 9_973;
+  const replies = profile.replies(employee);
   return {
     responder: profile.responder,
     senderKind: profile.senderKind,
-    body: profile.replies[seed % profile.replies.length],
+    body: replies[seed % replies.length],
   };
 }
 
 /**
  * Post a colleague's acknowledgement under a message Day0 posted. Internal;
  * scheduled by the mock Slack verb once the post lands. Writes the reply and
- * a `coworker.replied` event, or nothing on a channel with no colleague.
+ * a `coworker.replied` event, or nothing on a channel with no colleague or
+ * for an employee that no longer exists.
  */
 export const replyToAgentMessage = internalMutation({
   args: {
@@ -85,7 +90,10 @@ export const replyToAgentMessage = internalMutation({
     originalBody: v.string(),
   },
   handler: async (ctx, args): Promise<void> => {
-    const reply = pickReply(args.channelSlug, args.originalBody);
+    // A colleague thanks the employee by the name its manager gave it (the hosted walk's m5).
+    const employee = await ctx.db.get(args.agentId);
+    if (employee === null) return;
+    const reply = pickReply(args.channelSlug, args.originalBody, employee.name);
     if (!reply) return;
     const now = Date.now();
     await ctx.db.insert('mockSlackMessages', {
