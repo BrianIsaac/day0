@@ -1032,6 +1032,46 @@ describe('the figures do not depend on the order the rows are read in', (): void
     });
   });
 
+  it('times a dashboard decision no chat surface asked for from when the item began waiting (walk m14)', (): void => {
+    const minute = 60_000;
+    const held = (indexes: number[]) => ({
+      workItemId: 'w1',
+      runId: 'r1',
+      actionCount: 2,
+      autoIndexes: [],
+      heldIndexes: indexes,
+      refusedIndexes: [],
+    });
+    const events = [
+      event(1, 'work.plan-drafted', { workItemId: 'w1', plan: {} }, 0),
+      event(2, 'work.plan-approved', { workItemId: 'w1', decidedVia: 'dashboard' }, 2 * minute),
+      // A set holding nothing for the manager starts no wait.
+      event(3, 'work.actions-pending', held([]), 2 * minute),
+      event(4, 'work.actions-pending', held([0, 1]), 3 * minute),
+      event(
+        5,
+        'work.actions-approved',
+        {
+          workItemId: 'w1',
+          runId: 'r1',
+          approvedIndexes: [0, 1],
+          rejectedIndexes: [],
+          refusedIndexes: [],
+          autoIndexes: [],
+          decidedVia: 'dashboard',
+        },
+        7 * minute,
+      ),
+    ];
+    expect(computeAgentMetrics(events, [], []).decisions).toMatchObject({
+      requested: 0,
+      approved: 2,
+      rejected: 0,
+      medianLatencyMs: 3 * minute,
+      byVia: { dashboard: { decided: 2, medianLatencyMs: 3 * minute } },
+    });
+  });
+
   it('uses backend write order for duplicate ledger observations in reversed and shuffled reads', (): void => {
     const row = (effect?: string): Record<string, unknown> => ({
       tool: 'mcp.call',

@@ -298,6 +298,9 @@ function decisionTotals(
     byVia: { dashboard: [], channel: [] },
   };
   const pending = new Map<string, Doc<'events'>[]>();
+  // When each item began waiting on the manager, by `${workItemId}:${kind}`: the start of the
+  // wait for a decision made on the dashboard that no chat surface was asked for (walk m14).
+  const waitingSince = new Map<string, number>();
   const requestIds = new Set<string>();
   const resultIds = new Set<string>();
   const resentIds = new Map<string, string>();
@@ -330,6 +333,19 @@ function decisionTotals(
       pending.set(key, [...(pending.get(key) ?? []), event]);
       continue;
     }
+    if (isEventOf(event, 'work.plan-drafted')) {
+      const workItemId = asString(payload?.workItemId);
+      if (workItemId) waitingSince.set(`${workItemId}:plan`, event.createdAt);
+      continue;
+    }
+    if (isEventOf(event, 'work.actions-pending')) {
+      // Only a set holding something for the manager waits on them.
+      const workItemId = asString(payload?.workItemId);
+      if (workItemId && asIndexes(payload?.heldIndexes).length > 0) {
+        waitingSince.set(`${workItemId}:actions`, event.createdAt);
+      }
+      continue;
+    }
     if (isEventOf(event, 'work.plan-redrafting')) {
       // A re-draft withdraws the plan ask that was open: the manager is not
       // asked to decide it, so it is neither a request nor the start of the
@@ -343,6 +359,7 @@ function decisionTotals(
         if (withdrawnId) requestIds.delete(withdrawnId);
       }
       pending.delete(key);
+      waitingSince.delete(key);
       continue;
     }
     const result = decisionResult(event);
@@ -352,7 +369,18 @@ function decisionTotals(
     const queue = pending.get(key) ?? [];
     const request = queue.shift();
     pending.set(key, queue);
-    if (!request) continue;
+    const waitStart = waitingSince.get(key);
+    waitingSince.delete(key);
+    if (!request) {
+      // Decided on the dashboard with no ask on a chat surface: the manager's wait began when
+      // the item started waiting on them, so the page and the home both have one to quote.
+      if (waitStart !== undefined) {
+        const latency = Math.max(0, event.createdAt - waitStart);
+        totals.latencies.push(latency);
+        totals.byVia[result.via].push(latency);
+      }
+      continue;
+    }
     const decisionId = asString(asRecord(request.payload)?.decisionId);
     if (decisionId) resultIds.add(decisionId);
     const latency = Math.max(0, event.createdAt - request.createdAt);
