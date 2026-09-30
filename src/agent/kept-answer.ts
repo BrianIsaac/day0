@@ -67,24 +67,19 @@ export function keptAnswer(
   return stream.pipeThrough(
     new TransformStream<UIMessageChunk, UIMessageChunk>({
       transform(chunk, controller): void {
-        switch (chunk.type) {
-          case 'start':
-            controller.enqueue({ ...chunk, messageId: options.messageId });
-            return;
-          case 'text-delta':
-            text += chunk.delta;
-            break;
-          case 'tool-input-available':
-            if (chunk.toolName === 'dayOneComplete') closingLine = closingLineOf(chunk.input);
-            break;
-          case 'error':
-          case 'abort':
-            broken = true;
-            break;
-          case 'finish':
-            finish = chunk;
-            return;
+        // Only these chunks matter to what is kept; every other one passes through as it came.
+        if (chunk.type === 'start') {
+          controller.enqueue({ ...chunk, messageId: options.messageId });
+          return;
         }
+        if (chunk.type === 'finish') {
+          finish = chunk;
+          return;
+        }
+        if (chunk.type === 'text-delta') text += chunk.delta;
+        else if (chunk.type === 'tool-input-available' && chunk.toolName === 'dayOneComplete') {
+          closingLine = closingLineOf(chunk.input);
+        } else if (chunk.type === 'error' || chunk.type === 'abort') broken = true;
         controller.enqueue(chunk);
       },
       async flush(controller): Promise<void> {
