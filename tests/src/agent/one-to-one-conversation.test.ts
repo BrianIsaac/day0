@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   MAX_KEPT_TURNS,
   REPLY_MAX_CHARS,
+  TURN_ID_MAX_CHARS,
+  ANSWER_MAX_CHARS,
   answerFailure,
   closeEarned,
   conversationTranscript,
@@ -136,15 +138,14 @@ describe('deciding a turn against the kept conversation', (): void => {
     });
   });
 
-  it('refuses a reply before the opening, a second reply in a row, an empty or over-long one, and one past the bound', (): void => {
+  it('refuses a reply before the opening, an empty or over-long one, an id past its bound, and one past the turn bound', (): void => {
     const reply = (id: string, text = 'Yes.') => ({ kind: 'reply' as const, id, text });
     expect(decideTurn([], reply('m0'), 5)).toMatchObject({ ok: false });
-    expect(decideTurn([...answered(1), manager('m1', 'a')], reply('m2'), 5)).toMatchObject({
-      ok: false,
-      refusal: 'Day0 has not answered your last reply yet.',
-    });
     expect(decideTurn(answered(1), reply('m1', '   '), 5)).toMatchObject({ ok: false });
     expect(decideTurn(answered(1), reply('m1', 'x'.repeat(REPLY_MAX_CHARS + 1)), 5)).toMatchObject({
+      ok: false,
+    });
+    expect(decideTurn(answered(1), reply('m'.repeat(TURN_ID_MAX_CHARS + 1)), 5)).toMatchObject({
       ok: false,
     });
     const atBound = answered((MAX_KEPT_TURNS - 2) / 2);
@@ -152,32 +153,75 @@ describe('deciding a turn against the kept conversation', (): void => {
     expect(decideTurn(atBound, reply('mX'), 5)).toMatchObject({ ok: true });
     expect(
       decideTurn([...atBound, manager('mX', 'a'), employee('eX', 'More?')], reply('mY'), 5),
-    ).toMatchObject({
+    ).toMatchObject({ ok: false });
+  });
+
+  it('keeps a second reply in a row, after an answer that never came, and answers both (second pass H2)', (): void => {
+    const owed = [...answered(1), manager('m1', 'Priya.')];
+    const decision = decideTurn(owed, { kind: 'reply', id: 'm2', text: 'And Omar.' }, 5);
+    expect(decision).toMatchObject({ ok: true, answering: 'm2' });
+    if (!decision.ok) throw new Error(decision.refusal);
+    expect(decision.turns.slice(-2).map((turn) => turn.id)).toEqual(['m1', 'm2']);
+    // The close gate counts it once, as it counted the room's history before.
+    expect(repliesIn(decision.turns)).toBe(2);
+  });
+
+  it('refuses a reply whose id the conversation already answered', (): void => {
+    expect(decideTurn(answered(2), { kind: 'reply', id: 'm0', text: 'Again.' }, 5)).toMatchObject({
       ok: false,
     });
   });
+});
 
-  it('asks again for the answer the manager is owed, setting aside one the room set aside', (): void => {
+describe('asking a turn again against the kept conversation', (): void => {
+  const again = (reply: { id: string; text: string } | null, discarding: string | null = null) => ({
+    kind: 'ask-again' as const,
+    reply,
+    discarding,
+  });
+
+  it('answers the reply the manager is owed an answer to, as a reopened room asks', (): void => {
     const owed = [...answered(2), manager('m2', 'Third.')];
-    expect(decideTurn(owed, { kind: 'ask-again' }, 5)).toEqual({
+    expect(decideTurn(owed, again({ id: 'm2', text: 'Third.' }), 5)).toEqual({
       ok: true,
       turns: owed,
       answering: 'm2',
     });
-    expect(decideTurn(answered(2), { kind: 'ask-again' }, 5)).toMatchObject({
-      ok: true,
-      answering: 'm1',
-    });
-    expect(decideTurn(answered(0), { kind: 'ask-again' }, 5)).toEqual({
+  });
+
+  it('sets aside the answer the room set aside, and only that one', (): void => {
+    const decision = decideTurn(answered(2), again({ id: 'm1', text: 'Answer 2.' }, 'e2'), 5);
+    expect(decision).toMatchObject({ ok: true, answering: 'm1' });
+    if (!decision.ok) throw new Error(decision.refusal);
+    expect(decision.turns.at(-1)?.id).toBe('m1');
+    // An answer kept since, which this room never saw, is not dropped by its Ask again.
+    expect(decideTurn(answered(2), again({ id: 'm1', text: 'Answer 2.' }, 'e-other'), 5)).toEqual(
+      expect.objectContaining({ ok: false }),
+    );
+  });
+
+  it('keeps a reply whose send never reached the session, and keeps the answer before it (second pass H1)', (): void => {
+    const decision = decideTurn(answered(2), again({ id: 'm2', text: 'Third.' }), 5);
+    expect(decision).toMatchObject({ ok: true, answering: 'm2' });
+    if (!decision.ok) throw new Error(decision.refusal);
+    expect(decision.turns.slice(-2).map((turn) => turn.id)).toEqual(['e2', 'm2']);
+  });
+
+  it('asks the opening again only while nothing but it was kept', (): void => {
+    expect(decideTurn([], again(null), 5)).toEqual({ ok: true, turns: [], answering: null });
+    expect(decideTurn(answered(0), again(null, 'e0'), 5)).toEqual({
       ok: true,
       turns: [],
       answering: null,
     });
+    expect(decideTurn(answered(1), again(null), 5)).toMatchObject({ ok: false });
   });
 
   it('refuses every turn once the conversation is closed', (): void => {
     const closed = [...answered(7), { ...employee('e8', ''), closingLine: 'Thanks.' }];
-    expect(decideTurn(closed, { kind: 'ask-again' }, 5)).toMatchObject({ ok: false });
+    expect(decideTurn(closed, again({ id: 'm6', text: 'Answer 7.' }, 'e8'), 5)).toMatchObject({
+      ok: false,
+    });
   });
 });
 
@@ -210,6 +254,20 @@ describe('deciding an answer against the kept conversation', (): void => {
       ok: false,
     });
     expect(decideAnswer([], { ...offered, answering: null }, 9)).toMatchObject({ ok: true });
+  });
+
+  it('refuses an answer past its bounds, so the row stays inside its size', (): void => {
+    const owed = [...answered(1), manager('m1', 'Priya.')];
+    expect(
+      decideAnswer(
+        owed,
+        { ...offered, answering: 'm1', text: 'x'.repeat(ANSWER_MAX_CHARS + 1) },
+        9,
+      ),
+    ).toMatchObject({ ok: false });
+    expect(
+      decideAnswer(owed, { ...offered, answering: 'm1', id: 'e'.repeat(TURN_ID_MAX_CHARS + 1) }, 9),
+    ).toMatchObject({ ok: false });
   });
 
   it('keeps a closing line only on an earned close, and drops a question number out of range', (): void => {

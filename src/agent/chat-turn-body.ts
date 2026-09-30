@@ -1,4 +1,12 @@
-import type { TurnRequest } from './one-to-one-conversation';
+import type { SentReply, TurnRequest } from './one-to-one-conversation';
+
+/** A reply's id and words, when the value carries both. */
+function sentReplyOf(value: unknown): SentReply | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const id = 'id' in value ? value.id : undefined;
+  const text = 'text' in value ? value.text : undefined;
+  return typeof id === 'string' && id !== '' && typeof text === 'string' ? { id, text } : undefined;
+}
 
 /**
  * What the chat room posts for one turn of the one-to-one: the employee whose one-to-one it is,
@@ -17,16 +25,19 @@ function turnRequestOf(value: unknown): TurnRequest | undefined {
   switch (value.kind) {
     case 'open':
       return { kind: 'open' };
-    case 'ask-again':
-      return { kind: 'ask-again' };
-    case 'reply':
-      return 'id' in value &&
-        typeof value.id === 'string' &&
-        value.id !== '' &&
-        'text' in value &&
-        typeof value.text === 'string'
-        ? { kind: 'reply', id: value.id, text: value.text }
-        : undefined;
+    case 'ask-again': {
+      const reply = 'reply' in value ? value.reply : undefined;
+      const discarding = 'discarding' in value ? value.discarding : undefined;
+      const sent = reply === null ? null : sentReplyOf(reply);
+      if (sent === undefined || (discarding !== null && typeof discarding !== 'string')) {
+        return undefined;
+      }
+      return { kind: 'ask-again', reply: sent, discarding };
+    }
+    case 'reply': {
+      const sent = sentReplyOf(value);
+      return sent ? { kind: 'reply', ...sent } : undefined;
+    }
     default:
       return undefined;
   }

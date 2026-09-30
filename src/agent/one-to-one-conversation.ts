@@ -142,16 +142,35 @@ export function answerFailure(ending: AnswerEnding): string | null {
 }
 
 /**
- * The most turns one conversation keeps: thirty exchanges, four times the seven questions, well
+ * The most turns one conversation keeps: twenty exchanges, three times the seven questions. With
+ * the bounds below, the turns, the transcript drafted from them and the drafted answers stay well
  * inside a session row's size. A one-to-one that reaches it is finished from what was said.
  */
-export const MAX_KEPT_TURNS = 60;
+export const MAX_KEPT_TURNS = 40;
+
+/** The longest id a kept turn may carry: the room's and the route's ids are 36 characters. */
+export const TURN_ID_MAX_CHARS = 128;
+
+/** The most characters an employee turn may keep: its 2,000-token output budget and some. */
+export const ANSWER_MAX_CHARS = 8000;
+
+/** A reply the room sent: the id it drew it under and the words. */
+export interface SentReply {
+  readonly id: string;
+  readonly text: string;
+}
 
 /** What a room asks of the session before its turn is put to the employee. */
 export type TurnRequest =
   | { readonly kind: 'open' }
-  | { readonly kind: 'reply'; readonly id: string; readonly text: string }
-  | { readonly kind: 'ask-again' };
+  | ({ readonly kind: 'reply' } & SentReply)
+  | {
+      readonly kind: 'ask-again';
+      /** The room's last reply, which the employee answers again; null for the opening. */
+      readonly reply: SentReply | null;
+      /** The employee turn the room set aside to ask again, when it had one. */
+      readonly discarding: string | null;
+    };
 
 /** The conversation a turn is answered from, or why the session will not take the turn. */
 export type TurnDecision =
@@ -163,10 +182,40 @@ export type TurnDecision =
     }
   | { readonly ok: false; readonly refusal: string };
 
-/** The manager's last turn, which the employee's next answer answers. */
-function answeringOf(turns: readonly OneToOneTurn[]): string | null {
+/** The refusal for a room whose copy the kept conversation has moved past. */
+const MOVED_ON: TurnDecision = {
+  ok: false,
+  refusal: 'The one-to-one moved on in another window. Reload to carry on.',
+};
+
+/**
+ * Keep the manager's reply at the end of the conversation. A reply after one the employee has not
+ * answered is kept too (it answers both, as the close gate counts it: once); the reply the
+ * session already holds last (a send repeated after a lost connection) is taken as it stands.
+ */
+function withReply(turns: readonly OneToOneTurn[], reply: SentReply, now: number): TurnDecision {
   const last = turns.at(-1);
-  return last?.speaker === 'manager' ? last.id : null;
+  if (last?.speaker === 'manager' && last.id === reply.id) {
+    return { ok: true, turns, answering: last.id };
+  }
+  if (turns.some((turn: OneToOneTurn): boolean => turn.id === reply.id)) return MOVED_ON;
+  const text = reply.text.trim();
+  if (!text) return { ok: false, refusal: 'A reply needs some words.' };
+  if (text.length > REPLY_MAX_CHARS) {
+    return { ok: false, refusal: `A reply is at most ${REPLY_MAX_CHARS} characters.` };
+  }
+  if (!reply.id || reply.id.length > TURN_ID_MAX_CHARS) {
+    return { ok: false, refusal: 'The reply carries no usable id.' };
+  }
+  if (last === undefined) return { ok: false, refusal: 'The one-to-one has not opened yet.' };
+  if (turns.length >= MAX_KEPT_TURNS) {
+    return {
+      ok: false,
+      refusal: 'The one-to-one is as long as it can be. Finish it to draft the charter.',
+    };
+  }
+  const kept: OneToOneTurn = { id: reply.id, speaker: 'manager', text, at: now };
+  return { ok: true, turns: [...turns, kept], answering: kept.id };
 }
 
 /**
@@ -174,10 +223,11 @@ function answeringOf(turns: readonly OneToOneTurn[]): string | null {
  * the room's: a reopened or second room with a stale copy cannot fork it.
  *
  * - `open`: the employee's opening, only on a conversation with nothing kept yet.
- * - `reply`: the manager's reply, kept before the employee is asked; one the session already
- *   holds as its last turn (a send repeated after a lost connection) is taken as it stands.
- * - `ask-again`: the employee's last turn is asked for again; an answer the session kept after the
- *   manager's last reply is set aside first, as the room sets it aside.
+ * - `reply`: the manager's reply, kept before the employee is asked (`withReply`).
+ * - `ask-again`: the room's last reply is answered again. The employee turn the room set aside is
+ *   set aside here too, and only that one: an answer the room never saw is never dropped. A reply
+ *   the session never received (the send failed on the way) is kept first, so asking again after
+ *   a failed send loses neither it nor the answer before it.
  *
  * @param now - When the turn is kept, in milliseconds.
  */
@@ -192,40 +242,36 @@ export function decideTurn(
       return turns.length === 0
         ? { ok: true, turns, answering: null }
         : { ok: false, refusal: 'The one-to-one has already begun. Reload to carry on.' };
-    case 'reply': {
-      const last = turns.at(-1);
-      if (last?.speaker === 'manager' && last.id === request.id) {
-        return { ok: true, turns, answering: last.id };
-      }
-      const text = request.text.trim();
-      if (!text) return { ok: false, refusal: 'A reply needs some words.' };
-      if (text.length > REPLY_MAX_CHARS) {
-        return { ok: false, refusal: `A reply is at most ${REPLY_MAX_CHARS} characters.` };
-      }
-      if (last === undefined) {
-        return { ok: false, refusal: 'The one-to-one has not opened yet.' };
-      }
-      if (last.speaker === 'manager') {
-        return { ok: false, refusal: 'Day0 has not answered your last reply yet.' };
-      }
-      if (turns.length >= MAX_KEPT_TURNS) {
-        return {
-          ok: false,
-          refusal: 'The one-to-one is as long as it can be. Finish it to draft the charter.',
-        };
-      }
-      const reply: OneToOneTurn = { id: request.id, speaker: 'manager', text, at: now };
-      return { ok: true, turns: [...turns, reply], answering: reply.id };
-    }
+    case 'reply':
+      return withReply(turns, request, now);
     case 'ask-again': {
-      const kept = turns.at(-1)?.speaker === 'employee' ? turns.slice(0, -1) : turns;
-      return { ok: true, turns: kept, answering: answeringOf(kept) };
+      const last = turns.at(-1);
+      const kept =
+        last?.speaker === 'employee' && last.id === request.discarding ? turns.slice(0, -1) : turns;
+      if (request.reply === null) {
+        return kept.length === 0 ? { ok: true, turns: kept, answering: null } : MOVED_ON;
+      }
+      const end = kept.at(-1);
+      if (
+        end?.speaker === 'employee' &&
+        request.discarding !== null &&
+        end.id !== request.discarding
+      ) {
+        return MOVED_ON;
+      }
+      return withReply(kept, request.reply, now);
     }
     default: {
       const unknown: never = request;
       throw new Error(`unhandled turn request ${String(unknown)}`);
     }
   }
+}
+
+/** The manager's last turn, which the employee's next answer answers. */
+function answeringOf(turns: readonly OneToOneTurn[]): string | null {
+  const last = turns.at(-1);
+  return last?.speaker === 'manager' ? last.id : null;
 }
 
 /** An employee answer offered to the session, and the manager turn it answers. */
@@ -267,10 +313,15 @@ export function decideAnswer(
   }
   if (isClosed(turns)) return { ok: false, refusal: 'The one-to-one is already over.' };
   if (answeringOf(turns) !== answer.answering || (answer.answering === null && last)) {
-    return {
-      ok: false,
-      refusal: 'The one-to-one moved on in another window. Reload to carry on.',
-    };
+    return { ok: false, refusal: 'The one-to-one moved on in another window. Reload to carry on.' };
+  }
+  if (
+    !answer.id ||
+    answer.id.length > TURN_ID_MAX_CHARS ||
+    answer.text.length > ANSWER_MAX_CHARS ||
+    (answer.closingLine?.length ?? 0) > ANSWER_MAX_CHARS
+  ) {
+    return { ok: false, refusal: "Day0's answer was too long to keep. Ask again." };
   }
   const topicIndex =
     Number.isInteger(answer.topicIndex) &&

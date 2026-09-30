@@ -14,6 +14,7 @@ import {
   REPLY_MAX_CHARS,
   answerFailure,
   conversationTranscript,
+  isClosed,
   owesAnswer,
   uiMessagesOf,
   type OneToOneTurn,
@@ -117,31 +118,46 @@ export function composerLocked(state: {
  * Put the failed turn to Day0 again: the last thing the manager said, or the
  * opening prompt when the manager has said nothing yet. `regenerate` drops a
  * half-said answer first, so it is neither sent back as history nor left on
- * the page.
+ * the page; the session is told which answer that was, and sets aside only it.
  */
 export async function askAgain(
   chat: Pick<UseChatHelpers<UIMessage>, 'messages' | 'regenerate' | 'sendMessage'>,
 ): Promise<void> {
-  if (chat.messages.length === 0) await chat.sendMessage({ text: INIT_PROMPT });
+  const last = chat.messages.at(-1);
+  if (!last) await chat.sendMessage({ text: INIT_PROMPT });
+  else if (last.role === 'assistant') await chat.regenerate({ body: { discarding: last.id } });
   else await chat.regenerate();
 }
 
 /**
  * The turn a send asks the session for. The room posts only this, never its copy of the history:
- * the session keeps the conversation and answers from its own (`oneToOne.takeTurn`).
+ * the session keeps the conversation and answers from its own (`oneToOne.takeTurn`). A turn asked
+ * again names the reply it answers, so a reply whose send never reached the session is kept then.
  *
  * @param messages - The room's conversation with the send's own message last.
  * @param trigger - Whether the send is a new message or the last turn asked again.
+ * @param discarding - The answer the room set aside to ask again, when it had one.
  */
 export function turnRequestFor(
   messages: readonly UIMessage[],
   trigger: 'submit-message' | 'regenerate-message',
+  discarding: string | null,
 ): TurnRequest {
-  if (trigger === 'regenerate-message') return { kind: 'ask-again' };
   const last = messages.at(-1);
   const text = last ? textOf(last) : '';
-  if (!last || last.role !== 'user' || text.trim() === INIT_PROMPT) return { kind: 'open' };
-  return { kind: 'reply', id: last.id, text };
+  const reply = last && last.role === 'user' && text.trim() !== INIT_PROMPT ? last : undefined;
+  if (trigger === 'regenerate-message') {
+    return { kind: 'ask-again', reply: reply ? { id: reply.id, text } : null, discarding };
+  }
+  return reply ? { kind: 'reply', id: reply.id, text } : { kind: 'open' };
+}
+
+/** The last reply the room drew, which a reply being typed follows; null before the first. */
+function lastReplyId(messages: readonly UIMessage[]): string | null {
+  const reply = messages.findLast(
+    (m: UIMessage): boolean => m.role === 'user' && textOf(m).trim() !== INIT_PROMPT,
+  );
+  return reply?.id ?? null;
 }
 
 /**
@@ -291,8 +307,16 @@ export function chatTurnTransport(
 ): DefaultChatTransport<UIMessage> {
   return new DefaultChatTransport({
     api: '/api/voice/chat',
-    prepareSendMessagesRequest: ({ messages, trigger }) => ({
-      body: { agentId, bossLabel, request: turnRequestFor(messages, trigger) },
+    prepareSendMessagesRequest: ({ messages, trigger, body }) => ({
+      body: {
+        agentId,
+        bossLabel,
+        request: turnRequestFor(
+          messages,
+          trigger,
+          typeof body?.discarding === 'string' ? body.discarding : null,
+        ),
+      },
     }),
   });
 }
@@ -369,11 +393,14 @@ export function ChatRoom({
   const [finishing, setFinishing] = useState(false);
   // Why the last Finish did not reach the session; Finish stays on the page to press again.
   const [finishFailure, setFinishFailure] = useState<string | null>(null);
-  const closedByAgent = messages.some((m) => m.parts.some((p) => p.type === 'tool-dayOneComplete'));
-  // A close the room was shown but the session did not keep came with an error: Ask again stands.
-  const done = (closedByAgent && !streamError) || finishing;
-  const transcript = withoutPrimingTurn(messages);
   const kept = session?.turns;
+  // The employee's last turn closed the one-to-one. A close the room was shown but the session
+  // did not keep came with an error, and a reply sent after it moved on from it: neither ends it.
+  const closedInRoom =
+    messages.at(-1)?.role === 'assistant' &&
+    messages.at(-1)?.parts.some((p) => p.type === 'tool-dayOneComplete') === true;
+  const done = (closedInRoom && !streamError) || isClosed(kept ?? []) || finishing;
+  const transcript = withoutPrimingTurn(messages);
   // Drafting on the server without a conversation in this room: the room came back to it. A
   // finished session with the employee back at `deployed` is a draft sent back with nothing to
   // redraft from, so the next one-to-one starts (`voice.start` opens a new session).
@@ -443,18 +470,19 @@ export function ChatRoom({
   }, [startable, kept, messages.length, setMessages]);
 
   // Keep the reply being typed once the composer rests, so a room closed mid-reply reopens with it.
+  const after = lastReplyId(messages);
   useEffect(() => {
     const sessionId = sessionRef.current;
     if (!sessionId || over || draft === keptDraft.current) return;
     const timer = setTimeout((): void => {
       keptDraft.current = draft;
       // The reply is still in the field; a keep that fails costs only a crash's worth of typing.
-      void keepReplyDraft({ sessionId, text: draft }).catch((err: unknown): void => {
+      void keepReplyDraft({ sessionId, text: draft, after }).catch((err: unknown): void => {
         log.warn('reply being typed not kept', { reason: errorMessage(err) });
       });
     }, REPLY_DRAFT_KEEP_MS);
     return () => clearTimeout(timer);
-  }, [draft, over, keepReplyDraft]);
+  }, [draft, over, after, keepReplyDraft]);
 
   // The session drafts on its own; the room says so once it has waited longer than usual.
   const waitingOnDraft = serverPhase.kind === 'drafting' && post.kind === 'idle';

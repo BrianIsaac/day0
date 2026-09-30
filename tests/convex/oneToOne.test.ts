@@ -127,7 +127,7 @@ describe('the chat one-to-one kept turn by turn (30 Sep, a one-to-one lost to a 
     // The room reopened on it asks again: the employee answers the seventh reply, not question 1.
     const reopened = await room.owner.mutation(api.oneToOne.takeTurn, {
       agentId: room.agentId,
-      request: { kind: 'ask-again' },
+      request: { kind: 'ask-again', reply: { id: 'm6', text: ANSWERS[6] }, discarding: null },
     });
     expect(reopened.answering).toBe('m6');
     expect(reopened.turns).toHaveLength(14);
@@ -176,7 +176,7 @@ describe('the chat one-to-one kept turn by turn (30 Sep, a one-to-one lost to a 
     expect((await sessionOf(room)).turns).toHaveLength(5);
   });
 
-  it('takes a reply sent again after a lost connection once, and refuses a second reply in a row', async (): Promise<void> => {
+  it('takes a reply sent again after a lost connection once, and keeps a second reply in a row (second pass H2, re-pinned)', async (): Promise<void> => {
     const room = await openRoom();
     await holdThrough(room, 1);
     await room.owner.mutation(api.oneToOne.takeTurn, {
@@ -188,15 +188,27 @@ describe('the chat one-to-one kept turn by turn (30 Sep, a one-to-one lost to a 
       request: { kind: 'reply', id: 'm1', text: ANSWERS[1] },
     });
     expect(again.answering).toBe('m1');
-    await expect(
-      room.owner.mutation(api.oneToOne.takeTurn, {
-        agentId: room.agentId,
-        request: { kind: 'reply', id: 'm2', text: 'And another thing.' },
-      }),
-    ).rejects.toBeInstanceOf(ConvexError);
+    // The answer to m1 never came (a failed turn); the manager's next reply is kept, not refused.
+    const second = await room.owner.mutation(api.oneToOne.takeTurn, {
+      agentId: room.agentId,
+      request: { kind: 'reply', id: 'm2', text: 'And another thing.' },
+    });
+    expect(second.answering).toBe('m2');
     expect(
       (await sessionOf(room)).turns?.filter((turn) => turn.speaker === 'manager'),
-    ).toHaveLength(2);
+    ).toHaveLength(3);
+  });
+
+  it('keeps an answer and the reply whose send failed when the room asks again (second pass H1)', async (): Promise<void> => {
+    const room = await openRoom();
+    await holdThrough(room, 2);
+    // The room sent m2, which never reached the session, then pressed Ask again.
+    const again = await room.owner.mutation(api.oneToOne.takeTurn, {
+      agentId: room.agentId,
+      request: { kind: 'ask-again', reply: { id: 'm2', text: ANSWERS[2] }, discarding: null },
+    });
+    expect(again.answering).toBe('m2');
+    expect((await sessionOf(room)).turns?.slice(-2).map((turn) => turn.id)).toEqual(['e2', 'm2']);
   });
 
   it('refuses a turn once the one-to-one is drafting, and refuses anyone but the owner', async (): Promise<void> => {
@@ -205,7 +217,7 @@ describe('the chat one-to-one kept turn by turn (30 Sep, a one-to-one lost to a 
     await expect(
       room.harness.withIdentity({ subject: 'stranger' }).mutation(api.oneToOne.takeTurn, {
         agentId: room.agentId,
-        request: { kind: 'ask-again' },
+        request: { kind: 'ask-again', reply: null, discarding: null },
       }),
     ).rejects.toThrow();
     await room.owner.mutation(api.oneToOne.finish, {
@@ -287,17 +299,28 @@ describe('the reply being typed', (): void => {
     await room.owner.mutation(api.oneToOne.keepReplyDraft, {
       sessionId: room.sessionId,
       text: 'Half of my ans',
+      after: 'm0',
     });
     expect((await sessionOf(room)).replyDraft).toBe('Half of my ans');
     await room.owner.mutation(api.oneToOne.keepReplyDraft, {
       sessionId: room.sessionId,
       text: 'x'.repeat(5000),
+      after: 'm0',
     });
     expect((await sessionOf(room)).replyDraft).toHaveLength(4000);
     await room.owner.mutation(api.oneToOne.takeTurn, {
       agentId: room.agentId,
       request: { kind: 'reply', id: 'm1', text: ANSWERS[1] },
     });
+    expect((await sessionOf(room)).replyDraft).toBeUndefined();
+    // A keep typed before the send, arriving after it, would put the sent reply back.
+    expect(
+      await room.owner.mutation(api.oneToOne.keepReplyDraft, {
+        sessionId: room.sessionId,
+        text: ANSWERS[1],
+        after: 'm0',
+      }),
+    ).toEqual({ kept: false });
     expect((await sessionOf(room)).replyDraft).toBeUndefined();
   });
 });

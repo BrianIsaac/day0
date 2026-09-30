@@ -419,15 +419,23 @@ describe('a turn as the room sends it (30 Sep, a one-to-one lost to a closed tab
     turn('2', 'user', said('To close the books faster.')),
   ];
 
-  it('names the turn it wants: the opening, the reply by its id, or the last turn again', (): void => {
-    expect(turnRequestFor(opening, 'submit-message')).toEqual({ kind: 'open' });
-    expect(turnRequestFor(replied, 'submit-message')).toEqual({
+  it('names the turn it wants: the opening, the reply by its id, or the reply to answer again', (): void => {
+    expect(turnRequestFor(opening, 'submit-message', null)).toEqual({ kind: 'open' });
+    expect(turnRequestFor(replied, 'submit-message', null)).toEqual({
       kind: 'reply',
       id: '2',
       text: 'To close the books faster.',
     });
-    expect(turnRequestFor(replied, 'regenerate-message')).toEqual({ kind: 'ask-again' });
-    expect(turnRequestFor(opening, 'regenerate-message')).toEqual({ kind: 'ask-again' });
+    expect(turnRequestFor(replied, 'regenerate-message', 'a9')).toEqual({
+      kind: 'ask-again',
+      reply: { id: '2', text: 'To close the books faster.' },
+      discarding: 'a9',
+    });
+    expect(turnRequestFor(opening, 'regenerate-message', null)).toEqual({
+      kind: 'ask-again',
+      reply: null,
+      discarding: null,
+    });
   });
 
   it('posts the employee and the turn, and never the history, which the session keeps', async (): Promise<void> => {

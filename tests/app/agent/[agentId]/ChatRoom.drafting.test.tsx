@@ -352,8 +352,32 @@ describe('a room reopened on a one-to-one under way (30 Sep, a one-to-one lost t
     });
     expect(room.calls.at(-1)).toEqual({
       name: 'oneToOne:keepReplyDraft',
-      args: { sessionId: 'session-1', text: 'Priya in fin' },
+      args: { sessionId: 'session-1', text: 'Priya in fin', after: 'm0' },
     });
+    view.unmount();
+  });
+
+  it('does not end the one-to-one on a close the session never kept, once a reply follows it (second pass)', async (): Promise<void> => {
+    room.messages = [
+      ...CONVERSATION.slice(1, 3),
+      {
+        id: 'closing',
+        role: 'assistant',
+        parts: [
+          {
+            type: 'tool-dayOneComplete',
+            toolCallId: 'c1',
+            state: 'input-available',
+            input: { closingLine: 'Thanks.' },
+          },
+        ],
+      } as UIMessage,
+      turn('4', 'user', 'One more thing: Omar owns the rota.'),
+    ];
+    const view = mount(<ChatRoom agentId={AGENT} bossLabel="Sam" />);
+    await settle();
+    expect(view.container.querySelector('[data-drafting]')).toBeNull();
+    expect(view.container.querySelector('textarea')).not.toBeNull();
     view.unmount();
   });
 

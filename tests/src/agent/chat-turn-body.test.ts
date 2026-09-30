@@ -15,11 +15,22 @@ describe('a chat turn body', (): void => {
       bossLabel: 'there',
       request: { kind: 'reply', id: 'm1', text: 'Yes.' },
     });
-    expect(chatTurnBodyOf({ agentId: 'a1', request: { kind: 'ask-again', extra: 1 } })).toEqual({
+    expect(
+      chatTurnBodyOf({
+        agentId: 'a1',
+        request: { kind: 'ask-again', reply: { id: 'm1', text: 'Yes.' }, discarding: 'e1', x: 1 },
+      }),
+    ).toEqual({
       agentId: 'a1',
       bossLabel: 'there',
-      request: { kind: 'ask-again' },
+      request: { kind: 'ask-again', reply: { id: 'm1', text: 'Yes.' }, discarding: 'e1' },
     });
+    expect(
+      chatTurnBodyOf({
+        agentId: 'a1',
+        request: { kind: 'ask-again', reply: null, discarding: null },
+      })?.request,
+    ).toEqual({ kind: 'ask-again', reply: null, discarding: null });
   });
 
   it('reads nothing from a body without an employee, a known turn, or a reply id', (): void => {
@@ -31,6 +42,9 @@ describe('a chat turn body', (): void => {
       { agentId: 'a1', request: { kind: 'close' } },
       { agentId: 'a1', request: { kind: 'reply', text: 'Yes.' } },
       { agentId: 'a1', request: { kind: 'reply', id: 'm1', text: 3 } },
+      { agentId: 'a1', request: { kind: 'ask-again' } },
+      { agentId: 'a1', request: { kind: 'ask-again', reply: { id: 'm1' }, discarding: null } },
+      { agentId: 'a1', request: { kind: 'ask-again', reply: null, discarding: 4 } },
       { agentId: 'a1', messages: [] },
     ]) {
       expect(chatTurnBodyOf(value)).toBeUndefined();

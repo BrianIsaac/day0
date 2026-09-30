@@ -620,22 +620,23 @@ describe('closing the 1:1', (): void => {
     expect(closed(body)).toBe(true);
   });
 
-  it('never puts a second reply in a row to the model: the session refuses it first (re-pinned)', async (): Promise<void> => {
+  it('does not count the priming turn or a second message in a row as a reply (re-pinned: the session keeps both)', async (): Promise<void> => {
     const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
+    turnAfter(6);
+    session.turns = [...session.turns, { id: 'u6', speaker: 'manager', text: 'Answer 6.', at: 6 }];
     stubProvider([() => closingCompletion('Thanks.', 'Drafting the charter.')]);
-    await (await POST(turnAfter(6))).text();
-    session.turns = session.turns.slice(0, -1);
-    sent = [];
 
-    const response = await POST(
-      day1Request({
-        agentId: 'agent-1',
-        request: { kind: 'reply', id: 'u6b', text: 'And one more thing on that.' },
-      }),
-    );
+    const body = await (
+      await POST(
+        day1Request({
+          agentId: 'agent-1',
+          request: { kind: 'reply', id: 'u6b', text: 'And one more thing on that.' },
+        }),
+      )
+    ).text();
 
-    expect(response.status).toBe(409);
-    expect(sent).toHaveLength(0);
+    expect(closed(body)).toBe(false);
+    expect(session.turns.slice(-3).map((turn) => turn.id)).toEqual(['u6', 'u6b', TURN_ID]);
   });
 
   it('honours the close once the manager has replied after topic 7', async (): Promise<void> => {
@@ -763,7 +764,14 @@ describe('the one-to-one kept on its session (30 Sep, a one-to-one lost to a clo
     session.turns = [...session.turns, { id: 'u7', speaker: 'manager', text: 'Answer 7.', at: 7 }];
     stubProvider([() => closingCompletion('Thanks, Sam.', 'I will draft the charter now.')]);
 
-    await (await POST(day1Request({ agentId: 'agent-1', request: { kind: 'ask-again' } }))).text();
+    await (
+      await POST(
+        day1Request({
+          agentId: 'agent-1',
+          request: { kind: 'ask-again', reply: { id: 'u7', text: 'Answer 7.' }, discarding: null },
+        }),
+      )
+    ).text();
 
     expect(session.closed).toBe(true);
     expect(session.turns.at(-1)).toMatchObject({

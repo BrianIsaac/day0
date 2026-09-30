@@ -106,7 +106,11 @@ export const takeTurn = mutation({
     request: v.union(
       v.object({ kind: v.literal('open') }),
       v.object({ kind: v.literal('reply'), id: v.string(), text: v.string() }),
-      v.object({ kind: v.literal('ask-again') }),
+      v.object({
+        kind: v.literal('ask-again'),
+        reply: v.union(v.object({ id: v.string(), text: v.string() }), v.null()),
+        discarding: v.union(v.string(), v.null()),
+      }),
     ),
   },
   returns: v.object({
@@ -210,16 +214,23 @@ export const finish = mutation({
 /**
  * Keep the reply the manager is typing, so a room closed mid-reply reopens with it in the
  * composer. Bounded as a reply is; an empty field clears it. Nothing is kept once the one-to-one
- * is over.
+ * is over, or once a reply after `after` (the last reply the room had drawn) has been kept.
  *
  * Public, owner-guarded (`assertOwnsVoiceSession`). Writes the session's `replyDraft`.
  */
 export const keepReplyDraft = mutation({
-  args: { sessionId: v.id('voiceSessions'), text: v.string() },
+  args: {
+    sessionId: v.id('voiceSessions'),
+    text: v.string(),
+    after: v.union(v.string(), v.null()),
+  },
   returns: v.object({ kept: v.boolean() }),
   handler: async (ctx, args): Promise<{ kept: boolean }> => {
     const session = await assertOwnsVoiceSession(ctx, args.sessionId);
     if (oneToOnePhase(session).kind !== 'talking') return { kept: false };
+    // A keep that arrives after the reply it was typing was sent would put the sent words back.
+    const lastReply = turnsOf(session).findLast((turn) => turn.speaker === 'manager');
+    if ((lastReply?.id ?? null) !== args.after) return { kept: false };
     const text = args.text.slice(0, REPLY_MAX_CHARS);
     await ctx.db.patch(session._id, { replyDraft: text.trim() ? text : undefined });
     return { kept: true };
