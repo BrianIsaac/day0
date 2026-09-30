@@ -338,7 +338,7 @@ describe('what Retry does to an unregistered skill', (): void => {
         /<code class="[^"]*\bwhitespace-nowrap\b[^"]*">&lt;record-id&gt;<\/code>/,
       );
       expect(markup).toContain(
-        'The author used the input marked &quot;added by Day0&quot; without declaring it',
+        'The author used the input marked “added by Day0” without declaring it',
       );
       expect(markup).toContain(
         'the executor reads it from the candidate or its runbook at run time',
@@ -413,7 +413,7 @@ describe('what Retry does to an unregistered skill', (): void => {
         /<code class="[^"]*\bwhitespace-nowrap\b[^"]*">&lt;reply-surface&gt;<\/code> \(bound by Day0\)/,
       );
       expect(markup).toContain(
-        'This skill was registered before Day0 taught the input marked &quot;bound by Day0&quot;: the executor binds it from the Reply target, so the reply goes to the chat surface the ask came from.',
+        'This skill was registered before Day0 taught the input marked “bound by Day0”: the executor binds it from the Reply target, so the reply goes to the chat surface the ask came from.',
       );
     });
 

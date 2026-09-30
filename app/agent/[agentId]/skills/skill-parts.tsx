@@ -76,18 +76,16 @@ export function SkillInputs({
       {added.size > 0 ? (
         <span>
           {' '}
-          {/* The quotes are a string, not entities: the build drops the space before "marked"
-              from a wrapped text holding an entity (tests/app/jsx-text-spacing.test.ts). */}
-          · The author used the input{plural ? 's' : ''} marked {'"added by Day0"'} without
-          declaring {plural ? 'them' : 'it'}, so Day0 declared {plural ? 'them' : 'it'}: the
-          executor reads {plural ? 'them' : 'it'} from the candidate or its runbook at run time.
+          · The author used the input{plural ? 's' : ''} marked “added by Day0” without declaring{' '}
+          {plural ? 'them' : 'it'}, so Day0 declared {plural ? 'them' : 'it'}: the executor reads{' '}
+          {plural ? 'them' : 'it'} from the candidate or its runbook at run time.
         </span>
       ) : null}
       {bound.size > 0 ? (
         <span>
           {' '}
-          · This skill was registered before Day0 taught the input marked &quot;bound by Day0&quot;:
-          the executor binds it from the Reply target, so the reply goes to the chat surface the ask
+          · This skill was registered before Day0 taught the input marked “bound by Day0”: the
+          executor binds it from the Reply target, so the reply goes to the chat surface the ask
           came from.
         </span>
       ) : null}
