@@ -20,11 +20,45 @@ export const OFFICE_IDLE_SPOTS: readonly OfficePoint[] = [
 
 /**
  * How far apart two figures' centres stand before they overlap, as a share of the office at a
- * desktop width: a figure is 144 by 140 px in an office about 880 px wide and 560 px tall. A phone
- * draws the same figures in a third of the width, so there they can still meet (recorded for the
- * design call on the phone office).
+ * desktop width: a figure is 144 by 140 px in an office about 880 px wide and 560 px tall.
  */
 export const FIGURE_SPAN: OfficePoint = { x: 17, y: 26 };
+
+/**
+ * Where a phone stands its employees (below `sm`, the operator's ruling of 30 September): three
+ * across and three down, as shares of the office's inner width (inside its 8 px frame) and of its
+ * 560 px height. A phone figure is at most a third of the inner width wide (`app/globals.css`), so
+ * three stand side by side at any phone width, and at 140 px tall the rows at 16, 50 and 84 keep
+ * every figure inside the frame, its top edge included. Row by row, so the first three employees
+ * stand side by side along the top.
+ */
+export const PHONE_SPOTS: readonly OfficePoint[] = [16, 50, 84].flatMap((y) =>
+  [16.5, 50, 83.5].map((x) => ({ x, y })),
+);
+
+/**
+ * How far apart two phone figures' centres stand before they overlap, in the phone plan's shares:
+ * a figure is a third of the inner width less 6 px, under 33 percent at any phone width, and at
+ * most 140 of the office's 560 px tall.
+ */
+export const PHONE_FIGURE_SPAN: OfficePoint = { x: 33, y: 25 };
+
+/** Where an office stands its idle employees, and how far apart two must be not to overlap. */
+export interface OfficePlan {
+  readonly spots: readonly OfficePoint[];
+  readonly span: OfficePoint;
+}
+
+/** The office at a desktop width: the corridors' and rooms' open floor. */
+export const DESKTOP_PLAN: OfficePlan = { spots: OFFICE_IDLE_SPOTS, span: FIGURE_SPAN };
+
+/** The office on a phone: the three-by-three plan. */
+export const PHONE_PLAN: OfficePlan = { spots: PHONE_SPOTS, span: PHONE_FIGURE_SPAN };
+
+/** Where the employee at this place on the roster sits at its desk on a phone. */
+export function phoneSeat(index: number): OfficePoint {
+  return PHONE_SPOTS[index % PHONE_SPOTS.length];
+}
 
 /** How far a roaming employee moves at least, so a step reads as a walk. */
 const LEAST_STEP = 18;
@@ -35,16 +69,18 @@ const LEAST_STEP = 18;
  *
  * @param point - Where a figure would stand.
  * @param placed - Where the others stand.
+ * @param span - How far apart two figures stand before they overlap, in the plan's shares.
  */
-export function clearance(point: OfficePoint, placed: readonly OfficePoint[]): number {
+export function clearance(
+  point: OfficePoint,
+  placed: readonly OfficePoint[],
+  span: OfficePoint = FIGURE_SPAN,
+): number {
   return placed.reduce(
     (nearest, other) =>
       Math.min(
         nearest,
-        Math.max(
-          Math.abs(other.x - point.x) / FIGURE_SPAN.x,
-          Math.abs(other.y - point.y) / FIGURE_SPAN.y,
-        ),
+        Math.max(Math.abs(other.x - point.x) / span.x, Math.abs(other.y - point.y) / span.y),
       ),
     Number.POSITIVE_INFINITY,
   );
@@ -69,13 +105,16 @@ export interface IdleFigure {
  * @param idle - The idle employees, in roster order.
  * @param seated - Where the employees at desks sit.
  * @param pick - Chooses among equally good spots; the first by default, so a render is stable.
+ * @param plan - The office's spots and figure span: the desktop's by default, or the phone's.
  * @returns Each idle employee's spot, by id.
  */
 export function idlePlaces(
   idle: readonly IdleFigure[],
   seated: readonly OfficePoint[],
   pick: (spots: readonly OfficePoint[]) => OfficePoint = (spots) => spots[0],
+  plan: OfficePlan = DESKTOP_PLAN,
 ): Record<string, OfficePoint> {
+  const { spots, span } = plan;
   const placed: OfficePoint[] = [...seated];
   const places: Record<string, OfficePoint> = {};
   for (const figure of idle) {
@@ -83,17 +122,17 @@ export function idlePlaces(
     const away =
       previous === undefined
         ? []
-        : OFFICE_IDLE_SPOTS.filter(
+        : spots.filter(
             (spot) => Math.abs(spot.x - previous.x) + Math.abs(spot.y - previous.y) > LEAST_STEP,
           );
-    const reachable = away.length > 0 ? away : rotated(OFFICE_IDLE_SPOTS, figure.seed);
+    const reachable = away.length > 0 ? away : rotated(spots, figure.seed);
     // The spots still clear of everyone placed: a spot that takes fewer of them from the
     // employees still to place is the better of two clear ones.
-    const open = OFFICE_IDLE_SPOTS.filter((spot) => clearance(spot, placed) >= 1);
+    const open = spots.filter((spot) => clearance(spot, placed, span) >= 1);
     const scored = reachable.map((spot) => ({
       spot,
-      clear: Math.min(1, clearance(spot, placed)),
-      blocks: open.filter((other) => other !== spot && clearance(other, [spot]) < 1).length,
+      clear: Math.min(1, clearance(spot, placed, span)),
+      blocks: open.filter((other) => other !== spot && clearance(other, [spot], span) < 1).length,
     }));
     const best = Math.max(...scored.map(({ clear }) => clear));
     const clearest = scored.filter(({ clear }) => clear === best);

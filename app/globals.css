@@ -452,6 +452,34 @@ body {
     top var(--walk-duration, 2800ms) steps(8, end);
 }
 
+/*
+ * Where the office places a figure, a desk or a chair (`OfficeWorld`'s `placeStyle`). At a desktop
+ * width, a share of the office kept `--inset` from either edge: half a name plate for a figure,
+ * half the widest desk and the frame for a desk, so neither is cut by the office's clipping. Below
+ * `sm`, the phone plan (`PHONE_PLAN`): a share of the width inside the 8 px frame, where a figure
+ * is at most a third of that width, so three stand side by side and none crosses the frame.
+ */
+.day0-office-at {
+  --inset: 3.5rem;
+  left: clamp(var(--inset), calc(var(--x) * 1%), calc(100% - var(--inset)));
+  top: calc(var(--y) * 1%);
+}
+
+.day0-office-agent.day0-office-at {
+  --inset: 4.5rem;
+}
+
+@media (width < 40rem) {
+  .day0-office-at {
+    left: calc(8px + (100% - 16px) * var(--px) / 100);
+    top: calc(var(--py) * 1%);
+  }
+
+  .day0-office-agent.day0-office-at {
+    width: min(110px, calc((100% - 16px) / 3 - 6px));
+  }
+}
+
 .day0-office-agent-walking {
   will-change: left, top;
 }

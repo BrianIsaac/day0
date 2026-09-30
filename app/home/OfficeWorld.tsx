@@ -5,7 +5,13 @@ import Link from 'next/link';
 import type { Doc } from '@convex/_generated/dataModel';
 import { avatarById } from '@/agent/avatar-pets';
 import { useLightUpOnce } from './office-light-up';
-import { idlePlaces, type IdleFigure, type OfficePoint } from './office-places';
+import {
+  idlePlaces,
+  phoneSeat,
+  PHONE_PLAN,
+  type IdleFigure,
+  type OfficePoint,
+} from './office-places';
 import { AgentPixelAvatar } from './PixelAvatar';
 import type { RosterRow } from './types';
 
@@ -80,29 +86,49 @@ function deskFor(index: number): number {
   return (SEAT_ORDER[index] ?? index) % OFFICE_DESKS.length;
 }
 
+/** The place on the roster whose employee sits at this desk, which a phone seats in that order. */
+function sitterOf(desk: number): number {
+  const index = SEAT_ORDER.indexOf(desk as (typeof SEAT_ORDER)[number]);
+  return index === -1 ? desk : index;
+}
+
+/** How far above its chair a desk stands, as a share of the office's height. */
+const DESK_ABOVE_SEAT = 8;
+
 type OfficeStyle = CSSProperties & {
   '--walk-duration'?: string;
   /** The element's place in the light-up stagger. */
   '--i'?: number;
+  /** Where the element stands at a desktop width, as a share of the office (`day0-office-at`). */
+  '--x'?: number;
+  '--y'?: number;
+  /** Where it stands on a phone, as a share of the office's inner width and height (`PHONE_PLAN`). */
+  '--px'?: number;
+  '--py'?: number;
 };
 
-/**
- * Half a name plate's width: a figure's centre never comes nearer the box's
- * edge than this, so at a phone's width the plate is not cut off by the
- * office's clipping while the desk it sits at stays near the edge.
- */
-const FIGURE_EDGE_INSET = '4.5rem';
+/** Where an element of the office stands: at a desktop width, and on a phone. */
+interface OfficePlace {
+  readonly desktop: OfficePoint;
+  readonly phone: OfficePoint;
+}
 
-/** Half the widest desk and the office's frame: a desk's centre keeps this far from the box's edge. */
-const DESK_EDGE_INSET = '3.5rem';
+/**
+ * The element's place as the custom properties `.day0-office-at` reads (`app/globals.css`): an
+ * inline style cannot follow a breakpoint, so both places are handed to the stylesheet, which
+ * draws the desktop's and, below `sm`, the phone's.
+ */
+function placeStyle(place: OfficePlace): OfficeStyle {
+  return {
+    '--x': place.desktop.x,
+    '--y': place.desktop.y,
+    '--px': place.phone.x,
+    '--py': place.phone.y,
+  };
+}
 
 /** The fewest desks a phone draws (UX 12, v3 option c): the ones the first four employees take. */
 const PHONE_DESK_MINIMUM = 4;
-
-/** A percent across the office, kept `inset` from either edge. */
-function insetLeft(percent: number, inset: string): string {
-  return `clamp(${inset}, ${percent}%, calc(100% - ${inset}))`;
-}
 
 /**
  * The mini office world: the employees at their desks or roaming the rooms.
@@ -125,28 +151,37 @@ export function OfficeWorld({
       deskFor(index),
     ),
   );
-  const [agentDestinations, setAgentDestinations] = useState<Record<string, OfficePoint>>({});
+  const [agentDestinations, setAgentDestinations] = useState<Record<string, OfficePlace>>({});
   const office = useRef<HTMLDivElement>(null);
   useLightUpOnce(office, settled);
   const layout = officeLayout(visibleAgents);
   // Where each idle employee opens, stable between renders; the roaming below moves them on.
-  const opening = idlePlaces(layout.idle, layout.seated);
+  const opening = idleOffice(layout);
 
   useEffect(() => {
-    const { idle, seated } = officeLayout(agents ?? []);
-    if (idle.length === 0) return;
-    const start = idlePlaces(idle, seated);
+    const roster = officeLayout(agents ?? []);
+    if (roster.idle.length === 0) return;
+    const start = idleOffice(roster);
+    const pick = (spots: readonly OfficePoint[]): OfficePoint =>
+      spots[Math.floor(Math.random() * spots.length)] ?? spots[0];
     const timer = window.setInterval(() => {
-      setAgentDestinations((current) =>
-        idlePlaces(
-          idle.map((figure) => ({
-            ...figure,
-            previous: current[figure.agentId] ?? start[figure.agentId],
-          })),
-          seated,
-          (spots) => spots[Math.floor(Math.random() * spots.length)] ?? spots[0],
-        ),
-      );
+      setAgentDestinations((current) => {
+        const from = (agentId: string): OfficePlace | undefined =>
+          current[agentId] ?? start[agentId];
+        return placesById(
+          idlePlaces(
+            roster.idle.map((figure) => ({ ...figure, previous: from(figure.agentId)?.desktop })),
+            roster.seated,
+            pick,
+          ),
+          idlePlaces(
+            roster.idle.map((figure) => ({ ...figure, previous: from(figure.agentId)?.phone })),
+            roster.phoneSeated,
+            pick,
+            PHONE_PLAN,
+          ),
+        );
+      });
     }, 3400);
     return () => window.clearInterval(timer);
   }, [agents]);
@@ -196,14 +231,14 @@ export function OfficeWorld({
 
         {visibleAgents.map((agent, index) => {
           const seat = OFFICE_DESKS[deskFor(index)];
-          const point = layout.working.has(agent.agentId)
-            ? { x: seat.seatX, y: seat.seatY }
+          const place = layout.working.has(agent.agentId)
+            ? { desktop: { x: seat.seatX, y: seat.seatY }, phone: phoneSeat(index) }
             : (agentDestinations[agent.agentId] ?? opening[agent.agentId]);
           return (
             <OfficeAgent
               key={agent.agentId}
               agent={agent}
-              point={point}
+              place={place}
               working={layout.working.has(agent.agentId)}
             />
           );
@@ -271,26 +306,29 @@ function OfficeDesk({
   index: number;
   onPhone: boolean;
 }) {
+  // On a phone the desk stands where its sitter's seat is (`phoneSeat`), just above the chair.
+  const seat = phoneSeat(sitterOf(index));
   const chairStyle: OfficeStyle = {
-    left: insetLeft(desk.seatX, DESK_EDGE_INSET),
-    top: `${desk.seatY}%`,
+    ...placeStyle({ desktop: { x: desk.seatX, y: desk.seatY }, phone: seat }),
     '--i': index,
   };
   const deskStyle: OfficeStyle = {
-    left: insetLeft(desk.x, DESK_EDGE_INSET),
-    top: `${desk.y}%`,
+    ...placeStyle({
+      desktop: { x: desk.x, y: desk.y },
+      phone: { x: seat.x, y: seat.y - DESK_ABOVE_SEAT },
+    }),
     '--i': index,
   };
   const phone = onPhone ? '' : ' max-sm:hidden';
   return (
     <>
       <div
-        className={`day0-pixel-chair day0-pixel-chair-${desk.variant} absolute -translate-x-1/2 -translate-y-1/2${phone}`}
+        className={`day0-pixel-chair day0-pixel-chair-${desk.variant} day0-office-at absolute -translate-x-1/2 -translate-y-1/2${phone}`}
         style={chairStyle}
         aria-hidden="true"
       />
       <div
-        className={`day0-pixel-desk day0-pixel-desk-${desk.variant} absolute -translate-x-1/2 -translate-y-1/2${phone}`}
+        className={`day0-pixel-desk day0-pixel-desk-${desk.variant} day0-office-at absolute -translate-x-1/2 -translate-y-1/2${phone}`}
         style={deskStyle}
         aria-hidden="true"
       >
@@ -317,7 +355,30 @@ function rectStyle(rect: { left: number; top: number; width: number; height: num
 interface OfficeLayout {
   readonly working: ReadonlySet<string>;
   readonly seated: readonly OfficePoint[];
+  /** Where the same sitters sit on a phone. */
+  readonly phoneSeated: readonly OfficePoint[];
   readonly idle: readonly IdleFigure[];
+}
+
+/** Each idle employee's desktop and phone places, by id, from the two plans' own placements. */
+function placesById(
+  desktop: Readonly<Record<string, OfficePoint>>,
+  phone: Readonly<Record<string, OfficePoint>>,
+): Record<string, OfficePlace> {
+  return Object.fromEntries(
+    Object.entries(desktop).map(([agentId, point]) => [
+      agentId,
+      { desktop: point, phone: phone[agentId] ?? point },
+    ]),
+  );
+}
+
+/** Where each idle employee opens, on both plans. */
+function idleOffice(layout: OfficeLayout): Record<string, OfficePlace> {
+  return placesById(
+    idlePlaces(layout.idle, layout.seated),
+    idlePlaces(layout.idle, layout.phoneSeated, undefined, PHONE_PLAN),
+  );
 }
 
 /**
@@ -329,17 +390,19 @@ interface OfficeLayout {
 function officeLayout(agents: readonly RosterRow[]): OfficeLayout {
   const working = new Set<string>();
   const seated: OfficePoint[] = [];
+  const phoneSeated: OfficePoint[] = [];
   const idle: IdleFigure[] = [];
   agents.forEach((agent, index) => {
     if (agentIsWorking(agent.state, agent.openCount)) {
       const seat = OFFICE_DESKS[deskFor(index)];
       working.add(agent.agentId);
       seated.push({ x: seat.seatX, y: seat.seatY });
+      phoneSeated.push(phoneSeat(index));
     } else {
       idle.push({ agentId: agent.agentId, seed: figureSeed(agent) });
     }
   });
-  return { working, seated, idle };
+  return { working, seated, phoneSeated, idle };
 }
 
 /** A number of the employee's own, for its first spot and its walking pace. */
@@ -349,23 +412,22 @@ function figureSeed(agent: Pick<RosterRow, 'agentId' | 'name'>): number {
 
 function OfficeAgent({
   agent,
-  point,
+  place,
   working,
 }: {
   agent: RosterRow;
-  point: OfficePoint;
+  place: OfficePlace;
   working: boolean;
 }) {
   const style: OfficeStyle = {
-    left: insetLeft(point.x, FIGURE_EDGE_INSET),
-    top: `${point.y}%`,
+    ...placeStyle(place),
     '--walk-duration': `${2700 + (figureSeed(agent) % 700)}ms`,
   };
 
   return (
     <Link
       href={`/agent/${agent.agentId}`}
-      className={`day0-office-agent absolute z-10 -translate-x-1/2 -translate-y-1/2 ${
+      className={`day0-office-agent day0-office-at absolute z-10 -translate-x-1/2 -translate-y-1/2 ${
         working ? 'day0-office-agent-seated' : 'day0-office-agent-walking'
       }`}
       style={style}
@@ -378,14 +440,16 @@ function OfficeAgent({
           phase={agent.phase}
           label={agent.name}
         />
-        <div className="day0-pixel-nameplate mt-1 max-w-36 px-2 py-1 text-center">
+        <div className="day0-pixel-nameplate mt-1 max-w-36 px-2 py-1 text-center max-sm:max-w-none">
           <div className="truncate text-xs text-[var(--color-fg)]">{agent.name}</div>
           <div className="truncate text-xs text-[var(--color-fg)]/70" title={agent.roleLine}>
             {agent.roleLine}
           </div>
         </div>
-        <div className="mt-1 rounded-full border border-[var(--color-border)] bg-[var(--color-card)]/90 px-2 py-0.5 text-center text-xs whitespace-nowrap text-[var(--color-muted)]">
-          reads {agent.docSourceCount} {agent.docSourceCount === 1 ? 'location' : 'locations'}
+        <div className="mt-1 truncate rounded-full border border-[var(--color-border)] bg-[var(--color-card)]/90 px-2 py-0.5 text-center text-xs whitespace-nowrap text-[var(--color-muted)]">
+          {/* A phone figure is a third of the office wide: the count says it without the verb. */}
+          <span className="max-sm:hidden">reads </span>
+          {agent.docSourceCount} {agent.docSourceCount === 1 ? 'location' : 'locations'}
         </div>
       </div>
     </Link>
