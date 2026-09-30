@@ -112,8 +112,8 @@ CONVEX_DEPLOYMENT=prod:<name>, the production deployment:
   ./setup.sh cloud backup --target <file>    an export with its checksum and row counts
   ./setup.sh cloud pause | unpause --target <file>
                                              hold a real-mode deployment's jobs, or not
-  Each ends with its rollback runbook; --dry-run runs every read and changes
-  nothing. The full list: ./setup.sh cloud --help
+  Setup and upgrade end with their rollback runbook; --dry-run runs every read
+  and changes nothing. The full list: ./setup.sh cloud --help
 
 Everything else, ports and project names included: pnpm setup:local --help
 USAGE

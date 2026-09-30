@@ -29,7 +29,7 @@ Every `pnpm` script, in the order a contributor meets them. The ones marked real
 | Command | What it does |
 |---|---|
 | `./setup.sh` | Real mode, one command: checks the prerequisites and runs `pnpm setup:local --mode real`; `stop`, `resume`, `clear` and `--adopt` manage the installation |
-| `./setup.sh cloud <verb> --target <file>` | Convex cloud and Vercel, no Docker: `setup` (the first push to an empty production deployment, and the app), `upgrade` (an export, then the checkout's tag pushed, migrated, stamped and deployed), `backup`, `pause`, `unpause`; each proves its target with a dry run first and ends with its rollback |
+| `./setup.sh cloud <verb> --target <file>` | Convex cloud and Vercel, no Docker: `setup` (the first push to an empty production deployment, and the app), `upgrade` (an export, then the checkout's tag pushed, migrated, stamped and deployed), `backup`, `pause`, `unpause`; each proves its target with a dry run before it writes, and setup and upgrade end with their rollback |
 | `pnpm setup:local` | The same setup in mock mode, the seeded office the evaluation harness and the hosted demo run on |
 | `pnpm dev` | The app under `next dev`, with the unlock URL printed first |
 | `pnpm start` | `next start` on 3000 after a `pnpm build`; the hosted build's server, not the local way to run it |

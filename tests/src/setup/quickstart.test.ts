@@ -244,6 +244,16 @@ describe('the three ways to run it', (): void => {
       expect(offsets.at(-1)).toBeGreaterThan(chineseAt);
     }
     expect(HOSTED_COPY.body).toContain('CONVEX_DEPLOYMENT=prod:<name>');
+    // The files the commands name sit outside the clone the README makes, or the
+    // checkout would be dirty and the keys inside a repository.
+    const clones = [...README.matchAll(/git clone \S+ (\S+) && cd \1/g)].map((match) => match[1]);
+    expect(clones).toEqual(['day0-cloud', 'day0-cloud']);
+    for (const command of HOSTED_COPY.commands) {
+      for (const path of command.match(/~\/\S+/g) ?? []) {
+        expect(path.startsWith('~/day0-private/'), path).toBe(true);
+      }
+    }
+    expect(README).not.toContain('~/day0-cloud/');
     expect(`${HOSTED_COPY.body} ${HOSTED_COPY.after}`).toContain('--dry-run');
   });
 

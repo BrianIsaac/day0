@@ -205,14 +205,14 @@ export interface HostedCopy {
 export const HOSTED_COPY: HostedCopy = {
   title: 'Your own hosted copy',
   targetLine: 'CONVEX_DEPLOYMENT=prod:<name>',
-  body: 'The hosted demo runs on a Convex production deployment and Vercel, and so can a copy of your own, one command per task from a clean checkout of a release tag. The Convex, Clerk and Vercel accounts come first; the target file sits outside the checkout and names the production deployment as CONVEX_DEPLOYMENT=prod:<name>, and the deployment’s keys are read from a private file or asked for in hidden prompts. Each command refuses a development deployment, proves its target with a dry run before it writes anything, and reads both halves back afterwards.',
+  body: 'The hosted demo runs on a Convex production deployment and Vercel, and so can a copy of your own, one command per task from a clean checkout of a release tag. The Convex, Clerk and Vercel accounts come first; the target file sits outside the checkout and names the production deployment as CONVEX_DEPLOYMENT=prod:<name>, and the deployment\u2019s keys are read from a private file or asked for in hidden prompts. Each command refuses a development deployment and proves its target with a dry run before it writes anything; setup and upgrade read both halves back afterwards.',
   commands: [
-    './setup.sh cloud setup --target ~/day0-cloud/prod-target.env --env-file ~/day0-cloud/prod.env',
-    './setup.sh cloud upgrade --target ~/day0-cloud/prod-target.env',
-    './setup.sh cloud backup --target ~/day0-cloud/prod-target.env',
+    './setup.sh cloud setup --target ~/day0-private/prod-target.env --env-file ~/day0-private/prod.env',
+    './setup.sh cloud upgrade --target ~/day0-private/prod-target.env',
+    './setup.sh cloud backup --target ~/day0-private/prod-target.env',
   ],
   after:
-    'The upgrade takes an export first and moves one release at a time; every run ends with its rollback, filled in with what it read, and --dry-run runs every read and changes nothing.',
+    'The upgrade takes an export first and moves one release at a time; setup and upgrade end with their rollback, filled in with what they read, and --dry-run runs every read and changes nothing.',
 };
 
 /**
