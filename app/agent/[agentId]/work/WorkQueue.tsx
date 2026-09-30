@@ -170,12 +170,8 @@ const RUN_STATES: ReadonlySet<string> = new Set([
 /**
  * The work queue in the order the page lists it.
  *
- * Args:
- *   workItems: The employee's work items.
- *
- * Returns:
- *   A sorted copy; rows of one state keep their order, and runs under way keep theirs whatever
- *   state each has reached.
+ * @returns A sorted copy; rows of one state keep their order, and runs under way keep theirs
+ *   whatever state each has reached, the longest-running first.
  */
 export function sortedForQueue<
   T extends {

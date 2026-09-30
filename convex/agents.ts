@@ -316,12 +316,8 @@ async function newestSession(
  * counted state, so completed, skipped and cancelled work, however much of
  * it there is, is never read.
  *
- * Args:
- *   ctx: Query context.
- *   agentId: The employee.
- *
- * Returns:
- *   The open, parked and stopped counts, the parked count by state, and the needs-you count.
+ * @returns The open, parked and stopped counts, the parked count by state, and the needs-you
+ *   count.
  */
 async function workCounts(
   ctx: QueryCtx,
