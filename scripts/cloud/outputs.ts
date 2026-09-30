@@ -39,7 +39,6 @@ export function deploymentSiteUrl(name: string): string {
  * @param text - What the tool printed.
  */
 export function plainText(text: string): string {
-  // eslint-disable-next-line no-control-regex -- the escape character is what a colour code starts with
   return text.replace(/\u001b\[[0-9;]*m/g, '');
 }
 
