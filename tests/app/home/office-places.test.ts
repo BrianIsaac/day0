@@ -5,9 +5,11 @@ import {
   idlePlaces,
   OFFICE_IDLE_SPOTS,
   PHONE_FIGURE_SPAN,
-  PHONE_PLAN,
-  PHONE_SPOTS,
+  phoneOfficeHeight,
+  phonePlan,
+  phoneRows,
   phoneSeat,
+  phoneSpots,
 } from '../../../app/home/office-places';
 
 describe('where the office stands its idle employees (walk m18)', () => {
@@ -66,35 +68,85 @@ describe('where the office stands its idle employees (walk m18)', () => {
       expect(clearance(b!, [c!])).toBeGreaterThanOrEqual(1);
     }
   });
+
+  it('has ten spots every two of which stand clear, so a sixth idle employee overlaps nobody (second review x9)', () => {
+    expect(OFFICE_IDLE_SPOTS).toHaveLength(10);
+    for (const [index, spot] of OFFICE_IDLE_SPOTS.entries()) {
+      expect(
+        clearance(spot, OFFICE_IDLE_SPOTS.slice(index + 1)),
+        `spot ${index}`,
+      ).toBeGreaterThanOrEqual(1);
+    }
+    const places = Object.values(
+      idlePlaces(
+        Array.from({ length: 10 }, (_, index) => ({ agentId: `a${index}`, seed: index * 3 })),
+        [],
+      ),
+    );
+    for (const [index, place] of places.entries()) {
+      expect(clearance(place, places.slice(index + 1)), `figure ${index}`).toBeGreaterThanOrEqual(
+        1,
+      );
+    }
+  });
+
+  it('keeps every idle figure inside the desktop office, 560 px tall with an 8 px frame', () => {
+    // A figure is 140 px tall and drawn centred on its spot, and walks a 2 px step up.
+    for (const spot of OFFICE_IDLE_SPOTS) {
+      const centre = (spot.y / 100) * 560;
+      expect(centre - 70 - 2).toBeGreaterThanOrEqual(8);
+      expect(centre + 70).toBeLessThanOrEqual(560 - 8);
+    }
+  });
 });
 
 describe('the phone office (the operator’s ruling of 30 September)', () => {
-  /** The office's height and frame, and a phone figure's height at most, in px. */
-  const HEIGHT = 560;
+  /** The office's frame, and a phone figure's height at most, in px. */
   const FRAME = 8;
   const FIGURE_HEIGHT = 140;
 
-  it('stands three across and three down, every spot clear of every other', () => {
-    expect(PHONE_SPOTS).toHaveLength(9);
-    expect(PHONE_SPOTS.slice(0, 3).map((spot) => spot.y)).toEqual([16, 16, 16]);
-    for (const [index, spot] of PHONE_SPOTS.entries()) {
+  it('stands three across and three down up to nine, every spot clear of every other', () => {
+    expect(phoneRows(1)).toBe(3);
+    expect(phoneRows(9)).toBe(3);
+    const spots = phoneSpots(3);
+    expect(spots).toHaveLength(9);
+    expect(phoneOfficeHeight(3)).toBe(560);
+    for (const [index, spot] of spots.entries()) {
       expect(
-        clearance(spot, PHONE_SPOTS.slice(index + 1), PHONE_FIGURE_SPAN),
+        clearance(spot, spots.slice(index + 1), PHONE_FIGURE_SPAN),
         `spot ${index}`,
       ).toBeGreaterThanOrEqual(1);
     }
   });
 
-  it('keeps every figure inside the frame, its top edge included, the walk’s 2 px step too', () => {
-    for (const spot of PHONE_SPOTS) {
-      const centre = (spot.y / 100) * HEIGHT;
-      expect(centre - FIGURE_HEIGHT / 2 - 2).toBeGreaterThanOrEqual(FRAME);
-      expect(centre + FIGURE_HEIGHT / 2).toBeLessThanOrEqual(HEIGHT - FRAME);
+  it('adds a row for every three past nine, so a tenth employee has a seat of its own (pre-tag minor 10)', () => {
+    expect(phoneRows(10)).toBe(4);
+    expect(phoneRows(20)).toBe(7);
+    const seats = Array.from({ length: 20 }, (_, index) => phoneSeat(index));
+    for (const [index, seat] of seats.entries()) {
+      expect(
+        clearance(seat, seats.slice(index + 1), PHONE_FIGURE_SPAN),
+        `seat ${index}`,
+      ).toBeGreaterThanOrEqual(1);
+    }
+    expect(phoneSeat(9)).not.toEqual(phoneSeat(0));
+    // Each seat is one of its office's spots, so an idle figure is placed among the same.
+    expect(phoneSpots(phoneRows(20)).slice(0, 20)).toEqual(seats);
+  });
+
+  it('keeps every figure inside the frame at any row count, its top edge included, the walk’s 2 px step too', () => {
+    for (const rows of [3, 4, 7]) {
+      const height = phoneOfficeHeight(rows);
+      for (const spot of phoneSpots(rows)) {
+        expect(spot.y - FIGURE_HEIGHT / 2 - 2).toBeGreaterThanOrEqual(FRAME);
+        expect(spot.y + FIGURE_HEIGHT / 2).toBeLessThanOrEqual(height - FRAME);
+      }
     }
     // Across, a figure a third of the inner width wide at most stays inside it at either end.
     const third = 100 / 3;
-    expect(Math.min(...PHONE_SPOTS.map((spot) => spot.x)) - third / 2).toBeGreaterThan(-0.5);
-    expect(Math.max(...PHONE_SPOTS.map((spot) => spot.x)) + third / 2).toBeLessThan(100.5);
+    const spots = phoneSpots(3);
+    expect(Math.min(...spots.map((spot) => spot.x)) - third / 2).toBeGreaterThan(-0.5);
+    expect(Math.max(...spots.map((spot) => spot.x)) + third / 2).toBeLessThan(100.5);
   });
 
   it('stands up to nine employees clear of each other and of the seated, seats by roster place', () => {
@@ -103,7 +155,7 @@ describe('the phone office (the operator’s ruling of 30 September)', () => {
       Array.from({ length: 7 }, (_, index) => ({ agentId: `a${index}`, seed: index * 5 })),
       seated,
       undefined,
-      PHONE_PLAN,
+      phonePlan(3),
     );
     const all = [...seated, ...Object.values(places)];
     for (const [index, place] of all.entries()) {
@@ -112,6 +164,5 @@ describe('the phone office (the operator’s ruling of 30 September)', () => {
         `figure ${index}`,
       ).toBeGreaterThanOrEqual(1);
     }
-    expect(phoneSeat(9)).toEqual(phoneSeat(0));
   });
 });

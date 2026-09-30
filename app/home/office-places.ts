@@ -4,18 +4,24 @@ export interface OfficePoint {
   readonly y: number;
 }
 
-/** The spots an employee not at a desk stands at, in the corridors and the rooms' open floor. */
+/**
+ * The spots an employee not at a desk stands at, in the corridors and the rooms' open floor: ten,
+ * every two clear of each other by a figure's span (`FIGURE_SPAN`), none over one of the eight
+ * desks always drawn, their chairs or the décor, and every figure inside the office's frame, so
+ * ten idle employees stand apart at a desktop width (the second review's x9: at most five of the
+ * earlier ten were clear of each other).
+ */
 export const OFFICE_IDLE_SPOTS: readonly OfficePoint[] = [
-  { x: 49, y: 17 },
-  { x: 49, y: 32 },
-  { x: 48, y: 48 },
-  { x: 49, y: 62 },
-  { x: 39, y: 57 },
-  { x: 58, y: 56 },
-  { x: 38, y: 83 },
-  { x: 50, y: 86 },
-  { x: 74, y: 37 },
-  { x: 19, y: 37 },
+  { x: 41, y: 16 },
+  { x: 20, y: 36 },
+  { x: 60, y: 43 },
+  { x: 39, y: 43 },
+  { x: 88, y: 53 },
+  { x: 10, y: 73 },
+  { x: 48, y: 72 },
+  { x: 29, y: 81 },
+  { x: 67, y: 81 },
+  { x: 90, y: 81 },
 ];
 
 /**
@@ -24,24 +30,57 @@ export const OFFICE_IDLE_SPOTS: readonly OfficePoint[] = [
  */
 export const FIGURE_SPAN: OfficePoint = { x: 17, y: 26 };
 
-/**
- * Where a phone stands its employees (below `sm`, the operator's ruling of 30 September): three
- * across and three down, as shares of the office's inner width (inside its 8 px frame) and of its
- * 560 px height. A phone figure is at most a third of the inner width wide (`app/globals.css`), so
- * three stand side by side at any phone width, and at 140 px tall the rows at 16, 50 and 84 keep
- * every figure inside the frame, its top edge included. Row by row, so the first three employees
- * stand side by side along the top.
- */
-export const PHONE_SPOTS: readonly OfficePoint[] = [16, 50, 84].flatMap((y) =>
-  [16.5, 50, 83.5].map((x) => ({ x, y })),
-);
+/** The phone plan's columns, as shares of the office's inner width (inside its 8 px frame). */
+const PHONE_COLUMNS = [16.5, 50, 83.5] as const;
+
+/** Where the phone plan's first row stands, in px from the office's top: a figure's top at 20. */
+const PHONE_FIRST_ROW = 90;
+
+/** How far apart the phone plan's rows stand, in px: a figure and a 50 px gap. */
+const PHONE_ROW_PITCH = 190;
 
 /**
- * How far apart two phone figures' centres stand before they overlap, in the phone plan's shares:
- * a figure is a third of the inner width less 6 px, under 33 percent at any phone width, and at
- * most 140 of the office's 560 px tall.
+ * How many rows a phone office has for this many employees: three at least, as the plan was
+ * ruled (30 September), and one more for each three past nine, so every employee has a seat of
+ * its own (the pre-tag pass's minor 10: a tenth shared the first).
+ *
+ * @param employees - How many the office draws.
  */
-export const PHONE_FIGURE_SPAN: OfficePoint = { x: 33, y: 25 };
+export function phoneRows(employees: number): number {
+  return Math.max(3, Math.ceil(employees / PHONE_COLUMNS.length));
+}
+
+/**
+ * How tall a phone office is for this many rows, in px: the first row's room above, a pitch per
+ * row after it and the same room below, so three rows keep the 560 px office.
+ *
+ * @param rows - The office's rows (`phoneRows`).
+ */
+export function phoneOfficeHeight(rows: number): number {
+  return 2 * PHONE_FIRST_ROW + (rows - 1) * PHONE_ROW_PITCH;
+}
+
+/**
+ * Where a phone stands its employees (below `sm`, the operator's ruling of 30 September): three
+ * across, as shares of the office's inner width, and row after row down, in px from its top. A
+ * phone figure is at most a third of the inner width wide (`app/globals.css`), so three stand side
+ * by side at any phone width, and a row's pitch keeps each clear of the next. Row by row, so the
+ * first three employees stand side by side along the top.
+ *
+ * @param rows - The office's rows (`phoneRows`).
+ */
+export function phoneSpots(rows: number): OfficePoint[] {
+  return Array.from({ length: rows }, (_, row) => PHONE_FIRST_ROW + row * PHONE_ROW_PITCH).flatMap(
+    (y) => PHONE_COLUMNS.map((x) => ({ x, y })),
+  );
+}
+
+/**
+ * How far apart two phone figures' centres stand before they overlap, in the phone plan's units:
+ * a figure is a third of the inner width less 6 px, under 33 percent at any phone width, and at
+ * most 150 px tall.
+ */
+export const PHONE_FIGURE_SPAN: OfficePoint = { x: 33, y: 150 };
 
 /** Where an office stands its idle employees, and how far apart two must be not to overlap. */
 export interface OfficePlan {
@@ -52,12 +91,22 @@ export interface OfficePlan {
 /** The office at a desktop width: the corridors' and rooms' open floor. */
 export const DESKTOP_PLAN: OfficePlan = { spots: OFFICE_IDLE_SPOTS, span: FIGURE_SPAN };
 
-/** The office on a phone: the three-by-three plan. */
-export const PHONE_PLAN: OfficePlan = { spots: PHONE_SPOTS, span: PHONE_FIGURE_SPAN };
+/**
+ * The office on a phone: three across, as many rows as its employees need.
+ *
+ * @param rows - The office's rows (`phoneRows`).
+ */
+export function phonePlan(rows: number): OfficePlan {
+  return { spots: phoneSpots(rows), span: PHONE_FIGURE_SPAN };
+}
 
-/** Where the employee at this place on the roster sits at its desk on a phone. */
+/** Where the employee at this place on the roster sits at its desk on a phone: a seat of its own. */
 export function phoneSeat(index: number): OfficePoint {
-  return PHONE_SPOTS[index % PHONE_SPOTS.length];
+  const column = PHONE_COLUMNS[index % PHONE_COLUMNS.length] ?? PHONE_COLUMNS[0];
+  return {
+    x: column,
+    y: PHONE_FIRST_ROW + Math.floor(index / PHONE_COLUMNS.length) * PHONE_ROW_PITCH,
+  };
 }
 
 /** How far a roaming employee moves at least, so a step reads as a walk. */
