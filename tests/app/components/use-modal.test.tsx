@@ -195,6 +195,48 @@ describe('useModal', () => {
     expect(pageLock()).toEqual({ overflow: '', gutter: '' });
   });
 
+  it('keeps the page inert under a second modal when the first closes before it, and the second live (review m6)', () => {
+    const view = mount(<Pair first={false} second={false} />);
+    const first = document.querySelector<HTMLElement>('[data-held="first"]');
+    const second = document.querySelector<HTMLElement>('[data-held="second"]');
+    act((): void => view.root.render(<Pair first second={false} />));
+    act((): void => view.root.render(<Pair first second />));
+    expect(second?.hasAttribute('inert')).toBe(false);
+    expect(document.activeElement).toBe(second);
+    act((): void => view.root.render(<Pair first={false} second />));
+    expect(view.container.hasAttribute('inert')).toBe(true);
+    expect(first?.hasAttribute('inert')).toBe(true);
+    expect(second?.hasAttribute('inert')).toBe(false);
+    act((): void => view.root.render(<Pair first={false} second={false} />));
+    expect(document.querySelectorAll('[inert]')).toHaveLength(0);
+  });
+
+  it('leaves a part of the page something else made inert as it was', () => {
+    const aside = document.createElement('aside');
+    aside.setAttribute('inert', '');
+    document.body.append(aside);
+    const view = mount(<Pair first={false} second={false} />);
+    act((): void => view.root.render(<Pair first second={false} />));
+    act((): void => view.root.render(<Pair first={false} second={false} />));
+    expect(aside.hasAttribute('inert')).toBe(true);
+    expect(view.container.hasAttribute('inert')).toBe(false);
+  });
+
+  it('leaves a gutter it never set, on a page with no scrollbar, to whoever set it', () => {
+    const root = document.documentElement;
+    Object.defineProperty(root, 'clientWidth', { configurable: true, value: window.innerWidth });
+    try {
+      const view = mount(<Pair first={false} second={false} />);
+      act((): void => view.root.render(<Pair first second={false} />));
+      expect(pageLock()).toEqual({ overflow: 'hidden', gutter: '' });
+      root.style.scrollbarGutter = 'stable';
+      act((): void => view.root.render(<Pair first={false} second={false} />));
+      expect(pageLock()).toEqual({ overflow: '', gutter: 'stable' });
+    } finally {
+      Reflect.deleteProperty(root, 'clientWidth');
+    }
+  });
+
   it('gives the page back once when the modals close in the order they opened the other way round', () => {
     const view = mount(<Pair first={false} second={false} />);
     act((): void => view.root.render(<Pair first second={false} />));

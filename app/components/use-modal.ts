@@ -72,8 +72,9 @@ export interface ModalOptions {
 
 /**
  * The attributes on the document element that the modals open at once share their hold on the
- * page through: how many hold it, and the page's own overflow and gutter from before the first.
- * They live on the document, as the styles they guard do, so every modal sees the one count.
+ * page through: how many hold it, and the page's own overflow and gutter from before the first
+ * (the gutter only when the hold set one). They live on the document, as the styles they guard
+ * do, so every modal sees the one count.
  */
 const HOLDS = 'data-modal-holds';
 const OVERFLOW_BEFORE = 'data-modal-overflow';
@@ -94,9 +95,12 @@ function holdPageStill(): () => void {
   const holds = Number(root.getAttribute(HOLDS) ?? '0');
   if (holds === 0) {
     root.setAttribute(OVERFLOW_BEFORE, body.style.overflow);
-    root.setAttribute(GUTTER_BEFORE, root.style.scrollbarGutter);
-    // A page with a scrollbar keeps its room once it is still; one without never gains any.
-    if (window.innerWidth > root.clientWidth) root.style.scrollbarGutter = 'stable';
+    // A page with a scrollbar keeps its room once it is still; one without never gains any, and
+    // then the gutter is not the hold's to give back.
+    if (window.innerWidth > root.clientWidth) {
+      root.setAttribute(GUTTER_BEFORE, root.style.scrollbarGutter);
+      root.style.scrollbarGutter = 'stable';
+    }
     body.style.overflow = 'hidden';
   }
   root.setAttribute(HOLDS, String(holds + 1));
@@ -112,10 +116,61 @@ function holdPageStill(): () => void {
     if (body.style.overflow === 'hidden') {
       body.style.overflow = root.getAttribute(OVERFLOW_BEFORE) ?? '';
     }
-    if (root.style.scrollbarGutter === 'stable') {
-      root.style.scrollbarGutter = root.getAttribute(GUTTER_BEFORE) ?? '';
+    const gutter = root.getAttribute(GUTTER_BEFORE);
+    if (gutter !== null && root.style.scrollbarGutter === 'stable') {
+      root.style.scrollbarGutter = gutter;
     }
     for (const name of [HOLDS, OVERFLOW_BEFORE, GUTTER_BEFORE]) root.removeAttribute(name);
+  };
+}
+
+/**
+ * The attribute counting how many open modals hold one child of the body inert. Only a child
+ * a modal made inert carries it, so a part of the page something else made inert is never
+ * touched.
+ */
+const INERT_HOLDS = 'data-modal-inert';
+
+/**
+ * Make the rest of the page inert under a modal: every child of the body but the one holding
+ * the panel. Modals open at once share the hold on each child: a child is live again only when
+ * the last modal holding it lets go, so one closing never wakes the page under another (review
+ * m6). The panel's own child is lifted out of the hold, since a modal opened over another sits
+ * in a child the first made inert, and would take neither focus nor a click.
+ *
+ * @param own - The panel, or null when it has not rendered.
+ * @returns Let go of the hold; a second call does nothing.
+ */
+function holdPageInert(own: HTMLElement | null): () => void {
+  const children = [...document.body.children];
+  const mine = own === null ? undefined : children.find((element) => element.contains(own));
+  if (mine?.hasAttribute(INERT_HOLDS)) {
+    mine.removeAttribute(INERT_HOLDS);
+    mine.removeAttribute('inert');
+  }
+  const behind = children.filter(
+    (element) =>
+      element !== mine && (!element.hasAttribute('inert') || element.hasAttribute(INERT_HOLDS)),
+  );
+  for (const element of behind) {
+    element.setAttribute(INERT_HOLDS, String(Number(element.getAttribute(INERT_HOLDS) ?? '0') + 1));
+    element.setAttribute('inert', '');
+  }
+  let held = true;
+  return (): void => {
+    if (!held) return;
+    held = false;
+    for (const element of behind) {
+      // A hold lifted since (the child now holds a modal of its own) has no count left to take.
+      if (!element.hasAttribute(INERT_HOLDS)) continue;
+      const left = Number(element.getAttribute(INERT_HOLDS)) - 1;
+      if (left > 0) {
+        element.setAttribute(INERT_HOLDS, String(left));
+      } else {
+        element.removeAttribute(INERT_HOLDS);
+        element.removeAttribute('inert');
+      }
+    }
   };
 }
 
@@ -144,15 +199,12 @@ export function useModal({ panel, active, initialFocus, returnFocus }: ModalOpti
     const opener = held instanceof HTMLElement && held !== document.body ? held : null;
     const back = returnFocus?.current ?? opener;
     const own = panel.current;
-    const behind = [...document.body.children].filter(
-      (element) => (own === null || !element.contains(own)) && !element.hasAttribute('inert'),
-    );
-    for (const element of behind) element.setAttribute('inert', '');
+    const wake = holdPageInert(own);
     const letGo = holdPageStill();
     const target = initialFocus?.current ?? (own ? (focusableIn(own)[0] ?? own) : null);
     target?.focus();
     return () => {
-      for (const element of behind) element.removeAttribute('inert');
+      wake();
       letGo();
       // Nothing to return to (a click that focused nothing, on Safari or Firefox) leaves focus
       // where the browser puts it; only a target that has left the page hands it to the heading.
