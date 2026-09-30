@@ -54,6 +54,7 @@ vi.mock('@clerk/nextjs', async () => {
 vi.mock('next/navigation', () => ({
   useSelectedLayoutSegment: (): null => null,
   useRouter: () => ({ replace: (): void => undefined }),
+  usePathname: (): string => '/agent/j57agent',
 }));
 
 /** What the app's error boundary would show: the page did not load. */
@@ -254,5 +255,50 @@ describe('the employee page layout', () => {
     expect(authenticated()).toBeGreaterThan(before);
     expect(container.querySelector('nav[aria-label="Breadcrumb"]')?.textContent).toContain('Mira');
     expect(container.textContent).not.toContain('This page did not load');
+  });
+
+  it('takes the drawn page away when the manager signs out in another tab (Fable x1)', async () => {
+    const server = syncServer((path, signedIn) => {
+      if (path === 'config:surfaceMode') return { value: { mode: 'mock' } };
+      if (path !== 'agents:get') return undefined;
+      return signedIn ? { value: EMPLOYEE_ROW } : { error: 'not authenticated' };
+    });
+    vi.stubGlobal('WebSocket', server.Socket);
+    vi.stubEnv('NEXT_PUBLIC_CONVEX_URL', 'https://sign-out-test.convex.cloud');
+    vi.stubEnv('NEXT_PUBLIC_DEV_NO_AUTH', undefined);
+    const { Providers } = await import('../../../../app/Providers');
+    const { default: Layout } = await import('../../../../app/agent/[agentId]/layout');
+    const page = await Layout({
+      children: <p>tab</p>,
+      params: Promise.resolve({ agentId: EMPLOYEE_ROW._id }),
+    });
+    act((): void =>
+      clerk.answer({
+        isLoaded: true,
+        isSignedIn: true,
+        sessionId: 'sess_a',
+        getToken: clerk.getToken,
+      }),
+    );
+    const { container } = mount(
+      <Providers>
+        <Boundary>{page}</Boundary>
+      </Providers>,
+    );
+    await exchange();
+    expect(container.querySelector('nav[aria-label="Breadcrumb"]')?.textContent).toContain('Mira');
+
+    // The other tab signed out: Clerk here settles with no session, and Convex with nobody.
+    act((): void => clerk.answer({ isLoaded: true, isSignedIn: false, getToken: clerk.getToken }));
+    await exchange();
+
+    expect(container.querySelector('nav[aria-label="Breadcrumb"]')).toBeNull();
+    expect(container.textContent).not.toContain('Mira');
+    expect(container.textContent).not.toContain(EMPLOYEE_ROW.bossEmail);
+    expect(container.textContent).not.toContain('This page did not load');
+    expect(container.querySelector('h1')?.textContent).toBe('You are signed out');
+    expect(container.querySelector('a[href^="/sign-in"]')?.getAttribute('href')).toBe(
+      '/sign-in?redirect_url=%2Fagent%2Fj57agent',
+    );
   });
 });

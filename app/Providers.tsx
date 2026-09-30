@@ -3,8 +3,10 @@
 import { ClerkProvider, useAuth, useClerk } from '@clerk/nextjs';
 import { ConvexProviderWithAuth, ConvexReactClient, useConvexAuth } from 'convex/react';
 import { ConvexProviderWithClerk } from 'convex/react-clerk';
+import { usePathname } from 'next/navigation';
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import { DEV_NO_AUTH } from '@/lib/dev-auth';
+import { ButtonLink } from './components/Button';
 
 /**
  * Wraps with Clerk + Convex. Clerk auto-provisions keyless dev keys when
@@ -143,6 +145,11 @@ export interface SessionGateProps {
  * (`/setup`, `/walkthrough`, the marketing landing) read no owned row, and holding them would
  * hide their served HTML from every visitor until Clerk loaded. In no-auth dev mode the whole tree
  * is already held above, so the page passes straight through.
+ *
+ * Once Convex has answered that nobody is signed in, the owned page is taken away and the gate
+ * says so (`SignedOut`): a sign-out in another tab, or a token the deployment would not accept,
+ * would otherwise leave the manager's rows, address and controls drawn under a header that says
+ * "Sign in" (Fable review x1).
  */
 export function SessionGate({ children, fallback }: SessionGateProps) {
   if (DEV_NO_AUTH) return <>{children}</>;
@@ -150,10 +157,44 @@ export function SessionGate({ children, fallback }: SessionGateProps) {
 }
 
 function ClerkSessionGate({ children, fallback }: SessionGateProps) {
-  const { isLoading } = useConvexAuth();
-  // A Clerk that failed to load never answers; the page is let through to say what it can.
+  const { isLoading, isAuthenticated } = useConvexAuth();
   const { status } = useClerk();
-  return <>{isLoading && status !== 'error' ? fallback : children}</>;
+  const { isSignedIn } = useAuth();
+  // A Clerk that failed to load never answers; the page is let through to say what it can.
+  if (status === 'error') return <>{children}</>;
+  if (isLoading) return <>{fallback}</>;
+  if (!isAuthenticated) return <SignedOut refused={isSignedIn === true} />;
+  return <>{children}</>;
+}
+
+/**
+ * What an owned page shows once Convex has settled with nobody signed in: the manager signed out
+ * (here or in another tab), or Clerk holds a session whose token the deployment refused. Either
+ * way the page's rows are gone, and signing in again brings the manager back to this page.
+ *
+ * @param refused - Whether Clerk still holds a session, so the deployment refused its token.
+ */
+export function SignedOut({ refused }: { readonly refused: boolean }) {
+  const pathname = usePathname();
+  return (
+    // Inside the page's own `main` (`MainTransition`), as the owned page it stands in for was.
+    <div className="grid min-h-[calc(100vh-3.25rem)] place-items-center px-6">
+      <div className="grid max-w-md justify-items-center gap-4 text-center">
+        <h1 className="text-lg font-semibold">
+          {refused ? 'Day0 could not confirm your sign-in' : 'You are signed out'}
+        </h1>
+        <p className="text-sm text-[var(--color-muted)]">
+          Sign in again to carry on where you were.
+        </p>
+        <ButtonLink
+          href={`/sign-in?redirect_url=${encodeURIComponent(pathname)}`}
+          variant="primary"
+        >
+          Sign in
+        </ButtonLink>
+      </div>
+    </div>
+  );
 }
 
 /**
