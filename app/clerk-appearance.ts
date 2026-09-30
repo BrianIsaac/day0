@@ -1,6 +1,9 @@
 import type { Appearance } from '@clerk/ui';
 import { dark } from '@clerk/themes';
 
+/** Day0's mark drawn for Clerk's dark card (`public/day0-mark.svg`), served from the app itself. */
+export const DAY0_MARK_URL = '/day0-mark.svg';
+
 /**
  * How every Clerk surface looks: the sign-in and sign-up pages, the header's sign-in and
  * create-account modals, and the account menu.
@@ -12,9 +15,18 @@ import { dark } from '@clerk/themes';
  * came to be drawn dark on dark. `@clerk/ui`, installed for its types only, types every
  * `appearance` prop and `satisfies Appearance` here, so the typecheck refuses a name Clerk does
  * not read.
+ *
+ * Every card carries Day0's mark above its title (the operator's ask, 30 September), set here
+ * rather than in Clerk's dashboard so the deployment's code decides it.
  */
 export const clerkAppearance = {
   theme: dark,
+  options: {
+    logoImageUrl: DAY0_MARK_URL,
+    logoPlacement: 'inside',
+    // The mark leads home within the product, never to the Clerk instance's configured home.
+    logoLinkUrl: '/',
+  },
   variables: {
     colorBackground: '#18181b',
     colorForeground: '#f4f4f5',

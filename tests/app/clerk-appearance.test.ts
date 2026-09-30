@@ -1,6 +1,21 @@
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { dark } from '@clerk/themes';
 import { describe, expect, it } from 'vitest';
-import { clerkAppearance } from '../../app/clerk-appearance';
+import { DAY0_MARK_URL, clerkAppearance, headedClerkAppearance } from '../../app/clerk-appearance';
+
+/** A file of the checkout, read by path (under Vite `new URL(path, import.meta.url)` is an asset). */
+function checkoutFile(path: string): string {
+  return readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../..', path), 'utf8');
+}
+
+/** The rectangles an SVG draws, as their geometry attributes. */
+function rects(svg: string): string[] {
+  return [...svg.matchAll(/<rect ([^>]*?)\s*\/>/g)].map(([, attributes]) =>
+    attributes.replace(/\s*(fill|class)="[^"]*"/g, ''),
+  );
+}
 
 /** The names Clerk's Core 2 read and Core 3 ignores, which left the hosted widget unreadable. */
 const RETIRED_VARIABLES = [
@@ -40,5 +55,24 @@ describe('the Clerk appearance', () => {
   it('keeps the neutral light and leaves the borders to it, so the social button and divider show', () => {
     expect(clerkAppearance.variables.colorNeutral).toBe('#f4f4f5');
     expect(clerkAppearance.variables).not.toHaveProperty('colorBorder');
+  });
+
+  it("puts Day0's mark on every card, inside it above the title, leading home within the product", () => {
+    expect(clerkAppearance.options).toEqual({
+      logoImageUrl: '/day0-mark.svg',
+      logoPlacement: 'inside',
+      logoLinkUrl: '/',
+    });
+    expect(DAY0_MARK_URL).toBe('/day0-mark.svg');
+  });
+
+  it("serves the mark from public/ in the brand's own geometry, the head in the accent and the eyes cut in the card's colour", () => {
+    const mark = checkoutFile('public/day0-mark.svg');
+    expect(rects(mark)).toEqual(rects(checkoutFile('app/icon.svg')));
+    expect(mark).toMatch(/viewBox="0 0 16 16"/);
+    expect(mark.match(/fill="#22d3ee"/g)).toHaveLength(2);
+    expect(
+      mark.match(new RegExp(`fill="${clerkAppearance.variables.colorBackground}"`, 'g')),
+    ).toHaveLength(2);
   });
 });
