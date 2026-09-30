@@ -425,9 +425,22 @@ describe('the company home', (): void => {
 
   it('arrives the main column’s cards with the page and leaves the aside still (v4 section 1.3)', (): void => {
     const page = render(roster);
-    expect(page).toMatch(/<div data-cards="" class="flex min-w-0 flex-col gap-6"><section/);
+    expect(page).toMatch(
+      /<div data-cards="" class="contents xl:flex xl:min-w-0 xl:flex-col xl:gap-6"><section/,
+    );
     expect(page.match(/data-cards=""/g)).toHaveLength(1);
     expect(page).toMatch(/<aside class="flex flex-col gap-6">/);
+  });
+
+  it('puts the aside before Reset in the one column below xl, and Reset under the main column at xl (walk m17)', (): void => {
+    const page = render(roster);
+    // Below xl the main column's cards are items of the page's one column, so an order moves Reset
+    // after the aside; at xl the column is a column again and Reset its last card.
+    expect(page).toMatch(/<div data-cards="" class="contents xl:flex /);
+    expect(page).toMatch(
+      /<div class="order-1 min-w-0 xl:order-none"><section[^>]*>(?:(?!<\/section>).)*Reset demo/s,
+    );
+    expect(page.indexOf('Reset demo')).toBeLessThan(page.indexOf('<aside'));
   });
 
   it('keeps the hosted one-employee home under a snapshot', (): void => {

@@ -92,8 +92,13 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
       </header>
       <RetiredNotice />
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_20rem] xl:items-start">
-        <div data-cards={arriving ? '' : undefined} className="flex min-w-0 flex-col gap-6">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-6 xl:grid-cols-[minmax(0,1fr)_20rem] xl:items-start">
+        {/* Below xl the column's cards join the page's one column, so Reset can follow the aside:
+            a manager on a phone reads what Deploy does before the card that wipes (walk m17). */}
+        <div
+          data-cards={arriving ? '' : undefined}
+          className="contents xl:flex xl:min-w-0 xl:flex-col xl:gap-6"
+        >
           {showDeployForm ? (
             <DeployForm
               boss={boss}
@@ -123,10 +128,12 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
             <MonthCard roster={roster} figures={figures} waiting={inbox?.total ?? 0} now={now} />
           ) : null}
           <CompanySupervision />
-          <ResetCard
-            hasEmployees={(agents?.length ?? 0) > 0}
-            hasDocumentation={(docSources?.length ?? 0) > 0}
-          />
+          <div className="order-1 min-w-0 xl:order-none">
+            <ResetCard
+              hasEmployees={(agents?.length ?? 0) > 0}
+              hasDocumentation={(docSources?.length ?? 0) > 0}
+            />
+          </div>
         </div>
         <aside className="flex flex-col gap-6">
           {showDeployForm ? <AfterDeploy /> : null}
