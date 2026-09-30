@@ -229,16 +229,30 @@ export function DayZero({
     }
   }, [agent.state, voiceSession, room]);
 
+  // The room drawn now. Until the session is read nothing is chosen, so the chooser never flashes
+  // over a one-to-one under way (hosted walk m23); a one-to-one under way is drawn in its room
+  // from that first read, rather than a frame after it once the effect above has caught up.
+  const resumed =
+    voiceSession && agent.state === 'day-one-in-progress'
+      ? voiceSession.mode === 'chat'
+        ? 'chat'
+        : 'voice'
+      : null;
+  const shown: Room | 'reading' =
+    voiceSession === undefined ? 'reading' : room === 'pick' && resumed ? resumed : room;
+
   return (
     <Columns
       arriving={arriving}
       aside={
-        room === 'pick' ? (
+        shown === 'reading' ? (
+          <WhatThisBecomes name={agent.name} />
+        ) : shown === 'pick' ? (
           <>
             <WhatItKnows />
             <DayZeroRecord />
           </>
-        ) : room === 'chat' ? (
+        ) : shown === 'chat' ? (
           <>
             <NotedSoFar answers={noted} />
             <WhatThisBecomes name={agent.name} />
@@ -257,9 +271,11 @@ export function DayZero({
         role="region"
         aria-label="The 1:1 that drafts the charter"
       >
-        {room === 'pick' ? (
+        {shown === 'reading' ? (
+          <PanelLoading label="the 1:1" frame={ROOM_FRAME} />
+        ) : shown === 'pick' ? (
           <ModePicker onPick={setRoom} />
-        ) : room === 'voice' ? (
+        ) : shown === 'voice' ? (
           <VoiceRoom
             agentId={agent._id}
             bossLabel={agent.bossEmail}

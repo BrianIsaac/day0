@@ -38,6 +38,8 @@ import { errorMessage } from '../src/lib/errors';
  *   - `recoverFinalisation` - the deployment finishing a call neither client
  *     will come back for. Internal, and scheduled by the database rather
  *     than called by anybody.
+ *   - `draftKeptConversation` - the draft of a chat one-to-one its session
+ *     kept, scheduled by the close that claimed it (`convex/oneToOne.ts`).
  *   - `postCharterApproval` - scheduled by `charters.approve`. Seeds the
  *     work the approved charter implies; makes no web-research call and
  *     needs no search key.
@@ -574,6 +576,44 @@ export const recoverFinalisation = internalAction({
       // The release this attempt already performed carries the reason and
       // schedules the next try, so rethrowing would only turn a handled failure
       // into a failed scheduled function.
+      return { outcome: 'failed', reason: errorMessage(err) };
+    }
+  },
+});
+
+/**
+ * Draft the charter from a chat one-to-one its session kept, from the claim its close took
+ * (`oneToOne.recordAnswer` on an earned close, `oneToOne.finish`). Internal, scheduled in the
+ * transaction that ends the one-to-one, so the draft never waits on a room. A claim that is no
+ * longer this run's (taken over after its lease, or already finalised) is left to its holder; a
+ * failure releases the session, which schedules the deployment's own re-drive, so it is not
+ * rethrown.
+ */
+export const draftKeptConversation = internalAction({
+  args: { sessionId: v.id('voiceSessions'), claimToken: v.string() },
+  handler: async (ctx, args): Promise<RecoveryOutcome> => {
+    const session = await ctx.runQuery(internal.voice.getInternal, { sessionId: args.sessionId });
+    if (
+      !session ||
+      session.state !== 'synthesising' ||
+      session.claimToken !== args.claimToken ||
+      !session.pendingTranscript
+    ) {
+      return { outcome: 'skipped', reason: "the claim is no longer this draft's" };
+    }
+    try {
+      const result = await finaliseClaimedSession(ctx, {
+        sessionId: session._id,
+        agentId: session.agentId,
+        claimToken: args.claimToken,
+        bossLabel: session.pendingBossLabel ?? 'boss',
+        transcript: session.pendingTranscript,
+      });
+      return result.outcome === 'synthesised'
+        ? { outcome: 'recovered', charterId: result.charterId, version: result.version }
+        : { outcome: 'skipped', reason: `another finisher reported ${result.outcome}` };
+    } catch (err) {
+      // The release this attempt already performed carries the reason and schedules the retry.
       return { outcome: 'failed', reason: errorMessage(err) };
     }
   },

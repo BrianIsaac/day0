@@ -76,3 +76,25 @@ describe('what the room says while the charter drafts', (): void => {
     expect(html).not.toContain('<button');
   });
 });
+
+describe('the notice as the room focuses it', (): void => {
+  it("takes focus by script with no focus ring, in both its forms, as the page's other focus targets do", (): void => {
+    for (const phase of [
+      { kind: 'drafting' },
+      { kind: 'failed', reason: 'the model timed out' },
+    ] as const) {
+      const html = renderToStaticMarkup(
+        <DraftingNotice
+          name="Mira"
+          phase={phase}
+          post={{ kind: 'idle' }}
+          onDraftAgain={() => undefined}
+          onHoldAgain={() => undefined}
+        />,
+      );
+      const root = /^<div([^>]*)>/.exec(html)?.[1] ?? '';
+      expect(root).toContain('tabindex="-1"');
+      expect(root.split('class="')[1]?.split('"')[0].split(' ')).toContain('outline-none');
+    }
+  });
+});

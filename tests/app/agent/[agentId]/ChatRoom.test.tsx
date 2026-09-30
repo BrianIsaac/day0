@@ -17,9 +17,9 @@ const room = vi.hoisted(() => ({
 // The seams are the Convex client and the chat hook; the room's own logic runs. The session
 // query answers null: no one-to-one has been held yet.
 vi.mock('convex/react', () => ({
-  useMutation: () => async (): Promise<{ sessionId: string }> => {
+  useMutation: () => async (): Promise<{ sessionId: string; turns: never[]; replyDraft: null }> => {
     if (room.startRefusal) throw room.startRefusal;
-    return { sessionId: 'session-1' };
+    return { sessionId: 'session-1', turns: [], replyDraft: null };
   },
   useQuery: (): null => null,
 }));
@@ -46,17 +46,18 @@ import {
 import {
   FinishControl,
   REPLY_HELP,
-  REPLY_MAX_CHARS,
   ReplyInput,
   TurnFailureNotice,
   askAgain,
   canFinish,
-  charterTranscript,
+  chatTurnTransport,
   composerLocked,
   errorLine,
   turnFailure,
+  turnRequestFor,
 } from '../../../../app/agent/[agentId]/ChatRoom';
 import { INIT_PROMPT } from '../../../../src/agent/day-one-turn';
+import { REPLY_MAX_CHARS } from '../../../../src/agent/one-to-one-conversation';
 
 /** What `useChat` hands `onFinish`, cut down to what the chat room reads. */
 function finished(
@@ -129,8 +130,18 @@ describe('a stream error', (): void => {
   });
 
   it('shows any other error as it reads, and never an empty line', (): void => {
-    expect(errorLine(new Error('Failed to fetch'))).toBe('Failed to fetch');
+    expect(errorLine(new Error('The model timed out'))).toBe('The model timed out');
     expect(errorLine(new Error(''))).toBe('employee unavailable');
+  });
+
+  it("says a request that never reached Day0 in the page's words, not the browser's (re-pinned)", (): void => {
+    for (const browser of [
+      'Failed to fetch',
+      'NetworkError when attempting to fetch resource.',
+      'Load failed',
+    ]) {
+      expect(errorLine(new TypeError(browser))).toBe('The page could not reach Day0');
+    }
   });
 });
 
@@ -301,32 +312,6 @@ describe('finishing the 1:1 from the room', (): void => {
     expect(canFinish({ status: 'ready', done: true, messages: conversation })).toBe(false);
   });
 
-  it('builds the transcript the charter is drafted from without the priming turn, closing line included', (): void => {
-    const closed = [
-      ...conversation,
-      turn('3', 'assistant', [
-        { type: 'text', text: 'Thanks.' },
-        {
-          type: 'tool-dayOneComplete',
-          toolCallId: 'c1',
-          state: 'input-available',
-          input: { closingLine: 'I will draft the charter now.' },
-        },
-      ]),
-    ];
-
-    expect(charterTranscript(closed)).toBe(
-      [
-        'ASSISTANT: Why this hire?',
-        'USER: To close the books faster.',
-        'ASSISTANT: Thanks. I will draft the charter now.',
-      ].join('\n\n'),
-    );
-    expect(charterTranscript(conversation)).toBe(
-      'ASSISTANT: Why this hire?\n\nUSER: To close the books faster.',
-    );
-  });
-
   it('renders Finish as a labelled button that is disabled until it can run', (): void => {
     const enabled = renderToStaticMarkup(<FinishControl disabled={false} onFinish={() => {}} />);
     const disabled = renderToStaticMarkup(<FinishControl disabled onFinish={() => {}} />);
@@ -434,5 +419,58 @@ describe('the turns arriving in the 1:1 (v3 section 5.2)', (): void => {
     ]);
     view.unmount();
     room.messages = [];
+  });
+});
+
+describe('a turn as the room sends it (30 Sep, a one-to-one lost to a closed tab)', (): void => {
+  const opening: UIMessage[] = [turn('0', 'user', said(INIT_PROMPT))];
+  const replied: UIMessage[] = [
+    turn('1', 'assistant', said('Why this hire?')),
+    turn('2', 'user', said('To close the books faster.')),
+  ];
+
+  it('names the turn it wants: the opening, the reply by its id, or the reply to answer again', (): void => {
+    expect(turnRequestFor(opening, 'submit-message', null)).toEqual({ kind: 'open' });
+    expect(turnRequestFor(replied, 'submit-message', null)).toEqual({
+      kind: 'reply',
+      id: '2',
+      text: 'To close the books faster.',
+    });
+    expect(turnRequestFor(replied, 'regenerate-message', 'a9')).toEqual({
+      kind: 'ask-again',
+      reply: { id: '2', text: 'To close the books faster.' },
+      discarding: 'a9',
+    });
+    expect(turnRequestFor(opening, 'regenerate-message', null)).toEqual({
+      kind: 'ask-again',
+      reply: null,
+      discarding: null,
+    });
+  });
+
+  it('posts the employee and the turn, and never the history, which the session keeps', async (): Promise<void> => {
+    const bodies: unknown[] = [];
+    vi.stubGlobal('fetch', async (_url: string, init: RequestInit): Promise<Response> => {
+      bodies.push(JSON.parse(String(init.body)));
+      return new Response('data: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream' } });
+    });
+    try {
+      await chatTurnTransport('agent-1' as Id<'agents'>, 'Sam').sendMessages({
+        chatId: 'room',
+        messages: replied,
+        trigger: 'submit-message',
+        messageId: undefined,
+        abortSignal: undefined,
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(bodies).toEqual([
+      {
+        agentId: 'agent-1',
+        bossLabel: 'Sam',
+        request: { kind: 'reply', id: '2', text: 'To close the books faster.' },
+      },
+    ]);
   });
 });

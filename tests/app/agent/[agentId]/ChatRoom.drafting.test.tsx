@@ -13,22 +13,37 @@ const room = vi.hoisted(() => ({
   starts: 0,
   /** What `voice.restart` was asked to set aside. */
   restarts: [] as unknown[],
+  /** The conversation `voice.start` hands back: the turns the session kept, and the reply typed. */
+  kept: [] as OneToOneTurn[],
+  replyDraft: null as string | null,
+  /** What `oneToOne.finish` rejects with, when set. */
+  finishRefusal: undefined as Error | undefined,
+  /** Every `oneToOne` mutation the room called, by name. */
+  calls: [] as { name: string; args: unknown }[],
   messages: [] as UIMessage[],
   status: 'ready' as string,
   sent: [] as unknown[],
+  regenerated: 0,
+  stopped: 0,
 }));
 
 vi.mock('convex/react', () => ({
   useMutation:
     (reference: unknown) =>
     async (args: unknown): Promise<unknown> => {
-      if (getFunctionName(reference as never) === 'voice:restart') {
+      const name = getFunctionName(reference as never);
+      if (name === 'voice:restart') {
         room.restarts.push(args);
         return { ok: true };
       }
+      if (name.startsWith('oneToOne:')) {
+        room.calls.push({ name, args });
+        if (name === 'oneToOne:finish' && room.finishRefusal) throw room.finishRefusal;
+        return name === 'oneToOne:finish' ? { ok: true } : { kept: true };
+      }
       room.starts += 1;
       if (room.start === 'never') return await new Promise(() => undefined);
-      return { sessionId: 'session-1' };
+      return { sessionId: 'session-1', turns: room.kept, replyDraft: room.replyDraft };
     },
   useQuery: (): unknown => room.session,
 }));
@@ -37,19 +52,31 @@ vi.mock('@ai-sdk/react', async (importOriginal) => ({
   useChat: () => ({
     messages: room.messages,
     sendMessage: (message: unknown): void => void room.sent.push(message),
-    regenerate: (): void => undefined,
+    regenerate: (): void => {
+      room.regenerated += 1;
+    },
     setMessages: (next: UIMessage[]): void => {
       room.messages = next;
     },
     status: room.status,
+    stop: async (): Promise<void> => {
+      room.stopped += 1;
+    },
   }),
 }));
 
-import { ChatRoom, progressOf, sendsReply } from '../../../../app/agent/[agentId]/ChatRoom';
+import {
+  ChatRoom,
+  REPLY_DRAFT_KEEP_MS,
+  progressOf,
+  sendsReply,
+} from '../../../../app/agent/[agentId]/ChatRoom';
 import { SYNTHESIS_DEADLINE_MS } from '../../../../app/agent/[agentId]/charter-synthesis';
+import { TURN_DEADLINE_MS } from '../../../../app/agent/[agentId]/one-to-one/deadline';
 import type { Id } from '../../../../convex/_generated/dataModel';
 import { INIT_PROMPT } from '../../../../src/agent/day-one-turn';
 import { MAX_FINALISATION_RECOVERIES } from '../../../../src/agent/one-to-one-phase';
+import type { OneToOneTurn } from '../../../../src/agent/one-to-one-conversation';
 import { axeViolations } from '../../../fixtures/dom/axe';
 import { EMPLOYEE_ROW, asEmployee } from '../../../fixtures/dom/employee';
 import { mount, press, said, settle, typeInto } from '../../../fixtures/dom/press';
@@ -83,9 +110,15 @@ beforeEach((): void => {
   room.start = 'answer';
   room.starts = 0;
   room.restarts = [];
+  room.kept = [];
+  room.replyDraft = null;
+  room.finishRefusal = undefined;
+  room.calls = [];
   room.messages = [];
   room.status = 'ready';
   room.sent = [];
+  room.regenerated = 0;
+  room.stopped = 0;
   answerPosts(async () => Response.json({ outcome: 'synthesised' }));
 });
 
@@ -175,7 +208,7 @@ describe('the composer and an input method', (): void => {
 });
 
 describe('finishing and drafting (round two section 3.4)', (): void => {
-  it('asks before finishing, then says what happens and how long it takes, the transcript kept', async (): Promise<void> => {
+  it('asks before finishing, then has the session draft from what it kept, the transcript kept on the page (re-pinned)', async (): Promise<void> => {
     room.messages = CONVERSATION.slice(0, 3);
     const view = mount(<ChatRoom agentId={AGENT} bossLabel="Sam" />);
     await settle();
@@ -185,14 +218,12 @@ describe('finishing and drafting (round two section 3.4)', (): void => {
     await press(document.body, 'Finish and draft');
     await settle();
 
-    expect(posts).toEqual([
-      {
-        agentId: AGENT,
-        bossLabel: 'Sam',
-        transcript: 'ASSISTANT: Why this hire?\n\nUSER: Tier-2 asks swamp the close.',
-        voiceSessionId: 'session-1',
-      },
-    ]);
+    expect(room.calls).toContainEqual({
+      name: 'oneToOne:finish',
+      args: { sessionId: 'session-1', bossLabel: 'Sam' },
+    });
+    // The session drafts from the turns it kept; the room posts nothing that a closed tab could lose.
+    expect(posts).toEqual([]);
     expect(said(view.container)).toContain(
       'Drafting your charter, usually under a minute. Your answers are kept beside it, so you can re-read what you said while you review.',
     );
@@ -204,56 +235,179 @@ describe('finishing and drafting (round two section 3.4)', (): void => {
     view.unmount();
   });
 
-  it('says why the draft failed when the post never reached a session, and posts again on Draft again', async (): Promise<void> => {
-    answerPosts(async () => {
-      throw new TypeError('Failed to fetch');
-    });
+  it('says why the one-to-one could not finish, and keeps it open to finish again (re-pinned)', async (): Promise<void> => {
+    room.finishRefusal = new Error('Failed to fetch');
     room.messages = [...CONVERSATION.slice(0, 3)];
     const view = mount(<ChatRoom agentId={AGENT} bossLabel="Sam" />);
     await settle();
     await press(view.container, 'Finish');
     await press(document.body, 'Finish and draft');
     await settle();
-    expect(said(view.container).join(' ')).toContain(
-      'The charter could not be drafted: the page could not reach Day0.',
+    expect(view.container.querySelector('[role="alert"]')?.textContent).toBe(
+      'The one-to-one could not finish: Failed to fetch. Nothing you said is lost.',
     );
-    // Finish left the page with its form; focus is on what took its place.
-    expect(document.activeElement?.getAttribute('data-drafting')).toBe('failed');
+    // Finish is what failed, so Finish is what is offered again: Ask again would re-ask the employee.
+    expect(view.container.textContent).not.toContain('Ask again');
+    expect(view.container.querySelector('textarea')).not.toBeNull();
 
-    answerPosts(async () => Response.json({ outcome: 'synthesised' }));
-    await press(view.container, 'Draft again');
-    expect(posts).toHaveLength(1);
-    expect(view.container.querySelector('[data-drafting="failed"]')).toBeNull();
-    expect(document.activeElement?.getAttribute('data-drafting')).toBe('drafting');
+    room.finishRefusal = undefined;
+    await press(view.container, 'Finish');
+    await press(document.body, 'Finish and draft');
+    await settle();
+    expect(room.calls.filter((call) => call.name === 'oneToOne:finish')).toHaveLength(2);
     expect(said(view.container).join(' ')).toContain('Drafting your charter');
     view.unmount();
   });
 
-  it('says the draft is taking longer than usual once the post outlasts its deadline', async (): Promise<void> => {
+  it('says the draft is taking longer than usual once the session has drafted past the deadline (re-pinned)', async (): Promise<void> => {
     vi.useFakeTimers();
-    // The route never answers: the post waits until its own deadline aborts it.
-    vi.stubGlobal(
-      'fetch',
-      (_url: string, init: RequestInit): Promise<Response> =>
-        new Promise((_resolve, reject): void => {
-          init.signal?.addEventListener('abort', () => reject(init.signal?.reason), {
-            once: true,
-          });
-        }),
-    );
-    room.messages = CONVERSATION.slice(0, 3);
+    room.session = {
+      _id: 'session-1',
+      state: 'synthesising',
+      pendingTranscript: 'ASSISTANT: Why this hire?\n\nUSER: The close.',
+    };
     const view = mount(<ChatRoom agentId={AGENT} bossLabel="Sam" />);
-    await settle();
-    await press(view.container, 'Finish');
-    await press(document.body, 'Finish and draft');
     await act(async (): Promise<void> => {
-      await vi.advanceTimersByTimeAsync(SYNTHESIS_DEADLINE_MS);
+      await vi.advanceTimersByTimeAsync(SYNTHESIS_DEADLINE_MS - 1);
     });
-    await settle();
+    expect(view.container.querySelector('[role="status"]')?.textContent).not.toContain(
+      'longer than usual',
+    );
+    await act(async (): Promise<void> => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
     expect(view.container.querySelector('[role="status"]')?.textContent).toBe(
       'Drafting your charter, usually under a minute. It has taken longer than usual. It carries on, and the charter opens here when it is ready.',
     );
     expect(view.container.querySelector('[role="alert"]')).toBeNull();
+    view.unmount();
+  });
+});
+
+/** A kept turn, as the session holds it. */
+function keptTurn(
+  id: string,
+  speaker: OneToOneTurn['speaker'],
+  text: string,
+  topicIndex?: number,
+): OneToOneTurn {
+  return { id, speaker, text, at: 1, ...(topicIndex === undefined ? {} : { topicIndex }) };
+}
+
+/** The one-to-one as the session kept it after `answers` replies, the next question asked. */
+function keptThrough(answers: number): OneToOneTurn[] {
+  const turns = [keptTurn('e0', 'employee', 'Why this hire?', 0)];
+  for (let index = 0; index < answers; index += 1) {
+    turns.push(keptTurn(`m${index}`, 'manager', `Answer ${index + 1}.`));
+    if (index < 6)
+      turns.push(keptTurn(`e${index + 1}`, 'employee', `Question ${index + 2}?`, index + 1));
+  }
+  return turns;
+}
+
+describe('a room reopened on a one-to-one under way (30 Sep, a one-to-one lost to a closed tab)', (): void => {
+  /** Mount the room, let it open, and draw what it seeded (the chat hook here is a stand-in). */
+  async function reopen(): Promise<ReturnType<typeof mount>> {
+    room.session = { _id: 'session-1', state: 'active', turns: room.kept };
+    const view = mount(<ChatRoom agentId={AGENT} bossLabel="Sam" />);
+    await settle();
+    act((): void => view.root.render(<ChatRoom agentId={AGENT} bossLabel="Sam" />));
+    await settle();
+    return view;
+  }
+
+  it('draws every kept turn and carries on at the question it stood at, never question 1', async (): Promise<void> => {
+    room.kept = keptThrough(3);
+    const view = await reopen();
+    expect(room.sent).toEqual([]);
+    expect(room.regenerated).toBe(0);
+    const log = view.container.querySelector('[role="log"]')?.textContent ?? '';
+    for (const answer of ['Answer 1.', 'Answer 2.', 'Answer 3.'])
+      expect(log).toContain(`You: ${answer}`);
+    expect(view.container.textContent).toContain('Question 4 of 7');
+    expect(view.container.querySelector('textarea')?.disabled).toBe(false);
+    view.unmount();
+  });
+
+  it('asks again for the answer the employee owed when the room closed as it answered, the seventh included', async (): Promise<void> => {
+    room.kept = keptThrough(7);
+    const view = await reopen();
+    expect(room.sent).toEqual([]);
+    expect(room.regenerated).toBe(1);
+    expect(view.container.querySelector('[role="log"]')?.textContent?.match(/You: /g)).toHaveLength(
+      7,
+    );
+    view.unmount();
+  });
+
+  it('puts the reply the manager was typing back in the composer', async (): Promise<void> => {
+    room.kept = keptThrough(2);
+    room.replyDraft = 'Half of my ans';
+    const view = await reopen();
+    expect(view.container.querySelector('textarea')?.value).toBe('Half of my ans');
+    view.unmount();
+  });
+
+  it('keeps the reply being typed on the session once the composer rests', async (): Promise<void> => {
+    room.kept = keptThrough(1);
+    const view = await reopen();
+    vi.useFakeTimers();
+    await typeInto(view.container.querySelector('textarea')!, 'Priya in fin');
+    await act(async (): Promise<void> => {
+      await vi.advanceTimersByTimeAsync(REPLY_DRAFT_KEEP_MS);
+    });
+    expect(room.calls.at(-1)).toEqual({
+      name: 'oneToOne:keepReplyDraft',
+      args: { sessionId: 'session-1', text: 'Priya in fin', after: 'm0' },
+    });
+    view.unmount();
+  });
+
+  it('does not end the one-to-one on a close the session never kept, once a reply follows it (second pass)', async (): Promise<void> => {
+    room.messages = [
+      ...CONVERSATION.slice(1, 3),
+      {
+        id: 'closing',
+        role: 'assistant',
+        parts: [
+          {
+            type: 'tool-dayOneComplete',
+            toolCallId: 'c1',
+            state: 'input-available',
+            input: { closingLine: 'Thanks.' },
+          },
+        ],
+      } as UIMessage,
+      turn('4', 'user', 'One more thing: Omar owns the rota.'),
+    ];
+    const view = mount(<ChatRoom agentId={AGENT} bossLabel="Sam" />);
+    await settle();
+    expect(view.container.querySelector('[data-drafting]')).toBeNull();
+    expect(view.container.querySelector('textarea')).not.toBeNull();
+    view.unmount();
+  });
+
+  it('draws a conversation that closed as drafting, and posts nothing of its own', async (): Promise<void> => {
+    room.kept = [
+      ...keptThrough(7),
+      { ...keptTurn('e7', 'employee', ''), closingLine: 'Thanks, drafting now.' },
+    ];
+    room.session = {
+      _id: 'session-1',
+      state: 'synthesising',
+      turns: room.kept,
+      pendingTranscript: 'ASSISTANT: Why this hire?',
+    };
+    const view = mount(<ChatRoom agentId={AGENT} bossLabel="Sam" />);
+    await settle();
+    act((): void => view.root.render(<ChatRoom agentId={AGENT} bossLabel="Sam" />));
+    await settle();
+    expect(room.starts).toBe(0);
+    expect(posts).toEqual([]);
+    const log = view.container.querySelector('[role="log"]')?.textContent ?? '';
+    expect(log.match(/You: /g)).toHaveLength(7);
+    expect(log).toContain('Thanks, drafting now.');
+    expect(said(view.container).join(' ')).toContain('Drafting your charter');
     view.unmount();
   });
 });
@@ -423,6 +577,34 @@ describe('the chat room against the accessibility floor (N14)', (): void => {
     await settle();
     expect(await axeViolations(view.container, ['region'])).toEqual([]);
     expect(underTarget(view.container)).toEqual([]);
+    view.unmount();
+  });
+});
+
+describe('a turn that never answers (hosted walk m30)', (): void => {
+  it('stops waiting at the deadline and offers Ask again, which answers the kept reply', async (): Promise<void> => {
+    vi.useFakeTimers();
+    room.messages = CONVERSATION.slice(0, 3);
+    room.status = 'submitted';
+    const view = mount(<ChatRoom agentId={AGENT} bossLabel="Sam" />);
+    await act(async (): Promise<void> => {
+      await vi.advanceTimersByTimeAsync(TURN_DEADLINE_MS - 1);
+    });
+    expect(view.container.querySelector('[role="alert"]')).toBeNull();
+    await act(async (): Promise<void> => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(room.stopped).toBe(1);
+    room.status = 'ready';
+    act((): void => view.root.render(<ChatRoom agentId={AGENT} bossLabel="Sam" />));
+    expect(view.container.querySelector('[role="alert"]')?.textContent).toBe(
+      'Your employee did not answer within 75 seconds.Ask again',
+    );
+    await act(async (): Promise<void> => {
+      view.container.querySelector<HTMLButtonElement>('[role="alert"] button')!.click();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(room.regenerated).toBe(1);
     view.unmount();
   });
 });
