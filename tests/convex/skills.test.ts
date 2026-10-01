@@ -845,6 +845,34 @@ describe('skills.approve while a handover waits for its runs (U3-m3)', (): void 
     expect(grants.filter((grant) => grant.source === 'skill')).toEqual([]);
   });
 
+  it('refuses the old manager’s request for a revision once the new one has accepted (the wave 10 review, M1)', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId } = await seedAgentAndWork(harness, 'tickets');
+    const skillId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('skills', {
+          agentId,
+          name: 'ticket-comment-and-close',
+          description: 'Close a ticket.',
+          body: '# Close',
+          sourceType: 'agent-authored',
+          state: 'registered',
+          registeredAt: 2,
+          createdAt: 1,
+        }),
+    );
+    await seedTransfer(harness, agentId, 'accepting');
+
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.skills.requestRevision, { skillId }),
+    ).rejects.toMatchObject({
+      data: expect.stringContaining('handover to colleague@day0.local was already accepted'),
+    });
+    const rows = await harness.run(async (ctx) => await ctx.db.query('skills').collect());
+    expect(rows.filter((row) => row.agentId === agentId)).toHaveLength(1);
+  });
+
   it('lets the old manager approve while the handover is only asked', async (): Promise<void> => {
     useSurfaceMode('mock');
     const harness = convexTest(schema, allConvexModules());

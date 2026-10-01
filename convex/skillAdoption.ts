@@ -10,6 +10,7 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, assertOwnsSkill } from './ownership';
 import { appendEvent } from './eventLog';
+import { assertNotBeingHandedOver } from './handoverFence';
 import { grantScopeInTransaction } from './agents';
 import { ownerVersions, sharedSkillsOn } from './skillVersions';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
@@ -286,11 +287,15 @@ async function standingOffer(
 /**
  * Adopt the offered version for an offered proposal, in the caller's transaction: the approval of
  * the scopes the employee lacks, `skill.approved` and `skill.adopted`, and the stored verification
- * scheduled.
+ * scheduled. Refused, as the plain approval is, once a new manager has accepted the employee and
+ * it waits for its runs: the skill and its scopes would move with it after the new manager's
+ * preview (U3-m3; the wave 10 review, M1).
  *
- * @throws ConvexError when the row is not an offered proposal or the offer no longer stands.
+ * @throws ConvexError when a handover of the employee was accepted, the row is not an offered
+ *   proposal or the offer no longer stands.
  */
 async function adoptOffer(ctx: MutationCtx, row: Doc<'skills'>): Promise<{ scopes: string[] }> {
+  await assertNotBeingHandedOver(ctx.db, row.agentId);
   if (row.state !== 'proposed' || row.offeredVersionId === undefined) {
     throw new ConvexError(`${row.name} has no skill offered to adopt.`);
   }
@@ -337,8 +342,8 @@ async function adoptOffer(ctx: MutationCtx, row: Doc<'skills'>): Promise<{ scope
  * employee's own connection and tool allowlist and registers it only on a pass.
  *
  * @returns The scopes the adoption granted.
- * @throws ConvexError, in words for the manager, when the row is not an offered proposal or the
- *   offer no longer stands.
+ * @throws ConvexError, in words for the manager, when a handover of the employee was accepted, the
+ *   row is not an offered proposal or the offer no longer stands.
  */
 export const adopt = mutation({
   args: { skillId: v.id('skills') },

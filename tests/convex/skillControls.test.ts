@@ -11,6 +11,7 @@ import { parkedCheckLog } from '../../src/work/skill-adoption';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import { acceptedHandoverWords, seedAcceptingHandover } from './fakes/accepting-handover';
 
 /**
  * `convex/skillControls.ts`: the manager's five controls on a skill (the enhancements plan,
@@ -1055,6 +1056,22 @@ describe('skillControls', (): void => {
       expect(
         (await eventsOf(harness, office.priya, 'skill.revision-requested')).map((e) => e.payload),
       ).toEqual([{ skillId: office.priyaSkill, name: NAME, revisionId }]);
+    });
+
+    it('refuses a revision once a new manager has accepted the employee, in the accepted handover’s words (the wave 10 review, M1)', async (): Promise<void> => {
+      const harness = convexTest(schema, allConvexModules());
+      const office = await seedOffice(harness);
+      await seedAcceptingHandover(harness, office.mateo, 'Mateo');
+
+      await expect(
+        harness
+          .withIdentity(OWNER)
+          .mutation(api.skillControls.askForRevision, { skillId: office.mateoSkill }),
+      ).rejects.toMatchObject({ data: acceptedHandoverWords('Mateo') });
+
+      const rows = await harness.run(async (ctx) => await ctx.db.query('skills').collect());
+      expect(rows.filter((row) => row.agentId === office.mateo)).toHaveLength(1);
+      expect(await eventsOf(harness, office.mateo, 'skill.revision-requested')).toEqual([]);
     });
 
     it('refuses a skill that is not callable, and a built-in one', async (): Promise<void> => {

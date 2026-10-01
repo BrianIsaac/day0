@@ -10,6 +10,7 @@ import { versionBodyHash } from '../../src/work/skill-library';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import { acceptedHandoverWords, seedAcceptingHandover } from './fakes/accepting-handover';
 
 /**
  * `skillAdoption`: a sibling's verified skill offered at `needs-skill`, adopted with one approval
@@ -461,6 +462,24 @@ describe('skillAdoption: adopting and the stored verification (mock mode)', (): 
     useSurfaceMode('mock');
     recorded.sandboxRuns.length = 0;
     recorded.sandbox = PASSED;
+  });
+
+  it('refuses Adopt once a new manager has accepted the employee, in the accepted handover’s words, and grants nothing (the wave 10 review, M1)', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const priya = await employee(harness, 'Priya');
+    const ines = await employee(harness, 'Ines');
+    await version(harness, priya);
+    const skillId = await propose(harness, ines);
+    await seedAcceptingHandover(harness, ines, 'Ines');
+
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.skillAdoption.adopt, { skillId }),
+    ).rejects.toMatchObject({ data: acceptedHandoverWords('Ines') });
+
+    expect((await row(harness, skillId)).state).toBe('proposed');
+    expect(await liveGrants(harness, ines)).toEqual([]);
+    expect(await eventsOf(harness, 'skill.adopted')).toEqual([]);
   });
 
   it("adopt grants only the adopter's missing scopes and schedules the stored verification", async (): Promise<void> => {

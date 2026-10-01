@@ -11,6 +11,7 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, assertOwnsSkill } from './ownership';
 import { appendEvent, eventsOfType } from './eventLog';
+import { assertNotBeingHandedOver } from './handoverFence';
 import { holdersOf } from './skillVersions';
 import { applyVerdict } from './work';
 import { scheduleNextStep, STEP_LEASE_MS } from './workLoop';
@@ -822,13 +823,18 @@ export const giveUp = mutation({
  * checks while the current row keeps running. At its registration the current row becomes
  * `superseded` in the same transaction and the library gains the next version
  * (`skills.completeRegistration`). History is kept, so a skill that has already run may be
- * revised. One revision is written at a time.
+ * revised. One revision is written at a time. Refused once a new manager has accepted the
+ * employee and it waits for its runs: the revision would register and supersede the skill the new
+ * manager previewed (U3-m3; the wave 10 review, M1).
  *
  * @param ctx - The control's mutation context.
  * @param row - The current row, which the caller owns.
  * @returns The new row the authoring run writes.
+ * @throws ConvexError when a handover of the employee was accepted, the row is not a callable
+ *   skill an employee wrote, or a revision of it is already being written.
  */
 export async function openRevision(ctx: MutationCtx, row: Doc<'skills'>): Promise<Id<'skills'>> {
+  await assertNotBeingHandedOver(ctx.db, row.agentId);
   assertCallableAuthored(row, 'revised');
   if ((await openRevisionsOf(ctx, row)).length > 0) {
     throw new ConvexError(`A revision of ${row.name} is already being written.`);
