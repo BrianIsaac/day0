@@ -92,6 +92,14 @@ export function ProposedSkillsPanel({
   // A declined adoption leaves every list with its row; its card stays drawn, declined, until the
   // manager leaves the tab, so each decision is read where it was made.
   const [declined, setDeclined] = useState<readonly Adoption[]>([]);
+  // The adoption whose check the panel's last line says is under way, and the line: it stands
+  // while the check does, and goes once the card says otherwise (the wave 10 review, A-m4).
+  const [checkLine, setCheckLine] = useState<{
+    readonly skillId: Id<'skills'>;
+    readonly text: string;
+    /** The card's state when the check was asked for: an offer adopted, or a stopped check. */
+    readonly from: 'offered' | 'stalled';
+  } | null>(null);
 
   const offers = useMemo(
     (): ReadonlyMap<Id<'skills'>, Adoption> =>
@@ -132,20 +140,39 @@ export function ProposedSkillsPanel({
   }
 
   function onAdopt(adoption: Adoption): void {
+    const text = `Adopting ${adoption.name} for ${name}: the sandbox is checking it again, and this card says when ${name} can use it.`;
     change.run(() => adopt({ skillId: adoption.skillId }), {
-      done: `Adopting ${adoption.name} for ${name}: the sandbox is checking it again, and this card says when ${name} can use it.`,
+      done: text,
       refused: `${adoption.name} was not adopted.`,
-      // Filed with no reason, so the Skills card says so once the check registers it.
-      after: () => onAuthoringAttempt({ skillId: adoption.skillId, name: adoption.name }),
+      after: () => {
+        setCheckLine({ skillId: adoption.skillId, text, from: 'offered' });
+        // Filed with no reason, so the Skills card says so once the check registers it.
+        onAuthoringAttempt({ skillId: adoption.skillId, name: adoption.name });
+      },
     });
   }
 
   function onCheckAgain(adoption: Adoption): void {
+    const text = `Checking ${adoption.name} again for ${name}: this card says when ${name} can use it.`;
     change.run(() => verifyAgain({ skillId: adoption.skillId }), {
-      done: `Checking ${adoption.name} again for ${name}: this card says when ${name} can use it.`,
+      done: text,
       refused: `${adoption.name} was not checked again.`,
+      after: () => setCheckLine({ skillId: adoption.skillId, text, from: 'stalled' }),
     });
   }
+
+  // A line about a check under way says nothing true once its card does not: the adoption
+  // registered (or was declined) and left the panel, its check failed, or an Adopt's check stopped
+  // short. A Check it again is pressed on a stopped card, which reads stopped until the check
+  // claims the row, so its line stands until the card is gone or failed.
+  const checkAt = checkLine === null ? undefined : offers.get(checkLine.skillId);
+  const checkState = checkAt === undefined ? undefined : adoptionStateAt(checkAt, now);
+  const checkLineStale =
+    checkLine !== null &&
+    change.outcome?.text === checkLine.text &&
+    (checkState === undefined ||
+      checkState === 'failed' ||
+      (checkState === 'stalled' && checkLine.from === 'offered'));
 
   // Write a new one instead: the offer is set aside first, so a refused approval leaves an
   // ordinary proposal to approve, never an approved row the card would take for an adoption.
@@ -317,7 +344,7 @@ export function ProposedSkillsPanel({
           </p>
         </Card>
       ) : null}
-      <StatusRegion outcome={change.outcome} />
+      <StatusRegion outcome={checkLineStale ? null : change.outcome} />
     </>
   );
 }
