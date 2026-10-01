@@ -30,7 +30,9 @@ function FoldedNotice() {
     >
       <Disclosure
         summary={
-          <span className="font-semibold text-[var(--color-fg)]">{HOSTED_DEMO_NOTICE.heading}</span>
+          <span className="text-sm font-semibold text-[var(--color-fg)]">
+            {HOSTED_DEMO_NOTICE.heading}
+          </span>
         }
       >
         <div className="grid gap-1.5 pb-3.5">
