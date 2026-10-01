@@ -599,6 +599,7 @@ describe('the company sign-in block of the auth section', (): void => {
     DAY0_OIDC_ISSUER: ISSUER,
     DAY0_OIDC_AUDIENCE: 'day0-app',
     DAY0_OIDC_ALLOWED_DOMAINS: 'acme.test',
+    DAY0_PUBLIC_URL: 'https://day0.acme.test',
   };
   const PROBES = { host: REACHED, container: REACHED, deployment: { values: PUSHED } };
 
@@ -649,7 +650,13 @@ describe('the company sign-in block of the auth section', (): void => {
     expect(
       authSection({ ...COMPLETE, DAY0_PUBLIC_URL: 'http://day0.acme.test' }, PROBES).status,
     ).toBe('gap');
-    const loopback = authSection({ ...COMPLETE, DAY0_PUBLIC_URL: 'http://localhost:3550' }, PROBES);
+    const loopback = authSection(
+      { ...COMPLETE, DAY0_PUBLIC_URL: 'http://localhost:3550' },
+      {
+        ...PROBES,
+        deployment: { values: { ...PUSHED, DAY0_PUBLIC_URL: 'http://localhost:3550' } },
+      },
+    );
     expect(loopback.status).toBe('warn');
     expect(loopback.lines.join(' ')).toContain('only this machine');
   });
@@ -662,6 +669,15 @@ describe('the company sign-in block of the auth section', (): void => {
     expect(section.status).toBe('gap');
     expect(section.lines.join(' ')).toContain('DAY0_OIDC_ALLOWED_DOMAINS');
     expect(section.lines.join(' ')).toContain('pnpm sync:env');
+  });
+
+  it('reports a gap when the deployment still holds a trust flag the file dropped', (): void => {
+    const section = authSection(COMPLETE, {
+      ...PROBES,
+      deployment: { values: { ...PUSHED, DAY0_OIDC_EMAIL_TRUSTED: 'true' } },
+    });
+    expect(section.status).toBe('gap');
+    expect(section.lines.join(' ')).toContain('DAY0_OIDC_EMAIL_TRUSTED');
   });
 
   it('notes what it could not ask: the container with the backend down, the deployment unread', (): void => {
