@@ -104,6 +104,9 @@ describe('the company sign-in login route', (): void => {
     expect(response.status).toBe(503);
     const text = await response.text();
     expect(text).toContain('pnpm check:setup');
+    // The page is dark as the app is, and its action has the app button's hover and press.
+    expect(text).toContain(':root{color-scheme:dark}');
+    expect(text).toContain('.action:hover{opacity:.9}');
     expect(text).not.toContain(SESSION_SECRET);
   });
 

@@ -83,14 +83,16 @@ export function signInPageResponse(page: SignInPage): NextResponse {
   const html =
     '<!doctype html><html lang="en-GB"><head><meta charset="utf-8">' +
     '<meta name="viewport" content="width=device-width, initial-scale=1">' +
-    `<title>${escapeHtml(page.title)} - Day0</title><style>` +
+    `<title>${escapeHtml(page.title)} - Day0</title><style>:root{color-scheme:dark}` +
     'body{margin:0;min-height:100vh;display:grid;place-items:center;padding:0 1.5rem;' +
     'background:#0a0a0b;color:#f4f4f5;font:15px/1.5 ui-sans-serif,system-ui,sans-serif}' +
     'main{max-width:28rem;display:grid;justify-items:center;gap:1rem;text-align:center}' +
     'h1{font-size:1.125rem;font-weight:600;margin:0}p{margin:0;color:#a1a1aa;font-size:.875rem}' +
     '.action{display:inline-flex;align-items:center;min-height:44px;padding:0 1rem;border-radius:.5rem;' +
     'background:#22d3ee;color:#0a0a0b;font-weight:500;font-size:.875rem;text-decoration:none}' +
-    '.action:focus-visible{outline:2px solid #f4f4f5;outline-offset:2px}' +
+    '.action:focus-visible{outline:2px solid #f4f4f5;outline-offset:2px}.action:hover{opacity:.9}' +
+    '@media (prefers-reduced-motion:no-preference){.action{transition:opacity 180ms,transform 120ms ease-out}' +
+    '.action:active{transform:scale(.97)}}' +
     '.brand{color:#22d3ee;font-size:.75rem;font-weight:500;letter-spacing:.2em;text-transform:uppercase}' +
     '</style></head><body><main id="main"><p class="brand" aria-hidden="true">Day0</p>' +
     `<h1>${escapeHtml(page.title)}</h1>` +
@@ -656,9 +658,30 @@ const VERDICT_WORD: Readonly<Record<'ok' | 'warn' | 'gap', string>> = {
   gap: 'gap',
 };
 
+/** The check page's styles: a table on wide screens, one block per claim at phone width. */
+const CHECK_PAGE_STYLE =
+  ':root{color-scheme:dark}' +
+  'body{margin:0;background:#0a0a0b;color:#f4f4f5;font:14px/1.5 ui-sans-serif,system-ui,sans-serif}' +
+  'main{max-width:60rem;margin:0 auto;padding:2rem 1rem;display:grid;gap:1rem}' +
+  'h1{font-size:1.125rem;margin:0}p{margin:0;color:#a1a1aa}' +
+  'table{border-collapse:collapse;width:100%}' +
+  'th,td{text-align:left;vertical-align:top;padding:.5rem;border-bottom:1px solid #27272a}' +
+  'th,td.verdict{white-space:nowrap}td.value,td.why{overflow-wrap:anywhere}' +
+  'thead th{color:#a1a1aa;font-weight:500}.ok{color:#34d399}.warn{color:#f59e0b}.gap{color:#ef4444}' +
+  '.brand{color:#22d3ee;font-size:.75rem;font-weight:500;letter-spacing:.2em;text-transform:uppercase}' +
+  'code{font-size:.8125rem;overflow-wrap:anywhere}.sr-only{position:absolute;width:1px;height:1px;' +
+  'overflow:hidden;clip-path:inset(50%);white-space:nowrap}' +
+  // At phone width each claim is a block: its name and verdict on one line, the value, then why.
+  '@media (max-width:40rem){thead{position:absolute;width:1px;height:1px;overflow:hidden;' +
+  'clip-path:inset(50%)}table,tbody,tr,th,td{display:block}tr{display:grid;' +
+  'grid-template-columns:1fr auto;gap:.125rem .75rem;padding:.75rem 0;border-bottom:1px solid #27272a}' +
+  'th,td{padding:0;border:0}td.value,td.why{grid-column:1/-1}td.why{color:#a1a1aa}}';
+
 /**
- * The page the live check's sign-in lands on: each claim's verdict in a table,
- * then the owner key the deployment derived. Nobody is signed in.
+ * The page the live check's sign-in lands on: each claim's verdict, then what
+ * the deployment made of the token, then the one way on. Nobody is signed in.
+ * The table keeps its semantics by explicit roles, since at phone width its
+ * rows are drawn as blocks.
  *
  * @param report - The report.
  */
@@ -666,37 +689,33 @@ export function checkPageResponse(report: SignInCheckReport): NextResponse {
   const rows = report.verdicts
     .map(
       (one) =>
-        `<tr><th scope="row">${escapeHtml(one.claim)}</th><td class="value">${escapeHtml(one.value)}</td>` +
-        `<td class="verdict ${one.status}">${VERDICT_WORD[one.status]}</td>` +
-        `<td class="why">${escapeHtml(one.note)}</td></tr>`,
+        `<tr role="row"><th scope="row" role="rowheader">${escapeHtml(one.claim)}</th>` +
+        `<td role="cell" class="verdict ${one.status}">${VERDICT_WORD[one.status]}</td>` +
+        `<td role="cell" class="value">${escapeHtml(one.value)}</td>` +
+        `<td role="cell" class="why">${escapeHtml(one.note)}</td></tr>`,
     )
     .join('');
-  const whoAmI =
-    report.whoAmI.status === 'ok'
-      ? `<p class="ok">pass: the deployment accepted the token. Owner key <code>${escapeHtml(report.whoAmI.ownerKey)}</code>${report.whoAmI.verifiedAddress ? `, verified address ${escapeHtml(report.whoAmI.verifiedAddress)}` : ', no verified address'}.</p>`
-      : `<p class="gap">gap: ${escapeHtml(report.whoAmI.detail)}</p>`;
+  const who = report.whoAmI;
+  const result =
+    who.status === 'ok'
+      ? `<p role="status" class="ok">Pass: the deployment accepted the token. Owner key <code>${escapeHtml(who.ownerKey)}</code>${who.verifiedAddress ? `, verified address ${escapeHtml(who.verifiedAddress)}` : ', no verified address'}.</p>`
+      : `<p role="status" class="gap">Gap: ${escapeHtml(who.detail)}</p>`;
+  const passed = who.status === 'ok' && report.verdicts.every((one) => one.status !== 'gap');
+  const next = passed
+    ? '<p>Next: nothing to fix. Keep the terminal’s lines with the install’s support bundle.</p>'
+    : '<p>Next: fix each gap above, then run <code>pnpm check:sign-in</code> again.</p>';
   const html =
     '<!doctype html><html lang="en-GB"><head><meta charset="utf-8">' +
     '<meta name="viewport" content="width=device-width, initial-scale=1">' +
-    '<title>Sign-in check - Day0</title><style>' +
-    'body{margin:0;background:#0a0a0b;color:#f4f4f5;font:14px/1.5 ui-sans-serif,system-ui,sans-serif}' +
-    'main{max-width:60rem;margin:0 auto;padding:2rem 1rem;display:grid;gap:1rem}' +
-    'h1{font-size:1.125rem;margin:0}p{margin:0;color:#a1a1aa}.table{overflow-x:auto}' +
-    'table{border-collapse:collapse;width:100%;min-width:36rem}' +
-    'th,td{text-align:left;vertical-align:top;padding:.5rem;border-bottom:1px solid #27272a}' +
-    'th,td.verdict{white-space:nowrap}td.value,td.why{overflow-wrap:anywhere}' +
-    'thead th{color:#a1a1aa;font-weight:500}.ok{color:#34d399}.warn{color:#f59e0b}.gap{color:#ef4444}' +
-    '.brand{color:#22d3ee;font-size:.75rem;font-weight:500;letter-spacing:.2em;text-transform:uppercase}' +
-    'code{font-size:.8125rem}.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;' +
-    'clip-path:inset(50%);white-space:nowrap}</style></head><body><main id="main">' +
-    '<p class="brand" aria-hidden="true">Day0</p><h1>Sign-in check</h1>' +
+    `<title>Sign-in check - Day0</title><style>${CHECK_PAGE_STYLE}</style></head><body>` +
+    '<main id="main"><p class="brand" aria-hidden="true">Day0</p><h1>Sign-in check</h1>' +
     '<p>This sign-in was a check: nobody was signed in. The terminal that printed the link shows the same lines.</p>' +
     '<div class="table" tabindex="0" role="region" aria-label="Each claim and its verdict">' +
-    '<table><caption class="sr-only">' +
-    'Each claim of the ID token, with its verdict</caption>' +
-    '<thead><tr><th scope="col">Claim</th><th scope="col">Value</th><th scope="col">Verdict</th>' +
-    `<th scope="col">Why</th></tr></thead><tbody>${rows}</tbody></table></div>${whoAmI}` +
-    '</main></body></html>';
+    '<table role="table"><caption class="sr-only">Each claim of the ID token, with its verdict</caption>' +
+    '<thead><tr role="row"><th scope="col" role="columnheader">Claim</th>' +
+    '<th scope="col" role="columnheader">Verdict</th><th scope="col" role="columnheader">Value</th>' +
+    `<th scope="col" role="columnheader">Why</th></tr></thead><tbody>${rows}</tbody></table></div>` +
+    `${result}${next}</main></body></html>`;
   return new NextResponse(html, {
     status: 200,
     headers: { 'content-type': 'text/html; charset=utf-8', ...NO_STORE },

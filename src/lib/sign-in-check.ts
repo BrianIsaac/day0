@@ -1,4 +1,4 @@
-import { SIGN_IN_REFUSAL_WORDS, signInRefusal } from './customer-oidc';
+import { signInRefusal, type SignInRefusal } from './customer-oidc';
 import { providerOfIssuer } from './customer-oidc-presets';
 import { seal, unseal } from './customer-session';
 
@@ -57,6 +57,23 @@ export interface CheckTicket {
 export const CHECK_TICKET_SECONDS = 10 * 60;
 
 const ABSENT = '(absent)';
+
+/**
+ * What a refused address means to the operator running the check, and what to
+ * do: the refused person's own page says the same in words for them.
+ */
+const OPERATOR_REFUSAL_WORDS: Readonly<
+  Record<SignInRefusal, (allowedDomains: readonly string[]) => string>
+> = {
+  'no-domains': () =>
+    'DAY0_OIDC_ALLOWED_DOMAINS is empty, so nobody is admitted. Set it, then run pnpm sync:env.',
+  'no-email': () =>
+    'The token carries no email claim, and Day0 admits people by its domain. Ask the issuer to send it (the email scope).',
+  'foreign-domain': (domains) =>
+    `Outside DAY0_OIDC_ALLOWED_DOMAINS (${domains.join(', ')}). Add the domain and run pnpm sync:env, or check with an allowed account.`,
+  'foreign-workspace': (domains) =>
+    `Not a Google Workspace in DAY0_OIDC_ALLOWED_DOMAINS (${domains.join(', ')}).`,
+};
 
 /** A claim's value as text for the operator. */
 function shown(value: unknown): string {
@@ -131,7 +148,13 @@ function providerVerdict(
       const workspace = typeof claims.hd === 'string' ? claims.hd.toLowerCase() : '';
       return input.allowedDomains.includes(workspace)
         ? verdict('hd', claims.hd, 'ok', 'The account belongs to an allowed Google Workspace.')
-        : verdict('hd', claims.hd, 'gap', SIGN_IN_REFUSAL_WORDS['foreign-workspace']);
+        : verdict(
+            'hd',
+            claims.hd,
+            'gap',
+            `Not a Google Workspace in DAY0_OIDC_ALLOWED_DOMAINS (${input.allowedDomains.join(', ')}): ` +
+              'a personal account, or another organisation’s.',
+          );
     }
     case 'entra': {
       const tenant = /login\.microsoftonline\.com\/([^/]+)\/v2\.0$/.exec(input.issuer)?.[1];
@@ -200,7 +223,12 @@ export function claimVerdicts(
       : verdict('sub', claims.sub, 'gap', 'No subject: nobody can own an employee.'),
     refusal === undefined
       ? verdict('email', claims.email, 'ok', 'In an allowed domain.')
-      : verdict('email', claims.email, 'gap', SIGN_IN_REFUSAL_WORDS[refusal]),
+      : verdict(
+          'email',
+          claims.email,
+          'gap',
+          OPERATOR_REFUSAL_WORDS[refusal](input.allowedDomains),
+        ),
     addressVerdict(claims, input),
     ...(provider ? [provider] : []),
     lifetime === undefined

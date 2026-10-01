@@ -53,6 +53,22 @@ describe('the live check’s claim verdicts', (): void => {
     expect(verdicts.find((one) => one.claim === 'exp')?.value).toBe('60 minutes');
   });
 
+  it('tells the operator, not the person, what a refused address means and what to do', (): void => {
+    const note = claimVerdicts({ ...BASE, email: 'eve@rival.test' }, OKTA).find(
+      (one) => one.claim === 'email',
+    )?.note;
+    expect(note).toBe(
+      'Outside DAY0_OIDC_ALLOWED_DOMAINS (acme.test). Add the domain and run pnpm sync:env, or check with an allowed account.',
+    );
+    const google = { ...OKTA, issuer: 'https://accounts.google.com' };
+    const hd = claimVerdicts({ ...BASE, iss: google.issuer, hd: 'rival.test' }, google).find(
+      (one) => one.claim === 'hd',
+    )?.note;
+    expect(hd).toBe(
+      'Not a Google Workspace in DAY0_OIDC_ALLOWED_DOMAINS (acme.test): a personal account, or another organisation’s.',
+    );
+  });
+
   it('marks an issuer, an audience or a domain that is not the configured one as a gap', (): void => {
     expect(verdictOf({ ...BASE, iss: 'https://acme.okta.com/' }, OKTA, 'iss')).toBe('gap');
     expect(verdictOf({ ...BASE, aud: ['other'] }, OKTA, 'aud')).toBe('gap');

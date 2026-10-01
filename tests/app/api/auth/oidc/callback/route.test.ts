@@ -221,12 +221,18 @@ describe('the callback in check mode (pnpm check:sign-in)', (): void => {
     expect(setCookies(response).has('day0_session')).toBe(false);
     const page = await response.text();
     for (const claim of ['iss', 'aud', 'sub', 'email', 'email_verified', 'exp', 'refresh_token']) {
-      expect(page).toContain(`<th scope="row">${claim}</th>`);
+      expect(page).toContain(`<th scope="row" role="rowheader">${claim}</th>`);
     }
     expect(page).toContain('https://issuer.acme.test|fake-oidc|priya');
     // Seen on the bed: claim names and the Verdict heading broke mid-word; only values and reasons wrap.
     expect(page).toContain('th,td.verdict{white-space:nowrap}');
     expect(page).toContain('td.value,td.why{overflow-wrap:anywhere}');
+    // The result is announced, in sentence case, and the page ends on the one way on.
+    expect(page).toContain('<p role="status" class="ok">Pass: the deployment accepted the token.');
+    expect(page).toContain('<p>Next: nothing to fix.');
+    // At phone width each claim is a block, the table's semantics kept by explicit roles.
+    expect(page).toContain('@media (max-width:40rem)');
+    expect(page).toContain('<table role="table">');
     // At 390 the table scrolls inside its box, which a keyboard must be able to reach (N14).
     expect(page).toContain(
       '<div class="table" tabindex="0" role="region" aria-label="Each claim and its verdict">',
