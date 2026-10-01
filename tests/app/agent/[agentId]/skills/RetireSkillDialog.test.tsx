@@ -137,7 +137,7 @@ describe('RetireSkillDialog', (): void => {
       'Withdraw this skill from every employee?',
     );
     expect(document.body.textContent).toContain(
-      'Mira and Tomas stop running this skill now, and a run of it already under way is stopped.',
+      'Mira and Tomas start no new run of this skill, and a run of it already under way ends now.',
     );
     await press(document.body, 'Withdraw from 2 employees');
 
@@ -156,7 +156,7 @@ describe('RetireSkillDialog', (): void => {
     await settle();
 
     expect(document.body.textContent).toContain(
-      'Mira stops running this skill now. A run of it already under way finishes, and its writes still wait for you.',
+      'Mira starts no new run of this skill. A run of it already under way finishes, and its writes still wait for you.',
     );
     view.unmount();
   });
@@ -175,7 +175,7 @@ describe('RetireSkillDialog', (): void => {
     await settle();
 
     expect(document.body.textContent).toContain(
-      'A run of it already under way finishes, and with autonomous actions on its writes apply without waiting for you.',
+      'A run of it already under way finishes, and with autonomous actions on, its writes apply without waiting for you.',
     );
     view.unmount();
   });

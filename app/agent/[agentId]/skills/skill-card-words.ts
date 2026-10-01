@@ -168,11 +168,11 @@ export interface RetireDialogFacts {
 export function retireDialogDescription(facts: RetireDialogFacts): string {
   const { every, employee, runners, revisionOpen, autonomous } = facts;
   const who = every
-    ? `${namesInWords(runners)} stop running this skill now, and a run of it already under way is stopped.`
-    : `${employee} stops running this skill now. A run of it already under way finishes, and ${
+    ? `${namesInWords(runners)} start no new run of this skill, and a run of it already under way ends now.`
+    : `${employee} starts no new run of this skill. A run of it already under way finishes, ${
         autonomous
-          ? 'with autonomous actions on its writes apply without waiting for you.'
-          : 'its writes still wait for you.'
+          ? 'and with autonomous actions on, its writes apply without waiting for you.'
+          : 'and its writes still wait for you.'
       }`;
   const work =
     'Approved work that would have used it goes back to waiting for a skill, and a new one is proposed for it.';
