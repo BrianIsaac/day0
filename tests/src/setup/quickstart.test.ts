@@ -160,7 +160,7 @@ describe('the hosted demo address the README gives', (): void => {
   });
 
   it('sends no reader to a Vercel alias of the project in its place', (): void => {
-    expect(README).not.toMatch(/day0-[\w-]*\.vercel\.app/);
+    expect(README).not.toMatch(/\bday0[\w.-]*\.vercel\.app/);
   });
 });
 
