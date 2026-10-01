@@ -189,14 +189,14 @@ describe('the base address of the page metadata', (): void => {
   it('takes the production domain Vercel names, when it names one', async (): Promise<void> => {
     vi.stubEnv('VERCEL_PROJECT_PRODUCTION_URL', 'day0.example.test');
     const { metadata } = await import('../../app/layout');
-    expect(metadata.metadataBase?.href).toBe('https://day0.example.test/');
+    expect(String(metadata.metadataBase)).toBe('https://day0.example.test/');
     expect(metadata.openGraph?.url).toBe('https://day0.example.test');
   });
 
   it('falls back to the hosted demo’s own domain outside Vercel', async (): Promise<void> => {
     vi.stubEnv('VERCEL_PROJECT_PRODUCTION_URL', '');
     const { metadata } = await import('../../app/layout');
-    expect(metadata.metadataBase?.href).toBe('https://dayzer0.dev/');
+    expect(String(metadata.metadataBase)).toBe('https://dayzer0.dev/');
     expect(metadata.openGraph?.url).toBe('https://dayzer0.dev');
   });
 });
