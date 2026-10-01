@@ -52,18 +52,21 @@ export interface CharterCardBody {
  *
  * @param name - The employee's name.
  * @param autonomous - Whether the employee's writes go ahead without asking.
+ * @param approvedBy - Who approved it: "you", or the earlier manager a handover took it from.
  */
 export function CharterCard({
   charter,
   manager,
   name = 'Your employee',
   autonomous = false,
+  approvedBy = 'you',
 }: {
   charter: Doc<'charters'>;
   /** The agent row's manager, who approves this employee's work. */
   manager?: string;
   name?: string;
   autonomous?: boolean;
+  approvedBy?: string;
 }) {
   const approve = useMutation(api.charters.approve);
   const setConstraintStruck = useMutation(api.charters.setConstraintStruck);
@@ -134,7 +137,7 @@ export function CharterCard({
       title={`${name}'s charter · version ${charter.version}`}
       meta={
         charter.approved
-          ? `approved by you${
+          ? `approved by ${approvedBy}${
               charter.approvedAt !== undefined ? ` ${clockTime(charter.approvedAt, zone)}` : ''
             }${struck ? ` · ${struck}` : ''}`
           : struck || 'nothing struck yet'

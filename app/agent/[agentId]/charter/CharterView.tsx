@@ -6,7 +6,7 @@ import { sameManagerAddress } from '@/agent/manager-address';
 import { Card } from '../../../components/Card';
 import { Columns } from '../../../components/Columns';
 import { useEmployee } from '../employee-context';
-import { CharterAside } from './CharterAside';
+import { actorAt, CharterAside } from './CharterAside';
 import { CharterCard } from './CharterCard';
 
 /**
@@ -25,6 +25,12 @@ export function CharterView() {
     api.charters.listForAgent,
     charter?.approved ? { agentId: agent._id } : 'skip',
   );
+  const earlier = useQuery(
+    api.managerTransfers.earlierManagers,
+    charter?.approved ? { agentId: agent._id } : 'skip',
+  );
+  // Who acted before a handover is named, never "you" for the earlier manager.
+  const actor = (at: number): string => actorAt(at, earlier, agent.bossEmail);
   if (!charter) {
     return (
       <Columns arriving={arriving}>
@@ -58,6 +64,7 @@ export function CharterView() {
                 }
               : undefined
           }
+          actor={actor}
           versions={versions}
           onSentBack={reportSentBack}
         />
@@ -68,6 +75,7 @@ export function CharterView() {
         manager={agent.bossEmail}
         name={agent.name}
         autonomous={agent.autonomousActions === true}
+        approvedBy={charter.approvedAt === undefined ? 'you' : actor(charter.approvedAt)}
       />
     </Columns>
   );

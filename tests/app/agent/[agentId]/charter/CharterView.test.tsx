@@ -69,6 +69,39 @@ describe('a charter carried through a handover (wave 9 review, decision 1 (a))',
     expect(html).not.toContain('drafted from your one-to-one');
   });
 
+  it('says who approved and amended it before the handover, never "you" for the earlier manager', () => {
+    const approved = { ...charter, approvedAt: 1_000 };
+    const amended = {
+      ...charter,
+      _id: 'charter-2' as typeof charter._id,
+      version: '0.2',
+      supersedes: charter._id,
+      createdAt: 2_000,
+      approvedAt: 2_000,
+    };
+    const mine = {
+      ...charter,
+      _id: 'charter-3' as typeof charter._id,
+      version: '0.3',
+      supersedes: amended._id,
+      createdAt: 9_000,
+      approvedAt: 9_000,
+    };
+    backend.queries = {
+      'charters:transcriptOf': { heldBy: 'sam@company.com' },
+      'charters:listForAgent': [mine, amended, approved],
+      'managerTransfers:earlierManagers': [{ fromAddress: 'sam@company.com', decidedAt: 5_000 }],
+    };
+    const before = renderToStaticMarkup(asEmployee(<CharterView />, { charter: approved }));
+    const after = renderToStaticMarkup(asEmployee(<CharterView />, { charter: mine }));
+    backend.queries = {};
+    expect(before).toContain('approved by sam@company.com');
+    expect(before).not.toContain('approved by you');
+    expect(after).toContain('v0.2 amended by sam@company.com');
+    expect(after).toContain('v0.3 amended by you');
+    expect(after).toContain('v0.1 approved by sam@company.com');
+  });
+
   it('says the one-to-one was the reader’s own when it comes back to the manager who held it', () => {
     backend.queries = {
       'charters:transcriptOf': { heldBy: 'Boss@Day0.local' },

@@ -3,6 +3,7 @@
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import { transcriptTurns, type TranscriptTurn } from '@/agent/transcript-turns';
 import { listedRules } from '@/agent/charter-constraints';
+import { sameManagerAddress } from '@/agent/manager-address';
 import { Card } from '../../../components/Card';
 import { TurnText } from '../one-to-one/TurnText';
 import { Disclosure } from '../../../components/Disclosure';
@@ -97,6 +98,33 @@ export interface OneToOneHolder {
   readonly yours: boolean;
 }
 
+/** Who acted on the charter at a time, in the page's words: "you", or an earlier manager's address. */
+export type ActorAt = (at: number) => string;
+
+/** One handover that moved the employee, as `managerTransfers.earlierManagers` lists it. */
+export interface EarlierManager {
+  readonly fromAddress: string;
+  readonly decidedAt: number;
+}
+
+/**
+ * Who acted at a time: the manager who handed the employee over at the first handover after it,
+ * or "you" when none followed or it came from the reader's own address.
+ *
+ * @param earlier - The employee's handovers, oldest first; undefined while they load.
+ * @param manager - The reader's address, the row's manager now.
+ */
+export function actorAt(
+  at: number,
+  earlier: readonly EarlierManager[] | undefined,
+  manager: string,
+): string {
+  const handover = (earlier ?? []).find((moved) => moved.decidedAt > at);
+  return handover === undefined || sameManagerAddress(handover.fromAddress, manager)
+    ? 'you'
+    : handover.fromAddress;
+}
+
 /** Whose one-to-one the first version was drafted from, in the versions list's words. */
 function draftedFromWords(heldBy: OneToOneHolder | undefined): string {
   return heldBy === undefined || heldBy.yours
@@ -108,7 +136,7 @@ function draftedFromWords(heldBy: OneToOneHolder | undefined): string {
 function versionLines(
   row: Doc<'charters'>,
   current: boolean,
-  heldBy: OneToOneHolder | undefined,
+  who: { readonly heldBy: OneToOneHolder | undefined; readonly actor: ActorAt },
 ): Array<{ key: string; kind: 'landed' | 'noted'; at: number; text: string }> {
   const marker = current ? ' · in force' : '';
   if (row.supersedes) {
@@ -117,7 +145,7 @@ function versionLines(
         key: row._id,
         kind: 'landed',
         at: row.createdAt,
-        text: `v${row.version} amended by you${marker}`,
+        text: `v${row.version} amended by ${who.actor(row.createdAt)}${marker}`,
       },
     ];
   }
@@ -125,7 +153,7 @@ function versionLines(
     key: `${row._id}:drafted`,
     kind: 'noted' as const,
     at: row.createdAt,
-    text: `v${row.version} drafted from ${draftedFromWords(heldBy)}${row.approved ? '' : marker}`,
+    text: `v${row.version} drafted from ${draftedFromWords(who.heldBy)}${row.approved ? '' : marker}`,
   };
   if (!row.approved) return [drafted];
   return [
@@ -133,7 +161,7 @@ function versionLines(
       key: `${row._id}:approved`,
       kind: 'landed',
       at: row.approvedAt ?? row.createdAt,
-      text: `v${row.version} approved by you${struckWords(row)}${marker}`,
+      text: `v${row.version} approved by ${who.actor(row.approvedAt ?? row.createdAt)}${struckWords(row)}${marker}`,
     },
     drafted,
   ];
@@ -146,15 +174,18 @@ function versionLines(
  *
  * @param versions - `charters.listForAgent`, newest first; undefined while it loads.
  * @param heldBy - Who held the one-to-one, when a handover cleared its words.
+ * @param actor - Who acted at a time; "you" throughout when not given.
  */
 export function CharterVersions({
   versions,
   current,
   heldBy,
+  actor = () => 'you',
 }: {
   versions: readonly Doc<'charters'>[] | undefined;
   current: Doc<'charters'>;
   heldBy?: OneToOneHolder;
+  actor?: ActorAt;
 }) {
   const zone = useAgentZone();
   return (
@@ -164,7 +195,7 @@ export function CharterVersions({
       ) : (
         <ul className="grid gap-2">
           {versions
-            .flatMap((row) => versionLines(row, row._id === current._id, heldBy))
+            .flatMap((row) => versionLines(row, row._id === current._id, { heldBy, actor }))
             .map((line) => (
               <RecordLine
                 key={line.key}
@@ -188,6 +219,7 @@ export function CharterVersions({
  * @param transcript - The stored transcript; null when none was kept, undefined while it loads.
  * @param heldBy - Who held the one-to-one, when a handover cleared its words (the transcript is
  *   then null).
+ * @param actor - Who acted at a time, for the versions list.
  * @param versions - Every version, newest first, once approved; undefined while it loads.
  * @param onSentBack - Told which draft the manager sent back, and whether it is being redrafted.
  */
@@ -196,6 +228,7 @@ export function CharterAside({
   name,
   transcript,
   heldBy,
+  actor,
   versions,
   onSentBack,
 }: {
@@ -203,6 +236,7 @@ export function CharterAside({
   name: string;
   transcript: string | null | undefined;
   heldBy?: OneToOneHolder;
+  actor?: ActorAt;
   versions: readonly Doc<'charters'>[] | undefined;
   onSentBack: (charterId: Id<'charters'>, outcome: SentBackOutcome) => void;
 }) {
@@ -222,7 +256,7 @@ export function CharterAside({
   if (heldBy !== undefined) {
     return (
       <>
-        <CharterVersions versions={versions} current={charter} heldBy={heldBy} />
+        <CharterVersions versions={versions} current={charter} heldBy={heldBy} actor={actor} />
         <Card title="The one-to-one">
           <p className="text-sm text-[var(--color-muted)] [overflow-wrap:anywhere]">
             {heldBy.yours
@@ -235,7 +269,7 @@ export function CharterAside({
   }
   return (
     <>
-      <CharterVersions versions={versions} current={charter} />
+      <CharterVersions versions={versions} current={charter} actor={actor} />
       <Card title="What you said">
         <p className="text-sm text-[var(--color-muted)]">
           {transcript === null
