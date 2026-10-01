@@ -60,9 +60,10 @@ describe('a charter carried through a handover (wave 9 review, decision 1 (a))',
     };
     const html = renderToStaticMarkup(asEmployee(<CharterView />, { charter }));
     backend.queries = {};
-    expect(html).toContain('v0.1 drafted from sam@company.com&#x27;s one-to-one');
+    // No possessive on an address (second pass): the one-to-one held by them.
+    expect(html).toContain('v0.1 drafted from the one-to-one held by sam@company.com');
     expect(html).toContain(
-      'The one-to-one this charter was drafted from was held by sam@company.com. What they said stayed with them at the handover.',
+      'The one-to-one this charter was drafted from was held by sam@company.com. What they said was cleared at the handover.',
     );
     expect(html).not.toContain('What you said');
     expect(html).not.toContain('Read what you said');
@@ -168,7 +169,7 @@ describe('a charter carried through a handover (wave 9 review, decision 1 (a))',
     const html = renderToStaticMarkup(asEmployee(<CharterView />, { charter: mine }));
     backend.queries = {};
     expect(html).toMatch(/An ask falls outside scope\.<\/s> struck by sam@company\.com/);
-    expect(html).toContain('(before sam@company.com&#x27;s strike: ');
+    expect(html).toContain('(before the strike by sam@company.com: ');
     expect(html).toMatch(/answered by sam@company\.com at /);
     expect(html).toMatch(/never touch closed-won deals[^]*?added by sam@company\.com/);
     expect(html).toMatch(/never email a customer[^]*?added by you/);

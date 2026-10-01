@@ -327,13 +327,13 @@ describe('RetireDialog: what retiring does, said before it is done (Q15, N1)', (
     const keptOf = (preview: RetirePreview, requests: number): readonly string[] =>
       retireLines(preview, '', { requests }).find((line) => line.term === 'Kept')?.details ?? [];
     expect(keptOf(mock, 2)).toEqual([
-      "2 handover requests: the managers' addresses, the employee's name and any note or reason, kept as the other manager's record of the handover.",
+      "2 handover requests: the managers' addresses, the employee's name and any note or reason, kept as the record of the managers they name.",
     ]);
     expect(keptOf(mock, 1)).toEqual([
-      "1 handover request: the two managers' addresses, the employee's name and any note or reason, kept as the other manager's record of the handover.",
+      "1 handover request: the two managers' addresses, the employee's name and any note or reason, kept as the record of the managers it names.",
     ]);
     expect(keptOf(REAL_PREVIEW, 1)).toContain(
-      "1 handover request: the two managers' addresses, the employee's name and any note or reason, kept as the other manager's record of the handover.",
+      "1 handover request: the two managers' addresses, the employee's name and any note or reason, kept as the record of the managers it names.",
     );
     expect(keptOf(REAL_PREVIEW, 0).join(' ')).not.toContain('handover');
 
@@ -424,14 +424,11 @@ describe('RetireDialog: what retiring does, said before it is done (Q15, N1)', (
     view.unmount();
   });
 
-  it('says the cancel under Nothing when nothing else waits', (): void => {
+  it('says the cancel alone when nothing else waits, never under "Nothing." (second pass)', (): void => {
     const waiting = retireLines(REAL_PREVIEW, '', { handover: HANDOVER, requests: 1 }).find(
       (line) => line.term === 'Waiting on you',
     );
-    expect(waiting?.details).toEqual([
-      'Nothing.',
-      'Retiring cancels the handover to lead@day0.local.',
-    ]);
+    expect(waiting?.details).toEqual(['Retiring cancels the handover to lead@day0.local.']);
   });
 
   it('says when no credential is bound only by the employee', (): void => {

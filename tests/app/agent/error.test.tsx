@@ -132,7 +132,7 @@ describe('the employee route with an id that names no employee of the caller', (
     expect(heading?.textContent).toBe('Maya was handed over');
     expect(document.activeElement).toBe(heading);
     expect(view.container.textContent).toContain(
-      'Maya reports to lead@kestrel.example since 2 Oct 2026, 11:00, UTC time. Its record went with it; your record of the handover is on your home.',
+      'Maya reports to lead@kestrel.example since 2 Oct 2026, 11:00, UTC time. Its record went with it; your home lists the handover for 30 days.',
     );
     expect(view.container.textContent).not.toContain('not yours');
     expect(view.container.querySelector('a')?.getAttribute('href')).toBe('/');

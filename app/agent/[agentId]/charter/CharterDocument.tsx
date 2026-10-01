@@ -38,7 +38,7 @@ const INLINE_LINK =
  * @param actor - "you", or the earlier manager's address.
  */
 function strikeOf(actor: string): string {
-  return actor === 'you' ? 'your strike' : `${actor}'s strike`;
+  return actor === 'you' ? 'your strike' : `the strike by ${actor}`;
 }
 
 /**
@@ -250,9 +250,11 @@ export function CharterDocument({
       {manager ? (
         <Section title="Reports to">
           {/* The manager is the account the employee reports to: since D14 the header holds no
-              control, and Hand over on People is the only one (the v0.12.0 walk). */}
+              control. The sentence names no control, since People offers Hand over only where an
+              ask would be taken (the second pass); its address stands on its own line. */}
+          <p className="font-mono [overflow-wrap:anywhere]">{manager}</p>
           <p>
-            {manager}. To move the employee to another manager, use Hand over on{' '}
+            Handovers to another manager are on{' '}
             {peopleHref === undefined ? (
               'People'
             ) : (

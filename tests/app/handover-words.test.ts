@@ -7,6 +7,7 @@ import {
   askedWords,
   askLabel,
   changeAddressDescription,
+  declinedWords,
   departedLine,
   endedCardLine,
   handedOverLine,
@@ -238,10 +239,10 @@ describe('the Manager card (plan 7.1)', () => {
 describe('the acceptance dialog (plan 7.3)', () => {
   it('leads with who asks, the role line and nothing for an employee without one', () => {
     expect(takeOnLead(PREVIEW)).toBe(
-      "Maya's manager today, sam@kestrel.example, asks you to take over. Maya: owns triage for tier-2 asks.",
+      "Maya's manager today, sam@kestrel.example, asks you to take Maya on. Maya: owns triage for tier-2 asks.",
     );
     expect(takeOnLead({ ...PREVIEW, employee: { ...PREVIEW.employee, roleLine: null } })).toBe(
-      "Maya's manager today, sam@kestrel.example, asks you to take over.",
+      "Maya's manager today, sam@kestrel.example, asks you to take Maya on.",
     );
   });
 
@@ -372,10 +373,14 @@ describe('a sentence about a handover never starts with an address (the wave 9 r
         employee: { name: 'Maya', roleLine: null } as Parameters<typeof takeOnLead>[0]['employee'],
       }),
       retireBlockedByAcceptance('Maya', to),
+      declinedWords('Maya', to),
     ];
-    for (const sentence of sentences) {
-      expect(sentence.startsWith(to), sentence).toBe(false);
-      expect(sentence, sentence).toContain(to);
+    for (const words of sentences) {
+      expect(words, words).toContain(to);
+      // Every sentence, not only the first, opens on something other than the address.
+      for (const sentence of words.split(/(?<=[.:]) (?=[A-Z0-9a-z])/)) {
+        expect(sentence.startsWith(to), sentence).toBe(false);
+      }
     }
   });
 });
@@ -392,7 +397,7 @@ describe('the old manager’s notices (plan 7.4) and the home’s line (section 
       'Maya now reports to lead@kestrel.example, since 2 Oct 2026, 11:00, UTC time.',
     );
     expect(departedLine(outcome)).toBe(
-      'Maya reports to lead@kestrel.example since 2 Oct 2026, 11:00, UTC time. Its record went with it; your record of the handover is on your home.',
+      'Maya reports to lead@kestrel.example since 2 Oct 2026, 11:00, UTC time. Its record went with it; your home lists the handover for 30 days.',
     );
   });
 
@@ -410,7 +415,7 @@ describe('the old manager’s notices (plan 7.4) and the home’s line (section 
       'Wren was handed over to lead@kestrel.example on 2 Oct 2026, 11:00, UTC time, and has since moved to another manager.',
     );
     expect(departedLine({ ...outcome, afterwards: 'retired' })).toBe(
-      'Wren was handed over to lead@kestrel.example on 2 Oct 2026, 11:00, UTC time, and has since been retired. Your record of the handover is on your home.',
+      'Wren was handed over to lead@kestrel.example on 2 Oct 2026, 11:00, UTC time, and has since been retired. Your home lists the handover for 30 days.',
     );
     expect(handedOverLine({ ...outcome, afterwards: 'came-back' })).toBe(
       'Wren was handed over to lead@kestrel.example on 2 Oct 2026, 11:00, UTC time, and has since come back to you.',

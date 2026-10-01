@@ -93,10 +93,9 @@ describe('amending an approved charter from the card', (): void => {
     const card = renderToStaticMarkup(
       <CharterCard charter={{ ...charter, body }} manager="ana@kestrel.example" />,
     );
-    // The header holds no control since D14; Hand over on People is the only one (the v0.12.0 walk).
-    expect(card).toContain(
-      'ana@kestrel.example. To move the employee to another manager, use Hand over on',
-    );
+    // The header holds no control since D14; a handover is on People (the v0.12.0 walk).
+    expect(card).toContain('ana@kestrel.example</p>');
+    expect(card).toContain('Handovers to another manager are on');
     expect(card).not.toContain('change it there');
   });
 

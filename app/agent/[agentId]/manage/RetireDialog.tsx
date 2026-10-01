@@ -95,7 +95,11 @@ export function retireLines(
   const waits = {
     term: 'Waiting on you',
     details: [
-      waiting === '' ? 'Nothing.' : sentence(`${waiting}, discarded undecided`),
+      ...(waiting !== ''
+        ? [sentence(`${waiting}, discarded undecided`)]
+        : handover?.state === 'asked'
+          ? []
+          : ['Nothing.']),
       ...(handover?.state === 'asked' ? [retireCancelsWords(handover.toAddress)] : []),
     ],
   };

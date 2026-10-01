@@ -1,6 +1,10 @@
 import type { FunctionReturnType } from 'convex/server';
 import type { api } from '@convex/_generated/api';
-import { TRANSFER_EXPIRY_MS, TRANSFER_SETTLE_MS } from '@/agent/manager-transfer';
+import {
+  TRANSFER_DEPARTURES_WINDOW_MS,
+  TRANSFER_EXPIRY_MS,
+  TRANSFER_SETTLE_MS,
+} from '@/agent/manager-transfer';
 import { formatStamp } from '@/lib/zone';
 import { listed } from './agent/[agentId]/manage/retire-words';
 
@@ -219,9 +223,9 @@ export function retireCancelsWords(to: string): string {
 export function keptRequestsWords(requests: number): string {
   const what =
     requests === 1
-      ? "the two managers' addresses, the employee's name and any note or reason"
-      : "the managers' addresses, the employee's name and any note or reason";
-  return `${counted(requests, 'handover request', 'handover requests')}: ${what}, kept as the other manager's record of the handover.`;
+      ? "the two managers' addresses, the employee's name and any note or reason, kept as the record of the managers it names"
+      : "the managers' addresses, the employee's name and any note or reason, kept as the record of the managers they name";
+  return `${counted(requests, 'handover request', 'handover requests')}: ${what}.`;
 }
 
 /** What an accepting request's line on the card is drawn from. */
@@ -349,7 +353,7 @@ export function takeOnTitle(name: string): string {
 /** The acceptance dialog's lead: who asks, and what the employee is for. */
 export function takeOnLead(preview: Pick<HandoverPreview, 'fromAddress' | 'employee'>): string {
   const { name, roleLine } = preview.employee;
-  const lead = `${name}'s manager today, ${preview.fromAddress}, asks you to take over.`;
+  const lead = `${name}'s manager today, ${preview.fromAddress}, asks you to take ${name} on.`;
   if (roleLine === null) return lead;
   // A role line clipped with an ellipsis, or written as a sentence, keeps its own close.
   return `${lead} ${name}: ${roleLine}${/[.…!?]$/.test(roleLine) ? '' : '.'}`;
@@ -546,7 +550,7 @@ export function arrivingLine(input: ArrivingInput): string {
  * @param from - The manager who asked, who is told.
  */
 export function declinedWords(name: string, from: string): string {
-  return `You declined to take ${name} on. ${from} sees it on ${name}'s People tab.`;
+  return `You declined to take ${name} on. It shows on ${name}'s People tab for ${from}.`;
 }
 
 /** Said in the acceptance dialog while its preview is read. */
@@ -603,6 +607,13 @@ function sinceWords(
 }
 
 /**
+ * Where the old manager's own record of a handover is, for as long as the home lists it: the
+ * departed page has no window, so it says the home's (the second pass: "your record ... is on
+ * your home" was untrue after 30 days).
+ */
+const HOME_LISTS_IT = `Your home lists the handover for ${Math.round(TRANSFER_DEPARTURES_WINDOW_MS / 86_400_000)} days.`;
+
+/**
  * One line of the home's handed-over card: whom the employee reports to now, or, once it was
  * retired or moved on since, what happened and that it did.
  */
@@ -638,9 +649,9 @@ export function departedTabTitle(name: string): string {
 export function departedLine(outcome: HandoverOutcome): string {
   const { afterwards } = outcome;
   if (afterwards !== undefined) {
-    return `${sinceWords({ ...outcome, afterwards })} Your record of the handover is on your home.`;
+    return `${sinceWords({ ...outcome, afterwards })} ${HOME_LISTS_IT}`;
   }
-  return `${outcome.name} reports to ${outcome.to} since ${zonedStamp(outcome.since, outcome.zone)}. Its record went with it; your record of the handover is on your home.`;
+  return `${outcome.name} reports to ${outcome.to} since ${zonedStamp(outcome.since, outcome.zone)}. Its record went with it; ${HOME_LISTS_IT.charAt(0).toLocaleLowerCase('en-GB')}${HOME_LISTS_IT.slice(1)}`;
 }
 
 /**

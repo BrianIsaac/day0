@@ -243,7 +243,7 @@ describe('AcceptTransfer', () => {
     expect(title()).toBe('Take on Maya?');
     const description = document.getElementById(dialog().getAttribute('aria-describedby') ?? '');
     expect(description?.textContent).toBe(
-      "Maya's manager today, sam@kestrel.example, asks you to take over. Maya: owns triage for tier-2 asks.",
+      "Maya's manager today, sam@kestrel.example, asks you to take Maya on. Maya: owns triage for tier-2 asks.",
     );
     expect(dialog().querySelector('blockquote')?.textContent).toBe(
       '“She is mid-way through the September close.”',
@@ -395,7 +395,7 @@ describe('AcceptTransfer', () => {
     ]);
     expect(document.querySelector('[role="dialog"]')).toBeNull();
     expect(said(view.container)).toEqual([
-      "You declined to take Maya on. sam@kestrel.example sees it on Maya's People tab.",
+      "You declined to take Maya on. It shows on Maya's People tab for sam@kestrel.example.",
     ]);
   });
 

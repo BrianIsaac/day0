@@ -129,7 +129,7 @@ export function actorAt(
 function draftedFromWords(heldBy: OneToOneHolder | undefined): string {
   return heldBy === undefined || heldBy.yours
     ? 'your one-to-one'
-    : `${heldBy.address}'s one-to-one`;
+    : `the one-to-one held by ${heldBy.address}`;
 }
 
 /** The versions list's lines for one row: an amendment is one line, the first version two. */
@@ -261,7 +261,7 @@ export function CharterAside({
           <p className="text-sm text-[var(--color-muted)] [overflow-wrap:anywhere]">
             {heldBy.yours
               ? 'You held the one-to-one this charter was drafted from. What you said was cleared when it was handed over.'
-              : `The one-to-one this charter was drafted from was held by ${heldBy.address}. What they said stayed with them at the handover.`}
+              : `The one-to-one this charter was drafted from was held by ${heldBy.address}. What they said was cleared at the handover.`}
           </p>
         </Card>
       </>

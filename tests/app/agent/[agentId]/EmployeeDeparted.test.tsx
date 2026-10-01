@@ -65,7 +65,7 @@ describe('EmployeeDeparted (the transfer plan, 7.4)', () => {
     expect(heading?.textContent).toBe('Maya was handed over');
     expect(document.activeElement).toBe(heading);
     expect(view.container.querySelector('p')?.textContent).toBe(
-      'Maya reports to lead@kestrel.example since 2 Oct 2026, 11:00, UTC time. Its record went with it; your record of the handover is on your home.',
+      'Maya reports to lead@kestrel.example since 2 Oct 2026, 11:00, UTC time. Its record went with it; your home lists the handover for 30 days.',
     );
     expect(view.container.querySelector('a')?.textContent).toBe('Back to your employees');
     // The tab the page was served with named an employee that is no longer the manager's.
@@ -77,7 +77,7 @@ describe('EmployeeDeparted (the transfer plan, 7.4)', () => {
   it('says an employee retired since was handed over and retired, never whom it reports to (the v0.12.0 walk)', () => {
     const view = mount(<EmployeeDeparted departure={{ ...DEPARTURE, afterwards: 'retired' }} />);
     expect(view.container.querySelector('p')?.textContent).toBe(
-      'Maya was handed over to lead@kestrel.example on 2 Oct 2026, 11:00, UTC time, and has since been retired. Your record of the handover is on your home.',
+      'Maya was handed over to lead@kestrel.example on 2 Oct 2026, 11:00, UTC time, and has since been retired. Your home lists the handover for 30 days.',
     );
   });
 
