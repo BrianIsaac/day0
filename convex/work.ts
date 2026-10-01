@@ -7215,8 +7215,7 @@ const needsYouValidator = v.object({
   waitingByEmployee: v.array(v.object({ agentId: v.id('agents'), waiting: v.number() })),
 });
 
-/** One thing waiting on the manager. */
-/** One entry of the needs-you inbox. */
+/** One entry of the needs-you inbox: one thing waiting on the manager. */
 export type NeedsYouEntry = Infer<typeof needsYouEntryValidator>;
 
 /** The fields every entry shares: a charter entry is nothing else. */
