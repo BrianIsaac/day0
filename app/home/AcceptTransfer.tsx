@@ -120,6 +120,89 @@ interface TakeOnProps {
 }
 
 /**
+ * What the request says before the answer: the note quoted, what comes with the employee and what
+ * does not, and the runs the move waits for.
+ *
+ * @param preview - The request as the named manager reads it.
+ */
+function TakeOnSummary({ preview }: { readonly preview: HandoverPreview }) {
+  const { name } = preview.employee;
+  return (
+    <>
+      {preview.note === undefined ? null : (
+        <blockquote className="border-l-2 border-[var(--color-border-2)] pl-3 text-[15px] whitespace-pre-line text-[var(--color-fg-2)] [overflow-wrap:anywhere]">
+          <p>“{preview.note}”</p>
+        </blockquote>
+      )}
+      <dl className="grid gap-x-4 text-[15px] sm:grid-cols-[max-content_minmax(0,1fr)] sm:gap-y-3">
+        {acceptanceSections(preview).map((section) => (
+          <div key={section.term} className="contents">
+            <dt className="font-medium text-[var(--color-fg)]">{section.term}</dt>
+            <dd className="mb-3 text-[var(--color-fg-2)] sm:mb-0">
+              <ul className="grid gap-1 [overflow-wrap:anywhere]">
+                {section.lines.map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+            </dd>
+          </div>
+        ))}
+      </dl>
+      {preview.runsInFlight > 0 ? (
+        <p className="text-[15px] text-[var(--color-fg-2)]">
+          {runsInFlightLine({ name, from: preview.fromAddress, runs: preview.runsInFlight })}
+        </p>
+      ) : null}
+    </>
+  );
+}
+
+/** The documentation the employee reads, and what to do with each source while choosing. */
+interface ReadsForItProps {
+  readonly documentation: HandoverPreview['documentation'];
+  readonly excluded: readonly Id<'docSources'>[];
+  readonly busy: boolean;
+  /** A source ticked to be read, or unticked to be left out. */
+  readonly onRead: (sourceId: Id<'docSources'>, read: boolean) => void;
+}
+
+/**
+ * The sources the employee reads once taken on, each ticked until the new manager unticks it,
+ * or the line that none is linked.
+ */
+function ReadsForIt({ documentation, excluded, busy, onRead }: ReadsForItProps) {
+  return (
+    <fieldset className="grid gap-1.5">
+      <legend className="mb-1.5 text-[15px] font-medium text-[var(--color-fg)]">
+        {READS_FOR_IT}
+      </legend>
+      {documentation.length === 0 ? (
+        <p className="text-sm text-[var(--color-muted)]">{NO_DOCUMENTATION}</p>
+      ) : (
+        <>
+          {documentation.map((source) => (
+            <label
+              key={source.sourceId}
+              className="flex min-h-11 items-center gap-2 text-[15px] text-[var(--color-fg-2)]"
+            >
+              <input
+                type="checkbox"
+                className="size-4"
+                checked={!excluded.includes(source.sourceId)}
+                disabled={busy}
+                onChange={(event) => onRead(source.sourceId, event.target.checked)}
+              />
+              {source.label}
+            </label>
+          ))}
+          <p className="text-[13px] text-[var(--color-muted)]">{READS_FOR_IT_HINT}</p>
+        </>
+      )}
+    </fieldset>
+  );
+}
+
+/**
  * The acceptance dialog's body (plan 7.3): the note, what comes and what does not, the reporting
  * lines to check, the acceptor's documentation with ticks, the runs in flight, and Decline and
  * Take on. Decline opens a short reason first, then sends it. No typed confirmation: taking on is
@@ -189,63 +272,17 @@ function TakeOn({ preview, change, notice, onClose, onAnswer }: TakeOnProps) {
 
   return (
     <>
-      {preview.note === undefined ? null : (
-        <blockquote className="border-l-2 border-[var(--color-border-2)] pl-3 text-[15px] whitespace-pre-line text-[var(--color-fg-2)] [overflow-wrap:anywhere]">
-          <p>“{preview.note}”</p>
-        </blockquote>
-      )}
-      <dl className="grid gap-x-4 text-[15px] sm:grid-cols-[max-content_minmax(0,1fr)] sm:gap-y-3">
-        {acceptanceSections(preview).map((section) => (
-          <div key={section.term} className="contents">
-            <dt className="font-medium text-[var(--color-fg)]">{section.term}</dt>
-            <dd className="mb-3 text-[var(--color-fg-2)] sm:mb-0">
-              <ul className="grid gap-1 [overflow-wrap:anywhere]">
-                {section.lines.map((line) => (
-                  <li key={line}>{line}</li>
-                ))}
-              </ul>
-            </dd>
-          </div>
-        ))}
-      </dl>
-      {preview.runsInFlight > 0 ? (
-        <p className="text-[15px] text-[var(--color-fg-2)]">
-          {runsInFlightLine({ name, from, runs: preview.runsInFlight })}
-        </p>
-      ) : null}
-      <fieldset className="grid gap-1.5">
-        <legend className="mb-1.5 text-[15px] font-medium text-[var(--color-fg)]">
-          {READS_FOR_IT}
-        </legend>
-        {preview.documentation.length === 0 ? (
-          <p className="text-sm text-[var(--color-muted)]">{NO_DOCUMENTATION}</p>
-        ) : (
-          <>
-            {preview.documentation.map((source) => (
-              <label
-                key={source.sourceId}
-                className="flex min-h-11 items-center gap-2 text-[15px] text-[var(--color-fg-2)]"
-              >
-                <input
-                  type="checkbox"
-                  className="size-4"
-                  checked={!excluded.includes(source.sourceId)}
-                  disabled={change.busy}
-                  onChange={(event) =>
-                    setExcluded((current) =>
-                      event.target.checked
-                        ? current.filter((id) => id !== source.sourceId)
-                        : [...current, source.sourceId],
-                    )
-                  }
-                />
-                {source.label}
-              </label>
-            ))}
-            <p className="text-[13px] text-[var(--color-muted)]">{READS_FOR_IT_HINT}</p>
-          </>
-        )}
-      </fieldset>
+      <TakeOnSummary preview={preview} />
+      <ReadsForIt
+        documentation={preview.documentation}
+        excluded={excluded}
+        busy={change.busy}
+        onRead={(sourceId, read) =>
+          setExcluded((current) =>
+            read ? current.filter((id) => id !== sourceId) : [...current, sourceId],
+          )
+        }
+      />
       <form className="grid gap-4" onSubmit={submitDecline}>
         {declining ? (
           <Field label={declineReasonLabel(from)}>
