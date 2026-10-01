@@ -87,10 +87,12 @@ export const latest = query({
  * would cover the first case and none of the others; deciding against the row is
  * what covers all of them, including a second tab.
  *
- * A session is reusable until it reaches `done`: `synthesising` is a finaliser's
- * reservation and `active` is a 1:1 still being held, both of which belong to
- * the conversation that is already under way. Only a finished one starts the
- * next 1:1, which is what makes Request Changes open a genuinely new session.
+ * A session is reusable until it reaches `done` or `failed`: `synthesising` is a
+ * finaliser's reservation and `active` is a 1:1 still being held, both of which
+ * belong to the conversation that is already under way. Only a finished one
+ * starts the next 1:1, which is what makes Request Changes open a genuinely new
+ * session; a failed one (its manager handed the employee over) starts the new
+ * manager's own.
  *
  * Reuse crosses modes on purpose - switching from chat to voice mid-1:1 is the
  * same conversation on a different surface, and the UI says as much before it
@@ -119,7 +121,7 @@ export const start = mutation({
       .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
       .order('desc')
       .first();
-    if (open && open.state !== 'done') {
+    if (open && open.state !== 'done' && open.state !== 'failed') {
       const webhookToken = open.webhookToken ?? crypto.randomUUID();
       // A call started over a chat still being held starts from the first question, as the
       // switch says: the chat's turns are set aside, not drawn again over the call.
@@ -727,3 +729,70 @@ export const sweepStalledFinalisations = internalMutation({
     return { requeued };
   },
 });
+
+/** Why a one-to-one under way stopped at a handover: the manager it was held with is no longer the employee's. */
+export const HANDOVER_SESSION_FAILURE = 'the manager changed';
+
+/** The most of one employee's one-to-one sessions a handover reads. */
+const HANDOVER_SESSION_LIMIT = 100;
+
+/** The session states of a one-to-one still under way: held, or being drafted from. */
+const UNDER_WAY: ReadonlySet<Doc<'voiceSessions'>['state']> = new Set([
+  'pending',
+  'active',
+  'synthesising',
+]);
+
+/**
+ * Fail the employee's one-to-one under way at a handover's move (the transfer plan, section
+ * 6.4): the conversation is its manager's own, and the new manager holds their own. Each
+ * session still being held or drafted from is `failed` with {@link HANDOVER_SESSION_FAILURE}:
+ * its claim and webhook token are dropped, so a finisher still drafting commits nothing
+ * (`finaliseSession` refuses a session that is no longer its `synthesising` claim's), and its
+ * conversation stamp moves on, so a chat write composed for it is refused. The old manager's
+ * words leave it (the turns, the reply being typed, the transcript, the answers and the notes on
+ * earlier drafts), since the new manager can read the employee's sessions. When the draft
+ * charter is discarded with it (D8), every finished session that drafted it is failed the same
+ * way and loses the charter it names. `voice.start` opens a new session over a failed one.
+ *
+ * @param ctx - The move's mutation context.
+ * @param agentId - The employee.
+ * @param options - `draftDiscarded`: whether the move discarded a draft charter never approved.
+ * @returns How many one-to-ones were under way.
+ */
+export async function failOneToOnesForHandover(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+  options: { readonly draftDiscarded: boolean },
+): Promise<number> {
+  const sessions = await ctx.db
+    .query('voiceSessions')
+    .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+    .order('desc')
+    .take(HANDOVER_SESSION_LIMIT);
+  let underWay = 0;
+  for (const session of sessions) {
+    const held = UNDER_WAY.has(session.state);
+    if (!held && !(options.draftDiscarded && session.state === 'done')) continue;
+    if (held) underWay += 1;
+    await ctx.db.patch(session._id, {
+      state: 'failed',
+      finalisationError: HANDOVER_SESSION_FAILURE,
+      conversation: conversationOf(session) + 1,
+      answers: {},
+      transcriptText: undefined,
+      turns: undefined,
+      replyDraft: undefined,
+      pendingTranscript: undefined,
+      pendingBossLabel: undefined,
+      changeRequests: undefined,
+      claimToken: undefined,
+      claimedAt: undefined,
+      claimedBy: undefined,
+      webhookToken: undefined,
+      charterId: undefined,
+      charterVersion: undefined,
+    });
+  }
+  return underWay;
+}
