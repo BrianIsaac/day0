@@ -24,7 +24,8 @@ export type TitleSubjectReader = (agentId: Id<'agents'>) => Promise<TitleSubject
 /**
  * What the employee page's title is about, read on the server as the manager whose page it is,
  * through the seam every server route acts on Convex through. The manager's own employee is one
- * read; only when that read refuses the employee as another account's is the departure asked,
+ * read; only when that read refuses the employee as another account's, or finds no row, is the
+ * departure asked,
  * so a link to an employee the manager handed over is titled by where it went (the v0.12.0 walk:
  * it read "Needs you", the tab of an employee that was no longer theirs).
  *
@@ -35,7 +36,9 @@ export async function readTitleSubject(agentId: Id<'agents'>): Promise<TitleSubj
   if (!caller.ok) return { kind: 'unnamed' };
   try {
     const agent = await caller.client.query(api.agents.get, { agentId });
-    return agent === null ? { kind: 'unnamed' } : { kind: 'employee', name: agent.name };
+    if (agent !== null) return { kind: 'employee', name: agent.name };
+    // No row: retired, or never there. One the caller handed over and its new manager retired
+    // since is titled by where it went, as its page says.
   } catch (error) {
     if (!isEmployeeNotYours(error)) throw error;
   }

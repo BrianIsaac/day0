@@ -258,6 +258,31 @@ describe('the employee page layout', () => {
     logged.mockRestore();
   });
 
+  it('titles the old manager’s link by where the employee went once the new manager retired it, the row gone (second pass)', async () => {
+    vi.stubEnv('NEXT_PUBLIC_CONVEX_URL', 'https://title-test.convex.cloud');
+    vi.stubEnv('NEXT_PUBLIC_DEV_NO_AUTH', undefined);
+    const asked: unknown[] = [];
+    vi.stubGlobal('fetch', async (_url: string, init: RequestInit): Promise<Response> => {
+      const body = JSON.parse(String(init.body)) as { path: unknown };
+      asked.push(body.path);
+      const value =
+        body.path === 'agents:get'
+          ? null
+          : { ...DEPARTED, departure: { ...DEPARTED.departure, afterwards: 'retired' } };
+      return new Response(JSON.stringify({ status: 'success', value }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    const { generateMetadata } = await import('../../../../app/agent/[agentId]/layout');
+    expect(
+      await generateMetadata({ params: Promise.resolve({ agentId: EMPLOYEE_ROW._id }) }),
+    ).toEqual({
+      title: { default: 'Mira was handed over · Day0', template: 'Mira was handed over · Day0' },
+    });
+    expect(asked).toEqual(['agents:get', 'transferDepartures:employeePage']);
+  });
+
   it('asks for the employee only once Convex holds the token, so a full load never reaches the error boundary (walk M2)', async () => {
     const server = syncServer((path, signedIn) => {
       if (path === 'config:surfaceMode') return { value: { mode: 'mock' } };
