@@ -137,6 +137,7 @@ export function createIssuer(options) {
   const clients = options.clients;
   const now = options.now ?? (() => Date.now());
   let tokenSeconds = options.tokenSeconds ?? DEFAULT_TOKEN_SECONDS;
+  const endSessionSupported = options.endSession ?? true;
   const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const kid = randomUUID();
   const publicJwk = { ...publicKey.export({ format: 'jwk' }), kid, use: 'sig', alg: 'RS256' };
@@ -211,7 +212,7 @@ export function createIssuer(options) {
       authorization_endpoint: `${issuer}/authorize`,
       token_endpoint: `${issuer}/token`,
       jwks_uri: `${issuer}/jwks`,
-      end_session_endpoint: `${issuer}/end-session`,
+      ...(endSessionSupported ? { end_session_endpoint: `${issuer}/end-session` } : {}),
       response_types_supported: ['code'],
       subject_types_supported: ['public'],
       id_token_signing_alg_values_supported: ['RS256'],

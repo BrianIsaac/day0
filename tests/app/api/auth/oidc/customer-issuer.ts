@@ -30,6 +30,7 @@ export function customerIssuer(
     readonly issuer?: string;
     readonly env?: Readonly<Record<string, string>>;
     readonly now?: () => number;
+    readonly endSession?: boolean;
   } = {},
 ): FakeIssuer {
   const issuer = createIssuer({
@@ -44,6 +45,7 @@ export function customerIssuer(
     ...(options.people ? { people: options.people } : {}),
     ...(options.tokenSeconds ? { tokenSeconds: options.tokenSeconds } : {}),
     ...(options.now ? { now: options.now } : {}),
+    ...(options.endSession === undefined ? {} : { endSession: options.endSession }),
   });
   const env: Record<string, string> = {
     NEXT_PUBLIC_DAY0_PROFILE: 'customer-local',

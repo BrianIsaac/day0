@@ -6,10 +6,12 @@ import {
   CustomerSignInUnavailable,
   customerSignInSettings,
   finishSignIn,
+  issuerSignOutUrl,
   needsRefresh,
   refreshSession,
   safeReturnTo,
   sealedTokenClaims,
+  signedOutUriOf,
   startSignIn,
   type CustomerSignInSettings,
 } from './customer-oidc-server';
@@ -485,4 +487,44 @@ export async function tokenRoute(request: NextRequest): Promise<NextResponse> {
       throw new Error(`unhandled refresh outcome ${String(unknown)}`);
     }
   }
+}
+
+/**
+ * `POST /api/auth/oidc/logout`: end the session. The cookies are cleared, and
+ * the browser is sent to the issuer's `end_session_endpoint` when its metadata
+ * names one, which ends the issuer's own session and sends the person back to
+ * the signed-out page; without one, straight to that page.
+ *
+ * @param request - The account menu's Sign out, posted from the app's own pages.
+ */
+export async function signOutRoute(request: NextRequest): Promise<NextResponse> {
+  const unavailable = unavailableHere();
+  if (unavailable) return unavailable;
+  const settings = settingsOrPage();
+  if (settings instanceof NextResponse) return settings;
+  if (!fromOwnPages(request, settings)) {
+    return NextResponse.json({ error: 'not from this site' }, { status: 403, headers: NO_STORE });
+  }
+  const session = await sessionOf(request, settings);
+  const destination =
+    (await issuerSignOutUrl(settings, session?.idToken)) ?? signedOutUriOf(settings.publicUrl);
+  // 303, so the browser follows the POST with a GET.
+  const response = NextResponse.redirect(destination, { status: 303, headers: NO_STORE });
+  clearSession(response, request, settings);
+  return response;
+}
+
+/**
+ * `GET /api/auth/oidc/logout`: the signed-out page the issuer sends the
+ * person back to. It changes nothing; a link that loads it ends no session.
+ */
+export function signedOutRoute(): NextResponse {
+  const unavailable = unavailableHere();
+  if (unavailable) return unavailable;
+  return signInPageResponse({
+    status: 200,
+    title: 'You are signed out',
+    body: 'You are signed out of Day0. Sign in again to carry on.',
+    action: { href: signInAgainHref('/'), label: 'Sign in' },
+  });
 }

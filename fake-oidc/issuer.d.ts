@@ -21,6 +21,8 @@ export interface FakeIssuerOptions {
   readonly people?: readonly FakePerson[];
   /** How long an ID token lives, in seconds. */
   readonly tokenSeconds?: number;
+  /** Whether the metadata names an `end_session_endpoint`; true unless false. */
+  readonly endSession?: boolean;
   /** The clock, in milliseconds. */
   readonly now?: () => number;
 }
