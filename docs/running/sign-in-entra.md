@@ -122,7 +122,7 @@ With the customer's IT, and a test person assigned in step 4:
 pnpm check:sign-in
 ```
 
-It prints a one-time link. Open it in a private window and sign in as the test
+It prints a link good for ten minutes. Open it in a private window and sign in as the test
 person. The page and the terminal then show one line per claim, and every line
 must be `pass`:
 

@@ -118,5 +118,11 @@ describe('the one-time check ticket', (): void => {
       reportTo: 'https://evil.test/report',
     });
     expect(await openCheckTicket(SECRET, elsewhere, NOW)).toBeUndefined();
+    // Only the check's own listener: this machine, plain http, the /report path.
+    const otherPath = await sealCheckTicket(SECRET, {
+      ...ticket,
+      reportTo: 'http://127.0.0.1:3550/api/seed',
+    });
+    expect(await openCheckTicket(SECRET, otherPath, NOW)).toBeUndefined();
   });
 });

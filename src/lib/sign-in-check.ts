@@ -4,7 +4,7 @@ import { seal, unseal } from './customer-session';
 
 /**
  * The live sign-in check (`pnpm check:sign-in`), the half the app's server
- * runs: a one-time ticket the check mints with the session secret, and the
+ * runs: a ticket good for ten minutes the check mints with the session secret, and the
  * verdict on each claim that matters in the ID token a test person signs in
  * with. The callback, given a ticket, reports these instead of signing anyone
  * in, and posts the report back to the check on this machine.
@@ -45,7 +45,7 @@ export interface SignInCheckReport {
     | { readonly status: 'gap'; readonly detail: string };
 }
 
-/** The one-time ticket the check hands the login route. */
+/** The ticket the check hands the login route, good until its expiry. */
 export interface CheckTicket {
   readonly checkId: string;
   /** Where on this machine the callback posts the report. */
@@ -257,12 +257,15 @@ export async function sealCheckTicket(secret: string, ticket: CheckTicket): Prom
   return seal(secret, 'sign-in-check', ticket);
 }
 
-/** Whether an address is a listener on this machine: the only place a report goes. */
+/** Whether an address is the check's own listener on this machine: the only place a report goes. */
 function onThisMachine(address: string): boolean {
   try {
     const url = new URL(address);
     return (
-      url.protocol === 'http:' && (url.hostname === '127.0.0.1' || url.hostname === 'localhost')
+      url.protocol === 'http:' &&
+      (url.hostname === '127.0.0.1' || url.hostname === 'localhost') &&
+      url.pathname === '/report' &&
+      url.search === ''
     );
   } catch {
     // Not a URL: not this machine's listener.

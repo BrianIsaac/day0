@@ -180,7 +180,7 @@ export async function signInRoute(request: NextRequest): Promise<NextResponse> {
     return signInPageResponse({
       status: 400,
       title: 'This check link has expired',
-      body: 'A sign-in check link works once, for ten minutes. Run pnpm check:sign-in again for a new one.',
+      body: 'A sign-in check link works for ten minutes. Run pnpm check:sign-in again for a new one.',
     });
   }
   let started: Awaited<ReturnType<typeof startSignIn>>;

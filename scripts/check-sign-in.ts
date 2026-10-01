@@ -14,7 +14,7 @@
  *
  *   pnpm check:sign-in [env file] [--timeout <seconds>] [--report]
  *
- * It prints a one-time link (ten minutes, sealed with the session secret, so
+ * It prints a link good for ten minutes (sealed with the session secret, so
  * only this install's server opens it), waits on a listener on this machine,
  * and the operator signs in through the link as a test person in a private
  * window. The callback, in this mode only, judges each claim that matters
@@ -542,7 +542,7 @@ export function reportExitCode(report: SignInCheckReport): number {
 }
 
 /**
- * The one-time link the operator signs in through.
+ * The link the operator signs in through, good until the ticket's expiry.
  *
  * @param settings - The public origin and the session secret the ticket is sealed with.
  * @param ticket - The ticket.
@@ -697,7 +697,7 @@ async function main(argv: readonly string[]): Promise<number> {
   console.log('Open this link in a private window and sign in as the test person:');
   console.log(`\n  ${link}\n`);
   console.log(
-    `It works once, for ${Math.round(args.timeoutMs / 60_000)} minutes, and signs nobody in. Waiting...`,
+    `It works for ${Math.round(args.timeoutMs / 60_000)} minutes and signs nobody in. Waiting...`,
   );
   let report: SignInCheckReport;
   try {
