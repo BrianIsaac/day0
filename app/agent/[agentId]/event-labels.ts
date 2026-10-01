@@ -151,6 +151,15 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     const to = 'bossEmail' in payload ? text(payload.bossEmail) : undefined;
     return `manager changed${to ? ` to ${to}` : ''} on the dashboard`;
   },
+  'manager.transferred': (payload) => {
+    const from = text(payload.fromAddress);
+    const to = text(payload.toAddress);
+    const cut = counted(
+      Array.isArray(payload.surfacesCut) ? payload.surfacesCut.length : undefined,
+      'connection',
+    );
+    return `handed over${from ? ` from ${from}` : ''}${to ? ` to ${to}` : ''}${cut ? `, ${cut} cut` : ''}`;
+  },
   'charter.drafted': (payload) => `charter v${text(payload.version) ?? '?'} drafted`,
   'charter.approved': (payload) => {
     const struck = counted(payload.struckConstraints?.length, 'rule');

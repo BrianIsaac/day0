@@ -126,6 +126,33 @@ describe('recordWords', (): void => {
     ).toBe('Mira skipped “Refresh pipeline coverage view”: forecasting work assigned to Aman.');
   });
 
+  it('says where a handed-over employee went, and what waits for its new manager to connect', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'manager.transferred',
+          payload: {
+            fromAddress: 'sam@revops.example',
+            toAddress: 'ana@kestrel.example',
+            surfacesCut: ['linear', 'slack'],
+          },
+        },
+        { name: 'Mira' },
+      ),
+    ).toBe(
+      'Mira moved from sam@revops.example to ana@kestrel.example; 2 connections were cut and wait to be approved and connected again.',
+    );
+    expect(
+      recordWords(
+        {
+          type: 'manager.transferred',
+          payload: { toAddress: 'ana@kestrel.example', surfacesCut: [] },
+        },
+        { name: 'Mira' },
+      ),
+    ).toBe('Mira moved to ana@kestrel.example.');
+  });
+
   it('says the reason for a rejection once, not the stored prefix before it (m43)', (): void => {
     const rejected = (reason: string): string =>
       recordWords(

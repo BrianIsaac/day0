@@ -36,6 +36,7 @@ export const RECORD_FILTER_OF: { readonly [Type in EventType]: readonly RecordFi
   'permission.granted': DECISIONS,
   'permission.revoked': DECISIONS,
   'manager.changed': DECISIONS,
+  'manager.transferred': DECISIONS,
   'charter.drafted': CHARTER,
   'charter.approved': ['charter', 'decisions'],
   'charter.amended': ['charter', 'decisions'],

@@ -173,6 +173,16 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     const to = 'bossEmail' in p ? text(p.bossEmail) : undefined;
     return `You changed ${name}'s manager${to ? ` to ${to}` : ''}`;
   },
+  'manager.transferred': (p, { name }) => {
+    const from = text(p.fromAddress);
+    const to = text(p.toAddress);
+    const cut = Array.isArray(p.surfacesCut) ? p.surfacesCut.length : 0;
+    const moved = `${name} moved${from ? ` from ${from}` : ''} to ${to ?? 'a new manager'}`;
+    if (cut === 0) return moved;
+    return `${moved}; ${counted(cut, 'connection')} ${cut === 1 ? 'was' : 'were'} cut and ${
+      cut === 1 ? 'waits' : 'wait'
+    } to be approved and connected again`;
+  },
   'charter.drafted': (p) => `Charter version ${text(p.version) ?? '?'} drafted for your review`,
   'charter.approved': (p) => {
     const struck = counted(p.struckConstraints?.length, 'rule');

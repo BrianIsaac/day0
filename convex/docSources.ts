@@ -1290,12 +1290,18 @@ export const pruneMirrors = internalMutation({
  * pages (`mock.readableDocs`); this deletes them, a page of `PAGED_READ` at a time over the
  * employee's own index, the bound the finishing sync's `pruneMirrors` deletes by, keeping the
  * seeded office pages and every page the employee still reads. The run's finishing prune cannot
- * do it: it is fenced to one source's running sync and keeps every page the listing names.
+ * do it: it is fenced to one source's running sync and keeps every page the listing names. Each
+ * page adds what it deleted to the handover's outcome (`mirroredPagesHidden`) when it names one.
  *
  * @returns How many pages this page of the walk deleted.
  */
 export const pruneDepartedMirrors = internalMutation({
-  args: { agentId: v.id('agents'), cursor: v.optional(v.string()) },
+  args: {
+    agentId: v.id('agents'),
+    cursor: v.optional(v.string()),
+    /** The handover whose outcome counts the pages deleted, when a handover scheduled it. */
+    transferId: v.optional(v.id('managerTransfers')),
+  },
   handler: async (ctx, args): Promise<number> => {
     const page = await ctx.db
       .query('mockDocs')
@@ -1306,10 +1312,20 @@ export const pruneDepartedMirrors = internalMutation({
     );
     const unread = page.page.filter((doc) => !readable.has(doc._id));
     await Promise.all(unread.map(async (doc) => await ctx.db.delete(doc._id)));
+    const transfer = args.transferId === undefined ? null : await ctx.db.get(args.transferId);
+    if (transfer?.outcome && unread.length > 0) {
+      await ctx.db.patch(transfer._id, {
+        outcome: {
+          ...transfer.outcome,
+          mirroredPagesHidden: transfer.outcome.mirroredPagesHidden + unread.length,
+        },
+      });
+    }
     if (!page.isDone) {
       await ctx.scheduler.runAfter(0, internal.docSources.pruneDepartedMirrors, {
         agentId: args.agentId,
         cursor: page.continueCursor,
+        ...(args.transferId === undefined ? {} : { transferId: args.transferId }),
       });
     }
     return unread.length;
