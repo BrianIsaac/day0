@@ -12,7 +12,11 @@ import {
 } from '../../convex/transferAcceptance';
 import { HANDOVER_CUT_REASON } from '../../convex/surfaces';
 import { EMPLOYEE_NOT_YOURS } from '../../src/agent/employee-access';
-import { NOT_NAMED_IN_TRANSFER, transferExpiresAt } from '../../src/agent/manager-transfer';
+import {
+  NOT_NAMED_IN_TRANSFER,
+  OWN_TRANSFER,
+  transferExpiresAt,
+} from '../../src/agent/manager-transfer';
 import { runThroughBody } from '../fixtures/run-through-charter-2026-09-14';
 import { MANAGER_ADDRESS, fixtureAddressOf, managerIdentity } from './fakes/manager-identity';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
@@ -455,6 +459,8 @@ describe('transferPreview: what the named manager reads before accepting (transf
 describe('accept in mock mode: the office moves and nothing is kept (14.1 items 1 and 9)', (): void => {
   beforeEach((): void => {
     useSurfaceMode('mock');
+    // The jobs a move schedules run only when a test drains them, never mid-test.
+    vi.useFakeTimers();
   });
 
   it('makes the employee the colleague’s and no longer the asker’s, everywhere either reads it', async (): Promise<void> => {
@@ -523,6 +529,32 @@ describe('accept in mock mode: the office moves and nothing is kept (14.1 items 
     expect(identity['IDENTITY.md']).not.toContain(MANAGER_ADDRESS);
   });
 
+  it('gives the employee the documentation the acceptor ticked, and counts every old page deleted across pages', async (): Promise<void> => {
+    const office = await seedOffice();
+    await office.harness.run(async (ctx) => {
+      for (let index = 0; index < 150; index += 1) {
+        await ctx.db.insert('mockDocs', {
+          agentId: office.maya,
+          slug: `owner-page-${index}`,
+          title: `Owner page ${index}`,
+          body: 'OWNER-PAGE-BODY',
+          category: 'team-doc',
+          sourceId: office.ownerSource,
+          sourceRef: `page-${index}.md`,
+          updatedAt: 1,
+        });
+      }
+    });
+
+    await acceptAsColleague(office, { excludedDocSourceIds: [office.colleagueSource] });
+    await office.harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect((await read(office.harness, office.maya))?.excludedDocSourceIds).toEqual([
+      office.colleagueSource,
+    ]);
+    expect((await read(office.harness, office.transferId))?.outcome?.mirroredPagesHidden).toBe(151);
+  });
+
   it('carries the hosted office, hides the old owner’s pages at once, deletes them, and keeps no boundary', async (): Promise<void> => {
     vi.useFakeTimers();
     const office = await seedOffice();
@@ -549,6 +581,8 @@ describe('accept in mock mode: the office moves and nothing is kept (14.1 items 
 describe('accept in real mode: two surfaces, one credential shared with a colleague (14.1 items 2 and 3)', (): void => {
   beforeEach((): void => {
     useSurfaceMode('real');
+    // The jobs a move schedules run only when a test drains them, never mid-test.
+    vi.useFakeTimers();
   });
 
   it('cuts both surfaces, revokes the credential only she bound and keeps the shared one for the old owner', async (): Promise<void> => {
@@ -672,6 +706,8 @@ describe('accept in real mode: two surfaces, one credential shared with a collea
 describe('claims and the departure boundary at a move (14.1 item 4)', (): void => {
   beforeEach((): void => {
     useSurfaceMode('real');
+    // The jobs a move schedules run only when a test drains them, never mid-test.
+    vi.useFakeTimers();
   });
 
   it('keeps a written claim binding the old owner’s employees and moves it to bind the new owner’s', async (): Promise<void> => {
@@ -968,6 +1004,8 @@ describe('the acceptance stamp the company figures read (9-U5, D12)', (): void =
 describe('accept: the refusals, each before anything moves', (): void => {
   beforeEach((): void => {
     useSurfaceMode('mock');
+    // The jobs a move schedules run only when a test drains them, never mid-test.
+    vi.useFakeTimers();
   });
 
   it('refuses while a run is in flight, naming it, and leaves the request asked (9-U3b takes this case)', async (): Promise<void> => {
@@ -1032,6 +1070,15 @@ describe('accept: the refusals, each before anything moves', (): void => {
       await ctx.db.patch(office.maya, { userId: 'someone-else' });
     });
     await expect(acceptAsColleague(office)).rejects.toMatchObject({ data: EMPLOYEE_LEFT_ASKER });
+  });
+
+  it('refuses the account that asked, even signed in with the named address', async (): Promise<void> => {
+    const office = await seedOffice();
+    await expect(
+      office.harness
+        .withIdentity(managerIdentity('owner', { email: COLLEAGUE_ADDRESS }))
+        .mutation(api.transferAcceptance.accept, { transferId: office.transferId }),
+    ).rejects.toMatchObject({ data: OWN_TRANSFER });
   });
 
   it('refuses an account the request does not name', async (): Promise<void> => {
