@@ -6617,6 +6617,71 @@ export const claimApprovedActions = internalMutation({
   },
 });
 
+/** The output of an apply whose outcome is unknown, with its ledger as recovery records it. */
+interface InterruptedApplyLedger {
+  readonly output: {
+    actions?: Array<{ tool?: unknown }>;
+    actionIndexOffset?: unknown;
+    [key: string]: unknown;
+  };
+  readonly applied: AppliedAction[];
+}
+
+/**
+ * The ledger of an apply that was claimed and did not finish: every row this phase approved is
+ * recorded with its outcome unknown, a row an earlier phase recorded keeps its entry, and every
+ * other row keeps why it was not applied, as the apply's dead-man switch records it.
+ *
+ * @param row - The work item, `executing` with an apply claimed.
+ * @param pendingRunId - The run the approval belongs to.
+ */
+function interruptedApplyLedger(
+  row: Doc<'workItems'>,
+  pendingRunId: Id<'events'>,
+): InterruptedApplyLedger {
+  const output = (row.output ?? {}) as {
+    actions?: Array<{ tool?: unknown }>;
+    actionIndexOffset?: unknown;
+    [key: string]: unknown;
+  };
+  const approved = new Set(row.approvedIndexes ?? []);
+  const count = output.actions?.length ?? 0;
+  const verdicts = verdictList(row.actionVerdicts, count);
+  const prior = ledgerOf(row.output);
+  const actionIndexOffset =
+    typeof output.actionIndexOffset === 'number' &&
+    Number.isInteger(output.actionIndexOffset) &&
+    output.actionIndexOffset >= 0
+      ? output.actionIndexOffset
+      : 0;
+  // In the auto phase a held row was never offered to the manager, so it
+  // keeps the reason the gate held it for; in the approved phase an
+  // unapproved held row is one the manager left out.
+  const heldReasonFor = (index: number): string => {
+    const verdict = verdicts[index];
+    if (verdict.disposition === 'refused') return verdict.reason;
+    if (verdict.disposition === 'held' && row.applyPhase === 'auto') return verdict.reason;
+    return HELD_NOT_APPROVED;
+  };
+  const applied = (output.actions ?? []).map((action, index): AppliedAction => {
+    const earlier = prior[index];
+    if (earlier && !earlier.awaitingApproval && !approved.has(index)) return earlier;
+    return {
+      tool: typeof action.tool === 'string' ? action.tool : 'unknown',
+      ok: !approved.has(index),
+      ...(approved.has(index)
+        ? { reason: OUTCOME_UNKNOWN_REASON }
+        : { held: true, reason: heldReasonFor(index) }),
+      idempotencyKey: actionIdempotencyKey({
+        workItemId: row._id,
+        runId: row.executionRunId ?? pendingRunId,
+        actionIndex: index + actionIndexOffset,
+      }),
+    };
+  });
+  return { output, applied };
+}
+
 /**
  * Recover an apply action that disappeared across a backend interruption.
  *
@@ -6656,46 +6721,7 @@ export const recoverInterruptedApply = internalMutation({
     if (args.fromTimer && Date.now() - row.applyClaimedAt < APPLY_RECOVERY_MS) {
       return { recovered: 'ignored' };
     }
-    const output = (row.output ?? {}) as {
-      actions?: Array<{ tool?: unknown }>;
-      actionIndexOffset?: unknown;
-      [key: string]: unknown;
-    };
-    const approved = new Set(row.approvedIndexes ?? []);
-    const count = output.actions?.length ?? 0;
-    const verdicts = verdictList(row.actionVerdicts, count);
-    const prior = ledgerOf(row.output);
-    const actionIndexOffset =
-      typeof output.actionIndexOffset === 'number' &&
-      Number.isInteger(output.actionIndexOffset) &&
-      output.actionIndexOffset >= 0
-        ? output.actionIndexOffset
-        : 0;
-    // In the auto phase a held row was never offered to the manager, so it
-    // keeps the reason the gate held it for; in the approved phase an
-    // unapproved held row is one the manager left out.
-    const heldReasonFor = (index: number): string => {
-      const verdict = verdicts[index];
-      if (verdict.disposition === 'refused') return verdict.reason;
-      if (verdict.disposition === 'held' && row.applyPhase === 'auto') return verdict.reason;
-      return HELD_NOT_APPROVED;
-    };
-    const applied = (output.actions ?? []).map((action, index) => {
-      const earlier = prior[index];
-      if (earlier && !earlier.awaitingApproval && !approved.has(index)) return earlier;
-      return {
-        tool: typeof action.tool === 'string' ? action.tool : 'unknown',
-        ok: !approved.has(index),
-        ...(approved.has(index)
-          ? { reason: OUTCOME_UNKNOWN_REASON }
-          : { held: true, reason: heldReasonFor(index) }),
-        idempotencyKey: actionIdempotencyKey({
-          workItemId: args.workItemId,
-          runId: row.executionRunId ?? args.pendingRunId,
-          actionIndex: index + actionIndexOffset,
-        }),
-      };
-    });
+    const { output, applied } = interruptedApplyLedger(row, args.pendingRunId);
     await settleWriteTargetClaims(ctx, args.workItemId, Date.now());
     await ctx.db.patch(args.workItemId, {
       state: 'failed',
