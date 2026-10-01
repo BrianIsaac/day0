@@ -1,6 +1,8 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
 import { DEV_NO_AUTH, isLoopbackHostHeader } from '@/lib/dev-auth';
+import { CUSTOMER_SESSION_COOKIE, joinCookie, openSession } from '@/lib/customer-session';
+import { CUSTOMER_SIGN_IN, profileMismatch } from '@/lib/customer-sign-in';
 import {
   DEV_NO_AUTH_COOKIE,
   DEV_NO_AUTH_SESSION_SECONDS,
@@ -35,6 +37,11 @@ import {
  * in its place is the boundary that mode actually claims: the caller must
  * hold this machine's unlock secret, so the one synthetic user is only
  * ever handed to somebody who read it off this machine's terminal.
+ *
+ * A customer-local build (`NEXT_PUBLIC_DAY0_PROFILE=customer-local`) runs
+ * neither: people sign in through the customer's own issuer, and
+ * `customerSignInGate` below holds every route to the session that sign-in
+ * seals.
  */
 const isPublicRoute = createRouteMatcher([
   '/',
@@ -96,6 +103,10 @@ const isExternallyCalledRoute = createRouteMatcher([
 ]);
 
 export default function proxy(...args: Parameters<typeof clerkProxy>) {
+  if (CUSTOMER_SIGN_IN) {
+    const [request] = args;
+    return customerSignInGate(request);
+  }
   if (DEV_NO_AUTH) {
     const [request] = args;
     return isExternallyCalledRoute(request) ? NextResponse.next() : devNoAuthGate(request);
@@ -169,6 +180,54 @@ async function devNoAuthGate(request: NextRequest): Promise<NextResponse> {
   }
 
   return NextResponse.next();
+}
+
+/** The company sign-in's own routes, which a signed-out browser must reach to sign in. */
+const isCustomerSignInRoute = createRouteMatcher(['/api/auth/oidc/(.*)']);
+
+/** Clerk's pages, which a customer-local build never draws. */
+const isClerkPage = createRouteMatcher(['/sign-in(.*)', '/sign-up(.*)']);
+
+/** A redirect to the company sign-in, relative so it stays on whatever host the customer's proxy serves. */
+function toCompanySignIn(returnTo: string): NextResponse {
+  return new NextResponse(null, {
+    status: 307,
+    headers: {
+      location: `/api/auth/oidc/login?returnTo=${encodeURIComponent(returnTo)}`,
+      'cache-control': 'no-store',
+    },
+  });
+}
+
+/**
+ * The customer-local profile's gate (A7): every page and API route needs a
+ * session this install sealed, except the sign-in's own routes and the two
+ * that are called from outside (the voice webhook and Slack's install
+ * redirect, each with its own boundary, above). A signed-out page request is
+ * sent to the company sign-in and brought back afterwards; a signed-out API
+ * call is answered 401. Clerk's pages are never drawn.
+ *
+ * This is the optimistic check Next's guide describes (O2): it reads the
+ * sealed cookie on the Node runtime and nothing else. Authorisation stays on
+ * the deployment, where `getCaller` checks the ID token's signature and the
+ * allowed domains again.
+ */
+async function customerSignInGate(request: NextRequest): Promise<NextResponse> {
+  const mismatch = profileMismatch(process.env.DAY0_PROFILE);
+  if (mismatch) return refuse(mismatch, 503);
+  if (isCustomerSignInRoute(request) || isExternallyCalledRoute(request)) {
+    return NextResponse.next();
+  }
+  if (isClerkPage(request)) return toCompanySignIn('/');
+  const session = await openSession(
+    process.env.DAY0_SESSION_SECRET,
+    joinCookie(CUSTOMER_SESSION_COOKIE, (name) => request.cookies.get(name)?.value),
+  );
+  if (session) return NextResponse.next();
+  if (isApiRoute(request) || (request.method !== 'GET' && request.method !== 'HEAD')) {
+    return NextResponse.json({ error: 'not signed in' }, { status: 401 });
+  }
+  return toCompanySignIn(`${request.nextUrl.pathname}${request.nextUrl.search}`);
 }
 
 export const config = {
