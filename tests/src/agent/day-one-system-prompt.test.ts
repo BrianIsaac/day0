@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   DAY_ONE_PROMPT_CACHE_KEY,
   dayOneSystemPrompt,
+  dayOneTurnNote,
 } from '../../../src/agent/day-one-system-prompt';
 import { DAY_ONE_TOPIC_TITLES } from '../../../src/agent/day-one-progress';
+import { DAY_ONE_TOPIC_SPECS, questionBody } from '../../../src/agent/day-one-prompts';
 
 describe('dayOneSystemPrompt', (): void => {
   it('names the employee as the manager named it, in the first line and the welcome rule', (): void => {
@@ -61,7 +63,57 @@ describe('dayOneSystemPrompt', (): void => {
     );
   });
 
+  it('asks only the question each turn names, once, with no follow-up (the v0.11.0 walk)', (): void => {
+    const prompt = dayOneSystemPrompt('Ada');
+    expect(prompt).toContain(
+      '  - Ask only the question the note at the end of the conversation names, once, then stop. ' +
+        'Never ask a follow-up, never go back to an earlier topic and never ask a later one early. ' +
+        'An answer that leaves something out still stands: the boss can add to it at the last question.',
+    );
+    expect(prompt).not.toContain('follow-ups are fine');
+  });
+
   it('moves the cache key on with the prompt', (): void => {
-    expect(DAY_ONE_PROMPT_CACHE_KEY).toBe('day0-day1-system-v2');
+    expect(DAY_ONE_PROMPT_CACHE_KEY).toBe('day0-day1-system-v3');
+  });
+});
+
+describe('dayOneTurnNote', (): void => {
+  it('names the opening question after the welcome on turn one', (): void => {
+    expect(dayOneTurnNote(0)).toBe(
+      'Where the one-to-one stands: the boss has answered none of the seven questions yet. ' +
+        'In this turn, welcome the boss as the rules say, then ask question 1 (Why this hire) in your ' +
+        `own words: ${questionBody(DAY_ONE_TOPIC_SPECS[0].question)}`,
+    );
+  });
+
+  it('names the question after the replies counted, the one the progress line shows', (): void => {
+    DAY_ONE_TOPIC_SPECS.forEach((spec, replies) => {
+      if (replies === 0) return;
+      expect(dayOneTurnNote(replies)).toBe(
+        `Where the one-to-one stands: the boss has answered ${replies} of the seven questions. ` +
+          "In this turn, acknowledge the boss's last reply in at most one short sentence, then ask " +
+          `question ${replies + 1} (${DAY_ONE_TOPIC_TITLES[spec.topic]}) in your own words: ` +
+          questionBody(spec.question),
+      );
+    });
+  });
+
+  it('asks for the close, and no question, once all seven are answered', (): void => {
+    const close =
+      'Where the one-to-one stands: the boss has answered all seven questions. In this turn, ' +
+      'thank the boss in a sentence or two, ask nothing, and call the dayOneComplete tool with a ' +
+      'friendly closing line.';
+    expect(dayOneTurnNote(7)).toBe(close);
+    expect(dayOneTurnNote(12)).toBe(close);
+  });
+
+  it('carries no em dash, no slug and no product name, as the prompt does not', (): void => {
+    for (let replies = 0; replies <= 7; replies += 1) {
+      const note = dayOneTurnNote(replies);
+      expect(note).not.toContain('\u2014');
+      expect(note).not.toContain('Day0');
+      expect(note).not.toMatch(/why-this-hire|role-and-goals|open-questions|\d\/7/);
+    }
   });
 });

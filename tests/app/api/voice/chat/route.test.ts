@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { OneToOneTurn } from '../../../../../src/agent/one-to-one-conversation';
+import { dayOneTurnNote } from '../../../../../src/agent/day-one-system-prompt';
 
 vi.mock('../../../../../src/lib/dev-auth-server', () => ({
   establishCaller: async () => ({ ok: true, userId: 'dev-no-auth-subject' }),
@@ -279,8 +280,9 @@ describe('the Day-1 chat route', (): void => {
       stream: true,
       max_tokens: 32768,
       reasoning_effort: 'low',
-      // Re-pinned from v1: the prompt now carries the employee's name and the topics' titles.
-      prompt_cache_key: 'day0-day1-system-v2',
+      // Re-pinned from v1: the prompt now carries the employee's name and the topics' titles;
+      // from v2: it asks only the question each turn's note names (the v0.11.0 walk).
+      prompt_cache_key: 'day0-day1-system-v3',
     });
   });
 
@@ -329,7 +331,10 @@ describe('the Day-1 chat route', (): void => {
     };
     expect(body.messages[0].role).toBe('system');
     expect(body.messages[0].content).toContain('SEVEN topics');
-    expect(body.messages.slice(1)).toEqual([{ role: 'user', content: '__init__' }]);
+    expect(body.messages.slice(1)).toEqual([
+      { role: 'user', content: '__init__' },
+      { role: 'system', content: dayOneTurnNote(0) },
+    ]);
     expect(body.tools.map((t) => t.function.name)).toContain('dayOneComplete');
   });
 
@@ -460,6 +465,21 @@ it('cancels a stalled provider at the 60-second route deadline', async () => {
 });
 
 describe('a turn the model answers normally', (): void => {
+  it('names the one question the turn asks as the last thing the model reads, by the count the progress line shows (the v0.11.0 walk)', async (): Promise<void> => {
+    const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
+
+    const body = await (await POST(turnAfter(3))).text();
+
+    const messages = (sent[0] as { messages: { role: string; content: unknown }[] }).messages;
+    expect(messages.at(-1)).toEqual({ role: 'system', content: dayOneTurnNote(3) });
+    expect(messages.at(-1)?.content).toContain('ask question 4 (What to read)');
+    expect(messages.at(-2)).toMatchObject({ role: 'user' });
+    const start = body.split('\n').find((line) => line.includes('"type":"start"'));
+    expect(JSON.parse(start!.slice('data: '.length))).toMatchObject({
+      messageMetadata: { topicIndex: 3 },
+    });
+  });
+
   it("says on its start which of the seven questions the turn is on, by the close gate's count", async (): Promise<void> => {
     const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
     const topicOf = async (exchanges: number): Promise<unknown> => {

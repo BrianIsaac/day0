@@ -4,6 +4,7 @@ import {
   hasToolCall,
   streamText,
   tool,
+  type ModelMessage,
   type UIMessage,
 } from 'ai';
 import { ConvexError } from 'convex/values';
@@ -16,7 +17,11 @@ import { errorMessage } from '@/lib/errors';
 import { log } from '@/lib/logger';
 import { languageModel } from '@/lib/openai';
 import { streamCallOptions } from '@/lib/stream-settings';
-import { DAY_ONE_PROMPT_CACHE_KEY, dayOneSystemPrompt } from '@/agent/day-one-system-prompt';
+import {
+  DAY_ONE_PROMPT_CACHE_KEY,
+  dayOneSystemPrompt,
+  dayOneTurnNote,
+} from '@/agent/day-one-system-prompt';
 import { INIT_PROMPT, dayOneTurnStream, managerReplies } from '@/agent/day-one-turn';
 import { topicIndexOf, withTopicIndex } from '@/agent/day-one-progress';
 import { uiMessagesOf, type OneToOneTurn } from '@/agent/one-to-one-conversation';
@@ -118,7 +123,13 @@ export async function POST(req: Request): Promise<Response> {
   const system = dayOneSystemPrompt(employee.name);
 
   const uiMessages: UIMessage[] = [PRIMING_TURN, ...uiMessagesOf(taken.turns)];
-  const messages = await convertToModelMessages(uiMessages);
+  const replies = managerReplies(uiMessages);
+  const topicIndex = topicIndexOf(replies);
+  // The conversation, then the one question this turn asks: the model never chooses it.
+  const messages: ModelMessage[] = [
+    ...(await convertToModelMessages(uiMessages)),
+    { role: 'system', content: dayOneTurnNote(replies) },
+  ];
   const keep: KeepAnswer = async (answer) => {
     try {
       const kept = await client.mutation(api.oneToOne.recordAnswer, {
@@ -164,8 +175,6 @@ export async function POST(req: Request): Promise<Response> {
         stopWhen: hasToolCall('dayOneComplete'),
         maxRetries: 3,
       }).toUIMessageStream();
-    const replies = managerReplies(uiMessages);
-    const topicIndex = topicIndexOf(replies);
     // The turn says which of the seven questions it is on, for the room's progress line.
     return createUIMessageStreamResponse({
       stream: keptAnswer(
