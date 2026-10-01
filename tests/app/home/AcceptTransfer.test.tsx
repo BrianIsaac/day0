@@ -243,7 +243,7 @@ describe('AcceptTransfer', () => {
     expect(title()).toBe('Take on Maya?');
     const description = document.getElementById(dialog().getAttribute('aria-describedby') ?? '');
     expect(description?.textContent).toBe(
-      'sam@kestrel.example manages Maya today and asks you to take over. Maya: owns triage for tier-2 asks.',
+      "Maya's manager today, sam@kestrel.example, asks you to take over. Maya: owns triage for tier-2 asks.",
     );
     expect(dialog().querySelector('blockquote')?.textContent).toBe(
       '“She is mid-way through the September close.”',

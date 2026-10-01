@@ -118,7 +118,8 @@ export function inboxEntryWords(entry: InboxItem): InboxEntryWords {
       const zone = deploymentZone();
       return {
         ask: 'an employee to take on',
-        about: `${entry.fromAddress} asks you to become its manager. Expires ${clockTime(entry.expiresAt, zone)}, ${zone} time.`,
+        // The address sits inside the sentence, never first (the wave 9 review's U4-m7).
+        about: `Its manager, ${entry.fromAddress}, asks you to take it on. Expires ${clockTime(entry.expiresAt, zone)}, ${zone} time.`,
         control: 'Review',
       };
     }

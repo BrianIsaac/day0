@@ -62,7 +62,7 @@ describe('a charter carried through a handover (wave 9 review, decision 1 (a))',
     backend.queries = {};
     expect(html).toContain('v0.1 drafted from sam@company.com&#x27;s one-to-one');
     expect(html).toContain(
-      'sam@company.com held the one-to-one this charter was drafted from. What they said stayed with them at the handover.',
+      'The one-to-one this charter was drafted from was held by sam@company.com. What they said stayed with them at the handover.',
     );
     expect(html).not.toContain('What you said');
     expect(html).not.toContain('Read what you said');

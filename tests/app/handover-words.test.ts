@@ -154,7 +154,7 @@ describe('the Manager card (plan 7.1)', () => {
         zone: 'UTC',
       }),
     ).toBe(
-      'lead@kestrel.example accepted. Maya is finishing 2 runs; it becomes theirs when they end, by 2 Oct 2026, 10:15, UTC time at the latest.',
+      'Accepted by lead@kestrel.example. Maya is finishing 2 runs; it becomes theirs when they end, by 2 Oct 2026, 10:15, UTC time at the latest.',
     );
     expect(
       acceptingCardLine({
@@ -177,7 +177,7 @@ describe('the Manager card (plan 7.1)', () => {
         zone: 'UTC',
       }),
     ).toBe(
-      'lead@kestrel.example accepted. Maya is finishing its runs; it becomes theirs when they end, by 2 Oct 2026, 10:15, UTC time at the latest.',
+      'Accepted by lead@kestrel.example. Maya is finishing its runs; it becomes theirs when they end, by 2 Oct 2026, 10:15, UTC time at the latest.',
     );
   });
 
@@ -191,7 +191,7 @@ describe('the Manager card (plan 7.1)', () => {
         zone: 'UTC',
       }),
     ).toBe(
-      'lead@kestrel.example accepted. Maya is finishing 1 run; it becomes theirs when it ends.',
+      'Accepted by lead@kestrel.example. Maya is finishing 1 run; it becomes theirs when it ends.',
     );
   });
 
@@ -213,10 +213,10 @@ describe('the Manager card (plan 7.1)', () => {
         },
         'UTC',
       ),
-    ).toBe('lead@kestrel.example declined on 3 Oct 2026, 08:30, UTC time: "Not my team."');
+    ).toBe('Declined by lead@kestrel.example on 3 Oct 2026, 08:30, UTC time: "Not my team."');
     expect(
       endedCardLine({ state: 'declined', toAddress: 'lead@kestrel.example', decidedAt }, 'UTC'),
-    ).toBe('lead@kestrel.example declined on 3 Oct 2026, 08:30, UTC time.');
+    ).toBe('Declined by lead@kestrel.example on 3 Oct 2026, 08:30, UTC time.');
     expect(
       endedCardLine({ state: 'expired', toAddress: 'lead@kestrel.example', decidedAt }, 'UTC'),
     ).toBe('The request to lead@kestrel.example expired on 3 Oct 2026, 08:30, UTC time.');
@@ -238,10 +238,10 @@ describe('the Manager card (plan 7.1)', () => {
 describe('the acceptance dialog (plan 7.3)', () => {
   it('leads with who asks, the role line and nothing for an employee without one', () => {
     expect(takeOnLead(PREVIEW)).toBe(
-      'sam@kestrel.example manages Maya today and asks you to take over. Maya: owns triage for tier-2 asks.',
+      "Maya's manager today, sam@kestrel.example, asks you to take over. Maya: owns triage for tier-2 asks.",
     );
     expect(takeOnLead({ ...PREVIEW, employee: { ...PREVIEW.employee, roleLine: null } })).toBe(
-      'sam@kestrel.example manages Maya today and asks you to take over.',
+      "Maya's manager today, sam@kestrel.example, asks you to take over.",
     );
   });
 
@@ -357,6 +357,29 @@ describe('the acceptance dialog (plan 7.3)', () => {
   });
 });
 
+describe('a sentence about a handover never starts with an address (the wave 9 review’s U4-m7)', () => {
+  it('opens on the employee, the handover or the verb, as the record does', () => {
+    const to = 'lead@kestrel.example';
+    const sentences = [
+      acceptingCardLine({ name: 'Maya', to, runs: 1, settleBy: undefined, zone: 'UTC' }),
+      endedCardLine({ state: 'declined', toAddress: to, decidedAt: 0 }, 'UTC'),
+      endedCardLine(
+        { state: 'declined', toAddress: to, decidedAt: 0, declineReason: 'No.' },
+        'UTC',
+      ),
+      takeOnLead({
+        fromAddress: to,
+        employee: { name: 'Maya', roleLine: null } as Parameters<typeof takeOnLead>[0]['employee'],
+      }),
+      retireBlockedByAcceptance('Maya', to),
+    ];
+    for (const sentence of sentences) {
+      expect(sentence.startsWith(to), sentence).toBe(false);
+      expect(sentence, sentence).toContain(to);
+    }
+  });
+});
+
 describe('the old manager’s notices (plan 7.4) and the home’s line (section 11.2)', () => {
   it('names where a handed-over employee went and since when', () => {
     const outcome = {
@@ -406,7 +429,7 @@ describe('the old manager’s notices (plan 7.4) and the home’s line (section 
 describe('the retire dialog during a handover (plan 7.5)', () => {
   it('says why retire waits while the handover is accepting', () => {
     expect(retireBlockedByAcceptance('Maya', 'lead@kestrel.example')).toBe(
-      'lead@kestrel.example has accepted Maya; it is theirs once its runs finish.',
+      'Maya was accepted by lead@kestrel.example; it is theirs once its runs finish.',
     );
   });
 });

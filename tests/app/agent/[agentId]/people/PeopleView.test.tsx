@@ -498,7 +498,7 @@ describe('PeopleView', () => {
     const view = mount(asEmployee(<PeopleView />));
     const card = managerCard(view.container);
     expect(card.textContent).toContain(
-      'lead@day0.local accepted. Mira is finishing 2 runs; it becomes theirs when they end, by 2 Oct 2026, 10:15, UTC time at the latest.',
+      'Accepted by lead@day0.local. Mira is finishing 2 runs; it becomes theirs when they end, by 2 Oct 2026, 10:15, UTC time at the latest.',
     );
     expect(buttonNames(card)).toEqual([]);
   });
@@ -525,7 +525,7 @@ describe('PeopleView', () => {
     });
     act((): void => view.root.render(asEmployee(<PeopleView />)));
     expect(said(view.container)).toEqual([
-      'lead@day0.local declined on 3 Oct 2026, 08:30, UTC time.',
+      'Declined by lead@day0.local on 3 Oct 2026, 08:30, UTC time.',
     ]);
   });
 
@@ -562,7 +562,7 @@ describe('PeopleView', () => {
     const view = mount(asEmployee(<PeopleView />));
     const card = managerCard(view.container);
     expect(card.textContent).toContain(
-      'lead@day0.local declined on 3 Oct 2026, 08:30, UTC time: "Not my team."',
+      'Declined by lead@day0.local on 3 Oct 2026, 08:30, UTC time: "Not my team."',
     );
     expect(buttonNames(card)).toEqual(['Hand over']);
   });

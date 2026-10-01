@@ -406,14 +406,14 @@ describe('RetireDialog: what retiring does, said before it is done (Q15, N1)', (
     const { view } = open();
 
     expect(dialog().textContent).toContain(
-      'lead@day0.local has accepted Mira; it is theirs once its runs finish.',
+      'Mira was accepted by lead@day0.local; it is theirs once its runs finish.',
     );
     expect(field().disabled).toBe(true);
     expect(retireButton().disabled).toBe(true);
     expect(retireButton().getAttribute('aria-describedby')).toBeTruthy();
     expect(
       document.getElementById(retireButton().getAttribute('aria-describedby') ?? '')?.textContent,
-    ).toBe('lead@day0.local has accepted Mira; it is theirs once its runs finish.');
+    ).toBe('Mira was accepted by lead@day0.local; it is theirs once its runs finish.');
     // Said as it lands, and read before the field it disables.
     const reason = document.getElementById(retireButton().getAttribute('aria-describedby') ?? '');
     expect(reason?.getAttribute('role')).toBe('status');

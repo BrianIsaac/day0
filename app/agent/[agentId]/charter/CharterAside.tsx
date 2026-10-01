@@ -261,7 +261,7 @@ export function CharterAside({
           <p className="text-sm text-[var(--color-muted)] [overflow-wrap:anywhere]">
             {heldBy.yours
               ? 'You held the one-to-one this charter was drafted from. What you said was cleared when it was handed over.'
-              : `${heldBy.address} held the one-to-one this charter was drafted from. What they said stayed with them at the handover.`}
+              : `The one-to-one this charter was drafted from was held by ${heldBy.address}. What they said stayed with them at the handover.`}
           </p>
         </Card>
       </>

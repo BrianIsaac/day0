@@ -248,7 +248,7 @@ export function acceptingCardLine(input: AcceptingCardInput): string {
     input.settleBy === undefined
       ? ''
       : `, by ${zonedStamp(input.settleBy, input.zone)} at the latest`;
-  return `${input.to} accepted. ${input.name} is finishing ${runs}; it becomes theirs when ${end}${deadline}.`;
+  return `Accepted by ${input.to}. ${input.name} is finishing ${runs}; it becomes theirs when ${end}${deadline}.`;
 }
 
 /**
@@ -267,8 +267,8 @@ export function endedCardLine(
   const when = zonedStamp(ended.decidedAt, zone);
   if (ended.state === 'expired') return `The request to ${ended.toAddress} expired on ${when}.`;
   return ended.declineReason === undefined
-    ? `${ended.toAddress} declined on ${when}.`
-    : `${ended.toAddress} declined on ${when}: "${ended.declineReason}"`;
+    ? `Declined by ${ended.toAddress} on ${when}.`
+    : `Declined by ${ended.toAddress} on ${when}: "${ended.declineReason}"`;
 }
 
 /**
@@ -349,7 +349,7 @@ export function takeOnTitle(name: string): string {
 /** The acceptance dialog's lead: who asks, and what the employee is for. */
 export function takeOnLead(preview: Pick<HandoverPreview, 'fromAddress' | 'employee'>): string {
   const { name, roleLine } = preview.employee;
-  const lead = `${preview.fromAddress} manages ${name} today and asks you to take over.`;
+  const lead = `${name}'s manager today, ${preview.fromAddress}, asks you to take over.`;
   if (roleLine === null) return lead;
   // A role line clipped with an ellipsis, or written as a sentence, keeps its own close.
   return `${lead} ${name}: ${roleLine}${/[.…!?]$/.test(roleLine) ? '' : '.'}`;
@@ -656,5 +656,5 @@ export function reportingElsewhereChoice(count: number): string {
  * @param to - The manager who accepted.
  */
 export function retireBlockedByAcceptance(name: string, to: string): string {
-  return `${to} has accepted ${name}; it is theirs once its runs finish.`;
+  return `${name} was accepted by ${to}; it is theirs once its runs finish.`;
 }
