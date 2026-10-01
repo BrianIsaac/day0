@@ -5,6 +5,7 @@ import { mutation, query, type DatabaseReader, type MutationCtx } from './_gener
 import { assertOwnsAgent, getCallerOrThrow, ownedAgentOrNull } from './ownership';
 import { deleteOwnedDocumentation } from './docSources';
 import { purgeCredential, purgeOwnedCredentials } from './credentials';
+import { credentialsBoundBy } from './surfaces';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { appendEvent } from './eventLog';
 import { ownerRetirements, type RetiredClaim, type RetiredRejection } from './retirements';
@@ -351,21 +352,6 @@ interface Retired {
  * few (`work.setFailed`, `work.decidePlan`) throw into the backend log.
  */
 const SCHEDULED_JOB_SCAN_LIMIT = 4_000;
-
-/**
- * The credentials one employee's surfaces bind: the connection credential and
- * a Slack app's client secret.
- *
- * @param surfaces - The employee's surface rows.
- */
-export function credentialsBoundBy(surfaces: readonly Doc<'surfaces'>[]): Set<Id<'credentials'>> {
-  const bound = new Set<Id<'credentials'>>();
-  for (const surface of surfaces) {
-    if (surface.credentialId) bound.add(surface.credentialId);
-    if (surface.provisioning) bound.add(surface.provisioning.clientSecretCredentialId);
-  }
-  return bound;
-}
 
 /**
  * The claims and rejections a leaving employee's colleagues must still meet,
