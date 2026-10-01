@@ -507,8 +507,11 @@ export function RegisteredSkillsPanel({
           revisionOpen={revising.has(retiring.skill._id)}
           onClose={() => {
             // Some browsers do not focus a button on click, so the dialog's own return can land
-            // on the page: the control that opened it takes focus back.
-            setReturnTo({ control: retiring.origin, card: registeredCard.current });
+            // on the page: the control that opened it takes focus back, unless a run is still
+            // going, whose own control keeps the return.
+            if (retrying === null) {
+              setReturnTo({ control: retiring.origin, card: registeredCard.current });
+            }
             setRetiring(null);
           }}
           onDone={(words) => {

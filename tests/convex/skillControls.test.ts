@@ -343,7 +343,8 @@ describe('skillControls', (): void => {
 
         const parked = await item(harness, returned);
         expect(parked.state).toBe('needs-skill');
-        if (parked.proposedSkillId === undefined) throw new Error('no proposal linked');
+        expect(parked.proposedSkillId).toBeDefined();
+        if (parked.proposedSkillId === undefined) return;
         expect(await skill(harness, parked.proposedSkillId)).toMatchObject({
           name: NAME,
           state: 'proposed',
@@ -408,6 +409,61 @@ describe('skillControls', (): void => {
         state: 'needs-skill',
         proposedSkillId: proposal,
       });
+    });
+
+    it('leaves alone an item that moved on, was parked again, or that a later evaluation parked', async (): Promise<void> => {
+      const harness = convexTest(schema, allConvexModules());
+      const office = await seedOffice(harness);
+      const park = async (workItemId: Id<'workItems'>): Promise<void> => {
+        await harness.mutation(internal.skillControls.parkForMissingSkill, {
+          workItemId,
+          name: NAME,
+          reason: 'its skill is not callable',
+          rationale: 'No callable skill.',
+          shape: { surfaceClass: 'kanban', operation: 'comment-and-close' },
+        });
+      };
+      const approved = async (externalId: string): Promise<Id<'workItems'>> =>
+        await seedItem(harness, office.priya, {
+          state: 'plan-approved',
+          externalId,
+          plan: APPROVED_PLAN,
+        });
+      const movedOn = await approved('REVOPS-1');
+      const parkedTwice = await approved('REVOPS-2');
+      const reEvaluated = await approved('REVOPS-3');
+      for (const workItemId of [movedOn, parkedTwice, reEvaluated]) await park(workItemId);
+      await harness.run(async (ctx) => {
+        await ctx.db.patch(movedOn, { state: 'cancelled' });
+        // Parked again: the newer park's own recovery is the one that may act.
+        await ctx.db.patch(parkedTwice, { state: 'plan-approved' });
+        // A later evaluation parked it on a verdict of its own.
+        await ctx.db.patch(reEvaluated, {
+          verdict: {
+            decision: 'needs-skill',
+            reason: 'evaluated again: still needs a skill',
+            suggestedSkillName: NAME,
+          },
+        });
+      });
+      await park(parkedTwice);
+      const waiting = await eventsOf(harness, office.priya, 'work.waiting-for-skill');
+      const first = waiting.find((event) => event.payload.workItemId === parkedTwice);
+      if (first === undefined) throw new Error('the first park wrote no event');
+
+      // The first park's recovery only, run directly: the item has been parked since.
+      await expect(
+        harness.mutation(internal.skillControls.recoverStrandedParkedWork, {
+          workItemId: parkedTwice,
+          waitingId: first._id,
+        }),
+      ).resolves.toEqual({ recovered: false });
+      await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+      expect((await item(harness, movedOn)).state).toBe('cancelled');
+      expect((await item(harness, reEvaluated)).state).toBe('needs-skill');
+      // The newer park's recovery did act.
+      expect((await item(harness, parkedTwice)).state).toBe('discovered');
     });
 
     it('keeps an item another callable skill of the same shape still covers', async (): Promise<void> => {

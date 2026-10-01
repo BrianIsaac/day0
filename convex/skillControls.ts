@@ -218,8 +218,10 @@ const WAITING_EVENTS_SCAN = 200;
  * parked by that park, with no row of the name that may still become callable linked to it,
  * would wait for ever with nothing on any card to move it (the proposal step answered a row that
  * cannot register, or never ran). It goes back to be evaluated afresh, the shape every re-queued
- * item takes, so its next evaluation proposes the skill it needs. An item a later park, a link or
- * any other transition reached is left alone.
+ * item takes, so its next evaluation proposes the skill it needs. An item a later park, a link, a
+ * later evaluation or any other transition reached is left alone. The park is found among the
+ * employee's newest {@link WAITING_EVENTS_SCAN} waiting events; one older than that is left alone,
+ * the safe side, which the work-in-progress cap keeps out of reach within one lease.
  *
  * @returns Whether the item was sent back.
  */
@@ -238,8 +240,14 @@ export const recoverStrandedParkedWork = internalMutation({
       (event) =>
         isEventOf(event, 'work.waiting-for-skill') && event.payload.workItemId === item._id,
     );
-    if (newest?._id !== args.waitingId) return { recovered: false };
-    const name = isEventOf(newest, 'work.waiting-for-skill') ? newest.payload.name : 'it needs';
+    if (newest?._id !== args.waitingId || !isEventOf(newest, 'work.waiting-for-skill')) {
+      return { recovered: false };
+    }
+    // A later evaluation parked the item on a verdict of its own, and the evaluation's own
+    // recovery (`work.recoverUnproposedSkill`) is the one that answers for it.
+    const verdict = item.verdict as { reason?: unknown } | undefined;
+    if (verdict?.reason !== newest.payload.reason) return { recovered: false };
+    const name = newest.payload.name;
     await applyVerdict(ctx, item._id, {
       decision: 'pending-reevaluation',
       reason: strandedItemReason(name),

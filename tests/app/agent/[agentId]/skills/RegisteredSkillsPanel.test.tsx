@@ -809,6 +809,48 @@ describe('the five controls on the Skills cards (10-C, the prototype’s agent-s
     backend.queries = {};
   });
 
+  it('gives focus back to Retry when its run settles, even after a Retire dialog was kept meanwhile', async (): Promise<void> => {
+    backend.queries = {
+      'skillVersions:forSkill': {
+        held: {
+          version: { _id: 'version-1', version: 1 },
+          holders: [
+            { skillId: 'skill-1', agentId: 'agent-1', agentName: 'Mira', state: 'registered' },
+          ],
+        },
+        offered: null,
+      },
+    };
+    let settleRun: (result: { ok: boolean }) => void = () => undefined;
+    backend.results = {
+      'skillActions:authorAndRegisterSkill': new Promise((resolve): void => {
+        settleRun = resolve;
+      }),
+    };
+    const view = mount(
+      <RegisteredSkillsPanel
+        skills={[authored]}
+        unregistered={[failing(2)]}
+        authoringFailure={null}
+        onAuthoringAttempt={noop}
+        employee="Mira"
+      />,
+    );
+    await press(view.container, 'Retry with the reasons for analytics-refresh-value');
+    await press(view.container, 'Retire kanban-comment-and-close');
+    await press(document.body, 'Keep it');
+    // The manager left focus nowhere while the run went on.
+    (document.activeElement as HTMLElement | null)?.blur();
+    await act(async (): Promise<void> => {
+      settleRun({ ok: false });
+    });
+    await settle();
+    expect(focusedName()).toBe('Retry with the reasons for analytics-refresh-value');
+    view.unmount();
+    backend.queries = {};
+    backend.results = {};
+  });
+
   it('opens the Retire dialog, closes it on Keep, and says the retire once it lands', async (): Promise<void> => {
     backend.queries = {
       'skillVersions:forSkill': {
