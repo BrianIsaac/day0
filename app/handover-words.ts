@@ -537,16 +537,39 @@ export const HANDOVER_TITLE = 'Handover';
 /** The old manager's home card of employees handed over (plan 7.4). */
 export const HANDED_OVER = 'Handed over';
 
+/** A handover the old manager reads about: where the employee went, when, and what became of it since. */
+export interface HandoverOutcome {
+  /** The employee. */
+  readonly name: string;
+  /** The manager it went to. */
+  readonly to: string;
+  /** When they accepted. */
+  readonly since: number;
+  /** The viewer's zone. */
+  readonly zone: string;
+  /** What became of the employee since, when it is not with that manager still. */
+  readonly afterwards?: HandoverDeparture['afterwards'];
+}
+
 /**
- * One line of the home's handed-over card.
- *
- * @param name - The employee.
- * @param to - The manager it went to.
- * @param since - When they accepted.
- * @param zone - The viewer's zone.
+ * What became of a handed-over employee since, after the handover itself: retired, or moved on
+ * to another manager. The handover request outlives a retire by design, so the line it is read
+ * from must not say the employee reports to anyone once it does not (the v0.12.0 walk).
  */
-export function handedOverLine(name: string, to: string, since: number, zone: string): string {
-  return `${name} now reports to ${to}, since ${zonedStamp(since, zone)}.`;
+function sinceWords(outcome: HandoverOutcome): string {
+  const handed = `${outcome.name} was handed over to ${outcome.to} on ${zonedStamp(outcome.since, outcome.zone)}`;
+  return outcome.afterwards === 'retired'
+    ? `${handed}, and has since been retired.`
+    : `${handed}, and has since moved to another manager.`;
+}
+
+/**
+ * One line of the home's handed-over card: whom the employee reports to now, or, once it was
+ * retired or moved on since, what happened and that it did.
+ */
+export function handedOverLine(outcome: HandoverOutcome): string {
+  if (outcome.afterwards !== undefined) return sinceWords(outcome);
+  return `${outcome.name} now reports to ${outcome.to}, since ${zonedStamp(outcome.since, outcome.zone)}.`;
 }
 
 /**
@@ -559,16 +582,24 @@ export function departedTitle(name: string): string {
 }
 
 /**
- * What the old manager's link to an employee handed over says, in place of "not yours"
- * (plan 7.4).
+ * The browser tab's title on the old manager's link to an employee handed over, on every tab of
+ * it: the title the employee's own page has names a tab of an employee that is not theirs.
  *
  * @param name - The employee.
- * @param to - The manager it went to.
- * @param since - When they accepted.
- * @param zone - The viewer's zone.
  */
-export function departedLine(name: string, to: string, since: number, zone: string): string {
-  return `${name} reports to ${to} since ${zonedStamp(since, zone)}. Its record went with it; your record of the handover is on your home.`;
+export function departedTabTitle(name: string): string {
+  return `${departedTitle(name)} · Day0`;
+}
+
+/**
+ * What the old manager's link to an employee handed over says, in place of "not yours"
+ * (plan 7.4): whom it reports to now, or, once it was retired or moved on since, what happened.
+ */
+export function departedLine(outcome: HandoverOutcome): string {
+  if (outcome.afterwards !== undefined) {
+    return `${sinceWords(outcome)} Your record of the handover is on your home.`;
+  }
+  return `${outcome.name} reports to ${outcome.to} since ${zonedStamp(outcome.since, outcome.zone)}. Its record went with it; your record of the handover is on your home.`;
 }
 
 /**

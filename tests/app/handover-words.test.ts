@@ -359,13 +359,40 @@ describe('the acceptance dialog (plan 7.3)', () => {
 
 describe('the old manager’s notices (plan 7.4) and the home’s line (section 11.2)', () => {
   it('names where a handed-over employee went and since when', () => {
-    const decidedAt = Date.UTC(2026, 9, 2, 11, 0);
-    expect(handedOverLine('Maya', 'lead@kestrel.example', decidedAt, 'UTC')).toBe(
+    const outcome = {
+      name: 'Maya',
+      to: 'lead@kestrel.example',
+      since: Date.UTC(2026, 9, 2, 11, 0),
+      zone: 'UTC',
+    };
+    expect(handedOverLine(outcome)).toBe(
       'Maya now reports to lead@kestrel.example, since 2 Oct 2026, 11:00, UTC time.',
     );
-    expect(departedLine('Maya', 'lead@kestrel.example', decidedAt, 'UTC')).toBe(
+    expect(departedLine(outcome)).toBe(
       'Maya reports to lead@kestrel.example since 2 Oct 2026, 11:00, UTC time. Its record went with it; your record of the handover is on your home.',
     );
+  });
+
+  it('says what happened and what is so now once the employee was retired or moved on since, never that it reports to anyone (the v0.12.0 walk)', () => {
+    const outcome = {
+      name: 'Wren',
+      to: 'lead@kestrel.example',
+      since: Date.UTC(2026, 9, 2, 11, 0),
+      zone: 'UTC',
+    };
+    expect(handedOverLine({ ...outcome, afterwards: 'retired' })).toBe(
+      'Wren was handed over to lead@kestrel.example on 2 Oct 2026, 11:00, UTC time, and has since been retired.',
+    );
+    expect(handedOverLine({ ...outcome, afterwards: 'moved-on' })).toBe(
+      'Wren was handed over to lead@kestrel.example on 2 Oct 2026, 11:00, UTC time, and has since moved to another manager.',
+    );
+    expect(departedLine({ ...outcome, afterwards: 'retired' })).toBe(
+      'Wren was handed over to lead@kestrel.example on 2 Oct 2026, 11:00, UTC time, and has since been retired. Your record of the handover is on your home.',
+    );
+    for (const afterwards of ['retired', 'moved-on'] as const) {
+      expect(handedOverLine({ ...outcome, afterwards })).not.toContain('reports to');
+      expect(departedLine({ ...outcome, afterwards })).not.toContain('reports to');
+    }
   });
 
   it('counts the employees reporting to someone else, before naming them, and says where to choose', () => {

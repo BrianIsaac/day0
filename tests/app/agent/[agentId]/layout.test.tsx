@@ -5,6 +5,7 @@ import { act } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import EmployeeLayout from '../../../../app/agent/[agentId]/layout';
 import { EmployeeShell } from '../../../../app/agent/[agentId]/EmployeeShell';
+import { EmployeePageGate } from '../../../../app/agent/[agentId]/EmployeePageGate';
 import { SessionGate } from '../../../../app/Providers';
 import { mount, unmountAll } from '../../../fixtures/dom/press';
 import { EMPLOYEE_ROW } from '../../../fixtures/dom/employee';
@@ -82,6 +83,17 @@ class Boundary extends Component<{ children: ReactNode }, { error: Error | null 
   }
 }
 
+/** Where Mira went, as `transferDepartures.employeePage` answers her old manager. */
+const DEPARTED = {
+  page: 'departed',
+  departure: {
+    transferId: 'transfer-1',
+    agentName: 'Mira',
+    toAddress: 'lead@kestrel.example',
+    decidedAt: Date.UTC(2026, 9, 2, 11),
+  },
+};
+
 /** The most turns an exchange may take before the test calls it stuck. */
 const EXCHANGE_TURNS = 200;
 
@@ -108,6 +120,27 @@ function addsOf(message: ClientMessage): string[] {
     .map((change) => change.udfPath ?? '');
 }
 
+/** The employee page served, hydrated and signed in against the deployment. */
+async function signedInPage(server: SyncServer): Promise<HTMLElement> {
+  vi.stubGlobal('WebSocket', server.Socket);
+  vi.stubEnv('NEXT_PUBLIC_CONVEX_URL', 'https://departed-test.convex.cloud');
+  vi.stubEnv('NEXT_PUBLIC_DEV_NO_AUTH', undefined);
+  const { Providers } = await import('../../../../app/Providers');
+  const { default: Layout } = await import('../../../../app/agent/[agentId]/layout');
+  const page = await Layout({
+    children: <p>tab</p>,
+    params: Promise.resolve({ agentId: EMPLOYEE_ROW._id }),
+  });
+  const { container } = mount(
+    <Providers>
+      <Boundary>{page}</Boundary>
+    </Providers>,
+  );
+  act((): void => clerk.answer({ isLoaded: true, isSignedIn: true, getToken: clerk.getToken }));
+  await exchange(server);
+  return container;
+}
+
 afterEach(() => {
   unmountAll();
   clerk.answer({ isLoaded: false, getToken: clerk.getToken });
@@ -125,7 +158,12 @@ describe('the employee page layout', () => {
     });
     expect(isValidElement(element)).toBe(true);
     expect(element.type).toBe(SessionGate);
-    const shell = (element.props as { children: ReactNode }).children;
+    // The page first asks whether the employee is the manager's to show (the v0.12.0 walk).
+    const gate = (element.props as { children: ReactNode }).children;
+    expect(isValidElement(gate)).toBe(true);
+    expect((gate as { type: unknown }).type).toBe(EmployeePageGate);
+    expect((gate as { props: { agentId: unknown } }).props.agentId).toBe('j57agent');
+    const shell = (gate as { props: { children: ReactNode } }).props.children;
     expect(isValidElement(shell)).toBe(true);
     expect((shell as { type: unknown }).type).toBe(EmployeeShell);
     expect((shell as { props: unknown }).props).toEqual({ agentId: 'j57agent', children: child });
@@ -187,9 +225,43 @@ describe('the employee page layout', () => {
     ]);
   });
 
+  it('titles the old manager’s link to an employee handed over by where it went, without a warning (the v0.12.0 walk)', async () => {
+    vi.stubEnv('NEXT_PUBLIC_CONVEX_URL', 'https://title-test.convex.cloud');
+    vi.stubEnv('NEXT_PUBLIC_DEV_NO_AUTH', undefined);
+    const logged = vi.spyOn(console, 'log').mockImplementation((): void => undefined);
+    const asked: unknown[] = [];
+    vi.stubGlobal('fetch', async (_url: string, init: RequestInit): Promise<Response> => {
+      const body = JSON.parse(String(init.body)) as { path: unknown };
+      asked.push(body.path);
+      const answer =
+        body.path === 'agents:get'
+          ? {
+              status: 'error',
+              errorMessage: 'Server Error',
+              errorData: 'This employee is not yours.',
+            }
+          : { status: 'success', value: DEPARTED };
+      return new Response(JSON.stringify(answer), {
+        // The status a deployment answers a function that threw with.
+        status: answer.status === 'error' ? 560 : 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    const { generateMetadata } = await import('../../../../app/agent/[agentId]/layout');
+    expect(
+      await generateMetadata({ params: Promise.resolve({ agentId: EMPLOYEE_ROW._id }) }),
+    ).toEqual({
+      title: { default: 'Mira was handed over · Day0', template: 'Mira was handed over · Day0' },
+    });
+    expect(asked).toEqual(['agents:get', 'transferDepartures:employeePage']);
+    expect(logged).not.toHaveBeenCalled();
+    logged.mockRestore();
+  });
+
   it('asks for the employee only once Convex holds the token, so a full load never reaches the error boundary (walk M2)', async () => {
     const server = syncServer((path, signedIn) => {
       if (path === 'config:surfaceMode') return { value: { mode: 'mock' } };
+      if (path === 'transferDepartures:employeePage') return { value: { page: 'employee' } };
       if (path !== 'agents:get') return undefined;
       return signedIn ? { value: EMPLOYEE_ROW } : { error: 'not authenticated' };
     });
@@ -226,9 +298,53 @@ describe('the employee page layout', () => {
     expect(askedAt).toBeGreaterThan(signedInAt);
   });
 
+  it('asks where a handed-over employee went before it reads the employee, so no refusal reaches the console (the v0.12.0 walk)', async () => {
+    const reported = vi.spyOn(console, 'error').mockImplementation((): void => undefined);
+    const server = syncServer((path, signedIn) => {
+      if (!signedIn) return undefined;
+      if (path === 'config:surfaceMode') return { value: { mode: 'mock' } };
+      if (path === 'transferDepartures:employeePage') return { value: DEPARTED };
+      if (path === 'agents:get') return { error: 'Server Error' };
+      return undefined;
+    });
+    const container = await signedInPage(server);
+
+    expect(container.querySelector('h1')?.textContent).toBe('Mira was handed over');
+    expect(container.textContent).not.toContain('This page did not load');
+    expect(server.sent.flatMap(addsOf)).not.toContain('agents:get');
+    expect(reported).not.toHaveBeenCalled();
+    reported.mockRestore();
+  });
+
+  it('draws the departure in place of the open page the moment another manager accepts, with no refusal reported', async () => {
+    const reported = vi.spyOn(console, 'error').mockImplementation((): void => undefined);
+    let moved = false;
+    const server = syncServer((path, signedIn) => {
+      if (!signedIn) return undefined;
+      if (path === 'config:surfaceMode') return { value: { mode: 'mock' } };
+      if (path === 'transferDepartures:employeePage') {
+        return { value: moved ? DEPARTED : { page: 'employee' } };
+      }
+      if (path === 'agents:get') return moved ? { error: 'Server Error' } : { value: EMPLOYEE_ROW };
+      return undefined;
+    });
+    const container = await signedInPage(server);
+    expect(container.querySelector('nav[aria-label="Breadcrumb"]')?.textContent).toContain('Mira');
+
+    moved = true;
+    server.rerun();
+    await exchange(server);
+
+    expect(container.querySelector('h1')?.textContent).toBe('Mira was handed over');
+    expect(container.textContent).not.toContain('This page did not load');
+    expect(reported).not.toHaveBeenCalled();
+    reported.mockRestore();
+  });
+
   it('keeps the page and its token while Clerk re-resolves the session mid-visit', async () => {
     const server = syncServer((path, signedIn) => {
       if (path === 'config:surfaceMode') return { value: { mode: 'mock' } };
+      if (path === 'transferDepartures:employeePage') return { value: { page: 'employee' } };
       if (path !== 'agents:get') return undefined;
       return signedIn ? { value: EMPLOYEE_ROW } : { error: 'not authenticated' };
     });
@@ -269,6 +385,9 @@ describe('the employee page layout', () => {
     // The deployment answers each user for their own rows: the employee is the first user's.
     const server = syncServer((path, signedIn, subject) => {
       if (path === 'config:surfaceMode') return { value: { mode: 'mock' } };
+      if (path === 'transferDepartures:employeePage') {
+        return { value: { page: subject === 'user_1' ? 'employee' : 'not-yours' } };
+      }
       if (path !== 'agents:get') return undefined;
       if (!signedIn) return { error: 'not authenticated' };
       return { value: subject === 'user_1' ? EMPLOYEE_ROW : null };
@@ -322,6 +441,7 @@ describe('the employee page layout', () => {
   it('takes the drawn page away when the manager signs out in another tab (second review x1)', async () => {
     const server = syncServer((path, signedIn) => {
       if (path === 'config:surfaceMode') return { value: { mode: 'mock' } };
+      if (path === 'transferDepartures:employeePage') return { value: { page: 'employee' } };
       if (path !== 'agents:get') return undefined;
       return signedIn ? { value: EMPLOYEE_ROW } : { error: 'not authenticated' };
     });

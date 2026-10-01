@@ -1138,7 +1138,7 @@ describe('managerTransfers.earlierManagers', (): void => {
   });
 });
 
-describe('managerTransfers.departures and departureOf', (): void => {
+describe('managerTransfers.departures', (): void => {
   it('lists the asker’s requests answered in the last 30 days, newest first, and none cancelled, older or another account’s', async (): Promise<void> => {
     vi.useFakeTimers();
     const now = Date.UTC(2026, 10, 1);
@@ -1213,26 +1213,33 @@ describe('managerTransfers.departures and departureOf', (): void => {
     expect(await harness.query(api.managerTransfers.departures, {})).toEqual([]);
   });
 
-  it('says where a handed-over employee went, to the account that handed it over only', async (): Promise<void> => {
+  it('says what became of an employee another manager took on: retired, moved on, or with them still (the v0.12.0 walk)', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const now = Date.UTC(2026, 10, 1);
+    vi.setSystemTime(now);
     const harness = convexTest(schema, allConvexModules());
-    const maya = await employee(harness, 'Maya', { userId: 'priya' });
-    const transferId = await insertRequest(harness, {
-      agentId: maya,
-      state: 'accepted',
-      decidedAt: 7_000,
-      toOwnerKey: 'priya',
-    });
-    expect(
-      await harness.withIdentity(OWNER).query(api.managerTransfers.departureOf, { agentId: maya }),
-    ).toEqual({ transferId, agentName: 'Maya', toAddress: PRIYA_ADDRESS, decidedAt: 7_000 });
-    for (const other of [PRIYA, WEI]) {
-      expect(
-        await harness
-          .withIdentity(other)
-          .query(api.managerTransfers.departureOf, { agentId: maya }),
-      ).toBeNull();
-    }
-    expect(await harness.query(api.managerTransfers.departureOf, { agentId: maya })).toBeNull();
+    const accepted = async (agentId: Id<'agents'>, daysAgo: number) =>
+      await insertRequest(harness, {
+        agentId,
+        state: 'accepted',
+        requestedAt: now - (daysAgo + 1) * DAY_MS,
+        decidedAt: now - daysAgo * DAY_MS,
+        toOwnerKey: 'priya',
+      });
+    const stays = await employee(harness, 'Maya', { userId: 'priya' });
+    const movedOn = await employee(harness, 'Wes', { userId: 'wei' });
+    const retired = await employee(harness, 'Wren', { userId: 'priya' });
+    const staysId = await accepted(stays, 1);
+    const movedOnId = await accepted(movedOn, 2);
+    const retiredId = await accepted(retired, 3);
+    await harness.run(async (ctx) => await ctx.db.delete(retired));
+
+    const departures = await harness.withIdentity(OWNER).query(api.managerTransfers.departures, {});
+    expect(departures.map(({ transferId, afterwards }) => ({ transferId, afterwards }))).toEqual([
+      { transferId: staysId, afterwards: undefined },
+      { transferId: movedOnId, afterwards: 'moved-on' },
+      { transferId: retiredId, afterwards: 'retired' },
+    ]);
   });
 });
 

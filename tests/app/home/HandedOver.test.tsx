@@ -57,6 +57,23 @@ describe('HandedOver (the transfer plan, 7.4)', () => {
     expect(await axeViolations(view.container)).toEqual([]);
   });
 
+  it('says an employee retired since, or moved on since, was handed over, never that it reports to the manager it left (the v0.12.0 walk)', () => {
+    backend.departures = [
+      departure({ agentName: 'Wren', afterwards: 'retired' }),
+      departure({
+        transferId: 'transfer-2' as HandoverDeparture['transferId'],
+        agentId: 'agent-wes' as HandoverDeparture['agentId'],
+        agentName: 'Wes',
+        afterwards: 'moved-on',
+      }),
+    ];
+    const view = mount(<HandedOver held={[]} />);
+    expect([...view.container.querySelectorAll('li')].map((line) => line.textContent)).toEqual([
+      'Wren was handed over to lead@kestrel.example on 2 Oct 2026, 11:00, UTC time, and has since been retired.',
+      'Wes was handed over to lead@kestrel.example on 2 Oct 2026, 11:00, UTC time, and has since moved to another manager.',
+    ]);
+  });
+
   it('says nothing of a decline or an expiry, which People says while the employee is still the manager’s', () => {
     expect(
       handedOver(

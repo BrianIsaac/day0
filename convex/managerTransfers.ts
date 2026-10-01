@@ -14,6 +14,7 @@ import {
 import { appendEvent } from './eventLog';
 import { runsInFlight } from './transferInFlight';
 import { noticeSurfaceOf } from './transferNotice';
+import { afterwardsOf, afterwardsValidator } from './transferDepartures';
 import { isEvaluationAgent } from './metrics';
 import {
   assertNamedInTransfer,
@@ -142,18 +143,9 @@ const departureValidator = v.object({
   state: v.union(...DEPARTURE_STATES.map((state) => v.literal(state))),
   decidedAt: v.number(),
   declineReason: v.optional(v.string()),
+  /** For an accepted request: what became of the employee since, when it is not with them still. */
+  afterwards: v.optional(afterwardsValidator),
 });
-
-/** Where a departed employee went, as its old manager's link to it reads it. */
-const departureOfValidator = v.union(
-  v.null(),
-  v.object({
-    transferId: v.id('managerTransfers'),
-    agentName: v.string(),
-    toAddress: v.string(),
-    decidedAt: v.number(),
-  }),
-);
 
 /** An open request as the old manager reads it. */
 export type OpenTransfer = Infer<typeof openTransferValidator>;
@@ -812,7 +804,9 @@ export const earlierManagers = query({
  * declined or expired in the last 30 days, newest answer first, for the old
  * manager's notices (the transfer plan, section 7.4) and the People card's
  * last answer (section 7.1). An asked request past its expiry reads as
- * expired at its expiry. An anonymous caller has none. Writes nothing.
+ * expired at its expiry; an accepted one says what became of the employee
+ * since, so the notice never says it reports to someone it left or was
+ * retired by (the v0.12.0 walk). An anonymous caller has none. Writes nothing.
  */
 export const departures = query({
   args: {},
@@ -830,57 +824,37 @@ export const departures = query({
           await requestsInState(ctx, { fromOwnerKey: caller.ownerKey }, state, createdSince),
       ),
     );
-    return perState
+    const answered = perState
       .flat()
-      .flatMap((transfer): Infer<typeof departureValidator>[] => {
+      .flatMap((transfer) => {
         const state = stateNow(transfer, now);
         if (state !== 'accepted' && state !== 'declined' && state !== 'expired') return [];
         const decidedAt =
           transfer.state === 'asked'
             ? transfer.expiresAt
             : (transfer.decidedAt ?? transfer.expiresAt);
-        if (decidedAt < since) return [];
-        return [
-          {
-            transferId: transfer._id,
-            agentId: transfer.agentId,
-            agentName: transfer.agentName,
-            toAddress: transfer.toAddress,
-            state,
-            decidedAt,
-            ...(transfer.declineReason !== undefined
-              ? { declineReason: transfer.declineReason }
-              : {}),
-          },
-        ];
+        return decidedAt < since ? [] : [{ transfer, state, decidedAt }];
       })
       .sort((left, right) => right.decidedAt - left.decidedAt)
       .slice(0, DEPARTURES_LIMIT);
-  },
-});
-
-/**
- * Public, for the account that asked: where an employee it handed over went,
- * for the old link to its page, which the account no longer owns (the
- * transfer plan, section 7.4). Answers only the caller's own accepted
- * requests, the newest; null for an anonymous caller or an employee it never
- * handed over. Writes nothing.
- */
-export const departureOf = query({
-  args: { agentId: v.id('agents') },
-  returns: departureOfValidator,
-  handler: async (ctx, args): Promise<Infer<typeof departureOfValidator>> => {
-    const caller = await getCaller(ctx);
-    if (!caller) return null;
-    const accepted = await requestsInState(ctx, { agentId: args.agentId }, 'accepted');
-    const own = accepted.find((transfer) => transfer.fromOwnerKey === caller.ownerKey);
-    if (!own) return null;
-    return {
-      transferId: own._id,
-      agentName: own.agentName,
-      toAddress: own.toAddress,
-      decidedAt: own.decidedAt ?? own.requestedAt,
-    };
+    return await Promise.all(
+      answered.map(async ({ transfer, state, decidedAt }) => {
+        const afterwards =
+          state === 'accepted' ? await afterwardsOf(ctx, transfer, caller.ownerKey) : undefined;
+        return {
+          transferId: transfer._id,
+          agentId: transfer.agentId,
+          agentName: transfer.agentName,
+          toAddress: transfer.toAddress,
+          state,
+          decidedAt,
+          ...(transfer.declineReason !== undefined
+            ? { declineReason: transfer.declineReason }
+            : {}),
+          ...(afterwards === undefined ? {} : { afterwards }),
+        };
+      }),
+    );
   },
 });
 
