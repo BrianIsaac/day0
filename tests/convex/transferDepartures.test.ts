@@ -174,3 +174,28 @@ describe('transferDepartures.employeePage', (): void => {
     });
   });
 });
+
+describe('transferDepartures.keptAtRetire', (): void => {
+  it('counts the handover requests a retire keeps, in every state, to the owner only', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const maya = await employee(harness);
+    const wes = await employee(harness, 'Wes');
+    expect(
+      await harness
+        .withIdentity(OWNER)
+        .query(api.transferDepartures.keptAtRetire, { agentId: maya }),
+    ).toEqual({ requests: 0 });
+    for (const state of ['asked', 'declined', 'cancelled'] as const) {
+      await insertRequest(harness, { agentId: maya, state, decidedAt: 2_000 });
+    }
+    await insertRequest(harness, { agentId: wes, state: 'declined', decidedAt: 2_000 });
+    expect(
+      await harness
+        .withIdentity(OWNER)
+        .query(api.transferDepartures.keptAtRetire, { agentId: maya }),
+    ).toEqual({ requests: 3 });
+    await expect(
+      harness.withIdentity(WEI).query(api.transferDepartures.keptAtRetire, { agentId: maya }),
+    ).rejects.toThrow();
+  });
+});

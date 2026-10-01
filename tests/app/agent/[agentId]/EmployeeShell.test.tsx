@@ -561,6 +561,7 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
       'config:surfaceMode': { mode: 'mock' },
       'work:needsYouForAgent': { entries: [], total: 0 },
       'managerTransfers:openForAgent': null,
+      'transferDepartures:keptAtRetire': { requests: 0 },
       'reset:retirePreview': {
         mode: 'mock',
         rowCounts: { events: 3 },
@@ -700,6 +701,7 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
       'config:surfaceMode': { mode: 'mock' },
       'work:needsYouForAgent': { entries: [], total: 0 },
       'managerTransfers:openForAgent': null,
+      'transferDepartures:keptAtRetire': { requests: 0 },
       'reset:retirePreview': {
         mode: 'mock',
         rowCounts: { voiceSessions: 1, events: 2 },

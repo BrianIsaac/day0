@@ -199,6 +199,31 @@ export function cancelledWords(to: string): string {
   return `The handover to ${to} is cancelled.`;
 }
 
+/**
+ * Said in the retire dialog before the retire, of the asked request the retire cancels: what the
+ * retire will do, not what is done (the wave 9 review's U4-m7).
+ *
+ * @param to - The address asked.
+ */
+export function retireCancelsWords(to: string): string {
+  return `Retiring cancels the handover to ${to}.`;
+}
+
+/**
+ * The handover requests a retire keeps, in the retire dialog: none is deleted, since each is the
+ * other manager's record of the handover (`RETIRE_RECORD_TABLES`, the v0.12.0 walk: the dialog
+ * said the hosted office keeps nothing while it kept them).
+ *
+ * @param requests - How many requests name the employee; at least one.
+ */
+export function keptRequestsWords(requests: number): string {
+  const what =
+    requests === 1
+      ? "the two managers' addresses, the employee's name and any note or reason"
+      : "the managers' addresses, the employee's name and any note or reason";
+  return `${counted(requests, 'handover request', 'handover requests')}: ${what}, kept as the other manager's record of the handover.`;
+}
+
 /** What an accepting request's line on the card is drawn from. */
 export interface AcceptingCardInput {
   readonly name: string;

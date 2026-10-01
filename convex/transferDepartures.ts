@@ -1,7 +1,7 @@
 import { v, type Infer } from 'convex/values';
 import type { Doc } from './_generated/dataModel';
 import { query, type QueryCtx } from './_generated/server';
-import { getCaller } from './ownership';
+import { assertOwnsAgent, getCaller } from './ownership';
 
 /**
  * The most handover requests one employee's reads take. A request is asked at most once at a
@@ -114,5 +114,24 @@ export const employeePage = query({
         ...(afterwards === undefined ? {} : { afterwards }),
       },
     };
+  },
+});
+
+/**
+ * Public, owner-guarded by `assertOwnsAgent`: how many handover requests name the employee, in
+ * any state, for the retire dialog's account of what a retire keeps. A retire deletes none of
+ * them (`RETIRE_RECORD_TABLES`): each is the other manager's record of the handover. Writes
+ * nothing.
+ */
+export const keptAtRetire = query({
+  args: { agentId: v.id('agents') },
+  returns: v.object({ requests: v.number() }),
+  handler: async (ctx, args): Promise<{ requests: number }> => {
+    await assertOwnsAgent(ctx, args.agentId);
+    const requests = await ctx.db
+      .query('managerTransfers')
+      .withIndex('by_agent_state', (q) => q.eq('agentId', args.agentId))
+      .take(EMPLOYEE_REQUESTS_LIMIT);
+    return { requests: requests.length };
   },
 });
