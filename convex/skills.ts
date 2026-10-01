@@ -26,7 +26,7 @@ import type { SkillAuthoringRefusedPayload } from '../src/events/contract';
 import { recordRegisteredVersion, storedVersionRefusal } from './skillVersions';
 import { recordOffer } from './skillAdoption';
 import { readRefValidator, surfaceToolsValidator } from './schema';
-import { countsAsAuthoringAttempt } from '../src/work/skill-library';
+import { countsAsAuthoringAttempt, MAX_AUTHORING_ATTEMPTS } from '../src/work/skill-library';
 import { openRevision } from './skillControls';
 
 /**
@@ -1027,6 +1027,18 @@ export const claimAuthoringRun = internalMutation({
       : CLAIMABLE_STATES;
     if (!claimable.includes(row.state)) {
       return { claimed: false, reason: unclaimableReason(row.state, claimable) };
+    }
+    // "Attempt 3 of 3": a failed draft that has spent its attempts is not authored again; the
+    // manager gives it up or asks for a revision (10-C). A stored verification writes no body.
+    if (
+      !verifying &&
+      row.state === 'failed' &&
+      (row.authoringAttempts ?? 0) >= MAX_AUTHORING_ATTEMPTS
+    ) {
+      return {
+        claimed: false,
+        reason: `all ${MAX_AUTHORING_ATTEMPTS} attempts at this skill failed; give it up instead`,
+      };
     }
     if (row.authoringRunId) {
       const heldFor = Date.now() - (row.authoringClaimedAt ?? 0);
