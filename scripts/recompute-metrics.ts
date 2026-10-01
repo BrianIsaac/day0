@@ -241,12 +241,13 @@ export function recomputeFromTraces(
   traces: readonly AgentTrace[],
   options: { owner?: string; now?: number } = {},
 ): Recomputed {
-  const owners = [...new Set(traces.flatMap((trace) => trace.agent.userId ?? []))];
+  const read = newestTraceOfEach(traces);
+  const owners = [...new Set(read.flatMap((trace) => trace.agent.userId ?? []))];
   if (options.owner === undefined && owners.length > 1) {
     throw new Error(`the traces belong to ${owners.length} owners; name one with --owner`);
   }
   const owner = options.owner ?? owners[0] ?? DEV_NO_AUTH_SUBJECT;
-  const agents = traces.map((trace) => ({
+  const agents = read.map((trace) => ({
     _id: trace.agent.id as Id<'agents'>,
     _creationTime: trace.agent.creationTime,
     userId: trace.agent.userId,
@@ -256,14 +257,8 @@ export function recomputeFromTraces(
     trace,
   }));
   // The manifests' handovers cut each employee's history at its acceptances, as
-  // `metrics:forOwner` cuts it (D12); one employee's trace exported twice names them twice.
-  const handovers = [
-    ...new Map(
-      traces
-        .flatMap((trace) => trace.manifest.handovers ?? [])
-        .map((handover) => [`${handover.agentId}:${handover.acceptedAt}`, handover] as const),
-    ).values(),
-  ];
+  // `metrics:forOwner` cuts it (D12).
+  const handovers = read.flatMap((trace) => trace.manifest.handovers ?? []);
   const selection = selectCompanyEmployees(agents, owner, (agent) => agent.evaluation, handovers);
   const records: EmployeeRecords[] = selection.employees.map(({ trace, ...agent }) =>
     recordsWithinTenure(
@@ -294,6 +289,24 @@ export function recomputeFromTraces(
       })),
     },
   };
+}
+
+/**
+ * One trace per employee: the newest export of each, by when it was taken. An employee's trace
+ * exported twice (by the manager who held it before a handover and by the one after, say) would
+ * otherwise count it twice; the newer carries the whole history and every handover since.
+ *
+ * @param traces - The traces read, in any order.
+ */
+function newestTraceOfEach(traces: readonly AgentTrace[]): AgentTrace[] {
+  const newest = new Map<string, AgentTrace>();
+  for (const trace of traces) {
+    const kept = newest.get(trace.agent.id);
+    if (kept === undefined || trace.manifest.exportedAt > kept.manifest.exportedAt) {
+      newest.set(trace.agent.id, trace);
+    }
+  }
+  return [...newest.values()];
 }
 
 /**

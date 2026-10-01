@@ -428,6 +428,24 @@ describe('recomputing the figures from the owner’s exported traces', (): void 
     expect(old.employees.map((row) => row.name)).toEqual(['Priya', 'Mateo']);
   });
 
+  it('counts an employee once when two of its traces are read, the newer export standing (second pass)', async (): Promise<void> => {
+    const harness = await companyBackend();
+    await handOverMateo(harness);
+    const traces = await exportedTraces(harness);
+    const mateo = traces.find((trace) => trace.agent.name === 'Mateo')!;
+    // An earlier export of the same employee, taken by the manager who held it then.
+    const earlier = {
+      ...mateo,
+      manifest: { ...mateo.manifest, exportedAt: mateo.manifest.exportedAt - 1, handovers: [] },
+      agent: { ...mateo.agent, userId: OWNER },
+    };
+    for (const owner of [OWNER, COLLEAGUE]) {
+      expect(recomputeFromTraces([earlier, ...traces], { owner }).figures, owner).toEqual(
+        recomputeFromTraces(traces, { owner }).figures,
+      );
+    }
+  });
+
   it('reads trace files from the command line and prints its own date beside what it read', async (): Promise<void> => {
     const harness = await companyBackend();
     const directory = mkdtempSync(join(tmpdir(), 'day0-recompute-traces-'));
