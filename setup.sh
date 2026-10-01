@@ -11,6 +11,9 @@
 #   ./setup.sh backup | restore <file> | upgrade
 #                                      keep a copy, put it back, or move to this checkout's release
 #   ./setup.sh pause | unpause         hold the scheduled jobs, or let them run again
+#   ./setup.sh sign-in --provider entra|okta|google
+#                                      the company sign-in, with the customer's IT; exits
+#                                      with the check's status, so a later verb composes it
 #
 #   ./setup.sh cloud setup --target <file>
 #                                      Convex cloud and Vercel: the first push to an empty
@@ -42,6 +45,7 @@ Usage: ./setup.sh --route <featherless|key|endpoint|local> [setup flags]
        ./setup.sh stop | resume | clear [--yes] [--purge-env]
        ./setup.sh backup | restore <file> | upgrade [--yes] [--to <dir>]
        ./setup.sh pause | unpause [--dry-run]
+       ./setup.sh sign-in --provider <entra|okta|google> [--dry-run]
        ./setup.sh cloud setup | upgrade | backup | pause | unpause --target <file>
 
 Real mode, on your own documentation and systems: day0 reads the pages you
@@ -100,6 +104,17 @@ Hold the scheduled jobs, with the stack up:
                        restarts so every job reads it. Work already scheduled
                        runs to its end.
   ./setup.sh unpause   lift the pause; each job runs again at its next turn
+
+The company sign-in, with the customer's IT, on an installation this command made
+(docs/running/sign-in-entra.md, sign-in-okta.md, sign-in-google.md):
+  ./setup.sh sign-in --provider entra   asks for the tenant id, the client id, the
+                                        client secret (hidden), the allowed domains and
+                                        the public https origin; writes them, pushes them,
+                                        restarts the backend and runs the check, exiting
+                                        with its status. Okta asks for its domain and
+                                        server, Google for no issuer.
+                                        pnpm setup:local --help lists the flags that
+                                        answer each question.
 
 Your own copy on Convex cloud and Vercel, from a clean checkout of a release
 tag with no .env.local; <file> sits outside the checkout and holds
