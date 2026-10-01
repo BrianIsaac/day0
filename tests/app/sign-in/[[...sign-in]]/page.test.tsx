@@ -89,22 +89,24 @@ describe('the sign-in page', () => {
   it("dresses Clerk's sign-in in the shared appearance, so its text reads on the dark page", async () => {
     clerk.appearance.length = 0;
     await render();
-    const { clerkAppearance } = await import('../../../../app/clerk-appearance');
-    expect(clerk.appearance).toEqual([expect.objectContaining(clerkAppearance)]);
+    const { clerkSignInAppearance } = await import('../../../../app/clerk-appearance');
+    const { theme, variables, options } = clerkSignInAppearance;
+    expect(clerk.appearance).toEqual([expect.objectContaining({ theme, variables, options })]);
   });
 
-  it("leaves the card's title and subtitle out on the first step only, where the page's h1 says it, and keeps the mark (walk m26)", async () => {
+  it("leaves the card's header out on the first step only, where the page's h1 says it, and keeps the mark (walk m26)", async () => {
     clerk.appearance.length = 0;
     await render();
     await render('/sign-in/factor-one');
-    const { clerkAppearance } = await import('../../../../app/clerk-appearance');
+    const { clerkSignInAppearance } = await import('../../../../app/clerk-appearance');
     const [first, later] = clerk.appearance;
+    // Re-pinned (wave 9): the mark is above the card, so the whole header is left out and the
+    // mark's own box is only spaced, never hidden.
     expect(first).toMatchObject({
-      options: clerkAppearance.options,
-      elements: { headerTitle: { display: 'none' }, headerSubtitle: { display: 'none' } },
+      options: clerkSignInAppearance.options,
+      elements: { header: { display: 'none' }, logoBox: { marginBottom: '1.75rem' } },
     });
-    expect(first).not.toHaveProperty('elements.logoBox');
-    expect(later).toBe(clerkAppearance);
+    expect(later).toBe(clerkSignInAppearance);
   });
 
   it('sends the local manager home in no-auth dev mode, where there is nothing to sign in to', async () => {
