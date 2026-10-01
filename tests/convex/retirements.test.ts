@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import {
+  closeDeparturesOnReturn,
   firstRetiredRejection,
   ownerRetirements,
   RETIREMENT_READ_LIMIT,
@@ -190,5 +191,84 @@ describe('the read limit', (): void => {
     await expect(harness.run(async (ctx) => await ownerRetirements(ctx, 'owner'))).rejects.toThrow(
       `more than ${RETIREMENT_READ_LIMIT} retired employees`,
     );
+  });
+});
+
+describe('closeDeparturesOnReturn (U3-m6)', (): void => {
+  it('empties only the boundaries the owner kept for the returning employee’s departures', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const rows = await harness.run(async (ctx) => {
+      const employee = async (name: string): Promise<Id<'agents'>> =>
+        await ctx.db.insert('agents', {
+          bossEmail: MANAGER_ADDRESS,
+          name,
+          userId: 'owner',
+          state: 'active',
+          createdAt: 1,
+        });
+      const [maya, tomas] = [await employee('Maya'), await employee('Tomas')];
+      const workItemId = await ctx.db.insert('workItems', {
+        agentId: maya,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'REVOPS-7',
+        title: 'Close REVOPS-7',
+        contentSummary: 'Close REVOPS-7',
+        contentRefs: [],
+        observedAt: 1,
+        createdAt: 1,
+        state: 'completed',
+      });
+      const claimId = await ctx.db.insert('externalClaims', {
+        userId: 'owner',
+        key: 'linear:REVOPS-7',
+        agentId: maya,
+        workItemId,
+        claimedAt: 1,
+      });
+      const boundary = (agentId: Id<'agents'>, kind: 'retired' | 'transferred') => ({
+        userId: 'owner',
+        kind,
+        agentId,
+        retiredAt: 1,
+        rowCounts: {},
+        revokedCredentials: 0,
+        keptCredentials: 0,
+        claims: [
+          {
+            claimId,
+            key: 'linear:REVOPS-7',
+            workItemId,
+            title: 'Close REVOPS-7',
+            state: 'completed',
+            claimedAt: 1,
+          },
+        ],
+        rejections: [{ workItemId, keys: ['linear:REVOPS-7'], rejectedAt: 1 }],
+      });
+      return {
+        mayaDeparture: await ctx.db.insert('retirements', boundary(maya, 'transferred')),
+        tomasDeparture: await ctx.db.insert('retirements', boundary(tomas, 'transferred')),
+        mayaRetired: await ctx.db.insert('retirements', boundary(maya, 'retired')),
+        maya,
+      };
+    });
+
+    const closed = await harness.run(
+      async (ctx) => await closeDeparturesOnReturn(ctx, 'owner', rows.maya),
+    );
+
+    expect(closed).toBe(1);
+    const [mayaDeparture, tomasDeparture, mayaRetired] = await harness.run(
+      async (ctx) =>
+        await Promise.all([
+          ctx.db.get(rows.mayaDeparture),
+          ctx.db.get(rows.tomasDeparture),
+          ctx.db.get(rows.mayaRetired),
+        ]),
+    );
+    expect(mayaDeparture).toMatchObject({ claims: [], rejections: [] });
+    expect(tomasDeparture?.claims).toHaveLength(1);
+    expect(mayaRetired?.claims).toHaveLength(1);
   });
 });

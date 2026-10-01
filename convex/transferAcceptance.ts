@@ -21,6 +21,7 @@ import {
   wakeReleasedClaims,
   type Boundaries,
 } from './reset';
+import { closeDeparturesOnReturn } from './retirements';
 import { handOverSurfaces, type HandedOverSurfaces } from './surfaces';
 import { runsInFlight } from './transferInFlight';
 import {
@@ -311,7 +312,9 @@ async function cutConnections(
 /**
  * Leave the old owner a departure row (decision D11): the boundary the employee's claims and
  * rejections keep for the old owner's other employees, read by every reader of a retirement
- * unchanged. Real mode only, as a single retire keeps one; mock mode keeps nothing.
+ * unchanged. Real mode only, as a single retire keeps one; mock mode keeps nothing. An employee
+ * handed back to an owner it left closes the boundary that owner kept for it
+ * (`closeDeparturesOnReturn`, U3-m6).
  */
 async function leaveDeparture(
   ctx: MutationCtx,
@@ -322,6 +325,7 @@ async function leaveDeparture(
   now: number,
 ): Promise<void> {
   if (SURFACE_MODE !== 'real') return;
+  await closeDeparturesOnReturn(ctx, transfer.toOwnerKey, agent._id);
   await ctx.db.insert('retirements', {
     userId: transfer.fromOwnerKey,
     kind: 'transferred',
