@@ -86,3 +86,40 @@ export function cookieValue(line: string | undefined): string | undefined {
   const pair = line.split(';')[0];
   return decodeURIComponent(pair.slice(pair.indexOf('=') + 1));
 }
+
+/**
+ * Sign one test person in through the login route, the issuer and the
+ * callback, as a browser would, and hand back the session cookie it holds.
+ *
+ * @param issuer - The test issuer `customerIssuer` set up.
+ * @param person - The test person's id.
+ * @returns The `Cookie` header value the browser now sends.
+ */
+export async function signedIn(issuer: FakeIssuer, person: string): Promise<string> {
+  const { NextRequest } = await import('next/server');
+  const login = await import('../../../../../app/api/auth/oidc/login/route');
+  const callback = await import('../../../../../app/api/auth/oidc/callback/route');
+  const started = await login.GET(new NextRequest(`${PUBLIC_URL}/api/auth/oidc/login`));
+  const authorise = new URL(started.headers.get('location') ?? '');
+  authorise.searchParams.set('login_hint', person);
+  const back = new URL((await issuer.handle(new Request(authorise))).headers.get('location') ?? '');
+  const finished = await callback.GET(
+    new NextRequest(`${PUBLIC_URL}/api/auth/oidc/callback${back.search}`, {
+      headers: { cookie: `day0_sign_in=${cookieValue(setCookies(started).get('day0_sign_in'))}` },
+    }),
+  );
+  return sessionCookieHeader(finished);
+}
+
+/** The `Cookie` header a browser sends after a response set (or cleared) the session. */
+export function sessionCookieHeader(response: Response): string {
+  return [...setCookies(response)]
+    .filter(([name, line]) => name.startsWith('day0_session') && !/Max-Age=0/.test(line))
+    .map(([name, line]) => `${name}=${cookieValue(line)}`)
+    .join('; ');
+}
+
+/** The claims of a compact JWT, unverified: what a test reads off a token it was handed. */
+export function jwtClaims(token: string): Record<string, unknown> {
+  return JSON.parse(Buffer.from(token.split('.')[1] ?? '', 'base64url').toString('utf8'));
+}

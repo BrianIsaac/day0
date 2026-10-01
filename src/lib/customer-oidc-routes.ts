@@ -6,7 +6,10 @@ import {
   CustomerSignInUnavailable,
   customerSignInSettings,
   finishSignIn,
+  needsRefresh,
+  refreshSession,
   safeReturnTo,
+  sealedTokenClaims,
   startSignIn,
   type CustomerSignInSettings,
 } from './customer-oidc-server';
@@ -17,6 +20,8 @@ import {
   SIGN_IN_TRANSACTION_SECONDS,
   chunkCookie,
   cookieNames,
+  joinCookie,
+  openSession,
   openTransaction,
   sealSession,
   sealTransaction,
@@ -331,6 +336,153 @@ export async function callbackRoute(request: NextRequest): Promise<NextResponse>
     default: {
       const unknown: never = finished;
       throw new Error(`unhandled sign-in outcome ${String(unknown)}`);
+    }
+  }
+}
+
+/** The account a session names, as the header's menu shows it. */
+export interface SessionAccount {
+  readonly name?: string;
+  readonly email?: string;
+}
+
+/** What the token route answers a signed-in browser with. */
+export interface IssuedToken {
+  readonly token: string;
+  /** The token's expiry, in milliseconds. */
+  readonly expiresAt: number;
+  readonly account: SessionAccount;
+}
+
+/** How long a token must still be good for to be handed out when the issuer cannot refresh it. */
+const STILL_GOOD_MS = 30_000;
+
+/**
+ * Whether a state-changing request comes from the app's own pages: its
+ * `Origin` is the public origin, or the browser marks it same-origin. The
+ * session cookie is `SameSite=Lax`, so another site's POST does not carry it;
+ * this is the second lock on the same door.
+ *
+ * @param request - The request.
+ * @param settings - The sign-in's settings.
+ */
+export function fromOwnPages(request: NextRequest, settings: CustomerSignInSettings): boolean {
+  const origin = request.headers.get('origin');
+  if (origin !== null) return origin === settings.publicUrl;
+  return request.headers.get('sec-fetch-site') === 'same-origin';
+}
+
+/**
+ * The session the browser holds, or undefined.
+ *
+ * @param request - The request carrying the session's cookies.
+ * @param settings - The sign-in's settings.
+ * @param now - The current time in milliseconds.
+ */
+export async function sessionOf(
+  request: NextRequest,
+  settings: CustomerSignInSettings,
+  now: number = Date.now(),
+): Promise<CustomerSession | undefined> {
+  const sealed = joinCookie(CUSTOMER_SESSION_COOKIE, (name) => request.cookies.get(name)?.value);
+  return openSession(settings.sessionSecret, sealed, now);
+}
+
+/** The account a token names: its `name` (else `given_name`) and `email`, when they are strings. */
+function accountOf(idToken: string): SessionAccount {
+  const claims = sealedTokenClaims(idToken) ?? {};
+  const name =
+    typeof claims.name === 'string' && claims.name.trim() !== ''
+      ? claims.name.trim()
+      : typeof claims.given_name === 'string' && claims.given_name.trim() !== ''
+        ? claims.given_name.trim()
+        : undefined;
+  const email = typeof claims.email === 'string' ? claims.email.trim() : undefined;
+  return { ...(name ? { name } : {}), ...(email ? { email } : {}) };
+}
+
+function issued(session: CustomerSession): NextResponse {
+  const body: IssuedToken = {
+    token: session.idToken,
+    expiresAt: session.idTokenExpiresAt,
+    account: accountOf(session.idToken),
+  };
+  return NextResponse.json(body, { headers: NO_STORE });
+}
+
+function signedOut(
+  request: NextRequest,
+  settings: CustomerSignInSettings,
+  reason: string,
+): NextResponse {
+  const response = NextResponse.json(
+    { signedOut: true, reason },
+    { status: 401, headers: NO_STORE },
+  );
+  clearSession(response, request, settings);
+  return response;
+}
+
+/** Whether the browser's body asks for a fresh token (Convex's `forceRefreshToken`). */
+async function forceAsked(request: NextRequest): Promise<boolean> {
+  try {
+    const body: unknown = await request.json();
+    return (
+      typeof body === 'object' && body !== null && (body as { force?: unknown }).force === true
+    );
+  } catch {
+    // No body, or not JSON: an ordinary request for the current token.
+    return false;
+  }
+}
+
+/**
+ * `POST /api/auth/oidc/token`: the ID token Convex receives, refreshed with the
+ * refresh token when it is in its last minutes or Convex asks for a fresh one.
+ * A refresh the issuer refuses ends the session (401, cookies cleared); an
+ * issuer that cannot be reached leaves it standing, handing out the current
+ * token while it is still good and answering 503 once it is not, so the
+ * browser tries again rather than signing the person out.
+ *
+ * @param request - The browser's request, with the session's cookies.
+ */
+export async function tokenRoute(request: NextRequest): Promise<NextResponse> {
+  const unavailable = unavailableHere();
+  if (unavailable) return unavailable;
+  const settings = settingsOrPage();
+  if (settings instanceof NextResponse) return settings;
+  if (!fromOwnPages(request, settings)) {
+    return NextResponse.json({ error: 'not from this site' }, { status: 403, headers: NO_STORE });
+  }
+  const now = Date.now();
+  const session = await sessionOf(request, settings, now);
+  if (!session) return signedOut(request, settings, 'no session');
+  const force = await forceAsked(request);
+  const issuedAt = Number(sealedTokenClaims(session.idToken)?.iat ?? 0) * 1000;
+  const stillGood = session.idTokenExpiresAt - now > STILL_GOOD_MS;
+  if (!force && !needsRefresh(session, issuedAt, now)) return issued(session);
+  if (!session.refreshToken) {
+    return stillGood ? issued(session) : signedOut(request, settings, 'no refresh token');
+  }
+  const outcome = await refreshSession(settings, session, now);
+  switch (outcome.kind) {
+    case 'refreshed': {
+      const response = issued(outcome.session);
+      await writeSession(response, request, settings, outcome.session, now);
+      return response;
+    }
+    case 'refused':
+      return signedOut(request, settings, 'refresh refused');
+    case 'unavailable':
+      return stillGood
+        ? issued(session)
+        : NextResponse.json(
+            { error: 'the sign-in service did not answer; try again' },
+            { status: 503, headers: NO_STORE },
+          );
+    default: {
+      const unknown: never = outcome;
+      throw new Error(`unhandled refresh outcome ${String(unknown)}`);
     }
   }
 }
