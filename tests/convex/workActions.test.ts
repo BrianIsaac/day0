@@ -8947,9 +8947,9 @@ describe('an approved item whose skill is not callable (E-1, 10-C)', (): void =>
 
       await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
 
-      const parked = await readItem(harness, workItemId);
-      if (parked.proposedSkillId === undefined) throw new Error('no proposal linked');
-      const proposal = await harness.run(async (ctx) => await ctx.db.get(parked.proposedSkillId!));
+      const linked = (await readItem(harness, workItemId)).proposedSkillId;
+      if (linked === undefined) throw new Error('no proposal linked');
+      const proposal = await harness.run(async (ctx) => await ctx.db.get(linked));
       expect(proposal).toMatchObject({ name: 'kanban-comment-and-close', state: 'proposed' });
     },
   );
