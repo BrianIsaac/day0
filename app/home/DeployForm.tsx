@@ -14,7 +14,6 @@ import { errorMessage } from '@/lib/errors';
 import { log } from '@/lib/logger';
 import { AvatarPicker } from './AvatarPicker';
 import { AgentPixelAvatar } from './PixelAvatar';
-import type { Boss } from './types';
 
 /** The name the form opens with, so a manager can deploy in one click. */
 const DEFAULT_NAME = 'worker 1';
@@ -81,11 +80,6 @@ export function DeployForm({
   onCancel,
   focusOnMount = false,
 }: {
-  /**
-   * @deprecated The address comes from `agents.myManagerAddress`; the form reads nothing of
-   * this. `SignedInDashboard` still passes it until the screens unit (9-U4) drops it.
-   */
-  boss?: Boss;
   docSources: readonly DocSourceChoice[] | undefined;
   surfaceMode: 'mock' | 'real' | undefined;
   pickerOpen: boolean;

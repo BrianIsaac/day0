@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { Suspense, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { useQueries, useQuery } from 'convex/react';
 import Link from 'next/link';
@@ -9,7 +9,10 @@ import { employeeStateTally } from '@/work/state-labels';
 import { useNow } from '../components/time';
 import { useArrival } from '../arrival';
 import { CompanySupervision } from '../CompanySupervision';
+import { reportingElsewhereLine } from '../handover-words';
+import { AcceptTransfer } from './AcceptTransfer';
 import { DeployForm } from './DeployForm';
+import { HandedOver } from './HandedOver';
 import { EmployeeRoster } from './EmployeeRoster';
 import { MonthCard } from './MonthCard';
 import { NeedsYouList } from './NeedsYouList';
@@ -38,8 +41,10 @@ function useNeedsYou(): NeedsYouInbox | undefined | Error {
  * The signed-in home at `/`. With nobody deployed it is the deploy page: the
  * form, what happens after, the empty roster and the office. Once there are
  * employees it is the company home (v3 section 4.2, v2 section 7 step 7):
- * the needs-you inbox, the roster, the office, the month supervised from
- * here and the company's figures, with the form one click away.
+ * the needs-you inbox, the roster, the employees handed over, the office,
+ * the month supervised from here and the company's figures, with the form one
+ * click away. A handover named to the manager opens its acceptance dialog over
+ * the page (the transfer plan, sections 7.3 and 7.4).
  *
  * @param boss - Whoever the page acts for.
  */
@@ -53,6 +58,7 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
   const figures = useQuery(api.metrics.forOwner);
   const docSources = useQuery(api.docSources.listMine);
   const surfaceMode = useQuery(api.config.surfaceMode);
+  const reportingElsewhere = useQuery(api.agents.employeesReportingElsewhere);
   const now = useNow();
   const [deploying, setDeploying] = useState(false);
   const deployToggle = useRef<HTMLButtonElement>(null);
@@ -61,6 +67,10 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
 
   const staffed = roster !== undefined && roster.length > 0;
   const showDeployForm = roster !== undefined && (!staffed || deploying);
+  // A manager with nobody yet can still be named in a handover (the transfer plan, section 7.3),
+  // and one who handed over their only employee still reads where it went (7.4): for them the
+  // inbox and the handed-over card come before the deploy form, which is otherwise the page.
+  const showInbox = staffed || (inbox !== undefined && inbox.entries.length > 0);
 
   return (
     <div className="mx-auto w-full max-w-7xl flex-1 px-4 py-10 sm:px-6">
@@ -74,6 +84,13 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
               ? companyLine(roster, inbox)
               : 'Give your first employee a name. Everything else is learned from you.'}
           </p>
+          {reportingElsewhere !== undefined &&
+          reportingElsewhere !== null &&
+          reportingElsewhere > 0 ? (
+            <p className="mt-1 text-sm text-[var(--color-warn)]">
+              {reportingElsewhereLine(reportingElsewhere)}
+            </p>
+          ) : null}
         </div>
         {staffed ? (
           // Hidden while the form it opened is on the page, whose own Cancel closes it (walk m27);
@@ -92,15 +109,20 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
         ) : null}
       </header>
       <RetiredNotice />
+      {/* The acceptance dialog reads its request from the address (`/?transfer=<id>`). */}
+      <Suspense fallback={null}>
+        <AcceptTransfer />
+      </Suspense>
 
       <div className="grid grid-cols-[minmax(0,1fr)] gap-6 xl:grid-cols-[minmax(0,1fr)_20rem] xl:items-start">
         <div
           data-cards={arriving ? '' : undefined}
           className="flex min-w-0 flex-col gap-6 xl:col-start-1 xl:row-start-1"
         >
+          {!staffed && showInbox ? <NeedsYouList inbox={inboxRead} now={now} /> : null}
+          {staffed ? null : <HandedOver />}
           {showDeployForm ? (
             <DeployForm
-              boss={boss}
               docSources={docSources}
               surfaceMode={surfaceMode?.mode}
               pickerOpen={!staffed}
@@ -119,6 +141,7 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
           ) : null}
           {staffed ? <NeedsYouList inbox={inboxRead} now={now} /> : null}
           <EmployeeRoster employees={roster} waiting={waitingByEmployee(inbox)} />
+          {staffed ? <HandedOver /> : null}
           <OfficeWorld
             agents={roster}
             settled={roster !== undefined && (!staffed || inboxRead !== undefined)}

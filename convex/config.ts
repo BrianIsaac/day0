@@ -1,15 +1,25 @@
 import { query } from './_generated/server';
-import { SURFACE_MODE } from '../src/lib/surface-mode';
+import {
+  resolveDeploymentProfile,
+  SURFACE_MODE,
+  type DeploymentProfile,
+} from '../src/lib/surface-mode';
 import { modelName } from '../src/lib/model-name';
 import { browserComponent } from '../src/surfaces/browser';
 import { evaluationBedName } from '../src/evaluation/bed-flag';
 
-/** Return the non-secret surface mode for consistent UI labels. */
+/**
+ * Return the non-secret surface mode for consistent UI labels, and the deployment profile, so
+ * People can say which installation it is without guessing from the mode (the transfer plan,
+ * section 8): under `local-dev` with the local sign-in every browser is one manager, and a
+ * handover has nobody to go to. Public with no guard; both are the same for every caller.
+ */
 export const surfaceMode = query({
   args: {},
-  handler: (): { mode: 'mock' | 'real'; label: string } => ({
+  handler: (): { mode: 'mock' | 'real'; label: string; deploymentProfile: DeploymentProfile } => ({
     mode: SURFACE_MODE,
     label: SURFACE_MODE === 'real' ? 'real (local)' : 'mock',
+    deploymentProfile: resolveDeploymentProfile(),
   }),
 });
 

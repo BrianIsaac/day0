@@ -251,9 +251,10 @@ describe('the owned pages behind the session gate', (): void => {
   it('reaches no owned Convex hook from any route before its gate opens', (): void => {
     const { findings, gatedFiles } = ungatedOwnedHooks(appTree());
     expect(findings).toEqual([]);
-    // The walk saw the three owned roots, so an empty list is not a walk that found nothing.
+    // The walk saw the four owned roots, so an empty list is not a walk that found nothing.
     expect(gatedFiles).toEqual([
       'app/agent/[agentId]/layout.tsx',
+      'app/agent/error.tsx',
       'app/documentation/page.tsx',
       'app/page.tsx',
     ]);

@@ -1,12 +1,16 @@
 'use client';
 
 import { isEmployeeNotYours } from '@/agent/employee-access';
-import { EmployeePageFailed, NoSuchEmployee } from './[agentId]/NoSuchEmployee';
+import { SessionGate } from '../Providers';
+import { EmployeeLoading } from './[agentId]/EmployeeShell';
+import { NotYourEmployee } from './[agentId]/EmployeeDeparted';
+import { EmployeePageFailed } from './[agentId]/NoSuchEmployee';
 
 /**
  * The employee page's net (Next's `error.js`), placed above the page's own segment because a
  * segment's boundary never wraps its own layout, where the shell reads the employee. Another
- * owner's employee is drawn as the page's "No such employee"; any other throw offers the read
+ * owner's employee is drawn as where it went when the caller handed it over (the transfer plan,
+ * section 7.4), and as the page's "No such employee" otherwise; any other throw offers the read
  * again. React reports the caught error itself, so nothing is swallowed here.
  */
 export default function EmployeePageError({
@@ -17,7 +21,10 @@ export default function EmployeePageError({
   unstable_retry: () => void;
 }) {
   return isEmployeeNotYours(error) ? (
-    <NoSuchEmployee />
+    // The net sits above the layout's gate; asking where the employee went reads the caller.
+    <SessionGate fallback={<EmployeeLoading />}>
+      <NotYourEmployee retry={unstable_retry} />
+    </SessionGate>
   ) : (
     <EmployeePageFailed retry={unstable_retry} />
   );

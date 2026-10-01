@@ -1,4 +1,5 @@
 import { convexTest, type TestConvex } from 'convex-test';
+import { anyApi } from 'convex/server';
 import { ConvexError } from 'convex/values';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
@@ -1907,7 +1908,9 @@ describe('the employee roster', (): void => {
   });
 });
 
-describe('agents.setBossEmail', (): void => {
+// The free edit of the address is gone (the transfer plan, section 9): its pins are re-pinned to
+// what replaced it, **Make it you** for the owner's own address and a handover for anyone else's.
+describe('agents.setBossEmail, removed with the free edit', (): void => {
   const LEFT_WORKSPACE =
     'the manager email old@day0.local is not a member of this Slack workspace (users_not_found).';
 
@@ -1962,13 +1965,26 @@ describe('agents.setBossEmail', (): void => {
     );
   }
 
-  it('changes the manager with an event and re-probes the chat surfaces the change can mend', async (): Promise<void> => {
+  it('is no longer a function: the address changes only by deploy, Make it you and an accepted handover', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity(managerIdentity());
+    const agentId = await seedReportingTo(harness, 'boss@day0.local');
+    // The page's old call, by name: the deployment has no such function to run.
+    await expect(
+      owner.mutation(anyApi.agents.setBossEmail, { agentId, bossEmail: 'new@day0.local' }),
+    ).rejects.toThrow(/setBossEmail/);
+    const agent = await harness.run(async (ctx) => await ctx.db.get(agentId));
+    expect(agent?.bossEmail).toBe('boss@day0.local');
+  });
+
+  it('re-probes, on Make it you, the chat surfaces the change can mend, as the free edit did (Q6)', async (): Promise<void> => {
     vi.useFakeTimers();
     useSurfaceMode('real');
     const { api: realApi } = await import('../../convex/_generated/api');
     const harness = convexTest(schema, allConvexModules());
-    const owner = harness.withIdentity(managerIdentity('owner', { email: 'old@day0.local' }));
-    const agentId = await owner.mutation(realApi.agents.deploy, {});
+    const owner = harness.withIdentity(managerIdentity());
+    const agentId = await seedReportingTo(harness, 'old@day0.local');
     const connected = await seedApprovedSurface(harness, agentId, {
       slug: 'slack',
       class: 'chat',
@@ -1992,38 +2008,40 @@ describe('agents.setBossEmail', (): void => {
       verdict: 'connected',
     });
 
-    await expect(
-      owner.mutation(realApi.agents.setBossEmail, { agentId, bossEmail: '  new@day0.local ' }),
-    ).resolves.toEqual({ changed: true, reprobed: 2 });
+    await expect(owner.mutation(realApi.agents.adoptManagerAddress, { agentId })).resolves.toEqual({
+      changed: true,
+      reprobed: 2,
+    });
 
     const agent = await harness.run(async (ctx) => await ctx.db.get(agentId));
-    expect(agent?.bossEmail).toBe('new@day0.local');
+    expect(agent?.bossEmail).toBe(MANAGER_ADDRESS);
     const changes = await harness.run(async (ctx) =>
       (await ctx.db.query('events').collect())
         .filter((event) => event.type === 'manager.changed')
         .map((event) => event.payload),
     );
-    expect(changes).toEqual([{ via: 'dashboard', bossEmail: 'new@day0.local' }]);
+    expect(changes).toEqual([{ via: 'adopted', bossEmail: MANAGER_ADDRESS }]);
     expect((await scheduledProbes(harness)).sort()).toEqual(
       [String(connected), String(lostManager)].sort(),
     );
   });
 
-  it('writes nothing for the address the agent already reports to', async (): Promise<void> => {
+  it('writes nothing for the address the employee already reports to, in any case', async (): Promise<void> => {
     vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
     const owner = harness.withIdentity(managerIdentity());
-    const agentId = await owner.mutation(api.agents.deploy, {});
-    await expect(
-      owner.mutation(api.agents.setBossEmail, { agentId, bossEmail: 'Boss@Day0.local' }),
-    ).resolves.toEqual({ changed: false, reprobed: 0 });
+    const agentId = await seedReportingTo(harness, 'Boss@Day0.local');
+    await expect(owner.mutation(api.agents.adoptManagerAddress, { agentId })).resolves.toEqual({
+      changed: false,
+      reprobed: 0,
+    });
     const types = await harness.run(async (ctx) =>
       (await ctx.db.query('events').collect()).map((event) => event.type),
     );
     expect(types).not.toContain('manager.changed');
   });
 
-  it('refuses another owner, a malformed address and an evaluation agent', async (): Promise<void> => {
+  it('refuses another owner, a malformed address and an evaluation employee', async (): Promise<void> => {
     vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
     const owner = harness.withIdentity(managerIdentity());
@@ -2031,10 +2049,11 @@ describe('agents.setBossEmail', (): void => {
     await expect(
       harness
         .withIdentity(managerIdentity('intruder'))
-        .mutation(api.agents.setBossEmail, { agentId, bossEmail: 'intruder@day0.local' }),
+        .mutation(api.agents.adoptManagerAddress, { agentId }),
     ).rejects.toThrow();
+    // Another person's address is reached only by a handover, which checks its shape.
     await expect(
-      owner.mutation(api.agents.setBossEmail, { agentId, bossEmail: 'not an address' }),
+      owner.mutation(api.managerTransfers.ask, { agentId, toAddress: 'not an address' }),
     ).rejects.toThrow('email address');
     vi.stubEnv('DAY0_EVALUATION_BED', 'refusals');
     const evaluationId = await owner.mutation(api.agents.deploy, {
@@ -2042,13 +2061,16 @@ describe('agents.setBossEmail', (): void => {
       name: 'Day0 evaluation 1',
     });
     await expect(
-      owner.mutation(api.agents.setBossEmail, {
+      owner.mutation(api.agents.adoptManagerAddress, { agentId: evaluationId }),
+    ).rejects.toThrow(EVALUATION_ADDRESS_FIXED);
+    await expect(
+      owner.mutation(api.managerTransfers.ask, {
         agentId: evaluationId,
-        bossEmail: 'someone@day0.local',
+        toAddress: 'someone@day0.local',
       }),
     ).rejects.toThrow('evaluation');
     const agent = await harness.run(async (ctx) => await ctx.db.get(agentId));
-    expect(agent?.bossEmail).toBe('boss@day0.local');
+    expect(agent?.bossEmail).toBe(MANAGER_ADDRESS);
   });
 });
 
