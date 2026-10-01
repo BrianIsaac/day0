@@ -318,7 +318,7 @@ it('points a failed manager lookup at the manager, not at a new credential (U9 s
   });
   expect(presented).toMatchObject({ canLand: false, kind: 'masked', label: 'Slack bot token' });
   expect(presented.text).toBe(
-    'The credential works, but the manager could not be found: the manager email boss@day0.local is not a member of this Slack workspace. Change the manager on this employee’s page, then probe again.',
+    'The credential works, but the manager could not be found: the manager email boss@day0.local is not a member of this Slack workspace. The manager’s address must be one this workspace knows: choose on this employee’s People tab, then probe again.',
   );
 });
 
