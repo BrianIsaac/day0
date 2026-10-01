@@ -516,6 +516,53 @@ async function recipientNamedBy(
   return { person: user.id };
 }
 
+/** What one attempt to deliver the notice did: delivered with the provider's timestamp, or why not. */
+type NoticeDelivery =
+  | { readonly delivered: true; readonly providerTs: string }
+  | { readonly delivered: false; readonly reason: string };
+
+/**
+ * Deliver the claimed notice through the card's Slack token: find the person the address names
+ * ({@link recipientNamedBy}), open their DM and post the words. Every provider failure is the
+ * delivery's own answer, its message redacted of the token; nothing is recorded here, so a
+ * failure to record a delivered notice is never mistaken for one that was not sent.
+ *
+ * @param ctx - The notice action's context, for the credential's decrypt.
+ * @param claimed - The claimed notice: the credential, the address, the manager the card DMs and
+ *   the words.
+ */
+async function deliverTransferNotice(
+  ctx: ActionCtx,
+  claimed: {
+    readonly credentialId: string;
+    readonly toAddress: string;
+    readonly managerUserId?: string;
+    readonly text: string;
+  },
+): Promise<NoticeDelivery> {
+  let credential = '';
+  try {
+    credential = await decryptCredential(ctx, claimed.credentialId);
+    const recipient = await recipientNamedBy(credential, claimed.toAddress, claimed.managerUserId);
+    if ('nobody' in recipient) return { delivered: false, reason: recipient.nobody };
+    const opened = await callSlackForNotice(credential, 'conversations.open', {
+      body: { users: recipient.person },
+    });
+    const channel = (opened.channel as { id?: unknown } | undefined)?.id;
+    if (typeof channel !== 'string') throw new Error('Slack conversations.open returned no DM.');
+    const posted = await callSlackForNotice(credential, 'chat.postMessage', {
+      body: { channel, text: claimed.text },
+    });
+    if (typeof posted.ts !== 'string') throw new Error('Slack chat.postMessage returned no ts.');
+    return { delivered: true, providerTs: posted.ts };
+  } catch (error) {
+    return {
+      delivered: false,
+      reason: safeFailureMessage(error, credential, 'Handover notice failed.'),
+    };
+  }
+}
+
 /** What the notice action answers: sent, or why not. */
 const transferNoticeOutcomeValidator = v.object({
   sent: v.boolean(),
@@ -538,51 +585,22 @@ export const sendTransferNotice = internalAction({
   handler: async (ctx, args): Promise<Infer<typeof transferNoticeOutcomeValidator>> => {
     const claimed = await ctx.runMutation(internal.transferNotice.claimTransferNotice, args);
     if (!claimed.claimed) return { sent: false, reason: claimed.reason };
-    let credential = '';
-    let reason: string;
-    try {
-      credential = await decryptCredential(ctx, claimed.credentialId);
-      const recipient = await recipientNamedBy(
-        credential,
-        claimed.toAddress,
-        claimed.managerUserId,
-      );
-      if ('nobody' in recipient) {
-        log.info('handover notice not sent: the named address is nobody to tell', {
-          transferId: args.transferId,
-          reason: recipient.nobody,
-        });
-        await ctx.runMutation(internal.transferNotice.recordTransferNoticeUndelivered, {
-          transferId: args.transferId,
-          reason: recipient.nobody,
-        });
-        return { sent: false, reason: recipient.nobody };
-      }
-      const opened = await callSlackForNotice(credential, 'conversations.open', {
-        body: { users: recipient.person },
-      });
-      const channel = (opened.channel as { id?: unknown } | undefined)?.id;
-      if (typeof channel !== 'string') throw new Error('Slack conversations.open returned no DM.');
-      const posted = await callSlackForNotice(credential, 'chat.postMessage', {
-        body: { channel, text: claimed.text },
-      });
-      if (typeof posted.ts !== 'string') throw new Error('Slack chat.postMessage returned no ts.');
+    const outcome = await deliverTransferNotice(ctx, claimed);
+    if (outcome.delivered) {
       await ctx.runMutation(internal.transferNotice.recordTransferNotice, {
         transferId: args.transferId,
-        providerTs: posted.ts,
+        providerTs: outcome.providerTs,
       });
       return { sent: true };
-    } catch (error) {
-      reason = safeFailureMessage(error, credential, 'Handover notice failed.');
-      log.warn('handover notice not sent; it is not tried again', {
-        transferId: args.transferId,
-        reason,
-      });
     }
+    log.warn('handover notice not sent; it is not tried again', {
+      transferId: args.transferId,
+      reason: outcome.reason,
+    });
     await ctx.runMutation(internal.transferNotice.recordTransferNoticeUndelivered, {
       transferId: args.transferId,
-      reason,
+      reason: outcome.reason,
     });
-    return { sent: false, reason };
+    return { sent: false, reason: outcome.reason };
   },
 });
