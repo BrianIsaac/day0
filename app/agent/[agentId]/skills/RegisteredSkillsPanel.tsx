@@ -160,8 +160,9 @@ export function RegisteredSkillsPanel({
     card: HTMLElement | null;
   } | null>(null);
   const [retiring, setRetiring] = useState<Retiring | null>(null);
-  // What the last Retire or Withdraw did, said once its dialog has closed.
-  const [retired, setRetired] = useState<ChangeOutcome | null>(null);
+  // What the last Retire or Withdraw did, said once its dialog has closed, or why a revision
+  // was refused before any authoring began.
+  const [notice, setNotice] = useState<ChangeOutcome | null>(null);
   const now = useNow();
   const zone = useAgentZone();
   const describedBy = useId();
@@ -182,10 +183,23 @@ export function RegisteredSkillsPanel({
     setRetrying(skillId);
     setReturnTo({ control: origin, card: registeredCard.current });
     onAuthoringAttempt(null);
+    setNotice(null);
+    controls.clear();
     // A revision is its own row, written while this one keeps running.
     let written = skillId;
     try {
-      if (revise) written = (await askForRevision({ skillId })).revisionId;
+      if (revise) {
+        try {
+          written = (await askForRevision({ skillId })).revisionId;
+        } catch (err) {
+          // Refused before anything was authored: said here, since no attempt names a new row.
+          setNotice({
+            tone: 'refused',
+            text: refusalText(err, `${name} was not sent for a revision.`),
+          });
+          return;
+        }
+      }
       const result = await author({ skillId: written });
       onAuthoringAttempt(
         result.ok
@@ -210,7 +224,7 @@ export function RegisteredSkillsPanel({
 
   /** Start one of the row controls that change a skill at once, said in the card's live region. */
   function runControl(call: () => Promise<string>, refused: string): void {
-    setRetired(null);
+    setNotice(null);
     controls.run(call, { done: (words) => words, refused });
   }
 
@@ -244,8 +258,8 @@ export function RegisteredSkillsPanel({
             </p>
           ) : null}
         </div>
-        <div className="mb-3 empty:mb-0">
-          <StatusRegion outcome={retired ?? controls.outcome} />
+        <div className="mb-3 has-[p:empty]:mb-0">
+          <StatusRegion outcome={notice ?? controls.outcome} />
         </div>
         {loading ? (
           <p className="text-sm text-[var(--color-muted)]">loading skills…</p>
@@ -294,7 +308,7 @@ export function RegisteredSkillsPanel({
                     ) : null}
                   </div>
                   {authored ? (
-                    <div className="flex shrink-0 flex-wrap gap-2">
+                    <div className="flex max-w-full flex-wrap gap-2">
                       {due && s.versionId !== undefined ? (
                         <Button
                           size="small"
@@ -305,7 +319,7 @@ export function RegisteredSkillsPanel({
                             }, `${s.name} was not re-checked.`)
                           }
                           disabled={checking || controls.busy}
-                          aria-label={`Re-check ${s.name} now`}
+                          aria-label={`Re-check now: ${s.name}`}
                         >
                           Re-check now
                         </Button>
@@ -318,16 +332,19 @@ export function RegisteredSkillsPanel({
                         }}
                         disabled={retrying === s._id || hasRevision}
                         title={hasRevision ? revisionSentence(employee) : REVISE_HINT}
-                        aria-label={`Ask for a revision of ${s.name}`}
+                        // While its run writes, the visible words are the name.
+                        aria-label={
+                          retrying === s._id ? undefined : `Ask for a revision of ${s.name}`
+                        }
                         aria-describedby={`${describedBy}-revise`}
                       >
-                        {retrying === s._id ? 'Asking…' : 'Ask for a revision'}
+                        {retrying === s._id ? 'Writing the revision…' : 'Ask for a revision'}
                       </Button>
                       <Button
                         size="small"
                         variant="danger"
                         onClick={(event) => {
-                          setRetired(null);
+                          setNotice(null);
                           setRetiring({ skill: s, origin: event.currentTarget });
                         }}
                         disabled={controls.busy}
@@ -365,7 +382,7 @@ export function RegisteredSkillsPanel({
                   {/* A traceback's caret line has no break opportunity: without
                       min-w-0 the column keeps its full width and pushes Retry
                       past the card's edge. */}
-                  <div className="flex-1 min-w-0">
+                  <div className="flex-1 basis-64 min-w-0">
                     <p className="flex flex-wrap items-center gap-2 text-sm text-[var(--color-fg)]">
                       <span className="font-medium break-words">{s.name}</span>
                       <Chip tone={state.tone}>{state.label}</Chip>
@@ -407,7 +424,7 @@ export function RegisteredSkillsPanel({
                     </p>
                     <RefusedDraft skill={s} />
                   </div>
-                  <div className="flex shrink-0 flex-wrap gap-2">
+                  <div className="flex max-w-full flex-wrap gap-2">
                     {spent ? null : (
                       <Button
                         variant="retry"
@@ -418,8 +435,13 @@ export function RegisteredSkillsPanel({
                         }}
                         disabled={retrying === s._id || holdsLiveAuthoringClaim(s, now)}
                         title={retryHint(s, now)}
+                        // While its run writes, the visible words are the name.
                         aria-label={
-                          withReasons ? `Retry with the reasons for ${s.name}` : `Retry ${s.name}`
+                          retrying === s._id
+                            ? undefined
+                            : withReasons
+                              ? `Retry with the reasons for ${s.name}`
+                              : `Retry ${s.name}`
                         }
                         aria-describedby={`${describedBy}-${s._id}`}
                       >
@@ -442,7 +464,8 @@ export function RegisteredSkillsPanel({
                         }
                         disabled={retrying === s._id || controls.busy}
                         aria-label={`Give up ${s.name}`}
-                        aria-describedby={`${describedBy}-${s._id}`}
+                        // Described only once its line says what Give up does.
+                        aria-describedby={spent ? `${describedBy}-${s._id}` : undefined}
                       >
                         Give up
                       </Button>
@@ -481,9 +504,15 @@ export function RegisteredSkillsPanel({
         <RetireSkillDialog
           skill={retiring.skill}
           employee={employee}
-          onClose={() => setRetiring(null)}
+          revisionOpen={revising.has(retiring.skill._id)}
+          onClose={() => {
+            // Some browsers do not focus a button on click, so the dialog's own return can land
+            // on the page: the control that opened it takes focus back.
+            setReturnTo({ control: retiring.origin, card: registeredCard.current });
+            setRetiring(null);
+          }}
           onDone={(words) => {
-            setRetired({ tone: 'done', text: words });
+            setNotice({ tone: 'done', text: words });
             // The row leaves the list with its Retire, so focus goes to the card.
             setReturnTo({ control: retiring.origin, card: registeredCard.current });
             setRetiring(null);

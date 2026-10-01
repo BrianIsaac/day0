@@ -3,6 +3,7 @@ import {
   attemptLine,
   attemptsSpentSentence,
   givenUpOutcome,
+  namesInWords,
   recheckStartedOutcome,
   revisionRowSentence,
   recheckSentence,
@@ -54,20 +55,20 @@ describe('the skill cards’ words (10-C)', (): void => {
     expect(retireOutcome('kanban-comment-and-close', 'Mira', 1)).toBe(
       'kanban-comment-and-close is retired from Mira. 1 approved item waits for a skill again.',
     );
-    expect(withdrawOutcome('kanban-comment-and-close', 2)).toBe(
+    expect(withdrawOutcome('kanban-comment-and-close', 2, 0)).toBe(
       'kanban-comment-and-close is withdrawn from 2 employees.',
     );
-    expect(withdrawOutcome('kanban-comment-and-close', 1)).toBe(
-      'kanban-comment-and-close is withdrawn from 1 employee.',
+    expect(withdrawOutcome('kanban-comment-and-close', 1, 3)).toBe(
+      'kanban-comment-and-close is withdrawn from 1 employee. 3 approved items wait for a skill again.',
     );
   });
 
   it('says why Retry is withdrawn at the third attempt, and what Give up does', (): void => {
     expect(attemptsSpentSentence(false)).toBe(
-      'All 3 attempts failed, so Retry is withdrawn. Give up ends the skill and cancels the work waiting for it, with the reason.',
+      'All 3 attempts failed, so Retry is no longer offered. Give up ends the skill and cancels the work waiting for it, with the reason.',
     );
     expect(attemptsSpentSentence(true)).toBe(
-      'All 3 attempts failed, so Retry is withdrawn. Give up ends this revision; the registered version keeps running.',
+      'All 3 attempts failed, so Retry is no longer offered. Give up ends this revision; the registered version keeps running.',
     );
   });
 
@@ -88,7 +89,13 @@ describe('the skill cards’ words (10-C)', (): void => {
       'analytics-refresh-value is given up; 2 waiting items are cancelled.',
     );
     expect(recheckStartedOutcome('kanban-comment-and-close')).toBe(
-      'kanban-comment-and-close is being re-checked in the sandbox; it keeps running meanwhile.',
+      'A re-check of kanban-comment-and-close was asked for. It keeps running unless the check fails.',
     );
+  });
+
+  it('names a list of employees as a sentence does', (): void => {
+    expect(namesInWords(['Mira'])).toBe('Mira');
+    expect(namesInWords(['Mira', 'Tomas'])).toBe('Mira and Tomas');
+    expect(namesInWords(['Mira', 'Tomas', 'Aiko'])).toBe('Mira, Tomas and Aiko');
   });
 });

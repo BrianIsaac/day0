@@ -113,7 +113,9 @@ describe('RetireSkillDialog', (): void => {
         ['skill-3', 'Aiko', 'retired'],
       ),
     };
-    backend.results = { 'skillControls:withdraw': { withdrawn: true, holders: 2 } };
+    backend.results = {
+      'skillControls:withdraw': { withdrawn: true, holders: 2, returnedItems: 1 },
+    };
     const { view, onDone } = open();
     await settle();
 
@@ -122,18 +124,41 @@ describe('RetireSkillDialog', (): void => {
     );
     expect(choices).toEqual([
       'Only MiraTomas keeps running version 2.',
-      'Every employee who runs it: Mira, TomasVersion 2 is withdrawn: nobody runs it and it is offered to nobody.',
+      'Every employee who runs it: Mira and TomasVersion 2 is withdrawn: nobody runs it and it is offered to nobody.',
     ]);
     const every = document.body.querySelectorAll('input[type="radio"]')[1] as HTMLInputElement;
     await act(async (): Promise<void> => {
       every.click();
     });
+    // The question follows the choice.
+    expect(document.body.querySelector('h2')?.textContent).toBe(
+      'Withdraw Comment on a ticket and close it from every employee?',
+    );
+    expect(document.body.textContent).toContain('Mira and Tomas stop running this skill now.');
     await press(document.body, 'Withdraw from 2 employees');
 
     expect(backend.calls).toEqual([
       { name: 'skillControls:withdraw', args: { skillId: 'skill-1' } },
     ]);
-    expect(onDone).toHaveBeenCalledWith('kanban-comment-and-close is withdrawn from 2 employees.');
+    expect(onDone).toHaveBeenCalledWith(
+      'kanban-comment-and-close is withdrawn from 2 employees. 1 approved item waits for a skill again.',
+    );
+    view.unmount();
+  });
+
+  it('says a revision being written ends with the retire', async (): Promise<void> => {
+    backend.queries = { 'skillVersions:forSkill': heldBy(['skill-1', 'Mira', 'registered']) };
+    const view = mount(
+      <RetireSkillDialog
+        skill={SKILL}
+        employee="Mira"
+        revisionOpen
+        onClose={vi.fn()}
+        onDone={vi.fn()}
+      />,
+    );
+    await settle();
+    expect(document.body.textContent).toContain('The revision being written for it ends too.');
     view.unmount();
   });
 

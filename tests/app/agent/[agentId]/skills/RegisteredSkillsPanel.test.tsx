@@ -274,7 +274,7 @@ describe('what Retry does to an unregistered skill', (): void => {
     } as unknown as Doc<'skills'>;
     const markup = panel([traceback]);
     expect(markup).toMatch(
-      /<div class="flex-1 min-w-0"><p[^>]*><span class="font-medium break-words">refresh-the-tile</,
+      /<div class="flex-1 basis-64 min-w-0"><p[^>]*><span class="font-medium break-words">refresh-the-tile</,
     );
     expect(markup).toMatch(
       new RegExp(
@@ -643,12 +643,12 @@ describe('the five controls on the Skills cards (10-C, the prototype’s agent-s
         employee="Mira"
       />,
     );
-    await press(view.container, 'Re-check kanban-comment-and-close now');
+    await press(view.container, 'Re-check now: kanban-comment-and-close');
     expect(backend.calls).toEqual([
       { name: 'skillControls:recheckNow', args: { skillId: 'skill-1' } },
     ]);
     expect(said(view.container)).toContain(
-      'kanban-comment-and-close is being re-checked in the sandbox; it keeps running meanwhile.',
+      'A re-check of kanban-comment-and-close was asked for. It keeps running unless the check fails.',
     );
     view.unmount();
     backend.results = {};
@@ -664,7 +664,7 @@ describe('the five controls on the Skills cards (10-C, the prototype’s agent-s
     expect(markup).toContain('>Re-checking<');
     expect(markup).not.toContain('>Re-check due<');
     expect(markup).toMatch(
-      /<button[^>]*disabled=""[^>]*aria-label="Re-check kanban-comment-and-close now"/,
+      /<button[^>]*disabled=""[^>]*aria-label="Re-check now: kanban-comment-and-close"/,
     );
   });
 
@@ -726,8 +726,87 @@ describe('the five controls on the Skills cards (10-C, the prototype’s agent-s
     expect(markup).not.toMatch(/aria-label="Retry[^"]*analytics-refresh-value"/);
     expect(markup).toContain('>Give up<');
     expect(markup).toContain(
-      'All 3 attempts failed, so Retry is withdrawn. Give up ends the skill and cancels the work waiting for it, with the reason.',
+      'All 3 attempts failed, so Retry is no longer offered. Give up ends the skill and cancels the work waiting for it, with the reason.',
     );
+  });
+
+  it('says a refused Ask for a revision in the card, rather than losing it', async (): Promise<void> => {
+    backend.calls.length = 0;
+    backend.refusals = {
+      'skillControls:askForRevision':
+        'A revision of kanban-comment-and-close is already being written.',
+    };
+    const attempts: unknown[] = [];
+    const view = mount(
+      <RegisteredSkillsPanel
+        skills={[authored]}
+        unregistered={[]}
+        authoringFailure={null}
+        onAuthoringAttempt={(attempt) => void attempts.push(attempt)}
+        employee="Mira"
+      />,
+    );
+    await press(view.container, 'Ask for a revision of kanban-comment-and-close');
+    expect(said(view.container)).toContain(
+      'A revision of kanban-comment-and-close is already being written.',
+    );
+    // Nothing was authored, so no attempt is filed against the running skill.
+    expect(backend.calls.map((call) => call.name)).toEqual(['skillControls:askForRevision']);
+    expect(attempts).toEqual([null]);
+    view.unmount();
+    backend.refusals = {};
+  });
+
+  it('puts every visible label inside its control’s accessible name, and describes Give up only by what it does', (): void => {
+    const markup = markupOf([due], [failing(2)]);
+    for (const [visible, name] of [
+      ['Re-check now', 'Re-check now: kanban-comment-and-close'],
+      ['Ask for a revision', 'Ask for a revision of kanban-comment-and-close'],
+      ['Retire', 'Retire kanban-comment-and-close'],
+      ['Retry with the reasons', 'Retry with the reasons for analytics-refresh-value'],
+      ['Give up', 'Give up analytics-refresh-value'],
+    ]) {
+      expect(name.startsWith(visible)).toBe(true);
+      expect(markup).toContain(`aria-label="${name}"`);
+    }
+    // Give up is not described by Retry's hint while Retry is offered.
+    expect(markup).not.toMatch(/aria-label="Give up analytics-refresh-value"[^>]*aria-describedby/);
+    expect(markup).not.toMatch(
+      /aria-describedby="[^"]*"[^>]*aria-label="Give up analytics-refresh-value"/,
+    );
+  });
+
+  it('gives focus back to Retire when its dialog is kept, even when the click gave it none', async (): Promise<void> => {
+    backend.queries = {
+      'skillVersions:forSkill': {
+        held: {
+          version: { _id: 'version-1', version: 1 },
+          holders: [
+            { skillId: 'skill-1', agentId: 'agent-1', agentName: 'Mira', state: 'registered' },
+          ],
+        },
+        offered: null,
+      },
+    };
+    const view = mount(
+      <RegisteredSkillsPanel
+        skills={[authored]}
+        unregistered={[]}
+        authoringFailure={null}
+        onAuthoringAttempt={noop}
+        employee="Mira"
+      />,
+    );
+    // Safari and Firefox on macOS do not focus a button on click.
+    (document.activeElement as HTMLElement | null)?.blur();
+    await act(async (): Promise<void> => {
+      button(view.container, 'Retire kanban-comment-and-close').click();
+    });
+    await settle();
+    await press(document.body, 'Keep it');
+    expect(focusedName()).toBe('Retire kanban-comment-and-close');
+    view.unmount();
+    backend.queries = {};
   });
 
   it('opens the Retire dialog, closes it on Keep, and says the retire once it lands', async (): Promise<void> => {

@@ -39,7 +39,6 @@ function sentence(reason: string): string {
  * running what was verified meanwhile.
  *
  * @param reason - The stamp's reason (`recheckReason`).
- * @param employee - The employee's name.
  */
 export function recheckSentence(reason: string, employee: string): string {
   return `${sentence(reason)} ${employee} keeps running the verified version until it is re-checked.`;
@@ -47,8 +46,6 @@ export function recheckSentence(reason: string, employee: string): string {
 
 /**
  * What a registered row says while its revision is written beside it.
- *
- * @param employee - The employee's name.
  */
 export function revisionSentence(employee: string): string {
   return `A revision is being written. ${employee} keeps running this version until the new one registers.`;
@@ -56,8 +53,6 @@ export function revisionSentence(employee: string): string {
 
 /**
  * What an unregistered revision row says: what it replaces and that the old version runs on.
- *
- * @param employee - The employee's name.
  */
 export function revisionRowSentence(employee: string): string {
   return `A revision of a registered skill. ${employee} keeps running the registered version until this one registers.`;
@@ -73,13 +68,12 @@ export function attemptsSpentSentence(revision: boolean): string {
   const giveUp = revision
     ? 'Give up ends this revision; the registered version keeps running.'
     : 'Give up ends the skill and cancels the work waiting for it, with the reason.';
-  return `All ${MAX_AUTHORING_ATTEMPTS} attempts failed, so Retry is withdrawn. ${giveUp}`;
+  return `All ${MAX_AUTHORING_ATTEMPTS} attempts failed, so Retry is no longer offered. ${giveUp}`;
 }
 
 /**
  * What the live region says once a Give up lands.
  *
- * @param skill - The skill's name.
  * @param cancelled - The waiting items it cancelled.
  */
 export function givenUpOutcome(skill: string, cancelled: number): string {
@@ -89,17 +83,14 @@ export function givenUpOutcome(skill: string, cancelled: number): string {
 
 /**
  * What the live region says once a re-check is on its way.
- *
- * @param skill - The skill's name.
  */
 export function recheckStartedOutcome(skill: string): string {
-  return `${skill} is being re-checked in the sandbox; it keeps running meanwhile.`;
+  return `A re-check of ${skill} was asked for. It keeps running unless the check fails.`;
 }
 
 /**
  * What the live region says once a Retire lands.
  *
- * @param skill - The skill's name.
  * @param employee - The employee it was retired from.
  * @param returned - The approved items that went back to waiting for a skill.
  */
@@ -112,9 +103,23 @@ export function retireOutcome(skill: string, employee: string, returned: number)
 /**
  * What the live region says once a withdrawal from every employee lands.
  *
- * @param skill - The skill's name.
  * @param holders - How many employees' copies it retired.
+ * @param returned - The approved items that went back to waiting for a skill, theirs together.
  */
-export function withdrawOutcome(skill: string, holders: number): string {
-  return `${skill} is withdrawn from ${holders} ${holders === 1 ? 'employee' : 'employees'}.`;
+export function withdrawOutcome(skill: string, holders: number, returned: number): string {
+  const withdrawn = `${skill} is withdrawn from ${holders} ${holders === 1 ? 'employee' : 'employees'}.`;
+  if (returned === 0) return withdrawn;
+  return `${withdrawn} ${returned} approved ${returned === 1 ? 'item waits' : 'items wait'} for a skill again.`;
+}
+
+/** How a list of names is joined, as a British sentence joins it. */
+const NAME_LIST = new Intl.ListFormat('en-GB', { style: 'long', type: 'conjunction' });
+
+/**
+ * The employees in a list as a sentence names them ("Mira, Tomas and Aiko").
+ *
+ * @param names - The employees' names, in the order said.
+ */
+export function namesInWords(names: readonly string[]): string {
+  return NAME_LIST.format(names);
 }

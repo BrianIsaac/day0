@@ -11,15 +11,10 @@ import { Field, INPUT_CLASS } from '../../../components/Field';
 import { StatusRegion } from '../../../components/StatusRegion';
 import { useChange } from '../../../components/use-change';
 import { plainSkillName } from './skill-parts';
-import { retireOutcome, withdrawOutcome } from './skill-card-words';
+import { namesInWords, retireOutcome, withdrawOutcome } from './skill-card-words';
 
 /** Who stops running the skill: the one employee, or every employee who runs its version. */
 type RetireScope = 'one' | 'every';
-
-/** The names in a list, joined as the dialog says them. */
-function namesOf(names: readonly string[]): string {
-  return names.join(', ');
-}
 
 /**
  * The Retire dialog of the Skills tab (10-C, over the shared `Dialog`): Retire takes the skill
@@ -30,17 +25,20 @@ function namesOf(names: readonly string[]): string {
  *
  * @param skill - The registered row.
  * @param employee - The employee's name.
+ * @param revisionOpen - Whether a revision of the row is being written, which the retire ends.
  * @param onClose - Close the dialog without retiring.
  * @param onDone - The change landed, with what the Skills card's live region says.
  */
 export function RetireSkillDialog({
   skill,
   employee,
+  revisionOpen = false,
   onClose,
   onDone,
 }: {
   skill: Doc<'skills'>;
   employee: string;
+  revisionOpen?: boolean;
   onClose: () => void;
   onDone: (words: string) => void;
 }) {
@@ -76,7 +74,7 @@ export function RetireSkillDialog({
   } else if (withdrawable) {
     const others = runners.slice(1);
     choice = (
-      <fieldset className="grid gap-2">
+      <fieldset className="grid min-w-0 gap-2">
         <legend className="mb-1 text-[13px] font-medium text-[var(--color-fg-2)]">
           Who stops running it
         </legend>
@@ -90,10 +88,11 @@ export function RetireSkillDialog({
             disabled={change.busy}
             className="mt-1 h-4 w-4 shrink-0 accent-[var(--color-accent)]"
           />
-          <span className="grid gap-0.5">
+          <span className="grid min-w-0 gap-0.5 break-words">
             <span className="text-[15px] text-[var(--color-fg)]">Only {employee}</span>
             <span className="text-[13px] text-[var(--color-muted)]">
-              {namesOf(others)} {others.length === 1 ? 'keeps' : 'keep'} running version {version}.
+              {namesInWords(others)} {others.length === 1 ? 'keeps' : 'keep'} running version{' '}
+              {version}.
             </span>
           </span>
         </label>
@@ -107,9 +106,9 @@ export function RetireSkillDialog({
             disabled={change.busy}
             className="mt-1 h-4 w-4 shrink-0 accent-[var(--color-accent)]"
           />
-          <span className="grid gap-0.5">
+          <span className="grid min-w-0 gap-0.5 break-words">
             <span className="text-[15px] text-[var(--color-fg)]">
-              Every employee who runs it: {namesOf(runners)}
+              Every employee who runs it: {namesInWords(runners)}
             </span>
             <span className="text-[13px] text-[var(--color-muted)]">
               Version {version} is withdrawn: nobody runs it and it is offered to nobody.
@@ -129,8 +128,14 @@ export function RetireSkillDialog({
   return (
     <Dialog
       role="alertdialog"
-      title={`Retire ${name} from ${employee}?`}
-      description={`${employee} stops running this skill now. Approved work that would have used it goes back to waiting for a skill, and a new one is proposed for it.`}
+      title={every ? `Withdraw ${name} from every employee?` : `Retire ${name} from ${employee}?`}
+      description={`${
+        every
+          ? `${namesInWords(runners)} stop running this skill now.`
+          : `${employee} stops running this skill now.`
+      } Approved work that would have used it goes back to waiting for a skill, and a new one is proposed for it.${
+        revisionOpen ? ' The revision being written for it ends too.' : ''
+      }`}
       onClose={onClose}
       initialFocus={keep}
       busy={change.busy}
@@ -143,9 +148,10 @@ export function RetireSkillDialog({
           const withReason = trimmed === '' ? {} : { reason: trimmed };
           if (every) {
             change.run(() => withdraw({ skillId: skill._id, ...withReason }), {
-              done: (result) => withdrawOutcome(skill.name, result.holders),
+              done: (result) => withdrawOutcome(skill.name, result.holders, result.returnedItems),
               refused: `${skill.name} was not withdrawn.`,
-              after: (result) => onDone(withdrawOutcome(skill.name, result.holders)),
+              after: (result) =>
+                onDone(withdrawOutcome(skill.name, result.holders, result.returnedItems)),
             });
             return;
           }
@@ -157,7 +163,7 @@ export function RetireSkillDialog({
         }}
       >
         {choice}
-        <Field label="Reason (optional)" hint="Kept on the record with the retire.">
+        <Field label="Reason (optional)" hint="Kept on the record.">
           {(control) => (
             <input
               {...control}
