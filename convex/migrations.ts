@@ -237,7 +237,7 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
   },
   'skills-use-count': {
     release: SKILL_LIBRARY_RELEASE,
-    does: 'gives every skill the number of work items an execution claimed for it, the used-N-times count an older release did not keep; a count already larger is kept',
+    does: 'gives every skill the number of execution claims that named it and the time of the newest, from its employee’s work.execution-claimed events: the used-N-times count an older release did not keep; a count already larger is kept',
     thenRemoves: 'nothing: the execution claim counts each use from here on',
   },
   'surfaces-access-clock': {
