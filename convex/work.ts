@@ -2780,6 +2780,13 @@ export const setVerdict = internalMutation({
 });
 
 /**
+ * Why a grounding read is refused: the draft it grounds began under the owner the employee was
+ * handed away from, so its surfaces and its owner's values are that owner's (U3-m2).
+ */
+export const GROUNDING_READ_AFTER_HANDOVER =
+  'the employee was handed over to a new manager while this plan was being drafted';
+
+/**
  * Store a drafted plan, if the row is still waiting for one.
  *
  * Same shape as `claimForExecution`: two callers can both read `claimed`
@@ -2788,13 +2795,6 @@ export const setVerdict = internalMutation({
  * state check and the write share one transaction, so the second caller is
  * told its draft was not needed.
  */
-/**
- * Why a grounding read is refused: the draft it grounds began under the owner the employee was
- * handed away from, so its surfaces and its owner's values are that owner's (U3-m2).
- */
-export const GROUNDING_READ_AFTER_HANDOVER =
-  'the employee was handed over to a new manager while this plan was being drafted';
-
 /**
  * Record the one read that grounds a plan, before it is made, so the run id
  * the adapters key their idempotency on exists and the read is on the
@@ -2831,16 +2831,21 @@ export const beginPlanGroundingRead = internalMutation({
 /**
  * Attach the ledger row to the grounding read's event.
  *
- * Internal, for the draft's `readCandidateRecord`. Attaches nothing when the employee was handed
- * over since the read began (the event's own creation): the row is what the old owner's
- * connection returned, and the record it would land on is the new owner's (U3-m2).
+ * Internal, for the draft's `readCandidateRecord`. Refused when the employee was handed over
+ * since the read began (the event's own creation): the row is what the old owner's connection
+ * returned, and the record it would land on is the new owner's (U3-m2). The refusal is a throw,
+ * not a silent skip, so the caller's catch drafts the plan without the record as well.
+ *
+ * @throws Error with {@link GROUNDING_READ_AFTER_HANDOVER}.
  */
 export const finishPlanGroundingRead = internalMutation({
   args: { eventId: v.id('events'), applied: v.any() },
   handler: async (ctx, args): Promise<void> => {
     const event = await ctx.db.get(args.eventId);
     if (!event) return;
-    if (await handedOverSince(ctx.db, event.agentId, event._creationTime)) return;
+    if (await handedOverSince(ctx.db, event.agentId, event._creationTime)) {
+      throw new Error(GROUNDING_READ_AFTER_HANDOVER);
+    }
     await ctx.db.patch(args.eventId, {
       payload: { ...(event.payload as Record<string, unknown>), applied: args.applied },
     });

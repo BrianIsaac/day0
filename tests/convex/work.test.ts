@@ -29,6 +29,7 @@ import { skillBodyHash } from '../../src/work/skill-body';
 import { collectLedgerObservations } from '../../convex/metrics';
 import { fixtureAddressOf, MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 import {
+  GROUNDING_READ_AFTER_HANDOVER,
   HANDED_OVER_REQUEST_REASON,
   returnApprovalsForHandover,
   stopRunsForHandover,
@@ -7666,7 +7667,7 @@ describe('the plan-grounding read across a handover (U3-m2)', (): void => {
     expect(reads).toEqual([]);
   });
 
-  it('attaches no ledger row to a read the employee was handed over during', async (): Promise<void> => {
+  it('refuses the ledger row of a read the employee was handed over during, so the draft goes on without it', async (): Promise<void> => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(DRAFT_CLAIMED_AT + 1_000);
     const harness = convexTest(schema, allConvexModules());
@@ -7678,10 +7679,14 @@ describe('the plan-grounding read across a handover (U3-m2)', (): void => {
     vi.setSystemTime(DRAFT_CLAIMED_AT + 2_000);
     await recordHandover(harness, agentId);
 
-    await harness.mutation(internal.work.finishPlanGroundingRead, {
-      eventId,
-      applied: { ok: true, effect: 'REVOPS-1: the old owner’s ticket text' },
-    });
+    // Refused, not ignored: the draft's read catches it and drafts without the record
+    // (`readCandidateRecord`), so the old owner's read reaches neither the record nor the plan.
+    await expect(
+      harness.mutation(internal.work.finishPlanGroundingRead, {
+        eventId,
+        applied: { ok: true, effect: 'REVOPS-1: the old owner’s ticket text' },
+      }),
+    ).rejects.toThrow(GROUNDING_READ_AFTER_HANDOVER);
 
     expect((await groundingEvent(harness, eventId)).payload).not.toHaveProperty('applied');
   });
