@@ -616,7 +616,10 @@ async function leaveDeparture(
 
 /**
  * Mark the request accepted with what the move did, and append one `manager.transferred` event
- * to the employee's record (the transfer plan, section 7.6).
+ * to the employee's record (the transfer plan, section 7.6). `decidedAt` and `toOwnerKey` are
+ * the acceptance's, written when the request left `asked`, and the company figures read them as
+ * the moment the employee changed hands (9-U5, D12): the move never writes them again, so a
+ * request settled minutes after its acceptance keeps the acceptance's time.
  */
 async function recordMove(
   ctx: MutationCtx,
@@ -766,6 +769,8 @@ export const accept = mutation({
     await assertOwnSources(ctx.db, caller.ownerKey, excluded);
     const inFlight = await runsInFlight(ctx.db, agent._id);
     if (inFlight > 0) throw new ConvexError(runsInFlightRefusal(agent.name, inFlight));
+    // The acceptance's stamp, written as the request leaves `asked`, whichever state it enters:
+    // the company figures read `decidedAt` and `toOwnerKey` on accepting and accepted rows.
     const accepted = {
       ...transfer,
       decidedAt: now,

@@ -774,6 +774,72 @@ describe('claims and the departure boundary at a move (14.1 item 4)', (): void =
   });
 });
 
+describe('the acceptance stamp the company figures read (9-U5, D12)', (): void => {
+  beforeEach((): void => {
+    useSurfaceMode('mock');
+  });
+
+  it('stamps decidedAt and toOwnerKey at the acceptance, when the request leaves asked', async (): Promise<void> => {
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.UTC(2026, 9, 1, 9, 0));
+    const office = await seedOffice();
+
+    await acceptAsColleague(office);
+
+    expect(await read(office.harness, office.transferId)).toMatchObject({
+      state: 'accepted',
+      decidedAt: Date.UTC(2026, 9, 1, 9, 0),
+      toOwnerKey: 'colleague',
+    });
+  });
+
+  it('never stamps decidedAt again when an accepting request is moved later', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const acceptedAt = Date.UTC(2026, 9, 1, 9, 0);
+    vi.setSystemTime(acceptedAt);
+    const office = await seedOffice();
+    await office.harness.run(async (ctx) => {
+      await ctx.db.patch(office.transferId, {
+        state: 'accepting',
+        decidedAt: acceptedAt,
+        toOwnerKey: 'colleague',
+        toZone: 'Asia/Singapore',
+        toExcludedDocSourceIds: [],
+        settleBy: acceptedAt + 15 * 60_000,
+      });
+    });
+    vi.setSystemTime(acceptedAt + 10 * 60_000);
+
+    await office.harness.mutation(internal.transferAcceptance.moveEmployee, {
+      transferId: office.transferId,
+    });
+
+    expect(await read(office.harness, office.transferId)).toMatchObject({
+      state: 'accepted',
+      decidedAt: acceptedAt,
+      toOwnerKey: 'colleague',
+    });
+    expect(await read(office.harness, office.maya)).toMatchObject({
+      userId: 'colleague',
+      zone: 'Asia/Singapore',
+    });
+  });
+
+  it('leaves a settled request as it is when the settle runs twice', async (): Promise<void> => {
+    const office = await seedOffice();
+    await acceptAsColleague(office);
+    const accepted = await read(office.harness, office.transferId);
+
+    await expect(
+      office.harness.mutation(internal.transferAcceptance.moveEmployee, {
+        transferId: office.transferId,
+      }),
+    ).resolves.toBeNull();
+
+    expect(await read(office.harness, office.transferId)).toEqual(accepted);
+  });
+});
+
 describe('accept: the refusals, each before anything moves', (): void => {
   beforeEach((): void => {
     useSurfaceMode('mock');
