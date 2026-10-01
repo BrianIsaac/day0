@@ -38,6 +38,18 @@ describe('the live feed labels', (): void => {
       }),
       eventLabel({ type: 'manager.transfer-declined', payload: { ...request, hasReason: true } }),
       eventLabel({ type: 'manager.transfer-expired', payload: request }),
+      eventLabel({
+        type: 'manager.transfer-settle-failed',
+        payload: { ...request, attempt: 1, reason: 'x' },
+      }),
+      eventLabel({
+        type: 'manager.transfer-ended',
+        payload: { ...request, reason: 'settle-failed', detail: 'x' },
+      }),
+      eventLabel({
+        type: 'manager.transfer-ended',
+        payload: { ...request, reason: 'operator', detail: 'x' },
+      }),
       eventLabel({ type: 'manager.transfer-notice', payload: { ...request, delivered: true } }),
       eventLabel({
         type: 'manager.transfer-notice',
@@ -50,6 +62,9 @@ describe('the live feed labels', (): void => {
       'handover to priya@co.example cancelled for another address',
       'priya@co.example declined the handover',
       'handover to priya@co.example expired',
+      'handover to priya@co.example not finished yet',
+      'handover to priya@co.example ended, it could not finish',
+      'handover to priya@co.example ended by the operator',
       'handover notice to priya@co.example sent',
       'handover notice to priya@co.example not sent',
     ]);
@@ -325,6 +340,7 @@ describe('what a record line says an event did', (): void => {
     expect(recordKindOf({ type: 'manager.transfer-declined' })).toBe('refused');
     expect(recordKindOf({ type: 'manager.transfer-cancelled' })).toBe('withheld');
     expect(recordKindOf({ type: 'manager.transfer-expired' })).toBe('withheld');
+    expect(recordKindOf({ type: 'manager.transfer-ended' })).toBe('withheld');
     expect(recordKindOf({ type: 'manager.transfer-asked' })).toBe('noted');
   });
 

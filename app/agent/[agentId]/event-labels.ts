@@ -169,6 +169,12 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     `${text(payload.toAddress) ?? 'the named manager'} declined the handover`,
   'manager.transfer-expired': (payload) =>
     `handover to ${text(payload.toAddress) ?? 'another manager'} expired`,
+  'manager.transfer-settle-failed': (payload) =>
+    `handover to ${text(payload.toAddress) ?? 'another manager'} not finished yet`,
+  'manager.transfer-ended': (payload) =>
+    `handover to ${text(payload.toAddress) ?? 'another manager'} ended${
+      payload.reason === 'operator' ? ' by the operator' : ', it could not finish'
+    }`,
   'manager.transfer-notice': (payload) =>
     `handover notice to ${text(payload.toAddress) ?? 'the named manager'} ${
       payload.delivered === true ? 'sent' : 'not sent'
@@ -513,6 +519,7 @@ const RECORD_KINDS: Readonly<Partial<Record<EventType, Exclude<RecordKind, 'note
   'work.cancelled': 'withheld',
   'manager.transfer-cancelled': 'withheld',
   'manager.transfer-expired': 'withheld',
+  'manager.transfer-ended': 'withheld',
   'work.actions-pending': 'held',
   'work.plan-held': 'held',
   'skill.proposed': 'held',

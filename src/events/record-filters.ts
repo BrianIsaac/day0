@@ -41,6 +41,8 @@ export const RECORD_FILTER_OF: { readonly [Type in EventType]: readonly RecordFi
   'manager.transfer-declined': ['decisions', 'refused'],
   'manager.transfer-expired': REFUSED,
   'manager.transfer-notice': WRITES,
+  'manager.transfer-settle-failed': NONE,
+  'manager.transfer-ended': REFUSED,
   'manager.transferred': DECISIONS,
   'charter.drafted': CHARTER,
   'charter.approved': ['charter', 'decisions'],
