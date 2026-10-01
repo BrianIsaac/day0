@@ -4,7 +4,15 @@ import { ClerkProvider, useAuth, useClerk } from '@clerk/nextjs';
 import { ConvexProviderWithAuth, ConvexReactClient, useConvexAuth } from 'convex/react';
 import { ConvexProviderWithClerk } from 'convex/react-clerk';
 import { usePathname } from 'next/navigation';
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  createContext,
+  type ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
 import { DEV_NO_AUTH } from '@/lib/dev-auth';
 import { errorMessage } from '@/lib/errors';
 import { log } from '@/lib/logger';
@@ -66,6 +74,21 @@ interface SessionEpoch {
   readonly changes: number;
 }
 
+/** How the last token fetch Convex made through Clerk for the session settled. */
+interface TokenFetch {
+  readonly hadToken: boolean;
+}
+
+/**
+ * The session's token fetch as `SessionGate` reads it: null while none has settled for the
+ * session Clerk holds, undefined where no Clerk provider records one (the gate then reads Convex
+ * alone, as it did before).
+ */
+const TokenFetchContext = createContext<TokenFetch | null | undefined>(undefined);
+
+/** Records how a token fetch settled; stable for the provider's life. */
+const RecordTokenFetchContext = createContext<(fetch: TokenFetch) => void>(() => undefined);
+
 /**
  * Convex on Clerk's settled answer (`useSettledClerkAuth`), started afresh when the signed-in
  * session changes to another.
@@ -85,14 +108,27 @@ function ClerkConvexProvider({
 }) {
   const { sessionId } = useAuth();
   const [epoch, setEpoch] = useState<SessionEpoch>({ last: null, changes: 0 });
-  // Kept from the previous render in state, as React's docs set out.
+  const [tokenFetch, setTokenFetch] = useState<TokenFetch | null>(null);
+  // Convex fetches again at every renewal; an answer like the last changes nothing on the page.
+  const recordTokenFetch = useCallback(
+    (fetch: TokenFetch): void =>
+      setTokenFetch((last) => (last?.hadToken === fetch.hadToken ? last : fetch)),
+    [],
+  );
+  // Kept from the previous render in state, as React's docs set out. A new session has fetched
+  // no token yet, whatever an earlier one fetched.
   if (sessionId && sessionId !== epoch.last) {
     setEpoch({ last: sessionId, changes: epoch.last === null ? epoch.changes : epoch.changes + 1 });
+    setTokenFetch(null);
   }
   return (
-    <ConvexProviderWithClerk key={epoch.changes} client={client} useAuth={useSettledClerkAuth}>
-      {children}
-    </ConvexProviderWithClerk>
+    <RecordTokenFetchContext.Provider value={recordTokenFetch}>
+      <TokenFetchContext.Provider value={tokenFetch}>
+        <ConvexProviderWithClerk key={epoch.changes} client={client} useAuth={useSettledClerkAuth}>
+          {children}
+        </ConvexProviderWithClerk>
+      </TokenFetchContext.Provider>
+    </RecordTokenFetchContext.Provider>
   );
 }
 
@@ -108,13 +144,32 @@ type ClerkAuth = ReturnType<typeof useAuth>;
  * each owned one throws into the page's error boundary, or `SessionGate` takes the page away for
  * the moment. Held, Convex keeps the token it has and fetches the next through the same
  * `getToken`, as `useAccount` holds the dashboard. Only Clerk's own settled answer replaces it.
+ *
+ * Every fetch Convex makes through it is recorded as it settles, so `SessionGate` can tell a
+ * session whose token is still on its way from one the deployment refused (decision 6).
  */
 function useSettledClerkAuth(): ClerkAuth {
   const auth = useAuth();
   const [settled, setSettled] = useState<ClerkAuth | null>(null);
   // Kept from the previous render in state, as React's docs set out, so a re-resolve can use it.
   if (auth.isLoaded && !sameSession(auth, settled)) setSettled(auth);
-  return auth.isLoaded || settled === null ? auth : settled;
+  const answer = auth.isLoaded || settled === null ? auth : settled;
+  const record = useContext(RecordTokenFetchContext);
+  const clerkGetToken = answer.getToken;
+  // One function for as long as Clerk's is one: Convex starts its auth afresh when it changes.
+  const getToken = useCallback<ClerkAuth['getToken']>(
+    async (options) => {
+      let token: string | null = null;
+      try {
+        token = await clerkGetToken(options);
+        return token;
+      } finally {
+        record({ hadToken: token !== null });
+      }
+    },
+    [clerkGetToken, record],
+  );
+  return useMemo((): ClerkAuth => ({ ...answer, getToken }), [answer, getToken]);
 }
 
 /** Whether two of Clerk's answers name the same session, as far as Convex's token depends on it. */
@@ -134,6 +189,13 @@ function sameSession(a: ClerkAuth, b: ClerkAuth | null): boolean {
  * Clerk whose token endpoint keeps failing, never settles at all.
  */
 export const SESSION_WAIT_MS = 20_000;
+
+/**
+ * How long an owned page waits, once Clerk's token for a new session has been fetched, for the
+ * deployment to confirm it before it says the sign-in was refused: one round trip on any
+ * connection that serves the page, with room for a slow one.
+ */
+export const SIGN_IN_CONFIRM_MS = 5_000;
 
 /** What `SessionGate` is given: the owned page, and what stands in its place until it may run. */
 export interface SessionGateProps {
@@ -169,10 +231,20 @@ function ClerkSessionGate({ children, fallback }: SessionGateProps) {
   const { isLoading, isAuthenticated } = useConvexAuth();
   const { status } = useClerk();
   const { isSignedIn } = useAuth();
-  const overdue = useOverdue(isLoading && status !== 'error', SESSION_WAIT_MS);
+  const tokenFetch = useContext(TokenFetchContext);
+  // A visit going from signed out to signed in: Convex keeps its last "nobody" until the backend
+  // confirms the new session, so Clerk signed in with Convex not yet is not a refusal until the
+  // session's token fetch has settled and the backend has had its moment to answer (the wave 9
+  // review's stage 6, decision 6). A fetch that brought no token is refused at once.
+  const unconfirmed = !isLoading && !isAuthenticated && isSignedIn === true;
+  const awaitingToken = unconfirmed && tokenFetch === null;
+  const confirming = unconfirmed && tokenFetch?.hadToken === true;
+  const overdue = useOverdue((isLoading || awaitingToken) && status !== 'error', SESSION_WAIT_MS);
+  const confirmOverdue = useOverdue(confirming && status !== 'error', SIGN_IN_CONFIRM_MS);
   // A Clerk that failed to load never answers; the page is let through to say what it can.
   if (status === 'error') return <>{children}</>;
-  if (isLoading) return overdue ? <SessionUnconfirmed /> : <>{fallback}</>;
+  if (isLoading || awaitingToken) return overdue ? <SessionUnconfirmed /> : <>{fallback}</>;
+  if (confirming && !confirmOverdue) return <>{fallback}</>;
   if (!isAuthenticated) return <SignedOut refused={isSignedIn === true} />;
   return <>{children}</>;
 }
