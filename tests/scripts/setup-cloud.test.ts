@@ -160,6 +160,16 @@ describe('cloud setup, the first push', (): void => {
     expect(readFileSync(c.target, 'utf8')).toContain(`DAY0_APP_URL=${APP_URL}`);
   });
 
+  it('says the dry run proved the target, never that the setup itself is one', async (): Promise<void> => {
+    const c = cloud(empty());
+    const envFile = settingsFile(c, SETTINGS);
+    expect(await runCloudSetup(verb(c, { verb: 'setup', envFile }), c.io)).toBe(0);
+    expect(c.output.filter((line) => line.startsWith('The target is'))).toEqual([
+      `The target is ${DEPLOYMENT}, the project's default production deployment, proved by a dry-run push.`,
+    ]);
+    expect(printed(c)).not.toContain('(dry run)');
+  });
+
   it('never puts a secret on a command line or on the screen', async (): Promise<void> => {
     const c = cloud(empty());
     const envFile = settingsFile(c, SETTINGS);
@@ -702,6 +712,40 @@ describe('cloud upgrade', (): void => {
     expect(writes(c).some((line) => line.startsWith('vercel env'))).toBe(false);
   });
 
+  it('on a real run, says the dry run proved the target, never that the run is one', async (): Promise<void> => {
+    const c = cloud();
+    expect(await runCloudUpgrade(verb(c, { verb: 'upgrade' }), c.io)).toBe(0);
+    expect(c.output[0]).toBe(
+      `The target is ${DEPLOYMENT}, the project's default production deployment, proved by a dry-run push.`,
+    );
+    expect(printed(c)).not.toContain('(dry run)');
+  });
+
+  it('rolls the rows and functions back first and promotes the earlier app after them', async (): Promise<void> => {
+    const c = cloud();
+    expect(await runCloudUpgrade(verb(c, { verb: 'upgrade' }), c.io)).toBe(0);
+    const rollback = c.output.slice(
+      c.output.indexOf('Rollback (nothing here is run for you), in this order:'),
+    );
+    expect(rollback).toHaveLength(3);
+    expect(rollback[1]).toMatch(
+      /^ {2}1\. the rows and functions: .*npx convex import --replace-all /,
+    );
+    expect(rollback[2]).toBe(
+      '  2. the app, after the import and the push: vercel promote dpl_Before1, the build that served production before this run.',
+    );
+  });
+
+  it('after a re-push of the release it reads, rolls back from this checkout', async (): Promise<void> => {
+    const c = cloud({ stamp: { release: '0.4.0', commit: COMMIT } });
+    expect(await runCloudUpgrade(verb(c, { verb: 'upgrade' }), c.io)).toBe(0);
+    expect(printed(c)).toContain(`Done: ${DEPLOYMENT} is at v0.4.0, pushed again.`);
+    expect(printed(c)).toContain(
+      'holds the rows from before this run, which found v0.4.0 already there. From a clean checkout of v0.4.0 (this one), take',
+    );
+    expect(printed(c)).not.toContain('the release before it');
+  });
+
   it('writes the export owner-readable only, with its checksum and row counts beside it', async (): Promise<void> => {
     const c = cloud();
     expect(await runCloudUpgrade(verb(c, { verb: 'upgrade' }), c.io)).toBe(0);
@@ -729,6 +773,9 @@ describe('cloud upgrade', (): void => {
     expect(await runCloudUpgrade(verb(c, { verb: 'upgrade' }), c.io)).toBe(0);
     expect(printed(c)).toContain(
       `${first} (sha256 ${'e'.repeat(64)}) holds the rows from before the upgrade to v0.4.0, taken when that upgrade first ran.`,
+    );
+    expect(printed(c)).toContain(
+      'From a clean checkout of the release the deployment ran before v0.4.0 (this run did not read which), take',
     );
     expect(printed(c)).toContain(`Done: ${DEPLOYMENT} is at v0.4.0, pushed again.`);
   });
@@ -808,7 +855,7 @@ describe('cloud upgrade', (): void => {
       `Run \`./setup.sh cloud upgrade --target ${c.target}\` again from this checkout: it resumes the migrations and lifts the pause when it completes.`,
     );
     expect(printed(c)).not.toContain('cloud unpause');
-    expect(printed(c)).toContain('Rollback (nothing here is run for you):');
+    expect(printed(c)).toContain('Rollback (nothing here is run for you), in this order:');
     expect(writes(c).some((line) => line.startsWith('vercel --prod'))).toBe(false);
   });
 
