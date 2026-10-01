@@ -16,6 +16,7 @@
  */
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import type { CharterChange, FieldDiff } from '../agent/charter-amendment';
+import type { TransferCancelReason } from '../agent/manager-transfer';
 import type { ModelCallReport } from '../lib/model-call-telemetry';
 import type { SurfaceMode } from '../lib/surface-mode';
 import type { ClaimHolder } from '../work/claim-key';
@@ -221,6 +222,35 @@ export interface ManagerChangedByProbe {
 
 /** The payload of `manager.changed`, by where the change was seen. */
 export type ManagerChangedPayload = ManagerChangedOnDashboard | ManagerChangedByProbe;
+
+/**
+ * What every event of a handover request carries: the request, who asked and
+ * the address it names, so the record reads the same whichever manager holds
+ * it. Both addresses are personal keys, which the export drops.
+ */
+export interface TransferRequestEvent {
+  readonly transferId: Id<'managerTransfers'>;
+  readonly fromAddress: string;
+  readonly toAddress: string;
+}
+
+/** The payload of `manager.transfer-asked`: a manager asked another to take the employee on. */
+export interface ManagerTransferAskedPayload extends TransferRequestEvent {
+  readonly hasNote: boolean;
+}
+
+/** The payload of `manager.transfer-cancelled`: an asked request ended before its answer. */
+export interface ManagerTransferCancelledPayload extends TransferRequestEvent {
+  readonly reason: TransferCancelReason;
+}
+
+/** The payload of `manager.transfer-declined`: the named manager declined, with or without a reason. */
+export interface ManagerTransferDeclinedPayload extends TransferRequestEvent {
+  readonly hasReason: boolean;
+}
+
+/** The payload of `manager.transfer-expired`: the request went unanswered past its expiry. */
+export type ManagerTransferExpiredPayload = TransferRequestEvent;
 
 // The charter.
 
@@ -1054,6 +1084,10 @@ export interface EventPayloads {
   'permission.granted': PermissionGrantedPayload;
   'permission.revoked': PermissionRevokedPayload;
   'manager.changed': ManagerChangedPayload;
+  'manager.transfer-asked': ManagerTransferAskedPayload;
+  'manager.transfer-cancelled': ManagerTransferCancelledPayload;
+  'manager.transfer-declined': ManagerTransferDeclinedPayload;
+  'manager.transfer-expired': ManagerTransferExpiredPayload;
   'charter.drafted': CharterDraftedPayload;
   'charter.approved': CharterApprovedPayload;
   'charter.amended': CharterAmendedPayload;
@@ -1201,6 +1235,10 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'permission.granted',
   'permission.revoked',
   'manager.changed',
+  'manager.transfer-asked',
+  'manager.transfer-cancelled',
+  'manager.transfer-declined',
+  'manager.transfer-expired',
   'charter.drafted',
   'charter.approved',
   'charter.amended',

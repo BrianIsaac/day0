@@ -31,6 +31,7 @@ import type * as intakeActions from '../intakeActions.js';
 import type * as intakeIdentity from '../intakeIdentity.js';
 import type * as managerChannelActions from '../managerChannelActions.js';
 import type * as managerQuestions from '../managerQuestions.js';
+import type * as managerTransfers from '../managerTransfers.js';
 import type * as memoryProjection from '../memoryProjection.js';
 import type * as metrics from '../metrics.js';
 import type * as migrations from '../migrations.js';
@@ -86,6 +87,7 @@ declare const fullApi: ApiFromModules<{
   intakeIdentity: typeof intakeIdentity;
   managerChannelActions: typeof managerChannelActions;
   managerQuestions: typeof managerQuestions;
+  managerTransfers: typeof managerTransfers;
   memoryProjection: typeof memoryProjection;
   metrics: typeof metrics;
   migrations: typeof migrations;

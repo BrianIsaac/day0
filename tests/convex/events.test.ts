@@ -583,6 +583,24 @@ describe('export redaction', (): void => {
       payload: { reason: 'manager left' },
     });
   });
+
+  it('drops both addresses of a handover request and keeps what happened to it', async (): Promise<void> => {
+    const { redactForExport } = await import('../../convex/events');
+    expect(
+      redactForExport({
+        type: 'manager.transfer-asked',
+        payload: {
+          transferId: 'transfer-1',
+          fromAddress: 'sam@company.com',
+          toAddress: 'priya@company.com',
+          hasNote: true,
+        },
+      }),
+    ).toEqual({
+      type: 'manager.transfer-asked',
+      payload: { transferId: 'transfer-1', hasNote: true },
+    });
+  });
 });
 
 describe('the Record tab reader', (): void => {
