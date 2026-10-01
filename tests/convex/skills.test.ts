@@ -786,3 +786,32 @@ describe('registration and the library (10-K)', (): void => {
     }
   });
 });
+
+describe('proposing a name a retired or superseded row holds (10-A)', (): void => {
+  for (const state of ['retired', 'superseded'] as const) {
+    it(`a ${state} row does not block a later proposal of its name`, async (): Promise<void> => {
+      const harness = convexTest(schema, allConvexModules());
+      const { agentId, workItemId } = await seedAgentAndWork(harness, 'linear');
+      const old = await harness.run(
+        async (ctx) =>
+          await ctx.db.insert('skills', {
+            agentId,
+            name: 'update-linear-ticket',
+            description: 'Comment on and close a Linear ticket.',
+            body: '# Comment and close',
+            sourceType: 'agent-authored',
+            state,
+            createdAt: 1,
+            registeredAt: 1,
+          }),
+      );
+
+      const proposed = await propose(harness, agentId, workItemId);
+
+      expect(proposed).not.toBe(old);
+      const row = await harness.run(async (ctx) => await ctx.db.get(proposed));
+      expect(row).toMatchObject({ state: 'proposed', proposedFor: workItemId });
+      expect((await harness.run(async (ctx) => await ctx.db.get(old)))?.state).toBe(state);
+    });
+  }
+});
