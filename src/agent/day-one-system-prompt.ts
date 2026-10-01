@@ -1,5 +1,6 @@
 import { DAY_ONE_TOPIC_COUNT, DAY_ONE_TOPIC_TITLES, topicIndexOf } from './day-one-progress';
 import { DAY_ONE_TOPIC_SPECS, questionBody } from './day-one-prompts';
+import { clippedEmployeeName } from './employee-name';
 
 /**
  * The provider's prompt-cache key for the Day-1 system prompt. It names the prompt's shape, so a
@@ -7,9 +8,6 @@ import { DAY_ONE_TOPIC_SPECS, questionBody } from './day-one-prompts';
  * titles, 30 September; v3: one question per turn, the one `dayOneTurnNote` names, 1 October).
  */
 export const DAY_ONE_PROMPT_CACHE_KEY = 'day0-day1-system-v3';
-
-/** The most of an employee's name the prompt carries: a name, never a paragraph. */
-const NAME_MAX_CHARS = 80;
 
 /**
  * The system prompt of the Day-1 chat one-to-one, for one employee.
@@ -26,13 +24,14 @@ const NAME_MAX_CHARS = 80;
  * turn now ends with `dayOneTurnNote`, which names the one question to ask by the same count, and
  * the prompt asks for that question only, once, with no follow-up.
  *
- * The name is flattened to one line and held to 80 characters; a deploy may leave it empty, and
- * then the employee is told no name rather than an empty one.
+ * The name is flattened to one line and held to 80 characters (`clippedEmployeeName`, the bound a
+ * deploy holds a name to); a deploy may leave it empty, and then the employee is told no name
+ * rather than an empty one.
  *
  * @param employeeName - The employee's name as the manager gave it.
  */
 export function dayOneSystemPrompt(employeeName: string): string {
-  const name = employeeName.replace(/\s+/g, ' ').trim().slice(0, NAME_MAX_CHARS).trim();
+  const name = clippedEmployeeName(employeeName);
   return [
     name
       ? `You are ${name}, a newly deployed workplace employee on your first day.`

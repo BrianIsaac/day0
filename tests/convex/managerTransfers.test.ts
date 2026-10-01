@@ -436,6 +436,89 @@ describe('managerTransfers.ask', (): void => {
   });
 });
 
+describe('managerTransfers and a long or hidden text', (): void => {
+  it('clips the employee’s name at the ask, for an employee stored before the deploy bounded it', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const maya = await employee(harness, `Maya\u200B ${'y'.repeat(100_000)}`);
+    const transferId = await harness
+      .withIdentity(OWNER)
+      .mutation(api.managerTransfers.ask, { agentId: maya, toAddress: PRIYA_ADDRESS });
+    expect((await request(harness, transferId))?.agentName).toBe(`Maya ${'y'.repeat(75)}`);
+  });
+
+  it('keeps the named account’s inbox to names of 80 characters when two accounts ask ten times over long names', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const longName = (index: number): string => `${index}${'n'.repeat(900_000)}`;
+    for (const [index, asker] of [OWNER, WEI].entries()) {
+      for (let count = 0; count < 5; count += 1) {
+        const agentId = await employee(harness, longName(index * 5 + count), {
+          userId: asker.subject,
+        });
+        await harness
+          .withIdentity(asker)
+          .mutation(api.managerTransfers.ask, { agentId, toAddress: PRIYA_ADDRESS });
+      }
+    }
+
+    const incoming = await harness.withIdentity(PRIYA).query(api.managerTransfers.incoming, {});
+    const inbox = await harness.withIdentity(PRIYA).query(api.work.needsYou, {});
+    expect(incoming).toHaveLength(10);
+    expect(inbox.entries.filter((entry) => entry.kind === 'transfer')).toHaveLength(10);
+    expect(Math.max(...incoming.map((entry) => Array.from(entry.employeeName).length))).toBe(80);
+    expect(Math.max(...inbox.entries.map((entry) => Array.from(entry.employeeName).length))).toBe(
+      80,
+    );
+    expect(JSON.stringify(incoming).length + JSON.stringify(inbox).length).toBeLessThan(20_000);
+  });
+
+  it('measures the note by character after redaction, and stores none of its hidden characters', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const ask = async (agentId: Id<'agents'>, note: string): Promise<unknown> => {
+      const transferId = await harness
+        .withIdentity(OWNER)
+        .mutation(api.managerTransfers.ask, { agentId, toAddress: PRIYA_ADDRESS, note });
+      return (await request(harness, transferId))?.note;
+    };
+    const emoji = '\u{1F431}'.repeat(1_000);
+    expect(await ask(await employee(harness, 'Maya'), emoji)).toBe(emoji);
+    expect(
+      await ask(await employee(harness, 'Tomas'), 'Read\u200B the\u202E list\u0007.\r\nThanks'),
+    ).toBe('Read the list.\nThanks');
+    expect(await ask(await employee(harness, 'Aiko'), '\u200B\u200B\u2060')).toBeUndefined();
+    expect(
+      await refusal(
+        harness.withIdentity(OWNER).mutation(api.managerTransfers.ask, {
+          agentId: await employee(harness, 'Wes'),
+          toAddress: PRIYA_ADDRESS,
+          // 1,000 characters as typed; the redacted password makes the stored text 1,009.
+          note: `${'x'.repeat(974)} https://ops:p@crm.example`,
+        }),
+      ),
+    ).toBe(NOTE_TOO_LONG);
+  });
+
+  it('measures the decline reason by character after redaction, and stores none of its hidden characters', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const maya = await employee(harness);
+    const decline = async (reason: string): Promise<unknown> => {
+      const transferId = await insertRequest(harness, { agentId: maya });
+      const outcome = await refusal(
+        harness.withIdentity(PRIYA).mutation(api.managerTransfers.decline, { transferId, reason }),
+      );
+      return outcome === 'not refused'
+        ? (await request(harness, transferId))?.declineReason
+        : outcome;
+    };
+    expect(await decline('\u{1F431}'.repeat(500))).toBe('\u{1F431}'.repeat(500));
+    expect(await decline('Not\u200B this\u202E quarter')).toBe('Not this quarter');
+    expect(await decline('\u200B\uFEFF')).toBeUndefined();
+    // 500 characters as typed; the redacted password makes the stored text 509.
+    expect(await decline(`${'x'.repeat(474)} https://ops:p@crm.example`)).toBe(
+      DECLINE_REASON_TOO_LONG,
+    );
+  });
+});
+
 describe('managerTransfers.cancel', (): void => {
   it('cancels an asked request for the owner, with its reason and event, and takes it out of the named inbox', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());

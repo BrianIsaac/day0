@@ -63,6 +63,13 @@ describe('dayOneSystemPrompt', (): void => {
     );
   });
 
+  it('counts the name by character and drops its hidden characters, as the deploy does', (): void => {
+    const prompt = dayOneSystemPrompt(`Ma\u200Bya\u202E ${'\u{1F431}'.repeat(100)}`);
+    expect(prompt.split('\n')[0]).toBe(
+      `You are Maya ${'\u{1F431}'.repeat(75)}, a newly deployed workplace employee on your first day.`,
+    );
+  });
+
   it('asks only the question each turn names, once, with no follow-up (the v0.11.0 walk)', (): void => {
     const prompt = dayOneSystemPrompt('Ada');
     expect(prompt).toContain(

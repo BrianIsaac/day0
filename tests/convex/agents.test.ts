@@ -18,6 +18,7 @@ import { runThroughBody } from '../fixtures/run-through-charter-2026-09-14';
 import { runtimeCycleThrough } from '../fixtures/import-graph';
 import { MAX_FINALISATION_RECOVERIES } from '../../src/agent/one-to-one-phase';
 import { UNVERIFIED_FOR_DEPLOY } from '../../src/agent/manager-address';
+import { EMPLOYEE_NAME_TOO_LONG } from '../../src/agent/employee-name';
 import {
   EVALUATION_ADDRESS_FIXED,
   UNVERIFIED_FOR_ADOPTION,
@@ -132,6 +133,40 @@ describe('evaluation arm', (): void => {
     await expect(owner.query(api.agents.get, { agentId: baselineId })).resolves.toMatchObject({
       arm: 'baseline',
     });
+  });
+});
+
+describe("agents.deploy and the employee's name", (): void => {
+  /** The name a deploy stored, or the words it was refused with. */
+  async function deployedName(name: string): Promise<string | undefined> {
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity(managerIdentity());
+    try {
+      const agentId = await owner.mutation(api.agents.deploy, { name });
+      return await harness.run(async (ctx) => (await ctx.db.get(agentId))?.name);
+    } catch (error) {
+      if (error instanceof ConvexError) return `refused: ${String(error.data)}`;
+      throw error;
+    }
+  }
+
+  it('refuses a name past 80 characters, so no name can fill a reader past its bound', async (): Promise<void> => {
+    await expect(deployedName('M'.repeat(81))).resolves.toBe(`refused: ${EMPLOYEE_NAME_TOO_LONG}`);
+    await expect(deployedName('M'.repeat(100_000))).resolves.toBe(
+      `refused: ${EMPLOYEE_NAME_TOO_LONG}`,
+    );
+    expect(EMPLOYEE_NAME_TOO_LONG).toBe('A name can be at most 80 characters.');
+  });
+
+  it('counts the name by character, as the one-to-one prompt does, so 80 emoji are a name', async (): Promise<void> => {
+    await expect(deployedName('\u{1F431}'.repeat(80))).resolves.toBe('\u{1F431}'.repeat(80));
+    await expect(deployedName(` ${'M'.repeat(80)}\n`)).resolves.toBe('M'.repeat(80));
+  });
+
+  it('stores the name trimmed to one line, without control, bidirectional or zero-width characters', async (): Promise<void> => {
+    await expect(deployedName('  Ma\u200Bya\u202E\u0007 \n  Lim\u2066\uFEFF  ')).resolves.toBe(
+      'Maya Lim',
+    );
   });
 });
 

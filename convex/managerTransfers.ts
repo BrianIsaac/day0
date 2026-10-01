@@ -52,6 +52,8 @@ import { ownerKnownValues, scrubKnownValues } from '../src/redaction/known-value
 import { surfaceRefusal } from '../src/surfaces/policy';
 import { toSurfaceRecord } from '../src/surfaces/records';
 import { redactTokenShapes } from '../src/surfaces/redact';
+import { clippedEmployeeName } from '../src/agent/employee-name';
+import { characterCount, withoutInvisibles } from '../src/lib/visible-text';
 import { isSlackApiEndpoint } from '../src/surfaces/slack-endpoint';
 import { autonomousActionsOn } from '../src/work/autonomy';
 import { accessEnded } from '../src/work/surface-access';
@@ -417,10 +419,22 @@ export async function cancelTransferInTransaction(
  * @throws ConvexError with {@link NOTE_TOO_LONG}.
  */
 function storedNote(note: string | undefined): string | undefined {
-  const trimmed = note?.trim();
-  if (trimmed === undefined || trimmed === '') return undefined;
-  if (trimmed.length > MAX_TRANSFER_NOTE_LENGTH) throw new ConvexError(NOTE_TOO_LONG);
-  return redactTokenShapes(trimmed);
+  const stored = storedText(note);
+  if (stored !== undefined && characterCount(stored) > MAX_TRANSFER_NOTE_LENGTH) {
+    throw new ConvexError(NOTE_TOO_LONG);
+  }
+  return stored;
+}
+
+/**
+ * A note or a reason as it is stored, before its bound is checked: invisible characters removed,
+ * trimmed, empty as none, every recognisable secret shape replaced. The bound is measured on this
+ * text, by character, so what is stored is what was measured (a redacted password is longer than
+ * the password).
+ */
+function storedText(text: string | undefined): string | undefined {
+  const visible = text === undefined ? '' : withoutInvisibles(text).trim();
+  return visible === '' ? undefined : redactTokenShapes(visible);
 }
 
 /**
@@ -564,19 +578,22 @@ async function askInTransaction(
   if (isEvaluationAgent(agent)) throw new ConvexError(EVALUATION_EMPLOYEE_TRANSFER_REFUSAL);
   const fromAddress = verifiedAddressOf(caller);
   if (fromAddress === undefined) throw new ConvexError(UNVERIFIED_FOR_ASK);
-  const toAddress = namedAddress(input.toAddress, fromAddress, agent.name);
+  // A name stored before the deploy bounded it is clipped here: the request copies it into the
+  // named account's inbox, which another account's long names must not fill.
+  const agentName = clippedEmployeeName(agent.name);
+  const toAddress = namedAddress(input.toAddress, fromAddress, agentName);
   const note = storedNote(input.note);
 
   for (const transfer of await requestsInState(ctx, { agentId: agent._id }, 'asked')) {
     if (isTransferDue(transfer, now)) await expireInTransaction(ctx, transfer, now);
   }
   const [open] = await openRequests(ctx, { agentId: agent._id }, now);
-  if (open) throw new ConvexError(openTransferRefusal(agent.name, open.toAddress));
+  if (open) throw new ConvexError(openTransferRefusal(agentName, open.toAddress));
   await assertWithinBounds(ctx, caller.ownerKey, toAddress, now);
 
   const transferId = await ctx.db.insert('managerTransfers', {
     agentId: agent._id,
-    agentName: agent.name,
+    agentName,
     fromOwnerKey: caller.ownerKey,
     fromAddress,
     toAddress,
@@ -731,11 +748,10 @@ export const decline = mutation({
     const { transfer } = await assertNamedInTransfer(ctx, args.transferId);
     const now = Date.now();
     assertCanMove(transfer, 'declined', now);
-    const trimmed = args.reason?.trim();
-    if (trimmed !== undefined && trimmed.length > MAX_DECLINE_REASON_LENGTH) {
+    const declineReason = storedText(args.reason);
+    if (declineReason !== undefined && characterCount(declineReason) > MAX_DECLINE_REASON_LENGTH) {
       throw new ConvexError(DECLINE_REASON_TOO_LONG);
     }
-    const declineReason = trimmed ? redactTokenShapes(trimmed) : undefined;
     await ctx.db.patch(transfer._id, {
       state: 'declined',
       decidedAt: now,
@@ -840,7 +856,7 @@ export async function incomingTransfersOf(
         {
           transferId: transfer._id,
           agentId: transfer.agentId,
-          employeeName: employee.name,
+          employeeName: clippedEmployeeName(employee.name),
           zone: agentZone(employee),
           fromAddress: transfer.fromAddress,
           ...(transfer.note !== undefined ? { note: transfer.note } : {}),

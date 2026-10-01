@@ -40,6 +40,7 @@ import {
   transferSettleBy,
   type ManagerTransferState,
 } from '../src/agent/manager-transfer';
+import { clippedEmployeeName } from '../src/agent/employee-name';
 import { log } from '../src/lib/logger';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { canonicalZone, deploymentZone } from '../src/lib/zone';
@@ -437,7 +438,7 @@ export async function transferPreviewOf(
     mode: SURFACE_MODE,
     employee: {
       agentId: agent._id,
-      name: agent.name,
+      name: clippedEmployeeName(agent.name),
       ...(agent.avatarId === undefined ? {} : { avatarId: agent.avatarId }),
       state: shownEmployeeState(agent.state, takesOn.charter),
       roleLine: roleLineOf(charter),

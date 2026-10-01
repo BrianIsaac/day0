@@ -46,6 +46,11 @@ import {
   type ManagerStanding,
 } from '../src/agent/manager-standing';
 import { evaluationBedName, evaluationBedRefusal } from '../src/evaluation/bed-flag';
+import {
+  EMPLOYEE_NAME_TOO_LONG,
+  isEmployeeNameWithinBound,
+  visibleEmployeeName,
+} from '../src/agent/employee-name';
 import { shownEmployeeState, type CharterApproval } from '../src/work/state-labels';
 import {
   ONE_TO_ONE_PHASE_KINDS,
@@ -526,12 +531,25 @@ function deployAddress(caller: Caller, args: DeployAddressArgs): string {
 }
 
 /**
+ * The name a deploy stores: the visible name, one line and trimmed, or `Day0` when none is given.
+ *
+ * @throws ConvexError with {@link EMPLOYEE_NAME_TOO_LONG} past the bound: the name is copied into
+ *   every handover request and every inbox entry that names the employee, so an unbounded one
+ *   could fill another person's inbox past a read's limit.
+ */
+function deployName(name: string | undefined): string {
+  if (name === undefined) return 'Day0';
+  if (!isEmployeeNameWithinBound(name)) throw new ConvexError(EMPLOYEE_NAME_TOO_LONG);
+  return visibleEmployeeName(name);
+}
+
+/**
  * Public, signed in with a verified address: creates an employee for the
  * caller, reporting to that address (or, from the evaluation harness on a
  * bed, to its reserved `evaluationAddress`), in the caller's zone with its
  * deployment grants; records both, and schedules the mirror of the caller's
  * already-synced documentation sources to it. The workspace is written
- * later, when the charter is committed.
+ * later, when the charter is committed. Refuses a name past 80 characters.
  */
 export const deploy = mutation({
   args: {
@@ -546,7 +564,7 @@ export const deploy = mutation({
   },
   handler: async (ctx, args): Promise<Id<'agents'>> => {
     const identity = await getCallerOrThrow(ctx);
-    const name = args.name ?? 'Day0';
+    const name = deployName(args.name);
     const arm = args.arm ?? 'day0';
     const bossEmail = deployAddress(identity, {
       evaluationAddress: args.evaluationAddress,

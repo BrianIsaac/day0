@@ -415,6 +415,19 @@ describe('transferPreview: what the named manager reads before accepting (transf
     expect(preview?.takesOn).toMatchObject({ openWork: 2, openWorkAtLeast: false });
   });
 
+  it('names an employee stored before the deploy bounded names in 80 characters', async (): Promise<void> => {
+    const office = await seedOffice();
+    await office.harness.run(async (ctx) => {
+      await ctx.db.patch(office.maya, { name: `Maya\u202E ${'y'.repeat(900_000)}` });
+    });
+
+    const preview = await office.harness
+      .withIdentity(COLLEAGUE)
+      .query(api.transferAcceptance.transferPreview, { transferId: office.transferId });
+
+    expect(preview?.employee.name).toBe(`Maya ${'y'.repeat(75)}`);
+  });
+
   it('answers nothing for an asked request past its expiry, which accept would refuse', async (): Promise<void> => {
     const office = await seedOffice();
     await office.harness.run(async (ctx) => {
