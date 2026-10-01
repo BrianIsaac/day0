@@ -1,5 +1,6 @@
 /// <reference types="node" />
 
+import { DEFAULT_LOCAL_MANAGER_ADDRESS, normaliseManagerAddress } from '../agent/manager-address';
 import {
   DEV_NO_AUTH_ALGORITHM,
   DEV_NO_AUTH_AUDIENCE,
@@ -11,17 +12,51 @@ import {
 
 const TOKEN_LIFETIME_SECONDS = 3600;
 
+/** The name the operator configures the local manager's address under. */
+export const LOCAL_MANAGER_ADDRESS_VAR = 'NEXT_PUBLIC_DEMO_BOSS_EMAIL';
+
 /**
- * Mint the short-lived owner token used by no-auth development clients.
+ * The manager address the local issuer vouches for: the operator's configured
+ * address, trimmed and lower-cased, or the local default. Read on the server,
+ * so the token's `email` is the operator's word and never the browser's.
+ *
+ * @param values - Environment values to read; the process's own by default.
+ * @throws Error naming the variable, not its value, when it is set to something
+ *   that is not an address: a token naming no address would leave the operator
+ *   unable to deploy, for a reason the deploy could only guess at.
+ */
+export function localManagerAddress(
+  values: Readonly<Record<string, string | undefined>> = process.env,
+): string {
+  const configured = values[LOCAL_MANAGER_ADDRESS_VAR]?.trim();
+  if (!configured) return DEFAULT_LOCAL_MANAGER_ADDRESS;
+  const address = normaliseManagerAddress(configured);
+  if (address === undefined) {
+    throw new Error(
+      `${LOCAL_MANAGER_ADDRESS_VAR} is not an email address. Set it to the manager's address, ` +
+        `such as name@company.com, or leave it empty for ${DEFAULT_LOCAL_MANAGER_ADDRESS}.`,
+    );
+  }
+  return address;
+}
+
+/**
+ * Mint the short-lived owner token used by no-auth development clients. It
+ * carries the manager's address as a verified `email`: whoever holds the
+ * signing key is the operator, and the operator configured the address
+ * (the transfer plan, section 3.2).
  *
  * @param sessionId - The browser session the token is for, carried as `sid` so the
  *   backend can tell two browsers of the one local owner apart.
  * @param encodedSigningKey - The base64 PKCS#8 private key; the Next.js server
  *   reads it from `DEV_NO_AUTH_SIGNING_KEY`, a script passes the value it read.
+ * @param managerAddress - The address the token names; the configured one
+ *   ({@link localManagerAddress}) by default.
  */
 export async function mintDevNoAuthToken(
   sessionId?: string,
   encodedSigningKey: string | undefined = process.env.DEV_NO_AUTH_SIGNING_KEY,
+  managerAddress: string = localManagerAddress(),
 ): Promise<string> {
   const key = await signingKey(encodedSigningKey);
   const issuedAt = Math.floor(Date.now() / 1000);
@@ -33,6 +68,8 @@ export async function mintDevNoAuthToken(
     aud: DEV_NO_AUTH_AUDIENCE,
     iat: issuedAt,
     exp: issuedAt + TOKEN_LIFETIME_SECONDS,
+    email: managerAddress,
+    email_verified: true,
     ...(sessionId ? { [DEV_NO_AUTH_SESSION_CLAIM]: sessionId } : {}),
   };
 

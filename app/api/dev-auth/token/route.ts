@@ -6,7 +6,9 @@ import { errorMessage } from '@/lib/errors';
 
 /**
  * Hands the browser a short-lived Convex token for the local boss, once it has
- * shown the unlock cookie. `proxy.ts` refuses callers without it before they
+ * shown the unlock cookie. The token names the configured manager address as
+ * the caller's verified `email`, read here on the server and never taken from
+ * the browser, so the address an employee is deployed under is the operator's. `proxy.ts` refuses callers without it before they
  * reach this route; the check is repeated because this is the one route that turns
  * possession of the unlock secret into the credential Convex accepts, and it
  * should not depend on a matcher pattern for that.

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  DEFAULT_LOCAL_MANAGER_ADDRESS,
   MANAGER_ADDRESS_REFUSAL,
   MAX_MANAGER_ADDRESS_LENGTH,
   isEvaluationShapedAddress,
@@ -76,6 +77,15 @@ describe('MANAGER_ADDRESS_REFUSAL', (): void => {
   it('names the shape the manager must give, in the words the dashboard shows', (): void => {
     expect(MANAGER_ADDRESS_REFUSAL).toBe(
       'The manager must be an email address, such as name@company.com.',
+    );
+  });
+});
+
+describe('DEFAULT_LOCAL_MANAGER_ADDRESS', (): void => {
+  it('is the local address the operator has until they configure their own, and is shaped like one', (): void => {
+    expect(DEFAULT_LOCAL_MANAGER_ADDRESS).toBe('boss@day0.local');
+    expect(normaliseManagerAddress(DEFAULT_LOCAL_MANAGER_ADDRESS)).toBe(
+      DEFAULT_LOCAL_MANAGER_ADDRESS,
     );
   });
 });

@@ -19,6 +19,13 @@ const MANAGER_ADDRESS_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  */
 const EVALUATION_ADDRESS_SHAPE = /^eval-[^\s@]+@day0\.local$/;
 
+/**
+ * The address the local issuer vouches for when the operator configures none
+ * (`NEXT_PUBLIC_DEMO_BOSS_EMAIL`): the browser's label and the token's claim
+ * fall back to the same one.
+ */
+export const DEFAULT_LOCAL_MANAGER_ADDRESS = 'boss@day0.local';
+
 /** The refusal a manager reads for an address that is not shaped like one. */
 export const MANAGER_ADDRESS_REFUSAL =
   'The manager must be an email address, such as name@company.com.';
