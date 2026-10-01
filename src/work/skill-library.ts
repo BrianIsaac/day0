@@ -181,6 +181,7 @@ export interface NamedHarnessSurface extends HarnessSurfaceTools {
 export interface SurfaceTools {
   readonly slug: string;
   readonly surfaceClass?: string;
+  /** A fresh array the caller owns, typed as the Convex validator it is written through. */
   readonly tools: string[];
 }
 

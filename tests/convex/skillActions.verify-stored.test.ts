@@ -284,6 +284,32 @@ describe('verifyStoredSkill', (): void => {
     );
   });
 
+  it('fails an adoption whose version is withdrawn while it waits, and writes no version of it', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { mateo, versionId } = await seedOffice(harness);
+    const adopting = await adoptingRow(harness, mateo, versionId);
+    const started = new Promise<void>((resolve): void => {
+      recorded.started = resolve;
+    });
+    let finish = (): void => {};
+    recorded.gate = new Promise<void>((resolve): void => {
+      finish = resolve;
+    });
+
+    const run = harness.action(internal.skillActions.verifyStoredSkill, { skillId: adopting });
+    await started;
+    await harness.run(async (ctx) => await ctx.db.patch(versionId, { revokedAt: 7 }));
+    finish();
+
+    await expect(run).resolves.toMatchObject({ ok: false });
+    const after = await row(harness, adopting);
+    expect(after.state).toBe('failed');
+    expect(after.verificationLog).toContain('withdrawn');
+    expect(
+      await harness.run(async (ctx) => await ctx.db.query('skillVersions').collect()),
+    ).toHaveLength(1);
+  });
+
   it('re-checks a registered row in use, and clears its chip on a pass', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { priya, versionId } = await seedOffice(harness);

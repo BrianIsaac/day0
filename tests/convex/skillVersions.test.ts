@@ -305,6 +305,62 @@ describe('skillVersions: registration writes the library', (): void => {
     });
   });
 
+  it('keeps the chip when a trigger fires during the check on a row already due', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const priya = await employee(harness, 'Priya');
+    const held = await claimedSkill(harness, priya);
+    await register(harness, held, BODY_ONE);
+    await harness.run(
+      async (ctx) =>
+        await stampRecheckDue(ctx, {
+          skillId: held.skillId,
+          reason: 'its check was not kept',
+          now: 1,
+        }),
+    );
+    const recheck = await harness.mutation(internal.skills.claimAuthoringRun, {
+      skillId: held.skillId,
+      purpose: 'verify-stored',
+    });
+    if (!recheck.claimed) throw new Error(recheck.reason);
+    const claimedAt = (await skill(harness, held.skillId)).authoringClaimedAt!;
+    await harness.run(
+      async (ctx) =>
+        await stampRecheckDue(ctx, {
+          skillId: held.skillId,
+          reason: 'the approved tools changed',
+          now: claimedAt,
+        }),
+    );
+
+    await register(harness, { skillId: held.skillId, runId: recheck.runId }, BODY_ONE);
+
+    const after = await skill(harness, held.skillId);
+    expect(after.recheckDueAt).toBe(claimedAt);
+    expect(after.recheckReason).toBe('its check was not kept');
+  });
+
+  it('keeps an adopted row adopted when it moves onto a newer version another employee wrote', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const [priya, mateo] = [await employee(harness, 'Priya'), await employee(harness, 'Mateo')];
+    await register(harness, await claimedSkill(harness, priya), BODY_ONE);
+    const [first] = await versionsOf(harness);
+    const adopter = await claimedSkill(harness, mateo, { offeredVersionId: first._id });
+    await register(harness, adopter, BODY_ONE);
+    const revision = await claimedSkill(harness, priya, { name: NAME });
+    await register(harness, revision, BODY_TWO);
+    const newer = (await versionsOf(harness)).find((version) => version.version === 2)!;
+    await harness.run(
+      async (ctx) => await ctx.db.patch(adopter.skillId, { authoringRunId: adopter.runId }),
+    );
+
+    await register(harness, adopter, BODY_TWO);
+
+    const row = await skill(harness, adopter.skillId);
+    expect(row.versionId).toBe(newer._id);
+    expect(row.adoptedAt).toBeDefined();
+  });
+
   it('fences a re-check in flight out of the row its revision supersedes', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const priya = await employee(harness, 'Priya');
@@ -595,6 +651,32 @@ describe('skillVersions: an author leaving and an employee moving', (): void => 
     expect(deleted).toBe(LIBRARY_LOOKUP_LIMIT + 1);
     expect(await versionsOf(harness)).toEqual([]);
     expect(await versionsOf(harness, 'rival')).toHaveLength(1);
+  });
+
+  it("refuses a stored verification's registration once a move left its version behind", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const [priya, mateo] = [await employee(harness, 'Priya'), await employee(harness, 'Mateo')];
+    await register(harness, await claimedSkill(harness, priya), BODY_ONE);
+    const [offered] = await versionsOf(harness);
+    const adopting = await claimedSkill(harness, mateo, { offeredVersionId: offered._id });
+
+    // The run verified the old owner's version; the employee is handed over before it lands.
+    await harness.run(async (ctx) => await ctx.db.patch(mateo, { userId: 'lead' }));
+
+    await expect(
+      harness.mutation(internal.skills.completeRegistration, {
+        ...adopting,
+        body: BODY_ONE,
+        verificationLog: 'ok: true',
+        smokeTest: SMOKE,
+        storedVersionId: offered._id,
+      }),
+    ).resolves.toEqual({
+      registered: false,
+      refusal: "the version is not one of this employee's owner's",
+    });
+    expect(await versionsOf(harness, 'lead')).toEqual([]);
+    expect((await skill(harness, adopting.skillId)).versionId).toBeUndefined();
   });
 
   it("copies a mover's versions keyed on the new owner, drops the old owner's pages and offers, and stamps the cut", async (): Promise<void> => {

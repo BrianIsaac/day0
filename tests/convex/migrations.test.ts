@@ -9,6 +9,7 @@ import { MIGRATION_NAMES, MIGRATIONS } from '../../convex/migrations';
 import { RETIRED_DECLARATIONS, RETIRING_DECLARATIONS } from '../../scripts/releases';
 import { NEWEST_MIGRATION_RELEASE } from '../../src/lib/release';
 import { isOfferable } from '../../src/work/skill-library';
+import { USE_COUNT_SCAN_LIMIT } from '../../convex/skillVersions';
 import { avatarById } from '../../src/agent/avatar-pets';
 import { mirroredDocSlug } from '../../src/docs/types';
 import {
@@ -2033,6 +2034,33 @@ describe('the skill library backfills (10-K, K3)', (): void => {
       ['skills-library', '0.13.0', true],
       ['skills-use-count', '0.13.0', true],
     ]);
+  });
+
+  it('reads the newest claims first, so the last use is right when the count is a floor', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const priya = await agent(harness, { userId: 'owner' });
+    const used = await registeredSkill(harness, priya);
+    await harness.run(async (ctx) => {
+      for (let index = 0; index <= USE_COUNT_SCAN_LIMIT; index += 1) {
+        await ctx.db.insert('events', {
+          agentId: priya,
+          type: 'work.execution-claimed',
+          payload: { skillId: used },
+          createdAt: 1_000 + index,
+        });
+      }
+    });
+
+    await runAll(harness);
+
+    expect(await harness.run(async (ctx) => await ctx.db.get(used))).toMatchObject({
+      useCount: USE_COUNT_SCAN_LIMIT,
+      lastUsedAt: 1_000 + USE_COUNT_SCAN_LIMIT,
+    });
+    const status = await harness.query(internal.migrations.status, {});
+    expect(status.migrations.find((row) => row.name === 'skills-use-count')?.note).toContain(
+      'each count is a floor',
+    );
   });
 
   it('backfills a library larger than one page, every holder once', async (): Promise<void> => {

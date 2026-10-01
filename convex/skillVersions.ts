@@ -9,6 +9,7 @@ import {
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, assertOwnsSkill } from './ownership';
 import { appendEvent, eventsOfType } from './eventLog';
+import { readRefValidator } from './schema';
 import { isEventOf } from '../src/events/contract';
 import {
   CHECK_NOT_KEPT_REASON,
@@ -41,13 +42,6 @@ import {
 export const LIBRARY_LOOKUP_LIMIT = 200;
 
 /** A page the authoring run read, as a version records it for the page-change triggers. */
-export const readRefValidator = v.object({
-  sourceId: v.id('docSources'),
-  ref: v.string(),
-  title: v.string(),
-});
-
-/** A page the authoring run read. */
 export type ReadRef = Infer<typeof readRefValidator>;
 
 /** What one library lookup asks for: the versions of a shape, or of a name. */
@@ -121,9 +115,10 @@ export async function holdersOf(
 /**
  * Stamp "Re-check due" on a registered row, with the trigger's reason (A13: every re-check is
  * event-driven). The chip is never cleared here: only a passing re-check clears it
- * (`skills.completeRegistration`). A row already due keeps its first stamp and reason, so the
- * earliest cause stays on the card; every trigger still lands on the record as a
- * `skill.recheck-due` event. A row that is not registered runs nothing and is left alone.
+ * (`skills.completeRegistration`), and only of a stamp made before the check began. A row
+ * already due keeps its first reason, so the earliest cause stays on the card, and its first
+ * stamp unless a check is running, whose pass must not clear a change it never saw; every
+ * trigger still lands on the record as a `skill.recheck-due` event. A row that is not registered runs nothing and is left alone.
  *
  * @param ctx - The trigger's mutation context.
  * @param stamp - The holder row, why it is due in the card's words, and the trigger's time.
@@ -137,7 +132,13 @@ export async function stampRecheckDue(
   const row = await ctx.db.get(skillId);
   if (row?.state !== 'registered') return false;
   const fresh = row.recheckDueAt === undefined;
-  if (fresh) await ctx.db.patch(skillId, { recheckDueAt: now, recheckReason: reason });
+  if (fresh) {
+    await ctx.db.patch(skillId, { recheckDueAt: now, recheckReason: reason });
+  } else if (row.authoringRunId !== undefined) {
+    // A check is running and did not see this change: the stamp moves to now, so its pass
+    // leaves the chip; the first reason stays the card's.
+    await ctx.db.patch(skillId, { recheckDueAt: now });
+  }
   await appendEvent(ctx, {
     agentId: row.agentId,
     type: 'skill.recheck-due',
@@ -284,8 +285,11 @@ export async function recordRegisteredVersion(
       kind: 'linked',
       versionId: same._id,
       version: same.version,
-      // Adopted means the row took the version it was offered, never a coincidence of content.
-      adopted: row.offeredVersionId === same._id,
+      // Adopted means the row took the version it was offered, or an adopted row moved onto a
+      // version another employee wrote; never a coincidence of content.
+      adopted:
+        row.offeredVersionId === same._id ||
+        (row.adoptedAt !== undefined && same.authorAgentId !== row.agentId),
     };
   }
   const readRefs = await ownedReadRefs(ctx.db, owner.ownerKey, content.readRefs);
@@ -462,6 +466,8 @@ export async function copyVersionsForMove(
   const copies = new Map<Id<'skillVersions'>, Id<'skillVersions'> | null>();
   for (const row of rows) {
     // An offer is the old owner's library speaking, not something the employee holds: it goes.
+    // A run holding the row finishes under its fence, as the transfer plan's table has it
+    // (6.4); a stored verification's registration refuses a version the move left behind.
     if (row.offeredVersionId !== undefined) {
       await ctx.db.patch(row._id, { offeredVersionId: undefined });
     }
@@ -599,9 +605,10 @@ export async function backfillUseCountPage(
   let changed = 0;
   let floors = 0;
   for (const row of page.page) {
-    const claims = await eventsOfType(ctx, row.agentId, 'work.execution-claimed').take(
-      USE_COUNT_SCAN_LIMIT,
-    );
+    // Newest first, so an employee past the bound still gives its skills the right last use.
+    const claims = await eventsOfType(ctx, row.agentId, 'work.execution-claimed')
+      .order('desc')
+      .take(USE_COUNT_SCAN_LIMIT);
     if (claims.length === USE_COUNT_SCAN_LIMIT) floors += 1;
     const uses = claims.filter(
       (event) => isEventOf(event, 'work.execution-claimed') && event.payload.skillId === row._id,
@@ -660,14 +667,43 @@ export async function storedVerificationTargetOf(
   if (version === null) {
     return { kind: 'refused', reason: 'the skill holds no stored version to verify' };
   }
+  const refusal = await versionRefusal(db, skill, version);
+  return refusal === undefined
+    ? { kind: 'ready', skill, version }
+    : { kind: 'refused', reason: refusal };
+}
+
+/** Why a row may not be verified as a version, or undefined when it may. */
+async function versionRefusal(
+  db: DatabaseReader,
+  skill: Doc<'skills'>,
+  version: Doc<'skillVersions'>,
+): Promise<string | undefined> {
   const agent = await db.get(skill.agentId);
   if (agent?.userId !== version.userId || version.name !== skill.name) {
-    return { kind: 'refused', reason: "the version is not one of this employee's owner's" };
+    return "the version is not one of this employee's owner's";
   }
-  if (version.revokedAt !== undefined) {
-    return { kind: 'refused', reason: 'the version was withdrawn from every employee' };
-  }
-  return { kind: 'ready', skill, version };
+  if (version.revokedAt !== undefined) return 'the version was withdrawn from every employee';
+  return undefined;
+}
+
+/**
+ * The same check at registration, for a stored verification whose run waited on the lease and
+ * the sandbox: a version withdrawn, or an employee handed over, meanwhile is refused.
+ *
+ * @param db - The registration's database.
+ * @param skill - The holder row.
+ * @param versionId - The version the run verified.
+ * @returns The refusal, or undefined when the row may register as the version.
+ */
+export async function storedVersionRefusal(
+  db: DatabaseReader,
+  skill: Doc<'skills'>,
+  versionId: Id<'skillVersions'>,
+): Promise<string | undefined> {
+  const version = await db.get(versionId);
+  if (version === null) return 'the version no longer exists';
+  return await versionRefusal(db, skill, version);
 }
 
 /**

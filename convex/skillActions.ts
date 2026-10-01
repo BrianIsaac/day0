@@ -1191,7 +1191,7 @@ export const verifyStoredSkill = internalAction({
           })
         : smokeTest;
     if (stop.kind === 'passed') {
-      const { registered } = await ctx.runMutation(internal.skills.completeRegistration, {
+      const { registered, refusal } = await ctx.runMutation(internal.skills.completeRegistration, {
         skillId: args.skillId,
         runId,
         body: version.body,
@@ -1200,8 +1200,15 @@ export const verifyStoredSkill = internalAction({
         harnessTools: stop.harnessTools,
         harnessToolsBySurface: stop.harnessToolsBySurface,
         readRefs: version.readRefs,
+        storedVersionId: version._id,
       });
-      return registered ? { ok: true } : { ok: false, reason: SUPERSEDED };
+      if (registered) return { ok: true };
+      if (refusal === undefined) return { ok: false, reason: SUPERSEDED };
+      return await recordAuthoringFailure(ctx, args.skillId, runId, {
+        rowReason: `the stored skill was not registered: ${refusal}`,
+        reason: refusal,
+        eventType: 'skill.verification-failed',
+      });
     }
     if (stop.kind === 'failed') {
       return await recordAuthoringFailure(ctx, args.skillId, runId, {

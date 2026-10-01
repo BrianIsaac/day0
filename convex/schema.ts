@@ -51,6 +51,20 @@ export const oneToOneTurnValidator = v.object({
  * `events` is the feed driving the live UI; the server patches a row's payload in
  * place when a later phase completes it, so it is not strictly append-only.
  */
+/** A page an authoring run read, as a skill version records it (10-K). */
+export const readRefValidator = v.object({
+  sourceId: v.id('docSources'),
+  ref: v.string(),
+  title: v.string(),
+});
+
+/** The tools a skill version needs on one surface, with that surface's class (10-K). */
+export const surfaceToolsValidator = v.object({
+  slug: v.string(),
+  surfaceClass: v.optional(v.string()),
+  tools: v.array(v.string()),
+});
+
 export default defineSchema({
   agents: defineTable({
     bossEmail: v.string(),
@@ -1254,15 +1268,7 @@ export default defineSchema({
     harnessTools: v.array(v.string()),
     /** The same tools surface by surface, with each surface's class, so an adopter's surface of
      * that class is held to the tools listed for it. Absent where `harnessTools` is empty. */
-    harnessToolsBySurface: v.optional(
-      v.array(
-        v.object({
-          slug: v.string(),
-          surfaceClass: v.optional(v.string()),
-          tools: v.array(v.string()),
-        }),
-      ),
-    ),
+    harnessToolsBySurface: v.optional(v.array(surfaceToolsValidator)),
     /** The surface slug the author's row targeted, where it had one. */
     targetSurface: v.optional(v.string()),
     /** The employee that wrote it; absent once that employee is retired or handed over. */
@@ -1270,9 +1276,7 @@ export default defineSchema({
     /** The author's name, kept for the adoption card after the author leaves. */
     authorName: v.string(),
     /** The pages the authoring run read, for the page-change triggers of waves 13 and 14. */
-    readRefs: v.array(
-      v.object({ sourceId: v.id('docSources'), ref: v.string(), title: v.string() }),
-    ),
+    readRefs: v.array(readRefValidator),
     verifiedAt: v.number(),
     /** The version a revision replaced, and when this one was itself replaced. */
     supersedes: v.optional(v.id('skillVersions')),

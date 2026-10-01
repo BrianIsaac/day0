@@ -22,7 +22,8 @@ import { surfaceSlug } from '../src/surfaces/slug';
 import { redactTokenShapes } from '../src/surfaces/redact';
 import { appendEvent } from './eventLog';
 import type { SkillAuthoringRefusedPayload } from '../src/events/contract';
-import { readRefValidator, recordRegisteredVersion } from './skillVersions';
+import { recordRegisteredVersion, storedVersionRefusal } from './skillVersions';
+import { readRefValidator, surfaceToolsValidator } from './schema';
 import { countsAsAuthoringAttempt } from '../src/work/skill-library';
 
 /**
@@ -1168,23 +1169,25 @@ export const completeRegistration = internalMutation({
     /** The tools SKILL.md names that the harness's surfaces allowed. */
     harnessTools: v.optional(v.array(v.string())),
     /** The same tools surface by surface, with each surface's class. */
-    harnessToolsBySurface: v.optional(
-      v.array(
-        v.object({
-          slug: v.string(),
-          surfaceClass: v.optional(v.string()),
-          tools: v.array(v.string()),
-        }),
-      ),
-    ),
+    harnessToolsBySurface: v.optional(v.array(surfaceToolsValidator)),
+    /**
+     * The stored version a verification ran (`skillActions.verifyStoredSkill`), checked again
+     * here: one withdrawn, or no longer the employee's owner's, while the run held the row is
+     * refused, and the run fails the row with the reason.
+     */
+    storedVersionId: v.optional(v.id('skillVersions')),
     /** The pages the authoring run read (`linkedRunbookPages`). */
     readRefs: v.optional(v.array(readRefValidator)),
   },
-  handler: async (ctx, args): Promise<{ registered: boolean }> => {
+  handler: async (ctx, args): Promise<{ registered: boolean; refusal?: string }> => {
     const row = await claimHolder(ctx, args.skillId, args.runId, 'register');
     if (!row) return { registered: false };
     // Taken out of use while the run held it: nothing brings it back but its own control.
     if (row.state === 'retired' || row.state === 'superseded') return { registered: false };
+    if (args.storedVersionId !== undefined) {
+      const refusal = await storedVersionRefusal(ctx.db, row, args.storedVersionId);
+      if (refusal !== undefined) return { registered: false, refusal };
+    }
     const now = Date.now();
     const body = redactTokenShapes(args.body);
     const library = await recordRegisteredVersion(ctx, row, {
@@ -1203,7 +1206,7 @@ export const completeRegistration = internalMutation({
     const stampedDuringRun =
       row.recheckDueAt !== undefined &&
       row.authoringClaimedAt !== undefined &&
-      row.recheckDueAt > row.authoringClaimedAt;
+      row.recheckDueAt >= row.authoringClaimedAt;
     const held = library.kind === 'outside' ? undefined : library;
     await ctx.db.patch(args.skillId, {
       state: 'registered',
