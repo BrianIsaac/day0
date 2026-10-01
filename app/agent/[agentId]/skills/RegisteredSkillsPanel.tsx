@@ -132,21 +132,27 @@ export function RegisteredSkillsPanel({
     setRetrying(skillId);
     setReturnTo({ control: origin, card: registeredCard.current });
     onAuthoringAttempt(null);
+    // A revision is its own row, written while this one keeps running.
+    let written = skillId;
     try {
-      if (revise) await requestRevision({ skillId });
-      const result = await author({ skillId });
+      if (revise) written = (await requestRevision({ skillId })).revisionId;
+      const result = await author({ skillId: written });
       onAuthoringAttempt(
         result.ok
-          ? { skillId, name }
+          ? { skillId: written, name }
           : {
-              skillId,
+              skillId: written,
               name,
               reason:
                 result.reason ?? (revise ? 'revision did not succeed' : 'retry did not succeed'),
             },
       );
     } catch (err) {
-      onAuthoringAttempt({ skillId, name, reason: refusalText(err, AUTHORING_UNFINISHED) });
+      onAuthoringAttempt({
+        skillId: written,
+        name,
+        reason: refusalText(err, AUTHORING_UNFINISHED),
+      });
     } finally {
       setRetrying(null);
     }

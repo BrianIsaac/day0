@@ -255,7 +255,7 @@ describe('retiring a registered skill that predates shapes', (): void => {
 });
 
 describe('revising a registered authored skill', (): void => {
-  it('reopens only a never-executed authored skill and parks its source work', async (): Promise<void> => {
+  it('opens a revision beside the registered skill and leaves its source work where it is', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
     const { agentId, workItemId } = await seedAgentAndWork(harness, 'linear');
@@ -277,33 +277,39 @@ describe('revising a registered authored skill', (): void => {
       return id;
     });
 
-    await expect(
-      harness.withIdentity(OWNER).mutation(api.skills.requestRevision, { skillId }),
-    ).resolves.toEqual({ ok: true });
+    const opened = await harness
+      .withIdentity(OWNER)
+      .mutation(api.skills.requestRevision, { skillId });
 
-    const [skill, work, events] = await harness.run(async (ctx) => [
+    const [skill, revision, work, events] = await harness.run(async (ctx) => [
       await ctx.db.get(skillId),
+      await ctx.db.get(opened.revisionId),
       await ctx.db.get(workItemId),
       await ctx.db.query('events').collect(),
     ]);
-    expect(skill).toMatchObject({ state: 'approved', body: '' });
-    expect(skill?.registeredAt).toBeUndefined();
-    expect(skill?.sandboxId).toBeUndefined();
-    expect(skill?.verificationLog).toBeUndefined();
-    expect(work).toMatchObject({
-      state: 'needs-skill',
-      verdict: {
-        decision: 'needs-skill',
-        reason: 'registered skill sent back for revision before first execution',
-      },
+    // The registered row runs on, unchanged, until the revision registers in its place.
+    expect(skill).toMatchObject({
+      state: 'registered',
+      body: 'uses the wrong selector',
+      registeredAt: 2,
+      sandboxId: 'sandbox-1',
+      verificationLog: 'shape passed',
     });
+    expect(revision).toMatchObject({
+      state: 'approved',
+      name: 'bad-browser-contract',
+      body: '',
+      revisionOf: skillId,
+      proposedFor: workItemId,
+    });
+    expect(work?.state).toBe('discovered');
     expect(events.at(-1)).toMatchObject({
       type: 'skill.revision-requested',
-      payload: { skillId, name: 'bad-browser-contract' },
+      payload: { skillId, name: 'bad-browser-contract', revisionId: opened.revisionId },
     });
   });
 
-  it('refuses to reopen a skill after any execution has claimed it', async (): Promise<void> => {
+  it('opens a revision after an execution has claimed the skill, keeping the run’s history', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
     const { agentId, workItemId } = await seedAgentAndWork(harness, 'linear');
@@ -322,14 +328,22 @@ describe('revising a registered authored skill', (): void => {
       return id;
     });
 
-    await expect(
-      harness.withIdentity(OWNER).mutation(api.skills.requestRevision, { skillId }),
-    ).rejects.toThrow('cannot revise a skill after an execution has claimed it');
-    expect((await harness.run(async (ctx) => await ctx.db.get(skillId)))?.state).toBe('registered');
+    const { revisionId } = await harness
+      .withIdentity(OWNER)
+      .mutation(api.skills.requestRevision, { skillId });
+
+    const [skill, revision, work] = await harness.run(async (ctx) => [
+      await ctx.db.get(skillId),
+      await ctx.db.get(revisionId),
+      await ctx.db.get(workItemId),
+    ]);
+    expect(skill).toMatchObject({ state: 'registered', body: 'valid' });
+    expect(revision).toMatchObject({ state: 'approved', revisionOf: skillId });
+    expect(work).toMatchObject({ state: 'completed', skillId });
   });
 });
 
-describe('the Revise window while the source work waits', (): void => {
+describe('a revision whatever the source work is doing', (): void => {
   /**
    * Seed a registered authored skill whose source work is in a given state.
    *
@@ -363,40 +377,34 @@ describe('the Revise window while the source work waits', (): void => {
     return { skillId, workItemId };
   }
 
-  it.each(['deferred'] as const)(
-    'reopens the skill while its source work is %s and leaves that work where it is',
+  // History is kept: the current row runs on whatever its source work is doing, so the window
+  // the in-place revision needed is gone.
+  it.each([
+    'deferred',
+    'claimed',
+    'plan-pending',
+    'plan-approved',
+    'executing',
+    'completed',
+  ] as const)(
+    'opens a revision while the source work is %s and leaves that work where it is',
     async (state): Promise<void> => {
       useSurfaceMode('real');
       const harness = convexTest(schema, allConvexModules());
       const { skillId, workItemId } = await registeredWithSource(harness, state);
 
-      await expect(
-        harness.withIdentity(OWNER).mutation(api.skills.requestRevision, { skillId }),
-      ).resolves.toEqual({ ok: true });
+      const { revisionId } = await harness
+        .withIdentity(OWNER)
+        .mutation(api.skills.requestRevision, { skillId });
 
-      const [skill, work] = await harness.run(async (ctx) => [
+      const [skill, revision, work] = await harness.run(async (ctx) => [
         await ctx.db.get(skillId),
+        await ctx.db.get(revisionId),
         await ctx.db.get(workItemId),
       ]);
-      expect(skill).toMatchObject({ state: 'approved', body: '' });
+      expect(skill).toMatchObject({ state: 'registered', body: 'Comment with the figures.' });
+      expect(revision).toMatchObject({ state: 'approved', revisionOf: skillId, body: '' });
       expect(work?.state).toBe(state);
-    },
-  );
-
-  // A claimed or plan-pending row would be approved and then failed by the
-  // executor, which picks only registered skills.
-  it.each(['claimed', 'plan-pending', 'plan-approved', 'executing', 'completed'] as const)(
-    'refuses once the source work is %s',
-    async (state): Promise<void> => {
-      useSurfaceMode('real');
-      const harness = convexTest(schema, allConvexModules());
-      const { skillId } = await registeredWithSource(harness, state);
-
-      await expect(
-        harness.withIdentity(OWNER).mutation(api.skills.requestRevision, { skillId }),
-      ).rejects.toThrow('cannot revise while the source work has moved on');
-      const skill = await harness.run(async (ctx) => await ctx.db.get(skillId));
-      expect(skill?.state).toBe('registered');
     },
   );
 });

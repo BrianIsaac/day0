@@ -299,6 +299,36 @@ describe('what Retry does to an unregistered skill', (): void => {
     expect(markup).toContain('>Revise<');
   });
 
+  it('writes the revision as its own row and leaves the registered one running', async (): Promise<void> => {
+    backend.calls.length = 0;
+    backend.results = {
+      'skills:requestRevision': { ok: true, revisionId: 'revision-1' },
+      'skillActions:authorAndRegisterSkill': { ok: true },
+    };
+    const registered = {
+      ...base,
+      state: 'registered',
+      body: '# Refresh',
+    } as unknown as Doc<'skills'>;
+    const attempts: unknown[] = [];
+    const view = mount(
+      <RegisteredSkillsPanel
+        skills={[registered]}
+        unregistered={[]}
+        authoringFailure={null}
+        onAuthoringAttempt={(attempt) => void attempts.push(attempt)}
+      />,
+    );
+    await press(view.container, 'Revise refresh-the-tile');
+    expect(backend.calls).toEqual([
+      { name: 'skills:requestRevision', args: { skillId: 'skill-1' } },
+      { name: 'skillActions:authorAndRegisterSkill', args: { skillId: 'revision-1' } },
+    ]);
+    expect(attempts).toEqual([null, { skillId: 'revision-1', name: 'refresh-the-tile' }]);
+    view.unmount();
+    backend.results = {};
+  });
+
   // The manager approves a skill before its body exists, so the skill's own
   // row is the first place its inputs can be shown, and it has to say which of
   // them the author never declared.
