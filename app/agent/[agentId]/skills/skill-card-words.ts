@@ -82,6 +82,17 @@ export function givenUpOutcome(skill: string, cancelled: number): string {
 }
 
 /**
+ * What the live region says once a revision is opened and its writing has begun (the wave 10
+ * review, C-m2).
+ *
+ * @param skill - The skill's name.
+ * @param employee - The employee who keeps running the current version.
+ */
+export function revisionStartedOutcome(skill: string, employee: string): string {
+  return `A revision of ${skill} is being written. ${employee} keeps running this version until the new one registers.`;
+}
+
+/**
  * What the live region says once a re-check is on its way.
  */
 export function recheckStartedOutcome(skill: string): string {

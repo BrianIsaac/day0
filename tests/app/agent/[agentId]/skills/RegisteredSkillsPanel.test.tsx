@@ -654,6 +654,46 @@ describe('the five controls on the Skills cards (10-C, the prototype’s agent-s
     backend.results = {};
   });
 
+  it('gives focus to the Registered card after Re-check now, since the check that starts disables the control (the wave 10 review, C-m2)', async (): Promise<void> => {
+    backend.results = { 'skillControls:recheckNow': { scheduled: true } };
+    const view = mount(
+      <RegisteredSkillsPanel
+        skills={[due]}
+        unregistered={[]}
+        authoringFailure={null}
+        onAuthoringAttempt={noop}
+        employee="Mira"
+      />,
+    );
+    await press(view.container, 'Re-check now: kanban-comment-and-close');
+    expect(focusedName()).toBe('Registered');
+    view.unmount();
+    backend.results = {};
+  });
+
+  it('says a revision is being written in the live region and gives focus to the card while it is (C-m2)', async (): Promise<void> => {
+    backend.results = {
+      'skillControls:askForRevision': { revisionId: 'revision-1' },
+      'skillActions:authorAndRegisterSkill': { ok: true },
+    };
+    const view = mount(
+      <RegisteredSkillsPanel
+        skills={[due]}
+        unregistered={[]}
+        authoringFailure={null}
+        onAuthoringAttempt={noop}
+        employee="Mira"
+      />,
+    );
+    await press(view.container, 'Ask for a revision of kanban-comment-and-close');
+    expect(said(view.container)).toContain(
+      'A revision of kanban-comment-and-close is being written. Mira keeps running this version until the new one registers.',
+    );
+    expect(focusedName()).toBe('Registered');
+    view.unmount();
+    backend.results = {};
+  });
+
   it('says a re-check is running instead of offering another', (): void => {
     const checking = {
       ...due,

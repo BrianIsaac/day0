@@ -8,6 +8,7 @@ import {
   revisionRowSentence,
   recheckSentence,
   retireOutcome,
+  revisionStartedOutcome,
   revisionSentence,
   usedTimes,
   withdrawOutcome,
@@ -36,6 +37,12 @@ describe('the skill cards’ words (10-C)', (): void => {
     );
     expect(recheckSentence('v3 is verified; this runs v2.', 'Mira')).toBe(
       'V3 is verified; this runs v2. Mira keeps running the verified version until it is re-checked.',
+    );
+  });
+
+  it('says a revision began, and that the running version keeps running (C-m2)', (): void => {
+    expect(revisionStartedOutcome('kanban-comment-and-close', 'Mira')).toBe(
+      'A revision of kanban-comment-and-close is being written. Mira keeps running this version until the new one registers.',
     );
   });
 

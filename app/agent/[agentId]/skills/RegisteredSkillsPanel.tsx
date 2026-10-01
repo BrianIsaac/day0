@@ -30,6 +30,7 @@ import {
   recheckSentence,
   recheckStartedOutcome,
   revisionRowSentence,
+  revisionStartedOutcome,
   revisionSentence,
   usedTimes,
 } from './skill-card-words';
@@ -194,6 +195,10 @@ export function RegisteredSkillsPanel({
       if (revise) {
         try {
           written = (await askForRevision({ skillId })).revisionId;
+          // The control is disabled while the revision is written, which drops its focus: the
+          // card holds it meanwhile, and the live region says what began (C-m2).
+          setNotice({ tone: 'done', text: revisionStartedOutcome(name, employee) });
+          registeredCard.current?.focus();
         } catch (err) {
           // Refused before anything was authored: said here, since no attempt names a new row.
           setNotice({
@@ -225,10 +230,17 @@ export function RegisteredSkillsPanel({
     }
   }
 
-  /** Start one of the row controls that change a skill at once, said in the card's live region. */
-  function runControl(call: () => Promise<string>, refused: string): void {
+  /**
+   * Start one of the row controls that change a skill at once, said in the card's live region;
+   * `focus` names where focus goes once it lands, when not back to the control.
+   */
+  function runControl(
+    call: () => Promise<string>,
+    refused: string,
+    focus?: () => HTMLElement | null,
+  ): void {
     setNotice(null);
-    controls.run(call, { done: (words) => words, refused });
+    controls.run(call, { done: (words) => words, refused, ...(focus ? { focus } : {}) });
   }
 
   // The button is disabled while its run holds it, so focus comes back to it
@@ -316,10 +328,15 @@ export function RegisteredSkillsPanel({
                         <Button
                           size="small"
                           onClick={() =>
-                            runControl(async () => {
-                              await recheckNow({ skillId: s._id });
-                              return recheckStartedOutcome(s.name);
-                            }, `${s.name} was not re-checked.`)
+                            runControl(
+                              async () => {
+                                await recheckNow({ skillId: s._id });
+                                return recheckStartedOutcome(s.name);
+                              },
+                              `${s.name} was not re-checked.`,
+                              // The check that starts disables the control: the card takes focus.
+                              () => registeredCard.current,
+                            )
                           }
                           disabled={checking || controls.busy}
                           aria-label={`Re-check now: ${s.name}`}
