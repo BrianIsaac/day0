@@ -1,18 +1,26 @@
 import 'server-only';
 import { NextResponse, type NextRequest } from 'next/server';
 import { CUSTOMER_SIGN_IN, profileMismatch } from './customer-sign-in';
+import { SIGN_IN_REFUSAL_WORDS } from './customer-oidc';
 import {
   CustomerSignInUnavailable,
   customerSignInSettings,
+  finishSignIn,
   safeReturnTo,
   startSignIn,
   type CustomerSignInSettings,
 } from './customer-oidc-server';
 import {
+  CUSTOMER_SESSION_COOKIE,
   SIGN_IN_TRANSACTION_COOKIE,
   SIGN_IN_TRANSACTION_PATH,
   SIGN_IN_TRANSACTION_SECONDS,
+  chunkCookie,
+  cookieNames,
+  openTransaction,
+  sealSession,
   sealTransaction,
+  type CustomerSession,
 } from './customer-session';
 import { errorMessage } from './errors';
 import { log } from './logger';
@@ -168,4 +176,161 @@ export async function signInRoute(request: NextRequest): Promise<NextResponse> {
     },
   );
   return response;
+}
+
+/** The link that starts a sign-in afresh, landing on `returnTo` afterwards. */
+function signInAgainHref(returnTo: string): string {
+  return `/api/auth/oidc/login?returnTo=${encodeURIComponent(returnTo)}`;
+}
+
+/** Expire the sign-in transaction, on the one path its cookie was set for. */
+function clearTransaction(response: NextResponse, settings: CustomerSignInSettings): void {
+  response.cookies.set(SIGN_IN_TRANSACTION_COOKIE, '', {
+    ...cookieAttributes(settings),
+    path: SIGN_IN_TRANSACTION_PATH,
+    maxAge: 0,
+  });
+}
+
+/**
+ * Write a session onto a response: sealed, split across numbered cookies when
+ * it is long, every chunk an earlier and longer session left expired, and the
+ * cookies kept exactly as long as the session lasts.
+ *
+ * @param response - The response to set the cookies on.
+ * @param request - The request, for the cookies the browser holds now.
+ * @param settings - The sign-in's settings.
+ * @param session - The session to write.
+ * @param now - The current time in milliseconds.
+ */
+export async function writeSession(
+  response: NextResponse,
+  request: NextRequest,
+  settings: CustomerSignInSettings,
+  session: CustomerSession,
+  now: number = Date.now(),
+): Promise<void> {
+  const chunks = chunkCookie(
+    CUSTOMER_SESSION_COOKIE,
+    await sealSession(settings.sessionSecret, session),
+  );
+  const maxAge = Math.max(0, Math.floor((session.expiresAt - now) / 1000));
+  for (const chunk of chunks) {
+    response.cookies.set(chunk.name, chunk.value, {
+      ...cookieAttributes(settings),
+      path: '/',
+      maxAge,
+    });
+  }
+  const written = new Set(chunks.map((chunk) => chunk.name));
+  for (const name of cookieNames(CUSTOMER_SESSION_COOKIE)) {
+    if (!written.has(name) && request.cookies.has(name)) {
+      response.cookies.set(name, '', { ...cookieAttributes(settings), path: '/', maxAge: 0 });
+    }
+  }
+}
+
+/**
+ * Expire every cookie of the session the browser holds.
+ *
+ * @param response - The response to clear them on.
+ * @param request - The request, for the cookies the browser holds now.
+ * @param settings - The sign-in's settings.
+ */
+export function clearSession(
+  response: NextResponse,
+  request: NextRequest,
+  settings: CustomerSignInSettings,
+): void {
+  for (const name of cookieNames(CUSTOMER_SESSION_COOKIE)) {
+    if (request.cookies.has(name)) {
+      response.cookies.set(name, '', { ...cookieAttributes(settings), path: '/', maxAge: 0 });
+    }
+  }
+}
+
+/**
+ * `GET /api/auth/oidc/callback`: finish a sign-in. Opens the transaction the
+ * login route sealed, exchanges the code with its PKCE verifier, checks the
+ * state, the nonce and the ID token, applies the domain rule, then seals the
+ * session and sends the person back to the page they asked for. Every refusal
+ * clears the transaction and says why, never repeating what the issuer or the
+ * browser sent beyond an error code.
+ *
+ * @param request - The issuer's redirect back.
+ */
+export async function callbackRoute(request: NextRequest): Promise<NextResponse> {
+  const unavailable = unavailableHere();
+  if (unavailable) return unavailable;
+  const settings = settingsOrPage();
+  if (settings instanceof NextResponse) return settings;
+  const transaction = await openTransaction(
+    settings.sessionSecret,
+    request.cookies.get(SIGN_IN_TRANSACTION_COOKIE)?.value,
+  );
+  if (!transaction) {
+    const response = signInPageResponse({
+      status: 400,
+      title: 'This sign-in has expired',
+      body: 'It took longer than ten minutes, or it was started in another browser or tab. Start it again.',
+      action: { href: signInAgainHref('/'), label: 'Sign in again' },
+    });
+    clearTransaction(response, settings);
+    return response;
+  }
+  const issuerError = request.nextUrl.searchParams.get('error');
+  if (issuerError !== null) {
+    const code = /^[A-Za-z0-9_.-]{1,64}$/.test(issuerError) ? issuerError : 'an unnamed error';
+    log.info('customer sign-in refused by the issuer', { error: code });
+    const response = signInPageResponse({
+      status: 403,
+      title: 'Your company sign-in did not let you in',
+      body:
+        `It answered ${code}. Your account may not be assigned to Day0 yet: ask your ` +
+        'administrator, then try again.',
+      action: { href: signInAgainHref(transaction.returnTo), label: 'Try again' },
+    });
+    clearTransaction(response, settings);
+    return response;
+  }
+  const finished = await finishSignIn(settings, transaction, request.nextUrl.search);
+  switch (finished.kind) {
+    case 'failed': {
+      log.warn('customer sign-in failed at the callback', { reason: finished.detail });
+      const response = signInPageResponse({
+        status: 400,
+        title: 'Day0 could not sign you in',
+        body:
+          'The answer from your company sign-in did not check out, so nothing was signed in. ' +
+          'Start again; if it keeps happening, tell whoever installed Day0.',
+        action: { href: signInAgainHref(transaction.returnTo), label: 'Sign in again' },
+      });
+      clearTransaction(response, settings);
+      return response;
+    }
+    case 'refused': {
+      log.info('customer sign-in refused by the domain rule', { reason: finished.reason });
+      const response = signInPageResponse({
+        status: 403,
+        title: 'Day0 is not open to this account',
+        body: SIGN_IN_REFUSAL_WORDS[finished.reason],
+        action: { href: signInAgainHref(transaction.returnTo), label: 'Use another account' },
+      });
+      clearTransaction(response, settings);
+      return response;
+    }
+    case 'signed-in': {
+      const response = NextResponse.redirect(`${settings.publicUrl}${transaction.returnTo}`, {
+        status: 302,
+        headers: NO_STORE,
+      });
+      clearTransaction(response, settings);
+      await writeSession(response, request, settings, finished.session);
+      return response;
+    }
+    default: {
+      const unknown: never = finished;
+      throw new Error(`unhandled sign-in outcome ${String(unknown)}`);
+    }
+  }
 }
