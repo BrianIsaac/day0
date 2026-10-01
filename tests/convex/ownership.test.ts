@@ -253,6 +253,11 @@ describe('verifiedAddressOf', (): void => {
         { emailVerified: true, email_verified: false },
         { emailVerified: false, email_verified: true },
         { emailVerified: true, email_verified: 'false' },
+        // A JSON null is no claim of verification, alone or beside a true (second pass).
+        { emailVerified: null },
+        { email_verified: null },
+        { emailVerified: true, email_verified: null },
+        { email_verified: 0 },
       ]) {
         const both = identity(issuer, 'u', { email: 'boss@day0.local', ...claims });
         expect(verifiedAddressOf(both, env), `${issuer} ${JSON.stringify(claims)}`).toBeUndefined();

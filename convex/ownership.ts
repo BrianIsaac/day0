@@ -118,7 +118,11 @@ function emailVerifiedClaim(identity: UserIdentity): unknown {
     (claim: unknown) => claim !== undefined,
   );
   if (said.length === 0) return undefined;
-  return said.find((claim: unknown) => claim !== true) ?? true;
+  // Every spelling present must be `true`; anything else (a `false`, a string, a JSON null) is
+  // returned as said, so it neither verifies nor reads as absent.
+  return said.every((claim: unknown) => claim === true)
+    ? true
+    : said.find((claim: unknown) => claim !== true);
 }
 
 /**
