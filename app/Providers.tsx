@@ -11,6 +11,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 import { DEV_NO_AUTH } from '@/lib/dev-auth';
@@ -87,7 +88,7 @@ interface TokenFetch {
 const TokenFetchContext = createContext<TokenFetch | null | undefined>(undefined);
 
 /** Records how a token fetch settled; stable for the provider's life. */
-const RecordTokenFetchContext = createContext<(fetch: TokenFetch) => void>(() => undefined);
+const RecordTokenFetchContext = createContext<(settled: TokenFetch) => void>(() => undefined);
 
 /**
  * Convex on Clerk's settled answer (`useSettledClerkAuth`), started afresh when the signed-in
@@ -111,8 +112,8 @@ function ClerkConvexProvider({
   const [tokenFetch, setTokenFetch] = useState<TokenFetch | null>(null);
   // Convex fetches again at every renewal; an answer like the last changes nothing on the page.
   const recordTokenFetch = useCallback(
-    (fetch: TokenFetch): void =>
-      setTokenFetch((last) => (last?.hadToken === fetch.hadToken ? last : fetch)),
+    (settled: TokenFetch): void =>
+      setTokenFetch((last) => (last?.hadToken === settled.hadToken ? last : settled)),
     [],
   );
   // Kept from the previous render in state, as React's docs set out. A new session has fetched
@@ -156,7 +157,17 @@ function useSettledClerkAuth(): ClerkAuth {
   const answer = auth.isLoaded || settled === null ? auth : settled;
   const record = useContext(RecordTokenFetchContext);
   const clerkGetToken = answer.getToken;
-  // One function for as long as Clerk's is one: Convex starts its auth afresh when it changes.
+  // A provider keyed away for a new session may still have a fetch in flight; what it brings is
+  // the old session's and is not recorded for the new one.
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  // Convex keeps the token fetcher it built while signed out, which calls this function (it
+  // rebuilds the fetcher only when the organisation changes), so it is kept stable.
   const getToken = useCallback<ClerkAuth['getToken']>(
     async (options) => {
       let token: string | null = null;
@@ -164,7 +175,7 @@ function useSettledClerkAuth(): ClerkAuth {
         token = await clerkGetToken(options);
         return token;
       } finally {
-        record({ hadToken: token !== null });
+        if (mounted.current) record({ hadToken: token !== null });
       }
     },
     [clerkGetToken, record],
