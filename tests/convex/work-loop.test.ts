@@ -1322,3 +1322,64 @@ describe('queued work while the charter is not approved (step 4)', (): void => {
     expect((await readItem(harness, second)).state).toBe('discovered');
   });
 });
+
+describe('the stall sweep while a handover is finishing (D18)', (): void => {
+  /** A plan approved and a claimed row with no plan, both left by steps that died. */
+  async function seedStalled(harness: Harness, agentId: Id<'agents'>): Promise<void> {
+    await harness.run(async (ctx) => {
+      const fields = {
+        agentId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        title: 'Close the summary',
+        contentSummary: 'Synthetic.',
+        contentRefs: [],
+        observedAt: 1,
+        createdAt: 1,
+      };
+      await ctx.db.insert('workItems', {
+        ...fields,
+        externalId: 'REVOPS-71',
+        state: 'plan-approved',
+        plan: { summary: 'Close it.', steps: ['close'] },
+      });
+      await ctx.db.insert('workItems', { ...fields, externalId: 'REVOPS-72', state: 'claimed' });
+    });
+  }
+
+  it('resumes nothing for an employee whose handover is finishing, and resumes it otherwise', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const finishing = convexTest(contractSchema(), allConvexModules());
+    const agentId = await seedEmployee(finishing);
+    await seedStalled(finishing, agentId);
+    await finishing.run(async (ctx) => {
+      await ctx.db.insert('managerTransfers', {
+        agentId,
+        agentName: 'Priya',
+        fromOwnerKey: 'owner',
+        fromAddress: 'boss@day0.local',
+        toAddress: 'colleague@day0.local',
+        state: 'accepting',
+        requestedAt: 1,
+        expiresAt: Date.now() + 60_000,
+        decidedAt: 2,
+        toOwnerKey: 'colleague',
+        settleBy: Date.now() + 60_000,
+      });
+    });
+    const control = convexTest(contractSchema(), allConvexModules());
+    await seedStalled(control, await seedEmployee(control));
+
+    await finishing.mutation(internal.work.resumeStalledSteps, {});
+    await control.mutation(internal.work.resumeStalledSteps, {});
+
+    expect(await scheduledNames(finishing)).toEqual([]);
+    expect(await scheduledNames(control)).toEqual(
+      expect.arrayContaining([
+        'workActions:draftPlanInternal',
+        'workActions:executeApprovedPlanInternal',
+      ]),
+    );
+  });
+});

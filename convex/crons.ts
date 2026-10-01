@@ -39,6 +39,8 @@ const SCHEDULED_JOBS = {
     await ctx.runAction(internal.managerChannelActions.sendManagerDigests, {}),
   'managerTransfers:expireDue': async (ctx: ActionCtx): Promise<unknown> =>
     await ctx.runMutation(internal.managerTransfers.expireDue, {}),
+  'transferAcceptance:settleDue': async (ctx: ActionCtx): Promise<unknown> =>
+    await ctx.runMutation(internal.transferAcceptance.settleDue, {}),
 } as const;
 
 /** A job `runScheduledJob` knows, named by the function it runs. */
@@ -120,6 +122,13 @@ crons.cron('send manager digests', DIGEST_SCHEDULE, gate, {
 // treats it as expired from its expiry on.
 crons.interval('expire unanswered handovers', { minutes: 15 }, gate, {
   job: 'managerTransfers:expireDue',
+});
+
+// An accepted handover waits at most fifteen minutes for its runs (D18); each minute the sweep
+// settles the ones past that deadline, and any whose runs ended by a path that asked for no
+// settle.
+crons.interval('settle finishing handovers', { minutes: 1 }, gate, {
+  job: 'transferAcceptance:settleDue',
 });
 
 export default crons;

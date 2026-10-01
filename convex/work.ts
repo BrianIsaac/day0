@@ -16,6 +16,12 @@ import { assertOwnsAgent, assertOwnsWorkItem, getCaller, getCallerOrThrow } from
 import { isEvaluationAgent } from './metrics';
 import { incomingTransfersOf, type IncomingTransfer } from './managerTransfers';
 import {
+  HANDOVER_IN_PROGRESS_REASON,
+  HANDOVER_STOP_REASON,
+  isBeingHandedOver,
+  settleHandoverAfterRun,
+} from './transferInFlight';
+import {
   oneToOneWaitsOnManager,
   skillWaitsOnManager,
   stoppedRowNeedsManager,
@@ -3355,6 +3361,114 @@ export const MANAGER_CHANGED_RESEND_REASON =
   'the manager changed; the request went to the previous one';
 
 /**
+ * Why a request asked of the manager who handed the employee over is closed at the move: their
+ * reply to it decides nothing, and the new manager is asked afresh.
+ */
+export const HANDED_OVER_REQUEST_REASON =
+  'the employee was handed over to a new manager; the request went to the previous one';
+
+/**
+ * Close the employee's open decision requests at a handover's move (the transfer plan, section
+ * 6.4; D6). Each request asked and undecided, delivered or on its way, is marked failed with
+ * {@link HANDED_OVER_REQUEST_REASON} and the failure recorded, so a reply to its code decides
+ * nothing and the dashboard decides the row. A delivered one is sent again, with a fresh code, on
+ * the new manager's DM once their chat surface connects ({@link resendDecisionsAfterManagerChange},
+ * which re-sends a delivered request marked failed). A request already decided or already failed
+ * is left as it is.
+ *
+ * @param ctx - The move's mutation context.
+ * @param agentId - The employee.
+ * @param now - The move's time.
+ * @returns How many requests were closed.
+ */
+export async function voidDecisionRequestsForHandover(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+  now: number,
+): Promise<number> {
+  const parked = await Promise.all(
+    (['plan-pending', 'actions-pending'] as const).map(
+      async (state) =>
+        await ctx.db
+          .query('workItems')
+          .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', state))
+          .collect(),
+    ),
+  );
+  let voided = 0;
+  for (const row of parked.flat()) {
+    const decision = row.decision;
+    if (!decision || !askedFor(decision, row.state) || decision.requestFailedAt !== undefined) {
+      continue;
+    }
+    await ctx.db.patch(row._id, {
+      decision: { ...decision, requestFailedAt: now, requestFailure: HANDED_OVER_REQUEST_REASON },
+    });
+    await appendEvent(ctx, {
+      agentId,
+      type: 'work.decision-request-failed',
+      payload: {
+        workItemId: row._id,
+        decisionId: decision.id,
+        kind: decision.kind,
+        reason: HANDED_OVER_REQUEST_REASON,
+      },
+      createdAt: now,
+    });
+    voided += 1;
+  }
+  return voided;
+}
+
+/**
+ * Return to the new manager every approval the old one gave that has not started (decision D13
+ * (a)): an approval given for the old manager's connections does not run on the new manager's
+ * authority. A plan approved and not yet executing goes back to `plan-pending`, with a
+ * `work.plan-held` event saying its predecessor approved it; a held set approved and kept from
+ * its apply (`claimApprovedActions` refuses while the handover finishes) goes back to held. Each
+ * loses the old manager's decision, so the new manager is asked: in the dashboard, or by DM once
+ * their chat surface connects (the stall sweep asks a parked row with no request).
+ *
+ * @param ctx - The move's mutation context.
+ * @param agentId - The employee.
+ * @param now - The move's time.
+ * @returns How many approvals were returned, plans and held sets together.
+ */
+export async function returnApprovalsForHandover(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+  now: number,
+): Promise<number> {
+  const [approvedPlans, pending] = await Promise.all(
+    (['plan-approved', 'actions-pending'] as const).map(
+      async (state) =>
+        await ctx.db
+          .query('workItems')
+          .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', state))
+          .collect(),
+    ),
+  );
+  for (const row of approvedPlans) {
+    await ctx.db.patch(row._id, { state: 'plan-pending', planPendingAt: now, decision: undefined });
+    await appendEvent(ctx, {
+      agentId,
+      type: 'work.plan-held',
+      payload: { workItemId: row._id, reason: 'approved-by-predecessor' },
+      createdAt: now,
+    });
+  }
+  const approvedSets = pending.filter((row) => row.approvedIndexes !== undefined);
+  for (const row of approvedSets) {
+    await ctx.db.patch(row._id, {
+      approvedIndexes: undefined,
+      applyPhase: undefined,
+      decision: undefined,
+    });
+  }
+  return approvedPlans.length + approvedSets.length;
+}
+
+/**
  * Send the open decision requests delivered to a previous manager again.
  *
  * A probe that resolves the manager's DM finds the manager it has now. A
@@ -4739,6 +4853,11 @@ export const claimForExecution = internalMutation({
     if (skill.state !== 'registered' || skill.body === '') {
       return { claimed: false, reason: SKILL_UNDER_REVISION_REASON };
     }
+    // A handover the new manager accepted waits for the runs in flight and starts
+    // none (D18): the plan returns to them at the move (D13).
+    if (await isBeingHandedOver(ctx.db, item.agentId)) {
+      return { claimed: false, reason: HANDOVER_IN_PROGRESS_REASON };
+    }
     const runId = await appendEvent(ctx, {
       agentId: item.agentId,
       type: 'work.execution-claimed',
@@ -5114,6 +5233,7 @@ export const setCompleted = internalMutation({
       createdAt: Date.now(),
     });
     await scheduleNextStep(ctx, { ...row, state: 'completed' });
+    await settleHandoverAfterRun(ctx, row.agentId);
     const surfaces = (
       await ctx.db
         .query('surfaces')
@@ -5226,6 +5346,7 @@ async function failInTransaction(
     createdAt: Date.now(),
   });
   await scheduleNextStep(ctx, { ...row, state: 'failed' });
+  await settleHandoverAfterRun(ctx, row.agentId);
   if (args.stopped === false) return;
   if (stopped) {
     await queueManagerNote(ctx, row, 'stopped', (agentName) =>
@@ -5242,6 +5363,45 @@ async function failInTransaction(
       }),
     );
   }
+}
+
+/**
+ * Stop every run of the employee still executing when its handover's deadline passes (decision
+ * D18), through the stop every run's end shares ({@link failInTransaction}) with
+ * {@link HANDOVER_STOP_REASON}: the run id and the apply attempt are cleared, so the run's own
+ * next mutation is refused and writes nothing. A run whose apply was claimed may have sent its
+ * approved rows, so its ledger records their outcome as unknown, as the apply's dead-man switch
+ * would ({@link interruptedApplyLedger}), and it is not recorded as a stop; any other run is a
+ * stop when nothing it ran landed.
+ *
+ * @param ctx - The settle's mutation context.
+ * @param agentId - The employee being handed over.
+ * @returns How many runs were stopped.
+ */
+export async function stopRunsForHandover(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+): Promise<number> {
+  const running = await ctx.db
+    .query('workItems')
+    .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', 'executing'))
+    .collect();
+  for (const row of running) {
+    if (row.applyAttemptId !== undefined && row.pendingRunId !== undefined) {
+      const { output, applied } = interruptedApplyLedger(row, row.pendingRunId);
+      await failInTransaction(ctx, row, {
+        reason: HANDOVER_STOP_REASON,
+        output: { ...output, applied },
+        stopped: false,
+      });
+    } else {
+      await failInTransaction(ctx, row, {
+        reason: HANDOVER_STOP_REASON,
+        ...(row.output !== undefined ? { output: row.output } : {}),
+      });
+    }
+  }
+  return running.length;
 }
 
 /**
@@ -5892,6 +6052,7 @@ export const setActionsPending = internalMutation({
       createdAt: Date.now(),
     });
     await scheduleDecisionRequest(ctx, row, 'actions');
+    await settleHandoverAfterRun(ctx, row.agentId);
     return { pending: true, phase: 'manager' };
   },
 });
@@ -6578,6 +6739,12 @@ export const claimApprovedActions = internalMutation({
     }
     if (!row.pendingRunId) return { claimed: false, reason: 'workItem has no pending run' };
     if (!row.approvedIndexes) return { claimed: false, reason: 'no actions have been approved' };
+    // A manager's approval does not start its apply while the employee is being handed over
+    // (D18): the set returns to held at the move (D13). The auto phase belongs to a run already
+    // executing, which the move waits for.
+    if (!autoPhase && (await isBeingHandedOver(ctx.db, row.agentId))) {
+      return { claimed: false, reason: HANDOVER_IN_PROGRESS_REASON };
+    }
     // A missing agent row is the apply action's failure to report (it fences
     // the run as outcome-unknown); the claim only needs the switch's value.
     const agent = await ctx.db.get(row.agentId);

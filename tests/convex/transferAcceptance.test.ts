@@ -3,13 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import type schema from '../../convex/schema';
-import {
-  EMPLOYEE_LEFT_ASKER,
-  SOURCE_NOT_YOURS,
-  TRANSFER_EXPIRED_UNANSWERED,
-  TRANSFER_NOT_OPEN,
-  runsInFlightRefusal,
-} from '../../convex/transferAcceptance';
+import { EMPLOYEE_LEFT_ASKER, SOURCE_NOT_YOURS } from '../../convex/transferAcceptance';
+import { transferStateRefusal } from '../../convex/managerTransfers';
 import { HANDOVER_CUT_REASON } from '../../convex/surfaces';
 import { EMPLOYEE_NOT_YOURS } from '../../src/agent/employee-access';
 import {
@@ -294,7 +289,7 @@ async function seedOffice(): Promise<Office> {
 async function acceptAsColleague(
   office: Office,
   args: { zone?: string; excludedDocSourceIds?: Id<'docSources'>[] } = {},
-): Promise<{ agentId: Id<'agents'> }> {
+): Promise<{ agentId: Id<'agents'>; state: 'accepted' | 'accepting' }> {
   return await office.harness
     .withIdentity(COLLEAGUE)
     .mutation(api.transferAcceptance.accept, { transferId: office.transferId, ...args });
@@ -479,6 +474,7 @@ describe('accept in mock mode: the office moves and nothing is kept (14.1 items 
 
     await expect(acceptAsColleague(office, { zone: 'Asia/Singapore' })).resolves.toEqual({
       agentId: office.maya,
+      state: 'accepted',
     });
 
     const owner = office.harness.withIdentity(OWNER);
@@ -981,7 +977,7 @@ describe('the acceptance stamp the company figures read (9-U5, D12)', (): void =
     });
     vi.setSystemTime(acceptedAt + 10 * 60_000);
 
-    await office.harness.mutation(internal.transferAcceptance.moveEmployee, {
+    await office.harness.mutation(internal.transferAcceptance.settle, {
       transferId: office.transferId,
     });
 
@@ -1002,10 +998,10 @@ describe('the acceptance stamp the company figures read (9-U5, D12)', (): void =
     const accepted = await read(office.harness, office.transferId);
 
     await expect(
-      office.harness.mutation(internal.transferAcceptance.moveEmployee, {
+      office.harness.mutation(internal.transferAcceptance.settle, {
         transferId: office.transferId,
       }),
-    ).resolves.toBeNull();
+    ).resolves.toBe('not-accepting');
 
     expect(await read(office.harness, office.transferId)).toEqual(accepted);
   });
@@ -1018,7 +1014,7 @@ describe('accept: the refusals, each before anything moves', (): void => {
     vi.useFakeTimers();
   });
 
-  it('refuses while a run is in flight, naming it, and leaves the request asked (9-U3b takes this case)', async (): Promise<void> => {
+  it('takes the acceptance while a run is in flight, and waits in accepting for it to end (9-U3b)', async (): Promise<void> => {
     const office = await seedOffice();
     await office.harness.run(async (ctx) => {
       await ctx.db.insert('workItems', {
@@ -1027,10 +1023,11 @@ describe('accept: the refusals, each before anything moves', (): void => {
       });
     });
 
-    await expect(acceptAsColleague(office)).rejects.toMatchObject({
-      data: runsInFlightRefusal('Maya', 1),
+    await expect(acceptAsColleague(office)).resolves.toEqual({
+      agentId: office.maya,
+      state: 'accepting',
     });
-    expect(await read(office.harness, office.transferId)).toMatchObject({ state: 'asked' });
+    expect(await read(office.harness, office.transferId)).toMatchObject({ state: 'accepting' });
     expect(await read(office.harness, office.maya)).toMatchObject({ userId: 'owner' });
   });
 
@@ -1040,7 +1037,7 @@ describe('accept: the refusals, each before anything moves', (): void => {
       await ctx.db.patch(office.transferId, { expiresAt: Date.now() - 1 });
     });
     await expect(acceptAsColleague(office)).rejects.toMatchObject({
-      data: TRANSFER_EXPIRED_UNANSWERED,
+      data: transferStateRefusal('expired'),
     });
   });
 
@@ -1049,7 +1046,9 @@ describe('accept: the refusals, each before anything moves', (): void => {
     await office.harness.run(async (ctx) => {
       await ctx.db.patch(office.transferId, { state: 'cancelled', cancelReason: 'owner' });
     });
-    await expect(acceptAsColleague(office)).rejects.toMatchObject({ data: TRANSFER_NOT_OPEN });
+    await expect(acceptAsColleague(office)).rejects.toMatchObject({
+      data: transferStateRefusal('cancelled'),
+    });
   });
 
   it('refuses a request already accepted and finishing: only its settle moves it', async (): Promise<void> => {
@@ -1062,7 +1061,9 @@ describe('accept: the refusals, each before anything moves', (): void => {
         settleBy: Date.now() + 60_000,
       });
     });
-    await expect(acceptAsColleague(office)).rejects.toMatchObject({ data: TRANSFER_NOT_OPEN });
+    await expect(acceptAsColleague(office)).rejects.toMatchObject({
+      data: transferStateRefusal('accepting'),
+    });
     expect(await read(office.harness, office.maya)).toMatchObject({ userId: 'owner' });
   });
 

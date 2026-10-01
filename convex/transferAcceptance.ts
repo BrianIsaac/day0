@@ -10,9 +10,10 @@ import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { assertNamedInTransfer } from './ownership';
 import { clipRoleLine } from './agents';
-import { renderIdentityForManager } from './charters';
+import { charterAtHandover, discardUnapprovedCharter, renderIdentityForManager } from './charters';
 import { purgeCredential } from './credentials';
 import { appendEvent, eventsOfType } from './eventLog';
+import { transferStateRefusal } from './managerTransfers';
 import { readableDocs } from './mock';
 import {
   RETIRE_PREVIEW_ROW_LIMIT,
@@ -25,33 +26,43 @@ import {
   type Boundaries,
 } from './reset';
 import { handOverSurfaces, surfaceHandoversOf, type HandedOverSurfaces } from './surfaces';
-import { needsYouOfEmployee, type NeedsYouEntry } from './work';
+import { failOneToOnesForHandover } from './voice';
+import {
+  needsYouOfEmployee,
+  returnApprovalsForHandover,
+  stopRunsForHandover,
+  voidDecisionRequestsForHandover,
+  type NeedsYouEntry,
+} from './work';
 import type { CharterConstraint } from '../src/agent/charter-constraints';
+import {
+  isTransferDue,
+  transferSettleBy,
+  type ManagerTransferState,
+} from '../src/agent/manager-transfer';
+import { log } from '../src/lib/logger';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { canonicalZone, deploymentZone } from '../src/lib/zone';
 import { shownEmployeeState } from '../src/work/state-labels';
 
 /*
  * The handover's acceptance and the move (the transfer plan, sections 6.1 to
- * 6.3 and 6.5). The named manager reads the preview and accepts; the move
- * makes the employee theirs in the acceptance's own transaction. Two rules
- * decide every row: nothing of the old owner's that the employee does not
- * need becomes readable by the new one, and nothing the new owner cannot see
- * keeps acting for the employee. The employee's own rows move with the single
- * write of `agents.userId`; what joins them to the old owner is cut here, and
- * what the old owner keeps is the request row and, in real mode, a departure
- * boundary (decision D11).
+ * 6.5). The named manager reads the preview and accepts; the move makes the
+ * employee theirs. Two rules decide every row: nothing of the old owner's that
+ * the employee does not need becomes readable by the new one, and nothing the
+ * new owner cannot see keeps acting for the employee. The employee's own rows
+ * move with the single write of `agents.userId`; what joins them to the old
+ * owner is cut here, and what the old owner keeps is the request row and, in
+ * real mode, a departure boundary (decision D11).
  *
- * Work in flight at acceptance (section 6.4) is the next unit's: `accept`
- * refuses while a run is in flight, and the move leaves the work items as
- * they are.
+ * Work in flight (section 6.4, decision D18): with no run executing, the move
+ * is the acceptance's own transaction. With one, the request waits in
+ * `accepting`: no new run starts (`convex/transferInFlight.ts`), each run's
+ * end asks it to settle, and `settleDue` stops what outlives `settleBy` and
+ * moves the employee. The move returns the approvals the old manager gave
+ * that never started, closes their open requests, fails a one-to-one under
+ * way, discards a charter never approved and sets their unsent notes aside.
  */
-
-/** The refusal for a request no longer waiting for an answer. A `ConvexError`'s data. */
-export const TRANSFER_NOT_OPEN = 'This handover is no longer waiting for an answer.';
-
-/** The refusal for a request whose answer came after it expired, before the sweep marked it. */
-export const TRANSFER_EXPIRED_UNANSWERED = 'This handover expired before it was accepted.';
 
 /**
  * The refusal for an employee that is gone, or no longer belongs to the manager who asked: a
@@ -62,18 +73,6 @@ export const EMPLOYEE_LEFT_ASKER =
 
 /** The refusal for a documentation source among the unticked that is not the acceptor's own. */
 export const SOURCE_NOT_YOURS = 'A documentation source you unticked is not one of yours.';
-
-/**
- * The refusal while the employee has runs in flight. The move waits for them (decision D18);
- * until the `accepting` state lands, the acceptance is asked again once they end.
- *
- * @param name - The employee's name.
- * @param runs - How many runs are executing or applying.
- */
-export function runsInFlightRefusal(name: string, runs: number): string {
-  const what = runs === 1 ? 'a run' : `${runs} runs`;
-  return `${name} is in the middle of ${what}. Accept again once ${runs === 1 ? 'it ends' : 'they end'}.`;
-}
 
 /** The reason the record gives for the settings a handover returns to their defaults. */
 const HANDED_OVER_REASON = 'handed over to a new manager';
@@ -115,12 +114,16 @@ const OPEN_WORK_STATES = (Object.keys(WORK_IS_OPEN) as WorkItemState[]).filter(
 );
 
 /**
- * A request, if it can still be answered now: asked, and not past its expiry. An `accepting`
- * request may still move to `accepted`, but only its settle moves it, never a second answer.
+ * A request, if it can still be answered now: asked, and not past its expiry, which reads as
+ * expired before the sweep marks it (`isTransferDue`). An `accepting` request may still move to
+ * `accepted`, but only its settle moves it, never a second answer.
+ *
+ * @throws ConvexError with 9-U2's words for the state the request reads as now
+ *   ({@link transferStateRefusal}).
  */
 function assertAnswerable(transfer: Doc<'managerTransfers'>, now: number): void {
-  if (transfer.state !== 'asked') throw new ConvexError(TRANSFER_NOT_OPEN);
-  if (transfer.expiresAt <= now) throw new ConvexError(TRANSFER_EXPIRED_UNANSWERED);
+  const state: ManagerTransferState = isTransferDue(transfer, now) ? 'expired' : transfer.state;
+  if (state !== 'asked') throw new ConvexError(transferStateRefusal(state));
 }
 
 /**
@@ -140,23 +143,20 @@ async function departingEmployee(
 }
 
 /**
- * How many of the employee's runs are in flight: items executing, and items whose held actions
- * were approved and whose apply is scheduled or running (the transfer plan, section 6.4).
+ * How many of the employee's runs are in flight: the items executing, an apply that has started
+ * among them (the transfer plan, section 6.4). The move waits for these. An approved set whose
+ * apply has not started is not one: once the request is accepting the apply does not start, and
+ * the move returns the set to held (D13).
  *
  * @param db - Any reader.
  * @param agentId - The employee.
  */
 async function runsInFlight(db: QueryCtx['db'], agentId: Id<'agents'>): Promise<number> {
-  const inState = async (state: Doc<'workItems'>['state']): Promise<Doc<'workItems'>[]> =>
-    await db
-      .query('workItems')
-      .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', state))
-      .take(PREVIEW_ROW_LIMIT);
-  const [executing, pending] = await Promise.all([
-    inState('executing'),
-    inState('actions-pending'),
-  ]);
-  return executing.length + pending.filter((row) => row.approvedIndexes !== undefined).length;
+  const executing = await db
+    .query('workItems')
+    .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', 'executing'))
+    .take(PREVIEW_ROW_LIMIT);
+  return executing.length;
 }
 
 /** The employee's newest approved charter, the one in force, or null before one is approved. */
@@ -549,6 +549,25 @@ async function moveClaims(
 }
 
 /**
+ * The employee's `credential.superseded` events the move redacts, or the refusal when there are
+ * more than one move redacts.
+ */
+async function supersededCredentialEvents(
+  ctx: Pick<QueryCtx, 'db'>,
+  agentId: Id<'agents'>,
+): Promise<{ readonly events: Doc<'events'>[] } | { readonly refusal: string }> {
+  const events = await eventsOfType(ctx, agentId, 'credential.superseded').take(
+    SUPERSEDED_EVENT_LIMIT + 1,
+  );
+  if (events.length > SUPERSEDED_EVENT_LIMIT) {
+    return {
+      refusal: `This employee's record names more than ${SUPERSEDED_EVENT_LIMIT} superseded credentials, more than one handover can move.`,
+    };
+  }
+  return { events };
+}
+
+/**
  * Strip the old owner's credential names from the employee's record: a `credential.superseded`
  * event names the credential and the page the old owner's documentation held it on. The record
  * moves whole (D10); the line stays, saying a credential left the documentation, without naming
@@ -558,15 +577,9 @@ async function moveClaims(
  *   move redacts.
  */
 async function redactSupersededCredentials(ctx: MutationCtx, agentId: Id<'agents'>): Promise<void> {
-  const events = await eventsOfType(ctx, agentId, 'credential.superseded').take(
-    SUPERSEDED_EVENT_LIMIT + 1,
-  );
-  if (events.length > SUPERSEDED_EVENT_LIMIT) {
-    throw new ConvexError(
-      `This employee's record names more than ${SUPERSEDED_EVENT_LIMIT} superseded credentials, more than one handover can move.`,
-    );
-  }
-  for (const event of events) {
+  const found = await supersededCredentialEvents(ctx, agentId);
+  if ('refusal' in found) throw new ConvexError(found.refusal);
+  for (const event of found.events) {
     const payload = event.payload as Record<string, unknown>;
     await ctx.db.patch(event._id, { payload: { ...payload, label: '', page: '' } });
   }
@@ -732,32 +745,131 @@ async function recordMove(
   });
 }
 
+/** The most unsent manager notes of one employee a move sets aside. */
+const UNSENT_NOTE_LIMIT = 1_000;
+
+/**
+ * Set aside the notes kept for the old manager and not sent (the transfer plan, section 6.4): a
+ * digest note, or a per-run note whose send has not claimed it. Each is marked `discardedAt` and
+ * claimed with it, so neither the digest (`by_agent_unsent`) nor a per-run send
+ * (`prepareManagerNote`) takes it; the events the notes summarise stay in the record. The note
+ * lives beside the move rather than in `convex/managerChannelActions.ts`, whose Node runtime
+ * holds actions only (standard 1.5).
+ *
+ * @returns How many notes were set aside.
+ */
+async function discardUnsentNotes(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+  now: number,
+): Promise<number> {
+  const unsent = await ctx.db
+    .query('managerNotes')
+    .withIndex('by_agent_unsent', (q) =>
+      q.eq('agentId', agentId).eq('claimedAt', undefined).eq('providerTs', undefined),
+    )
+    .take(UNSENT_NOTE_LIMIT);
+  if (unsent.length === UNSENT_NOTE_LIMIT) {
+    // An hour of digest notes is far below the bound; reaching it means a stuck digest, whose
+    // remainder waits for a channel the cut has removed.
+    log.warn('handover set aside the most unsent notes one move takes', { agentId, now });
+  }
+  for (const note of unsent) await ctx.db.patch(note._id, { discardedAt: now, claimedAt: now });
+  return unsent.length;
+}
+
+/** What the move did with the employee's work in flight (the transfer plan, section 6.4). */
+interface SettledWork {
+  readonly decisionRequestsVoided: number;
+  readonly plansReturned: number;
+  readonly charterDiscarded: boolean;
+  readonly sessionsFailed: number;
+  readonly notesDiscarded: number;
+}
+
+/**
+ * The move's section 6.4 steps, after the claims and before the owner write: the old manager's
+ * open decision requests are closed (D6), the approvals they gave that never started are returned
+ * (D13), a charter never approved is discarded and the employee returned to `deployed` (D8), a
+ * one-to-one under way is failed, and the notes kept for their digest are set aside. Work in
+ * every other state moves as it is.
+ */
+async function settleWorkInFlight(
+  ctx: MutationCtx,
+  agent: Doc<'agents'>,
+  now: number,
+): Promise<SettledWork> {
+  const decisionRequestsVoided = await voidDecisionRequestsForHandover(ctx, agent._id, now);
+  const plansReturned = await returnApprovalsForHandover(ctx, agent._id, now);
+  const charterDiscarded = await discardUnapprovedCharter(ctx, agent);
+  const sessionsFailed = await failOneToOnesForHandover(ctx, agent._id, {
+    draftDiscarded: charterDiscarded,
+  });
+  const notesDiscarded = await discardUnsentNotes(ctx, agent._id, now);
+  return {
+    decisionRequestsVoided,
+    plansReturned,
+    charterDiscarded,
+    sessionsFailed,
+    notesDiscarded,
+  };
+}
+
+/**
+ * Why the move would refuse, read before anything is written: the employee gone or no longer
+ * the asker's, a departure boundary larger than one row keeps (real mode), more superseded
+ * credentials than one move redacts, or more draft charters than one move discards. The
+ * acceptance refuses with these words before it enters `accepting`; a settle that meets one ends
+ * the request rather than retrying it.
+ *
+ * @returns The refusal's words, or null when the move can be made.
+ */
+async function moveRefusal(
+  ctx: Pick<QueryCtx, 'db'>,
+  transfer: Doc<'managerTransfers'>,
+  now: number,
+): Promise<string | null> {
+  const agent = await ctx.db.get(transfer.agentId);
+  if (agent === null || agent.userId !== transfer.fromOwnerKey) return EMPLOYEE_LEFT_ASKER;
+  if (SURFACE_MODE === 'real') {
+    const boundaries = await boundariesOf(ctx.db, await employeeWorkItems(ctx.db, agent._id), now);
+    try {
+      assertKeepable(boundaries);
+    } catch (err) {
+      if (err instanceof ConvexError && typeof err.data === 'string') return err.data;
+      throw err;
+    }
+  }
+  const superseded = await supersededCredentialEvents(ctx, agent._id);
+  if ('refusal' in superseded) return superseded.refusal;
+  const charter = await charterAtHandover(ctx.db, agent);
+  return charter.kind === 'refused' ? charter.refusal : null;
+}
+
 /**
  * Move the employee to the manager who accepted its handover, in one transaction (the transfer
- * plan, sections 6.2, 6.3 and 6.5). In order: the departure boundary is read before anything
- * changes; the connections are cut ({@link cutConnections}); the live claims are moved or
- * released; the old owner's credential names leave the record; the employee row is written for
- * the new owner and the identity file rendered for them; the old owner keeps a departure row in
- * real mode, and their employees a released claim refused are woken; the old mirrors are deleted
- * in pages and the new owner's documentation mirrored; and the request is marked accepted with
- * what the move did, beside one `manager.transferred` event.
- *
- * Work in flight is the next unit's (section 6.4): its steps go between the claims and the owner
- * write, and fill the outcome's counts of requests voided, plans returned, sessions failed, notes
- * discarded, runs stopped and a discarded charter, which are zero here.
+ * plan, sections 6.2 to 6.5). In order: the departure boundary is read before anything changes;
+ * the connections are cut ({@link cutConnections}); the live claims are moved or released; the
+ * work in flight is settled ({@link settleWorkInFlight}); the old owner's credential names leave
+ * the record; the employee row is written for the new owner and the identity file rendered for
+ * them; the old owner keeps a departure row in real mode, and their employees a released claim
+ * refused are woken; the old mirrors are deleted in pages and the new owner's documentation
+ * mirrored; and the request is marked accepted with what the move did, beside one
+ * `manager.transferred` event.
  *
  * @param ctx - The acceptance's or the settle's mutation context.
  * @param transfer - The request, with the acceptor's owner key written.
- * @param now - The move's time.
+ * @param move - The move's time, and how many runs the settle stopped before it.
  * @returns What the move did.
  * @throws ConvexError with {@link EMPLOYEE_LEFT_ASKER} when the employee is no longer the asker's;
- *   ConvexError when its boundary is more than one departure row keeps.
+ *   ConvexError with {@link moveRefusal}'s other words when it is more than one move takes.
  */
 async function moveEmployeeInTransaction(
   ctx: MutationCtx,
   transfer: AcceptedTransfer,
-  now: number,
+  move: { readonly now: number; readonly runsStopped: number },
 ): Promise<TransferOutcome> {
+  const { now } = move;
   const agent = await departingEmployee(ctx.db, transfer);
   const items = await employeeWorkItems(ctx.db, agent._id);
   const boundaries = await boundariesOf(ctx.db, items, now);
@@ -765,6 +877,7 @@ async function moveEmployeeInTransaction(
 
   const cut = await cutConnections(ctx, agent, transfer, now);
   const claims = await moveClaims(ctx, items, boundaries, transfer.toOwnerKey, now);
+  const work = await settleWorkInFlight(ctx, agent, now);
   await redactSupersededCredentials(ctx, agent._id);
   await settleEmployeeRow(ctx, agent, transfer, now);
   await renderIdentityForManager(ctx, agent._id);
@@ -785,14 +898,14 @@ async function moveEmployeeInTransaction(
     claimsMoved: claims.moved,
     claimsReleased: claims.released,
     conflictingClaimKeys: claims.conflictingKeys,
-    decisionRequestsVoided: 0,
-    plansReturned: 0,
-    sessionsFailed: 0,
-    notesDiscarded: 0,
+    decisionRequestsVoided: work.decisionRequestsVoided,
+    plansReturned: work.plansReturned,
+    sessionsFailed: work.sessionsFailed,
+    notesDiscarded: work.notesDiscarded,
     // Counted page by page as `pruneDepartedMirrors` deletes them.
     mirroredPagesHidden: 0,
-    runsStopped: 0,
-    charterDiscarded: false,
+    runsStopped: move.runsStopped,
+    charterDiscarded: work.charterDiscarded,
   };
   await recordMove(ctx, agent._id, transfer, outcome, cut, now);
   return outcome;
@@ -815,22 +928,32 @@ async function assertOwnSources(
   }
 }
 
+/** What `accept` answers: the employee, and whether it moved or waits for its runs. */
+const acceptedValidator = v.object({
+  agentId: v.id('agents'),
+  state: v.union(v.literal('accepted'), v.literal('accepting')),
+});
+
 /**
- * Accept a handover: the employee becomes the caller's, in this transaction, when it has no run
- * in flight (the transfer plan, sections 5.1 and 6).
+ * Accept a handover (the transfer plan, sections 5.1 and 6; decision D18). With no run executing
+ * the employee becomes the caller's in this transaction (`accepted`). With runs executing the
+ * request enters `accepting`: the acceptance is given and irrevocable, no new run starts, and the
+ * move waits for the runs to end, or for `settleBy` (`transferSettleBy`, fifteen minutes), when
+ * {@link settleDue} stops what remains and moves the employee.
  *
  * Public, for the account the request names only (`assertNamedInTransfer`, which also refuses
  * the account that asked). The request must be `asked` and unexpired, and the employee still the
  * asker's. `zone` is the acceptor's browser zone, as `deploy` takes it (N12); one the backend
  * does not know reads as the deployment's. `excludedDocSourceIds` are the acceptor's own sources
- * the employee should not read, as the deploy form's ticks. Writes the request's acceptance and
- * the acceptor's choices, then the move (`moveEmployeeInTransaction`).
+ * the employee should not read, as the deploy form's ticks. Writes the acceptance's stamp
+ * (`decidedAt`, `toOwnerKey`) and the acceptor's choices in the one patch that takes the request
+ * out of `asked`; the company figures read the stamp and nothing writes it again. Then the move
+ * (`moveEmployeeInTransaction`), or `accepting` with its `settleBy`.
  *
- * While a run is in flight it refuses, naming the runs: the move waits for them (D18), which is
- * the `accepting` path the next unit adds here in place of the refusal.
- *
- * @returns The employee, now the caller's.
- * @throws ConvexError with words the dialog shows for every refusal.
+ * @returns The employee, and `accepted` when it is now the caller's or `accepting` when it moves
+ *   once its runs end.
+ * @throws ConvexError with words the dialog shows for every refusal, the move's own included
+ *   before the request enters `accepting`.
  */
 export const accept = mutation({
   args: {
@@ -838,56 +961,138 @@ export const accept = mutation({
     zone: v.optional(v.string()),
     excludedDocSourceIds: v.optional(v.array(v.id('docSources'))),
   },
-  returns: v.object({ agentId: v.id('agents') }),
-  handler: async (ctx, args): Promise<{ agentId: Id<'agents'> }> => {
+  returns: acceptedValidator,
+  handler: async (ctx, args): Promise<Infer<typeof acceptedValidator>> => {
     const { transfer, caller } = await assertNamedInTransfer(ctx, args.transferId);
     const now = Date.now();
     assertAnswerable(transfer, now);
     const agent = await departingEmployee(ctx.db, transfer);
     const excluded = args.excludedDocSourceIds ?? [];
     await assertOwnSources(ctx.db, caller.ownerKey, excluded);
-    const inFlight = await runsInFlight(ctx.db, agent._id);
-    if (inFlight > 0) throw new ConvexError(runsInFlightRefusal(agent.name, inFlight));
     // The acceptance's stamp, written as the request leaves `asked`, whichever state it enters:
     // the company figures read `decidedAt` and `toOwnerKey` on accepting and accepted rows.
-    const accepted = {
-      ...transfer,
+    const acceptance = {
       decidedAt: now,
       toOwnerKey: caller.ownerKey,
       toZone: canonicalZone(args.zone) ?? deploymentZone(),
       toExcludedDocSourceIds: excluded,
     };
-    await ctx.db.patch(transfer._id, {
-      decidedAt: accepted.decidedAt,
-      toOwnerKey: accepted.toOwnerKey,
-      toZone: accepted.toZone,
-      toExcludedDocSourceIds: accepted.toExcludedDocSourceIds,
-    });
-    await moveEmployeeInTransaction(ctx, accepted, now);
-    return { agentId: agent._id };
+    if ((await runsInFlight(ctx.db, agent._id)) > 0) {
+      const refusal = await moveRefusal(ctx, transfer, now);
+      if (refusal !== null) throw new ConvexError(refusal);
+      await ctx.db.patch(transfer._id, {
+        state: 'accepting',
+        settleBy: transferSettleBy(now),
+        ...acceptance,
+      });
+      return { agentId: agent._id, state: 'accepting' };
+    }
+    await ctx.db.patch(transfer._id, acceptance);
+    await moveEmployeeInTransaction(ctx, { ...transfer, ...acceptance }, { now, runsStopped: 0 });
+    return { agentId: agent._id, state: 'accepted' };
   },
 });
 
 /**
- * Move the employee of an `accepting` request whose runs in flight have ended: the settle's
- * move, with the acceptor's choices kept on the row at acceptance. A request in any other state
- * is left as it is, so a second settle of one request does nothing.
- *
- * Internal; scheduled by the settle (the transfer plan, section 6.4). Writes what
- * `moveEmployeeInTransaction` writes.
- *
- * @returns What the move did, or null when the request was not `accepting`.
+ * End an `accepting` request whose move cannot be made, rather than retry it at every sweep: the
+ * employee stays its old manager's, and the request is `cancelled`, the one final state that says
+ * so. Its acceptance's stamp is kept as it was written (nothing writes `decidedAt` again), and
+ * since the company figures cut only at an accepting or accepted request, the old manager's
+ * figures run on unbroken. `TRANSFER_MOVES` (`src/agent/manager-transfer.ts`) names no way out of
+ * `accepting` but the move, so this one write steps outside it; the cockpit has the patch that
+ * names it there.
  */
-export const moveEmployee = internalMutation({
+async function endUnmovable(
+  ctx: MutationCtx,
+  transfer: Doc<'managerTransfers'>,
+  refusal: string,
+): Promise<void> {
+  await ctx.db.patch(transfer._id, { state: 'cancelled' });
+  log.error('accepted handover could not move; ended', {
+    transferId: transfer._id,
+    agentId: transfer.agentId,
+    reason: refusal,
+  });
+}
+
+/** What a settle did with its request. */
+const settleOutcomeValidator = v.union(
+  v.literal('moved'),
+  v.literal('waiting'),
+  v.literal('ended'),
+  v.literal('not-accepting'),
+);
+
+/**
+ * Settle a finishing handover (the transfer plan, section 6.4; D18): once no run of the employee
+ * is executing, or once `settleBy` has passed, the runs that remain are stopped
+ * (`stopRunsForHandover`, "the employee was handed over to a new manager") and the employee is
+ * moved with the acceptor's choices kept on the row. Before that, it waits. A request no longer
+ * `accepting` is left as it is, so a second settle does nothing; one whose move would be refused
+ * is ended ({@link endUnmovable}).
+ *
+ * Internal; scheduled by every path out of a run (`convex/transferInFlight.ts`) and by
+ * {@link settleDue}. Writes what the stop and the move write.
+ *
+ * @returns `moved`, `waiting`, `ended`, or `not-accepting`.
+ */
+export const settle = internalMutation({
   args: { transferId: v.id('managerTransfers') },
-  handler: async (ctx, args): Promise<TransferOutcome | null> => {
+  returns: settleOutcomeValidator,
+  handler: async (ctx, args): Promise<Infer<typeof settleOutcomeValidator>> => {
     const transfer = await ctx.db.get(args.transferId);
-    if (transfer === null || transfer.state !== 'accepting') return null;
+    if (transfer === null || transfer.state !== 'accepting') return 'not-accepting';
+    const now = Date.now();
     const { toOwnerKey } = transfer;
     if (toOwnerKey === undefined) {
-      throw new Error(`accepting handover ${transfer._id} has no acceptor`);
+      await endUnmovable(ctx, transfer, 'the accepted handover names no acceptor');
+      return 'ended';
     }
-    return await moveEmployeeInTransaction(ctx, { ...transfer, toOwnerKey }, Date.now());
+    const refusal = await moveRefusal(ctx, transfer, now);
+    if (refusal !== null) {
+      await endUnmovable(ctx, transfer, refusal);
+      return 'ended';
+    }
+    const due = transfer.settleBy === undefined || transfer.settleBy <= now;
+    if (!due && (await runsInFlight(ctx.db, transfer.agentId)) > 0) return 'waiting';
+    const runsStopped = await stopRunsForHandover(ctx, transfer.agentId);
+    await moveEmployeeInTransaction(ctx, { ...transfer, toOwnerKey }, { now, runsStopped });
+    return 'moved';
+  },
+});
+
+/** The most finishing requests one sweep reads, the soonest deadline first. */
+const SETTLE_SWEEP_LIMIT = 50;
+
+/**
+ * The settle's sweep (the cron's, every minute): each `accepting` request past its `settleBy`, or
+ * with no run left executing, is settled in a transaction of its own. The second case is the
+ * backstop for a run that ended by a path that asked for no settle (a resumed run returned to its
+ * approved plan, an interrupted apply), so no request waits past a minute once its runs are over.
+ *
+ * Internal; the cron's. Writes nothing itself; schedules {@link settle}.
+ *
+ * @returns How many settles were scheduled.
+ */
+export const settleDue = internalMutation({
+  args: {},
+  returns: v.object({ scheduled: v.number() }),
+  handler: async (ctx): Promise<{ scheduled: number }> => {
+    const now = Date.now();
+    const finishing = await ctx.db
+      .query('managerTransfers')
+      .withIndex('by_state_settle', (q) => q.eq('state', 'accepting'))
+      .take(SETTLE_SWEEP_LIMIT);
+    let scheduled = 0;
+    for (const transfer of finishing) {
+      const due = transfer.settleBy === undefined || transfer.settleBy <= now;
+      if (!due && (await runsInFlight(ctx.db, transfer.agentId)) > 0) continue;
+      await ctx.scheduler.runAfter(0, internal.transferAcceptance.settle, {
+        transferId: transfer._id,
+      });
+      scheduled += 1;
+    }
+    return { scheduled };
   },
 });
 
