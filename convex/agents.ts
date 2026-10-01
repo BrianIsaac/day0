@@ -635,6 +635,20 @@ export const myManagerAddress = query({
   },
 });
 
+/**
+ * One employee's standing against an owner's verified address, the employee
+ * read as an evaluation one by its own row.
+ *
+ * @param callerAddress - The owner's verified address, or undefined when the sign-in asserts none.
+ */
+function standingOf(agent: Doc<'agents'>, callerAddress: string | undefined): ManagerStanding {
+  return managerStandingOf({
+    bossEmail: agent.bossEmail,
+    callerAddress,
+    evaluation: isEvaluationAgent(agent),
+  });
+}
+
 /** What `managerStanding` returns: {@link ManagerStanding}, as a validator. */
 const managerStandingValidator = v.union(
   v.object({ standing: v.literal('you') }),
@@ -657,12 +671,7 @@ export const managerStanding = query({
   returns: managerStandingValidator,
   handler: async (ctx, args): Promise<ManagerStanding> => {
     const agent = await assertOwnsAgent(ctx, args.agentId);
-    const caller = await getCallerOrThrow(ctx);
-    return managerStandingOf({
-      bossEmail: agent.bossEmail,
-      callerAddress: verifiedAddressOf(caller),
-      evaluation: isEvaluationAgent(agent),
-    });
+    return standingOf(agent, verifiedAddressOf(await getCallerOrThrow(ctx)));
   },
 });
 
@@ -670,7 +679,8 @@ export const managerStanding = query({
  * Public, any caller: how many of the caller's company employees report to
  * an address that is not the caller's verified one, for the home's one line
  * while any does (the transfer plan section 11.2). Evaluation employees are
- * left out, as the roster leaves them out. Writes nothing.
+ * left out, as the roster leaves them out, within the rows the roster reads
+ * (`ROSTER_SCAN_LIMIT`). Writes nothing.
  *
  * @returns The count, or null for an anonymous caller or one whose sign-in asserts no verified address.
  */
@@ -684,15 +694,8 @@ export const employeesReportingElsewhere = query({
     const agents = await ctx.db
       .query('agents')
       .withIndex('by_userId', (q) => q.eq('userId', caller.ownerKey))
-      .collect();
-    return agents.filter(
-      (agent) =>
-        managerStandingOf({
-          bossEmail: agent.bossEmail,
-          callerAddress,
-          evaluation: isEvaluationAgent(agent),
-        }).standing === 'other',
-    ).length;
+      .take(ROSTER_SCAN_LIMIT);
+    return agents.filter((agent) => standingOf(agent, callerAddress).standing === 'other').length;
   },
 });
 
@@ -715,11 +718,7 @@ export const adoptManagerAddress = mutation({
   handler: async (ctx, args): Promise<{ changed: boolean; reprobed: number }> => {
     const agent = await assertOwnsAgent(ctx, args.agentId);
     const caller = await getCallerOrThrow(ctx);
-    const standing = managerStandingOf({
-      bossEmail: agent.bossEmail,
-      callerAddress: verifiedAddressOf(caller),
-      evaluation: isEvaluationAgent(agent),
-    });
+    const standing = standingOf(agent, verifiedAddressOf(caller));
     switch (standing.standing) {
       case 'evaluation':
         throw new ConvexError(EVALUATION_ADDRESS_FIXED);
