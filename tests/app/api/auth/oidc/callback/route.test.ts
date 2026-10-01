@@ -257,6 +257,25 @@ describe('the callback in check mode (pnpm check:sign-in)', (): void => {
     expect(email?.status).toBe('gap');
   });
 
+  it('reports an issuer that refused the test person, rather than leaving the check to wait', async (): Promise<void> => {
+    const { reports } = checkBed(null);
+    const started = await startCheck(await checkLink());
+    const state = started.authorisation.searchParams.get('state') ?? '';
+    const response = await callback(
+      `?error=access_denied&state=${encodeURIComponent(state)}`,
+      started.transactionCookie,
+    );
+    expect(response.status).toBe(200);
+    expect(reports).toHaveLength(1);
+    expect(reports[0]).toMatchObject({
+      checkId: 'check-1',
+      verdicts: [],
+      whoAmI: { status: 'gap' },
+    });
+    expect(JSON.stringify(reports[0])).toContain('access_denied');
+    expect(await response.text()).toContain('access_denied');
+  });
+
   it('refuses a check link the session secret did not seal', async (): Promise<void> => {
     checkBed(null);
     const { sealCheckTicket } = await import('../../../../../../src/lib/sign-in-check');

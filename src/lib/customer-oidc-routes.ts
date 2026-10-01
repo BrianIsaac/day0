@@ -313,6 +313,24 @@ export async function callbackRoute(request: NextRequest): Promise<NextResponse>
   if (issuerError !== null) {
     const code = /^[A-Za-z0-9_.-]{1,64}$/.test(issuerError) ? issuerError : 'an unnamed error';
     log.info('customer sign-in refused by the issuer', { error: code });
+    if (transaction.check) {
+      // The live check waits for a report: an issuer's refusal (most often a test person not
+      // assigned to the app) is one, not ten minutes of silence.
+      const report: SignInCheckReport = {
+        version: 1,
+        checkId: transaction.check.id,
+        checkedAt: Date.now(),
+        verdicts: [],
+        whoAmI: {
+          status: 'gap',
+          detail: `The issuer refused the sign-in (${code}): the test person may not be assigned to the app.`,
+        },
+      };
+      await deliverReport(transaction.check.reportTo, report);
+      const page = checkPageResponse(report);
+      clearTransaction(page, settings);
+      return page;
+    }
     const response = signInPageResponse({
       status: 403,
       title: 'Your company sign-in did not let you in',
