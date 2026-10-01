@@ -5663,7 +5663,9 @@ describe('the autonomous-actions switch through the gate', (): void => {
 describe('work action surface enablement', (): void => {
   it('loads persisted surfaces and stores an awaiting-connection verdict', async (): Promise<void> => {
     useSurfaceMode('real');
-    const harness = convexTest(schema, allConvexModules()).withIdentity(managerIdentity());
+    const harness = convexTest(schema, allConvexModules()).withIdentity(
+      managerIdentity('owner', { email: 'manager@day0.local' }),
+    );
     const { workItemId } = await harness.run(
       async (
         ctx,

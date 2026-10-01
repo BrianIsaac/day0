@@ -104,7 +104,7 @@ describe('memoryProjection.forAgent', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedEmployee(harness);
     const { text, cut } = await harness
-      .withIdentity(managerIdentity())
+      .withIdentity(managerIdentity('owner', { email: 'sam@revops.example' }))
       .query(api.memoryProjection.forAgent, { agentId });
     expect(cut).toBe(false);
     expect(text).toContain('Charter 0.1, approved 26 Sep 2026: Own triage for tier-2 asks.');

@@ -49,7 +49,7 @@ vi.mock('../../src/lib/skill-sandbox', () => ({
 }));
 
 type Harness = TestConvex<typeof schema>;
-const OWNER = managerIdentity();
+const OWNER = managerIdentity('owner', { email: 'boss@example.com' });
 
 /** Mateo's rows as the rehearsal had them when the skill was approved. */
 async function seedApprovedSkill(harness: Harness): Promise<Id<'skills'>> {
