@@ -374,7 +374,7 @@ const completeMetrics: AgentMetrics = {
   autonomyChanges: 1,
   auditTrail: { complete: 11, total: 11, fraction: 1 },
   pilot: {
-    skillReuse: { runs: 0, reused: 0, rate: null },
+    skillReuse: { runs: 0, reused: 0, adopted: 0, rate: null },
     cycleTime: {
       ended: 0,
       medianToEndMs: null,

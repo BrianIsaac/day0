@@ -142,7 +142,7 @@ const oneEmployeeMetrics = {
   autonomyChanges: 1,
   auditTrail: { complete: 26, total: 26, fraction: 1 },
   pilot: {
-    skillReuse: { runs: 0, reused: 0, rate: null },
+    skillReuse: { runs: 0, reused: 0, adopted: 0, rate: null },
     cycleTime: {
       ended: 0,
       medianToEndMs: null,

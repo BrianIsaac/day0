@@ -702,6 +702,8 @@ export const TERMINAL_WORK_EVENTS: ReadonlySet<EventType> = new Set<EventType>([
 interface PilotTotals {
   runs: number;
   reused: number;
+  /** Of the reused runs, those of a skill adopted from another employee (A14). */
+  adopted: number;
   toEnd: number[];
   toCompletion: number[];
   answered: number;
@@ -718,6 +720,7 @@ function pilotTotals(
   const firstItemOfSkill = new Map<string, string>();
   const runs = new Set<string>();
   let reused = 0;
+  let adopted = 0;
   const standingEnd = new Map<string, number>();
   const firstCompletion = new Map<string, number>();
   const discoveredAt = new Map<string, number>();
@@ -734,12 +737,16 @@ function pilotTotals(
       const first = firstItemOfSkill.get(skillId);
       if (first === undefined) firstItemOfSkill.set(skillId, workItemId);
       // The item a skill was made for decides; a builtin, made for none,
-      // is reused from its second item on.
+      // is reused from its second item on. An adopted skill was first made
+      // for another employee's work, so every run of it is reuse (A14).
+      const fromAnother = payload?.skillAdopted === true;
       const reuse =
-        proposedFor !== undefined
+        fromAnother ||
+        (proposedFor !== undefined
           ? proposedFor !== workItemId
-          : (first ?? workItemId) !== workItemId;
+          : (first ?? workItemId) !== workItemId);
       if (reuse) reused += 1;
+      if (fromAnother) adopted += 1;
       continue;
     }
     if (isEventOf(event, 'work.discovered') && workItemId && !discoveredAt.has(workItemId)) {
@@ -779,6 +786,7 @@ function pilotTotals(
   return {
     runs: runs.size,
     reused,
+    adopted,
     toEnd: durations(standingEnd),
     toCompletion: durations(firstCompletion),
     answered,
@@ -794,6 +802,7 @@ function summarisePilot(totals: PilotTotals): PilotFigures {
     skillReuse: {
       runs: totals.runs,
       reused: totals.reused,
+      adopted: totals.adopted,
       rate: totals.runs > 0 ? totals.reused / totals.runs : null,
     },
     cycleTime: {
@@ -820,6 +829,7 @@ function pooledPilot(rows: readonly PilotTotals[]): PilotTotals {
   return {
     runs: rows.reduce((total, row) => total + row.runs, 0),
     reused: rows.reduce((total, row) => total + row.reused, 0),
+    adopted: rows.reduce((total, row) => total + row.adopted, 0),
     toEnd: rows.flatMap((row) => row.toEnd),
     toCompletion: rows.flatMap((row) => row.toCompletion),
     answered: rows.reduce((total, row) => total + row.answered, 0),

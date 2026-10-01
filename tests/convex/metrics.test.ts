@@ -269,7 +269,7 @@ describe('agent evaluation metrics', (): void => {
       // The ask is the rows' observedAt (1); the three items that ended did
       // so at 509 s, 620 s and 650 s, and only the last completed.
       pilot: {
-        skillReuse: { runs: 0, reused: 0, rate: null },
+        skillReuse: { runs: 0, reused: 0, adopted: 0, rate: null },
         cycleTime: {
           ended: 3,
           medianToEndMs: 619_999,
@@ -871,7 +871,7 @@ describe('supervision figures for a company of employees', (): void => {
       autonomyChanges: 1,
       auditTrail: { complete: 5, total: 6, fraction: 5 / 6 },
       pilot: {
-        skillReuse: { runs: 0, reused: 0, rate: null },
+        skillReuse: { runs: 0, reused: 0, adopted: 0, rate: null },
         cycleTime: {
           ended: 1,
           medianToEndMs: 122_999,
@@ -1689,7 +1689,43 @@ describe('the ledger walk and the pilot figures (step 29)', (): void => {
     expect(computeAgentMetrics(events, [], []).pilot.skillReuse).toEqual({
       runs: 2,
       reused: 1,
+      adopted: 0,
       rate: 0.5,
+    });
+  });
+
+  it('an adopted run counts as reuse and in the adopted split (A14, 10-A)', (): void => {
+    const events = [
+      // Priya's own skill on the item it was made for: a run, not reuse.
+      event(
+        'work.execution-claimed',
+        { workItemId: 'p1', skillId: 'sp', proposedFor: 'p1' },
+        1_000,
+      ),
+      // Mateo's adopted copy on the item it was proposed for, and on a second item: both reuse,
+      // since the skill was first made for Priya's work, and both adopted.
+      event(
+        'work.execution-claimed',
+        { workItemId: 'm1', skillId: 'sm', proposedFor: 'm1', skillAdopted: true },
+        2_000,
+      ),
+      event(
+        'work.execution-claimed',
+        { workItemId: 'm2', skillId: 'sm', proposedFor: 'm1', skillAdopted: true },
+        3_000,
+      ),
+      // A second claim of one run is still one run.
+      event(
+        'work.execution-claimed',
+        { workItemId: 'm2', skillId: 'sm', proposedFor: 'm1', skillAdopted: true },
+        4_000,
+      ),
+    ];
+    expect(computeAgentMetrics(events, [], []).pilot.skillReuse).toEqual({
+      runs: 3,
+      reused: 2,
+      adopted: 2,
+      rate: 2 / 3,
     });
   });
 
@@ -2011,7 +2047,7 @@ describe('the ledger walk and the pilot figures (step 29)', (): void => {
       item('e', { state: 'skipped' }),
     ];
     expect(computeAgentMetrics(events, items, []).pilot).toEqual({
-      skillReuse: { runs: 4, reused: 2, rate: 0.5 },
+      skillReuse: { runs: 4, reused: 2, adopted: 0, rate: 0.5 },
       cycleTime: {
         ended: 3,
         medianToEndMs: 6_000,

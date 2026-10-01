@@ -465,7 +465,7 @@ describe('the 17 September recording, as a tracked trace', (): void => {
       writes: 12,
     });
     expect(figures.company.pilot).toEqual({
-      skillReuse: { runs: 3, reused: 0, rate: 0 },
+      skillReuse: { runs: 3, reused: 0, adopted: 0, rate: 0 },
       // One item's stop was retried by the manager and it then completed, so
       // its end is the completion (review m36), not the stop.
       cycleTime: {
