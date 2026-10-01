@@ -905,6 +905,11 @@ describe('the jobs a reset leaves scheduled (step 47, P4-7)', (): void => {
 });
 
 describe('a retire or a deletion during a handover request (transfer plan 10.5)', (): void => {
+  afterEach((): void => {
+    vi.useRealTimers();
+    restoreSurfaceMode();
+  });
+
   /** The colleague the requests in this block name. */
   const COLLEAGUE_ADDRESS = 'colleague@day0.local';
 
@@ -937,8 +942,9 @@ describe('a retire or a deletion during a handover request (transfer plan 10.5)'
               fromAddress: MANAGER_ADDRESS,
               toAddress: COLLEAGUE_ADDRESS,
               state,
-              requestedAt: 1,
-              expiresAt: 1 + 14 * 24 * 60 * 60 * 1000,
+              // Asked now, so an asked request is still open when the test retires its employee.
+              requestedAt: Date.now(),
+              expiresAt: Date.now() + 14 * 24 * 60 * 60 * 1000,
               ...(state === 'accepting'
                 ? { decidedAt: 2, toOwnerKey: 'colleague', settleBy: 3 }
                 : {}),
@@ -968,6 +974,33 @@ describe('a retire or a deletion during a handover request (transfer plan 10.5)'
       cancelReason: 'retired',
       decidedAt: expect.any(Number),
     });
+    expect(await harness.run(async (ctx) => await ctx.db.get(agentId))).toBeNull();
+  });
+
+  it('cancels through the handover’s own cancel, writing its event into the record the retire counts', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const [{ agentId }] = await seedRequests(harness, ['asked']);
+
+    await harness.withIdentity(managerIdentity()).mutation(api.reset.retire, { agentId });
+
+    const [retirement] = await harness.run(
+      async (ctx) => await ctx.db.query('retirements').collect(),
+    );
+    expect(retirement?.rowCounts).toEqual({ events: 1 });
+  });
+
+  it('leaves an asked request past its expiry to the expiry sweep: an expired request is not cancelled', async (): Promise<void> => {
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.UTC(2026, 9, 1));
+    const harness = convexTest(schema, allConvexModules());
+    const [{ agentId, transferId }] = await seedRequests(harness, ['asked']);
+    vi.setSystemTime(Date.UTC(2026, 9, 16));
+
+    await harness.withIdentity(managerIdentity()).mutation(api.reset.retire, { agentId });
+
+    expect(await transferOf(harness, transferId)).toMatchObject({ state: 'asked' });
+    expect((await transferOf(harness, transferId))?.cancelReason).toBeUndefined();
     expect(await harness.run(async (ctx) => await ctx.db.get(agentId))).toBeNull();
   });
 

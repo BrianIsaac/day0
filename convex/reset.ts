@@ -5,6 +5,7 @@ import { mutation, query, type DatabaseReader, type MutationCtx } from './_gener
 import { assertOwnsAgent, getCallerOrThrow, ownedAgentOrNull } from './ownership';
 import { deleteOwnedDocumentation } from './docSources';
 import { purgeCredential, purgeOwnedCredentials } from './credentials';
+import { cancelTransferInTransaction } from './managerTransfers';
 import { credentialsBoundBy } from './surfaces';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { appendEvent } from './eventLog';
@@ -15,6 +16,7 @@ import {
   OPEN_MANAGER_TRANSFER_STATES,
   TRANSFER_SETTLE_MS,
   canMoveTransfer,
+  isTransferDue,
 } from '../src/agent/manager-transfer';
 
 /**
@@ -761,9 +763,11 @@ export function deleteDuringHandoverRefusal(name: string, toAddress: string): st
 /**
  * Close the open handover requests of employees about to be retired (the transfer plan, section
  * 10.5): an `asked` request is cancelled with the retire as its reason, in the retire's own
- * transaction; an `accepting` one refuses the whole retire, before anything is written, since
- * its acceptance is irrevocable. A request the owner is named in is not touched: its employee is
- * not the owner's until it moves.
+ * transaction, through the request's own cancel (`cancelTransferInTransaction`, which writes the
+ * `manager.transfer-cancelled` event); an `accepting` one refuses the whole retire, before
+ * anything is written, since its acceptance is irrevocable. An asked request past its expiry is
+ * no longer open and is left to the expiry sweep. A request the owner is named in is not
+ * touched: its employee is not the owner's until it moves.
  *
  * @param ctx - The retire's mutation context.
  * @param agents - The employees to retire.
@@ -796,11 +800,8 @@ async function closeOpenTransfers(
     throw new ConvexError(refusal(finishing.agent.name, finishing.transfer.toAddress));
   }
   for (const { transfer } of open) {
-    await ctx.db.patch(transfer._id, {
-      state: 'cancelled',
-      cancelReason: 'retired',
-      decidedAt: now,
-    });
+    if (isTransferDue(transfer, now)) continue;
+    await cancelTransferInTransaction(ctx, transfer, 'retired', now);
   }
 }
 
