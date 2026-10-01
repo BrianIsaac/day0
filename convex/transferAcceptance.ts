@@ -1028,12 +1028,39 @@ const settleOutcomeValidator = v.union(
 );
 
 /**
- * Settle a finishing handover (the transfer plan, section 6.4; D18): once no run of the employee
- * is executing, or once `settleBy` has passed, the runs that remain are stopped
- * (`stopRunsForHandover`, "the employee was handed over to a new manager") and the employee is
- * moved with the acceptor's choices kept on the row. Before that, it waits. A request no longer
- * `accepting` is left as it is, so a second settle does nothing; one whose move would be refused
- * is ended ({@link endUnmovable}).
+ * Settle a finishing handover in the caller's transaction (the transfer plan, section 6.4; D18):
+ * once no run of the employee is executing, or once `settleBy` has passed, the runs that remain
+ * are stopped (`stopRunsForHandover`, "the employee was handed over to a new manager") and the
+ * employee is moved with the acceptor's choices kept on the row. Before that, it waits. A request
+ * no longer `accepting` is left as it is, so a second settle does nothing; one whose move would
+ * be refused is ended ({@link endUnmovable}).
+ */
+async function settleInTransaction(
+  ctx: MutationCtx,
+  transferId: Id<'managerTransfers'>,
+  now: number,
+): Promise<Infer<typeof settleOutcomeValidator>> {
+  const transfer = await ctx.db.get(transferId);
+  if (transfer === null || transfer.state !== 'accepting') return 'not-accepting';
+  const { toOwnerKey } = transfer;
+  if (toOwnerKey === undefined) {
+    await endUnmovable(ctx, transfer, 'the accepted handover names no acceptor');
+    return 'ended';
+  }
+  const refusal = await moveRefusal(ctx, transfer, now);
+  if (refusal !== null) {
+    await endUnmovable(ctx, transfer, refusal);
+    return 'ended';
+  }
+  const due = transfer.settleBy === undefined || transfer.settleBy <= now;
+  if (!due && (await runsInFlight(ctx.db, transfer.agentId)) > 0) return 'waiting';
+  const runsStopped = await stopRunsForHandover(ctx, transfer.agentId);
+  await moveEmployeeInTransaction(ctx, { ...transfer, toOwnerKey }, { now, runsStopped });
+  return 'moved';
+}
+
+/**
+ * Settle a finishing handover ({@link settleInTransaction}).
  *
  * Internal; scheduled by every path out of a run (`convex/transferInFlight.ts`) and by
  * {@link settleDue}. Writes what the stop and the move write.
@@ -1043,36 +1070,42 @@ const settleOutcomeValidator = v.union(
 export const settle = internalMutation({
   args: { transferId: v.id('managerTransfers') },
   returns: settleOutcomeValidator,
-  handler: async (ctx, args): Promise<Infer<typeof settleOutcomeValidator>> => {
-    const transfer = await ctx.db.get(args.transferId);
-    if (transfer === null || transfer.state !== 'accepting') return 'not-accepting';
-    const now = Date.now();
-    const { toOwnerKey } = transfer;
-    if (toOwnerKey === undefined) {
-      await endUnmovable(ctx, transfer, 'the accepted handover names no acceptor');
-      return 'ended';
-    }
-    const refusal = await moveRefusal(ctx, transfer, now);
-    if (refusal !== null) {
-      await endUnmovable(ctx, transfer, refusal);
-      return 'ended';
-    }
-    const due = transfer.settleBy === undefined || transfer.settleBy <= now;
-    if (!due && (await runsInFlight(ctx.db, transfer.agentId)) > 0) return 'waiting';
-    const runsStopped = await stopRunsForHandover(ctx, transfer.agentId);
-    await moveEmployeeInTransaction(ctx, { ...transfer, toOwnerKey }, { now, runsStopped });
-    return 'moved';
-  },
+  handler: async (ctx, args): Promise<Infer<typeof settleOutcomeValidator>> =>
+    await settleInTransaction(ctx, args.transferId, Date.now()),
 });
 
 /** The most finishing requests one sweep reads, the soonest deadline first. */
 const SETTLE_SWEEP_LIMIT = 50;
 
 /**
- * The settle's sweep (the cron's, every minute): each `accepting` request past its `settleBy`, or
- * with no run left executing, is settled in a transaction of its own. The second case is the
- * backstop for a run that ended by a path that asked for no settle (a resumed run returned to its
- * approved plan, an interrupted apply), so no request waits past a minute once its runs are over.
+ * The finishing requests a sweep settles: each past its `settleBy`, and each whose runs have all
+ * ended. Read soonest deadline first, so a request past its deadline is never behind one that is
+ * not; the second case is the backstop for a run that ended while the settle it asked for could
+ * not run (a crons pause holds the sweep, not the settle), so a request whose runs are over waits
+ * at most until the sweep reaches it, and never past its own deadline.
+ */
+async function finishingToSettle(
+  db: QueryCtx['db'],
+  now: number,
+): Promise<Doc<'managerTransfers'>[]> {
+  const finishing = await db
+    .query('managerTransfers')
+    .withIndex('by_state_settle', (q) => q.eq('state', 'accepting'))
+    .take(SETTLE_SWEEP_LIMIT);
+  const settling = await Promise.all(
+    finishing.map(
+      async (transfer) =>
+        transfer.settleBy === undefined ||
+        transfer.settleBy <= now ||
+        (await runsInFlight(db, transfer.agentId)) === 0,
+    ),
+  );
+  return finishing.filter((_, index) => settling[index]);
+}
+
+/**
+ * The settle's sweep (the cron's, every minute): each request {@link finishingToSettle} finds is
+ * settled in a transaction of its own.
  *
  * Internal; the cron's. Writes nothing itself; schedules {@link settle}.
  *
@@ -1082,21 +1115,13 @@ export const settleDue = internalMutation({
   args: {},
   returns: v.object({ scheduled: v.number() }),
   handler: async (ctx): Promise<{ scheduled: number }> => {
-    const now = Date.now();
-    const finishing = await ctx.db
-      .query('managerTransfers')
-      .withIndex('by_state_settle', (q) => q.eq('state', 'accepting'))
-      .take(SETTLE_SWEEP_LIMIT);
-    let scheduled = 0;
+    const finishing = await finishingToSettle(ctx.db, Date.now());
     for (const transfer of finishing) {
-      const due = transfer.settleBy === undefined || transfer.settleBy <= now;
-      if (!due && (await runsInFlight(ctx.db, transfer.agentId)) > 0) continue;
       await ctx.scheduler.runAfter(0, internal.transferAcceptance.settle, {
         transferId: transfer._id,
       });
-      scheduled += 1;
     }
-    return { scheduled };
+    return { scheduled: finishing.length };
   },
 });
 

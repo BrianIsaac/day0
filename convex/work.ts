@@ -6709,16 +6709,20 @@ export const noticeUnreadableReply = internalMutation({
 });
 
 /**
- * The effective verdicts of a surface that waits on its manager to approve or connect it: the
- * states a connection ends, as opposed to a connection that lapsed (`listed-dead`) or a system
- * that is gone (`absent`), which the gate refuses as before.
+ * Whether a surface with each effective verdict waits on its manager to approve or connect it:
+ * the states a connection ends, as opposed to a connection that lapsed (`listed-dead`) or a system
+ * that is gone (`absent`), which the gate refuses as before. Keyed over every verdict, so one the
+ * type gains does not compile until it is placed.
  */
-const AWAITING_CONNECTION_VERDICTS: ReadonlySet<ReturnType<typeof verdictFor>> = new Set([
-  'declared',
-  'proposed',
-  'approved',
-  'ungranted',
-]);
+const AWAITING_CONNECTION_VERDICTS: Readonly<Record<ReturnType<typeof verdictFor>, boolean>> = {
+  declared: true,
+  proposed: true,
+  approved: true,
+  ungranted: true,
+  connected: false,
+  'listed-dead': false,
+  absent: false,
+};
 
 /**
  * The surface an approved write would go through that waits for its connection, if any: the
@@ -6748,7 +6752,7 @@ async function surfaceAwaitingConnection(
     if (!parsed.ok) continue;
     const surface = surfaces.find((candidate) => candidate.slug === parsed.action.surface);
     if (surface === undefined || accessEnded(surface, now)) continue;
-    if (AWAITING_CONNECTION_VERDICTS.has(verdictFor(toSurfaceRecord(surface), now))) {
+    if (AWAITING_CONNECTION_VERDICTS[verdictFor(toSurfaceRecord(surface), now)]) {
       return surface.slug;
     }
   }
