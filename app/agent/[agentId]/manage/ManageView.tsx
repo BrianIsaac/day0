@@ -118,7 +118,8 @@ export function ManageView() {
             <p className={COPY}>
               {real
                 ? `Ends ${agent.name}'s employment now. Day0 deletes its copy of any credential only ${agent.name} uses and its working rows at once, and keeps one record so the audit export can say it existed.`
-                : `Removes ${agent.name} and everything it made in the hosted office. Nothing is kept.`}
+                : // What a retire keeps (the handover requests that name it) the dialog counts.
+                  `Removes ${agent.name} and everything it made in the hosted office.`}
             </p>
           )}
           <Button
