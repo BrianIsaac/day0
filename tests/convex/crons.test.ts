@@ -115,6 +115,42 @@ async function runCron(harness: Harness, label: string): Promise<unknown> {
   return await harness.action(makeFunctionReference<'action'>(cron.name), cron.args[0] ?? {});
 }
 
+describe('the handover expiry sweep', (): void => {
+  afterEach((): void => {
+    vi.useRealTimers();
+  });
+
+  it('runs every fifteen minutes behind the one gate', (): void => {
+    expect(crons.crons['expire unanswered handovers']).toMatchObject({
+      name: 'crons:runScheduledJob',
+      args: [{ job: 'managerTransfers:expireDue' }],
+      schedule: { type: 'interval', minutes: 15 },
+    });
+  });
+
+  it('expires an unanswered handover past its fourteen days', async (): Promise<void> => {
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.UTC(2026, 9, 20));
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness, false);
+    const transferId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('managerTransfers', {
+          agentId,
+          agentName: 'Priya',
+          fromOwnerKey: 'owner',
+          fromAddress: MANAGER_ADDRESS,
+          toAddress: 'sam@day0.local',
+          state: 'asked',
+          requestedAt: Date.UTC(2026, 9, 1),
+          expiresAt: Date.UTC(2026, 9, 15),
+        }),
+    );
+    await expect(runCron(harness, 'expire unanswered handovers')).resolves.toEqual({ expired: 1 });
+    expect((await harness.run(async (ctx) => await ctx.db.get(transferId)))?.state).toBe('expired');
+  });
+});
+
 describe('the stalled-step sweep', (): void => {
   afterEach((): void => {
     vi.useRealTimers();
@@ -509,7 +545,7 @@ describe('the crons pause switch', (): void => {
 
   it('puts every scheduled job behind the one gate, the voice sweep included', (): void => {
     const jobs = Object.values(crons.crons);
-    expect(jobs).toHaveLength(7);
+    expect(jobs).toHaveLength(8);
     for (const job of jobs) expect(job.name).toBe('crons:runScheduledJob');
     expect(crons.crons['recover stalled voice finalisations']).toMatchObject({
       args: [{ job: 'voice:sweepStalledFinalisations' }],
@@ -555,7 +591,7 @@ describe('the crons pause switch', (): void => {
       ([line]) => JSON.parse(String(line)) as Record<string, unknown>,
     );
     printed.mockRestore();
-    expect(lines).toHaveLength(7);
+    expect(lines).toHaveLength(8);
     expect(lines[0]).toMatchObject({
       msg: 'scheduled job skipped: crons paused',
       reason: 'upgrade to 0.9.0',

@@ -37,6 +37,8 @@ const SCHEDULED_JOBS = {
     await ctx.runAction(intakeInternal.intakeActions.pollDecisions, {}),
   'managerChannelActions:sendManagerDigests': async (ctx: ActionCtx): Promise<unknown> =>
     await ctx.runAction(internal.managerChannelActions.sendManagerDigests, {}),
+  'managerTransfers:expireDue': async (ctx: ActionCtx): Promise<unknown> =>
+    await ctx.runMutation(internal.managerTransfers.expireDue, {}),
 } as const;
 
 /** A job `runScheduledJob` knows, named by the function it runs. */
@@ -111,6 +113,13 @@ crons.interval('poll manager decision replies', { seconds: 60 }, gate, {
 // at the next run.
 crons.cron('send manager digests', DIGEST_SCHEDULE, gate, {
   job: 'managerChannelActions:sendManagerDigests',
+});
+
+// A handover unanswered for fourteen days expires (D4); a quarter hour is the
+// most an expired request waits for the sweep, and every reader already
+// treats it as expired from its expiry on.
+crons.interval('expire unanswered handovers', { minutes: 15 }, gate, {
+  job: 'managerTransfers:expireDue',
 });
 
 export default crons;
