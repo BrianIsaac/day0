@@ -998,9 +998,10 @@ export const accept = mutation({
  * employee stays its old manager's, and the request is `cancelled`, the one final state that says
  * so. Its acceptance's stamp is kept as it was written (nothing writes `decidedAt` again), and
  * since the company figures cut only at an accepting or accepted request, the old manager's
- * figures run on unbroken. `TRANSFER_MOVES` (`src/agent/manager-transfer.ts`) names no way out of
- * `accepting` but the move, so this one write steps outside it; the cockpit has the patch that
- * names it there.
+ * figures run on unbroken. `TRANSFER_MOVES` (`src/agent/manager-transfer.ts`) keeps `accepting`
+ * to `accepted` alone, so no caller can cancel an acceptance (the owner's cancel and the retire
+ * both read it); this one write, the settle's own and never a caller's, steps outside the table
+ * on purpose.
  */
 async function endUnmovable(
   ctx: MutationCtx,
