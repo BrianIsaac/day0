@@ -163,3 +163,15 @@ describe('the rollback the cloud verbs print, as the README describes it (F, C1)
     );
   });
 });
+
+describe('the manager address the setup writes, as the README describes it (9-U5)', (): void => {
+  it('says a later address is taken on with Make it you, never that it cannot be corrected', (): void => {
+    const { english, chinese } = halves();
+    expect(english).not.toContain('cannot be corrected on a live agent');
+    expect(chinese).not.toContain('无法在已运行的 Agent 上更正');
+    expect(english).toContain(
+      "your local sign-in carries it, and real mode finds your Slack DM from it; set later, each employee's People tab offers Make it you",
+    );
+    expect(chinese).toContain('之后再设置的话，每个员工的 People 标签页都提供 Make it you');
+  });
+});
