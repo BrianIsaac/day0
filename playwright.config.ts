@@ -8,7 +8,27 @@ import { defineConfig } from '@playwright/test';
  *
  * Output goes under `.next/`, which the build owns and git ignores.
  */
-const PORT = 3100;
+/** The port the gate's server listens on when the environment names none. */
+const DEFAULT_PORT = 3100;
+
+/**
+ * The port for this run: `PLAYWRIGHT_PORT` when set, so two checkouts can run
+ * the job side by side, else {@link DEFAULT_PORT}. A value that is not a port
+ * is refused rather than read as a different one.
+ *
+ * @throws Error when `PLAYWRIGHT_PORT` is set to anything but an integer from 1 to 65535.
+ */
+function serverPort(): number {
+  const given = process.env.PLAYWRIGHT_PORT;
+  if (given === undefined || given === '') return DEFAULT_PORT;
+  const port = /^\d+$/.test(given) ? Number(given) : Number.NaN;
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new Error(`PLAYWRIGHT_PORT must be a port from 1 to 65535, not ${JSON.stringify(given)}`);
+  }
+  return port;
+}
+
+const PORT = serverPort();
 
 export default defineConfig({
   testDir: 'tests/browser',
