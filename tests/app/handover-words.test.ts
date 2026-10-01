@@ -22,7 +22,7 @@ import {
   zonedStamp,
 } from '../../app/handover-words';
 import { LOCAL_DEV_TRANSFER_REFUSAL } from '../../convex/managerTransfers';
-import type { TransferPreview } from '../../convex/transferAcceptance';
+import type { TransferPreview } from '../../convex/transferPreview';
 
 /** 1 October 2026, 09:00 UTC. */
 const ASKED = Date.UTC(2026, 9, 1, 9, 0);
