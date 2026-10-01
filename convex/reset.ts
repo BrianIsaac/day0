@@ -12,6 +12,7 @@ import { appendEvent } from './eventLog';
 import { ownerRetirements, type RetiredClaim, type RetiredRejection } from './retirements';
 import { internal } from './_generated/api';
 import { landedWritesOf } from '../src/work/landed-writes';
+import { providerReconciliationEntries } from '../src/work/reconciliation';
 import {
   OPEN_MANAGER_TRANSFER_STATES,
   TRANSFER_SETTLE_MS,
@@ -304,13 +305,19 @@ const WRITING_HOLDER_STATES: ReadonlySet<Doc<'workItems'>['state']> = new Set([
 ]);
 
 /**
- * Whether a leaving employee's item may have written its provider item.
+ * Whether a leaving employee's item may have written its provider item: it is writing or wrote,
+ * or it failed with a landed write, or with a write whose outcome is unknown (an apply stopped
+ * part way, by the dead-man switch or a handover's deadline), which may have landed.
  *
  * @param item - The holding work item.
  */
 function mayHaveWritten(item: Doc<'workItems'>): boolean {
   if (WRITING_HOLDER_STATES.has(item.state)) return true;
-  return item.state === 'failed' && landedWritesOf(item.output).length > 0;
+  if (item.state !== 'failed') return false;
+  return (
+    landedWritesOf(item.output).length > 0 ||
+    providerReconciliationEntries(item.output).some((entry) => entry.outcome === 'outcome-unknown')
+  );
 }
 
 /** The longest item title a kept claim carries, for the holder's name in a refusal. */

@@ -6,6 +6,7 @@ import type schema from '../../convex/schema';
 import { EMPLOYEE_LEFT_ASKER, SOURCE_NOT_YOURS } from '../../convex/transferAcceptance';
 import { transferStateRefusal } from '../../convex/managerTransfers';
 import { HANDOVER_CUT_REASON } from '../../convex/surfaces';
+import { OUTCOME_UNKNOWN_REASON } from '../../src/work/reconciliation';
 import { EMPLOYEE_NOT_YOURS } from '../../src/agent/employee-access';
 import {
   NOT_NAMED_IN_TRANSFER,
@@ -951,6 +952,42 @@ describe('claims and the departure boundary at a move (14.1 item 4)', (): void =
     expect((await read(office.harness, office.transferId))?.outcome).toMatchObject({
       claimsMoved: 0,
       claimsReleased: 1,
+    });
+  });
+
+  it('keeps the claim of a stopped item whose write’s outcome is unknown, as one that may have written (M4)', async (): Promise<void> => {
+    const office = await seedOffice();
+    const claim = await office.harness.run(async (ctx) => {
+      const stopped = await ctx.db.insert('workItems', {
+        ...workItemFields(office.maya, 'REVOPS-12'),
+        state: 'failed',
+        output: {
+          actions: [{ tool: 'linear.save_comment', args: { issueId: 'REVOPS-12', body: 'Done.' } }],
+          applied: [
+            {
+              tool: 'linear.save_comment',
+              ok: false,
+              outcomeUnknown: true,
+              reason: OUTCOME_UNKNOWN_REASON,
+            },
+          ],
+        },
+      });
+      return await ctx.db.insert('externalClaims', {
+        userId: 'owner',
+        key: 'linear:REVOPS-12',
+        agentId: office.maya,
+        workItemId: stopped,
+        claimedAt: 1,
+      });
+    });
+
+    await acceptAsColleague(office);
+
+    const kept = await office.harness.run(async (ctx) => await ctx.db.get(claim));
+    expect(kept?.releasedAt).toBeUndefined();
+    expect((await read(office.harness, office.transferId))?.outcome).toMatchObject({
+      claimsReleased: 0,
     });
   });
 
