@@ -394,25 +394,6 @@ export async function transferPreviewOf(
   };
 }
 
-/**
- * What accepting a handover would bring and leave, for the acceptance dialog
- * ({@link transferPreviewOf}). A request is not a grant of read access (section 4.4).
- *
- * Public, for the account the request names only (`assertNamedInTransfer`); writes nothing.
- *
- * @returns The preview, or null when the request is no longer waiting for an answer.
- * @throws ConvexError with the guard's words for any other caller.
- */
-export const transferPreview = query({
-  args: { transferId: v.id('managerTransfers') },
-  returns: v.union(v.null(), transferPreviewValidator),
-  handler: async (ctx, args): Promise<TransferPreview | null> => {
-    const { transfer, caller } = await assertNamedInTransfer(ctx, args.transferId);
-    if (transfer.state !== 'asked') return null;
-    return await transferPreviewOf(ctx, transfer, caller.ownerKey);
-  },
-});
-
 /** What happened to the employee's live claims at the move. */
 interface MovedClaims {
   readonly moved: number;
@@ -821,5 +802,26 @@ export const moveEmployee = internalMutation({
       throw new Error(`accepting handover ${transfer._id} has no acceptor`);
     }
     return await moveEmployeeInTransaction(ctx, { ...transfer, toOwnerKey }, Date.now());
+  },
+});
+
+// The module's last definition: the decryption-reach scan reads a public query's source up to
+// the next export (tests/convex/credentialCryptoActions.test.ts), and the move above revokes.
+/**
+ * What accepting a handover would bring and leave, for the acceptance dialog
+ * ({@link transferPreviewOf}). A request is not a grant of read access (section 4.4).
+ *
+ * Public, for the account the request names only (`assertNamedInTransfer`); writes nothing.
+ *
+ * @returns The preview, or null when the request is no longer waiting for an answer.
+ * @throws ConvexError with the guard's words for any other caller.
+ */
+export const transferPreview = query({
+  args: { transferId: v.id('managerTransfers') },
+  returns: v.union(v.null(), transferPreviewValidator),
+  handler: async (ctx, args): Promise<TransferPreview | null> => {
+    const { transfer, caller } = await assertNamedInTransfer(ctx, args.transferId);
+    if (transfer.state !== 'asked') return null;
+    return await transferPreviewOf(ctx, transfer, caller.ownerKey);
   },
 });
