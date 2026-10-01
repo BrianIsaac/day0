@@ -82,6 +82,17 @@ describe('namedPeople', () => {
 });
 
 describe('provenanceLine', () => {
+  it('names the earlier manager who approved the version, never "you" (the second pass, item 4)', () => {
+    const approvedAt = Date.UTC(2026, 8, 26, 14, 23);
+    expect(
+      provenanceLine(
+        { ...APPROVED_CHARTER, approvedAt } as Doc<'charters'>,
+        'UTC',
+        'sam@kestrel.example',
+      ),
+    ).toBe('Named in charter version 0.1, approved by sam@kestrel.example 26 Sep 2026, 14:23.');
+  });
+
   it('says which charter version names them, and whether and when it was approved', () => {
     const approvedAt = Date.UTC(2026, 8, 26, 14, 23);
     expect(provenanceLine({ ...APPROVED_CHARTER, approvedAt } as Doc<'charters'>, 'UTC')).toBe(
@@ -185,6 +196,15 @@ describe('PeopleView', () => {
     expect(html).toContain('Priya');
     expect(html).toContain(' · segment and pipeline · reaches out directly');
     expect(html).toContain('Named in charter version 0.1, approved by you.');
+    backend.queries['managerTransfers:earlierManagers'] = [
+      { fromAddress: 'sam@kestrel.example', decidedAt: 5_000 },
+    ];
+    const carried = renderToStaticMarkup(
+      asEmployee(<PeopleView />, { charter: { ...charter, approvedAt: 1_000 } }),
+    );
+    // Approved before a handover by the manager who handed it over (the second pass, item 4).
+    expect(carried).toContain('approved by sam@kestrel.example');
+    expect(carried).not.toContain('approved by you');
     // An amendment can add a person, so the line never claims the one-to-one named them.
     expect(html).not.toContain('From your one-to-one');
     expect(html).toContain('does not propose people for you to confirm yet');
