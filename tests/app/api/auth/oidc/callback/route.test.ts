@@ -221,6 +221,9 @@ describe('the callback in check mode (pnpm check:sign-in)', (): void => {
       expect(page).toContain(`<th scope="row">${claim}</th>`);
     }
     expect(page).toContain('https://issuer.acme.test|fake-oidc|priya');
+    // Seen on the bed: claim names and the Verdict heading broke mid-word; only values and reasons wrap.
+    expect(page).toContain('th,td.verdict{white-space:nowrap}');
+    expect(page).toContain('td.value,td.why{overflow-wrap:anywhere}');
     expect(reports).toHaveLength(1);
     expect(reports[0]).toMatchObject({
       checkId: 'check-1',

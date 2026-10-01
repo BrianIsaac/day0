@@ -661,8 +661,9 @@ export function checkPageResponse(report: SignInCheckReport): NextResponse {
   const rows = report.verdicts
     .map(
       (one) =>
-        `<tr><th scope="row">${escapeHtml(one.claim)}</th><td>${escapeHtml(one.value)}</td>` +
-        `<td class="${one.status}">${VERDICT_WORD[one.status]}</td><td>${escapeHtml(one.note)}</td></tr>`,
+        `<tr><th scope="row">${escapeHtml(one.claim)}</th><td class="value">${escapeHtml(one.value)}</td>` +
+        `<td class="verdict ${one.status}">${VERDICT_WORD[one.status]}</td>` +
+        `<td class="why">${escapeHtml(one.note)}</td></tr>`,
     )
     .join('');
   const whoAmI =
@@ -677,7 +678,8 @@ export function checkPageResponse(report: SignInCheckReport): NextResponse {
     'main{max-width:60rem;margin:0 auto;padding:2rem 1rem;display:grid;gap:1rem}' +
     'h1{font-size:1.125rem;margin:0}p{margin:0;color:#a1a1aa}.table{overflow-x:auto}' +
     'table{border-collapse:collapse;width:100%;min-width:36rem}' +
-    'th,td{text-align:left;vertical-align:top;padding:.5rem;border-bottom:1px solid #27272a;overflow-wrap:anywhere}' +
+    'th,td{text-align:left;vertical-align:top;padding:.5rem;border-bottom:1px solid #27272a}' +
+    'th,td.verdict{white-space:nowrap}td.value,td.why{overflow-wrap:anywhere}' +
     'thead th{color:#a1a1aa;font-weight:500}.ok{color:#34d399}.warn{color:#f59e0b}.gap{color:#ef4444}' +
     '.brand{color:#22d3ee;font-size:.75rem;font-weight:500;letter-spacing:.2em;text-transform:uppercase}' +
     'code{font-size:.8125rem}.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;' +
