@@ -224,6 +224,10 @@ describe('the callback in check mode (pnpm check:sign-in)', (): void => {
     // Seen on the bed: claim names and the Verdict heading broke mid-word; only values and reasons wrap.
     expect(page).toContain('th,td.verdict{white-space:nowrap}');
     expect(page).toContain('td.value,td.why{overflow-wrap:anywhere}');
+    // At 390 the table scrolls inside its box, which a keyboard must be able to reach (N14).
+    expect(page).toContain(
+      '<div class="table" tabindex="0" role="region" aria-label="Each claim and its verdict">',
+    );
     expect(reports).toHaveLength(1);
     expect(reports[0]).toMatchObject({
       checkId: 'check-1',

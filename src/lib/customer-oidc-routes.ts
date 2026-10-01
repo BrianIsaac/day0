@@ -686,7 +686,8 @@ export function checkPageResponse(report: SignInCheckReport): NextResponse {
     'clip-path:inset(50%);white-space:nowrap}</style></head><body><main id="main">' +
     '<p class="brand" aria-hidden="true">Day0</p><h1>Sign-in check</h1>' +
     '<p>This sign-in was a check: nobody was signed in. The terminal that printed the link shows the same lines.</p>' +
-    '<div class="table"><table><caption class="sr-only">' +
+    '<div class="table" tabindex="0" role="region" aria-label="Each claim and its verdict">' +
+    '<table><caption class="sr-only">' +
     'Each claim of the ID token, with its verdict</caption>' +
     '<thead><tr><th scope="col">Claim</th><th scope="col">Value</th><th scope="col">Verdict</th>' +
     `<th scope="col">Why</th></tr></thead><tbody>${rows}</tbody></table></div>${whoAmI}` +
