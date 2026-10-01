@@ -15,11 +15,25 @@ afterEach((): void => {
 });
 
 describe('public surface configuration', (): void => {
-  it('returns only the mock mode and its public label', async (): Promise<void> => {
+  afterEach((): void => {
+    vi.unstubAllEnvs();
+  });
+
+  it('returns only the mock mode, its public label and the deployment profile', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
+    vi.stubEnv('DAY0_PROFILE', '');
     await expect(harness.query(api.config.surfaceMode, {})).resolves.toEqual({
       mode: 'mock',
       label: 'mock',
+      deploymentProfile: 'local-dev',
+    });
+  });
+
+  it('names the customer-local profile, so People can say which installation it is', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    vi.stubEnv('DAY0_PROFILE', 'customer-local');
+    await expect(harness.query(api.config.surfaceMode, {})).resolves.toMatchObject({
+      deploymentProfile: 'customer-local',
     });
   });
 });
