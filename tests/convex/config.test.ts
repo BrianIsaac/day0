@@ -3,6 +3,7 @@ import { convexTest } from 'convex-test';
 import { api } from '../../convex/_generated/api';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
+import { managerIdentity } from './fakes/manager-identity';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 // The mode is set here, never read from the shell that runs the suite (P11-1).
@@ -141,6 +142,63 @@ describe('the release the deployment is stamped at', (): void => {
     await expect(harness.query(api.config.release, {})).resolves.toEqual({
       release: '0.8.0',
       since: 2,
+    });
+  });
+});
+
+describe('config.whoAmI, the live sign-in check', (): void => {
+  const CUSTOMER = 'https://issuer.acme.test';
+
+  afterEach((): void => {
+    vi.unstubAllEnvs();
+  });
+
+  it('answers an anonymous caller with null', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await expect(harness.query(api.config.whoAmI, {})).resolves.toBeNull();
+  });
+
+  it('tells a caller its own owner key, issuer, subject and verified address, and nothing else', async (): Promise<void> => {
+    vi.stubEnv('DAY0_OIDC_ISSUER', CUSTOMER);
+    vi.stubEnv('DAY0_OIDC_AUDIENCE', 'day0-app');
+    vi.stubEnv('DAY0_OIDC_ALLOWED_DOMAINS', 'acme.test');
+    const harness = convexTest(schema, allConvexModules());
+    const priya = harness.withIdentity(
+      managerIdentity('fake-oidc|priya', { issuer: CUSTOMER, email: 'Priya@Acme.test' }),
+    );
+    await expect(priya.query(api.config.whoAmI, {})).resolves.toEqual({
+      ownerKey: `${CUSTOMER}|fake-oidc|priya`,
+      issuer: CUSTOMER,
+      subject: 'fake-oidc|priya',
+      verifiedAddress: 'priya@acme.test',
+    });
+  });
+
+  it('answers a caller the domain rule refuses with null, as every guarded function would', async (): Promise<void> => {
+    vi.stubEnv('DAY0_OIDC_ISSUER', CUSTOMER);
+    vi.stubEnv('DAY0_OIDC_AUDIENCE', 'day0-app');
+    vi.stubEnv('DAY0_OIDC_ALLOWED_DOMAINS', 'acme.test');
+    const harness = convexTest(schema, allConvexModules());
+    const eve = harness.withIdentity(
+      managerIdentity('fake-oidc|eve', { issuer: CUSTOMER, email: 'eve@rival.test' }),
+    );
+    await expect(eve.query(api.config.whoAmI, {})).resolves.toBeNull();
+  });
+
+  it('says when the address is not verified', async (): Promise<void> => {
+    vi.stubEnv('DAY0_OIDC_ISSUER', CUSTOMER);
+    vi.stubEnv('DAY0_OIDC_AUDIENCE', 'day0-app');
+    vi.stubEnv('DAY0_OIDC_ALLOWED_DOMAINS', 'acme.test');
+    const harness = convexTest(schema, allConvexModules());
+    const nora = harness.withIdentity(
+      managerIdentity('fake-oidc|nora', {
+        issuer: CUSTOMER,
+        email: 'nora@acme.test',
+        emailVerified: undefined,
+      }),
+    );
+    await expect(nora.query(api.config.whoAmI, {})).resolves.toMatchObject({
+      verifiedAddress: null,
     });
   });
 });
