@@ -5,6 +5,7 @@ import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import {
   AGENT_KEYED_TABLES,
+  OWNER_LIBRARY_TABLES,
   RETIRE_RECORD_TABLES,
   deleteDuringHandoverRefusal,
   retireDuringHandoverRefusal,
@@ -1101,5 +1102,105 @@ describe('a retire or a deletion during a handover request (transfer plan 10.5)'
     ).resolves.toMatchObject({ deleted: 0 });
 
     expect(await transferOf(harness, transferId)).toMatchObject({ state: 'accepting' });
+  });
+});
+
+describe('the skill library at a retire and a deletion (10-K)', (): void => {
+  /** Two employees of one owner, the first the author of a version the second also holds. */
+  async function seedLibrary(harness: TestConvex<typeof schema>): Promise<{
+    author: Id<'agents'>;
+    holder: Id<'agents'>;
+    versionId: Id<'skillVersions'>;
+    held: Id<'skills'>;
+  }> {
+    return await harness.run(async (ctx) => {
+      const employee = async (name: string): Promise<Id<'agents'>> =>
+        await ctx.db.insert('agents', {
+          bossEmail: MANAGER_ADDRESS,
+          name,
+          userId: 'owner',
+          state: 'active',
+          createdAt: 1,
+        });
+      const author = await employee('Priya');
+      const holder = await employee('Mateo');
+      const versionId = await ctx.db.insert('skillVersions', {
+        userId: 'owner',
+        name: 'kanban-comment-and-close',
+        description: 'Ticket comment-and-close.',
+        surfaceClass: 'kanban',
+        operation: 'comment-and-close',
+        version: 1,
+        body: '# Comment and close',
+        smokeTest: 'CASES = []',
+        bodyHash: 'sha256:00',
+        requiredScopes: [],
+        harnessTools: [],
+        authorAgentId: author,
+        authorName: 'Priya',
+        readRefs: [],
+        verifiedAt: 1,
+        createdAt: 1,
+      });
+      const holding = {
+        name: 'kanban-comment-and-close',
+        description: 'Ticket comment-and-close.',
+        body: '# Comment and close',
+        sourceType: 'agent-authored' as const,
+        state: 'registered' as const,
+        versionId,
+        createdAt: 1,
+      };
+      await ctx.db.insert('skills', { ...holding, agentId: author });
+      const held = await ctx.db.insert('skills', { ...holding, agentId: holder, adoptedAt: 2 });
+      return { author, holder, versionId, held };
+    });
+  }
+
+  it("an employee's retire keeps the owner's versions and clears their author", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { author, versionId, held } = await seedLibrary(harness);
+
+    await harness.withIdentity(managerIdentity()).mutation(api.reset.retire, { agentId: author });
+
+    const version = await harness.run(async (ctx) => await ctx.db.get(versionId));
+    expect(version).not.toBeNull();
+    expect(version?.authorAgentId).toBeUndefined();
+    expect(version?.authorName).toBe('Priya');
+    // The other holder keeps running the version.
+    expect(await harness.run(async (ctx) => await ctx.db.get(held))).toMatchObject({
+      state: 'registered',
+      versionId,
+    });
+  });
+
+  it("the whole-owner deletion deletes the owner's library and no other owner's", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await seedLibrary(harness);
+    const theirs = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('skillVersions', {
+          userId: 'rival',
+          name: 'kanban-comment-and-close',
+          description: 'Ticket comment-and-close.',
+          surfaceClass: 'kanban',
+          operation: 'comment-and-close',
+          version: 1,
+          body: '# Theirs',
+          bodyHash: 'sha256:01',
+          requiredScopes: [],
+          harnessTools: [],
+          authorName: 'Tomas',
+          readRefs: [],
+          verifiedAt: 1,
+          createdAt: 1,
+        }),
+    );
+
+    await harness.withIdentity(managerIdentity()).mutation(api.reset.deleteMyData, {});
+
+    expect([...OWNER_LIBRARY_TABLES]).toEqual(['skillVersions']);
+    const left = await harness.run(async (ctx) => await ctx.db.query('skillVersions').collect());
+    expect(left.map((version) => version._id)).toEqual([theirs]);
   });
 });
