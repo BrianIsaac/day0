@@ -120,6 +120,48 @@ describe.skipIf(!hasHostTool('bash'))('sync-convex-env.sh (needs bash)', (): voi
     expect(dropped.deployment).not.toContain('DAY0_OIDC_EMAIL_TRUSTED=true');
   });
 
+  it('puts the allowed domains on the deployment with the issuer and clears a stale list, never the two secrets or the browser copy', (): void => {
+    const local = [
+      'DAY0_PROFILE=customer-local',
+      'NEXT_PUBLIC_DAY0_PROFILE=customer-local',
+      'DAY0_OIDC_AUDIENCE=day0',
+      'DAY0_OIDC_ISSUER=https://sso.example.com/realms/ops',
+      'DAY0_OIDC_ALLOWED_DOMAINS=acme.test,acme.co.uk',
+      'DAY0_OIDC_CLIENT_SECRET=day0-test-client-secret',
+      `DAY0_SESSION_SECRET=${'s'.repeat(43)}`,
+      '',
+    ].join('\n');
+    const pushed = runSync([], local);
+    expect(pushed.status).toBe(0);
+    expect(pushed.calls).toContain(
+      'convex env set DAY0_OIDC_ALLOWED_DOMAINS -- acme.test,acme.co.uk',
+    );
+    expect(
+      pushed.calls.findIndex((call) =>
+        call.startsWith('convex env set DAY0_OIDC_ALLOWED_DOMAINS '),
+      ),
+    ).toBeLessThan(
+      pushed.calls.findIndex((call) => call.startsWith('convex env set DAY0_OIDC_ISSUER ')),
+    );
+    for (const secret of [
+      'DAY0_OIDC_CLIENT_SECRET',
+      'DAY0_SESSION_SECRET',
+      'NEXT_PUBLIC_DAY0_PROFILE',
+    ]) {
+      expect(pushed.calls.join('\n'), secret).not.toContain(secret);
+    }
+
+    const dropped = runSync(
+      [
+        'DAY0_OIDC_ALLOWED_DOMAINS=acme.test',
+        'DAY0_OIDC_ISSUER=https://sso.example.com/realms/ops',
+      ],
+      'DAY0_SURFACE_MODE=mock\n',
+    );
+    expect(dropped.calls).toContain('convex env remove DAY0_OIDC_ALLOWED_DOMAINS');
+    expect(dropped.deployment).not.toContain('DAY0_OIDC_ALLOWED_DOMAINS=acme.test');
+  });
+
   it('clears the retired credential names a deployment still carries', (): void => {
     const { status, calls } = runSync(
       [
