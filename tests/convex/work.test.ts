@@ -7504,3 +7504,54 @@ describe('work while its employee is handed over (transfer plan 6.4, D18)', (): 
     expect(stopped.executionRunId).toBeUndefined();
   });
 });
+
+describe('an approved write whose surface waits for its connection (U-3)', (): void => {
+  /** Seed a held comment through Linear, approved, with the surface in the given verdict. */
+  async function approvedOn(
+    harness: Harness,
+    surface: Partial<Doc<'surfaces'>>,
+  ): Promise<Id<'workItems'>> {
+    const { agentId, workItemId, runId } = await seed(harness, 'actions-pending');
+    await harness.run(async (ctx) => {
+      const linear = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId).eq('slug', 'linear'))
+        .first();
+      if (linear === null) throw new Error('linear surface missing');
+      await ctx.db.patch(linear._id, surface);
+      await ctx.db.patch(workItemId, {
+        output: pendingOutput,
+        pendingRunId: runId,
+        actionVerdicts: pendingOutput.actions.map(() => ({ disposition: 'held' as const })),
+        approvedIndexes: [0],
+        applyPhase: 'approved',
+      });
+    });
+    return workItemId;
+  }
+
+  it('parks the set on the connection with the evaluator’s own verdict, sending nothing', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const workItemId = await approvedOn(harness, { verdict: 'proposed' });
+
+    await expect(
+      harness.mutation(internal.work.claimApprovedActions, { workItemId }),
+    ).resolves.toEqual({ claimed: false, reason: 'parked until linear is connected' });
+
+    const parked = await readItem(harness, workItemId);
+    expect(parked).toMatchObject({
+      state: 'deferred',
+      verdict: { decision: 'defer', reason: 'awaiting-connection', missingSurface: 'linear' },
+    });
+    expect(parked.approvedIndexes).toBeUndefined();
+  });
+
+  it('leaves a lapsed connection to the gate, as before', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const workItemId = await approvedOn(harness, { lastVerifiedAt: 1 });
+
+    await expect(
+      harness.mutation(internal.work.claimApprovedActions, { workItemId }),
+    ).resolves.toMatchObject({ claimed: true });
+  });
+});

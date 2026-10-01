@@ -51,6 +51,7 @@ import {
   HELD_NOT_APPROVED,
   HELD_WRITE,
   isAuditComment,
+  isSurfaceTool,
   normaliseActionVerdict,
   parseSurfaceAction,
   reviewActions,
@@ -6696,6 +6697,94 @@ export const noticeUnreadableReply = internalMutation({
 });
 
 /**
+ * The effective verdicts of a surface that waits on its manager to approve or connect it: the
+ * states a connection ends, as opposed to a connection that lapsed (`listed-dead`) or a system
+ * that is gone (`absent`), which the gate refuses as before.
+ */
+const AWAITING_CONNECTION_VERDICTS: ReadonlySet<ReturnType<typeof verdictFor>> = new Set([
+  'declared',
+  'proposed',
+  'approved',
+  'ungranted',
+]);
+
+/**
+ * The surface an approved write would go through that waits for its connection, if any: the
+ * first approved row naming a surface of the employee's whose access has not ended and whose
+ * effective verdict is one a connection ends ({@link AWAITING_CONNECTION_VERDICTS}).
+ *
+ * @param db - The claim's reader.
+ * @param row - The work item, its set approved by the manager.
+ * @param now - The claim's time.
+ * @returns The surface's slug, or undefined when every approved write's surface is connected,
+ *   ended or unknown (the gate decides those).
+ */
+async function surfaceAwaitingConnection(
+  db: QueryCtx['db'],
+  row: Doc<'workItems'>,
+  now: number,
+): Promise<string | undefined> {
+  const actions = actionsOf(row.output) as MockAction[];
+  const surfaces = await db
+    .query('surfaces')
+    .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
+    .collect();
+  for (const index of row.approvedIndexes ?? []) {
+    const action = actions[index];
+    if (action === undefined || !isSurfaceTool(action.tool)) continue;
+    const parsed = parseSurfaceAction(action);
+    if (!parsed.ok) continue;
+    const surface = surfaces.find((candidate) => candidate.slug === parsed.action.surface);
+    if (surface === undefined || accessEnded(surface, now)) continue;
+    if (AWAITING_CONNECTION_VERDICTS.has(verdictFor(toSurfaceRecord(surface), now))) {
+      return surface.slug;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Park an approved set on the connection its write needs (U-3 of the transfer plan): the item is
+ * `deferred` with the evaluator's own verdict (`awaiting-connection` and the `missingSurface`),
+ * so connecting the surface returns it to evaluation (`requeueDeferredWork`); nothing was sent,
+ * and the approval goes with the set, since the run is planned again from the item.
+ *
+ * @param ctx - The apply claim's mutation context.
+ * @param row - The work item, `actions-pending` with its set approved.
+ * @param missingSurface - The surface the write waits on.
+ */
+async function parkOnConnection(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+  missingSurface: string,
+): Promise<void> {
+  const verdict = {
+    decision: 'defer' as const,
+    reason: 'awaiting-connection' as const,
+    missingSurface,
+  };
+  await ctx.db.patch(row._id, {
+    state: 'deferred',
+    verdict,
+    pendingRunId: undefined,
+    approvedIndexes: undefined,
+    actionVerdicts: undefined,
+    applyPhase: undefined,
+    executionRunId: undefined,
+    applyAttemptId: undefined,
+    applyClaimedAt: undefined,
+    decision: undefined,
+  });
+  await appendEvent(ctx, {
+    agentId: row.agentId,
+    type: 'work.evaluated',
+    payload: { workItemId: row._id, decision: verdict.decision, verdict },
+    createdAt: Date.now(),
+  });
+  await scheduleNextStep(ctx, { ...row, state: 'deferred' });
+}
+
+/**
  * Take the approved actions for application, exactly once.
  *
  * The apply action is scheduled by `setActionsPending` (the auto phase) and
@@ -6744,6 +6833,16 @@ export const claimApprovedActions = internalMutation({
     // executing, which the move waits for.
     if (!autoPhase && (await isBeingHandedOver(ctx.db, row.agentId))) {
       return { claimed: false, reason: HANDOVER_IN_PROGRESS_REASON };
+    }
+    // An approved write on a surface that waits for its connection (one a handover cut, for
+    // one) parks on it rather than meeting the gate's refusal: connecting it returns the item
+    // (U-3). The auto phase's rows were judged connected at the hold, so the gate keeps them.
+    const missingSurface = autoPhase
+      ? undefined
+      : await surfaceAwaitingConnection(ctx.db, row, Date.now());
+    if (missingSurface !== undefined) {
+      await parkOnConnection(ctx, row, missingSurface);
+      return { claimed: false, reason: `parked until ${missingSurface} is connected` };
     }
     // A missing agent row is the apply action's failure to report (it fences
     // the run as outcome-unknown); the claim only needs the switch's value.

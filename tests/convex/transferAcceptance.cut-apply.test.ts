@@ -208,26 +208,64 @@ describe('an approved write on a surface the handover cut (U-3)', (): void => {
     return convexTest(realSchema, realModules());
   }
 
-  it('sends nothing through the cut connection and refuses the write at the gate', async (): Promise<void> => {
+  it('sends nothing through the cut connection: the apply never starts', async (): Promise<void> => {
     const harness = await realHarness();
 
     const row = await approveAfterTheMove(harness);
 
     expect(recorded.mcp.filter((call) => call.tool === 'save_comment')).toEqual([]);
-    const ledger = (row.output as { applied: AppliedAction[] }).applied;
-    expect(ledger).toMatchObject([{ ok: false, reason: 'surface not connected (proposed)' }]);
+    expect((row.output as { applied?: AppliedAction[] }).applied).toBeUndefined();
   });
 
-  it.fails(
-    // until the approval or the apply's start parks it (convex/work.ts, recorded for the cockpit in the 9-U3a handover): today the gate fails the item
-    'parks the approved write on its connection until the new manager connects it',
-    async (): Promise<void> => {
-      const harness = await realHarness();
+  it('parks the approved write on its connection until the new manager connects it', async (): Promise<void> => {
+    const harness = await realHarness();
 
-      const row = await approveAfterTheMove(harness);
+    const row = await approveAfterTheMove(harness);
 
-      expect(row.state).toBe('deferred');
-      expect(row.verdict).toMatchObject({ reason: 'awaiting-connection' });
-    },
-  );
+    expect(row.state).toBe('deferred');
+    expect(row.verdict).toEqual({
+      decision: 'defer',
+      reason: 'awaiting-connection',
+      missingSurface: 'linear',
+    });
+    expect(row.approvedIndexes).toBeUndefined();
+    expect(row.pendingRunId).toBeUndefined();
+  });
+
+  it('returns the parked write to evaluation when the new manager connects the surface', async (): Promise<void> => {
+    const harness = await realHarness();
+    const row = await approveAfterTheMove(harness);
+    const linear = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('surfaces')
+          .withIndex('by_agent_slug', (q) => q.eq('agentId', row.agentId).eq('slug', 'linear'))
+          .first(),
+    );
+    if (linear === null) throw new Error('linear surface missing');
+    // The new manager approved the connection and landed a credential of their own; the probe
+    // that follows lands here.
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(linear._id, {
+        verdict: 'approved',
+        credentialLanded: true,
+        probeGeneration: 7,
+      });
+    });
+
+    await harness.mutation(internal.surfaces.recordConnected, {
+      surfaceId: linear._id,
+      generation: 7,
+      toolAllowlist: ['get_issue', 'save_comment'],
+      toolArguments: [
+        { tool: 'get_issue', arguments: ['id'] },
+        { tool: 'save_comment', arguments: ['issueId', 'body'] },
+      ],
+      verifiedAt: Date.now(),
+    });
+
+    const returned = await harness.run(async (ctx) => await ctx.db.get(row._id));
+    expect(returned?.state).toBe('discovered');
+    expect(returned?.verdict).toBeUndefined();
+  });
 });
