@@ -13,6 +13,8 @@ import { SegmentBoundary } from '../../fixtures/dom/segment-boundary';
 const backend = vi.hoisted(() => ({
   /** What a query answers, by function name; an `Error` is thrown in render as `useQuery` does. */
   queries: {} as Record<string, unknown>,
+  /** Every query asked through `useQueries`, by function name, with its arguments. */
+  asked: [] as Array<{ name: string; args: unknown }>,
 }));
 
 vi.mock('convex/react', () => ({
@@ -22,6 +24,15 @@ vi.mock('convex/react', () => ({
     if (answer instanceof Error) throw answer;
     return answer;
   },
+  // `useQueries` answers a refused read as a value, never a throw.
+  useQueries: (queries: Record<string, { query: unknown; args: unknown }>) =>
+    Object.fromEntries(
+      Object.entries(queries).map(([key, { query, args }]) => {
+        const name = getFunctionName(query as never);
+        backend.asked.push({ name, args });
+        return [key, backend.queries[name]];
+      }),
+    ),
   useMutation: (): (() => Promise<void>) => async (): Promise<void> => undefined,
   useAction: (): (() => Promise<void>) => async (): Promise<void> => undefined,
 }));
@@ -29,6 +40,7 @@ vi.mock('convex/react', () => ({
 vi.mock('next/navigation', () => ({
   useSelectedLayoutSegment: (): null => null,
   useRouter: () => ({ replace: (): void => undefined }),
+  useParams: (): { agentId: string } => ({ agentId: 'agent-1' }),
 }));
 
 /** Every read of the employee's the backend refuses the way it refuses this caller. */
@@ -62,6 +74,7 @@ describe('the employee route with an id that names no employee of the caller', (
 
   afterEach((): void => {
     backend.queries = {};
+    backend.asked = [];
     vi.restoreAllMocks();
     document.body.replaceChildren();
   });
@@ -83,12 +96,57 @@ describe('the employee route with an id that names no employee of the caller', (
     backend.queries = {
       ...refusedWith(new ConvexError(EMPLOYEE_NOT_YOURS)),
       'config:surfaceMode': { mode: 'mock' },
+      'managerTransfers:departureOf': null,
     };
     const view = mount(route());
     await settle();
     expect(view.container.querySelector('h1')?.textContent).toBe('No such employee');
     expect(view.container.textContent).toContain('this link is for an employee that is not yours');
     view.unmount();
+  });
+
+  it('says where an employee the caller handed over went, in place of "not yours" (the transfer plan, 7.4)', async (): Promise<void> => {
+    backend.queries = {
+      ...refusedWith(new ConvexError(EMPLOYEE_NOT_YOURS)),
+      'config:surfaceMode': { mode: 'mock' },
+      'managerTransfers:departureOf': {
+        transferId: 'transfer-1',
+        agentName: 'Maya',
+        toAddress: 'lead@kestrel.example',
+        decidedAt: Date.UTC(2026, 9, 2, 11),
+      },
+    };
+    const view = mount(route());
+    await settle();
+    const heading = view.container.querySelector('h1');
+    expect(heading?.textContent).toBe('Maya was handed over');
+    expect(document.activeElement).toBe(heading);
+    expect(view.container.textContent).toContain(
+      'Maya reports to lead@kestrel.example since 2 Oct 2026, 11:00, UTC time. Its record went with it; your record of the handover is on your home.',
+    );
+    expect(view.container.textContent).not.toContain('not yours');
+    expect(view.container.querySelector('a')?.getAttribute('href')).toBe('/');
+    expect(backend.asked).toContainEqual({
+      name: 'managerTransfers:departureOf',
+      args: { agentId: 'agent-1' },
+    });
+    view.unmount();
+  });
+
+  it('says it is loading while it asks where the employee went, then "not yours" when it was not handed over', async (): Promise<void> => {
+    backend.queries = {
+      ...refusedWith(new ConvexError(EMPLOYEE_NOT_YOURS)),
+      'config:surfaceMode': { mode: 'mock' },
+    };
+    const view = mount(route());
+    await settle();
+    expect(view.container.textContent).toContain('loading employee');
+    view.unmount();
+    backend.queries['managerTransfers:departureOf'] = new Error('ArgumentValidationError');
+    const refused = mount(route());
+    await settle();
+    expect(refused.container.querySelector('h1')?.textContent).toBe('No such employee');
+    refused.unmount();
   });
 
   it('offers the read again for any other throw, and draws the page once it answers', async (): Promise<void> => {
