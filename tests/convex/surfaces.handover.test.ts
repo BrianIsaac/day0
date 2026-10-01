@@ -9,6 +9,7 @@ import {
   handOverSurfaces,
   surfaceHandoversOf,
 } from '../../convex/surfaces';
+import { LINEAR_MCP_ENDPOINT } from '../../src/surfaces/fixed-endpoints';
 import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS } from './fakes/manager-identity';
 
@@ -120,15 +121,15 @@ describe('handOverSurfaces: the cut at a handover (transfer plan 6.3)', (): void
         agentId,
         slug: 'linear',
         path: 'mcp',
-        endpoint: 'https://acme-fin.mcp.linear.app/mcp',
+        endpoint: LINEAR_MCP_ENDPOINT,
         pathCandidates: [
-          { path: 'mcp', endpoint: 'https://acme-fin.mcp.linear.app/mcp' },
+          { path: 'mcp', endpoint: LINEAR_MCP_ENDPOINT },
           { path: 'documented-api', endpoint: 'https://acme-fin.linear.app/api' },
         ],
         probeAttempts: [
           {
             path: 'mcp',
-            endpoint: 'https://acme-fin.mcp.linear.app/mcp',
+            endpoint: LINEAR_MCP_ENDPOINT,
             outcome: 'ungranted',
             reason: 'credential not in the docs; ask Priya Nair for the vault Finance Ops',
             attemptedAt: 3,
@@ -171,7 +172,7 @@ describe('handOverSurfaces: the cut at a handover (transfer plan 6.3)', (): void
             system: 'Linear',
             chosenPath: 'mcp',
             reasoning: 'Documentation states journals over $50k need Tom Reyes (CFO).',
-            ladder: [{ path: 'mcp', endpoint: 'https://acme-fin.mcp.linear.app/mcp' }],
+            ladder: [{ path: 'mcp', endpoint: LINEAR_MCP_ENDPOINT }],
           },
           evidence: [{ sourceId: String(handbook), ref: 'linear.md', quote: 'Use the token.' }],
           openQuestions: ['Tom Reyes signs journals over $50k; confirm before approving.'],
@@ -227,8 +228,19 @@ describe('handOverSurfaces: the cut at a handover (transfer plan 6.3)', (): void
         displayName: 'Notion',
         class: 'docs',
         verdict: 'proposed',
+        reason: 'Rejected once: Priya Nair says not this quarter.',
         path: 'mcp',
-        endpoint: 'https://mcp.notion.com/mcp',
+        endpoint: 'https://acme-fin.notion.site/mcp',
+        pathCandidates: [{ path: 'mcp', endpoint: 'https://acme-fin.notion.site/mcp' }],
+        intakeScope: {
+          project: {
+            value: 'Finance Ops',
+            sourceId: handbook,
+            ref: 'notion.md',
+            quote: 'Finance Ops',
+          },
+          notes: ['Priya Nair keeps the Finance Ops wiki'],
+        },
         credentialLocation:
           'the Notion API key lives in the 1Password vault Finance Ops, ask Priya Nair',
         discoveryEvidence: [documentation],
@@ -266,14 +278,15 @@ describe('handOverSurfaces: the cut at a handover (transfer plan 6.3)', (): void
     const row = await harness.run(async (ctx) => await ctx.db.get(linear));
     expect(row).toMatchObject({
       verdict: 'proposed',
-      reason: HANDOVER_CUT_REPROPOSE_REASON,
+      reason: HANDOVER_CUT_REASON,
       credentialLanded: false,
       probeGeneration: 8,
       path: 'mcp',
+      // The address Day0 fixes itself stays, with only its own rung of the ladder.
+      endpoint: LINEAR_MCP_ENDPOINT,
+      pathCandidates: [{ path: 'mcp', endpoint: LINEAR_MCP_ENDPOINT }],
     });
     for (const field of [
-      'endpoint',
-      'pathCandidates',
       'probeAttempts',
       'credentialId',
       'credentialKind',
@@ -311,9 +324,9 @@ describe('handOverSurfaces: the cut at a handover (transfer plan 6.3)', (): void
     expect(cut?.whereFound).toEqual([
       { ref: 'manager 1:1', quote: 'Linear is where the queue lives.' },
     ]);
+    // The scope's notes were drafted from the departed pages, so they go with them.
     expect(cut?.intakeScope).toEqual({
       channels: [{ value: '#deals', ref: 'manager', quote: 'Watch #deals too.' }],
-      notes: ['picked at orientation'],
     });
     expect(cut?.request).toEqual({
       target: { system: 'Linear', chosenPath: 'mcp' },
@@ -329,14 +342,51 @@ describe('handOverSurfaces: the cut at a handover (transfer plan 6.3)', (): void
     expect(carried?.discoveryEvidence).toBeUndefined();
   });
 
-  it("clears a cut card's probe history and the route its old owner's documentation gave", async (): Promise<void> => {
-    const { harness, agentId, linear } = await seed();
+  it("clears a cut card's probe history and the documented address its old owner's pages gave", async (): Promise<void> => {
+    const { harness, agentId } = await seed();
+    const salesforce = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('surfaces', {
+          ...SURFACE_BASE,
+          agentId,
+          slug: 'salesforce',
+          displayName: 'Salesforce',
+          class: 'crm',
+          verdict: 'approved',
+          managerApprovedAt: 2,
+          path: 'documented-api',
+          endpoint: 'https://acme-fin.my.salesforce.com/services/data/',
+          pathCandidates: [
+            {
+              path: 'documented-api',
+              endpoint: 'https://acme-fin.my.salesforce.com/services/data/',
+            },
+          ],
+          probeAttempts: [
+            {
+              path: 'documented-api',
+              outcome: 'ungranted',
+              reason: 'credential not in the docs; ask Priya Nair for the vault Finance Ops',
+              attemptedAt: 3,
+            },
+          ],
+          request: {
+            target: {
+              system: 'Salesforce',
+              chosenPath: 'documented-api',
+              reasoning: 'Documentation states journals over $50k need Tom Reyes (CFO).',
+            },
+            evidence: [{ sourceId: 'gone-source', ref: 'crm.md', quote: 'Use the REST API.' }],
+          },
+        }),
+    );
 
     await harness.run(
       async (ctx) => await handOverSurfaces(ctx, { agentId, toOwnerKey: 'colleague', now: 50 }),
     );
 
-    const row = await harness.run(async (ctx) => await ctx.db.get(linear));
+    const row = await harness.run(async (ctx) => await ctx.db.get(salesforce));
+    expect(row).toMatchObject({ verdict: 'proposed', reason: HANDOVER_CUT_REPROPOSE_REASON });
     expect(row?.probeAttempts).toBeUndefined();
     expect(row?.endpoint).toBeUndefined();
     expect(row?.pathCandidates).toBeUndefined();
@@ -370,6 +420,10 @@ describe('handOverSurfaces: the cut at a handover (transfer plan 6.3)', (): void
 
     const row = await harness.run(async (ctx) => await ctx.db.get(notion));
     expect(row?.credentialLocation).toBeUndefined();
+    expect(row?.reason).toBeUndefined();
+    expect(row?.endpoint).toBeUndefined();
+    expect(row?.pathCandidates).toBeUndefined();
+    expect(row?.intakeScope).toEqual({});
     expect(row?.request).toEqual({
       target: { system: 'Notion', chosenPath: 'mcp' },
       evidence: [],

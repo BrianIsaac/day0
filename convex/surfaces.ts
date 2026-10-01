@@ -45,7 +45,7 @@ import { agentZone, expiryNoticeDay, expiryNoticeDue } from '../src/lib/zone';
 import { SURFACE_ACCESS_DEFAULT_DAYS, SURFACE_ACCESS_MAX_DAYS } from '../src/surfaces/access';
 import { surfaceHandoverOf, type SurfaceHandover } from '../src/surfaces/handover';
 import { assertCredentialOfOwner, credentialOwnerRefusal } from './handoverFence';
-import { isSlackApiEndpoint } from '../src/surfaces/slack-endpoint';
+import { isDay0FixedEndpoint } from '../src/surfaces/fixed-endpoints';
 import { log } from '../src/lib/logger';
 
 const MAX_LADDER_PATHS = 3;
@@ -763,7 +763,14 @@ export const propose = internalMutation({
   },
 });
 
-/** Record that documentation explicitly provides no approved surface. */
+/**
+ * Record that documentation explicitly provides no approved surface.
+ *
+ * Internal, the orientation's. Writes nothing, and answers false, for a card no longer
+ * `declared`, and for quotes of documentation the employee's current owner does not hold
+ * ({@link proposalOwnerRefusal}): an orientation still running when a handover moved the
+ * employee read the old owner's pages.
+ */
 export const markAbsent = internalMutation({
   args: {
     surfaceId: v.id('surfaces'),
@@ -774,6 +781,17 @@ export const markAbsent = internalMutation({
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) throw new Error('Surface not found.');
     if (surface.verdict !== 'declared') return false;
+    const refusal = await proposalOwnerRefusal(ctx.db, surface.agentId, {
+      request: undefined,
+      whereFound: args.whereFound,
+    });
+    if (refusal !== null) {
+      log.warn('surface absence refused: the employee changed owner during its orientation', {
+        surfaceId: surface._id,
+        reason: refusal,
+      });
+      return false;
+    }
     await ctx.db.patch(args.surfaceId, {
       verdict: 'absent',
       whereFound: args.whereFound,
@@ -2707,6 +2725,8 @@ function withoutDepartedQuotes(
       entry.kind === 'charter' || (entry.sourceId !== undefined && readable.has(entry.sourceId)),
   );
   const scope = surface.intakeScope;
+  // The scope's notes are the model's words about the pages it read; they go when any did.
+  const departed = [...quotedSourceIds([surface])].some((sourceId) => !readable.has(sourceId));
   return {
     discoveryEvidence: evidence.length > 0 ? evidence : undefined,
     whereFound: surface.whereFound.filter(kept),
@@ -2715,7 +2735,7 @@ function withoutDepartedQuotes(
       ...(scope.project && kept(scope.project) ? { project: scope.project } : {}),
       ...(scope.projects ? { projects: scope.projects.filter(kept) } : {}),
       ...(scope.channels ? { channels: scope.channels.filter(kept) } : {}),
-      ...(scope.notes ? { notes: scope.notes } : {}),
+      ...(scope.notes && !departed ? { notes: scope.notes } : {}),
     },
     request: requestWithoutDepartedQuotes(surface.request, kept),
   };
@@ -2796,21 +2816,24 @@ function withoutDraftedProse(drafted: Readonly<Record<string, unknown>>): Record
 }
 
 /**
- * The route a cut card keeps (the wave 9 review's section 3): a documented address is the old
- * owner's documentation, a tenant's host among it, so the endpoint and the ladder go with the
- * quotes. Slack's own Web API base is the one address Day0 fixes itself (`isSlackApiEndpoint`):
- * the same for every workspace, it is nobody's documentation, and the new manager's chat card
- * reconnects on it, which re-sends the decisions still open (the transfer plan, section 6.4).
+ * The route a handed-over card keeps (the wave 9 review's section 3): a documented address is
+ * the old owner's documentation, a tenant's host among it, so the endpoint and the ladder go with
+ * the quotes. An address Day0 fixes itself (`isDay0FixedEndpoint`: Slack's Web API base, the
+ * Linear MCP server) is the same for every workspace and nobody's documentation, so it stays: the
+ * new manager's chat card reconnects on it, which re-sends the decisions still open (the transfer
+ * plan, section 6.4), and intake reads Linear only there.
  *
- * @param surface - The surface before the cut.
+ * @param surface - The surface before the move.
  */
-function routeAfterCut(
+function routeAfterHandover(
   surface: Doc<'surfaces'>,
 ): Pick<Doc<'surfaces'>, 'endpoint' | 'pathCandidates'> {
-  if (!isSlackApiEndpoint(surface.endpoint)) {
+  if (!isDay0FixedEndpoint(surface.endpoint)) {
     return { endpoint: undefined, pathCandidates: undefined };
   }
-  const ladder = (surface.pathCandidates ?? []).filter((rung) => isSlackApiEndpoint(rung.endpoint));
+  const ladder = (surface.pathCandidates ?? []).filter((rung) =>
+    isDay0FixedEndpoint(rung.endpoint),
+  );
   return { endpoint: surface.endpoint, pathCandidates: ladder.length > 0 ? ladder : undefined };
 }
 
@@ -2834,13 +2857,13 @@ function requestWithoutLadder(request: unknown): unknown {
  * The fields a cut clears: the credential, the provider's identities, the old manager's chat
  * binding and decision poll, the approval with the tools and the access clock it set, any probe
  * in flight with its generation, the probe attempts (their reasons quote the old manager's
- * address and the old owner's pages), and the documented route ({@link routeAfterCut}). The path
+ * address and the old owner's pages), and the documented route ({@link routeAfterHandover}). The path
  * stays; a card whose address went says so, since approving it as it stands connects nowhere.
  *
  * @param surface - The surface before the cut.
  */
 function cutPatch(surface: Doc<'surfaces'>): Partial<Doc<'surfaces'>> {
-  const route = routeAfterCut(surface);
+  const route = routeAfterHandover(surface);
   const addressWent = surface.endpoint !== undefined && route.endpoint === undefined;
   return {
     verdict: 'proposed',
@@ -2950,15 +2973,23 @@ export async function handOverSurfaces(
   for (const { surface, handover } of planned) {
     const quotes = withoutDepartedQuotes(surface, readable);
     switch (handover) {
-      case 'carry':
+      case 'carry': {
         // The credential's documented location is the old owner's page text, up to 500
-        // characters of it; a carried card was never probed, so its attempts are empty or stale.
+        // characters of it; a carried card was never probed, so its attempts are empty or stale;
+        // its reason is the old manager's rejection or an orientation's words, save an absent
+        // system's, which names only what was searched for.
+        const route = routeAfterHandover(surface);
         await ctx.db.patch(surface._id, {
           ...quotes,
+          ...route,
+          request:
+            route.endpoint === undefined ? requestWithoutLadder(quotes.request) : quotes.request,
           credentialLocation: undefined,
           probeAttempts: undefined,
+          ...(surface.verdict === 'absent' ? {} : { reason: undefined }),
         });
         break;
+      }
       case 'cut': {
         const patch = cutPatch(surface);
         await ctx.db.patch(surface._id, {

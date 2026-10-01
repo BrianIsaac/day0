@@ -167,6 +167,25 @@ describe("surfaces.propose: an orientation in flight at a handover (the wave 9 r
   });
 });
 
+describe('surfaces.markAbsent: an orientation in flight at a handover (M5)', (): void => {
+  it("records no absence quoting documentation the employee's owner does not hold", async (): Promise<void> => {
+    const { harness, declared, oldOwnersSource } = await seedMoved();
+    const before = await readSurface(harness, declared);
+
+    await expect(
+      harness.mutation(internal.surfaces.markAbsent, {
+        surfaceId: declared,
+        searched: ['Linear', 'kanban'],
+        whereFound: [
+          { sourceId: String(oldOwnersSource), ref: 'tools.md', quote: 'We do not use Linear.' },
+        ],
+      }),
+    ).resolves.toBe(false);
+
+    expect(await readSurface(harness, declared)).toEqual(before);
+  });
+});
+
 describe('the three credential writers after a handover (M5)', (): void => {
   it("attachCredential refuses the old owner's credential and attaches nothing", async (): Promise<void> => {
     const { harness, slack, oldOwners } = await seedMoved();
