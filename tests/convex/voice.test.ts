@@ -302,6 +302,22 @@ describe('the one-to-ones at a handover’s move (endOneToOnesForHandover)', ():
     expect(session?.changeRequests).toBeUndefined();
   });
 
+  it("drops a finished session's webhook token and its provider conversation id at the move (second pass)", async (): Promise<void> => {
+    const { harness, agentId, sessionId } = await failedSession();
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(sessionId, {
+        state: 'done',
+        webhookToken: 'old-manager-webhook-token',
+        elevenLabsConversationId: 'conv-old-manager',
+      });
+    });
+
+    await endAtHandover(harness, agentId, false);
+    const session = await harness.run(async (ctx) => await ctx.db.get(sessionId));
+    expect(session?.webhookToken).toBeUndefined();
+    expect(session?.elevenLabsConversationId).toBeUndefined();
+  });
+
   it('opens a new session for the next one-to-one over a failed one', async (): Promise<void> => {
     const { harness, agentId, sessionId } = await failedSession();
     await endAtHandover(harness, agentId, false);

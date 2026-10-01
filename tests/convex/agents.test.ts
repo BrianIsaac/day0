@@ -19,6 +19,7 @@ import { runtimeCycleThrough } from '../fixtures/import-graph';
 import { MAX_FINALISATION_RECOVERIES } from '../../src/agent/one-to-one-phase';
 import { UNVERIFIED_FOR_DEPLOY } from '../../src/agent/manager-address';
 import { EMPLOYEE_NAME_TOO_LONG } from '../../src/agent/employee-name';
+import { AVATAR_ID_TOO_LONG } from '../../src/agent/avatar-pets';
 import {
   EVALUATION_ADDRESS_FIXED,
   UNVERIFIED_FOR_ADOPTION,
@@ -161,6 +162,24 @@ describe("agents.deploy and the employee's name", (): void => {
   it('counts the name by character, as the one-to-one prompt does, so 80 emoji are a name', async (): Promise<void> => {
     await expect(deployedName('\u{1F431}'.repeat(80))).resolves.toBe('\u{1F431}'.repeat(80));
     await expect(deployedName(` ${'M'.repeat(80)}\n`)).resolves.toBe('M'.repeat(80));
+  });
+
+  it('stores the default name for one of only hidden characters, never an empty one', async (): Promise<void> => {
+    await expect(deployedName('\u200B\u2060 \uFEFF')).resolves.toBe('Day0');
+  });
+
+  it('refuses an avatar id past 64 characters, which the employee row would carry into every inbox read', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await expect(
+      harness
+        .withIdentity(managerIdentity())
+        .mutation(api.agents.deploy, { name: 'Maya', avatarId: 'f'.repeat(900_000) }),
+    ).rejects.toMatchObject({ data: AVATAR_ID_TOO_LONG });
+    await expect(
+      harness
+        .withIdentity(managerIdentity())
+        .mutation(api.agents.deploy, { name: 'Maya', avatarId: 'face-07' }),
+    ).resolves.toBeDefined();
   });
 
   it('stores the name trimmed to one line, without control, bidirectional or zero-width characters', async (): Promise<void> => {

@@ -22,6 +22,12 @@ export const SINGAPORE_AI_BUILDER_AVATARS: readonly AgentAvatarPet[] = Array.fro
   (_, index): AgentAvatarPet => face(index + 1),
 );
 
+/** The longest avatar id a deploy stores: a face's id, never a document's worth of text. */
+export const AVATAR_ID_MAX_CHARS = 64;
+
+/** Said when a deploy names an avatar id past {@link AVATAR_ID_MAX_CHARS}. */
+export const AVATAR_ID_TOO_LONG = `An avatar id can be at most ${AVATAR_ID_MAX_CHARS} characters.`;
+
 /** The face a new agent starts with. */
 export const DEFAULT_AGENT_AVATAR = SINGAPORE_AI_BUILDER_AVATARS[0]!;
 

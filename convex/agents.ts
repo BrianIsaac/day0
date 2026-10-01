@@ -46,6 +46,8 @@ import {
   type ManagerStanding,
 } from '../src/agent/manager-standing';
 import { evaluationBedName, evaluationBedRefusal } from '../src/evaluation/bed-flag';
+import { AVATAR_ID_MAX_CHARS, AVATAR_ID_TOO_LONG } from '../src/agent/avatar-pets';
+import { characterCount } from '../src/lib/visible-text';
 import {
   clippedEmployeeName,
   EMPLOYEE_NAME_TOO_LONG,
@@ -541,7 +543,8 @@ function deployAddress(caller: Caller, args: DeployAddressArgs): string {
 function deployName(name: string | undefined): string {
   if (name === undefined) return 'Day0';
   if (!isEmployeeNameWithinBound(name)) throw new ConvexError(EMPLOYEE_NAME_TOO_LONG);
-  return visibleEmployeeName(name);
+  // A name of nothing visible names no one: the default, as with no name given.
+  return visibleEmployeeName(name) || 'Day0';
 }
 
 /**
@@ -566,6 +569,11 @@ export const deploy = mutation({
   handler: async (ctx, args): Promise<Id<'agents'>> => {
     const identity = await getCallerOrThrow(ctx);
     const name = deployName(args.name);
+    // The row is read whole wherever the employee is named (the inbox of a handover's named
+    // account among them), so nothing on it is left unbounded (the wave 9 review's B2).
+    if (args.avatarId !== undefined && characterCount(args.avatarId) > AVATAR_ID_MAX_CHARS) {
+      throw new ConvexError(AVATAR_ID_TOO_LONG);
+    }
     const arm = args.arm ?? 'day0';
     const bossEmail = deployAddress(identity, {
       evaluationAddress: args.evaluationAddress,

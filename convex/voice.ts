@@ -748,7 +748,8 @@ const UNDER_WAY: Readonly<Record<Doc<'voiceSessions'>['state'], boolean>> = {
 
 /**
  * What a finished one-to-one keeps of its manager's words, cleared at a handover: the transcript,
- * the turns, the answers and the notes the drafts were sent back with. The charter it drafted is
+ * the turns, the answers, the notes the drafts were sent back with, and the webhook token and the
+ * voice provider's conversation id that lead back to them. The charter it drafted is
  * the carried result; the conversation was the old manager's own (decision 1 (a) of the wave 9
  * review).
  */
@@ -760,6 +761,8 @@ const WORDS_CLEARED = {
   replyDraft: undefined,
   pendingTranscript: undefined,
   pendingBossLabel: undefined,
+  webhookToken: undefined,
+  elevenLabsConversationId: undefined,
 } as const satisfies Partial<Doc<'voiceSessions'>>;
 
 /** Whether a session still holds any of the words {@link WORDS_CLEARED} clears. */
@@ -772,7 +775,9 @@ function holdsOldManagersWords(session: Doc<'voiceSessions'>): boolean {
     session.changeRequests !== undefined ||
     session.replyDraft !== undefined ||
     session.pendingTranscript !== undefined ||
-    session.pendingBossLabel !== undefined
+    session.pendingBossLabel !== undefined ||
+    session.webhookToken !== undefined ||
+    session.elevenLabsConversationId !== undefined
   );
 }
 
