@@ -70,6 +70,7 @@ export const RECORD_FILTER_OF: { readonly [Type in EventType]: readonly RecordFi
   'skill.authoring-claimed': NONE,
   'skill.authoring': NONE,
   'skill.registered': NONE,
+  'skill.recheck-due': NONE,
   'skill.failed': REFUSED,
   'skill.author-failed': REFUSED,
   'skill.verification-failed': REFUSED,

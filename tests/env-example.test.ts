@@ -32,6 +32,11 @@ describe('.env.example', (): void => {
     }
   });
 
+  it('declares the shared-skills switch, on by default (K4)', (): void => {
+    expect(DECLARED).toContain('DAY0_SHARED_SKILLS');
+    expect(EXAMPLE).toMatch(/^DAY0_SHARED_SKILLS=$/m);
+  });
+
   it('declares every bind address and mirror the compose file reads', (): void => {
     const read = [...COMPOSE.matchAll(/\$\{([A-Z_]+(?:BIND_ADDR|_ENDPOINT|_INDEX_URL)):-/g)].map(
       (match) => match[1],

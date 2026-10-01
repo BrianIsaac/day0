@@ -49,6 +49,7 @@ import {
 } from './work';
 import type { TicketSnapshot } from '../src/work/ticket-ownership';
 import { AGENT_RETIRED_EVENT } from './reset';
+import { backfillLibraryPage, backfillUseCountPage } from './skillVersions';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { avatarById } from '../src/agent/avatar-pets';
 import { mirroredDocSlug } from '../src/docs/types';
@@ -84,6 +85,8 @@ export const MIGRATION_NAMES = [
   'doc-page-listings',
   'credentials-superseded-at',
   'decision-batches-settled',
+  'skills-library',
+  'skills-use-count',
 ] as const;
 
 /** One migration's name. */
@@ -128,6 +131,9 @@ const ZONE_RELEASE = '0.5.0';
  * record and its listing stamp.
  */
 const SCHEMA_STEP_RELEASE = '0.6.0';
+
+/** The release of the owner's skill library (wave 10, 10-K): the library and the use count. */
+const SKILL_LIBRARY_RELEASE = '0.13.0';
 
 /** Every migration's description, keyed by name. */
 export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> = {
@@ -223,6 +229,16 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
     release: SCHEMA_STEP_RELEASE,
     does: 'stamps each credential a sync superseded before this release with the upgrade, so its source’s finish prunes it once it has stayed superseded past the keep and no surface holds it',
     thenRemoves: 'nothing: a sync stamps supersededAt when it supersedes a row from here on',
+  },
+  'skills-library': {
+    release: SKILL_LIBRARY_RELEASE,
+    does: 'gives every registered agent-authored shaped skill of an owned employee a version in its owner’s skill library; its passing smoke test was not kept, so the version is not offerable and the skill is marked Re-check due (its check was not kept) until a re-check keeps one',
+    thenRemoves: 'nothing: registration writes the version from here on',
+  },
+  'skills-use-count': {
+    release: SKILL_LIBRARY_RELEASE,
+    does: 'gives every skill the number of execution claims that named it and the time of the newest, from its employee’s work.execution-claimed events: the used-N-times count an older release did not keep; a count already larger is kept',
+    thenRemoves: 'nothing: the execution claim counts each use from here on',
   },
   'surfaces-access-clock': {
     release: FIRST_MIGRATIONS_RELEASE,
@@ -685,6 +701,8 @@ const MIGRATION_PAGES: Readonly<
   'doc-page-listings': stampPageListings,
   'credentials-superseded-at': stampSupersededAt,
   'decision-batches-settled': async (ctx, cursor) => await settleDecisionBatchesPage(ctx, cursor),
+  'skills-library': async (ctx, cursor) => await backfillLibraryPage(ctx, cursor),
+  'skills-use-count': async (ctx, cursor) => await backfillUseCountPage(ctx, cursor),
 };
 
 /** A migration's row, if it has started. */

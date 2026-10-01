@@ -7,6 +7,7 @@ import { deleteOwnedDocumentation } from './docSources';
 import { purgeCredential, purgeOwnedCredentials } from './credentials';
 import { cancelTransferInTransaction } from './managerTransfers';
 import { credentialsBoundBy } from './surfaces';
+import { deleteOwnerLibrary, releaseAuthor } from './skillVersions';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { appendEvent } from './eventLog';
 import { ownerRetirements, type RetiredClaim, type RetiredRejection } from './retirements';
@@ -58,6 +59,14 @@ export const AGENT_KEYED_TABLES = [
  * No reset deletes their rows.
  */
 export const RETIRE_RECORD_TABLES = ['retirements', 'managerTransfers'] as const;
+
+/**
+ * The tables keyed by owner that outlive one employee and go with the owner's data: the owner's
+ * skill library (K1). A single retire keeps its versions, which other employees may hold, and
+ * clears the retired employee from their author (`releaseAuthor`); the whole-owner deletion
+ * deletes them (`deleteOwnerLibrary`).
+ */
+export const OWNER_LIBRARY_TABLES = ['skillVersions'] as const;
 
 /** A table whose rows belong to one employee and go with it. */
 export type AgentKeyedTable = (typeof AGENT_KEYED_TABLES)[number];
@@ -674,7 +683,10 @@ async function revokeUnbound(
  * claims on items it may already have written and its rejections on its row, where a
  * colleague's claim, write and plan still meet them, and releases its other claims; retiring
  * every employee lets both go. Every pending job whose arguments name a deleted row is
- * cancelled, so nothing scheduled ahead of time for a retired employee runs afterwards.
+ * cancelled, so nothing scheduled ahead of time for a retired employee runs afterwards. In both
+ * modes the owner's skill library ({@link OWNER_LIBRARY_TABLES}) outlives a single retire, which
+ * only clears the employee from the versions it wrote, and goes with the owner's data when every
+ * employee does.
  *
  * @param ctx - The mutation context.
  * @param userId - The owner.
@@ -702,6 +714,11 @@ async function retireEmployees(
   }
   const retired = new Map<Id<'agents'>, Retired>();
   for (const agent of agents) retired.set(agent._id, await deleteEmployee(ctx, agent));
+  if (options.single) {
+    for (const agent of agents) await releaseAuthor(ctx, agent._id);
+  } else {
+    await deleteOwnerLibrary(ctx, userId);
+  }
   await cancelJobsFor(ctx, {
     ids: new Set([...retired.values()].flatMap((entry) => [...entry.deletedIds])),
     employees: new Set(agents.map((agent) => agent._id)),

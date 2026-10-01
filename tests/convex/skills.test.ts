@@ -691,3 +691,98 @@ describe('skills that target a surface', (): void => {
     );
   });
 });
+
+describe('registration and the library (10-K)', (): void => {
+  /** A shaped, approved skill of an owned employee. */
+  async function approvedSkill(harness: Harness): Promise<Id<'skills'>> {
+    const { agentId, workItemId } = await seedAgentAndWork(harness, 'tickets');
+    return await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('skills', {
+          agentId,
+          name: 'kanban-comment-and-close',
+          description: 'Ticket comment-and-close.',
+          body: '',
+          sourceType: 'agent-authored',
+          state: 'approved',
+          proposedFor: workItemId,
+          surfaceClass: 'kanban',
+          operation: 'comment-and-close',
+          createdAt: 1,
+        }),
+    );
+  }
+
+  it('registration keeps the passing smoke test', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const skillId = await approvedSkill(harness);
+    const claimed = await harness.mutation(internal.skills.claimAuthoringRun, { skillId });
+    if (!claimed.claimed) throw new Error(claimed.reason);
+
+    await harness.mutation(internal.skills.completeRegistration, {
+      skillId,
+      runId: claimed.runId,
+      body: '# Comment and close',
+      verificationLog: 'ok: true',
+      smokeTest: 'CASES = []\ndef run(inputs): return {"actions": []}',
+    });
+
+    const row = await harness.run(async (ctx) => await ctx.db.get(skillId));
+    expect(row?.state).toBe('registered');
+    // Kept on the version, not on the row: `pendingSmokeTest` means a check not yet run.
+    expect(row?.pendingSmokeTest).toBeUndefined();
+    const version = await harness.run(async (ctx) => await ctx.db.get(row!.versionId!));
+    expect(version?.smokeTest).toBe('CASES = []\ndef run(inputs): return {"actions": []}');
+  });
+
+  it('claimAuthoringRun counts attempts', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const skillId = await approvedSkill(harness);
+    const attempts = async (): Promise<number | undefined> =>
+      (await harness.run(async (ctx) => await ctx.db.get(skillId)))?.authoringAttempts;
+
+    const first = await harness.mutation(internal.skills.claimAuthoringRun, { skillId });
+    if (!first.claimed) throw new Error(first.reason);
+    expect(await attempts()).toBe(1);
+    // The first attempt fails; Retry is the second.
+    await harness.mutation(internal.skills.failAuthoringRun, {
+      skillId,
+      runId: first.runId,
+      rowReason: 'the static gate refused the draft',
+      reason: 'the static gate refused the draft',
+      eventType: 'skill.author-failed',
+    });
+    const second = await harness.mutation(internal.skills.claimAuthoringRun, { skillId });
+    if (!second.claimed) throw new Error(second.reason);
+    expect(await attempts()).toBe(2);
+    // A provider outage defers the second attempt; its own retry carries it on, uncounted.
+    await harness.mutation(internal.skills.deferAuthoringRun, {
+      skillId,
+      runId: second.runId,
+      reason: 'the provider timed out',
+    });
+    const resumed = await harness.mutation(internal.skills.claimAuthoringRun, { skillId });
+    expect(resumed.claimed).toBe(true);
+    expect(await attempts()).toBe(2);
+    // A second caller while the run holds the skill is refused and counts nothing.
+    expect((await harness.mutation(internal.skills.claimAuthoringRun, { skillId })).claimed).toBe(
+      false,
+    );
+    expect(await attempts()).toBe(2);
+  });
+
+  it('refuses to author a retired or a superseded row, saying which', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const skillId = await approvedSkill(harness);
+    for (const state of ['retired', 'superseded'] as const) {
+      await harness.run(async (ctx) => await ctx.db.patch(skillId, { state }));
+      expect(await harness.mutation(internal.skills.claimAuthoringRun, { skillId })).toEqual({
+        claimed: false,
+        reason: `this skill was ${state === 'retired' ? 'retired' : 'superseded by a revision'}`,
+      });
+    }
+  });
+});

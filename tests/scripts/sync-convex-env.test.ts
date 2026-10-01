@@ -120,6 +120,15 @@ describe.skipIf(!hasHostTool('bash'))('sync-convex-env.sh (needs bash)', (): voi
     expect(dropped.deployment).not.toContain('DAY0_OIDC_EMAIL_TRUSTED=true');
   });
 
+  it('puts the shared-skills off switch on the deployment, and removes it once the file drops it, which turns sharing back on (K4)', (): void => {
+    const off = runSync([], 'DAY0_SHARED_SKILLS=false\n');
+    expect(off.status).toBe(0);
+    expect(off.calls).toContain('convex env set DAY0_SHARED_SKILLS -- false');
+    const dropped = runSync(['DAY0_SHARED_SKILLS=false'], 'DAY0_SURFACE_MODE=mock\n');
+    expect(dropped.calls).toContain('convex env remove DAY0_SHARED_SKILLS');
+    expect(dropped.deployment).not.toContain('DAY0_SHARED_SKILLS=false');
+  });
+
   it('clears the retired credential names a deployment still carries', (): void => {
     const { status, calls } = runSync(
       [

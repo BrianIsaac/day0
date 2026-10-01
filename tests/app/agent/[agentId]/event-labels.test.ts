@@ -259,6 +259,21 @@ describe('the live feed labels', (): void => {
     );
   });
 
+  it('labels the version a skill registered as, and a re-check due with its reason (10-K)', (): void => {
+    expect(
+      eventLabel({
+        type: 'skill.registered',
+        payload: { name: 'kanban-comment-and-close', version: 2 },
+      }),
+    ).toBe('skill registered: kanban-comment-and-close v2');
+    expect(
+      eventLabel({
+        type: 'skill.recheck-due',
+        payload: { name: 'kanban-comment-and-close', reason: 'v3 is verified; this runs v2' },
+      }),
+    ).toBe('skill re-check due: kanban-comment-and-close (v3 is verified; this runs v2)');
+  });
+
   it('labels a dismissal as the manager setting a stopped item aside (m16)', (): void => {
     expect(eventLabel({ type: 'work.dismissed', payload: { workItemId: 'w1' } })).toBe(
       'dismissed by the manager',

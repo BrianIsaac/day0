@@ -22,6 +22,7 @@ import {
   type Boundaries,
 } from './reset';
 import { handOverSurfaces, type HandedOverSurfaces } from './surfaces';
+import { copyVersionsForMove } from './skillVersions';
 import { runsInFlight } from './transferInFlight';
 import {
   departingEmployee,
@@ -483,7 +484,9 @@ async function moveRefusal(
 /**
  * Move the employee to the manager who accepted its handover, in one transaction (the transfer
  * plan, sections 6.2 to 6.5). In order: the departure boundary is read before anything changes;
- * the connections are cut ({@link cutConnections}); the live claims are moved or released; the
+ * the connections are cut ({@link cutConnections}); the skill versions the employee holds are
+ * copied into the new owner's library, and its skills on a cut surface are due a re-check
+ * (`copyVersionsForMove`, K2); the live claims are moved or released; the
  * work in flight is settled ({@link settleWorkInFlight}); the old owner's credential names leave
  * the record; the employee row is written for the new owner and the identity file rendered for
  * them; the old owner keeps a departure row in real mode, and their employees a released claim
@@ -510,6 +513,12 @@ async function moveEmployeeInTransaction(
   if (SURFACE_MODE === 'real') assertKeepable(boundaries);
 
   const cut = await cutConnections(ctx, agent, transfer, now);
+  await copyVersionsForMove(ctx, {
+    agentId: agent._id,
+    toOwnerKey: transfer.toOwnerKey,
+    cutSlugs: cut.surfaces.cut.map((surface) => surface.slug),
+    now,
+  });
   const claims = await moveClaims(ctx, items, boundaries, transfer.toOwnerKey, now);
   const work = await settleWorkInFlight(ctx, agent, now);
   await redactSupersededCredentials(ctx, agent._id);

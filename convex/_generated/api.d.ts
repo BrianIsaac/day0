@@ -50,6 +50,7 @@ import type * as revocationEvaluationActions from '../revocationEvaluationAction
 import type * as sandboxLease from '../sandboxLease.js';
 import type * as seed from '../seed.js';
 import type * as skillActions from '../skillActions.js';
+import type * as skillVersions from '../skillVersions.js';
 import type * as skills from '../skills.js';
 import type * as slackProvisionActions from '../slackProvisionActions.js';
 import type * as surfaceActions from '../surfaceActions.js';
@@ -110,6 +111,7 @@ declare const fullApi: ApiFromModules<{
   sandboxLease: typeof sandboxLease;
   seed: typeof seed;
   skillActions: typeof skillActions;
+  skillVersions: typeof skillVersions;
   skills: typeof skills;
   slackProvisionActions: typeof slackProvisionActions;
   surfaceActions: typeof surfaceActions;

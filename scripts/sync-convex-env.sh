@@ -36,6 +36,7 @@ KEYS=(
   DAY0_TEST_SLACK_AUTHORIZE_URL
   DAY0_EVALUATION_BED
   DAY0_OIDC_EMAIL_TRUSTED
+  DAY0_SHARED_SKILLS
   NEXT_PUBLIC_DEMO_BOSS_EMAIL
 )
 
@@ -108,6 +109,9 @@ CLEAR_WHEN_EMPTY=(
   # A stale trust flag would keep believing addresses the customer's issuer
   # never verified after the operator turned it off (D3).
   DAY0_OIDC_EMAIL_TRUSTED
+  # Unset means shared skills on (K4): a stale `false` would keep every offer
+  # off after the operator removed the switch.
+  DAY0_SHARED_SKILLS
 )
 
 # Keys the deployment used to read and no longer does. A stale CONVEX_BIND_ADDR
