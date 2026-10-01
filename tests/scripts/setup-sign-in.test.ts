@@ -83,6 +83,7 @@ describe('setup: the sign-in verb', (): void => {
     expect(bed.output.join('\n')).not.toContain('day0-test-client-secret');
     expect(bed.output.join('\n')).not.toContain(values.DAY0_SESSION_SECRET);
     expect(bed.output.join('\n')).toContain('https://day0.acme.test/api/auth/oidc/callback');
+    expect(bed.output).toContain('Register these with Microsoft Entra ID (its guide says where):');
   });
 
   it('turns the local key off, since the build signs in through the issuer and next build refuses the key', async (): Promise<void> => {

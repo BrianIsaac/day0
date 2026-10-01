@@ -300,7 +300,7 @@ function shownValue(name: string, value: string, generated: boolean): string {
 /** What to register at the issuer, and what comes after the verb. */
 function registrationLines(resolved: ResolvedSignIn): string[] {
   return [
-    `Register these with the ${CUSTOMER_OIDC_PRESETS[resolved.provider].label} app (the guide says where):`,
+    `Register these with ${CUSTOMER_OIDC_PRESETS[resolved.provider].label} (its guide says where):`,
     `  redirect URI         ${redirectUriOf(resolved.publicUrl)}`,
     `  sign-out return URI  ${signedOutUriOf(resolved.publicUrl)}`,
   ];
