@@ -2,9 +2,9 @@
 
 An autonomous teammate that joins with no role, no skills and no scope.
 
-[![Live demo](https://img.shields.io/badge/Live%20demo-day0--olive.vercel.app-2ea043)](https://day0-olive.vercel.app) [![Runs with no accounts](https://img.shields.io/badge/Runs%20with-no%20accounts-1f6feb)](#local-local-model) [![Licence Apache-2.0](https://img.shields.io/badge/Licence-Apache--2.0-blue)](LICENSE)
+[![Live demo](https://img.shields.io/badge/Live%20demo-dayzer0.dev-2ea043)](https://dayzer0.dev) [![Runs with no accounts](https://img.shields.io/badge/Runs%20with-no%20accounts-1f6feb)](#local-local-model) [![Licence Apache-2.0](https://img.shields.io/badge/Licence-Apache--2.0-blue)](LICENSE)
 
-[**Live demo**](https://day0-olive.vercel.app) · [**Run it yourself**](#local-dev), including with no accounts and no hosted model · [**中文说明**](#中文说明) · [**What it is not**](#what-this-is-and-what-it-is-not) · [**How it works**](#runtime-flow)
+[**Live demo**](https://dayzer0.dev) · [**Run it yourself**](#local-dev), including with no accounts and no hosted model · [**中文说明**](#中文说明) · [**What it is not**](#what-this-is-and-what-it-is-not) · [**How it works**](#runtime-flow)
 
 ![A clean evidence composite from the final real-mode dashboard: approved charter, four registered skills, one built-in and three it authored, seven-item work queue, revoked Linear write grant and supervision metrics](.github/images/agent-dashboard.webp)
 
@@ -16,7 +16,7 @@ Day0 starts a step earlier. It is deployed empty. Everything it becomes comes ou
 
 ## Live demo
 
-[`day0-olive.vercel.app`](https://day0-olive.vercel.app) is the hosted mock office: a safe, public way to run the product loop without connecting Day0 to a real workplace. It runs the model named by the deployment's `OPENAI_MODEL`, with `gpt-5.6-terra` as the code default when unset; the demo's provider for a given window is a deployment setting, not the product's identity. The deployment is in mock mode by design: `src/lib/surface-mode.ts` refuses real mode on Vercel, so live systems are unreachable from the hosted app. Everything below can also be run locally through one of the routes in [Local dev](#local-dev).
+[`dayzer0.dev`](https://dayzer0.dev) is the hosted mock office: a safe, public way to run the product loop without connecting Day0 to a real workplace. It runs the model named by the deployment's `OPENAI_MODEL`, with `gpt-5.6-terra` as the code default when unset; the demo's provider for a given window is a deployment setting, not the product's identity. The deployment is in mock mode by design: `src/lib/surface-mode.ts` refuses real mode on Vercel, so live systems are unreachable from the hosted app. Everything below can also be run locally through one of the routes in [Local dev](#local-dev).
 
 - Sign in with Clerk and deploy an agent.
 - Hold its Day-1 one-to-one over voice or chat, then approve the charter it drafts.
@@ -61,7 +61,7 @@ Who receives what. On the hosted demo, the sign-in email goes to Clerk, the page
 
 Three ways to run it, and the two local ways are real mode: Day0 reads the documentation you link and acts on the systems it names, through approval cards. They differ in one thing only, where the model runs.
 
-- **Hosted demo** - nothing to install. Sign in at [day0-olive.vercel.app](https://day0-olive.vercel.app) for the mock workspace, or open [/walkthrough](https://day0-olive.vercel.app/walkthrough) for the walkthrough without sign-in.
+- **Hosted demo** - nothing to install. Sign in at [dayzer0.dev](https://dayzer0.dev) for the mock workspace, or open [/walkthrough](https://dayzer0.dev/walkthrough) for the walkthrough without sign-in.
 - **Local, cloud model** - `./setup.sh --route featherless`: GLM 5.3 Flash through Featherless, with a Featherless key; `--route key` for OpenAI or any OpenAI-compatible key, `--route endpoint` for a server you already run. Your chat and relevant content are sent to the provider, which charges per token.
 - **Local, local model** - `./setup.sh --route local`: the bundled model (`qwen3:8b` tested) in Docker on this machine, nothing signed up for and nothing metered.
 
@@ -77,7 +77,7 @@ pnpm dev
 
 `./setup.sh` asks where the model runs when `--route` does not say - a hosted model through Featherless, a key you already have, an endpoint you already run, or the bundled model here - then for the key in a hidden prompt where one is needed and for the address your Slack DM is resolved from. It then does the rest: the containers and components, the generated keys written into `.env.local` rather than pasted into it, the two model addresses written as a pair, the function push and `pnpm check:setup`. It finishes by printing an unlock URL. Open that, link your documentation, deploy an agent, hold the Day-1 1:1 in chat, and approve the charter it writes; that first approval is what fills the work queue, and the connection cards on the Surfaces tab are what let it act.
 
-[**Set up Day0**](https://day0-olive.vercel.app/setup) is this quick start as a page, with what first success looks like, the setup traps worth knowing and the measured timings. [Local dev](#local-dev) gives each way's one command and says what the setup does on it, step by step, and is what to read when something needs fixing. Mock mode, the seeded office the hosted demo and the evaluation harness run on, is `pnpm setup:local` and is documented as that under [Evaluation and the mock office](#evaluation-and-the-mock-office).
+[**Set up Day0**](https://dayzer0.dev/setup) is this quick start as a page, with what first success looks like, the setup traps worth knowing and the measured timings. [Local dev](#local-dev) gives each way's one command and says what the setup does on it, step by step, and is what to read when something needs fixing. Mock mode, the seeded office the hosted demo and the evaluation harness run on, is `pnpm setup:local` and is documented as that under [Evaluation and the mock office](#evaluation-and-the-mock-office).
 
 
 ## What is unusual about it
@@ -264,7 +264,7 @@ Whichever you pick, `pnpm check:setup` reads `.env.local` and reports each of th
 
 ## Hosted demo
 
-Nothing to install. Sign in at [`day0-olive.vercel.app`](https://day0-olive.vercel.app) to deploy an employee into the hosted mock office, which runs the product loop on synthetic content and reaches no system of yours; or open [`/walkthrough`](https://day0-olive.vercel.app/walkthrough) for the recorded walkthrough, which needs no sign-in at all. [Live demo](#live-demo) above says what the deployment runs and links both recordings. It runs on a Convex production deployment and a Vercel project, and each release reaches it by `./setup.sh cloud upgrade`, the command below.
+Nothing to install. Sign in at [`dayzer0.dev`](https://dayzer0.dev) to deploy an employee into the hosted mock office, which runs the product loop on synthetic content and reaches no system of yours; or open [`/walkthrough`](https://dayzer0.dev/walkthrough) for the recorded walkthrough, which needs no sign-in at all. [Live demo](#live-demo) above says what the deployment runs and links both recordings. It runs on a Convex production deployment and a Vercel project, and each release reaches it by `./setup.sh cloud upgrade`, the command below.
 
 ### Your own hosted copy
 
@@ -1159,7 +1159,7 @@ Day0 从更早的一步开始。它在空白状态下部署，之后形成的一
 
 ### 在线演示
 
-[`day0-olive.vercel.app`](https://day0-olive.vercel.app) 是公开托管的 mock office，可在不连接真实工作系统的情况下运行完整产品流程。它运行 deployment 的 `OPENAI_MODEL` 指定的模型，未设置时使用代码默认值 `gpt-5.6-terra`；特定时间窗内演示所用的提供方是部署设置，不代表产品身份。该部署按设计运行 mock mode：`src/lib/surface-mode.ts` 会在 Vercel 上拒绝 real mode，因此托管应用无法访问真实系统。以下体验也都可以通过[本地开发](#local-dev)中的任一路径在本机运行。
+[`dayzer0.dev`](https://dayzer0.dev) 是公开托管的 mock office，可在不连接真实工作系统的情况下运行完整产品流程。它运行 deployment 的 `OPENAI_MODEL` 指定的模型，未设置时使用代码默认值 `gpt-5.6-terra`；特定时间窗内演示所用的提供方是部署设置，不代表产品身份。该部署按设计运行 mock mode：`src/lib/surface-mode.ts` 会在 Vercel 上拒绝 real mode，因此托管应用无法访问真实系统。以下体验也都可以通过[本地开发](#local-dev)中的任一路径在本机运行。
 
 - 使用 Clerk 登录并部署一个 Agent。
 - 通过语音或文字完成 Day-1 一对一，然后批准 Agent 起草的工作章程。
@@ -1204,7 +1204,7 @@ Day0 从更早的一步开始。它在空白状态下部署，之后形成的一
 
 三种运行方式，其中两种本地方式都是 real mode：Day0 读取你链接的文档，并通过审批卡片操作文档中记录的系统。两者只有一处不同：模型在哪里运行。
 
-- **托管演示**：无需安装任何东西。在 [day0-olive.vercel.app](https://day0-olive.vercel.app) 登录即可使用 mock workspace，或打开 [/walkthrough](https://day0-olive.vercel.app/walkthrough) 观看无需登录的演示录像。
+- **托管演示**：无需安装任何东西。在 [dayzer0.dev](https://dayzer0.dev) 登录即可使用 mock workspace，或打开 [/walkthrough](https://dayzer0.dev/walkthrough) 观看无需登录的演示录像。
 - **本地运行，云端模型**：`./setup.sh --route featherless`，通过 Featherless 使用 GLM 5.3 Flash，需要一个 Featherless key；`--route key` 使用 OpenAI 或任意 OpenAI-compatible key，`--route endpoint` 使用你已经在运行的服务器。你的聊天内容及相关内容会发送给该提供商，并按 token 计费。
 - **本地运行，本地模型**：`./setup.sh --route local`，在本机 Docker 中运行内置模型（已测试 `qwen3:8b`），不注册任何账户，也不产生任何费用。
 
@@ -1220,7 +1220,7 @@ pnpm dev
 
 未指定 `--route` 时，`./setup.sh` 会先问模型在哪里运行：通过 Featherless 使用托管模型、使用你已有的 key、你已经在运行的 endpoint，或在本机运行内置模型；需要 key 时通过隐藏输入读取，并询问用于解析 Slack DM 的邮箱地址。其余步骤由它完成：启动容器和各组件、把生成的密钥直接写入 `.env.local` 而不是让你粘贴、成对写入两个模型地址、推送函数并运行 `pnpm check:setup`。最后它会打印一个 unlock URL：打开该链接，链接你的文档，部署一个 Agent，用文字模式完成 Day-1 一对一，然后批准它起草的工作章程；第一次批准会填充工作队列，Surfaces 标签页上的连接卡片则决定它能操作什么。
 
-[**Set up Day0**](https://day0-olive.vercel.app/setup) 是这份快速开始的页面版本，其中包含首次成功的判断标准、值得了解的设置陷阱，以及实测耗时。[本地开发](#local-dev)给出每种方式的那一条命令，并逐步说明 setup 在该方式下做了什么，遇到问题时应当从那里读起。mock mode 是托管演示和评测 harness 所运行的预置 office，对应 `pnpm setup:local`，在[评测与 mock office](#评测与-mock-office)中按其用途说明。
+[**Set up Day0**](https://dayzer0.dev/setup) 是这份快速开始的页面版本，其中包含首次成功的判断标准、值得了解的设置陷阱，以及实测耗时。[本地开发](#local-dev)给出每种方式的那一条命令，并逐步说明 setup 在该方式下做了什么，遇到问题时应当从那里读起。mock mode 是托管演示和评测 harness 所运行的预置 office，对应 `pnpm setup:local`，在[评测与 mock office](#评测与-mock-office)中按其用途说明。
 
 ### 它的特别之处
 
@@ -1386,7 +1386,7 @@ Agent 核心不绑定具体模型。`OPENAI_BASE_URL` 留空时，共享模型�
 
 ### 托管演示
 
-无需安装任何东西。在 [`day0-olive.vercel.app`](https://day0-olive.vercel.app) 登录，把一名员工部署进托管的 mock office：它在合成内容上运行完整产品流程，不会触及你的任何系统；或打开 [`/walkthrough`](https://day0-olive.vercel.app/walkthrough) 观看演示录像，完全无需登录。上文[在线演示](#在线演示)说明该部署运行的模型，并链接两段录像。它运行在一个 Convex production deployment 和一个 Vercel 项目上，每个版本都通过下文的命令 `./setup.sh cloud upgrade` 上线。
+无需安装任何东西。在 [`dayzer0.dev`](https://dayzer0.dev) 登录，把一名员工部署进托管的 mock office：它在合成内容上运行完整产品流程，不会触及你的任何系统；或打开 [`/walkthrough`](https://dayzer0.dev/walkthrough) 观看演示录像，完全无需登录。上文[在线演示](#在线演示)说明该部署运行的模型，并链接两段录像。它运行在一个 Convex production deployment 和一个 Vercel 项目上，每个版本都通过下文的命令 `./setup.sh cloud upgrade` 上线。
 
 #### 你自己的托管副本
 
