@@ -5,6 +5,7 @@ import { useMutation, useQueries } from 'convex/react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
+import { MAX_DECLINE_REASON_LENGTH } from '@/agent/manager-transfer';
 import { deploymentZone } from '@/lib/zone';
 import { Button } from '../components/Button';
 import { Dialog } from '../components/Dialog';
@@ -89,6 +90,9 @@ export function acceptanceSections(preview: HandoverPreview): AccountSection[] {
   return sections;
 }
 
+/** Which answer is in flight, so its own control says so while it runs. */
+type Answering = 'accept' | 'decline';
+
 /** What the dialog's body is drawn from once the preview is read. */
 interface TakeOnProps {
   readonly preview: HandoverPreview;
@@ -98,9 +102,9 @@ interface TakeOnProps {
 }
 
 /**
- * The acceptance dialog's body (plan 7.3): who asks and the note, what comes and what does not,
- * the reporting lines to check, the acceptor's documentation with ticks, the runs in flight, and
- * Decline and Take on. Decline opens a short reason first. No typed confirmation: taking on is
+ * The acceptance dialog's body (plan 7.3): the note, what comes and what does not, the reporting
+ * lines to check, the acceptor's documentation with ticks, the runs in flight, and Decline and
+ * Take on. Decline opens a short reason first, then sends it. No typed confirmation: taking on is
  * additive for the acceptor and can be handed back by the same flow.
  */
 function TakeOn({ preview, change, notice, onClose }: TakeOnProps) {
@@ -109,7 +113,7 @@ function TakeOn({ preview, change, notice, onClose }: TakeOnProps) {
   const [excluded, setExcluded] = useState<Id<'docSources'>[]>([]);
   const [declining, setDeclining] = useState(false);
   const [reason, setReason] = useState('');
-  const top = useRef<HTMLDivElement>(null);
+  const [answering, setAnswering] = useState<Answering | null>(null);
   const reasonField = useRef<HTMLTextAreaElement>(null);
   const { name } = preview.employee;
   const from = preview.fromAddress;
@@ -119,6 +123,7 @@ function TakeOn({ preview, change, notice, onClose }: TakeOnProps) {
   }, [declining]);
 
   const takeOn = (): void => {
+    setAnswering('accept');
     change.run(
       () =>
         accept({
@@ -140,6 +145,7 @@ function TakeOn({ preview, change, notice, onClose }: TakeOnProps) {
     event.preventDefault();
     if (change.busy) return;
     const why = reason.trim();
+    setAnswering('decline');
     change.run(
       () => decline({ transferId: preview.transferId, ...(why === '' ? {} : { reason: why }) }),
       {
@@ -152,39 +158,35 @@ function TakeOn({ preview, change, notice, onClose }: TakeOnProps) {
   };
 
   return (
-    <Dialog
-      title={takeOnTitle(name)}
-      description={takeOnLead(preview)}
-      onClose={onClose}
-      initialFocus={top}
-      busy={change.busy}
-    >
-      <div ref={top} tabIndex={-1} className="grid gap-4 outline-none">
-        {preview.note === undefined ? null : (
-          <blockquote className="border-l-2 border-[var(--color-border-2)] pl-3 text-[15px] text-[var(--color-fg-2)]">
-            <p>“{preview.note}”</p>
-          </blockquote>
-        )}
-        <dl className="grid gap-x-4 gap-y-2 text-[15px] sm:grid-cols-[max-content_minmax(0,1fr)]">
-          {acceptanceSections(preview).map((section) => (
-            <div key={section.term} className="contents">
-              <dt className="font-medium text-[var(--color-fg)]">{section.term}</dt>
-              <dd className="mb-1 grid gap-1 text-[var(--color-fg-2)] sm:mb-0">
+    <>
+      {preview.note === undefined ? null : (
+        <blockquote className="border-l-2 border-[var(--color-border-2)] pl-3 text-[15px] whitespace-pre-line text-[var(--color-fg-2)] [overflow-wrap:anywhere]">
+          <p>“{preview.note}”</p>
+        </blockquote>
+      )}
+      <dl className="grid gap-x-4 text-[15px] sm:grid-cols-[max-content_minmax(0,1fr)] sm:gap-y-3">
+        {acceptanceSections(preview).map((section) => (
+          <div key={section.term} className="contents">
+            <dt className="font-medium text-[var(--color-fg)]">{section.term}</dt>
+            <dd className="mb-3 text-[var(--color-fg-2)] sm:mb-0">
+              <ul className="grid gap-1 [overflow-wrap:anywhere]">
                 {section.lines.map((line) => (
-                  <span key={line}>{line}</span>
+                  <li key={line}>{line}</li>
                 ))}
-              </dd>
-            </div>
-          ))}
-        </dl>
-        {preview.runsInFlight > 0 ? (
-          <p className="text-[15px] text-[var(--color-fg-2)]">
-            {runsInFlightLine({ name, from, runs: preview.runsInFlight })}
-          </p>
-        ) : null}
-      </div>
+              </ul>
+            </dd>
+          </div>
+        ))}
+      </dl>
+      {preview.runsInFlight > 0 ? (
+        <p className="text-[15px] text-[var(--color-fg-2)]">
+          {runsInFlightLine({ name, from, runs: preview.runsInFlight })}
+        </p>
+      ) : null}
       <fieldset className="grid gap-1.5">
-        <legend className="text-[13px] font-medium text-[var(--color-fg-2)]">{READS_FOR_IT}</legend>
+        <legend className="mb-1.5 text-[15px] font-medium text-[var(--color-fg)]">
+          {READS_FOR_IT}
+        </legend>
         {preview.documentation.length === 0 ? (
           <p className="text-sm text-[var(--color-muted)]">{NO_DOCUMENTATION}</p>
         ) : (
@@ -222,6 +224,7 @@ function TakeOn({ preview, change, notice, onClose }: TakeOnProps) {
                 {...control}
                 ref={reasonField}
                 rows={2}
+                maxLength={MAX_DECLINE_REASON_LENGTH}
                 value={reason}
                 disabled={change.busy}
                 onChange={(event) => setReason(event.target.value)}
@@ -232,12 +235,21 @@ function TakeOn({ preview, change, notice, onClose }: TakeOnProps) {
         ) : null}
         <StatusRegion outcome={change.outcome} />
         <div className="flex flex-wrap justify-end gap-2">
+          {/* Two buttons, never one that changes its type: a click that opened the reason must
+              not also submit the form it turned into a submit button for. */}
           {declining ? (
-            <Button type="submit" variant="danger" size="large" disabled={change.busy}>
-              {DECLINE}
+            <Button
+              key="send-decline"
+              type="submit"
+              variant="danger"
+              size="large"
+              disabled={change.busy}
+            >
+              {change.busy && answering === 'decline' ? 'Declining…' : DECLINE}
             </Button>
           ) : (
             <Button
+              key="ask-reason"
               size="large"
               disabled={change.busy}
               onClick={() => {
@@ -250,28 +262,11 @@ function TakeOn({ preview, change, notice, onClose }: TakeOnProps) {
             </Button>
           )}
           <Button variant="primary" size="large" disabled={change.busy} onClick={takeOn}>
-            {change.busy ? 'Taking on…' : takeOnLabel(name)}
+            {change.busy && answering === 'accept' ? 'Taking on…' : takeOnLabel(name)}
           </Button>
         </div>
       </form>
-    </Dialog>
-  );
-}
-
-/**
- * The dialog when it has no request to show: still reading, refused, or no longer waiting, each
- * with the one way out.
- */
-function NoHandover({ onClose, children }: { onClose: () => void; children: ReactNode }) {
-  return (
-    <Dialog title={HANDOVER_TITLE} onClose={onClose}>
-      {children}
-      <div className="flex justify-end">
-        <Button size="large" onClick={onClose}>
-          Close
-        </Button>
-      </div>
-    </Dialog>
+    </>
   );
 }
 
@@ -283,35 +278,64 @@ interface AcceptTransferDialogProps {
   readonly onClose: () => void;
 }
 
-/** The acceptance dialog for one request, in whichever state its preview is. */
+/**
+ * The acceptance dialog for one request, in whichever state its preview is: one dialog whose body
+ * changes, so a change of state neither plays the dialog in again nor moves focus. While an
+ * answer is in flight the preview the manager answered stays drawn: the request leaves `asked`
+ * (and the preview answers null) a moment before the answer's own result arrives.
+ */
 function AcceptTransferDialog({ transferId, change, notice, onClose }: AcceptTransferDialogProps) {
-  const preview = useTransferPreview(transferId);
-  if (preview === undefined) {
-    return (
-      <NoHandover onClose={onClose}>
+  const read = useTransferPreview(transferId);
+  const top = useRef<HTMLDivElement>(null);
+  const live = read instanceof Error || read === null || read === undefined ? undefined : read;
+  const [answered, setAnswered] = useState<HandoverPreview | undefined>(live);
+  if (live !== undefined && live !== answered) setAnswered(live);
+  const preview = live ?? (change.busy ? answered : undefined);
+  let body: ReactNode;
+  if (preview !== undefined) {
+    body = <TakeOn preview={preview} change={change} notice={notice} onClose={onClose} />;
+  } else {
+    let said: ReactNode;
+    if (read === undefined) {
+      said = (
         <p role="status" className="text-sm text-[var(--color-muted)]">
           {READING_HANDOVER}
         </p>
-      </NoHandover>
-    );
-  }
-  if (preview instanceof Error) {
-    return (
-      <NoHandover onClose={onClose}>
+      );
+    } else if (read instanceof Error) {
+      said = (
         <p className="text-[15px] text-[var(--color-fg-2)]">
-          {refusalText(preview, HANDOVER_UNREADABLE)}
+          {refusalText(read, HANDOVER_UNREADABLE)}
         </p>
-      </NoHandover>
+      );
+    } else {
+      said = <p className="text-[15px] text-[var(--color-fg-2)]">{HANDOVER_NOT_WAITING}</p>;
+    }
+    body = (
+      <>
+        {said}
+        <div className="flex justify-end">
+          <Button size="large" onClick={onClose}>
+            Close
+          </Button>
+        </div>
+      </>
     );
   }
-  if (preview === null) {
-    return (
-      <NoHandover onClose={onClose}>
-        <p className="text-[15px] text-[var(--color-fg-2)]">{HANDOVER_NOT_WAITING}</p>
-      </NoHandover>
-    );
-  }
-  return <TakeOn preview={preview} change={change} notice={notice} onClose={onClose} />;
+  return (
+    <Dialog
+      title={preview === undefined ? HANDOVER_TITLE : takeOnTitle(preview.employee.name)}
+      description={preview === undefined ? undefined : takeOnLead(preview)}
+      onClose={onClose}
+      initialFocus={top}
+      busy={change.busy}
+    >
+      {/* The dialog opens on its account, read from the top, rather than on its last control. */}
+      <div ref={top} tabIndex={-1} className="grid gap-4 outline-none">
+        {body}
+      </div>
+    </Dialog>
+  );
 }
 
 /**
@@ -333,6 +357,17 @@ export function AcceptTransfer() {
   // parameter off, so focus settles on the home in the same render that says what landed.
   const [dismissed, setDismissed] = useState<string | null>(null);
   if (transferId === null && dismissed !== null) setDismissed(null);
+  const open = transferId !== null && transferId !== dismissed ? transferId : null;
+  // A refusal belongs to the request it was said for: another one, reached by the browser's Back
+  // or a second link, opens without it.
+  const [refusedFor, setRefusedFor] = useState<string | null>(null);
+  if (change.outcome?.tone === 'refused' && refusedFor === null && open !== null) {
+    setRefusedFor(open);
+  }
+  if (refusedFor !== null && refusedFor !== open) {
+    setRefusedFor(null);
+    if (change.outcome?.tone === 'refused') change.clear();
+  }
   const close = (): void => {
     // A refusal said inside the dialog is not carried to the home once it is closed (m38).
     if (change.outcome?.tone === 'refused') change.clear();
@@ -342,19 +377,19 @@ export function AcceptTransfer() {
   // What a landed answer said stays on the home until another lands.
   const said = change.outcome?.tone === 'done' ? change.outcome.text : null;
   if (said !== null && said !== shown) setShown(said);
-  const open = transferId !== null && transferId !== dismissed ? transferId : null;
   return (
     <>
-      {shown === null ? null : (
-        <p
-          ref={notice}
-          role="status"
-          tabIndex={-1}
-          className="mb-6 rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] px-4 py-3 text-sm text-[var(--color-fg-2)] outline-none"
-        >
-          {shown}
-        </p>
-      )}
+      {/* In the page before anything is said, so the line is announced when it is filled; it also
+          takes focus then, since the entry that opened the dialog has gone. */}
+      <p
+        ref={notice}
+        role="status"
+        aria-live="polite"
+        tabIndex={-1}
+        className="mb-6 rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] px-4 py-3 text-sm text-[var(--color-fg-2)] outline-none empty:sr-only"
+      >
+        {shown ?? ''}
+      </p>
       {open === null ? null : (
         <AcceptTransferDialog
           key={open}

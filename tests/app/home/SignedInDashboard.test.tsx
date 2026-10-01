@@ -565,8 +565,8 @@ describe('the home during a handover (the transfer plan, sections 7.3, 7.4 and 1
     expect(page).toContain('>Needs you<');
     expect(readAs(page)).toContain('Maya · an employee to take on');
     expect(page).toContain('href="/?transfer=transfer-1"');
-    // The deploy form is still the page's first card for a manager with nobody.
-    expect(page.indexOf('Deploy a new Day0 employee')).toBeLessThan(page.indexOf('>Needs you<'));
+    // Before the deploy form, which would otherwise push the entry below the fold at 390.
+    expect(page.indexOf('>Needs you<')).toBeLessThan(page.indexOf('Deploy a new Day0 employee'));
   });
 
   it('keeps the inbox off the page of a manager with nobody and nothing waiting', (): void => {
@@ -601,6 +601,22 @@ describe('the home during a handover (the transfer plan, sections 7.3, 7.4 and 1
       'Handed over Maya now reports to lead@kestrel.example, since 26 Sep 2026, 05:45, UTC time.',
     );
     expect(page.indexOf('>Handed over<')).toBeGreaterThan(page.indexOf('Recorded colleague'));
+  });
+
+  it('puts where an only employee went before the deploy form, for a manager who handed it over', (): void => {
+    state.departures = [
+      {
+        transferId: 'transfer-1',
+        agentId: 'agent-maya',
+        agentName: 'Maya',
+        toAddress: 'lead@kestrel.example',
+        state: 'accepted',
+        decidedAt: NOW - 60 * 60_000,
+      },
+    ];
+    const page = render([], { entries: [], total: 0, waitingByEmployee: [] });
+    expect(page.indexOf('>Handed over<')).toBeGreaterThan(-1);
+    expect(page.indexOf('>Handed over<')).toBeLessThan(page.indexOf('Deploy a new Day0 employee'));
   });
 
   it('opens the acceptance dialog over the home for the handover the address names', (): void => {

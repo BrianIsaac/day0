@@ -16,6 +16,8 @@ const backend = vi.hoisted(() => ({
   refusals: {} as Record<string, string>,
   calls: [] as Array<{ name: string; args: unknown }>,
   asked: [] as Array<{ name: string; args: unknown }>,
+  /** When set, the acceptance answers only once the test calls it, as a slow round trip does. */
+  hold: undefined as undefined | Promise<void>,
 }));
 
 vi.mock('convex/react', () => ({
@@ -36,6 +38,7 @@ vi.mock('convex/react', () => ({
         const { ConvexError } = await import('convex/values');
         throw new ConvexError(refusal);
       }
+      if (backend.hold !== undefined) await backend.hold;
       return name === 'transferAcceptance:accept' ? { agentId: 'agent-maya' } : null;
     },
 }));
@@ -56,7 +59,15 @@ import { ConvexError } from 'convex/values';
 import { AcceptTransfer, acceptanceSections } from '../../../app/home/AcceptTransfer';
 import type { HandoverPreview } from '../../../app/handover-words';
 import { axeViolations } from '../../fixtures/dom/axe';
-import { focusedName, mount, press, said, typeInto, unmountAll } from '../../fixtures/dom/press';
+import {
+  focusedName,
+  mount,
+  press,
+  said,
+  settle,
+  typeInto,
+  unmountAll,
+} from '../../fixtures/dom/press';
 import { underTarget } from '../../fixtures/dom/targets';
 
 /** Maya, handed by sam@kestrel.example to the signed-in manager, in real mode. */
@@ -113,7 +124,9 @@ function title(): string {
 function sections(): string[][] {
   return [...dialog().querySelectorAll('dt')].map((term) => [
     term.textContent ?? '',
-    ...[...(term.nextElementSibling?.children ?? [])].map((line) => line.textContent ?? ''),
+    ...[...(term.nextElementSibling?.querySelectorAll('li') ?? [])].map(
+      (line) => line.textContent ?? '',
+    ),
   ]);
 }
 
@@ -137,14 +150,18 @@ describe('AcceptTransfer', () => {
     backend.refusals = {};
     backend.calls = [];
     backend.asked = [];
+    backend.hold = undefined;
     route.search = '';
     route.replaced = [];
   });
 
-  it('draws nothing and reads nothing without a request in the address', () => {
+  it('draws only its empty status line and reads nothing without a request in the address', () => {
     route.search = '';
     const view = mount(<AcceptTransfer />);
-    expect(view.container.innerHTML).toBe('');
+    const regions = view.container.querySelectorAll('[role="status"]');
+    expect(regions).toHaveLength(1);
+    expect(regions[0]?.textContent).toBe('');
+    expect(view.container.textContent).toBe('');
     expect(document.querySelector('[role="dialog"]')).toBeNull();
     expect(backend.asked).toEqual([]);
   });
@@ -345,6 +362,60 @@ describe('AcceptTransfer', () => {
     expect(backend.calls).toEqual([
       { name: 'managerTransfers:decline', args: { transferId: 'transfer-1' } },
     ]);
+  });
+
+  it('reveals the reason with one button and sends the decline with another, so the first click sends nothing', async () => {
+    backend.preview = PREVIEW;
+    mount(<AcceptTransfer />);
+    const reveal = [...dialog().querySelectorAll('button')].find(
+      (button) => button.textContent === 'Decline',
+    );
+    expect(reveal?.getAttribute('type')).toBe('button');
+    await press(dialog(), 'Decline');
+    const send = [...dialog().querySelectorAll('button')].find(
+      (button) => button.textContent === 'Decline',
+    );
+    expect(send).not.toBe(reveal);
+    expect(send?.getAttribute('type')).toBe('submit');
+    expect(reveal?.isConnected).toBe(false);
+    expect(backend.calls).toEqual([]);
+  });
+
+  it('keeps the employee drawn while the acceptance is in flight, though the request has left asked', async () => {
+    backend.preview = PREVIEW;
+    let release: () => void = () => undefined;
+    backend.hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const view = mount(<AcceptTransfer />);
+    await press(dialog(), 'Take on Maya');
+    // The request left `asked` before the acceptance's own answer arrived.
+    backend.preview = null;
+    act((): void => view.root.render(<AcceptTransfer />));
+    expect(title()).toBe('Take on Maya?');
+    expect(dialog().textContent).not.toContain('no longer waiting');
+    expect(focusedName()).not.toBe('Close');
+    await act(async (): Promise<void> => {
+      release();
+    });
+    await settle();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(said(view.container)).toEqual(['Maya is yours.']);
+  });
+
+  it('opens another request without the refusal said for the last one', async () => {
+    backend.preview = PREVIEW;
+    backend.refusals = {
+      'transferAcceptance:accept': 'This handover expired before it was accepted.',
+    };
+    const view = mount(<AcceptTransfer />);
+    await press(dialog(), 'Take on Maya');
+    expect(said(dialog())).toEqual(['This handover expired before it was accepted.']);
+    // The browser's Back, to another request's link.
+    route.search = '?transfer=transfer-2';
+    act((): void => view.root.render(<AcceptTransfer />));
+    await settle();
+    expect(said(dialog())).toEqual([]);
   });
 
   it('closes on Escape, deciding nothing', () => {

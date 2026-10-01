@@ -67,8 +67,9 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
 
   const staffed = roster !== undefined && roster.length > 0;
   const showDeployForm = roster !== undefined && (!staffed || deploying);
-  // A manager with nobody yet can still be named in a handover (the transfer plan, section 7.3):
-  // the inbox shows whenever something waits, so its entry is never hidden behind the deploy form.
+  // A manager with nobody yet can still be named in a handover (the transfer plan, section 7.3),
+  // and one who handed over their only employee still reads where it went (7.4): for them the
+  // inbox and the handed-over card come before the deploy form, which is otherwise the page.
   const showInbox = staffed || (inbox !== undefined && inbox.entries.length > 0);
 
   return (
@@ -118,6 +119,8 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
           data-cards={arriving ? '' : undefined}
           className="flex min-w-0 flex-col gap-6 xl:col-start-1 xl:row-start-1"
         >
+          {!staffed && showInbox ? <NeedsYouList inbox={inboxRead} now={now} /> : null}
+          {staffed ? null : <HandedOver />}
           {showDeployForm ? (
             <DeployForm
               docSources={docSources}
@@ -136,9 +139,9 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
               focusOnMount={staffed}
             />
           ) : null}
-          {showInbox ? <NeedsYouList inbox={inboxRead} now={now} /> : null}
+          {staffed ? <NeedsYouList inbox={inboxRead} now={now} /> : null}
           <EmployeeRoster employees={roster} waiting={waitingByEmployee(inbox)} />
-          <HandedOver />
+          {staffed ? <HandedOver /> : null}
           <OfficeWorld
             agents={roster}
             settled={roster !== undefined && (!staffed || inboxRead !== undefined)}
