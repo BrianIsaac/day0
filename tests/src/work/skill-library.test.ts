@@ -2,9 +2,13 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
   CHECK_NOT_KEPT_REASON,
+  HANDED_OVER_AUTHOR_NAME,
+  HANDED_OVER_RECHECK_REASON,
   MAX_AUTHORING_ATTEMPTS,
   countsAsAuthoringAttempt,
+  harnessToolsBySurface,
   harnessToolsNamed,
+  isNewerVersionReason,
   isOfferable,
   newerVersionReason,
   nextVersionNumber,
@@ -121,5 +125,37 @@ describe('harnessToolsNamed', (): void => {
 
   it('does not read a tool inside a longer word or a dotted name', (): void => {
     expect(harnessToolsNamed('use save_comments and chat.update.v2', surfaces)).toEqual([]);
+  });
+});
+
+describe('harnessToolsBySurface', (): void => {
+  it('says which surface allows each tool SKILL.md names, and leaves out a surface it names none of', (): void => {
+    const body = 'Call `save_comment`, then reply with chat.postMessage.';
+    expect(
+      harnessToolsBySurface(body, [
+        { slug: 'linear', surfaceClass: 'kanban', allowedTools: ['save_comment', 'save_issue'] },
+        { slug: 'slack', surfaceClass: 'chat', allowedTools: ['chat.postMessage'] },
+        { slug: 'notion', allowedTools: ['notion-search'] },
+      ]),
+    ).toEqual([
+      { slug: 'linear', surfaceClass: 'kanban', tools: ['save_comment'] },
+      { slug: 'slack', surfaceClass: 'chat', tools: ['chat.postMessage'] },
+    ]);
+  });
+});
+
+describe('what a handover rewrites', (): void => {
+  it('recognises the newer-version reason, which names the old library’s numbers, and nothing else', (): void => {
+    expect(isNewerVersionReason(newerVersionReason(12, 3))).toBe(true);
+    expect(isNewerVersionReason(CHECK_NOT_KEPT_REASON)).toBe(false);
+    expect(isNewerVersionReason(surfaceCutReason('linear'))).toBe(false);
+    expect(isNewerVersionReason('v3 is verified; this runs v2 and more')).toBe(false);
+  });
+
+  it('names an author left behind at a handover without naming them', (): void => {
+    expect(HANDED_OVER_AUTHOR_NAME).toBe('a colleague under the previous manager');
+    expect(HANDED_OVER_RECHECK_REASON).toBe(
+      'it was due a re-check when the employee was handed over',
+    );
   });
 });

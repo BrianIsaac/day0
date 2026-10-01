@@ -91,6 +91,32 @@ export function newerVersionReason(newer: number, held: number): string {
   return `v${newer} is verified; this runs v${held}`;
 }
 
+/** The shape `newerVersionReason` writes, and nothing else. */
+const NEWER_VERSION_REASON = /^v\d+ is verified; this runs v\d+$/;
+
+/**
+ * Whether a re-check reason is the newer-version one, which names version numbers of the
+ * library it was stamped in: a handover rewrites it, since the new owner's library numbers its
+ * copies afresh.
+ *
+ * @param reason - A row's `recheckReason`.
+ */
+export function isNewerVersionReason(reason: string): boolean {
+  return NEWER_VERSION_REASON.test(reason);
+}
+
+/**
+ * The re-check reason a handed-over skill carries in place of one that named the old owner's
+ * library: it was due a re-check, and still is.
+ */
+export const HANDED_OVER_RECHECK_REASON = 'it was due a re-check when the employee was handed over';
+
+/**
+ * The author a handed-over copy names when the moving employee did not write it: the colleague
+ * who did stays with the previous manager, and the new manager's library does not name them.
+ */
+export const HANDED_OVER_AUTHOR_NAME = 'a colleague under the previous manager';
+
 /**
  * The re-check reason a moved employee's skill is stamped with when the handover cut the
  * connection the skill acts on.
@@ -145,6 +171,19 @@ export interface HarnessSurfaceTools {
   readonly allowedTools: readonly string[];
 }
 
+/** One connected surface named by slug and class, for the tools it allows. */
+export interface NamedHarnessSurface extends HarnessSurfaceTools {
+  readonly slug: string;
+  readonly surfaceClass?: string;
+}
+
+/** The tools a version needs on one surface (`harnessToolsBySurface`). */
+export interface SurfaceTools {
+  readonly slug: string;
+  readonly surfaceClass?: string;
+  readonly tools: string[];
+}
+
 /**
  * Whether SKILL.md names an operation as a whole word, as the smoke harness reads it: not inside
  * a longer identifier, and not as the head of a longer dotted name.
@@ -169,4 +208,32 @@ export function harnessToolsNamed(
 ): string[] {
   const tools = surfaces.flatMap((surface) => surface.allowedTools);
   return [...new Set(tools)].filter((tool) => namesOperation(body, tool));
+}
+
+/**
+ * The tools a version needs, surface by surface: for each connected surface of the harness, the
+ * tools it allows that SKILL.md names. An adopter's surface of the same class must allow the
+ * tools listed for it (10-A's compatibility check); a surface SKILL.md names no tool of is left
+ * out.
+ *
+ * @param body - SKILL.md as registered.
+ * @param surfaces - The harness contract's connected surfaces, with their classes.
+ * @returns One entry per surface that contributes a tool, in the order given.
+ */
+export function harnessToolsBySurface(
+  body: string,
+  surfaces: readonly NamedHarnessSurface[],
+): SurfaceTools[] {
+  return surfaces.flatMap((surface) => {
+    const tools = harnessToolsNamed(body, [surface]);
+    return tools.length === 0
+      ? []
+      : [
+          {
+            slug: surface.slug,
+            ...(surface.surfaceClass !== undefined ? { surfaceClass: surface.surfaceClass } : {}),
+            tools,
+          },
+        ];
+  });
 }
