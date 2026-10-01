@@ -384,6 +384,40 @@ describe('transferPreview: what the named manager reads before accepting (transf
     expect(preview?.takesOn).toMatchObject({ recordLength: 200, recordAtLeast: true });
   });
 
+  it('counts open work by state, however much closed work sits before it', async (): Promise<void> => {
+    const office = await seedOffice();
+    await office.harness.run(async (ctx) => {
+      for (let index = 0; index < 210; index += 1) {
+        await ctx.db.insert('workItems', {
+          ...workItemFields(office.maya, `DONE-${index}`),
+          state: 'completed',
+        });
+      }
+      await ctx.db.insert('workItems', {
+        ...workItemFields(office.maya, 'NEW-1'),
+        state: 'deferred',
+      });
+    });
+
+    const preview = await office.harness
+      .withIdentity(COLLEAGUE)
+      .query(api.transferAcceptance.transferPreview, { transferId: office.transferId });
+
+    expect(preview?.takesOn).toMatchObject({ openWork: 2, openWorkAtLeast: false });
+  });
+
+  it('answers nothing for an asked request past its expiry, which accept would refuse', async (): Promise<void> => {
+    const office = await seedOffice();
+    await office.harness.run(async (ctx) => {
+      await ctx.db.patch(office.transferId, { expiresAt: Date.now() - 1 });
+    });
+    await expect(
+      office.harness
+        .withIdentity(COLLEAGUE)
+        .query(api.transferAcceptance.transferPreview, { transferId: office.transferId }),
+    ).resolves.toBeNull();
+  });
+
   it('refuses an account the request does not name', async (): Promise<void> => {
     const office = await seedOffice();
     await expect(

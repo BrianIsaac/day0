@@ -86,13 +86,32 @@ const PREVIEW_SOURCE_LIMIT = 100;
 /** The most `credential.superseded` events of one employee the move redacts. */
 const SUPERSEDED_EVENT_LIMIT = 1_000;
 
-/** The work item states that are the record rather than open work. */
-const CLOSED_WORK_STATES: ReadonlySet<Doc<'workItems'>['state']> = new Set([
-  'completed',
-  'cancelled',
-  'skipped',
-  'failed',
-]);
+/** One state of a work item. */
+type WorkItemState = Doc<'workItems'>['state'];
+
+/**
+ * Whether work in each state is still open, rather than the record. Keyed over every state, so a
+ * state the schema gains does not compile until it is placed.
+ */
+const WORK_IS_OPEN: Readonly<Record<WorkItemState, boolean>> = {
+  discovered: true,
+  claimed: true,
+  'plan-pending': true,
+  'plan-approved': true,
+  executing: true,
+  'actions-pending': true,
+  deferred: true,
+  'needs-skill': true,
+  completed: false,
+  cancelled: false,
+  failed: false,
+  skipped: false,
+};
+
+/** The states of open work, read one index range each. */
+const OPEN_WORK_STATES = (Object.keys(WORK_IS_OPEN) as WorkItemState[]).filter(
+  (state) => WORK_IS_OPEN[state],
+);
 
 /**
  * A request, if it can still be answered now: asked, and not past its expiry. An `accepting`
@@ -249,8 +268,16 @@ async function takenOn(
   agentId: Id<'agents'>,
   revokedScopes: ReadonlySet<string>,
 ): Promise<TransferPreview['takesOn']> {
-  const [items, skills, newest, grants, events] = await Promise.all([
-    employeeWorkItems(ctx.db, agentId, PREVIEW_ROW_LIMIT),
+  const [open, skills, newest, grants, events] = await Promise.all([
+    Promise.all(
+      OPEN_WORK_STATES.map(
+        async (state) =>
+          await ctx.db
+            .query('workItems')
+            .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', state))
+            .take(PREVIEW_ROW_LIMIT),
+      ),
+    ),
     ctx.db
       .query('skills')
       .withIndex('by_agent_name', (q) => q.eq('agentId', agentId))
@@ -270,8 +297,8 @@ async function takenOn(
       .take(PREVIEW_ROW_LIMIT),
   ]);
   return {
-    openWork: items.filter((item) => !CLOSED_WORK_STATES.has(item.state)).length,
-    openWorkAtLeast: items.length >= PREVIEW_ROW_LIMIT,
+    openWork: open.reduce((total, rows) => total + rows.length, 0),
+    openWorkAtLeast: open.some((rows) => rows.length >= PREVIEW_ROW_LIMIT),
     registeredSkills: skills.filter((skill) => skill.state === 'registered').length,
     charter: newest && { version: newest.version, approved: newest.approved },
     scopes: grants
@@ -472,7 +499,7 @@ async function moveClaims(
   const conflictingKeys: string[] = [];
   for (const claim of boundaries.live) {
     const state = stateOf.get(claim.workItemId);
-    const closed = state === undefined || CLOSED_WORK_STATES.has(state);
+    const closed = state === undefined || !WORK_IS_OPEN[state];
     if (unwritten.has(claim._id) && closed) {
       await ctx.db.patch(claim._id, { releasedAt: now });
       released += 1;
@@ -835,7 +862,8 @@ export const moveEmployee = internalMutation({
  *
  * Public, for the account the request names only (`assertNamedInTransfer`); writes nothing.
  *
- * @returns The preview, or null when the request is no longer waiting for an answer.
+ * @returns The preview, or null when the request is no longer waiting for an answer, or is past
+ *   its expiry and so would be refused, before the expiry sweep marks it.
  * @throws ConvexError with the guard's words for any other caller.
  */
 export const transferPreview = query({
@@ -843,7 +871,7 @@ export const transferPreview = query({
   returns: v.union(v.null(), transferPreviewValidator),
   handler: async (ctx, args): Promise<TransferPreview | null> => {
     const { transfer, caller } = await assertNamedInTransfer(ctx, args.transferId);
-    if (transfer.state !== 'asked') return null;
+    if (transfer.state !== 'asked' || transfer.expiresAt <= Date.now()) return null;
     return await transferPreviewOf(ctx, transfer, caller.ownerKey);
   },
 });
