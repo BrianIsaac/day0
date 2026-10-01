@@ -80,11 +80,3 @@ export function isWithinTenure(at: number, windows: readonly TenureWindow[]): bo
 export function isWholeHistory(windows: readonly TenureWindow[]): boolean {
   return windows.length === 1 && windows[0].from === null && windows[0].until === null;
 }
-
-/**
- * The span that runs to now, which only the current owner holds: the one in
- * which the employee's present state (its work rows) is the owner's.
- */
-export function openTenureOf(windows: readonly TenureWindow[]): TenureWindow | undefined {
-  return windows.find((window) => window.until === null);
-}

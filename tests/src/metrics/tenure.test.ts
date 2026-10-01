@@ -3,7 +3,6 @@ import {
   WHOLE_HISTORY,
   isWholeHistory,
   isWithinTenure,
-  openTenureOf,
   tenureWindowsOf,
   type AcceptedHandover,
 } from '../../../src/metrics/tenure';
@@ -66,17 +65,5 @@ describe('isWithinTenure', (): void => {
 
   it('counts nothing for an owner with no span', (): void => {
     expect(isWithinTenure(1, [])).toBe(false);
-  });
-});
-
-describe('openTenureOf', (): void => {
-  it('is the span that runs to now, held only by the current owner', (): void => {
-    expect(openTenureOf([{ from: null, until: 500 }])).toBeUndefined();
-    expect(
-      openTenureOf([
-        { from: null, until: 500 },
-        { from: 900, until: null },
-      ]),
-    ).toEqual({ from: 900, until: null });
   });
 });

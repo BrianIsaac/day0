@@ -618,6 +618,8 @@ describe('supervision figures for a company of employees', (): void => {
       outcome: 'approved' | 'rejected';
     }>;
     ledger?: (workItemId: Id<'workItems'>) => unknown[];
+    /** When the ledger's run completed: its rows are then on a `work.completed` event too, as the product writes them. */
+    completedAt?: number;
     autonomyChanges?: number;
   }
 
@@ -686,7 +688,11 @@ describe('supervision figures for a company of employees', (): void => {
           observedAt: 1,
           createdAt: 1,
         });
-        await ctx.db.patch(workItemId, { output: { applied: spec.ledger(workItemId) } });
+        const output = { applied: spec.ledger(workItemId) };
+        await ctx.db.patch(workItemId, { output });
+        if (spec.completedAt !== undefined) {
+          await addEvent('work.completed', { workItemId, output }, spec.completedAt);
+        }
       }
       for (let change = 0; change < (spec.autonomyChanges ?? 0); change += 1) {
         await addEvent('agent.autonomy-changed', { from: false, to: true }, spec.deployedAt + 900);
@@ -950,6 +956,133 @@ describe('supervision figures for a company of employees', (): void => {
     expect(figures.omittedEmployees).toBe(1);
     expect(figures.employees[0].name).toBe('Employee 2');
     expect(figures.employees.at(-1)?.name).toBe('Employee 21');
+  });
+
+  /** The new manager of a handover, signed in with a verified address of their own. */
+  const SUCCESSOR = managerIdentity('successor');
+
+  /**
+   * Hand an employee over as an accepted request leaves it: the accepted row
+   * (inserted directly; the move is 9-U3a's) and the row's new owner.
+   */
+  async function handOver(
+    harness: ReturnType<typeof convexTest>,
+    agentId: Id<'agents'>,
+    acceptedAt: number,
+  ): Promise<void> {
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.insert('managerTransfers', {
+        agentId,
+        agentName: 'Priya',
+        fromOwnerKey: COMPANY_OWNER.subject,
+        fromAddress: COMPANY_OWNER.email ?? '',
+        toAddress: SUCCESSOR.email ?? '',
+        state: 'accepted',
+        requestedAt: acceptedAt - 60_000,
+        expiresAt: acceptedAt + 1_209_600_000,
+        decidedAt: acceptedAt,
+        toOwnerKey: SUCCESSOR.subject,
+      });
+      await ctx.db.patch(agentId, { userId: SUCCESSOR.subject, bossEmail: SUCCESSOR.email });
+    });
+  }
+
+  it('keeps the old owner’s figures as they were after a handover, and counts the new owner’s from the acceptance (D12)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const priyaId = await deployEmployee(harness, { ...THREE_EMPLOYEES[0], completedAt: 130_000 });
+    await deployEmployee(harness, { ...THREE_EMPLOYEES[1], completedAt: 220_000 });
+    // A plan the old manager was asked for and had not decided when Priya moved.
+    const openItemId = await harness.run(async (ctx): Promise<Id<'workItems'>> => {
+      const workItemId = await ctx.db.insert('workItems', {
+        agentId: priyaId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'PRIYA-OPEN',
+        title: 'Priya item open at the handover',
+        contentSummary: 'Synthetic company work.',
+        contentRefs: [],
+        state: 'plan-pending',
+        observedAt: 140_000,
+        createdAt: 140_000,
+      });
+      await ctx.db.insert('events', {
+        agentId: priyaId,
+        type: 'work.decision-requesting',
+        payload: { workItemId, decisionId: 'open-0', kind: 'plan' },
+        createdAt: 141_000,
+      });
+      return workItemId;
+    });
+    const before = await companyFigures(harness);
+    expect(before.employees.map((row) => row.name)).toEqual(['Priya', 'Mateo']);
+
+    await handOver(harness, priyaId, 500_000);
+    // The new manager approves the moved plan and its run lands a write on the row and its event.
+    await harness.run(async (ctx): Promise<void> => {
+      const output = { applied: [landedRow(openItemId, 7, 'manager', 'Commented on PRIYA-OPEN')] };
+      await ctx.db.patch(openItemId, { state: 'completed', output, manualEstimateMinutes: 30 });
+      await ctx.db.insert('events', {
+        agentId: priyaId,
+        type: 'work.plan-approved',
+        payload: { workItemId: openItemId, decidedVia: 'dashboard' },
+        createdAt: 610_000,
+      });
+      await ctx.db.insert('events', {
+        agentId: priyaId,
+        type: 'work.completed',
+        payload: { workItemId: openItemId, output },
+        createdAt: 620_000,
+      });
+    });
+    // The new manager's own month with Priya: one plan, asked and approved after the acceptance.
+    await harness.run(async (ctx): Promise<void> => {
+      const workItemId = await ctx.db.insert('workItems', {
+        agentId: priyaId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'PRIYA-NEW',
+        title: 'Priya item for the new manager',
+        contentSummary: 'Synthetic company work.',
+        contentRefs: [],
+        state: 'completed',
+        observedAt: 590_000,
+        createdAt: 590_000,
+      });
+      for (const [type, payload, createdAt] of [
+        ['work.decision-requesting', { workItemId, decisionId: 'new-0', kind: 'plan' }, 600_000],
+        ['work.plan-approved', { workItemId, decidedVia: 'dashboard' }, 603_000],
+      ] as const) {
+        await ctx.db.insert('events', { agentId: priyaId, type, payload, createdAt });
+      }
+    });
+
+    await expect(companyFigures(harness)).resolves.toEqual(before);
+
+    const successor = await harness.withIdentity(SUCCESSOR).query(api.metrics.forOwner, {});
+    expect(successor?.employees.map((row) => row.name)).toEqual(['Priya']);
+    expect(successor?.company.employees).toBe(1);
+    // The new manager asked for one plan and decided two: their own and the moved one.
+    expect(successor?.company.decisions).toMatchObject({
+      requested: 1,
+      approved: 2,
+      rejected: 0,
+      medianLatencyMs: 3_000,
+    });
+    // Priya's charter and her earlier writes were the old manager's; the moved plan's write is theirs.
+    expect(successor?.company.charter.timesToFirstApprovedMs).toEqual([null]);
+    expect(successor?.company.auditTrail).toEqual({ complete: 1, total: 1, fraction: 1 });
+  });
+
+  it('leaves out an employee handed over and since retired, whose records are gone', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await deployEmployee(harness, { ...THREE_EMPLOYEES[1], completedAt: 220_000 });
+    const before = await companyFigures(harness);
+    const gone = await deployEmployee(harness, { name: 'Priya', deployedAt: 1_000 });
+    await handOver(harness, gone, 500_000);
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.delete(gone);
+    });
+    await expect(companyFigures(harness)).resolves.toEqual(before);
   });
 
   it('returns nothing to a caller with no identity', async (): Promise<void> => {
