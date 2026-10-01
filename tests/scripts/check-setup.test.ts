@@ -371,6 +371,37 @@ describe('the auth section', (): void => {
     expect(lines).not.toContain('npx convex env set DAY0_OIDC_ISSUER');
   });
 
+  it("reports that a manager's address comes from the issuer's email and email_verified claims", (): void => {
+    const lines = authSection({ ...ISSUER, DAY0_PROFILE: 'customer-local' }).lines.join(' ');
+    expect(lines).toContain('`email` claim');
+    expect(lines).toContain('`email_verified`');
+    expect(lines).toContain('nobody can deploy an employee or take one on');
+  });
+
+  it('says the trust flag is off by default, and what turning it on means', (): void => {
+    const off = authSection({ ...ISSUER, DAY0_PROFILE: 'customer-local' }).lines.join(' ');
+    expect(off).toContain('DAY0_OIDC_EMAIL_TRUSTED is off');
+    const on = authSection({
+      ...ISSUER,
+      DAY0_PROFILE: 'customer-local',
+      DAY0_OIDC_EMAIL_TRUSTED: 'true',
+    });
+    expect(on.lines.join(' ')).toContain('DAY0_OIDC_EMAIL_TRUSTED=true');
+    expect(on.lines.join(' ')).toContain('every address this issuer signs is one it controls');
+    expect(on.status).toBe('warn');
+  });
+
+  it('is a gap for a trust flag set to anything but true or false, which reads as off', (): void => {
+    const section = authSection({
+      ...ISSUER,
+      DAY0_PROFILE: 'customer-local',
+      DAY0_OIDC_EMAIL_TRUSTED: 'yes',
+    });
+    expect(section.status).toBe('gap');
+    expect(section.lines.join(' ')).toContain('DAY0_OIDC_EMAIL_TRUSTED');
+    expect(section.lines.join(' ')).toContain('reads as off');
+  });
+
   it('says the local key and the customer issuer are both accepted when both are on', (): void => {
     const section = authSection({
       ...ISSUER,

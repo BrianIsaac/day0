@@ -48,7 +48,12 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { parse as parseYaml } from 'yaml';
-import { customerOidcIssuer, type CustomerOidcIssuer } from '../src/lib/customer-oidc';
+import {
+  CUSTOMER_OIDC_EMAIL_TRUSTED_VAR,
+  customerOidcEmailTrusted,
+  customerOidcIssuer,
+  type CustomerOidcIssuer,
+} from '../src/lib/customer-oidc';
 import { PRIVATE_HOSTS_VAR, privateHostAllowlist } from '../src/lib/private-hosts';
 import { DEPLOYMENT_PROFILES } from '../src/lib/surface-mode';
 import { wayOfSetup } from '../src/setup/quickstart';
@@ -942,6 +947,19 @@ function customerIssuerSection(v: Values): Section | undefined {
       ],
     };
   }
+  const trustFlag = (v[CUSTOMER_OIDC_EMAIL_TRUSTED_VAR] ?? '').trim().toLowerCase();
+  if (trustFlag !== '' && trustFlag !== 'true' && trustFlag !== 'false') {
+    return {
+      title: "Auth: the customer issuer's address flag is unreadable",
+      status: 'gap',
+      lines: [
+        `${CUSTOMER_OIDC_EMAIL_TRUSTED_VAR} is neither true nor false, so it reads as off:`,
+        'an address this issuer sends without `email_verified` is not believed. Set it to',
+        'true only if every address the issuer signs is one it controls, else leave it empty.',
+      ],
+    };
+  }
+  const trusted = customerOidcEmailTrusted((name: string): string | undefined => v[name]);
   const noAuth = v.NEXT_PUBLIC_DEV_NO_AUTH === 'true';
   // A warning until the app's own sign-in uses the issuer (review M12): the
   // backend accepts its tokens, and no browser can get one yet.
@@ -964,6 +982,19 @@ function customerIssuerSection(v: Values): Section | undefined {
       noAuth
         ? 'through the browser with it; the local key is the way in meanwhile.'
         : 'through the browser, and with the local key off there is no other way in.',
+      "A manager's address is the token's `email` claim, believed only when `email_verified`",
+      'is true: a person whose token carries no verified address is signed in, but nobody can',
+      'deploy an employee or take one on without one.',
+      ...(trusted
+        ? [
+            `${CUSTOMER_OIDC_EMAIL_TRUSTED_VAR}=true: an \`email\` sent without \`email_verified\` is believed`,
+            'as well. Keep it only if every address this issuer signs is one it controls.',
+          ]
+        : [
+            `${CUSTOMER_OIDC_EMAIL_TRUSTED_VAR} is off: if this issuer omits \`email_verified\`, set it to`,
+            'true only if every address it signs is one it controls.',
+          ]),
+      'The deployment reads the flag, so it must be set there as well.',
     ],
   };
 }
