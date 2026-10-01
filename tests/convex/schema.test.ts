@@ -4,6 +4,7 @@ import { internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
+import { MANAGER_ADDRESS } from './fakes/manager-identity';
 
 describe('documentation schema', (): void => {
   it('stores owner-level sources, pages and agent source selections', async (): Promise<void> => {
@@ -26,7 +27,7 @@ describe('documentation schema', (): void => {
         updatedAt: 1,
       });
       const agentId = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'schema test',
         userId: 'owner',
         excludedDocSourceIds: [sourceId],
@@ -64,7 +65,7 @@ describe('surface connection evidence persistence', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const surfaceId = await harness.run(async (ctx): Promise<Id<'surfaces'>> => {
       const agentId = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'Schema behaviour test',
         userId: 'owner',
         state: 'active',
@@ -121,7 +122,7 @@ describe('surface connection evidence persistence', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const stored = await harness.run(async (ctx): Promise<Doc<'surfaces'> | null> => {
       const agentId = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'Schema scope test',
         userId: 'owner',
         state: 'active',
@@ -156,7 +157,7 @@ describe('surface connection evidence persistence', (): void => {
     await expect(
       harness.run(async (ctx): Promise<void> => {
         const agentId = await ctx.db.insert('agents', {
-          bossEmail: 'boss@day0.local',
+          bossEmail: MANAGER_ADDRESS,
           name: 'Schema scope test',
           userId: 'owner',
           state: 'active',
@@ -185,7 +186,7 @@ describe('exact-action gate schema', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const result = await harness.run(async (ctx) => {
       const agentId = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'gate test',
         userId: 'owner',
         state: 'active',
@@ -235,7 +236,7 @@ describe('manager transfer schema', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const read = await harness.run(async (ctx) => {
       const agentId = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'Maya',
         userId: 'owner',
         state: 'deployed',
@@ -322,7 +323,7 @@ describe('manager transfer schema', (): void => {
     await expect(
       harness.run(async (ctx) => {
         const agentId = await ctx.db.insert('agents', {
-          bossEmail: 'boss@day0.local',
+          bossEmail: MANAGER_ADDRESS,
           name: 'Maya',
           userId: 'owner',
           state: 'deployed',
@@ -346,7 +347,7 @@ describe('manager transfer schema', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const read = await harness.run(async (ctx) => {
       const agentId = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'Maya',
         userId: 'owner',
         state: 'deployed',

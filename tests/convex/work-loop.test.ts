@@ -15,6 +15,7 @@ import {
   MAX_DRAFT_RESUMES,
   STEP_LEASE_MS,
 } from '../../convex/workLoop';
+import { managerIdentity } from './fakes/manager-identity';
 
 /**
  * The server drives each employee's work loop in real mode: a row entering a
@@ -117,7 +118,7 @@ vi.stubGlobal('fetch', async (input: URL | string, init?: RequestInit): Promise<
 });
 
 type Harness = TestConvex<typeof schema>;
-const OWNER = { subject: 'owner' };
+const OWNER = managerIdentity();
 
 afterEach((): void => {
   recorded.scopeCalls.length = 0;
@@ -1091,7 +1092,7 @@ describe('checking for new work on demand', (): void => {
     const agentId = await seedEmployee(harness);
     await expect(
       harness
-        .withIdentity({ subject: 'someone-else' })
+        .withIdentity(managerIdentity('someone-else'))
         .mutation(api.workLoop.checkForNewWork, { agentId }),
     ).rejects.toThrow(/forbidden/);
 

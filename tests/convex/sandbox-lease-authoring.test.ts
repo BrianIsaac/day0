@@ -11,6 +11,7 @@ import { holdSandboxLease } from '../../convex/skillActions';
 import { SANDBOX_LEASE_RETRY_MS } from '../../convex/sandboxLease';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
 /**
  * An authoring run holds the sandbox lease across its verification, and a run
@@ -55,7 +56,7 @@ vi.mock('../../src/lib/skill-sandbox', () => ({
 }));
 
 type Harness = TestConvex<typeof schema>;
-const OWNER = { subject: 'owner' };
+const OWNER = managerIdentity();
 
 const reusableBody = [
   '# Value refresh on an analytics surface',
@@ -80,7 +81,7 @@ const smokeTest = [
 async function seedApprovedSkill(harness: Harness, name: string): Promise<Id<'skills'>> {
   return await harness.run(async (ctx) => {
     const agentId = await ctx.db.insert('agents', {
-      bossEmail: 'boss@day0.local',
+      bossEmail: MANAGER_ADDRESS,
       name,
       userId: 'owner',
       state: 'active',

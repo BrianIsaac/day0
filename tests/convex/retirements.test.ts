@@ -10,6 +10,7 @@ import {
   retiredHolderName,
 } from '../../convex/retirements';
 import { allConvexModules } from './all-modules';
+import { MANAGER_ADDRESS } from './fakes/manager-identity';
 
 type Harness = TestConvex<typeof schema>;
 
@@ -25,7 +26,7 @@ async function retire(
 ): Promise<Id<'retirements'>> {
   return await harness.run(async (ctx): Promise<Id<'retirements'>> => {
     const agentId = await ctx.db.insert('agents', {
-      bossEmail: 'boss@day0.local',
+      bossEmail: MANAGER_ADDRESS,
       name: args.name ?? 'retired',
       userId: 'owner',
       state: 'active',
@@ -160,7 +161,7 @@ describe('the read limit', (): void => {
     const harness = convexTest(schema, allConvexModules());
     await harness.run(async (ctx) => {
       const agentId = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'retired',
         userId: 'owner',
         state: 'active',

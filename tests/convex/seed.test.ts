@@ -6,6 +6,7 @@ import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
 afterEach((): void => {
   restoreSurfaceMode();
@@ -34,14 +35,14 @@ async function seedAsOwner(): Promise<{
   const agentId = await harness.run(
     async (ctx): Promise<Id<'agents'>> =>
       await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'seed test',
         userId: 'owner',
         state: 'deployed',
         createdAt: 1,
       }),
   );
-  const result = await harness.withIdentity({ subject: 'owner' }).action(api.seed.seedDemo, {
+  const result = await harness.withIdentity(managerIdentity()).action(api.seed.seedDemo, {
     agentId,
   });
   const counts = await harness.run(async (ctx) => ({
@@ -115,7 +116,7 @@ describe('demo seed', (): void => {
     const agentId = await harness.run(
       async (ctx): Promise<Id<'agents'>> =>
         await ctx.db.insert('agents', {
-          bossEmail: 'boss@day0.local',
+          bossEmail: MANAGER_ADDRESS,
           name: 'seed test',
           userId: 'owner',
           state: 'deployed',
@@ -123,7 +124,7 @@ describe('demo seed', (): void => {
         }),
     );
     await expect(
-      harness.withIdentity({ subject: 'stranger' }).action(api.seed.seedDemo, { agentId }),
+      harness.withIdentity(managerIdentity('stranger')).action(api.seed.seedDemo, { agentId }),
     ).rejects.toThrow('forbidden');
   });
 });

@@ -132,6 +132,7 @@ import {
   log1Plan,
   log1RefusedClosing,
 } from '../fixtures/work/full-run-3-2026-09-19-log-1';
+import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
 // The redaction component the actions reach through DAY0_REDACTOR_URL, served
 // in-process from the recorded span model.
@@ -845,7 +846,7 @@ afterEach((): void => {
 });
 
 type Harness = TestConvex<typeof schema>;
-const OWNER = { subject: 'owner' };
+const OWNER = managerIdentity();
 
 interface Seeded {
   agentId: Id<'agents'>;
@@ -877,7 +878,7 @@ async function seed(
 ): Promise<Seeded> {
   return await harness.run(async (ctx) => {
     const agentId = await ctx.db.insert('agents', {
-      bossEmail: 'boss@day0.local',
+      bossEmail: MANAGER_ADDRESS,
       name: 'Priya',
       userId: 'owner',
       state: 'active',
@@ -5662,7 +5663,7 @@ describe('the autonomous-actions switch through the gate', (): void => {
 describe('work action surface enablement', (): void => {
   it('loads persisted surfaces and stores an awaiting-connection verdict', async (): Promise<void> => {
     useSurfaceMode('real');
-    const harness = convexTest(schema, allConvexModules()).withIdentity({ subject: 'owner' });
+    const harness = convexTest(schema, allConvexModules()).withIdentity(managerIdentity());
     const { workItemId } = await harness.run(
       async (
         ctx,
@@ -8670,7 +8671,7 @@ describe('a write to a ticket no work item was discovered from (P8-2)', (): void
     // A colleague of the same owner lists REVOPS-9 on the next poll.
     const colleague = await harness.run(async (ctx) => {
       const colleagueId = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'Mateo',
         userId: 'owner',
         state: 'active',

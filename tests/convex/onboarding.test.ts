@@ -8,6 +8,7 @@ import schema from '../../convex/schema';
 import { CHARTER_SEEDING_ATTEMPTS, parseTranscript } from '../../convex/onboarding';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
@@ -59,7 +60,7 @@ async function seedApprovedCharter(
 ): Promise<{ agentId: Id<'agents'>; charterId: Id<'charters'> }> {
   return await harness.run(async (ctx) => {
     const agentId = await ctx.db.insert('agents', {
-      bossEmail: 'boss@day0.local',
+      bossEmail: MANAGER_ADDRESS,
       name: 'charter approval test',
       userId: 'owner',
       state: 'charter-pending',
@@ -191,7 +192,7 @@ describe('charter approval by surface mode', (): void => {
       vi.stubGlobal('fetch', webCall);
       const harness = convexTest(schema, allConvexModules());
       const { agentId, charterId } = await seedApprovedCharter(harness);
-      const owner = harness.withIdentity({ subject: 'owner' });
+      const owner = harness.withIdentity(managerIdentity());
       await harness.action(internal.onboarding.postCharterApproval, { agentId, charterId });
       await harness.finishAllScheduledFunctions(vi.runAllTimers);
       const result = await outcome(harness, agentId);

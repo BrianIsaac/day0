@@ -9,6 +9,7 @@ import { allConvexModules } from './all-modules';
 import { browserFieldId, providerItemKey } from '../../src/work/claim-key';
 import { agentKeyedTables, insertMinimalRow } from './schema-fixtures';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
 /**
  * Seed one owner with an agent and linked documentation.
@@ -38,7 +39,7 @@ async function seedOwner(harness: ReturnType<typeof convexTest>): Promise<string
       updatedAt: 1,
     });
     await ctx.db.insert('agents', {
-      bossEmail: 'boss@day0.local',
+      bossEmail: MANAGER_ADDRESS,
       name: 'reset test',
       userId: 'owner',
       state: 'deployed',
@@ -52,7 +53,7 @@ describe('reset documentation retention', (): void => {
   it('keeps owner-level documentation by default', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const sourceId = await seedOwner(harness);
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     await expect(owner.mutation(api.reset.deleteMyData, {})).resolves.toEqual({
       deleted: 1,
       unlinkedSources: 0,
@@ -63,7 +64,7 @@ describe('reset documentation retention', (): void => {
   it('removes documentation only when explicitly requested', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const sourceId = await seedOwner(harness);
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     await expect(
       owner.mutation(api.reset.deleteMyData, { alsoUnlinkDocumentation: true }),
     ).resolves.toEqual({ deleted: 1, unlinkedSources: 1 });
@@ -102,7 +103,7 @@ describe('reset transient verification state', (): void => {
       return { skillId, runId };
     });
     await harness.mutation(internal.sandboxLease.take, { skillId, runId });
-    await harness.withIdentity({ subject: 'owner' }).mutation(api.reset.deleteMyData, {});
+    await harness.withIdentity(managerIdentity()).mutation(api.reset.deleteMyData, {});
     expect(await harness.run(async (ctx) => await ctx.db.query('sandboxLeases').collect())).toEqual(
       [],
     );
@@ -142,7 +143,7 @@ describe('reset completeness', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await harness.run(async (ctx): Promise<Id<'agents'>> => {
       const id = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'reset test',
         userId: 'owner',
         state: 'deployed',
@@ -169,7 +170,7 @@ describe('reset completeness', (): void => {
     const before = await countRows();
     for (const table of tables) expect(before[table], table).toBeGreaterThan(0);
 
-    await harness.withIdentity({ subject: 'owner' }).mutation(api.reset.deleteMyData, {});
+    await harness.withIdentity(managerIdentity()).mutation(api.reset.deleteMyData, {});
 
     const after = await countRows();
     for (const table of tables) expect(after[table], table).toBe(0);
@@ -217,7 +218,7 @@ describe('credential retention on reset', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const sourceId = await seedOwner(harness);
     const ids = await seedCredentials(harness, sourceId);
-    await harness.withIdentity({ subject: 'owner' }).mutation(api.reset.deleteMyData, {});
+    await harness.withIdentity(managerIdentity()).mutation(api.reset.deleteMyData, {});
     for (const id of ids) {
       const row = await harness.run(async (ctx) => await ctx.db.get(id));
       expect(row).toMatchObject({ ciphertext: 'sealed', iv: 'iv' });
@@ -242,7 +243,7 @@ describe('credential retention on reset', (): void => {
         }),
     );
     await harness
-      .withIdentity({ subject: 'owner' })
+      .withIdentity(managerIdentity())
       .mutation(api.reset.deleteMyData, { alsoUnlinkDocumentation: true });
     const rows = await harness.run(
       async (ctx) => await Promise.all(ids.map(async (id) => await ctx.db.get(id))),
@@ -266,7 +267,7 @@ describe('credential retention on reset', (): void => {
     }
     // The summary the Surfaces tab reads still lists the rows as revoked.
     const summary = await harness
-      .withIdentity({ subject: 'owner' })
+      .withIdentity(managerIdentity())
       .query(api.credentials.summaryForOwner, {});
     expect(summary.map((row) => row.revokedAt)).toEqual([
       expect.any(Number),
@@ -378,7 +379,7 @@ describe('retire in real mode', (): void => {
       });
       const employee = async (name: string): Promise<Id<'agents'>> =>
         await ctx.db.insert('agents', {
-          bossEmail: 'boss@day0.local',
+          bossEmail: MANAGER_ADDRESS,
           name,
           userId: 'owner',
           state: 'deployed',
@@ -444,9 +445,7 @@ describe('retire in real mode', (): void => {
 
   it('deletes the working rows and keeps the retirement under its owner, with one event naming it on the agent id', async (): Promise<void> => {
     const { harness, retiring } = await seedRealOwner();
-    await harness
-      .withIdentity({ subject: 'owner' })
-      .mutation(api.reset.retire, { agentId: retiring });
+    await harness.withIdentity(managerIdentity()).mutation(api.reset.retire, { agentId: retiring });
     const events = await harness.run(
       async (ctx) =>
         await ctx.db
@@ -483,9 +482,7 @@ describe('retire in real mode', (): void => {
   it('revokes only the credentials no remaining employee or documentation binds', async (): Promise<void> => {
     const { harness, retiring, sibling, only, shared, secret, documentation } =
       await seedRealOwner();
-    await harness
-      .withIdentity({ subject: 'owner' })
-      .mutation(api.reset.retire, { agentId: retiring });
+    await harness.withIdentity(managerIdentity()).mutation(api.reset.retire, { agentId: retiring });
     const row = async (id: Id<'credentials'>) =>
       await harness.run(async (ctx) => await ctx.db.get(id));
     for (const id of [only, secret]) {
@@ -505,7 +502,7 @@ describe('retire in real mode', (): void => {
     const { harness, retiring, sibling, only, shared, secret, documentation } =
       await seedRealOwner();
     await expect(
-      harness.withIdentity({ subject: 'owner' }).mutation(api.reset.deleteMyData, {}),
+      harness.withIdentity(managerIdentity()).mutation(api.reset.deleteMyData, {}),
     ).resolves.toEqual({ deleted: 2, unlinkedSources: 0 });
     const tombstones = await harness.run(async (ctx) =>
       (await ctx.db.query('events').collect()).filter((event) => event.type === 'agent.retired'),
@@ -530,7 +527,7 @@ describe('retire in real mode', (): void => {
     });
 
     await harness
-      .withIdentity({ subject: 'owner' })
+      .withIdentity(managerIdentity())
       .mutation(api.reset.deleteMyData, { alsoUnlinkDocumentation: true });
 
     for (const retirement of await retirementsOf(harness)) {
@@ -580,9 +577,7 @@ describe('retire in real mode', (): void => {
       return { held, asking, writer };
     });
 
-    await harness
-      .withIdentity({ subject: 'owner' })
-      .mutation(api.reset.retire, { agentId: retiring });
+    await harness.withIdentity(managerIdentity()).mutation(api.reset.retire, { agentId: retiring });
 
     const [retirement] = await retirementsOf(harness);
     expect(retirement.claims).toMatchObject([
@@ -638,9 +633,7 @@ describe('retire in real mode', (): void => {
       });
     });
 
-    await harness
-      .withIdentity({ subject: 'owner' })
-      .mutation(api.reset.retire, { agentId: retiring });
+    await harness.withIdentity(managerIdentity()).mutation(api.reset.retire, { agentId: retiring });
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
 
     expect((await retirementsOf(harness))[0].claims).toEqual([]);
@@ -666,9 +659,7 @@ describe('retire in real mode', (): void => {
       });
     });
 
-    await harness
-      .withIdentity({ subject: 'owner' })
-      .mutation(api.reset.retire, { agentId: retiring });
+    await harness.withIdentity(managerIdentity()).mutation(api.reset.retire, { agentId: retiring });
 
     expect((await retirementsOf(harness))[0].rejections).toMatchObject([
       { keys: ['linear:REVOPS-9'], rejectedAt: 5 },
@@ -727,9 +718,7 @@ describe('retire in real mode', (): void => {
       });
     });
 
-    await harness
-      .withIdentity({ subject: 'owner' })
-      .mutation(api.reset.retire, { agentId: retiring });
+    await harness.withIdentity(managerIdentity()).mutation(api.reset.retire, { agentId: retiring });
 
     expect((await retirementsOf(harness))[0].claims).toMatchObject([
       { key, writeTarget: { field: 'Pipeline coverage' }, settledAt: expect.any(Number) },
@@ -776,9 +765,7 @@ describe('retire in real mode', (): void => {
       });
     });
 
-    await harness
-      .withIdentity({ subject: 'owner' })
-      .mutation(api.reset.retire, { agentId: retiring });
+    await harness.withIdentity(managerIdentity()).mutation(api.reset.retire, { agentId: retiring });
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
 
     expect((await retirementsOf(harness))[0].claims).toEqual([]);
@@ -803,12 +790,10 @@ describe('retire in real mode', (): void => {
         claimedAt: 1,
       });
     });
-    await harness
-      .withIdentity({ subject: 'owner' })
-      .mutation(api.reset.retire, { agentId: retiring });
+    await harness.withIdentity(managerIdentity()).mutation(api.reset.retire, { agentId: retiring });
     expect((await retirementsOf(harness))[0].claims).toHaveLength(1);
 
-    await harness.withIdentity({ subject: 'owner' }).mutation(api.reset.deleteMyData, {});
+    await harness.withIdentity(managerIdentity()).mutation(api.reset.deleteMyData, {});
 
     const retirements = await retirementsOf(harness);
     expect(retirements).toHaveLength(2);
@@ -822,7 +807,7 @@ describe('retire in real mode', (): void => {
     // Unlinking retires every employee, so the one-employee retire takes no such argument.
     await expect(
       harness
-        .withIdentity({ subject: 'owner' })
+        .withIdentity(managerIdentity())
         .mutation(api.reset.retire, { agentId: retiring, alsoUnlinkDocumentation: true } as never),
     ).rejects.toThrow('alsoUnlinkDocumentation');
     expect(await harness.run(async (ctx) => await ctx.db.get(retiring))).not.toBeNull();
@@ -835,7 +820,7 @@ describe('retire in real mode', (): void => {
     const { harness, retiring } = await seedRealOwner();
     await expect(
       harness
-        .withIdentity({ subject: 'stranger' })
+        .withIdentity(managerIdentity('stranger'))
         .mutation(api.reset.retire, { agentId: retiring }),
     ).rejects.toThrow('forbidden');
     expect(await harness.run(async (ctx) => await ctx.db.get(retiring))).not.toBeNull();
@@ -846,7 +831,7 @@ describe('reset in mock mode', (): void => {
   it('wipes the employee and writes no tombstone', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     await seedOwner(harness);
-    await harness.withIdentity({ subject: 'owner' }).mutation(api.reset.deleteMyData, {});
+    await harness.withIdentity(managerIdentity()).mutation(api.reset.deleteMyData, {});
     expect(await harness.run(async (ctx) => await ctx.db.query('events').collect())).toEqual([]);
   });
 });
@@ -862,7 +847,7 @@ describe('the jobs a reset leaves scheduled (step 47, P4-7)', (): void => {
     const { retiring, colleague, item } = await harness.run(async (ctx) => {
       const insertAgent = async (name: string): Promise<Id<'agents'>> =>
         await ctx.db.insert('agents', {
-          bossEmail: 'boss@day0.local',
+          bossEmail: MANAGER_ADDRESS,
           name,
           userId: 'owner',
           state: 'active',
@@ -899,9 +884,7 @@ describe('the jobs a reset leaves scheduled (step 47, P4-7)', (): void => {
       return { retiring, colleague, item };
     });
 
-    await harness
-      .withIdentity({ subject: 'owner' })
-      .mutation(api.reset.retire, { agentId: retiring });
+    await harness.withIdentity(managerIdentity()).mutation(api.reset.retire, { agentId: retiring });
 
     const jobs = await harness.run(
       async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),

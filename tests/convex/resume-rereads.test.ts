@@ -26,6 +26,7 @@ import {
   firstAttempt2026_09_17,
 } from '../fixtures/resume-rereads-2026-09-17';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
 /**
  * A retry that resumes at the closing phase reads the carried reads again
@@ -173,7 +174,7 @@ vi.stubGlobal('fetch', async (input: URL | string, init?: RequestInit): Promise<
 });
 
 type Harness = TestConvex<typeof schema>;
-const OWNER = { subject: 'owner' };
+const OWNER = managerIdentity();
 
 /** The tile's container, stopped and started by the test. */
 let tileDown = false;
@@ -184,7 +185,7 @@ async function seed(
 ): Promise<Id<'workItems'>> {
   return await harness.run(async (ctx) => {
     const agentId = await ctx.db.insert('agents', {
-      bossEmail: 'boss@day0.local',
+      bossEmail: MANAGER_ADDRESS,
       name: 'ops worker',
       userId: 'owner',
       state: 'active',

@@ -22,6 +22,7 @@ import { credentialSourceRef } from '../../src/docs/credential-ref';
 import { listingCursor } from '../../src/docs/readers/batch';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
+import { MANAGER_ADDRESS } from './fakes/manager-identity';
 
 type Harness = TestConvex<typeof schema>;
 
@@ -34,7 +35,7 @@ async function agent(harness: Harness, fields: { userId?: string } = {}): Promis
   return await harness.run(
     async (ctx) =>
       await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'Priya',
         state: 'active',
         createdAt: 1,
@@ -243,7 +244,7 @@ describe('the agents-zone migration (N12, the M2 backfill)', (): void => {
     const zoned = await harness.run(
       async (ctx) =>
         await ctx.db.insert('agents', {
-          bossEmail: 'boss@day0.local',
+          bossEmail: MANAGER_ADDRESS,
           name: 'Aiko',
           state: 'active',
           zone: 'Asia/Singapore',
@@ -1012,7 +1013,7 @@ describe('the avatar id rewrite (U15 D1 (a), N6)', (): void => {
           await harness.run(
             async (ctx) =>
               await ctx.db.insert('agents', {
-                bossEmail: 'boss@day0.local',
+                bossEmail: MANAGER_ADDRESS,
                 name: 'Priya',
                 state: 'active',
                 createdAt: 1,

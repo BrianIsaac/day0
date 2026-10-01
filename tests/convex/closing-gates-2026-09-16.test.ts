@@ -60,6 +60,7 @@ import { DEFERRALS_KEPT } from '../../src/work/execute-skill';
 import { encrypt } from '../../src/lib/credential-crypto';
 import { REDACTED } from '../../src/redaction/redact';
 import { randomBytes } from 'node:crypto';
+import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
 /**
  * The 16 September second run's two closing phases, replayed from the point
@@ -168,7 +169,7 @@ const TILE_SNAPSHOT = [
 ].join('\n');
 
 type Harness = TestConvex<typeof schema>;
-const OWNER = { subject: 'owner' };
+const OWNER = managerIdentity();
 const CREDENTIAL_KEY = randomBytes(32).toString('base64');
 /** The tile login the owner stores; a closing set that quotes it must not reach the row in clear. */
 const TILE_PASSWORD = 'tile-pass-9x7Q';
@@ -195,7 +196,7 @@ async function seedAtClosing(
 ): Promise<{ agentId: Id<'agents'>; workItemId: Id<'workItems'>; runId: Id<'events'> }> {
   return await harness.run(async (ctx) => {
     const agentId = await ctx.db.insert('agents', {
-      bossEmail: 'boss@day0.local',
+      bossEmail: MANAGER_ADDRESS,
       name: 'Priya',
       userId: 'owner',
       state: 'active',

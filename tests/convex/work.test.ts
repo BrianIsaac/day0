@@ -27,6 +27,7 @@ import { runThroughBody } from '../fixtures/run-through-charter-2026-09-14';
 import type { Charter } from '../../src/agent/charter';
 import { skillBodyHash } from '../../src/work/skill-body';
 import { collectLedgerObservations } from '../../convex/metrics';
+import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
@@ -50,7 +51,7 @@ afterEach((): void => {
 
 type Harness = TestConvex<typeof schema>;
 
-const OWNER = { subject: 'owner' };
+const OWNER = managerIdentity();
 const pendingOutput = {
   draft: 'Prepared the close summary.',
   notes: '',
@@ -91,7 +92,7 @@ async function seed(
 ): Promise<{ agentId: Id<'agents'>; workItemId: Id<'workItems'>; runId: Id<'events'> }> {
   return await harness.run(async (ctx) => {
     const agentId = await ctx.db.insert('agents', {
-      bossEmail: 'boss@day0.local',
+      bossEmail: MANAGER_ADDRESS,
       name: 'Priya',
       userId: 'owner',
       state: 'active',
@@ -359,7 +360,7 @@ describe('batched decisions', (): void => {
     ).rejects.toThrow('actions have already been approved');
     expect((await readItem(harness, second.workItemId)).approvedIndexes).toBeUndefined();
     await expect(
-      harness.withIdentity({ subject: 'intruder' }).mutation(api.work.approveActionsBatch, {
+      harness.withIdentity(managerIdentity('intruder')).mutation(api.work.approveActionsBatch, {
         members: [
           { workItemId: second.workItemId, pendingRunId: second.runId, approvedIndexes: [0] },
         ],
@@ -799,7 +800,7 @@ describe('plan decisions under the autonomous-actions switch', (): void => {
   async function rejectedElsewhere(harness: Harness, userId: string): Promise<Id<'workItems'>> {
     return await harness.run(async (ctx) => {
       const colleague = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'Mateo',
         userId,
         state: 'active',
@@ -1265,7 +1266,7 @@ describe('manager channel request claims', (): void => {
       failure: 'Slack returned HTTP 503.',
     });
     await expect(
-      harness.withIdentity({ subject: 'stranger' }).mutation(api.work.resendDecisionRequest, {
+      harness.withIdentity(managerIdentity('stranger')).mutation(api.work.resendDecisionRequest, {
         workItemId,
       }),
     ).rejects.toThrow('forbidden');
@@ -2452,7 +2453,7 @@ describe('approving a plan with answers', (): void => {
       }),
     ).rejects.toThrow('cannot be empty');
     await expect(
-      harness.withIdentity({ subject: 'stranger' }).mutation(api.work.approvePlan, {
+      harness.withIdentity(managerIdentity('stranger')).mutation(api.work.approvePlan, {
         workItemId,
         answers: [{ questionId: question._id, text: 'Priya.' }],
       }),
@@ -3005,7 +3006,7 @@ describe('the exact-action gate', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const { workItemId, runId } = await pend(harness);
     await expect(
-      harness.withIdentity({ subject: 'intruder' }).mutation(api.work.approveActions, {
+      harness.withIdentity(managerIdentity('intruder')).mutation(api.work.approveActions, {
         workItemId,
         pendingRunId: runId,
         approvedIndexes: [0],
@@ -3437,7 +3438,7 @@ describe('the exact-action gate', (): void => {
       }),
     ).rejects.toThrow('explicit provider verification is required');
     await expect(
-      harness.withIdentity({ subject: 'intruder' }).mutation(api.work.reconcileFailed, {
+      harness.withIdentity(managerIdentity('intruder')).mutation(api.work.reconcileFailed, {
         workItemId,
         confirmed: true,
       }),
@@ -3675,7 +3676,7 @@ describe('the exact-action gate', (): void => {
         ['Waiting', 1],
       ] as const) {
         const agentId = await ctx.db.insert('agents', {
-          bossEmail: 'boss@day0.local',
+          bossEmail: MANAGER_ADDRESS,
           name,
           userId: 'owner',
           state: 'active',
@@ -5006,7 +5007,7 @@ describe('a re-listed ticket keeps its row current (Q11)', (): void => {
     return await harness.run(
       async (ctx) =>
         await ctx.db.insert('agents', {
-          bossEmail: 'boss@day0.local',
+          bossEmail: MANAGER_ADDRESS,
           name: 'Priya',
           userId: 'owner',
           state: 'active',
@@ -5162,7 +5163,9 @@ describe('a re-listed ticket keeps its row current (Q11)', (): void => {
       listedAt: expect.any(Number),
     });
     await expect(
-      harness.withIdentity({ subject: 'stranger' }).query(api.work.latestListing, { workItemId }),
+      harness
+        .withIdentity(managerIdentity('stranger'))
+        .query(api.work.latestListing, { workItemId }),
     ).rejects.toThrow();
   });
 
@@ -5436,7 +5439,7 @@ describe('the owner-wide claim before the model call and on parked verdicts', ()
     return await harness.run(async (ctx) => {
       const row = async (name: string): Promise<Id<'workItems'>> => {
         const agentId = await ctx.db.insert('agents', {
-          bossEmail: 'boss@day0.local',
+          bossEmail: MANAGER_ADDRESS,
           name,
           userId: 'owner',
           state: 'active',
@@ -5677,7 +5680,7 @@ describe('the cap count behind every evaluation (P9-1)', (): void => {
     const agentId = await harness.run(
       async (ctx) =>
         await ctx.db.insert('agents', {
-          bossEmail: 'boss@day0.local',
+          bossEmail: MANAGER_ADDRESS,
           name: 'Priya',
           userId: 'owner',
           state: 'active',
@@ -6298,7 +6301,7 @@ describe('the evaluation’s record (step 29)', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const { agentId, charterId, workItemId } = await harness.run(async (ctx) => {
       const agentId = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'Priya',
         userId: 'owner',
         state: 'active',
@@ -6370,7 +6373,7 @@ describe('the charter a verdict names (review M17, Q14)', (): void => {
   }> {
     return await harness.run(async (ctx) => {
       const agentId = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'Priya',
         userId: 'owner',
         state: 'active',
@@ -6538,7 +6541,7 @@ describe('work.needsYou', (): void => {
     return await harness.run(
       async (ctx) =>
         await ctx.db.insert('agents', {
-          bossEmail: 'boss@day0.local',
+          bossEmail: MANAGER_ADDRESS,
           name,
           userId: 'owner',
           state: 'active',
@@ -6720,7 +6723,7 @@ describe('work.needsYou', (): void => {
 
     const owner = await harness.withIdentity(OWNER).query(api.work.needsYou, {});
     const stranger = await harness
-      .withIdentity({ subject: 'stranger' })
+      .withIdentity(managerIdentity('stranger'))
       .query(api.work.needsYou, {});
 
     expect(owner.entries.map((entry) => entry.subject)).toEqual(['Mine']);
@@ -6987,7 +6990,7 @@ describe('work.dismissFailed (N7)', (): void => {
 
     await expect(
       harness
-        .withIdentity({ subject: 'intruder' })
+        .withIdentity(managerIdentity('intruder'))
         .mutation(api.work.dismissFailed, { workItemId }),
     ).rejects.toThrow('forbidden');
     const { workItemId: pending } = await seed(harness, 'plan-pending');
@@ -7051,7 +7054,7 @@ describe('work.earlierPlan (round two 3.7, attempt two)', (): void => {
     });
     expect(await owner.query(api.work.earlierPlan, { workItemId: other })).toBeNull();
     await expect(
-      harness.withIdentity({ subject: 'stranger' }).query(api.work.earlierPlan, { workItemId }),
+      harness.withIdentity(managerIdentity('stranger')).query(api.work.earlierPlan, { workItemId }),
     ).rejects.toThrow('forbidden');
   });
 });
@@ -7061,7 +7064,7 @@ describe('work.needsYou, dating a wait', (): void => {
     return await harness.run(
       async (ctx) =>
         await ctx.db.insert('agents', {
-          bossEmail: 'boss@day0.local',
+          bossEmail: MANAGER_ADDRESS,
           name: 'Mira',
           userId: 'owner',
           state: 'active',

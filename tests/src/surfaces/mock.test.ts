@@ -6,6 +6,7 @@ import schema from '../../../convex/schema';
 import { mockAdapter } from '../../../src/surfaces/mock';
 import type { AdapterRun } from '../../../src/surfaces/types';
 import type { MockAction } from '../../../src/work/types';
+import { MANAGER_ADDRESS } from '../../convex/fakes/manager-identity';
 
 const modules = {
   '../../../convex/_generated/api.ts': (): Promise<
@@ -28,7 +29,7 @@ async function createRun(): Promise<{
   const harness = convexTest(schema, modules);
   const run = await harness.run(async (ctx): Promise<AdapterRun> => {
     const agentId = await ctx.db.insert('agents', {
-      bossEmail: 'boss@day0.local',
+      bossEmail: MANAGER_ADDRESS,
       name: 'adapter test',
       userId: 'test-user',
       state: 'active',

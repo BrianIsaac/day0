@@ -14,6 +14,7 @@ import {
   GLM_DRAFT_2026_09_16,
   PROVENANCE_SUFFIX_2026_09_16,
 } from '../fixtures/charter-glm-draft-2026-09-16';
+import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
 /**
  * The model, scripted per agent: the labeller files the seven questions in
@@ -106,7 +107,7 @@ async function deployAgent(harness: TestConvex<typeof schema>): Promise<Id<'agen
   return await harness.run(
     async (ctx) =>
       await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'worker 1',
         userId: 'owner',
         state: 'day-one-in-progress',
@@ -118,7 +119,7 @@ async function deployAgent(harness: TestConvex<typeof schema>): Promise<Id<'agen
 async function synthesise(): Promise<Doc<'charters'>> {
   const harness = convexTest(schema, allConvexModules());
   const agentId = await deployAgent(harness);
-  const owner = harness.withIdentity({ subject: 'owner' });
+  const owner = harness.withIdentity(managerIdentity());
   const result = await owner.action(api.onboarding.synthesiseFromTranscript, {
     agentId,
     bossLabel: 'Sam',
@@ -235,7 +236,7 @@ describe('the workspace a synthesised charter seeds', (): void => {
     useSurfaceMode('mock');
     const harness = convexTest(schema, allConvexModules());
     const agentId = await deployAgent(harness);
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     await owner.action(api.onboarding.synthesiseFromTranscript, {
       agentId,
       bossLabel: 'Sam',
@@ -264,7 +265,7 @@ describe('a draft sent back with a note (round two section 3.5)', (): void => {
   }> {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await deployAgent(harness);
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     const { sessionId } = await owner.mutation(api.voice.start, { agentId, mode: 'chat' });
     const result = await owner.action(api.onboarding.synthesiseFromTranscript, {
       agentId,
@@ -287,7 +288,7 @@ describe('a draft sent back with a note (round two section 3.5)', (): void => {
       },
     ];
     const { harness, agentId, sessionId, charterId } = await draftFromSession();
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     await owner.mutation(api.charters.setConstraintStruck, { charterId, index: 0, struck: true });
 
     const sent = await owner.mutation(api.charters.requestChanges, {
@@ -353,7 +354,7 @@ describe('a draft sent back with a note (round two section 3.5)', (): void => {
   it('keeps the transcript beside every version an approved redraft is amended into', async (): Promise<void> => {
     useSurfaceMode('mock');
     const { harness, agentId, charterId } = await draftFromSession();
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     await owner.mutation(api.charters.approve, { charterId });
     const amended = await owner.mutation(api.charters.amend, {
       agentId,
@@ -379,7 +380,7 @@ describe('a draft sent back with a note (round two section 3.5)', (): void => {
           createdAt: 2,
         }),
     );
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     expect(await owner.query(api.charters.transcriptOf, { charterId })).toBeNull();
     expect(
       await owner.mutation(api.charters.requestChanges, { charterId, reason: 'Name the deck.' }),
@@ -395,7 +396,7 @@ describe('the draft of a chat one-to-one its session kept (30 Sep, a one-to-one 
     try {
       const harness = convexTest(schema, allConvexModules());
       const agentId = await deployAgent(harness);
-      const owner = harness.withIdentity({ subject: 'owner' });
+      const owner = harness.withIdentity(managerIdentity());
       const { sessionId } = await owner.mutation(api.voice.start, { agentId, mode: 'chat' });
       const replies = [
         'Tier-2 asks swamp the Q3 close.',

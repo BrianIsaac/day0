@@ -11,6 +11,7 @@ import type { SkillSandboxRun } from '../../src/lib/skill-sandbox';
 import { allConvexModules } from './all-modules';
 import { MAX_AUTHORING_DEFERRALS } from '../../convex/skills';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
 /**
  * Read back what a harnessed sandbox program carries: the author's program and
@@ -72,7 +73,7 @@ vi.mock('../../src/lib/skill-sandbox', () => ({
 }));
 
 type Harness = TestConvex<typeof schema>;
-const OWNER = { subject: 'owner' };
+const OWNER = managerIdentity();
 
 const reusableBody = [
   '# Value refresh on an analytics surface',
@@ -99,7 +100,7 @@ async function seedApprovedSkill(
 ): Promise<{ skillId: Id<'skills'>; workItemId: Id<'workItems'> }> {
   return await harness.run(async (ctx) => {
     const agentId = await ctx.db.insert('agents', {
-      bossEmail: 'boss@day0.local',
+      bossEmail: MANAGER_ADDRESS,
       name: 'Priya',
       userId: 'owner',
       state: 'active',

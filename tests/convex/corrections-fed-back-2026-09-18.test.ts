@@ -10,6 +10,7 @@ import { allConvexModules } from './all-modules';
 import { contractSchema } from './contract-schema';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { randomBytes } from 'node:crypto';
+import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
 /**
  * Corrections are kept and fed back into the employee's later work. The
@@ -133,7 +134,7 @@ vi.stubGlobal('fetch', async (input: URL | string, init?: RequestInit): Promise<
 });
 
 type Harness = TestConvex<typeof schema>;
-const OWNER = { subject: 'owner' };
+const OWNER = managerIdentity();
 const CREDENTIAL_KEY = randomBytes(32).toString('base64');
 
 beforeEach((): void => {
@@ -160,7 +161,7 @@ async function seedEmployee(
 ): Promise<Id<'agents'>> {
   return await harness.run(async (ctx) => {
     const agentId = await ctx.db.insert('agents', {
-      bossEmail: 'boss@day0.local',
+      bossEmail: MANAGER_ADDRESS,
       name: options.name ?? 'Aiko',
       userId: 'owner',
       state: 'active',
@@ -538,7 +539,7 @@ describe('a note on item one changes the plan of item two', (): void => {
     const { correction } = await ticketOneRetriedWithNote(harness, agentId);
     await expect(
       harness
-        .withIdentity({ subject: 'stranger' })
+        .withIdentity(managerIdentity('stranger'))
         .mutation(api.corrections.retire, { correctionId: correction._id }),
     ).rejects.toThrow('forbidden');
     expect((await correctionsOf(harness, agentId))[0]?.retiredAt).toBeUndefined();

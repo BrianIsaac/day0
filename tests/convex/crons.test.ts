@@ -9,6 +9,7 @@ import schema from '../../convex/schema';
 import crons from '../../convex/crons';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+import { MANAGER_ADDRESS } from './fakes/manager-identity';
 
 describe('scheduled documentation sync', (): void => {
   it('runs every fifteen minutes', (): void => {
@@ -69,7 +70,7 @@ async function seedAgent(harness: Harness, autonomousActions: boolean): Promise<
   return await harness.run(
     async (ctx) =>
       await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'Priya',
         userId: 'owner',
         state: 'active',

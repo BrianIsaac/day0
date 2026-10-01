@@ -7,6 +7,7 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
@@ -21,7 +22,7 @@ afterEach((): void => {
 });
 
 type Harness = TestConvex<typeof schema>;
-const OWNER = { subject: 'owner' };
+const OWNER = managerIdentity();
 
 async function seedAgentAndWork(
   harness: Harness,
@@ -29,7 +30,7 @@ async function seedAgentAndWork(
 ): Promise<{ agentId: Id<'agents'>; workItemId: Id<'workItems'> }> {
   return await harness.run(async (ctx) => {
     const agentId = await ctx.db.insert('agents', {
-      bossEmail: 'boss@day0.local',
+      bossEmail: MANAGER_ADDRESS,
       name: 'Priya',
       userId: 'owner',
       state: 'active',
@@ -93,7 +94,7 @@ describe('rejecting a proposed skill', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const { agentId, workItemId } = await seedAgentAndWork(harness, 'linear');
     const skillId = await propose(harness, agentId, workItemId);
-    await harness.withIdentity({ subject: 'owner' }).mutation(api.skills.reject, { skillId });
+    await harness.withIdentity(managerIdentity()).mutation(api.skills.reject, { skillId });
     const [skill, work] = await harness.run(async (ctx) => [
       await ctx.db.get(skillId),
       await ctx.db.get(workItemId),
@@ -114,7 +115,7 @@ describe('rejecting a proposed skill', (): void => {
       },
     ]);
     await expect(
-      harness.withIdentity({ subject: 'owner' }).mutation(api.skills.reject, { skillId }),
+      harness.withIdentity(managerIdentity()).mutation(api.skills.reject, { skillId }),
     ).resolves.toEqual({ ok: true });
   });
 

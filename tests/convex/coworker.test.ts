@@ -4,6 +4,7 @@ import { internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
+import { MANAGER_ADDRESS } from './fakes/manager-identity';
 
 type Harness = ReturnType<typeof convexTest>;
 
@@ -20,7 +21,7 @@ async function seedAgent(harness: Harness): Promise<Id<'agents'>> {
   return await harness.run(
     async (ctx) =>
       await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'coworker test',
         userId: 'owner',
         state: 'deployed',
