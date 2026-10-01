@@ -499,6 +499,51 @@ describe('accept with a run in flight: the request waits in accepting (transfer 
     expect(await read(handover.harness, handover.transferId)).toEqual(ended);
   });
 
+  it('lets the operator end an accepting request stuck on a settle that throws, and nothing else (M3)', async (): Promise<void> => {
+    const handover = await seedHandover();
+    await seedExecuting(handover, 'REVOPS-1');
+    const approved = await seedItem(handover, 'REVOPS-2', 'plan-approved', {
+      plan: { steps: ['Close it'] },
+    });
+    await accept(handover);
+
+    await expect(
+      handover.harness.mutation(internal.transferAcceptance.endStuckHandover, {
+        transferId: handover.transferId,
+        reason: 'the settle throws on a transaction limit',
+      }),
+    ).resolves.toBe('ended');
+    const ended = await read(handover.harness, handover.transferId);
+    expect(ended).toMatchObject({ state: 'cancelled', decidedAt: ACCEPTED_AT });
+    expect(await read(handover.harness, handover.maya)).toMatchObject({ userId: 'owner' });
+    // The employee is no longer being handed over: its approved plan may start again.
+    await expect(
+      handover.harness.mutation(internal.work.claimForExecution, {
+        workItemId: approved,
+        skillId: handover.skillId,
+      }),
+    ).resolves.toMatchObject({ claimed: true });
+    await expect(
+      handover.harness.mutation(internal.transferAcceptance.endStuckHandover, {
+        transferId: handover.transferId,
+        reason: 'again',
+      }),
+    ).resolves.toBe('not-accepting');
+    expect(await read(handover.harness, handover.transferId)).toEqual(ended);
+  });
+
+  it('leaves a request that is not accepting as it is when the operator tries to end it', async (): Promise<void> => {
+    const handover = await seedHandover();
+    const asked = await read(handover.harness, handover.transferId);
+    await expect(
+      handover.harness.mutation(internal.transferAcceptance.endStuckHandover, {
+        transferId: handover.transferId,
+        reason: 'mistaken id',
+      }),
+    ).resolves.toBe('not-accepting');
+    expect(await read(handover.harness, handover.transferId)).toEqual(asked);
+  });
+
   it('refuses before entering accepting when the move it waits for would be refused', async (): Promise<void> => {
     const handover = await seedHandover('charter-pending');
     await seedExecuting(handover, 'REVOPS-1');

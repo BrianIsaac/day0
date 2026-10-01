@@ -1007,6 +1007,29 @@ async function endUnmovable(
   });
 }
 
+/**
+ * Internal, operator-run only (`npx convex run transferAcceptance:endStuckHandover`, named in the
+ * cockpit's redeploy runbook): end an `accepting` request whose settle keeps failing on something
+ * `moveRefusal` does not test (a transaction limit, a throw inside the move), which `settleDue`
+ * would otherwise retry every minute for ever while no run starts for the employee and it cannot
+ * be retired (the wave 9 review's M3; decision 4). Ends it exactly as the settle ends an
+ * unmovable request ({@link endUnmovable}): the employee stays its old manager's, the request
+ * `cancelled`, its stamp kept. A request in any other state is left as it is.
+ *
+ * Writes the request's state and an error log line with the operator's reason; no event (the
+ * contract's cancel reasons are closed until the next schema step).
+ */
+export const endStuckHandover = internalMutation({
+  args: { transferId: v.id('managerTransfers'), reason: v.string() },
+  returns: v.union(v.literal('ended'), v.literal('not-accepting')),
+  handler: async (ctx, args): Promise<'ended' | 'not-accepting'> => {
+    const transfer = await ctx.db.get(args.transferId);
+    if (transfer?.state !== 'accepting') return 'not-accepting';
+    await endUnmovable(ctx, transfer, `ended by the operator: ${args.reason}`);
+    return 'ended';
+  },
+});
+
 /** What a settle did with its request. */
 const settleOutcomeValidator = v.union(
   v.literal('moved'),
