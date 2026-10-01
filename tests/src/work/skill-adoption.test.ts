@@ -319,6 +319,16 @@ describe('adoptionWords', (): void => {
     });
   });
 
+  it('words an offer whose version was withdrawn as withdrawn, never as one the adopter can adopt (A-m5)', (): void => {
+    const words = adoptionWords({ ...base, state: 'offered', withdrawn: true });
+    expect(words.lead).toBe(
+      "Priya's skill kanban-comment-and-close, verified on 18 September 2026, was withdrawn from every employee.",
+    );
+    expect(words.body).toBe(
+      'Mateo cannot adopt it. Write a new one instead to have Mateo write and verify its own, or decline it.',
+    );
+  });
+
   it("words a copy handed over from another manager as its own case, never as that author's name", (): void => {
     const words = adoptionWords({ ...base, authorName: HANDED_OVER_AUTHOR_NAME, state: 'offered' });
     expect(words.lead).toBe(

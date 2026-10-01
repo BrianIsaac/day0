@@ -20,6 +20,7 @@ import { toSurfaceRecord } from '../src/surfaces/records';
 import { verdictFor } from '../src/surfaces/verdict';
 import { holdsLiveAuthoringClaim } from '../src/lib/skill-authoring';
 import {
+  OFFER_WITHDRAWN_REFUSAL,
   adoptionCardState,
   adoptionFit,
   chooseOffer,
@@ -267,7 +268,7 @@ async function standingOffer(
   if (!isOfferedTo(version, adopter)) {
     return refused(
       version.revokedAt !== undefined
-        ? 'the offered skill was withdrawn from every employee'
+        ? OFFER_WITHDRAWN_REFUSAL
         : version.supersededAt !== undefined
           ? 'a revision replaced the offered skill'
           : 'the offered skill cannot be offered now',
@@ -371,7 +372,7 @@ async function versionRefusal(
     return { version, refusal: 'the offered skill is no longer in your library' };
   }
   if (version.revokedAt !== undefined) {
-    return { version, refusal: 'the offered skill was withdrawn from every employee' };
+    return { version, refusal: OFFER_WITHDRAWN_REFUSAL };
   }
   return { version };
 }

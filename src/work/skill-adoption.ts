@@ -385,7 +385,12 @@ export interface AdoptionWordsInput {
   readonly verifiedOn: string;
   /** The adopter's connection the sandbox runs under, by name; absent in mock mode. */
   readonly connection?: string;
+  /** The offered version was withdrawn from every employee ({@link OFFER_WITHDRAWN_REFUSAL}). */
+  readonly withdrawn?: boolean;
 }
+
+/** Why an offer may no longer be adopted or checked again: its version was withdrawn. */
+export const OFFER_WITHDRAWN_REFUSAL = 'the offered skill was withdrawn from every employee';
 
 /** The card's sentences. */
 export interface AdoptionWords {
@@ -419,6 +424,15 @@ export function adoptionWords(input: AdoptionWordsInput): AdoptionWords {
   };
   switch (input.state) {
     case 'offered':
+      // A withdrawn version is offered to nobody: the card says so rather than that it can be
+      // adopted (the wave 10 review, A-m5).
+      if (input.withdrawn === true) {
+        return {
+          lead: `${opening}, verified on ${verifiedOn}, was withdrawn from every employee.`,
+          body: `${adopterName} cannot adopt it. Write a new one instead to have ${adopterName} write and verify its own, or decline it.`,
+          ...scopes,
+        };
+      }
       return {
         lead: handedOver
           ? `${opening}, which came with an employee handed over to you and was verified on ${verifiedOn}, does this.`

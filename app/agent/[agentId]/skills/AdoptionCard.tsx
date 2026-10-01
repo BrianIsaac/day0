@@ -5,6 +5,7 @@ import type { api } from '@convex/_generated/api';
 import { deploymentZone } from '@/lib/zone';
 import {
   adoptionWords,
+  OFFER_WITHDRAWN_REFUSAL,
   stalledReason,
   verifiedOnDay,
   type AdoptionCardState,
@@ -87,6 +88,7 @@ export function AdoptionCard({
     skillName: adoption.name,
     verifiedOn: verifiedOnDay(adoption.verifiedAt, zone),
     ...(adoption.connection !== undefined ? { connection: adoption.connection } : {}),
+    withdrawn: adoption.refusal === OFFER_WITHDRAWN_REFUSAL,
   });
   // The approval's own refusal is said once, with where to fix it; the offer's own, when it
   // differs, is said beside it, since it withholds Adopt alone.
