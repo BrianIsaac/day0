@@ -15,7 +15,7 @@ body:
       label: Route
       description: Which of the README's ways of running it were you on?
       options:
-        - Hosted demo (day0-olive.vercel.app)
+        - Hosted demo (dayzer0.dev)
         - Local, cloud model (./setup.sh --route featherless, key or endpoint)
         - Local, local model (./setup.sh --route local)
         - Convex cloud + Clerk
