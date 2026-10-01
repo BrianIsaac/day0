@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
+import { SEED_AFTER_HANDOVER } from '../../convex/intakeSeed';
 import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS } from './fakes/manager-identity';
 
@@ -66,24 +67,23 @@ describe('intakeSeed.seedListedItem: a poll in flight at a handover (U3-m2)', ()
       listed(agentId, 'owner'),
     );
 
-    expect(seeded).not.toBeNull();
+    expect(seeded).toEqual(expect.any(String));
     expect(await itemsOf(harness, agentId)).toBe(1);
   });
 
-  it('seeds nothing once the employee was handed to another owner since the poll read it', async (): Promise<void> => {
+  it('refuses the seed once the employee was handed to another owner since the poll read it', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedEmployee(harness, 'colleague');
 
-    const seeded = await harness.mutation(
-      internal.intakeSeed.seedListedItem,
-      listed(agentId, 'owner'),
-    );
-
-    expect(seeded).toBeNull();
+    // Refused, not dropped: the sweep counts a refused seed as unseeded, so its checkpoint holds
+    // and the new owner's first poll reads the item again.
+    await expect(
+      harness.mutation(internal.intakeSeed.seedListedItem, listed(agentId, 'owner')),
+    ).rejects.toThrow(SEED_AFTER_HANDOVER);
     expect(await itemsOf(harness, agentId)).toBe(0);
   });
 
-  it('seeds nothing for an employee that is gone', async (): Promise<void> => {
+  it('refuses the seed for an employee that is gone', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedEmployee(harness, 'owner');
     await harness.run(async (ctx) => {
@@ -92,6 +92,6 @@ describe('intakeSeed.seedListedItem: a poll in flight at a handover (U3-m2)', ()
 
     await expect(
       harness.mutation(internal.intakeSeed.seedListedItem, listed(agentId, 'owner')),
-    ).resolves.toBeNull();
+    ).rejects.toThrow(SEED_AFTER_HANDOVER);
   });
 });
