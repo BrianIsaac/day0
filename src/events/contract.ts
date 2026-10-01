@@ -547,6 +547,25 @@ export interface SkillRevokedPayload extends SkillReason {
   readonly holders: readonly SkillRevokedHolder[];
 }
 
+/**
+ * The payload of `skill.rechecked`: a callable skill passed its re-check and keeps running, as
+ * the version it names. `stillDue` when a trigger stamped it during the check, so the chip stays.
+ */
+export interface SkillRecheckedPayload extends SkillNamed {
+  readonly version?: number;
+  readonly versionId?: Id<'skillVersions'>;
+  readonly stillDue?: true;
+}
+
+/**
+ * The payload of `skill.superseded`: a row stopped running because its revision registered in
+ * the same transaction, as the version it names.
+ */
+export interface SkillSupersededPayload extends SkillNamed {
+  readonly revisionId: SkillId;
+  readonly version?: number;
+}
+
 /** The payload of `skill.given-up`: a failed skill ended by the manager's Give up. */
 export interface SkillGivenUpPayload extends SkillReason {
   /** The authoring attempts it had made. */
@@ -1315,6 +1334,8 @@ export interface EventPayloads {
   'skill.retired': SkillRetiredPayload;
   'skill.revoked': SkillRevokedPayload;
   'skill.given-up': SkillGivenUpPayload;
+  'skill.rechecked': SkillRecheckedPayload;
+  'skill.superseded': SkillSupersededPayload;
   'skill.authoring-superseded': SkillAuthoringSupersededPayload;
   'skill.authoring-claimed': SkillAuthoringClaimedPayload;
   'skill.authoring': SkillAuthoringPayload;
@@ -1477,6 +1498,8 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'skill.retired',
   'skill.revoked',
   'skill.given-up',
+  'skill.rechecked',
+  'skill.superseded',
   'skill.authoring-superseded',
   'skill.authoring-claimed',
   'skill.authoring',

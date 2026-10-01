@@ -372,6 +372,18 @@ describe('the live feed labels', (): void => {
     ).toBe('skill given up: analytics-refresh-value after 2 attempts');
     expect(
       eventLabel({
+        type: 'skill.rechecked',
+        payload: { name: 'kanban-comment-and-close', version: 2 },
+      }),
+    ).toBe('skill re-checked: kanban-comment-and-close v2');
+    expect(
+      eventLabel({
+        type: 'skill.superseded',
+        payload: { name: 'kanban-comment-and-close', version: 3 },
+      }),
+    ).toBe('skill superseded by its revision: kanban-comment-and-close v3');
+    expect(
+      eventLabel({
         type: 'work.waiting-for-skill',
         payload: { name: 'kanban-comment-and-close', reason: 'its skill was retired' },
       }),

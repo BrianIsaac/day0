@@ -72,6 +72,8 @@ export const RECORD_FILTER_OF: { readonly [Type in EventType]: readonly RecordFi
   'skill.retired': DECISIONS,
   'skill.revoked': ['decisions', 'refused'],
   'skill.given-up': ['decisions', 'refused'],
+  'skill.rechecked': NONE,
+  'skill.superseded': NONE,
   'skill.authoring-superseded': NONE,
   'skill.authoring-claimed': NONE,
   'skill.authoring': NONE,

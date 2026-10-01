@@ -354,6 +354,20 @@ describe('recordWords', (): void => {
     ).toBe('You gave up on the skill analytics-refresh-value after 3 attempts.');
     expect(
       recordWords(
+        { type: 'skill.rechecked', payload: { name: 'kanban-comment-and-close', version: 2 } },
+        subject,
+      ),
+    ).toBe(
+      'The skill kanban-comment-and-close passed its re-check as version 2 and keeps running.',
+    );
+    expect(
+      recordWords(
+        { type: 'skill.superseded', payload: { name: 'kanban-comment-and-close', version: 3 } },
+        subject,
+      ),
+    ).toBe('The skill kanban-comment-and-close was replaced by its revision, version 3.');
+    expect(
+      recordWords(
         {
           type: 'work.waiting-for-skill',
           payload: {

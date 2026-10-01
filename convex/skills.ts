@@ -1223,6 +1223,35 @@ export const completeRegistration = internalMutation({
       ...RELEASED,
     });
     const replaced = await supersedeReplacedRow(ctx, row);
+    if (replaced !== undefined) {
+      // The replaced row's own line on the record: it stopped running in this transaction.
+      await appendEvent(ctx, {
+        agentId: row.agentId,
+        type: 'skill.superseded',
+        payload: {
+          skillId: replaced,
+          name: row.name,
+          revisionId: args.skillId,
+          ...(held !== undefined ? { version: held.version } : {}),
+        },
+        createdAt: now,
+      });
+    }
+    if (row.state === 'registered') {
+      // A row registered before its claim passed a re-check (Re-check now, or a stored check
+      // moving it onto a newer version): the record says so beside the registration.
+      await appendEvent(ctx, {
+        agentId: row.agentId,
+        type: 'skill.rechecked',
+        payload: {
+          skillId: args.skillId,
+          name: row.name,
+          ...(held !== undefined ? { version: held.version, versionId: held.versionId } : {}),
+          ...(stampedDuringRun ? { stillDue: true as const } : {}),
+        },
+        createdAt: now,
+      });
+    }
     await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'skill.registered',

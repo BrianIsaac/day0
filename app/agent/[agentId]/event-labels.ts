@@ -261,6 +261,14 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
       typeof payload.version === 'number' ? ` v${payload.version}` : ''
     }${holders.length > 0 ? `, ${holders.join(', ')}` : ''}${because(payload.reason)}`;
   },
+  'skill.rechecked': (payload) =>
+    `skill re-checked: ${text(payload.name) ?? 'unnamed'}${
+      typeof payload.version === 'number' ? ` v${payload.version}` : ''
+    }`,
+  'skill.superseded': (payload) =>
+    `skill superseded by its revision: ${text(payload.name) ?? 'unnamed'}${
+      typeof payload.version === 'number' ? ` v${payload.version}` : ''
+    }`,
   'skill.given-up': (payload) =>
     `skill given up: ${text(payload.name) ?? 'unnamed'}${
       typeof payload.attempts === 'number'
@@ -537,6 +545,7 @@ const RECORD_KINDS: Readonly<Partial<Record<EventType, Exclude<RecordKind, 'note
   'work.provider-reconciled': 'landed',
   'charter.approved': 'landed',
   'skill.registered': 'landed',
+  'skill.rechecked': 'landed',
   'skill.builtin-installed': 'landed',
   'surface.connected': 'landed',
   'work.actions-rejected': 'refused',

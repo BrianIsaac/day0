@@ -739,6 +739,11 @@ describe('skillControls', (): void => {
 
       const passed = await skill(harness, office.priyaSkill);
       expect(passed).toMatchObject({ state: 'registered', versionId: office.versionId });
+      expect(
+        (await eventsOf(harness, office.priya, 'skill.rechecked')).map((event) => event.payload),
+      ).toEqual([
+        { skillId: office.priyaSkill, name: NAME, version: 1, versionId: office.versionId },
+      ]);
       expect(passed.recheckDueAt).toBeUndefined();
       expect(passed.recheckReason).toBeUndefined();
 
@@ -922,6 +927,11 @@ describe('skillControls', (): void => {
 
       expect((await skill(harness, revisionId)).state).toBe('registered');
       expect((await skill(harness, office.priyaSkill)).state).toBe('superseded');
+      expect(
+        (await eventsOf(harness, office.priya, 'skill.superseded')).map((event) => event.payload),
+      ).toEqual([{ skillId: office.priyaSkill, name: NAME, revisionId, version: 2 }]);
+      // A revision's first registration is no re-check.
+      expect(await eventsOf(harness, office.priya, 'skill.rechecked')).toEqual([]);
       const versions = await harness.run(
         async (ctx) => await ctx.db.query('skillVersions').collect(),
       );

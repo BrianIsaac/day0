@@ -321,6 +321,14 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
       holders ? ` (${holders})` : ''
     }${because(p.reason)}`;
   },
+  'skill.rechecked': (p) =>
+    `The skill ${text(p.name) ?? 'unnamed'} passed its re-check${
+      typeof p.version === 'number' ? ` as version ${p.version}` : ''
+    } and keeps running${p.stillDue === true ? '; a change during the check keeps it due' : ''}`,
+  'skill.superseded': (p) =>
+    `The skill ${text(p.name) ?? 'unnamed'} was replaced by its revision${
+      typeof p.version === 'number' ? `, version ${p.version}` : ''
+    }`,
   'skill.given-up': (p) => {
     const attempts = counted(p.attempts, 'attempt');
     return `You gave up on the skill ${text(p.name) ?? 'unnamed'}${attempts ? ` after ${attempts}` : ''}`;
