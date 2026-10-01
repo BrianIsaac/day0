@@ -274,6 +274,53 @@ describe('the live feed labels', (): void => {
     ).toBe('skill re-check due: kanban-comment-and-close (v3 is verified; this runs v2)');
   });
 
+  it('labels a retire, a withdrawal from every employee and a Give up (10-C)', (): void => {
+    expect(
+      eventLabel({
+        type: 'skill.retired',
+        payload: { name: 'kanban-comment-and-close', reason: 'it closes the wrong tickets' },
+      }),
+    ).toBe('skill retired: kanban-comment-and-close (it closes the wrong tickets)');
+    expect(
+      eventLabel({
+        type: 'skill.retired',
+        payload: { name: 'kanban-comment-and-close', reason: 'stale', withdrawn: true },
+      }),
+    ).toBe('skill retired, withdrawn from every employee: kanban-comment-and-close (stale)');
+    expect(
+      eventLabel({
+        type: 'skill.revoked',
+        payload: {
+          name: 'kanban-comment-and-close',
+          version: 2,
+          reason: 'stale',
+          holders: [
+            { skillId: 's1', agentId: 'a1', agentName: 'Priya' },
+            { skillId: 's2', agentId: 'a2', agentName: 'Mateo' },
+          ],
+        },
+      }),
+    ).toBe(
+      'skill withdrawn from every employee: kanban-comment-and-close v2, Priya, Mateo (stale)',
+    );
+    expect(
+      eventLabel({
+        type: 'skill.given-up',
+        payload: {
+          name: 'analytics-refresh-value',
+          reason: 'given up after 2 attempts',
+          attempts: 2,
+        },
+      }),
+    ).toBe('skill given up: analytics-refresh-value after 2 attempts');
+    expect(
+      eventLabel({
+        type: 'work.waiting-for-skill',
+        payload: { name: 'kanban-comment-and-close', reason: 'its skill was retired' },
+      }),
+    ).toBe('waiting for a skill again: kanban-comment-and-close (its skill was retired)');
+  });
+
   it('labels a dismissal as the manager setting a stopped item aside (m16)', (): void => {
     expect(eventLabel({ type: 'work.dismissed', payload: { workItemId: 'w1' } })).toBe(
       'dismissed by the manager',
@@ -321,6 +368,10 @@ describe('what a record line says an event did', (): void => {
     expect(recordKindOf({ type: 'work.skipped' })).toBe('withheld');
     expect(recordKindOf({ type: 'work.actions-pending' })).toBe('held');
     expect(recordKindOf({ type: 'skill.proposed' })).toBe('held');
+    expect(recordKindOf({ type: 'skill.retired' })).toBe('withheld');
+    expect(recordKindOf({ type: 'skill.revoked' })).toBe('withheld');
+    expect(recordKindOf({ type: 'skill.given-up' })).toBe('withheld');
+    expect(recordKindOf({ type: 'work.waiting-for-skill' })).toBe('held');
   });
 
   it('draws every line the Refused and withheld chip lists as refused or set aside, never noted (m34)', (): void => {

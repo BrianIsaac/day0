@@ -11,20 +11,27 @@ export const MAX_CONTROL_REASON_LENGTH = 500;
 /** The retire reason kept when the manager gives none. */
 export const RETIRED_BY_MANAGER = 'retired by the manager';
 
+/** The withdrawal reason kept when the manager gives none. */
+export const WITHDRAWN_BY_MANAGER = 'withdrawn by the manager';
+
 /**
- * The retire reason a skill keeps: the manager's own, trimmed, or {@link RETIRED_BY_MANAGER}
+ * The reason a Retire or a Withdraw keeps: the manager's own, trimmed, or the control's own words
  * when they gave none.
  *
  * @param reason - What the manager typed, if anything.
+ * @param fallback - The words kept for an empty reason.
  * @throws Error when the reason passes {@link MAX_CONTROL_REASON_LENGTH}; it is refused rather
  *   than cut, so the record never keeps half of what was meant.
  */
-export function retireReasonOf(reason: string | undefined): string {
+export function controlReasonOf(
+  reason: string | undefined,
+  fallback: typeof RETIRED_BY_MANAGER | typeof WITHDRAWN_BY_MANAGER = RETIRED_BY_MANAGER,
+): string {
   const trimmed = (reason ?? '').trim();
   if (trimmed.length > MAX_CONTROL_REASON_LENGTH) {
     throw new Error(`Keep the reason to ${MAX_CONTROL_REASON_LENGTH} characters.`);
   }
-  return trimmed === '' ? RETIRED_BY_MANAGER : trimmed;
+  return trimmed === '' ? fallback : trimmed;
 }
 
 /**

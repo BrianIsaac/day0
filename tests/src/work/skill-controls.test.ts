@@ -5,9 +5,10 @@ import {
   MAX_CONTROL_REASON_LENGTH,
   notCallableItemReason,
   reconnectedReason,
-  retireReasonOf,
+  controlReasonOf,
   RETIRED_BY_MANAGER,
   takenOutItemReason,
+  WITHDRAWN_BY_MANAGER,
 } from '../../../src/work/skill-controls';
 
 describe('skill controls words', (): void => {
@@ -21,18 +22,19 @@ describe('skill controls words', (): void => {
     expect(givenUpReason(Number.NaN)).toBe('given up after 1 attempt');
   });
 
-  it('keeps the manager’s retire reason trimmed, and says who retired it when there is none', (): void => {
-    expect(retireReasonOf('  it closes the wrong tickets  ')).toBe('it closes the wrong tickets');
-    expect(retireReasonOf('')).toBe(RETIRED_BY_MANAGER);
-    expect(retireReasonOf('   ')).toBe(RETIRED_BY_MANAGER);
-    expect(retireReasonOf(undefined)).toBe(RETIRED_BY_MANAGER);
+  it('keeps the manager’s reason trimmed, and says who acted when there is none', (): void => {
+    expect(controlReasonOf('  it closes the wrong tickets  ')).toBe('it closes the wrong tickets');
+    expect(controlReasonOf('')).toBe(RETIRED_BY_MANAGER);
+    expect(controlReasonOf('   ')).toBe(RETIRED_BY_MANAGER);
+    expect(controlReasonOf(undefined)).toBe(RETIRED_BY_MANAGER);
+    expect(controlReasonOf(' ', WITHDRAWN_BY_MANAGER)).toBe('withdrawn by the manager');
   });
 
   it('refuses a retire reason past the limit rather than cutting it', (): void => {
-    expect(() => retireReasonOf('x'.repeat(MAX_CONTROL_REASON_LENGTH + 1))).toThrow(
+    expect(() => controlReasonOf('x'.repeat(MAX_CONTROL_REASON_LENGTH + 1))).toThrow(
       `Keep the reason to ${MAX_CONTROL_REASON_LENGTH} characters.`,
     );
-    expect(retireReasonOf('x'.repeat(MAX_CONTROL_REASON_LENGTH))).toHaveLength(
+    expect(controlReasonOf('x'.repeat(MAX_CONTROL_REASON_LENGTH))).toHaveLength(
       MAX_CONTROL_REASON_LENGTH,
     );
   });
