@@ -1,12 +1,11 @@
 'use client';
 
 import { useRef, useState, type FormEvent } from 'react';
-import { useMutation } from 'convex/react';
+import { useMutation, useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
-import { transferExpiresAt } from '@/agent/manager-transfer';
+import { MAX_TRANSFER_NOTE_LENGTH, transferExpiresAt } from '@/agent/manager-transfer';
 import { deploymentZone } from '@/lib/zone';
-import type { SurfaceRecord } from '@/surfaces/types';
 import { Button } from '../../../components/Button';
 import { Dialog } from '../../../components/Dialog';
 import { Field, INPUT_CLASS } from '../../../components/Field';
@@ -20,12 +19,14 @@ import {
   CANCEL_THE_HANDOVER,
   cancelHandoverTitle,
   cancelledWords,
+  changeAddressDescription,
   HANDOVER_ADDRESS_HINT,
   HANDOVER_ADDRESS_LABEL,
   HANDOVER_NOTE_HINT,
   HANDOVER_NOTE_LABEL,
   handOverLines,
   handOverTitle,
+  KEEP_THE_ADDRESS,
   KEEP_THE_HANDOVER,
   madeYouWords,
   MAKE_IT_YOU,
@@ -34,27 +35,35 @@ import {
 
 /**
  * The verdicts that stand on the old manager's approval of a card: a handover cuts each, as
- * `surfaceHandoverOf` in `convex/surfaces.ts` decides for the move. The card's record carries the
- * verdict and the bound credential, which is what the decision reads; the approval stamp itself
- * is not on the record, so a card approved and since refused is not named here.
+ * `surfaceHandoverOf` in `convex/surfaces.ts` decides for the move.
  */
-const CUT_VERDICTS: ReadonlySet<SurfaceRecord['verdict']> = new Set([
+const CUT_VERDICTS: ReadonlySet<Doc<'surfaces'>['verdict']> = new Set([
   'approved',
   'connected',
   'ungranted',
   'listed-dead',
 ]);
 
+/** What the cut is decided from: a card as `surfaces.listForAgent` lists it. */
+export type CutCandidate = Pick<
+  Doc<'surfaces'>,
+  'displayName' | 'verdict' | 'credentialId' | 'provisioning' | 'managerApprovedAt'
+>;
+
 /**
  * The systems a handover would cut, by the name the Surfaces tab gives each: every card bound to
- * a credential or standing on the old manager's approval, as the move decides it (the transfer
- * plan, section 6.3).
+ * a credential (its own or its provisioned app's secret) or standing on the old manager's
+ * approval, the rule `surfaceHandoverOf` states for the move (the transfer plan, section 6.3).
  *
- * @param surfaces - The employee's cards, as the page reads them.
+ * @param surfaces - The employee's cards.
  */
-export function cutSystems(surfaces: readonly SurfaceRecord[]): string[] {
+export function cutSystems(surfaces: readonly CutCandidate[]): string[] {
   const cut = surfaces.filter(
-    (surface) => surface.credentialId !== undefined || CUT_VERDICTS.has(surface.verdict),
+    (surface) =>
+      surface.credentialId !== undefined ||
+      surface.provisioning !== undefined ||
+      surface.managerApprovedAt !== undefined ||
+      CUT_VERDICTS.has(surface.verdict),
   );
   return [...new Set(cut.map((surface) => surface.displayName))];
 }
@@ -70,7 +79,6 @@ export interface ChangingHandover {
 export interface HandOverDialogProps {
   readonly agent: Doc<'agents'>;
   readonly mode: 'mock' | 'real';
-  readonly surfaces: readonly SurfaceRecord[];
   /** The address the field starts with: the flagged address, or the asked one being changed. */
   readonly address?: string;
   /** The open request whose address this changes; a new ask when absent. */
@@ -92,7 +100,6 @@ export interface HandOverDialogProps {
 export function HandOverDialog({
   agent,
   mode,
-  surfaces,
   address = '',
   changing,
   change,
@@ -101,6 +108,13 @@ export function HandOverDialog({
 }: HandOverDialogProps) {
   const ask = useMutation(api.managerTransfers.ask);
   const changeAddress = useMutation(api.managerTransfers.changeAddress);
+  // Only real mode cuts a connection; the cards are read here, as the move reads them.
+  const surfaces = useQuery(
+    api.surfaces.listForAgent,
+    mode === 'real' ? { agentId: agent._id } : 'skip',
+  );
+  // The account of what happens is complete before anything can be asked.
+  const counted = mode === 'mock' || surfaces !== undefined;
   const [to, setTo] = useState(changing?.toAddress ?? address);
   const [note, setNote] = useState(changing?.note ?? '');
   const now = useNow();
@@ -108,14 +122,14 @@ export function HandOverDialog({
   const lines = handOverLines({
     name: agent.name,
     mode,
-    cutSystems: cutSystems(surfaces),
+    cutSystems: cutSystems(surfaces ?? []),
     expiresAt: transferExpiresAt(now),
     zone,
   });
 
   const submit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
-    if (change.busy) return;
+    if (change.busy || !counted) return;
     const toAddress = to.trim();
     const kept = note.trim();
     change.run(
@@ -138,7 +152,14 @@ export function HandOverDialog({
   };
 
   return (
-    <Dialog title={handOverTitle(agent.name)} onClose={onClose} busy={change.busy}>
+    <Dialog
+      title={handOverTitle(agent.name)}
+      description={
+        changing === undefined ? undefined : changeAddressDescription(changing.toAddress)
+      }
+      onClose={onClose}
+      busy={change.busy}
+    >
       <form className="grid gap-4" onSubmit={submit}>
         <Field label={HANDOVER_ADDRESS_LABEL} hint={HANDOVER_ADDRESS_HINT}>
           {(control) => (
@@ -160,6 +181,7 @@ export function HandOverDialog({
             <textarea
               {...control}
               rows={3}
+              maxLength={MAX_TRANSFER_NOTE_LENGTH}
               value={note}
               disabled={change.busy}
               onChange={(event) => setNote(event.target.value)}
@@ -178,9 +200,16 @@ export function HandOverDialog({
         <StatusRegion outcome={change.outcome} />
         <div className="flex flex-wrap justify-end gap-2">
           <Button size="large" disabled={change.busy} onClick={onClose}>
-            Cancel
+            {changing === undefined ? 'Cancel' : KEEP_THE_ADDRESS}
           </Button>
-          <Button type="submit" variant="primary" size="large" disabled={change.busy}>
+          <Button
+            type="submit"
+            variant="primary"
+            size="large"
+            disabled={change.busy || !counted}
+            // An address is one word: it wraps anywhere rather than run out of a phone's dialog.
+            className="!whitespace-normal text-left [overflow-wrap:anywhere]"
+          >
             {change.busy ? 'Asking…' : askLabel(to)}
           </Button>
         </div>
@@ -251,18 +280,21 @@ export interface MakeItYouProps {
   readonly agent: Doc<'agents'>;
   readonly change: Change;
   readonly landed: () => HTMLElement | null;
+  /** The flag's sentence, which says what the control answers. */
+  readonly describedBy?: string;
 }
 
 /**
  * **Make it you** (section 11.2): the owner's verified address becomes the employee's, through
  * `agents.adoptManagerAddress`. Said on the card, where focus goes once the flag is gone.
  */
-export function MakeItYou({ agent, change, landed }: MakeItYouProps) {
+export function MakeItYou({ agent, change, landed, describedBy }: MakeItYouProps) {
   const adopt = useMutation(api.agents.adoptManagerAddress);
   return (
     <Button
       size="small"
       disabled={change.busy}
+      aria-describedby={describedBy}
       onClick={() =>
         change.run(() => adopt({ agentId: agent._id }), {
           done: madeYouWords(agent.name),

@@ -1,6 +1,6 @@
 import type { FunctionReturnType } from 'convex/server';
 import type { api } from '@convex/_generated/api';
-import { TRANSFER_SETTLE_MS } from '@/agent/manager-transfer';
+import { TRANSFER_EXPIRY_MS, TRANSFER_SETTLE_MS } from '@/agent/manager-transfer';
 import { formatStamp } from '@/lib/zone';
 import { listed } from './agent/[agentId]/manage/retire-words';
 
@@ -47,6 +47,9 @@ function counted(count: number, one: string, many: string): string {
 function countedAtLeast(count: number, atLeast: boolean, one: string, many: string): string {
   return `${atLeast ? 'at least ' : ''}${counted(count, one, many)}`;
 }
+
+/** How many days an unanswered request stands, from the clock the backend keeps. */
+const EXPIRY_DAYS = Math.round(TRANSFER_EXPIRY_MS / 86_400_000);
 
 /** What the Manager card says the manager is for. */
 export const MANAGER_DUTY =
@@ -157,11 +160,24 @@ export interface AskedCardInput {
  * the server cannot know it, and the old manager is not told (plan 7.1).
  */
 export function askedCardLine(input: AskedCardInput): string {
-  return `Handing over to ${input.to}. Asked ${formatStamp(input.requestedAt, input.zone)}; expires ${zonedStamp(input.expiresAt, input.zone)}. ${input.name} works for you until they accept.`;
+  return `Handing over to ${input.to}. Asked ${zonedStamp(input.requestedAt, input.zone)}; expires ${zonedStamp(input.expiresAt, input.zone)}. ${input.name} works for you until they accept.`;
 }
 
 /** The control that names another address for an asked request. */
 export const CHANGE_THE_ADDRESS = 'Change the address';
+
+/**
+ * What the hand-over dialog says when it names another address for an asked request: the request
+ * is asked again, so its expiry starts again.
+ *
+ * @param to - The address the request names now.
+ */
+export function changeAddressDescription(to: string): string {
+  return `The request to ${to} is cancelled and a new one is asked, so its ${EXPIRY_DAYS} days start again.`;
+}
+
+/** The hand-over dialog's dismiss control when it changes an address, beside Cancel the handover. */
+export const KEEP_THE_ADDRESS = 'Keep the address';
 
 /** The control that cancels an asked request. */
 export const CANCEL_THE_HANDOVER = 'Cancel the handover';
@@ -196,8 +212,8 @@ export interface AcceptingCardInput {
   readonly to: string;
   /** The runs in flight, or undefined while they are read. */
   readonly runs: number | undefined;
-  /** When the runs are stopped at the latest. */
-  readonly settleBy: number;
+  /** When the runs are stopped at the latest; an accepting request carries it from acceptance. */
+  readonly settleBy: number | undefined;
   readonly zone: string;
 }
 
@@ -210,7 +226,11 @@ function finishingRuns(runs: number | undefined): { readonly runs: string; reado
 /** The card's line while the named manager has accepted and the employee's runs finish. */
 export function acceptingCardLine(input: AcceptingCardInput): string {
   const { runs, end } = finishingRuns(input.runs);
-  return `${input.to} accepted. ${input.name} is finishing ${runs}; it becomes theirs when ${end}, by ${zonedStamp(input.settleBy, input.zone)} at the latest.`;
+  const deadline =
+    input.settleBy === undefined
+      ? ''
+      : `, by ${zonedStamp(input.settleBy, input.zone)} at the latest`;
+  return `${input.to} accepted. ${input.name} is finishing ${runs}; it becomes theirs when ${end}${deadline}.`;
 }
 
 /**
@@ -296,7 +316,7 @@ export const CHOOSE_ON_PEOPLE = 'choose on People';
  * @param reason - The surface's stored reason.
  */
 export function managerLookupFailureLine(reason: string): string {
-  return `The chat surface could not find this manager: ${reason.replace(/\.$/, '')}. The credential still works; the manager’s address must be one the workspace knows.`;
+  return `The chat surface could not find this manager: ${reason.replace(/\.$/, '')}. The credential still works; the manager's address must be one the workspace knows.`;
 }
 
 /**
@@ -312,7 +332,9 @@ export function takeOnTitle(name: string): string {
 export function takeOnLead(preview: Pick<HandoverPreview, 'fromAddress' | 'employee'>): string {
   const { name, roleLine } = preview.employee;
   const lead = `${preview.fromAddress} manages ${name} today and asks you to take over.`;
-  return roleLine === null ? lead : `${lead} ${name}: ${roleLine}.`;
+  if (roleLine === null) return lead;
+  // A role line clipped with an ellipsis, or written as a sentence, keeps its own close.
+  return `${lead} ${name}: ${roleLine}${/[.…!?]$/.test(roleLine) ? '' : '.'}`;
 }
 
 /** The acceptance dialog's section of what comes with the employee. */
@@ -500,17 +522,7 @@ export function departedLine(name: string, to: string, since: number, zone: stri
 export function reportingElsewhereLine(count: number): string {
   return count === 1
     ? '1 employee reports to someone who is not you. Choose on its People tab.'
-    : `${counted(count, 'employee', 'employees')} report to someone who is not you. Choose on each one’s People tab.`;
-}
-
-/**
- * The retire dialog's line, under what waits on the manager, while a request is asked: the retire
- * cancels it (plan 7.5).
- *
- * @param to - The address asked.
- */
-export function retireCancelsHandover(to: string): string {
-  return `The handover to ${to} is cancelled.`;
+    : `${counted(count, 'employee', 'employees')} report to someone who is not you. Choose on each one's People tab.`;
 }
 
 /**

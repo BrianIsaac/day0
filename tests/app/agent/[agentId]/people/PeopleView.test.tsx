@@ -1,5 +1,6 @@
 /** @vitest-environment jsdom */
 
+import { act } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { getFunctionName } from 'convex/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -42,9 +43,8 @@ import {
   provenanceLine,
   runsInFlightOf,
 } from '../../../../../app/agent/[agentId]/people/PeopleView';
-import { cutSystems } from '../../../../../app/agent/[agentId]/people/HandOver';
+import type { CutCandidate } from '../../../../../app/agent/[agentId]/people/HandOver';
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel';
-import type { SurfaceRecord } from '../../../../../src/surfaces/types';
 import { axeViolations } from '../../../../fixtures/dom/axe';
 import { APPROVED_CHARTER, asEmployee, EMPLOYEE_ROW } from '../../../../fixtures/dom/employee';
 import {
@@ -104,31 +104,17 @@ const OPEN_ASKED = {
   expiresAt: Date.UTC(2026, 9, 15, 9, 0),
 };
 
-/** A Linear card the old manager connected, a Slack one approved, and one still proposed. */
+/**
+ * The employee's cards as `surfaces.listForAgent` lists them: Linear connected on the old
+ * manager's credential, Slack approved, Notion still proposed, and a Looker card found absent after
+ * the old manager approved it, which the move cuts as well.
+ */
 const SURFACES = [
-  {
-    slug: 'linear',
-    displayName: 'Linear',
-    class: 'kanban',
-    verdict: 'connected',
-    credentialLanded: true,
-    credentialId: 'credential-1',
-  },
-  {
-    slug: 'slack',
-    displayName: 'Slack',
-    class: 'chat',
-    verdict: 'approved',
-    credentialLanded: false,
-  },
-  {
-    slug: 'notion',
-    displayName: 'Notion',
-    class: 'docs',
-    verdict: 'proposed',
-    credentialLanded: false,
-  },
-] as SurfaceRecord[];
+  { displayName: 'Linear', verdict: 'connected', credentialId: 'credential-1' },
+  { displayName: 'Slack', verdict: 'approved' },
+  { displayName: 'Notion', verdict: 'proposed' },
+  { displayName: 'Looker', verdict: 'absent', managerApprovedAt: 5 },
+] as CutCandidate[];
 
 /** The page's reads for an employee that reports to its owner, with no handover. */
 function settled(overrides: Record<string, unknown> = {}): void {
@@ -141,6 +127,7 @@ function settled(overrides: Record<string, unknown> = {}): void {
       label: 'real (local)',
       deploymentProfile: 'customer-local',
     },
+    'surfaces:listForAgent': SURFACES,
     ...overrides,
   };
 }
@@ -186,7 +173,7 @@ describe('PeopleView', () => {
 
   it('names the manager as you, says what that means and offers Hand over, and the people the charter names', () => {
     const html = renderToStaticMarkup(asEmployee(<PeopleView />, { charter }));
-    expect(html).toContain('boss@day0.local');
+    expect(html).toContain('boss<wbr/>@day0.local');
     expect(html).toMatch(/>you<\/span>/);
     expect(html).toMatch(/>manager<\/span>/);
     expect(html).toContain(
@@ -220,16 +207,14 @@ describe('PeopleView', () => {
   it('claims nothing about the address while its standing is read', () => {
     settled({ 'agents:managerStanding': undefined });
     const html = renderToStaticMarkup(asEmployee(<PeopleView />));
-    expect(html).toContain('boss@day0.local');
+    expect(html).toContain('boss<wbr/>@day0.local');
     expect(html).not.toMatch(/>you<\/span>/);
     expect(html).not.toContain('Hand over</button>');
   });
 
   it('asks through a dialog that says what happens, then says so on the card and gives it focus', async () => {
     backend.results = { 'managerTransfers:ask': 'transfer-1' };
-    const view = mount(
-      asEmployee(<PeopleView />, { charter, surfaceMode: 'real', surfaces: SURFACES }),
-    );
+    const view = mount(asEmployee(<PeopleView />, { charter, surfaceMode: 'real' }));
 
     await press(view.container, 'Hand over');
     const dialog = openDialog();
@@ -247,6 +232,7 @@ describe('PeopleView', () => {
       'When they accept, Mira becomes theirs. It leaves your home and your team, and this page closes to you.',
       'Its connection to Linear is cut. They approve it and connect it again with their own credentials.',
       'Its connection to Slack is cut. They approve it and connect it again with their own credentials.',
+      'Its connection to Looker is cut. They approve it and connect it again with their own credentials.',
       'Credentials only Mira uses are revoked. Ones another employee or your documentation uses stay yours.',
       'Its record, charter, skills and lessons go with it. Your documentation stays yours.',
       expect.stringMatching(
@@ -353,12 +339,53 @@ describe('PeopleView', () => {
     expect(focusedName()).toBe('Hand over');
   });
 
+  it('holds Ask until the cards are read in real mode, so the account of what is cut is whole', async () => {
+    settled({ 'surfaces:listForAgent': undefined });
+    const view = mount(asEmployee(<PeopleView />, { surfaceMode: 'real' }));
+    await press(view.container, 'Hand over');
+    const address = openDialog().querySelector('input');
+    if (!address) throw new Error('no field');
+    typeInto(address, 'lead@day0.local');
+    const ask = [...openDialog().querySelectorAll('button')].find(
+      (button) => button.textContent === 'Ask lead@day0.local',
+    );
+    expect(ask?.disabled).toBe(true);
+  });
+
+  it('holds every other control on the card while a change runs', async () => {
+    settled({ 'agents:managerStanding': { standing: 'other', bossEmail: 'ana@day0.local' } });
+    let release: () => void = () => undefined;
+    backend.results = {
+      'agents:adoptManagerAddress': new Promise<void>((resolve) => {
+        release = resolve;
+      }).then(() => ({ changed: true, reprobed: 0 })),
+    };
+    const view = mount(asEmployee(<PeopleView />));
+    const card = managerCard(view.container);
+    const make = [...card.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Make it you',
+    );
+    make?.focus();
+    await act(async (): Promise<void> => {
+      make?.click();
+    });
+    expect(
+      [...card.querySelectorAll('button')].map((button) => [button.textContent, button.disabled]),
+    ).toEqual([
+      ['Hand over to ana@day0.local', true],
+      ['Make it you', true],
+    ]);
+    await act(async (): Promise<void> => {
+      release();
+    });
+  });
+
   it('says an asked request with its stamps and offers to change the address or cancel', () => {
     settled({ 'managerTransfers:openForAgent': OPEN_ASKED });
     const view = mount(asEmployee(<PeopleView />));
     const card = managerCard(view.container);
     expect(card.textContent).toContain(
-      'Handing over to lead@day0.local. Asked 1 Oct 2026, 09:00; expires 15 Oct 2026, 09:00, UTC time. Mira works for you until they accept.',
+      'Handing over to lead@day0.local. Asked 1 Oct 2026, 09:00, UTC time; expires 15 Oct 2026, 09:00, UTC time. Mira works for you until they accept.',
     );
     expect(buttonNames(card)).toEqual(['Change the address', 'Cancel the handover']);
   });
@@ -389,6 +416,44 @@ describe('PeopleView', () => {
     expect(said(view.container)).toEqual([
       'Asked deputy@day0.local to take Mira on. Nothing changes until they accept.',
     ]);
+  });
+
+  it('says the change of address asks again, and offers Keep the address rather than a second Cancel', async () => {
+    settled({ 'managerTransfers:openForAgent': OPEN_ASKED });
+    const view = mount(asEmployee(<PeopleView />));
+    await press(view.container, 'Change the address');
+    const description = document.getElementById(
+      openDialog().getAttribute('aria-describedby') ?? '',
+    );
+    expect(description?.textContent).toBe(
+      'The request to lead@day0.local is cancelled and a new one is asked, so its 14 days start again.',
+    );
+    expect(buttonNames(openDialog())).toEqual(['Keep the address', 'Ask lead@day0.local']);
+    await press(openDialog(), 'Keep the address');
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(backend.calls).toEqual([]);
+  });
+
+  it('keeps the dialog open on a refused change of address, and says it there only', async () => {
+    settled({ 'managerTransfers:openForAgent': OPEN_ASKED });
+    backend.refusals = {
+      'managerTransfers:changeAddress': 'The handover is already addressed to lead@day0.local.',
+    };
+    const view = mount(asEmployee(<PeopleView />));
+    await press(view.container, 'Change the address');
+    await press(openDialog(), 'Ask lead@day0.local');
+    expect(said(openDialog())).toEqual(['The handover is already addressed to lead@day0.local.']);
+    expect(said(managerCard(view.container))).toEqual([]);
+  });
+
+  it('keeps the confirmation open on a refused cancel, and says it there only', async () => {
+    settled({ 'managerTransfers:openForAgent': OPEN_ASKED });
+    backend.refusals = { 'managerTransfers:cancel': 'This handover was already accepted.' };
+    const view = mount(asEmployee(<PeopleView />));
+    await press(view.container, 'Cancel the handover');
+    await press(openDialog(), 'Cancel the handover');
+    expect(said(openDialog())).toEqual(['This handover was already accepted.']);
+    expect(said(managerCard(view.container))).toEqual([]);
   });
 
   it('cancels behind a confirmation that keeps focus on Keep, then says so on the card', async () => {
@@ -504,9 +569,19 @@ describe('PeopleView', () => {
     );
     expect(card.innerHTML).not.toMatch(/>you<\/span>/);
     expect(buttonNames(card)).toEqual(['Hand over to ana@day0.local', 'Make it you']);
+    // Flagged in the warn tone the home's line has, and Make it you names what it answers.
+    expect(card.className).toContain('border-[var(--color-warn-line)]');
+    const make = [...card.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Make it you',
+    );
+    expect(document.getElementById(make?.getAttribute('aria-describedby') ?? '')?.textContent).toBe(
+      'Mira reports to ana@day0.local, who is not you. From this release the manager is the account that owns the employee. Hand Mira over to ana@day0.local, or make yourself its manager.',
+    );
 
     await press(card, 'Hand over to ana@day0.local');
     expect(openDialog().querySelector('input')?.value).toBe('ana@day0.local');
+    expect(await axeViolations(openDialog())).toEqual([]);
+    expect(underTarget(openDialog())).toEqual([]);
     await press(openDialog(), 'Cancel');
   });
 
@@ -556,18 +631,21 @@ describe('PeopleView', () => {
     ];
     for (const state of states) {
       settled(state);
-      const view = mount(asEmployee(<PeopleView />, { surfaces: SURFACES }));
+      const view = mount(asEmployee(<PeopleView />));
       expect(await axeViolations(view.container)).toEqual([]);
       expect(underTarget(view.container)).toEqual([]);
       unmountAll();
     }
     settled({ 'managerTransfers:openForAgent': OPEN_ASKED });
-    const view = mount(asEmployee(<PeopleView />, { surfaces: SURFACES }));
+    const view = mount(asEmployee(<PeopleView />));
     for (const control of ['Change the address', 'Cancel the handover']) {
       await press(view.container, control);
       expect(await axeViolations(openDialog())).toEqual([]);
       expect(underTarget(openDialog())).toEqual([]);
-      await press(openDialog(), control === 'Change the address' ? 'Cancel' : 'Keep the handover');
+      await press(
+        openDialog(),
+        control === 'Change the address' ? 'Keep the address' : 'Keep the handover',
+      );
     }
   });
 });
@@ -647,12 +725,6 @@ describe('the Manager card’s state and reads', () => {
         { state: 'completed' },
       ]),
     ).toBe(2);
-  });
-
-  it('names each system a handover cuts once, and none still waiting for approval', () => {
-    expect(
-      cutSystems([...SURFACES, { ...SURFACES[0], slug: 'linear-2' } as SurfaceRecord]),
-    ).toEqual(['Linear', 'Slack']);
   });
 });
 

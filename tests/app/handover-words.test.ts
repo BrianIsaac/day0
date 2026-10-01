@@ -5,6 +5,7 @@ import {
   askedCardLine,
   askedWords,
   askLabel,
+  changeAddressDescription,
   departedLine,
   endedCardLine,
   handedOverLine,
@@ -127,7 +128,7 @@ describe('the Manager card (plan 7.1)', () => {
         zone: 'UTC',
       }),
     ).toBe(
-      'Handing over to lead@kestrel.example. Asked 1 Oct 2026, 09:00; expires 15 Oct 2026, 09:00, UTC time. Maya works for you until they accept.',
+      'Handing over to lead@kestrel.example. Asked 1 Oct 2026, 09:00, UTC time; expires 15 Oct 2026, 09:00, UTC time. Maya works for you until they accept.',
     );
   });
 
@@ -166,6 +167,26 @@ describe('the Manager card (plan 7.1)', () => {
       }),
     ).toBe(
       'lead@kestrel.example accepted. Maya is finishing its runs; it becomes theirs when they end, by 2 Oct 2026, 10:15, UTC time at the latest.',
+    );
+  });
+
+  it('says an accepting request without a deadline when the row carries none', () => {
+    expect(
+      acceptingCardLine({
+        name: 'Maya',
+        to: 'lead@kestrel.example',
+        runs: 1,
+        settleBy: undefined,
+        zone: 'UTC',
+      }),
+    ).toBe(
+      'lead@kestrel.example accepted. Maya is finishing 1 run; it becomes theirs when it ends.',
+    );
+  });
+
+  it('says that changing the address asks again, so the expiry starts again', () => {
+    expect(changeAddressDescription('deputy@kestrel.example')).toBe(
+      'The request to deputy@kestrel.example is cancelled and a new one is asked, so its 14 days start again.',
     );
   });
 
@@ -209,6 +230,13 @@ describe('the acceptance dialog (plan 7.3)', () => {
     expect(takeOnLead({ ...PREVIEW, employee: { ...PREVIEW.employee, roleLine: null } })).toBe(
       'sam@kestrel.example manages Maya today and asks you to take over.',
     );
+  });
+
+  it('closes the role line once, whether it was clipped or written as a sentence', () => {
+    const lead = (roleLine: string): string =>
+      takeOnLead({ ...PREVIEW, employee: { ...PREVIEW.employee, roleLine } });
+    expect(lead('owns triage…')).toMatch(/Maya: owns triage…$/);
+    expect(lead('Owns triage.')).toMatch(/Maya: Owns triage\.$/);
   });
 
   it('lists what the new manager takes on', () => {
@@ -289,7 +317,7 @@ describe('the old manager’s notices (plan 7.4) and the home’s line (section 
 
   it('counts the employees reporting to someone else', () => {
     expect(reportingElsewhereLine(3)).toBe(
-      '3 employees report to someone who is not you. Choose on each one’s People tab.',
+      "3 employees report to someone who is not you. Choose on each one's People tab.",
     );
     expect(reportingElsewhereLine(1)).toBe(
       '1 employee reports to someone who is not you. Choose on its People tab.',

@@ -11,8 +11,8 @@ import { Field, INPUT_CLASS } from '../../../components/Field';
 import { StatusRegion } from '../../../components/StatusRegion';
 import { useChange } from '../../../components/use-change';
 import {
+  cancelledWords,
   retireBlockedByAcceptance,
-  retireCancelsHandover,
   type OpenHandover,
 } from '../../../handover-words';
 import {
@@ -86,7 +86,7 @@ export function retireLines(
     term: 'Waiting on you',
     details: [
       waiting === '' ? 'Nothing.' : sentence(`${waiting}, discarded undecided`),
-      ...(handover?.state === 'asked' ? [retireCancelsHandover(handover.toAddress)] : []),
+      ...(handover?.state === 'asked' ? [cancelledWords(handover.toAddress)] : []),
     ],
   };
   if (preview.mode === 'mock') {

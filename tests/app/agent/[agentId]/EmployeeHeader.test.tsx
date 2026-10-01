@@ -257,7 +257,7 @@ describe('the manager line (the transfer plan 7.2, D14)', (): void => {
       />,
     );
     expect(markup).toContain(
-      'could not find this manager: the manager email left@day0.local is not a member of this Slack workspace (users_not_found). The credential still works; the manager’s address must be one the workspace knows.',
+      'could not find this manager: the manager email left@day0.local is not a member of this Slack workspace (users_not_found). The credential still works; the manager&#x27;s address must be one the workspace knows.',
     );
     expect(markup).not.toContain('change the manager');
     expect(markup).not.toContain('..');

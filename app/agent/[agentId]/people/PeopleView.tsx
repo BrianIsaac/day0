@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState, type ReactNode } from 'react';
+import { useId, useRef, useState, type ReactNode } from 'react';
 import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Doc } from '@convex/_generated/dataModel';
@@ -8,7 +8,6 @@ import type { ManagerStanding } from '@/agent/manager-standing';
 import { DEV_NO_AUTH } from '@/lib/dev-auth';
 import type { DeploymentProfile } from '@/lib/surface-mode';
 import { deploymentZone } from '@/lib/zone';
-import type { SurfaceRecord } from '@/surfaces/types';
 import { Button } from '../../../components/Button';
 import { Card } from '../../../components/Card';
 import { Chip } from '../../../components/Chip';
@@ -30,6 +29,7 @@ import {
   type OpenHandover,
 } from '../../../handover-words';
 import { useEmployee } from '../employee-context';
+import { addressWithBreaks } from '../EmployeeHeader';
 import { EmployeeRail } from '../EmployeeRail';
 import { clockTime, useAgentZone } from '../../../components/time';
 import { CancelHandoverDialog, HandOverDialog, MakeItYou } from './HandOver';
@@ -115,7 +115,7 @@ export function provenanceLine(charter: Doc<'charters'>, zone: string | undefine
  * controls that do nothing.
  */
 export function PeopleView() {
-  const { agent, charter, surfaceMode, surfaces, arriving } = useEmployee();
+  const { agent, charter, surfaceMode, arriving } = useEmployee();
   const zone = useAgentZone();
   const named = namedPeople(charter?.body);
   return (
@@ -134,7 +134,7 @@ export function PeopleView() {
         </>
       }
     >
-      <ManagerCard agent={agent} surfaceMode={surfaceMode} surfaces={surfaces} />
+      <ManagerCard agent={agent} surfaceMode={surfaceMode} />
       <Card title="Named in the charter" meta={named.length > 0 ? `${named.length}` : undefined}>
         {named.length === 0 || charter === null ? (
           <p className="text-sm text-[var(--color-muted)]">
@@ -257,7 +257,6 @@ type CardDialog =
 interface ManagerCardProps {
   readonly agent: Doc<'agents'>;
   readonly surfaceMode: 'mock' | 'real' | undefined;
-  readonly surfaces: readonly SurfaceRecord[];
 }
 
 /**
@@ -268,7 +267,7 @@ interface ManagerCardProps {
  * **Make it you**). Every change is said in the card's one status region and focus comes to the
  * card, since the control that made it leaves with the state it changed.
  */
-function ManagerCard({ agent, surfaceMode, surfaces }: ManagerCardProps) {
+function ManagerCard({ agent, surfaceMode }: ManagerCardProps) {
   const open = useQuery(api.managerTransfers.openForAgent, { agentId: agent._id });
   const standing = useQuery(api.agents.managerStanding, { agentId: agent._id });
   const departures = useQuery(api.managerTransfers.departures, {});
@@ -277,6 +276,7 @@ function ManagerCard({ agent, surfaceMode, surfaces }: ManagerCardProps) {
   const work = useQuery(api.work.listForAgent, accepting ? { agentId: agent._id } : 'skip');
   const [dialog, setDialog] = useState<CardDialog | null>(null);
   const card = useRef<HTMLElement>(null);
+  const flagId = useId();
   const change = useChange(card);
   const landed = (): HTMLElement | null => card.current;
   const zone = deploymentZone();
@@ -297,7 +297,10 @@ function ManagerCard({ agent, surfaceMode, surfaces }: ManagerCardProps) {
       <Button
         size="small"
         aria-haspopup="dialog"
+        disabled={change.busy}
         onClick={() => openDialog({ kind: 'hand-over', address })}
+        // A label that carries an address wraps anywhere rather than run out of the card.
+        className="!whitespace-normal text-left [overflow-wrap:anywhere]"
       >
         {label}
       </Button>
@@ -325,6 +328,7 @@ function ManagerCard({ agent, surfaceMode, surfaces }: ManagerCardProps) {
             <Button
               size="small"
               aria-haspopup="dialog"
+              disabled={change.busy}
               onClick={() => openDialog({ kind: 'change', open: state.open })}
             >
               {CHANGE_THE_ADDRESS}
@@ -334,6 +338,7 @@ function ManagerCard({ agent, surfaceMode, surfaces }: ManagerCardProps) {
             size="small"
             variant="quiet"
             aria-haspopup="dialog"
+            disabled={change.busy}
             onClick={() => openDialog({ kind: 'cancel', open: state.open })}
           >
             {CANCEL_THE_HANDOVER}
@@ -347,7 +352,7 @@ function ManagerCard({ agent, surfaceMode, surfaces }: ManagerCardProps) {
           name: agent.name,
           to: state.open.toAddress,
           runs: work === undefined ? undefined : runsInFlightOf(work),
-          settleBy: state.open.settleBy ?? state.open.expiresAt,
+          settleBy: state.open.settleBy,
           zone,
         }),
       );
@@ -358,7 +363,7 @@ function ManagerCard({ agent, surfaceMode, surfaces }: ManagerCardProps) {
         controls = (
           <>
             {handOver(state.standing.bossEmail, handOverToLabel(state.standing.bossEmail))}
-            <MakeItYou agent={agent} change={change} landed={landed} />
+            <MakeItYou agent={agent} change={change} landed={landed} describedBy={flagId} />
           </>
         );
       } else {
@@ -375,17 +380,25 @@ function ManagerCard({ agent, surfaceMode, surfaces }: ManagerCardProps) {
     }
   }
 
+  const flagged = state.kind === 'standing' && state.standing.standing === 'other';
   return (
-    <Card title="Manager" focusRef={card}>
+    <Card title="Manager" focusRef={card} tone={flagged ? 'warn' : undefined}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="grid min-w-0 gap-1">
           <p className="flex flex-wrap items-center gap-2 text-[15px]">
-            <span className="font-mono break-all">{agent.bossEmail}</span>
+            <span className="min-w-0 font-mono [overflow-wrap:anywhere]">
+              {addressWithBreaks(agent.bossEmail)}
+            </span>
             {standing?.standing === 'you' ? <Chip tone="you">you</Chip> : null}
             <Chip tone="muted">manager</Chip>
           </p>
-          {lines.map((line) => (
-            <p key={line} className="text-sm text-[var(--color-fg-2)]">
+          {lines.map((line, index) => (
+            <p
+              key={line}
+              // The flag is the first line, and what Make it you answers.
+              id={flagged && index === 0 ? flagId : undefined}
+              className="text-sm whitespace-pre-line text-[var(--color-fg-2)] [overflow-wrap:anywhere]"
+            >
               {line}
             </p>
           ))}
@@ -397,7 +410,6 @@ function ManagerCard({ agent, surfaceMode, surfaces }: ManagerCardProps) {
         <HandOverDialog
           agent={agent}
           mode={surfaceMode}
-          surfaces={surfaces}
           address={dialog.address}
           change={change}
           landed={landed}
@@ -408,7 +420,6 @@ function ManagerCard({ agent, surfaceMode, surfaces }: ManagerCardProps) {
         <HandOverDialog
           agent={agent}
           mode={surfaceMode}
-          surfaces={surfaces}
           changing={{
             transferId: dialog.open.transferId,
             toAddress: dialog.open.toAddress,
