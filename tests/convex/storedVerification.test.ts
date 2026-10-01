@@ -346,6 +346,31 @@ describe('verifyStoredSkill', (): void => {
     expect(after.authoringRunId).toBeUndefined();
   });
 
+  it('counts attempts of the draft only: a registration clears them, so a later failed re-check can be retried (the wave 10 review, K-m4)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { priya, versionId } = await seedOffice(harness);
+    const held = await registeredRow(harness, priya, versionId);
+    // Registered on its third attempt.
+    await harness.run(async (ctx) => await ctx.db.patch(held, { authoringAttempts: 3 }));
+
+    await harness.action(internal.storedVerification.verifyStoredSkill, { skillId: held });
+    expect((await row(harness, held)).authoringAttempts).toBeUndefined();
+
+    recorded.sandbox = {
+      backend: 'local',
+      sandboxId: 'local:stored-3',
+      stdout: '',
+      stderr: 'Traceback: KeyError record_id',
+      ok: false,
+      failureReason: 'smoke test exited 1',
+      skipped: false,
+    };
+    await harness.action(internal.storedVerification.verifyStoredSkill, { skillId: held });
+    expect((await row(harness, held)).state).toBe('failed');
+    const retry = await harness.mutation(internal.skills.claimAuthoringRun, { skillId: held });
+    expect(retry.claimed).toBe(true);
+  });
+
   it('re-checks a registered row in use, and clears its chip on a pass', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { priya, versionId } = await seedOffice(harness);

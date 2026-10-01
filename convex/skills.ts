@@ -943,6 +943,9 @@ export const completeRegistration = internalMutation({
       pendingSmokeTest: undefined,
       registeredAt: row.registeredAt ?? now,
       authoringDeferrals: undefined,
+      // "Attempt n of 3" counts the draft being written; a registered body starts the next
+      // draft afresh (the record keeps the history; the wave 10 review, K-m4).
+      authoringAttempts: undefined,
       versionId: held?.versionId,
       adoptedAt: held?.adopted ? (row.adoptedAt ?? now) : undefined,
       // The offer is answered once the row registers, whichever way.
