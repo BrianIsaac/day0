@@ -572,14 +572,24 @@ export function departedLine(name: string, to: string, since: number, zone: stri
 }
 
 /**
- * The home's one line while any employee reports to someone else (section 11.2).
+ * The start of the home's one line while any employee reports to someone else (section 11.2),
+ * before the employees are named, each a link to its People tab.
  *
  * @param count - How many do.
  */
-export function reportingElsewhereLine(count: number): string {
+export function reportingElsewhereLead(count: number): string {
   return count === 1
-    ? '1 employee reports to someone who is not you. Choose on its People tab.'
-    : `${counted(count, 'employee', 'employees')} report to someone who is not you. Choose on each one's People tab.`;
+    ? '1 employee reports to someone who is not you:'
+    : `${counted(count, 'employee', 'employees')} report to someone who is not you:`;
+}
+
+/**
+ * The end of the home's line: where the manager chooses.
+ *
+ * @param count - How many employees the line names.
+ */
+export function reportingElsewhereChoice(count: number): string {
+  return count === 1 ? 'Choose on its People tab.' : "Choose on each one's People tab.";
 }
 
 /**

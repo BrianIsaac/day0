@@ -9,7 +9,6 @@ import { employeeStateTally } from '@/work/state-labels';
 import { useNow } from '../components/time';
 import { useArrival } from '../arrival';
 import { CompanySupervision } from '../CompanySupervision';
-import { reportingElsewhereLine } from '../handover-words';
 import { AcceptTransfer } from './AcceptTransfer';
 import { DeployForm } from './DeployForm';
 import { HandedOver } from './HandedOver';
@@ -17,6 +16,7 @@ import { EmployeeRoster } from './EmployeeRoster';
 import { MonthCard } from './MonthCard';
 import { NeedsYouList } from './NeedsYouList';
 import { OnItsWay } from './OnItsWay';
+import { ReportingElsewhere } from './ReportingElsewhere';
 import { OfficeWorld } from './OfficeWorld';
 import { RetiredNotice } from '../RetiredNotice';
 import { ResetCard } from './ResetCard';
@@ -86,13 +86,7 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
               ? companyLine(roster, inbox)
               : 'Give your first employee a name. Everything else is learned from you.'}
           </p>
-          {reportingElsewhere !== undefined &&
-          reportingElsewhere !== null &&
-          reportingElsewhere > 0 ? (
-            <p className="mt-1 text-sm text-[var(--color-warn)]">
-              {reportingElsewhereLine(reportingElsewhere)}
-            </p>
-          ) : null}
+          {reportingElsewhere ? <ReportingElsewhere employees={reportingElsewhere} /> : null}
         </div>
         {staffed ? (
           // Hidden while the form it opened is on the page, whose own Cancel closes it (walk m27);

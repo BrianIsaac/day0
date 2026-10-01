@@ -47,6 +47,7 @@ import {
 } from '../src/agent/manager-standing';
 import { evaluationBedName, evaluationBedRefusal } from '../src/evaluation/bed-flag';
 import {
+  clippedEmployeeName,
   EMPLOYEE_NAME_TOO_LONG,
   isEmployeeNameWithinBound,
   visibleEmployeeName,
@@ -691,27 +692,34 @@ export const managerStanding = query({
   },
 });
 
+/** One employee that reports to an address other than its owner's, for the home's line. */
+const reportingElsewhereValidator = v.object({ agentId: v.id('agents'), name: v.string() });
+
 /**
- * Public, any caller: how many of the caller's company employees report to
- * an address that is not the caller's verified one, for the home's one line
- * while any does (the transfer plan section 11.2). Evaluation employees are
- * left out, as the roster leaves them out, within the rows the roster reads
+ * Public, any caller: the caller's company employees that report to an
+ * address that is not the caller's verified one, newest first as the roster
+ * reads them, for the home's one line while any does, each linked to its
+ * People tab (the transfer plan section 11.2). Evaluation employees are left
+ * out, as the roster leaves them out, within the rows the roster reads
  * (`ROSTER_SCAN_LIMIT`). Writes nothing.
  *
- * @returns The count, or null for an anonymous caller or one whose sign-in asserts no verified address.
+ * @returns The employees, or null for an anonymous caller or one whose sign-in asserts no verified address.
  */
 export const employeesReportingElsewhere = query({
   args: {},
-  returns: v.union(v.number(), v.null()),
-  handler: async (ctx): Promise<number | null> => {
+  returns: v.union(v.array(reportingElsewhereValidator), v.null()),
+  handler: async (ctx): Promise<Infer<typeof reportingElsewhereValidator>[] | null> => {
     const caller = await getCaller(ctx);
     const callerAddress = caller ? verifiedAddressOf(caller) : undefined;
     if (!caller || callerAddress === undefined) return null;
     const agents = await ctx.db
       .query('agents')
       .withIndex('by_userId', (q) => q.eq('userId', caller.ownerKey))
+      .order('desc')
       .take(ROSTER_SCAN_LIMIT);
-    return agents.filter((agent) => standingOf(agent, callerAddress).standing === 'other').length;
+    return agents
+      .filter((agent) => standingOf(agent, callerAddress).standing === 'other')
+      .map((agent) => ({ agentId: agent._id, name: clippedEmployeeName(agent.name) }));
   },
 });
 

@@ -1301,7 +1301,8 @@ export const recordProbeRetry = internalMutation({
  *
  * A failed manager lookup never descends either: the route answered, and the
  * person it looked up is what changed. The failure is recorded on the same
- * rung, and changing the manager (`agents.setBossEmail`) re-probes it (Q6).
+ * rung, and Make it you (`agents.adoptManagerAddress`) re-probes it (Q6); a handover cuts the
+ * card for the new manager to connect again.
  */
 export const demoteAfterProbeFailure = internalMutation({
   args: {

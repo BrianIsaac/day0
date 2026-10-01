@@ -2185,18 +2185,21 @@ describe('agents.managerStanding (D17)', (): void => {
 });
 
 describe('agents.employeesReportingElsewhere (the home line, D17)', (): void => {
-  it("counts the owner's company employees whose address is not the owner's", async (): Promise<void> => {
+  it("names the owner's company employees whose address is not the owner's, newest first, so the home can link each (U4 for the cockpit)", async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     await seedReportingTo(harness, 'Boss@Day0.local');
-    await seedReportingTo(harness, 'ana@kestrel.example', { name: 'Tomas' });
-    await seedReportingTo(harness, 'lee@kestrel.example', { name: 'Aiko' });
+    const tomas = await seedReportingTo(harness, 'ana@kestrel.example', { name: 'Tomas' });
+    const aiko = await seedReportingTo(harness, 'lee@kestrel.example', { name: 'Aiko' });
     await seedReportingTo(harness, 'eval-day0-r1-1758150000000@day0.local', {
       name: 'Day0 evaluation 1',
     });
     await seedReportingTo(harness, 'ana@kestrel.example', { userId: 'colleague' });
     await expect(
       harness.withIdentity(managerIdentity()).query(api.agents.employeesReportingElsewhere, {}),
-    ).resolves.toBe(2);
+    ).resolves.toEqual([
+      { agentId: aiko, name: 'Aiko' },
+      { agentId: tomas, name: 'Tomas' },
+    ]);
   });
 
   it('answers null when there is no verified address to compare with', async (): Promise<void> => {

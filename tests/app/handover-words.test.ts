@@ -13,7 +13,8 @@ import {
   handOverLines,
   leavesBehindLines,
   otherStandingLine,
-  reportingElsewhereLine,
+  reportingElsewhereChoice,
+  reportingElsewhereLead,
   retireBlockedByAcceptance,
   runsInFlightLine,
   takeOnLead,
@@ -367,13 +368,11 @@ describe('the old manager’s notices (plan 7.4) and the home’s line (section 
     );
   });
 
-  it('counts the employees reporting to someone else', () => {
-    expect(reportingElsewhereLine(3)).toBe(
-      "3 employees report to someone who is not you. Choose on each one's People tab.",
-    );
-    expect(reportingElsewhereLine(1)).toBe(
-      '1 employee reports to someone who is not you. Choose on its People tab.',
-    );
+  it('counts the employees reporting to someone else, before naming them, and says where to choose', () => {
+    expect(reportingElsewhereLead(3)).toBe('3 employees report to someone who is not you:');
+    expect(reportingElsewhereChoice(3)).toBe("Choose on each one's People tab.");
+    expect(reportingElsewhereLead(1)).toBe('1 employee reports to someone who is not you:');
+    expect(reportingElsewhereChoice(1)).toBe('Choose on its People tab.');
   });
 });
 
