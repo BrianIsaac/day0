@@ -45,7 +45,14 @@ describe('tenureWindowsOf', (): void => {
     expect(tenureWindowsOf('cat', 'cat', handovers)).toEqual([{ from: 900, until: null }]);
   });
 
-  it('reads only the handovers of the employee the first one names', (): void => {
+  it('cuts at the acceptance while the move still waits for runs in flight, so the cut never moves', (): void => {
+    // Accepting: the row still names the old owner until the move.
+    const handovers = [handover('ana', 'ben', 500)];
+    expect(tenureWindowsOf('ana', 'ana', handovers)).toEqual([{ from: null, until: 500 }]);
+    expect(tenureWindowsOf('ben', 'ana', handovers)).toEqual([{ from: 500, until: null }]);
+  });
+
+  it('refuses handovers of more than one employee at once', (): void => {
     expect(() =>
       tenureWindowsOf('ana', 'ben', [
         handover('ana', 'ben', 500),

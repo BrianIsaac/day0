@@ -7,7 +7,13 @@
  * the same rule.
  */
 
-/** One accepted handover of an employee, as the figures read it from its `managerTransfers` row. */
+/**
+ * One accepted handover of an employee, as the figures read it from its
+ * `managerTransfers` row: accepted and moved, or accepted and waiting for its
+ * runs in flight (`accepting`, D18). The acceptance is the boundary either way,
+ * so the old owner's figures are cut once, when the named manager accepts, and
+ * never again when the move follows.
+ */
 export interface AcceptedHandover {
   readonly agentId: string;
   /** The owner key that held the employee before. */
@@ -36,11 +42,12 @@ export const WHOLE_HISTORY: TenureWindow = { from: null, until: null };
  *
  * The handovers cut its history at each acceptance; the span before the
  * first is held by the first handover's old owner, each span between two by
- * the later one's old owner, and the span since the last by the employee's
- * current owner. An employee never handed over is wholly its current owner's.
+ * the later one's old owner, and the span since the last by the last one's
+ * new owner, who holds it from the acceptance even while the move waits for
+ * runs in flight. An employee never handed over is wholly its current owner's.
  *
  * @param owner - The owner key whose spans are wanted.
- * @param currentOwner - The employee's `userId` now.
+ * @param currentOwner - The employee's `userId` now, which holds an employee never handed over.
  * @param handovers - The employee's accepted handovers, in any order.
  * @returns The owner's spans in time order; none when the owner never held it.
  * @throws Error when the handovers name more than one employee.
@@ -61,7 +68,11 @@ export function tenureWindowsOf(
       from: index === 0 ? null : ordered[index - 1].acceptedAt,
       until: handover.acceptedAt,
     })),
-    { holder: currentOwner, from: ordered.at(-1)?.acceptedAt ?? null, until: null },
+    {
+      holder: ordered.at(-1)?.toOwnerKey ?? currentOwner,
+      from: ordered.at(-1)?.acceptedAt ?? null,
+      until: null,
+    },
   ];
   return spans
     .filter((span) => span.holder === owner)

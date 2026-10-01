@@ -13,6 +13,7 @@ import { droppedReadRefusal } from '../src/work/stop';
 import { ledgerPhases } from '../src/work/reconciliation';
 import type { MockAction } from '../src/work/types';
 import { assertOwnsAgent, getCaller } from './ownership';
+import { log } from '../src/lib/logger';
 import { isEventOf, isEventType, type EventType } from '../src/events/contract';
 import type { AgentMetrics, DecisionVia, OwnerMetrics, PilotFigures } from '../src/metrics/types';
 import { isEvaluationShapedAddress, normaliseManagerAddress } from '../src/agent/manager-address';
@@ -982,10 +983,12 @@ function byDeployOrder(left: CompanyAgent, right: CompanyAgent): number {
  * handed over is its old owner's up to the acceptance and its new owner's
  * from it, so the old owner's past figures never change after the fact.
  * Employees the owner never held, evaluation agents and baseline arms are
- * left out; of the rest, the most recent `MAX_COMPANY_EMPLOYEES` are kept, as
- * the landing page lists them, and the older ones are counted as omitted so
- * a partial company figure is never silent. The query and the recompute
- * script both select through here.
+ * left out. Of those the owner holds now, the most recent
+ * `MAX_COMPANY_EMPLOYEES` are kept, as the landing page lists them; of those
+ * it handed over, the most recent as many again, so a departure never takes
+ * the place of an employee the roster shows. The older ones are counted as
+ * omitted so a partial company figure is never silent. The query and the
+ * recompute script both select through here.
  *
  * @param agents - Agent rows, in any order: the owner's own and any it handed over; rows the
  *   owner never held are ignored.
@@ -1010,7 +1013,14 @@ export function selectCompanyEmployees<Agent extends CompanyAgent>(
   const company = held
     .filter(({ agent }) => !isEvaluation(agent))
     .sort((left, right) => byDeployOrder(left.agent, right.agent));
-  const kept = company.slice(Math.max(0, company.length - MAX_COMPANY_EMPLOYEES));
+  const holdsNow = ({ windows }: (typeof company)[number]): boolean =>
+    windows.some((window) => window.until === null);
+  const mostRecent = (employees: typeof company): typeof company =>
+    employees.slice(Math.max(0, employees.length - MAX_COMPANY_EMPLOYEES));
+  const kept = [
+    ...mostRecent(company.filter(holdsNow)),
+    ...mostRecent(company.filter((employee) => !holdsNow(employee))),
+  ].sort((left, right) => byDeployOrder(left.agent, right.agent));
   return {
     employees: kept.map(({ agent }) => agent),
     tenures: new Map(kept.map(({ agent, windows }) => [agent._id, windows])),
@@ -1160,13 +1170,15 @@ export const forAgent = query({
  *
  * The events are the dated record, so each counts toward the owner whose
  * span holds its `createdAt`; a charter counts its draft and its approval
- * the same way. A work row is present state: it counts toward the span it
- * was created in, and toward a span that has closed only while nothing has
- * happened to it since (no event of the row at or after the acceptance). A
- * row the next owner went on to work is read from its events alone, so its
- * later decisions, outputs and estimates never reach the old owner's
- * figures. The surfaces only tell a manager DM from a write and pass
- * through. An employee never handed over keeps every record, as before.
+ * the same way. A work row counts toward the span it was created in. In the
+ * span that runs to now it is read as it is; in a span that has closed it is
+ * read as that span left it, because the next owner may go on working it:
+ * its ledger and its decision are taken from the span's events alone, and
+ * its estimate counts only when the row was completed within the span. So
+ * nothing the next owner does reaches the old owner's figures, and nothing
+ * the old owner did leaves them. The surfaces only tell a manager DM from a
+ * write and pass through. An employee never handed over keeps every record,
+ * as before.
  *
  * @param records - The employee's whole records.
  * @param windows - The owner's spans, from {@link selectCompanyEmployees}.
@@ -1178,24 +1190,31 @@ export function recordsWithinTenure(
 ): EmployeeRecords {
   if (isWholeHistory(windows)) return records;
   const within = (at: number): boolean => isWithinTenure(at, windows);
-  const lastEventAt = new Map<string, number>();
-  for (const event of records.events) {
-    const workItemId = asString(asRecord(event.payload)?.workItemId);
-    if (workItemId === undefined) continue;
-    lastEventAt.set(
-      workItemId,
-      Math.max(lastEventAt.get(workItemId) ?? -Infinity, event.createdAt),
-    );
-  }
-  const heldStill = (item: Doc<'workItems'>): boolean => {
+  const events = records.events.filter((event) => within(event.createdAt));
+  const completedWithin = new Set(
+    events
+      .filter((event) => isEventOf(event, 'work.completed'))
+      .flatMap((event) => asString(asRecord(event.payload)?.workItemId) ?? []),
+  );
+  const workItems = records.workItems.flatMap((item): Doc<'workItems'>[] => {
     const span = windows.find((window) => isWithinTenure(item.createdAt, [window]));
-    if (span === undefined) return false;
-    return span.until === null || (lastEventAt.get(item._id) ?? -Infinity) < span.until;
-  };
+    if (span === undefined) return [];
+    if (span.until === null) return [item];
+    const completed = completedWithin.has(item._id);
+    return [
+      {
+        ...item,
+        state: completed ? 'completed' : item.state,
+        output: undefined,
+        decision: undefined,
+        manualEstimateMinutes: completed ? item.manualEstimateMinutes : undefined,
+      },
+    ];
+  });
   return {
     ...records,
-    events: records.events.filter((event) => within(event.createdAt)),
-    workItems: records.workItems.filter(heldStill),
+    events,
+    workItems,
     charters: records.charters
       .filter((charter) => within(charter.createdAt))
       .map((charter) =>
@@ -1206,44 +1225,85 @@ export function recordsWithinTenure(
   };
 }
 
-/** One accepted `managerTransfers` row as the figures read it; a row without its acceptance is none. */
-function acceptedHandoverOf(row: Doc<'managerTransfers'>): AcceptedHandover[] {
-  if (row.state !== 'accepted' || row.toOwnerKey === undefined || row.decidedAt === undefined) {
-    return [];
-  }
-  return [
-    {
-      agentId: row.agentId,
-      fromOwnerKey: row.fromOwnerKey,
-      toOwnerKey: row.toOwnerKey,
-      acceptedAt: row.decidedAt,
-    },
-  ];
+/** The states of a request the named manager has accepted: moved, or waiting for runs in flight. */
+const ACCEPTED_TRANSFER_STATES = ['accepting', 'accepted'] as const;
+
+/**
+ * The handovers the figures cut an employee's history at, from its
+ * `managerTransfers` rows: every accepted request, moved or still waiting for
+ * its runs in flight, cut at its acceptance (`decidedAt`). A row in another
+ * state is no handover. An accepted row without its acceptance time or the
+ * acceptor's key cannot be placed; it is left out and logged.
+ *
+ * @param rows - Request rows of any employees, in any state.
+ */
+export function handoversFromTransfers(
+  rows: readonly Doc<'managerTransfers'>[],
+): AcceptedHandover[] {
+  return rows.flatMap((row): AcceptedHandover[] => {
+    if (row.state !== 'accepting' && row.state !== 'accepted') return [];
+    if (row.toOwnerKey === undefined || row.decidedAt === undefined) {
+      log.warn('an accepted handover without its acceptance is left out of the figures', {
+        transferId: row._id,
+        state: row.state,
+      });
+      return [];
+    }
+    return [
+      {
+        agentId: row.agentId,
+        fromOwnerKey: row.fromOwnerKey,
+        toOwnerKey: row.toOwnerKey,
+        acceptedAt: row.decidedAt,
+      },
+    ];
+  });
+}
+
+/** One employee's accepted requests, moved or waiting for runs in flight. */
+async function acceptedTransfersOf(
+  ctx: QueryCtx,
+  agentId: Doc<'agents'>['_id'],
+): Promise<Doc<'managerTransfers'>[]> {
+  const byState = await Promise.all(
+    ACCEPTED_TRANSFER_STATES.map(
+      async (state) =>
+        await ctx.db
+          .query('managerTransfers')
+          .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', state))
+          .collect(),
+    ),
+  );
+  return byState.flat();
 }
 
 /**
  * The employees an owner's figures may count: those it owns now and those it
  * handed over that still exist, with the accepted handovers of each. A handed
- * over employee since retired has no records left and is not among them.
+ * over employee since retired has no records left and is not among them; an
+ * evaluation employee is never handed over, so none of its requests is read.
  */
 async function heldEmployees(
   ctx: QueryCtx,
   owner: string,
 ): Promise<{ agents: Doc<'agents'>[]; handovers: AcceptedHandover[] }> {
-  // Both reads are by index and bounded by what one owner did: every employee it deployed or
-  // took on, and every handover it gave, which D16 holds to 20 asks a day.
-  const [owned, given] = await Promise.all([
+  // Unbounded like the company's own employee read before it: an owner's accepted requests are
+  // one per employee it handed over, each of them one employee it once deployed or took on.
+  const [owned, ...given] = await Promise.all([
     ctx.db
       .query('agents')
       .withIndex('by_userId', (q) => q.eq('userId', owner))
       .collect(),
-    ctx.db
-      .query('managerTransfers')
-      .withIndex('by_from_owner_state', (q) => q.eq('fromOwnerKey', owner).eq('state', 'accepted'))
-      .collect(),
+    ...ACCEPTED_TRANSFER_STATES.map(
+      async (state) =>
+        await ctx.db
+          .query('managerTransfers')
+          .withIndex('by_from_owner_state', (q) => q.eq('fromOwnerKey', owner).eq('state', state))
+          .collect(),
+    ),
   ]);
   const ownedIds = new Set<string>(owned.map((agent) => agent._id));
-  const departedIds = [...new Set(given.map((row) => row.agentId))].filter(
+  const departedIds = [...new Set(given.flat().map((row) => row.agentId))].filter(
     (agentId) => !ownedIds.has(agentId),
   );
   const departed = (
@@ -1251,15 +1311,11 @@ async function heldEmployees(
   ).filter((agent): agent is Doc<'agents'> => agent !== null);
   const agents = [...owned, ...departed];
   const rows = await Promise.all(
-    agents.map(
-      async (agent) =>
-        await ctx.db
-          .query('managerTransfers')
-          .withIndex('by_agent_state', (q) => q.eq('agentId', agent._id).eq('state', 'accepted'))
-          .collect(),
-    ),
+    agents
+      .filter((agent) => !isEvaluationAgent(agent))
+      .map(async (agent) => await acceptedTransfersOf(ctx, agent._id)),
   );
-  return { agents, handovers: rows.flat().flatMap(acceptedHandoverOf) };
+  return { agents, handovers: handoversFromTransfers(rows.flat()) };
 }
 
 /**

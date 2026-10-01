@@ -2,7 +2,11 @@ import { convexTest } from 'convex-test';
 import { describe, expect, it } from 'vitest';
 import { api } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
-import { computeAgentMetrics, isEvaluationAgent } from '../../convex/metrics';
+import {
+  computeAgentMetrics,
+  handoversFromTransfers,
+  isEvaluationAgent,
+} from '../../convex/metrics';
 import type { OwnerMetrics } from '../../src/metrics/types';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
@@ -963,29 +967,121 @@ describe('supervision figures for a company of employees', (): void => {
 
   /**
    * Hand an employee over as an accepted request leaves it: the accepted row
-   * (inserted directly; the move is 9-U3a's) and the row's new owner.
+   * (inserted directly; the move is 9-U3a's) and the row's new owner. While
+   * `accepting`, the row waits for runs in flight and the employee has not moved.
    */
   async function handOver(
     harness: ReturnType<typeof convexTest>,
     agentId: Id<'agents'>,
     acceptedAt: number,
-  ): Promise<void> {
-    await harness.run(async (ctx): Promise<void> => {
-      await ctx.db.insert('managerTransfers', {
+    state: 'accepted' | 'accepting' = 'accepted',
+  ): Promise<Id<'managerTransfers'>> {
+    return await harness.run(async (ctx): Promise<Id<'managerTransfers'>> => {
+      const transferId = await ctx.db.insert('managerTransfers', {
         agentId,
         agentName: 'Priya',
         fromOwnerKey: COMPANY_OWNER.subject,
         fromAddress: COMPANY_OWNER.email ?? '',
         toAddress: SUCCESSOR.email ?? '',
-        state: 'accepted',
+        state,
         requestedAt: acceptedAt - 60_000,
         expiresAt: acceptedAt + 1_209_600_000,
         decidedAt: acceptedAt,
         toOwnerKey: SUCCESSOR.subject,
       });
-      await ctx.db.patch(agentId, { userId: SUCCESSOR.subject, bossEmail: SUCCESSOR.email });
+      if (state === 'accepted') {
+        await ctx.db.patch(agentId, { userId: SUCCESSOR.subject, bossEmail: SUCCESSOR.email });
+      }
+      return transferId;
     });
   }
+
+  it('keeps an item the old owner completed in their figures when the new owner retries it (D12)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const priyaId = await deployEmployee(harness, { ...THREE_EMPLOYEES[0], completedAt: 130_000 });
+    const doneId = await harness.run(async (ctx): Promise<Id<'workItems'>> => {
+      const workItemId = await ctx.db.insert('workItems', {
+        agentId: priyaId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'PRIYA-DONE',
+        title: 'Priya item finished before the handover',
+        contentSummary: 'Synthetic company work.',
+        contentRefs: [],
+        state: 'completed',
+        manualEstimateMinutes: 30,
+        observedAt: 140_000,
+        createdAt: 140_000,
+      });
+      await ctx.db.insert('events', {
+        agentId: priyaId,
+        type: 'work.completed',
+        payload: { workItemId },
+        createdAt: 150_000,
+      });
+      return workItemId;
+    });
+    const before = await companyFigures(harness);
+    expect(before.company.pilot.hoursSaved).toEqual({ estimatedItems: 1, hours: 0.5 });
+
+    await handOver(harness, priyaId, 500_000);
+    // The new manager retries it and the retry fails.
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(doneId, { state: 'failed', skipReason: 'the retry failed' });
+      for (const [type, createdAt] of [
+        ['work.retry', 700_000],
+        ['work.failed', 710_000],
+      ] as const) {
+        await ctx.db.insert('events', {
+          agentId: priyaId,
+          type,
+          payload: { workItemId: doneId },
+          createdAt,
+        });
+      }
+    });
+
+    await expect(companyFigures(harness)).resolves.toEqual(before);
+  });
+
+  it('cuts the old owner’s figures at the acceptance while the move waits for runs, and never again at the move (D12, D18)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const priyaId = await deployEmployee(harness, { ...THREE_EMPLOYEES[0], completedAt: 130_000 });
+    const before = await companyFigures(harness);
+    const transferId = await handOver(harness, priyaId, 500_000, 'accepting');
+    // A run in flight at the acceptance settles before the move.
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.insert('events', {
+        agentId: priyaId,
+        type: 'work.plan-approved',
+        payload: { workItemId: 'settling', decidedVia: 'channel' },
+        createdAt: 510_000,
+      });
+    });
+    await expect(companyFigures(harness)).resolves.toEqual(before);
+
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(transferId, { state: 'accepted' });
+      await ctx.db.patch(priyaId, { userId: SUCCESSOR.subject, bossEmail: SUCCESSOR.email });
+    });
+    await expect(companyFigures(harness)).resolves.toEqual(before);
+  });
+
+  it('keeps every employee the roster lists when one more was handed over, the cap applied to each kind', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const departedId = await deployEmployee(harness, { name: 'Priya', deployedAt: 500 });
+    for (let index = 0; index < 20; index += 1) {
+      await deployEmployee(harness, { name: `Employee ${index + 1}`, deployedAt: 1_000 + index });
+    }
+    await handOver(harness, departedId, 500_000);
+    const figures = await companyFigures(harness);
+    expect(figures.omittedEmployees).toBe(0);
+    expect(figures.company.employees).toBe(21);
+    expect(figures.employees.map((row) => row.name)).toEqual([
+      'Priya',
+      ...Array.from({ length: 20 }, (_, index) => `Employee ${index + 1}`),
+    ]);
+  });
 
   it('keeps the old owner’s figures as they were after a handover, and counts the new owner’s from the acceptance (D12)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
@@ -1089,6 +1185,41 @@ describe('supervision figures for a company of employees', (): void => {
     const harness = convexTest(schema, allConvexModules());
     await deployEmployee(harness, { name: 'Priya', deployedAt: 1_000 });
     await expect(harness.query(api.metrics.forOwner, {})).resolves.toBeNull();
+  });
+});
+
+describe('handoversFromTransfers', (): void => {
+  const row = (fields: Partial<Doc<'managerTransfers'>>): Doc<'managerTransfers'> => ({
+    _id: 'transfer1' as Id<'managerTransfers'>,
+    _creationTime: 1,
+    agentId: 'agent1' as Id<'agents'>,
+    agentName: 'Priya',
+    fromOwnerKey: 'ana',
+    fromAddress: 'ana@day0.local',
+    toAddress: 'ben@day0.local',
+    state: 'accepted',
+    requestedAt: 1,
+    expiresAt: 2,
+    decidedAt: 500,
+    toOwnerKey: 'ben',
+    ...fields,
+  });
+
+  it('cuts at the acceptance of a request moved or waiting for runs, and at no other state', (): void => {
+    expect(
+      handoversFromTransfers([
+        row({}),
+        row({ state: 'accepting', decidedAt: 600 }),
+        row({ state: 'declined' }),
+        row({ state: 'asked', decidedAt: undefined, toOwnerKey: undefined }),
+      ]).map((handover) => handover.acceptedAt),
+    ).toEqual([500, 600]);
+  });
+
+  it('leaves out an accepted row it cannot place, without its acceptance time or acceptor', (): void => {
+    expect(
+      handoversFromTransfers([row({ decidedAt: undefined }), row({ toOwnerKey: undefined })]),
+    ).toEqual([]);
   });
 });
 
