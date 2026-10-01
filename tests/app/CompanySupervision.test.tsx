@@ -347,7 +347,7 @@ describe('the skill reuse figure (A14, 10-A)', (): void => {
 
   it('defines the adopted runs as part of the reuse they are counted in', (): void => {
     expect(reuse?.definition).toBe(
-      'Of the distinct work item and skill runs, those run with a skill first made for another item. Adopted counts the runs of a skill one employee adopted from another, all of them reuse.',
+      'Of the distinct work item and skill runs, those run with a skill first made for another item. Runs of a skill adopted from another employee count as reuse, and are shown as adopted.',
     );
   });
 });

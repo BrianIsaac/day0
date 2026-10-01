@@ -231,7 +231,9 @@ describe('recordWords', (): void => {
         },
         subject,
       ),
-    ).toBe('Mira was offered the skill kanban-comment-and-close, version 2 by Priya, to adopt.');
+    ).toBe(
+      'Mira was offered version 2 of the skill kanban-comment-and-close, written by Priya, to adopt.',
+    );
     expect(
       recordWords(
         {
@@ -241,7 +243,7 @@ describe('recordWords', (): void => {
         subject,
       ),
     ).toBe(
-      'You adopted the skill kanban-comment-and-close, version 2 by Priya, for Mira; the sandbox checks it again for Mira before it runs.',
+      'You adopted version 2 of the skill kanban-comment-and-close, written by Priya, for Mira; the sandbox checks it again for Mira before it runs.',
     );
   });
 

@@ -61,11 +61,15 @@ function listed(value: unknown): string | undefined {
   return names.length > 0 ? names.join(', ') : undefined;
 }
 
-/** `, version 2 by Priya` for a library version an adoption event names, or what of it the row carries. */
-function versionBy(payload: { readonly version?: unknown; readonly authorName?: unknown }): string {
-  const version = typeof payload.version === 'number' ? ` version ${payload.version}` : '';
+/** `version 2 of the skill X, written by Priya` for an adoption event, with what of it the row carries. */
+function versionOfSkill(payload: {
+  readonly name?: unknown;
+  readonly version?: unknown;
+  readonly authorName?: unknown;
+}): string {
+  const version = typeof payload.version === 'number' ? `version ${payload.version} of ` : '';
   const author = text(payload.authorName);
-  return version || author ? `,${version}${author ? ` by ${author}` : ''}` : '';
+  return `${version}the skill ${text(payload.name) ?? 'unnamed'}${author ? `, written by ${author},` : ''}`;
 }
 
 /** How long a duration reads: `90 s`, `4 min`, `2 h`. */
@@ -298,10 +302,9 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     }`,
   'skill.recheck-due': (p) =>
     `The skill ${text(p.name) ?? 'unnamed'} is due a re-check${because(p.reason)}`,
-  'skill.adoption-offered': (p, { name }) =>
-    `${name} was offered the skill ${text(p.name) ?? 'unnamed'}${versionBy(p)}, to adopt`,
+  'skill.adoption-offered': (p, { name }) => `${name} was offered ${versionOfSkill(p)} to adopt`,
   'skill.adopted': (p, { name }) =>
-    `You adopted the skill ${text(p.name) ?? 'unnamed'}${versionBy(p)}, for ${name}; the sandbox checks it again for ${name} before it runs`,
+    `You adopted ${versionOfSkill(p)} for ${name}; the sandbox checks it again for ${name} before it runs`,
   'skill.failed': (p) =>
     `The skill ${text(p.name) ?? 'unnamed'} did not register${because(p.reason)}`,
   'skill.author-failed': (p) =>

@@ -135,7 +135,7 @@ export const PILOT_FIGURES: readonly PilotFigure[] = [
     label: 'Skill reuse',
     unit: 'runs with a skill made for other work',
     definition:
-      'Of the distinct work item and skill runs, those run with a skill first made for another item. Adopted counts the runs of a skill one employee adopted from another, all of them reuse.',
+      'Of the distinct work item and skill runs, those run with a skill first made for another item. Runs of a skill adopted from another employee count as reuse, and are shown as adopted.',
     value: ({ skillReuse }) =>
       skillReuse.runs === 0 || skillReuse.rate === null
         ? 'not yet'
