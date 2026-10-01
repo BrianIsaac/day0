@@ -209,6 +209,20 @@ describe('recordWords', (): void => {
     );
   });
 
+  it('says a plan handed over before it started waits for the new manager’s approval (D13)', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'work.plan-held',
+          payload: { workItemId: 'w1', reason: 'approved-by-predecessor' },
+        },
+        subject,
+      ),
+    ).toBe(
+      'The plan for “Draft response for new tier-two RevOps ask” is held for you: your predecessor approved it, so approve it again.',
+    );
+  });
+
   it('says a plan approved under autonomous actions was not the manager pressing Approve', (): void => {
     expect(
       recordWords({ type: 'work.plan-approved', payload: { by: 'autonomous' } }, { name: 'Mira' }),

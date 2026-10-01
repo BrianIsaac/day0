@@ -869,12 +869,21 @@ export interface PlanHeldDraftedWithout extends WorkItemNamed {
   readonly cause: 'not-connected' | 'read-failed';
 }
 
+/**
+ * `work.plan-held` for a plan the previous manager approved and that had not started when the
+ * employee was handed over: the approval does not carry to the new manager (decision D13).
+ */
+export interface PlanHeldApprovedByPredecessor extends WorkItemNamed {
+  readonly reason: 'approved-by-predecessor';
+}
+
 /** The payload of `work.plan-held`, by why the plan waits for the manager. */
 export type WorkPlanHeldPayload =
   | PlanHeldSkipOverruled
   | PlanHeldForRejection
   | PlanHeldObligationsFailedOpen
-  | PlanHeldDraftedWithout;
+  | PlanHeldDraftedWithout
+  | PlanHeldApprovedByPredecessor;
 
 /** The payload of `work.plan-approved`. */
 export interface WorkPlanApprovedPayload extends WorkItemNamed {
