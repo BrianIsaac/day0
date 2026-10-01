@@ -126,6 +126,34 @@ describe('recordWords', (): void => {
     ).toBe('Mira skipped “Refresh pipeline coverage view”: forecasting work assigned to Aman.');
   });
 
+  it('says each step of a handover request by who asked, the address it names and the employee', (): void => {
+    const request = {
+      transferId: 't1',
+      fromAddress: 'sam@company.com',
+      toAddress: 'priya@company.com',
+    };
+    const said = (type: (typeof EVENT_TYPES)[number], payload: Record<string, unknown>): string =>
+      recordWords({ type, payload: { ...request, ...payload } }, { name: 'Maya' });
+    expect(said('manager.transfer-asked', { hasNote: true })).toBe(
+      "Maya's manager, sam@company.com, asked priya@company.com to take Maya on.",
+    );
+    expect(said('manager.transfer-cancelled', { reason: 'owner' })).toBe(
+      "Maya's manager, sam@company.com, cancelled the handover to priya@company.com.",
+    );
+    expect(said('manager.transfer-cancelled', { reason: 'retired' })).toBe(
+      "Maya's manager, sam@company.com, cancelled the handover to priya@company.com when Maya was retired.",
+    );
+    expect(said('manager.transfer-cancelled', { reason: 'address-changed' })).toBe(
+      "Maya's manager, sam@company.com, cancelled the handover to priya@company.com to ask another address.",
+    );
+    expect(said('manager.transfer-declined', { hasReason: false })).toBe(
+      'Asked to take Maya on, priya@company.com declined.',
+    );
+    expect(said('manager.transfer-expired', {})).toBe(
+      'The handover to priya@company.com expired unanswered.',
+    );
+  });
+
   it('says the reason for a rejection once, not the stored prefix before it (m43)', (): void => {
     const rejected = (reason: string): string =>
       recordWords(

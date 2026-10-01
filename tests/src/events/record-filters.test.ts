@@ -21,6 +21,13 @@ describe('the Record tab filters', (): void => {
     }
   });
 
+  it('lists a handover asked or cancelled as the manager’s decision, a decline as a decision and a refusal, and an expiry as set aside', (): void => {
+    expect(RECORD_FILTER_OF['manager.transfer-asked']).toEqual(['decisions']);
+    expect(RECORD_FILTER_OF['manager.transfer-cancelled']).toEqual(['decisions']);
+    expect(RECORD_FILTER_OF['manager.transfer-declined']).toEqual(['decisions', 'refused']);
+    expect(RECORD_FILTER_OF['manager.transfer-expired']).toEqual(['refused']);
+  });
+
   it('keeps the charter’s history, the one-to-one that drafts it included, under Charter', (): void => {
     const charter = eventTypesIn('charter');
     for (const type of EVENT_TYPES) {

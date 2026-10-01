@@ -154,6 +154,20 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     }
     return `manager changed${to ? ` to ${to}` : ''} on the dashboard`;
   },
+  'manager.transfer-asked': (payload) =>
+    `handover to ${text(payload.toAddress) ?? 'another manager'} asked`,
+  'manager.transfer-cancelled': (payload) =>
+    `handover to ${text(payload.toAddress) ?? 'another manager'} cancelled${
+      payload.reason === 'retired'
+        ? ' at the retire'
+        : payload.reason === 'address-changed'
+          ? ' for another address'
+          : ''
+    }`,
+  'manager.transfer-declined': (payload) =>
+    `${text(payload.toAddress) ?? 'the named manager'} declined the handover`,
+  'manager.transfer-expired': (payload) =>
+    `handover to ${text(payload.toAddress) ?? 'another manager'} expired`,
   'charter.drafted': (payload) => `charter v${text(payload.version) ?? '?'} drafted`,
   'charter.approved': (payload) => {
     const struck = counted(payload.struckConstraints?.length, 'rule');
@@ -478,10 +492,13 @@ const RECORD_KINDS: Readonly<Partial<Record<EventType, Exclude<RecordKind, 'note
   'skill.author-failed': 'refused',
   'audit.corrected': 'refused',
   'work.decision-ignored': 'refused',
+  'manager.transfer-declined': 'refused',
   'work.conditional-writes-withheld': 'withheld',
   'work.skipped': 'withheld',
   'work.withdrawn': 'withheld',
   'work.cancelled': 'withheld',
+  'manager.transfer-cancelled': 'withheld',
+  'manager.transfer-expired': 'withheld',
   'work.actions-pending': 'held',
   'work.plan-held': 'held',
   'skill.proposed': 'held',

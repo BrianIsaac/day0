@@ -130,6 +130,16 @@ const PLAN_HELD_BECAUSE: { readonly [Reason in WorkPlanHeldPayload['reason']]: s
   'drafted-without-record': 'it was drafted without reading its ticket or thread',
 };
 
+/**
+ * Why an asked handover was cancelled, as the end of a sentence: nothing for the manager's own
+ * cancel, which the sentence already says.
+ */
+function handoverCancelledBecause(reason: unknown, name: string): string {
+  if (reason === 'retired') return ` when ${name} was retired`;
+  if (reason === 'address-changed') return ' to ask another address';
+  return '';
+}
+
 /** The stage a model call belongs to. */
 const MODEL_CALL_STAGE: Readonly<Record<string, string>> = {
   evaluation: 'evaluation',
@@ -176,6 +186,18 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     }
     return `You changed ${name}'s manager${to ? ` to ${to}` : ''}`;
   },
+  'manager.transfer-asked': (p, { name }) =>
+    `${name}'s manager, ${text(p.fromAddress) ?? 'you'}, asked ${
+      text(p.toAddress) ?? 'another manager'
+    } to take ${name} on`,
+  'manager.transfer-cancelled': (p, { name }) =>
+    `${name}'s manager, ${text(p.fromAddress) ?? 'you'}, cancelled the handover to ${
+      text(p.toAddress) ?? 'another manager'
+    }${handoverCancelledBecause(p.reason, name)}`,
+  'manager.transfer-declined': (p, { name }) =>
+    `Asked to take ${name} on, ${text(p.toAddress) ?? 'the named manager'} declined`,
+  'manager.transfer-expired': (p) =>
+    `The handover to ${text(p.toAddress) ?? 'another manager'} expired unanswered`,
   'charter.drafted': (p) => `Charter version ${text(p.version) ?? '?'} drafted for your review`,
   'charter.approved': (p) => {
     const struck = counted(p.struckConstraints?.length, 'rule');

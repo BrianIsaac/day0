@@ -3,6 +3,7 @@
 import { useId } from 'react';
 import type { FunctionReturnType } from 'convex/server';
 import type { api } from '@convex/_generated/api';
+import { deploymentZone } from '@/lib/zone';
 import { clockTime } from './time';
 import { ButtonLink } from './Button';
 
@@ -112,12 +113,22 @@ export function inboxEntryWords(entry: InboxItem): InboxEntryWords {
         about: `${entry.subject}, before it is connected.`,
         control: 'Open',
       };
+    case 'transfer': {
+      // The employee is not the viewer's yet, so the date is in the viewer's zone, named (N12).
+      const zone = deploymentZone();
+      return {
+        ask: 'an employee to take on',
+        about: `${entry.fromAddress} asks you to become its manager. Expires ${clockTime(entry.expiresAt, zone)}, ${zone} time.`,
+        control: 'Review',
+      };
+    }
   }
 }
 
 /**
- * Where an entry's control goes: the tab of the employee's page that performs it, and for a work
- * item the item's own card on the Work tab (`#item-<id>`), which the queue scrolls to and focuses.
+ * Where an entry's control goes: the tab of the employee's page that performs it, for a work
+ * item the item's own card on the Work tab (`#item-<id>`), which the queue scrolls to and focuses,
+ * and for a handover the acceptance dialog on the home (`/?transfer=<id>`).
  *
  * @param entry - The entry.
  */
@@ -137,6 +148,9 @@ export function inboxEntryHref(entry: InboxItem): string {
       return `${page}/skills`;
     case 'surface':
       return `${page}/surfaces`;
+    case 'transfer':
+      // The employee's page refuses a caller who does not own it yet; the home opens the dialog.
+      return `/?transfer=${encodeURIComponent(entry.transferId)}`;
   }
 }
 

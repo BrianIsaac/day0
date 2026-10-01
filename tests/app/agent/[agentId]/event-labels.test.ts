@@ -19,6 +19,35 @@ describe('the live feed labels', (): void => {
     }
   });
 
+  it('labels each step of a handover request by the address it names', (): void => {
+    const request = {
+      transferId: 't1',
+      fromAddress: 'sam@co.example',
+      toAddress: 'priya@co.example',
+    };
+    expect([
+      eventLabel({ type: 'manager.transfer-asked', payload: { ...request, hasNote: false } }),
+      eventLabel({ type: 'manager.transfer-cancelled', payload: { ...request, reason: 'owner' } }),
+      eventLabel({
+        type: 'manager.transfer-cancelled',
+        payload: { ...request, reason: 'retired' },
+      }),
+      eventLabel({
+        type: 'manager.transfer-cancelled',
+        payload: { ...request, reason: 'address-changed' },
+      }),
+      eventLabel({ type: 'manager.transfer-declined', payload: { ...request, hasReason: true } }),
+      eventLabel({ type: 'manager.transfer-expired', payload: request }),
+    ]).toEqual([
+      'handover to priya@co.example asked',
+      'handover to priya@co.example cancelled',
+      'handover to priya@co.example cancelled at the retire',
+      'handover to priya@co.example cancelled for another address',
+      'priya@co.example declined the handover',
+      'handover to priya@co.example expired',
+    ]);
+  });
+
   it('says why each held plan waits, by its reason', (): void => {
     const held = (payload: Record<string, unknown>): string =>
       eventLabel({ type: 'work.plan-held', payload: { workItemId: 'w1', ...payload } });
@@ -267,6 +296,13 @@ describe('what a record line says an event did', (): void => {
     for (const type of eventTypesIn('refused')) {
       expect(['refused', 'withheld'], type).toContain(recordKindOf({ type }));
     }
+  });
+
+  it('draws a declined handover as refused, a cancelled or expired one as set aside, and an ask as noted', (): void => {
+    expect(recordKindOf({ type: 'manager.transfer-declined' })).toBe('refused');
+    expect(recordKindOf({ type: 'manager.transfer-cancelled' })).toBe('withheld');
+    expect(recordKindOf({ type: 'manager.transfer-expired' })).toBe('withheld');
+    expect(recordKindOf({ type: 'manager.transfer-asked' })).toBe('noted');
   });
 
   it('notes a failed run and a past draft rather than calling them refused or still held', (): void => {

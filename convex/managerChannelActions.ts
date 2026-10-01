@@ -19,7 +19,7 @@ import {
   type RequestEdit,
 } from '../src/surfaces/policy';
 import { applySurfaceActions } from '../src/surfaces/registry';
-import { isSlackApiEndpoint } from '../src/surfaces/slack-endpoint';
+import { isSlackApiEndpoint, slackApiUrl } from '../src/surfaces/slack-endpoint';
 import { safeFailureMessage } from '../src/surfaces/redact';
 import type { BeforeSurfaceTransport, SurfaceRecord } from '../src/surfaces/types';
 import {
@@ -415,5 +415,132 @@ export const sendManagerDigests = internalAction({
       }
     }
     return { sent, failed };
+  },
+});
+
+/** How long one Slack call of the notice may take before it is abandoned. */
+const NOTICE_SLACK_TIMEOUT_MS = 30_000;
+
+/** One Slack call of the notice: a read sends its values as the query, a write as a JSON body. */
+type NoticeSlackCall =
+  | { readonly query: Readonly<Record<string, string>> }
+  | { readonly body: Readonly<Record<string, string>> };
+
+/**
+ * Call one Slack Web API method for the transfer notice and hold it to Slack's
+ * in-band success contract, in the shapes the card's probe calls them. The
+ * notice is Day0's own message to a person who is not the employee's manager,
+ * so it does not go through the work gate, whose automatic path is the
+ * manager DM; it calls only methods the card's allowlist names
+ * (`claimTransferNotice` checks them).
+ *
+ * @throws Error with the method and Slack's error, or the HTTP status.
+ */
+async function callSlackForNotice(
+  credential: string,
+  method: string,
+  call: NoticeSlackCall,
+): Promise<Record<string, unknown>> {
+  const url = slackApiUrl(method);
+  if ('query' in call) {
+    for (const [name, value] of Object.entries(call.query)) url.searchParams.set(name, value);
+  }
+  const response = await fetch(url, {
+    method: 'body' in call ? 'POST' : 'GET',
+    headers: {
+      Authorization: `Bearer ${credential}`,
+      ...('body' in call ? { 'Content-Type': 'application/json; charset=utf-8' } : {}),
+    },
+    ...('body' in call ? { body: JSON.stringify(call.body) } : {}),
+    signal: AbortSignal.timeout(NOTICE_SLACK_TIMEOUT_MS),
+  });
+  // A gateway answering for Slack sends HTML; the status is then the reason.
+  const payload: unknown = await response.json().catch((): unknown => ({}));
+  const record =
+    payload !== null && typeof payload === 'object' ? (payload as Record<string, unknown>) : {};
+  if (!response.ok || record.ok !== true) {
+    throw new Error(
+      typeof record.error === 'string'
+        ? `Slack ${method} failed: ${record.error}`
+        : `Slack ${method} returned HTTP ${response.status}.`,
+    );
+  }
+  return record;
+}
+
+/**
+ * The Slack user an address names, when it is a person the bot may DM: not a
+ * bot or an app, not deactivated, not the bot itself. Undefined otherwise,
+ * and when the workspace has no member with the address.
+ */
+async function personNamedBy(credential: string, address: string): Promise<string | undefined> {
+  const auth = await callSlackForNotice(credential, 'auth.test', { query: {} });
+  let lookup: Record<string, unknown>;
+  try {
+    lookup = await callSlackForNotice(credential, 'users.lookupByEmail', {
+      query: { email: address },
+    });
+  } catch (error) {
+    // Not a member of this workspace: the address names nobody the notice can reach.
+    if (error instanceof Error && /users_not_found/.test(error.message)) return undefined;
+    throw error;
+  }
+  const user =
+    lookup.user !== null && typeof lookup.user === 'object'
+      ? (lookup.user as Record<string, unknown>)
+      : undefined;
+  if (typeof user?.id !== 'string') return undefined;
+  if (user.is_bot === true || user.is_app_user === true || user.deleted === true) return undefined;
+  if (user.id === auth.user_id) return undefined;
+  return user.id;
+}
+
+/**
+ * Internal, scheduled by a real-mode `managerTransfers.ask`: the one DM notice
+ * to the person a handover names (D7, the transfer plan section 5.2), from the
+ * employee's Slack card, when the named address is a person in that
+ * workspace. Claimed once by `managerTransfers.claimTransferNotice` before
+ * anything is sent, so it is never re-sent, a failure included; the provider's
+ * timestamp is recorded as the evidence it landed. The notice decides nothing:
+ * it carries no decision code, goes to a DM the decision poll never reads, and
+ * a transfer is answered only in the dashboard (D6).
+ */
+export const sendTransferNotice = internalAction({
+  args: { transferId: v.id('managerTransfers') },
+  handler: async (ctx, args): Promise<{ sent: boolean; reason?: string }> => {
+    const claimed = await ctx.runMutation(internal.managerTransfers.claimTransferNotice, args);
+    if (!claimed.claimed) return { sent: false, reason: claimed.reason };
+    let credential = '';
+    try {
+      credential = await decryptCredential(ctx, claimed.credentialId);
+      const person = await personNamedBy(credential, claimed.toAddress);
+      if (person === undefined) {
+        log.info('handover notice not sent: the named address is no person in the workspace', {
+          transferId: args.transferId,
+        });
+        return { sent: false, reason: 'the named address is no person in the workspace' };
+      }
+      const opened = await callSlackForNotice(credential, 'conversations.open', {
+        body: { users: person },
+      });
+      const channel = (opened.channel as { id?: unknown } | undefined)?.id;
+      if (typeof channel !== 'string') throw new Error('Slack conversations.open returned no DM.');
+      const posted = await callSlackForNotice(credential, 'chat.postMessage', {
+        body: { channel, text: claimed.text },
+      });
+      if (typeof posted.ts !== 'string') throw new Error('Slack chat.postMessage returned no ts.');
+      await ctx.runMutation(internal.managerTransfers.recordTransferNotice, {
+        transferId: args.transferId,
+        providerTs: posted.ts,
+      });
+      return { sent: true };
+    } catch (error) {
+      const reason = safeFailureMessage(error, credential, 'Handover notice failed.');
+      log.warn('handover notice not sent; it is not tried again', {
+        transferId: args.transferId,
+        reason,
+      });
+      return { sent: false, reason };
+    }
   },
 });
