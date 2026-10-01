@@ -25,6 +25,7 @@ import { assertCurrentGeneration } from '../src/docs/sync-generation';
 import { appendEvent } from './eventLog';
 import { mirroredDocSlug } from '../src/docs/types';
 import { agentReadsSource } from '../src/docs/agent-sources';
+import { readableDocs } from './mock';
 import {
   endedShort,
   reasonWithoutLegacyRecord,
@@ -1278,6 +1279,40 @@ export const pruneMirrors = internalMutation({
       ...page,
       removed,
     });
+  },
+});
+
+/**
+ * Delete one bounded page of an employee's mirrors it no longer reads, and schedule the next.
+ *
+ * Internal; scheduled by a handover's move (`transferAcceptance`), which hands the employee to an
+ * owner the old owner's sources do not belong to. From that write the readers already hide those
+ * pages (`mock.readableDocs`); this deletes them, a page of `PAGED_READ` at a time over the
+ * employee's own index, the bound the finishing sync's `pruneMirrors` deletes by, keeping the
+ * seeded office pages and every page the employee still reads. The run's finishing prune cannot
+ * do it: it is fenced to one source's running sync and keeps every page the listing names.
+ *
+ * @returns How many pages this page of the walk deleted.
+ */
+export const pruneDepartedMirrors = internalMutation({
+  args: { agentId: v.id('agents'), cursor: v.optional(v.string()) },
+  handler: async (ctx, args): Promise<number> => {
+    const page = await ctx.db
+      .query('mockDocs')
+      .withIndex('by_agent_slug', (index) => index.eq('agentId', args.agentId))
+      .paginate({ ...PAGED_READ, cursor: args.cursor ?? null });
+    const readable = new Set(
+      (await readableDocs(ctx.db, await ctx.db.get(args.agentId), page.page)).map((doc) => doc._id),
+    );
+    const unread = page.page.filter((doc) => !readable.has(doc._id));
+    await Promise.all(unread.map(async (doc) => await ctx.db.delete(doc._id)));
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.docSources.pruneDepartedMirrors, {
+        agentId: args.agentId,
+        cursor: page.continueCursor,
+      });
+    }
+    return unread.length;
   },
 });
 

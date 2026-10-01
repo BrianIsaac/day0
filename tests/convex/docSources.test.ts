@@ -2298,3 +2298,77 @@ describe('the documentation store under the transaction limits (step 49)', (): v
     expect(await left()).toEqual([runs.pointedAt, runs.recent]);
   });
 });
+
+describe("a handed-over employee's mirrors of its old owner's sources (transfer plan 6.2)", (): void => {
+  afterEach((): void => {
+    vi.useRealTimers();
+  });
+
+  it("deletes them page by page and keeps the seeded pages, the new owner's and a colleague's", async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { moved, colleague } = await harness.run(async (ctx) => {
+      const source = async (userId: string): Promise<Id<'docSources'>> =>
+        await ctx.db.insert('docSources', {
+          userId,
+          label: `${userId} handbook`,
+          kind: 'folder',
+          locator: '.',
+          status: 'synced',
+          createdAt: 1,
+          updatedAt: 1,
+        });
+      const previous = await source('owner');
+      const own = await source('colleague');
+      const employee = async (userId: string, name: string): Promise<Id<'agents'>> =>
+        await ctx.db.insert('agents', {
+          bossEmail: MANAGER_ADDRESS,
+          name,
+          userId,
+          state: 'active',
+          createdAt: 1,
+        });
+      const moved = await employee('colleague', 'Maya');
+      const colleague = await employee('owner', 'Tomas');
+      const page = async (
+        agentId: Id<'agents'>,
+        slug: string,
+        sourceId?: Id<'docSources'>,
+      ): Promise<void> => {
+        await ctx.db.insert('mockDocs', {
+          agentId,
+          slug,
+          title: slug,
+          body: `# ${slug}`,
+          category: 'team-doc',
+          ...(sourceId ? { sourceId, sourceRef: `${slug}.md` } : {}),
+          updatedAt: 1,
+        });
+      };
+      // More than one page of the paged read, so the delete must schedule itself again.
+      for (let index = 0; index < 150; index += 1) await page(moved, `owner-${index}`, previous);
+      await page(moved, 'office-welcome');
+      await page(moved, 'colleague-onboarding', own);
+      await page(colleague, 'owner-0', previous);
+      return { moved, colleague };
+    });
+
+    await harness.mutation(internal.docSources.pruneDepartedMirrors, { agentId: moved });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const slugsOf = async (agentId: Id<'agents'>): Promise<string[]> =>
+      (
+        await harness.run(
+          async (ctx) =>
+            await ctx.db
+              .query('mockDocs')
+              .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId))
+              .collect(),
+        )
+      )
+        .map((doc) => doc.slug)
+        .sort();
+    expect(await slugsOf(moved)).toEqual(['colleague-onboarding', 'office-welcome']);
+    expect(await slugsOf(colleague)).toEqual(['owner-0']);
+  });
+});
