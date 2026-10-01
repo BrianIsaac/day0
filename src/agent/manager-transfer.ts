@@ -147,3 +147,17 @@ export function isTransferDue(
 export function isWithinAskWindow(requestedAt: number, now: number): boolean {
   return now - requestedAt < TRANSFER_ASK_WINDOW_MS;
 }
+
+/** The refusal for a request that no longer exists. A `ConvexError`'s data, so the dialog can show it. */
+export const TRANSFER_NOT_FOUND = 'This handover no longer exists.';
+
+/** The refusal for an account the request does not name. A `ConvexError`'s data. */
+export const NOT_NAMED_IN_TRANSFER = 'This handover is addressed to someone else.';
+
+/**
+ * The refusal for a caller whose sign-in asserts no verified address: a
+ * request names an address, and only that address, verified, may answer it.
+ * A `ConvexError`'s data.
+ */
+export const UNVERIFIED_FOR_TRANSFER =
+  'Your sign-in does not carry a verified email address, so no handover can be addressed to you. Verify your address, then sign in again.';

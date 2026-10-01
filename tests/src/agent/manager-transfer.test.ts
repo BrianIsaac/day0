@@ -7,12 +7,15 @@ import {
   MAX_OPEN_TRANSFERS_PER_OWNER,
   MAX_TRANSFER_ASKS_PER_WINDOW,
   MAX_TRANSFER_NOTE_LENGTH,
+  NOT_NAMED_IN_TRANSFER,
   OPEN_MANAGER_TRANSFER_STATES,
   TRANSFER_ASK_WINDOW_MS,
   TRANSFER_CANCEL_REASONS,
   TRANSFER_DEPARTURES_WINDOW_MS,
   TRANSFER_EXPIRY_MS,
+  TRANSFER_NOT_FOUND,
   TRANSFER_SETTLE_MS,
+  UNVERIFIED_FOR_TRANSFER,
   canMoveTransfer,
   isFinalTransferState,
   isOpenTransferState,
@@ -113,5 +116,15 @@ describe('the bounds (D16)', (): void => {
   it('bound the handover note at 1,000 characters and a decline reason at 500', (): void => {
     expect(MAX_TRANSFER_NOTE_LENGTH).toBe(1_000);
     expect(MAX_DECLINE_REASON_LENGTH).toBe(500);
+  });
+});
+
+describe('the refusals the named manager reads', (): void => {
+  it('say what is wrong in the words the dialog shows', (): void => {
+    expect(TRANSFER_NOT_FOUND).toBe('This handover no longer exists.');
+    expect(NOT_NAMED_IN_TRANSFER).toBe('This handover is addressed to someone else.');
+    expect(UNVERIFIED_FOR_TRANSFER).toBe(
+      'Your sign-in does not carry a verified email address, so no handover can be addressed to you. Verify your address, then sign in again.',
+    );
   });
 });
