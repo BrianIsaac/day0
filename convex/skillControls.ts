@@ -528,9 +528,10 @@ export const retire = mutation({
  * holds is stamped withdrawn (`revokedAt`, `revokedReason`), so it is offered to nobody and no
  * stored verification registers it again, and every holder of it that is callable is retired as
  * Retire retires one, all in this one transaction; a run of it already under way is stopped
- * ({@link stopRunsOf}), and every adoption offering it ends with it ({@link endAdoptionsOf}). One `skill.revoked` on the acting employee's record names every holder
- * retired; each holder's record carries its own `skill.retired`, and each ended adoption's a
- * `skill.rejected` saying so. Refused for a row that is not a callable skill an employee wrote.
+ * ({@link stopRunsOf}), and every adoption offering it ends with it ({@link endAdoptionsOf}).
+ * One `skill.revoked` on the acting employee's record names every holder retired; each holder's
+ * record carries its own `skill.retired`, and each ended adoption's a `skill.rejected` saying
+ * so. Refused for a row that is not a callable skill an employee wrote.
  */
 export const withdraw = mutation({
   args: { skillId: v.id('skills'), reason: v.optional(v.string()) },

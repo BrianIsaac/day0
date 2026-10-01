@@ -468,8 +468,8 @@ export async function deleteOwnerLibrary(ctx: MutationCtx, ownerKey: string): Pr
  * The handover's library step (K2), inside the move: copy every version the moving employee's
  * rows hold into the new owner's library and re-point each row, drop any adoption offer the old
  * owner's library made to it with any adoption under way and its parked copy, then stamp
- * "Re-check due" on its
- * registered skills whose surface the move cut. Nothing names the old owner afterwards: each copy
+ * "Re-check due" on its registered skills whose surface the move cut. Nothing names the old
+ * owner afterwards: each copy
  * is keyed on the new owner, numbered in the new owner's library, keeps its author only when the
  * mover wrote it (any other author is {@link HANDED_OVER_AUTHOR_NAME}), and drops the pages the
  * old owner's documentation gave it (`readRefs`), which the mover no longer reads; a chip whose

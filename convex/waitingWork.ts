@@ -143,6 +143,7 @@ export const WAITING_BATCH = 25;
 /** Rows of one state one transaction reads while looking for the ones waiting. */
 const WAITING_SCAN = 200;
 
+/** The states a waiting item is read in: parked at `needs-skill`, or sent back to `discovered`. */
 export const waitingState = v.union(v.literal('discovered'), v.literal('needs-skill'));
 
 /** What a skill's transition does to each row waiting for it. */
@@ -161,6 +162,7 @@ export const waitingMove = v.union(
 /** What a skill's transition does to each row waiting for it ({@link waitingMove}). */
 export type WaitingMove = typeof waitingMove.type;
 
+/** How far a skill's transition reaches ({@link WaitingScope}), as a continuation carries it. */
 export const waitingScope = v.object({
   queued: v.optional(v.boolean()),
   sameName: v.optional(v.boolean()),
