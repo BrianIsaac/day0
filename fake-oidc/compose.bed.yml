@@ -1,0 +1,32 @@
+# The customer-local bed's additions to docker-compose.yml: the test issuer at
+# a fixed address on the project's network, and the backend trusting the
+# issuer's throwaway CA (fake-oidc/make-tls.sh) through SSL_CERT_FILE, which
+# the pinned backend image's TLS roots honour. Compose reads COMPOSE_FILE from
+# the process environment, not from the --env-file, and the setup pins it to
+# the main file for its own children; so a bed runs the setup, then exports
+#
+#   COMPOSE_FILE=docker-compose.yml:fake-oidc/compose.bed.yml
+#
+# and recreates the stack (`docker compose ... down`, then `up -d --wait`;
+# the volumes are kept) before anything else.
+# The issuer is then https://${FAKE_OIDC_ADDRESS}:${FAKE_OIDC_PORT} from the
+# backend container, from this machine's processes and from its browser alike
+# (a Linux host reaches its bridge networks' addresses). Never on a customer
+# install: a real issuer has a public certificate and a public name.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: ${FAKE_OIDC_SUBNET:-172.31.250.0/24}
+
+services:
+  fake-oidc:
+    networks:
+      default:
+        ipv4_address: ${FAKE_OIDC_ADDRESS:-172.31.250.10}
+
+  backend:
+    environment:
+      - SSL_CERT_FILE=/fake-oidc-tls/bundle.pem
+    volumes:
+      - ${FAKE_OIDC_TLS_DIR:-./fake-oidc/tls}:/fake-oidc-tls:ro

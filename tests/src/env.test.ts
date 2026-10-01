@@ -82,3 +82,34 @@ describe('environment contract', (): void => {
     await expect(loadEnv()).rejects.toThrow();
   });
 });
+
+describe('the customer-local block of the environment contract', (): void => {
+  it('carries the profile, its browser copy and the sign-in settings, empty as absent', async (): Promise<void> => {
+    vi.stubEnv('DAY0_PROFILE', 'customer-local');
+    vi.stubEnv('NEXT_PUBLIC_DAY0_PROFILE', 'customer-local');
+    vi.stubEnv('DAY0_OIDC_ISSUER', 'https://issuer.acme.test');
+    vi.stubEnv('DAY0_OIDC_AUDIENCE', 'day0-app');
+    vi.stubEnv('DAY0_OIDC_CLIENT_SECRET', 'day0-test-client-secret');
+    vi.stubEnv('DAY0_OIDC_ALLOWED_DOMAINS', 'acme.test');
+    vi.stubEnv('DAY0_SESSION_SECRET', '');
+    const env = await loadEnv();
+    expect(env).toMatchObject({
+      DAY0_PROFILE: 'customer-local',
+      NEXT_PUBLIC_DAY0_PROFILE: 'customer-local',
+      DAY0_OIDC_ISSUER: 'https://issuer.acme.test',
+      DAY0_OIDC_AUDIENCE: 'day0-app',
+      DAY0_OIDC_CLIENT_SECRET: 'day0-test-client-secret',
+      DAY0_OIDC_ALLOWED_DOMAINS: 'acme.test',
+    });
+    expect(env.DAY0_SESSION_SECRET).toBeUndefined();
+    expect(process.env.DAY0_SESSION_SECRET).toBeUndefined();
+  });
+
+  it('refuses a profile, or a browser copy of one, that names none', async (): Promise<void> => {
+    vi.stubEnv('NEXT_PUBLIC_DAY0_PROFILE', 'customer-lcoal');
+    await expect(loadEnv()).rejects.toThrow();
+    vi.stubEnv('NEXT_PUBLIC_DAY0_PROFILE', '');
+    vi.stubEnv('DAY0_PROFILE', 'hosted');
+    await expect(loadEnv()).rejects.toThrow();
+  });
+});

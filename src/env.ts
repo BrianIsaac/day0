@@ -65,6 +65,18 @@ const schema = z.object({
   DAY0_BROWSER_MCP_URL: z.string().optional(),
   /** The redaction component as the backend reaches it; unset means none. */
   DAY0_REDACTOR_URL: z.string().optional(),
+
+  // The customer-local profile (A7): people sign in through the customer's own
+  // OpenID Connect issuer. `src/lib/customer-oidc.ts` reads and checks the
+  // issuer's values; the profile and its browser copy are refused here when
+  // they name no profile, so a typo fails at start rather than signing nobody in.
+  DAY0_PROFILE: z.enum(['local-dev', 'customer-local']).optional(),
+  NEXT_PUBLIC_DAY0_PROFILE: z.enum(['local-dev', 'customer-local']).optional(),
+  DAY0_OIDC_ISSUER: z.string().optional(),
+  DAY0_OIDC_AUDIENCE: z.string().optional(),
+  DAY0_OIDC_CLIENT_SECRET: z.string().optional(),
+  DAY0_OIDC_ALLOWED_DOMAINS: z.string().optional(),
+  DAY0_SESSION_SECRET: z.string().optional(),
 });
 
 /**
@@ -108,6 +120,13 @@ const OPTIONAL_STRINGS = [
   'DAY0_PUBLIC_URL',
   'DAY0_BROWSER_MCP_URL',
   'DAY0_REDACTOR_URL',
+  'DAY0_PROFILE',
+  'NEXT_PUBLIC_DAY0_PROFILE',
+  'DAY0_OIDC_ISSUER',
+  'DAY0_OIDC_AUDIENCE',
+  'DAY0_OIDC_CLIENT_SECRET',
+  'DAY0_OIDC_ALLOWED_DOMAINS',
+  'DAY0_SESSION_SECRET',
 ] as const;
 
 /**
@@ -164,5 +183,12 @@ export const env = schema.parse(
     DAY0_PUBLIC_URL: process.env.DAY0_PUBLIC_URL,
     DAY0_BROWSER_MCP_URL: process.env.DAY0_BROWSER_MCP_URL,
     DAY0_REDACTOR_URL: process.env.DAY0_REDACTOR_URL,
+    DAY0_PROFILE: process.env.DAY0_PROFILE,
+    NEXT_PUBLIC_DAY0_PROFILE: process.env.NEXT_PUBLIC_DAY0_PROFILE,
+    DAY0_OIDC_ISSUER: process.env.DAY0_OIDC_ISSUER,
+    DAY0_OIDC_AUDIENCE: process.env.DAY0_OIDC_AUDIENCE,
+    DAY0_OIDC_CLIENT_SECRET: process.env.DAY0_OIDC_CLIENT_SECRET,
+    DAY0_OIDC_ALLOWED_DOMAINS: process.env.DAY0_OIDC_ALLOWED_DOMAINS,
+    DAY0_SESSION_SECRET: process.env.DAY0_SESSION_SECRET,
   }),
 );

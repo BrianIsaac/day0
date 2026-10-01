@@ -2,7 +2,9 @@
 
 import { useState, useSyncExternalStore } from 'react';
 import { useClerk, useUser } from '@clerk/nextjs';
+import { CUSTOMER_SIGN_IN } from '@/lib/customer-sign-in';
 import type { Boss } from './home/types';
+import { useCustomerAccount } from './Providers';
 import { holdsClerkSession } from './session-hint';
 
 /**
@@ -41,7 +43,32 @@ function sameBoss(a: Boss | null, b: Boss | null): boolean {
 }
 
 /**
- * Resolve who `/` is for (decision D2 (a) of the wave 5 review).
+ * Who `/` is for under the customer-local profile: the person the session's ID token names
+ * (`useCustomerAccount`), never Clerk. The whole tree is held until the deployment accepts the
+ * token, so a page reading this has a signed-in person by then.
+ */
+function useCustomerSignInAccount(): Account {
+  const state = useCustomerAccount();
+  switch (state.status) {
+    case 'signed-in':
+      return {
+        kind: 'signed-in',
+        boss: { email: state.account.email, firstName: state.account.firstName },
+      };
+    case 'resolving':
+      return RESOLVING;
+    case 'signed-out':
+    case 'unavailable':
+      return SIGNED_OUT;
+    default: {
+      const unknown: never = state;
+      throw new Error(`unhandled account state ${String(unknown)}`);
+    }
+  }
+}
+
+/**
+ * Who `/` is for under Clerk, the hosted demo's sign-in (decision D2 (a) of the wave 5 review).
  *
  * Until Clerk has answered the answer is `resolving`, and the page shows a neutral shell: the
  * served HTML is the same for both audiences, so a signed-in manager never sees the marketing
@@ -53,7 +80,7 @@ function sameBoss(a: Boss | null, b: Boss | null): boolean {
  * signed-in answer is held through that, so the dashboard is never swapped for the marketing
  * page in place. Only Clerk's own resolved answer of "no user" ends it.
  */
-export function useAccount(): Account {
+function useClerkAccount(): Account {
   const { isLoaded, user } = useUser();
   const clerk = useClerk();
   const hint = useSyncExternalStore(noSubscription, readSessionHint, serverSessionHint);
@@ -73,3 +100,11 @@ export function useAccount(): Account {
   if (clerk.status === 'error' || hint === 'none') return SIGNED_OUT;
   return RESOLVING;
 }
+
+/**
+ * Who `/` is for: the customer sign-in's person in a customer-local build, else Clerk's answer.
+ * Chosen once per build, so every render calls the same hooks.
+ */
+export const useAccount: () => Account = CUSTOMER_SIGN_IN
+  ? useCustomerSignInAccount
+  : useClerkAccount;

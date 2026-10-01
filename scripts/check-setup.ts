@@ -23,9 +23,11 @@
  * command.
  *
  * Two things this does not do. It never calls a provider with a key: no key
- * here is spent establishing that it exists. The one address it dials is the
- * model's, from inside the backend container and with no key, because an
- * address this machine reaches may still be one the container cannot, and
+ * here is spent establishing that it exists. The addresses it dials are the
+ * model's, from inside the backend container and with no key, and under the
+ * customer-local profile the issuer's public discovery document, from this
+ * machine and from inside the container (`scripts/check-sign-in.ts`), because
+ * an address this machine reaches may still be one the container cannot, and
  * only the container can say so. And it cannot see the ElevenLabs dashboard,
  * so the dynamic variables an agent must declare are printed to check by eye
  * rather than guessed at.
@@ -67,6 +69,15 @@ import {
   type ModelDial,
 } from './model-reach';
 import { isLoopback, setupRoute } from './setup-route';
+import {
+  fetchFromContainer,
+  fetchFromHost,
+  readDeploymentEnv,
+  signInSetupChecks,
+  worstStatus,
+  type SignInCheck,
+  type SignInProbes,
+} from './check-sign-in';
 
 export { setupRoute, type ReportedRoute, type RouteReport } from './setup-route';
 
@@ -129,6 +140,10 @@ export const WATCHED = [
   'DAY0_OIDC_ISSUER',
   'DAY0_OIDC_AUDIENCE',
   'DAY0_OIDC_EMAIL_TRUSTED',
+  'NEXT_PUBLIC_DAY0_PROFILE',
+  'DAY0_OIDC_CLIENT_SECRET',
+  'DAY0_OIDC_ALLOWED_DOMAINS',
+  'DAY0_SESSION_SECRET',
   'NEXT_PUBLIC_DEMO_BOSS_EMAIL',
   'DAY0_PRIVATE_HOSTS',
   'CONVEX_BIND_ADDR',
@@ -246,10 +261,11 @@ export function main(envFile: string = ENV_FILE, options: { report?: boolean } =
       ? migrationsSection(readMigrationStatus(v))
       : undefined;
   const settings = settingsSection(v);
+  const signInProbes = probeSignIn(v, { selfHosted, projectName, services });
   const sections: Section[] = [
     backendSection(v),
     ...(migrations ? [migrations] : []),
-    authSection(v),
+    authSection(v, signInProbes),
     ...(settings ? [settings] : []),
     surfacesSection(v, services),
     componentsSection(v, projectName, services),
@@ -271,6 +287,7 @@ export function main(envFile: string = ENV_FILE, options: { report?: boolean } =
             running: services?.includes(row.service) ?? false,
           })),
           digests: fileDigests(REPORTED_FILES),
+          ...(signInProbes === undefined ? {} : { signIn: signInChecksFor(v, signInProbes) }),
           commit: checkoutCommit(),
           generatedAt: new Date().toISOString(),
         }),
@@ -916,14 +933,70 @@ function backendSection(v: Values): Section {
 }
 
 /**
+ * Ask what the company sign-in's checks need from outside this process: the
+ * discovery document from this machine, from inside the backend container when
+ * it runs here, and the deployment's values when one can be asked. Undefined
+ * when the company sign-in is not configured, or its issuer is not one.
+ */
+function probeSignIn(
+  v: Values,
+  where: { selfHosted: boolean; projectName: string; services: string[] | undefined },
+): SignInProbes | undefined {
+  if (!companySignInConfigured(v)) return undefined;
+  let issuer: CustomerOidcIssuer | undefined;
+  try {
+    issuer = customerOidcIssuer((name: string): string | undefined => v[name]);
+  } catch {
+    // The section reports the malformed issuer with its own words; there is nothing to fetch.
+    issuer = undefined;
+  }
+  if (!issuer) return undefined;
+  const backendHere = where.selfHosted && (where.services?.includes('backend') ?? false);
+  const deploymentReachable = backendHere || (!where.selfHosted && !!v.CONVEX_DEPLOYMENT);
+  return {
+    host: fetchFromHost(issuer.issuer),
+    ...(backendHere
+      ? { container: fetchFromContainer(issuer.issuer, where.projectName, ENV_FILE) }
+      : {}),
+    ...(deploymentReachable ? { deployment: readDeploymentEnv(v) } : {}),
+  };
+}
+
+/** The sign-in checks the report lists, by name and verdict. */
+function signInChecksFor(v: Values, probes: SignInProbes): SignInCheck[] {
+  const issuer = (v.DAY0_OIDC_ISSUER ?? '').trim();
+  return signInSetupChecks(v, issuer, probes);
+}
+
+/** How one sign-in check's line opens in the section. */
+const CHECK_LABEL: Readonly<Record<SignInCheck['status'], string>> = {
+  ok: 'pass',
+  warn: 'note',
+  gap: 'gap ',
+};
+
+/** Whether this configuration signs people in through the issuer in the browser (A7). */
+function companySignInConfigured(v: Values): boolean {
+  const customerLocal = (v.DAY0_PROFILE ?? '').trim() === 'customer-local';
+  const browserCopy = (v.NEXT_PUBLIC_DAY0_PROFILE ?? '').trim() === 'customer-local';
+  // Under `next dev` the local key may stand in for the operator on a customer-local server;
+  // without the browser copy that is the way in, and the company sign-in is not configured yet.
+  return customerLocal && (browserCopy || v.NEXT_PUBLIC_DEV_NO_AUTH !== 'true');
+}
+
+/**
  * The customer issuer's section, or undefined when neither an issuer nor the
  * customer-local profile is configured.
  *
  * Validated by the same reader the backend's auth config uses, so a value this
  * reports as fine is one the push accepts. The issuer is printed only once it
- * has been accepted, since a refused one may carry a password.
+ * has been accepted, since a refused one may carry a password. Under the
+ * customer-local profile it is pass or gap (`signInSetupChecks`): every value
+ * the company sign-in needs, the discovery document from this machine and from
+ * inside the backend container, the issuer byte for byte and the deployment's
+ * values; a probe that could not be asked is a note.
  */
-function customerIssuerSection(v: Values): Section | undefined {
+function customerIssuerSection(v: Values, probes?: SignInProbes): Section | undefined {
   const customerLocal = (v.DAY0_PROFILE ?? '').trim() === 'customer-local';
   if (!customerLocal && !(v.DAY0_OIDC_ISSUER ?? '').trim()) return undefined;
   let issuer: CustomerOidcIssuer | undefined;
@@ -947,7 +1020,7 @@ function customerIssuerSection(v: Values): Section | undefined {
         "DAY0_PROFILE=customer-local signs people in through the customer's OIDC issuer,",
         'and DAY0_OIDC_ISSUER is unset, so real mode refuses to start. Set it to the',
         "issuer's URL as its tokens carry it in `iss`, and DAY0_OIDC_AUDIENCE to the",
-        'client id they carry in `aud`.',
+        "app registration's client id: `./setup.sh sign-in --provider entra|okta|google`.",
       ],
     };
   }
@@ -955,15 +1028,23 @@ function customerIssuerSection(v: Values): Section | undefined {
   const unreadableFlag = trustFlag !== '' && trustFlag !== 'true' && trustFlag !== 'false';
   const trusted = customerOidcEmailTrusted((name: string): string | undefined => v[name]);
   const noAuth = v.NEXT_PUBLIC_DEV_NO_AUTH === 'true';
-  // A warning until the app's own sign-in uses the issuer (review M12): the
-  // backend accepts its tokens, and no browser can get one yet.
+  const companySignIn = companySignInConfigured(v);
+  const checks = companySignIn ? signInSetupChecks(v, issuer.issuer, probes) : [];
+  const status: Status = unreadableFlag
+    ? 'gap'
+    : companySignIn
+      ? worstStatus(checks)
+      : // The issuer beside the local key: accepted by the backend, signing nobody in through the
+        // browser until the profile says so.
+        'warn';
   return {
     title: unreadableFlag
       ? "Auth: the customer issuer's address flag is unreadable"
-      : noAuth
-        ? 'Auth: customer OIDC issuer and the local key'
-        : 'Auth: customer OIDC issuer',
-    status: unreadableFlag ? 'gap' : 'warn',
+      : titleFor(
+          status,
+          noAuth ? 'Auth: customer OIDC issuer and the local key' : 'Auth: customer OIDC issuer',
+        ),
+    status,
     lines: [
       ...(unreadableFlag
         ? [
@@ -983,13 +1064,20 @@ function customerIssuerSection(v: Values): Section | undefined {
         : customerLocal
           ? 'DAY0_PROFILE=customer-local: real mode is for the people it signs in, under `next start`.'
           : 'DAY0_PROFILE is not customer-local, so real mode still needs the local key under `next dev`.',
-      "The app's own sign-in does not use this issuer yet, so until it does nobody signs in",
-      noAuth
-        ? 'through the browser with it; the local key is the way in meanwhile.'
-        : 'through the browser, and with the local key off there is no other way in.',
+      ...(companySignIn
+        ? [
+            ...checks.map((one) => `${CHECK_LABEL[one.status]} ${one.line}`),
+            'Then `pnpm check:sign-in` signs a test person in and shows what the deployment made of the token.',
+          ]
+        : [
+            noAuth
+              ? 'The browser signs in with the local key; the company sign-in runs in a build with'
+              : 'Nobody signs in through the browser with this issuer: the company sign-in runs in a build with',
+            'DAY0_PROFILE and NEXT_PUBLIC_DAY0_PROFILE both customer-local (`./setup.sh sign-in`).',
+          ]),
       "A manager's address is the token's `email` claim, believed only when `email_verified`",
-      'is true: a person whose token carries no verified address is signed in, but nobody can',
-      'deploy an employee or take one on without one.',
+      "(or Entra's `xms_edov`) is true: a person whose token carries no verified address is",
+      'signed in, but nobody can deploy an employee or take one on without one.',
       ...(trusted
         ? [
             `${CUSTOMER_OIDC_EMAIL_TRUSTED_VAR}=true: an \`email\` sent without \`email_verified\` is believed`,
@@ -1009,8 +1097,9 @@ function customerIssuerSection(v: Values): Section | undefined {
  * alone), the local key, or Clerk. A half of any of them is worse than none.
  *
  * @param v - The env file with the process environment layered on.
+ * @param probes - What the company sign-in's checks asked outside this process, when it is configured.
  */
-export function authSection(v: Values): Section {
+export function authSection(v: Values, probes?: SignInProbes): Section {
   const noAuth = v.NEXT_PUBLIC_DEV_NO_AUTH === 'true';
   const clerkKeys = ['NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY', 'CLERK_SECRET_KEY'].filter((k) => !v[k]);
   const hasClerk = clerkKeys.length === 0;
@@ -1032,7 +1121,7 @@ export function authSection(v: Values): Section {
   }
   // A keyless local issuer is a gap whatever else is configured beside it.
   if (!noAuth || missing.length === 0) {
-    const customer = customerIssuerSection(v);
+    const customer = customerIssuerSection(v, probes);
     if (customer) return customer;
   }
 
@@ -1443,6 +1532,8 @@ export interface SetupReport {
   digests: Record<string, string>;
   egress: EgressHost[];
   sections: Array<{ title: string; status: Status }>;
+  /** The company sign-in's checks by name and verdict, when the customer-local profile runs it. */
+  signIn?: Array<{ check: SignInCheck['name']; status: Status }>;
 }
 
 /** The host of an address that leaves this machine, or undefined for one that stays. */
@@ -1515,6 +1606,10 @@ export function egressHosts(values: Readonly<Record<string, string>>): EgressHos
   }
   if (values.ELEVENLABS_API_KEY) add('api.elevenlabs.io', 'the voice 1:1');
   add(outboundHost(values.CLERK_JWT_ISSUER_DOMAIN), 'Clerk, signing users in');
+  add(
+    outboundHost(values.DAY0_OIDC_ISSUER),
+    "the customer's issuer: discovery, keys and tokens, from this machine and the backend",
+  );
   add('registry-1.docker.io', 'image pulls at setup (ollama, python, node)');
   add('ghcr.io', 'image pulls at setup (the Convex backend and dashboard)');
   add('mcr.microsoft.com', 'image pulls at setup (the browser component)');
@@ -1561,6 +1656,7 @@ export function composeImages(compose: string): ComposeImage[] {
 export function setupReport(inputs: {
   values: Readonly<Record<string, string>>;
   sections: readonly Section[];
+  signIn?: readonly SignInCheck[];
   versions: Record<string, string | undefined>;
   images: ReadonlyArray<ComposeImage & { running: boolean }>;
   digests: Record<string, string>;
@@ -1579,6 +1675,9 @@ export function setupReport(inputs: {
     digests: inputs.digests,
     egress: egressHosts(inputs.values),
     sections: inputs.sections.map(({ title, status }) => ({ title, status })),
+    ...(inputs.signIn === undefined
+      ? {}
+      : { signIn: inputs.signIn.map(({ name, status }) => ({ check: name, status })) }),
   };
 }
 

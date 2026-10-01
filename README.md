@@ -446,6 +446,18 @@ Both local ways are real mode: link your documentation and connect the systems i
 
 It is deliberately restricted to a machine whose callers are known. `DAY0_SURFACE_MODE=real` throws unless the deployment is local no-auth development (`NEXT_PUBLIC_DEV_NO_AUTH=true` under `NODE_ENV=development`), or `DAY0_PROFILE=customer-local` with the customer's OIDC issuer configured (`DAY0_OIDC_ISSUER` and `DAY0_OIDC_AUDIENCE`); either way it throws when a Vercel marker is set, so the mode that can touch live systems cannot be reached on the hosted demo's platform at all (`src/lib/surface-mode.ts`).
 
+### The company sign-in (customer-local)
+
+Installed at a customer, Day0 signs people in through the customer's own identity provider, never Clerk or the local key: `DAY0_PROFILE=customer-local`. It is an install kit we run with the customer's IT, not a self-service feature, and the first install runs `next start` behind the customer's https proxy. On an installation `./setup.sh --route ...` made:
+
+```bash
+./setup.sh sign-in --provider entra     # or okta, or google; asks for what no flag names
+pnpm build && pnpm start                # the browser reads the profile at build
+pnpm check:sign-in                      # with the customer's IT: one test sign-in, each claim's verdict
+```
+
+The guides take the customer's administrator through the same seven steps, from registering the application to what the live check must show: [Microsoft Entra ID](docs/running/sign-in-entra.md), [Okta](docs/running/sign-in-okta.md), [Google Workspace](docs/running/sign-in-google.md). Who may sign in is decided three times: by the provider's own assignment, by the allowed domains (`DAY0_OIDC_ALLOWED_DOMAINS`, checked at sign-in and again on the backend, and for Google the account's Workspace, `hd`, as well), and, for deploying or taking on an employee, by a verified address (`email_verified`, Entra's `xms_edov`, or `DAY0_OIDC_EMAIL_TRUSTED` as the declared fallback). The session is a sealed, httpOnly cookie holding the refresh token and the current ID token; there is no session table, and changing `DAY0_SESSION_SECRET` signs everyone out. `pnpm check:setup` checks every value, the issuer's discovery document from this machine and from inside the backend container, and that the backend holds the file's values.
+
 ### The components you need
 
 Real mode adds optional components, and each one is a Compose profile. `real` is day0 itself and is added for you; you name the rest:
@@ -703,6 +715,7 @@ Copy `.env.example` to `.env.local` and fill in:
 | `PLAYWRIGHT_ALLOWED_ORIGINS` | The origins the bundled browser component may open at all, semicolon-separated (`http://looker-tile:8080;http://host.docker.internal:3000` by default). It is one list for the whole deployment, a floor under day0's own check that every browser action stays on its card's documented page: add the origin of each web UI a card will drive, and nothing else |
 | `DAY0_REDACTOR_URL` | The redaction component as the backend reaches it: `http://redactor:8000` for the bundled one, paired with `pnpm redactor:up`. Unset means no component: a documentation sync refuses to persist, and a provider outcome is recorded as `structural-only` |
 | `DAY0_PUBLIC_URL` | The https origin a provider redirects a finished OAuth install back to. Needed only to provision a dedicated Slack app; unset, Slack is connected with a shared bot token instead |
+| `DAY0_PROFILE`, `NEXT_PUBLIC_DAY0_PROFILE`, `DAY0_OIDC_ISSUER`, `DAY0_OIDC_AUDIENCE`, `DAY0_OIDC_CLIENT_SECRET`, `DAY0_OIDC_ALLOWED_DOMAINS`, `DAY0_SESSION_SECRET`, `DAY0_OIDC_EMAIL_TRUSTED` | The company sign-in at a customer, written by `./setup.sh sign-in`. The audience is the app registration's client id; the client secret and the session secret stay on this machine. `DAY0_PUBLIC_URL` is then the https origin people reach Day0 on. See [The company sign-in](#the-company-sign-in-customer-local) |
 
 Convex Node actions read their settings from the Convex deployment env, which is a separate store from `.env.local`: the model keys (`OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`, `OPENAI_JSON_MODE`), `DAYTONA_API_KEY`, `SKILL_SANDBOX_SOCKET` and every real-mode `DAY0_*` value bar `DAY0_DOCS_HOST_DIR`, which is Compose's alone. `./scripts/sync-convex-env.sh` pushes exactly that list and is the only thing that should write it; it also pushes `OPENAI_BASE_URL` under the deployment's name for it, taking the value from `CONVEX_OPENAI_BASE_URL`. ElevenLabs and Clerk keys stay local - only Next.js reads those.
 
@@ -1546,6 +1559,18 @@ pnpm convex:down                 # the backend; the data volume stays
 该模式被刻意限制在调用者已知的机器上。除非部署是本机无认证开发环境（`NODE_ENV=development` 下的 `NEXT_PUBLIC_DEV_NO_AUTH=true`），或设置了 `DAY0_PROFILE=customer-local` 并配置了客户的 OIDC issuer（`DAY0_OIDC_ISSUER` 与 `DAY0_OIDC_AUDIENCE`），否则 `DAY0_SURFACE_MODE=real` 会直接抛错；两种情况下只要存在 Vercel 变量都会抛错（`src/lib/surface-mode.ts`），因此可以操作真实系统的模式无法在托管演示所在的平台上启用。
 
 当环境中存在 `NEXT_PUBLIC_DEV_NO_AUTH=true` 时，`pnpm build` 会拒绝生产构建。构建前必须取消该值；如果它进入 Vercel 配置，构建失败是预期的安全保护。
+
+#### 公司登录（customer-local）
+
+在客户处安装时，Day0 通过客户自己的身份提供方让人员登录，绝不使用 Clerk 或本机密钥：`DAY0_PROFILE=customer-local`。这是一个由我们与客户 IT 一起执行的安装套件，而不是自助功能；首次安装在客户的 https 反向代理之后直接运行 `next start`。在由 `./setup.sh --route ...` 完成的安装上：
+
+```bash
+./setup.sh sign-in --provider entra     # 或 okta、google；未由参数给出的内容会逐项询问
+pnpm build && pnpm start                # 浏览器在构建时读取 profile
+pnpm check:sign-in                      # 与客户 IT 一起：一次测试登录，逐项给出每个 claim 的结论
+```
+
+三份指南按相同的七个步骤带客户管理员完成配置，从注册应用到在线检查必须显示的内容：[Microsoft Entra ID](docs/running/sign-in-entra.md)、[Okta](docs/running/sign-in-okta.md)、[Google Workspace](docs/running/sign-in-google.md)。谁可以登录由三层决定：身份提供方自己的分配；允许的域名（`DAY0_OIDC_ALLOWED_DOMAINS`，在登录时和后端各检查一次，Google 还要检查账号所属的 Workspace，即 `hd`）；以及部署或接手员工所需的已验证地址（`email_verified`、Entra 的 `xms_edov`，或作为声明的后备方案的 `DAY0_OIDC_EMAIL_TRUSTED`）。会话是一个加密封装的 httpOnly cookie，保存 refresh token 和当前的 ID token；没有会话表，更改 `DAY0_SESSION_SECRET` 会让所有人退出登录。`pnpm check:setup` 会检查每个值、从本机和后端容器内部各获取一次 issuer 的 discovery 文档，并确认后端保存的值与文件一致。
 
 #### 需要的组件
 

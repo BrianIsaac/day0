@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import * as customerOidc from '../../../src/lib/customer-oidc';
 import {
   CUSTOMER_OIDC_EMAIL_TRUSTED_VAR,
   customerOidcEmailTrusted,
@@ -90,5 +91,63 @@ describe("trusting the customer issuer's addresses (D3)", (): void => {
       throw new Error('AuthConfigMissingEnvironmentVariable');
     };
     expect(customerOidcEmailTrusted(throwing)).toBe(false);
+  });
+});
+
+describe('the allowed domains', (): void => {
+  it('reads a comma- or space-separated list, lower-cased and without repeats', (): void => {
+    const { parseAllowedDomains } = customerOidc;
+    expect(parseAllowedDomains(' Acme.com, acme.co.uk  ACME.com ')).toEqual([
+      'acme.com',
+      'acme.co.uk',
+    ]);
+    expect(parseAllowedDomains(undefined)).toEqual([]);
+    expect(parseAllowedDomains('  ')).toEqual([]);
+  });
+
+  it('refuses an entry that is not a plain domain, naming it', (): void => {
+    const { parseAllowedDomains } = customerOidc;
+    for (const entry of ['@acme.com', 'https://acme.com', '*.acme.com', 'localhost', 'acme..com']) {
+      expect(() => parseAllowedDomains(entry)).toThrow(/DAY0_OIDC_ALLOWED_DOMAINS/);
+    }
+  });
+});
+
+describe('the domain rule', (): void => {
+  const { signInRefusal } = customerOidc;
+  const okta = 'https://acme.okta.com';
+
+  it('admits an address in an allowed domain, whatever the case of its domain', (): void => {
+    expect(signInRefusal({ email: 'priya@ACME.com' }, ['acme.com'], okta)).toBeUndefined();
+  });
+
+  it('refuses an address in another domain, and a subdomain that is not listed', (): void => {
+    expect(signInRefusal({ email: 'eve@rival.com' }, ['acme.com'], okta)).toBe('foreign-domain');
+    expect(signInRefusal({ email: 'a@eu.acme.com' }, ['acme.com'], okta)).toBe('foreign-domain');
+    expect(signInRefusal({ email: 'a@acme.com.evil.test' }, ['acme.com'], okta)).toBe(
+      'foreign-domain',
+    );
+  });
+
+  it('refuses a token with no address, and everyone when no domain is configured', (): void => {
+    expect(signInRefusal({}, ['acme.com'], okta)).toBe('no-email');
+    expect(signInRefusal({ email: 42 }, ['acme.com'], okta)).toBe('no-email');
+    expect(signInRefusal({ email: 'priya@acme.com' }, [], okta)).toBe('no-domains');
+  });
+
+  it('refuses a Google account without the allowed Workspace in hd, whatever its address says', (): void => {
+    const google = 'https://accounts.google.com';
+    expect(signInRefusal({ email: 'priya@acme.com', hd: 'acme.com' }, ['acme.com'], google)).toBe(
+      undefined,
+    );
+    expect(signInRefusal({ email: 'priya@acme.com' }, ['acme.com'], google)).toBe(
+      'foreign-workspace',
+    );
+    expect(signInRefusal({ email: 'priya@acme.com', hd: 'rival.com' }, ['acme.com'], google)).toBe(
+      'foreign-workspace',
+    );
+    expect(signInRefusal({ email: 'priya@acme.com', hd: 'rival.com' }, ['acme.com'], okta)).toBe(
+      undefined,
+    );
   });
 });

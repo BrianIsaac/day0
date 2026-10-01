@@ -19,7 +19,7 @@ import {
 } from '../../src/agent/manager-transfer';
 import { EMPLOYEE_NOT_YOURS, isEmployeeNotYours } from '../../src/agent/employee-access';
 import { allConvexModules } from './all-modules';
-import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import { MANAGER_ADDRESS, localIssuerIdentity, managerIdentity } from './fakes/manager-identity';
 
 const CUSTOMER_ISSUER = 'https://sso.example.com/realms/ops';
 
@@ -50,6 +50,7 @@ describe('the owner key', (): void => {
 
   it('keys an agent a customer user deploys on the issuer and the subject together', async (): Promise<void> => {
     vi.stubEnv('DAY0_OIDC_ISSUER', CUSTOMER_ISSUER);
+    vi.stubEnv('DAY0_OIDC_ALLOWED_DOMAINS', 'example.com');
     const harness = convexTest(schema, allConvexModules());
     const alice = harness.withIdentity(
       managerIdentity('alice', { issuer: CUSTOMER_ISSUER, email: 'alice@example.com' }),
@@ -62,6 +63,7 @@ describe('the owner key', (): void => {
 
   it('never lets a customer token that names the local subject act as the local owner', async (): Promise<void> => {
     vi.stubEnv('DAY0_OIDC_ISSUER', CUSTOMER_ISSUER);
+    vi.stubEnv('DAY0_OIDC_ALLOWED_DOMAINS', 'example.com');
     const harness = convexTest(schema, allConvexModules());
     const local = harness.withIdentity(
       managerIdentity(DEV_NO_AUTH_SUBJECT, { issuer: DEV_NO_AUTH_ISSUER, email: MANAGER_ADDRESS }),
@@ -70,7 +72,8 @@ describe('the owner key', (): void => {
     expect((await local.query(api.agents.get, { agentId }))?.userId).toBe(DEV_NO_AUTH_SUBJECT);
 
     const impostor = harness.withIdentity(
-      managerIdentity(DEV_NO_AUTH_SUBJECT, { issuer: CUSTOMER_ISSUER, email: MANAGER_ADDRESS }),
+      // An allowed address: the domain rule admits it, and the owner key still keeps it apart.
+      managerIdentity(DEV_NO_AUTH_SUBJECT, { issuer: CUSTOMER_ISSUER, email: 'boss@example.com' }),
     );
     await expect(impostor.query(api.agents.get, { agentId })).rejects.toThrow(EMPLOYEE_NOT_YOURS);
   });
@@ -132,9 +135,10 @@ describe('the caller session', (): void => {
 
   it('survives the owner key: getCaller keeps every claim, the subject as the token gave it, and adds the owner key', async (): Promise<void> => {
     vi.stubEnv('DAY0_OIDC_ISSUER', CUSTOMER_ISSUER);
+    vi.stubEnv('DAY0_OIDC_ALLOWED_DOMAINS', 'example.com');
     const harness = convexTest(schema, allConvexModules());
     const alice = harness.withIdentity({
-      ...managerIdentity('alice', { issuer: CUSTOMER_ISSUER }),
+      ...managerIdentity('alice', { issuer: CUSTOMER_ISSUER, email: 'alice@example.com' }),
       sid: 'tab-2',
     });
     const seen = await alice.run(async (ctx) => {
@@ -221,12 +225,19 @@ describe('verifiedAddressOf', (): void => {
     // carried `email` and `email_verified: true`, and no `emailVerified` (the 9-U1 bed, 1 Oct).
     const env = deploymentEnv({ DAY0_OIDC_ISSUER: CUSTOMER_ISSUER });
     for (const issuer of [DEV_NO_AUTH_ISSUER, CUSTOMER_ISSUER, CLERK_ISSUER]) {
-      const raw = identity(issuer, 'u', { email: 'Boss@Day0.local', email_verified: true });
-      expect(verifiedAddressOf(raw, env), issuer).toBe('boss@day0.local');
-      const rawFalse = identity(issuer, 'u', { email: 'boss@day0.local', email_verified: false });
+      // Outside `day0.local`, which only the local issuer vouches for (U1-m4, its own test below).
+      const raw = identity(issuer, 'u', { email: 'Boss@Kestrel.Example', email_verified: true });
+      expect(verifiedAddressOf(raw, env), issuer).toBe('boss@kestrel.example');
+      const rawFalse = identity(issuer, 'u', {
+        email: 'boss@kestrel.example',
+        email_verified: false,
+      });
       expect(verifiedAddressOf(rawFalse, env), issuer).toBeUndefined();
       // Only a boolean asserts it: a string is not the claim the issuer is specified to send.
-      const rawString = identity(issuer, 'u', { email: 'boss@day0.local', email_verified: 'true' });
+      const rawString = identity(issuer, 'u', {
+        email: 'boss@kestrel.example',
+        email_verified: 'true',
+      });
       expect(verifiedAddressOf(rawString, env), issuer).toBeUndefined();
     }
   });
@@ -259,15 +270,16 @@ describe('verifiedAddressOf', (): void => {
         { emailVerified: true, email_verified: null },
         { email_verified: 0 },
       ]) {
-        const both = identity(issuer, 'u', { email: 'boss@day0.local', ...claims });
+        const both = identity(issuer, 'u', { email: 'boss@kestrel.example', ...claims });
         expect(verifiedAddressOf(both, env), `${issuer} ${JSON.stringify(claims)}`).toBeUndefined();
       }
+      // Outside `day0.local`, which only the local issuer vouches for (U1-m4).
       const agreeing = identity(issuer, 'u', {
-        email: 'boss@day0.local',
+        email: 'boss@kestrel.example',
         emailVerified: true,
         email_verified: true,
       });
-      expect(verifiedAddressOf(agreeing, env), issuer).toBe('boss@day0.local');
+      expect(verifiedAddressOf(agreeing, env), issuer).toBe('boss@kestrel.example');
     }
   });
 
@@ -472,5 +484,165 @@ describe('assertNamedInTransfer', (): void => {
     await expect(
       harness.run(async (ctx) => await assertNamedInTransfer(ctx, transferId)),
     ).rejects.toThrow(/^not authenticated/);
+  });
+});
+
+describe('the domain rule in getCaller (S2)', (): void => {
+  /** The owner key getCaller answers a caller with, or null when it refuses them. */
+  async function callerKeyOf(who: Partial<UserIdentity>): Promise<string | null> {
+    const harness = convexTest(schema, allConvexModules());
+    return await harness.withIdentity(who).run(async (ctx) => {
+      const { getCaller } = await import('../../convex/ownership');
+      return (await getCaller(ctx))?.ownerKey ?? null;
+    });
+  }
+
+  it('getCaller refuses a customer-issuer caller outside the allowed domains', async (): Promise<void> => {
+    vi.stubEnv('DAY0_OIDC_ISSUER', CUSTOMER_ISSUER);
+    vi.stubEnv('DAY0_OIDC_ALLOWED_DOMAINS', 'acme.test');
+    const forced = managerIdentity('eve', { issuer: CUSTOMER_ISSUER, email: 'eve@rival.test' });
+    await expect(callerKeyOf(forced)).resolves.toBeNull();
+    const allowed = managerIdentity('priya', { issuer: CUSTOMER_ISSUER, email: 'Priya@ACME.test' });
+    await expect(callerKeyOf(allowed)).resolves.toBe(`${CUSTOMER_ISSUER}|priya`);
+  });
+
+  it('refuses every customer-issuer caller while the deployment names no allowed domain', async (): Promise<void> => {
+    vi.stubEnv('DAY0_OIDC_ISSUER', CUSTOMER_ISSUER);
+    const priya = managerIdentity('priya', { issuer: CUSTOMER_ISSUER, email: 'priya@acme.test' });
+    await expect(callerKeyOf(priya)).resolves.toBeNull();
+  });
+
+  it('refuses a Google caller whose hd is not an allowed Workspace, whatever its address', async (): Promise<void> => {
+    vi.stubEnv('DAY0_OIDC_ISSUER', 'https://accounts.google.com');
+    vi.stubEnv('DAY0_OIDC_ALLOWED_DOMAINS', 'acme.test');
+    const personal = {
+      ...managerIdentity('g1', { issuer: 'https://accounts.google.com', email: 'priya@acme.test' }),
+    };
+    await expect(callerKeyOf(personal)).resolves.toBeNull();
+    await expect(callerKeyOf({ ...personal, hd: 'acme.test' })).resolves.toBe(
+      'https://accounts.google.com|g1',
+    );
+  });
+
+  it('leaves the local issuer and Clerk to their own rules', async (): Promise<void> => {
+    vi.stubEnv('DAY0_OIDC_ISSUER', CUSTOMER_ISSUER);
+    vi.stubEnv('DAY0_OIDC_ALLOWED_DOMAINS', 'acme.test');
+    await expect(callerKeyOf(localIssuerIdentity())).resolves.toBe(DEV_NO_AUTH_SUBJECT);
+    await expect(
+      callerKeyOf(managerIdentity('user_1', { issuer: CLERK_ISSUER, email: 'a@elsewhere.test' })),
+    ).resolves.toBe('user_1');
+  });
+});
+
+describe("verifiedAddressOf and Entra's xms_edov (S4)", (): void => {
+  const ENTRA = 'https://login.microsoftonline.com/3f2504e0-4f89-11d3-9a0c-0305e82c3301/v2.0';
+
+  it('verifiedAddressOf reads xms_edov', (): void => {
+    const env = deploymentEnv({ DAY0_OIDC_ISSUER: ENTRA });
+    const edov = identity(ENTRA, 'oid-1', { email: 'Priya@Acme.test', xms_edov: true });
+    expect(verifiedAddressOf(edov, env)).toBe('priya@acme.test');
+    expect(verifiedAddressOf(identity(ENTRA, 'oid-1', { email: 'priya@acme.test' }), env)).toBe(
+      undefined,
+    );
+  });
+
+  it('takes an xms_edov of false at its word, the trust flag notwithstanding, and only a boolean true asserts it', (): void => {
+    const trusted = deploymentEnv({ DAY0_OIDC_ISSUER: ENTRA, DAY0_OIDC_EMAIL_TRUSTED: 'true' });
+    for (const said of [false, 'true', 1, null]) {
+      const caller = identity(ENTRA, 'oid-1', { email: 'priya@acme.test', xms_edov: said });
+      expect(verifiedAddressOf(caller, trusted), String(said)).toBeUndefined();
+    }
+  });
+
+  it('lets email_verified speak first when the issuer sends both', (): void => {
+    const env = deploymentEnv({ DAY0_OIDC_ISSUER: ENTRA });
+    const both = identity(ENTRA, 'oid-1', {
+      email: 'priya@acme.test',
+      emailVerified: false,
+      xms_edov: true,
+    });
+    expect(verifiedAddressOf(both, env)).toBeUndefined();
+  });
+});
+
+describe('the reserved local domain (the wave 9 review, U1-m4)', (): void => {
+  it("never believes a customer issuer's day0.local address, verified or trusted", (): void => {
+    const trusted = deploymentEnv({
+      DAY0_OIDC_ISSUER: CUSTOMER_ISSUER,
+      DAY0_OIDC_EMAIL_TRUSTED: 'true',
+    });
+    for (const address of ['boss@day0.local', 'Eval-run1@Day0.local', 'lead@day0.local']) {
+      const verified = identity(CUSTOMER_ISSUER, 'mallory', {
+        email: address,
+        emailVerified: true,
+      });
+      expect(verifiedAddressOf(verified, trusted), address).toBeUndefined();
+      const flagged = identity(CUSTOMER_ISSUER, 'mallory', { email: address });
+      expect(verifiedAddressOf(flagged, trusted), address).toBeUndefined();
+    }
+  });
+
+  it('believes the local issuer, whose own domain it is', (): void => {
+    const env = deploymentEnv({ DAY0_OIDC_ISSUER: CUSTOMER_ISSUER });
+    expect(verifiedAddressOf(localIssuerIdentity() as UserIdentity, env)).toBe(MANAGER_ADDRESS);
+  });
+});
+
+describe('the one local manager on the named side of a handover (the wave 9 review, U1-m3)', (): void => {
+  /** A request a customer-issuer account asked, naming the local operator's configured address. */
+  async function askedOfTheLocalAddress(
+    harness: ReturnType<typeof convexTest>,
+  ): Promise<Id<'managerTransfers'>> {
+    return await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: 'alice@acme.test',
+        name: 'Maya',
+        userId: `${CUSTOMER_ISSUER}|alice`,
+        state: 'deployed',
+        createdAt: 1,
+      });
+      return await ctx.db.insert('managerTransfers', {
+        agentId,
+        agentName: 'Maya',
+        fromOwnerKey: `${CUSTOMER_ISSUER}|alice`,
+        fromAddress: 'alice@acme.test',
+        toAddress: MANAGER_ADDRESS,
+        state: 'asked',
+        requestedAt: Date.now(),
+        expiresAt: Date.now() + 86_400_000,
+      });
+    });
+  }
+
+  it('refuses the local account the preview, the accept and the decline under local-dev, as it refuses the ask', async (): Promise<void> => {
+    vi.stubEnv('DAY0_OIDC_ISSUER', CUSTOMER_ISSUER);
+    vi.stubEnv('DAY0_PROFILE', '');
+    const harness = convexTest(schema, allConvexModules());
+    const transferId = await askedOfTheLocalAddress(harness);
+    const local = harness.withIdentity(localIssuerIdentity());
+    const refusal = (error: unknown): string =>
+      error instanceof ConvexError ? String(error.data) : String(error);
+    const { LOCAL_DEV_TRANSFER_REFUSAL } = await import('../../src/agent/manager-transfer');
+    await expect(
+      local.query(api.transferAcceptance.transferPreview, { transferId }).catch(refusal),
+    ).resolves.toBe(LOCAL_DEV_TRANSFER_REFUSAL);
+    await expect(
+      local.mutation(api.transferAcceptance.accept, { transferId }).catch(refusal),
+    ).resolves.toBe(LOCAL_DEV_TRANSFER_REFUSAL);
+    await expect(
+      local.mutation(api.managerTransfers.decline, { transferId }).catch(refusal),
+    ).resolves.toBe(LOCAL_DEV_TRANSFER_REFUSAL);
+  });
+
+  it('lets the local account answer under customer-local, where it is one manager among several', async (): Promise<void> => {
+    vi.stubEnv('DAY0_OIDC_ISSUER', CUSTOMER_ISSUER);
+    vi.stubEnv('DAY0_PROFILE', 'customer-local');
+    const harness = convexTest(schema, allConvexModules());
+    const transferId = await askedOfTheLocalAddress(harness);
+    const seen = await harness.withIdentity(localIssuerIdentity()).run(async (ctx) => {
+      const { transfer, caller } = await assertNamedInTransfer(ctx, transferId);
+      return `${transfer._id} for ${caller.ownerKey}`;
+    });
+    expect(seen).toBe(`${transferId} for ${DEV_NO_AUTH_SUBJECT}`);
   });
 });

@@ -14,10 +14,17 @@ import {
   useRef,
   useState,
 } from 'react';
+import {
+  CUSTOMER_SIGN_IN,
+  CUSTOMER_SIGN_OUT_ROUTE,
+  CUSTOMER_TOKEN_ROUTE,
+  customerSignInHref,
+  type SessionAccount,
+} from '@/lib/customer-sign-in';
 import { DEV_NO_AUTH } from '@/lib/dev-auth';
 import { errorMessage } from '@/lib/errors';
 import { log } from '@/lib/logger';
-import { Button, ButtonLink } from './components/Button';
+import { Button, ButtonLink, buttonClass } from './components/Button';
 
 /**
  * Wraps with Clerk + Convex. Clerk auto-provisions keyless dev keys when
@@ -29,6 +36,11 @@ import { Button, ButtonLink } from './components/Button';
  * deployment verifies its signature. The browser can only obtain one after it
  * has been unlocked with the local key, so the same provider shape serves both
  * modes and only the issuer differs.
+ *
+ * A customer-local build (`NEXT_PUBLIC_DAY0_PROFILE=customer-local`) is the
+ * third shape: Convex on the ID token the customer's own issuer signed, which
+ * the token route hands over from the sealed session, and Clerk never loaded
+ * (Q16).
  */
 export function Providers({ children }: { children: ReactNode }) {
   const client = useMemo(() => {
@@ -52,6 +64,10 @@ export function Providers({ children }: { children: ReactNode }) {
         </p>
       </main>
     );
+  }
+
+  if (CUSTOMER_SIGN_IN) {
+    return <CustomerSignInProvider client={client}>{children}</CustomerSignInProvider>;
   }
 
   if (DEV_NO_AUTH) {
@@ -225,8 +241,8 @@ export interface SessionGateProps {
  *
  * It goes round the owned pages rather than the whole tree: the header and the public pages
  * (`/setup`, `/walkthrough`, the marketing landing) read no owned row, and holding them would
- * hide their served HTML from every visitor until Clerk loaded. In no-auth dev mode the whole tree
- * is already held above, so the page passes straight through.
+ * hide their served HTML from every visitor until Clerk loaded. In no-auth dev mode and under the
+ * customer-local profile the whole tree is already held above, so the page passes straight through.
  *
  * Once Convex has answered that nobody is signed in, the owned page is taken away and the gate
  * says so (`SignedOut`): a sign-out in another tab, or a token the deployment would not accept,
@@ -234,7 +250,7 @@ export interface SessionGateProps {
  * "Sign in" (the second review's x1).
  */
 export function SessionGate({ children, fallback }: SessionGateProps) {
-  if (DEV_NO_AUTH) return <>{children}</>;
+  if (DEV_NO_AUTH || CUSTOMER_SIGN_IN) return <>{children}</>;
   return <ClerkSessionGate fallback={fallback}>{children}</ClerkSessionGate>;
 }
 
@@ -422,4 +438,267 @@ function DevNoAuthGate({ children }: { children: ReactNode }) {
       </p>
     </main>
   );
+}
+
+/** What the customer sign-in knows about who this browser is signed in as. */
+export type CustomerAccountState =
+  | { readonly status: 'resolving' }
+  | { readonly status: 'signed-in'; readonly account: SessionAccount }
+  | { readonly status: 'signed-out' }
+  /** The token route could not reach the issuer, after asking again. */
+  | { readonly status: 'unavailable' };
+
+const RESOLVING_ACCOUNT: CustomerAccountState = { status: 'resolving' };
+
+const CustomerAccountContext = createContext<CustomerAccountState>(RESOLVING_ACCOUNT);
+
+const RecordCustomerAccountContext = createContext<(state: CustomerAccountState) => void>(
+  () => undefined,
+);
+
+/**
+ * Who the customer sign-in says this browser is: the account the session's ID token names, read
+ * by the header's menu and the landing page. Resolving outside the customer-local profile.
+ */
+export function useCustomerAccount(): CustomerAccountState {
+  return useContext(CustomerAccountContext);
+}
+
+function sameAccountState(a: CustomerAccountState, b: CustomerAccountState): boolean {
+  if (a.status !== b.status) return false;
+  if (a.status !== 'signed-in' || b.status !== 'signed-in') return true;
+  return a.account.name === b.account.name && a.account.email === b.account.email;
+}
+
+/** What the customer sign-in's provider is given: the Convex client and the tree. */
+interface CustomerSignInProviderProps {
+  readonly client: ConvexReactClient;
+  readonly children: ReactNode;
+}
+
+/** Convex on the customer's ID token, and the account it names for the header. */
+function CustomerSignInProvider({ client, children }: CustomerSignInProviderProps) {
+  const [account, setAccount] = useState<CustomerAccountState>(RESOLVING_ACCOUNT);
+  // Convex fetches again at every renewal; an answer like the last changes nothing on the page.
+  const record = useCallback(
+    (next: CustomerAccountState): void =>
+      setAccount((last) => (sameAccountState(last, next) ? last : next)),
+    [],
+  );
+  return (
+    <RecordCustomerAccountContext.Provider value={record}>
+      <CustomerAccountContext.Provider value={account}>
+        <ConvexProviderWithAuth client={client} useAuth={useCustomerSignIn}>
+          <CustomerSignInGate>{children}</CustomerSignInGate>
+        </ConvexProviderWithAuth>
+      </CustomerAccountContext.Provider>
+    </RecordCustomerAccountContext.Provider>
+  );
+}
+
+/** How long the browser waits before asking the token route again after it could not answer. */
+const TOKEN_RETRY_DELAYS_MS = [500, 1_500] as const;
+
+/** What one token request came to. */
+type CustomerTokenAnswer =
+  | { readonly kind: 'token'; readonly token: string; readonly account: SessionAccount }
+  | { readonly kind: 'signed-out' }
+  | { readonly kind: 'unavailable' };
+
+function isIssuedToken(body: unknown): body is { token: string; account?: SessionAccount } {
+  return (
+    typeof body === 'object' &&
+    body !== null &&
+    typeof (body as { token?: unknown }).token === 'string'
+  );
+}
+
+/** One answer from the token route, read; anything but a token or a 401 is a failure to answer. */
+async function askTokenRoute(force: boolean): Promise<CustomerTokenAnswer | undefined> {
+  let response: Response;
+  try {
+    response = await fetch(CUSTOMER_TOKEN_ROUTE, {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ force }),
+    });
+  } catch (err) {
+    log.warn('company sign-in token route unreachable', { reason: errorMessage(err) });
+    return undefined;
+  }
+  if (response.status === 401) return { kind: 'signed-out' };
+  if (!response.ok) return undefined;
+  // A body that is not JSON is no token: read as the route failing to answer, which is retried.
+  const body: unknown = await response.json().catch((): undefined => undefined);
+  if (!isIssuedToken(body)) return undefined;
+  return { kind: 'token', token: body.token, account: body.account ?? {} };
+}
+
+/**
+ * The ID token Convex receives, from the token route, asking again twice when the route cannot
+ * reach the issuer: a moment's outage is not a sign-out.
+ */
+async function fetchCustomerToken(force: boolean): Promise<CustomerTokenAnswer> {
+  for (const delay of [0, ...TOKEN_RETRY_DELAYS_MS]) {
+    if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+    const answer = await askTokenRoute(force);
+    if (answer) return answer;
+  }
+  return { kind: 'unavailable' };
+}
+
+/**
+ * The customer sign-in's equivalent of Clerk's `useAuth`, shaped like `useDevNoAuth`: the token
+ * route answers only for a browser holding a session the install sealed, so a null token means
+ * this browser is not signed in. Every answer is recorded for the header's account menu.
+ */
+function useCustomerSignIn() {
+  const record = useContext(RecordCustomerAccountContext);
+  const [state, setState] = useState({ isLoading: true, isAuthenticated: false });
+
+  const fetchAccessToken = useCallback(
+    async ({ forceRefreshToken }: { forceRefreshToken: boolean }): Promise<string | null> => {
+      const answer = await fetchCustomerToken(forceRefreshToken);
+      switch (answer.kind) {
+        case 'token':
+          record({ status: 'signed-in', account: answer.account });
+          return answer.token;
+        case 'signed-out':
+          record({ status: 'signed-out' });
+          return null;
+        case 'unavailable':
+          record({ status: 'unavailable' });
+          return null;
+        default: {
+          const unknown: never = answer;
+          throw new Error(`unhandled token answer ${String(unknown)}`);
+        }
+      }
+    },
+    [record],
+  );
+
+  useEffect(() => {
+    let current = true;
+    fetchAccessToken({ forceRefreshToken: false })
+      // A token the route refuses, or cannot be reached for, is "not signed in": the gate says
+      // which, and offers the way on.
+      .catch((): null => null)
+      .then((token) => {
+        if (current) setState({ isLoading: false, isAuthenticated: token !== null });
+      });
+    return () => {
+      current = false;
+    };
+  }, [fetchAccessToken]);
+
+  return useMemo(() => ({ ...state, fetchAccessToken }), [state, fetchAccessToken]);
+}
+
+/** The frame the customer gate stands in for the whole page with. */
+function CustomerGateFrame({ children }: { readonly children: ReactNode }) {
+  return (
+    <main
+      id="main"
+      tabIndex={-1}
+      className="grid min-h-[calc(100vh-3.25rem)] place-items-center px-6 outline-none"
+    >
+      <div className="grid max-w-md justify-items-center gap-4 text-center">
+        {/* The header is held with the rest of the tree, so the frame names the app itself; the
+            page's title already says it to assistive technology. */}
+        <p
+          aria-hidden="true"
+          className="text-xs font-medium uppercase tracking-[0.2em] text-[var(--color-accent)]"
+        >
+          Day0
+        </p>
+        {children}
+      </div>
+    </main>
+  );
+}
+
+/**
+ * The control that ends the customer session: a form posting to the sign-out route, which ends
+ * the issuer's session as well when it can. A form, so it works before any script has run.
+ */
+export function CustomerSignOutButton({
+  variant = 'secondary',
+  label = 'Sign out',
+}: {
+  readonly variant?: 'secondary' | 'quiet' | 'primary';
+  readonly label?: string;
+}) {
+  return (
+    <form method="post" action={CUSTOMER_SIGN_OUT_ROUTE}>
+      <Button type="submit" variant={variant}>
+        {label}
+      </Button>
+    </form>
+  );
+}
+
+/**
+ * Holds the app until the deployment has accepted the customer's ID token, as `DevNoAuthGate`
+ * does for the local key, and says what stands in the way when it has not: nobody signed in, a
+ * sign-in service that does not answer, or a token the deployment would not accept.
+ */
+function CustomerSignInGate({ children }: { readonly children: ReactNode }) {
+  const { isLoading, isAuthenticated } = useConvexAuth();
+  const account = useCustomerAccount();
+  const pathname = usePathname();
+  if (isAuthenticated) return <>{children}</>;
+  if (isLoading || account.status === 'resolving') {
+    return (
+      <CustomerGateFrame>
+        <p role="status" className="text-sm text-[var(--color-muted)]">
+          Signing you in…
+        </p>
+      </CustomerGateFrame>
+    );
+  }
+  switch (account.status) {
+    case 'signed-out':
+      return (
+        <CustomerGateFrame>
+          <h1 className="text-lg font-semibold">You are signed out</h1>
+          <p className="text-sm text-[var(--color-muted)]">
+            Sign in with your work account to carry on where you were.
+          </p>
+          <a href={customerSignInHref(pathname)} className={buttonClass('primary')}>
+            Sign in
+          </a>
+        </CustomerGateFrame>
+      );
+    case 'unavailable':
+      return (
+        <CustomerGateFrame>
+          <h1 className="text-lg font-semibold">Day0 cannot reach your sign-in service</h1>
+          <p className="text-sm text-[var(--color-muted)]">
+            Your company sign-in is not answering. Try again in a moment; if it keeps failing, tell
+            whoever installed Day0.
+          </p>
+          <Button variant="primary" onClick={(): void => window.location.reload()}>
+            Try again
+          </Button>
+        </CustomerGateFrame>
+      );
+    case 'signed-in':
+      return (
+        <CustomerGateFrame>
+          <h1 className="text-lg font-semibold">Day0 could not confirm your sign-in</h1>
+          <p className="text-sm text-[var(--color-muted)]">
+            Your company sign-in let you in, but Day0 would not accept it. Sign out and try again;
+            if it keeps happening, ask whoever installed Day0 to run <code>pnpm check:sign-in</code>
+            .
+          </p>
+          <CustomerSignOutButton variant="primary" label="Sign out and try again" />
+        </CustomerGateFrame>
+      );
+    default: {
+      const unknown: never = account;
+      throw new Error(`unhandled account state ${String(unknown)}`);
+    }
+  }
 }

@@ -353,9 +353,16 @@ describe('the support report without an env file', (): void => {
 });
 
 describe('the auth section', (): void => {
+  // A complete company sign-in, so the issuer's own lines are what each test reads; the sign-in's
+  // checks have their own tests below. Re-pinned when the block became pass or gap (10-S).
   const ISSUER = {
     DAY0_OIDC_ISSUER: 'https://sso.example.com/realms/ops',
     DAY0_OIDC_AUDIENCE: 'day0',
+    NEXT_PUBLIC_DAY0_PROFILE: 'customer-local',
+    DAY0_OIDC_CLIENT_SECRET: 'day0-test-client-secret',
+    DAY0_OIDC_ALLOWED_DOMAINS: 'example.com',
+    DAY0_SESSION_SECRET: 's'.repeat(43),
+    DAY0_PUBLIC_URL: 'https://day0.example.com',
   };
 
   it('reports the customer issuer a customer-local profile signs people in with', (): void => {
@@ -414,7 +421,8 @@ describe('the auth section', (): void => {
     expect(lines).toContain('DAY0_OIDC_EMAIL_TRUSTED');
     expect(lines).toContain('reads as off');
     expect(lines).toContain('Issuer https://sso.example.com/realms/ops, audience day0.');
-    expect(lines).toContain("The app's own sign-in does not use this issuer yet");
+    // Re-pinned: the standing "does not use this issuer yet" became the live check's pointer (10-S).
+    expect(lines).toContain('`pnpm check:sign-in` signs a test person in');
   });
 
   it('lets the process environment override the trust flag and the local address, as it does the issuer', (): void => {
@@ -569,5 +577,150 @@ describe('the settings worth a second look', (): void => {
     expect(lines).toContain('DAY0_APP_HOST=0.0.0.0 publishes the app');
     expect(lines).toContain('DAY0_PRIVATE_HOSTS is refused as it stands');
     expect(lines).toContain('every git source, GitHub and GitLab included');
+  });
+});
+
+describe('the company sign-in block of the auth section', (): void => {
+  const ISSUER = 'https://issuer.acme.test';
+  const COMPLETE = {
+    DAY0_PROFILE: 'customer-local',
+    NEXT_PUBLIC_DAY0_PROFILE: 'customer-local',
+    DAY0_OIDC_ISSUER: ISSUER,
+    DAY0_OIDC_AUDIENCE: 'day0-app',
+    DAY0_OIDC_CLIENT_SECRET: 'day0-test-client-secret',
+    DAY0_OIDC_ALLOWED_DOMAINS: 'acme.test',
+    DAY0_SESSION_SECRET: 's'.repeat(43),
+    DAY0_PUBLIC_URL: 'https://day0.acme.test',
+  };
+  const DISCOVERY = JSON.stringify({ issuer: ISSUER, jwks_uri: `${ISSUER}/jwks` });
+  const REACHED = { status: 200, body: DISCOVERY };
+  const PUSHED = {
+    DAY0_PROFILE: 'customer-local',
+    DAY0_OIDC_ISSUER: ISSUER,
+    DAY0_OIDC_AUDIENCE: 'day0-app',
+    DAY0_OIDC_ALLOWED_DOMAINS: 'acme.test',
+    DAY0_PUBLIC_URL: 'https://day0.acme.test',
+  };
+  const PROBES = { host: REACHED, container: REACHED, deployment: { values: PUSHED } };
+
+  it('passes a complete install the host and the backend container both reach', (): void => {
+    const section = authSection(COMPLETE, PROBES);
+    expect(section.status).toBe('ok');
+    const lines = section.lines.join('\n');
+    expect(lines).toContain('https://day0.acme.test/api/auth/oidc/callback');
+    expect(lines).not.toContain('does not use this issuer yet');
+    expect(lines).not.toContain('day0-test-client-secret');
+    expect(lines).not.toContain('s'.repeat(43));
+  });
+
+  it('reports a gap when the backend container cannot reach the issuer', (): void => {
+    const section = authSection(COMPLETE, {
+      ...PROBES,
+      container: { error: 'curl: (28) Connection timed out after 10001 milliseconds' },
+    });
+    expect(section.status).toBe('gap');
+    expect(section.title).toBe('Auth: customer OIDC issuer - needs fixing');
+    expect(section.lines.join(' ')).toContain('from inside the backend container');
+    expect(section.lines.join(' ')).toContain('Connection timed out');
+  });
+
+  it('reports a gap when the discovery issuer differs by a trailing slash', (): void => {
+    const slashed = { status: 200, body: JSON.stringify({ issuer: `${ISSUER}/` }) };
+    const section = authSection(COMPLETE, { ...PROBES, host: slashed, container: slashed });
+    expect(section.status).toBe('gap');
+    expect(section.lines.join(' ')).toContain(`"${ISSUER}/"`);
+    expect(section.lines.join(' ')).toContain('byte for byte');
+  });
+
+  it('reports a gap for each sign-in value that is missing, naming it and never a value', (): void => {
+    for (const name of [
+      'NEXT_PUBLIC_DAY0_PROFILE',
+      'DAY0_OIDC_CLIENT_SECRET',
+      'DAY0_OIDC_ALLOWED_DOMAINS',
+      'DAY0_SESSION_SECRET',
+      'DAY0_PUBLIC_URL',
+    ]) {
+      const section = authSection({ ...COMPLETE, [name]: '' }, PROBES);
+      expect(section.status, name).toBe('gap');
+      expect(section.lines.join(' '), name).toContain(name);
+    }
+  });
+
+  it('holds the public origin to https, and notes a loopback http origin as this machine only', (): void => {
+    expect(
+      authSection({ ...COMPLETE, DAY0_PUBLIC_URL: 'http://day0.acme.test' }, PROBES).status,
+    ).toBe('gap');
+    const loopback = authSection(
+      { ...COMPLETE, DAY0_PUBLIC_URL: 'http://localhost:3550' },
+      {
+        ...PROBES,
+        deployment: { values: { ...PUSHED, DAY0_PUBLIC_URL: 'http://localhost:3550' } },
+      },
+    );
+    expect(loopback.status).toBe('warn');
+    expect(loopback.lines.join(' ')).toContain('only this machine');
+  });
+
+  it('reports a gap when a value pushed to the deployment differs from the file', (): void => {
+    const section = authSection(COMPLETE, {
+      ...PROBES,
+      deployment: { values: { ...PUSHED, DAY0_OIDC_ALLOWED_DOMAINS: 'acme.test,rival.test' } },
+    });
+    expect(section.status).toBe('gap');
+    expect(section.lines.join(' ')).toContain('DAY0_OIDC_ALLOWED_DOMAINS');
+    expect(section.lines.join(' ')).toContain('pnpm sync:env');
+  });
+
+  it('reports a gap when the deployment still holds a trust flag the file dropped', (): void => {
+    const section = authSection(COMPLETE, {
+      ...PROBES,
+      deployment: { values: { ...PUSHED, DAY0_OIDC_EMAIL_TRUSTED: 'true' } },
+    });
+    expect(section.status).toBe('gap');
+    expect(section.lines.join(' ')).toContain('DAY0_OIDC_EMAIL_TRUSTED');
+  });
+
+  it('notes what it could not ask: the container with the backend down, the deployment unread', (): void => {
+    const section = authSection(COMPLETE, { host: REACHED });
+    expect(section.status).toBe('warn');
+    expect(section.lines.join(' ')).toContain('not asked');
+  });
+
+  it('reports a gap when this machine cannot reach the issuer, or it answers with no issuer', (): void => {
+    expect(authSection(COMPLETE, { ...PROBES, host: { error: 'ENOTFOUND' } }).status).toBe('gap');
+    expect(
+      authSection(COMPLETE, { ...PROBES, host: { status: 404, body: 'not found' } }).status,
+    ).toBe('gap');
+  });
+
+  it('lists the issuer as an outbound host in the support report', (): void => {
+    const hosts = egressHosts(COMPLETE).map((row) => row.host);
+    expect(hosts).toContain('issuer.acme.test');
+  });
+});
+
+describe("the support report's sign-in lines", (): void => {
+  it("carries each sign-in check's name and verdict, and none of its lines", (): void => {
+    const report = setupReport({
+      values: { DAY0_OIDC_ISSUER: 'https://issuer.acme.test' },
+      sections: [],
+      signIn: [
+        {
+          name: 'discovery-from-container',
+          status: 'gap',
+          line: 'The issuer cannot be reached from inside the backend container: curl: (6)',
+        },
+        { name: 'session-secret', status: 'ok', line: 'DAY0_SESSION_SECRET is set.' },
+      ],
+      versions: {},
+      images: [],
+      digests: {},
+      generatedAt: '2026-10-02T09:00:00.000Z',
+    });
+    expect(report.signIn).toEqual([
+      { check: 'discovery-from-container', status: 'gap' },
+      { check: 'session-secret', status: 'ok' },
+    ]);
+    expect(JSON.stringify(report)).not.toContain('curl');
   });
 });

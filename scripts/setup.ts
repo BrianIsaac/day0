@@ -87,12 +87,9 @@ import {
   unreachableFix,
 } from './model-reach';
 import { writePrivateEnv } from './private-env';
-import {
-  credentialKeyToAdopt,
-  PROTECTED_PROJECTS,
-  PROTECTED_VOLUMES,
-  upsertEnvText,
-} from './demo-bed';
+import { readEnvValues, writeEnvValues } from './lib/env-file';
+import { SIGN_IN_PROVIDERS, runSignIn, type SignInFlags } from './setup-sign-in';
+import { credentialKeyToAdopt, PROTECTED_PROJECTS, PROTECTED_VOLUMES } from './demo-bed';
 import {
   defaultModel,
   manifestListingCommand,
@@ -134,6 +131,9 @@ import {
 } from './releases';
 import { errorMessage } from '../src/lib/errors';
 
+/** The env file helpers, where the setup's callers and tests have always found them. */
+export { readEnvValues, writeEnvValues };
+
 const ENV_FILE = '.env.local';
 const ENV_EXAMPLE = '.env.example';
 
@@ -163,7 +163,8 @@ export type SandboxChoice = 'local' | 'daytona';
 /**
  * The lifecycle verbs: stop for the day, come back, throw the project away,
  * copy its data out, put a copy back, upgrade to the checkout's release, or
- * hold and release the deployment's scheduled jobs.
+ * hold and release the deployment's scheduled jobs; and `sign-in`, which adds
+ * the company sign-in to an installation (`scripts/setup-sign-in.ts`).
  */
 export type SetupCommand =
   | 'stop'
@@ -173,7 +174,8 @@ export type SetupCommand =
   | 'restore'
   | 'upgrade'
   | 'pause'
-  | 'unpause';
+  | 'unpause'
+  | 'sign-in';
 
 /** The verbs, as the command line spells them. */
 const SETUP_COMMANDS: readonly SetupCommand[] = [
@@ -185,6 +187,7 @@ const SETUP_COMMANDS: readonly SetupCommand[] = [
   'upgrade',
   'pause',
   'unpause',
+  'sign-in',
 ];
 
 /**
@@ -298,6 +301,8 @@ export interface SetupOptions {
    * passes.
    */
   upgradePause?: string;
+  /** `sign-in`: the provider and the answers given as flags; the rest are asked for. */
+  signIn?: SignInFlags;
   /** Take the default answer to every question that has one. */
   assumeYes: boolean;
   /** Print usage and do nothing. */
@@ -383,6 +388,7 @@ export class ProtectedProjectError extends Error {
 const USAGE = `Usage: pnpm setup:local [options]
        pnpm setup:local stop | resume | clear | backup | upgrade | pause | unpause [options]
        pnpm setup:local restore <backup.tar.gz> [options]
+       pnpm setup:local sign-in --provider <entra|okta|google> [sign-in options]
 
   --mode <mock|real>            mock (default here): the seeded office, for the
                                 evaluation harness and the hosted demo's workspace;
@@ -442,6 +448,18 @@ Keep a copy, put it back, or move to the checkout's release:
                                           scheduled jobs are paused from before the push until the
                                           check passes
 
+The company sign-in, with the customer's IT (docs/running/sign-in-<provider>.md):
+  ./setup.sh sign-in --provider entra     asks for the tenant id, the client id, the client
+                                          secret (hidden, or DAY0_OIDC_CLIENT_SECRET), the
+                                          allowed domains and the public https origin;
+                                          --tenant, --client-id, --allowed-domains and
+                                          --public-url answer them on the command line
+  ./setup.sh sign-in --provider okta      --okta-domain and --auth-server (org, default or an id)
+  ./setup.sh sign-in --provider google    no issuer to ask for
+                                          (--provider oidc --issuer <url> for any other issuer)
+  It writes the customer-local block, pushes it, restarts the backend, runs the check
+  and exits with the check's status.
+
 Hold the deployment's scheduled jobs (the polls, the digests, the sweeps and the sync):
   ./setup.sh pause                        every job skips until unpause; an upgrade leaves it so
   ./setup.sh unpause                      each job runs again at its next turn
@@ -472,6 +490,15 @@ export function parseSetupArguments(argv: readonly string[]): SetupOptions {
     purgeEnv: false,
     assumeYes: false,
     help: false,
+  };
+  const signInFlags: Readonly<Record<string, keyof SignInFlags>> = {
+    '--tenant': 'tenant',
+    '--okta-domain': 'oktaDomain',
+    '--auth-server': 'authServer',
+    '--issuer': 'issuer',
+    '--client-id': 'clientId',
+    '--allowed-domains': 'allowedDomains',
+    '--public-url': 'publicUrl',
   };
   const portFlags: Readonly<Record<string, keyof SetupPorts>> = {
     '--port': 'backend',
@@ -547,6 +574,13 @@ export function parseSetupArguments(argv: readonly string[]): SetupOptions {
       options.warmFrom = take();
     } else if (argument === '--boss-email') {
       options.bossEmail = take();
+    } else if (argument === '--provider') {
+      options.signIn = {
+        ...options.signIn,
+        provider: oneOf('--provider', take(), SIGN_IN_PROVIDERS),
+      };
+    } else if (argument in signInFlags) {
+      options.signIn = { ...options.signIn, [signInFlags[argument]]: take() };
     } else if (argument in portFlags) {
       const value = take();
       const port = Number.parseInt(value, 10);
@@ -1498,42 +1532,6 @@ export function publicUrlCorrections(
     if ((values[name] ?? '') !== value) corrections[name] = value;
   }
   return corrections;
-}
-
-/**
- * Every `KEY=value` an env file declares.
- *
- * Args:
- *   path: Env file path.
- *
- * Returns:
- *   The declared values; empty when the file does not exist.
- */
-export function readEnvValues(path: string): Record<string, string> {
-  const values: Record<string, string> = {};
-  if (!existsSync(path)) return values;
-  for (const line of readFileSync(path, 'utf8').split('\n')) {
-    const match = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
-    if (match) values[match[1]] = match[2].trim().replace(/^"(.*)"$/, '$1');
-  }
-  return values;
-}
-
-/**
- * Write values into an env file without disturbing anything else in it.
- *
- * The file holds a provider key, a credential key and an admin key, so it is
- * written through a temporary file in the same directory and renamed over the
- * original: a reader who interrupts this never ends up with half a file. The
- * mode is set before the rename, so the key is never briefly world-readable.
- *
- * Args:
- *   path: Env file path, which must already exist.
- *   updates: Names and values to replace or append.
- */
-export function writeEnvValues(path: string, updates: Readonly<Record<string, string>>): void {
-  const text = existsSync(path) ? readFileSync(path, 'utf8') : '';
-  writePrivateEnv(path, upsertEnvText(text, updates));
 }
 
 /**
@@ -5037,6 +5035,8 @@ export async function runCommand(options: SetupOptions, io: SetupIo): Promise<nu
       return runPause(options, io);
     case 'unpause':
       return runUnpause(options, io);
+    case 'sign-in':
+      return runSignIn({ signIn: options.signIn ?? {}, dryRun: options.dryRun }, io);
     case undefined:
       return runSetup(options, io);
   }
