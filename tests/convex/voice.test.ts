@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
-import { HANDOVER_SESSION_FAILURE, failOneToOnesForHandover } from '../../convex/voice';
+import { HANDOVER_SESSION_FAILURE, endOneToOnesForHandover } from '../../convex/voice';
 import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
@@ -179,19 +179,61 @@ describe('a call started over a chat one-to-one', (): void => {
   });
 });
 
-describe('a one-to-one under way at a handover’s move (failOneToOnesForHandover)', (): void => {
+describe('the one-to-ones at a handover’s move (endOneToOnesForHandover)', (): void => {
   /** Run the helper in its own transaction, as the move does. */
-  async function failAtHandover(
+  async function endAtHandover(
     harness: ReturnType<typeof convexTest>,
     agentId: Id<'agents'>,
-    draftDiscarded: boolean,
+    returnsToDeployed: boolean,
   ): Promise<number> {
     return await harness.run(
-      async (ctx) => await failOneToOnesForHandover(ctx, agentId, { draftDiscarded }),
+      async (ctx) => await endOneToOnesForHandover(ctx, agentId, { returnsToDeployed }),
     );
   }
 
-  it('fails it with the manager changed, drops its claim and sets the old manager’s words aside', async (): Promise<void> => {
+  it('deletes every session with the old manager’s words when the employee returns to deployed (D8)', async (): Promise<void> => {
+    const { harness, agentId, sessionId } = await failedSession('synthesising');
+    const finished = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('voiceSessions', {
+          agentId,
+          mode: 'chat',
+          state: 'done',
+          answers: { role: 'RevOps' },
+          transcriptText: 'USER: The close.',
+          startedAt: 1,
+        }),
+    );
+
+    await expect(endAtHandover(harness, agentId, true)).resolves.toBe(1);
+
+    expect(await harness.run(async (ctx) => await ctx.db.get(sessionId))).toBeNull();
+    expect(await harness.run(async (ctx) => await ctx.db.get(finished))).toBeNull();
+  });
+
+  it('commits no charter from a finisher that was drafting when its session went', async (): Promise<void> => {
+    const { harness, agentId, sessionId } = await failedSession('synthesising');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(sessionId, { claimToken: 'claim-1', claimedAt: 4, claimedBy: 'browser' });
+    });
+    await endAtHandover(harness, agentId, true);
+
+    await expect(
+      harness.mutation(internal.voice.finaliseSession, {
+        sessionId,
+        expectedAgentId: agentId,
+        claimToken: 'claim-1',
+        answers: {},
+        charterVersion: '0.1',
+        charterBody: {},
+        workspaceFiles: [],
+      }),
+    ).rejects.toThrow('voice session not found');
+    const charters = await harness.run(async (ctx) => await ctx.db.query('charters').collect());
+    expect(charters).toEqual([]);
+  });
+
+  it('fails a session under way of an employee whose charter is carried, dropping its claim and the old manager’s words', async (): Promise<void> => {
     const { harness, agentId, sessionId } = await failedSession('synthesising');
     await harness.run(async (ctx) => {
       await ctx.db.patch(sessionId, {
@@ -204,7 +246,7 @@ describe('a one-to-one under way at a handover’s move (failOneToOnesForHandove
       });
     });
 
-    await expect(failAtHandover(harness, agentId, false)).resolves.toBe(1);
+    await expect(endAtHandover(harness, agentId, false)).resolves.toBe(1);
 
     const row = await harness.run(async (ctx) => await ctx.db.get(sessionId));
     expect(row).toMatchObject({
@@ -227,15 +269,6 @@ describe('a one-to-one under way at a handover’s move (failOneToOnesForHandove
     ] as const) {
       expect(row?.[field], field).toBeUndefined();
     }
-  });
-
-  it('commits no charter from a finisher that was drafting when the session failed', async (): Promise<void> => {
-    const { harness, agentId, sessionId } = await failedSession('synthesising');
-    await harness.run(async (ctx) => {
-      await ctx.db.patch(sessionId, { claimToken: 'claim-1', claimedAt: 4, claimedBy: 'browser' });
-    });
-    await failAtHandover(harness, agentId, false);
-
     await expect(
       harness.mutation(internal.voice.finaliseSession, {
         sessionId,
@@ -247,31 +280,24 @@ describe('a one-to-one under way at a handover’s move (failOneToOnesForHandove
         workspaceFiles: [],
       }),
     ).resolves.toEqual({ outcome: 'claim-lost' });
-    const charters = await harness.run(async (ctx) => await ctx.db.query('charters').collect());
-    expect(charters).toEqual([]);
   });
 
-  it('leaves a finished session alone unless its draft was discarded with it (D8)', async (): Promise<void> => {
+  it('leaves a finished session alone when the charter is carried', async (): Promise<void> => {
     const { harness, agentId, sessionId } = await failedSession();
     await harness.run(async (ctx) => {
       await ctx.db.patch(sessionId, { state: 'done', transcriptText: 'USER: The close.' });
     });
 
-    await expect(failAtHandover(harness, agentId, false)).resolves.toBe(0);
+    await expect(endAtHandover(harness, agentId, false)).resolves.toBe(0);
     expect(await harness.run(async (ctx) => await ctx.db.get(sessionId))).toMatchObject({
       state: 'done',
       transcriptText: 'USER: The close.',
     });
-
-    await expect(failAtHandover(harness, agentId, true)).resolves.toBe(0);
-    const row = await harness.run(async (ctx) => await ctx.db.get(sessionId));
-    expect(row?.state).toBe('failed');
-    expect(row?.transcriptText).toBeUndefined();
   });
 
   it('opens a new session for the next one-to-one over a failed one', async (): Promise<void> => {
     const { harness, agentId, sessionId } = await failedSession();
-    await failAtHandover(harness, agentId, false);
+    await endAtHandover(harness, agentId, false);
 
     const started = await harness
       .withIdentity(managerIdentity())

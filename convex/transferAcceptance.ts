@@ -26,7 +26,7 @@ import {
   type Boundaries,
 } from './reset';
 import { handOverSurfaces, surfaceHandoversOf, type HandedOverSurfaces } from './surfaces';
-import { failOneToOnesForHandover } from './voice';
+import { endOneToOnesForHandover, oneToOnesAtHandoverRefusal } from './voice';
 import {
   needsYouOfEmployee,
   returnApprovalsForHandover,
@@ -790,9 +790,10 @@ interface SettledWork {
 /**
  * The move's section 6.4 steps, after the claims and before the owner write: the old manager's
  * open decision requests are closed (D6), the approvals they gave that never started are returned
- * (D13), a charter never approved is discarded and the employee returned to `deployed` (D8), a
- * one-to-one under way is failed, and the notes kept for their digest are set aside. Work in
- * every other state moves as it is.
+ * (D13), a charter never approved is discarded and the employee returned to `deployed` (D8),
+ * its one-to-ones ended (deleted with the employee's return to `deployed`, a session under way
+ * failed otherwise), and the notes kept for their digest are set aside. Work in every other
+ * state moves as it is.
  */
 async function settleWorkInFlight(
   ctx: MutationCtx,
@@ -801,15 +802,15 @@ async function settleWorkInFlight(
 ): Promise<SettledWork> {
   const decisionRequestsVoided = await voidDecisionRequestsForHandover(ctx, agent._id, now);
   const plansReturned = await returnApprovalsForHandover(ctx, agent._id, now);
-  const charterDiscarded = await discardUnapprovedCharter(ctx, agent);
-  const sessionsFailed = await failOneToOnesForHandover(ctx, agent._id, {
-    draftDiscarded: charterDiscarded,
+  const charter = await discardUnapprovedCharter(ctx, agent);
+  const sessionsFailed = await endOneToOnesForHandover(ctx, agent._id, {
+    returnsToDeployed: charter.returnedToDeployed,
   });
   const notesDiscarded = await discardUnsentNotes(ctx, agent._id, now);
   return {
     decisionRequestsVoided,
     plansReturned,
-    charterDiscarded,
+    charterDiscarded: charter.discarded,
     sessionsFailed,
     notesDiscarded,
   };
@@ -818,7 +819,8 @@ async function settleWorkInFlight(
 /**
  * Why the move would refuse, read before anything is written: the employee gone or no longer
  * the asker's, a departure boundary larger than one row keeps (real mode), more superseded
- * credentials than one move redacts, or more draft charters than one move discards. The
+ * credentials than one move redacts, or more draft charters or one-to-one sessions than one move
+ * ends. The
  * acceptance refuses with these words before it enters `accepting`; a settle that meets one ends
  * the request rather than retrying it.
  *
@@ -843,7 +845,8 @@ async function moveRefusal(
   const superseded = await supersededCredentialEvents(ctx, agent._id);
   if ('refusal' in superseded) return superseded.refusal;
   const charter = await charterAtHandover(ctx.db, agent);
-  return charter.kind === 'refused' ? charter.refusal : null;
+  if (charter.kind === 'refused') return charter.refusal;
+  return await oneToOnesAtHandoverRefusal(ctx.db, agent._id);
 }
 
 /**

@@ -260,17 +260,18 @@ export async function charterAtHandover(
  *
  * @param ctx - The move's mutation context.
  * @param agent - The employee, as the move read it.
- * @returns Whether a draft was discarded.
+ * @returns Whether the employee returned to `deployed` (its charter was never approved), and
+ *   whether a draft was discarded with it.
  * @throws ConvexError when the employee has more draft versions than one move discards.
  */
 export async function discardUnapprovedCharter(
   ctx: MutationCtx,
   agent: Doc<'agents'>,
-): Promise<boolean> {
+): Promise<{ readonly returnedToDeployed: boolean; readonly discarded: boolean }> {
   const decided = await charterAtHandover(ctx.db, agent);
   switch (decided.kind) {
     case 'carried':
-      return false;
+      return { returnedToDeployed: false, discarded: false };
     case 'refused':
       throw new ConvexError(decided.refusal);
     case 'discarded':
@@ -289,7 +290,7 @@ export async function discardUnapprovedCharter(
     if (file !== null) await ctx.db.delete(file._id);
   }
   if (agent.state !== 'deployed') await ctx.db.patch(agent._id, { state: 'deployed' });
-  return decided.drafts.length > 0;
+  return { returnedToDeployed: true, discarded: decided.drafts.length > 0 };
 }
 
 /** A strike or an approval either lands or names the reason it was refused. */

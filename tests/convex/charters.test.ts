@@ -1085,13 +1085,19 @@ describe('a charter at a handover’s move (D8)', (): void => {
   async function discard(
     harness: TestConvex<typeof schema>,
     agentId: Id<'agents'>,
-  ): Promise<{ discarded: boolean; state: string; versions: number; files: string[] }> {
+  ): Promise<{
+    returnedToDeployed: boolean;
+    discarded: boolean;
+    state: string;
+    versions: number;
+    files: string[];
+  }> {
     return await harness.run(async (ctx) => {
       const agent = await ctx.db.get(agentId);
       if (agent === null) throw new Error('agent missing');
-      const discarded = await discardUnapprovedCharter(ctx, agent);
+      const decided = await discardUnapprovedCharter(ctx, agent);
       return {
-        discarded,
+        ...decided,
         state: (await ctx.db.get(agentId))?.state ?? 'gone',
         versions: (
           await ctx.db
@@ -1113,6 +1119,7 @@ describe('a charter at a handover’s move (D8)', (): void => {
     const { harness, agentId } = await seedAtHandover('charter-pending', [false, false]);
 
     await expect(discard(harness, agentId)).resolves.toEqual({
+      returnedToDeployed: true,
       discarded: true,
       state: 'deployed',
       versions: 0,
@@ -1124,6 +1131,7 @@ describe('a charter at a handover’s move (D8)', (): void => {
     const { harness, agentId } = await seedAtHandover('day-one-in-progress', []);
 
     await expect(discard(harness, agentId)).resolves.toMatchObject({
+      returnedToDeployed: true,
       discarded: false,
       state: 'deployed',
     });
@@ -1133,6 +1141,7 @@ describe('a charter at a handover’s move (D8)', (): void => {
     const { harness, agentId } = await seedAtHandover('active', [true, false]);
 
     await expect(discard(harness, agentId)).resolves.toEqual({
+      returnedToDeployed: false,
       discarded: false,
       state: 'active',
       versions: 2,
@@ -1144,6 +1153,7 @@ describe('a charter at a handover’s move (D8)', (): void => {
     const { harness, agentId } = await seedAtHandover('charter-pending', [true, false]);
 
     await expect(discard(harness, agentId)).resolves.toMatchObject({
+      returnedToDeployed: false,
       discarded: false,
       state: 'charter-pending',
       versions: 2,

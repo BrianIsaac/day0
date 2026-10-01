@@ -721,7 +721,7 @@ describe('what the move does with each kind of work (transfer plan 6.4, the tabl
     }
   });
 
-  it('fails a one-to-one under way with “the manager changed” and sets its words aside', async (): Promise<void> => {
+  it('ends a Day-1 one-to-one under way with the old manager’s words, so the new manager’s room opens afresh (D8)', async (): Promise<void> => {
     const handover = await seedHandover('day-one-in-progress');
     const sessionId = await handover.harness.run(
       async (ctx) =>
@@ -745,15 +745,40 @@ describe('what the move does with each kind of work (transfer plan 6.4, the tabl
 
     await accept(handover);
 
+    expect(await handover.harness.run(async (ctx) => await ctx.db.get(sessionId))).toBeNull();
+    await expect(
+      handover.harness.withIdentity(COLLEAGUE).query(api.voice.latest, { agentId: handover.maya }),
+    ).resolves.toBeNull();
+    expect(await read(handover.harness, handover.maya)).toMatchObject({ state: 'deployed' });
+    expect((await read(handover.harness, handover.transferId)).outcome).toMatchObject({
+      sessionsFailed: 1,
+    });
+  });
+
+  it('fails a one-to-one under way with “the manager changed” when the approved charter is carried', async (): Promise<void> => {
+    const handover = await seedHandover();
+    const sessionId = await handover.harness.run(
+      async (ctx) =>
+        await ctx.db.insert('voiceSessions', {
+          agentId: handover.maya,
+          mode: 'chat',
+          state: 'active',
+          answers: { role: 'RevOps' },
+          replyDraft: 'OWNER-DRAFT',
+          startedAt: 1,
+        }),
+    );
+
+    await accept(handover);
+
     const session = await read(handover.harness, sessionId);
     expect(session).toMatchObject({
       state: 'failed',
       finalisationError: HANDOVER_SESSION_FAILURE,
       answers: {},
     });
-    expect(session.turns).toBeUndefined();
     expect(session.replyDraft).toBeUndefined();
-    expect(await read(handover.harness, handover.maya)).toMatchObject({ state: 'deployed' });
+    expect(await read(handover.harness, handover.maya)).toMatchObject({ state: 'active' });
     expect((await read(handover.harness, handover.transferId)).outcome).toMatchObject({
       sessionsFailed: 1,
     });
@@ -831,10 +856,7 @@ describe('what the move does with each kind of work (transfer plan 6.4, the tabl
     }));
     expect(left.charter).toBeNull();
     expect(left.files).toEqual(['SOUL.md']);
-    expect(left.sessions).toHaveLength(1);
-    expect(left.sessions[0]?.transcriptText).toBeUndefined();
-    expect(left.sessions[0]?.charterId).toBeUndefined();
-    expect(left.sessions[0]?.state).toBe('failed');
+    expect(left.sessions).toEqual([]);
     expect(await read(handover.harness, handover.maya)).toMatchObject({ state: 'deployed' });
     expect((await read(handover.harness, handover.transferId)).outcome).toMatchObject({
       charterDiscarded: true,
