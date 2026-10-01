@@ -50,6 +50,7 @@ describe('the live feed labels', (): void => {
         type: 'manager.transfer-ended',
         payload: { ...request, reason: 'operator', detail: 'x' },
       }),
+      eventLabel({ type: 'manager.transfer-note-withheld', payload: request }),
       eventLabel({ type: 'manager.transfer-notice', payload: { ...request, delivered: true } }),
       eventLabel({
         type: 'manager.transfer-notice',
@@ -65,6 +66,7 @@ describe('the live feed labels', (): void => {
       'handover to priya@co.example not finished yet',
       'handover to priya@co.example ended, it could not finish',
       'handover to priya@co.example ended by the operator',
+      'handover note to priya@co.example withheld',
       'handover notice to priya@co.example sent',
       'handover notice to priya@co.example not sent',
     ]);

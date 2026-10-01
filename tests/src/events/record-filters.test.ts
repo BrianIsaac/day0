@@ -35,6 +35,7 @@ describe('the Record tab filters', (): void => {
   it('lists a handover that ended unmoved as set aside, and its failed settles in the whole record only', (): void => {
     expect(RECORD_FILTER_OF['manager.transfer-ended']).toEqual(['refused']);
     expect(RECORD_FILTER_OF['manager.transfer-settle-failed']).toEqual([]);
+    expect(RECORD_FILTER_OF['manager.transfer-note-withheld']).toEqual(['refused']);
   });
 
   it('keeps the charter’s history, the one-to-one that drafts it included, under Charter', (): void => {

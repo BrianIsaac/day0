@@ -452,6 +452,7 @@ async function askInTransaction(
   }
   await assertWithinBounds(ctx, caller.ownerKey, toAddress, now);
 
+  const expiresAt = transferExpiresAt(now);
   const transferId = await ctx.db.insert('managerTransfers', {
     agentId: agent._id,
     agentName,
@@ -461,8 +462,11 @@ async function askInTransaction(
     ...(note !== undefined ? { note } : {}),
     state: 'asked',
     requestedAt: now,
-    expiresAt: transferExpiresAt(now),
+    expiresAt,
   });
+  // The request expires at its own time, so no page shows it open past it (U2-m7); the sweep
+  // stays as the backstop for a request written before this job existed.
+  await ctx.scheduler.runAt(expiresAt, internal.managerTransfers.expireOne, { transferId });
   await appendEvent(ctx, {
     agentId: agent._id,
     type: 'manager.transfer-asked',
@@ -655,6 +659,24 @@ export const expireDue = internalMutation({
 });
 
 /**
+ * Internal, scheduled by the ask at the request's expiry (U2-m7): expire it as the sweep would,
+ * if it is still asked and due; a request answered or cancelled since is left as it is.
+ *
+ * @returns Whether it expired the request.
+ */
+export const expireOne = internalMutation({
+  args: { transferId: v.id('managerTransfers') },
+  returns: v.boolean(),
+  handler: async (ctx, args): Promise<boolean> => {
+    const transfer = await ctx.db.get(args.transferId);
+    const now = Date.now();
+    if (transfer === null || !isTransferDue(transfer, now)) return false;
+    await expireInTransaction(ctx, transfer, now);
+    return true;
+  },
+});
+
+/**
  * Public, owner-guarded (`assertOwnsAgent`): the employee's open request, or
  * null, for the People card and the header; an accepting one with the runs the
  * move waits for, so the card never counts them by a rule of its own (U4-m4).
@@ -704,9 +726,12 @@ export async function incomingTransfersOf(
 ): Promise<IncomingTransfer[]> {
   const address = verifiedAddressOf(caller);
   if (address === undefined) return [];
+  // Newest first, so asked rows past their expiry that the sweep has not yet written cannot
+  // fill the read ahead of a live one (U2-m5); the list is put oldest first below.
   const asked = await ctx.db
     .query('managerTransfers')
     .withIndex('by_to_address_state', (q) => q.eq('toAddress', address).eq('state', 'asked'))
+    .order('desc')
     .take(INCOMING_READ_LIMIT);
   const named = asked.filter(
     (transfer) => transfer.fromOwnerKey !== caller.ownerKey && !isTransferDue(transfer, now),
@@ -898,6 +923,7 @@ export const noteOf = internalQuery({
 /**
  * Internal, for {@link scrubNote}: replace the stored note with its scrubbed
  * form, or withhold it, but only while it is still the note that was scrubbed.
+ * A withheld note appends `manager.transfer-note-withheld` to the employee's record.
  */
 export const replaceNote = internalMutation({
   args: {
@@ -910,6 +936,16 @@ export const replaceNote = internalMutation({
     const transfer = await ctx.db.get(args.transferId);
     if (transfer?.note !== args.scrubbedFrom) return null;
     await ctx.db.patch(args.transferId, { note: args.note });
+    // A note withheld, not scrubbed, is said on the old manager's record (U2-m8), so the person
+    // who wrote it knows the named manager will not read it.
+    if (args.note === undefined && (await ctx.db.get(transfer.agentId)) !== null) {
+      await appendEvent(ctx, {
+        agentId: transfer.agentId,
+        type: 'manager.transfer-note-withheld',
+        payload: requestEventOf(transfer),
+        createdAt: Date.now(),
+      });
+    }
     return null;
   },
 });

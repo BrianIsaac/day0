@@ -266,6 +266,12 @@ export interface ManagerTransferDeclinedPayload extends TransferRequestEvent {
 export type ManagerTransferExpiredPayload = TransferRequestEvent;
 
 /**
+ * The payload of `manager.transfer-note-withheld`: the owner-wide exact layer could not be applied
+ * to the handover note, so the note was withheld rather than kept unchecked (U2-m8).
+ */
+export type ManagerTransferNoteWithheldPayload = TransferRequestEvent;
+
+/**
  * Why an accepted handover ended without the move (decision 4): the move would be refused
  * (`unmovable`), its settle kept failing (`settle-failed`), or the operator ended it (`operator`).
  */
@@ -1201,6 +1207,7 @@ export interface EventPayloads {
   'manager.transfer-declined': ManagerTransferDeclinedPayload;
   'manager.transfer-expired': ManagerTransferExpiredPayload;
   'manager.transfer-notice': ManagerTransferNoticePayload;
+  'manager.transfer-note-withheld': ManagerTransferNoteWithheldPayload;
   'manager.transfer-settle-failed': ManagerTransferSettleFailedPayload;
   'manager.transfer-ended': ManagerTransferEndedPayload;
   'manager.transferred': ManagerTransferredPayload;
@@ -1357,6 +1364,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'manager.transfer-declined',
   'manager.transfer-expired',
   'manager.transfer-notice',
+  'manager.transfer-note-withheld',
   'manager.transfer-settle-failed',
   'manager.transfer-ended',
   'manager.transferred',

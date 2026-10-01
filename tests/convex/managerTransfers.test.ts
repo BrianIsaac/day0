@@ -959,7 +959,57 @@ describe('managerTransfers.openForAgent', (): void => {
   });
 });
 
+describe('managerTransfers.expireOne: the request expires at its own time (U2-m7)', (): void => {
+  it('expires an unanswered request at its expiry with no sweep, so no page shows it open past it', async (): Promise<void> => {
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.UTC(2026, 9, 1, 9));
+    const harness = convexTest(schema, allConvexModules());
+    const maya = await employee(harness);
+    const transferId = await harness
+      .withIdentity(OWNER)
+      .mutation(api.managerTransfers.ask, { agentId: maya, toAddress: PRIYA_ADDRESS });
+
+    await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(TRANSFER_EXPIRY_MS));
+
+    expect(await request(harness, transferId)).toMatchObject({
+      state: 'expired',
+      decidedAt: Date.UTC(2026, 9, 15, 9),
+    });
+    expect(
+      await harness.withIdentity(OWNER).query(api.managerTransfers.openForAgent, { agentId: maya }),
+    ).toBeNull();
+  });
+
+  it('leaves a request answered before its expiry as it is', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const maya = await employee(harness);
+    const transferId = await harness
+      .withIdentity(OWNER)
+      .mutation(api.managerTransfers.ask, { agentId: maya, toAddress: PRIYA_ADDRESS });
+    await harness.withIdentity(OWNER).mutation(api.managerTransfers.cancel, { transferId });
+
+    await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(TRANSFER_EXPIRY_MS));
+
+    expect((await request(harness, transferId))?.state).toBe('cancelled');
+  });
+});
+
 describe('managerTransfers.incoming', (): void => {
+  it('finds a live request behind a full read of stale ones the sweep has not yet written (U2-m5)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const maya = await employee(harness);
+    const stale = Date.now() - TRANSFER_EXPIRY_MS - DAY_MS;
+    for (let index = 0; index < 50; index += 1) {
+      await insertRequest(harness, { agentId: maya, requestedAt: stale + index });
+    }
+    const live = await insertRequest(harness, { agentId: maya });
+
+    const listed = await harness.withIdentity(PRIYA).query(api.managerTransfers.incoming, {});
+
+    expect(listed.map((entry) => entry.transferId)).toEqual([live]);
+  });
+
   it('lists the asked requests naming the caller’s verified address, oldest first, with the employee’s name and zone', async (): Promise<void> => {
     vi.useFakeTimers();
     vi.setSystemTime(Date.UTC(2026, 9, 1, 9));
@@ -1303,10 +1353,20 @@ describe('the handover note in real mode', (): void => {
       toAddress: PRIYA_ADDRESS,
       note: 'Read the checklist.',
     });
-    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    // What the ask scheduled for now: the scrub, not the expiry fourteen days on (U2-m7).
+    await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
 
     expect((await request(harness, transferId))?.note).toBeUndefined();
     expect((await request(harness, transferId))?.state).toBe('asked');
+    // The old manager's record says the note was withheld (U2-m8).
+    const withheld = await harness.run(async (ctx) =>
+      (await ctx.db.query('events').collect()).filter(
+        (event) => event.type === 'manager.transfer-note-withheld',
+      ),
+    );
+    expect(withheld.map((event) => event.payload)).toEqual([
+      { transferId, fromAddress: MANAGER_ADDRESS, toAddress: PRIYA_ADDRESS },
+    ]);
   });
 });
 

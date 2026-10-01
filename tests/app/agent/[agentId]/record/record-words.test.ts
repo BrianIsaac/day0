@@ -166,6 +166,9 @@ describe('recordWords', (): void => {
     expect(said('manager.transfer-ended', { reason: 'operator', detail: 'stuck' })).toBe(
       'The handover to priya@company.com was ended by the operator: stuck; Maya stays with sam@company.com.',
     );
+    expect(said('manager.transfer-note-withheld', {})).toBe(
+      'Your note to priya@company.com was withheld: Day0 could not check it for stored credentials.',
+    );
     expect(said('manager.transfer-notice', { delivered: true })).toBe(
       'Maya told priya@company.com in Slack that they were asked to take Maya on.',
     );

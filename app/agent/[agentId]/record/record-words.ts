@@ -207,6 +207,8 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `The handover to ${text(p.toAddress) ?? 'another manager'} ${
       p.reason === 'operator' ? 'was ended by the operator' : 'could not finish and was ended'
     }${because(p.detail)}; ${name} stays with ${text(p.fromAddress) ?? 'its manager'}`,
+  'manager.transfer-note-withheld': (p) =>
+    `Your note to ${text(p.toAddress) ?? 'the named manager'} was withheld: Day0 could not check it for stored credentials`,
   'manager.transfer-notice': (p, { name }) =>
     p.delivered === true
       ? `${name} told ${text(p.toAddress) ?? 'the named manager'} in Slack that they were asked to take ${name} on`

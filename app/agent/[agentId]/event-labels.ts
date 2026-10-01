@@ -175,6 +175,8 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     `handover to ${text(payload.toAddress) ?? 'another manager'} ended${
       payload.reason === 'operator' ? ' by the operator' : ', it could not finish'
     }`,
+  'manager.transfer-note-withheld': (payload) =>
+    `handover note to ${text(payload.toAddress) ?? 'the named manager'} withheld`,
   'manager.transfer-notice': (payload) =>
     `handover notice to ${text(payload.toAddress) ?? 'the named manager'} ${
       payload.delivered === true ? 'sent' : 'not sent'
@@ -525,6 +527,7 @@ const RECORD_KINDS: Readonly<Partial<Record<EventType, Exclude<RecordKind, 'note
   'manager.transfer-cancelled': 'withheld',
   'manager.transfer-expired': 'withheld',
   'manager.transfer-ended': 'withheld',
+  'manager.transfer-note-withheld': 'withheld',
   'work.actions-pending': 'held',
   'work.plan-held': 'held',
   'skill.proposed': 'held',

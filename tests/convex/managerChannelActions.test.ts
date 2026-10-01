@@ -1080,6 +1080,14 @@ describe('the handover notice to the person a request names (D7)', (): void => {
     restoreSurfaceMode();
   });
 
+  /**
+   * Run what the ask scheduled that is due now: the notice and the scrub. The request's own
+   * expiry, fourteen days on, is not (U2-m7).
+   */
+  const runDueNow = (): void => {
+    vi.advanceTimersByTime(0);
+  };
+
   /** One Slack call the fake answered: the method, the channel it named and the text it carried. */
   interface SlackCall {
     readonly method: string;
@@ -1255,7 +1263,7 @@ describe('the handover notice to the person a request names (D7)', (): void => {
     const transferId = await harness
       .withIdentity(managerIdentity())
       .mutation(api.managerTransfers.ask, { agentId, toAddress: PRIYA_ADDRESS });
-    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    await harness.finishAllScheduledFunctions(runDueNow);
     return transferId;
   }
 
@@ -1343,7 +1351,7 @@ describe('the handover notice to the person a request names (D7)', (): void => {
         agentId,
         toAddress: 'someone@elsewhere.example',
       });
-    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    await harness.finishAllScheduledFunctions(runDueNow);
 
     expect(calls.filter((call) => call.method === 'users.lookupByEmail')).toEqual([
       { method: 'users.lookupByEmail', email: 'someone@elsewhere.example' },
@@ -1387,7 +1395,7 @@ describe('the handover notice to the person a request names (D7)', (): void => {
       await harness
         .withIdentity(managerIdentity())
         .mutation(api.managerTransfers.ask, { agentId, toAddress });
-      await harness.finishAllScheduledFunctions(vi.runAllTimers);
+      await harness.finishAllScheduledFunctions(runDueNow);
     }
     expect(calls.filter((call) => call.method === 'conversations.open')).toEqual([]);
     expect(noticesIn(calls)).toEqual([]);
@@ -1426,7 +1434,7 @@ describe('the handover notice to the person a request names (D7)', (): void => {
       const transferId = await harness
         .withIdentity(managerIdentity())
         .mutation(api.managerTransfers.ask, { agentId, toAddress });
-      await harness.finishAllScheduledFunctions(vi.runAllTimers);
+      await harness.finishAllScheduledFunctions(runDueNow);
       recorded.push(...(await noticeEvents(harness, agentId)));
       expect(await noticeEvents(harness, agentId)).toEqual([
         expect.objectContaining({ transferId, toAddress, delivered: false }),
@@ -1552,7 +1560,7 @@ describe('the handover notice to the person a request names (D7)', (): void => {
       toAddress: PRIYA_ADDRESS,
     });
     await owner.mutation(api.managerTransfers.cancel, { transferId });
-    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    await harness.finishAllScheduledFunctions(runDueNow);
     expect(noticesIn(calls)).toEqual([]);
     expect((await harness.run(async (ctx) => await ctx.db.get(transferId)))?.noticeSentAt).toBe(
       undefined,
@@ -1594,7 +1602,7 @@ describe('the handover notice to the person a request names (D7)', (): void => {
     const employeeBefore = await harness.run(async (ctx) => await ctx.db.get(agentId));
 
     await harness.action(internal.intakeActions.pollDecisions, {});
-    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    await harness.finishAllScheduledFunctions(runDueNow);
 
     // The poll read the manager DM, where both replies sit.
     expect(calls.some((call) => call.method === 'conversations.history')).toBe(true);
