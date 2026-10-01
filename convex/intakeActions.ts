@@ -1,5 +1,6 @@
 'use node';
 
+import { LINEAR_MCP_ENDPOINT } from '../src/surfaces/fixed-endpoints';
 import { randomUUID } from 'node:crypto';
 import type { ToolExecutionContext } from '@mastra/core/tools';
 import type { FunctionReference } from 'convex/server';
@@ -850,9 +851,6 @@ export function linearCandidate(
     ...(requester === undefined ? {} : { requester }),
   };
 }
-
-/** The one MCP server this deployment's kanban intake reader speaks to. */
-const LINEAR_MCP_ENDPOINT = 'https://mcp.linear.app/mcp';
 
 /**
  * Create the production MCP client intake polls one endpoint with.
