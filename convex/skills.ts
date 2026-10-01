@@ -1306,6 +1306,11 @@ export const failAuthoringRun = internalMutation({
     eventType: authoringFailureEventValidator,
     refusedBody: v.optional(v.string()),
     refusedSmokeTest: v.optional(v.string()),
+    /**
+     * The row's body is a parked copy of a stored version that may not register (the wave 10
+     * review, B1): it goes, so no later press checks it again.
+     */
+    dropsStoredCopy: v.optional(v.boolean()),
   },
   handler: async (ctx, args): Promise<{ recorded: boolean }> => {
     const row = await claimHolder(ctx, args.skillId, args.runId, 'fail');
@@ -1313,6 +1318,7 @@ export const failAuthoringRun = internalMutation({
     const reason = redactTokenShapes(args.reason);
     await ctx.db.patch(args.skillId, {
       state: 'failed',
+      ...(args.dropsStoredCopy === true ? { body: '' } : {}),
       verificationLog: redactTokenShapes(args.rowReason),
       refusedBody: args.refusedBody === undefined ? undefined : redactTokenShapes(args.refusedBody),
       refusedSmokeTest:

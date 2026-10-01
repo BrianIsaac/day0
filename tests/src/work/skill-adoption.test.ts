@@ -5,6 +5,8 @@ import {
   adoptionStateAt,
   stalledReason,
   adoptionFit,
+  holdsParkedStoredCopy,
+  parkedCheckLog,
   adoptionHelp,
   adoptionWords,
   chooseOffer,
@@ -259,6 +261,35 @@ describe('stalledReason', (): void => {
       'the sandbox threw: socket closed',
     );
     expect(stalledReason(undefined)).toBeUndefined();
+  });
+});
+
+describe('parkedCheckLog and holdsParkedStoredCopy (the wave 10 review, B1)', (): void => {
+  it('marks a parked copy of a stored version, and reads the reason back out of it', (): void => {
+    const log = parkedCheckLog('no sandbox backend answered');
+    expect(stalledReason(log)).toBe('no sandbox backend answered');
+    expect(
+      holdsParkedStoredCopy({
+        body: '# Body',
+        pendingSmokeTest: 'CASES = []',
+        verificationLog: log,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not take an employee's own parked draft, or a row with no parked body, for a copy", (): void => {
+    expect(
+      holdsParkedStoredCopy({
+        body: '# Body',
+        pendingSmokeTest: 'CASES = []',
+        verificationLog: 'sandbox verification skipped - no sandbox available',
+      }),
+    ).toBe(false);
+    const log = parkedCheckLog('no sandbox backend answered');
+    expect(
+      holdsParkedStoredCopy({ body: '', pendingSmokeTest: 'CASES = []', verificationLog: log }),
+    ).toBe(false);
+    expect(holdsParkedStoredCopy({ body: '# Body', verificationLog: log })).toBe(false);
   });
 });
 

@@ -53,6 +53,7 @@ import {
   type NamedHarnessSurface,
   type SurfaceTools,
 } from '../src/work/skill-library';
+import { holdsParkedStoredCopy, parkedCheckLog } from '../src/work/skill-adoption';
 
 /**
  * Autonomous skill authoring action. Demo headline:
@@ -622,6 +623,8 @@ async function recordAuthoringFailure(
     reason: string;
     eventType: 'skill.author-failed' | 'skill.verification-failed';
     refusedDraft?: { body: string; smokeTest: string };
+    /** The row's body is a parked copy of a stored version that may not register: it goes. */
+    dropsStoredCopy?: boolean;
   },
 ): Promise<{ ok: false; reason: string }> {
   const { refusedDraft, ...failure } = args;
@@ -794,7 +797,22 @@ async function authorAndRegister(
   // panels, with nothing to press. Record the failure instead: `failed` is
   // listed, carries the reason, and offers Retry.
   let authored: AuthoredSkill;
+  // A parked copy of a stored version registers under that version's checks or not at all (the
+  // wave 10 review, B1): its own draft is the employee's, the copy is the library's.
+  let storedVersionId: Id<'skillVersions'> | undefined;
   if (skill.state === 'authoring' && skill.pendingSmokeTest && skill.body) {
+    if (holdsParkedStoredCopy(skill)) {
+      const refusal = await parkedCopyRefusal(ctx, skill);
+      if (refusal !== undefined) {
+        return await recordAuthoringFailure(ctx, skillId, runId, {
+          rowReason: storedCopyRefusedReason(refusal),
+          reason: refusal,
+          eventType: 'skill.verification-failed',
+          dropsStoredCopy: true,
+        });
+      }
+      storedVersionId = skill.offeredVersionId;
+    }
     authored = { body: skill.body, smokeTest: skill.pendingSmokeTest };
   } else {
     const userPrompt = buildAuthorPrompt(
@@ -1052,7 +1070,7 @@ async function authorAndRegister(
   // requeue of the work item that asked for the skill either all land or none
   // of them do. Anything that fails here leaves the row in a state the skills
   // panel lists and the next claim accepts.
-  const { registered } = await ctx.runMutation(internal.skills.completeRegistration, {
+  const { registered, refusal } = await ctx.runMutation(internal.skills.completeRegistration, {
     skillId: skillId,
     runId,
     body,
@@ -1068,10 +1086,39 @@ async function authorAndRegister(
       ref: page.ref,
       title: page.title,
     })),
+    ...(storedVersionId !== undefined ? { storedVersionId } : {}),
   });
-  if (!registered) return { ok: false, reason: SUPERSEDED };
+  if (registered) return { ok: true };
+  if (refusal === undefined) return { ok: false, reason: SUPERSEDED };
+  return await recordAuthoringFailure(ctx, skillId, runId, {
+    rowReason: storedCopyRefusedReason(refusal),
+    reason: refusal,
+    eventType: 'skill.verification-failed',
+    dropsStoredCopy: true,
+  });
+}
 
-  return { ok: true };
+/**
+ * Why a row's parked copy of a stored version may not be checked: its offer is gone (a handover,
+ * a Withdraw or a later evaluation took it), or the version offered is no longer one the row may
+ * register as. Undefined when the copy may be checked, under the version's checks again at
+ * registration.
+ */
+async function parkedCopyRefusal(
+  ctx: ActionCtx,
+  skill: Doc<'skills'>,
+): Promise<string | undefined> {
+  if (skill.offeredVersionId === undefined) return 'the skill it copied is no longer offered';
+  const target = await ctx.runQuery(internal.skillVersions.storedVerificationTarget, {
+    skillId: skill._id,
+    versionId: skill.offeredVersionId,
+  });
+  return target.kind === 'refused' ? target.reason : undefined;
+}
+
+/** The row's line for a stored version's copy that was refused, around the refusal. */
+function storedCopyRefusedReason(refusal: string): string {
+  return `the stored skill was not registered: ${refusal}`;
 }
 
 /**
@@ -1205,9 +1252,12 @@ export const verifyStoredSkill = internalAction({
       if (registered) return { ok: true };
       if (refusal === undefined) return { ok: false, reason: SUPERSEDED };
       return await recordAuthoringFailure(ctx, args.skillId, runId, {
-        rowReason: `the stored skill was not registered: ${refusal}`,
+        rowReason: storedCopyRefusedReason(refusal),
         reason: refusal,
         eventType: 'skill.verification-failed',
+        // A row that is not callable may hold a copy an earlier stop parked; a registered row's
+        // body is its own verified one.
+        dropsStoredCopy: skill.state !== 'registered',
       });
     }
     if (stop.kind === 'failed') {
@@ -1400,7 +1450,7 @@ async function stopShortOfVerdict(
     sandboxId: '(skipped)',
     body: args.body,
     smokeTest: args.smokeTest,
-    verificationLog: `the stored skill was not verified: ${reason}; Retry runs its check`,
+    verificationLog: parkedCheckLog(reason),
     reason,
   });
   return { ok: false, reason: recorded ? reason : SUPERSEDED };

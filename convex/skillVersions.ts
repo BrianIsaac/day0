@@ -436,7 +436,8 @@ export async function deleteOwnerLibrary(ctx: MutationCtx, ownerKey: string): Pr
 /**
  * The handover's library step (K2), inside the move: copy every version the moving employee's
  * rows hold into the new owner's library and re-point each row, drop any adoption offer the old
- * owner's library made to it, then stamp "Re-check due" on its
+ * owner's library made to it with any adoption under way and its parked copy, then stamp
+ * "Re-check due" on its
  * registered skills whose surface the move cut. Nothing names the old owner afterwards: each copy
  * is keyed on the new owner, numbered in the new owner's library, keeps its author only when the
  * mover wrote it (any other author is {@link HANDED_OVER_AUTHOR_NAME}), and drops the pages the
@@ -465,12 +466,9 @@ export async function copyVersionsForMove(
     .collect();
   const copies = new Map<Id<'skillVersions'>, Id<'skillVersions'> | null>();
   for (const row of rows) {
-    // An offer is the old owner's library speaking, not something the employee holds: it goes.
-    // A run holding the row finishes under its fence, as the transfer plan's table has it
-    // (6.4); a stored verification's registration refuses a version the move left behind.
-    if (row.offeredVersionId !== undefined) {
-      await ctx.db.patch(row._id, { offeredVersionId: undefined });
-    }
+    // An offer is the old owner's library speaking, not something the employee holds: it goes,
+    // and an adoption under way goes with it (the wave 10 review, B1).
+    if (row.offeredVersionId !== undefined) await endOfferAtMove(ctx, row);
     // A newer-version chip names the old library's numbers, which the new one does not use.
     if (row.recheckReason !== undefined && isNewerVersionReason(row.recheckReason)) {
       await ctx.db.patch(row._id, { recheckReason: HANDED_OVER_RECHECK_REASON });
@@ -490,6 +488,35 @@ export async function copyVersionsForMove(
     now,
   });
   return { copied: [...copies.values()].filter((id) => id !== null).length, stamped };
+}
+
+/**
+ * Drop an adoption offer the old owner's library made to a moving employee's row. A proposal
+ * keeps its place as a plain proposal, for the new manager to approve or reject. An adoption the
+ * old manager pressed (approved, being checked, parked or failed) holds the old owner's version
+ * or a copy of it, which no copy may carry across owners: the copy, its log and any run's claim
+ * go, and the row goes back to a proposal, from which nothing registers without the new
+ * manager's approval. A check still running is fenced out of the row by the released claim.
+ */
+async function endOfferAtMove(ctx: MutationCtx, row: Doc<'skills'>): Promise<void> {
+  if (row.state === 'proposed') {
+    await ctx.db.patch(row._id, { offeredVersionId: undefined });
+    return;
+  }
+  await ctx.db.patch(row._id, {
+    state: 'proposed',
+    offeredVersionId: undefined,
+    body: '',
+    pendingSmokeTest: undefined,
+    refusedBody: undefined,
+    refusedSmokeTest: undefined,
+    sandboxId: undefined,
+    verificationLog: undefined,
+    authoringAttempts: undefined,
+    authoringDeferrals: undefined,
+    authoringRunId: undefined,
+    authoringClaimedAt: undefined,
+  });
 }
 
 /** One version copied into the new owner's library, or null when it no longer exists. */

@@ -294,8 +294,45 @@ export function adoptionStateAt(adoption: AdoptionAtFields, now: number): Adopti
     : 'stalled';
 }
 
-/** How `skillActions.verifyStoredSkill` words a parked check on the row, around its reason. */
-const PARKED_CHECK = /^the stored skill was not verified: (.+?)(?:; Retry runs its check)?$/s;
+/** The opening of the log a stored verification parks on a row ({@link parkedCheckLog}). */
+const PARKED_CHECK_OPENING = 'the stored skill was not verified: ';
+
+/** How {@link parkedCheckLog} words a parked check on the row, around its reason. */
+const PARKED_CHECK = new RegExp(`^${PARKED_CHECK_OPENING}(.+?)(?:; Retry runs its check)?$`, 's');
+
+/**
+ * The log a stored verification that reached no verdict leaves on a row that is not callable
+ * (`skillActions.verifyStoredSkill`): the row then holds a copy of the stored version's body and
+ * smoke test, and this log is what marks the copy as one ({@link holdsParkedStoredCopy}).
+ *
+ * @param reason - Why no sandbox reached a verdict.
+ */
+export function parkedCheckLog(reason: string): string {
+  return `${PARKED_CHECK_OPENING}${reason}; Retry runs its check`;
+}
+
+/** What tells a row's parked body from a parked copy of a stored version. */
+export interface ParkedBodyFields {
+  readonly body: string;
+  readonly pendingSmokeTest?: string;
+  readonly verificationLog?: string;
+}
+
+/**
+ * Whether a row's parked body is a copy of a stored version (an adoption's, parked when its check
+ * stopped short) rather than a draft the employee wrote. Such a copy registers only under its
+ * version's checks, and only while the row is still offered that version (the wave 10 review,
+ * B1): the authoring action refuses one whose offer is gone.
+ *
+ * @param row - The row, as the authoring claim read it.
+ */
+export function holdsParkedStoredCopy(row: ParkedBodyFields): boolean {
+  return (
+    row.body !== '' &&
+    row.pendingSmokeTest !== undefined &&
+    (row.verificationLog?.startsWith(PARKED_CHECK_OPENING) ?? false)
+  );
+}
 
 /**
  * Why an adoption's check stopped short, from the row's log: the reason of a parked check without
