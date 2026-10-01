@@ -25,7 +25,7 @@ describe('HowSkillsAreMade', (): void => {
   it('says a colleague’s verified skill can be adopted instead, and is checked again first (A-m9)', (): void => {
     const html = renderToStaticMarkup(<HowSkillsAreMade name="Mira" />);
     expect(html).toContain(
-      'When another employee of yours already has a verified skill of the same shape, Mira can adopt it instead: one approval, and the sandbox checks it again under Mira&#x27;s own connection before it runs.',
+      'When another of your employees already has a verified skill that does the same job, Mira can adopt it instead: one approval, and the sandbox checks it again for Mira before it runs.',
     );
   });
 });

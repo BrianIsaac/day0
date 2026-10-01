@@ -21,9 +21,9 @@ export function HowSkillsAreMade({ name }: { name: string }) {
         </li>
       </ol>
       <p className="mt-3 text-[13px] text-[var(--color-muted)]">
-        When another employee of yours already has a verified skill of the same shape, {name} can
-        adopt it instead: one approval, and the sandbox checks it again under {name}&apos;s own
-        connection before it runs.
+        When another of your employees already has a verified skill that does the same job, {name}{' '}
+        can adopt it instead: one approval, and the sandbox checks it again for {name} before it
+        runs.
       </p>
       <p className="mt-2 text-[13px] text-[var(--color-muted)]">
         One run writes a skill at a time: Retry waits while one is running and opens once it
