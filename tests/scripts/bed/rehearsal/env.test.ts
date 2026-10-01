@@ -67,8 +67,10 @@ describe('the bed environment', (): void => {
 
   it('refuses a source with no model route or no boss email', (): void => {
     expect(envRefusal({ NEXT_PUBLIC_DEMO_BOSS_EMAIL: 'b@x.com' })).toContain('OPENAI_API_KEY');
-    expect(envRefusal({ OPENAI_BASE_URL: 'http://model:11434/v1' })).toContain(
-      'NEXT_PUBLIC_DEMO_BOSS_EMAIL',
+    expect(envRefusal({ OPENAI_BASE_URL: 'http://model:11434/v1' })).toBe(
+      'the source env has no NEXT_PUBLIC_DEMO_BOSS_EMAIL; real mode finds the manager DM from the ' +
+        'address the local sign-in carries, and without it that is boss@day0.local, which no Slack ' +
+        'workspace knows.',
     );
     expect(
       envRefusal({ OPENAI_API_KEY: 'sk', NEXT_PUBLIC_DEMO_BOSS_EMAIL: 'b@x.com' }),

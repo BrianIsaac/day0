@@ -17,6 +17,11 @@ import { runThroughBody } from '../fixtures/run-through-charter-2026-09-14';
 import { runtimeCycleThrough } from '../fixtures/import-graph';
 import { MAX_FINALISATION_RECOVERIES } from '../../src/agent/one-to-one-phase';
 import { UNVERIFIED_FOR_DEPLOY } from '../../src/agent/manager-address';
+import {
+  EVALUATION_ADDRESS_FIXED,
+  UNVERIFIED_FOR_ADOPTION,
+} from '../../src/agent/manager-standing';
+import { MANAGER_CHANGED_RESEND_REASON } from '../../convex/work';
 import { MANAGER_ADDRESS, localIssuerIdentity, managerIdentity } from './fakes/manager-identity';
 
 afterEach((): void => {
@@ -2044,6 +2049,308 @@ describe('agents.setBossEmail', (): void => {
     ).rejects.toThrow('evaluation');
     const agent = await harness.run(async (ctx) => await ctx.db.get(agentId));
     expect(agent?.bossEmail).toBe('boss@day0.local');
+  });
+});
+
+/**
+ * An employee of the fixture owner whose address an older release stored as given.
+ *
+ * @param bossEmail - The address the row reports to, in the spelling it was stored with.
+ * @param fields - Anything else the row carries, such as an evaluation name.
+ */
+async function seedReportingTo(
+  harness: TestConvex<typeof schema>,
+  bossEmail: string,
+  fields: Partial<Pick<Doc<'agents'>, 'name' | 'arm' | 'userId'>> = {},
+): Promise<Id<'agents'>> {
+  return await harness.run(
+    async (ctx) =>
+      await ctx.db.insert('agents', {
+        bossEmail,
+        name: 'Maya',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+        ...fields,
+      }),
+  );
+}
+
+describe('agents.managerStanding (D17)', (): void => {
+  it("answers you for the owner's own address, in an older row's spelling too", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedReportingTo(harness, 'Boss@Day0.local');
+    await expect(
+      harness.withIdentity(managerIdentity()).query(api.agents.managerStanding, { agentId }),
+    ).resolves.toEqual({ standing: 'you' });
+  });
+
+  it('answers other with the address an employee reports to that is not the owner’s', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedReportingTo(harness, 'Ana@Kestrel.example');
+    await expect(
+      harness.withIdentity(managerIdentity()).query(api.agents.managerStanding, { agentId }),
+    ).resolves.toEqual({ standing: 'other', bossEmail: 'Ana@Kestrel.example' });
+  });
+
+  it('answers unverified for an owner whose sign-in asserts no verified address', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedReportingTo(harness, MANAGER_ADDRESS);
+    for (const claims of [{ emailVerified: false }, { email: undefined }]) {
+      await expect(
+        harness
+          .withIdentity(managerIdentity('owner', claims))
+          .query(api.agents.managerStanding, { agentId }),
+      ).resolves.toEqual({ standing: 'unverified' });
+    }
+  });
+
+  it('answers evaluation for an evaluation employee, never other', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedReportingTo(harness, 'eval-day0-r1-1758150000000@day0.local', {
+      name: 'Day0 evaluation 1',
+    });
+    await expect(
+      harness.withIdentity(managerIdentity()).query(api.agents.managerStanding, { agentId }),
+    ).resolves.toEqual({ standing: 'evaluation' });
+  });
+
+  it('refuses a caller who does not own the employee', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedReportingTo(harness, 'Ana@Kestrel.example');
+    await expect(
+      harness
+        .withIdentity(managerIdentity('intruder'))
+        .query(api.agents.managerStanding, { agentId }),
+    ).rejects.toThrow('forbidden');
+    await expect(harness.query(api.agents.managerStanding, { agentId })).rejects.toThrow();
+  });
+});
+
+describe('agents.employeesReportingElsewhere (the home line, D17)', (): void => {
+  it("counts the owner's company employees whose address is not the owner's", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await seedReportingTo(harness, 'Boss@Day0.local');
+    await seedReportingTo(harness, 'ana@kestrel.example', { name: 'Tomas' });
+    await seedReportingTo(harness, 'lee@kestrel.example', { name: 'Aiko' });
+    await seedReportingTo(harness, 'eval-day0-r1-1758150000000@day0.local', {
+      name: 'Day0 evaluation 1',
+    });
+    await seedReportingTo(harness, 'ana@kestrel.example', { userId: 'colleague' });
+    await expect(
+      harness.withIdentity(managerIdentity()).query(api.agents.employeesReportingElsewhere, {}),
+    ).resolves.toBe(2);
+  });
+
+  it('answers null when there is no verified address to compare with', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await seedReportingTo(harness, 'ana@kestrel.example');
+    await expect(
+      harness
+        .withIdentity(managerIdentity('owner', { emailVerified: false }))
+        .query(api.agents.employeesReportingElsewhere, {}),
+    ).resolves.toBeNull();
+    await expect(harness.query(api.agents.employeesReportingElsewhere, {})).resolves.toBeNull();
+  });
+});
+
+describe('agents.adoptManagerAddress (Make it you, D17)', (): void => {
+  /** The `manager.changed` payloads of one employee, in write order. */
+  async function managerChanges(
+    harness: TestConvex<typeof schema>,
+    agentId: Id<'agents'>,
+  ): Promise<unknown[]> {
+    return await harness.run(async (ctx) =>
+      (
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+          .collect()
+      )
+        .filter((event) => event.type === 'manager.changed')
+        .map((event) => event.payload),
+    );
+  }
+
+  it("makes the owner's verified address the employee's, with an event, and probes nothing in mock mode", async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedReportingTo(harness, 'Ana@Kestrel.example');
+    const owner = harness.withIdentity(managerIdentity('owner', { email: ' Lead@Day0.local ' }));
+    await expect(owner.mutation(api.agents.adoptManagerAddress, { agentId })).resolves.toEqual({
+      changed: true,
+      reprobed: 0,
+    });
+    await expect(owner.query(api.agents.managerStanding, { agentId })).resolves.toEqual({
+      standing: 'you',
+    });
+    const agent = await harness.run(async (ctx) => await ctx.db.get(agentId));
+    expect(agent?.bossEmail).toBe('lead@day0.local');
+    await expect(managerChanges(harness, agentId)).resolves.toEqual([
+      { via: 'adopted', bossEmail: 'lead@day0.local' },
+    ]);
+  });
+
+  it("writes nothing for an employee that already reports to the owner's address", async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedReportingTo(harness, 'Boss@Day0.local');
+    await expect(
+      harness.withIdentity(managerIdentity()).mutation(api.agents.adoptManagerAddress, { agentId }),
+    ).resolves.toEqual({ changed: false, reprobed: 0 });
+    const agent = await harness.run(async (ctx) => await ctx.db.get(agentId));
+    expect(agent?.bossEmail).toBe('Boss@Day0.local');
+    await expect(managerChanges(harness, agentId)).resolves.toEqual([]);
+  });
+
+  it('refuses another owner, an unverified sign-in and an evaluation employee, and writes nothing', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedReportingTo(harness, 'ana@kestrel.example');
+    const evaluationId = await seedReportingTo(harness, 'eval-day0-r1-1758150000000@day0.local', {
+      name: 'Day0 evaluation 1',
+    });
+    await expect(
+      harness
+        .withIdentity(managerIdentity('intruder'))
+        .mutation(api.agents.adoptManagerAddress, { agentId }),
+    ).rejects.toThrow('forbidden');
+    await expect(
+      harness
+        .withIdentity(managerIdentity('owner', { emailVerified: false }))
+        .mutation(api.agents.adoptManagerAddress, { agentId }),
+    ).rejects.toThrow(UNVERIFIED_FOR_ADOPTION);
+    await expect(
+      harness
+        .withIdentity(managerIdentity())
+        .mutation(api.agents.adoptManagerAddress, { agentId: evaluationId }),
+    ).rejects.toThrow(EVALUATION_ADDRESS_FIXED);
+    const rows = await harness.run(async (ctx) => await ctx.db.query('agents').collect());
+    expect(rows.map((row) => row.bossEmail)).toEqual([
+      'ana@kestrel.example',
+      'eval-day0-r1-1758150000000@day0.local',
+    ]);
+    await expect(managerChanges(harness, agentId)).resolves.toEqual([]);
+  });
+
+  it('in real mode re-probes the chat surfaces and re-sends the open request to the owner', async (): Promise<void> => {
+    vi.useFakeTimers();
+    useSurfaceMode('real');
+    const { api: realApi, internal: realInternal } = await import('../../convex/_generated/api');
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedReportingTo(harness, 'ana@kestrel.example');
+    const { slackId, linearId, workItemId } = await harness.run(async (ctx) => {
+      const credentialId = await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'value',
+        label: 'team chat token',
+        ciphertext: 'sealed',
+        iv: 'iv',
+        source: 'entered',
+        createdAt: 1,
+      });
+      const slackId = await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'slack',
+        displayName: 'Slack',
+        class: 'chat',
+        verdict: 'connected',
+        endpoint: 'https://slack.com/api/',
+        path: 'documented-api',
+        toolAllowlist: ['chat.postMessage'],
+        toolArguments: [{ tool: 'chat.postMessage', arguments: ['channel', 'text'] }],
+        managerDmChannelId: 'D0ANA',
+        managerUserId: 'UANA',
+        credentialId,
+        credentialLanded: true,
+        managerApprovedAt: 10,
+        lastVerifiedAt: 10,
+        whereFound: [],
+        createdAt: 1,
+      });
+      const linearId = await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'linear',
+        displayName: 'Linear',
+        class: 'kanban',
+        verdict: 'connected',
+        endpoint: 'https://mcp.linear.app/mcp',
+        path: 'mcp',
+        credentialId,
+        credentialLanded: true,
+        managerApprovedAt: 10,
+        whereFound: [],
+        createdAt: 1,
+      });
+      const workItemId = await ctx.db.insert('workItems', {
+        agentId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'REVOPS-1',
+        title: 'Add the close-summary audit note',
+        contentSummary: 'Synthetic.',
+        contentRefs: [],
+        state: 'plan-pending',
+        plan: { summary: 'Comment then close.', steps: ['comment', 'close'] },
+        observedAt: 1,
+        createdAt: 1,
+      });
+      return { slackId, linearId, workItemId };
+    });
+    // The plan's request, delivered to Ana's DM before the owner made the address theirs.
+    await harness.mutation(realInternal.work.prepareDecisionRequest, {
+      workItemId,
+      kind: 'plan',
+      decisionId: 'ab3xyz',
+    });
+    await harness.mutation(realInternal.work.recordDecisionRequest, {
+      workItemId,
+      decisionId: 'ab3xyz',
+      ts: '1787746453.000100',
+    });
+
+    const owner = harness.withIdentity(managerIdentity());
+    await expect(owner.mutation(realApi.agents.adoptManagerAddress, { agentId })).resolves.toEqual({
+      changed: true,
+      reprobed: 1,
+    });
+    const probes = await harness.run(async (ctx) =>
+      (await ctx.db.system.query('_scheduled_functions').collect())
+        .filter((job) => job.name === 'surfaceActions:probeInternal')
+        .map((job) => (job.args[0] as { surfaceId: Id<'surfaces'> }).surfaceId),
+    );
+    expect(probes).toEqual([slackId]);
+    expect(probes).not.toContain(linearId);
+
+    // The scheduled probe looks the owner's address up and lands the owner's own DM.
+    const probe = await harness.mutation(realInternal.surfaces.beginProbe, { surfaceId: slackId });
+    if (!probe.reserved) throw new Error('probe was not reserved');
+    await harness.mutation(realInternal.surfaces.recordConnected, {
+      surfaceId: slackId,
+      generation: probe.generation,
+      toolAllowlist: ['chat.postMessage'],
+      toolArguments: [{ tool: 'chat.postMessage', arguments: ['channel', 'text'] }],
+      managerDmChannelId: 'D0OWNER',
+      managerUserId: 'UOWNER',
+      verifiedAt: Date.now(),
+    });
+    const item = await harness.run(async (ctx) => await ctx.db.get(workItemId));
+    expect(item?.decision).toMatchObject({
+      id: 'ab3xyz',
+      requestFailure: MANAGER_CHANGED_RESEND_REASON,
+    });
+    await expect(
+      harness.mutation(realInternal.work.prepareDecisionRequest, {
+        workItemId,
+        kind: 'plan',
+        decisionId: 'cd4uvw',
+        supersedes: 'ab3xyz',
+      }),
+    ).resolves.toMatchObject({ prepared: true, surface: { managerDmChannelId: 'D0OWNER' } });
+    await expect(managerChanges(harness, agentId)).resolves.toEqual([
+      { via: 'adopted', bossEmail: MANAGER_ADDRESS },
+      { surfaceId: slackId, via: 'probe', previousManagerUserId: 'UANA', managerUserId: 'UOWNER' },
+    ]);
   });
 });
 

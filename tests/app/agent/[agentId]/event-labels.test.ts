@@ -86,6 +86,18 @@ describe('the live feed labels', (): void => {
     ]);
   });
 
+  it('labels the adoption of the owner’s own address apart from a change on the dashboard (D17)', (): void => {
+    expect(
+      eventLabel({
+        type: 'manager.changed',
+        payload: { via: 'adopted', bossEmail: 'lead@kestrel.example' },
+      }),
+    ).toBe('the owner made themselves the manager (lead@kestrel.example)');
+    expect(eventLabel({ type: 'manager.changed', payload: { via: 'adopted' } })).toBe(
+      'the owner made themselves the manager',
+    );
+  });
+
   it('labels the two types the schema step added, and the access clock', (): void => {
     expect(
       eventLabel({

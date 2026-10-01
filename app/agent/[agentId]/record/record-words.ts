@@ -171,6 +171,9 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
       return `The chat surface showed ${name} a different manager, so its DMs go to them now`;
     }
     const to = 'bossEmail' in p ? text(p.bossEmail) : undefined;
+    if (p.via === 'adopted') {
+      return `You made yourself ${name}'s manager${to ? ` at ${to}` : ''}, so its DMs come to you now`;
+    }
     return `You changed ${name}'s manager${to ? ` to ${to}` : ''}`;
   },
   'charter.drafted': (p) => `Charter version ${text(p.version) ?? '?'} drafted for your review`,

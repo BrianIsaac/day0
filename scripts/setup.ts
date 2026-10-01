@@ -67,6 +67,7 @@ import { createInterface, type Interface } from 'node:readline';
 import { Writable } from 'node:stream';
 import { pathToFileURL } from 'node:url';
 import { DEFAULT_DOCS_HOST_DIR, ensureDocsHostDir } from '../src/docs/host-dir';
+import { DEFAULT_LOCAL_MANAGER_ADDRESS } from '../src/agent/manager-address';
 import { CRONS_PAUSED_FLAG, cronsPauseReason } from '../src/lib/crons-pause';
 import {
   FIRST_SUCCESS,
@@ -2943,8 +2944,10 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
         } else if (options.assumeYes) {
           io.log('');
           io.log(
-            'note: NEXT_PUBLIC_DEMO_BOSS_EMAIL is unset. Real mode resolves your Slack DM from it at ' +
-              'deploy and cannot correct a live agent; set it (or pass --boss-email) before you deploy.',
+            `note: NEXT_PUBLIC_DEMO_BOSS_EMAIL is unset, so your local sign-in carries ${DEFAULT_LOCAL_MANAGER_ADDRESS}, ` +
+              'which no Slack workspace knows, and real mode finds your Slack DM from that address. Set it ' +
+              "(or pass --boss-email) before you deploy; set later, each employee's People tab offers " +
+              'Make it you, which moves its DM to the new address.',
           );
         } else {
           io.log('');

@@ -41,6 +41,12 @@ import {
   isManagerAddressShaped,
   normaliseManagerAddress,
 } from '../src/agent/manager-address';
+import {
+  EVALUATION_ADDRESS_FIXED,
+  UNVERIFIED_FOR_ADOPTION,
+  managerStandingOf,
+  type ManagerStanding,
+} from '../src/agent/manager-standing';
 import { evaluationBedName, evaluationBedRefusal } from '../src/evaluation/bed-flag';
 import { shownEmployeeState, type CharterApproval } from '../src/work/state-labels';
 import {
@@ -629,6 +635,130 @@ export const myManagerAddress = query({
   },
 });
 
+/**
+ * One employee's standing against an owner's verified address, the employee
+ * read as an evaluation one by its own row.
+ *
+ * @param callerAddress - The owner's verified address, or undefined when the sign-in asserts none.
+ */
+function standingOf(agent: Doc<'agents'>, callerAddress: string | undefined): ManagerStanding {
+  return managerStandingOf({
+    bossEmail: agent.bossEmail,
+    callerAddress,
+    evaluation: isEvaluationAgent(agent),
+  });
+}
+
+/** What `managerStanding` returns: {@link ManagerStanding}, as a validator. */
+const managerStandingValidator = v.union(
+  v.object({ standing: v.literal('you') }),
+  v.object({ standing: v.literal('other'), bossEmail: v.string() }),
+  v.object({ standing: v.literal('unverified') }),
+  v.object({ standing: v.literal('evaluation') }),
+);
+
+/**
+ * Public, owner-guarded: whether the employee reports to the caller's own
+ * verified address (`you`), to someone else's (`other`, with the stored
+ * address, which the People card offers to hand over to or make the
+ * caller's), or cannot be compared (`unverified`); an evaluation employee is
+ * never flagged (`evaluation`). Compared case-insensitively through the one
+ * address comparison, so an older row's spelling is still the owner's
+ * (D17 (a), the transfer plan section 11.2). Writes nothing.
+ */
+export const managerStanding = query({
+  args: { agentId: v.id('agents') },
+  returns: managerStandingValidator,
+  handler: async (ctx, args): Promise<ManagerStanding> => {
+    const agent = await assertOwnsAgent(ctx, args.agentId);
+    return standingOf(agent, verifiedAddressOf(await getCallerOrThrow(ctx)));
+  },
+});
+
+/**
+ * Public, any caller: how many of the caller's company employees report to
+ * an address that is not the caller's verified one, for the home's one line
+ * while any does (the transfer plan section 11.2). Evaluation employees are
+ * left out, as the roster leaves them out, within the rows the roster reads
+ * (`ROSTER_SCAN_LIMIT`). Writes nothing.
+ *
+ * @returns The count, or null for an anonymous caller or one whose sign-in asserts no verified address.
+ */
+export const employeesReportingElsewhere = query({
+  args: {},
+  returns: v.union(v.number(), v.null()),
+  handler: async (ctx): Promise<number | null> => {
+    const caller = await getCaller(ctx);
+    const callerAddress = caller ? verifiedAddressOf(caller) : undefined;
+    if (!caller || callerAddress === undefined) return null;
+    const agents = await ctx.db
+      .query('agents')
+      .withIndex('by_userId', (q) => q.eq('userId', caller.ownerKey))
+      .take(ROSTER_SCAN_LIMIT);
+    return agents.filter((agent) => standingOf(agent, callerAddress).standing === 'other').length;
+  },
+});
+
+/**
+ * Public, owner-guarded: **Make it you**. The employee reports to the
+ * caller's verified address from now on: writes `bossEmail` and a
+ * `manager.changed` event (`via: 'adopted'`), then, in real mode, schedules a
+ * probe of every chat surface the change can mend, so the manager DM moves to
+ * the owner at once and the open decision requests delivered to the previous
+ * DM are sent again to the owner's (the probe's `recordConnected`). The one
+ * writer of `bossEmail` besides deploy and an accepted handover (D1 (b),
+ * D17 (a)).
+ *
+ * @returns Whether the address changed, and how many surfaces were re-probed.
+ * @throws ConvexError for a caller without a verified address or an evaluation employee.
+ */
+export const adoptManagerAddress = mutation({
+  args: { agentId: v.id('agents') },
+  returns: v.object({ changed: v.boolean(), reprobed: v.number() }),
+  handler: async (ctx, args): Promise<{ changed: boolean; reprobed: number }> => {
+    const agent = await assertOwnsAgent(ctx, args.agentId);
+    const caller = await getCallerOrThrow(ctx);
+    const standing = standingOf(agent, verifiedAddressOf(caller));
+    switch (standing.standing) {
+      case 'evaluation':
+        throw new ConvexError(EVALUATION_ADDRESS_FIXED);
+      case 'unverified':
+        throw new ConvexError(UNVERIFIED_FOR_ADOPTION);
+      case 'you':
+        return { changed: false, reprobed: 0 };
+      case 'other':
+        return { changed: true, reprobed: await adoptAddress(ctx, agent, caller) };
+      default: {
+        const unknown: never = standing;
+        throw new Error(`unhandled manager standing ${String(unknown)}`);
+      }
+    }
+  },
+});
+
+/**
+ * Make the caller's verified address the employee's, record it, and re-probe
+ * what the change can mend.
+ *
+ * @returns How many surfaces were re-probed.
+ */
+async function adoptAddress(
+  ctx: MutationCtx,
+  agent: Doc<'agents'>,
+  caller: Caller,
+): Promise<number> {
+  const bossEmail = verifiedAddressOf(caller);
+  if (bossEmail === undefined) throw new ConvexError(UNVERIFIED_FOR_ADOPTION);
+  await ctx.db.patch(agent._id, { bossEmail });
+  await appendEvent(ctx, {
+    agentId: agent._id,
+    type: 'manager.changed',
+    payload: { via: 'adopted', bossEmail },
+    createdAt: Date.now(),
+  });
+  return await reprobeForManagerChange(ctx, agent._id);
+}
+
 /** The verdicts a surface keeps while its approval and credential stand. */
 const MANAGER_REPROBE_VERDICTS: ReadonlyArray<Doc<'surfaces'>['verdict']> = [
   'connected',
@@ -651,6 +781,35 @@ function reprobedForManagerChange(surface: Doc<'surfaces'>): boolean {
     MANAGER_REPROBE_VERDICTS.includes(surface.verdict) &&
     (surface.verdict === 'connected' || isManagerLookupFailure(surface.reason))
   );
+}
+
+/**
+ * Schedule a probe of every chat surface a change of manager address can
+ * mend, so the manager DM moves to the new person at once and a surface that
+ * failed on the old person's lookup comes back (Q6). A probe that resolves a
+ * different Slack user writes `manager.changed` (`via: 'probe'`) and re-sends
+ * the open decision requests delivered to the previous DM
+ * (`resendDecisionsAfterManagerChange`). Mock mode has no provider to probe.
+ *
+ * @returns How many surfaces were scheduled for a probe.
+ */
+async function reprobeForManagerChange(ctx: MutationCtx, agentId: Id<'agents'>): Promise<number> {
+  if (SURFACE_MODE === 'mock') return 0;
+  const surfaces = (
+    await ctx.db
+      .query('surfaces')
+      .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+      .collect()
+  ).filter(reprobedForManagerChange);
+  await Promise.all(
+    surfaces.map(
+      async (surface) =>
+        await ctx.scheduler.runAfter(0, internal.surfaceActions.probeInternal, {
+          surfaceId: surface._id,
+        }),
+    ),
+  );
+  return surfaces.length;
 }
 
 /**
@@ -687,22 +846,7 @@ export const setBossEmail = mutation({
       payload: { via: 'dashboard', bossEmail },
       createdAt: now,
     });
-    if (SURFACE_MODE === 'mock') return { changed: true, reprobed: 0 };
-    const surfaces = (
-      await ctx.db
-        .query('surfaces')
-        .withIndex('by_agent', (q) => q.eq('agentId', agent._id))
-        .collect()
-    ).filter(reprobedForManagerChange);
-    await Promise.all(
-      surfaces.map(
-        async (surface) =>
-          await ctx.scheduler.runAfter(0, internal.surfaceActions.probeInternal, {
-            surfaceId: surface._id,
-          }),
-      ),
-    );
-    return { changed: true, reprobed: surfaces.length };
+    return { changed: true, reprobed: await reprobeForManagerChange(ctx, agent._id) };
   },
 });
 

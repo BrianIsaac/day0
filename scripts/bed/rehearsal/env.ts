@@ -3,6 +3,8 @@
  * operator's files without ever writing to them.
  */
 
+import { DEFAULT_LOCAL_MANAGER_ADDRESS } from '../../../src/agent/manager-address';
+
 /**
  * Application values copied from the operator's env file into the bed's.
  * Nothing here is a provider credential the agent acts with: the Linear key
@@ -116,7 +118,11 @@ export function envRefusal(source: Readonly<Record<string, string>>): string | u
     return 'the source env has neither OPENAI_API_KEY nor OPENAI_BASE_URL, and every step of the loop is a model call.';
   }
   if (!source.NEXT_PUBLIC_DEMO_BOSS_EMAIL?.trim()) {
-    return 'the source env has no NEXT_PUBLIC_DEMO_BOSS_EMAIL; real mode resolves the manager DM from it at deploy and cannot be corrected on a live agent.';
+    return (
+      'the source env has no NEXT_PUBLIC_DEMO_BOSS_EMAIL; real mode finds the manager DM from the ' +
+      `address the local sign-in carries, and without it that is ${DEFAULT_LOCAL_MANAGER_ADDRESS}, ` +
+      'which no Slack workspace knows.'
+    );
   }
   return undefined;
 }
