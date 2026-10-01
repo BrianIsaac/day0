@@ -449,6 +449,27 @@ describe('accept with a run in flight: the request waits in accepting (transfer 
     expect(await read(handover.harness, handover.transferId)).toEqual(ended);
   });
 
+  it('refuses before entering accepting when the move it waits for would be refused', async (): Promise<void> => {
+    const handover = await seedHandover('charter-pending');
+    await seedExecuting(handover, 'REVOPS-1');
+    await handover.harness.run(async (ctx) => {
+      for (let version = 0; version <= 100; version += 1) {
+        await ctx.db.insert('charters', {
+          agentId: handover.maya,
+          version: `0.${version}`,
+          body: runThroughBody(),
+          approved: false,
+          createdAt: 2,
+        });
+      }
+    });
+
+    await expect(accept(handover)).rejects.toMatchObject({
+      data: 'This employee has more than 100 draft charters, more than one handover can discard.',
+    });
+    expect(await read(handover.harness, handover.transferId)).toMatchObject({ state: 'asked' });
+  });
+
   it('settles nothing for a request no longer accepting', async (): Promise<void> => {
     const handover = await seedHandover();
     await accept(handover);
