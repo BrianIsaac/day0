@@ -442,16 +442,41 @@ export function declineReasonLabel(from: string): string {
 }
 
 /**
- * Said on the home once the acceptance lands: the employee is the acceptor's, or is finishing
- * the runs the move waits for.
+ * Said on the home once the acceptance lands, from what the acceptance answered: the employee is
+ * the acceptor's, or becomes theirs when its runs end. It names no count, which would go stale on
+ * the page once the runs ended; the line {@link arrivingLine} draws is the live one.
  *
  * @param name - The employee.
- * @param runs - The runs in flight when it was accepted.
+ * @param state - The request's state as `transferAcceptance.accept` answered it.
  */
-export function acceptedWords(name: string, runs: number): string {
-  if (runs === 0) return `${name} is yours.`;
-  const finishing = finishingRuns(runs);
-  return `Accepted. ${name} is finishing ${finishing.runs}; it becomes yours when ${finishing.end}.`;
+export function acceptedWords(name: string, state: 'accepted' | 'accepting'): string {
+  return state === 'accepted'
+    ? `${name} is yours.`
+    : `You accepted ${name}. It becomes yours when its runs end.`;
+}
+
+/** What the acceptor's line for an employee on its way is drawn from. */
+export interface ArrivingInput {
+  readonly name: string;
+  readonly from: string;
+  /** The runs the move waits for, as the backend counts them now. */
+  readonly runs: number;
+  /** When the runs are stopped at the latest. */
+  readonly settleBy: number | undefined;
+  readonly zone: string;
+}
+
+/** The heading of the acceptor's employees on their way (the transfer plan, section 4.2). */
+export const ON_ITS_WAY = 'On its way to you';
+
+/** The acceptor's line for an accepted employee still finishing its runs for the old manager. */
+export function arrivingLine(input: ArrivingInput): string {
+  const { runs, end } = finishingRuns(input.runs);
+  const deadline =
+    input.settleBy === undefined
+      ? ''
+      : `, by ${zonedStamp(input.settleBy, input.zone)} at the latest`;
+  return `${input.name} is finishing ${runs} for ${input.from} and becomes yours when ${end}${deadline}.`;
 }
 
 /**

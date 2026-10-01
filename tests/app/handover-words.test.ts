@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   acceptedWords,
+  arrivingLine,
   acceptingCardLine,
   askedCardLine,
   askedWords,
@@ -306,11 +307,29 @@ describe('the acceptance dialog (plan 7.3)', () => {
     );
   });
 
-  it('says the employee is the acceptor’s, or still finishing its runs', () => {
-    expect(acceptedWords('Maya', 0)).toBe('Maya is yours.');
-    expect(acceptedWords('Maya', 1)).toBe(
-      'Accepted. Maya is finishing 1 run; it becomes yours when it ends.',
+  it('says the employee is the acceptor’s, or becomes theirs when its runs end, as the acceptance answered', () => {
+    expect(acceptedWords('Maya', 'accepted')).toBe('Maya is yours.');
+    expect(acceptedWords('Maya', 'accepting')).toBe(
+      'You accepted Maya. It becomes yours when its runs end.',
     );
+  });
+
+  it('says on the acceptor’s home an employee is on its way, its runs and the deadline in the viewer’s zone (M2)', () => {
+    const settleBy = Date.UTC(2026, 9, 2, 11, 15);
+    expect(
+      arrivingLine({ name: 'Maya', from: 'sam@kestrel.example', runs: 1, settleBy, zone: 'UTC' }),
+    ).toBe(
+      'Maya is finishing 1 run for sam@kestrel.example and becomes yours when it ends, by 2 Oct 2026, 11:15, UTC time at the latest.',
+    );
+    expect(
+      arrivingLine({
+        name: 'Maya',
+        from: 'sam@kestrel.example',
+        runs: 0,
+        settleBy: undefined,
+        zone: 'UTC',
+      }),
+    ).toBe('Maya is finishing its runs for sam@kestrel.example and becomes yours when they end.');
   });
 });
 

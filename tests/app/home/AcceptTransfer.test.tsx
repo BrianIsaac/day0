@@ -20,6 +20,8 @@ const backend = vi.hoisted(() => ({
   hold: undefined as undefined | Promise<void>,
   /** Every queries object handed to `useQueries`, in render order. */
   subscriptions: [] as unknown[],
+  /** The state the acceptance answers with: moved at once, or waiting for the runs. */
+  acceptState: 'accepted' as 'accepted' | 'accepting',
 }));
 
 vi.mock('convex/react', () => ({
@@ -49,7 +51,9 @@ vi.mock('convex/react', () => ({
         throw new ConvexError(refusal);
       }
       if (backend.hold !== undefined) await backend.hold;
-      return name === 'transferAcceptance:accept' ? { agentId: 'agent-maya' } : null;
+      return name === 'transferAcceptance:accept'
+        ? { agentId: 'agent-maya', state: backend.acceptState }
+        : null;
     },
 }));
 
@@ -172,6 +176,7 @@ describe('AcceptTransfer', () => {
     backend.asked = [];
     backend.hold = undefined;
     backend.subscriptions = [];
+    backend.acceptState = 'accepted';
     route.search = '';
     route.replaced = [];
   });
@@ -336,13 +341,22 @@ describe('AcceptTransfer', () => {
     ]);
   });
 
-  it('says the employee is finishing its runs when it was accepted with runs in flight', async () => {
+  it('says the employee becomes the acceptor’s when its runs end, when the acceptance answers accepting', async () => {
     backend.preview = { ...PREVIEW, runsInFlight: 1 };
+    backend.acceptState = 'accepting';
     const view = mount(<AcceptTransfer />);
     await press(dialog(), 'Take on Maya');
     expect(said(view.container)).toEqual([
-      'Accepted. Maya is finishing 1 run; it becomes yours when it ends.',
+      'You accepted Maya. It becomes yours when its runs end.',
     ]);
+  });
+
+  it('says the employee is yours when the acceptance moved it, though the preview counted a run (M2)', async () => {
+    backend.preview = { ...PREVIEW, runsInFlight: 1 };
+    backend.acceptState = 'accepted';
+    const view = mount(<AcceptTransfer />);
+    await press(dialog(), 'Take on Maya');
+    expect(said(view.container)).toEqual(['Maya is yours.']);
   });
 
   it('keeps the dialog open on a refusal, says it there and nothing on the home', async () => {
