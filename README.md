@@ -912,7 +912,7 @@ It resolves values the way the running app does, which matters more than it soun
 
 ## Schema (`convex/schema.ts`)
 
-The schema contains 35 tables: 24 carry per-agent or agent-owned runtime state, two keep the records that outlive an employee (the owner's record of the employees it retired, and the requests to hand an employee to another manager), six hold owner-level documentation and credential state, one is the transient lease on the verification sandbox, and two are the deployment's own record of the migrations it has run and the release its rows are at.
+The schema contains 36 tables: 24 carry per-agent or agent-owned runtime state, two keep the records that outlive an employee (the owner's record of the employees it retired, and the requests to hand an employee to another manager), six hold owner-level documentation and credential state, one is the owner's skill library, one is the transient lease on the verification sandbox, and two are the deployment's own record of the migrations it has run and the release its rows are at.
 
 | Table | Purpose |
 |---|---|
@@ -937,6 +937,7 @@ The schema contains 35 tables: 24 carry per-agent or agent-owned runtime state, 
 | `managerNotes` | What the gate tells the manager about a finished run, sent per run or claimed by the hourly digest |
 | `corrections` | The manager's retry notes, rejection reasons and plan-cancel reasons kept per employee, real mode only, with the item they came from, the surfaces its plan touched and the later items whose plans applied them |
 | `skills` | Skill registry - `builtin` or `agent-authored`, shaped by surface class and operation |
+| `skillVersions` | The owner's skill library: each verified skill's body, its passing smoke test and the tools it needs, numbered per name, which an employee's `skills` row holds by version; kept when its author is retired, deleted with the owner's data |
 | `permissionGrants` | Scoped capability grants (revocable) |
 | `sandboxLeases` | The one lease on the verification sandbox: which authoring run may call it now, so employees authoring at once wait visibly instead of timing out on each other |
 | `events` | Event ticker |
