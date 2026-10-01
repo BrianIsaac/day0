@@ -134,7 +134,7 @@ describe('the paged trace export', (): void => {
       .action(api.exportActions.exportForAgent, { agentId });
     expect(head.manifest).toEqual({
       format: 'day0-trace',
-      version: 3,
+      version: 4,
       exportedAt: Date.UTC(2026, 8, 27, 17, 0),
       exportedOn: '2026-09-28',
       zone: 'Asia/Singapore',
@@ -142,6 +142,7 @@ describe('the paged trace export', (): void => {
       commit: 'd71b1cf8',
       pageRows: 100,
       eventTypes: [...EVENT_TYPES],
+      handovers: [],
     });
     expect(head.agent).toMatchObject({
       id: agentId,
@@ -153,6 +154,47 @@ describe('the paged trace export', (): void => {
     expect(head.next).toEqual({ section: 'charters', cursor: null });
     expect(head.credentialNames).toEqual([{ label: 'Linear service token' }]);
     expect(JSON.stringify(head)).not.toContain('boss@day0.local');
+  });
+
+  it('carries the employee’s accepted handovers in its manifest, oldest first, for a recompute to cut by tenure (the v0.12.0 walk)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedTracedAgent(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(agentId, { userId: 'wei' });
+      const request = {
+        agentId,
+        agentName: 'Priya',
+        fromAddress: MANAGER_ADDRESS,
+        toAddress: 'lead@day0.local',
+        requestedAt: 1_000,
+        expiresAt: 1_000 + 14 * 24 * 60 * 60 * 1000,
+      };
+      await ctx.db.insert('managerTransfers', {
+        ...request,
+        fromOwnerKey: 'priya',
+        toOwnerKey: 'wei',
+        state: 'accepted',
+        decidedAt: 9_000,
+      });
+      await ctx.db.insert('managerTransfers', {
+        ...request,
+        fromOwnerKey: 'owner',
+        toOwnerKey: 'priya',
+        state: 'accepted',
+        decidedAt: 5_000,
+      });
+      await ctx.db.insert('managerTransfers', {
+        ...request,
+        fromOwnerKey: 'wei',
+        state: 'declined',
+        decidedAt: 10_000,
+      });
+    });
+    const trace = await exportedTrace(harness.withIdentity(managerIdentity('wei')), agentId);
+    expect(trace.manifest.handovers).toEqual([
+      { agentId, fromOwnerKey: 'owner', toOwnerKey: 'priya', acceptedAt: 5_000 },
+      { agentId, fromOwnerKey: 'priya', toOwnerKey: 'wei', acceptedAt: 9_000 },
+    ]);
   });
 
   it('carries work items, charters, surfaces and events, and neither a stored secret nor the manager’s address', async (): Promise<void> => {

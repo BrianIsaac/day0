@@ -7,9 +7,10 @@ import {
 import { internalQuery, query, type QueryCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent } from './ownership';
-import { isEvaluationAgent } from './metrics';
+import { handoversFromTransfers, isEvaluationAgent } from './metrics';
 import { ownerRetirements } from './retirements';
 import { redactTokenShapes } from '../src/surfaces/redact';
+import type { AcceptedHandover } from '../src/metrics/tenure';
 import { agentZone, dayKey } from '../src/lib/zone';
 import {
   sectionAfter,
@@ -276,6 +277,32 @@ async function retiredEmployees(
   );
 }
 
+/** The request states a handover is accepted in, moved or still waiting for its runs (D18). */
+const ACCEPTED_HANDOVER_STATES = ['accepting', 'accepted'] as const;
+
+/**
+ * An employee's accepted handovers for its trace's manifest, oldest first, read as
+ * `metrics:forOwner` reads them: so a recompute from the trace cuts each manager's figures at the
+ * acceptance. The per-account bounds keep an employee's requests far under one page.
+ */
+async function acceptedHandoversOf(
+  ctx: QueryCtx,
+  agentId: Id<'agents'>,
+): Promise<AcceptedHandover[]> {
+  const byState = await Promise.all(
+    ACCEPTED_HANDOVER_STATES.map(
+      async (state) =>
+        await ctx.db
+          .query('managerTransfers')
+          .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', state))
+          .take(TRACE_PAGE_ROWS),
+    ),
+  );
+  return handoversFromTransfers(byState.flat()).toSorted(
+    (left, right) => left.acceptedAt - right.acceptedAt,
+  );
+}
+
 /**
  * The head of an agent's trace: the manifest, the agent, the owner section
  * and the credential labels, and where the first page starts. Internal; the
@@ -288,13 +315,14 @@ export const exportHead = internalQuery({
     const agent = await assertOwnsAgent(ctx, args.agentId);
     const { exportedAt } = args;
     const zone = agentZone(agent);
-    const [stamp, surfaces, retired] = await Promise.all([
+    const [stamp, surfaces, retired, handovers] = await Promise.all([
       ctx.db.query('deploymentVersions').order('desc').first(),
       ctx.db
         .query('surfaces')
         .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
         .take(TRACE_PAGE_ROWS),
       retiredEmployees(ctx, agent.userId),
+      acceptedHandoversOf(ctx, args.agentId),
     ]);
     const credentials = await Promise.all(
       [
@@ -314,6 +342,7 @@ export const exportHead = internalQuery({
         commit: stamp?.commit ?? null,
         pageRows: TRACE_PAGE_ROWS,
         eventTypes: EVENT_TYPES,
+        handovers,
       },
       agent: {
         id: agent._id,

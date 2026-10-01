@@ -11,18 +11,24 @@
  */
 import type { Doc } from '../../convex/_generated/dataModel';
 import type { EventType } from '../events/contract';
+import type { AcceptedHandover } from '../metrics/tenure';
 
 /** The format name every trace carries, so a file says what it is. */
 export const TRACE_FORMAT = 'day0-trace';
 
 /**
  * The trace format's version: 2 is the paged trace with a manifest; 3 adds
- * the delivery records of Day0's own messages and the event contract's types.
+ * the delivery records of Day0's own messages and the event contract's types;
+ * 4 adds the employee's accepted handovers to the manifest, so a recompute
+ * from traces cuts each manager's figures by tenure.
  */
-export const TRACE_VERSION = 3;
+export const TRACE_VERSION = 4;
 
-/** The earlier version this release still reads: a version 2 trace has no delivery records. */
-const READABLE_VERSIONS: ReadonlySet<unknown> = new Set([2, TRACE_VERSION]);
+/**
+ * The earlier versions this release still reads: a version 2 trace has no
+ * delivery records, and neither 2 nor 3 carries the handovers.
+ */
+const READABLE_VERSIONS: ReadonlySet<unknown> = new Set([2, 3, TRACE_VERSION]);
 
 /** The most rows one page returns, far inside the backend's 8,192-element bound. */
 export const TRACE_PAGE_ROWS = 100;
@@ -114,7 +120,7 @@ export type TraceRetirement = Omit<Doc<'retirements'>, 'userId'> | TombstoneReti
 export interface TraceManifest {
   readonly format: typeof TRACE_FORMAT;
   /** This release's version, or the earlier one a file read from an older export keeps. */
-  readonly version: 2 | typeof TRACE_VERSION;
+  readonly version: 2 | 3 | typeof TRACE_VERSION;
   readonly exportedAt: number;
   /** The export's date, `YYYY-MM-DD`, in the agent's zone. */
   readonly exportedOn: string;
@@ -129,6 +135,14 @@ export interface TraceManifest {
    * Absent from a version 2 trace.
    */
   readonly eventTypes?: readonly EventType[];
+  /**
+   * The employee's accepted handovers, oldest first: who held it before and after each, and
+   * when the named manager accepted. A trace is exported by the manager who holds the employee
+   * now and carries its whole history, so a recompute cuts each manager's figures at these, as
+   * `metrics:forOwner` cuts them (D12). Absent before version 4, where the history is read as
+   * the present holder's.
+   */
+  readonly handovers?: readonly AcceptedHandover[];
 }
 
 /** The first call's answer: everything but the paged sections, and where they start. */

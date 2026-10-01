@@ -22,9 +22,9 @@
  * valid JSON file.
  *
  * An employee handed to another manager counts for each within the spans they held it, as
- * `metrics:forOwner` counts it, read from the export's `managerTransfers` rows (D12). A trace
- * carries no request rows, so a recompute from traces counts each employee for the owner who
- * holds it now: after a handover, recompute from a snapshot export.
+ * `metrics:forOwner` counts it, read from the export's `managerTransfers` rows (D12), or from a
+ * trace's manifest, which carries the employee's accepted handovers from version 4. A trace of
+ * an earlier version carries none, so its employee counts for the owner who holds it now.
  *
  * `--owner` defaults to the traces' own owner, or to the no-auth subject
  * every local bed runs as for a snapshot. With `--expect`, every field the
@@ -255,14 +255,28 @@ export function recomputeFromTraces(
     evaluation: trace.agent.evaluation || trace.agent.arm === 'baseline',
     trace,
   }));
-  const selection = selectCompanyEmployees(agents, owner, (agent) => agent.evaluation);
-  const records: EmployeeRecords[] = selection.employees.map(({ trace, ...agent }) => ({
-    agent,
-    events: trace.sections.events,
-    workItems: trace.sections.workItems,
-    charters: trace.sections.charters,
-    surfaces: trace.sections.surfaces,
-  }));
+  // The manifests' handovers cut each employee's history at its acceptances, as
+  // `metrics:forOwner` cuts it (D12); one employee's trace exported twice names them twice.
+  const handovers = [
+    ...new Map(
+      traces
+        .flatMap((trace) => trace.manifest.handovers ?? [])
+        .map((handover) => [`${handover.agentId}:${handover.acceptedAt}`, handover] as const),
+    ).values(),
+  ];
+  const selection = selectCompanyEmployees(agents, owner, (agent) => agent.evaluation, handovers);
+  const records: EmployeeRecords[] = selection.employees.map(({ trace, ...agent }) =>
+    recordsWithinTenure(
+      {
+        agent,
+        events: trace.sections.events,
+        workItems: trace.sections.workItems,
+        charters: trace.sections.charters,
+        surfaces: trace.sections.surfaces,
+      },
+      selection.tenures.get(agent._id) ?? [],
+    ),
+  );
   return {
     owner,
     figures: computeCompanyMetrics(records, selection),
@@ -302,7 +316,7 @@ export function recompute(
       const trace = readAgentTrace(JSON.parse(readFileSync(path, 'utf8')));
       if (trace === undefined) {
         throw new Error(
-          `${path} is not a day0 trace (version 2 or 3); export it with pnpm export:trace`,
+          `${path} is not a day0 trace (version 2, 3 or 4); export it with pnpm export:trace`,
         );
       }
       return trace;
