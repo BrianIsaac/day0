@@ -3373,12 +3373,13 @@ export const HANDED_OVER_REQUEST_REASON =
 
 /**
  * Close the employee's open decision requests at a handover's move (the transfer plan, section
- * 6.4; D6). Each request asked and undecided, delivered or on its way, is marked failed with
- * {@link HANDED_OVER_REQUEST_REASON} and the failure recorded, so a reply to its code decides
- * nothing and the dashboard decides the row. A delivered one is sent again, with a fresh code, on
- * the new manager's DM once their chat surface connects ({@link resendDecisionsAfterManagerChange},
- * which re-sends a delivered request marked failed). A request already decided or already failed
- * is left as it is.
+ * 6.4; D6). Each request asked and undecided is closed and its failure recorded with
+ * {@link HANDED_OVER_REQUEST_REASON}, so a reply to its code decides nothing and the dashboard
+ * decides the row. A delivered one is marked failed and sent again, with a fresh code, on the new
+ * manager's DM once their chat surface connects ({@link resendDecisionsAfterManagerChange}, which
+ * re-sends a delivered request marked failed); one still on its way is taken off the row, so the
+ * stall sweep asks the new manager once a channel exists. A request already decided or already
+ * failed is left as it is.
  *
  * @param ctx - The move's mutation context.
  * @param agentId - The employee.
@@ -3405,8 +3406,13 @@ export async function voidDecisionRequestsForHandover(
     if (!decision || !askedFor(decision, row.state) || decision.requestFailedAt !== undefined) {
       continue;
     }
+    // A delivered request keeps its code, marked failed, for the probe to re-send; one still on
+    // its way would be re-sent by nothing, so it is taken back and the stall sweep asks afresh.
     await ctx.db.patch(row._id, {
-      decision: { ...decision, requestFailedAt: now, requestFailure: HANDED_OVER_REQUEST_REASON },
+      decision:
+        decision.ts === undefined
+          ? undefined
+          : { ...decision, requestFailedAt: now, requestFailure: HANDED_OVER_REQUEST_REASON },
     });
     await appendEvent(ctx, {
       agentId,
@@ -6772,6 +6778,11 @@ async function parkOnConnection(
   await ctx.db.patch(row._id, {
     state: 'deferred',
     verdict,
+    // Returned to evaluation, the item is planned again, as a send-back to drafting plans it.
+    plan: undefined,
+    planPendingAt: undefined,
+    planDraftedWithout: undefined,
+    managerAnswers: undefined,
     pendingRunId: undefined,
     approvedIndexes: undefined,
     actionVerdicts: undefined,

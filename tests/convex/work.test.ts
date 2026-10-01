@@ -7544,6 +7544,8 @@ describe('an approved write whose surface waits for its connection (U-3)', (): v
       verdict: { decision: 'defer', reason: 'awaiting-connection', missingSurface: 'linear' },
     });
     expect(parked.approvedIndexes).toBeUndefined();
+    // Planned again once it returns: a kept plan would leave a returned row claimed with no draft.
+    expect(parked.plan).toBeUndefined();
   });
 
   it('leaves a lapsed connection to the gate, as before', async (): Promise<void> => {

@@ -1149,6 +1149,23 @@ describe('an open decision request by DM at the move (transfer plan 6.4; 14.1 it
     expect(item.decision?.decidedAt).toBeUndefined();
   });
 
+  it('takes back a request still on its way, so the sweep asks the new manager once their channel connects', async (): Promise<void> => {
+    const { handover, workItemId } = await seedDelivered();
+    await handover.harness.run(async (ctx) => {
+      const row = await ctx.db.get(workItemId);
+      if (!row?.decision) throw new Error('no decision');
+      const { ts: _sent, ...claimed } = row.decision;
+      await ctx.db.patch(workItemId, { decision: claimed });
+    });
+
+    await accept(handover);
+
+    expect((await read(handover.harness, workItemId)).decision).toBeUndefined();
+    expect((await read(handover.harness, handover.transferId)).outcome).toMatchObject({
+      decisionRequestsVoided: 1,
+    });
+  });
+
   it('leaves a request already decided alone', async (): Promise<void> => {
     const { handover, workItemId } = await seedDelivered();
     await handover.harness.run(async (ctx) => {
