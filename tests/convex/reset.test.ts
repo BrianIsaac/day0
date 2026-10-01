@@ -137,6 +137,10 @@ describe('reset completeness', (): void => {
       'It keeps the two record tables that outlive an employee: `retirements`, and `managerTransfers`',
     );
     expect(security).toContain("the handover note and a decline's reason");
+    // And what it scrubs from them (decision 7, wave 10).
+    expect(security).toContain(
+      "The deletion clears the handover note and a decline's reason from every request the caller asked or was named in",
+    );
     expect(readme).toContain('| `externalClaims` |');
     expect(readme).toContain('| `corrections` |');
   });
