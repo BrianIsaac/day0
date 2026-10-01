@@ -43,6 +43,7 @@ import {
   TRANSFER_NOT_FOUND,
   transferExpiresAt,
   type ManagerTransferState,
+  type OpenManagerTransferState,
   type TransferCancelReason,
 } from '../src/agent/manager-transfer';
 import { DEV_NO_AUTH_ISSUER } from '../src/lib/dev-auth-issuer';
@@ -115,13 +116,21 @@ export function ownAddressRefusal(name: string): string {
 }
 
 /**
- * The refusal for a second request while one is open (the one-open rule).
+ * The refusal for a second request while one is open (the one-open rule), in the open request's
+ * own terms: an asked one can be changed or cancelled, an accepting one can be neither (U2-m1).
  *
  * @param name - The employee's name.
  * @param toAddress - The address the open request names.
+ * @param state - The open request's state.
  */
-export function openTransferRefusal(name: string, toAddress: string): string {
-  return `${name} already has a handover open to ${toAddress}. Change the address or cancel it first.`;
+export function openTransferRefusal(
+  name: string,
+  toAddress: string,
+  state: OpenManagerTransferState,
+): string {
+  return state === 'accepting'
+    ? `${name}'s handover to ${toAddress} was already accepted: ${name} becomes theirs when its runs end.`
+    : `${name} already has a handover open to ${toAddress}. Change the address or cancel it first.`;
 }
 
 /**
@@ -601,7 +610,15 @@ async function askInTransaction(
     if (isTransferDue(transfer, now)) await expireInTransaction(ctx, transfer, now);
   }
   const [open] = await openRequests(ctx, { agentId: agent._id }, now);
-  if (open) throw new ConvexError(openTransferRefusal(agentName, open.toAddress));
+  if (open) {
+    throw new ConvexError(
+      openTransferRefusal(
+        agentName,
+        open.toAddress,
+        open.state === 'accepting' ? 'accepting' : 'asked',
+      ),
+    );
+  }
   await assertWithinBounds(ctx, caller.ownerKey, toAddress, now);
 
   const transferId = await ctx.db.insert('managerTransfers', {

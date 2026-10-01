@@ -311,24 +311,29 @@ describe('managerTransfers.ask', (): void => {
           toAddress: fixtureAddressOf('wei'),
         }),
       ),
-    ).toBe(openTransferRefusal('Maya', PRIYA_ADDRESS));
-    expect(openTransferRefusal('Maya', PRIYA_ADDRESS)).toBe(
+    ).toBe(openTransferRefusal('Maya', PRIYA_ADDRESS, 'asked'));
+    expect(openTransferRefusal('Maya', PRIYA_ADDRESS, 'asked')).toBe(
       'Maya already has a handover open to priya@day0.local. Change the address or cancel it first.',
     );
   });
 
-  it('refuses a second request while one is accepting', async (): Promise<void> => {
+  it('refuses a second request while one is accepting, in the words of an accepted handover rather than ones that offer a change (U2-m1)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const maya = await employee(harness);
     await insertRequest(harness, { agentId: maya, state: 'accepting' });
-    expect(
-      await refusal(
-        harness.withIdentity(OWNER).mutation(api.managerTransfers.ask, {
-          agentId: maya,
-          toAddress: fixtureAddressOf('wei'),
-        }),
-      ),
-    ).toBe(openTransferRefusal('Maya', PRIYA_ADDRESS));
+    const refused = await refusal(
+      harness.withIdentity(OWNER).mutation(api.managerTransfers.ask, {
+        agentId: maya,
+        toAddress: fixtureAddressOf('wei'),
+      }),
+    );
+    expect(refused).toBe(openTransferRefusal('Maya', PRIYA_ADDRESS, 'accepting'));
+    expect(refused).toBe(
+      `Maya's handover to ${PRIYA_ADDRESS} was already accepted: Maya becomes theirs when its runs end.`,
+    );
+    expect(openTransferRefusal('Maya', PRIYA_ADDRESS, 'asked')).toBe(
+      `Maya already has a handover open to ${PRIYA_ADDRESS}. Change the address or cancel it first.`,
+    );
   });
 
   it('expires an open request past its expiry in the ask, so it holds nothing, and asks again', async (): Promise<void> => {
