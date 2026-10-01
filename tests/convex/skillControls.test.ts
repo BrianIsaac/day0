@@ -8,6 +8,7 @@ import schema from '../../convex/schema';
 import type { SkillSandboxRun } from '../../src/lib/skill-sandbox';
 import { versionBodyHash } from '../../src/work/skill-library';
 import { parkedCheckLog } from '../../src/work/skill-adoption';
+import { WAITING_BATCH } from '../../convex/waitingWork';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
@@ -1286,6 +1287,47 @@ describe('skillControls', (): void => {
       ).rejects.toThrow('A built-in skill comes with the employee and is not re-checked.');
     });
 
+    it('releases the claim each cancelled item holds on its provider item, as cancelling a plan does (the wave 10 review, M9)', async (): Promise<void> => {
+      const harness = convexTest(schema, allConvexModules());
+      const office = await seedOffice(harness);
+      const failing = await harness.run(
+        async (ctx) =>
+          await ctx.db.insert('skills', {
+            agentId: office.priya,
+            name: 'analytics-refresh-value',
+            description: 'Refresh a tile.',
+            body: '',
+            sourceType: 'agent-authored',
+            state: 'failed',
+            authoringAttempts: 3,
+            createdAt: 1,
+          }),
+      );
+      // Parked at needs-skill by a Retire, keeping the claim its approved plan took.
+      const parked = await seedItem(harness, office.priya, {
+        state: 'needs-skill',
+        externalId: 'LIN-5',
+        externalClaimKey: 'linear:LIN-5',
+        proposedSkillId: failing,
+      });
+      const claim = await harness.run(
+        async (ctx) =>
+          await ctx.db.insert('externalClaims', {
+            userId: 'owner',
+            key: 'linear:LIN-5',
+            agentId: office.priya,
+            workItemId: parked,
+            claimedAt: 1,
+          }),
+      );
+
+      await harness.withIdentity(OWNER).mutation(api.skillControls.giveUp, { skillId: failing });
+
+      expect((await item(harness, parked)).state).toBe('cancelled');
+      const released = await harness.run(async (ctx) => await ctx.db.get(claim));
+      expect(released?.releasedAt).toBeTypeOf('number');
+    });
+
     it('gives up a failed revision without cancelling the work its original was proposed for', async (): Promise<void> => {
       const harness = convexTest(schema, allConvexModules());
       const office = await seedOffice(harness);
@@ -1354,7 +1396,8 @@ describe('skillControls', (): void => {
 
       await expect(
         harness.withIdentity(OWNER).mutation(api.skillControls.giveUp, { skillId: failing }),
-      ).resolves.toEqual({ givenUp: true, cancelled: 200 });
+        // Re-pinned (M9): Give up takes the walk a rejection takes, a batch per transaction.
+      ).resolves.toEqual({ givenUp: true, cancelled: WAITING_BATCH });
       await harness.finishAllScheduledFunctions(vi.runAllTimers);
 
       const left = await harness.run(async (ctx) =>

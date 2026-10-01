@@ -67,6 +67,7 @@ import type * as transferInFlight from '../transferInFlight.js';
 import type * as transferNotice from '../transferNotice.js';
 import type * as transferPreview from '../transferPreview.js';
 import type * as voice from '../voice.js';
+import type * as waitingWork from '../waitingWork.js';
 import type * as work from '../work.js';
 import type * as workActions from '../workActions.js';
 import type * as workLoop from '../workLoop.js';
@@ -134,6 +135,7 @@ declare const fullApi: ApiFromModules<{
   transferNotice: typeof transferNotice;
   transferPreview: typeof transferPreview;
   voice: typeof voice;
+  waitingWork: typeof waitingWork;
   work: typeof work;
   workActions: typeof workActions;
   workLoop: typeof workLoop;

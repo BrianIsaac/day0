@@ -796,6 +796,34 @@ describe('registration and the library (10-K)', (): void => {
   });
 });
 
+describe('skills.reject and the work waiting for the skill (the wave 10 review, M9)', (): void => {
+  it('releases the claim a cancelled item holds on its provider item', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedAgentAndWork(harness, 'tickets');
+    const skillId = await propose(harness, agentId, workItemId);
+    const claim = await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, { state: 'needs-skill', proposedSkillId: skillId });
+      return await ctx.db.insert('externalClaims', {
+        userId: 'owner',
+        key: 'linear:LIN-5',
+        agentId,
+        workItemId,
+        claimedAt: 1,
+      });
+    });
+
+    await harness.withIdentity(OWNER).mutation(api.skills.reject, { skillId });
+
+    const [item, released] = await harness.run(async (ctx) => [
+      await ctx.db.get(workItemId),
+      await ctx.db.get(claim),
+    ]);
+    expect(item?.state).toBe('cancelled');
+    expect(released?.releasedAt).toBeTypeOf('number');
+  });
+});
+
 describe('skills.approve while a handover waits for its runs (U3-m3)', (): void => {
   /** A request of the employee's in `state`, naming the colleague. */
   async function seedTransfer(

@@ -14,6 +14,7 @@ import { appendEvent, eventsOfType } from './eventLog';
 import { assertNotBeingHandedOver } from './handoverFence';
 import { holdersOf, newerVersionToRecheck } from './skillVersions';
 import { applyVerdict, stopRunsInTransaction } from './work';
+import { moveWaitingWork } from './waitingWork';
 import { scheduleNextStep, STEP_LEASE_MS } from './workLoop';
 import { isEventOf, type SkillRevokedHolder } from '../src/events/contract';
 import { holdsLiveAuthoringClaim } from '../src/lib/skill-authoring';
@@ -54,8 +55,8 @@ const releasedClaim = { authoringRunId: undefined, authoringClaimedAt: undefined
  */
 const APPROVED_SCAN = 200;
 
-/** Parked items one batch of a Give up's cancellation reads before it continues by schedule. */
-const CANCEL_SCAN = 200;
+/** Parked items of one employee an ended adoption reads for the ones that waited on it. */
+const WAITING_SCAN = 200;
 
 /**
  * The owner's employees a Withdraw reads for adoptions offering the version, and each one's rows
@@ -659,6 +660,15 @@ async function endAdoptionsOf(
   }
 }
 
+/**
+ * Whether a parked item waited on an adoption's row: linked to it, or the item the row was
+ * proposed for when that one is linked to nothing. An adoption is never a revision.
+ */
+function waitedOnAdoption(item: Doc<'workItems'>, row: Doc<'skills'>): boolean {
+  if (item.proposedSkillId === row._id) return true;
+  return item.proposedSkillId === undefined && item._id === row.proposedFor;
+}
+
 /** One adoption ended because its version was withdrawn ({@link endAdoptionsOf}). */
 async function endAdoption(
   ctx: MutationCtx,
@@ -688,8 +698,8 @@ async function endAdoption(
     await ctx.db
       .query('workItems')
       .withIndex('by_agent_state', (q) => q.eq('agentId', row.agentId).eq('state', 'needs-skill'))
-      .take(CANCEL_SCAN)
-  ).filter((item) => waitsFor(item, row));
+      .take(WAITING_SCAN)
+  ).filter((item) => waitedOnAdoption(item, row));
   const returned: Id<'workItems'>[] = [];
   for (const item of waiting) {
     await parkForSkill(ctx, item, {
@@ -743,88 +753,14 @@ export const recheckNow = mutation({
   },
 });
 
-/** Where a Give up's cancellation is: the skill, the reason each item carries, the batch's start. */
-interface Cancellation {
-  readonly skill: Doc<'skills'>;
-  readonly reason: string;
-  /** Where the previous batch stopped; absent for the first. */
-  readonly after?: number;
-}
-
-/**
- * Whether a parked item waits for this skill: linked to it, or, for a skill that is no revision,
- * the item it was proposed for when that one is linked to nothing. A revision shares its original's
- * source item without being what that item waits for, so only its own links reach it.
- */
-function waitsFor(item: Doc<'workItems'>, skill: Doc<'skills'>): boolean {
-  if (item.proposedSkillId === skill._id) return true;
-  return (
-    skill.revisionOf === undefined &&
-    item.proposedSkillId === undefined &&
-    item._id === skill.proposedFor
-  );
-}
-
-/**
- * Cancel the parked items waiting for a skill that will never register ({@link waitsFor}), a
- * batch per transaction. Each carries the reason on its card and a `work.cancelled` event.
- *
- * @param ctx - The control's or its continuation's mutation context.
- * @param cancellation - The skill, the reason, and where the batch starts.
- * @returns How many items this batch cancelled.
- */
-async function cancelWaitingWork(ctx: MutationCtx, cancellation: Cancellation): Promise<number> {
-  const { skill, reason, after } = cancellation;
-  const page = await ctx.db
-    .query('workItems')
-    .withIndex('by_agent_state', (q) => {
-      const parked = q.eq('agentId', skill.agentId).eq('state', 'needs-skill');
-      return after === undefined ? parked : parked.gt('_creationTime', after);
-    })
-    .take(CANCEL_SCAN);
-  let cancelled = 0;
-  for (const item of page) {
-    if (!waitsFor(item, skill)) continue;
-    await ctx.db.patch(item._id, { state: 'cancelled', skipReason: reason });
-    await appendEvent(ctx, {
-      agentId: item.agentId,
-      type: 'work.cancelled',
-      payload: { workItemId: item._id, skillId: skill._id, reason },
-      createdAt: Date.now(),
-    });
-    await scheduleNextStep(ctx, { ...item, state: 'cancelled' });
-    cancelled += 1;
-  }
-  const last = page.at(-1);
-  if (page.length === CANCEL_SCAN && last !== undefined) {
-    await ctx.scheduler.runAfter(0, internal.skillControls.continueCancellingWaitingWork, {
-      skillId: skill._id,
-      reason,
-      after: last._creationTime,
-    });
-  }
-  return cancelled;
-}
-
-/**
- * Internal, scheduled by a Give up whose employee had more parked items than one batch reads:
- * the next batch, while the skill is still given up.
- */
-export const continueCancellingWaitingWork = internalMutation({
-  args: { skillId: v.id('skills'), reason: v.string(), after: v.number() },
-  handler: async (ctx, args): Promise<{ cancelled: number }> => {
-    const skill = await ctx.db.get(args.skillId);
-    if (skill?.state !== 'rejected') return { cancelled: 0 };
-    return {
-      cancelled: await cancelWaitingWork(ctx, { skill, reason: args.reason, after: args.after }),
-    };
-  },
-});
-
 /**
  * Public, guarded by `assertOwnsSkill`: Give up on a skill that failed its check. The row goes to
  * `rejected`, keeping its last failure on the row, and every item waiting for it is cancelled
- * with "given up after n attempts". Writes `skill.given-up` and a `work.cancelled` per item.
+ * with "given up after n attempts", its claim on the provider item released, through the walk a
+ * rejection takes (`waitingWork.moveWaitingWork`; the wave 10 review, M9): a batch here, the rest
+ * by schedule. Writes `skill.given-up` and a `work.cancelled` per item.
+ *
+ * @returns How many items this transaction cancelled.
  */
 export const giveUp = mutation({
   args: { skillId: v.id('skills') },
@@ -844,10 +780,7 @@ export const giveUp = mutation({
       payload: { skillId: row._id, name: row.name, reason, attempts },
       createdAt: Date.now(),
     });
-    const cancelled = await cancelWaitingWork(ctx, {
-      skill: { ...row, state: 'rejected' },
-      reason,
-    });
+    const cancelled = await moveWaitingWork(ctx, row, { kind: 'cancel', reason });
     return { givenUp: true, cancelled };
   },
 });
