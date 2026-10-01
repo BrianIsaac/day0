@@ -158,7 +158,7 @@ describe('AdoptionCard', (): void => {
     );
     const text = view.container.textContent ?? '';
     expect(text).toContain(
-      'Why it stopped: no sandbox was running to check it, which whoever runs Day0 for you can start.',
+      'Why it stopped: no sandbox was running to check it; the operator can start one.',
     );
     for (const operatorWord of ['DAYTONA_API_KEY', 'pnpm', 'ECONNREFUSED', '.sock']) {
       expect(text).not.toContain(operatorWord);
@@ -183,7 +183,7 @@ describe('AdoptionCard', (): void => {
     // Why it stopped, without the other card's control: the log's own "Retry" line is not said.
     // Re-pinned (A-m6): why it stopped in the manager's words, not the operator's.
     expect(view.container.textContent).toContain(
-      'Why it stopped: no sandbox was running to check it, which whoever runs Day0 for you can start.',
+      'Why it stopped: no sandbox was running to check it; the operator can start one.',
     );
     expect(view.container.textContent).not.toContain('Retry');
     expect(buttonNames(view.container)).toEqual([
@@ -200,10 +200,22 @@ describe('AdoptionCard', (): void => {
         refusal: 'the offered skill was withdrawn from every employee',
       }),
     );
+    // Re-pinned (the second pass): the withdrawal is said once, in the lead, with the moves left.
     expect(withdrawn.container.textContent).toContain(
-      'Cannot check it again: the offered skill was withdrawn from every employee',
+      "Adopting Priya's skill kanban-comment-and-close for Mateo stopped, and the version was then withdrawn from every employee. Mateo cannot use it. Write a new one instead, or decline it.",
     );
+    expect(withdrawn.container.textContent).not.toContain('Cannot check it again');
     expect(withdrawn.container.querySelector('button')?.disabled).toBe(true);
+  });
+
+  it('says a withdrawn offer once: no scopes to gain and no second refusal line (the second pass)', (): void => {
+    const view = mount(
+      card('offered', { refusal: 'the offered skill was withdrawn from every employee' }),
+    );
+    const text = view.container.textContent ?? '';
+    expect(text).toContain('was withdrawn from every employee. Mateo cannot adopt it.');
+    expect(text).not.toContain('Cannot adopt now');
+    expect(text).not.toContain('Scopes Mateo would gain');
   });
 
   it('shows a failed check with its log, and offers Write a new one instead and Decline', (): void => {

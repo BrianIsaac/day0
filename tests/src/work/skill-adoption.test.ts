@@ -311,20 +311,26 @@ describe('stalledWords (the wave 10 review, A-m6)', (): void => {
       stalledWords(
         'DAYTONA_API_KEY not set and the local sandbox is not running (/run/x.sock: ECONNREFUSED). Start it with `pnpm sandbox:up`.',
       ),
-    ).toBe('no sandbox was running to check it, which whoever runs Day0 for you can start');
+    ).toBe('no sandbox was running to check it; the operator can start one');
     expect(stalledWords('no sandbox backend answered')).toBe(
-      'no sandbox was running to check it, which whoever runs Day0 for you can start',
+      'no sandbox was running to check it; the operator can start one',
     );
     expect(stalledWords('the verification sandbox was busy with another skill for 5 minutes')).toBe(
       'the sandbox was busy checking another skill for 5 minutes',
     );
     expect(stalledWords('the sandbox threw: socket closed')).toBe(
-      'the sandbox stopped before it reached a verdict',
+      'the sandbox failed while it ran',
     );
     expect(
       stalledWords('the smoke test for its unchanged body could not be written: model down'),
     ).toBe('the check for it could not be written');
-    expect(stalledWords('something else entirely')).toBe('the check could not run');
+    expect(stalledWords('something else entirely')).toBe('Day0 could not start the check');
+    // A check that could not be written names the model's error, which may refuse a connection.
+    expect(
+      stalledWords(
+        'the smoke test for its unchanged body could not be written: connect ECONNREFUSED 10.0.0.1:443',
+      ),
+    ).toBe('the check for it could not be written');
     expect(stalledWords(undefined)).toBeUndefined();
   });
 });

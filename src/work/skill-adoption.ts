@@ -376,12 +376,13 @@ export function stalledWords(reason: string | undefined): string | undefined {
     const minutes = Number(busy[1]);
     return `the sandbox was busy checking another skill for ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`;
   }
-  if (NO_SANDBOX.test(reason)) {
-    return 'no sandbox was running to check it, which whoever runs Day0 for you can start';
-  }
+  // Before the sandbox's own words: a check that could not be written names a model's error,
+  // which can carry the same refused connection.
   if (CHECK_NOT_WRITTEN.test(reason)) return 'the check for it could not be written';
-  if (SANDBOX_FAILED.test(reason)) return 'the sandbox stopped before it reached a verdict';
-  return 'the check could not run';
+  if (NO_SANDBOX.test(reason))
+    return 'no sandbox was running to check it; the operator can start one';
+  if (SANDBOX_FAILED.test(reason)) return 'the sandbox failed while it ran';
+  return 'Day0 could not start the check';
 }
 
 /** The month names the card prints a day with. */
@@ -485,11 +486,17 @@ export function adoptionWords(input: AdoptionWordsInput): AdoptionWords {
         ...scopes,
       };
     case 'stalled':
-      return {
-        lead: `Adopting ${skill} for ${adopterName} stopped before the sandbox finished checking it.`,
-        body: `${adopterName} cannot use it yet. Check it again, write a new one instead, or decline it.`,
-        ...scopes,
-      };
+      return input.withdrawn === true
+        ? {
+            lead: `Adopting ${skill} for ${adopterName} stopped, and the version was then withdrawn from every employee.`,
+            body: `${adopterName} cannot use it. Write a new one instead, or decline it.`,
+            ...scopes,
+          }
+        : {
+            lead: `Adopting ${skill} for ${adopterName} stopped before the sandbox finished checking it.`,
+            body: `${adopterName} cannot use it yet. Check it again, write a new one instead, or decline it.`,
+            ...scopes,
+          };
     case 'failed':
       return {
         lead: `${opening} failed its re-verification for ${adopterName}.`,

@@ -82,6 +82,8 @@ export function AdoptionCard({
   onDecline: () => void;
 }) {
   const zone = useAgentZone() ?? deploymentZone();
+  // A withdrawn version is said once, in the lead: no scopes to gain, no second refusal line.
+  const withdrawn = adoption.refusal === OFFER_WITHDRAWN_REFUSAL;
   const words = adoptionWords({
     state,
     adopterName,
@@ -89,7 +91,7 @@ export function AdoptionCard({
     skillName: adoption.name,
     verifiedOn: verifiedOnDay(adoption.verifiedAt, zone),
     ...(adoption.connection !== undefined ? { connection: adoption.connection } : {}),
-    withdrawn: adoption.refusal === OFFER_WITHDRAWN_REFUSAL,
+    withdrawn,
   });
   // The approval's own refusal is said once, with where to fix it; the offer's own, when it
   // differs, is said beside it, since it withholds Adopt alone.
@@ -107,7 +109,7 @@ export function AdoptionCard({
         <p className="break-words">
           <span className="text-[var(--color-fg)]">{words.lead}</span> {words.body}
         </p>
-        {state === 'offered' ? (
+        {state === 'offered' && !withdrawn ? (
           <p className="mt-1.5 text-xs text-[var(--color-muted)]">
             {adoption.missingScopes.length > 0 ? (
               <ScopeChips scopes={adoption.missingScopes} lead={`${words.scopesLead}:`} />
@@ -133,12 +135,12 @@ export function AdoptionCard({
           </a>
         </p>
       ) : null}
-      {state === 'offered' && offerRefusal ? (
+      {state === 'offered' && offerRefusal && !withdrawn ? (
         <p className="text-[13px] text-[var(--color-warn)] break-words">
           Cannot adopt now: {offerRefusal}
         </p>
       ) : null}
-      {state === 'stalled' && adoption.refusal ? (
+      {state === 'stalled' && adoption.refusal && !withdrawn ? (
         <p className="text-[13px] text-[var(--color-warn)] break-words">
           Cannot check it again: {adoption.refusal}
         </p>
