@@ -1,13 +1,7 @@
 'use client';
 
 import { Show, SignInButton, SignUpButton, UserButton } from '@clerk/nextjs';
-import {
-  useEffect,
-  useId,
-  useRef,
-  useState,
-  type KeyboardEvent as ReactKeyboardEvent,
-} from 'react';
+import { useEffect, useId, useRef, useState, type FocusEvent as ReactFocusEvent } from 'react';
 import { CUSTOMER_SIGN_IN, type SessionAccount } from '@/lib/customer-sign-in';
 import { DEV_NO_AUTH } from '@/lib/dev-auth';
 import { useAccount } from './account';
@@ -156,8 +150,10 @@ export function accountInitials(account: SessionAccount): string {
 /**
  * The customer-local account menu: a 44 px button with the person's initials, opening to their
  * name, address and Sign out (N14). A disclosure rather than an ARIA menu, since it holds text as
- * well as the one control; Escape and a press outside close it, and Escape gives focus back to the
- * button. The slot keeps its 44 px while the session is read, so the nav never moves.
+ * well as the one control; Escape, a press outside and keyboard focus moving out close it, and
+ * Escape gives focus back to the button when it was inside. It opens with a short scale and fade
+ * from its corner, none where motion is reduced. The slot keeps its 44 px while the session is
+ * read, so the nav never moves.
  */
 function CustomerAccountMenu(): React.ReactElement {
   const state = useCustomerAccount();
@@ -171,37 +167,50 @@ function CustomerAccountMenu(): React.ReactElement {
     function closeOutside(event: PointerEvent): void {
       if (holder.current && !holder.current.contains(event.target as Node)) setOpen(false);
     }
+    // On the document, not the menu: a browser that does not focus a pressed button leaves focus
+    // outside it, and Escape must still close it. Focus goes back to the button only from inside.
+    function closeOnEscape(event: KeyboardEvent): void {
+      if (event.key !== 'Escape') return;
+      const focusInside = holder.current?.contains(document.activeElement) ?? false;
+      setOpen(false);
+      if (focusInside) button.current?.focus();
+    }
     document.addEventListener('pointerdown', closeOutside);
-    return () => document.removeEventListener('pointerdown', closeOutside);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOutside);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
   }, [open]);
 
   if (state.status !== 'signed-in') {
     return <div aria-hidden="true" className="size-11" />;
   }
   const account = state.account;
-  const label = account.name ?? account.email ?? 'your account';
+  const label = account.name ?? account.email;
 
-  function closeOnEscape(event: ReactKeyboardEvent<HTMLDivElement>): void {
-    if (event.key !== 'Escape' || !open) return;
-    event.stopPropagation();
-    setOpen(false);
-    button.current?.focus();
+  // Keyboard focus moving out (Tab past Sign out) closes it, so an open panel never covers the
+  // control focus moved to (WCAG 2.4.11). Focus going nowhere is a press on the panel's own text,
+  // which the press-outside rule above already answers.
+  function closeOnFocusOut(event: ReactFocusEvent<HTMLDivElement>): void {
+    const next = event.relatedTarget;
+    if (next instanceof Node && !event.currentTarget.contains(next)) setOpen(false);
   }
 
   return (
-    <div ref={holder} className="relative" onKeyDown={closeOnEscape}>
+    <div ref={holder} className="relative" onBlur={closeOnFocusOut}>
       <button
         ref={button}
         type="button"
         aria-expanded={open}
         aria-controls={panelId}
-        aria-label={`Account: ${label}`}
+        aria-label={label ? `Account: ${label}` : 'Account menu'}
         onClick={(): void => setOpen((was) => !was)}
-        className="grid size-11 place-items-center rounded-full"
+        className="group grid size-11 place-items-center rounded-full focus-visible:outline-offset-[-4px]"
       >
         <span
           aria-hidden="true"
-          className="grid size-8 place-items-center rounded-full border border-[var(--color-accent-line)] bg-[var(--color-accent-soft)] text-xs font-semibold text-[var(--color-accent)]"
+          className="grid size-8 place-items-center rounded-full border border-[var(--color-accent-line)] bg-[var(--color-accent-soft)] text-xs font-semibold text-[var(--color-accent)] transition-colors duration-150 group-hover:border-[var(--color-accent)] group-aria-expanded:border-[var(--color-accent)]"
         >
           {accountInitials(account)}
         </span>
@@ -209,7 +218,7 @@ function CustomerAccountMenu(): React.ReactElement {
       <div
         id={panelId}
         hidden={!open}
-        className="absolute right-0 top-full z-20 mt-2 grid w-64 max-w-[calc(100vw-2rem)] gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] p-4 shadow-lg"
+        className="absolute right-0 top-[calc(100%+0.375rem)] z-20 grid w-64 max-w-[calc(100vw-2rem)] origin-top-right gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] p-4 transition-[opacity,scale] duration-150 ease-out starting:scale-[0.96] starting:opacity-0 motion-reduce:transition-none"
       >
         <div className="grid min-w-0 gap-0.5">
           {account.name && <p className="truncate text-sm font-medium">{account.name}</p>}

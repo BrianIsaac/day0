@@ -140,6 +140,35 @@ describe('the customer-local account menu', (): void => {
     expect(document.activeElement).toBe(button);
   });
 
+  it('closes when keyboard focus leaves it, and on Escape wherever focus is', async (): Promise<void> => {
+    const container = await mountHeader();
+    const elsewhere = document.createElement('button');
+    elsewhere.textContent = 'elsewhere';
+    document.body.append(elsewhere);
+    const button = menuButton(container);
+    act((): void => button.click());
+    const signOut = container.querySelector<HTMLButtonElement>('form button');
+    act((): void => signOut?.focus());
+    act((): void => elsewhere.focus());
+    expect(button.getAttribute('aria-expanded')).toBe('false');
+
+    // Opened by a pointer on a browser that does not focus a pressed button: focus is elsewhere.
+    act((): void => button.click());
+    expect(button.getAttribute('aria-expanded')).toBe('true');
+    expect(document.activeElement).toBe(elsewhere);
+    act((): void => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    expect(button.getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement).toBe(elsewhere);
+    elsewhere.remove();
+  });
+
+  it('names an account that carries neither a name nor an address as the account menu', async (): Promise<void> => {
+    const container = await mountHeader({});
+    expect(menuButton(container).getAttribute('aria-label')).toBe('Account menu');
+  });
+
   it('falls back to the address when the token names nobody', async (): Promise<void> => {
     const container = await mountHeader({ email: 'mateo@acme.test' });
     const button = menuButton(container);
