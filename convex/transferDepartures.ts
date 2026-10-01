@@ -39,6 +39,27 @@ export async function afterwardsOf(
   return 'moved-on';
 }
 
+/**
+ * Whether the employee an accepted request moved came back to the reader since: an accepted
+ * request to the reader decided after it. The handover is then no longer where the employee
+ * went, whatever became of it after (the wave 10 bed: a manager who took an employee back and
+ * retired it read that it was "handed over ... and has since been retired").
+ *
+ * @param transfer - The accepted request the reader asked.
+ * @param readerKey - The owner key of the manager who reads it.
+ */
+export async function cameBackSince(
+  ctx: QueryCtx,
+  transfer: Doc<'managerTransfers'>,
+  readerKey: string,
+): Promise<boolean> {
+  const accepted = await ctx.db
+    .query('managerTransfers')
+    .withIndex('by_agent_state', (q) => q.eq('agentId', transfer.agentId).eq('state', 'accepted'))
+    .take(EMPLOYEE_REQUESTS_LIMIT);
+  return lastDeparture(accepted, readerKey)?._id !== transfer._id;
+}
+
 /** Where an employee the reader handed over went, and what became of it since. */
 const departureValidator = v.object({
   transferId: v.id('managerTransfers'),

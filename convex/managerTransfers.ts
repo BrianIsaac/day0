@@ -14,7 +14,7 @@ import {
 import { appendEvent } from './eventLog';
 import { runsInFlight } from './transferInFlight';
 import { noticeSurfaceOf } from './transferNotice';
-import { afterwardsOf, afterwardsValidator } from './transferDepartures';
+import { afterwardsOf, afterwardsValidator, cameBackSince } from './transferDepartures';
 import { isEvaluationAgent } from './metrics';
 import {
   assertNamedInTransfer,
@@ -806,7 +806,8 @@ export const earlierManagers = query({
  * last answer (section 7.1). An asked request past its expiry reads as
  * expired at its expiry; an accepted one says what became of the employee
  * since, so the notice never says it reports to someone it left or was
- * retired by (the v0.12.0 walk). An anonymous caller has none. Writes nothing.
+ * retired by (the v0.12.0 walk), and one the employee came back from since is
+ * left out. An anonymous caller has none. Writes nothing.
  */
 export const departures = query({
   args: {},
@@ -837,24 +838,31 @@ export const departures = query({
       })
       .sort((left, right) => right.decidedAt - left.decidedAt)
       .slice(0, DEPARTURES_LIMIT);
-    return await Promise.all(
+    const read = await Promise.all(
       answered.map(async ({ transfer, state, decidedAt }) => {
+        // A handover the employee came back from since is not where it went any more.
+        if (state === 'accepted' && (await cameBackSince(ctx, transfer, caller.ownerKey))) {
+          return [];
+        }
         const afterwards =
           state === 'accepted' ? await afterwardsOf(ctx, transfer, caller.ownerKey) : undefined;
-        return {
-          transferId: transfer._id,
-          agentId: transfer.agentId,
-          agentName: transfer.agentName,
-          toAddress: transfer.toAddress,
-          state,
-          decidedAt,
-          ...(transfer.declineReason !== undefined
-            ? { declineReason: transfer.declineReason }
-            : {}),
-          ...(afterwards === undefined ? {} : { afterwards }),
-        };
+        return [
+          {
+            transferId: transfer._id,
+            agentId: transfer.agentId,
+            agentName: transfer.agentName,
+            toAddress: transfer.toAddress,
+            state,
+            decidedAt,
+            ...(transfer.declineReason !== undefined
+              ? { declineReason: transfer.declineReason }
+              : {}),
+            ...(afterwards === undefined ? {} : { afterwards }),
+          },
+        ];
       }),
     );
+    return read.flat();
   },
 });
 

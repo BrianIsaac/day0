@@ -1241,6 +1241,42 @@ describe('managerTransfers.departures', (): void => {
       { transferId: retiredId, afterwards: 'retired' },
     ]);
   });
+
+  it('leaves out a handover the employee came back from since, retired by the reader or not (the wave 10 bed)', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const now = Date.UTC(2026, 10, 1);
+    vi.setSystemTime(now);
+    const harness = convexTest(schema, allConvexModules());
+    const rhea = await employee(harness, 'Rhea');
+    await insertRequest(harness, {
+      agentId: rhea,
+      state: 'accepted',
+      requestedAt: now - 3 * DAY_MS,
+      decidedAt: now - 2 * DAY_MS,
+      toOwnerKey: 'priya',
+    });
+    await insertRequest(harness, {
+      agentId: rhea,
+      fromOwnerKey: 'priya',
+      fromAddress: PRIYA_ADDRESS,
+      toAddress: MANAGER_ADDRESS,
+      state: 'accepted',
+      requestedAt: now - 2 * DAY_MS,
+      decidedAt: now - DAY_MS,
+      toOwnerKey: OWNER_SUBJECT,
+    });
+    await harness.run(async (ctx) => await ctx.db.delete(rhea));
+
+    expect(await harness.withIdentity(OWNER).query(api.managerTransfers.departures, {})).toEqual(
+      [],
+    );
+    // The colleague's own handover back is still theirs to read, and says it was retired since.
+    expect(
+      (await harness.withIdentity(PRIYA).query(api.managerTransfers.departures, {})).map(
+        ({ afterwards }) => afterwards,
+      ),
+    ).toEqual(['retired']);
+  });
 });
 
 describe('the handover note in real mode', (): void => {
