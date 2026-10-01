@@ -210,17 +210,20 @@ describe('DeployForm, deploying', (): void => {
     expect(document.activeElement).toBe(document.body);
   });
 
-  it('says why when the sign-in carries no verified address, and deploys nothing', async (): Promise<void> => {
+  it('says why at once when the sign-in carries no verified address, and offers no deploy', async (): Promise<void> => {
     server.address = null;
     act(() =>
       root.render(<DeployForm boss={boss} docSources={[]} surfaceMode="mock" pickerOpen />),
     );
     expect(host.querySelector('dl dd')?.textContent).toBe('no verified address');
+    // Before any click: the reason is on the form, announced, and the button is held.
+    const reason = host.querySelector('[role="status"]');
+    expect(reason?.textContent).toBe(UNVERIFIED_FOR_DEPLOY);
+    expect(host.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(true);
     await act(async () => {
       host.querySelector('form')!.requestSubmit();
     });
     expect(deploy).not.toHaveBeenCalled();
-    expect(host.querySelector('[role="alert"]')?.textContent).toBe(UNVERIFIED_FOR_DEPLOY);
   });
 
   it('holds the button while the address loads, and says so in the facts', (): void => {
@@ -229,6 +232,7 @@ describe('DeployForm, deploying', (): void => {
       root.render(<DeployForm boss={boss} docSources={[]} surfaceMode="mock" pickerOpen />),
     );
     expect(host.querySelector('dl dd')?.textContent).toBe('loading');
+    expect(host.querySelector('dl dd')?.getAttribute('aria-live')).toBe('polite');
     expect(host.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(true);
   });
 

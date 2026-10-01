@@ -113,11 +113,8 @@ export function DeployForm({
 
   async function onDeploy(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    if (!trimmed || managerAddress === undefined) return;
-    if (managerAddress === null) {
-      setError(UNVERIFIED_FOR_DEPLOY);
-      return;
-    }
+    // The button is held in both cases; Enter in the name field still submits.
+    if (!trimmed || !managerAddress) return;
     setSubmitting(true);
     setError(null);
     try {
@@ -225,7 +222,7 @@ export function DeployForm({
 
       <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm">
         <dt className="text-[var(--color-muted)]">Reports to</dt>
-        <dd>{reportsTo(managerAddress)}</dd>
+        <dd aria-live="polite">{reportsTo(managerAddress)}</dd>
         <dt className="text-[var(--color-muted)]">Works in</dt>
         <dd>{surfaceMode ? WORKS_IN[surfaceMode] : 'loading'}</dd>
         <dt className="text-[var(--color-muted)]">Autonomy</dt>
@@ -235,7 +232,7 @@ export function DeployForm({
       <div className="flex flex-wrap items-center gap-3">
         <button
           type="submit"
-          disabled={submitting || managerAddress === undefined}
+          disabled={submitting || !managerAddress}
           className="rounded-lg bg-[var(--color-accent)] px-5 py-2.5 text-sm font-medium text-[var(--color-bg)] disabled:opacity-50"
         >
           {/* Exactly "Deploy": the bed rehearsal's driver presses the button by that name. */}
@@ -256,6 +253,11 @@ export function DeployForm({
           </button>
         ) : null}
       </div>
+      {managerAddress === null ? (
+        <p role="status" className="text-sm text-[var(--color-danger)]">
+          {UNVERIFIED_FOR_DEPLOY}
+        </p>
+      ) : null}
       {error ? (
         <p role="alert" className="text-sm text-[var(--color-danger)]">
           {error}
