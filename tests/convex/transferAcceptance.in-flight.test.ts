@@ -703,7 +703,16 @@ describe('a stopped run’s late writes after the move (U-2)', (): void => {
     await expect(
       handover.harness.mutation(internal.work.claimLandedTicketWrites, {
         workItemId,
+        runId,
         writes: [{ surfaceSlug: 'linear', targets: ['REVOPS-1'] }],
+      }),
+    ).resolves.toEqual([]);
+    // The page fields claimed before authoring are fenced by the same run (U3-m1).
+    await expect(
+      handover.harness.mutation(internal.work.takeWriteTargetClaims, {
+        workItemId,
+        runId,
+        targets: [{ surfaceSlug: 'linear', field: 'Status' }],
       }),
     ).resolves.toEqual([]);
     await drain(handover.harness);

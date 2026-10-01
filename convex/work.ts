@@ -1822,21 +1822,24 @@ export const writeClaimHolder = internalQuery({
  * guard reads (`writeTargetIds`), since the listing may print either case. A
  * ticket another work item holds is left to it, the work item's own
  * discovered item is never claimed twice, and a browser page field is
- * claimed before authoring (`takeWriteTargetClaims`), not here. A run no
- * longer executing takes nothing: one stopped at a handover's deadline has
- * moved to its new owner, whose claims it must not write (U-2).
+ * claimed before authoring (`takeWriteTargetClaims`), not here. A run that is
+ * no longer the item's executing run takes nothing: one stopped at a
+ * handover's deadline has moved to its new owner, whose claims it must not
+ * write (U-2; fenced by the run id, the wave 9 review's U3-m1).
  *
  * @returns The keys taken.
  */
 export const claimLandedTicketWrites = internalMutation({
   args: {
     workItemId: v.id('workItems'),
+    /** The run whose phase landed the writes. */
+    runId: v.id('events'),
     writes: v.array(v.object({ surfaceSlug: v.string(), targets: v.array(v.string()) })),
   },
   handler: async (ctx, args): Promise<string[]> => {
     const row = await ctx.db.get(args.workItemId);
     if (SURFACE_MODE !== 'real' || !row || isRevocationTrialRow(row)) return [];
-    if (row.state !== 'executing') return [];
+    if (row.state !== 'executing' || row.executionRunId !== args.runId) return [];
     const userId = (await ctx.db.get(row.agentId))?.userId;
     if (!userId) return [];
     const keys = new Set<string>();
@@ -1936,11 +1939,15 @@ const WRITE_TARGET_CLAIMS = 8;
 export const takeWriteTargetClaims = internalMutation({
   args: {
     workItemId: v.id('workItems'),
+    /** The run about to author: a run the item no longer carries takes nothing (U3-m1). */
+    runId: v.id('events'),
     targets: v.array(v.object({ surfaceSlug: v.string(), field: v.string() })),
   },
   handler: async (ctx, args): Promise<string[]> => {
     const row = await ctx.db.get(args.workItemId);
     if (SURFACE_MODE !== 'real' || !row || isRevocationTrialRow(row)) return [];
+    // A run stopped at a handover's deadline would otherwise claim a field under the new owner.
+    if (row.executionRunId !== args.runId) return [];
     const agent = await ctx.db.get(row.agentId);
     const userId = agent?.userId;
     if (!userId) return [];

@@ -136,7 +136,7 @@ describe('reset completeness', (): void => {
     expect(security).toContain(
       'It keeps the two record tables that outlive an employee: `retirements`, and `managerTransfers`',
     );
-    expect(security).toContain('the handover note and a decline\'s reason');
+    expect(security).toContain("the handover note and a decline's reason");
     expect(readme).toContain('| `externalClaims` |');
     expect(readme).toContain('| `corrections` |');
   });
@@ -733,9 +733,20 @@ describe('retire in real mode', (): void => {
     expect((await retirementsOf(harness))[0].claims).toMatchObject([
       { key, writeTarget: { field: 'Pipeline coverage' }, settledAt: expect.any(Number) },
     ]);
+    const runId = await harness.run(async (ctx) => {
+      const id = await ctx.db.insert('events', {
+        agentId: sibling,
+        type: 'work.execution-claimed',
+        payload: { workItemId: writer },
+        createdAt: 2,
+      });
+      await ctx.db.patch(writer, { executionRunId: id });
+      return id;
+    });
     await expect(
       harness.mutation(internal.work.takeWriteTargetClaims, {
         workItemId: writer,
+        runId,
         targets: [{ surfaceSlug: 'looker-tile', field: 'Pipeline coverage' }],
       }),
     ).resolves.toEqual([]);
