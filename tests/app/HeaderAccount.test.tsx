@@ -40,7 +40,7 @@ vi.mock('@clerk/nextjs', () => ({
 }));
 
 import { HeaderAccount } from '../../app/HeaderAccount';
-import { clerkAppearance } from '../../app/clerk-appearance';
+import { clerkAppearance, clerkSignInAppearance } from '../../app/clerk-appearance';
 
 const MANAGER = {
   primaryEmailAddress: { emailAddress: 'boss@example.invalid' },
@@ -86,11 +86,11 @@ describe('the header account controls', (): void => {
     for (const [button] of buttons) expect(button).toMatch(/\bmin-h-11\b/);
   });
 
-  it('opens the sign-in and create-account modals in the shared appearance', (): void => {
+  it('opens the sign-in and create-account modals in the sign-in pages’ appearance, the mark above every step (F-m2)', (): void => {
     clerk.user = null;
     render();
-    expect(clerk.appearance.signIn).toBe(clerkAppearance);
-    expect(clerk.appearance.signUp).toBe(clerkAppearance);
+    expect(clerk.appearance.signIn).toBe(clerkSignInAppearance);
+    expect(clerk.appearance.signUp).toBe(clerkSignInAppearance);
   });
 
   it('opens the account menu in the shared appearance once signed in', (): void => {
