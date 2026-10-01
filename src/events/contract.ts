@@ -265,6 +265,33 @@ export interface ManagerTransferDeclinedPayload extends TransferRequestEvent {
 /** The payload of `manager.transfer-expired`: the request went unanswered past its expiry. */
 export type ManagerTransferExpiredPayload = TransferRequestEvent;
 
+/**
+ * The payload of `manager.transferred`: the employee moved to the manager who accepted its
+ * handover (the transfer plan, section 7.6). What the move did, as counts and names, never a
+ * credential's or a documentation source's label.
+ */
+export interface ManagerTransferredPayload {
+  readonly transferId: Id<'managerTransfers'>;
+  readonly fromAddress: string;
+  readonly toAddress: string;
+  /** The connections cut, by slug: each waits for the new manager to approve and connect it. */
+  readonly surfacesCut: readonly string[];
+  /** The read scopes the cut connections had granted. */
+  readonly scopesRevoked: readonly string[];
+  readonly credentialsRevoked: number;
+  readonly credentialsKept: number;
+  readonly claimsMoved: number;
+  readonly claimsReleased: number;
+  /** The items the new manager's employees already held, whose moving claims were released. */
+  readonly conflictingClaimKeys: readonly string[];
+  readonly decisionRequestsVoided: number;
+  /** Approved plans not yet started, returned to the new manager (D13). */
+  readonly plansReturned: number;
+  readonly runsStopped: number;
+  /** Whether a never-approved draft charter was discarded (D8). */
+  readonly charterDiscarded: boolean;
+}
+
 // The charter.
 
 /** The payload of `charter.drafted`. */
@@ -1101,6 +1128,7 @@ export interface EventPayloads {
   'manager.transfer-cancelled': ManagerTransferCancelledPayload;
   'manager.transfer-declined': ManagerTransferDeclinedPayload;
   'manager.transfer-expired': ManagerTransferExpiredPayload;
+  'manager.transferred': ManagerTransferredPayload;
   'charter.drafted': CharterDraftedPayload;
   'charter.approved': CharterApprovedPayload;
   'charter.amended': CharterAmendedPayload;
@@ -1252,6 +1280,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'manager.transfer-cancelled',
   'manager.transfer-declined',
   'manager.transfer-expired',
+  'manager.transferred',
   'charter.drafted',
   'charter.approved',
   'charter.amended',

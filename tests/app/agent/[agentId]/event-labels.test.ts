@@ -127,6 +127,19 @@ describe('the live feed labels', (): void => {
     );
   });
 
+  it('labels a handover with both managers and the connections it cut', (): void => {
+    expect(
+      eventLabel({
+        type: 'manager.transferred',
+        payload: {
+          fromAddress: 'sam@revops.example',
+          toAddress: 'ana@kestrel.example',
+          surfacesCut: ['linear'],
+        },
+      }),
+    ).toBe('handed over from sam@revops.example to ana@kestrel.example, 1 connection cut');
+  });
+
   it('labels the two types the schema step added, and the access clock', (): void => {
     expect(
       eventLabel({

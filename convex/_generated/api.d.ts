@@ -55,6 +55,7 @@ import type * as slackProvisionActions from '../slackProvisionActions.js';
 import type * as surfaceActions from '../surfaceActions.js';
 import type * as surfaceReopen from '../surfaceReopen.js';
 import type * as surfaces from '../surfaces.js';
+import type * as transferAcceptance from '../transferAcceptance.js';
 import type * as voice from '../voice.js';
 import type * as work from '../work.js';
 import type * as workActions from '../workActions.js';
@@ -111,6 +112,7 @@ declare const fullApi: ApiFromModules<{
   surfaceActions: typeof surfaceActions;
   surfaceReopen: typeof surfaceReopen;
   surfaces: typeof surfaces;
+  transferAcceptance: typeof transferAcceptance;
   voice: typeof voice;
   work: typeof work;
   workActions: typeof workActions;

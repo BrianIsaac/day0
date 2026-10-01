@@ -180,6 +180,32 @@ export async function renderWorkspaceFromCharter(
   await writeFileImpl(ctx, { agentId, fileName: 'TOOLS.md', content: toolsFromCharter(charter) });
 }
 
+/**
+ * Render IDENTITY.md (and TOOLS.md with it, through {@link renderWorkspaceFromCharter}) again for
+ * the manager the employee row names now, from its newest approved charter: a handover writes the new manager's address to the row (the transfer plan, section
+ * 6.2), and the file names who approves. An employee whose charter was never approved keeps its
+ * file, since a draft is rendered without a manager.
+ *
+ * @param ctx - The handover's mutation context.
+ * @param agentId - The employee, already under its new manager.
+ * @returns Whether the file was rendered.
+ */
+export async function renderIdentityForManager(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+): Promise<boolean> {
+  const charters = ctx.db
+    .query('charters')
+    .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+    .order('desc');
+  for await (const charter of charters) {
+    if (!charter.approved) continue;
+    await renderWorkspaceFromCharter(ctx, agentId, charter.body as Charter);
+    return true;
+  }
+  return false;
+}
+
 /** A strike or an approval either lands or names the reason it was refused. */
 const strikeResultValidator = v.union(
   v.object({ ok: v.literal(true) }),

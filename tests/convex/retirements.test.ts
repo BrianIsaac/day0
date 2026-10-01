@@ -105,6 +105,13 @@ describe('the retired employees of an owner', (): void => {
     expect(retiredHolderName({ agentName: 'Priya' })).toBe('Priya (retired)');
     expect(retiredHolderName({})).toBe('an employee (retired)');
   });
+
+  it('name a holder handed over to another manager as such, not as retired', (): void => {
+    expect(retiredHolderName({ agentName: 'Maya', kind: 'transferred' })).toBe(
+      'Maya (handed over to another manager)',
+    );
+    expect(retiredHolderName({ agentName: 'Priya', kind: 'retired' })).toBe('Priya (retired)');
+  });
 });
 
 describe('retiredClaimOn', (): void => {

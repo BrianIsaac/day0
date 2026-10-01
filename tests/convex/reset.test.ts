@@ -3,7 +3,12 @@ import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
-import { AGENT_KEYED_TABLES, RETIRE_RECORD_TABLES } from '../../convex/reset';
+import {
+  AGENT_KEYED_TABLES,
+  RETIRE_RECORD_TABLES,
+  deleteDuringHandoverRefusal,
+  retireDuringHandoverRefusal,
+} from '../../convex/reset';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { browserFieldId, providerItemKey } from '../../src/work/claim-key';
@@ -896,5 +901,137 @@ describe('the jobs a reset leaves scheduled (step 47, P4-7)', (): void => {
     expect(stateOf((args) => args.workItemId === item)).toEqual(['canceled']);
     expect(stateOf((args) => args.agentId === retiring)).toEqual(['canceled']);
     expect(stateOf((args) => args.agentId === colleague)).toEqual(['pending']);
+  });
+});
+
+describe('a retire or a deletion during a handover request (transfer plan 10.5)', (): void => {
+  /** The colleague the requests in this block name. */
+  const COLLEAGUE_ADDRESS = 'colleague@day0.local';
+
+  /**
+   * Seed one owner's employees and a handover request for each, in the given states.
+   *
+   * @param harness - The convex-test harness.
+   * @param states - One request state per employee, in order.
+   * @returns The employees and their requests, in the same order.
+   */
+  async function seedRequests(
+    harness: TestConvex<typeof schema>,
+    states: readonly Doc<'managerTransfers'>['state'][],
+  ): Promise<{ agentId: Id<'agents'>; transferId: Id<'managerTransfers'> }[]> {
+    return await harness.run(
+      async (ctx) =>
+        await Promise.all(
+          states.map(async (state, index) => {
+            const agentId = await ctx.db.insert('agents', {
+              bossEmail: MANAGER_ADDRESS,
+              name: `Employee ${index + 1}`,
+              userId: 'owner',
+              state: 'active',
+              createdAt: 1,
+            });
+            const transferId = await ctx.db.insert('managerTransfers', {
+              agentId,
+              agentName: `Employee ${index + 1}`,
+              fromOwnerKey: 'owner',
+              fromAddress: MANAGER_ADDRESS,
+              toAddress: COLLEAGUE_ADDRESS,
+              state,
+              requestedAt: 1,
+              expiresAt: 1 + 14 * 24 * 60 * 60 * 1000,
+              ...(state === 'accepting'
+                ? { decidedAt: 2, toOwnerKey: 'colleague', settleBy: 3 }
+                : {}),
+            });
+            return { agentId, transferId };
+          }),
+        ),
+    );
+  }
+
+  /** Read a request back. */
+  async function transferOf(
+    harness: TestConvex<typeof schema>,
+    transferId: Id<'managerTransfers'>,
+  ): Promise<Doc<'managerTransfers'> | null> {
+    return await harness.run(async (ctx) => await ctx.db.get(transferId));
+  }
+
+  it('cancels an asked request when its employee is retired, with the retire as the reason', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const [{ agentId, transferId }] = await seedRequests(harness, ['asked']);
+
+    await harness.withIdentity(managerIdentity()).mutation(api.reset.retire, { agentId });
+
+    expect(await transferOf(harness, transferId)).toMatchObject({
+      state: 'cancelled',
+      cancelReason: 'retired',
+      decidedAt: expect.any(Number),
+    });
+    expect(await harness.run(async (ctx) => await ctx.db.get(agentId))).toBeNull();
+  });
+
+  it('refuses to retire an employee whose handover was accepted and is finishing, naming who takes it', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const [{ agentId, transferId }] = await seedRequests(harness, ['accepting']);
+
+    await expect(
+      harness.withIdentity(managerIdentity()).mutation(api.reset.retire, { agentId }),
+    ).rejects.toMatchObject({ data: retireDuringHandoverRefusal('Employee 1', COLLEAGUE_ADDRESS) });
+
+    expect(await harness.run(async (ctx) => await ctx.db.get(agentId))).not.toBeNull();
+    expect(await transferOf(harness, transferId)).toMatchObject({ state: 'accepting' });
+  });
+
+  it('leaves a finished request as it ended when its employee is retired', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const [{ agentId, transferId }] = await seedRequests(harness, ['declined']);
+
+    await harness.withIdentity(managerIdentity()).mutation(api.reset.retire, { agentId });
+
+    expect(await transferOf(harness, transferId)).toMatchObject({ state: 'declined' });
+    expect((await transferOf(harness, transferId))?.cancelReason).toBeUndefined();
+  });
+
+  it("cancels every asked request of the owner's when the owner deletes their data", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const seeded = await seedRequests(harness, ['asked', 'asked', 'expired']);
+
+    await expect(
+      harness.withIdentity(managerIdentity()).mutation(api.reset.deleteMyData, {}),
+    ).resolves.toMatchObject({ deleted: 3 });
+
+    const [first, second, third] = await Promise.all(
+      seeded.map(async ({ transferId }) => await transferOf(harness, transferId)),
+    );
+    expect(first).toMatchObject({ state: 'cancelled', cancelReason: 'retired' });
+    expect(second).toMatchObject({ state: 'cancelled', cancelReason: 'retired' });
+    expect(third).toMatchObject({ state: 'expired' });
+  });
+
+  it('refuses to delete the data while a handover is finishing, naming the wait, and changes nothing', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const seeded = await seedRequests(harness, ['asked', 'accepting']);
+
+    await expect(
+      harness.withIdentity(managerIdentity()).mutation(api.reset.deleteMyData, {}),
+    ).rejects.toMatchObject({
+      data: deleteDuringHandoverRefusal('Employee 2', COLLEAGUE_ADDRESS),
+    });
+
+    expect(await transferOf(harness, seeded[0].transferId)).toMatchObject({ state: 'asked' });
+    const employees = await harness.run(async (ctx) => await ctx.db.query('agents').collect());
+    expect(employees).toHaveLength(2);
+  });
+
+  it("leaves a request the owner was named in alone: the employee is not the owner's yet", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const [{ transferId }] = await seedRequests(harness, ['accepting']);
+
+    await expect(
+      harness.withIdentity(managerIdentity('colleague')).mutation(api.reset.deleteMyData, {}),
+    ).resolves.toMatchObject({ deleted: 0 });
+
+    expect(await transferOf(harness, transferId)).toMatchObject({ state: 'accepting' });
   });
 });
