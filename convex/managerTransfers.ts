@@ -1,5 +1,4 @@
 import { ConvexError, v, type Infer } from 'convex/values';
-import type { UserIdentity } from 'convex/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import {
@@ -21,6 +20,7 @@ import {
   assertOwnsAgent,
   getCaller,
   getCallerOrThrow,
+  signedInAsTheOneLocalManager,
   verifiedAddressOf,
   type Caller,
 } from './ownership';
@@ -60,9 +60,8 @@ import {
   transferStateRefusal,
   UNVERIFIED_FOR_ASK,
 } from '../src/agent/manager-transfer';
-import { DEV_NO_AUTH_ISSUER } from '../src/lib/dev-auth-issuer';
 import { log } from '../src/lib/logger';
-import { resolveDeploymentProfile, SURFACE_MODE } from '../src/lib/surface-mode';
+import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { agentZone } from '../src/lib/zone';
 import { ownerKnownValues, scrubKnownValues } from '../src/redaction/known-values';
 import { redactTokenShapes } from '../src/surfaces/redact';
@@ -152,26 +151,6 @@ export type OpenTransfer = Infer<typeof openTransferValidator>;
 
 /** An open request as the account it names reads it. */
 export type IncomingTransfer = Infer<typeof incomingTransferValidator>;
-
-/** An issuer URL compared the way two spellings of one issuer should compare. */
-function issuerKey(issuer: string): string {
-  return issuer.trim().replace(/\/+$/, '');
-}
-
-/**
- * Whether no second account can exist on this deployment for this caller: it
- * signed in through the local issuer, which signs every browser in as one
- * subject, and the profile is `local-dev`. Under `customer-local` the local
- * account is one more manager beside the customer's issuer (the transfer
- * plan, section 8), and a Clerk caller on the hosted demo, whose profile is
- * unset, is its own account.
- */
-function signedInAsTheOneLocalManager(identity: UserIdentity): boolean {
-  return (
-    issuerKey(identity.issuer) === issuerKey(DEV_NO_AUTH_ISSUER) &&
-    resolveDeploymentProfile() === 'local-dev'
-  );
-}
 
 /** Whether a request is open now: asked and not yet past its expiry, or accepting. */
 function isOpenNow(transfer: Doc<'managerTransfers'>, now: number): boolean {

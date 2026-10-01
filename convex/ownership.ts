@@ -280,7 +280,7 @@ export async function assertOwnsAgentAction(
  * signed in through the local issuer, which signs every browser in as one
  * subject, and the profile is `local-dev`. Under `customer-local` the local
  * account is one more manager beside the customer's issuer (the transfer plan,
- * section 8). The ask in `convex/managerTransfers.ts` reads the same rule.
+ * section 8). The handover's ask (`convex/managerTransfers.ts`) calls it too.
  *
  * @param identity - The caller's verified token.
  */
