@@ -5,7 +5,7 @@ import { ConvexError } from 'convex/values';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import { clipRoleLine } from '../../convex/agents';
-import { CHANGE_REQUEST_MAX_CHARS } from '../../convex/charters';
+import { CHANGE_REQUEST_MAX_CHARS, renderIdentityForManager } from '../../convex/charters';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
@@ -1003,5 +1003,38 @@ describe('sending a draft back with a note', (): void => {
     await expect(sent).rejects.toBeInstanceOf(ConvexError);
     await expect(sent).rejects.toThrow(`under ${CHANGE_REQUEST_MAX_CHARS} characters`);
     expect((await latestCharter(harness, agentId))._id).toBe(charterId);
+  });
+});
+
+describe('the identity file after a handover (transfer plan 6.2, the workspace row)', (): void => {
+  it('names the new manager in IDENTITY.md from the approved charter', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, charterId } = await seedDraft(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(charterId, { approved: true, approvedAt: 3 });
+      await ctx.db.patch(agentId, { bossEmail: 'colleague@day0.local', userId: 'colleague' });
+    });
+
+    const rendered = await harness.run(async (ctx) => await renderIdentityForManager(ctx, agentId));
+
+    expect(rendered).toBe(true);
+    const identity = await workspaceFile(harness, agentId, 'IDENTITY.md');
+    expect(identity).toContain('## Manager (who approves)\n- colleague@day0.local');
+    expect(identity).not.toContain(MANAGER_ADDRESS);
+  });
+
+  it('leaves the file of an employee with no approved charter alone: a draft names no manager', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId } = await seedDraft(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(agentId, { bossEmail: 'colleague@day0.local' });
+    });
+
+    const rendered = await harness.run(async (ctx) => await renderIdentityForManager(ctx, agentId));
+
+    expect(rendered).toBe(false);
+    expect(await workspaceFile(harness, agentId, 'IDENTITY.md')).toBe(
+      '# IDENTITY\n\nRole: owned, prioritized Linear tickets\n',
+    );
   });
 });
