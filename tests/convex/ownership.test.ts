@@ -139,3 +139,35 @@ describe('the caller session', (): void => {
     });
   });
 });
+
+describe("convex-test's identity (U-5)", (): void => {
+  it('reaches ctx.auth with the email and emailVerified withIdentity was given, as UserIdentity carries the email claims', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const manager = harness.withIdentity({
+      subject: 'owner',
+      email: 'Boss@Day0.local',
+      emailVerified: true,
+    });
+    const seen = await manager.run(async (ctx) => {
+      const identity = await ctx.auth.getUserIdentity();
+      return identity && { email: identity.email, emailVerified: identity.emailVerified };
+    });
+    expect(seen).toEqual({ email: 'Boss@Day0.local', emailVerified: true });
+
+    const unverified = harness.withIdentity({
+      subject: 'other',
+      email: 'other@day0.local',
+      emailVerified: false,
+    });
+    expect(
+      await unverified.run(async (ctx) => (await ctx.auth.getUserIdentity())?.emailVerified),
+    ).toBe(false);
+    // A function's undefined comes back from run as null, so the claim's absence is read inside.
+    expect(
+      await harness.withIdentity({ subject: 'bare' }).run(async (ctx) => {
+        const identity = await ctx.auth.getUserIdentity();
+        return identity !== null && !('email' in identity) && !('emailVerified' in identity);
+      }),
+    ).toBe(true);
+  });
+});
