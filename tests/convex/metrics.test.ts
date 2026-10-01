@@ -2,7 +2,7 @@ import { convexTest } from 'convex-test';
 import { describe, expect, it } from 'vitest';
 import { api } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
-import { computeAgentMetrics } from '../../convex/metrics';
+import { computeAgentMetrics, isEvaluationAgent } from '../../convex/metrics';
 import type { OwnerMetrics } from '../../src/metrics/types';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
@@ -956,6 +956,38 @@ describe('supervision figures for a company of employees', (): void => {
     const harness = convexTest(schema, allConvexModules());
     await deployEmployee(harness, { name: 'Priya', deployedAt: 1_000 });
     await expect(harness.query(api.metrics.forOwner, {})).resolves.toBeNull();
+  });
+});
+
+describe('isEvaluationAgent', (): void => {
+  it('reads the reserved address through the one evaluation-address check, in any spelling', (): void => {
+    expect(
+      isEvaluationAgent({
+        bossEmail: ' EVAL-day0-r1-1758150000000@Day0.local ',
+        name: 'Day0 evaluation 1',
+        arm: 'day0',
+      }),
+    ).toBe(true);
+    expect(
+      isEvaluationAgent({
+        bossEmail: 'Eval-Revocation-20260918t090000@day0.local',
+        name: 'Day0 revocation evaluation',
+      }),
+    ).toBe(true);
+  });
+
+  it('never takes an ordinary manager whose address begins with eval- for an evaluation run', (): void => {
+    for (const agent of [
+      { bossEmail: 'eval-team@company.com', name: 'Day0 evaluation 1' },
+      { bossEmail: 'eval-day0-r1-1758150000000@day0.local', name: 'Maya' },
+      { bossEmail: 'eval-revocation-x@day0.local.example', name: 'Day0 revocation evaluation' },
+      { bossEmail: 'lead@day0.local', name: 'Day0 revocation evaluation' },
+    ]) {
+      expect(isEvaluationAgent(agent), agent.bossEmail).toBe(false);
+    }
+    expect(isEvaluationAgent({ bossEmail: 'lead@day0.local', name: 'Maya', arm: 'baseline' })).toBe(
+      true,
+    );
   });
 });
 

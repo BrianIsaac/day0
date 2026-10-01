@@ -15,6 +15,7 @@ import type { MockAction } from '../src/work/types';
 import { assertOwnsAgent, getCaller } from './ownership';
 import { isEventOf, isEventType, type EventType } from '../src/events/contract';
 import type { AgentMetrics, DecisionVia, OwnerMetrics, PilotFigures } from '../src/metrics/types';
+import { isEvaluationShapedAddress, normaliseManagerAddress } from '../src/agent/manager-address';
 
 type UnknownRecord = Record<string, unknown>;
 export interface LedgerObservation {
@@ -935,28 +936,27 @@ export interface CompanySelection<Agent extends CompanyAgent = Doc<'agents'>> {
  * Whether an agent row belongs to an evaluation run rather than the company.
  *
  * Match an evaluation name and its reserved address together: an ordinary
- * manager may also have an address beginning with `eval-`. The revocation
- * trial's driver and manual review beds use different timestamp formats.
+ * manager may also have an address beginning with `eval-`. The address is
+ * read through the one evaluation-address check and its one spelling
+ * (`src/agent/manager-address.ts`), so a row an older release stored in
+ * another case still reads as what it is. The revocation trial's driver and
+ * manual review beds use different timestamp formats.
  *
- * Args:
- *   agent: The agent row's boss address, name and arm.
- *
- * Returns:
- *   True for an evaluation agent.
+ * @param agent - The agent row's boss address, name and arm.
+ * @returns True for an evaluation agent.
  */
 export function isEvaluationAgent(
   agent: Pick<Doc<'agents'>, 'bossEmail' | 'name' | 'arm'>,
 ): boolean {
   if (agent.arm === 'baseline') return true;
-  if (!agent.bossEmail.startsWith('eval-') || !agent.bossEmail.endsWith('@day0.local')) {
-    return false;
-  }
+  const address = normaliseManagerAddress(agent.bossEmail);
+  if (address === undefined || !isEvaluationShapedAddress(address)) return false;
   if (agent.name === 'Day0 revocation evaluation') {
-    return agent.bossEmail.startsWith('eval-revocation-');
+    return address.startsWith('eval-revocation-');
   }
   return (
     /^Day0 evaluation [1-9]\d*$/.test(agent.name) &&
-    /^eval-day0-r[1-9]\d*-\d{13}@day0\.local$/.test(agent.bossEmail)
+    /^eval-day0-r[1-9]\d*-\d{13}@day0\.local$/.test(address)
   );
 }
 
