@@ -104,6 +104,11 @@ const isExternallyCalledRoute = createRouteMatcher([
 ]);
 
 export default function proxy(...args: Parameters<typeof clerkProxy>) {
+  // A build and a server that disagree on the profile refuse every request, whichever of the two
+  // asked for the customer sign-in (the wave 10 review, S-m1): the browser and the server would
+  // sign people in two different ways.
+  const mismatch = profileMismatch(process.env.DAY0_PROFILE);
+  if (mismatch) return refuse(mismatch, 503);
   if (CUSTOMER_SIGN_IN) {
     const [request] = args;
     return customerSignInGate(request);
@@ -217,8 +222,6 @@ function toCompanySignIn(request: NextRequest, returnTo: string): NextResponse {
  * allowed domains again.
  */
 async function customerSignInGate(request: NextRequest): Promise<NextResponse> {
-  const mismatch = profileMismatch(process.env.DAY0_PROFILE);
-  if (mismatch) return refuse(mismatch, 503);
   if (isCustomerSignInRoute(request) || isExternallyCalledRoute(request)) {
     return NextResponse.next();
   }
