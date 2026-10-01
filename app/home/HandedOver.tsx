@@ -23,7 +23,9 @@ export function handedOver(
 ): HandoverDeparture[] {
   const named = new Set(held);
   return departures.filter((departure) => {
+    // One that came back since is no longer where it went, and the card says nothing of it.
     if (departure.state !== 'accepted' || named.has(departure.agentId)) return false;
+    if (departure.afterwards === 'came-back') return false;
     named.add(departure.agentId);
     return true;
   });

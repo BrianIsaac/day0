@@ -584,11 +584,22 @@ export interface HandoverOutcome {
  * to another manager. The handover request outlives a retire by design, so the line it is read
  * from must not say the employee reports to anyone once it does not (the v0.12.0 walk).
  */
-function sinceWords(outcome: HandoverOutcome): string {
+function sinceWords(
+  outcome: HandoverOutcome & { readonly afterwards: NonNullable<HandoverOutcome['afterwards']> },
+): string {
   const handed = `${outcome.name} was handed over to ${outcome.to} on ${zonedStamp(outcome.since, outcome.zone)}`;
-  return outcome.afterwards === 'retired'
-    ? `${handed}, and has since been retired.`
-    : `${handed}, and has since moved to another manager.`;
+  switch (outcome.afterwards) {
+    case 'came-back':
+      return `${handed}, and has since come back to you.`;
+    case 'retired':
+      return `${handed}, and has since been retired.`;
+    case 'moved-on':
+      return `${handed}, and has since moved to another manager.`;
+    default: {
+      const unknown: never = outcome.afterwards;
+      throw new Error(`unhandled handover outcome ${String(unknown)}`);
+    }
+  }
 }
 
 /**
@@ -596,7 +607,8 @@ function sinceWords(outcome: HandoverOutcome): string {
  * retired or moved on since, what happened and that it did.
  */
 export function handedOverLine(outcome: HandoverOutcome): string {
-  if (outcome.afterwards !== undefined) return sinceWords(outcome);
+  const { afterwards } = outcome;
+  if (afterwards !== undefined) return sinceWords({ ...outcome, afterwards });
   return `${outcome.name} now reports to ${outcome.to}, since ${zonedStamp(outcome.since, outcome.zone)}.`;
 }
 
@@ -624,8 +636,9 @@ export function departedTabTitle(name: string): string {
  * (plan 7.4): whom it reports to now, or, once it was retired or moved on since, what happened.
  */
 export function departedLine(outcome: HandoverOutcome): string {
-  if (outcome.afterwards !== undefined) {
-    return `${sinceWords(outcome)} Your record of the handover is on your home.`;
+  const { afterwards } = outcome;
+  if (afterwards !== undefined) {
+    return `${sinceWords({ ...outcome, afterwards })} Your record of the handover is on your home.`;
   }
   return `${outcome.name} reports to ${outcome.to} since ${zonedStamp(outcome.since, outcome.zone)}. Its record went with it; your record of the handover is on your home.`;
 }

@@ -1242,7 +1242,7 @@ describe('managerTransfers.departures', (): void => {
     ]);
   });
 
-  it('leaves out a handover the employee came back from since, retired by the reader or not (the wave 10 bed)', async (): Promise<void> => {
+  it('marks a handover the employee came back from since, retired by the reader or not, so it ends the line and is drawn nowhere (the wave 10 bed)', async (): Promise<void> => {
     vi.useFakeTimers();
     const now = Date.UTC(2026, 10, 1);
     vi.setSystemTime(now);
@@ -1267,9 +1267,12 @@ describe('managerTransfers.departures', (): void => {
     });
     await harness.run(async (ctx) => await ctx.db.delete(rhea));
 
-    expect(await harness.withIdentity(OWNER).query(api.managerTransfers.departures, {})).toEqual(
-      [],
-    );
+    // Kept, so the People card's last answer is this acceptance, never an older decline.
+    expect(
+      (await harness.withIdentity(OWNER).query(api.managerTransfers.departures, {})).map(
+        ({ state, afterwards }) => ({ state, afterwards }),
+      ),
+    ).toEqual([{ state: 'accepted', afterwards: 'came-back' }]);
     // The colleague's own handover back is still theirs to read, and says it was retired since.
     expect(
       (await harness.withIdentity(PRIYA).query(api.managerTransfers.departures, {})).map(

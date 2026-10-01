@@ -10,22 +10,30 @@ import { assertOwnsAgent, getCaller } from './ownership';
 const EMPLOYEE_REQUESTS_LIMIT = 200;
 
 /**
- * What became of an employee after the handover the old manager reads: retired since (its row
- * is gone), or moved on to a manager other than the one that took it on. Absent while it is with
- * that manager still.
+ * What became of an employee after the handover the old manager reads: came back to them since
+ * (the handover is no longer where it went, and ends the card's line of answers), retired since
+ * (its row is gone), or moved on to a manager other than the one that took it on. Absent while it
+ * is with that manager still.
  */
-export const afterwardsValidator = v.union(v.literal('retired'), v.literal('moved-on'));
+export const afterwardsValidator = v.union(
+  v.literal('came-back'),
+  v.literal('retired'),
+  v.literal('moved-on'),
+);
 
 /** What became of an employee after a handover; see {@link afterwardsValidator}. */
 export type HandoverAfterwards = Infer<typeof afterwardsValidator>;
 
 /**
  * What became of the employee an accepted request moved, as the manager who asked reads it now.
- * Its row gone, it was retired since (a retire or a reset deletes the row, and the request
- * outlives it by design); with a manager other than the one that accepted, it moved on; nothing
- * while it is with that manager, or back with the reader, whose roster names it.
+ * Handed back to the reader since, it came back: the handover is no longer where it went,
+ * whatever became of it after (the wave 10 bed: a manager who took an employee back and retired it
+ * read that it was "handed over ... and has since been retired"). Otherwise, its row gone, it was
+ * retired since (a retire or a reset deletes the row, and the request outlives it by design);
+ * with a manager other than the one that accepted, it moved on; nothing while it is with that
+ * manager, or with the reader, whose roster names it.
  *
- * @param transfer - The accepted request.
+ * @param transfer - The accepted request the reader asked.
  * @param readerKey - The owner key of the manager who reads it.
  */
 export async function afterwardsOf(
@@ -33,31 +41,19 @@ export async function afterwardsOf(
   transfer: Doc<'managerTransfers'>,
   readerKey: string,
 ): Promise<HandoverAfterwards | undefined> {
-  const employee = await ctx.db.get(transfer.agentId);
+  const [accepted, employee] = await Promise.all([
+    ctx.db
+      .query('managerTransfers')
+      .withIndex('by_agent_state', (q) => q.eq('agentId', transfer.agentId).eq('state', 'accepted'))
+      .order('desc')
+      .take(EMPLOYEE_REQUESTS_LIMIT),
+    ctx.db.get(transfer.agentId),
+  ]);
+  if (lastDeparture(accepted, readerKey)?._id !== transfer._id) return 'came-back';
   if (employee === null) return 'retired';
+  // With the reader, it is on their roster, which says so; nothing to add.
   if (employee.userId === transfer.toOwnerKey || employee.userId === readerKey) return undefined;
   return 'moved-on';
-}
-
-/**
- * Whether the employee an accepted request moved came back to the reader since: an accepted
- * request to the reader decided after it. The handover is then no longer where the employee
- * went, whatever became of it after (the wave 10 bed: a manager who took an employee back and
- * retired it read that it was "handed over ... and has since been retired").
- *
- * @param transfer - The accepted request the reader asked.
- * @param readerKey - The owner key of the manager who reads it.
- */
-export async function cameBackSince(
-  ctx: QueryCtx,
-  transfer: Doc<'managerTransfers'>,
-  readerKey: string,
-): Promise<boolean> {
-  const accepted = await ctx.db
-    .query('managerTransfers')
-    .withIndex('by_agent_state', (q) => q.eq('agentId', transfer.agentId).eq('state', 'accepted'))
-    .take(EMPLOYEE_REQUESTS_LIMIT);
-  return lastDeparture(accepted, readerKey)?._id !== transfer._id;
 }
 
 /** Where an employee the reader handed over went, and what became of it since. */

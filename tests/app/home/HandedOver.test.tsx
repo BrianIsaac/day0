@@ -74,6 +74,11 @@ describe('HandedOver (the transfer plan, 7.4)', () => {
     ]);
   });
 
+  it('draws nothing of a handover the employee came back from since (the wave 10 bed)', () => {
+    backend.departures = [departure({ agentName: 'Rhea', afterwards: 'came-back' })];
+    expect(mount(<HandedOver held={[]} />).container.querySelector('section')).toBeNull();
+  });
+
   it('says nothing of a decline or an expiry, which People says while the employee is still the manager’s', () => {
     expect(
       handedOver(

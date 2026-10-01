@@ -412,7 +412,10 @@ describe('the old manager’s notices (plan 7.4) and the home’s line (section 
     expect(departedLine({ ...outcome, afterwards: 'retired' })).toBe(
       'Wren was handed over to lead@kestrel.example on 2 Oct 2026, 11:00, UTC time, and has since been retired. Your record of the handover is on your home.',
     );
-    for (const afterwards of ['retired', 'moved-on'] as const) {
+    expect(handedOverLine({ ...outcome, afterwards: 'came-back' })).toBe(
+      'Wren was handed over to lead@kestrel.example on 2 Oct 2026, 11:00, UTC time, and has since come back to you.',
+    );
+    for (const afterwards of ['came-back', 'retired', 'moved-on'] as const) {
       expect(handedOverLine({ ...outcome, afterwards })).not.toContain('reports to');
       expect(departedLine({ ...outcome, afterwards })).not.toContain('reports to');
     }
