@@ -74,6 +74,16 @@ const PASSED: SkillSandboxRun = {
   skipped: false,
 };
 
+const SKIPPED: SkillSandboxRun = {
+  backend: 'local',
+  sandboxId: '',
+  stdout: '',
+  stderr: '',
+  ok: false,
+  skipped: true,
+  skipReason: 'no sandbox backend answered',
+};
+
 const FAILED: SkillSandboxRun = {
   backend: 'local',
   sandboxId: 'local:adopt-2',
@@ -596,5 +606,97 @@ describe('skillAdoption: adopting and the stored verification (mock mode)', (): 
 
     await harness.withIdentity(OWNER).mutation(api.skills.reject, { skillId: setAside });
     expect((await row(harness, setAside)).state).toBe('rejected');
+  });
+
+  it('a check that stopped short draws as stalled, and Check it again verifies the version again', async (): Promise<void> => {
+    vi.useFakeTimers();
+    recorded.sandbox = SKIPPED;
+    const harness = convexTest(schema, allConvexModules());
+    const priya = await employee(harness, 'Priya');
+    const mateo = await employee(harness, 'Mateo');
+    const offered = await version(harness, priya);
+    const skillId = await propose(harness, mateo);
+    await harness.withIdentity(OWNER).mutation(api.skillAdoption.adopt, { skillId });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const parked = await row(harness, skillId);
+    expect(parked).toMatchObject({ state: 'authoring', offeredVersionId: offered });
+    expect(parked.authoringRunId).toBeUndefined();
+    const [card] = await harness.withIdentity(OWNER).query(api.skillAdoption.adoptions, {
+      agentId: mateo,
+    });
+    expect(card).toMatchObject({ skillId, state: 'verifying', rowState: 'authoring' });
+    expect(card).not.toHaveProperty('claimedAt');
+    expect(card?.log).toContain('no sandbox backend');
+
+    recorded.sandbox = PASSED;
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.skillAdoption.verifyAgain, { skillId }),
+    ).resolves.toEqual({ ok: true });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    const registered = await row(harness, skillId);
+    expect(registered).toMatchObject({ state: 'registered', versionId: offered });
+    expect(registered.adoptedAt).toBeDefined();
+  });
+
+  it('Check it again refuses an offer that no longer stands and a row a live run holds', async (): Promise<void> => {
+    vi.useFakeTimers();
+    recorded.sandbox = SKIPPED;
+    const harness = convexTest(schema, allConvexModules());
+    const priya = await employee(harness, 'Priya');
+    const mateo = await employee(harness, 'Mateo');
+    const offered = await version(harness, priya);
+    const skillId = await propose(harness, mateo);
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.skillAdoption.verifyAgain, { skillId }),
+    ).rejects.toThrow(`${NAME} has no stopped check to run again.`);
+    await harness.withIdentity(OWNER).mutation(api.skillAdoption.adopt, { skillId });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(skillId, {
+        authoringRunId: (await ctx.db.query('events').first())!._id,
+        authoringClaimedAt: Date.now(),
+      });
+    });
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.skillAdoption.verifyAgain, { skillId }),
+    ).rejects.toThrow(`${NAME} is being checked now.`);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(skillId, { authoringRunId: undefined, authoringClaimedAt: undefined });
+      await ctx.db.patch(offered, { revokedAt: 9, revokedReason: 'withdrawn' });
+    });
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.skillAdoption.verifyAgain, { skillId }),
+    ).rejects.toThrow(
+      `${NAME} cannot be checked again: the offered skill was withdrawn from every employee.`,
+    );
+    const [card] = await harness.withIdentity(OWNER).query(api.skillAdoption.adoptions, {
+      agentId: mateo,
+    });
+    expect(card).toMatchObject({
+      state: 'verifying',
+      refusal: 'the offered skill was withdrawn from every employee',
+    });
+  });
+
+  it('Write a new one instead on a stalled adoption drops the parked copy, so the authoring writes anew', async (): Promise<void> => {
+    vi.useFakeTimers();
+    recorded.sandbox = SKIPPED;
+    const harness = convexTest(schema, allConvexModules());
+    const priya = await employee(harness, 'Priya');
+    const mateo = await employee(harness, 'Mateo');
+    await version(harness, priya);
+    const skillId = await propose(harness, mateo);
+    await harness.withIdentity(OWNER).mutation(api.skillAdoption.adopt, { skillId });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    expect((await row(harness, skillId)).pendingSmokeTest).toBe(SMOKE);
+
+    await harness.withIdentity(OWNER).mutation(api.skillAdoption.setOfferAside, { skillId });
+
+    const setAside = await row(harness, skillId);
+    expect(setAside).toMatchObject({ state: 'authoring', body: '' });
+    expect(setAside.offeredVersionId).toBeUndefined();
+    expect(setAside.pendingSmokeTest).toBeUndefined();
   });
 });

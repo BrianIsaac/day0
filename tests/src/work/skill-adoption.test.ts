@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ADOPTION_CARD_STATES,
   adoptionCardState,
+  adoptionStateAt,
   adoptionFit,
   adoptionHelp,
   adoptionWords,
@@ -13,6 +15,7 @@ import {
   type AdopterSurface,
 } from '../../../src/work/skill-adoption';
 import { HANDED_OVER_AUTHOR_NAME } from '../../../src/work/skill-library';
+import { AUTHORING_LEASE_MS } from '../../../src/lib/skill-authoring';
 
 const LINEAR: AdopterSurface = {
   slug: 'linear',
@@ -216,6 +219,34 @@ describe('adoptionCardState', (): void => {
   });
 });
 
+describe('adoptionStateAt', (): void => {
+  const NOW = 1_000_000_000;
+  const verifying = { state: 'verifying' as const, rowState: 'authoring' as const };
+
+  it('keeps an offered, failed or declined card as it is', (): void => {
+    expect(adoptionStateAt({ state: 'offered', rowState: 'proposed' }, NOW)).toBe('offered');
+    expect(adoptionStateAt({ state: 'failed', rowState: 'failed' }, NOW)).toBe('failed');
+  });
+
+  it('reads a check a live run holds as verifying, and one approved but not yet claimed too', (): void => {
+    expect(adoptionStateAt({ ...verifying, claimedAt: NOW - 60_000 }, NOW)).toBe('verifying');
+    expect(adoptionStateAt({ state: 'verifying', rowState: 'approved' }, NOW)).toBe('verifying');
+  });
+
+  it('reads a check no live run holds as stalled: parked, lapsed, or refused before it ran', (): void => {
+    expect(adoptionStateAt(verifying, NOW)).toBe('stalled');
+    expect(adoptionStateAt({ ...verifying, claimedAt: NOW - AUTHORING_LEASE_MS }, NOW)).toBe(
+      'stalled',
+    );
+    expect(
+      adoptionStateAt(
+        { state: 'verifying', rowState: 'approved', refusal: 'the offered skill was withdrawn' },
+        NOW,
+      ),
+    ).toBe('stalled');
+  });
+});
+
 describe('verifiedOnDay', (): void => {
   it('prints the day in the zone given, the same on every runtime', (): void => {
     const at = Date.UTC(2026, 8, 18, 23, 30);
@@ -238,7 +269,7 @@ describe('adoptionWords', (): void => {
       lead: "Priya's skill kanban-comment-and-close, verified on 18 September 2026, does this.",
       body: "Mateo can adopt it. It would be re-verified in the sandbox under Mateo's Linear connection before Mateo can use it.",
       scopesLead: 'Scopes Mateo would gain',
-      noScopes: 'Mateo already holds every scope it needs.',
+      noScopes: 'Mateo already holds every scope the skill needs.',
     });
   });
 
@@ -264,19 +295,26 @@ describe('adoptionWords', (): void => {
     });
     expect(adoptionWords({ ...base, state: 'failed' })).toMatchObject({
       lead: "Priya's skill kanban-comment-and-close failed its re-verification for Mateo.",
-      body: 'Mateo cannot use it. Write a new one instead to have Mateo write and verify one of its own, or decline it.',
+      body: 'Mateo cannot use it, and keeps the scopes the adoption granted. Write a new one instead to have Mateo write and verify a new one, or decline it.',
     });
     expect(adoptionWords({ ...base, state: 'declined' })).toMatchObject({
       lead: "You declined Priya's skill kanban-comment-and-close for Mateo.",
-      body: 'Mateo will not adopt it, and the work that needed it was cancelled.',
+      body: 'Mateo will not adopt it, and the work waiting for it was cancelled.',
+    });
+  });
+
+  it('says a check that stopped short, and what the manager can do about it', (): void => {
+    expect(adoptionWords({ ...base, state: 'stalled' })).toMatchObject({
+      lead: "Adopting Priya's skill kanban-comment-and-close for Mateo stopped before the sandbox finished checking it.",
+      body: 'Mateo cannot use it yet. Check it again, write a new one instead, or decline it.',
     });
   });
 
   it('carries no em dash and names no pronoun for the adopter', (): void => {
-    for (const state of ['offered', 'verifying', 'failed', 'declined'] as const) {
+    for (const state of ADOPTION_CARD_STATES) {
       const text = Object.values(adoptionWords({ ...base, state })).join(' ');
       expect(text).not.toContain('—');
-      expect(text).not.toMatch(/\b(she|he|her|his)\b/i);
+      expect(text).not.toMatch(/\b(she|he|her|his|its own)\b/i);
     }
   });
 });

@@ -190,7 +190,7 @@ describe('ProposedSkillsPanel', (): void => {
     rejected.unmount();
   });
 
-  it('names the item that first needs the skill, what approving grants and that it is written for this employee alone', (): void => {
+  it('names the item that first needs the skill and what approving grants', (): void => {
     const proposed = {
       ...base,
       state: 'proposed',
@@ -326,6 +326,7 @@ describe('ProposedSkillsPanel: adoption (A3, 10-A)', (): void => {
     description: 'Ticket comment-and-close on a kanban surface.',
     proposedFor: 'item-1',
     state: 'offered',
+    rowState: 'proposed',
     versionId: 'version-1',
     version: 1,
     authorName: 'Priya',
@@ -447,7 +448,7 @@ describe('ProposedSkillsPanel: adoption (A3, 10-A)', (): void => {
     backend.queries = { 'skillAdoption:adoptions': [] };
     act((): void => view.root.render(panel([])));
     expect(view.container.textContent).toContain(
-      "You declined Priya's skill kanban-comment-and-close for Mira. Mira will not adopt it, and the work that needed it was cancelled.",
+      "You declined Priya's skill kanban-comment-and-close for Mira. Mira will not adopt it, and the work waiting for it was cancelled.",
     );
     expect(view.container.querySelectorAll('button')).toHaveLength(0);
     view.unmount();
@@ -456,13 +457,20 @@ describe('ProposedSkillsPanel: adoption (A3, 10-A)', (): void => {
   it('keeps an adoption on the panel while it is checked and when the check fails, and writes a new one from the failure without a second approval', async (): Promise<void> => {
     backend.queries = {
       'skillAdoption:adoptions': [
-        { ...adoption, state: 'verifying', missingScopes: [] },
+        {
+          ...adoption,
+          state: 'verifying',
+          rowState: 'authoring',
+          claimedAt: Date.now(),
+          missingScopes: [],
+        },
         {
           ...adoption,
           skillId: 'skill-10',
           name: 'chat-thread-reply',
           description: 'Threaded reply on a chat surface.',
           state: 'failed',
+          rowState: 'failed',
           missingScopes: [],
           log: 'the stored skill failed its check - smoke.py exited 1',
         },
@@ -483,9 +491,10 @@ describe('ProposedSkillsPanel: adoption (A3, 10-A)', (): void => {
       'skillAdoption:setOfferAside',
       'skillActions:authorAndRegisterSkill',
     ]);
-    expect(said(view.container)).toEqual([
+    // The failed card's note is an alert of its own; the press's outcome is said after it.
+    expect(said(view.container).at(-1)).toBe(
       'Mira is writing chat-thread-reply now, and the Skills card says when it is callable.',
-    ]);
+    );
     view.unmount();
   });
 
@@ -493,8 +502,30 @@ describe('ProposedSkillsPanel: adoption (A3, 10-A)', (): void => {
     backend.queries = {
       'skillAdoption:adoptions': [
         adoption,
-        { ...adoption, skillId: 'skill-11', state: 'verifying', missingScopes: [] },
-        { ...adoption, skillId: 'skill-12', state: 'failed', missingScopes: [], log: 'one\ntwo' },
+        {
+          ...adoption,
+          skillId: 'skill-11',
+          state: 'verifying',
+          rowState: 'authoring',
+          claimedAt: Date.now(),
+          missingScopes: [],
+        },
+        {
+          ...adoption,
+          skillId: 'skill-12',
+          state: 'failed',
+          rowState: 'failed',
+          missingScopes: [],
+          log: 'one\ntwo',
+        },
+        {
+          ...adoption,
+          skillId: 'skill-13',
+          state: 'verifying',
+          rowState: 'authoring',
+          missingScopes: [],
+          log: 'the stored skill was not verified: no sandbox backend answered',
+        },
       ],
     };
     const view = mount(panel([offered]));
@@ -502,4 +533,90 @@ describe('ProposedSkillsPanel: adoption (A3, 10-A)', (): void => {
     expect(underTarget(view.container)).toEqual([]);
     view.unmount();
   }, 30_000);
+
+  it('draws a check that stopped short with Check it again, which runs the stored verification once more', async (): Promise<void> => {
+    backend.queries = {
+      'skillAdoption:adoptions': [
+        {
+          ...adoption,
+          state: 'verifying',
+          rowState: 'authoring',
+          missingScopes: [],
+          log: 'the stored skill was not verified: no sandbox backend answered',
+        },
+      ],
+    };
+    backend.results = { 'skillAdoption:verifyAgain': { ok: true } };
+    const view = mount(panel([]));
+    expect(view.container.querySelector('h2')?.textContent).toBe('Proposed · waiting on you');
+    expect(view.container.textContent).toContain(
+      "Adopting Priya's skill kanban-comment-and-close for Mira stopped before the sandbox finished checking it.",
+    );
+    await press(view.container, 'Check it again: kanban-comment-and-close');
+    expect(backend.calls).toEqual([
+      { name: 'skillAdoption:verifyAgain', args: { skillId: 'skill-9' } },
+    ]);
+    expect(said(view.container).at(-1)).toBe(
+      'Checking kanban-comment-and-close again for Mira: this card says when Mira can use it.',
+    );
+    view.unmount();
+  });
+
+  it('titles the card plainly, with no count, while nothing on it waits on the manager', (): void => {
+    backend.queries = {
+      'skillAdoption:adoptions': [
+        {
+          ...adoption,
+          state: 'verifying',
+          rowState: 'authoring',
+          claimedAt: Date.now(),
+          missingScopes: [],
+        },
+      ],
+    };
+    const view = mount(panel([]));
+    expect(view.container.querySelector('h2')?.textContent).toBe('Proposed');
+    expect(view.container.textContent).not.toContain('waiting on you');
+    view.unmount();
+  });
+
+  it('keeps every adoption declined on this visit drawn, not only the last', async (): Promise<void> => {
+    const second = { ...offered, _id: 'skill-10', name: 'chat-thread-reply' } as Doc<'skills'>;
+    backend.queries = {
+      'skillAdoption:adoptions': [
+        adoption,
+        { ...adoption, skillId: 'skill-10', name: 'chat-thread-reply' },
+      ],
+    };
+    const view = mount(panel([offered, second]));
+    await press(view.container, 'Decline kanban-comment-and-close');
+    await press(view.container, 'Decline chat-thread-reply');
+    backend.queries = { 'skillAdoption:adoptions': [] };
+    act((): void => view.root.render(panel([])));
+    const text = view.container.textContent ?? '';
+    expect(text).toContain("You declined Priya's skill kanban-comment-and-close for Mira.");
+    expect(text).toContain("You declined Priya's skill chat-thread-reply for Mira.");
+    view.unmount();
+  });
+
+  it('leaves an ordinary proposal when Write a new one instead sets the offer aside and the approval is refused', async (): Promise<void> => {
+    backend.queries = { 'skillAdoption:adoptions': [adoption] };
+    backend.results = { 'skillAdoption:setOfferAside': { ok: true } };
+    backend.refusals = {
+      'skills:approve':
+        '[CONVEX M(skills:approve)] [Request ID: 1] Server Error\nUncaught Error: cannot approve "kanban-comment-and-close": surface linear is listed-dead; connect it on the Surfaces tab before approving this skill\n    at handler (../convex/skills.ts:1:1)',
+    };
+    const attempts: unknown[] = [];
+    const view = mount(panel([offered], (attempt) => void attempts.push(attempt)));
+    await press(view.container, 'Write a new one instead of kanban-comment-and-close');
+    expect(backend.calls.map((call) => call.name)).toEqual([
+      'skillAdoption:setOfferAside',
+      'skills:approve',
+    ]);
+    expect(said(view.container)).toEqual([
+      'cannot approve "kanban-comment-and-close": surface linear is listed-dead; connect it on the Surfaces tab before approving this skill',
+    ]);
+    expect(attempts).toEqual([]);
+    view.unmount();
+  });
 });

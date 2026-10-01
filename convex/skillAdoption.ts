@@ -17,6 +17,7 @@ import { browserComponentRefusal, withBrowserComponentState } from '../src/surfa
 import { skillApprovalRefusal } from '../src/surfaces/policy';
 import { toSurfaceRecord } from '../src/surfaces/records';
 import { verdictFor } from '../src/surfaces/verdict';
+import { holdsLiveAuthoringClaim } from '../src/lib/skill-authoring';
 import {
   adoptionCardState,
   adoptionFit,
@@ -258,7 +259,7 @@ async function standingOffer(
   const refused = (reason: string): StandingOffer => ({ kind: 'refused', reason, version });
   if (version === null) return refused('the offered skill no longer exists');
   if (version.userId !== agent.userId || version.name !== row.name) {
-    return refused("the offered skill is not one of this employee's owner's");
+    return refused('the offered skill is no longer in your library');
   }
   if (!sharedSkillsOn()) return refused('sharing skills between employees is switched off');
   const adopter = await adopterOf(db, agent, now);
@@ -283,6 +284,51 @@ async function standingOffer(
 }
 
 /**
+ * Adopt the offered version for an offered proposal, in the caller's transaction: the approval of
+ * the scopes the employee lacks, `skill.approved` and `skill.adopted`, and the stored verification
+ * scheduled.
+ *
+ * @throws ConvexError when the row is not an offered proposal or the offer no longer stands.
+ */
+async function adoptOffer(ctx: MutationCtx, row: Doc<'skills'>): Promise<{ scopes: string[] }> {
+  if (row.state !== 'proposed' || row.offeredVersionId === undefined) {
+    throw new ConvexError(`${row.name} has no skill offered to adopt.`);
+  }
+  const agent = await ctx.db.get(row.agentId);
+  if (agent === null) throw new ConvexError(`${row.name} has no employee to adopt it for.`);
+  const now = Date.now();
+  const offer = await standingOffer(ctx.db, row, agent, now);
+  if (offer.kind === 'refused') {
+    throw new ConvexError(`${row.name} cannot be adopted: ${offer.reason}.`);
+  }
+  const scopes = missingScopes(row.requiredScopes, await grantedScopes(ctx.db, row.agentId));
+  await ctx.db.patch(row._id, { state: 'approved' });
+  for (const scope of scopes) {
+    await grantScopeInTransaction(ctx, row.agentId, scope, 'skill');
+  }
+  await appendEvent(ctx, {
+    agentId: row.agentId,
+    type: 'skill.approved',
+    payload: { skillId: row._id, name: row.name, scopes },
+    createdAt: now,
+  });
+  await appendEvent(ctx, {
+    agentId: row.agentId,
+    type: 'skill.adopted',
+    payload: {
+      skillId: row._id,
+      name: row.name,
+      versionId: offer.version._id,
+      version: offer.version.version,
+      authorName: offer.version.authorName,
+    },
+    createdAt: now,
+  });
+  await ctx.scheduler.runAfter(0, internal.skillActions.verifyStoredSkill, { skillId: row._id });
+  return { scopes };
+}
+
+/**
  * Public, guarded by `assertOwnsSkill`: adopt the version offered to a proposal (Adopt for
  * {name}). Checks the offer again as it stands, then in one transaction approves the row, grants
  * only the scopes the employee lacks (the approval path's own grant, with its `skill.approved`
@@ -296,66 +342,89 @@ async function standingOffer(
  */
 export const adopt = mutation({
   args: { skillId: v.id('skills') },
-  handler: async (ctx, args): Promise<{ scopes: string[] }> => {
+  handler: async (ctx, args): Promise<{ scopes: string[] }> =>
+    await adoptOffer(ctx, await assertOwnsSkill(ctx, args.skillId)),
+});
+
+/**
+ * Whether an adoption's check stopped short with nothing holding the row: approved, parked or
+ * stranded with its offer, and no live run's claim on it.
+ */
+function stoppedShort(row: Doc<'skills'>, now: number): boolean {
+  return adoptionCardState(row) === 'verifying' && !holdsLiveAuthoringClaim(row, now);
+}
+
+/** Why the version an adoption verifies may no longer be verified, or undefined when it may. */
+async function versionRefusal(
+  db: DatabaseReader,
+  row: Doc<'skills'>,
+  agent: Doc<'agents'>,
+): Promise<{ readonly version: Doc<'skillVersions'> | null; readonly refusal?: string }> {
+  const version = row.offeredVersionId === undefined ? null : await db.get(row.offeredVersionId);
+  if (version === null) return { version, refusal: 'the offered skill no longer exists' };
+  if (version.userId !== agent.userId || version.name !== row.name) {
+    return { version, refusal: 'the offered skill is no longer in your library' };
+  }
+  if (version.revokedAt !== undefined) {
+    return { version, refusal: 'the offered skill was withdrawn from every employee' };
+  }
+  return { version };
+}
+
+/**
+ * Public, guarded by `assertOwnsSkill`: Check it again, for an adoption whose stored verification
+ * stopped short (no sandbox ran, the run lapsed, or it was refused before it ran). Schedules
+ * `skillActions.verifyStoredSkill` once more for the version offered; writes nothing else.
+ *
+ * @throws ConvexError when the row has no stopped check, a live run holds it, or the version may no
+ *   longer be verified.
+ */
+export const verifyAgain = mutation({
+  args: { skillId: v.id('skills') },
+  handler: async (ctx, args): Promise<{ ok: true }> => {
     const row = await assertOwnsSkill(ctx, args.skillId);
-    if (row.state !== 'proposed' || row.offeredVersionId === undefined) {
-      throw new ConvexError(`${row.name} has no skill offered to adopt.`);
+    if (adoptionCardState(row) !== 'verifying') {
+      throw new ConvexError(`${row.name} has no stopped check to run again.`);
     }
+    if (!stoppedShort(row, Date.now())) throw new ConvexError(`${row.name} is being checked now.`);
     const agent = await ctx.db.get(row.agentId);
-    if (agent === null) throw new ConvexError(`${row.name} has no employee to adopt it for.`);
-    const now = Date.now();
-    const offer = await standingOffer(ctx.db, row, agent, now);
-    if (offer.kind === 'refused') {
-      throw new ConvexError(`${row.name} cannot be adopted: ${offer.reason}.`);
+    const refusal =
+      agent === null
+        ? 'the employee no longer exists'
+        : (await versionRefusal(ctx.db, row, agent)).refusal;
+    if (refusal !== undefined) {
+      throw new ConvexError(`${row.name} cannot be checked again: ${refusal}.`);
     }
-    const scopes = missingScopes(row.requiredScopes, await grantedScopes(ctx.db, row.agentId));
-    await ctx.db.patch(row._id, { state: 'approved' });
-    for (const scope of scopes) {
-      await grantScopeInTransaction(ctx, row.agentId, scope, 'skill');
-    }
-    await appendEvent(ctx, {
-      agentId: row.agentId,
-      type: 'skill.approved',
-      payload: { skillId: row._id, name: row.name, scopes },
-      createdAt: now,
-    });
-    await appendEvent(ctx, {
-      agentId: row.agentId,
-      type: 'skill.adopted',
-      payload: {
-        skillId: row._id,
-        name: row.name,
-        versionId: offer.version._id,
-        version: offer.version.version,
-        authorName: offer.version.authorName,
-      },
-      createdAt: now,
-    });
-    await ctx.scheduler.runAfter(0, internal.skillActions.verifyStoredSkill, {
-      skillId: row._id,
-    });
-    return { scopes };
+    await ctx.scheduler.runAfter(0, internal.skillActions.verifyStoredSkill, { skillId: row._id });
+    return { ok: true };
   },
 });
 
 /**
- * Public, guarded by `assertOwnsSkill`: set a proposal's offer aside for Write a new one instead,
+ * Public, guarded by `assertOwnsSkill`: set an adoption's offer aside for Write a new one instead,
  * so the authoring the card starts next (`skills.approve` and `skillActions.authorAndRegisterSkill`
- * on a proposal, the authoring alone on a failed adoption) writes the employee's own skill and the
- * card stops saying an adoption is under way. Writes the row only; the approval and the authoring
- * write their own events.
+ * on a proposal, the authoring alone on a failed or stopped adoption) writes the employee's own
+ * skill and the card stops saying an adoption is under way. A stopped check's parked copy of the
+ * version goes too, since an authoring run that found it would check that copy instead of writing.
+ * Writes the row only; the approval and the authoring write their own events.
  *
- * @throws ConvexError when the row is neither an offered proposal nor a failed adoption.
+ * @throws ConvexError when the row is not an offered proposal, a failed adoption or one whose check
+ *   stopped short.
  */
 export const setOfferAside = mutation({
   args: { skillId: v.id('skills') },
   handler: async (ctx, args): Promise<{ ok: true }> => {
     const row = await assertOwnsSkill(ctx, args.skillId);
     const state = adoptionCardState(row);
-    if (state !== 'offered' && state !== 'failed') {
+    if (state !== 'offered' && state !== 'failed' && !stoppedShort(row, Date.now())) {
       throw new ConvexError(`${row.name} has no adoption to set aside.`);
     }
-    await ctx.db.patch(row._id, { offeredVersionId: undefined });
+    await ctx.db.patch(row._id, {
+      offeredVersionId: undefined,
+      ...(state === 'verifying' && row.pendingSmokeTest !== undefined
+        ? { body: '', pendingSmokeTest: undefined }
+        : {}),
+    });
     return { ok: true };
   },
 });
@@ -368,6 +437,10 @@ export interface AdoptionView {
   /** The item the proposal was first made for. */
   readonly proposedFor?: Id<'workItems'>;
   readonly state: 'offered' | 'verifying' | 'failed';
+  /** The row's own state, which tells a scheduled check from one that stopped short. */
+  readonly rowState: Doc<'skills'>['state'];
+  /** When the run holding the row claimed it; absent when no run holds it. */
+  readonly claimedAt?: number;
   readonly versionId: Id<'skillVersions'>;
   readonly version: number;
   readonly authorName: string;
@@ -376,9 +449,9 @@ export interface AdoptionView {
   readonly connection?: string;
   /** The scopes Adopt would grant, for an offer. */
   readonly missingScopes: string[];
-  /** Why Adopt is withheld now, for an offer that no longer stands. */
+  /** Why Adopt, or Check it again, is withheld now: the offer or its version no longer stands. */
   readonly refusal?: string;
-  /** The failed re-verification's log. */
+  /** The failed re-verification's log, or why a stopped check stopped. */
   readonly log?: string;
 }
 
@@ -386,35 +459,44 @@ export interface AdoptionView {
 const ADOPTION_ROW_STATES = ['proposed', 'approved', 'authoring', 'verified', 'failed'] as const;
 
 /**
- * Public, guarded by `assertOwnsAgent`: the employee's adoptions the Skills tab draws, an offer on
- * a proposal, a verification in flight and a failed one, each with the version offered. Reads
- * only; a version that is not the employee's owner's is never shown.
+ * The employee's adoptions as the Skills tab draws them: an offer on a proposal, a verification in
+ * flight or stopped short, and a failed one, each with the version offered. A version that is not
+ * the employee's owner's is never shown.
+ */
+async function adoptionViewsOf(
+  db: DatabaseReader,
+  agent: Doc<'agents'>,
+  now: number,
+): Promise<AdoptionView[]> {
+  const rows = (
+    await Promise.all(
+      ADOPTION_ROW_STATES.map((state) =>
+        db
+          .query('skills')
+          .withIndex('by_agent_state', (q) => q.eq('agentId', agent._id).eq('state', state))
+          .collect(),
+      ),
+    )
+  ).flat();
+  const granted = await grantedScopes(db, agent._id);
+  const views: AdoptionView[] = [];
+  for (const row of rows) {
+    const state = adoptionCardState(row);
+    if (state === undefined) continue;
+    const view = await adoptionView(db, { row, agent, state, granted, now });
+    if (view !== undefined) views.push(view);
+  }
+  return views.sort((left, right) => left.name.localeCompare(right.name));
+}
+
+/**
+ * Public, guarded by `assertOwnsAgent`: the employee's adoptions the Skills tab draws
+ * ({@link adoptionViewsOf}). Reads only.
  */
 export const adoptions = query({
   args: { agentId: v.id('agents') },
-  handler: async (ctx, args): Promise<AdoptionView[]> => {
-    const agent = await assertOwnsAgent(ctx, args.agentId);
-    const rows = (
-      await Promise.all(
-        ADOPTION_ROW_STATES.map((state) =>
-          ctx.db
-            .query('skills')
-            .withIndex('by_agent_state', (q) => q.eq('agentId', agent._id).eq('state', state))
-            .collect(),
-        ),
-      )
-    ).flat();
-    const granted = await grantedScopes(ctx.db, agent._id);
-    const now = Date.now();
-    const views: AdoptionView[] = [];
-    for (const row of rows) {
-      const state = adoptionCardState(row);
-      if (state === undefined) continue;
-      const view = await adoptionView(ctx.db, { row, agent, state, granted, now });
-      if (view !== undefined) views.push(view);
-    }
-    return views.sort((left, right) => left.name.localeCompare(right.name));
-  },
+  handler: async (ctx, args): Promise<AdoptionView[]> =>
+    await adoptionViewsOf(ctx.db, await assertOwnsAgent(ctx, args.agentId), Date.now()),
 });
 
 /** One row's card, or undefined when its version is not the employee's owner's to show. */
@@ -432,15 +514,20 @@ async function adoptionView(
   const offer =
     state === 'offered'
       ? await standingOffer(db, row, agent, now)
-      : await connectionOffer(db, row, agent, now);
+      : await decidedOffer(db, row, agent, now);
   const { version } = offer;
   if (version === null || version.userId !== agent.userId) return undefined;
+  const log = state === 'offered' ? undefined : row.verificationLog;
   return {
     skillId: row._id,
     name: row.name,
     description: row.description,
     ...(row.proposedFor !== undefined ? { proposedFor: row.proposedFor } : {}),
     state,
+    rowState: row.state,
+    ...(row.authoringRunId !== undefined && row.authoringClaimedAt !== undefined
+      ? { claimedAt: row.authoringClaimedAt }
+      : {}),
     versionId: version._id,
     version: version.version,
     authorName: version.authorName,
@@ -449,25 +536,25 @@ async function adoptionView(
       ? { connection: offer.connection }
       : {}),
     missingScopes: state === 'offered' ? missingScopes(row.requiredScopes, input.granted) : [],
-    ...(state === 'offered' && offer.kind === 'refused' ? { refusal: offer.reason } : {}),
-    ...(state === 'failed' && row.verificationLog ? { log: row.verificationLog } : {}),
+    ...(offer.kind === 'refused' && state !== 'failed' ? { refusal: offer.reason } : {}),
+    ...(log ? { log } : {}),
   };
 }
 
 /**
  * The version of a row past its offer (verifying or failed), with the connection the sandbox runs
- * under: the decision is made, so nothing is checked again here.
+ * under, or why it may no longer be verified: the decision is made, so only the version's own
+ * standing is read again.
  */
-async function connectionOffer(
+async function decidedOffer(
   db: DatabaseReader,
   row: Doc<'skills'>,
   agent: Doc<'agents'>,
   now: number,
 ): Promise<StandingOffer> {
-  const version = row.offeredVersionId === undefined ? null : await db.get(row.offeredVersionId);
-  if (version === null) {
-    return { kind: 'refused', reason: 'the offered skill no longer exists', version };
-  }
+  const { version, refusal } = await versionRefusal(db, row, agent);
+  if (version === null) return { kind: 'refused', reason: refusal ?? '', version };
+  if (refusal !== undefined) return { kind: 'refused', reason: refusal, version };
   const fit = adoptionFit(version, await adopterOf(db, agent, now));
   return {
     kind: 'ready',

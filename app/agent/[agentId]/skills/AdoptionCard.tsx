@@ -15,6 +15,7 @@ export type Adoption = FunctionReturnType<typeof api.skillAdoption.adoptions>[nu
 const NOTE_BORDER: Readonly<Record<AdoptionCardState, string>> = {
   offered: 'border-[var(--color-border)]',
   verifying: 'border-[var(--color-border)]',
+  stalled: 'border-[var(--color-warn-line)]',
   failed: 'border-[var(--color-danger-line)]',
   declined: 'border-[var(--color-border)]',
 };
@@ -23,15 +24,16 @@ const NOTE_BORDER: Readonly<Record<AdoptionCardState, string>> = {
  * A sibling's verified skill offered to the employee in place of writing its own (A3), in each
  * state the decision goes through: offered, with **Adopt for {name}**, **Write a new one
  * instead** and **Decline**; verifying, while the sandbox checks it again under the employee's
- * own connection, with nothing to press; failed, with the sandbox's log, **Write a new one
- * instead** and **Decline**; and declined. The proposal's own lines (its name and the item that
+ * own connection, with nothing to press; stalled, when that check stopped short, with why,
+ * **Check it again**, **Write a new one instead** and **Decline**; failed, with the sandbox's log,
+ * **Write a new one instead** and **Decline**; and declined. The proposal's own lines (its name and the item that
  * needs it) are the panel's; this is the note and the controls under them.
  *
  * @param adoption - The adoption as the backend draws it.
  * @param state - The state to draw: the adoption's own, or `declined` once the manager declined.
  * @param adopterName - The employee.
  * @param writeRefusal - Why the approval path refuses now (its target surface is not connected),
- *   which withholds Write a new one instead and Adopt alike.
+ *   which withholds Write a new one instead and Adopt alike, said with a link to the Surfaces tab.
  * @param busy - Whether a decision is in flight on the panel.
  */
 export function AdoptionCard({
@@ -41,6 +43,7 @@ export function AdoptionCard({
   writeRefusal,
   busy,
   onAdopt,
+  onCheckAgain,
   onWriteNew,
   onDecline,
 }: {
@@ -50,6 +53,7 @@ export function AdoptionCard({
   writeRefusal?: string;
   busy: boolean;
   onAdopt: () => void;
+  onCheckAgain: () => void;
   onWriteNew: () => void;
   onDecline: () => void;
 }) {
@@ -62,11 +66,16 @@ export function AdoptionCard({
     verifiedOn: verifiedOnDay(adoption.verifiedAt, zone),
     ...(adoption.connection !== undefined ? { connection: adoption.connection } : {}),
   });
-  const adoptRefusal = adoption.refusal ?? writeRefusal;
-  const decides = state === 'offered' || state === 'failed';
+  // The approval's own refusal is said once, with where to fix it; the offer's own, when it
+  // differs, is said beside it, since it withholds Adopt alone.
+  const offerRefusal = adoption.refusal !== writeRefusal ? adoption.refusal : undefined;
+  const adoptRefusal = writeRefusal ?? adoption.refusal;
+  const decides = state === 'offered' || state === 'failed' || state === 'stalled';
+  const alerting = state === 'failed' || state === 'stalled';
   return (
     <div className="grid gap-3" data-adoption={state}>
       <div
+        {...(alerting ? { role: 'alert' } : {})}
         className={`rounded-lg border bg-[var(--color-inset)] px-3 py-2 text-[13px] leading-relaxed text-[var(--color-fg-2)] ${NOTE_BORDER[state]}`}
       >
         <p className="break-words">
@@ -82,12 +91,25 @@ export function AdoptionCard({
           </p>
         ) : null}
       </div>
-      {state === 'failed' && adoption.log ? (
+      {alerting && adoption.log ? (
         <SkillStatusLine skill={adoption.name} text={adoption.log} />
       ) : null}
-      {state === 'offered' && adoptRefusal ? (
+      {decides && state !== 'stalled' && writeRefusal ? (
         <p className="text-[13px] text-[var(--color-warn)] break-words">
-          Cannot adopt yet: {adoptRefusal}
+          Cannot approve yet: {writeRefusal}{' '}
+          <a href="#surfaces" className="underline underline-offset-4">
+            Surfaces tab
+          </a>
+        </p>
+      ) : null}
+      {state === 'offered' && offerRefusal ? (
+        <p className="text-[13px] text-[var(--color-warn)] break-words">
+          Cannot adopt now: {offerRefusal}
+        </p>
+      ) : null}
+      {state === 'stalled' && adoption.refusal ? (
+        <p className="text-[13px] text-[var(--color-warn)] break-words">
+          Cannot check it again: {adoption.refusal}
         </p>
       ) : null}
       {decides ? (
@@ -104,11 +126,23 @@ export function AdoptionCard({
               Adopt for {adopterName}
             </Button>
           ) : null}
+          {state === 'stalled' ? (
+            <Button
+              variant="retry"
+              size="small"
+              disabled={busy || Boolean(adoption.refusal)}
+              title={adoption.refusal}
+              aria-label={`Check it again: ${adoption.name}`}
+              onClick={onCheckAgain}
+            >
+              Check it again
+            </Button>
+          ) : null}
           <Button
             variant="secondary"
             size="small"
-            disabled={busy || Boolean(writeRefusal)}
-            title={writeRefusal}
+            disabled={busy || (state !== 'stalled' && Boolean(writeRefusal))}
+            title={state !== 'stalled' ? writeRefusal : undefined}
             aria-label={`Write a new one instead of ${adoption.name}`}
             onClick={onWriteNew}
           >

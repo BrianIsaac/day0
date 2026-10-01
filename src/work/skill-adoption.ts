@@ -12,6 +12,7 @@
  */
 import type { Doc } from '../../convex/_generated/dataModel';
 import type { SurfaceMode } from '../lib/surface-mode';
+import { AUTHORING_LEASE_MS } from '../lib/skill-authoring';
 import { zonedParts } from '../lib/zone';
 import { HANDED_OVER_AUTHOR_NAME, isOfferable, type VersionStandingFields } from './skill-library';
 
@@ -209,8 +210,18 @@ export function missingScopes(
   return [...new Set(required ?? [])].filter((scope) => !held.has(scope));
 }
 
-/** The states the adoption card draws. */
-export const ADOPTION_CARD_STATES = ['offered', 'verifying', 'failed', 'declined'] as const;
+/**
+ * The states the adoption card draws: offered; verifying while a run checks it; stalled when the
+ * check stopped short (parked for want of a sandbox, a run that lapsed, or a refusal before it
+ * ran) and nothing holds it; failed; and declined.
+ */
+export const ADOPTION_CARD_STATES = [
+  'offered',
+  'verifying',
+  'stalled',
+  'failed',
+  'declined',
+] as const;
 
 /** One of {@link ADOPTION_CARD_STATES}. */
 export type AdoptionCardState = (typeof ADOPTION_CARD_STATES)[number];
@@ -231,7 +242,7 @@ export interface AdoptionRowFields {
  */
 export function adoptionCardState(
   row: AdoptionRowFields,
-): Exclude<AdoptionCardState, 'declined'> | undefined {
+): 'offered' | 'verifying' | 'failed' | undefined {
   if (row.offeredVersionId === undefined) return undefined;
   switch (row.state) {
     case 'proposed':
@@ -247,7 +258,40 @@ export function adoptionCardState(
     case 'retired':
     case 'superseded':
       return undefined;
+    default: {
+      const unknown: never = row.state;
+      throw new Error(`unhandled skill state ${String(unknown)}`);
+    }
   }
+}
+
+/** What decides whether a verifying adoption is still being checked. */
+export interface AdoptionAtFields {
+  readonly state: 'offered' | 'verifying' | 'failed';
+  readonly rowState: Doc<'skills'>['state'];
+  /** When the run holding the row claimed it; absent when no run holds it. */
+  readonly claimedAt?: number;
+  /** Why the offer no longer stands, when it does not. */
+  readonly refusal?: string;
+}
+
+/**
+ * The card an adoption draws at a moment: a verifying one is still verifying while a live run
+ * holds it, or while it is approved and its scheduled check has not claimed it yet (unless the
+ * offer no longer stands, so the check will refuse); otherwise it stalled, and the card offers
+ * Check it again. Read against the browser's clock, so a run that lapses is seen to.
+ *
+ * @param adoption - The adoption as the backend draws it.
+ * @param now - The clock.
+ */
+export function adoptionStateAt(adoption: AdoptionAtFields, now: number): AdoptionCardState {
+  if (adoption.state !== 'verifying') return adoption.state;
+  // The claim's own lease (`holdsLiveAuthoringClaim`): a run past it is gone.
+  const live = adoption.claimedAt !== undefined && now - adoption.claimedAt < AUTHORING_LEASE_MS;
+  if (live) return 'verifying';
+  return adoption.rowState === 'approved' && adoption.refusal === undefined
+    ? 'verifying'
+    : 'stalled';
 }
 
 /** The month names the card prints a day with. */
@@ -314,19 +358,19 @@ export function adoptionWords(input: AdoptionWordsInput): AdoptionWords {
   const { adopterName, skillName, verifiedOn } = input;
   const handedOver = input.authorName === HANDED_OVER_AUTHOR_NAME;
   const skill = handedOver ? `the skill ${skillName}` : `${input.authorName}'s skill ${skillName}`;
-  const Skill = handedOver ? `The skill ${skillName}` : skill;
+  const opening = handedOver ? `The skill ${skillName}` : skill;
   const under =
     input.connection !== undefined ? ` under ${adopterName}'s ${input.connection} connection` : '';
   const scopes = {
     scopesLead: `Scopes ${adopterName} would gain`,
-    noScopes: `${adopterName} already holds every scope it needs.`,
+    noScopes: `${adopterName} already holds every scope the skill needs.`,
   };
   switch (input.state) {
     case 'offered':
       return {
         lead: handedOver
-          ? `${Skill}, which came with an employee handed over to you and was verified on ${verifiedOn}, does this.`
-          : `${Skill}, verified on ${verifiedOn}, does this.`,
+          ? `${opening}, which came with an employee handed over to you and was verified on ${verifiedOn}, does this.`
+          : `${opening}, verified on ${verifiedOn}, does this.`,
         body: `${adopterName} can adopt it. It would be re-verified in the sandbox${under} before ${adopterName} can use it.`,
         ...scopes,
       };
@@ -336,16 +380,22 @@ export function adoptionWords(input: AdoptionWordsInput): AdoptionWords {
         body: `It is being re-verified in the sandbox${under}. ${adopterName} can use it once the check passes; there is nothing to press until then.`,
         ...scopes,
       };
+    case 'stalled':
+      return {
+        lead: `Adopting ${skill} for ${adopterName} stopped before the sandbox finished checking it.`,
+        body: `${adopterName} cannot use it yet. Check it again, write a new one instead, or decline it.`,
+        ...scopes,
+      };
     case 'failed':
       return {
-        lead: `${Skill} failed its re-verification for ${adopterName}.`,
-        body: `${adopterName} cannot use it. Write a new one instead to have ${adopterName} write and verify one of its own, or decline it.`,
+        lead: `${opening} failed its re-verification for ${adopterName}.`,
+        body: `${adopterName} cannot use it, and keeps the scopes the adoption granted. Write a new one instead to have ${adopterName} write and verify a new one, or decline it.`,
         ...scopes,
       };
     case 'declined':
       return {
         lead: `You declined ${skill} for ${adopterName}.`,
-        body: `${adopterName} will not adopt it, and the work that needed it was cancelled.`,
+        body: `${adopterName} will not adopt it, and the work waiting for it was cancelled.`,
         ...scopes,
       };
   }
