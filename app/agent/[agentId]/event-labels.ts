@@ -173,7 +173,7 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
           : ''
     }`,
   'manager.transfer-declined': (payload) =>
-    `${text(payload.toAddress) ?? 'the named manager'} declined the handover`,
+    `handover declined by ${text(payload.toAddress) ?? 'the named manager'}`,
   'manager.transfer-expired': (payload) =>
     `handover to ${text(payload.toAddress) ?? 'another manager'} expired`,
   'manager.transfer-settle-failed': (payload) =>

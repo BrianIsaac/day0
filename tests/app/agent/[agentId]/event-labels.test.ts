@@ -61,7 +61,7 @@ describe('the live feed labels', (): void => {
       'handover to priya@co.example cancelled',
       'handover to priya@co.example cancelled at the retire',
       'handover to priya@co.example cancelled for another address',
-      'priya@co.example declined the handover',
+      'handover declined by priya@co.example',
       'handover to priya@co.example expired',
       'handover to priya@co.example not finished yet',
       'handover to priya@co.example ended, it could not finish',
