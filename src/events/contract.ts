@@ -16,6 +16,7 @@
  */
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import type { CharterChange, FieldDiff } from '../agent/charter-amendment';
+import type { TransferCancelReason } from '../agent/manager-transfer';
 import type { ModelCallReport } from '../lib/model-call-telemetry';
 import type { SurfaceMode } from '../lib/surface-mode';
 import type { ClaimHolder } from '../work/claim-key';
@@ -219,8 +220,77 @@ export interface ManagerChangedByProbe {
   readonly managerUserId: string;
 }
 
+/**
+ * `manager.changed` from the owner's **Make it you** (D17 (a)): the employee's
+ * address was not its owner's, and the owner made it their own verified one.
+ */
+export interface ManagerChangedByAdoption {
+  readonly via: 'adopted';
+  /** The owner's verified address, normalised, that the employee reports to now. */
+  readonly bossEmail: string;
+}
+
 /** The payload of `manager.changed`, by where the change was seen. */
-export type ManagerChangedPayload = ManagerChangedOnDashboard | ManagerChangedByProbe;
+export type ManagerChangedPayload =
+  | ManagerChangedOnDashboard
+  | ManagerChangedByProbe
+  | ManagerChangedByAdoption;
+
+/**
+ * What every event of a handover request carries: the request, who asked and
+ * the address it names, so the record reads the same whichever manager holds
+ * it. Both addresses are personal keys, which the export drops.
+ */
+export interface TransferRequestEvent {
+  readonly transferId: Id<'managerTransfers'>;
+  readonly fromAddress: string;
+  readonly toAddress: string;
+}
+
+/** The payload of `manager.transfer-asked`: a manager asked another to take the employee on. */
+export interface ManagerTransferAskedPayload extends TransferRequestEvent {
+  readonly hasNote: boolean;
+}
+
+/** The payload of `manager.transfer-cancelled`: an asked request ended before its answer. */
+export interface ManagerTransferCancelledPayload extends TransferRequestEvent {
+  readonly reason: TransferCancelReason;
+}
+
+/** The payload of `manager.transfer-declined`: the named manager declined, with or without a reason. */
+export interface ManagerTransferDeclinedPayload extends TransferRequestEvent {
+  readonly hasReason: boolean;
+}
+
+/** The payload of `manager.transfer-expired`: the request went unanswered past its expiry. */
+export type ManagerTransferExpiredPayload = TransferRequestEvent;
+
+/**
+ * The payload of `manager.transferred`: the employee moved to the manager who accepted its
+ * handover (the transfer plan, section 7.6). What the move did, as counts and names, never a
+ * credential's or a documentation source's label.
+ */
+export interface ManagerTransferredPayload {
+  readonly transferId: Id<'managerTransfers'>;
+  readonly fromAddress: string;
+  readonly toAddress: string;
+  /** The connections cut, by slug: each waits for the new manager to approve and connect it. */
+  readonly surfacesCut: readonly string[];
+  /** The read scopes the cut connections had granted. */
+  readonly scopesRevoked: readonly string[];
+  readonly credentialsRevoked: number;
+  readonly credentialsKept: number;
+  readonly claimsMoved: number;
+  readonly claimsReleased: number;
+  /** The items the new manager's employees already held, whose moving claims were released. */
+  readonly conflictingClaimKeys: readonly string[];
+  readonly decisionRequestsVoided: number;
+  /** Approved plans not yet started, returned to the new manager (D13). */
+  readonly plansReturned: number;
+  readonly runsStopped: number;
+  /** Whether a never-approved draft charter was discarded (D8). */
+  readonly charterDiscarded: boolean;
+}
 
 // The charter.
 
@@ -799,12 +869,21 @@ export interface PlanHeldDraftedWithout extends WorkItemNamed {
   readonly cause: 'not-connected' | 'read-failed';
 }
 
+/**
+ * `work.plan-held` for a plan the previous manager approved and that had not started when the
+ * employee was handed over: the approval does not carry to the new manager (decision D13).
+ */
+export interface PlanHeldApprovedByPredecessor extends WorkItemNamed {
+  readonly reason: 'approved-by-predecessor';
+}
+
 /** The payload of `work.plan-held`, by why the plan waits for the manager. */
 export type WorkPlanHeldPayload =
   | PlanHeldSkipOverruled
   | PlanHeldForRejection
   | PlanHeldObligationsFailedOpen
-  | PlanHeldDraftedWithout;
+  | PlanHeldDraftedWithout
+  | PlanHeldApprovedByPredecessor;
 
 /** The payload of `work.plan-approved`. */
 export interface WorkPlanApprovedPayload extends WorkItemNamed {
@@ -1054,6 +1133,11 @@ export interface EventPayloads {
   'permission.granted': PermissionGrantedPayload;
   'permission.revoked': PermissionRevokedPayload;
   'manager.changed': ManagerChangedPayload;
+  'manager.transfer-asked': ManagerTransferAskedPayload;
+  'manager.transfer-cancelled': ManagerTransferCancelledPayload;
+  'manager.transfer-declined': ManagerTransferDeclinedPayload;
+  'manager.transfer-expired': ManagerTransferExpiredPayload;
+  'manager.transferred': ManagerTransferredPayload;
   'charter.drafted': CharterDraftedPayload;
   'charter.approved': CharterApprovedPayload;
   'charter.amended': CharterAmendedPayload;
@@ -1201,6 +1285,11 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'permission.granted',
   'permission.revoked',
   'manager.changed',
+  'manager.transfer-asked',
+  'manager.transfer-cancelled',
+  'manager.transfer-declined',
+  'manager.transfer-expired',
+  'manager.transferred',
   'charter.drafted',
   'charter.approved',
   'charter.amended',

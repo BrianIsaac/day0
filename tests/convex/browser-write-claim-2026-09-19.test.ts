@@ -15,6 +15,7 @@ import { TileDriver } from '../fixtures/browser-phase-split-2026-09-16';
 import { allConvexModules } from './all-modules';
 import { contractSchema } from './contract-schema';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
 /** The repository root, found from this file rather than the working directory. */
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
@@ -128,7 +129,7 @@ vi.mock('../../src/surfaces/mcp', async (importOriginal) => {
 });
 
 type Harness = TestConvex<typeof schema>;
-const OWNER = { subject: 'owner' };
+const OWNER = managerIdentity();
 
 const planWith = (tileStep: 'write' | 'conditional-write'): ExecutionPlan => ({
   summary: 'Work the Looker pipeline tile per the runbook and read it back.',
@@ -158,10 +159,25 @@ interface Seeded {
   revops28: Id<'workItems'>;
 }
 
+/** Start a run of the work item, as the claim before authoring meets it: the run id it carries. */
+async function runOf(harness: Harness, workItemId: Id<'workItems'>): Promise<Id<'events'>> {
+  return await harness.run(async (ctx) => {
+    const row = await ctx.db.get(workItemId);
+    const runId = await ctx.db.insert('events', {
+      agentId: row!.agentId,
+      type: 'work.execution-claimed',
+      payload: { workItemId },
+      createdAt: 1,
+    });
+    await ctx.db.patch(workItemId, { executionRunId: runId });
+    return runId;
+  });
+}
+
 async function seed(harness: Harness): Promise<Seeded> {
   return await harness.run(async (ctx) => {
     const agentId = await ctx.db.insert('agents', {
-      bossEmail: 'boss@day0.local',
+      bossEmail: MANAGER_ADDRESS,
       name: 'Priya',
       userId: 'owner',
       state: 'active',
@@ -484,7 +500,7 @@ describe('one work item writes a documented page field (finding M, 19 September 
       delete card._id;
       delete card._creationTime;
       const agentId = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'Mateo',
         userId: 'owner',
         state: 'active',
@@ -505,6 +521,7 @@ describe('one work item writes a documented page field (finding M, 19 September 
     expect(
       await t.mutation(internal.work.takeWriteTargetClaims, {
         workItemId: revops27,
+        runId: await runOf(t, revops27),
         targets: [{ surfaceSlug: SLUG, field: 'Pipeline coverage' }],
       }),
     ).toEqual(['http://looker-tile:8080|pipeline coverage']);
@@ -512,6 +529,7 @@ describe('one work item writes a documented page field (finding M, 19 September 
     expect(
       await t.mutation(internal.work.takeWriteTargetClaims, {
         workItemId: colleagueItem,
+        runId: await runOf(t, colleagueItem),
         targets: [{ surfaceSlug: 'looker', field: 'pipeline coverage' }],
       }),
     ).toEqual([]);
@@ -539,6 +557,21 @@ describe('one work item writes a documented page field (finding M, 19 September 
     ]);
   });
 
+  it('takes nothing for a run that is no longer the item’s, as after a stop at a handover (U3-m1)', async (): Promise<void> => {
+    const t = convexTest(contractSchema(), allConvexModules());
+    const { revops27 } = await seed(t);
+    const stale = await runOf(t, revops27);
+    await runOf(t, revops27);
+    expect(
+      await t.mutation(internal.work.takeWriteTargetClaims, {
+        workItemId: revops27,
+        runId: stale,
+        targets: [{ surfaceSlug: SLUG, field: 'Pipeline coverage' }],
+      }),
+    ).toEqual([]);
+    expect(await t.run(async (ctx) => await ctx.db.query('externalClaims').collect())).toEqual([]);
+  });
+
   it('takes nothing in mock mode', async (): Promise<void> => {
     restoreSurfaceMode();
     useSurfaceMode('mock');
@@ -547,6 +580,7 @@ describe('one work item writes a documented page field (finding M, 19 September 
     expect(
       await t.mutation(internal.work.takeWriteTargetClaims, {
         workItemId: revops27,
+        runId: await runOf(t, revops27),
         targets: [{ surfaceSlug: SLUG, field: 'Pipeline coverage' }],
       }),
     ).toEqual([]);

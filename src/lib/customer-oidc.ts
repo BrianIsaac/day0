@@ -13,6 +13,15 @@ export const CUSTOMER_OIDC_ISSUER_VAR = 'DAY0_OIDC_ISSUER';
 /** The client id tokens carry in `aud`; the deployment refuses a token for anyone else. */
 export const CUSTOMER_OIDC_AUDIENCE_VAR = 'DAY0_OIDC_AUDIENCE';
 
+/**
+ * Declares the customer issuer authoritative for the addresses it puts in
+ * `email` when it sends no `email_verified` claim (decision D3). Several
+ * enterprise issuers omit the claim; without this flag such an address is
+ * not believed, since a self-service issuer would let anyone claim any
+ * address and so take any employee handed to it.
+ */
+export const CUSTOMER_OIDC_EMAIL_TRUSTED_VAR = 'DAY0_OIDC_EMAIL_TRUSTED';
+
 /** A configured customer issuer. */
 export interface CustomerOidcIssuer {
   readonly issuer: string;
@@ -74,4 +83,15 @@ export function customerOidcIssuer(read: EnvReader): CustomerOidcIssuer | undefi
     );
   }
   return { issuer, audience };
+}
+
+/**
+ * Whether this environment declares the customer issuer's `email` claim
+ * verified when the issuer sends no `email_verified` (D3). Only `true` turns
+ * it on, so a typo never widens whose address is believed.
+ *
+ * @param read - Reads one environment name.
+ */
+export function customerOidcEmailTrusted(read: EnvReader): boolean {
+  return readTrimmed(read, CUSTOMER_OIDC_EMAIL_TRUSTED_VAR)?.toLowerCase() === 'true';
 }

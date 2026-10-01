@@ -21,6 +21,11 @@
  * the second. `--json` emits only the figures so stdout can be saved as a
  * valid JSON file.
  *
+ * An employee handed to another manager counts for each within the spans they held it, as
+ * `metrics:forOwner` counts it, read from the export's `managerTransfers` rows (D12). A trace
+ * carries no request rows, so a recompute from traces counts each employee for the owner who
+ * holds it now: after a handover, recompute from a snapshot export.
+ *
  * `--owner` defaults to the traces' own owner, or to the no-auth subject
  * every local bed runs as for a snapshot. With `--expect`, every field the
  * file names must equal the recomputed one; a file holding the query's whole
@@ -36,7 +41,9 @@ import { DEV_NO_AUTH_SUBJECT } from '../src/lib/dev-auth-issuer';
 import {
   byWriteOrder,
   computeCompanyMetrics,
+  handoversFromTransfers,
   isEvaluationAgent,
+  recordsWithinTenure,
   selectCompanyEmployees,
   type EmployeeRecords,
 } from '../convex/metrics';
@@ -142,7 +149,10 @@ export function recomputeFromExport(
   options: { owner?: string; now?: number } = {},
 ): Recomputed {
   const owner = options.owner ?? DEV_NO_AUTH_SUBJECT;
-  const entries = exportEntries(path, new Set([...METRIC_TABLES, ...TIMELINE_TABLES, 'surfaces']));
+  const entries = exportEntries(
+    path,
+    new Set([...METRIC_TABLES, ...TIMELINE_TABLES, 'surfaces', 'managerTransfers']),
+  );
   const required = <Row>(table: (typeof METRIC_TABLES)[number]): Row[] => {
     const rows = exportRows(entries, table);
     if (!rows) throw new Error(`the export has no ${table} table; is this a Convex export?`);
@@ -153,15 +163,25 @@ export function recomputeFromExport(
   const workItems = groupByAgent(required<Doc<'workItems'>>('workItems'));
   const charters = groupByAgent(required<Doc<'charters'>>('charters'));
 
-  const selection = selectCompanyEmployees(agents, owner, isEvaluationAgent);
+  // The handovers cut each employee's history at its acceptance, as `metrics:forOwner` cuts it
+  // (D12): an export from before the transfer release has no such table and no handover.
+  const handovers = handoversFromTransfers(
+    (exportRows(entries, 'managerTransfers') ?? []) as Doc<'managerTransfers'>[],
+  );
+  const selection = selectCompanyEmployees(agents, owner, isEvaluationAgent, handovers);
   const surfaces = groupByAgent((exportRows(entries, 'surfaces') ?? []) as Doc<'surfaces'>[]);
-  const records: EmployeeRecords[] = selection.employees.map((agent) => ({
-    agent,
-    events: events.get(agent._id) ?? [],
-    workItems: workItems.get(agent._id) ?? [],
-    charters: charters.get(agent._id) ?? [],
-    surfaces: surfaces.get(agent._id) ?? [],
-  }));
+  const records: EmployeeRecords[] = selection.employees.map((agent) =>
+    recordsWithinTenure(
+      {
+        agent,
+        events: events.get(agent._id) ?? [],
+        workItems: workItems.get(agent._id) ?? [],
+        charters: charters.get(agent._id) ?? [],
+        surfaces: surfaces.get(agent._id) ?? [],
+      },
+      selection.tenures.get(agent._id) ?? [],
+    ),
+  );
   const figures = computeCompanyMetrics(records, selection);
 
   const sources = (exportRows(entries, 'docSources') ?? []) as Doc<'docSources'>[];

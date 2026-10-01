@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   DEV_NO_AUTH_ALGORITHM,
   DEV_NO_AUTH_AUDIENCE,
@@ -6,7 +6,11 @@ import {
   DEV_NO_AUTH_KEY_ID,
   DEV_NO_AUTH_SUBJECT,
 } from '../../../src/lib/dev-auth-issuer';
-import { mintDevNoAuthToken } from '../../../src/lib/dev-auth-token';
+import { localManagerAddress, mintDevNoAuthToken } from '../../../src/lib/dev-auth-token';
+
+afterEach((): void => {
+  vi.unstubAllEnvs();
+});
 
 /** A fresh P-256 keypair, the private half base64 PKCS#8 as the env file stores it. */
 async function keypair(): Promise<{ encodedPrivate: string; publicKey: CryptoKey }> {
@@ -64,5 +68,48 @@ describe('mintDevNoAuthToken', (): void => {
     await expect(mintDevNoAuthToken('s', undefined)).rejects.toThrow(
       'DEV_NO_AUTH_SIGNING_KEY is not set',
     );
+  });
+});
+
+describe('the local manager address', (): void => {
+  it('is the configured address, trimmed and lower-cased', (): void => {
+    expect(localManagerAddress({ NEXT_PUBLIC_DEMO_BOSS_EMAIL: ' Manager@Example.com ' })).toBe(
+      'manager@example.com',
+    );
+  });
+
+  it('is the local default when none is configured', (): void => {
+    expect(localManagerAddress({})).toBe('boss@day0.local');
+    expect(localManagerAddress({ NEXT_PUBLIC_DEMO_BOSS_EMAIL: '  ' })).toBe('boss@day0.local');
+  });
+
+  it('refuses a configured value that is not an address, naming the variable and not the value', (): void => {
+    expect(() => localManagerAddress({ NEXT_PUBLIC_DEMO_BOSS_EMAIL: 'boss at work' })).toThrow(
+      expect.objectContaining({
+        message: expect.stringContaining('NEXT_PUBLIC_DEMO_BOSS_EMAIL'),
+      }),
+    );
+    expect(() => localManagerAddress({ NEXT_PUBLIC_DEMO_BOSS_EMAIL: 'boss at work' })).toThrow(
+      expect.objectContaining({ message: expect.not.stringContaining('boss at work') }),
+    );
+  });
+});
+
+describe("the local token's address", (): void => {
+  it('carries the manager address it is given as a verified email', async (): Promise<void> => {
+    const { encodedPrivate } = await keypair();
+    const claims = decodeSegment(
+      (await mintDevNoAuthToken('s', encodedPrivate, 'lead@day0.local')).split('.')[1]!,
+    );
+    expect(claims).toMatchObject({ email: 'lead@day0.local', email_verified: true });
+  });
+
+  it('carries the configured manager address when none is given, as a script minting with no environment but the key', async (): Promise<void> => {
+    vi.stubEnv('NEXT_PUBLIC_DEMO_BOSS_EMAIL', 'Ops@Kestrel.Example');
+    const { encodedPrivate } = await keypair();
+    const claims = decodeSegment(
+      (await mintDevNoAuthToken(undefined, encodedPrivate)).split('.')[1]!,
+    );
+    expect(claims).toMatchObject({ email: 'ops@kestrel.example', email_verified: true });
   });
 });

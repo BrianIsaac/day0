@@ -29,42 +29,89 @@ export interface RollbackFacts {
 }
 
 /**
- * The rollback, written out with what the run read. Nothing in it is run for
- * the reader: undoing a production push is a decision, taken with the
- * release's changelog in hand.
+ * The rollback, written out with what the run read: the steps to take, numbered in the order
+ * they are taken (the deployment's rows and functions, or the app's Convex values, first, and the
+ * earlier app build after them, so the build promoted back never meets the release it was not
+ * built for), then what the run left with nothing to undo. Nothing in it is run for the reader:
+ * undoing a production push is a decision, taken with the release's changelog in hand.
  *
  * @param facts - What the run read.
  */
 export function rollbackLines(facts: RollbackFacts): string[] {
   const { target, upgrade } = facts;
   const scope = target.scope === undefined ? '' : ` --scope ${target.scope}`;
-  const lines = ['Rollback (nothing here is run for you):'];
-  lines.push(
-    facts.previousApp === undefined
-      ? '  the app: this run read no earlier production build to go back to.'
-      : `  the app: vercel promote ${facts.previousApp}${scope}, the build that served production before this run.`,
-  );
+  const steps: string[] = [];
+  const notes: string[] = [];
+  if (upgrade !== undefined) steps.push(rowsStep(target, upgrade));
   if (facts.appValuesChanged) {
-    lines.push(
-      '  its Convex values: this run set NEXT_PUBLIC_CONVEX_URL, NEXT_PUBLIC_CONVEX_SITE_URL and ' +
+    steps.push(
+      'its Convex values: this run set NEXT_PUBLIC_CONVEX_URL, NEXT_PUBLIC_CONVEX_SITE_URL and ' +
         "CONVEX_DEPLOYMENT on Vercel production; put back what they held (printf '%s' <value> | " +
         `vercel env update <NAME> production --yes${scope}) before promoting the earlier build.`,
     );
   }
-  if (upgrade === undefined) {
-    lines.push(
-      `  the deployment: ${target.deployment} held nothing before this run; an app that points away from it leaves it serving nobody.`,
+  if (facts.previousApp === undefined) {
+    notes.push('the app: this run read no earlier production build to go back to.');
+  } else {
+    const after = upgrade === undefined ? '' : ', after the import and the push';
+    steps.push(
+      `the app${after}: vercel promote ${facts.previousApp}${scope}, the build that served production before this run.`,
     );
-    return lines;
   }
+  if (upgrade === undefined) {
+    notes.push(
+      `the deployment: ${target.deployment} held nothing before this run; an app that points away from it leaves it serving nobody.`,
+    );
+  }
+  return [
+    `Rollback (nothing here is run for you)${steps.length > 1 ? ', in this order' : ''}:`,
+    ...steps.map((step, at) => `  ${at + 1}. ${step}`),
+    ...notes.map((note) => `  ${note}`),
+  ];
+}
+
+/**
+ * The step that puts an upgraded deployment's rows and functions back, run from the checkout of
+ * the release the export's rows were written under.
+ */
+function rowsStep(target: CloudTarget, upgrade: NonNullable<RollbackFacts['upgrade']>): string {
   const { backup } = upgrade;
-  const before = upgrade.from === undefined ? 'the release before it' : `v${upgrade.from}`;
-  lines.push(
-    `  the rows and functions: ${backup.file} (sha256 ${backup.sha256}) holds the rows from before ` +
-      `the upgrade to v${upgrade.to}${backup.earlier ? ', taken when that upgrade first ran' : ''}. ` +
-      `From a clean checkout of ${before}, take \`./setup.sh cloud backup\` of what you replace, then ` +
-      `npx convex import --replace-all --deployment ${target.deployment} ${backup.file} and ` +
-      `npx convex deploy --typecheck enable --env-file ${target.file}.`,
+  const { taken, checkout } = exportOrigin(upgrade);
+  return (
+    `the rows and functions: ${backup.file} (sha256 ${backup.sha256}) holds the rows from before ` +
+    `${taken}. From a clean checkout of ${checkout}, take \`./setup.sh cloud backup\` of what you ` +
+    `replace, then npx convex import --replace-all --deployment ${target.deployment} ` +
+    `${backup.file} and npx convex deploy --typecheck enable --env-file ${target.file}.`
   );
-  return lines;
+}
+
+/** When an upgrade's export was taken, and where its rows are put back from. */
+interface ExportOrigin {
+  /** What the rows predate, read after "holds the rows from before". */
+  readonly taken: string;
+  /** The checkout to put them back from. */
+  readonly checkout: string;
+}
+
+/**
+ * When an upgrade's export was taken and the release its rows were written under: the release
+ * the run read before it; this checkout's after a re-push of the release the deployment already
+ * had; and an unread one when the export is an earlier attempt's, taken before the release first
+ * reached the deployment.
+ */
+function exportOrigin(upgrade: NonNullable<RollbackFacts['upgrade']>): ExportOrigin {
+  const { to, from, backup } = upgrade;
+  if (backup.earlier) {
+    return {
+      taken: `the upgrade to v${to}, taken when that upgrade first ran`,
+      checkout:
+        from === undefined
+          ? `the release the deployment ran before v${to} (this run did not read which)`
+          : `v${from}`,
+    };
+  }
+  if (from === undefined) {
+    return { taken: `this run, which found v${to} already there`, checkout: `v${to} (this one)` };
+  }
+  return { taken: `the upgrade to v${to}`, checkout: `v${from}` };
 }

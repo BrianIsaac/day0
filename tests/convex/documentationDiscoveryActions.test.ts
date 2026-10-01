@@ -7,6 +7,7 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { surfaceSlug } from '../../src/surfaces/slug';
+import { MANAGER_ADDRESS } from './fakes/manager-identity';
 
 /** Controllable discovery classifier boundary. */
 const model = vi.hoisted(() => ({
@@ -354,7 +355,7 @@ describe('the documentation discovery action', (): void => {
     const { sourceId, runId } = await seedGeneration(harness, 1);
     const { agentId, outOfScope, lowValue } = await harness.run(async (ctx) => {
       const agentId = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'Reader',
         userId: 'owner',
         state: 'active',

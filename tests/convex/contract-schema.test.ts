@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { contractSchema } from './contract-schema';
+import { MANAGER_ADDRESS } from './fakes/manager-identity';
 
 describe('the contract schema', (): void => {
   it('declares every index the checked-in surfaces table declares', (): void => {
@@ -17,7 +18,7 @@ describe('the contract schema', (): void => {
     const harness = convexTest(contractSchema(), allConvexModules());
     const found = await harness.run(async (ctx) => {
       const agentId = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'contract',
         state: 'active',
         createdAt: 1,

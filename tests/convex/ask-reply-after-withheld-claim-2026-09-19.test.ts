@@ -25,6 +25,7 @@ import {
 import { allConvexModules } from './all-modules';
 import { contractSchema } from './contract-schema';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
 /** The repository root, found from this file rather than the working directory. */
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
@@ -166,7 +167,7 @@ vi.mock('../../src/surfaces/mcp', async (importOriginal) => {
 });
 
 type Harness = TestConvex<typeof schema>;
-const OWNER = { subject: 'owner' };
+const OWNER = managerIdentity();
 
 /** The run's closing answer: fill, Save, snapshot and the DM, with the thread reply reported blocked. */
 const RUN_CLOSING = closingAnswer({
@@ -233,7 +234,7 @@ interface Seeded {
 async function seed(harness: Harness): Promise<Seeded> {
   return await harness.run(async (ctx) => {
     const agentId = await ctx.db.insert('agents', {
-      bossEmail: 'boss@day0.local',
+      bossEmail: MANAGER_ADDRESS,
       name: 'Priya',
       userId: 'owner',
       state: 'active',

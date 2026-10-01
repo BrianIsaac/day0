@@ -6,13 +6,14 @@ import { api } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
+import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
 describe('the export redacts by its own policy row (review M9)', (): void => {
   it("removes an e-mail, a phone number and a labelled address from a work item's text", async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await harness.run(async (ctx): Promise<Id<'agents'>> => {
       const id = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'Priya',
         userId: 'owner',
         state: 'active',
@@ -34,7 +35,7 @@ describe('the export redacts by its own policy row (review M9)', (): void => {
       return id;
     });
     const page = await harness
-      .withIdentity({ subject: 'owner' })
+      .withIdentity(managerIdentity())
       .action(api.exportActions.exportPage, { agentId, section: 'workItems', cursor: null });
     const exported = JSON.stringify(page.rows);
     expect(exported).toContain(

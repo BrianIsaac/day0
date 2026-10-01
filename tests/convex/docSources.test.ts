@@ -19,6 +19,7 @@ import { listingCursor } from '../../src/docs/readers/batch';
 import { allConvexModules } from './all-modules';
 import { mirroredDocSlug } from '../../src/docs/types';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
 /**
  * A cursor a resume can check: an offset bound to the listing it continues,
@@ -60,7 +61,7 @@ async function seedSyncedSource(
       updatedAt: 1,
     });
     const agentId = await ctx.db.insert('agents', {
-      bossEmail: 'boss@day0.local',
+      bossEmail: MANAGER_ADDRESS,
       name: 'source test',
       userId,
       state: 'deployed',
@@ -224,7 +225,7 @@ describe('documentation source validation', (): void => {
 describe('documentation sources in mock mode', (): void => {
   it('refuses to link any location, including link-local metadata URLs', async (): Promise<void> => {
     useSurfaceMode('mock');
-    const harness = convexTest(schema, allConvexModules()).withIdentity({ subject: 'owner' });
+    const harness = convexTest(schema, allConvexModules()).withIdentity(managerIdentity());
     await expect(
       harness.action(api.docSources.link, { label: 'Team folder', kind: 'folder', locator: '.' }),
     ).rejects.toThrow('real-mode feature');
@@ -242,7 +243,7 @@ describe('documentation sources in mock mode', (): void => {
     useSurfaceMode('mock');
     const harness = convexTest(schema, allConvexModules());
     const { sourceId } = await seedSyncedSource(harness);
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     await expect(owner.mutation(api.docSources.resync, { sourceId })).rejects.toThrow(
       'real-mode feature',
     );
@@ -274,7 +275,7 @@ describe('documentation components a source depends on', (): void => {
     });
     vi.stubGlobal('fetch', reach);
     const harness = convexTest(schema, allConvexModules());
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     await expect(
       owner.action(api.docSources.link, {
         label: 'RevOps handbook',
@@ -300,7 +301,7 @@ describe('documentation components a source depends on', (): void => {
     });
     vi.stubGlobal('fetch', reach);
     const harness = convexTest(schema, allConvexModules());
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     await expect(
       owner.action(api.docSources.link, { label: 'Team folder', kind: 'folder', locator: '.' }),
     ).resolves.toBeDefined();
@@ -355,7 +356,7 @@ describe('documentation sources in real mode', (): void => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     const sourceId = await owner.action(api.docSources.link, {
       label: 'Team folder',
       kind: 'folder',
@@ -364,7 +365,7 @@ describe('documentation sources in real mode', (): void => {
     const sources = await owner.query(api.docSources.listMine, {});
     expect(sources).toMatchObject([{ _id: sourceId, status: 'linking', pageCount: 0 }]);
     await expect(
-      harness.withIdentity({ subject: 'other-owner' }).query(api.docSources.listMine, {}),
+      harness.withIdentity(managerIdentity('other-owner')).query(api.docSources.listMine, {}),
     ).resolves.toEqual([]);
   });
 
@@ -372,7 +373,7 @@ describe('documentation sources in real mode', (): void => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     await expect(
       owner.action(api.docSources.link, {
         label: 'Runbooks',
@@ -389,7 +390,7 @@ describe('documentation sources in real mode', (): void => {
     vi.stubEnv('DAY0_CREDENTIAL_KEY', randomBytes(32).toString('base64'));
     const secret = ['ghp', 'readerContractValue0123456789'].join('_');
     const harness = convexTest(schema, allConvexModules());
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     const sourceId = await owner.action(api.docSources.link, {
       label: 'Runbooks',
       kind: 'git',
@@ -421,7 +422,7 @@ describe('documentation sources in real mode', (): void => {
     vi.useFakeTimers();
     vi.stubEnv('DAY0_CREDENTIAL_KEY', randomBytes(32).toString('base64'));
     const harness = convexTest(schema, allConvexModules());
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     const sourceId = await owner.action(api.docSources.link, {
       label: 'Wiki',
       kind: 'urls',
@@ -533,7 +534,7 @@ describe('documentation sources in real mode', (): void => {
     vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
     const { sourceId } = await seedSyncedSource(harness);
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     await expect(owner.mutation(api.docSources.unlink, { sourceId })).resolves.toBeNull();
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
     await expect(rowsForSource(harness, sourceId)).resolves.toEqual({
@@ -575,7 +576,7 @@ describe('documentation sources in real mode', (): void => {
         }),
       };
     });
-    await harness.withIdentity({ subject: 'owner' }).mutation(api.docSources.unlink, { sourceId });
+    await harness.withIdentity(managerIdentity()).mutation(api.docSources.unlink, { sourceId });
     for (const id of [discovered, connection]) {
       const row = await harness.run(async (ctx) => await ctx.db.get(id));
       expect(row).toMatchObject({ userId: 'owner', revokedAt: expect.any(Number) });
@@ -631,7 +632,7 @@ describe('documentation sources in real mode', (): void => {
       });
     });
 
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     await owner.mutation(api.docSources.unlink, { sourceId });
 
     const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
@@ -654,7 +655,7 @@ describe('documentation sources in real mode', (): void => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
     const { sourceId } = await seedSyncedSource(harness, 'owner');
-    const other = harness.withIdentity({ subject: 'other-owner' });
+    const other = harness.withIdentity(managerIdentity('other-owner'));
     await expect(other.mutation(api.docSources.resync, { sourceId })).rejects.toThrow('not found');
     await expect(other.mutation(api.docSources.unlink, { sourceId })).rejects.toThrow('not found');
     await expect(other.query(api.docSources.byIds, { sourceIds: [sourceId] })).resolves.toEqual([]);
@@ -1013,7 +1014,7 @@ describe('documentation sources in real mode', (): void => {
     expect(surface?.managerApprovedAt).toBeUndefined();
     expect(surface?.intakeScope?.channels?.[0].value).toBe('finance-close');
     await expect(
-      harness.withIdentity({ subject: 'owner' }).mutation(api.surfaces.approve, { surfaceId }),
+      harness.withIdentity(managerIdentity()).mutation(api.surfaces.approve, { surfaceId }),
     ).rejects.toThrow('re-run orientation');
   });
 
@@ -1614,7 +1615,7 @@ describe('the documentation store under the transaction limits (step 49)', (): v
         updatedAt: 1,
       });
       const agentId = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'large source test',
         userId: 'owner',
         state: 'deployed',
@@ -1706,7 +1707,7 @@ describe('the documentation store under the transaction limits (step 49)', (): v
     const harness = limitedHarness();
     const { sourceId } = await largeSource(harness);
     await expect(
-      harness.withIdentity({ subject: 'owner' }).query(api.docSources.listMine, {}),
+      harness.withIdentity(managerIdentity()).query(api.docSources.listMine, {}),
     ).resolves.toMatchObject([{ _id: sourceId, pageCount: LARGE_PAGES + 1 }]);
     await expect(
       harness.query(internal.docSources.syncReport, { sourceId }),
@@ -1778,7 +1779,7 @@ describe('the documentation store under the transaction limits (step 49)', (): v
     const newcomer = await harness.run(
       async (ctx) =>
         await ctx.db.insert('agents', {
-          bossEmail: 'boss@day0.local',
+          bossEmail: MANAGER_ADDRESS,
           name: 'newcomer',
           userId: 'owner',
           state: 'deployed',
@@ -1810,7 +1811,7 @@ describe('the documentation store under the transaction limits (step 49)', (): v
     vi.useFakeTimers();
     const harness = limitedHarness();
     const { sourceId } = await largeSource(harness);
-    await harness.withIdentity({ subject: 'owner' }).mutation(api.docSources.unlink, { sourceId });
+    await harness.withIdentity(managerIdentity()).mutation(api.docSources.unlink, { sourceId });
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
     const left = await harness.run(async (ctx) => ({
       page: await ctx.db
@@ -2092,7 +2093,7 @@ describe('the documentation store under the transaction limits (step 49)', (): v
         updatedAt: 1,
       });
       const agentId = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'legacy mirror test',
         userId: 'owner',
         state: 'deployed',
@@ -2295,5 +2296,79 @@ describe('the documentation store under the transaction limits (step 49)', (): v
       1,
     );
     expect(await left()).toEqual([runs.pointedAt, runs.recent]);
+  });
+});
+
+describe("a handed-over employee's mirrors of its old owner's sources (transfer plan 6.2)", (): void => {
+  afterEach((): void => {
+    vi.useRealTimers();
+  });
+
+  it("deletes them page by page and keeps the seeded pages, the new owner's and a colleague's", async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { moved, colleague } = await harness.run(async (ctx) => {
+      const source = async (userId: string): Promise<Id<'docSources'>> =>
+        await ctx.db.insert('docSources', {
+          userId,
+          label: `${userId} handbook`,
+          kind: 'folder',
+          locator: '.',
+          status: 'synced',
+          createdAt: 1,
+          updatedAt: 1,
+        });
+      const previous = await source('owner');
+      const own = await source('colleague');
+      const employee = async (userId: string, name: string): Promise<Id<'agents'>> =>
+        await ctx.db.insert('agents', {
+          bossEmail: MANAGER_ADDRESS,
+          name,
+          userId,
+          state: 'active',
+          createdAt: 1,
+        });
+      const moved = await employee('colleague', 'Maya');
+      const colleague = await employee('owner', 'Tomas');
+      const page = async (
+        agentId: Id<'agents'>,
+        slug: string,
+        sourceId?: Id<'docSources'>,
+      ): Promise<void> => {
+        await ctx.db.insert('mockDocs', {
+          agentId,
+          slug,
+          title: slug,
+          body: `# ${slug}`,
+          category: 'team-doc',
+          ...(sourceId ? { sourceId, sourceRef: `${slug}.md` } : {}),
+          updatedAt: 1,
+        });
+      };
+      // More than one page of the paged read, so the delete must schedule itself again.
+      for (let index = 0; index < 150; index += 1) await page(moved, `owner-${index}`, previous);
+      await page(moved, 'office-welcome');
+      await page(moved, 'colleague-onboarding', own);
+      await page(colleague, 'owner-0', previous);
+      return { moved, colleague };
+    });
+
+    await harness.mutation(internal.docSources.pruneDepartedMirrors, { agentId: moved });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const slugsOf = async (agentId: Id<'agents'>): Promise<string[]> =>
+      (
+        await harness.run(
+          async (ctx) =>
+            await ctx.db
+              .query('mockDocs')
+              .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId))
+              .collect(),
+        )
+      )
+        .map((doc) => doc.slug)
+        .sort();
+    expect(await slugsOf(moved)).toEqual(['colleague-onboarding', 'office-welcome']);
+    expect(await slugsOf(colleague)).toEqual(['owner-0']);
   });
 });

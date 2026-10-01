@@ -63,10 +63,41 @@ describe('the sign-in page', () => {
     );
   });
 
-  it('says that nothing reaches a real system once, in the notice, not again in the lede', async () => {
+  // Re-pinned (wave 9): the notice is drawn twice, folded for a phone and open for a wide
+  // screen, one of them shown at a time; the lede still never says it.
+  it('says that nothing reaches a real system once in each form of the notice, not again in the lede', async () => {
     const html = text(await render());
-    expect(html.match(/reaches a real system/g)).toHaveLength(1);
-    expect(html).toContain(HOSTED_DEMO_NOTICE.paragraphs[0]);
+    expect(html.match(/reaches a real system/g)).toHaveLength(2);
+    expect(html.match(new RegExp(HOSTED_DEMO_NOTICE.paragraphs[0], 'g'))).toHaveLength(2);
+    const lede = /<p class="[^"]*">\s*The hosted office is a seeded, synthetic[^<]*<\/p>/.exec(
+      html,
+    );
+    expect(lede?.[0]).not.toMatch(/real system/);
+  });
+
+  it('folds the notice under its heading on a phone and keeps it open on a wide screen, both before the card (the v0.11.0 walk)', async () => {
+    const html = text(await render());
+    const folded = html.indexOf('<details');
+    const open = html.indexOf('<div class="hidden md:block">');
+    const card = html.indexOf('id="sign-in-card"');
+    expect(folded).toBeGreaterThan(-1);
+    expect(folded).toBeLessThan(card);
+    expect(open).toBeLessThan(card);
+    // The folded one names the notice in its summary, so its heading is read before the card.
+    expect(html.slice(folded, card)).toMatch(
+      new RegExp(`<summary[^>]*>[\\s\\S]*${HOSTED_DEMO_NOTICE.heading}[\\s\\S]*</summary>`),
+    );
+    for (const paragraph of HOSTED_DEMO_NOTICE.paragraphs)
+      expect(html.slice(folded, open)).toContain(paragraph);
+    expect(html.slice(folded, open)).toContain(`href="${HOSTED_DEMO_NOTICE.link.href}"`);
+  });
+
+  it('shows one form of the notice at each width, and the steps after the card on a phone only', async () => {
+    const html = await render();
+    expect(html).toMatch(/<div role="note" class="[^"]*\bmd:hidden\b/);
+    expect(html).toMatch(/<div class="hidden md:block"><div role="note"/);
+    expect(html).toMatch(/<div class="order-last [^"]*md:order-none[^"]*"><p /);
+    expect(html).toMatch(/<div class="contents md:flex /);
   });
 
   it('leaves the one main landmark to the layout', async () => {
@@ -89,22 +120,24 @@ describe('the sign-in page', () => {
   it("dresses Clerk's sign-in in the shared appearance, so its text reads on the dark page", async () => {
     clerk.appearance.length = 0;
     await render();
-    const { clerkAppearance } = await import('../../../../app/clerk-appearance');
-    expect(clerk.appearance).toEqual([expect.objectContaining(clerkAppearance)]);
+    const { clerkSignInAppearance } = await import('../../../../app/clerk-appearance');
+    const { theme, variables, options } = clerkSignInAppearance;
+    expect(clerk.appearance).toEqual([expect.objectContaining({ theme, variables, options })]);
   });
 
-  it("leaves the card's title and subtitle out on the first step only, where the page's h1 says it, and keeps the mark (walk m26)", async () => {
+  it("leaves the card's header out on the first step only, where the page's h1 says it, and keeps the mark (walk m26)", async () => {
     clerk.appearance.length = 0;
     await render();
     await render('/sign-in/factor-one');
-    const { clerkAppearance } = await import('../../../../app/clerk-appearance');
+    const { clerkSignInAppearance } = await import('../../../../app/clerk-appearance');
     const [first, later] = clerk.appearance;
+    // Re-pinned (wave 9): the mark is above the card, so the whole header is left out and the
+    // mark's own box is only spaced, never hidden.
     expect(first).toMatchObject({
-      options: clerkAppearance.options,
-      elements: { headerTitle: { display: 'none' }, headerSubtitle: { display: 'none' } },
+      options: clerkSignInAppearance.options,
+      elements: { header: { display: 'none' }, logoBox: { marginBottom: '1.75rem' } },
     });
-    expect(first).not.toHaveProperty('elements.logoBox');
-    expect(later).toBe(clerkAppearance);
+    expect(later).toBe(clerkSignInAppearance);
   });
 
   it('sends the local manager home in no-auth dev mode, where there is nothing to sign in to', async () => {

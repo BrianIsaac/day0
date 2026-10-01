@@ -23,6 +23,7 @@ import type { WorkspaceFile } from './charters';
 import { logEvent } from './eventLog';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { errorMessage } from '../src/lib/errors';
+import { userFromManager } from '../src/agent/charter-workspace';
 
 /**
  * Day-1 onboarding actions. Surfaces:
@@ -269,7 +270,7 @@ async function draftCharter(args: {
       { fileName: 'IDENTITY.md', content: identityFromCharter(charter) },
       { fileName: 'TOOLS.md', content: toolsFromCharter(charter) },
       { fileName: 'BOOTSTRAP.md', content: day1Script() },
-      { fileName: 'USER.md', content: `# USER\n\nBoss: ${args.bossLabel}\n` },
+      { fileName: 'USER.md', content: userFromManager(args.bossLabel) },
       { fileName: 'MEMORY.md', content: '# MEMORY\n\n(empty — populated by post-turn review)\n' },
       {
         fileName: 'HEARTBEAT.md',

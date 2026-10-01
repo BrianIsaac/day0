@@ -14,6 +14,13 @@ import { planDraftedWithoutValidator, ticketSnapshotValidator } from './schema';
 import { internal } from './_generated/api';
 import { assertOwnsAgent, assertOwnsWorkItem, getCaller, getCallerOrThrow } from './ownership';
 import { isEvaluationAgent } from './metrics';
+import { incomingTransfersOf, type IncomingTransfer } from './managerTransfers';
+import {
+  HANDOVER_IN_PROGRESS_REASON,
+  HANDOVER_STOP_REASON,
+  isBeingHandedOver,
+  settleHandoverAfterRun,
+} from './transferInFlight';
 import {
   oneToOneWaitsOnManager,
   skillWaitsOnManager,
@@ -44,6 +51,7 @@ import {
   HELD_NOT_APPROVED,
   HELD_WRITE,
   isAuditComment,
+  isSurfaceTool,
   normaliseActionVerdict,
   parseSurfaceAction,
   reviewActions,
@@ -1814,18 +1822,24 @@ export const writeClaimHolder = internalQuery({
  * guard reads (`writeTargetIds`), since the listing may print either case. A
  * ticket another work item holds is left to it, the work item's own
  * discovered item is never claimed twice, and a browser page field is
- * claimed before authoring (`takeWriteTargetClaims`), not here.
+ * claimed before authoring (`takeWriteTargetClaims`), not here. A run that is
+ * no longer the item's executing run takes nothing: one stopped at a
+ * handover's deadline has moved to its new owner, whose claims it must not
+ * write (U-2; fenced by the run id, the wave 9 review's U3-m1).
  *
  * @returns The keys taken.
  */
 export const claimLandedTicketWrites = internalMutation({
   args: {
     workItemId: v.id('workItems'),
+    /** The run whose phase landed the writes. */
+    runId: v.id('events'),
     writes: v.array(v.object({ surfaceSlug: v.string(), targets: v.array(v.string()) })),
   },
   handler: async (ctx, args): Promise<string[]> => {
     const row = await ctx.db.get(args.workItemId);
     if (SURFACE_MODE !== 'real' || !row || isRevocationTrialRow(row)) return [];
+    if (row.state !== 'executing' || row.executionRunId !== args.runId) return [];
     const userId = (await ctx.db.get(row.agentId))?.userId;
     if (!userId) return [];
     const keys = new Set<string>();
@@ -1925,11 +1939,15 @@ const WRITE_TARGET_CLAIMS = 8;
 export const takeWriteTargetClaims = internalMutation({
   args: {
     workItemId: v.id('workItems'),
+    /** The run about to author: a run the item no longer carries takes nothing (U3-m1). */
+    runId: v.id('events'),
     targets: v.array(v.object({ surfaceSlug: v.string(), field: v.string() })),
   },
   handler: async (ctx, args): Promise<string[]> => {
     const row = await ctx.db.get(args.workItemId);
     if (SURFACE_MODE !== 'real' || !row || isRevocationTrialRow(row)) return [];
+    // A run stopped at a handover's deadline would otherwise claim a field under the new owner.
+    if (row.executionRunId !== args.runId) return [];
     const agent = await ctx.db.get(row.agentId);
     const userId = agent?.userId;
     if (!userId) return [];
@@ -3354,6 +3372,127 @@ export const MANAGER_CHANGED_RESEND_REASON =
   'the manager changed; the request went to the previous one';
 
 /**
+ * Why a request asked of the manager who handed the employee over is closed at the move: their
+ * reply to it decides nothing, and the new manager is asked afresh.
+ */
+export const HANDED_OVER_REQUEST_REASON =
+  'the employee was handed over to a new manager; the request went to the previous one';
+
+/**
+ * Close the employee's open decision requests at a handover's move (the transfer plan, section
+ * 6.4; D6). Each request asked and undecided is closed and its failure recorded with
+ * {@link HANDED_OVER_REQUEST_REASON}, so a reply to its code decides nothing and the dashboard
+ * decides the row. A delivered one is marked failed and sent again, with a fresh code, on the new
+ * manager's DM once their chat surface connects ({@link resendDecisionsAfterManagerChange}, which
+ * re-sends a delivered request marked failed); one still on its way is taken off the row, so the
+ * stall sweep asks the new manager once a channel exists. A request already decided or already
+ * failed is left as it is.
+ *
+ * @param ctx - The move's mutation context.
+ * @param agentId - The employee.
+ * @param now - The move's time.
+ * @returns How many requests were closed.
+ */
+export async function voidDecisionRequestsForHandover(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+  now: number,
+): Promise<number> {
+  const parked = await Promise.all(
+    (['plan-pending', 'actions-pending'] as const).map(
+      async (state) =>
+        await ctx.db
+          .query('workItems')
+          .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', state))
+          .collect(),
+    ),
+  );
+  let voided = 0;
+  for (const row of parked.flat()) {
+    const decision = row.decision;
+    if (!decision || !askedFor(decision, row.state) || decision.requestFailedAt !== undefined) {
+      continue;
+    }
+    // A delivered request keeps its code, marked failed, for the probe to re-send; one still on
+    // its way would be re-sent by nothing, so it is taken back and the stall sweep asks afresh.
+    await ctx.db.patch(row._id, {
+      decision:
+        decision.ts === undefined
+          ? undefined
+          : { ...decision, requestFailedAt: now, requestFailure: HANDED_OVER_REQUEST_REASON },
+    });
+    await appendEvent(ctx, {
+      agentId,
+      type: 'work.decision-request-failed',
+      payload: {
+        workItemId: row._id,
+        decisionId: decision.id,
+        kind: decision.kind,
+        reason: HANDED_OVER_REQUEST_REASON,
+      },
+      createdAt: now,
+    });
+    voided += 1;
+  }
+  return voided;
+}
+
+/**
+ * Return to the new manager every approval the old one gave that has not started (decision D13
+ * (a)): an approval given for the old manager's connections does not run on the new manager's
+ * authority. A plan approved and not yet executing goes back to `plan-pending`, with a
+ * `work.plan-held` event saying its predecessor approved it; a held set approved and kept from
+ * its apply (`claimApprovedActions` refuses while the handover finishes) goes back to held. Each
+ * loses the old manager's decision, so the new manager is asked: in the dashboard, or by DM once
+ * their chat surface connects (the stall sweep asks a parked row with no request).
+ *
+ * @param ctx - The move's mutation context.
+ * @param agentId - The employee.
+ * @param now - The move's time.
+ * @returns How many approvals were returned, plans and held sets together.
+ */
+export async function returnApprovalsForHandover(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+  now: number,
+): Promise<number> {
+  const [approvedPlans, pending] = await Promise.all(
+    (['plan-approved', 'actions-pending'] as const).map(
+      async (state) =>
+        await ctx.db
+          .query('workItems')
+          .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', state))
+          .collect(),
+    ),
+  );
+  for (const row of approvedPlans) {
+    // The answers were given with the old manager's approval, and a run reads them as the
+    // manager's: they go with it, as on every other path back to drafting.
+    await ctx.db.patch(row._id, {
+      state: 'plan-pending',
+      planPendingAt: now,
+      decision: undefined,
+      managerAnswers: undefined,
+    });
+    await appendEvent(ctx, {
+      agentId,
+      type: 'work.plan-held',
+      payload: { workItemId: row._id, reason: 'approved-by-predecessor' },
+      createdAt: now,
+    });
+  }
+  const approvedSets = pending.filter((row) => row.approvedIndexes !== undefined);
+  for (const row of approvedSets) {
+    await ctx.db.patch(row._id, {
+      approvedIndexes: undefined,
+      applyPhase: undefined,
+      decision: undefined,
+    });
+  }
+  return approvedPlans.length + approvedSets.length;
+}
+
+/**
  * Send the open decision requests delivered to a previous manager again.
  *
  * A probe that resolves the manager's DM finds the manager it has now. A
@@ -4738,6 +4877,11 @@ export const claimForExecution = internalMutation({
     if (skill.state !== 'registered' || skill.body === '') {
       return { claimed: false, reason: SKILL_UNDER_REVISION_REASON };
     }
+    // A handover the new manager accepted waits for the runs in flight and starts
+    // none (D18): the plan returns to them at the move (D13).
+    if (await isBeingHandedOver(ctx.db, item.agentId)) {
+      return { claimed: false, reason: HANDOVER_IN_PROGRESS_REASON };
+    }
     const runId = await appendEvent(ctx, {
       agentId: item.agentId,
       type: 'work.execution-claimed',
@@ -5042,6 +5186,8 @@ export const resumeExecution = internalMutation({
       internal.workActions.executeApprovedPlanInternal,
       { workItemId: row._id },
     );
+    // The run is out of flight until it claims again, which a finishing handover refuses.
+    await settleHandoverAfterRun(ctx, row.agentId);
     return { outcome: 'resumed' };
   },
 });
@@ -5113,6 +5259,7 @@ export const setCompleted = internalMutation({
       createdAt: Date.now(),
     });
     await scheduleNextStep(ctx, { ...row, state: 'completed' });
+    await settleHandoverAfterRun(ctx, row.agentId);
     const surfaces = (
       await ctx.db
         .query('surfaces')
@@ -5225,6 +5372,7 @@ async function failInTransaction(
     createdAt: Date.now(),
   });
   await scheduleNextStep(ctx, { ...row, state: 'failed' });
+  await settleHandoverAfterRun(ctx, row.agentId);
   if (args.stopped === false) return;
   if (stopped) {
     await queueManagerNote(ctx, row, 'stopped', (agentName) =>
@@ -5241,6 +5389,45 @@ async function failInTransaction(
       }),
     );
   }
+}
+
+/**
+ * Stop every run of the employee still executing when its handover's deadline passes (decision
+ * D18), through the stop every run's end shares ({@link failInTransaction}) with
+ * {@link HANDOVER_STOP_REASON}: the run id and the apply attempt are cleared, so the run's own
+ * next mutation is refused and writes nothing. A run whose apply was claimed may have sent its
+ * approved rows, so its ledger records their outcome as unknown, as the apply's dead-man switch
+ * would ({@link interruptedApplyLedger}), and it is not recorded as a stop; any other run is a
+ * stop when nothing it ran landed.
+ *
+ * @param ctx - The settle's mutation context.
+ * @param agentId - The employee being handed over.
+ * @returns How many runs were stopped.
+ */
+export async function stopRunsForHandover(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+): Promise<number> {
+  const running = await ctx.db
+    .query('workItems')
+    .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', 'executing'))
+    .collect();
+  for (const row of running) {
+    if (row.applyAttemptId !== undefined && row.pendingRunId !== undefined) {
+      const { output, applied } = interruptedApplyLedger(row, row.pendingRunId);
+      await failInTransaction(ctx, row, {
+        reason: HANDOVER_STOP_REASON,
+        output: { ...output, applied },
+        stopped: false,
+      });
+    } else {
+      await failInTransaction(ctx, row, {
+        reason: HANDOVER_STOP_REASON,
+        ...(row.output !== undefined ? { output: row.output } : {}),
+      });
+    }
+  }
+  return running.length;
 }
 
 /**
@@ -5891,6 +6078,7 @@ export const setActionsPending = internalMutation({
       createdAt: Date.now(),
     });
     await scheduleDecisionRequest(ctx, row, 'actions');
+    await settleHandoverAfterRun(ctx, row.agentId);
     return { pending: true, phase: 'manager' };
   },
 });
@@ -5954,6 +6142,7 @@ export const setAwaitingApproval = internalMutation({
       createdAt: Date.now(),
     });
     await scheduleDecisionRequest(ctx, row, 'actions');
+    await settleHandoverAfterRun(ctx, row.agentId);
     return { parked: true };
   },
 });
@@ -6534,6 +6723,103 @@ export const noticeUnreadableReply = internalMutation({
 });
 
 /**
+ * Whether a surface with each effective verdict waits on its manager to approve or connect it:
+ * the states a connection ends, as opposed to a connection that lapsed (`listed-dead`) or a system
+ * that is gone (`absent`), which the gate refuses as before. Keyed over every verdict, so one the
+ * type gains does not compile until it is placed.
+ */
+const AWAITING_CONNECTION_VERDICTS: Readonly<Record<ReturnType<typeof verdictFor>, boolean>> = {
+  declared: true,
+  proposed: true,
+  approved: true,
+  ungranted: true,
+  connected: false,
+  'listed-dead': false,
+  absent: false,
+};
+
+/**
+ * The surface an approved write would go through that waits for its connection, if any: the
+ * first approved row naming a surface of the employee's whose access has not ended and whose
+ * effective verdict is one a connection ends ({@link AWAITING_CONNECTION_VERDICTS}).
+ *
+ * @param db - The claim's reader.
+ * @param row - The work item, its set approved by the manager.
+ * @param now - The claim's time.
+ * @returns The surface's slug, or undefined when every approved write's surface is connected,
+ *   ended or unknown (the gate decides those).
+ */
+async function surfaceAwaitingConnection(
+  db: QueryCtx['db'],
+  row: Doc<'workItems'>,
+  now: number,
+): Promise<string | undefined> {
+  const actions = actionsOf(row.output) as MockAction[];
+  const surfaces = await db
+    .query('surfaces')
+    .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
+    .collect();
+  for (const index of row.approvedIndexes ?? []) {
+    const action = actions[index];
+    if (action === undefined || !isSurfaceTool(action.tool)) continue;
+    const parsed = parseSurfaceAction(action);
+    if (!parsed.ok) continue;
+    const surface = surfaces.find((candidate) => candidate.slug === parsed.action.surface);
+    if (surface === undefined || accessEnded(surface, now)) continue;
+    if (AWAITING_CONNECTION_VERDICTS[verdictFor(toSurfaceRecord(surface), now)]) {
+      return surface.slug;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Park an approved set on the connection its write needs (U-3 of the transfer plan): the item is
+ * `deferred` with the evaluator's own verdict (`awaiting-connection` and the `missingSurface`),
+ * so connecting the surface returns it to evaluation (`requeueDeferredWork`); nothing was sent,
+ * and the approval goes with the set, since the run is planned again from the item.
+ *
+ * @param ctx - The apply claim's mutation context.
+ * @param row - The work item, `actions-pending` with its set approved.
+ * @param missingSurface - The surface the write waits on.
+ */
+async function parkOnConnection(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+  missingSurface: string,
+): Promise<void> {
+  const verdict = {
+    decision: 'defer' as const,
+    reason: 'awaiting-connection' as const,
+    missingSurface,
+  };
+  await ctx.db.patch(row._id, {
+    state: 'deferred',
+    verdict,
+    // Returned to evaluation, the item is planned again, as a send-back to drafting plans it.
+    plan: undefined,
+    planPendingAt: undefined,
+    planDraftedWithout: undefined,
+    managerAnswers: undefined,
+    pendingRunId: undefined,
+    approvedIndexes: undefined,
+    actionVerdicts: undefined,
+    applyPhase: undefined,
+    executionRunId: undefined,
+    applyAttemptId: undefined,
+    applyClaimedAt: undefined,
+    decision: undefined,
+  });
+  await appendEvent(ctx, {
+    agentId: row.agentId,
+    type: 'work.evaluated',
+    payload: { workItemId: row._id, decision: verdict.decision, verdict },
+    createdAt: Date.now(),
+  });
+  await scheduleNextStep(ctx, { ...row, state: 'deferred' });
+}
+
+/**
  * Take the approved actions for application, exactly once.
  *
  * The apply action is scheduled by `setActionsPending` (the auto phase) and
@@ -6577,6 +6863,22 @@ export const claimApprovedActions = internalMutation({
     }
     if (!row.pendingRunId) return { claimed: false, reason: 'workItem has no pending run' };
     if (!row.approvedIndexes) return { claimed: false, reason: 'no actions have been approved' };
+    // A manager's approval does not start its apply while the employee is being handed over
+    // (D18): the set returns to held at the move (D13). The auto phase belongs to a run already
+    // executing, which the move waits for.
+    if (!autoPhase && (await isBeingHandedOver(ctx.db, row.agentId))) {
+      return { claimed: false, reason: HANDOVER_IN_PROGRESS_REASON };
+    }
+    // An approved write on a surface that waits for its connection (one a handover cut, for
+    // one) parks on it rather than meeting the gate's refusal: connecting it returns the item
+    // (U-3). The auto phase's rows were judged connected at the hold, so the gate keeps them.
+    const missingSurface = autoPhase
+      ? undefined
+      : await surfaceAwaitingConnection(ctx.db, row, Date.now());
+    if (missingSurface !== undefined) {
+      await parkOnConnection(ctx, row, missingSurface);
+      return { claimed: false, reason: `parked until ${missingSurface} is connected` };
+    }
     // A missing agent row is the apply action's failure to report (it fences
     // the run as outcome-unknown); the claim only needs the switch's value.
     const agent = await ctx.db.get(row.agentId);
@@ -6615,6 +6917,71 @@ export const claimApprovedActions = internalMutation({
     };
   },
 });
+
+/** The output of an apply whose outcome is unknown, with its ledger as recovery records it. */
+interface InterruptedApplyLedger {
+  readonly output: {
+    actions?: Array<{ tool?: unknown }>;
+    actionIndexOffset?: unknown;
+    [key: string]: unknown;
+  };
+  readonly applied: AppliedAction[];
+}
+
+/**
+ * The ledger of an apply that was claimed and did not finish: every row this phase approved is
+ * recorded with its outcome unknown, a row an earlier phase recorded keeps its entry, and every
+ * other row keeps why it was not applied, as the apply's dead-man switch records it.
+ *
+ * @param row - The work item, `executing` with an apply claimed.
+ * @param pendingRunId - The run the approval belongs to.
+ */
+function interruptedApplyLedger(
+  row: Doc<'workItems'>,
+  pendingRunId: Id<'events'>,
+): InterruptedApplyLedger {
+  const output = (row.output ?? {}) as {
+    actions?: Array<{ tool?: unknown }>;
+    actionIndexOffset?: unknown;
+    [key: string]: unknown;
+  };
+  const approved = new Set(row.approvedIndexes ?? []);
+  const count = output.actions?.length ?? 0;
+  const verdicts = verdictList(row.actionVerdicts, count);
+  const prior = ledgerOf(row.output);
+  const actionIndexOffset =
+    typeof output.actionIndexOffset === 'number' &&
+    Number.isInteger(output.actionIndexOffset) &&
+    output.actionIndexOffset >= 0
+      ? output.actionIndexOffset
+      : 0;
+  // In the auto phase a held row was never offered to the manager, so it
+  // keeps the reason the gate held it for; in the approved phase an
+  // unapproved held row is one the manager left out.
+  const heldReasonFor = (index: number): string => {
+    const verdict = verdicts[index];
+    if (verdict.disposition === 'refused') return verdict.reason;
+    if (verdict.disposition === 'held' && row.applyPhase === 'auto') return verdict.reason;
+    return HELD_NOT_APPROVED;
+  };
+  const applied = (output.actions ?? []).map((action, index): AppliedAction => {
+    const earlier = prior[index];
+    if (earlier && !earlier.awaitingApproval && !approved.has(index)) return earlier;
+    return {
+      tool: typeof action.tool === 'string' ? action.tool : 'unknown',
+      ok: !approved.has(index),
+      ...(approved.has(index)
+        ? { reason: OUTCOME_UNKNOWN_REASON }
+        : { held: true, reason: heldReasonFor(index) }),
+      idempotencyKey: actionIdempotencyKey({
+        workItemId: row._id,
+        runId: row.executionRunId ?? pendingRunId,
+        actionIndex: index + actionIndexOffset,
+      }),
+    };
+  });
+  return { output, applied };
+}
 
 /**
  * Recover an apply action that disappeared across a backend interruption.
@@ -6655,46 +7022,7 @@ export const recoverInterruptedApply = internalMutation({
     if (args.fromTimer && Date.now() - row.applyClaimedAt < APPLY_RECOVERY_MS) {
       return { recovered: 'ignored' };
     }
-    const output = (row.output ?? {}) as {
-      actions?: Array<{ tool?: unknown }>;
-      actionIndexOffset?: unknown;
-      [key: string]: unknown;
-    };
-    const approved = new Set(row.approvedIndexes ?? []);
-    const count = output.actions?.length ?? 0;
-    const verdicts = verdictList(row.actionVerdicts, count);
-    const prior = ledgerOf(row.output);
-    const actionIndexOffset =
-      typeof output.actionIndexOffset === 'number' &&
-      Number.isInteger(output.actionIndexOffset) &&
-      output.actionIndexOffset >= 0
-        ? output.actionIndexOffset
-        : 0;
-    // In the auto phase a held row was never offered to the manager, so it
-    // keeps the reason the gate held it for; in the approved phase an
-    // unapproved held row is one the manager left out.
-    const heldReasonFor = (index: number): string => {
-      const verdict = verdicts[index];
-      if (verdict.disposition === 'refused') return verdict.reason;
-      if (verdict.disposition === 'held' && row.applyPhase === 'auto') return verdict.reason;
-      return HELD_NOT_APPROVED;
-    };
-    const applied = (output.actions ?? []).map((action, index) => {
-      const earlier = prior[index];
-      if (earlier && !earlier.awaitingApproval && !approved.has(index)) return earlier;
-      return {
-        tool: typeof action.tool === 'string' ? action.tool : 'unknown',
-        ok: !approved.has(index),
-        ...(approved.has(index)
-          ? { reason: OUTCOME_UNKNOWN_REASON }
-          : { held: true, reason: heldReasonFor(index) }),
-        idempotencyKey: actionIdempotencyKey({
-          workItemId: args.workItemId,
-          runId: row.executionRunId ?? args.pendingRunId,
-          actionIndex: index + actionIndexOffset,
-        }),
-      };
-    });
+    const { output, applied } = interruptedApplyLedger(row, args.pendingRunId);
     await settleWriteTargetClaims(ctx, args.workItemId, Date.now());
     await ctx.db.patch(args.workItemId, {
       state: 'failed',
@@ -6732,6 +7060,7 @@ export const recoverInterruptedApply = internalMutation({
         reason: INTERRUPTED_NOTE_REASON,
       }),
     );
+    await settleHandoverAfterRun(ctx, row.agentId);
     return { recovered: 'outcome-unknown' };
   },
 });
@@ -6900,6 +7229,19 @@ const needsYouEntryValidator = v.union(
   }),
   v.object({ kind: v.literal('stopped'), ...needsYouBaseFields, workItemId: v.id('workItems') }),
   v.object({ kind: v.literal('surface'), ...needsYouBaseFields, surfaceId: v.id('surfaces') }),
+  /**
+   * A handover naming the caller (the transfer plan, section 5.1), read by the
+   * caller's verified address rather than through the caller's employees: its
+   * `agentId` is an employee the caller does not own yet, so the entry opens
+   * the acceptance dialog on the home, never the employee's page.
+   */
+  v.object({
+    kind: v.literal('transfer'),
+    ...needsYouBaseFields,
+    transferId: v.id('managerTransfers'),
+    fromAddress: v.string(),
+    expiresAt: v.number(),
+  }),
 );
 
 const needsYouValidator = v.object({
@@ -6909,8 +7251,8 @@ const needsYouValidator = v.object({
   waitingByEmployee: v.array(v.object({ agentId: v.id('agents'), waiting: v.number() })),
 });
 
-/** One thing waiting on the manager. */
-type NeedsYouEntry = Infer<typeof needsYouEntryValidator>;
+/** One entry of the needs-you inbox: one thing waiting on the manager. */
+export type NeedsYouEntry = Infer<typeof needsYouEntryValidator>;
 
 /** The fields every entry shares: a charter entry is nothing else. */
 type NeedsYouBase = Omit<Extract<NeedsYouEntry, { kind: 'charter' }>, 'kind'>;
@@ -7128,7 +7470,7 @@ async function oneToOneWaitingSince(ctx: QueryCtx, agent: Doc<'agents'>): Promis
  * @param agent - The employee.
  * @param now - The instant an authoring claim is judged against.
  */
-async function needsYouOfEmployee(
+export async function needsYouOfEmployee(
   ctx: QueryCtx,
   agent: Doc<'agents'>,
   now: number,
@@ -7252,10 +7594,35 @@ function longestWaitFirst(left: NeedsYouEntry, right: NeedsYouEntry): number {
 }
 
 /**
+ * A handover naming the caller as an inbox entry, waiting since it was asked.
+ *
+ * @param transfer - The request, as `incomingTransfersOf` reads it.
+ */
+function transferEntryOf(transfer: IncomingTransfer): NeedsYouEntry {
+  return {
+    kind: 'transfer',
+    key: `transfer:${transfer.transferId}`,
+    agentId: transfer.agentId,
+    employeeName: transfer.employeeName,
+    zone: transfer.zone,
+    subject: transfer.employeeName,
+    waitingSince: transfer.requestedAt,
+    waitingAtLeast: false,
+    transferId: transfer.transferId,
+    fromAddress: transfer.fromAddress,
+    expiresAt: transfer.expiresAt,
+  };
+}
+
+/**
  * Public, owner-scoped: everything waiting on the manager across their
- * employees, longest wait first, for the needs-you inbox on the signed-in
- * home (N7). Evaluation agents and the baseline arm are left out, as on the
- * roster. An anonymous caller gets an empty inbox. Writes nothing.
+ * employees, and every handover naming the caller's verified address (the
+ * ninth kind, read by address through `incomingTransfersOf`), longest wait
+ * first, for the needs-you inbox on the signed-in home (N7). Evaluation agents
+ * and the baseline arm are left out, as on the roster. A handover is counted
+ * in `total` and on no employee in `waitingByEmployee`, since its employee is
+ * not the caller's yet. An anonymous caller gets an empty inbox. Writes
+ * nothing.
  *
  * @returns At most `NEEDS_YOU_LIMIT` entries, how many there are in all, and
  *   how many wait on each employee.
@@ -7276,13 +7643,21 @@ export const needsYou = query({
       .filter((agent) => !isEvaluationAgent(agent))
       .slice(0, NEEDS_YOU_EMPLOYEE_LIMIT);
     const now = Date.now();
-    const perEmployee = await Promise.all(
-      employees.map(async (agent) => await needsYouOfEmployee(ctx, agent, now)),
-    );
-    const entries = perEmployee.flat().sort(longestWaitFirst);
+    const [perEmployee, incoming] = await Promise.all([
+      Promise.all(employees.map(async (agent) => await needsYouOfEmployee(ctx, agent, now))),
+      incomingTransfersOf(ctx, caller, now),
+    ]);
+    const waiting = perEmployee.flat().sort(longestWaitFirst);
+    // No employee's page lists a handover, so every one stays in the entries
+    // returned (at most MAX_OPEN_TRANSFERS_PER_ADDRESS); the longest waits fill the rest.
+    const transfers = incoming.map(transferEntryOf);
+    const entries = [
+      ...transfers,
+      ...waiting.slice(0, Math.max(0, NEEDS_YOU_LIMIT - transfers.length)),
+    ].sort(longestWaitFirst);
     return {
-      entries: entries.slice(0, NEEDS_YOU_LIMIT),
-      total: entries.length,
+      entries,
+      total: waiting.length + transfers.length,
       waitingByEmployee: employees.map((agent, index) => ({
         agentId: agent._id,
         waiting: perEmployee[index]?.length ?? 0,

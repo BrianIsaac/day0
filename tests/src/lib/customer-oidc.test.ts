@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { customerOidcIssuer } from '../../../src/lib/customer-oidc';
+import {
+  CUSTOMER_OIDC_EMAIL_TRUSTED_VAR,
+  customerOidcEmailTrusted,
+  customerOidcIssuer,
+} from '../../../src/lib/customer-oidc';
 
 /** An env reader over a plain record. */
 function reader(values: Record<string, string>): (name: string) => string | undefined {
@@ -59,5 +63,32 @@ describe('the customer OIDC issuer', (): void => {
       throw new Error('AuthConfigMissingEnvironmentVariable');
     };
     expect(customerOidcIssuer(throwing)).toBeUndefined();
+  });
+});
+
+describe("trusting the customer issuer's addresses (D3)", (): void => {
+  it('is named DAY0_OIDC_EMAIL_TRUSTED', (): void => {
+    expect(CUSTOMER_OIDC_EMAIL_TRUSTED_VAR).toBe('DAY0_OIDC_EMAIL_TRUSTED');
+  });
+
+  it('is on only when the flag says true, whatever its case and edges', (): void => {
+    expect(customerOidcEmailTrusted(reader({ DAY0_OIDC_EMAIL_TRUSTED: 'true' }))).toBe(true);
+    expect(customerOidcEmailTrusted(reader({ DAY0_OIDC_EMAIL_TRUSTED: ' TRUE ' }))).toBe(true);
+  });
+
+  it('is off by default, and for any other value, so a typo never widens whose address is believed', (): void => {
+    for (const value of ['', 'false', 'yes', '1', 'on']) {
+      expect(customerOidcEmailTrusted(reader({ DAY0_OIDC_EMAIL_TRUSTED: value })), value).toBe(
+        false,
+      );
+    }
+    expect(customerOidcEmailTrusted(reader({}))).toBe(false);
+  });
+
+  it('is off when the reader refuses the name, as the auth config does for an unset one', (): void => {
+    const throwing = (): string | undefined => {
+      throw new Error('AuthConfigMissingEnvironmentVariable');
+    };
+    expect(customerOidcEmailTrusted(throwing)).toBe(false);
   });
 });

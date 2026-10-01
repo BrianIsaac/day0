@@ -112,6 +112,14 @@ describe.skipIf(!hasHostTool('bash'))('sync-convex-env.sh (needs bash)', (): voi
     expect(leaving.deployment).not.toContain('DAY0_EVALUATION_BED=comparison');
   });
 
+  it("puts the customer issuer's trust flag on the deployment, and removes a stale one once the file drops it (D3)", (): void => {
+    const trusted = runSync([], 'DAY0_OIDC_EMAIL_TRUSTED=true\n');
+    expect(trusted.calls).toContain('convex env set DAY0_OIDC_EMAIL_TRUSTED -- true');
+    const dropped = runSync(['DAY0_OIDC_EMAIL_TRUSTED=true'], 'DAY0_SURFACE_MODE=mock\n');
+    expect(dropped.calls).toContain('convex env remove DAY0_OIDC_EMAIL_TRUSTED');
+    expect(dropped.deployment).not.toContain('DAY0_OIDC_EMAIL_TRUSTED=true');
+  });
+
   it('clears the retired credential names a deployment still carries', (): void => {
     const { status, calls } = runSync(
       [

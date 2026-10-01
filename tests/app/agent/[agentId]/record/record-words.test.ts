@@ -126,6 +126,61 @@ describe('recordWords', (): void => {
     ).toBe('Mira skipped “Refresh pipeline coverage view”: forecasting work assigned to Aman.');
   });
 
+  it('says each step of a handover request by who asked, the address it names and the employee', (): void => {
+    const request = {
+      transferId: 't1',
+      fromAddress: 'sam@company.com',
+      toAddress: 'priya@company.com',
+    };
+    const said = (type: (typeof EVENT_TYPES)[number], payload: Record<string, unknown>): string =>
+      recordWords({ type, payload: { ...request, ...payload } }, { name: 'Maya' });
+    expect(said('manager.transfer-asked', { hasNote: true })).toBe(
+      "Maya's manager, sam@company.com, asked priya@company.com to take Maya on.",
+    );
+    expect(said('manager.transfer-cancelled', { reason: 'owner' })).toBe(
+      "Maya's manager, sam@company.com, cancelled the handover to priya@company.com.",
+    );
+    expect(said('manager.transfer-cancelled', { reason: 'retired' })).toBe(
+      "Maya's manager, sam@company.com, cancelled the handover to priya@company.com when Maya was retired.",
+    );
+    expect(said('manager.transfer-cancelled', { reason: 'address-changed' })).toBe(
+      "Maya's manager, sam@company.com, cancelled the handover to priya@company.com to ask another address.",
+    );
+    expect(said('manager.transfer-declined', { hasReason: false })).toBe(
+      'Asked to take Maya on, priya@company.com declined.',
+    );
+    expect(said('manager.transfer-expired', {})).toBe(
+      'The handover to priya@company.com expired unanswered.',
+    );
+  });
+
+  it('says where a handed-over employee went, and what waits for its new manager to connect', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'manager.transferred',
+          payload: {
+            fromAddress: 'sam@revops.example',
+            toAddress: 'ana@kestrel.example',
+            surfacesCut: ['linear', 'slack'],
+          },
+        },
+        { name: 'Mira' },
+      ),
+    ).toBe(
+      'Mira moved from sam@revops.example to ana@kestrel.example; 2 connections were cut and wait to be approved and connected again.',
+    );
+    expect(
+      recordWords(
+        {
+          type: 'manager.transferred',
+          payload: { toAddress: 'ana@kestrel.example', surfacesCut: [] },
+        },
+        { name: 'Mira' },
+      ),
+    ).toBe('Mira moved to ana@kestrel.example.');
+  });
+
   it('says the reason for a rejection once, not the stored prefix before it (m43)', (): void => {
     const rejected = (reason: string): string =>
       recordWords(
@@ -154,6 +209,20 @@ describe('recordWords', (): void => {
     );
   });
 
+  it('says a plan handed over before it started waits for the new manager’s approval (D13)', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'work.plan-held',
+          payload: { workItemId: 'w1', reason: 'approved-by-predecessor' },
+        },
+        subject,
+      ),
+    ).toBe(
+      'The plan for “Draft response for new tier-two RevOps ask” is held for you: your predecessor approved it, so approve it again.',
+    );
+  });
+
   it('says a plan approved under autonomous actions was not the manager pressing Approve', (): void => {
     expect(
       recordWords({ type: 'work.plan-approved', payload: { by: 'autonomous' } }, { name: 'Mira' }),
@@ -179,6 +248,23 @@ describe('recordWords', (): void => {
     expect(
       recordWords({ type: 'surface.expiring', payload: {} }, { name: 'Mira', connection: 'Slack' }),
     ).toBe('Access to the Slack connection ends within a week; renew it on its card.');
+  });
+
+  it('says each way the manager changed, the adoption of the owner’s own address included (D17)', (): void => {
+    const changed = (payload: Record<string, unknown>): string =>
+      recordWords({ type: 'manager.changed', payload }, { name: 'Mira' });
+    expect(changed({ via: 'adopted', bossEmail: 'lead@kestrel.example' })).toBe(
+      "You made yourself Mira's manager at lead@kestrel.example, so its DMs come to you now.",
+    );
+    expect(changed({ via: 'adopted' })).toBe(
+      "You made yourself Mira's manager, so its DMs come to you now.",
+    );
+    expect(changed({ via: 'dashboard', bossEmail: 'ana@kestrel.example' })).toBe(
+      "You changed Mira's manager to ana@kestrel.example.",
+    );
+    expect(changed({ via: 'probe', managerUserId: 'U2' })).toBe(
+      'The chat surface showed Mira a different manager, so its DMs go to them now.',
+    );
   });
 
   it('says an intake listing is a change the tracker shows, with intake’s refusal when there is one', (): void => {

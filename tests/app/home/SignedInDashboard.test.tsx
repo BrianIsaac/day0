@@ -159,6 +159,12 @@ const oneEmployeeMetrics = {
 const state = vi.hoisted(() => ({
   roster: [] as unknown[],
   inbox: undefined as unknown,
+  /** How many employees report to someone else, as `agents.employeesReportingElsewhere` counts. */
+  reportingElsewhere: undefined as unknown,
+  /** The manager's finished handovers, as `managerTransfers.departures` lists them. */
+  departures: undefined as unknown,
+  /** A handover's preview, as `transferAcceptance.transferPreview` answers it. */
+  preview: undefined as unknown,
 }));
 
 vi.mock('convex/react', () => {
@@ -170,6 +176,9 @@ vi.mock('convex/react', () => {
     }
     if (name === 'agents:rosterForUser') return shown;
     if (name === 'work:needsYou') return state.inbox;
+    if (name === 'agents:employeesReportingElsewhere') return state.reportingElsewhere;
+    if (name === 'managerTransfers:departures') return state.departures;
+    if (name === 'transferAcceptance:transferPreview') return state.preview;
     if (name === 'config:surfaceMode') return { mode: 'mock', label: 'mock' };
     if (name === 'docSources:listMine') return [{ _id: 'synthetic-doc-source', label: 'Handbook' }];
     if (name === 'metrics:forOwner' && shown.length > 0) {
@@ -213,8 +222,21 @@ vi.mock('convex/react', () => {
   };
 });
 
+/** The address the home is at: its search names a handover to open (`/?transfer=<id>`). */
+const route = vi.hoisted(() => ({
+  search: '',
+  replaced: [] as string[],
+}));
+
 vi.mock('next/navigation', () => ({
-  useRouter: (): { push: () => void } => ({ push: (): void => undefined }),
+  useRouter: (): { push: () => void; replace: (href: string) => void } => ({
+    push: (): void => undefined,
+    replace: (href: string): void => {
+      route.replaced.push(href);
+    },
+  }),
+  usePathname: (): string => '/',
+  useSearchParams: (): URLSearchParams => new URLSearchParams(route.search),
 }));
 
 import { NEEDS_YOU_UNREADABLE } from '../../../app/home/NeedsYouList';
@@ -243,6 +265,11 @@ beforeEach((): void => {
 
 afterEach((): void => {
   vi.useRealTimers();
+  state.reportingElsewhere = undefined;
+  state.departures = undefined;
+  state.preview = undefined;
+  route.search = '';
+  route.replaced = [];
 });
 
 describe('the signed-in home with nobody deployed', (): void => {
@@ -513,6 +540,104 @@ describe('Deploy another', (): void => {
     expect(toggle.hidden).toBe(false);
     expect(document.activeElement).toBe(toggle);
 
+    act(() => root.unmount());
+    host.remove();
+  });
+});
+
+describe('the home during a handover (the transfer plan, sections 7.3, 7.4 and 11.2)', (): void => {
+  /** A handover of Maya named to this manager, as the ninth kind of the inbox. */
+  const handover = {
+    kind: 'transfer',
+    key: 'transfer:transfer-1',
+    agentId: 'agent-maya',
+    employeeName: 'Maya',
+    zone: 'UTC',
+    waitingSince: minutes(30),
+    waitingAtLeast: false,
+    transferId: 'transfer-1',
+    fromAddress: 'sam@kestrel.example',
+    expiresAt: NOW + 14 * 24 * 60 * 60_000,
+  };
+
+  it('shows the inbox to a manager with nobody yet when a handover waits on them, with Review opening it', (): void => {
+    const page = render([], { entries: [handover], total: 1, waitingByEmployee: [] });
+    expect(page).toContain('>Needs you<');
+    expect(readAs(page)).toContain('Maya · an employee to take on');
+    expect(page).toContain('href="/?transfer=transfer-1"');
+    // Before the deploy form, which would otherwise push the entry below the fold at 390.
+    expect(page.indexOf('>Needs you<')).toBeLessThan(page.indexOf('Deploy a new Day0 employee'));
+  });
+
+  it('keeps the inbox off the page of a manager with nobody and nothing waiting', (): void => {
+    const page = render([], { entries: [], total: 0, waitingByEmployee: [] });
+    expect(page).not.toContain('>Needs you<');
+  });
+
+  it('names the employees that report to someone who is not the owner under the company line, each a link to its People tab', (): void => {
+    state.reportingElsewhere = [
+      { agentId: 'agent-tomas', name: 'Tomas' },
+      { agentId: 'agent-aiko', name: 'Aiko' },
+    ];
+    const page = render(roster);
+    expect(readAs(page)).toContain(
+      '2 employees report to someone who is not you: Tomas and Aiko . Choose on each one&#x27;s People tab.',
+    );
+    expect(page).toContain('href="/agent/agent-tomas/people"');
+    expect(page).toContain('href="/agent/agent-aiko/people"');
+    state.reportingElsewhere = [];
+    expect(readAs(render(roster))).not.toContain('who is not you');
+    state.reportingElsewhere = null;
+    expect(readAs(render(roster))).not.toContain('who is not you');
+  });
+
+  it('lists the employees handed over under the roster', (): void => {
+    state.departures = [
+      {
+        transferId: 'transfer-1',
+        agentId: 'agent-maya',
+        agentName: 'Maya',
+        toAddress: 'lead@kestrel.example',
+        state: 'accepted',
+        decidedAt: NOW - 60 * 60_000,
+      },
+    ];
+    const page = render(roster);
+    expect(readAs(page)).toContain(
+      'Handed over Maya now reports to lead@kestrel.example, since 26 Sep 2026, 05:45, UTC time.',
+    );
+    expect(page.indexOf('>Handed over<')).toBeGreaterThan(page.indexOf('Recorded colleague'));
+  });
+
+  it('puts where an only employee went before the deploy form, for a manager who handed it over', (): void => {
+    state.departures = [
+      {
+        transferId: 'transfer-1',
+        agentId: 'agent-maya',
+        agentName: 'Maya',
+        toAddress: 'lead@kestrel.example',
+        state: 'accepted',
+        decidedAt: NOW - 60 * 60_000,
+      },
+    ];
+    const page = render([], { entries: [], total: 0, waitingByEmployee: [] });
+    expect(page.indexOf('>Handed over<')).toBeGreaterThan(-1);
+    expect(page.indexOf('>Handed over<')).toBeLessThan(page.indexOf('Deploy a new Day0 employee'));
+  });
+
+  it('opens the acceptance dialog over the home for the handover the address names', (): void => {
+    vi.useRealTimers();
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    route.search = '?transfer=transfer-1';
+    state.roster = [];
+    state.inbox = { entries: [handover], total: 1, waitingByEmployee: [] };
+    state.preview = null;
+    const host = document.createElement('div');
+    document.body.append(host);
+    const root = createRoot(host);
+    act(() => root.render(<SignedInDashboard boss={boss} />));
+    const dialog = document.querySelector('[role="dialog"]');
+    expect(dialog?.textContent).toContain('This handover is no longer waiting for an answer');
     act(() => root.unmount());
     host.remove();
   });

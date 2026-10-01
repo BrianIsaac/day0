@@ -18,7 +18,7 @@
 export const REPOSITORY_URL = 'https://github.com/BrianIsaac/day0';
 
 /** This guide, hosted, so the README can send a reader to the same page. */
-export const SETUP_PAGE_URL = 'https://day0-olive.vercel.app/setup';
+export const SETUP_PAGE_URL = 'https://dayzer0.dev/setup';
 
 /**
  * Everything a newcomer types, in order. The fourth is real mode, and asks

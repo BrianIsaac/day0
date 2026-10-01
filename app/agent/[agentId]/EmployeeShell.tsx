@@ -65,6 +65,19 @@ interface SentBack {
  */
 const DAY_ZERO_TABS: ReadonlySet<EmployeeTab> = new Set(['surfaces', 'manage']);
 
+/**
+ * Whether day zero draws the selected tab rather than the one-to-one: {@link DAY_ZERO_TABS}, and
+ * People while the employee reports to an address that is not the manager's, where the flag the
+ * home and the header raise is resolved (the wave 9 review's M6). Hand over on People still
+ * waits for the one-to-one otherwise (9-U4's recorded product call).
+ *
+ * @param selected - The tab the address names.
+ * @param reportsElsewhere - Whether the employee's standing is `other`.
+ */
+function dayZeroShowsTab(selected: EmployeeTab, reportsElsewhere: boolean): boolean {
+  return DAY_ZERO_TABS.has(selected) || (selected === 'people' && reportsElsewhere);
+}
+
 /** The rail's step while what it is read from is still loading. */
 const UNSETTLED = -1;
 
@@ -178,6 +191,7 @@ export function EmployeeShell({ agentId, children }: EmployeeShellProps) {
   const proposedSkills = useQuery(api.skills.proposed, present);
   const metrics = useQuery(api.metrics.forAgent, present);
   const session = useQuery(api.voice.latest, present);
+  const standing = useQuery(api.agents.managerStanding, present);
   const phase = oneToOnePhase(session).kind;
   const segment = useSelectedLayoutSegment();
   const router = useRouter();
@@ -354,7 +368,9 @@ export function EmployeeShell({ agentId, children }: EmployeeShellProps) {
               <FirstWeekRail steps={steps} advanced={advanced || railLeaving} />
             </div>
           ) : null}
-          {dayZero && segment !== null && DAY_ZERO_TABS.has(selected) ? (
+          {dayZero &&
+          segment !== null &&
+          dayZeroShowsTab(selected, standing?.standing === 'other') ? (
             <div className="mt-6 grid gap-4">
               <ButtonLink
                 href={employeeTabHref(agentId, 'needs-you')}

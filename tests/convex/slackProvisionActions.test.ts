@@ -9,6 +9,7 @@ import { parseManifestCreate, parseOauthAccess } from '../../convex/slackProvisi
 import { signOauthState } from '../../src/lib/oauth-state';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
 const POLICY = readFileSync(
   resolve(__dirname, '../fixtures/notion-pages/slack-day0-app.md'),
@@ -71,7 +72,7 @@ async function seedSlackSurface(
 ): Promise<Seeded> {
   return await harness.run(async (ctx): Promise<Seeded> => {
     const agentId = await ctx.db.insert('agents', {
-      bossEmail: 'boss@day0.local',
+      bossEmail: MANAGER_ADDRESS,
       name: 'ops worker',
       userId: 'owner',
       state: 'active',
@@ -186,7 +187,7 @@ describe('registering a dedicated app', (): void => {
     const { surfaceId } = await seedSlackSurface(harness);
 
     const outcome = await harness
-      .withIdentity({ subject: 'owner' })
+      .withIdentity(managerIdentity())
       .action(liveApi.slackProvisionActions.provisionApp, {
         surfaceId,
         configurationToken: CONFIG_TOKEN,
@@ -242,12 +243,10 @@ describe('registering a dedicated app', (): void => {
     const { surfaceId } = await seedSlackSurface(harness);
 
     await expect(
-      harness
-        .withIdentity({ subject: 'owner' })
-        .action(liveApi.slackProvisionActions.provisionApp, {
-          surfaceId,
-          configurationToken: CONFIG_TOKEN,
-        }),
+      harness.withIdentity(managerIdentity()).action(liveApi.slackProvisionActions.provisionApp, {
+        surfaceId,
+        configurationToken: CONFIG_TOKEN,
+      }),
     ).rejects.toThrow('invalid_auth');
 
     const credentials = await harness.run(
@@ -265,12 +264,10 @@ describe('registering a dedicated app', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const { surfaceId } = await seedSlackSurface(harness, { approved: false });
     await expect(
-      harness
-        .withIdentity({ subject: 'owner' })
-        .action(liveApi.slackProvisionActions.provisionApp, {
-          surfaceId,
-          configurationToken: CONFIG_TOKEN,
-        }),
+      harness.withIdentity(managerIdentity()).action(liveApi.slackProvisionActions.provisionApp, {
+        surfaceId,
+        configurationToken: CONFIG_TOKEN,
+      }),
     ).rejects.toThrow('needs its approval');
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
@@ -299,12 +296,10 @@ describe('registering a dedicated app', (): void => {
     });
 
     await expect(
-      harness
-        .withIdentity({ subject: 'owner' })
-        .action(liveApi.slackProvisionActions.provisionApp, {
-          surfaceId,
-          configurationToken: CONFIG_TOKEN,
-        }),
+      harness.withIdentity(managerIdentity()).action(liveApi.slackProvisionActions.provisionApp, {
+        surfaceId,
+        configurationToken: CONFIG_TOKEN,
+      }),
     ).rejects.toThrow('already has a connected dedicated identity');
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
@@ -316,7 +311,7 @@ describe('registering a dedicated app', (): void => {
     const { surfaceId } = await seedSlackSurface(harness);
     await expect(
       harness
-        .withIdentity({ subject: 'intruder' })
+        .withIdentity(managerIdentity('intruder'))
         .action(liveApi.slackProvisionActions.provisionApp, {
           surfaceId,
           configurationToken: CONFIG_TOKEN,
@@ -332,12 +327,10 @@ describe('registering a dedicated app', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const { surfaceId } = await seedSlackSurface(harness);
     await expect(
-      harness
-        .withIdentity({ subject: 'owner' })
-        .action(liveApi.slackProvisionActions.provisionApp, {
-          surfaceId,
-          configurationToken: CONFIG_TOKEN,
-        }),
+      harness.withIdentity(managerIdentity()).action(liveApi.slackProvisionActions.provisionApp, {
+        surfaceId,
+        configurationToken: CONFIG_TOKEN,
+      }),
     ).rejects.toThrow('DAY0_PUBLIC_URL');
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
@@ -353,12 +346,10 @@ describe('registering a dedicated app', (): void => {
         await ctx.db.patch(page._id, { markdown: '# Slack automation policy\n\nNo template.' });
     });
     await expect(
-      harness
-        .withIdentity({ subject: 'owner' })
-        .action(liveApi.slackProvisionActions.provisionApp, {
-          surfaceId,
-          configurationToken: CONFIG_TOKEN,
-        }),
+      harness.withIdentity(managerIdentity()).action(liveApi.slackProvisionActions.provisionApp, {
+        surfaceId,
+        configurationToken: CONFIG_TOKEN,
+      }),
     ).rejects.toThrow('no app manifest template');
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
@@ -383,7 +374,7 @@ describe('completing the install', (): void => {
     );
     const { api: liveApi } = await import('../../convex/_generated/api');
     const outcome = await harness
-      .withIdentity({ subject: 'owner' })
+      .withIdentity(managerIdentity())
       .action(liveApi.slackProvisionActions.provisionApp, {
         surfaceId,
         configurationToken: CONFIG_TOKEN,
@@ -593,7 +584,7 @@ describe("the administrator's one action (P7-3, P3-17)", (): void => {
   ): Promise<{ appId: string; installUrl: string }> {
     const { api: liveApi } = await import('../../convex/_generated/api');
     return await harness
-      .withIdentity({ subject: 'owner' })
+      .withIdentity(managerIdentity())
       .action(liveApi.slackProvisionActions.provisionApp, {
         surfaceId,
         configurationToken: CONFIG_TOKEN,

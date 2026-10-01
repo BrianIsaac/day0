@@ -128,7 +128,18 @@ const PLAN_HELD_BECAUSE: { readonly [Reason in WorkPlanHeldPayload['reason']]: s
   'plan-rejected-for-this-item': "you rejected a colleague's plan for this ticket",
   'obligations-failed-open': 'its reads and writes could not be checked',
   'drafted-without-record': 'it was drafted without reading its ticket or thread',
+  'approved-by-predecessor': 'your predecessor approved it, so approve it again',
 };
+
+/**
+ * Why an asked handover was cancelled, as the end of a sentence: nothing for the manager's own
+ * cancel, which the sentence already says.
+ */
+function handoverCancelledBecause(reason: unknown, name: string): string {
+  if (reason === 'retired') return ` when ${name} was retired`;
+  if (reason === 'address-changed') return ' to ask another address';
+  return '';
+}
 
 /** The stage a model call belongs to. */
 const MODEL_CALL_STAGE: Readonly<Record<string, string>> = {
@@ -171,7 +182,32 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
       return `The chat surface showed ${name} a different manager, so its DMs go to them now`;
     }
     const to = 'bossEmail' in p ? text(p.bossEmail) : undefined;
+    if (p.via === 'adopted') {
+      return `You made yourself ${name}'s manager${to ? ` at ${to}` : ''}, so its DMs come to you now`;
+    }
     return `You changed ${name}'s manager${to ? ` to ${to}` : ''}`;
+  },
+  'manager.transfer-asked': (p, { name }) =>
+    `${name}'s manager, ${text(p.fromAddress) ?? 'you'}, asked ${
+      text(p.toAddress) ?? 'another manager'
+    } to take ${name} on`,
+  'manager.transfer-cancelled': (p, { name }) =>
+    `${name}'s manager, ${text(p.fromAddress) ?? 'you'}, cancelled the handover to ${
+      text(p.toAddress) ?? 'another manager'
+    }${handoverCancelledBecause(p.reason, name)}`,
+  'manager.transfer-declined': (p, { name }) =>
+    `Asked to take ${name} on, ${text(p.toAddress) ?? 'the named manager'} declined`,
+  'manager.transfer-expired': (p) =>
+    `The handover to ${text(p.toAddress) ?? 'another manager'} expired unanswered`,
+  'manager.transferred': (p, { name }) => {
+    const from = text(p.fromAddress);
+    const to = text(p.toAddress);
+    const cut = Array.isArray(p.surfacesCut) ? p.surfacesCut.length : 0;
+    const moved = `${name} moved${from ? ` from ${from}` : ''} to ${to ?? 'a new manager'}`;
+    if (cut === 0) return moved;
+    return `${moved}; ${counted(cut, 'connection')} ${cut === 1 ? 'was' : 'were'} cut and ${
+      cut === 1 ? 'waits' : 'wait'
+    } to be approved and connected again`;
   },
   'charter.drafted': (p) => `Charter version ${text(p.version) ?? '?'} drafted for your review`,
   'charter.approved': (p) => {

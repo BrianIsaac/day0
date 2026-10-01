@@ -2,9 +2,9 @@
 
 An autonomous teammate that joins with no role, no skills and no scope.
 
-[![Live demo](https://img.shields.io/badge/Live%20demo-day0--olive.vercel.app-2ea043)](https://day0-olive.vercel.app) [![Runs with no accounts](https://img.shields.io/badge/Runs%20with-no%20accounts-1f6feb)](#local-local-model) [![Licence Apache-2.0](https://img.shields.io/badge/Licence-Apache--2.0-blue)](LICENSE)
+[![Live demo](https://img.shields.io/badge/Live%20demo-dayzer0.dev-2ea043)](https://dayzer0.dev) [![Runs with no accounts](https://img.shields.io/badge/Runs%20with-no%20accounts-1f6feb)](#local-local-model) [![Licence Apache-2.0](https://img.shields.io/badge/Licence-Apache--2.0-blue)](LICENSE)
 
-[**Live demo**](https://day0-olive.vercel.app) · [**Run it yourself**](#local-dev), including with no accounts and no hosted model · [**中文说明**](#中文说明) · [**What it is not**](#what-this-is-and-what-it-is-not) · [**How it works**](#runtime-flow)
+[**Live demo**](https://dayzer0.dev) · [**Run it yourself**](#local-dev), including with no accounts and no hosted model · [**中文说明**](#中文说明) · [**What it is not**](#what-this-is-and-what-it-is-not) · [**How it works**](#runtime-flow)
 
 ![A clean evidence composite from the final real-mode dashboard: approved charter, four registered skills, one built-in and three it authored, seven-item work queue, revoked Linear write grant and supervision metrics](.github/images/agent-dashboard.webp)
 
@@ -16,7 +16,7 @@ Day0 starts a step earlier. It is deployed empty. Everything it becomes comes ou
 
 ## Live demo
 
-[`day0-olive.vercel.app`](https://day0-olive.vercel.app) is the hosted mock office: a safe, public way to run the product loop without connecting Day0 to a real workplace. It runs the model named by the deployment's `OPENAI_MODEL`, with `gpt-5.6-terra` as the code default when unset; the demo's provider for a given window is a deployment setting, not the product's identity. The deployment is in mock mode by design: `src/lib/surface-mode.ts` refuses real mode on Vercel, so live systems are unreachable from the hosted app. Everything below can also be run locally through one of the routes in [Local dev](#local-dev).
+[`dayzer0.dev`](https://dayzer0.dev) is the hosted mock office: a safe, public way to run the product loop without connecting Day0 to a real workplace. It runs the model named by the deployment's `OPENAI_MODEL`, with `gpt-5.6-terra` as the code default when unset; the demo's provider for a given window is a deployment setting, not the product's identity. The deployment is in mock mode by design: `src/lib/surface-mode.ts` refuses real mode on Vercel, so live systems are unreachable from the hosted app. Everything below can also be run locally through one of the routes in [Local dev](#local-dev).
 
 - Sign in with Clerk and deploy an agent.
 - Hold its Day-1 one-to-one over voice or chat, then approve the charter it drafts.
@@ -61,7 +61,7 @@ Who receives what. On the hosted demo, the sign-in email goes to Clerk, the page
 
 Three ways to run it, and the two local ways are real mode: Day0 reads the documentation you link and acts on the systems it names, through approval cards. They differ in one thing only, where the model runs.
 
-- **Hosted demo** - nothing to install. Sign in at [day0-olive.vercel.app](https://day0-olive.vercel.app) for the mock workspace, or open [/walkthrough](https://day0-olive.vercel.app/walkthrough) for the walkthrough without sign-in.
+- **Hosted demo** - nothing to install. Sign in at [dayzer0.dev](https://dayzer0.dev) for the mock workspace, or open [/walkthrough](https://dayzer0.dev/walkthrough) for the walkthrough without sign-in.
 - **Local, cloud model** - `./setup.sh --route featherless`: GLM 5.3 Flash through Featherless, with a Featherless key; `--route key` for OpenAI or any OpenAI-compatible key, `--route endpoint` for a server you already run. Your chat and relevant content are sent to the provider, which charges per token.
 - **Local, local model** - `./setup.sh --route local`: the bundled model (`qwen3:8b` tested) in Docker on this machine, nothing signed up for and nothing metered.
 
@@ -77,7 +77,7 @@ pnpm dev
 
 `./setup.sh` asks where the model runs when `--route` does not say - a hosted model through Featherless, a key you already have, an endpoint you already run, or the bundled model here - then for the key in a hidden prompt where one is needed and for the address your Slack DM is resolved from. It then does the rest: the containers and components, the generated keys written into `.env.local` rather than pasted into it, the two model addresses written as a pair, the function push and `pnpm check:setup`. It finishes by printing an unlock URL. Open that, link your documentation, deploy an agent, hold the Day-1 1:1 in chat, and approve the charter it writes; that first approval is what fills the work queue, and the connection cards on the Surfaces tab are what let it act.
 
-[**Set up Day0**](https://day0-olive.vercel.app/setup) is this quick start as a page, with what first success looks like, the setup traps worth knowing and the measured timings. [Local dev](#local-dev) gives each way's one command and says what the setup does on it, step by step, and is what to read when something needs fixing. Mock mode, the seeded office the hosted demo and the evaluation harness run on, is `pnpm setup:local` and is documented as that under [Evaluation and the mock office](#evaluation-and-the-mock-office).
+[**Set up Day0**](https://dayzer0.dev/setup) is this quick start as a page, with what first success looks like, the setup traps worth knowing and the measured timings. [Local dev](#local-dev) gives each way's one command and says what the setup does on it, step by step, and is what to read when something needs fixing. Mock mode, the seeded office the hosted demo and the evaluation harness run on, is `pnpm setup:local` and is documented as that under [Evaluation and the mock office](#evaluation-and-the-mock-office).
 
 
 ## What is unusual about it
@@ -264,7 +264,7 @@ Whichever you pick, `pnpm check:setup` reads `.env.local` and reports each of th
 
 ## Hosted demo
 
-Nothing to install. Sign in at [`day0-olive.vercel.app`](https://day0-olive.vercel.app) to deploy an employee into the hosted mock office, which runs the product loop on synthetic content and reaches no system of yours; or open [`/walkthrough`](https://day0-olive.vercel.app/walkthrough) for the recorded walkthrough, which needs no sign-in at all. [Live demo](#live-demo) above says what the deployment runs and links both recordings. It runs on a Convex production deployment and a Vercel project, and each release reaches it by `./setup.sh cloud upgrade`, the command below.
+Nothing to install. Sign in at [`dayzer0.dev`](https://dayzer0.dev) to deploy an employee into the hosted mock office, which runs the product loop on synthetic content and reaches no system of yours; or open [`/walkthrough`](https://dayzer0.dev/walkthrough) for the recorded walkthrough, which needs no sign-in at all. [Live demo](#live-demo) above says what the deployment runs and links both recordings. It runs on a Convex production deployment and a Vercel project, and each release reaches it by `./setup.sh cloud upgrade`, the command below.
 
 ### Your own hosted copy
 
@@ -283,7 +283,7 @@ vercel link                        # once: the Vercel project the app deploys to
 Four things come first, and none can be done for you:
 
 - **Convex**: a project, and its production deployment. In the [dashboard](https://dashboard.convex.dev), open the project and choose Production, which provisions it and shows its name (`<word>-<word>-<number>`); `npx convex login` on this machine. The target file names it, alone in a file outside the checkout: `mkdir -p -m 700 ~/day0-private && printf 'CONVEX_DEPLOYMENT=prod:<name>\n' > ~/day0-private/prod-target.env && chmod 600 ~/day0-private/prod-target.env`. It may also hold `DAY0_APP_URL` (the setup writes it) and `VERCEL_SCOPE`, and nothing else: it is not for keys.
-- **Clerk**: an application, with a JWT template named exactly `convex`; its Issuer URL, with no trailing slash, is `CLERK_JWT_ISSUER_DOMAIN`.
+- **Clerk**: an application, with a JWT template named exactly `convex` whose claims carry the manager's verified address (`email` and `email_verified`); its Issuer URL, with no trailing slash, is `CLERK_JWT_ISSUER_DOMAIN`.
 - **Vercel**: a Next.js project linked to the checkout, which is the Framework Preset `vercel link` sets when it creates the project; one made in the dashboard or by `vercel project add` needs it set in the project's settings, and the setup refuses any other preset. It holds the app's own keys on production: `vercel env add NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY production` and `vercel env add CLERK_SECRET_KEY production --sensitive`, each asking for its value, and the model settings the chat route reads (`OPENAI_API_KEY`, `OPENAI_MODEL`, and on Featherless `OPENAI_BASE_URL`, `OPENAI_MAX_OUTPUT_TOKENS` and `OPENAI_REASONING_EFFORT` as below) the same way. The setup refuses while the two Clerk keys are missing.
 - **The deployment's settings**: a private file outside the checkout, mode 600, one `NAME=value` per line: `CLERK_JWT_ISSUER_DOMAIN`, `OPENAI_API_KEY`, and any other name `scripts/sync-convex-env.sh` manages (`OPENAI_MODEL`, `OPENAI_BASE_URL`, `DAYTONA_API_KEY` and the rest). A copy on GLM through Featherless, the hosted demo's route, needs `OPENAI_JSON_MODE=prompt`, `OPENAI_MAX_OUTPUT_TOKENS=32768` and `OPENAI_REASONING_EFFORT=low` beside `OPENAI_BASE_URL=https://api.featherless.ai/v1`; the prompts do not ask for them, so name them in the file. Without `--env-file` the setup asks for the Clerk issuer, the model key and three optional values, the keys in hidden prompts.
 
@@ -291,7 +291,7 @@ Four things come first, and none can be done for you:
 
 **`cloud upgrade`** is what to run from the checkout of the next tag. It makes the same refusals, the [release check](#backup-restore-and-upgrade) the local upgrade makes (one release at a time; older functions never over newer rows), and one of its own: the app at `DAY0_APP_URL` must be served by the linked project and talk to the deployment now, since an app on another deployment is a move, which `cloud setup` makes. Then it exports the deployment with its file storage (`before-v<release>-<time>.zip` beside the target file, mode 600, with its sha256 and row counts), pushes, migrates, stamps and deploys the app, each read back as above. A real-mode deployment's scheduled jobs are paused with `DAY0_CRONS_PAUSED` before the push and lifted once both halves read back, with a second push so every module reads the change, because a module keeps the env it was first evaluated with; a pause set by hand (`./setup.sh cloud pause`) is left for `./setup.sh cloud unpause`. An upgrade that stops before its push lifts its own pause again; one that stops after it leaves the pause, and running it again from the same checkout resumes the migrations and lifts it. **`cloud backup`** is the export on its own, after the same dry run proves its target (`--to <dir>`, `--name <file stem>`).
 
-Setup and upgrade end with their rollback, written out with what they read and run by nobody: `vercel promote` of the build that served production before, the three Vercel values to put back when the setup changed them, and, after an upgrade, the export from before it (the first attempt's, when an attempt stopped part way) with its checksum and the `npx convex import --replace-all` that puts it back from a checkout of the earlier tag. `./setup.sh cloud --help` lists every flag.
+Setup and upgrade end with their rollback, written out with what they read, numbered in the order it is taken, and run by nobody: after an upgrade, the export from before it (the first attempt's, when an attempt stopped part way) with its checksum and the `npx convex import --replace-all` that puts it back from a clean checkout of the release its rows were taken under (this checkout, after a re-push of the release the deployment already had); the three Vercel values to put back when the setup changed them; and last, after the import and the push, `vercel promote` of the build that served production before. `./setup.sh cloud --help` lists every flag.
 
 ## Local, cloud model
 
@@ -335,7 +335,7 @@ Running the setup again is the same as `resume`, and `--reset` is `clear` follow
 10. **`pnpm convex:restart`**, only once every step before it has succeeded, because a module keeps whatever env it was first evaluated with and the backend has been up since step 3. The setup then waits for the redactor to report healthy - the model loaded and verified against `redactor/models.sha256` - and carries on with a note if it has not.
 11. **`pnpm check:setup`** reads the same `.env.local` and reports every component and every setup, with the mode and the route on one line. It looks for the Compose project `COMPOSE_PROJECT_NAME` names, which the setup writes; a hand-made file without it, in a clone called anything but `day0`, is a checker that reports every component as absent while `docker ps` shows them running. Read the whole output rather than the summary lines - the component notes underneath them are where the real gaps are.
 
-On top of the generated values, the setup writes `COMPOSE_PROJECT_NAME`, the ports, `NEXT_PUBLIC_DEV_NO_AUTH=true`, `NEXT_PUBLIC_CONVEX_URL` and `CONVEX_SELF_HOSTED_URL`, `DAY0_SURFACE_MODE=real`, `DAY0_DOCS_HOST_DIR` (default `./docs-local`), `DAY0_BROWSER_MCP_URL=http://playwright-mcp:8931/mcp`, `DAY0_REDACTOR_URL=http://redactor:8000`, `NEXT_PUBLIC_DEMO_BOSS_EMAIL` (your Slack address, asked for when the file has none because the DM is resolved from it at deploy and cannot be corrected on a live agent; `--boss-email` gives it), `DAY0_SETUP_ROOT`, and the model settings of the route: on the Featherless route `OPENAI_BASE_URL=https://api.featherless.ai/v1`, `OPENAI_MODEL=zai-org/GLM-5.3-Flash`, `OPENAI_JSON_MODE=prompt`, `OPENAI_MAX_OUTPUT_TOKENS=32768` and `OPENAI_REASONING_EFFORT=low`, written every time, with the key stored as `OPENAI_API_KEY`; on the local route the two paired model addresses, `MODEL_PORT` and `OPENAI_MODEL`.
+On top of the generated values, the setup writes `COMPOSE_PROJECT_NAME`, the ports, `NEXT_PUBLIC_DEV_NO_AUTH=true`, `NEXT_PUBLIC_CONVEX_URL` and `CONVEX_SELF_HOSTED_URL`, `DAY0_SURFACE_MODE=real`, `DAY0_DOCS_HOST_DIR` (default `./docs-local`), `DAY0_BROWSER_MCP_URL=http://playwright-mcp:8931/mcp`, `DAY0_REDACTOR_URL=http://redactor:8000`, `NEXT_PUBLIC_DEMO_BOSS_EMAIL` (your Slack address, asked for when the file has none: your local sign-in carries it, and real mode finds your Slack DM from it; set later, each employee's People tab offers Make it you; `--boss-email` gives it), `DAY0_SETUP_ROOT`, and the model settings of the route: on the Featherless route `OPENAI_BASE_URL=https://api.featherless.ai/v1`, `OPENAI_MODEL=zai-org/GLM-5.3-Flash`, `OPENAI_JSON_MODE=prompt`, `OPENAI_MAX_OUTPUT_TOKENS=32768` and `OPENAI_REASONING_EFFORT=low`, written every time, with the key stored as `OPENAI_API_KEY`; on the local route the two paired model addresses, `MODEL_PORT` and `OPENAI_MODEL`.
 
 Three things are the cloud-model way's own:
 
@@ -647,7 +647,7 @@ pnpm dev                         # http://localhost:3000
 Both accounts are free to create and neither step can be done for you:
 
 - **Convex** - `pnpm convex:dev` offers a choice on first run: log in, which opens a browser to sign up at [convex.dev](https://convex.dev) and then asks you to name a project, or carry on without an account, which gives you a local [anonymous deployment](#without-docker-for-convex) instead. This route is the cloud one, so log in - it is the account. Either way the command writes `CONVEX_DEPLOYMENT` and `NEXT_PUBLIC_CONVEX_URL` into `.env.local` itself. With no terminal to prompt at, it takes the anonymous option silently, which is worth knowing before you wonder why nothing appeared on the dashboard.
-- **Clerk** - create an application at [dashboard.clerk.com](https://dashboard.clerk.com), copy the publishable and secret keys into `.env.local`, then add a JWT template named exactly `convex` (JWT Templates → New template). Copy its Issuer URL, with no trailing slash, into `CLERK_JWT_ISSUER_DOMAIN` and re-run `./scripts/sync-convex-env.sh` so the deployment sees it too. Without that template Convex cannot verify a Clerk token and every signed-in call is refused.
+- **Clerk** - create an application at [dashboard.clerk.com](https://dashboard.clerk.com), copy the publishable and secret keys into `.env.local`, then add a JWT template named exactly `convex` (JWT Templates → New template) with the claims `{"email": "{{user.primary_email_address}}", "email_verified": "{{user.email_verified}}"}`: an employee reports to the verified address of the manager who deploys it, so a token without them cannot deploy. Copy its Issuer URL, with no trailing slash, into `CLERK_JWT_ISSUER_DOMAIN` and re-run `./scripts/sync-convex-env.sh` so the deployment sees it too. Without that template Convex cannot verify a Clerk token and every signed-in call is refused.
 
 `pnpm dev` binds `localhost`, which is also the host Clerk's proxy rewrites to; a `127.0.0.1` bind reads as a foreign origin to Next 16 and breaks the sign-in handshake.
 
@@ -912,7 +912,7 @@ It resolves values the way the running app does, which matters more than it soun
 
 ## Schema (`convex/schema.ts`)
 
-The schema contains 34 tables: 24 carry per-agent or agent-owned runtime state, one keeps the owner's record of the employees it retired, six hold owner-level documentation and credential state, one is the transient lease on the verification sandbox, and two are the deployment's own record of the migrations it has run and the release its rows are at.
+The schema contains 35 tables: 24 carry per-agent or agent-owned runtime state, two keep the records that outlive an employee (the owner's record of the employees it retired, and the requests to hand an employee to another manager), six hold owner-level documentation and credential state, one is the transient lease on the verification sandbox, and two are the deployment's own record of the migrations it has run and the release its rows are at.
 
 | Table | Purpose |
 |---|---|
@@ -930,7 +930,8 @@ The schema contains 34 tables: 24 carry per-agent or agent-owned runtime state, 
 | `voiceSessions` | Day-1 1:1 sessions (`elevenlabs` / `gemini-live` / `chat`) |
 | `workItems` | Work items in the twelve-state lifecycle, including exact-action decisions, provider reconciliation, the manager's feedback, waivers and answers, and the re-evaluation stamp |
 | `externalClaims` | One live claim per provider item across employees, released on cancellation and retaken before a retry resumes |
-| `retirements` | One row per employee a real-mode retire deleted, under its owner: what went, what was revoked, and the claims and rejections its colleagues still meet |
+| `retirements` | One row per employee a real-mode retire deleted, or a handover took from its owner, under that owner: what went, what was revoked, and the claims and rejections its colleagues still meet |
+| `managerTransfers` | One row per request to hand an employee to another manager: the address it names, the old manager's note, its state from asked to accepted, declined, cancelled or expired, and what the move did; a record both managers keep, so neither a retire nor a reset deletes it, addresses and note included |
 | `managerDecisionNotices` | Idempotent received/unknown acknowledgements for parsed manager-channel replies |
 | `decisionBatches` | One channel code per set of held action decisions open at once, naming each member's item, code and run |
 | `managerNotes` | What the gate tells the manager about a finished run, sent per run or claimed by the hourly digest |
@@ -1158,7 +1159,7 @@ Day0 从更早的一步开始。它在空白状态下部署，之后形成的一
 
 ### 在线演示
 
-[`day0-olive.vercel.app`](https://day0-olive.vercel.app) 是公开托管的 mock office，可在不连接真实工作系统的情况下运行完整产品流程。它运行 deployment 的 `OPENAI_MODEL` 指定的模型，未设置时使用代码默认值 `gpt-5.6-terra`；特定时间窗内演示所用的提供方是部署设置，不代表产品身份。该部署按设计运行 mock mode：`src/lib/surface-mode.ts` 会在 Vercel 上拒绝 real mode，因此托管应用无法访问真实系统。以下体验也都可以通过[本地开发](#local-dev)中的任一路径在本机运行。
+[`dayzer0.dev`](https://dayzer0.dev) 是公开托管的 mock office，可在不连接真实工作系统的情况下运行完整产品流程。它运行 deployment 的 `OPENAI_MODEL` 指定的模型，未设置时使用代码默认值 `gpt-5.6-terra`；特定时间窗内演示所用的提供方是部署设置，不代表产品身份。该部署按设计运行 mock mode：`src/lib/surface-mode.ts` 会在 Vercel 上拒绝 real mode，因此托管应用无法访问真实系统。以下体验也都可以通过[本地开发](#local-dev)中的任一路径在本机运行。
 
 - 使用 Clerk 登录并部署一个 Agent。
 - 通过语音或文字完成 Day-1 一对一，然后批准 Agent 起草的工作章程。
@@ -1203,7 +1204,7 @@ Day0 从更早的一步开始。它在空白状态下部署，之后形成的一
 
 三种运行方式，其中两种本地方式都是 real mode：Day0 读取你链接的文档，并通过审批卡片操作文档中记录的系统。两者只有一处不同：模型在哪里运行。
 
-- **托管演示**：无需安装任何东西。在 [day0-olive.vercel.app](https://day0-olive.vercel.app) 登录即可使用 mock workspace，或打开 [/walkthrough](https://day0-olive.vercel.app/walkthrough) 观看无需登录的演示录像。
+- **托管演示**：无需安装任何东西。在 [dayzer0.dev](https://dayzer0.dev) 登录即可使用 mock workspace，或打开 [/walkthrough](https://dayzer0.dev/walkthrough) 观看无需登录的演示录像。
 - **本地运行，云端模型**：`./setup.sh --route featherless`，通过 Featherless 使用 GLM 5.3 Flash，需要一个 Featherless key；`--route key` 使用 OpenAI 或任意 OpenAI-compatible key，`--route endpoint` 使用你已经在运行的服务器。你的聊天内容及相关内容会发送给该提供商，并按 token 计费。
 - **本地运行，本地模型**：`./setup.sh --route local`，在本机 Docker 中运行内置模型（已测试 `qwen3:8b`），不注册任何账户，也不产生任何费用。
 
@@ -1219,7 +1220,7 @@ pnpm dev
 
 未指定 `--route` 时，`./setup.sh` 会先问模型在哪里运行：通过 Featherless 使用托管模型、使用你已有的 key、你已经在运行的 endpoint，或在本机运行内置模型；需要 key 时通过隐藏输入读取，并询问用于解析 Slack DM 的邮箱地址。其余步骤由它完成：启动容器和各组件、把生成的密钥直接写入 `.env.local` 而不是让你粘贴、成对写入两个模型地址、推送函数并运行 `pnpm check:setup`。最后它会打印一个 unlock URL：打开该链接，链接你的文档，部署一个 Agent，用文字模式完成 Day-1 一对一，然后批准它起草的工作章程；第一次批准会填充工作队列，Surfaces 标签页上的连接卡片则决定它能操作什么。
 
-[**Set up Day0**](https://day0-olive.vercel.app/setup) 是这份快速开始的页面版本，其中包含首次成功的判断标准、值得了解的设置陷阱，以及实测耗时。[本地开发](#local-dev)给出每种方式的那一条命令，并逐步说明 setup 在该方式下做了什么，遇到问题时应当从那里读起。mock mode 是托管演示和评测 harness 所运行的预置 office，对应 `pnpm setup:local`，在[评测与 mock office](#评测与-mock-office)中按其用途说明。
+[**Set up Day0**](https://dayzer0.dev/setup) 是这份快速开始的页面版本，其中包含首次成功的判断标准、值得了解的设置陷阱，以及实测耗时。[本地开发](#local-dev)给出每种方式的那一条命令，并逐步说明 setup 在该方式下做了什么，遇到问题时应当从那里读起。mock mode 是托管演示和评测 harness 所运行的预置 office，对应 `pnpm setup:local`，在[评测与 mock office](#评测与-mock-office)中按其用途说明。
 
 ### 它的特别之处
 
@@ -1385,7 +1386,7 @@ Agent 核心不绑定具体模型。`OPENAI_BASE_URL` 留空时，共享模型�
 
 ### 托管演示
 
-无需安装任何东西。在 [`day0-olive.vercel.app`](https://day0-olive.vercel.app) 登录，把一名员工部署进托管的 mock office：它在合成内容上运行完整产品流程，不会触及你的任何系统；或打开 [`/walkthrough`](https://day0-olive.vercel.app/walkthrough) 观看演示录像，完全无需登录。上文[在线演示](#在线演示)说明该部署运行的模型，并链接两段录像。它运行在一个 Convex production deployment 和一个 Vercel 项目上，每个版本都通过下文的命令 `./setup.sh cloud upgrade` 上线。
+无需安装任何东西。在 [`dayzer0.dev`](https://dayzer0.dev) 登录，把一名员工部署进托管的 mock office：它在合成内容上运行完整产品流程，不会触及你的任何系统；或打开 [`/walkthrough`](https://dayzer0.dev/walkthrough) 观看演示录像，完全无需登录。上文[在线演示](#在线演示)说明该部署运行的模型，并链接两段录像。它运行在一个 Convex production deployment 和一个 Vercel 项目上，每个版本都通过下文的命令 `./setup.sh cloud upgrade` 上线。
 
 #### 你自己的托管副本
 
@@ -1404,7 +1405,7 @@ vercel link                        # 一次性：应用要部署到的 Vercel �
 有四件事必须先做，都无法代劳：
 
 - **Convex**：一个项目及其 production deployment。在[控制台](https://dashboard.convex.dev)中打开该项目并选择 Production，它会创建该 deployment 并显示其名称（`<词>-<词>-<数字>`）；在本机运行 `npx convex login`。target 文件记录这个名称，单独放在 checkout 之外的一个文件里：`mkdir -p -m 700 ~/day0-private && printf 'CONVEX_DEPLOYMENT=prod:<name>\n' > ~/day0-private/prod-target.env && chmod 600 ~/day0-private/prod-target.env`。它还可以包含 `DAY0_APP_URL`（setup 会写入）和 `VERCEL_SCOPE`，除此之外什么都不放：它不是存放密钥的地方。
-- **Clerk**：一个应用，以及一个名称恰好为 `convex` 的 JWT template；它的 Issuer URL（末尾不带斜杠）就是 `CLERK_JWT_ISSUER_DOMAIN`。
+- **Clerk**：一个应用，以及一个名称恰好为 `convex` 的 JWT template，其 claims 携带 manager 已验证的邮箱地址（`email` 与 `email_verified`）；它的 Issuer URL（末尾不带斜杠）就是 `CLERK_JWT_ISSUER_DOMAIN`。
 - **Vercel**：一个链接到该 checkout 的 Next.js 项目，即 `vercel link` 创建项目时设置的 Framework Preset；在控制台或用 `vercel project add` 创建的项目需要在项目设置中设定它，其他 preset 会被 setup 拒绝。它在 production 上保存应用自己的密钥：`vercel env add NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY production` 和 `vercel env add CLERK_SECRET_KEY production --sensitive`，每条都会询问其值；聊天路由读取的模型设置（`OPENAI_API_KEY`、`OPENAI_MODEL`，使用 Featherless 时还有下面的 `OPENAI_BASE_URL`、`OPENAI_MAX_OUTPUT_TOKENS` 和 `OPENAI_REASONING_EFFORT`）也用同样方式设置。缺少这两个 Clerk 密钥时 setup 会拒绝。
 - **deployment 的设置**：checkout 之外的一个私有文件，权限 600，每行一个 `NAME=value`：`CLERK_JWT_ISSUER_DOMAIN`、`OPENAI_API_KEY`，以及 `scripts/sync-convex-env.sh` 管理的其他任何名称（`OPENAI_MODEL`、`OPENAI_BASE_URL`、`DAYTONA_API_KEY` 等）。通过 Featherless 使用 GLM 的副本（即托管演示的路线）在 `OPENAI_BASE_URL=https://api.featherless.ai/v1` 之外还需要 `OPENAI_JSON_MODE=prompt`、`OPENAI_MAX_OUTPUT_TOKENS=32768` 和 `OPENAI_REASONING_EFFORT=low`；提示不会询问它们，请写在文件中。不带 `--env-file` 时，setup 会询问 Clerk issuer、模型密钥和三个可选值，密钥在隐藏提示中输入。
 
@@ -1412,7 +1413,7 @@ vercel link                        # 一次性：应用要部署到的 Vercel �
 
 **`cloud upgrade`** 在下一个 tag 的 checkout 中运行。它做同样的拒绝检查，做本地升级所做的[版本检查](#备份恢复与升级)（一次一个版本；旧 functions 永远不推到新数据上），外加它自己的一项：`DAY0_APP_URL` 上的应用必须由已链接的项目提供，并且此刻连着这个 deployment，因为连着另一个 deployment 的应用是一次迁移，由 `cloud setup` 完成。随后它导出该 deployment 及其文件存储（target 文件旁的 `before-v<release>-<时间>.zip`，权限 600，附带 sha256 与行数），推送、迁移、记录版本并部署应用，每一步都如上读回。real mode 的 deployment 在推送之前用 `DAY0_CRONS_PAUSED` 暂停定时任务，两部分都读回之后解除暂停，并再推送一次，使每个 module 读到这一变化，因为 module 会保留首次求值时的 env；手动设置的暂停（`./setup.sh cloud pause`）留给 `./setup.sh cloud unpause` 解除。在推送之前停止的升级会自行解除它设置的暂停；在推送之后停止的升级保留暂停，从同一 checkout 再次运行升级会继续迁移并解除暂停。**`cloud backup`** 就是单独的导出，同样先用 dry run 证明目标（`--to <dir>`、`--name <文件名>`）。
 
-setup 与 upgrade 都以回滚步骤结束，其中填入本次读到的值，但不替你执行：对此前服务 production 的构建执行 `vercel promote`；setup 改动过的三个 Vercel 值应改回什么；升级之后，还有升级之前的那份导出（若有中途停止的尝试，则是第一次尝试时的导出）及其校验和，以及从较早 tag 的 checkout 把它放回的 `npx convex import --replace-all`。`./setup.sh cloud --help` 列出所有参数。
+setup 与 upgrade 都以回滚步骤结束，其中填入本次读到的值，按执行顺序编号，但不替你执行：升级之后，先是升级之前的那份导出（若有中途停止的尝试，则是第一次尝试时的导出）及其校验和，以及从这批数据所属版本的干净 checkout 把它放回的 `npx convex import --replace-all`（若本次是对 deployment 已有版本的重新推送，就是当前这个 checkout）；然后是 setup 改动过的三个 Vercel 值应改回什么；最后，在导入与推送完成之后，对此前服务 production 的构建执行 `vercel promote`。`./setup.sh cloud --help` 列出所有参数。
 
 ### 本地运行，云端模型
 
@@ -1456,7 +1457,7 @@ key 路线上两个模型地址归并为同一个默认值。变量留空表示 
 10. **`pnpm convex:restart`**：只在此前每一步都成功后执行，因为 module 会保留首次求值时的 env，而 backend 从第 3 步起就一直在运行。随后 setup 等待 redactor 报告健康（模型已加载并按 `redactor/models.sha256` 校验），未就绪时留下说明并继续。
 11. **`pnpm check:setup`** 读取同一个 `.env.local`，报告每个组件和每项配置，并用一行给出模式和路线。它按 `COMPOSE_PROJECT_NAME` 查找 Compose project，setup 会写入该值；目录名不是 `day0` 又没有这一行的手写文件，症状是 `docker ps` 显示组件全部运行，而 check:setup 报告组件全部缺失。另外要读完整输出，而不只是摘要行：真正的缺口写在摘要行下方的组件说明里。
 
-除生成的值外，setup 还会写入 `COMPOSE_PROJECT_NAME`、各端口、`NEXT_PUBLIC_DEV_NO_AUTH=true`、`NEXT_PUBLIC_CONVEX_URL` 和 `CONVEX_SELF_HOSTED_URL`、`DAY0_SURFACE_MODE=real`、`DAY0_DOCS_HOST_DIR`（默认 `./docs-local`）、`DAY0_BROWSER_MCP_URL=http://playwright-mcp:8931/mcp`、`DAY0_REDACTOR_URL=http://redactor:8000`、`NEXT_PUBLIC_DEMO_BOSS_EMAIL`（你的 Slack 地址；文件中没有时会询问，因为 Slack DM 在部署时据此解析，且无法在已运行的 Agent 上更正；`--boss-email` 可直接给出）、`DAY0_SETUP_ROOT`，以及所选路线的模型设置：Featherless 路线上每次都写入 `OPENAI_BASE_URL=https://api.featherless.ai/v1`、`OPENAI_MODEL=zai-org/GLM-5.3-Flash`、`OPENAI_JSON_MODE=prompt`、`OPENAI_MAX_OUTPUT_TOKENS=32768` 和 `OPENAI_REASONING_EFFORT=low`，key 存为 `OPENAI_API_KEY`；本地路线上写入成对的两个模型地址、`MODEL_PORT` 和 `OPENAI_MODEL`。
+除生成的值外，setup 还会写入 `COMPOSE_PROJECT_NAME`、各端口、`NEXT_PUBLIC_DEV_NO_AUTH=true`、`NEXT_PUBLIC_CONVEX_URL` 和 `CONVEX_SELF_HOSTED_URL`、`DAY0_SURFACE_MODE=real`、`DAY0_DOCS_HOST_DIR`（默认 `./docs-local`）、`DAY0_BROWSER_MCP_URL=http://playwright-mcp:8931/mcp`、`DAY0_REDACTOR_URL=http://redactor:8000`、`NEXT_PUBLIC_DEMO_BOSS_EMAIL`（你的 Slack 地址；文件中没有时会询问：本地登录携带这个地址，真实模式据此找到你的 Slack DM；之后再设置的话，每个员工的 People 标签页都提供 Make it you；`--boss-email` 可直接给出）、`DAY0_SETUP_ROOT`，以及所选路线的模型设置：Featherless 路线上每次都写入 `OPENAI_BASE_URL=https://api.featherless.ai/v1`、`OPENAI_MODEL=zai-org/GLM-5.3-Flash`、`OPENAI_JSON_MODE=prompt`、`OPENAI_MAX_OUTPUT_TOKENS=32768` 和 `OPENAI_REASONING_EFFORT=low`，key 存为 `OPENAI_API_KEY`；本地路线上写入成对的两个模型地址、`MODEL_PORT` 和 `OPENAI_MODEL`。
 
 以下三点是云端模型方式独有的：
 

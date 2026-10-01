@@ -8,6 +8,7 @@ import type schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { contractSchema } from './contract-schema';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
 /**
  * Finding C of the 19 Sep full run: REVOPS-27 read "defer - awaiting-connection:
@@ -68,7 +69,7 @@ vi.stubGlobal(
 );
 
 type Harness = TestConvex<typeof schema>;
-const OWNER = { subject: 'owner' };
+const OWNER = managerIdentity();
 const TILE = 'looker-pipeline-tile';
 
 afterEach((): void => {
@@ -106,7 +107,7 @@ async function seedPriya(
 ): Promise<Employee> {
   return await harness.run(async (ctx) => {
     const agentId = await ctx.db.insert('agents', {
-      bossEmail: 'boss@day0.local',
+      bossEmail: MANAGER_ADDRESS,
       name: 'Priya',
       userId: 'owner',
       state: 'active',

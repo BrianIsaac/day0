@@ -1,11 +1,16 @@
 /** @vitest-environment node */
 
+import { randomBytes } from 'node:crypto';
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { internal } from '../../convex/_generated/api';
+import { api, internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
+import { transferNoticeText } from '../../convex/transferNotice';
+import { credentialOwnerBinding, encrypt } from '../../src/lib/credential-crypto';
+import { fixtureAddressOf, MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 const sent = vi.hoisted(() => [] as Array<{ authorization: string; body: string; url: string }>);
 const hooks = vi.hoisted(() => ({
@@ -42,7 +47,7 @@ async function seedParkedPlan(
 ): Promise<{ agentId: Id<'agents'>; workItemId: Id<'workItems'> }> {
   return await harness.run(async (ctx) => {
     const agentId = await ctx.db.insert('agents', {
-      bossEmail: 'boss@day0.local',
+      bossEmail: MANAGER_ADDRESS,
       name: 'ops worker',
       userId: 'owner',
       state: 'active',
@@ -219,7 +224,7 @@ describe('the outbound manager-channel action', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const workItemId = await harness.run(async (ctx): Promise<Id<'workItems'>> => {
       const agentId = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'ops worker',
         managerNotifications: 'digest',
         userId: 'owner',
@@ -227,6 +232,8 @@ describe('the outbound manager-channel action', (): void => {
         createdAt: 1,
       });
       await ctx.db.insert('permissionGrants', { agentId, scope: 'boss:message', createdAt: 1 });
+      await ctx.db.insert('permissionGrants', { agentId, scope: 'team-chat:read', createdAt: 1 });
+      await ctx.db.insert('permissionGrants', { agentId, scope: 'team-chat:write', createdAt: 1 });
       const credentialId = await ctx.db.insert('credentials', {
         userId: 'owner',
         kind: 'value',
@@ -1056,5 +1063,444 @@ describe('one code for every open action decision', (): void => {
         decision: { outcome: 'approved', decidedVia: 'channel' },
       });
     }
+  });
+});
+
+describe('the handover notice to the person a request names (D7)', (): void => {
+  const PRIYA_ADDRESS = fixtureAddressOf('priya');
+  const NOTICE_TS = '1790000000.000100';
+  const REQUEST_TS = '1789999000.000100';
+
+  afterEach((): void => {
+    restoreSurfaceMode();
+  });
+
+  /** One Slack call the fake answered: the method, the channel it named and the text it carried. */
+  interface SlackCall {
+    readonly method: string;
+    readonly channel?: string;
+    readonly text?: string;
+    readonly email?: string;
+  }
+
+  /**
+   * A Slack workspace with the manager (UMANAGER), the bot (UBOT) and Priya (UPRIYA): it answers
+   * the notice's calls and the decision poll's reads, and every message read back is a reply
+   * that would accept the handover if a reply could.
+   */
+  function slackWorkspace(options: { readonly postFails?: boolean } = {}): SlackCall[] {
+    const calls: SlackCall[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: URL, init: RequestInit = {}): Promise<Response> => {
+        const method = input.pathname.split('/').pop() ?? '';
+        const body =
+          typeof init.body === 'string' ? (JSON.parse(init.body) as Record<string, string>) : {};
+        const email = input.searchParams.get('email') ?? undefined;
+        calls.push({ method, channel: body.channel, text: body.text, email });
+        const answer = (payload: Record<string, unknown>): Response =>
+          new Response(JSON.stringify(payload), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+        switch (method) {
+          case 'auth.test':
+            return answer({ ok: true, user_id: 'UBOT', bot_id: 'BBOT', team_id: 'T1' });
+          case 'users.lookupByEmail':
+            if (email === PRIYA_ADDRESS) {
+              return answer({ ok: true, user: { id: 'UPRIYA', real_name: 'Priya' } });
+            }
+            if (email === 'bot@day0.local') return answer({ ok: true, user: { id: 'UBOT' } });
+            if (email === 'app@day0.local') {
+              return answer({ ok: true, user: { id: 'UAPP', is_bot: true } });
+            }
+            if (email === 'gone@day0.local') {
+              return answer({ ok: true, user: { id: 'UGONE', deleted: true } });
+            }
+            return answer({ ok: false, error: 'users_not_found' });
+          case 'conversations.open':
+            return answer({ ok: true, channel: { id: 'D0PRIYA' } });
+          case 'chat.postMessage':
+            return options.postFails
+              ? answer({ ok: false, error: 'channel_not_found' })
+              : answer({ ok: true, ts: NOTICE_TS });
+          case 'conversations.history':
+          case 'conversations.replies':
+            return answer({
+              ok: true,
+              messages: [
+                { user: 'UPRIYA', text: 'Accept. I will take Maya on.', ts: '1790000100.000100' },
+                {
+                  user: 'UMANAGER',
+                  text: 'accept the handover',
+                  ts: '1790000200.000100',
+                  thread_ts: REQUEST_TS,
+                },
+              ],
+            });
+          default:
+            return answer({ ok: true });
+        }
+      }),
+    );
+    return calls;
+  }
+
+  /**
+   * The notices among the calls: every post carrying the notice's words, wherever it went. The
+   * file's earlier tests leave scheduled work that may post to the manager DM through the same
+   * stubbed fetch, so a test counts the notice by its words, not every post.
+   */
+  function noticesIn(calls: readonly SlackCall[]): SlackCall[] {
+    return calls.filter(
+      (call) => call.method === 'chat.postMessage' && call.text?.includes('has asked you to take'),
+    );
+  }
+
+  /** Maya, with a connected Slack card that can carry the notice, and a plan the manager was asked about. */
+  async function seedMaya(
+    harness: TestConvex<typeof schema>,
+  ): Promise<{ agentId: Id<'agents'>; workItemId: Id<'workItems'> }> {
+    return await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Maya',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      await ctx.db.insert('permissionGrants', { agentId, scope: 'boss:message', createdAt: 1 });
+      await ctx.db.insert('permissionGrants', { agentId, scope: 'team-chat:read', createdAt: 1 });
+      await ctx.db.insert('permissionGrants', { agentId, scope: 'team-chat:write', createdAt: 1 });
+      const credentialId = await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'value',
+        label: 'team chat token',
+        ciphertext: 'ciphertext',
+        iv: 'iv',
+        source: 'entered',
+        createdAt: 1,
+      });
+      await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'team-chat',
+        displayName: 'Team chat',
+        class: 'chat',
+        verdict: 'connected',
+        whereFound: [],
+        path: 'documented-api',
+        endpoint: 'https://slack.com/api/',
+        toolAllowlist: [
+          'auth.test',
+          'users.lookupByEmail',
+          'conversations.open',
+          'conversations.history',
+          'conversations.replies',
+          'chat.postMessage',
+        ],
+        toolArguments: [{ tool: 'chat.postMessage', arguments: ['channel', 'text'] }],
+        managerDmChannelId: 'D0MANAGER',
+        managerUserId: 'UMANAGER',
+        credentialId,
+        credentialKind: 'value',
+        credentialLanded: true,
+        lastVerifiedAt: Date.now(),
+        createdAt: 1,
+      });
+      const workItemId = await ctx.db.insert('workItems', {
+        agentId,
+        sourceCategory: 'live-document',
+        sourceSystem: 'docs',
+        externalId: 'handover-notice-test',
+        title: 'Verify the runbook',
+        contentSummary: 'Read the runbook.',
+        contentRefs: [],
+        state: 'plan-pending',
+        plan: { summary: 'Read the runbook and report the finding.' },
+        decision: {
+          id: 'decision-1',
+          kind: 'plan',
+          requestedAt: 1,
+          channel: 'D0MANAGER',
+          surfaceSlug: 'team-chat',
+          surfaceName: 'Team chat',
+          ts: REQUEST_TS,
+        },
+        observedAt: 1,
+        createdAt: 1,
+      });
+      return { agentId, workItemId };
+    });
+  }
+
+  /** Ask Priya to take Maya on, as the owner, and run what the ask scheduled. */
+  async function askPriya(
+    harness: TestConvex<typeof schema>,
+    agentId: Id<'agents'>,
+  ): Promise<Id<'managerTransfers'>> {
+    const transferId = await harness
+      .withIdentity(managerIdentity())
+      .mutation(api.managerTransfers.ask, { agentId, toAddress: PRIYA_ADDRESS });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    return transferId;
+  }
+
+  it('sends one DM to the named person from the employee’s Slack card, saying who asks and where to answer, and records that it landed', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.stubEnv('DAY0_PUBLIC_URL', 'https://day0.company.example');
+    vi.useFakeTimers();
+    const calls = slackWorkspace();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId } = await seedMaya(harness);
+
+    const transferId = await askPriya(harness, agentId);
+
+    expect(noticesIn(calls)).toEqual([
+      {
+        method: 'chat.postMessage',
+        channel: 'D0PRIYA',
+        text: transferNoticeText({
+          transferId,
+          employeeName: 'Maya',
+          fromAddress: MANAGER_ADDRESS,
+          publicUrl: 'https://day0.company.example',
+        }),
+      },
+    ]);
+    expect(calls.find((call) => call.method === 'users.lookupByEmail')?.email).toBe(PRIYA_ADDRESS);
+    expect(await harness.run(async (ctx) => await ctx.db.get(transferId))).toMatchObject({
+      state: 'asked',
+      noticeSentAt: expect.any(Number),
+      noticeProviderTs: NOTICE_TS,
+    });
+  });
+
+  it('names an employee stored before the deploy bounded names by the request’s clipped name (B2)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const calls = slackWorkspace();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId } = await seedMaya(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(agentId, { name: `Maya ${'y'.repeat(100_000)}` });
+    });
+
+    const transferId = await askPriya(harness, agentId);
+
+    expect(noticesIn(calls).map((notice) => notice.text)).toEqual([
+      transferNoticeText({
+        transferId,
+        employeeName: `Maya ${'y'.repeat(75)}`,
+        fromAddress: MANAGER_ADDRESS,
+      }),
+    ]);
+  });
+
+  it('never sends it again, once sent or once it failed', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const calls = slackWorkspace({ postFails: true });
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId } = await seedMaya(harness);
+    vi.spyOn(console, 'log').mockImplementation((): void => undefined);
+
+    const transferId = await askPriya(harness, agentId);
+    await expect(
+      harness.action(internal.managerChannelActions.sendTransferNotice, { transferId }),
+    ).resolves.toEqual({ sent: false, reason: 'the notice was already sent' });
+
+    expect(noticesIn(calls)).toHaveLength(1);
+    const row = await harness.run(async (ctx) => await ctx.db.get(transferId));
+    expect(row?.noticeSentAt).toEqual(expect.any(Number));
+    expect(row?.noticeProviderTs).toBeUndefined();
+  });
+
+  it('sends nothing when the address is no person in the workspace', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const calls = slackWorkspace();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId } = await seedMaya(harness);
+    vi.spyOn(console, 'log').mockImplementation((): void => undefined);
+
+    const transferId = await harness
+      .withIdentity(managerIdentity())
+      .mutation(api.managerTransfers.ask, {
+        agentId,
+        toAddress: 'someone@elsewhere.example',
+      });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(calls.filter((call) => call.method === 'users.lookupByEmail')).toEqual([
+      { method: 'users.lookupByEmail', email: 'someone@elsewhere.example' },
+    ]);
+    expect(calls.filter((call) => call.method === 'conversations.open')).toEqual([]);
+    expect(noticesIn(calls)).toEqual([]);
+    expect((await harness.run(async (ctx) => await ctx.db.get(transferId)))?.state).toBe('asked');
+  });
+
+  it('sends nothing for an employee without a Slack card, and nothing in mock mode', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const calls = slackWorkspace();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId } = await seedMaya(harness);
+    await harness.run(async (ctx): Promise<void> => {
+      for (const surface of await ctx.db.query('surfaces').collect())
+        await ctx.db.delete(surface._id);
+    });
+    await askPriya(harness, agentId);
+    expect(calls.filter((call) => call.method === 'users.lookupByEmail')).toEqual([]);
+    expect(noticesIn(calls)).toEqual([]);
+
+    restoreSurfaceMode();
+    useSurfaceMode('mock');
+    const mock = convexTest(schema, allConvexModules());
+    const maya = await seedMaya(mock);
+    await askPriya(mock, maya.agentId);
+    expect(calls.filter((call) => call.method === 'users.lookupByEmail')).toEqual([]);
+    expect(noticesIn(calls)).toEqual([]);
+  });
+
+  it('names no bot, app, deactivated member or the employee’s own bot as the person to tell', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const calls = slackWorkspace();
+    vi.spyOn(console, 'log').mockImplementation((): void => undefined);
+    for (const toAddress of ['bot@day0.local', 'app@day0.local', 'gone@day0.local']) {
+      const harness = convexTest(schema, allConvexModules());
+      const { agentId } = await seedMaya(harness);
+      await harness
+        .withIdentity(managerIdentity())
+        .mutation(api.managerTransfers.ask, { agentId, toAddress });
+      await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    }
+    expect(calls.filter((call) => call.method === 'conversations.open')).toEqual([]);
+    expect(noticesIn(calls)).toEqual([]);
+  });
+
+  it('sends nothing without the manager’s standing authority to write on the card: no write grant, or the write scope revoked under autonomous actions', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const calls = slackWorkspace();
+    const withoutWrite = async (autonomousActions: boolean, revoked: boolean): Promise<void> => {
+      const harness = convexTest(schema, allConvexModules());
+      const { agentId } = await seedMaya(harness);
+      await harness.run(async (ctx): Promise<void> => {
+        await ctx.db.patch(agentId, { autonomousActions });
+        for (const grant of await ctx.db.query('permissionGrants').collect()) {
+          if (grant.scope !== 'team-chat:write') continue;
+          if (revoked) await ctx.db.patch(grant._id, { revokedAt: 2 });
+          else await ctx.db.delete(grant._id);
+        }
+      });
+      await askPriya(harness, agentId);
+    };
+    await withoutWrite(false, false);
+    await withoutWrite(true, true);
+    expect(calls.filter((call) => call.method === 'users.lookupByEmail')).toEqual([]);
+    expect(noticesIn(calls)).toEqual([]);
+  });
+
+  it('sends under autonomous actions when the write scope was never revoked', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const calls = slackWorkspace();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId } = await seedMaya(harness);
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(agentId, { autonomousActions: true });
+      for (const grant of await ctx.db.query('permissionGrants').collect()) {
+        if (grant.scope === 'team-chat:write') await ctx.db.delete(grant._id);
+      }
+    });
+    await askPriya(harness, agentId);
+    expect(noticesIn(calls)).toHaveLength(1);
+  });
+
+  it('sends nothing through a card whose access has ended', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const calls = slackWorkspace();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId } = await seedMaya(harness);
+    await harness.run(async (ctx): Promise<void> => {
+      for (const surface of await ctx.db.query('surfaces').collect()) {
+        await ctx.db.patch(surface._id, { expiresAt: Date.now() - 1 });
+      }
+    });
+    await askPriya(harness, agentId);
+    expect(noticesIn(calls)).toEqual([]);
+  });
+
+  it('re-reads the request at the claim: one cancelled before the notice runs is never told', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const calls = slackWorkspace();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId } = await seedMaya(harness);
+    const owner = harness.withIdentity(managerIdentity());
+    const transferId = await owner.mutation(api.managerTransfers.ask, {
+      agentId,
+      toAddress: PRIYA_ADDRESS,
+    });
+    await owner.mutation(api.managerTransfers.cancel, { transferId });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(noticesIn(calls)).toEqual([]);
+    expect((await harness.run(async (ctx) => await ctx.db.get(transferId)))?.noticeSentAt).toBe(
+      undefined,
+    );
+  });
+
+  it('claims nothing in mock mode, whoever schedules it', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const calls = slackWorkspace();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId } = await seedMaya(harness);
+    const transferId = await harness
+      .withIdentity(managerIdentity())
+      .mutation(api.managerTransfers.ask, { agentId, toAddress: PRIYA_ADDRESS });
+    await expect(
+      harness.action(internal.managerChannelActions.sendTransferNotice, { transferId }),
+    ).resolves.toEqual({ sent: false, reason: 'the notice is sent in real mode only' });
+    expect(noticesIn(calls)).toEqual([]);
+  });
+
+  it('reads no reply to it as an answer: the named person’s and the old manager’s replies decide nothing', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    // The decision poll opens the card's credential itself, under the deployment's key.
+    const key = randomBytes(32).toString('base64');
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', key);
+    const calls = slackWorkspace();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId } = await seedMaya(harness);
+    await harness.run(async (ctx): Promise<void> => {
+      for (const credential of await ctx.db.query('credentials').collect()) {
+        await ctx.db.patch(credential._id, {
+          ...encrypt('chat-secret', key, credentialOwnerBinding('owner')),
+        });
+      }
+    });
+    vi.spyOn(console, 'log').mockImplementation((): void => undefined);
+    const transferId = await askPriya(harness, agentId);
+    const employeeBefore = await harness.run(async (ctx) => await ctx.db.get(agentId));
+
+    await harness.action(internal.intakeActions.pollDecisions, {});
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+    // The poll read the manager DM, where both replies sit.
+    expect(calls.some((call) => call.method === 'conversations.history')).toBe(true);
+    expect(await harness.run(async (ctx) => await ctx.db.get(transferId))).toMatchObject({
+      state: 'asked',
+    });
+    expect(await harness.run(async (ctx) => await ctx.db.get(agentId))).toEqual(employeeBefore);
+    const handover = await harness.run(async (ctx) =>
+      (await ctx.db.query('events').collect())
+        .map((event) => event.type)
+        .filter((type) => type.startsWith('manager.')),
+    );
+    expect(handover).toEqual(['manager.transfer-asked']);
+    expect(noticesIn(calls)).toHaveLength(1);
   });
 });

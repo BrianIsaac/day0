@@ -4,14 +4,17 @@ import { convexTest } from 'convex-test';
 import { ConvexError } from 'convex/values';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
+import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
+import { HANDOVER_SESSION_FAILURE, endOneToOnesForHandover } from '../../convex/voice';
 import { allConvexModules } from './all-modules';
+import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
 async function failedSession(state: 'active' | 'synthesising' = 'active') {
   const harness = convexTest(schema, allConvexModules());
   const { agentId, sessionId } = await harness.run(async (ctx) => {
     const agentId = await ctx.db.insert('agents', {
-      bossEmail: 'boss@day0.local',
+      bossEmail: MANAGER_ADDRESS,
       name: 'Mira',
       userId: 'owner',
       state: 'day-one-in-progress',
@@ -44,7 +47,7 @@ async function failedSession(state: 'active' | 'synthesising' = 'active') {
 describe('holding the one-to-one again after its draft failed for good', (): void => {
   it('sets aside the kept conversation, the old transcript, the notes and the spent retries, so none reaches the next draft or its room', async (): Promise<void> => {
     const { harness, sessionId } = await failedSession();
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     expect(await owner.mutation(api.voice.restart, { sessionId })).toEqual({ ok: true });
     const row = await harness.run(async (ctx) => await ctx.db.get(sessionId));
     // The conversation moves on, so a write still in flight for the one set aside is refused.
@@ -67,10 +70,10 @@ describe('holding the one-to-one again after its draft failed for good', (): voi
   it('refuses while a finisher holds the session, and refuses anyone but the owner', async (): Promise<void> => {
     const { harness, sessionId } = await failedSession('synthesising');
     await expect(
-      harness.withIdentity({ subject: 'owner' }).mutation(api.voice.restart, { sessionId }),
+      harness.withIdentity(managerIdentity()).mutation(api.voice.restart, { sessionId }),
     ).rejects.toBeInstanceOf(ConvexError);
     await expect(
-      harness.withIdentity({ subject: 'stranger' }).mutation(api.voice.restart, { sessionId }),
+      harness.withIdentity(managerIdentity('stranger')).mutation(api.voice.restart, { sessionId }),
     ).rejects.toThrow();
     expect((await harness.run(async (ctx) => await ctx.db.get(sessionId)))?.pendingTranscript).toBe(
       'ASSISTANT: Why?\n\nUSER: The close.',
@@ -118,7 +121,7 @@ describe('a call taking over a chat one-to-one (second pass)', (): void => {
       await ctx.db.patch(sessionId, { pendingTranscript: undefined, conversationEndedAt: 5 });
     });
     await harness
-      .withIdentity({ subject: 'owner' })
+      .withIdentity(managerIdentity())
       .mutation(api.voice.start, { agentId, mode: 'elevenlabs' });
     const row = await harness.run(async (ctx) => await ctx.db.get(sessionId));
     expect(row?.turns).toBeUndefined();
@@ -136,7 +139,7 @@ describe('opening the one-to-one on a session already under way', (): void => {
         recoveryAttempts: undefined,
       });
     });
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     expect(await owner.mutation(api.voice.start, { agentId, mode: 'chat' })).toMatchObject({
       sessionId,
       resumed: true,
@@ -160,7 +163,7 @@ describe('a call started over a chat one-to-one', (): void => {
         recoveryAttempts: undefined,
       });
     });
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     expect(await owner.mutation(api.voice.start, { agentId, mode: 'elevenlabs' })).toMatchObject({
       turns: [],
       replyDraft: null,
@@ -173,5 +176,157 @@ describe('a call started over a chat one-to-one', (): void => {
     expect(await owner.mutation(api.voice.start, { agentId, mode: 'chat' })).toMatchObject({
       conversation: 1,
     });
+  });
+});
+
+describe('the one-to-ones at a handover’s move (endOneToOnesForHandover)', (): void => {
+  /** Run the helper in its own transaction, as the move does. */
+  async function endAtHandover(
+    harness: ReturnType<typeof convexTest>,
+    agentId: Id<'agents'>,
+    returnsToDeployed: boolean,
+  ): Promise<number> {
+    return await harness.run(
+      async (ctx) => await endOneToOnesForHandover(ctx, agentId, { returnsToDeployed }),
+    );
+  }
+
+  it('deletes every session with the old manager’s words when the employee returns to deployed (D8)', async (): Promise<void> => {
+    const { harness, agentId, sessionId } = await failedSession('synthesising');
+    const finished = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('voiceSessions', {
+          agentId,
+          mode: 'chat',
+          state: 'done',
+          answers: { role: 'RevOps' },
+          transcriptText: 'USER: The close.',
+          startedAt: 1,
+        }),
+    );
+
+    await expect(endAtHandover(harness, agentId, true)).resolves.toBe(1);
+
+    expect(await harness.run(async (ctx) => await ctx.db.get(sessionId))).toBeNull();
+    expect(await harness.run(async (ctx) => await ctx.db.get(finished))).toBeNull();
+  });
+
+  it('commits no charter from a finisher that was drafting when its session went', async (): Promise<void> => {
+    const { harness, agentId, sessionId } = await failedSession('synthesising');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(sessionId, { claimToken: 'claim-1', claimedAt: 4, claimedBy: 'browser' });
+    });
+    await endAtHandover(harness, agentId, true);
+
+    await expect(
+      harness.mutation(internal.voice.finaliseSession, {
+        sessionId,
+        expectedAgentId: agentId,
+        claimToken: 'claim-1',
+        answers: {},
+        charterVersion: '0.1',
+        charterBody: {},
+        workspaceFiles: [],
+      }),
+    ).rejects.toThrow('voice session not found');
+    const charters = await harness.run(async (ctx) => await ctx.db.query('charters').collect());
+    expect(charters).toEqual([]);
+  });
+
+  it('fails a session under way of an employee whose charter is carried, dropping its claim and the old manager’s words', async (): Promise<void> => {
+    const { harness, agentId, sessionId } = await failedSession('synthesising');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(sessionId, {
+        claimToken: 'claim-1',
+        claimedAt: 4,
+        claimedBy: 'browser',
+        webhookToken: 'hook-1',
+        transcriptText: 'USER: The close.',
+        answers: { role: 'RevOps' },
+      });
+    });
+
+    await expect(endAtHandover(harness, agentId, false)).resolves.toBe(1);
+
+    const row = await harness.run(async (ctx) => await ctx.db.get(sessionId));
+    expect(row).toMatchObject({
+      state: 'failed',
+      finalisationError: HANDOVER_SESSION_FAILURE,
+      conversation: 1,
+      answers: {},
+    });
+    for (const field of [
+      'turns',
+      'replyDraft',
+      'pendingTranscript',
+      'pendingBossLabel',
+      'changeRequests',
+      'transcriptText',
+      'claimToken',
+      'claimedAt',
+      'claimedBy',
+      'webhookToken',
+    ] as const) {
+      expect(row?.[field], field).toBeUndefined();
+    }
+    await expect(
+      harness.mutation(internal.voice.finaliseSession, {
+        sessionId,
+        expectedAgentId: agentId,
+        claimToken: 'claim-1',
+        answers: {},
+        charterVersion: '0.1',
+        charterBody: {},
+        workspaceFiles: [],
+      }),
+    ).resolves.toEqual({ outcome: 'claim-lost' });
+  });
+
+  it('keeps a finished session finished when the charter is carried, without the old manager’s words (wave 9 review, decision 1 (a))', async (): Promise<void> => {
+    const { harness, agentId, sessionId } = await failedSession();
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(sessionId, {
+        state: 'done',
+        transcriptText: 'USER: The close.',
+        answers: { 'why-this-hire': 'The close.' },
+        turns: [{ id: 't1', speaker: 'manager', text: 'The close.', at: 1 }],
+        changeRequests: [{ reason: 'Shorter.', struck: [], requestedAt: 1 }],
+      });
+    });
+
+    await expect(endAtHandover(harness, agentId, false)).resolves.toBe(0);
+    const session = await harness.run(async (ctx) => await ctx.db.get(sessionId));
+    expect(session).toMatchObject({ state: 'done', answers: {} });
+    expect(session?.transcriptText).toBeUndefined();
+    expect(session?.turns).toBeUndefined();
+    expect(session?.changeRequests).toBeUndefined();
+  });
+
+  it("drops a finished session's webhook token and its provider conversation id at the move (second pass)", async (): Promise<void> => {
+    const { harness, agentId, sessionId } = await failedSession();
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(sessionId, {
+        state: 'done',
+        webhookToken: 'old-manager-webhook-token',
+        elevenLabsConversationId: 'conv-old-manager',
+      });
+    });
+
+    await endAtHandover(harness, agentId, false);
+    const session = await harness.run(async (ctx) => await ctx.db.get(sessionId));
+    expect(session?.webhookToken).toBeUndefined();
+    expect(session?.elevenLabsConversationId).toBeUndefined();
+  });
+
+  it('opens a new session for the next one-to-one over a failed one', async (): Promise<void> => {
+    const { harness, agentId, sessionId } = await failedSession();
+    await endAtHandover(harness, agentId, false);
+
+    const started = await harness
+      .withIdentity(managerIdentity())
+      .mutation(api.voice.start, { agentId, mode: 'chat' });
+
+    expect(started.sessionId).not.toBe(sessionId);
+    expect(started).toMatchObject({ resumed: false, turns: [], replyDraft: null });
   });
 });

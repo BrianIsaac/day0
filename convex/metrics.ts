@@ -13,8 +13,17 @@ import { droppedReadRefusal } from '../src/work/stop';
 import { ledgerPhases } from '../src/work/reconciliation';
 import type { MockAction } from '../src/work/types';
 import { assertOwnsAgent, getCaller } from './ownership';
+import { log } from '../src/lib/logger';
 import { isEventOf, isEventType, type EventType } from '../src/events/contract';
 import type { AgentMetrics, DecisionVia, OwnerMetrics, PilotFigures } from '../src/metrics/types';
+import { isEvaluationShapedAddress, normaliseManagerAddress } from '../src/agent/manager-address';
+import {
+  isWholeHistory,
+  isWithinTenure,
+  tenureWindowsOf,
+  type AcceptedHandover,
+  type TenureWindow,
+} from '../src/metrics/tenure';
 
 type UnknownRecord = Record<string, unknown>;
 export interface LedgerObservation {
@@ -924,9 +933,12 @@ export interface EmployeeRecords {
 /** What the company selection reads of an agent, from a row or from a trace. */
 export type CompanyAgent = Pick<Doc<'agents'>, '_id' | '_creationTime' | 'userId'>;
 
+/** The employees one owner's company figures cover, and what was left out. */
 export interface CompanySelection<Agent extends CompanyAgent = Doc<'agents'>> {
   /** The employees the figures cover, in deploy order. */
   employees: Agent[];
+  /** The spans the owner held each employee, by its id: its whole history unless it was handed over (D12). */
+  tenures: ReadonlyMap<string, readonly TenureWindow[]>;
   excludedAgents: number;
   omittedEmployees: number;
 }
@@ -935,28 +947,27 @@ export interface CompanySelection<Agent extends CompanyAgent = Doc<'agents'>> {
  * Whether an agent row belongs to an evaluation run rather than the company.
  *
  * Match an evaluation name and its reserved address together: an ordinary
- * manager may also have an address beginning with `eval-`. The revocation
- * trial's driver and manual review beds use different timestamp formats.
+ * manager may also have an address beginning with `eval-`. The address is
+ * read through the one evaluation-address check and its one spelling
+ * (`src/agent/manager-address.ts`), so a row an older release stored in
+ * another case still reads as what it is. The revocation trial's driver and
+ * manual review beds use different timestamp formats.
  *
- * Args:
- *   agent: The agent row's boss address, name and arm.
- *
- * Returns:
- *   True for an evaluation agent.
+ * @param agent - The agent row's boss address, name and arm.
+ * @returns True for an evaluation agent.
  */
 export function isEvaluationAgent(
   agent: Pick<Doc<'agents'>, 'bossEmail' | 'name' | 'arm'>,
 ): boolean {
   if (agent.arm === 'baseline') return true;
-  if (!agent.bossEmail.startsWith('eval-') || !agent.bossEmail.endsWith('@day0.local')) {
-    return false;
-  }
+  const address = normaliseManagerAddress(agent.bossEmail);
+  if (address === undefined || !isEvaluationShapedAddress(address)) return false;
   if (agent.name === 'Day0 revocation evaluation') {
-    return agent.bossEmail.startsWith('eval-revocation-');
+    return address.startsWith('eval-revocation-');
   }
   return (
     /^Day0 evaluation [1-9]\d*$/.test(agent.name) &&
-    /^eval-day0-r[1-9]\d*-\d{13}@day0\.local$/.test(agent.bossEmail)
+    /^eval-day0-r[1-9]\d*-\d{13}@day0\.local$/.test(address)
   );
 }
 
@@ -967,32 +978,53 @@ function byDeployOrder(left: CompanyAgent, right: CompanyAgent): number {
 /**
  * The employees one owner's company figures cover.
  *
- * Another owner's agents, evaluation agents and baseline arms are left out;
- * of the rest, the most recent `MAX_COMPANY_EMPLOYEES` are kept, as the
- * landing page lists them, and the older ones are counted as omitted so a
- * partial company figure is never silent. The query and the recompute script
- * both select through here.
+ * An employee counts toward each owner who held it, within that owner's
+ * spans (D12 (a)): one never handed over is wholly its owner's, and one
+ * handed over is its old owner's up to the acceptance and its new owner's
+ * from it, so the old owner's past figures never change after the fact.
+ * Employees the owner never held, evaluation agents and baseline arms are
+ * left out. Of those the owner holds now, the most recent
+ * `MAX_COMPANY_EMPLOYEES` are kept, as the landing page lists them; of those
+ * it handed over, the most recent as many again, so a departure never takes
+ * the place of an employee the roster shows. The older ones are counted as
+ * omitted so a partial company figure is never silent. The query and the
+ * recompute script both select through here.
  *
- * Args:
- *   agents: Agent rows, in any order; rows of other owners are ignored.
- *   owner: The owner's subject.
- *   isEvaluation: How an evaluation agent is told: by its row's reserved
- *     address, or by the flag a trace carries instead of the address.
- *
- * Returns:
- *   The employees in deploy order and the counts left out.
+ * @param agents - Agent rows, in any order: the owner's own and any it handed over; rows the
+ *   owner never held are ignored.
+ * @param owner - The owner's key.
+ * @param isEvaluation - How an evaluation agent is told: by its row's reserved address, or by
+ *   the flag a trace carries instead of the address.
+ * @param handovers - The accepted handovers of those agents; none reads every agent as never
+ *   handed over.
+ * @returns The employees in deploy order, the spans the owner held each, and the counts left out.
  */
 export function selectCompanyEmployees<Agent extends CompanyAgent>(
   agents: readonly Agent[],
   owner: string,
   isEvaluation: (agent: Agent) => boolean,
+  handovers: readonly AcceptedHandover[] = [],
 ): CompanySelection<Agent> {
-  const owned = agents.filter((agent) => agent.userId === owner);
-  const company = owned.filter((agent) => !isEvaluation(agent)).sort(byDeployOrder);
-  const kept = company.slice(Math.max(0, company.length - MAX_COMPANY_EMPLOYEES));
+  const held = agents.flatMap((agent) => {
+    const own = handovers.filter((handover) => handover.agentId === agent._id);
+    const windows = tenureWindowsOf(owner, agent.userId, own);
+    return windows.length > 0 ? [{ agent, windows }] : [];
+  });
+  const company = held
+    .filter(({ agent }) => !isEvaluation(agent))
+    .sort((left, right) => byDeployOrder(left.agent, right.agent));
+  const holdsNow = ({ windows }: (typeof company)[number]): boolean =>
+    windows.some((window) => window.until === null);
+  const mostRecent = (employees: typeof company): typeof company =>
+    employees.slice(Math.max(0, employees.length - MAX_COMPANY_EMPLOYEES));
+  const kept = [
+    ...mostRecent(company.filter(holdsNow)),
+    ...mostRecent(company.filter((employee) => !holdsNow(employee))),
+  ].sort((left, right) => byDeployOrder(left.agent, right.agent));
   return {
-    employees: kept,
-    excludedAgents: owned.length - company.length,
+    employees: kept.map(({ agent }) => agent),
+    tenures: new Map(kept.map(({ agent, windows }) => [agent._id, windows])),
+    excludedAgents: held.length - company.length,
     omittedEmployees: company.length - kept.length,
   };
 }
@@ -1134,21 +1166,183 @@ export const forAgent = query({
 });
 
 /**
- * The supervision figures of the caller's company: each employee's own
- * figures and the company row. An anonymous caller gets `null`.
+ * One employee's records within the spans one owner held it (D12 (a)).
+ *
+ * The events are the dated record, so each counts toward the owner whose
+ * span holds its `createdAt`; a charter counts its draft and its approval
+ * the same way. A work row counts toward the span it was created in. In the
+ * span that runs to now it is read as it is; in a span that has closed it is
+ * read as that span left it, because the next owner may go on working it:
+ * its ledger and its decision are taken from the span's events alone, and
+ * its estimate counts only when the row was completed within the span. So
+ * nothing the next owner does reaches the old owner's figures, and nothing
+ * the old owner did leaves them. The surfaces only tell a manager DM from a
+ * write and pass through. An employee never handed over keeps every record,
+ * as before.
+ *
+ * @param records - The employee's whole records.
+ * @param windows - The owner's spans, from {@link selectCompanyEmployees}.
+ * @returns The records the owner's figures count.
+ */
+export function recordsWithinTenure(
+  records: EmployeeRecords,
+  windows: readonly TenureWindow[],
+): EmployeeRecords {
+  if (isWholeHistory(windows)) return records;
+  const within = (at: number): boolean => isWithinTenure(at, windows);
+  const events = records.events.filter((event) => within(event.createdAt));
+  const completedWithin = new Set(
+    events
+      .filter((event) => isEventOf(event, 'work.completed'))
+      .flatMap((event) => asString(asRecord(event.payload)?.workItemId) ?? []),
+  );
+  const workItems = records.workItems.flatMap((item): Doc<'workItems'>[] => {
+    const span = windows.find((window) => isWithinTenure(item.createdAt, [window]));
+    if (span === undefined) return [];
+    if (span.until === null) return [item];
+    const completed = completedWithin.has(item._id);
+    return [
+      {
+        ...item,
+        state: completed ? 'completed' : item.state,
+        output: undefined,
+        decision: undefined,
+        manualEstimateMinutes: completed ? item.manualEstimateMinutes : undefined,
+      },
+    ];
+  });
+  return {
+    ...records,
+    events,
+    workItems,
+    charters: records.charters
+      .filter((charter) => within(charter.createdAt))
+      .map((charter) =>
+        charter.approvedAt === undefined || within(charter.approvedAt)
+          ? charter
+          : { ...charter, approvedAt: undefined },
+      ),
+  };
+}
+
+/** The states of a request the named manager has accepted: moved, or waiting for runs in flight. */
+const ACCEPTED_TRANSFER_STATES = ['accepting', 'accepted'] as const;
+
+/**
+ * The handovers the figures cut an employee's history at, from its
+ * `managerTransfers` rows: every accepted request, moved or still waiting for
+ * its runs in flight, cut at its acceptance (`decidedAt`). A row in another
+ * state is no handover. An accepted row without its acceptance time or the
+ * acceptor's key cannot be placed; it is left out and logged.
+ *
+ * @param rows - Request rows of any employees, in any state.
+ */
+export function handoversFromTransfers(
+  rows: readonly Doc<'managerTransfers'>[],
+): AcceptedHandover[] {
+  return rows.flatMap((row): AcceptedHandover[] => {
+    if (row.state !== 'accepting' && row.state !== 'accepted') return [];
+    if (row.toOwnerKey === undefined || row.decidedAt === undefined) {
+      log.warn('an accepted handover without its acceptance is left out of the figures', {
+        transferId: row._id,
+        state: row.state,
+      });
+      return [];
+    }
+    return [
+      {
+        agentId: row.agentId,
+        fromOwnerKey: row.fromOwnerKey,
+        toOwnerKey: row.toOwnerKey,
+        acceptedAt: row.decidedAt,
+      },
+    ];
+  });
+}
+
+/** One employee's accepted requests, moved or waiting for runs in flight. */
+async function acceptedTransfersOf(
+  ctx: QueryCtx,
+  agentId: Doc<'agents'>['_id'],
+): Promise<Doc<'managerTransfers'>[]> {
+  const byState = await Promise.all(
+    ACCEPTED_TRANSFER_STATES.map(
+      async (state) =>
+        await ctx.db
+          .query('managerTransfers')
+          .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', state))
+          .collect(),
+    ),
+  );
+  return byState.flat();
+}
+
+/**
+ * The employees an owner's figures may count: those it owns now and those it
+ * handed over that still exist, with the accepted handovers of each. A handed
+ * over employee since retired has no records left and is not among them; an
+ * evaluation employee is never handed over, so none of its requests is read.
+ */
+async function heldEmployees(
+  ctx: QueryCtx,
+  owner: string,
+): Promise<{ agents: Doc<'agents'>[]; handovers: AcceptedHandover[] }> {
+  // Unbounded like the company's own employee read before it: an owner's accepted requests are
+  // one per employee it handed over, each of them one employee it once deployed or took on.
+  const [owned, ...given] = await Promise.all([
+    ctx.db
+      .query('agents')
+      .withIndex('by_userId', (q) => q.eq('userId', owner))
+      .collect(),
+    ...ACCEPTED_TRANSFER_STATES.map(
+      async (state) =>
+        await ctx.db
+          .query('managerTransfers')
+          .withIndex('by_from_owner_state', (q) => q.eq('fromOwnerKey', owner).eq('state', state))
+          .collect(),
+    ),
+  ]);
+  const ownedIds = new Set<string>(owned.map((agent) => agent._id));
+  const departedIds = [...new Set(given.flat().map((row) => row.agentId))].filter(
+    (agentId) => !ownedIds.has(agentId),
+  );
+  const departed = (
+    await Promise.all(departedIds.map(async (agentId) => await ctx.db.get(agentId)))
+  ).filter((agent): agent is Doc<'agents'> => agent !== null);
+  const agents = [...owned, ...departed];
+  const rows = await Promise.all(
+    agents
+      .filter((agent) => !isEvaluationAgent(agent))
+      .map(async (agent) => await acceptedTransfersOf(ctx, agent._id)),
+  );
+  return { agents, handovers: handoversFromTransfers(rows.flat()) };
+}
+
+/**
+ * Public, any caller; reads only the caller's own: the supervision figures of
+ * the caller's company, each employee's own figures and the company row, each
+ * employee counted within the spans the caller held it (D12 (a)). Writes
+ * nothing. An anonymous caller gets `null`.
  */
 export const forOwner = query({
   args: {},
   handler: async (ctx): Promise<OwnerMetrics | null> => {
     const identity = await getCaller(ctx);
     if (!identity) return null;
-    const agents = await ctx.db
-      .query('agents')
-      .withIndex('by_userId', (q) => q.eq('userId', identity.ownerKey))
-      .collect();
-    const selection = selectCompanyEmployees(agents, identity.ownerKey, isEvaluationAgent);
+    const { agents, handovers } = await heldEmployees(ctx, identity.ownerKey);
+    const selection = selectCompanyEmployees(
+      agents,
+      identity.ownerKey,
+      isEvaluationAgent,
+      handovers,
+    );
     const records = await Promise.all(
-      selection.employees.map((agent) => readEmployeeRecords(ctx, agent)),
+      selection.employees.map(async (agent) =>
+        recordsWithinTenure(
+          await readEmployeeRecords(ctx, agent),
+          selection.tenures.get(agent._id) ?? [],
+        ),
+      ),
     );
     return computeCompanyMetrics(records, selection);
   },

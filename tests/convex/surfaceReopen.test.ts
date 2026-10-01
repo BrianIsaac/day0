@@ -6,6 +6,7 @@ import { internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
+import { MANAGER_ADDRESS } from './fakes/manager-identity';
 
 /** Seed one agent with one surface in the given verdict. */
 async function seedSurface(
@@ -14,7 +15,7 @@ async function seedSurface(
 ): Promise<Id<'surfaces'>> {
   return await harness.run(async (ctx) => {
     const agentId = await ctx.db.insert('agents', {
-      bossEmail: 'boss@day0.local',
+      bossEmail: MANAGER_ADDRESS,
       name: 'reopen test',
       userId: 'owner',
       state: 'active',

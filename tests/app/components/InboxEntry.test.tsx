@@ -106,6 +106,43 @@ describe('inboxEntryWords and inboxEntryHref', (): void => {
   });
 });
 
+describe('the ninth kind: an employee to take on', (): void => {
+  const transfer = {
+    ...base,
+    kind: 'transfer',
+    key: 'transfer:t1',
+    agentId: 'synthetic-maya',
+    employeeName: 'Maya',
+    zone: 'Europe/London',
+    subject: 'Maya',
+    waitingSince: minutes(30),
+    transferId: 't1',
+    fromAddress: 'sam@company.com',
+    expiresAt: Date.UTC(2026, 9, 10, 6, 45),
+  } as unknown as InboxItem;
+
+  it('says who asks and when it expires, in the viewer’s zone with the zone named, and offers a review', (): void => {
+    expect(inboxEntryWords(transfer)).toEqual({
+      ask: 'an employee to take on',
+      about:
+        'sam@company.com asks you to become its manager. Expires 10 Oct 2026, 06:45, UTC time.',
+      control: 'Review',
+    });
+  });
+
+  it('opens the acceptance dialog on the home, never the employee’s page, which is not the caller’s yet', (): void => {
+    expect(inboxEntryHref(transfer)).toBe('/?transfer=t1');
+  });
+
+  it('leads with the employee’s name on the home, one 44 px control named by its label and the title', (): void => {
+    const html = renderToStaticMarkup(<InboxEntry entry={transfer} now={NOW} named />);
+    expect(html).toContain('Maya · an employee to take on');
+    expect(html).toContain('href="/?transfer=t1"');
+    expect(html).toContain('>Review<');
+    expect(html).toContain('waiting 30 min');
+  });
+});
+
 describe('InboxEntry', (): void => {
   it('opens with the ask as a sentence on the employee page, and after the name on the home', (): void => {
     expect(renderToStaticMarkup(<InboxEntry entry={held} now={NOW} />)).toContain(
@@ -140,6 +177,15 @@ describe('InboxEntry', (): void => {
   it('draws the held entry’s control as the way to the decision, not as the approval itself', (): void => {
     const html = renderToStaticMarkup(<InboxEntry entry={held} now={NOW} />);
     expect(html).not.toContain('text-[var(--color-ok)]');
+  });
+
+  it('wraps a long unbroken name and its about line inside the entry, as a phone needs (U2-m4)', (): void => {
+    const html = renderToStaticMarkup(
+      <InboxEntry entry={{ ...held, employeeName: 'M'.repeat(80) }} now={NOW} named />,
+    );
+    const lines = html.match(/<p [^>]*class="[^"]*"/g) ?? [];
+    expect(lines.slice(0, 2)).toHaveLength(2);
+    for (const line of lines.slice(0, 2)) expect(line).toContain('[overflow-wrap:anywhere]');
   });
 
   it('sets no type below the 12 px floor', (): void => {

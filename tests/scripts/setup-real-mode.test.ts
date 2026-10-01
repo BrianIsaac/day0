@@ -647,6 +647,22 @@ describe('a whole real-mode run on the Featherless route', (): void => {
     expect(ran(h)).not.toContain('convex:up');
   });
 
+  it('says with --yes and no address what the sign-in carries and how an employee is moved later', async (): Promise<void> => {
+    const h = harness({
+      environment: { FEATHERLESS_API_KEY: SYNTHETIC_KEY },
+      services: ['backend', 'sandbox', 'redactor'],
+    });
+    expect(await runSetup(realRoute({ bossEmail: undefined }), h.io)).toBe(0);
+    const output = h.output.join('\n');
+    expect(output).toContain(
+      'note: NEXT_PUBLIC_DEMO_BOSS_EMAIL is unset, so your local sign-in carries boss@day0.local, ' +
+        'which no Slack workspace knows, and real mode finds your Slack DM from that address. Set it ' +
+        "(or pass --boss-email) before you deploy; set later, each employee's People tab offers " +
+        'Make it you, which moves its DM to the new address.',
+    );
+    expect(output).not.toContain('cannot correct a live agent');
+  });
+
   it('asks for the manager’s address when the file has none and --yes was not given', async (): Promise<void> => {
     const h = harness({
       environment: { FEATHERLESS_API_KEY: SYNTHETIC_KEY },
@@ -657,6 +673,24 @@ describe('a whole real-mode run on the Featherless route', (): void => {
     expect(readEnvValues(join(h.directory, '.env.local')).NEXT_PUBLIC_DEMO_BOSS_EMAIL).toBe(
       'boss@example.com',
     );
+  });
+
+  it('refuses a manager’s address that is not one, from the flag or the prompt, before anything runs', async (): Promise<void> => {
+    const flagged = harness({ environment: { FEATHERLESS_API_KEY: SYNTHETIC_KEY } });
+    expect(await runSetup(realRoute({ bossEmail: 'not an address' }), flagged.io)).toBe(1);
+    expect(flagged.output.join('\n')).toContain(
+      'error: "not an address" is not an email address, and the local sign-in would refuse it. ' +
+        'The manager must be an email address, such as name@company.com.',
+    );
+    expect(ran(flagged)).not.toContain('convex:up');
+
+    const asked = harness({
+      environment: { FEATHERLESS_API_KEY: SYNTHETIC_KEY },
+      answers: ['boss at example'],
+    });
+    expect(await runSetup(realRoute({ bossEmail: undefined, assumeYes: false }), asked.io)).toBe(1);
+    expect(asked.output.join('\n')).toContain('error: "boss at example" is not an email address');
+    expect(ran(asked)).not.toContain('convex:up');
   });
 
   it('refuses --sandbox daytona without a key, and skips the bundled sandbox with one', async (): Promise<void> => {

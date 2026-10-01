@@ -1,5 +1,7 @@
 /// <reference types="node" />
 
+import { DEFAULT_LOCAL_MANAGER_ADDRESS } from '../agent/manager-address';
+
 /**
  * No-auth development mode - the Next.js half.
  *
@@ -78,8 +80,12 @@ export function isLoopbackHostHeader(host: string | null | undefined): boolean {
 }
 
 /**
- * The boss the synthetic user presents as. Mirrors the identity
- * `convex/devAuth.ts` mints, so the deploy form and the Convex row agree.
+ * The address the local manager is shown under in the browser. The token
+ * route mints the same configured address, read on the server, as the
+ * caller's verified `email` (`localManagerAddress`, `src/lib/dev-auth-token.ts`),
+ * and that is the address the backend stores: this one only labels the page.
+ * The literal `process.env` read is what Next inlines into the client.
  */
-export const DEV_BOSS_EMAIL = process.env.NEXT_PUBLIC_DEMO_BOSS_EMAIL || 'boss@day0.local';
+export const DEV_BOSS_EMAIL =
+  process.env.NEXT_PUBLIC_DEMO_BOSS_EMAIL || DEFAULT_LOCAL_MANAGER_ADDRESS;
 export const DEV_BOSS_FIRST_NAME = 'Boss';

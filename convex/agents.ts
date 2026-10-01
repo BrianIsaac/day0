@@ -9,7 +9,14 @@ import {
 } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
-import { assertOwnsAgent, getCaller, getCallerOrThrow, ownedAgentOrNull } from './ownership';
+import {
+  assertOwnsAgent,
+  getCaller,
+  getCallerOrThrow,
+  ownedAgentOrNull,
+  verifiedAddressOf,
+  type Caller,
+} from './ownership';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 import { AUTONOMY_CHANGE_REASON, autonomousActionsOn } from '../src/work/autonomy';
 import {
@@ -27,6 +34,26 @@ import {
 import { agentReadsSource } from '../src/docs/agent-sources';
 import { isEvaluationAgent } from './metrics';
 import { isManagerLookupFailure } from '../src/surfaces/manager-lookup';
+import {
+  UNVERIFIED_FOR_DEPLOY,
+  isEvaluationShapedAddress,
+  normaliseManagerAddress,
+} from '../src/agent/manager-address';
+import {
+  EVALUATION_ADDRESS_FIXED,
+  UNVERIFIED_FOR_ADOPTION,
+  managerStandingOf,
+  type ManagerStanding,
+} from '../src/agent/manager-standing';
+import { evaluationBedName, evaluationBedRefusal } from '../src/evaluation/bed-flag';
+import { AVATAR_ID_MAX_CHARS, AVATAR_ID_TOO_LONG } from '../src/agent/avatar-pets';
+import { characterCount } from '../src/lib/visible-text';
+import {
+  clippedEmployeeName,
+  EMPLOYEE_NAME_TOO_LONG,
+  isEmployeeNameWithinBound,
+  visibleEmployeeName,
+} from '../src/agent/employee-name';
 import { shownEmployeeState, type CharterApproval } from '../src/work/state-labels';
 import {
   ONE_TO_ONE_PHASE_KINDS,
@@ -467,15 +494,71 @@ export const getInternal = internalQuery({
   },
 });
 
+/** What a deploy is asked for that decides the employee's address. */
+interface DeployAddressArgs {
+  readonly evaluationAddress?: string;
+  readonly name: string;
+  readonly arm: 'day0' | 'baseline';
+}
+
 /**
- * Public, signed in: creates an employee for the caller in the caller's zone
- * with its deployment grants, records both, and schedules the mirror of the
- * caller's already-synced documentation sources to it. The workspace is
- * written later, when the charter is committed.
+ * The address a new employee reports to: the deploying caller's verified
+ * address, since the account that owns an employee is its manager (the
+ * transfer plan, section 3.3, D1 (b) and D2 (a)). The evaluation harness
+ * names a reserved address instead, its evaluation marker, taken only on an
+ * evaluation bed and only when the row it makes reads as an evaluation
+ * employee; the caller must still have a verified address of its own.
+ *
+ * @throws ConvexError for a caller without a verified address, an evaluation
+ *   address off a bed, or one that would not mark an evaluation employee.
+ */
+function deployAddress(caller: Caller, args: DeployAddressArgs): string {
+  const callerAddress = verifiedAddressOf(caller);
+  if (callerAddress === undefined) throw new ConvexError(UNVERIFIED_FOR_DEPLOY);
+  if (args.evaluationAddress === undefined) return callerAddress;
+  if (evaluationBedName() === undefined) {
+    throw new ConvexError(evaluationBedRefusal('agents.deploy with an evaluation address'));
+  }
+  const evaluationAddress = normaliseManagerAddress(args.evaluationAddress);
+  if (
+    evaluationAddress === undefined ||
+    !isEvaluationShapedAddress(evaluationAddress) ||
+    !isEvaluationAgent({ bossEmail: evaluationAddress, name: args.name, arm: args.arm })
+  ) {
+    throw new ConvexError(
+      "An evaluation address must be the harness's reserved eval-<run>@day0.local address of " +
+        'an employee named as an evaluation one.',
+    );
+  }
+  return evaluationAddress;
+}
+
+/**
+ * The name a deploy stores: the visible name, one line and trimmed, or `Day0` when none is given.
+ *
+ * @throws ConvexError with {@link EMPLOYEE_NAME_TOO_LONG} past the bound: the name is copied into
+ *   every handover request and every inbox entry that names the employee, so an unbounded one
+ *   could fill another person's inbox past a read's limit.
+ */
+function deployName(name: string | undefined): string {
+  if (name === undefined) return 'Day0';
+  if (!isEmployeeNameWithinBound(name)) throw new ConvexError(EMPLOYEE_NAME_TOO_LONG);
+  // A name of nothing visible names no one: the default, as with no name given.
+  return visibleEmployeeName(name) || 'Day0';
+}
+
+/**
+ * Public, signed in with a verified address: creates an employee for the
+ * caller, reporting to that address (or, from the evaluation harness on a
+ * bed, to its reserved `evaluationAddress`), in the caller's zone with its
+ * deployment grants; records both, and schedules the mirror of the caller's
+ * already-synced documentation sources to it. The workspace is written
+ * later, when the charter is committed. Refuses a name past 80 characters.
  */
 export const deploy = mutation({
   args: {
-    bossEmail: v.string(),
+    /** The harness's reserved address; refused off an evaluation bed. */
+    evaluationAddress: v.optional(v.string()),
     name: v.optional(v.string()),
     avatarId: v.optional(v.string()),
     arm: v.optional(v.union(v.literal('day0'), v.literal('baseline'))),
@@ -485,10 +568,22 @@ export const deploy = mutation({
   },
   handler: async (ctx, args): Promise<Id<'agents'>> => {
     const identity = await getCallerOrThrow(ctx);
+    const name = deployName(args.name);
+    // The row is read whole wherever the employee is named (the inbox of a handover's named
+    // account among them), so nothing on it is left unbounded (the wave 9 review's B2).
+    if (args.avatarId !== undefined && characterCount(args.avatarId) > AVATAR_ID_MAX_CHARS) {
+      throw new ConvexError(AVATAR_ID_TOO_LONG);
+    }
+    const arm = args.arm ?? 'day0';
+    const bossEmail = deployAddress(identity, {
+      evaluationAddress: args.evaluationAddress,
+      name,
+      arm,
+    });
     // The control arm exists only for the mock-mode comparison. Nothing on the
     // real path reads the arm, so a baseline row there would be a day0 agent
     // wearing the wrong label in the evidence.
-    if (args.arm === 'baseline' && SURFACE_MODE !== 'mock') {
+    if (arm === 'baseline' && SURFACE_MODE !== 'mock') {
       throw new Error('the baseline comparison arm can only be deployed in mock mode');
     }
     for (const sourceId of args.excludedDocSourceIds ?? []) {
@@ -499,15 +594,15 @@ export const deploy = mutation({
     }
     const zone = canonicalZone(args.zone) ?? deploymentZone();
     const agentId = await ctx.db.insert('agents', {
-      bossEmail: args.bossEmail,
-      name: args.name ?? 'Day0',
+      bossEmail,
+      name,
       avatarId: args.avatarId,
       excludedDocSourceIds: args.excludedDocSourceIds?.length
         ? args.excludedDocSourceIds
         : undefined,
       userId: identity.ownerKey,
       state: 'deployed',
-      arm: args.arm ?? 'day0',
+      arm,
       zone,
       mode: SURFACE_MODE,
       createdAt: Date.now(),
@@ -515,7 +610,7 @@ export const deploy = mutation({
     await appendEvent(ctx, {
       agentId,
       type: 'agent.deployed',
-      payload: { bossEmail: args.bossEmail, arm: args.arm ?? 'day0', zone, mode: SURFACE_MODE },
+      payload: { bossEmail, arm, zone, mode: SURFACE_MODE },
       createdAt: Date.now(),
     });
     const initialScopes =
@@ -549,11 +644,152 @@ export const deploy = mutation({
   },
 });
 
-/** The longest address a mailbox can have (RFC 5321's path limit). */
-const MAX_EMAIL_LENGTH = 254;
+/**
+ * Public, any caller: the verified address a deploy by this caller would
+ * store, so the deploy form shows the server's address and not the
+ * browser's. Writes nothing.
+ *
+ * @returns The address, or null for an anonymous caller or one whose sign-in asserts none verified.
+ */
+export const myManagerAddress = query({
+  args: {},
+  returns: v.union(v.string(), v.null()),
+  handler: async (ctx): Promise<string | null> => {
+    const caller = await getCaller(ctx);
+    return (caller && verifiedAddressOf(caller)) ?? null;
+  },
+});
 
-/** One `@`, a dotted domain and no spaces: enough to refuse a typo, not a validator. */
-const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+/**
+ * One employee's standing against an owner's verified address, the employee
+ * read as an evaluation one by its own row.
+ *
+ * @param callerAddress - The owner's verified address, or undefined when the sign-in asserts none.
+ */
+function standingOf(agent: Doc<'agents'>, callerAddress: string | undefined): ManagerStanding {
+  return managerStandingOf({
+    bossEmail: agent.bossEmail,
+    callerAddress,
+    evaluation: isEvaluationAgent(agent),
+  });
+}
+
+/** What `managerStanding` returns: {@link ManagerStanding}, as a validator. */
+const managerStandingValidator = v.union(
+  v.object({ standing: v.literal('you') }),
+  v.object({ standing: v.literal('other'), bossEmail: v.string() }),
+  v.object({ standing: v.literal('unverified') }),
+  v.object({ standing: v.literal('evaluation') }),
+);
+
+/**
+ * Public, owner-guarded: whether the employee reports to the caller's own
+ * verified address (`you`), to someone else's (`other`, with the stored
+ * address, which the People card offers to hand over to or make the
+ * caller's), or cannot be compared (`unverified`); an evaluation employee is
+ * never flagged (`evaluation`). Compared case-insensitively through the one
+ * address comparison, so an older row's spelling is still the owner's
+ * (D17 (a), the transfer plan section 11.2). Writes nothing.
+ */
+export const managerStanding = query({
+  args: { agentId: v.id('agents') },
+  returns: managerStandingValidator,
+  handler: async (ctx, args): Promise<ManagerStanding> => {
+    const agent = await assertOwnsAgent(ctx, args.agentId);
+    return standingOf(agent, verifiedAddressOf(await getCallerOrThrow(ctx)));
+  },
+});
+
+/** One employee that reports to an address other than its owner's, for the home's line. */
+const reportingElsewhereValidator = v.object({ agentId: v.id('agents'), name: v.string() });
+
+/**
+ * Public, any caller: the caller's company employees that report to an
+ * address that is not the caller's verified one, newest first as the roster
+ * reads them, for the home's one line while any does, each linked to its
+ * People tab (the transfer plan section 11.2). Evaluation employees are left
+ * out, as the roster leaves them out, within the rows the roster reads
+ * (`ROSTER_SCAN_LIMIT`). Writes nothing.
+ *
+ * @returns The employees, or null for an anonymous caller or one whose sign-in asserts no verified address.
+ */
+export const employeesReportingElsewhere = query({
+  args: {},
+  returns: v.union(v.array(reportingElsewhereValidator), v.null()),
+  handler: async (ctx): Promise<Infer<typeof reportingElsewhereValidator>[] | null> => {
+    const caller = await getCaller(ctx);
+    const callerAddress = caller ? verifiedAddressOf(caller) : undefined;
+    if (!caller || callerAddress === undefined) return null;
+    const agents = await ctx.db
+      .query('agents')
+      .withIndex('by_userId', (q) => q.eq('userId', caller.ownerKey))
+      .order('desc')
+      .take(ROSTER_SCAN_LIMIT);
+    return agents
+      .filter((agent) => standingOf(agent, callerAddress).standing === 'other')
+      .map((agent) => ({ agentId: agent._id, name: clippedEmployeeName(agent.name) }));
+  },
+});
+
+/**
+ * Public, owner-guarded: **Make it you**. The employee reports to the
+ * caller's verified address from now on: writes `bossEmail` and a
+ * `manager.changed` event (`via: 'adopted'`), then, in real mode, schedules a
+ * probe of every chat surface the change can mend, so the manager DM moves to
+ * the owner at once and the open decision requests delivered to the previous
+ * DM are sent again to the owner's (the probe's `recordConnected`). The one
+ * writer of `bossEmail` besides deploy and an accepted handover (D1 (b),
+ * D17 (a)).
+ *
+ * @returns Whether the address changed, and how many surfaces were re-probed.
+ * @throws ConvexError for a caller without a verified address or an evaluation employee.
+ */
+export const adoptManagerAddress = mutation({
+  args: { agentId: v.id('agents') },
+  returns: v.object({ changed: v.boolean(), reprobed: v.number() }),
+  handler: async (ctx, args): Promise<{ changed: boolean; reprobed: number }> => {
+    const agent = await assertOwnsAgent(ctx, args.agentId);
+    const caller = await getCallerOrThrow(ctx);
+    const standing = standingOf(agent, verifiedAddressOf(caller));
+    switch (standing.standing) {
+      case 'evaluation':
+        throw new ConvexError(EVALUATION_ADDRESS_FIXED);
+      case 'unverified':
+        throw new ConvexError(UNVERIFIED_FOR_ADOPTION);
+      case 'you':
+        return { changed: false, reprobed: 0 };
+      case 'other':
+        return { changed: true, reprobed: await adoptAddress(ctx, agent, caller) };
+      default: {
+        const unknown: never = standing;
+        throw new Error(`unhandled manager standing ${String(unknown)}`);
+      }
+    }
+  },
+});
+
+/**
+ * Make the caller's verified address the employee's, record it, and re-probe
+ * what the change can mend.
+ *
+ * @returns How many surfaces were re-probed.
+ */
+async function adoptAddress(
+  ctx: MutationCtx,
+  agent: Doc<'agents'>,
+  caller: Caller,
+): Promise<number> {
+  const bossEmail = verifiedAddressOf(caller);
+  if (bossEmail === undefined) throw new ConvexError(UNVERIFIED_FOR_ADOPTION);
+  await ctx.db.patch(agent._id, { bossEmail });
+  await appendEvent(ctx, {
+    agentId: agent._id,
+    type: 'manager.changed',
+    payload: { via: 'adopted', bossEmail },
+    createdAt: Date.now(),
+  });
+  return await reprobeForManagerChange(ctx, agent._id);
+}
 
 /** The verdicts a surface keeps while its approval and credential stand. */
 const MANAGER_REPROBE_VERDICTS: ReadonlyArray<Doc<'surfaces'>['verdict']> = [
@@ -580,59 +816,33 @@ function reprobedForManagerChange(surface: Doc<'surfaces'>): boolean {
 }
 
 /**
- * Change who the agent reports to.
+ * Schedule a probe of every chat surface a change of manager address can
+ * mend, so the manager DM moves to the new person at once and a surface that
+ * failed on the old person's lookup comes back (Q6). A probe that resolves a
+ * different Slack user writes `manager.changed` (`via: 'probe'`) and re-sends
+ * the open decision requests delivered to the previous DM
+ * (`resendDecisionsAfterManagerChange`). Mock mode has no provider to probe.
  *
- * Public, owner-guarded. Writes the agent's `bossEmail` and a `manager.changed`
- * event (`via: 'dashboard'`), then, in real mode, schedules a probe of every
- * chat surface the change can mend, so the manager DM moves to the new person
- * and a surface that failed on the old person's lookup comes back (Q6). A
- * probe that resolves a different Slack user writes its own
- * `manager.changed` (`via: 'probe'`) and re-sends the open decision requests.
- * An evaluation agent's address is its evaluation marker and is refused.
- *
- * @returns Whether the address changed, and how many surfaces were re-probed.
- * @throws ConvexError for a malformed address or an evaluation agent.
+ * @returns How many surfaces were scheduled for a probe.
  */
-export const setBossEmail = mutation({
-  args: { agentId: v.id('agents'), bossEmail: v.string() },
-  handler: async (ctx, args): Promise<{ changed: boolean; reprobed: number }> => {
-    const agent = await assertOwnsAgent(ctx, args.agentId);
-    const bossEmail = args.bossEmail.trim();
-    if (bossEmail.length > MAX_EMAIL_LENGTH || !EMAIL_SHAPE.test(bossEmail)) {
-      throw new ConvexError('The manager must be an email address, such as name@company.com.');
-    }
-    if (isEvaluationAgent(agent) || isEvaluationAgent({ ...agent, bossEmail })) {
-      throw new ConvexError("An evaluation agent's manager address is fixed by its run.");
-    }
-    if (bossEmail.toLowerCase() === agent.bossEmail.trim().toLowerCase()) {
-      return { changed: false, reprobed: 0 };
-    }
-    const now = Date.now();
-    await ctx.db.patch(agent._id, { bossEmail });
-    await appendEvent(ctx, {
-      agentId: agent._id,
-      type: 'manager.changed',
-      payload: { via: 'dashboard', bossEmail },
-      createdAt: now,
-    });
-    if (SURFACE_MODE === 'mock') return { changed: true, reprobed: 0 };
-    const surfaces = (
-      await ctx.db
-        .query('surfaces')
-        .withIndex('by_agent', (q) => q.eq('agentId', agent._id))
-        .collect()
-    ).filter(reprobedForManagerChange);
-    await Promise.all(
-      surfaces.map(
-        async (surface) =>
-          await ctx.scheduler.runAfter(0, internal.surfaceActions.probeInternal, {
-            surfaceId: surface._id,
-          }),
-      ),
-    );
-    return { changed: true, reprobed: surfaces.length };
-  },
-});
+async function reprobeForManagerChange(ctx: MutationCtx, agentId: Id<'agents'>): Promise<number> {
+  if (SURFACE_MODE === 'mock') return 0;
+  const surfaces = (
+    await ctx.db
+      .query('surfaces')
+      .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+      .collect()
+  ).filter(reprobedForManagerChange);
+  await Promise.all(
+    surfaces.map(
+      async (surface) =>
+        await ctx.scheduler.runAfter(0, internal.surfaceActions.probeInternal, {
+          surfaceId: surface._id,
+        }),
+    ),
+  );
+  return surfaces.length;
+}
 
 /** Public, owner-guarded: grants permission scopes to an employee as the manager. */
 export const grantScopes = mutation({

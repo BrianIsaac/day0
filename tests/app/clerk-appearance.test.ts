@@ -3,7 +3,12 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dark } from '@clerk/themes';
 import { describe, expect, it } from 'vitest';
-import { DAY0_MARK_URL, clerkAppearance, headedClerkAppearance } from '../../app/clerk-appearance';
+import {
+  DAY0_MARK_URL,
+  clerkAppearance,
+  clerkSignInAppearance,
+  headedClerkAppearance,
+} from '../../app/clerk-appearance';
 
 /** A file of the checkout, read by path (under Vite `new URL(path, import.meta.url)` is an asset). */
 function checkoutFile(path: string): string {
@@ -69,13 +74,41 @@ describe('the Clerk appearance', () => {
     expect(clerkAppearance.variables).not.toHaveProperty('colorBorder');
   });
 
-  it("puts Day0's mark on every card, inside it above the title, leading home within the product", () => {
+  // Re-pinned (wave 9): the shared appearance no longer claims every card; the sign-in and
+  // sign-up flows draw the mark outside (`clerkSignInAppearance`, below).
+  it("gives the account menu's surfaces Day0's mark inside a card that asks for one, leading home within the product", () => {
     expect(clerkAppearance.options).toEqual({
       logoImageUrl: '/day0-mark.svg',
       logoPlacement: 'inside',
       logoLinkUrl: '/',
     });
     expect(DAY0_MARK_URL).toBe('/day0-mark.svg');
+  });
+
+  it('draws the mark above the card on every step of the sign-in and sign-up flows, the code steps among them (the v0.11.0 walk)', () => {
+    expect(clerkSignInAppearance).toMatchObject({
+      theme: clerkAppearance.theme,
+      variables: clerkAppearance.variables,
+    });
+    expect(clerkSignInAppearance.options).toEqual({
+      logoImageUrl: '/day0-mark.svg',
+      logoPlacement: 'outside',
+      logoLinkUrl: '/',
+    });
+    // Clerk spaces an outside mark from the card on small screens only; this keeps it at every width.
+    expect(clerkSignInAppearance.elements).toEqual({ logoBox: { marginBottom: '1.75rem' } });
+    expect(selectorKeys(clerkSignInAppearance.elements)).toEqual([]);
+  });
+
+  it("finds Clerk's code-entry card still asking for no logo, which is why the flows' mark sits outside", () => {
+    // When this fails Clerk draws a logo on its code steps, and the mark can go back inside.
+    const card = checkoutFile('node_modules/@clerk/ui/dist/elements/VerificationCodeCard.js');
+    const header = card.slice(card.indexOf('Header.Root'), card.indexOf('Header.Title'));
+    expect(header).not.toBe('');
+    expect(header).not.toContain('showLogo');
+    expect(checkoutFile('node_modules/@clerk/ui/dist/elements/Header.js')).toContain(
+      'parsedOptions.logoPlacement === "inside" && showLogo',
+    );
   });
 
   it("serves the mark from public/ in the brand's own geometry, the head in the accent and the eyes cut in the card's colour", () => {
@@ -90,19 +123,19 @@ describe('the Clerk appearance', () => {
 });
 
 describe('the appearance of a Clerk widget under a page heading', () => {
-  it("hides the first step's title and subtitle and the gap under the mark, through Clerk's own element styles", () => {
+  // Re-pinned (wave 9): the mark is outside the card, so the first step's whole header, title
+  // and subtitle, is left out rather than each beside a mark that is no longer in it.
+  it("leaves the first step's header out through Clerk's own element styles, keeping the mark above the card", () => {
     const first = headedClerkAppearance(true);
-    expect(first).toMatchObject({ ...clerkAppearance });
+    expect(first).toMatchObject({ options: clerkSignInAppearance.options });
     expect(first.elements).toEqual({
-      header: { gap: 0 },
-      headerTitle: { display: 'none' },
-      headerSubtitle: { display: 'none' },
+      logoBox: { marginBottom: '1.75rem' },
+      header: { display: 'none' },
     });
-    expect(first.elements).not.toHaveProperty('logoBox');
   });
 
-  it('keeps every later step as the shared appearance draws it, header and all', () => {
-    expect(headedClerkAppearance(false)).toBe(clerkAppearance);
+  it('keeps every later step as the sign-in flows draw it, header and mark', () => {
+    expect(headedClerkAppearance(false)).toBe(clerkSignInAppearance);
   });
 
   it('names no selector Clerk reports as structural CSS', () => {

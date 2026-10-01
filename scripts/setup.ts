@@ -67,6 +67,11 @@ import { createInterface, type Interface } from 'node:readline';
 import { Writable } from 'node:stream';
 import { pathToFileURL } from 'node:url';
 import { DEFAULT_DOCS_HOST_DIR, ensureDocsHostDir } from '../src/docs/host-dir';
+import {
+  DEFAULT_LOCAL_MANAGER_ADDRESS,
+  isManagerAddressShaped,
+  MANAGER_ADDRESS_REFUSAL,
+} from '../src/agent/manager-address';
 import { CRONS_PAUSED_FLAG, cronsPauseReason } from '../src/lib/crons-pause';
 import {
   FIRST_SUCCESS,
@@ -2943,8 +2948,10 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
         } else if (options.assumeYes) {
           io.log('');
           io.log(
-            'note: NEXT_PUBLIC_DEMO_BOSS_EMAIL is unset. Real mode resolves your Slack DM from it at ' +
-              'deploy and cannot correct a live agent; set it (or pass --boss-email) before you deploy.',
+            `note: NEXT_PUBLIC_DEMO_BOSS_EMAIL is unset, so your local sign-in carries ${DEFAULT_LOCAL_MANAGER_ADDRESS}, ` +
+              'which no Slack workspace knows, and real mode finds your Slack DM from that address. Set it ' +
+              "(or pass --boss-email) before you deploy; set later, each employee's People tab offers " +
+              'Make it you, which moves its DM to the new address.',
           );
         } else {
           io.log('');
@@ -2973,6 +2980,16 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       io.log(
         '  your own hosted copy on Convex cloud and Vercel is `./setup.sh cloud setup --target <file>`.',
       );
+    }
+
+    // The local token route refuses to mint for a configured address that is not one (503), so a
+    // malformed one is refused here, before anything is written or started.
+    if (bossEmail !== '' && !isManagerAddressShaped(bossEmail)) {
+      io.log(
+        `error: "${bossEmail}" is not an email address, and the local sign-in would refuse it. ` +
+          MANAGER_ADDRESS_REFUSAL,
+      );
+      return 1;
     }
 
     const createsEnv = !existsSync(envPath);

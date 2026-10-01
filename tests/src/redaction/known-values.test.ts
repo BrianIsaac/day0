@@ -28,6 +28,7 @@ import {
   serveSpanModel,
 } from '../../fixtures/redaction-double';
 import { assembleTrace } from '../../../src/export/trace';
+import { MANAGER_ADDRESS, managerIdentity } from '../../convex/fakes/manager-identity';
 
 /**
  * A value Day0 stored for this owner that no transport in the run holds and
@@ -246,7 +247,7 @@ describe.each(STATES)(
         const harness = convexTest(schema, allConvexModules());
         const agentId = await harness.run(async (db): Promise<Id<'agents'>> => {
           const id = await db.db.insert('agents', {
-            bossEmail: 'boss@day0.local',
+            bossEmail: MANAGER_ADDRESS,
             name: 'Priya',
             userId: 'owner',
             state: 'active',
@@ -271,7 +272,7 @@ describe.each(STATES)(
           });
           return id;
         });
-        const owner = harness.withIdentity({ subject: 'owner' });
+        const owner = harness.withIdentity(managerIdentity());
         const trace = await assembleTrace(agentId, {
           head: async () => await owner.action(api.exportActions.exportForAgent, { agentId }),
           page: async ({ page }) =>
@@ -284,7 +285,7 @@ describe.each(STATES)(
         expect(trace.credentialNames).toEqual([]);
         await expect(
           harness
-            .withIdentity({ subject: 'intruder' })
+            .withIdentity(managerIdentity('intruder'))
             .action(api.exportActions.exportForAgent, { agentId }),
         ).rejects.toThrow('forbidden');
         await expect(

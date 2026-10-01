@@ -12,15 +12,7 @@ import {
 import { AUTONOMY_WARNING } from '../../../../../src/work/autonomy';
 import { ManagerLine } from '../../../../../app/agent/[agentId]/EmployeeHeader';
 import { NotificationModeControl } from '../../../../../app/agent/[agentId]/manage/NotificationModeControl';
-import {
-  button,
-  choose,
-  focusedName,
-  mount,
-  press,
-  said,
-  typeInto,
-} from '../../../../fixtures/dom/press';
+import { button, choose, focusedName, mount, press, said } from '../../../../fixtures/dom/press';
 
 const backend = vi.hoisted(() => ({
   /** Mutations and actions that reject, by function name, with the text they reject with. */
@@ -234,42 +226,19 @@ describe('the header controls say what each change came to and give focus back (
     refused.unmount();
   });
 
-  it('changes the manager, says who the employee reports to now, and gives focus back to Change manager', async (): Promise<void> => {
-    const sent: string[] = [];
+  // The header's Change manager is gone (the transfer plan, section 9, D14): its two pins here
+  // are re-pinned to the line that replaced it and to People's dialog, which holds the only
+  // control and says a refusal without the envelope.
+  it('offers no manager control on the header: the line names the manager and People holds the control', (): void => {
     const view = mount(
       <ManagerLine
-        bossEmail="boss@day0.local"
-        onChange={async (next) => {
-          sent.push(next);
-        }}
+        agent={{ _id: 'agent-1', name: 'Mira', bossEmail: 'boss@day0.local' } as never}
+        standing={{ standing: 'you' }}
+        open={null}
       />,
     );
-    await press(view.container, 'Change manager');
-    const field = view.container.querySelector<HTMLInputElement>('#manager-email');
-    if (!field) throw new Error('no field');
-    typeInto(field, ' lead@day0.local ');
-    await press(view.container, 'Save');
-
-    expect(sent).toEqual(['lead@day0.local']);
-    expect(said(view.container)).toEqual(['The employee now reports to lead@day0.local.']);
-    expect(focusedName()).toBe('Change manager');
-    view.unmount();
-  });
-
-  it('keeps the editor open on a refusal and says it without the envelope', async (): Promise<void> => {
-    const view = mount(
-      <ManagerLine
-        bossEmail="boss@day0.local"
-        onChange={async () => {
-          throw refusal('agents:setBossEmail', 'That is not an e-mail address.');
-        }}
-      />,
-    );
-    await press(view.container, 'Change manager');
-    await press(view.container, 'Save');
-
-    expect(said(view.container)).toEqual(['That is not an e-mail address.']);
-    expect(focusedName()).toBe('Save');
+    expect(view.container.textContent).toBe('Reports to you');
+    expect(view.container.querySelector('button, input')).toBeNull();
     view.unmount();
   });
 });

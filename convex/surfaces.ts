@@ -43,6 +43,7 @@ import { appendEvent, eventsOfType } from './eventLog';
 import { isEventOf, type EventOf, type EventType } from '../src/events/contract';
 import { agentZone, expiryNoticeDay, expiryNoticeDue } from '../src/lib/zone';
 import { SURFACE_ACCESS_DEFAULT_DAYS, SURFACE_ACCESS_MAX_DAYS } from '../src/surfaces/access';
+import { surfaceHandoverOf, type SurfaceHandover } from '../src/surfaces/handover';
 
 const MAX_LADDER_PATHS = 3;
 const MAX_PROBE_ATTEMPTS = 12;
@@ -1300,7 +1301,8 @@ export const recordProbeRetry = internalMutation({
  *
  * A failed manager lookup never descends either: the route answered, and the
  * person it looked up is what changed. The failure is recorded on the same
- * rung, and changing the manager (`agents.setBossEmail`) re-probes it (Q6).
+ * rung, and Make it you (`agents.adoptManagerAddress`) re-probes it (Q6); a handover cuts the
+ * card for the new manager to connect again.
  */
 export const demoteAfterProbeFailure = internalMutation({
   args: {
@@ -2480,3 +2482,320 @@ export const reorient = action({
     });
   },
 });
+
+// ---------- The handover's cut (transfer plan 6.3; D5 (a), A25) ----------
+
+/**
+ * The credentials surfaces bind: each connection credential and each Slack app's client secret.
+ *
+ * @param surfaces - Surface rows, of one employee or of several.
+ */
+export function credentialsBoundBy(
+  surfaces: readonly Pick<Doc<'surfaces'>, 'credentialId' | 'provisioning'>[],
+): Set<Id<'credentials'>> {
+  const bound = new Set<Id<'credentials'>>();
+  for (const surface of surfaces) {
+    if (surface.credentialId) bound.add(surface.credentialId);
+    if (surface.provisioning) bound.add(surface.provisioning.clientSecretCredentialId);
+  }
+  return bound;
+}
+
+/** Why a cut card is back in `proposed`, on the card. */
+export const HANDOVER_CUT_REASON =
+  'Handed over to a new manager: approve this connection, then land a credential of your own.';
+
+/**
+ * Where the card tells the new manager the credential is, in place of the old owner's documented
+ * one: its label, page and finding are the old owner's documentation.
+ */
+export const HANDOVER_CREDENTIAL_LOCATION =
+  "Land a credential of your own: the previous manager's was not handed over.";
+
+/** The most surfaces one employee's handover reads, the card's own bound. */
+const HANDOVER_SURFACE_LIMIT = CARD_SURFACE_LIMIT;
+
+/**
+ * Every surface of an employee with what a handover would do to it, each decided with the
+ * credential rows it binds.
+ *
+ * @param db - The move's or its preview's reader.
+ * @param agentId - The employee.
+ * @throws ConvexError, in words the acceptance dialog shows, when the employee has more surfaces
+ *   than a handover reads.
+ */
+export async function surfaceHandoversOf(
+  db: QueryCtx['db'],
+  agentId: Id<'agents'>,
+): Promise<{ surface: Doc<'surfaces'>; handover: SurfaceHandover }[]> {
+  const surfaces = await db
+    .query('surfaces')
+    .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+    .take(HANDOVER_SURFACE_LIMIT + 1);
+  if (surfaces.length > HANDOVER_SURFACE_LIMIT) {
+    throw new ConvexError(
+      `This employee has more than ${HANDOVER_SURFACE_LIMIT} connections, more than one handover can move.`,
+    );
+  }
+  return await Promise.all(
+    surfaces.map(async (surface) => {
+      const rows = await Promise.all(
+        [...credentialsBoundBy([surface])].map(async (id) => await db.get(id)),
+      );
+      const bound = rows.filter((row): row is Doc<'credentials'> => row !== null);
+      return { surface, handover: surfaceHandoverOf(surface, bound) };
+    }),
+  );
+}
+
+/** The documentation source a quote or an evidence entry names, when it names one. */
+function namedSourceId(entry: unknown): string | undefined {
+  if (typeof entry !== 'object' || entry === null) return undefined;
+  const sourceId = (entry as { sourceId?: unknown }).sourceId;
+  return typeof sourceId === 'string' ? sourceId : undefined;
+}
+
+/**
+ * Every documentation source the quotes on these surfaces name: their evidence, their route
+ * evidence, their intake scope and their drafted request.
+ */
+function quotedSourceIds(surfaces: readonly Doc<'surfaces'>[]): Set<string> {
+  const named = new Set<string>();
+  const add = (entry: unknown): void => {
+    const sourceId = namedSourceId(entry);
+    if (sourceId !== undefined) named.add(sourceId);
+  };
+  for (const surface of surfaces) {
+    for (const entry of surface.discoveryEvidence ?? []) add(entry);
+    for (const entry of surface.whereFound) add(entry);
+    const scope = surface.intakeScope;
+    if (scope) {
+      for (const entry of [
+        scope.team,
+        scope.project,
+        ...(scope.projects ?? []),
+        ...(scope.channels ?? []),
+      ]) {
+        add(entry);
+      }
+    }
+    const evidence: unknown = (surface.request as { evidence?: unknown } | undefined)?.evidence;
+    if (Array.isArray(evidence)) for (const entry of evidence) add(entry);
+  }
+  return named;
+}
+
+/**
+ * A surface's quotes with every one of a documentation source the new owner does not hold left
+ * out (the transfer plan, section 6.3): its documentation evidence, the documentation entries of
+ * its route evidence and of its drafted request, and the intake scope values documentation
+ * stated. The charter's evidence and the manager's own scope values stay. The request's
+ * credential finding names the old owner's documented credential, so it becomes the new
+ * manager's to land.
+ *
+ * @param surface - The surface before the move.
+ * @param readable - The quoted sources the new owner holds.
+ */
+function withoutDepartedQuotes(
+  surface: Doc<'surfaces'>,
+  readable: ReadonlySet<string>,
+): Pick<Doc<'surfaces'>, 'discoveryEvidence' | 'whereFound' | 'intakeScope' | 'request'> {
+  const kept = (entry: unknown): boolean => {
+    const sourceId = namedSourceId(entry);
+    return sourceId === undefined || readable.has(sourceId);
+  };
+  const evidence = (surface.discoveryEvidence ?? []).filter(
+    (entry) =>
+      entry.kind === 'charter' || (entry.sourceId !== undefined && readable.has(entry.sourceId)),
+  );
+  const scope = surface.intakeScope;
+  return {
+    discoveryEvidence: evidence.length > 0 ? evidence : undefined,
+    whereFound: surface.whereFound.filter(kept),
+    intakeScope: scope && {
+      ...(scope.team && kept(scope.team) ? { team: scope.team } : {}),
+      ...(scope.project && kept(scope.project) ? { project: scope.project } : {}),
+      ...(scope.projects ? { projects: scope.projects.filter(kept) } : {}),
+      ...(scope.channels ? { channels: scope.channels.filter(kept) } : {}),
+      ...(scope.notes ? { notes: scope.notes } : {}),
+    },
+    request: requestWithoutDepartedQuotes(surface.request, kept),
+  };
+}
+
+/**
+ * A drafted request with the old owner's documentation left out: its evidence filtered, and its
+ * credential finding replaced by the new manager's own landing.
+ *
+ * @param request - The surface's request, as orientation drafted it.
+ * @param kept - Whether an evidence entry stays.
+ */
+function requestWithoutDepartedQuotes(
+  request: unknown,
+  kept: (entry: unknown) => boolean,
+): unknown {
+  if (typeof request !== 'object' || request === null) return request;
+  const { evidence, credential, ...rest } = request as Record<string, unknown>;
+  const method =
+    typeof credential === 'object' && credential !== null
+      ? (credential as { method?: unknown }).method
+      : undefined;
+  return {
+    ...rest,
+    ...(Array.isArray(evidence) ? { evidence: evidence.filter(kept) } : {}),
+    ...(credential === undefined
+      ? {}
+      : {
+          credential: {
+            ...(method === undefined ? {} : { method }),
+            found: 'location',
+            location: HANDOVER_CREDENTIAL_LOCATION,
+          },
+        }),
+  };
+}
+
+/**
+ * The fields a cut clears: the credential, the provider's identities, the old manager's chat
+ * binding and decision poll, the approval with the tools and the access clock it set, and any
+ * probe in flight with its generation. The route the card proposes (path, endpoint, ladder and
+ * request) stays, for the new manager to approve.
+ *
+ * @param surface - The surface before the cut.
+ */
+function cutPatch(surface: Doc<'surfaces'>): Partial<Doc<'surfaces'>> {
+  return {
+    verdict: 'proposed',
+    reason: HANDOVER_CUT_REASON,
+    probeGeneration: (surface.probeGeneration ?? 0) + 1,
+    probeStartedAt: undefined,
+    managerApprovedAt: undefined,
+    credentialId: undefined,
+    credentialKind: undefined,
+    credentialLocation: undefined,
+    credentialLanded: false,
+    providerIdentityId: undefined,
+    providerBotId: undefined,
+    providerWorkspaceId: undefined,
+    managerDmChannelId: undefined,
+    managerUserId: undefined,
+    managerName: undefined,
+    lastDecisionPolledAt: undefined,
+    lastDecisionError: undefined,
+    toolAllowlist: undefined,
+    withheldTools: undefined,
+    approvedToolAllowlist: undefined,
+    toolAllowlistApprovedAt: undefined,
+    toolArguments: undefined,
+    // The dedicated app stays in the old owner's workspace, which only its administrator can
+    // change; this deployment forgets it, so the new manager's approval provisions afresh.
+    provisioning: undefined,
+    channelsNotJoined: undefined,
+    intakeSkipReason: undefined,
+    lastVerifiedAt: undefined,
+    expiresAt: undefined,
+    accessSetBy: undefined,
+  };
+}
+
+/**
+ * Revoke the read grant a connection gave (`recordConnected`'s `<slug>:read`, source `surface`,
+ * or no source on a row from before sources), so the scope comes back when the new manager's
+ * connection lands. No `permission.revoked` event: that event is the manager's own revoke; the
+ * handover's record names the scopes (`manager.transferred`).
+ *
+ * @returns The scope, when an active grant was revoked.
+ */
+async function revokeConnectionGrant(
+  ctx: MutationCtx,
+  surface: Doc<'surfaces'>,
+  now: number,
+): Promise<string | undefined> {
+  const scope = `${surface.slug}:read`;
+  const grants = await ctx.db
+    .query('permissionGrants')
+    .withIndex('by_agent_scope', (q) => q.eq('agentId', surface.agentId).eq('scope', scope))
+    .collect();
+  const active = grants.filter(
+    (grant) =>
+      grant.revokedAt === undefined && (grant.source === 'surface' || grant.source === undefined),
+  );
+  await Promise.all(active.map(async (grant) => await ctx.db.patch(grant._id, { revokedAt: now })));
+  return active.length > 0 ? scope : undefined;
+}
+
+/** One surface a handover cut, as it stood before the cut. */
+export interface CutSurface {
+  readonly surfaceId: Id<'surfaces'>;
+  readonly slug: string;
+  readonly displayName: string;
+  /** The credentials it bound, which the move sorts by the retire's rule. */
+  readonly boundCredentials: readonly Id<'credentials'>[];
+}
+
+/** What {@link handOverSurfaces} did. */
+export interface HandedOverSurfaces {
+  readonly cut: readonly CutSurface[];
+  /** The read scopes the cut connections had granted, revoked with them. */
+  readonly scopesRevoked: readonly string[];
+}
+
+/**
+ * Cut the employee's surfaces at a handover, in the move's transaction (the transfer plan,
+ * section 6.3): each surface {@link surfaceHandoverOf} cuts goes back to `proposed` with the old
+ * manager's credential, chat binding and approval cleared, its connection's read grant revoked
+ * and a `surface.proposed` event, so the new manager's inbox asks for it; every surface loses the
+ * quotes of documentation the new owner does not hold. The credentials themselves, and the
+ * pending jobs naming a cut surface, are the caller's: it sorts the first by the retire's rule
+ * and cancels the second (`convex/reset.ts`), which this module cannot import.
+ *
+ * @param ctx - The move's mutation context.
+ * @param input - The employee, the new owner's key, and the move's time.
+ * @returns The cut surfaces with the credentials they bound, and the scopes revoked.
+ */
+export async function handOverSurfaces(
+  ctx: MutationCtx,
+  input: { readonly agentId: Id<'agents'>; readonly toOwnerKey: string; readonly now: number },
+): Promise<HandedOverSurfaces> {
+  const planned = await surfaceHandoversOf(ctx.db, input.agentId);
+  const quoted = [...quotedSourceIds(planned.map(({ surface }) => surface))];
+  const readable = new Set<string>();
+  for (const sourceId of quoted) {
+    const id = ctx.db.normalizeId('docSources', sourceId);
+    const source = id === null ? null : await ctx.db.get(id);
+    if (source?.userId === input.toOwnerKey) readable.add(sourceId);
+  }
+  const cut: CutSurface[] = [];
+  const scopesRevoked: string[] = [];
+  for (const { surface, handover } of planned) {
+    const quotes = withoutDepartedQuotes(surface, readable);
+    switch (handover) {
+      case 'carry':
+        await ctx.db.patch(surface._id, quotes);
+        break;
+      case 'cut': {
+        await ctx.db.patch(surface._id, { ...cutPatch(surface), ...quotes });
+        const scope = await revokeConnectionGrant(ctx, surface, input.now);
+        if (scope !== undefined) scopesRevoked.push(scope);
+        await appendEvent(ctx, {
+          agentId: surface.agentId,
+          type: 'surface.proposed',
+          payload: { surfaceId: surface._id, ...(surface.path ? { path: surface.path } : {}) },
+          createdAt: input.now,
+        });
+        cut.push({
+          surfaceId: surface._id,
+          slug: surface.slug,
+          displayName: surface.displayName,
+          boundCredentials: [...credentialsBoundBy([surface])],
+        });
+        break;
+      }
+      default: {
+        const unknown: never = handover;
+        throw new Error(`unhandled surface handover ${String(unknown)}`);
+      }
+    }
+  }
+  return { cut, scopesRevoked };
+}

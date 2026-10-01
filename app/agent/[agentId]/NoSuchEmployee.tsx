@@ -4,7 +4,7 @@ import { useEffect, useRef, type ReactNode } from 'react';
 import { Button, ButtonLink } from '../../components/Button';
 
 /** The words of the one way back from every page-wide answer about a missing employee. */
-const BACK = 'Back to your employees';
+export const BACK = 'Back to your employees';
 
 /**
  * The frame every page-wide answer about a missing employee is drawn in: its heading, what
@@ -13,7 +13,7 @@ const BACK = 'Back to your employees';
  * @param focus - Take focus on mount: the page changed under the manager, so the heading says
  *   where they are now.
  */
-function Answer({
+export function Answer({
   title,
   focus = false,
   children,

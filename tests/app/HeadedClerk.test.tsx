@@ -23,7 +23,7 @@ vi.mock('@clerk/nextjs', () => ({
 }));
 
 import { HeadedSignIn, HeadedSignUp, StepHeading } from '../../app/HeadedClerk';
-import { clerkAppearance, headedClerkAppearance } from '../../app/clerk-appearance';
+import { clerkSignInAppearance, headedClerkAppearance } from '../../app/clerk-appearance';
 
 /** The appearance Clerk was last handed. */
 const lastAppearance = (): unknown => clerk.drawn.at(-1)?.appearance;
@@ -88,7 +88,7 @@ describe('a Clerk widget under a page heading', (): void => {
       window.history.pushState(null, '', '/sign-in/factor-one');
       navigation.dispatchEvent(new Event('currententrychange'));
     });
-    expect(lastAppearance()).toBe(clerkAppearance);
+    expect(lastAppearance()).toBe(clerkSignInAppearance);
 
     // Back to the first step, as the browser's back button takes it and tells the Navigation API.
     await act(async () => {
@@ -102,13 +102,13 @@ describe('a Clerk widget under a page heading', (): void => {
   it('keeps the header on the verification step of sign-up', async (): Promise<void> => {
     installNavigation();
     const unmount = await mount('sign-up', '/sign-up/verify-email-address');
-    expect(lastAppearance()).toBe(clerkAppearance);
+    expect(lastAppearance()).toBe(clerkSignInAppearance);
     unmount();
   });
 
   it('keeps every title where the browser cannot say when Clerk changes step', async (): Promise<void> => {
     const unmount = await mount('sign-in', '/sign-in');
-    expect(lastAppearance()).toBe(clerkAppearance);
+    expect(lastAppearance()).toBe(clerkSignInAppearance);
     unmount();
   });
 
@@ -172,7 +172,7 @@ describe("the page's heading over a Clerk widget", (): void => {
     });
     expect(pageHeading(host)?.tagName).toBe('P');
     expect(host.querySelectorAll('h1')).toHaveLength(0);
-    expect(lastAppearance()).toBe(clerkAppearance);
+    expect(lastAppearance()).toBe(clerkSignInAppearance);
 
     await act(async () => {
       window.history.replaceState(null, '', '/sign-in');
@@ -185,7 +185,7 @@ describe("the page's heading over a Clerk widget", (): void => {
   it("is a paragraph where the browser cannot say when Clerk changes step, since Clerk's title stays", async (): Promise<void> => {
     const { host, unmount } = await mountPage('/sign-in');
     expect(pageHeading(host)?.tagName).toBe('P');
-    expect(lastAppearance()).toBe(clerkAppearance);
+    expect(lastAppearance()).toBe(clerkSignInAppearance);
     unmount();
   });
 

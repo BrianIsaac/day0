@@ -218,13 +218,14 @@ export function presentSurfaceCredential(
   const governanceFinding = input.credential?.governanceFinding;
   const lookupFailure = isManagerLookupFailure(input.reason) ? input.reason : undefined;
   if (input.verdict === 'ungranted' && input.credentialId && lookupFailure !== undefined) {
-    // The credential works; a new one would fail the same way (U9 step 18).
+    // The credential works; a new one would fail the same way (U9 step 18). With the free edit
+    // gone the address is the owner's; People hands the employee over or makes it the owner's.
     return {
       canLand: false,
       kind: 'masked',
       label: input.summary?.label,
       governanceFinding,
-      text: `The credential works, but the manager could not be found: ${lookupFailure.replace(/\.$/, '')}. Change the manager on this employee’s page, then probe again.`,
+      text: `The credential works, but the manager could not be found: ${lookupFailure.replace(/\.$/, '')}. The manager’s address must be one this workspace knows: choose on this employee’s People tab, then probe again.`,
     };
   }
   if (input.verdict === 'ungranted' && input.credentialId) {

@@ -560,6 +560,7 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
       'charters:latest': approved,
       'config:surfaceMode': { mode: 'mock' },
       'work:needsYouForAgent': { entries: [], total: 0 },
+      'managerTransfers:openForAgent': null,
       'reset:retirePreview': {
         mode: 'mock',
         rowCounts: { events: 3 },
@@ -643,6 +644,38 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     view.unmount();
   });
 
+  it('shows People on day zero when the employee reports to someone else, so the flag’s choice can be made (M6)', async (): Promise<void> => {
+    backend.queries = {
+      'agents:get': row('deployed', { bossEmail: 'ana@elsewhere.example' }),
+      'charters:latest': null,
+      'agents:managerStanding': { standing: 'other', bossEmail: 'ana@elsewhere.example' },
+    };
+    route.segment = 'people';
+    const view = mount(page(<p>the people page</p>));
+    await settle();
+    expect(view.container.textContent).toContain('the people page');
+    expect(view.container.querySelector('[role="tablist"]')).toBeNull();
+    expect(view.container.querySelector('a[href="/agent/agent-1"]')?.textContent).toBe(
+      'Back to the one-to-one',
+    );
+    view.unmount();
+  });
+
+  it('keeps People behind the one-to-one on day zero when the employee reports to the manager', async (): Promise<void> => {
+    backend.queries = {
+      'agents:get': row('deployed'),
+      'charters:latest': null,
+      'voice:latest': null,
+      'agents:managerStanding': { standing: 'you' },
+    };
+    route.segment = 'people';
+    const view = mount(page(<p>the people page</p>));
+    await settle();
+    expect(view.container.textContent).not.toContain('the people page');
+    expect(view.container.textContent).toContain('Day-1 one-to-one: voice or chat?');
+    view.unmount();
+  });
+
   it('reaches Manage from day zero by a visible link naming the employee (walk M3)', async (): Promise<void> => {
     for (const state of ['deployed', 'day-one-in-progress'] as const) {
       backend.queries = { 'agents:get': row(state), 'charters:latest': null };
@@ -662,6 +695,7 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
       'charters:latest': null,
       'config:surfaceMode': { mode: 'mock' },
       'work:needsYouForAgent': { entries: [], total: 0 },
+      'managerTransfers:openForAgent': null,
       'reset:retirePreview': {
         mode: 'mock',
         rowCounts: { voiceSessions: 1, events: 2 },

@@ -89,6 +89,9 @@ const WAITING_NOUNS: Readonly<Record<InboxItem['kind'], readonly [one: string, m
   parked: ['parked item', 'parked items'],
   stopped: ['stopped run', 'stopped runs'],
   surface: ['connection to approve', 'connections to approve'],
+  // No employee's own inbox holds one (`work.needsYouForAgent` keeps the other eight); the map
+  // is exhaustive over the kinds.
+  transfer: ['employee to take on', 'employees to take on'],
 };
 
 /**

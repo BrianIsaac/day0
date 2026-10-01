@@ -19,6 +19,7 @@ import {
 } from '../src/work/queue-order';
 
 import { appendEvent, eventsOfType } from './eventLog';
+import { isBeingHandedOver } from './transferInFlight';
 import type { EventType } from '../src/events/contract';
 
 /**
@@ -627,6 +628,12 @@ async function resumeDraft(ctx: MutationCtx, row: Doc<'workItems'>, now: number)
  * an evaluation that died once its lease has passed and recovers a wake-up
  * lost with a step that died after freeing the slot.
  *
+ * An employee whose handover is finishing (`accepting`, decision D18) has
+ * nothing resumed: no draft, no approved plan, no decision request and no
+ * evaluation starts for it, since the new manager decides once it moves. Its
+ * stalled runs are still stopped, which ends them for the move sooner than
+ * the handover's deadline would.
+ *
  * Args:
  *   ctx: Mutation context.
  *   now: The instant to judge claims against.
@@ -641,6 +648,7 @@ export async function resumeStalledStepsInTransaction(
   if (SURFACE_MODE !== 'real') return { rescheduled: 0 };
   let rescheduled = 0;
   for (const agent of await ctx.db.query('agents').collect()) {
+    const resumes = !(await isBeingHandedOver(ctx.db, agent._id));
     const ready = async (
       state: 'claimed' | 'plan-approved' | 'plan-pending' | 'executing' | 'actions-pending',
       eligible: (row: Doc<'workItems'>) => boolean | Promise<boolean>,
@@ -655,19 +663,22 @@ export async function resumeStalledStepsInTransaction(
       }
       return rows;
     };
-    for (const row of await ready(
+    // A finishing handover's employee has its stalled runs stopped and nothing resumed.
+    const resumable: typeof ready = async (state, eligible) =>
+      resumes ? await ready(state, eligible) : [];
+    for (const row of await resumable(
       'claimed',
       (row) => row.plan === undefined && !holdsLiveStepClaim(row, 'draft', now),
     )) {
       if (await resumeDraft(ctx, row, now)) rescheduled += 1;
     }
-    for (const row of await ready('plan-approved', () => true)) {
+    for (const row of await resumable('plan-approved', () => true)) {
       await ctx.scheduler.runAfter(0, internal.workActions.executeApprovedPlanInternal, {
         workItemId: row._id,
       });
       rescheduled += 1;
     }
-    for (const row of await ready(
+    for (const row of await resumable(
       'plan-pending',
       (row) =>
         !row.decision &&
@@ -724,7 +735,7 @@ export async function resumeStalledStepsInTransaction(
         .collect()
     ).some(isManagerChannel);
     if (channel) {
-      for (const row of await ready('actions-pending', async (row) => {
+      for (const row of await resumable('actions-pending', async (row) => {
         if (row.decision || row.approvedIndexes !== undefined || !row.pendingRunId) return false;
         // A set with nothing held has nothing to ask about; the request would
         // refuse it and the next sweep would ask again.
@@ -743,7 +754,7 @@ export async function resumeStalledStepsInTransaction(
         rescheduled += 1;
       }
     }
-    rescheduled += await evaluateNext(ctx, agent._id, now);
+    if (resumes) rescheduled += await evaluateNext(ctx, agent._id, now);
   }
   return { rescheduled };
 }

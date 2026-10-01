@@ -73,6 +73,10 @@ describe('the quick-start commands', (): void => {
     expect(SETUP_PAGE_URL.endsWith('/setup')).toBe(true);
   });
 
+  it('send a reader to the guide on the hosted demo’s own domain', (): void => {
+    expect(SETUP_PAGE_URL).toBe('https://dayzer0.dev/setup');
+  });
+
   it('render as one fenced bash block, which is what a README carries', (): void => {
     expect(QUICKSTART_BLOCK).toBe(['```bash', ...QUICKSTART_COMMANDS, '```'].join('\n'));
   });
@@ -121,9 +125,42 @@ describe('the README quick starts', (): void => {
   });
 
   it('sends a reader on to the page and to the hand-run sections', (): void => {
-    expect(README).toContain(SETUP_PAGE_URL);
+    const link = `[**Set up Day0**](${SETUP_PAGE_URL})`;
+    expect(README.slice(0, chineseAt)).toContain(link);
+    expect(README.slice(chineseAt)).toContain(link);
     const quickStart = README.slice(README.indexOf('\n## Quick start\n'), blockOffsets[0] + 2000);
     expect(quickStart).toContain('#local-dev');
+  });
+});
+
+/**
+ * The hosted demo's address, which the setup guide is served from. The README
+ * names it in the badge, the live demo link, the hosted paragraphs and the
+ * walkthrough links, in both halves; the address moved on 1 October 2026.
+ */
+describe('the hosted demo address the README gives', (): void => {
+  const { origin, host } = new URL(SETUP_PAGE_URL);
+  const chineseAt = README.indexOf(CHINESE_HEADING);
+  const halves = { english: README.slice(0, chineseAt), chinese: README.slice(chineseAt) };
+
+  it('labels and links the badge and the live demo link with it', (): void => {
+    expect(README).toContain(
+      `[![Live demo](https://img.shields.io/badge/Live%20demo-${host}-2ea043)](${origin})`,
+    );
+    expect(README).toContain(`[**Live demo**](${origin})`);
+  });
+
+  it('links the sign-in and the walkthrough by it, in both halves', (): void => {
+    for (const [name, half] of Object.entries(halves)) {
+      expect(half, name).toContain(`[\`${host}\`](${origin})`);
+      expect(half, name).toContain(`[${host}](${origin})`);
+      expect(half, name).toContain(`[/walkthrough](${origin}/walkthrough)`);
+      expect(half, name).toContain(`[\`/walkthrough\`](${origin}/walkthrough)`);
+    }
+  });
+
+  it('sends no reader to a Vercel alias of the project in its place', (): void => {
+    expect(README).not.toMatch(/\bday0[\w.-]*\.vercel\.app/);
   });
 });
 

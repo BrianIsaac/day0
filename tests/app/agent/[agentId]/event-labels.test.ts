@@ -19,6 +19,35 @@ describe('the live feed labels', (): void => {
     }
   });
 
+  it('labels each step of a handover request by the address it names', (): void => {
+    const request = {
+      transferId: 't1',
+      fromAddress: 'sam@co.example',
+      toAddress: 'priya@co.example',
+    };
+    expect([
+      eventLabel({ type: 'manager.transfer-asked', payload: { ...request, hasNote: false } }),
+      eventLabel({ type: 'manager.transfer-cancelled', payload: { ...request, reason: 'owner' } }),
+      eventLabel({
+        type: 'manager.transfer-cancelled',
+        payload: { ...request, reason: 'retired' },
+      }),
+      eventLabel({
+        type: 'manager.transfer-cancelled',
+        payload: { ...request, reason: 'address-changed' },
+      }),
+      eventLabel({ type: 'manager.transfer-declined', payload: { ...request, hasReason: true } }),
+      eventLabel({ type: 'manager.transfer-expired', payload: request }),
+    ]).toEqual([
+      'handover to priya@co.example asked',
+      'handover to priya@co.example cancelled',
+      'handover to priya@co.example cancelled at the retire',
+      'handover to priya@co.example cancelled for another address',
+      'priya@co.example declined the handover',
+      'handover to priya@co.example expired',
+    ]);
+  });
+
   it('says why each held plan waits, by its reason', (): void => {
     const held = (payload: Record<string, unknown>): string =>
       eventLabel({ type: 'work.plan-held', payload: { workItemId: 'w1', ...payload } });
@@ -34,6 +63,9 @@ describe('the live feed labels', (): void => {
     expect(
       held({ reason: 'drafted-without-record', surfaceSlug: 'linear', cause: 'not-connected' }),
     ).toBe('plan held for you: it was drafted without reading its ticket or thread');
+    expect(held({ reason: 'approved-by-predecessor' })).toBe(
+      'plan held for you: approved by your predecessor; approve it again',
+    );
     expect(held({ reason: 'a reason from a later build' })).toBe(
       'plan held for you: it waits for your decision',
     );
@@ -84,6 +116,31 @@ describe('the live feed labels', (): void => {
       'charter question answered with a plan approval, charter amended',
       'skipped (out of scope)',
     ]);
+  });
+
+  it('labels the adoption of the owner’s own address apart from a change on the dashboard (D17)', (): void => {
+    expect(
+      eventLabel({
+        type: 'manager.changed',
+        payload: { via: 'adopted', bossEmail: 'lead@kestrel.example' },
+      }),
+    ).toBe('the owner made themselves the manager (lead@kestrel.example)');
+    expect(eventLabel({ type: 'manager.changed', payload: { via: 'adopted' } })).toBe(
+      'the owner made themselves the manager',
+    );
+  });
+
+  it('labels a handover with both managers and the connections it cut', (): void => {
+    expect(
+      eventLabel({
+        type: 'manager.transferred',
+        payload: {
+          fromAddress: 'sam@revops.example',
+          toAddress: 'ana@kestrel.example',
+          surfacesCut: ['linear'],
+        },
+      }),
+    ).toBe('handed over from sam@revops.example to ana@kestrel.example, 1 connection cut');
   });
 
   it('labels the two types the schema step added, and the access clock', (): void => {
@@ -255,6 +312,13 @@ describe('what a record line says an event did', (): void => {
     for (const type of eventTypesIn('refused')) {
       expect(['refused', 'withheld'], type).toContain(recordKindOf({ type }));
     }
+  });
+
+  it('draws a declined handover as refused, a cancelled or expired one as set aside, and an ask as noted', (): void => {
+    expect(recordKindOf({ type: 'manager.transfer-declined' })).toBe('refused');
+    expect(recordKindOf({ type: 'manager.transfer-cancelled' })).toBe('withheld');
+    expect(recordKindOf({ type: 'manager.transfer-expired' })).toBe('withheld');
+    expect(recordKindOf({ type: 'manager.transfer-asked' })).toBe('noted');
   });
 
   it('notes a failed run and a past draft rather than calling them refused or still held', (): void => {

@@ -5,11 +5,20 @@ import { mutation, query, type DatabaseReader, type MutationCtx } from './_gener
 import { assertOwnsAgent, getCallerOrThrow, ownedAgentOrNull } from './ownership';
 import { deleteOwnedDocumentation } from './docSources';
 import { purgeCredential, purgeOwnedCredentials } from './credentials';
+import { cancelTransferInTransaction } from './managerTransfers';
+import { credentialsBoundBy } from './surfaces';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { appendEvent } from './eventLog';
 import { ownerRetirements, type RetiredClaim, type RetiredRejection } from './retirements';
 import { internal } from './_generated/api';
 import { landedWritesOf } from '../src/work/landed-writes';
+import { providerReconciliationEntries } from '../src/work/reconciliation';
+import {
+  OPEN_MANAGER_TRANSFER_STATES,
+  TRANSFER_SETTLE_MS,
+  canMoveTransfer,
+  isTransferDue,
+} from '../src/agent/manager-transfer';
 
 /**
  * Every table whose rows belong to one agent through an `agentId` field.
@@ -45,9 +54,10 @@ export const AGENT_KEYED_TABLES = [
 
 /**
  * The tables that name an agent through `agentId` and outlive it: the record
- * a real-mode retire leaves. No reset deletes their rows.
+ * a real-mode retire leaves, and the handover requests that name an employee.
+ * No reset deletes their rows.
  */
-export const RETIRE_RECORD_TABLES = ['retirements'] as const;
+export const RETIRE_RECORD_TABLES = ['retirements', 'managerTransfers'] as const;
 
 /** A table whose rows belong to one employee and go with it. */
 export type AgentKeyedTable = (typeof AGENT_KEYED_TABLES)[number];
@@ -261,13 +271,13 @@ async function employeeRows(
 
 /**
  * One employee's work items, every one or the first `limit`: the rows the retire's claims, its
- * boundaries and the tables keyed by item are all read from.
+ * boundaries and the tables keyed by item are all read from, and a handover's too.
  *
  * @param db - Any database reader.
  * @param agentId - The employee.
  * @param limit - The most items read.
  */
-async function employeeWorkItems(
+export async function employeeWorkItems(
   db: DatabaseReader,
   agentId: Id<'agents'>,
   limit?: number,
@@ -295,13 +305,19 @@ const WRITING_HOLDER_STATES: ReadonlySet<Doc<'workItems'>['state']> = new Set([
 ]);
 
 /**
- * Whether a retiring employee's item may have written its provider item.
+ * Whether a leaving employee's item may have written its provider item: it is writing or wrote,
+ * or it failed with a landed write, or with a write whose outcome is unknown (an apply stopped
+ * part way, by the dead-man switch or a handover's deadline), which may have landed.
  *
  * @param item - The holding work item.
  */
 function mayHaveWritten(item: Doc<'workItems'>): boolean {
   if (WRITING_HOLDER_STATES.has(item.state)) return true;
-  return item.state === 'failed' && landedWritesOf(item.output).length > 0;
+  if (item.state !== 'failed') return false;
+  return (
+    landedWritesOf(item.output).length > 0 ||
+    providerReconciliationEntries(item.output).some((entry) => entry.outcome === 'outcome-unknown')
+  );
 }
 
 /** The longest item title a kept claim carries, for the holder's name in a refusal. */
@@ -313,15 +329,23 @@ const RETIRED_TITLE_LENGTH = 200;
  */
 const RETIRED_BOUNDARY_LIMIT = 2_000;
 
-/** What a single employee's retire keeps binding its colleagues, and the claims it lets go. */
-interface Boundaries {
+/**
+ * What a single employee leaving its owner keeps binding its colleagues, and the claims it lets
+ * go: by a retire, or by a handover to another manager (decision D11).
+ */
+export interface Boundaries {
   readonly claims: RetiredClaim[];
   readonly rejections: RetiredRejection[];
   readonly released: Id<'externalClaims'>[];
+  /** Every live claim the employee's items hold, as read, so a handover decides each in one pass. */
+  readonly live: Doc<'externalClaims'>[];
 }
 
-/** A whole-owner retire keeps nothing binding: every employee the boundaries protected is gone too. */
-const NO_BOUNDARIES: Boundaries = { claims: [], rejections: [], released: [] };
+/**
+ * Nothing kept binding: a whole-owner retire, whose every employee the boundaries protected is
+ * gone too, and any mock-mode departure.
+ */
+export const NO_BOUNDARIES: Boundaries = { claims: [], rejections: [], released: [], live: [] };
 
 /** What one employee's retire deleted and revoked, for its tombstone. */
 interface Retired {
@@ -341,32 +365,19 @@ interface Retired {
 const SCHEDULED_JOB_SCAN_LIMIT = 4_000;
 
 /**
- * The credentials one employee's surfaces bind: the connection credential and
- * a Slack app's client secret.
+ * The claims and rejections a leaving employee's colleagues must still meet,
+ * read before its rows are deleted or it moves to another owner: a live claim
+ * on an item it may already have written is kept, any other is let go, and
+ * every rejection of its plan or held actions is kept by the item's names
+ * (decision N3's sibling hold).
  *
- * @param surfaces - The employee's surface rows.
+ * @param db - The retire's, the handover's or a preview's reader.
+ * @param items - The employee's work items: every one for the retire and the handover, the first
+ *   few for a preview.
+ * @param now - When it leaves, the settle time of a write-target claim it keeps.
+ * @returns What its retirement or departure keeps, and the claims to release.
  */
-function credentialsBoundBy(surfaces: readonly Doc<'surfaces'>[]): Set<Id<'credentials'>> {
-  const bound = new Set<Id<'credentials'>>();
-  for (const surface of surfaces) {
-    if (surface.credentialId) bound.add(surface.credentialId);
-    if (surface.provisioning) bound.add(surface.provisioning.clientSecretCredentialId);
-  }
-  return bound;
-}
-
-/**
- * The claims and rejections a retiring employee's colleagues must still meet,
- * read before its rows are deleted: a live claim on an item it may already
- * have written is kept, any other is let go, and every rejection of its plan
- * or held actions is kept by the item's names (decision N3's sibling hold).
- *
- * @param db - The retire's or its preview's reader.
- * @param items - The employee's work items: every one for the retire, the first few for the preview.
- * @param now - When the retire happens, the settle time of a write-target claim it keeps.
- * @returns What its retirement keeps, and the claims to release.
- */
-async function boundariesOf(
+export async function boundariesOf(
   db: DatabaseReader,
   items: readonly Doc<'workItems'>[],
   now: number,
@@ -374,6 +385,7 @@ async function boundariesOf(
   const claims: RetiredClaim[] = [];
   const rejections: RetiredRejection[] = [];
   const released: Id<'externalClaims'>[] = [];
+  const held: Doc<'externalClaims'>[] = [];
   for (const item of items) {
     const keys = [item.externalClaimKey, item.externalClaimAlias].filter(
       (key): key is string => key !== undefined,
@@ -387,6 +399,7 @@ async function boundariesOf(
       .withIndex('by_work_item', (q) => q.eq('workItemId', item._id))
       .filter((q) => q.eq(q.field('releasedAt'), undefined))
       .collect();
+    held.push(...live);
     for (const claim of live) {
       if (!mayHaveWritten(item)) {
         released.push(claim._id);
@@ -408,16 +421,16 @@ async function boundariesOf(
       });
     }
   }
-  return { claims, rejections, released };
+  return { claims, rejections, released, live: held };
 }
 
 /**
- * Refuse a retire whose boundaries one retirement row cannot keep.
+ * Refuse a retire or a handover whose boundaries one retirement row cannot keep.
  *
- * @param boundaries - What the retire would keep.
+ * @param boundaries - What the retire or the handover would keep.
  * @throws ConvexError when there are more than `RETIRED_BOUNDARY_LIMIT` claims and rejections.
  */
-function assertKeepable(boundaries: Boundaries): void {
+export function assertKeepable(boundaries: Boundaries): void {
   const { claims, rejections } = boundaries;
   if (claims.length + rejections.length <= RETIRED_BOUNDARY_LIMIT) return;
   throw new ConvexError(
@@ -427,15 +440,15 @@ function assertKeepable(boundaries: Boundaries): void {
 
 /**
  * Wake what each released claim refused: a colleague's row skipped because
- * the retired employee held its item is evaluated again. Each colleague and
- * claim is its own scheduled pass, so a retire that releases many claims
- * never reads every colleague's parked rows in its own transaction.
+ * the leaving employee held its item is evaluated again. Each colleague and
+ * claim is its own scheduled pass, so a retire or a handover that releases
+ * many claims never reads every colleague's parked rows in its own transaction.
  *
- * @param ctx - The retire's mutation context.
- * @param userId - The owner.
- * @param released - The claims the retire let go.
+ * @param ctx - The retire's or the handover's mutation context.
+ * @param userId - The owner whose employees the claims refused.
+ * @param released - The claims let go.
  */
-async function wakeReleasedClaims(
+export async function wakeReleasedClaims(
   ctx: MutationCtx,
   userId: string,
   released: readonly Id<'externalClaims'>[],
@@ -506,68 +519,82 @@ async function deleteEmployee(ctx: MutationCtx, agent: Doc<'agents'>): Promise<R
 }
 
 /**
- * Whether a scheduled job's arguments make it a retired employee's: they name
- * a row the reset deleted, and no surviving employee through `agentId` (a
- * colleague's wake keyed on a retired claim is still the colleague's).
+ * The rows a reset deleted or a handover cut, and the employees they were
+ * deleted or cut for: what makes a pending job one to cancel.
+ */
+export interface NamedRows {
+  /** Every row id the jobs to cancel may name: deleted rows, or a handover's cut surfaces. */
+  readonly ids: ReadonlySet<string>;
+  /**
+   * The employees the reset or the handover acts on. A job whose `agentId` names another
+   * employee is that employee's and stays, even when it names one of `ids` (a colleague's wake
+   * keyed on a retired claim is still the colleague's).
+   */
+  readonly employees: ReadonlySet<string>;
+}
+
+/**
+ * Whether a scheduled job's arguments make it one the reset or the handover
+ * ends: they name one of its rows, and no employee outside it through `agentId`.
  *
  * @param args - The job's arguments.
- * @param deletedIds - The ids the reset deleted.
+ * @param named - The rows and the employees acted on.
  */
-function namesDeletedRow(args: readonly unknown[], deletedIds: ReadonlySet<string>): boolean {
+function namesRow(args: readonly unknown[], named: NamedRows): boolean {
   return args.some((arg: unknown): boolean => {
     if (typeof arg !== 'object' || arg === null) return false;
     const fields = arg as Record<string, unknown>;
-    if (typeof fields.agentId === 'string' && !deletedIds.has(fields.agentId)) return false;
+    if (typeof fields.agentId === 'string' && !named.employees.has(fields.agentId)) return false;
     return Object.values(fields).some(
-      (value: unknown) => typeof value === 'string' && deletedIds.has(value),
+      (value: unknown) => typeof value === 'string' && named.ids.has(value),
     );
   });
 }
 
 /**
- * Cancel every pending job that is a retired employee's: an evaluation, a
- * draft, an apply's recovery, a probe or a note scheduled ahead of time for
- * it would otherwise run against nothing (P4-7).
+ * Cancel every pending job that names a row a reset deleted or a handover cut:
+ * an evaluation, a draft, an apply's recovery, a probe or a note scheduled
+ * ahead of time for a retired employee would otherwise run against nothing
+ * (P4-7), and a probe or a poll of a cut surface would act on a connection the
+ * new manager has not approved.
  *
- * @param ctx - The reset's mutation context.
- * @param deletedIds - The ids the reset deleted.
+ * @param ctx - The reset's or the handover's mutation context.
+ * @param named - The ids it deleted or cut, and the employees it acted on.
  * @returns How many jobs were cancelled.
  */
-async function cancelJobsFor(ctx: MutationCtx, deletedIds: ReadonlySet<string>): Promise<number> {
-  if (deletedIds.size === 0) return 0;
+export async function cancelJobsFor(ctx: MutationCtx, named: NamedRows): Promise<number> {
+  if (named.ids.size === 0) return 0;
   const recent = await ctx.db.system
     .query('_scheduled_functions')
     .order('desc')
     .take(SCHEDULED_JOB_SCAN_LIMIT);
-  const doomed = recent.filter(
-    (job) => job.state.kind === 'pending' && namesDeletedRow(job.args, deletedIds),
-  );
+  const doomed = recent.filter((job) => job.state.kind === 'pending' && namesRow(job.args, named));
   await Promise.all(doomed.map((job) => ctx.scheduler.cancel(job._id)));
   return doomed.length;
 }
 
 /**
- * Whether anything that outlives a retire still binds a credential: another
- * employee's surface, as its connection or as a Slack app's client secret, or
- * one of the owner's documentation sources (decision N1).
+ * Whether anything that outlives a retire or a handover still binds a credential: another
+ * employee's surface, as its connection or as a Slack app's client secret, or one of the owner's
+ * documentation sources (decision N1, and D5 (a) for a handover).
  *
- * @param db - The retire's or its preview's reader.
+ * @param db - The retire's, the handover's or a preview's reader.
  * @param userId - The owner.
- * @param credentialId - The credential a retiring employee binds.
- * @param retiring - The employees being retired, whose own surfaces do not count; after the
- *   retire has deleted them there are none to skip.
+ * @param credentialId - The credential a leaving employee binds.
+ * @param leaving - The employees being retired or handed over, whose own surfaces do not count;
+ *   after the retire has deleted them there are none to skip.
  */
-async function stillBound(
+export async function stillBound(
   db: DatabaseReader,
   userId: string,
   credentialId: Id<'credentials'>,
-  retiring: ReadonlySet<Id<'agents'>>,
+  leaving: ReadonlySet<Id<'agents'>>,
 ): Promise<boolean> {
   const connections = await db
     .query('surfaces')
     .withIndex('by_credentialId', (q) => q.eq('credentialId', credentialId))
     .collect();
-  if (connections.some((surface) => !retiring.has(surface.agentId))) return true;
+  if (connections.some((surface) => !leaving.has(surface.agentId))) return true;
   const sources = await db
     .query('docSources')
     .withIndex('by_user', (q) => q.eq('userId', userId))
@@ -578,7 +605,7 @@ async function stillBound(
     .withIndex('by_userId', (q) => q.eq('userId', userId))
     .collect();
   for (const employee of employees) {
-    if (retiring.has(employee._id)) continue;
+    if (leaving.has(employee._id)) continue;
     const surfaces = await db
       .query('surfaces')
       .withIndex('by_agent', (q) => q.eq('agentId', employee._id))
@@ -589,26 +616,27 @@ async function stillBound(
 }
 
 /**
- * Which of a retiring employee's credentials a retire would revoke and which it would keep for
- * what still binds them; a credential that is gone or not the owner's is in neither.
+ * Which of a leaving employee's credentials a retire or a handover would revoke and which it
+ * would keep for what still binds them; a credential that is gone or not the owner's is in
+ * neither.
  *
- * @param db - The retire's or its preview's reader.
+ * @param db - The retire's, the handover's or a preview's reader.
  * @param userId - The owner.
- * @param bound - The credentials the retiring employees bind.
- * @param retiring - The employees being retired.
+ * @param bound - The credentials the leaving employees bind.
+ * @param leaving - The employees being retired or handed over.
  */
-async function sortCredentials(
+export async function sortCredentials(
   db: DatabaseReader,
   userId: string,
   bound: ReadonlySet<Id<'credentials'>>,
-  retiring: ReadonlySet<Id<'agents'>>,
+  leaving: ReadonlySet<Id<'agents'>>,
 ): Promise<{ revoke: Doc<'credentials'>[]; kept: Set<Id<'credentials'>> }> {
   const revoke: Doc<'credentials'>[] = [];
   const kept = new Set<Id<'credentials'>>();
   for (const credentialId of bound) {
     const credential = await db.get(credentialId);
     if (!credential || credential.userId !== userId) continue;
-    if (await stillBound(db, userId, credentialId, retiring)) kept.add(credentialId);
+    if (await stillBound(db, userId, credentialId, leaving)) kept.add(credentialId);
     else revoke.push(credential);
   }
   return { revoke, kept };
@@ -674,10 +702,10 @@ async function retireEmployees(
   }
   const retired = new Map<Id<'agents'>, Retired>();
   for (const agent of agents) retired.set(agent._id, await deleteEmployee(ctx, agent));
-  await cancelJobsFor(
-    ctx,
-    new Set([...retired.values()].flatMap((entry) => [...entry.deletedIds])),
-  );
+  await cancelJobsFor(ctx, {
+    ids: new Set([...retired.values()].flatMap((entry) => [...entry.deletedIds])),
+    employees: new Set(agents.map((agent) => agent._id)),
+  });
   // Unlinked before the retire counts, so a credential the unlink purges is
   // counted revoked rather than kept for a source that is gone.
   const unlinkedSources = options.unlinkDocumentation
@@ -716,25 +744,114 @@ async function retireEmployees(
 }
 
 /**
+ * The refusal for retiring an employee whose handover the named manager accepted and whose runs
+ * in flight are finishing: from then on the employee is theirs to keep or retire. A
+ * `ConvexError`'s data, which the retire dialog shows.
+ *
+ * @param name - The employee's name.
+ * @param toAddress - The address of the manager taking it on.
+ */
+export function retireDuringHandoverRefusal(name: string, toAddress: string): string {
+  return `${name} is being handed over to ${toAddress}, who has accepted, so ${name} can no longer be retired.`;
+}
+
+/**
+ * The refusal for deleting an owner's data while one of its employees' handovers is finishing,
+ * with the wait named. A `ConvexError`'s data, which the reset dialog shows.
+ *
+ * @param name - The employee being handed over.
+ * @param toAddress - The address of the manager taking it on.
+ */
+export function deleteDuringHandoverRefusal(name: string, toAddress: string): string {
+  const minutes = TRANSFER_SETTLE_MS / 60_000;
+  return `Your data cannot be deleted while ${name} is being handed over to ${toAddress}. The handover finishes when the work ${name} has in progress ends, within ${minutes} minutes; delete your data after that.`;
+}
+
+/**
+ * Close the open handover requests of employees about to be retired (the transfer plan, section
+ * 10.5): an `asked` request is cancelled with the retire as its reason, in the retire's own
+ * transaction, through the request's own cancel (`cancelTransferInTransaction`, which writes the
+ * `manager.transfer-cancelled` event); an `accepting` one refuses the whole retire, before
+ * anything is written, since its acceptance is irrevocable. An asked request past its expiry is
+ * no longer open and is left to the expiry sweep. A request the owner is named in is not
+ * touched: its employee is not the owner's until it moves.
+ *
+ * @param ctx - The retire's mutation context.
+ * @param agents - The employees to retire.
+ * @param refusal - The words for an employee whose handover is finishing.
+ * @param now - The retire time.
+ * @returns What is left to do once the employees are deleted: in real mode the cancels, written
+ *   after the deletion so their events stay in the record beside `agent.retired`; nothing
+ *   otherwise.
+ * @throws ConvexError with `refusal`'s words when any employee's handover is `accepting`.
+ */
+async function closeOpenTransfers(
+  ctx: MutationCtx,
+  agents: readonly Doc<'agents'>[],
+  refusal: (name: string, toAddress: string) => string,
+  now: number,
+): Promise<() => Promise<void>> {
+  const open = (
+    await Promise.all(
+      agents.flatMap((agent) =>
+        OPEN_MANAGER_TRANSFER_STATES.map(async (state) =>
+          (
+            await ctx.db
+              .query('managerTransfers')
+              .withIndex('by_agent_state', (q) => q.eq('agentId', agent._id).eq('state', state))
+              .collect()
+          ).map((transfer) => ({ agent, transfer })),
+        ),
+      ),
+    )
+  ).flat();
+  const finishing = open.find(({ transfer }) => !canMoveTransfer(transfer.state, 'cancelled'));
+  if (finishing) {
+    throw new ConvexError(refusal(finishing.agent.name, finishing.transfer.toAddress));
+  }
+  const cancel = async (): Promise<void> => {
+    for (const { transfer } of open) {
+      if (isTransferDue(transfer, now)) continue;
+      await cancelTransferInTransaction(ctx, transfer, 'retired', now);
+    }
+  };
+  // Real mode keeps the employee's record beside its retirement, so the cancel follows the
+  // deletion there and its event stays in it; the hosted office wipes the record, cancel and all.
+  if (SURFACE_MODE === 'real') return cancel;
+  await cancel();
+  return async (): Promise<void> => undefined;
+}
+
+/**
  * Retire one employee (decisions Q15 and N1): the Manage tab's Retire, once the manager has
  * typed its confirmation. Public; the caller must own the employee, and one already retired is
  * refused as not found. Real mode revokes what only it bound, deletes its working rows and
  * keeps one retirement row with an `agent.retired` event; the hosted office wipes it. What it
  * would do is `retirePreview`'s answer. Owner-level documentation and credentials are never
- * touched here: unlinking them retires every employee (`deleteMyData`).
+ * touched here: unlinking them retires every employee (`deleteMyData`). An open handover request
+ * for it is cancelled (reason `retired`); one the named manager has accepted and that is still
+ * finishing refuses the retire.
  *
  * @returns The retired employee's name.
- * @throws ConvexError when the employee holds more than one retirement keeps.
+ * @throws ConvexError when the employee holds more than one retirement keeps, or its handover is
+ *   finishing ({@link retireDuringHandoverRefusal}).
  */
 export const retire = mutation({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<{ agentName: string }> => {
     const identity = await getCallerOrThrow(ctx);
     const agent = await assertOwnsAgent(ctx, args.agentId);
+    const cancelAfter = await closeOpenTransfers(
+      ctx,
+      [agent],
+      retireDuringHandoverRefusal,
+      Date.now(),
+    );
     await retireEmployees(ctx, identity.ownerKey, [agent], {
       single: true,
       unlinkDocumentation: false,
     });
+    await cancelAfter();
     return { agentName: agent.name };
   },
 });
@@ -748,6 +865,12 @@ export const retire = mutation({
  * Owner-level documentation and credentials outlive it. With `alsoUnlinkDocumentation` every
  * owned source is unlinked and every owned credential is revoked with its ciphertext deleted;
  * the credential rows stay as the audit trail of what was held.
+ *
+ * Every open handover request of the owner's employees is cancelled (reason `retired`); while one
+ * is `accepting` nothing is deleted and the refusal names the wait. A request naming the caller
+ * leaves its employee alone, since it is not the caller's until it moves.
+ *
+ * @throws ConvexError with {@link deleteDuringHandoverRefusal}'s words while a handover is finishing.
  */
 export const deleteMyData = mutation({
   args: { alsoUnlinkDocumentation: v.optional(v.boolean()) },
@@ -758,10 +881,17 @@ export const deleteMyData = mutation({
       .query('agents')
       .withIndex('by_userId', (q) => q.eq('userId', userId))
       .collect();
+    const cancelAfter = await closeOpenTransfers(
+      ctx,
+      agents,
+      deleteDuringHandoverRefusal,
+      Date.now(),
+    );
     const { unlinkedSources } = await retireEmployees(ctx, userId, agents, {
       single: false,
       unlinkDocumentation: args.alsoUnlinkDocumentation === true,
     });
+    await cancelAfter();
     return { deleted: agents.length, unlinkedSources };
   },
 });

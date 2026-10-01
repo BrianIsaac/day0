@@ -6,8 +6,9 @@ import { api, internal } from '../../convex/_generated/api';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
-const OWNER = { subject: 'owner' };
+const OWNER = managerIdentity();
 
 beforeEach((): void => {
   vi.stubEnv('DAY0_EVALUATION_BED', 'revocation-test');
@@ -63,7 +64,7 @@ describe('the live revocation evaluation fixture', (): void => {
         createdAt: 1,
       });
       const ordinaryAgentId = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'Priya',
         userId: 'owner',
         state: 'active',

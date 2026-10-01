@@ -189,6 +189,9 @@ vi.mock('convex/react', () => {
     if (name === 'docSources:listMine') return [{ _id: 'synthetic-doc-source', label: 'Handbook' }];
     if (name === 'work:needsYou') return { entries: [], total: 0, waitingByEmployee: [] };
     if (name === 'config:surfaceMode') return { mode: 'mock', label: 'mock' };
+    if (name === 'managerTransfers:departures') return [];
+    if (name === 'managerTransfers:arriving') return [];
+    if (name === 'agents:employeesReportingElsewhere') return [];
     return 0;
   };
   return {
@@ -207,7 +210,13 @@ vi.mock('convex/react', () => {
 });
 
 vi.mock('next/navigation', () => ({
-  useRouter: (): { push: () => void } => ({ push: (): void => undefined }),
+  useRouter: (): { push: () => void; replace: () => void } => ({
+    push: (): void => undefined,
+    replace: (): void => undefined,
+  }),
+  // No handover named in the address: the acceptance dialog stays closed.
+  usePathname: (): string => '/',
+  useSearchParams: (): URLSearchParams => new URLSearchParams(),
 }));
 
 import LandingPage from '../../app/page';

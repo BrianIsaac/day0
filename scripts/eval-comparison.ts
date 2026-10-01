@@ -423,7 +423,7 @@ async function prepareDay0(context: HarnessContext, run: RunWithProgress): Promi
   if (!agentId) {
     const deployedAt = Date.now();
     agentId = await context.client.mutation(api.agents.deploy, {
-      bossEmail: `eval-${run.id}-${deployedAt}@day0.local`,
+      evaluationAddress: `eval-${run.id}-${deployedAt}@day0.local`,
       name: `Day0 evaluation ${run.run}`,
       arm: 'day0',
     });
@@ -474,7 +474,7 @@ async function prepareBaseline(
   if (run.agentId) return run.agentId as Id<'agents'>;
   const deployedAt = Date.now();
   const result = await context.client.action(api.baselineActions.deployBaseline, {
-    bossEmail: `eval-${run.id}-${deployedAt}@day0.local`,
+    evaluationAddress: `eval-${run.id}-${deployedAt}@day0.local`,
     name: `Ordinary agent evaluation ${run.run}`,
   });
   run.agentId = result.agentId;

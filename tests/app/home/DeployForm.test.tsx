@@ -8,13 +8,21 @@ import type { Id } from '../../../convex/_generated/dataModel';
 
 const deploy = vi.hoisted(() => vi.fn());
 const push = vi.hoisted(() => vi.fn());
+/** What `agents.myManagerAddress` answers: undefined while it loads, null for no verified address. */
+const server = vi.hoisted((): { address: string | null | undefined } => ({
+  address: 'sam@revops.example',
+}));
 
-vi.mock('convex/react', () => ({ useMutation: () => deploy }));
+vi.mock('convex/react', () => ({ useMutation: () => deploy, useQuery: () => server.address }));
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push }) }));
 
+import { ConvexError } from 'convex/values';
 import { DeployForm } from '../../../app/home/DeployForm';
+import { UNVERIFIED_FOR_DEPLOY } from '../../../src/agent/manager-address';
 
-const boss = { email: 'sam@revops.example', firstName: 'Sam' };
+// The browser's own word for the address (Clerk's client value), which the form no longer takes,
+// shows or sends: the address is the server's verified one (9-U1), and its dead prop is gone (9-U4).
+const BROWSER_ADDRESS = 'browser@elsewhere.example';
 const sources = [
   { _id: 'source-handbook' as Id<'docSources'>, label: 'Handbook' },
   { _id: 'source-wiki' as Id<'docSources'>, label: 'Wiki' },
@@ -25,7 +33,7 @@ const readAs = (markup: string): string => markup.replace(/<[^>]+>/g, ' ').repla
 
 describe('DeployForm', (): void => {
   const html = renderToStaticMarkup(
-    <DeployForm boss={boss} docSources={sources} surfaceMode="mock" pickerOpen />,
+    <DeployForm docSources={sources} surfaceMode="mock" pickerOpen />,
   );
   const text = readAs(html);
 
@@ -49,8 +57,15 @@ describe('DeployForm', (): void => {
     expect(field).not.toMatch(/outline-(none|hidden)/);
   });
 
+  it('takes a name of at most 80 characters, the bound the deploy holds it to', (): void => {
+    const field = /<input[^>]*placeholder="worker 1"[^>]*>/.exec(html)?.[0] ?? '';
+    expect(field).toContain('maxLength="80"');
+  });
+
   it('states the three facts: who it reports to, where it works, how much it does alone', (): void => {
+    // The server's verified address, never the browser's.
     expect(text).toContain('Reports to sam@revops.example (you)');
+    expect(text).not.toContain(BROWSER_ADDRESS);
     expect(text).toContain(
       'Works in the mock office: a Slack, the Q4 Revenue Tracker, a wiki, a ticket queue and one social mention',
     );
@@ -59,9 +74,7 @@ describe('DeployForm', (): void => {
       'Autonomy Supervised. In the hosted office every action waits for you, a message to you included, and applies once you approve its exact payload.',
     );
     const real = readAs(
-      renderToStaticMarkup(
-        <DeployForm boss={boss} docSources={[]} surfaceMode="real" pickerOpen />,
-      ),
+      renderToStaticMarkup(<DeployForm docSources={[]} surfaceMode="real" pickerOpen />),
     );
     expect(real).toContain(
       'Works in the systems it finds in your documentation, each connected only once you approve it',
@@ -84,7 +97,7 @@ describe('DeployForm', (): void => {
   it('opens the faces for the first employee and keeps them folded for another', (): void => {
     expect(html).toMatch(/<details\b[^>]*\bopen=""/);
     const another = renderToStaticMarkup(
-      <DeployForm boss={boss} docSources={sources} surfaceMode="mock" pickerOpen={false} />,
+      <DeployForm docSources={sources} surfaceMode="mock" pickerOpen={false} />,
     );
     expect(another).not.toMatch(/<details\b[^>]*\bopen/);
   });
@@ -102,6 +115,7 @@ describe('DeployForm, deploying', (): void => {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     deploy.mockReset();
     push.mockReset();
+    server.address = 'sam@revops.example';
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => new Response(null, { status: 202 })),
@@ -125,9 +139,7 @@ describe('DeployForm, deploying', (): void => {
 
   it('deploys the named employee with the chosen face and the unticked sources, then opens its page', async (): Promise<void> => {
     deploy.mockResolvedValue('agent-mira');
-    act(() =>
-      root.render(<DeployForm boss={boss} docSources={sources} surfaceMode="mock" pickerOpen />),
-    );
+    act(() => root.render(<DeployForm docSources={sources} surfaceMode="mock" pickerOpen />));
     act(() => type(host.querySelector<HTMLInputElement>('input[type="text"]')!, '  Mira  '));
     act(() => host.querySelector<HTMLButtonElement>('[aria-label="Face 7"]')!.click());
     act(() => host.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
@@ -141,13 +153,14 @@ describe('DeployForm, deploying', (): void => {
 
     expect(deploy).toHaveBeenCalledWith(
       expect.objectContaining({
-        bossEmail: 'sam@revops.example',
         name: 'Mira',
         avatarId: 'face-07',
         excludedDocSourceIds: ['source-handbook'],
         zone: expect.any(String),
       }),
     );
+    // The address is the caller's own verified one, read on the server: the form sends none.
+    expect(deploy.mock.calls[0]?.[0]).not.toHaveProperty('bossEmail');
     expect(push).toHaveBeenCalledWith('/agent/agent-mira');
   });
 
@@ -160,9 +173,7 @@ describe('DeployForm, deploying', (): void => {
       }),
     );
     const lines = vi.spyOn(console, 'log').mockImplementation((): void => undefined);
-    act(() =>
-      root.render(<DeployForm boss={boss} docSources={[]} surfaceMode="mock" pickerOpen />),
-    );
+    act(() => root.render(<DeployForm docSources={[]} surfaceMode="mock" pickerOpen />));
     await act(async () => {
       host.querySelector('form')!.requestSubmit();
     });
@@ -182,48 +193,53 @@ describe('DeployForm, deploying', (): void => {
   it('puts the caret in the name field when opened as Deploy another, and not otherwise', (): void => {
     act(() =>
       root.render(
-        <DeployForm
-          boss={boss}
-          docSources={[]}
-          surfaceMode="mock"
-          pickerOpen={false}
-          focusOnMount
-        />,
+        <DeployForm docSources={[]} surfaceMode="mock" pickerOpen={false} focusOnMount />,
       ),
     );
     expect(document.activeElement).toBe(host.querySelector('input[type="text"]'));
     act(() => root.render(<></>));
-    act(() =>
-      root.render(<DeployForm boss={boss} docSources={[]} surfaceMode="mock" pickerOpen />),
-    );
+    act(() => root.render(<DeployForm docSources={[]} surfaceMode="mock" pickerOpen />));
     expect(document.activeElement).toBe(document.body);
   });
 
-  it('says why when the address cannot be read, and deploys nothing', async (): Promise<void> => {
-    act(() =>
-      root.render(
-        <DeployForm
-          boss={{ email: undefined, firstName: undefined }}
-          docSources={[]}
-          surfaceMode="mock"
-          pickerOpen
-        />,
-      ),
-    );
+  it('says why at once when the sign-in carries no verified address, and offers no deploy', async (): Promise<void> => {
+    server.address = null;
+    act(() => root.render(<DeployForm docSources={[]} surfaceMode="mock" pickerOpen />));
+    expect(host.querySelector('dl dd')?.textContent).toBe('no verified address');
+    // Before any click: the reason is on the form, announced, and the button is held.
+    const reason = host.querySelector('[role="status"]');
+    expect(reason?.textContent).toBe(UNVERIFIED_FOR_DEPLOY);
+    expect(host.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(true);
     await act(async () => {
       host.querySelector('form')!.requestSubmit();
     });
     expect(deploy).not.toHaveBeenCalled();
-    expect(host.querySelector('[role="alert"]')?.textContent).toBe(
-      'Could not read your email address. Try signing out and back in.',
-    );
+  });
+
+  it('holds the button while the address loads, and says so in the facts', (): void => {
+    server.address = undefined;
+    act(() => root.render(<DeployForm docSources={[]} surfaceMode="mock" pickerOpen />));
+    expect(host.querySelector('dl dd')?.textContent).toBe('loading');
+    expect(host.querySelector('dl dd')?.getAttribute('aria-live')).toBe('polite');
+    expect(host.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(true);
+  });
+
+  it("shows the server's refusal in its own words, not the transport's", async (): Promise<void> => {
+    // As the Convex client raises it: the data is the words, the message carries the transport's.
+    const refusal = Object.assign(new ConvexError(UNVERIFIED_FOR_DEPLOY), {
+      message: `[CONVEX M(agents:deploy)] [Request ID: 1] Server Error\nUncaught ConvexError: ${UNVERIFIED_FOR_DEPLOY}`,
+    });
+    deploy.mockRejectedValue(refusal);
+    act(() => root.render(<DeployForm docSources={[]} surfaceMode="mock" pickerOpen />));
+    await act(async () => {
+      host.querySelector('form')!.requestSubmit();
+    });
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe(UNVERIFIED_FOR_DEPLOY);
   });
 
   it('keeps the form and says what failed when the deploy is refused', async (): Promise<void> => {
     deploy.mockRejectedValue(new Error('Deploy limit reached'));
-    act(() =>
-      root.render(<DeployForm boss={boss} docSources={[]} surfaceMode="mock" pickerOpen />),
-    );
+    act(() => root.render(<DeployForm docSources={[]} surfaceMode="mock" pickerOpen />));
     await act(async () => {
       host.querySelector('form')!.requestSubmit();
     });

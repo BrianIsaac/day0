@@ -21,7 +21,7 @@ const description = HERO.lede;
  */
 const siteUrl = process.env.VERCEL_PROJECT_PRODUCTION_URL
   ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
-  : 'https://day0-olive.vercel.app';
+  : 'https://dayzer0.dev';
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),

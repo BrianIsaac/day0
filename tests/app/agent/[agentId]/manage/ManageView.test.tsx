@@ -178,6 +178,7 @@ describe('ManageView: the manager DM setting waits for a manager channel (N7)', 
         tombstone: false,
       },
       'work:needsYouForAgent': { entries: [], total: 0 },
+      'managerTransfers:openForAgent': null,
     };
     backend.results = { 'reset:retire': { agentName: 'Mira' } };
     const view = mount(asEmployee(<ManageView />));

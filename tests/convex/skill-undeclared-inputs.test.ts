@@ -14,6 +14,7 @@ import {
 } from '../fixtures/skill-undeclared-inputs-2026-09-19';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+import { managerIdentity } from './fakes/manager-identity';
 
 const recorded = vi.hoisted(() => ({
   outputs: [] as Array<{ body: string; smokeTest: string }>,
@@ -48,7 +49,7 @@ vi.mock('../../src/lib/skill-sandbox', () => ({
 }));
 
 type Harness = TestConvex<typeof schema>;
-const OWNER = { subject: 'owner' };
+const OWNER = managerIdentity('owner', { email: 'boss@example.com' });
 
 /** Mateo's rows as the rehearsal had them when the skill was approved. */
 async function seedApprovedSkill(harness: Harness): Promise<Id<'skills'>> {

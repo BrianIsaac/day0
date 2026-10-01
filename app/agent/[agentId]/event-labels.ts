@@ -118,6 +118,7 @@ const PLAN_HELD_WORDS: { readonly [Reason in WorkPlanHeldPayload['reason']]: str
   'plan-rejected-for-this-item': "a colleague's plan for this ticket was rejected",
   'obligations-failed-open': 'its reads and writes could not be checked',
   'drafted-without-record': 'it was drafted without reading its ticket or thread',
+  'approved-by-predecessor': 'approved by your predecessor; approve it again',
 };
 
 /** Why a held plan waits, or a plain line for a reason this build does not know. */
@@ -149,7 +150,33 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     if (payload.via === 'probe')
       return 'the chat surface found a different manager and moved the DM to them';
     const to = 'bossEmail' in payload ? text(payload.bossEmail) : undefined;
+    if (payload.via === 'adopted') {
+      return `the owner made themselves the manager${to ? ` (${to})` : ''}`;
+    }
     return `manager changed${to ? ` to ${to}` : ''} on the dashboard`;
+  },
+  'manager.transfer-asked': (payload) =>
+    `handover to ${text(payload.toAddress) ?? 'another manager'} asked`,
+  'manager.transfer-cancelled': (payload) =>
+    `handover to ${text(payload.toAddress) ?? 'another manager'} cancelled${
+      payload.reason === 'retired'
+        ? ' at the retire'
+        : payload.reason === 'address-changed'
+          ? ' for another address'
+          : ''
+    }`,
+  'manager.transfer-declined': (payload) =>
+    `${text(payload.toAddress) ?? 'the named manager'} declined the handover`,
+  'manager.transfer-expired': (payload) =>
+    `handover to ${text(payload.toAddress) ?? 'another manager'} expired`,
+  'manager.transferred': (payload) => {
+    const from = text(payload.fromAddress);
+    const to = text(payload.toAddress);
+    const cut = counted(
+      Array.isArray(payload.surfacesCut) ? payload.surfacesCut.length : undefined,
+      'connection',
+    );
+    return `handed over${from ? ` from ${from}` : ''}${to ? ` to ${to}` : ''}${cut ? `, ${cut} cut` : ''}`;
   },
   'charter.drafted': (payload) => `charter v${text(payload.version) ?? '?'} drafted`,
   'charter.approved': (payload) => {
@@ -475,10 +502,13 @@ const RECORD_KINDS: Readonly<Partial<Record<EventType, Exclude<RecordKind, 'note
   'skill.author-failed': 'refused',
   'audit.corrected': 'refused',
   'work.decision-ignored': 'refused',
+  'manager.transfer-declined': 'refused',
   'work.conditional-writes-withheld': 'withheld',
   'work.skipped': 'withheld',
   'work.withdrawn': 'withheld',
   'work.cancelled': 'withheld',
+  'manager.transfer-cancelled': 'withheld',
+  'manager.transfer-expired': 'withheld',
   'work.actions-pending': 'held',
   'work.plan-held': 'held',
   'skill.proposed': 'held',

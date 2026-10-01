@@ -9,6 +9,7 @@ import { allConvexModules } from './all-modules';
 import { companyPage } from '../fixtures/company-bed';
 import type { ListedSurface } from '../../convex/surfaces';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
 /**
  * What `surfaces.listForAgent` hands the Surfaces tab's cards beyond the stored row: the reason
@@ -32,7 +33,7 @@ async function seedOffice(handbook: string): Promise<{
   const harness = convexTest(schema, allConvexModules());
   const ids = await harness.run(async (ctx) => {
     const agentId = await ctx.db.insert('agents', {
-      bossEmail: 'boss@day0.local',
+      bossEmail: MANAGER_ADDRESS,
       name: 'Mira',
       userId: 'owner',
       state: 'active',
@@ -92,7 +93,7 @@ describe('the approval refusal on a listed card (E-63)', (): void => {
     });
 
     const listed = await harness
-      .withIdentity({ subject: 'owner' })
+      .withIdentity(managerIdentity())
       .query(api.surfaces.listForAgent, { agentId });
 
     expect(listed).toMatchObject([{ slug: 'linear', approvalRefusal: QUEUE_CHANGED }]);
@@ -104,7 +105,7 @@ describe('the approval refusal on a listed card (E-63)', (): void => {
     await card(harness, agentId, { slug: 'looker', class: 'analytics', path: 'browser-driven' });
 
     const [looker] = await harness
-      .withIdentity({ subject: 'owner' })
+      .withIdentity(managerIdentity())
       .query(api.surfaces.listForAgent, { agentId });
 
     expect(looker?.approvalRefusal).toContain(BROWSER_DRIVER_ABSENT);
@@ -123,7 +124,7 @@ describe('the approval refusal on a listed card (E-63)', (): void => {
     });
 
     const listed = await harness
-      .withIdentity({ subject: 'owner' })
+      .withIdentity(managerIdentity())
       .query(api.surfaces.listForAgent, { agentId });
 
     expect(listed.map((row) => [row.slug, row.approvalRefusal])).toEqual([
@@ -189,7 +190,7 @@ describe('the order of the listed cards (D D4)', (): void => {
     });
 
     const listed = await harness
-      .withIdentity({ subject: 'owner' })
+      .withIdentity(managerIdentity())
       .query(api.surfaces.listForAgent, { agentId });
 
     expect(listed.map((row) => row.slug)).toEqual(['slack', 'linear']);
@@ -202,7 +203,7 @@ describe('the order of the listed cards (D D4)', (): void => {
     await card(harness, agentId, { slug: 'linear', displayName: 'Linear', class: 'kanban' });
 
     const listed = await harness
-      .withIdentity({ subject: 'owner' })
+      .withIdentity(managerIdentity())
       .query(api.surfaces.listForAgent, { agentId });
 
     expect(listed.map((row) => row.slug)).toEqual(['linear', 'slack']);
@@ -223,7 +224,7 @@ describe('the order of the listed cards (D D4)', (): void => {
     await card(harness, agentId, { slug: 'linear', displayName: 'Linear', class: 'kanban' });
 
     const listed = await harness
-      .withIdentity({ subject: 'owner' })
+      .withIdentity(managerIdentity())
       .query(api.surfaces.listForAgent, { agentId });
 
     expect(listed.map((row) => row.slug)).toEqual(['linear', 'slack']);
@@ -255,7 +256,7 @@ describe('the drift of an approved scope, as a server field (D D4)', (): void =>
       },
     });
     const [linear] = await harness
-      .withIdentity({ subject: 'owner' })
+      .withIdentity(managerIdentity())
       .query(api.surfaces.listForAgent, { agentId });
     return linear;
   }
@@ -307,7 +308,7 @@ describe('the intake-queue guard, judged by value (M3, D D9)', (): void => {
     });
 
     const [linear] = await harness
-      .withIdentity({ subject: 'owner' })
+      .withIdentity(managerIdentity())
       .query(api.surfaces.listForAgent, { agentId });
 
     expect(linear?.approvalRefusal).toBeUndefined();
@@ -324,7 +325,7 @@ describe('the intake-queue guard, judged by value (M3, D D9)', (): void => {
       intakeScope: { team: { ...STORED, sourceId } },
     });
 
-    await harness.withIdentity({ subject: 'owner' }).mutation(api.surfaces.approve, { surfaceId });
+    await harness.withIdentity(managerIdentity()).mutation(api.surfaces.approve, { surfaceId });
 
     const row = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
     expect(row?.verdict).toBe('approved');
@@ -340,7 +341,7 @@ describe('the intake-queue guard, judged by value (M3, D D9)', (): void => {
     });
 
     const refusal = await thrown(
-      harness.withIdentity({ subject: 'owner' }).mutation(api.surfaces.approve, { surfaceId }),
+      harness.withIdentity(managerIdentity()).mutation(api.surfaces.approve, { surfaceId }),
     );
 
     expect(refusal).toBeInstanceOf(ConvexError);
@@ -351,7 +352,7 @@ describe('the intake-queue guard, judged by value (M3, D D9)', (): void => {
     useSurfaceMode('real');
     const { harness, agentId } = await seedOffice('- Team: `REVOPS`');
     const surfaceId = await card(harness, agentId, { slug: 'linear', verdict: 'declared' });
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
 
     const refusal = await thrown(owner.mutation(api.surfaces.reject, { surfaceId, reason: 'no' }));
     expect(refusal).toBeInstanceOf(ConvexError);

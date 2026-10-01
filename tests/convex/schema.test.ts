@@ -4,6 +4,7 @@ import { internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
+import { MANAGER_ADDRESS } from './fakes/manager-identity';
 
 describe('documentation schema', (): void => {
   it('stores owner-level sources, pages and agent source selections', async (): Promise<void> => {
@@ -26,7 +27,7 @@ describe('documentation schema', (): void => {
         updatedAt: 1,
       });
       const agentId = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'schema test',
         userId: 'owner',
         excludedDocSourceIds: [sourceId],
@@ -64,7 +65,7 @@ describe('surface connection evidence persistence', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const surfaceId = await harness.run(async (ctx): Promise<Id<'surfaces'>> => {
       const agentId = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'Schema behaviour test',
         userId: 'owner',
         state: 'active',
@@ -121,7 +122,7 @@ describe('surface connection evidence persistence', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const stored = await harness.run(async (ctx): Promise<Doc<'surfaces'> | null> => {
       const agentId = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'Schema scope test',
         userId: 'owner',
         state: 'active',
@@ -156,7 +157,7 @@ describe('surface connection evidence persistence', (): void => {
     await expect(
       harness.run(async (ctx): Promise<void> => {
         const agentId = await ctx.db.insert('agents', {
-          bossEmail: 'boss@day0.local',
+          bossEmail: MANAGER_ADDRESS,
           name: 'Schema scope test',
           userId: 'owner',
           state: 'active',
@@ -185,7 +186,7 @@ describe('exact-action gate schema', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const result = await harness.run(async (ctx) => {
       const agentId = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'gate test',
         userId: 'owner',
         state: 'active',
@@ -227,5 +228,238 @@ describe('exact-action gate schema', (): void => {
     expect(result.item?.pendingRunId).toBe(result.runId);
     expect(result.item?.approvedIndexes).toEqual([0, 2]);
     expect(result.skill?.targetSurface).toBe('linear');
+  });
+});
+
+describe('manager transfer schema', (): void => {
+  it('stores a request with its outcome and reads it back by each of its four indexes', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Maya',
+        userId: 'owner',
+        state: 'deployed',
+        createdAt: 1,
+      });
+      const transferId = await ctx.db.insert('managerTransfers', {
+        agentId,
+        agentName: 'Maya',
+        fromOwnerKey: 'owner',
+        fromAddress: 'boss@day0.local',
+        toAddress: 'lead@day0.local',
+        note: 'Maya works the renewals queue.',
+        state: 'accepted',
+        requestedAt: 10,
+        expiresAt: 20,
+        decidedAt: 15,
+        toOwnerKey: 'lead',
+        outcome: {
+          workItemsMoved: 3,
+          surfacesCut: 1,
+          credentialsRevoked: 1,
+          credentialsKept: 0,
+          scopesRevoked: 2,
+          claimsMoved: 1,
+          claimsReleased: 1,
+          conflictingClaimKeys: ['linear:REVOPS-9'],
+          decisionRequestsVoided: 1,
+          plansReturned: 1,
+          sessionsFailed: 0,
+          notesDiscarded: 2,
+          mirroredPagesHidden: 4,
+          runsStopped: 0,
+          charterDiscarded: false,
+        },
+      });
+      const one = async (
+        rows: Promise<Array<Doc<'managerTransfers'>>>,
+      ): Promise<Id<'managerTransfers'> | undefined> => (await rows)[0]?._id;
+      return {
+        transferId,
+        row: await ctx.db.get(transferId),
+        byAgent: await one(
+          ctx.db
+            .query('managerTransfers')
+            .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', 'accepted'))
+            .collect(),
+        ),
+        byAddress: await one(
+          ctx.db
+            .query('managerTransfers')
+            .withIndex('by_to_address_state', (q) =>
+              q.eq('toAddress', 'lead@day0.local').eq('state', 'accepted'),
+            )
+            .collect(),
+        ),
+        byOwner: await one(
+          ctx.db
+            .query('managerTransfers')
+            .withIndex('by_from_owner_state', (q) =>
+              q.eq('fromOwnerKey', 'owner').eq('state', 'accepted'),
+            )
+            .collect(),
+        ),
+        byExpiry: await one(
+          ctx.db
+            .query('managerTransfers')
+            .withIndex('by_state_expires', (q) => q.eq('state', 'accepted').lte('expiresAt', 20))
+            .collect(),
+        ),
+      };
+    });
+    expect(read.row?.outcome?.conflictingClaimKeys).toEqual(['linear:REVOPS-9']);
+    expect(read.row?.toOwnerKey).toBe('lead');
+    expect([read.byAgent, read.byAddress, read.byOwner, read.byExpiry]).toEqual([
+      read.transferId,
+      read.transferId,
+      read.transferId,
+      read.transferId,
+    ]);
+  });
+
+  it("keeps what an accepting request needs to finish the move later, and the notice's one send", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Maya',
+        userId: 'owner',
+        state: 'deployed',
+        createdAt: 1,
+      });
+      const sourceId = await ctx.db.insert('docSources', {
+        userId: 'lead',
+        label: 'Lead handbook',
+        kind: 'folder',
+        locator: '.',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const transferId = await ctx.db.insert('managerTransfers', {
+        agentId,
+        agentName: 'Maya',
+        fromOwnerKey: 'owner',
+        fromAddress: MANAGER_ADDRESS,
+        toAddress: 'lead@day0.local',
+        state: 'accepting',
+        requestedAt: 10,
+        expiresAt: 20,
+        decidedAt: 15,
+        toOwnerKey: 'lead',
+        toZone: 'Asia/Singapore',
+        toExcludedDocSourceIds: [sourceId],
+        settleBy: 900,
+        noticeSentAt: 11,
+        noticeProviderTs: '1759300000.000100',
+      });
+      const due = await ctx.db
+        .query('managerTransfers')
+        .withIndex('by_state_settle', (q) => q.eq('state', 'accepting').lte('settleBy', 1_000))
+        .collect();
+      return { transferId, row: await ctx.db.get(transferId), due: due.map((row) => row._id) };
+    });
+    expect(read.row).toMatchObject({
+      toZone: 'Asia/Singapore',
+      noticeSentAt: 11,
+      noticeProviderTs: '1759300000.000100',
+    });
+    expect(read.row?.toExcludedDocSourceIds).toHaveLength(1);
+    expect(read.due).toEqual([read.transferId]);
+  });
+
+  it('refuses a state the request cannot be in', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await expect(
+      harness.run(async (ctx) => {
+        const agentId = await ctx.db.insert('agents', {
+          bossEmail: MANAGER_ADDRESS,
+          name: 'Maya',
+          userId: 'owner',
+          state: 'deployed',
+          createdAt: 1,
+        });
+        await ctx.db.insert('managerTransfers', {
+          agentId,
+          agentName: 'Maya',
+          fromOwnerKey: 'owner',
+          fromAddress: 'boss@day0.local',
+          toAddress: 'lead@day0.local',
+          state: 'reopened' as Doc<'managerTransfers'>['state'],
+          requestedAt: 10,
+          expiresAt: 20,
+        });
+      }),
+    ).rejects.toThrow(/got `"reopened"`/);
+  });
+
+  it("marks a retire record as a transfer's departure, and an unsent note as discarded, while older rows keep reading", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Maya',
+        userId: 'owner',
+        state: 'deployed',
+        createdAt: 1,
+      });
+      const transferId = await ctx.db.insert('managerTransfers', {
+        agentId,
+        agentName: 'Maya',
+        fromOwnerKey: 'owner',
+        fromAddress: 'boss@day0.local',
+        toAddress: 'lead@day0.local',
+        state: 'asked',
+        requestedAt: 10,
+        expiresAt: 20,
+      });
+      const record = {
+        userId: 'owner',
+        agentId,
+        retiredAt: 30,
+        rowCounts: {},
+        revokedCredentials: 0,
+        keptCredentials: 0,
+        claims: [],
+        rejections: [],
+      };
+      const departureId = await ctx.db.insert('retirements', {
+        ...record,
+        kind: 'transferred',
+        transferId,
+      });
+      const olderId = await ctx.db.insert('retirements', record);
+      const workItemId = await ctx.db.insert('workItems', {
+        agentId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'REVOPS-1',
+        title: 'Note',
+        contentSummary: 'Note',
+        contentRefs: [],
+        state: 'completed',
+        observedAt: 1,
+        createdAt: 1,
+      });
+      const noteId = await ctx.db.insert('managerNotes', {
+        agentId,
+        workItemId,
+        kind: 'landed',
+        text: 'Landed.',
+        createdAt: 1,
+        discardedAt: 40,
+      });
+      return {
+        transferId,
+        departure: await ctx.db.get(departureId),
+        older: await ctx.db.get(olderId),
+        note: await ctx.db.get(noteId),
+      };
+    });
+    expect(read.departure?.kind).toBe('transferred');
+    expect(read.departure?.transferId).toBe(read.transferId);
+    expect(read.older?.kind).toBeUndefined();
+    expect(read.note?.discardedAt).toBe(40);
   });
 });

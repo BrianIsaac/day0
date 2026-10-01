@@ -4,6 +4,7 @@ import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { appendEvent, eventsOfType } from '../../convex/eventLog';
 import { allConvexModules } from './all-modules';
+import { MANAGER_ADDRESS } from './fakes/manager-identity';
 
 describe('eventsOfType', (): void => {
   it("reads one agent's events of one type, bounded by creation when asked", async (): Promise<void> => {
@@ -11,7 +12,7 @@ describe('eventsOfType', (): void => {
     const read = await harness.run(async (ctx) => {
       const agent = async (name: string): Promise<Id<'agents'>> =>
         await ctx.db.insert('agents', {
-          bossEmail: 'boss@day0.local',
+          bossEmail: MANAGER_ADDRESS,
           name,
           userId: 'owner',
           state: 'active',

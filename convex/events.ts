@@ -204,10 +204,11 @@ export const autonomyChanges = query({
  * Keys an export never carries: those that identify a person rather than
  * describe an action (a ticket's author, requester and branch, which carries
  * its assignee's handle; the charter's manager and named colleagues; a
- * manager change's previous manager as well as the new one), and a
- * surface's live install claim (a single-use state nonce and the URL that
- * spends it). The export's policy keeps names as working material in text
- * (U12 D1 (c)); a key whose whole value is a name has none to keep.
+ * manager change's previous manager as well as the new one; both addresses
+ * of a handover request), and a surface's live install claim (a single-use
+ * state nonce and the URL that spends it). The export's policy keeps names as
+ * working material in text (U12 D1 (c)); a key whose whole value is a name has
+ * none to keep.
  */
 const PERSONAL_KEYS = new Set([
   'assigneeEmail',
@@ -215,6 +216,7 @@ const PERSONAL_KEYS = new Set([
   'bossEmail',
   'createdBy',
   'email',
+  'fromAddress',
   'gitBranchName',
   'managerEmail',
   'managerName',
@@ -223,6 +225,7 @@ const PERSONAL_KEYS = new Set([
   'previousManagerUserId',
   'provisioning',
   'requester',
+  'toAddress',
 ]);
 
 /**

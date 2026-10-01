@@ -63,6 +63,28 @@ describe('the no-auth token route', (): void => {
     expect(first.sid).not.toBe(second.sid);
   });
 
+  it('names the configured manager address as the verified email, read on the server', async (): Promise<void> => {
+    vi.stubEnv('NEXT_PUBLIC_DEMO_BOSS_EMAIL', ' Manager@Example.com ');
+    const { mintDevNoAuthSession } = await import('../../../../../src/lib/dev-auth-server');
+    cookieValue = await mintDevNoAuthSession();
+    const { POST } = await import('../../../../../app/api/dev-auth/token/route');
+    const { token } = (await (await POST()).json()) as { token: string };
+    const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8'));
+    expect(payload).toMatchObject({ email: 'manager@example.com', email_verified: true });
+  });
+
+  it('refuses to mint a token for a configured address that is not one, and says which variable', async (): Promise<void> => {
+    vi.stubEnv('NEXT_PUBLIC_DEMO_BOSS_EMAIL', 'boss at work');
+    const { mintDevNoAuthSession } = await import('../../../../../src/lib/dev-auth-server');
+    cookieValue = await mintDevNoAuthSession();
+    const { POST } = await import('../../../../../app/api/dev-auth/token/route');
+    const response = await POST();
+    expect(response.status).toBe(503);
+    expect(((await response.json()) as { error: string }).error).toContain(
+      'NEXT_PUBLIC_DEMO_BOSS_EMAIL',
+    );
+  });
+
   it('refuses a cookie that holds the unlock secret rather than a session', async (): Promise<void> => {
     cookieValue = SECRET;
     const { POST } = await import('../../../../../app/api/dev-auth/token/route');

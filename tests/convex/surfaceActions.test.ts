@@ -40,6 +40,7 @@ import {
 import { allConvexModules } from './all-modules';
 import { companyPage } from '../fixtures/company-bed';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
 afterEach((): void => {
   restoreSurfaceMode();
@@ -545,7 +546,7 @@ describe('surface probe action state', (): void => {
         },
         runQuery: async (): Promise<unknown> => ({
           surface,
-          agent: { _id: agentId, bossEmail: 'boss@day0.local' },
+          agent: { _id: agentId, bossEmail: MANAGER_ADDRESS },
         }),
         runAction: vi.fn(),
       } as unknown as ActionCtx,
@@ -634,7 +635,7 @@ describe('surface probe action state', (): void => {
         },
         runQuery: async (): Promise<unknown> => ({
           surface: { ...surface, probeGeneration: 1 },
-          agent: { _id: agentId, bossEmail: 'boss@day0.local' },
+          agent: { _id: agentId, bossEmail: MANAGER_ADDRESS },
         }),
         runAction: fakeRunAction('provider-contract-value'),
       } as unknown as ActionCtx;
@@ -702,7 +703,7 @@ describe('surface probe action state', (): void => {
           },
           runQuery: async (reference: unknown): Promise<unknown> =>
             !readsCardPages(reference)
-              ? { surface, agent: { _id: agentId, bossEmail: 'boss@day0.local' } }
+              ? { surface, agent: { _id: agentId, bossEmail: MANAGER_ADDRESS } }
               : [],
           runAction: fakeRunAction('slack-contract-value'),
         } as unknown as ActionCtx,
@@ -767,7 +768,7 @@ describe('surface probe action state', (): void => {
           },
           runQuery: async (reference: unknown): Promise<unknown> =>
             !readsCardPages(reference)
-              ? { surface, agent: { _id: agentId, bossEmail: 'boss@day0.local' } }
+              ? { surface, agent: { _id: agentId, bossEmail: MANAGER_ADDRESS } }
               : [],
           runAction: fakeRunAction('slack-contract-value'),
         } as unknown as ActionCtx,
@@ -835,7 +836,7 @@ describe('surface probe action state', (): void => {
         },
         runQuery: async (reference: unknown): Promise<unknown> =>
           !readsCardPages(reference)
-            ? { surface, agent: { _id: agentId, bossEmail: 'boss@day0.local' } }
+            ? { surface, agent: { _id: agentId, bossEmail: MANAGER_ADDRESS } }
             : pages,
         runAction: fakeRunAction('slack-contract-value'),
       } as unknown as ActionCtx,
@@ -883,7 +884,7 @@ describe('surface probe action state', (): void => {
         surface: { _id: surfaceId, agentId },
         agent: {
           _id: agentId,
-          bossEmail: 'boss@day0.local',
+          bossEmail: MANAGER_ADDRESS,
           name: 'probe contract',
           state: 'active',
           createdAt: 1,
@@ -968,7 +969,7 @@ describe('surface probe action state', (): void => {
       },
       runQuery: async (): Promise<unknown> => ({
         surface: { _id: surfaceId, agentId },
-        agent: { _id: agentId, bossEmail: 'boss@day0.local' },
+        agent: { _id: agentId, bossEmail: MANAGER_ADDRESS },
       }),
       runAction: fakeRunAction('local-contract-value'),
     } as unknown as ActionCtx;
@@ -995,7 +996,7 @@ describe('surface probe action state', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const surfaceId = await harness.run(async (ctx): Promise<Id<'surfaces'>> => {
       const agentId = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'approved before its credential',
         userId: 'owner',
         state: 'active',
@@ -1038,7 +1039,7 @@ describe('surface probe action state', (): void => {
     const { agentId, surfaceId } = await harness.run(
       async (ctx): Promise<{ agentId: Id<'agents'>; surfaceId: Id<'surfaces'> }> => {
         const agentId = await ctx.db.insert('agents', {
-          bossEmail: 'boss@day0.local',
+          bossEmail: MANAGER_ADDRESS,
           name: 'missing credential probe',
           userId: 'owner',
           state: 'active',
@@ -1088,7 +1089,7 @@ describe('surface probe action state', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const surfaceId = await harness.run(async (ctx): Promise<Id<'surfaces'>> => {
       const agentId = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'owned probe',
         userId: 'owner',
         state: 'active',
@@ -1107,7 +1108,7 @@ describe('surface probe action state', (): void => {
     });
 
     await expect(
-      harness.withIdentity({ subject: 'other-owner' }).action(api.surfaceActions.probe, {
+      harness.withIdentity(managerIdentity('other-owner')).action(api.surfaceActions.probe, {
         surfaceId,
       }),
     ).rejects.toThrow('forbidden');
@@ -1196,7 +1197,7 @@ describe('probing a documented API that is not Slack', (): void => {
           !readsCardPages(reference)
             ? {
                 surface: { ...surface, probeGeneration: 1 },
-                agent: { _id: agentId, bossEmail: 'boss@day0.local' },
+                agent: { _id: agentId, bossEmail: MANAGER_ADDRESS },
               }
             : pages,
         runAction: fakeRunAction('tracker-key'),
@@ -1316,7 +1317,7 @@ describe('the hourly re-probe sweep', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const [ended, ending, later] = await harness.run(async (ctx) => {
       const agentId = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'reprobe sweep',
         userId: 'owner',
         state: 'active',
@@ -1404,7 +1405,7 @@ describe('credential landing from the card', (): void => {
   ): Promise<Id<'surfaces'>> {
     return await harness.run(async (ctx): Promise<Id<'surfaces'>> => {
       const agentId = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'landing test',
         userId: 'owner',
         state: 'active',
@@ -1441,7 +1442,7 @@ describe('credential landing from the card', (): void => {
     const { api: liveApi } = await import('../../convex/_generated/api');
     const harness = convexTest(schema, allConvexModules());
     const surfaceId = await seedLandingSurface(harness, 'oauth');
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     await expect(
       owner.action(liveApi.surfaceActions.landCredential, {
         surfaceId,
@@ -1482,7 +1483,7 @@ describe('credential landing from the card', (): void => {
     const { api: liveApi } = await import('../../convex/_generated/api');
     const harness = convexTest(schema, allConvexModules());
     const surfaceId = await seedLandingSurface(harness, 'api-key');
-    await harness.withIdentity({ subject: 'owner' }).action(liveApi.surfaceActions.landCredential, {
+    await harness.withIdentity(managerIdentity()).action(liveApi.surfaceActions.landCredential, {
       surfaceId,
       label: '',
       plaintext: ' lin_api_test_value ',
@@ -1498,7 +1499,7 @@ describe('credential landing from the card', (): void => {
     });
     await expect(
       harness
-        .withIdentity({ subject: 'stranger' })
+        .withIdentity(managerIdentity('stranger'))
         .action(liveApi.surfaceActions.landCredential, { surfaceId, label: 'x', plaintext: 'y' }),
     ).rejects.toThrow('forbidden');
   });
@@ -1546,7 +1547,7 @@ describe('what the card may not store', (): void => {
     vi.stubEnv('DAY0_CREDENTIAL_KEY', randomBytes(32).toString('base64'));
     const { api: liveApi } = await import('../../convex/_generated/api');
     const harness = convexTest(schema, allConvexModules());
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     const pending = await seedCard(harness, false);
     await expect(
       owner.action(liveApi.surfaceActions.landCredential, {
@@ -1578,7 +1579,7 @@ describe('what the card may not store', (): void => {
   ): Promise<Id<'surfaces'>> {
     return await harness.run(async (ctx): Promise<Id<'surfaces'>> => {
       const agentId = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'landing refusal',
         userId: 'owner',
         state: 'active',
@@ -2130,7 +2131,7 @@ describe('probing the browser floor', (): void => {
     const { agentId, surfaceId } = await harness.run(
       async (ctx): Promise<{ agentId: Id<'agents'>; surfaceId: Id<'surfaces'> }> => {
         const agentId = await ctx.db.insert('agents', {
-          bossEmail: 'boss@day0.local',
+          bossEmail: MANAGER_ADDRESS,
           name: 'floor probe',
           userId: 'owner',
           state: 'active',
@@ -2311,7 +2312,7 @@ describe('probing the browser floor', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const surfaceId = await harness.run(async (ctx): Promise<Id<'surfaces'>> => {
       const agentId = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'Jira employee',
         userId: 'owner',
         state: 'active',
@@ -2443,7 +2444,7 @@ describe('probing the browser floor', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const surfaceId = await harness.run(async (ctx): Promise<Id<'surfaces'>> => {
       const agentId = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'Jira employee',
         userId: 'owner',
         state: 'active',
@@ -2511,7 +2512,7 @@ describe('probing the browser floor', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const { surfaceId } = await harness.run(async (ctx): Promise<{ surfaceId: Id<'surfaces'> }> => {
       const agentId = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'Jira employee',
         userId: 'owner',
         state: 'active',
@@ -2686,7 +2687,7 @@ describe('one failed probe does not write listed-dead', (): void => {
   ): Promise<Id<'surfaces'>> {
     return await harness.run(async (ctx): Promise<Id<'surfaces'>> => {
       const agentId = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'Priya',
         userId: 'owner',
         state: 'active',

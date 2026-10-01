@@ -6,6 +6,7 @@ import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { assembleTrace, type AgentTrace, type TracePage } from '../../src/export/trace';
 import { EVENT_TYPES } from '../../src/events/contract';
+import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
 /** The whole trace of one agent, assembled from the paged export as the command line assembles it. */
 async function exportedTrace(
@@ -31,7 +32,7 @@ async function exportedTrace(
 async function seedTracedAgent(harness: TestConvex<typeof schema>): Promise<Id<'agents'>> {
   return await harness.run(async (ctx): Promise<Id<'agents'>> => {
     const id = await ctx.db.insert('agents', {
-      bossEmail: 'boss@day0.local',
+      bossEmail: MANAGER_ADDRESS,
       name: 'Priya',
       userId: 'owner',
       state: 'active',
@@ -129,7 +130,7 @@ describe('the paged trace export', (): void => {
     });
     const { api } = await import('../../convex/_generated/api');
     const head = await harness
-      .withIdentity({ subject: 'owner' })
+      .withIdentity(managerIdentity())
       .action(api.exportActions.exportForAgent, { agentId });
     expect(head.manifest).toEqual({
       format: 'day0-trace',
@@ -158,9 +159,9 @@ describe('the paged trace export', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedTracedAgent(harness);
     await expect(
-      exportedTrace(harness.withIdentity({ subject: 'intruder' }), agentId),
+      exportedTrace(harness.withIdentity(managerIdentity('intruder')), agentId),
     ).rejects.toThrow('forbidden');
-    const trace = await exportedTrace(harness.withIdentity({ subject: 'owner' }), agentId);
+    const trace = await exportedTrace(harness.withIdentity(managerIdentity()), agentId);
     expect(trace.sections.events.map((event) => event.type)).toEqual([
       'work.completed',
       'permission.revoked',
@@ -224,7 +225,7 @@ describe('the paged trace export', (): void => {
         providerTs: '1789000000.000300',
       });
     });
-    const trace = await exportedTrace(harness.withIdentity({ subject: 'owner' }), agentId);
+    const trace = await exportedTrace(harness.withIdentity(managerIdentity()), agentId);
     expect(
       trace.sections.managerNotes.map((note) => [note.kind, note.providerTs, note.failure]),
     ).toEqual([
@@ -268,7 +269,7 @@ describe('the paged trace export', (): void => {
         createdAt: 2,
       });
     });
-    const trace = await exportedTrace(harness.withIdentity({ subject: 'owner' }), agentId);
+    const trace = await exportedTrace(harness.withIdentity(managerIdentity()), agentId);
     const serialised = JSON.stringify(trace);
     expect(serialised).not.toContain('LIVE-NONCE-123');
     expect(serialised).not.toContain('Priya Raman');
@@ -292,7 +293,7 @@ describe('the paged trace export', (): void => {
       }
     });
     const pages: TracePage[] = [];
-    const trace = await exportedTrace(harness.withIdentity({ subject: 'owner' }), agentId, pages);
+    const trace = await exportedTrace(harness.withIdentity(managerIdentity()), agentId, pages);
     expect(Math.max(...pages.map((page) => page.rows.length))).toBe(100);
     expect(
       pages.filter((page) => page.section === 'events').map((page) => page.rows.length),
@@ -316,7 +317,7 @@ describe('the paged trace export', (): void => {
         rejections: [],
       });
       const gone = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'Mateo',
         userId: 'owner',
         state: 'active',
@@ -337,7 +338,7 @@ describe('the paged trace export', (): void => {
       await ctx.db.delete(gone);
       await ctx.db.delete(elsewhere);
     });
-    const trace = await exportedTrace(harness.withIdentity({ subject: 'owner' }), agentId);
+    const trace = await exportedTrace(harness.withIdentity(managerIdentity()), agentId);
     expect(trace.owner.retired).toEqual([
       expect.objectContaining({
         agentName: 'Mateo',
@@ -364,7 +365,7 @@ describe('the paged trace export', (): void => {
           createdAt: 1,
         }),
     );
-    const trace = await exportedTrace(harness.withIdentity({ subject: 'owner' }), agentId);
+    const trace = await exportedTrace(harness.withIdentity(managerIdentity()), agentId);
     expect(trace.agent.evaluation).toBe(true);
     expect(JSON.stringify(trace)).not.toContain('eval-day0-r1');
   });
@@ -377,9 +378,9 @@ describe('event trace export on a deployed agent', (): void => {
     useSurfaceMode('mock');
     const { api: mockApi } = await import('../../convex/_generated/api');
     const harness = convexTest(schema, allConvexModules());
-    const owner = harness.withIdentity({ subject: 'owner' });
     const bossEmail = 'priya.boss@day0.local';
-    const agentId = await owner.mutation(mockApi.agents.deploy, { bossEmail, name: 'Priya' });
+    const owner = harness.withIdentity(managerIdentity('owner', { email: bossEmail }));
+    const agentId = await owner.mutation(mockApi.agents.deploy, { name: 'Priya' });
     const token = ['xoxb', '1234567890', 'abcdefghijklmnop'].join('-');
     await harness.run(async (ctx): Promise<void> => {
       const workItemId = await ctx.db.insert('workItems', {
@@ -431,7 +432,7 @@ describe('the flips of the autonomous-actions switch', (): void => {
       for (const name of ['Priya', 'Mateo']) {
         ids.push(
           await ctx.db.insert('agents', {
-            bossEmail: 'boss@day0.local',
+            bossEmail: MANAGER_ADDRESS,
             name,
             userId: 'owner',
             state: 'active',
@@ -470,7 +471,7 @@ describe('the flips of the autonomous-actions switch', (): void => {
       return ids;
     });
 
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     expect(await owner.query(api.events.autonomyChanges, { agentId: priya! })).toEqual([
       { at: 1789788458102, on: true },
       { at: 1789788500000, on: false },
@@ -480,7 +481,7 @@ describe('the flips of the autonomous-actions switch', (): void => {
     ]);
     await expect(
       harness
-        .withIdentity({ subject: 'intruder' })
+        .withIdentity(managerIdentity('intruder'))
         .query(api.events.autonomyChanges, { agentId: priya! }),
     ).rejects.toThrow('forbidden');
   });
@@ -492,7 +493,7 @@ describe('the dashboard ticker', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await harness.run(async (ctx): Promise<Id<'agents'>> => {
       const id = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'Priya',
         userId: 'owner',
         state: 'active',
@@ -521,7 +522,7 @@ describe('the dashboard ticker', (): void => {
       return id;
     });
     const recent = await harness
-      .withIdentity({ subject: 'owner' })
+      .withIdentity(managerIdentity())
       .query(api.events.recent, { agentId, limit: 2 });
     expect(recent.map((event) => event.type)).toEqual(['work.completed', 'work.discovered']);
   });
@@ -531,7 +532,7 @@ describe('the dashboard ticker', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await harness.run(async (ctx): Promise<Id<'agents'>> => {
       const id = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'Priya',
         userId: 'owner',
         state: 'active',
@@ -547,7 +548,7 @@ describe('the dashboard ticker', (): void => {
       }
       return id;
     });
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     for (const limit of [20_000, Number.POSITIVE_INFINITY]) {
       expect(await owner.query(api.events.recent, { agentId, limit })).toHaveLength(500);
     }
@@ -582,6 +583,24 @@ describe('export redaction', (): void => {
       payload: { reason: 'manager left' },
     });
   });
+
+  it('drops both addresses of a handover request and keeps what happened to it', async (): Promise<void> => {
+    const { redactForExport } = await import('../../convex/events');
+    expect(
+      redactForExport({
+        type: 'manager.transfer-asked',
+        payload: {
+          transferId: 'transfer-1',
+          fromAddress: 'sam@company.com',
+          toAddress: 'priya@company.com',
+          hasNote: true,
+        },
+      }),
+    ).toEqual({
+      type: 'manager.transfer-asked',
+      payload: { transferId: 'transfer-1', hasNote: true },
+    });
+  });
 });
 
 describe('the Record tab reader', (): void => {
@@ -589,7 +608,7 @@ describe('the Record tab reader', (): void => {
   async function seedRecord(harness: TestConvex<typeof schema>): Promise<Id<'agents'>> {
     return await harness.run(async (ctx): Promise<Id<'agents'>> => {
       const id = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'Priya',
         userId: 'owner',
         state: 'active',
@@ -625,7 +644,7 @@ describe('the Record tab reader', (): void => {
     const { api } = await import('../../convex/_generated/api');
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedRecord(harness);
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     const first = await owner.query(api.events.record, {
       agentId,
       paginationOpts: { numItems: 3, cursor: null },
@@ -652,7 +671,7 @@ describe('the Record tab reader', (): void => {
     const { api } = await import('../../convex/_generated/api');
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedRecord(harness);
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     const types = async (filter: 'writes' | 'decisions' | 'reads' | 'refused' | 'charter') =>
       (
         await owner.query(api.events.record, {
@@ -673,7 +692,7 @@ describe('the Record tab reader', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedRecord(harness);
     await expect(
-      harness.withIdentity({ subject: 'intruder' }).query(api.events.record, {
+      harness.withIdentity(managerIdentity('intruder')).query(api.events.record, {
         agentId,
         paginationOpts: { numItems: 3, cursor: null },
       }),
@@ -688,7 +707,7 @@ describe('the Record tab reader over a long record', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await harness.run(async (ctx): Promise<Id<'agents'>> => {
       const id = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'Priya',
         userId: 'owner',
         state: 'active',
@@ -710,7 +729,7 @@ describe('the Record tab reader over a long record', (): void => {
       }
       return id;
     });
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     const first = await owner.query(api.events.record, {
       agentId,
       filter: 'charter',
@@ -733,7 +752,7 @@ describe('the Record tab reader over a long record', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await harness.run(async (ctx): Promise<Id<'agents'>> => {
       const id = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'Priya',
         userId: 'owner',
         state: 'active',
@@ -759,7 +778,7 @@ describe('the Record tab reader over a long record', (): void => {
       return id;
     });
     const page = await harness
-      .withIdentity({ subject: 'owner' })
+      .withIdentity(managerIdentity())
       .query(api.events.record, { agentId, paginationOpts: { numItems: 5, cursor: null } });
     expect(page.page.map((entry) => entry.connection)).toEqual(['Linear']);
   });

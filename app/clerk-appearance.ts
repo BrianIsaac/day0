@@ -16,8 +16,10 @@ export const DAY0_MARK_URL = '/day0-mark.svg';
  * `appearance` prop and `satisfies Appearance` here, so the typecheck refuses a name Clerk does
  * not read.
  *
- * Every card carries Day0's mark above its title (the operator's ask, 30 September), set here
- * rather than in Clerk's dashboard so the deployment's code decides it.
+ * Day0's mark is set here rather than in Clerk's dashboard, so the deployment's code decides it
+ * (the operator's ask, 30 September). Inside the card, Clerk draws it only on a card that asks for
+ * a logo; the account menu's popover and profile ask for none, and the sign-in and sign-up flows
+ * draw it outside (`clerkSignInAppearance`).
  */
 export const clerkAppearance = {
   theme: dark,
@@ -49,27 +51,41 @@ export const clerkAppearance = {
 } satisfies Appearance;
 
 /**
+ * How the sign-in and sign-up flows look, on their pages and in the header's two modals: the
+ * shared appearance, with Day0's mark above the card on every step.
+ *
+ * Inside the card the mark reached only the steps whose card asks Clerk for a logo. Clerk's
+ * code-entry card (`VerificationCodeCard` in `@clerk/ui` 1.36: "Check your email", "Verify your
+ * email", a second factor's code) never does, so those steps had none (the v0.11.0 walk).
+ * Outside is the one placement Clerk draws on every card of a flow. It is kept to the two flows:
+ * the account menu's popover and profile are cards too, and a mark above them would float over
+ * the header. Clerk spaces an outside mark from the card on small screens only; the margin keeps
+ * that space at every width.
+ */
+export const clerkSignInAppearance = {
+  ...clerkAppearance,
+  options: { ...clerkAppearance.options, logoPlacement: 'outside' },
+  elements: { logoBox: { marginBottom: '1.75rem' } },
+} satisfies Appearance;
+
+/**
  * The appearance of a Clerk widget drawn under a page's own h1: the sign-in and sign-up pages.
  *
  * Clerk draws every step's title as an h1, so on the first step, where the page's heading already
- * says what the card is for, the title and its subtitle are left out and the mark stands alone
- * above the form (the hosted walk's m26), with no header gap left under it. Later steps keep their
- * headers: they say what to do ("Check your email") and to which address, and the page's heading
- * steps down to a paragraph there (`StepHeading`), so each step has one h1. All of it goes through
- * Clerk's own element styles, never a stylesheet selector on its classes, which Clerk reports as
- * structural CSS on every page.
+ * says what the card is for, the card's header, its title and subtitle, is left out: the mark
+ * above the card and the form inside it are all the step shows (the hosted walk's m26). Later
+ * steps keep their headers: they say what to do ("Check your email") and to which address, and
+ * the page's heading steps down to a paragraph there (`StepHeading`), so each step has one h1.
+ * All of it goes through Clerk's own element styles, never a stylesheet selector on its classes,
+ * which Clerk reports as structural CSS on every page.
  *
  * @param firstStep - Whether the widget is on its first step (`HeadedClerk.tsx` reads it off the
  *   path, by which Clerk routes its steps).
  */
 export function headedClerkAppearance(firstStep: boolean): Appearance {
-  if (!firstStep) return clerkAppearance;
+  if (!firstStep) return clerkSignInAppearance;
   return {
-    ...clerkAppearance,
-    elements: {
-      header: { gap: 0 },
-      headerTitle: { display: 'none' },
-      headerSubtitle: { display: 'none' },
-    },
+    ...clerkSignInAppearance,
+    elements: { ...clerkSignInAppearance.elements, header: { display: 'none' } },
   };
 }
