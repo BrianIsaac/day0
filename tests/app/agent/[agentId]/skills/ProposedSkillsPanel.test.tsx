@@ -439,6 +439,28 @@ describe('ProposedSkillsPanel: adoption (A3, 10-A)', (): void => {
     view.unmount();
   });
 
+  it('lets a Check it again’s line go once its check has run and stopped short again (the second pass)', async (): Promise<void> => {
+    const stalled = { ...adoption, state: 'verifying', rowState: 'authoring', log: 'no sandbox' };
+    backend.queries = { 'skillAdoption:adoptions': [stalled] };
+    backend.results = { 'skillAdoption:verifyAgain': { ok: true } };
+    const view = mount(panel([]));
+    await press(view.container, 'Check it again: kanban-comment-and-close');
+    expect(said(view.container).join(' ')).toContain('Checking kanban-comment-and-close again');
+
+    // The check claims the row and runs.
+    backend.queries = {
+      'skillAdoption:adoptions': [{ ...stalled, log: undefined, claimedAt: Date.now() }],
+    };
+    act((): void => view.root.render(panel([])));
+    expect(said(view.container).join(' ')).toContain('Checking kanban-comment-and-close again');
+
+    // It stops short again: the card says why, and the line goes.
+    backend.queries = { 'skillAdoption:adoptions': [stalled] };
+    act((): void => view.root.render(panel([])));
+    expect(said(view.container).join(' ')).not.toContain('Checking kanban-comment-and-close again');
+    view.unmount();
+  });
+
   it('says a refused adoption in the words the backend wrote for the manager', async (): Promise<void> => {
     backend.queries = { 'skillAdoption:adoptions': [adoption] };
     backend.refusals = {

@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { SurfaceRecord } from '@/surfaces/types';
 import { type AuthoringAttempt, AUTHORING_UNFINISHED } from './authoring';
@@ -99,6 +99,8 @@ export function ProposedSkillsPanel({
     readonly text: string;
     /** The card's state when the check was asked for: an offer adopted, or a stopped check. */
     readonly from: 'offered' | 'stalled';
+    /** Whether the card has been seen with the check under way since. */
+    readonly ran?: true;
   } | null>(null);
 
   const offers = useMemo(
@@ -162,17 +164,23 @@ export function ProposedSkillsPanel({
   }
 
   // A line about a check under way says nothing true once its card does not: the adoption
-  // registered (or was declined) and left the panel, its check failed, or an Adopt's check stopped
+  // registered (or was declined) and left the panel, its check failed, or its check stopped
   // short. A Check it again is pressed on a stopped card, which reads stopped until the check
-  // claims the row, so its line stands until the card is gone or failed.
+  // claims the row, so its line goes on a stop only once the check has been seen under way.
   const checkAt = checkLine === null ? undefined : offers.get(checkLine.skillId);
   const checkState = checkAt === undefined ? undefined : adoptionStateAt(checkAt, now);
+  const checkSeenRunning = checkLine !== null && checkState === 'verifying';
+  useEffect(() => {
+    if (!checkSeenRunning) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- a check seen under way once is remembered, so a later stop ends its line
+    setCheckLine((line) => (line === null || line.ran ? line : { ...line, ran: true }));
+  }, [checkSeenRunning]);
   const checkLineStale =
     checkLine !== null &&
     change.outcome?.text === checkLine.text &&
     (checkState === undefined ||
       checkState === 'failed' ||
-      (checkState === 'stalled' && checkLine.from === 'offered'));
+      (checkState === 'stalled' && (checkLine.from === 'offered' || checkLine.ran === true)));
 
   // Write a new one instead: the offer is set aside first, so a refused approval leaves an
   // ordinary proposal to approve, never an approved row the card would take for an adoption.
