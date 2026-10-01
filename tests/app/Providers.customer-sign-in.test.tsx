@@ -115,6 +115,8 @@ describe('the customer-local providers', (): void => {
     expect(html).toMatch(/^<main id="main" tabindex="-1"/);
     expect(html).toContain('Signing you in');
     expect(html).not.toContain('owned');
+    // The header is held with the rest of the tree, so the frame names the app itself.
+    expect(html).toMatch(/aria-hidden="true"[^>]*>Day0</);
   });
 
   it('lets the pages in once Convex holds the ID token the token route hands over', async (): Promise<void> => {

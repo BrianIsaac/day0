@@ -91,7 +91,9 @@ export function signInPageResponse(page: SignInPage): NextResponse {
     '.action{display:inline-flex;align-items:center;min-height:44px;padding:0 1rem;border-radius:.5rem;' +
     'background:#22d3ee;color:#0a0a0b;font-weight:500;font-size:.875rem;text-decoration:none}' +
     '.action:focus-visible{outline:2px solid #f4f4f5;outline-offset:2px}' +
-    `</style></head><body><main id="main"><h1>${escapeHtml(page.title)}</h1>` +
+    '.brand{color:#22d3ee;font-size:.75rem;font-weight:500;letter-spacing:.2em;text-transform:uppercase}' +
+    '</style></head><body><main id="main"><p class="brand" aria-hidden="true">Day0</p>' +
+    `<h1>${escapeHtml(page.title)}</h1>` +
     `<p>${escapeHtml(page.body)}</p>${action}</main></body></html>`;
   return new NextResponse(html, {
     status: page.status,
@@ -677,9 +679,10 @@ export function checkPageResponse(report: SignInCheckReport): NextResponse {
     'table{border-collapse:collapse;width:100%;min-width:36rem}' +
     'th,td{text-align:left;vertical-align:top;padding:.5rem;border-bottom:1px solid #27272a;overflow-wrap:anywhere}' +
     'thead th{color:#a1a1aa;font-weight:500}.ok{color:#34d399}.warn{color:#f59e0b}.gap{color:#ef4444}' +
+    '.brand{color:#22d3ee;font-size:.75rem;font-weight:500;letter-spacing:.2em;text-transform:uppercase}' +
     'code{font-size:.8125rem}.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;' +
     'clip-path:inset(50%);white-space:nowrap}</style></head><body><main id="main">' +
-    '<h1>Sign-in check</h1>' +
+    '<p class="brand" aria-hidden="true">Day0</p><h1>Sign-in check</h1>' +
     '<p>This sign-in was a check: nobody was signed in. The terminal that printed the link shows the same lines.</p>' +
     '<div class="table"><table><caption class="sr-only">' +
     'Each claim of the ID token, with its verdict</caption>' +

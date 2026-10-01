@@ -603,7 +603,17 @@ function CustomerGateFrame({ children }: { readonly children: ReactNode }) {
       tabIndex={-1}
       className="grid min-h-[calc(100vh-3.25rem)] place-items-center px-6 outline-none"
     >
-      <div className="grid max-w-md justify-items-center gap-4 text-center">{children}</div>
+      <div className="grid max-w-md justify-items-center gap-4 text-center">
+        {/* The header is held with the rest of the tree, so the frame names the app itself; the
+            page's title already says it to assistive technology. */}
+        <p
+          aria-hidden="true"
+          className="text-xs font-medium uppercase tracking-[0.2em] text-[var(--color-accent)]"
+        >
+          Day0
+        </p>
+        {children}
+      </div>
     </main>
   );
 }

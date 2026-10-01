@@ -111,7 +111,10 @@ describe('the company sign-in callback', (): void => {
     const back = await issuerRedirect(issuer, started, 'eve');
     const response = await callback(back.search, started.transactionCookie);
     expect(response.status).toBe(403);
-    expect(await response.text()).toContain('not in a domain this installation admits');
+    const page = await response.text();
+    expect(page).toContain('not in a domain this installation admits');
+    // A refused person can tell which app refused them.
+    expect(page).toContain('<p class="brand" aria-hidden="true">Day0</p>');
     expect(setCookies(response).has('day0_session')).toBe(false);
   });
 
