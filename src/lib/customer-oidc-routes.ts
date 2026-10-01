@@ -1,6 +1,12 @@
 import 'server-only';
 import { NextResponse, type NextRequest } from 'next/server';
-import { CUSTOMER_SIGN_IN, profileMismatch } from './customer-sign-in';
+import {
+  CUSTOMER_SIGN_IN,
+  customerSignInHref,
+  profileMismatch,
+  type IssuedToken,
+  type SessionAccount,
+} from './customer-sign-in';
 import { SIGN_IN_REFUSAL_WORDS } from './customer-oidc';
 import {
   CustomerSignInUnavailable,
@@ -185,11 +191,6 @@ export async function signInRoute(request: NextRequest): Promise<NextResponse> {
   return response;
 }
 
-/** The link that starts a sign-in afresh, landing on `returnTo` afterwards. */
-function signInAgainHref(returnTo: string): string {
-  return `/api/auth/oidc/login?returnTo=${encodeURIComponent(returnTo)}`;
-}
-
 /** Expire the sign-in transaction, on the one path its cookie was set for. */
 function clearTransaction(response: NextResponse, settings: CustomerSignInSettings): void {
   response.cookies.set(SIGN_IN_TRANSACTION_COOKIE, '', {
@@ -280,7 +281,7 @@ export async function callbackRoute(request: NextRequest): Promise<NextResponse>
       status: 400,
       title: 'This sign-in has expired',
       body: 'It took longer than ten minutes, or it was started in another browser or tab. Start it again.',
-      action: { href: signInAgainHref('/'), label: 'Sign in again' },
+      action: { href: customerSignInHref('/'), label: 'Sign in again' },
     });
     clearTransaction(response, settings);
     return response;
@@ -295,7 +296,7 @@ export async function callbackRoute(request: NextRequest): Promise<NextResponse>
       body:
         `It answered ${code}. Your account may not be assigned to Day0 yet: ask your ` +
         'administrator, then try again.',
-      action: { href: signInAgainHref(transaction.returnTo), label: 'Try again' },
+      action: { href: customerSignInHref(transaction.returnTo), label: 'Try again' },
     });
     clearTransaction(response, settings);
     return response;
@@ -310,7 +311,7 @@ export async function callbackRoute(request: NextRequest): Promise<NextResponse>
         body:
           'The answer from your company sign-in did not check out, so nothing was signed in. ' +
           'Start again; if it keeps happening, tell whoever installed Day0.',
-        action: { href: signInAgainHref(transaction.returnTo), label: 'Sign in again' },
+        action: { href: customerSignInHref(transaction.returnTo), label: 'Sign in again' },
       });
       clearTransaction(response, settings);
       return response;
@@ -321,7 +322,7 @@ export async function callbackRoute(request: NextRequest): Promise<NextResponse>
         status: 403,
         title: 'Day0 is not open to this account',
         body: SIGN_IN_REFUSAL_WORDS[finished.reason],
-        action: { href: signInAgainHref(transaction.returnTo), label: 'Use another account' },
+        action: { href: customerSignInHref(transaction.returnTo), label: 'Use another account' },
       });
       clearTransaction(response, settings);
       return response;
@@ -340,20 +341,6 @@ export async function callbackRoute(request: NextRequest): Promise<NextResponse>
       throw new Error(`unhandled sign-in outcome ${String(unknown)}`);
     }
   }
-}
-
-/** The account a session names, as the header's menu shows it. */
-export interface SessionAccount {
-  readonly name?: string;
-  readonly email?: string;
-}
-
-/** What the token route answers a signed-in browser with. */
-export interface IssuedToken {
-  readonly token: string;
-  /** The token's expiry, in milliseconds. */
-  readonly expiresAt: number;
-  readonly account: SessionAccount;
 }
 
 /** How long a token must still be good for to be handed out when the issuer cannot refresh it. */
@@ -525,6 +512,6 @@ export function signedOutRoute(): NextResponse {
     status: 200,
     title: 'You are signed out',
     body: 'You are signed out of Day0. Sign in again to carry on.',
-    action: { href: signInAgainHref('/'), label: 'Sign in' },
+    action: { href: customerSignInHref('/'), label: 'Sign in' },
   });
 }

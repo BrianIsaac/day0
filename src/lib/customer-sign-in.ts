@@ -44,3 +44,32 @@ export function profileMismatch(serverProfile: string | undefined): string | und
     ? `This build signs people in through the customer's issuer (NEXT_PUBLIC_DAY0_PROFILE=customer-local), and the server runs DAY0_PROFILE=${server}. Set DAY0_PROFILE=customer-local, or rebuild without the browser copy.`
     : `The server runs DAY0_PROFILE=customer-local, and this build was made without NEXT_PUBLIC_DAY0_PROFILE=customer-local, so the browser would not use the customer's sign-in. Set it in the env file, then run pnpm build again.`;
 }
+
+/** The account a session names, as the header's menu shows it. */
+export interface SessionAccount {
+  readonly name?: string;
+  readonly email?: string;
+}
+
+/** What the token route answers a signed-in browser with. */
+export interface IssuedToken {
+  readonly token: string;
+  /** The token's expiry, in milliseconds. */
+  readonly expiresAt: number;
+  readonly account: SessionAccount;
+}
+
+/** The route the browser fetches Convex's token from. */
+export const CUSTOMER_TOKEN_ROUTE = '/api/auth/oidc/token';
+
+/** The route that ends a session; a form posts to it. */
+export const CUSTOMER_SIGN_OUT_ROUTE = '/api/auth/oidc/logout';
+
+/**
+ * The link that starts a sign-in and lands on `returnTo` afterwards.
+ *
+ * @param returnTo - The same-origin path to come back to.
+ */
+export function customerSignInHref(returnTo: string): string {
+  return `/api/auth/oidc/login?returnTo=${encodeURIComponent(returnTo)}`;
+}
