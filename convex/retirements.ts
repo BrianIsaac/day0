@@ -7,7 +7,10 @@ import type { QueryCtx } from './_generated/server';
  * employee's rows, but a provider item it may already have written stays
  * held, and an item the manager rejected its plan for stays rejected; both
  * are kept on its `retirements` row, read here by the claim guard, the write
- * guard and the sibling hold (`convex/reset.ts` writes them).
+ * guard and the sibling hold (`convex/reset.ts` writes them). An employee
+ * handed over to another manager leaves the same boundary for its old owner
+ * on a row of `kind: 'transferred'` (decision D11, `convex/transferAcceptance.ts`
+ * writes it), read here unchanged.
  */
 
 /** One claim a retired employee still holds. */
@@ -108,11 +111,18 @@ export async function firstRetiredRejection(
 }
 
 /**
- * How a retired holder is named to a colleague it refuses.
+ * How a holder kept on a retirement row is named to a colleague it refuses: as retired, or, on a
+ * departure's row (`kind: 'transferred'`, decision D11), as handed over, since that employee
+ * lives on under another manager.
  *
- * @param retirement - The holder's retirement.
- * @returns Its name, marked retired.
+ * @param retirement - The holder's retirement or departure.
+ * @returns Its name, marked by how it left the owner.
  */
-export function retiredHolderName(retirement: Pick<Doc<'retirements'>, 'agentName'>): string {
-  return `${retirement.agentName ?? 'an employee'} (retired)`;
+export function retiredHolderName(
+  retirement: Pick<Doc<'retirements'>, 'agentName' | 'kind'>,
+): string {
+  const name = retirement.agentName ?? 'an employee';
+  return retirement.kind === 'transferred'
+    ? `${name} (handed over to another manager)`
+    : `${name} (retired)`;
 }
