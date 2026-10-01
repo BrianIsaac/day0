@@ -45,6 +45,7 @@ import { agentZone, expiryNoticeDay, expiryNoticeDue } from '../src/lib/zone';
 import { SURFACE_ACCESS_DEFAULT_DAYS, SURFACE_ACCESS_MAX_DAYS } from '../src/surfaces/access';
 import { surfaceHandoverOf, type SurfaceHandover } from '../src/surfaces/handover';
 import { assertCredentialOfOwner, credentialOwnerRefusal } from './handoverFence';
+import { isSlackApiEndpoint } from '../src/surfaces/slack-endpoint';
 import { log } from '../src/lib/logger';
 
 const MAX_LADDER_PATHS = 3;
@@ -2584,9 +2585,18 @@ export function credentialsBoundBy(
   return bound;
 }
 
-/** Why a cut card is back in `proposed`, on the card. */
+/** Why a cut card is back in `proposed`, on the card, when its route is no owner's documentation. */
 export const HANDOVER_CUT_REASON =
   'Handed over to a new manager: approve this connection, then land a credential of your own.';
+
+/**
+ * Why a cut card is back in `proposed`, on the card, when the address it connected to came from
+ * the previous manager's documentation and was cleared with it: approving it as it stands has
+ * nowhere to connect, so the new manager proposes it again from their own documentation (a
+ * rejection returns it to `declared`, where Propose orients it afresh).
+ */
+export const HANDOVER_CUT_REPROPOSE_REASON =
+  "Handed over to a new manager: the address the previous manager's documentation gave for this connection did not come with it. Reject this card, then propose it again from your own documentation.";
 
 /**
  * Where the card tells the new manager the credential is, in place of the old owner's documented
@@ -2723,7 +2733,9 @@ function requestWithoutDepartedQuotes(
   kept: (entry: unknown) => boolean,
 ): unknown {
   if (typeof request !== 'object' || request === null) return request;
-  const { evidence, credential, ...rest } = request as Record<string, unknown>;
+  const { evidence, credential, ...drafted } = request as Record<string, unknown>;
+  const departed = Array.isArray(evidence) && !evidence.every(kept);
+  const rest = departed ? withoutDraftedProse(drafted) : drafted;
   const method =
     typeof credential === 'object' && credential !== null
       ? (credential as { method?: unknown }).method
@@ -2743,18 +2755,98 @@ function requestWithoutDepartedQuotes(
   };
 }
 
+/** The words of a drafted request that the model wrote from the pages its evidence quotes. */
+const DRAFTED_PROSE_FIELDS: ReadonlySet<string> = new Set([
+  'openQuestions',
+  'blastRadius',
+  'rollback',
+]);
+
+/** The target's fields the model wrote from those pages: its reasoning and its ladder of addresses. */
+const DRAFTED_TARGET_FIELDS: ReadonlySet<string> = new Set(['reasoning', 'ladder']);
+
+/**
+ * An object without the named fields.
+ *
+ * @param record - The object.
+ * @param left - The fields to leave out.
+ */
+function withoutFields(
+  record: Readonly<Record<string, unknown>>,
+  left: ReadonlySet<string>,
+): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(record).filter(([field]) => !left.has(field)));
+}
+
+/**
+ * A drafted request without the prose the model wrote from its evidence: the target's reasoning
+ * and its ladder of documented addresses, the open questions, the blast radius and the rollback.
+ * What remains names the system, the path chosen and the scopes, none of it a page's words.
+ *
+ * @param drafted - The request, its evidence and credential finding set aside by the caller.
+ */
+function withoutDraftedProse(drafted: Readonly<Record<string, unknown>>): Record<string, unknown> {
+  const kept = withoutFields(drafted, DRAFTED_PROSE_FIELDS);
+  const target = drafted.target;
+  if (typeof target !== 'object' || target === null) return kept;
+  return {
+    ...kept,
+    target: withoutFields(target as Record<string, unknown>, DRAFTED_TARGET_FIELDS),
+  };
+}
+
+/**
+ * The route a cut card keeps (the wave 9 review's section 3): a documented address is the old
+ * owner's documentation, a tenant's host among it, so the endpoint and the ladder go with the
+ * quotes. Slack's own Web API base is the one address Day0 fixes itself (`isSlackApiEndpoint`):
+ * the same for every workspace, it is nobody's documentation, and the new manager's chat card
+ * reconnects on it, which re-sends the decisions still open (the transfer plan, section 6.4).
+ *
+ * @param surface - The surface before the cut.
+ */
+function routeAfterCut(
+  surface: Doc<'surfaces'>,
+): Pick<Doc<'surfaces'>, 'endpoint' | 'pathCandidates'> {
+  if (!isSlackApiEndpoint(surface.endpoint)) {
+    return { endpoint: undefined, pathCandidates: undefined };
+  }
+  const ladder = (surface.pathCandidates ?? []).filter((rung) => isSlackApiEndpoint(rung.endpoint));
+  return { endpoint: surface.endpoint, pathCandidates: ladder.length > 0 ? ladder : undefined };
+}
+
+/**
+ * A drafted request without its target's ladder of documented addresses, for a cut card whose
+ * route went with the old owner's documentation.
+ *
+ * @param request - The request with the departed quotes already left out.
+ */
+function requestWithoutLadder(request: unknown): unknown {
+  if (typeof request !== 'object' || request === null) return request;
+  const target = (request as Record<string, unknown>).target;
+  if (typeof target !== 'object' || target === null) return request;
+  return {
+    ...request,
+    target: withoutFields(target as Record<string, unknown>, new Set(['ladder'])),
+  };
+}
+
 /**
  * The fields a cut clears: the credential, the provider's identities, the old manager's chat
- * binding and decision poll, the approval with the tools and the access clock it set, and any
- * probe in flight with its generation. The route the card proposes (path, endpoint, ladder and
- * request) stays, for the new manager to approve.
+ * binding and decision poll, the approval with the tools and the access clock it set, any probe
+ * in flight with its generation, the probe attempts (their reasons quote the old manager's
+ * address and the old owner's pages), and the documented route ({@link routeAfterCut}). The path
+ * stays; a card whose address went says so, since approving it as it stands connects nowhere.
  *
  * @param surface - The surface before the cut.
  */
 function cutPatch(surface: Doc<'surfaces'>): Partial<Doc<'surfaces'>> {
+  const route = routeAfterCut(surface);
+  const addressWent = surface.endpoint !== undefined && route.endpoint === undefined;
   return {
     verdict: 'proposed',
-    reason: HANDOVER_CUT_REASON,
+    reason: addressWent ? HANDOVER_CUT_REPROPOSE_REASON : HANDOVER_CUT_REASON,
+    ...route,
+    probeAttempts: undefined,
     probeGeneration: (surface.probeGeneration ?? 0) + 1,
     probeStartedAt: undefined,
     managerApprovedAt: undefined,
@@ -2859,10 +2951,22 @@ export async function handOverSurfaces(
     const quotes = withoutDepartedQuotes(surface, readable);
     switch (handover) {
       case 'carry':
-        await ctx.db.patch(surface._id, quotes);
+        // The credential's documented location is the old owner's page text, up to 500
+        // characters of it; a carried card was never probed, so its attempts are empty or stale.
+        await ctx.db.patch(surface._id, {
+          ...quotes,
+          credentialLocation: undefined,
+          probeAttempts: undefined,
+        });
         break;
       case 'cut': {
-        await ctx.db.patch(surface._id, { ...cutPatch(surface), ...quotes });
+        const patch = cutPatch(surface);
+        await ctx.db.patch(surface._id, {
+          ...patch,
+          ...quotes,
+          request:
+            patch.endpoint === undefined ? requestWithoutLadder(quotes.request) : quotes.request,
+        });
         const scope = await revokeConnectionGrant(ctx, surface, input.now);
         if (scope !== undefined) scopesRevoked.push(scope);
         await appendEvent(ctx, {
