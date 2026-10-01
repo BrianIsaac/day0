@@ -4,6 +4,7 @@ import { api } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import {
   computeAgentMetrics,
+  computeCompanyMetrics,
   handoversFromTransfers,
   isEvaluationAgent,
 } from '../../convex/metrics';
@@ -1727,6 +1728,36 @@ describe('the ledger walk and the pilot figures (step 29)', (): void => {
       adopted: 2,
       rate: 2 / 3,
     });
+  });
+
+  it('pools the adopted split across employees in the company figure (A14, 10-A)', (): void => {
+    const records = ['mateo', 'ana'].map((id, index) => ({
+      agent: { _id: id as Id<'agents'>, name: id, createdAt: index },
+      events: [
+        event(
+          'work.execution-claimed',
+          { workItemId: `${id}-1`, skillId: `${id}-s`, proposedFor: `${id}-1`, skillAdopted: true },
+          1_000 + index,
+        ),
+        event(
+          'work.execution-claimed',
+          { workItemId: `${id}-2`, skillId: `${id}-own`, proposedFor: `${id}-2` },
+          2_000 + index,
+        ),
+      ],
+      workItems: [],
+      charters: [],
+    }));
+    const company = computeCompanyMetrics(records, { excludedAgents: 0, omittedEmployees: 0 });
+    expect(company.company.pilot.skillReuse).toEqual({
+      runs: 4,
+      reused: 2,
+      adopted: 2,
+      rate: 0.5,
+    });
+    expect(company.employees.map((employee) => employee.metrics.pilot.skillReuse.adopted)).toEqual([
+      1, 1,
+    ]);
   });
 
   it('counts approving none of the held actions as a rejection of the decision and of each held action', (): void => {
