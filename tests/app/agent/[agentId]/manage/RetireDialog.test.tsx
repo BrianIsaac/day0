@@ -11,6 +11,7 @@ import {
   retirePhrase,
 } from '../../../../../app/agent/[agentId]/manage/RetireDialog';
 import type { RetirePreview } from '../../../../../app/agent/[agentId]/manage/retire-words';
+import type { OpenHandover } from '../../../../../app/handover-words';
 import { EMPLOYEE_ROW } from '../../../../fixtures/dom/employee';
 import { focusedName, mount, press, said, typeInto } from '../../../../fixtures/dom/press';
 
@@ -63,6 +64,22 @@ const INBOX = {
     { kind: 'plan', key: 'plan-1', subject: 'REVOPS-9', questions: 0 },
   ],
   total: 2,
+};
+
+/** The dialog's reads for an employee with a preview, what waits, and no handover open. */
+const READS = {
+  'work:needsYouForAgent': INBOX,
+  'managerTransfers:openForAgent': null,
+};
+
+/** A handover of Mira to lead@day0.local, asked on 1 October 2026. */
+const HANDOVER: OpenHandover = {
+  transferId: 'transfer-1' as OpenHandover['transferId'],
+  agentId: 'agent-1' as OpenHandover['agentId'],
+  toAddress: 'lead@day0.local',
+  state: 'asked',
+  requestedAt: Date.UTC(2026, 9, 1, 9),
+  expiresAt: Date.UTC(2026, 9, 15, 9),
 };
 
 /** The dialog open over a page with an opener, as the Manage tab opens it. */
@@ -133,7 +150,7 @@ describe('RetireDialog: what retiring does, said before it is done (Q15, N1)', (
   });
 
   it('opens on Keep, named for the employee, with the counts from the preview and what waits', (): void => {
-    backend.queries = { 'reset:retirePreview': REAL_PREVIEW, 'work:needsYouForAgent': INBOX };
+    backend.queries = { ...READS, 'reset:retirePreview': REAL_PREVIEW };
     const { view } = open();
 
     const heading = document.getElementById(dialog().getAttribute('aria-labelledby') ?? '');
@@ -181,7 +198,7 @@ describe('RetireDialog: what retiring does, said before it is done (Q15, N1)', (
   });
 
   it('keeps Tab inside the dialog, wrapping at both ends', (): void => {
-    backend.queries = { 'reset:retirePreview': REAL_PREVIEW, 'work:needsYouForAgent': INBOX };
+    backend.queries = { ...READS, 'reset:retirePreview': REAL_PREVIEW };
     const { view } = open();
 
     // Retire is disabled until the words match, so Keep is the last control.
@@ -193,7 +210,7 @@ describe('RetireDialog: what retiring does, said before it is done (Q15, N1)', (
   });
 
   it('closes on Escape and on Keep, retiring nothing', async (): Promise<void> => {
-    backend.queries = { 'reset:retirePreview': REAL_PREVIEW, 'work:needsYouForAgent': INBOX };
+    backend.queries = { ...READS, 'reset:retirePreview': REAL_PREVIEW };
     const { view, outcome } = open();
 
     key('Escape');
@@ -205,7 +222,7 @@ describe('RetireDialog: what retiring does, said before it is done (Q15, N1)', (
   });
 
   it('enables Retire only once the typed words match, then retires and hands the name on', async (): Promise<void> => {
-    backend.queries = { 'reset:retirePreview': REAL_PREVIEW, 'work:needsYouForAgent': INBOX };
+    backend.queries = { ...READS, 'reset:retirePreview': REAL_PREVIEW };
     backend.results = { 'reset:retire': { agentName: 'Mira' } };
     const { view, outcome } = open();
 
@@ -223,7 +240,7 @@ describe('RetireDialog: what retiring does, said before it is done (Q15, N1)', (
   });
 
   it('says a refusal inside the dialog and leaves it open', async (): Promise<void> => {
-    backend.queries = { 'reset:retirePreview': REAL_PREVIEW, 'work:needsYouForAgent': INBOX };
+    backend.queries = { ...READS, 'reset:retirePreview': REAL_PREVIEW };
     backend.refusals = {
       'reset:retire':
         '[CONVEX M(reset:retire)] [Request ID: 1] Server Error\nUncaught Error: This employee holds 2001 items and 0 rejections, more than one retirement keeps (2000).\n    at handler (../convex/reset.ts:1:1)',
@@ -251,7 +268,7 @@ describe('RetireDialog: what retiring does, said before it is done (Q15, N1)', (
   });
 
   it('offers supervision where a pause would be, since there is no pause', (): void => {
-    backend.queries = { 'reset:retirePreview': REAL_PREVIEW, 'work:needsYouForAgent': INBOX };
+    backend.queries = { ...READS, 'reset:retirePreview': REAL_PREVIEW };
     const { view } = open();
 
     expect(dialog().textContent).toContain(
@@ -289,12 +306,76 @@ describe('RetireDialog: what retiring does, said before it is done (Q15, N1)', (
       },
       { term: 'Waiting on you', details: ['Nothing.'] },
     ]);
-    backend.queries = { 'reset:retirePreview': mock, 'work:needsYouForAgent': INBOX };
+    backend.queries = { ...READS, 'reset:retirePreview': mock };
     const { view } = open('mock');
     expect(dialog().textContent).toContain(
       'This removes Mira and everything it made in the hosted office. It cannot be undone.',
     );
     view.unmount();
+  });
+
+  it('waits for the handover read before it offers Retire', (): void => {
+    backend.queries = {
+      ...READS,
+      'reset:retirePreview': REAL_PREVIEW,
+      'managerTransfers:openForAgent': undefined,
+    };
+    const { view } = open();
+    typeInto(field(), retirePhrase('Mira'));
+    expect(retireButton().disabled).toBe(true);
+    view.unmount();
+  });
+
+  it('says an asked handover is cancelled by the retire, under what waits, and still retires (plan 7.5)', async (): Promise<void> => {
+    backend.queries = {
+      ...READS,
+      'reset:retirePreview': REAL_PREVIEW,
+      'managerTransfers:openForAgent': HANDOVER,
+    };
+    backend.results = { 'reset:retire': { agentName: 'Mira' } };
+    const { view, outcome } = open();
+
+    const waiting = [...dialog().querySelectorAll('dt')].find(
+      (term) => term.textContent === 'Waiting on you',
+    );
+    expect(
+      [...(waiting?.nextElementSibling?.children ?? [])].map((detail) => detail.textContent),
+    ).toEqual([
+      '1 held write and 1 plan, discarded undecided.',
+      'The handover to lead@day0.local is cancelled.',
+    ]);
+    typeInto(field(), retirePhrase('Mira'));
+    await press(document.body, 'Retire Mira');
+    expect(outcome.retired).toEqual(['Mira']);
+    view.unmount();
+  });
+
+  it('keeps Retire off while the handover is accepting, and says why (plan 7.5)', (): void => {
+    backend.queries = {
+      ...READS,
+      'reset:retirePreview': REAL_PREVIEW,
+      'managerTransfers:openForAgent': { ...HANDOVER, state: 'accepting', settleBy: 1 },
+    };
+    const { view } = open();
+
+    expect(dialog().textContent).toContain(
+      'lead@day0.local has accepted Mira; it is theirs once its runs finish.',
+    );
+    expect(field().disabled).toBe(true);
+    expect(retireButton().disabled).toBe(true);
+    expect(retireButton().getAttribute('aria-describedby')).toBeTruthy();
+    expect(
+      document.getElementById(retireButton().getAttribute('aria-describedby') ?? '')?.textContent,
+    ).toBe('lead@day0.local has accepted Mira; it is theirs once its runs finish.');
+    expect(focusedName()).toBe('Keep Mira');
+    view.unmount();
+  });
+
+  it('says the cancel under Nothing when nothing else waits', (): void => {
+    const waiting = retireLines(REAL_PREVIEW, '', HANDOVER).find(
+      (line) => line.term === 'Waiting on you',
+    );
+    expect(waiting?.details).toEqual(['Nothing.', 'The handover to lead@day0.local is cancelled.']);
   });
 
   it('says when no credential is bound only by the employee', (): void => {

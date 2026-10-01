@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState, type ReactNode } from 'react';
+import { useId, useRef, useState, type ReactNode } from 'react';
 import { useMutation, useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Doc } from '@convex/_generated/dataModel';
@@ -10,6 +10,11 @@ import { Dialog } from '../../../components/Dialog';
 import { Field, INPUT_CLASS } from '../../../components/Field';
 import { StatusRegion } from '../../../components/StatusRegion';
 import { useChange } from '../../../components/use-change';
+import {
+  retireBlockedByAcceptance,
+  retireCancelsHandover,
+  type OpenHandover,
+} from '../../../handover-words';
 import {
   confirmationMatches,
   credentialsWords,
@@ -63,17 +68,26 @@ function keptClaimsLine(
 
 /**
  * What retiring the employee does, line by line, in the manager's words (round two section 3.9):
- * what is revoked, deleted and kept, and what waits on the manager and goes undecided. The
- * hosted office wipes and keeps nothing, so it says so rather than promising a record.
+ * what is revoked, deleted and kept, and what waits on the manager and goes undecided, with an
+ * asked handover, which the retire cancels (the transfer plan, section 7.5). The hosted office
+ * wipes and keeps nothing, so it says so rather than promising a record.
  *
  * @param preview - What `reset.retirePreview` says the retire would do.
  * @param waiting - What waits on the manager, in words; empty when nothing does.
+ * @param handover - The handover open on the employee, if any.
  */
-export function retireLines(preview: RetirePreview, waiting: string): RetireLine[] {
+export function retireLines(
+  preview: RetirePreview,
+  waiting: string,
+  handover?: OpenHandover | null,
+): RetireLine[] {
   const deleted = { term: 'Deleted', details: [sentence(deletedWords(preview))] };
   const waits = {
     term: 'Waiting on you',
-    details: [waiting === '' ? 'Nothing.' : sentence(`${waiting}, discarded undecided`)],
+    details: [
+      waiting === '' ? 'Nothing.' : sentence(`${waiting}, discarded undecided`),
+      ...(handover?.state === 'asked' ? [retireCancelsHandover(handover.toAddress)] : []),
+    ],
   };
   if (preview.mode === 'mock') {
     return [
@@ -132,10 +146,12 @@ export function retireAlternative(agent: Doc<'agents'>, mode: RetirePreview['mod
 /**
  * The retire dialog (round two's `retire-dialog.html`, decisions Q15 and N1): what retiring the
  * employee revokes, deletes and keeps and what waiting work goes with it, read from
- * `reset.retirePreview` and the employee's needs-you inbox before anything is done; a typed
- * confirmation; Keep, which holds focus, and Retire, enabled once the words match; and the
- * alternative for a manager who is not sure. A refusal is said inside the dialog and leaves it
- * open.
+ * `reset.retirePreview`, the employee's needs-you inbox and its open handover before anything is
+ * done; a typed confirmation; Keep, which holds focus, and Retire, enabled once the words match;
+ * and the alternative for a manager who is not sure. A refusal is said inside the dialog and
+ * leaves it open. While a handover is accepting, Retire stays off and the dialog says why: the
+ * acceptance cannot be undone, and a retire would destroy what the new manager accepted (the
+ * transfer plan, section 7.5).
  *
  * @param agent - The employee to retire.
  * @param mode - The deployment's surface mode: a retire in real mode, a wipe in the hosted office.
@@ -160,12 +176,19 @@ export function RetireDialog({
     api.work.needsYouForAgent,
     preview === null ? 'skip' : { agentId: agent._id },
   );
+  const handover = useQuery(
+    api.managerTransfers.openForAgent,
+    preview === null ? 'skip' : { agentId: agent._id },
+  );
   const retire = useMutation(api.reset.retire);
   const [typed, setTyped] = useState('');
   const keep = useRef<HTMLButtonElement>(null);
   const change = useChange(keep);
+  const blockedId = useId();
   const phrase = retirePhrase(agent.name);
-  const ready = preview !== undefined && preview !== null && inbox !== undefined;
+  const ready =
+    preview !== undefined && preview !== null && inbox !== undefined && handover !== undefined;
+  const accepting = handover?.state === 'accepting' ? handover : undefined;
   const matches = confirmationMatches(typed, phrase);
 
   let account: ReactNode;
@@ -178,7 +201,7 @@ export function RetireDialog({
   } else {
     account = (
       <dl className="grid gap-x-4 gap-y-2 text-[15px] sm:grid-cols-[max-content_minmax(0,1fr)]">
-        {retireLines(preview, waitingWords(inbox.entries, inbox.total)).map((line) => (
+        {retireLines(preview, waitingWords(inbox.entries, inbox.total), handover).map((line) => (
           <div key={line.term} className="contents">
             <dt className="font-medium text-[var(--color-fg)]">{line.term}</dt>
             <dd className="mb-1 grid gap-1 text-[var(--color-fg-2)] sm:mb-0">
@@ -210,7 +233,7 @@ export function RetireDialog({
         className="grid gap-4"
         onSubmit={(event) => {
           event.preventDefault();
-          if (!ready || !matches || change.busy) return;
+          if (!ready || !matches || accepting !== undefined || change.busy) return;
           change.run(() => retire({ agentId: agent._id }), {
             done: (result) => `${result.agentName} is retired.`,
             refused: `${agent.name} was not retired.`,
@@ -233,11 +256,16 @@ export function RetireDialog({
               autoComplete="off"
               autoCapitalize="off"
               spellCheck={false}
-              disabled={change.busy}
+              disabled={change.busy || accepting !== undefined}
               className={`${INPUT_CLASS} w-full`}
             />
           )}
         </Field>
+        {accepting === undefined ? null : (
+          <p id={blockedId} className="text-[15px] text-[var(--color-fg-2)]">
+            {retireBlockedByAcceptance(agent.name, accepting.toAddress)}
+          </p>
+        )}
         <StatusRegion outcome={change.outcome} />
         <div className="flex flex-wrap justify-end gap-2">
           <Button ref={keep} size="large" disabled={change.busy} onClick={onClose}>
@@ -247,7 +275,8 @@ export function RetireDialog({
             type="submit"
             variant="danger"
             size="large"
-            disabled={!ready || !matches || change.busy}
+            disabled={!ready || !matches || accepting !== undefined || change.busy}
+            aria-describedby={accepting === undefined ? undefined : blockedId}
           >
             {change.busy ? `Retiring ${agent.name}…` : `Retire ${agent.name}`}
           </Button>
