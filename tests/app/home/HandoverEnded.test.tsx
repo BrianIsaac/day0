@@ -35,9 +35,20 @@ describe('HandoverEnded (the acceptor told a handover ended itself, the cockpitâ
     const card = view.container.querySelector('section');
     expect(card?.querySelector('h2')?.textContent).toBe('A handover that did not finish');
     expect([...(card?.querySelectorAll('li') ?? [])].map((line) => line.textContent)).toEqual([
-      'Juno is not coming to you: the handover from priya@acme.test you accepted on 1 Oct 2026, 21:30, UTC time could not finish and was ended, so Juno stays with priya@acme.test.',
+      'Juno stays with priya@acme.test: the handover you accepted could not finish and was ended (accepted 1 Oct 2026, 21:30, UTC time).',
     ]);
     expect(await axeViolations(view.container)).toEqual([]);
+  });
+
+  it('names the card by how many handovers it lists', () => {
+    backend.ended = ['one', 'two'].map((id) => ({
+      transferId: id,
+      agentName: `Employee ${id}`,
+      fromAddress: 'priya@acme.test',
+      acceptedAt: Date.UTC(2026, 9, 1, 21, 30),
+    }));
+    const view = mount(<HandoverEnded />);
+    expect(view.container.querySelector('h2')?.textContent).toBe('Handovers that did not finish');
   });
 
   it('draws nothing while the read loads or when no handover ended', () => {

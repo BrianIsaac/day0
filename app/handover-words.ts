@@ -543,8 +543,15 @@ export function arrivingLine(input: ArrivingInput): string {
   return `${input.name} is finishing ${runs} for ${input.from} and becomes yours when ${end}${deadline}.`;
 }
 
-/** The heading of the acceptor's handovers that ended without the move (decision 4). */
-export const NOT_FINISHED = 'A handover that did not finish';
+/**
+ * The heading of the acceptor's handovers that ended without the move (decision 4), by how many
+ * there are.
+ *
+ * @param count - How many lines the card draws.
+ */
+export function notFinishedHeading(count: number): string {
+  return count === 1 ? 'A handover that did not finish' : 'Handovers that did not finish';
+}
 
 /** What the acceptor's line for a handover that ended without the move is made from. */
 export interface EndedHandoverInput {
@@ -558,14 +565,14 @@ export interface EndedHandoverInput {
 
 /**
  * The acceptor's line for a handover it accepted that could not finish and was ended (decision 4:
- * the automatic end after the settles failed, or the operator's): the employee is not coming, and
- * stays with the manager who asked.
+ * the automatic end after the settles failed, or the operator's): the employee stays with the
+ * manager who asked, said once, and when the acceptance was made last.
  */
 export function endedHandoverLine(input: EndedHandoverInput): string {
-  return `${input.name} is not coming to you: the handover from ${input.from} you accepted on ${zonedStamp(
+  return `${input.name} stays with ${input.from}: the handover you accepted could not finish and was ended (accepted ${zonedStamp(
     input.acceptedAt,
     input.zone,
-  )} could not finish and was ended, so ${input.name} stays with ${input.from}.`;
+  )}).`;
 }
 
 /**

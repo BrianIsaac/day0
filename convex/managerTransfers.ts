@@ -793,9 +793,10 @@ const endedHandoverValidator = v.object({
  * without the move in the last 30 days (decision 4: the settle's automatic end, or the
  * operator's), so the acceptor's home says the employee is not coming, as the old manager's
  * record says it (`manager.transfer-ended`). Such a request is `cancelled` with the acceptance's
- * stamp kept and no ask's cancel reason (`transferAcceptance.endUnmovable`). An anonymous
- * caller, or one without a verified address, has none. Reads at most `TRANSFER_READ_LIMIT`
- * rows; writes nothing.
+ * stamp kept and no ask's cancel reason (`transferAcceptance.endUnmovable`); one whose employee
+ * has since gone, moved, or been asked for again is left out ({@link endingStillTrue}). An
+ * anonymous caller, or one without a verified address, has none. Reads at most
+ * `TRANSFER_READ_LIMIT` rows per index; writes nothing.
  */
 export const endedForMe = query({
   args: {},
@@ -806,23 +807,44 @@ export const endedForMe = query({
     if (!caller || address === undefined) return [];
     const since = Date.now() - TRANSFER_DEPARTURES_WINDOW_MS;
     const cancelled = await requestsInState(ctx, { toAddress: address }, 'cancelled');
-    return cancelled.flatMap((transfer) =>
-      transfer.toOwnerKey === caller.ownerKey &&
-      transfer.cancelReason === undefined &&
-      transfer.decidedAt !== undefined &&
-      transfer.decidedAt >= since
-        ? [
-            {
-              transferId: transfer._id,
-              agentName: transfer.agentName,
-              fromAddress: transfer.fromAddress,
-              acceptedAt: transfer.decidedAt,
-            },
-          ]
-        : [],
+    const ended = cancelled.filter(
+      (transfer) =>
+        transfer.toOwnerKey === caller.ownerKey &&
+        transfer.cancelReason === undefined &&
+        transfer.decidedAt !== undefined &&
+        transfer.decidedAt >= since,
     );
+    const standing = await Promise.all(
+      ended.map(async (transfer) => ((await endingStillTrue(ctx, transfer)) ? [transfer] : [])),
+    );
+    return standing.flat().map((transfer) => ({
+      transferId: transfer._id,
+      agentName: transfer.agentName,
+      fromAddress: transfer.fromAddress,
+      acceptedAt: transfer.decidedAt ?? transfer.requestedAt,
+    }));
   },
 });
+
+/** The request states a later handover of the same employee may be in. */
+const LATER_REQUEST_STATES = ['asked', 'accepting', 'accepted'] as const;
+
+/**
+ * Whether an ended handover still says what is so: the employee exists and is still with the
+ * manager who asked, and no later request of it was made. Otherwise the acceptor's line would say
+ * an employee is not coming that is on their roster, retired, or asked for again (the second
+ * pass).
+ */
+async function endingStillTrue(ctx: QueryCtx, transfer: Doc<'managerTransfers'>): Promise<boolean> {
+  const agent = await ctx.db.get(transfer.agentId);
+  if (agent === null || agent.userId !== transfer.fromOwnerKey) return false;
+  const later = await Promise.all(
+    LATER_REQUEST_STATES.map(
+      async (state) => await requestsInState(ctx, { agentId: transfer.agentId }, state),
+    ),
+  );
+  return !later.flat().some((request) => request._creationTime > transfer._creationTime);
+}
 
 /** One handover that moved the employee: who it moved from, and when they accepted. */
 const earlierManagerValidator = v.object({ fromAddress: v.string(), decidedAt: v.number() });

@@ -1124,6 +1124,37 @@ describe('managerTransfers.endedForMe (the cockpit’s item: the acceptor is tol
   });
 });
 
+describe('managerTransfers.endedForMe once the story moved on (the second pass)', (): void => {
+  it('drops an ended handover once the employee is gone, is the caller’s after all, or has a later request', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const acceptedAt = Date.now() - 60_000;
+    const ended = async (agentId: Id<'agents'>): Promise<Id<'managerTransfers'>> =>
+      await insertRequest(harness, {
+        agentId,
+        state: 'cancelled',
+        decidedAt: acceptedAt,
+        toOwnerKey: 'priya',
+        requestedAt: acceptedAt - 1_000,
+      });
+    const stays = await employee(harness, 'Maya');
+    const came = await employee(harness, 'Tomas', { userId: 'priya' });
+    const retired = await employee(harness, 'Juno');
+    const askedAgain = await employee(harness, 'Wren');
+    const kept = await ended(stays);
+    await ended(came);
+    await ended(retired);
+    await ended(askedAgain);
+    await harness.run(async (ctx) => {
+      await ctx.db.delete(retired);
+    });
+    await insertRequest(harness, { agentId: askedAgain, state: 'asked' });
+
+    const shown = await harness.withIdentity(PRIYA).query(api.managerTransfers.endedForMe, {});
+
+    expect(shown.map((transfer) => transfer.transferId)).toEqual([kept]);
+  });
+});
+
 describe('managerTransfers.arriving', (): void => {
   it('lists the requests the caller accepted that wait for the employee’s runs, with the runs, to the acceptor only', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
