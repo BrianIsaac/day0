@@ -54,6 +54,8 @@ import {
   customerOidcIssuer,
   type CustomerOidcIssuer,
 } from '../src/lib/customer-oidc';
+import { isManagerAddressShaped } from '../src/agent/manager-address';
+import { LOCAL_MANAGER_ADDRESS_VAR } from '../src/lib/dev-auth-token';
 import { PRIVATE_HOSTS_VAR, privateHostAllowlist } from '../src/lib/private-hosts';
 import { DEPLOYMENT_PROFILES } from '../src/lib/surface-mode';
 import { wayOfSetup } from '../src/setup/quickstart';
@@ -111,7 +113,7 @@ const DYNAMIC_VARIABLES = ['internal_agent_id', 'internal_session_token', 'boss_
  * because the override rule is "present in the environment wins", and a bare
  * sweep of `process.env` would let unrelated shell variables through.
  */
-const WATCHED = [
+export const WATCHED = [
   'CONVEX_DEPLOYMENT',
   'NEXT_PUBLIC_CONVEX_URL',
   'CONVEX_SELF_HOSTED_URL',
@@ -126,6 +128,8 @@ const WATCHED = [
   'DAY0_PROFILE',
   'DAY0_OIDC_ISSUER',
   'DAY0_OIDC_AUDIENCE',
+  'DAY0_OIDC_EMAIL_TRUSTED',
+  'NEXT_PUBLIC_DEMO_BOSS_EMAIL',
   'DAY0_PRIVATE_HOSTS',
   'CONVEX_BIND_ADDR',
   'CONVEX_DASHBOARD_BIND_ADDR',
@@ -948,25 +952,26 @@ function customerIssuerSection(v: Values): Section | undefined {
     };
   }
   const trustFlag = (v[CUSTOMER_OIDC_EMAIL_TRUSTED_VAR] ?? '').trim().toLowerCase();
-  if (trustFlag !== '' && trustFlag !== 'true' && trustFlag !== 'false') {
-    return {
-      title: "Auth: the customer issuer's address flag is unreadable",
-      status: 'gap',
-      lines: [
-        `${CUSTOMER_OIDC_EMAIL_TRUSTED_VAR} is neither true nor false, so it reads as off:`,
-        'an address this issuer sends without `email_verified` is not believed. Set it to',
-        'true only if every address the issuer signs is one it controls, else leave it empty.',
-      ],
-    };
-  }
+  const unreadableFlag = trustFlag !== '' && trustFlag !== 'true' && trustFlag !== 'false';
   const trusted = customerOidcEmailTrusted((name: string): string | undefined => v[name]);
   const noAuth = v.NEXT_PUBLIC_DEV_NO_AUTH === 'true';
   // A warning until the app's own sign-in uses the issuer (review M12): the
   // backend accepts its tokens, and no browser can get one yet.
   return {
-    title: noAuth ? 'Auth: customer OIDC issuer and the local key' : 'Auth: customer OIDC issuer',
-    status: 'warn',
+    title: unreadableFlag
+      ? "Auth: the customer issuer's address flag is unreadable"
+      : noAuth
+        ? 'Auth: customer OIDC issuer and the local key'
+        : 'Auth: customer OIDC issuer',
+    status: unreadableFlag ? 'gap' : 'warn',
     lines: [
+      ...(unreadableFlag
+        ? [
+            `${CUSTOMER_OIDC_EMAIL_TRUSTED_VAR} is neither true nor false, so it reads as off:`,
+            'an address this issuer sends without `email_verified` is not believed. Set it to',
+            'true only if every address the issuer signs is one it controls, else leave it empty.',
+          ]
+        : []),
       `Issuer ${issuer.issuer}, audience ${issuer.audience}.`,
       noAuth
         ? "The backend accepts this issuer's tokens and this machine's local key side by side."
@@ -1012,6 +1017,19 @@ export function authSection(v: Values): Section {
   const missing = ['DEV_NO_AUTH_SECRET', 'DEV_NO_AUTH_SIGNING_KEY', 'DEV_NO_AUTH_JWKS'].filter(
     (k) => !v[k],
   );
+  // The local token names this address; one that is not an address refuses every token.
+  const localAddress = v[LOCAL_MANAGER_ADDRESS_VAR]?.trim();
+  if (noAuth && missing.length === 0 && localAddress && !isManagerAddressShaped(localAddress)) {
+    return {
+      title: 'Auth: the local manager address is not an address',
+      status: 'gap',
+      lines: [
+        `${LOCAL_MANAGER_ADDRESS_VAR} is set to something that is not an email address. The`,
+        "local token names it as the operator's verified address, so the token route refuses",
+        'every browser until it is one, such as name@company.com, or empty for boss@day0.local.',
+      ],
+    };
+  }
   // A keyless local issuer is a gap whatever else is configured beside it.
   if (!noAuth || missing.length === 0) {
     const customer = customerIssuerSection(v);
