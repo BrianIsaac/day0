@@ -3,10 +3,15 @@
 import type { FunctionReturnType } from 'convex/server';
 import type { api } from '@convex/_generated/api';
 import { deploymentZone } from '@/lib/zone';
-import { adoptionWords, verifiedOnDay, type AdoptionCardState } from '@/work/skill-adoption';
+import {
+  adoptionWords,
+  stalledReason,
+  verifiedOnDay,
+  type AdoptionCardState,
+} from '@/work/skill-adoption';
 import { Button } from '../../../components/Button';
 import { useAgentZone } from '../../../components/time';
-import { ScopeChips, SkillStatusLine } from './skill-parts';
+import { ScopeChips } from './skill-parts';
 
 /** One adoption as the backend draws it (`skillAdoption.adoptions`). */
 export type Adoption = FunctionReturnType<typeof api.skillAdoption.adoptions>[number];
@@ -19,6 +24,23 @@ const NOTE_BORDER: Readonly<Record<AdoptionCardState, string>> = {
   failed: 'border-[var(--color-danger-line)]',
   declined: 'border-[var(--color-border)]',
 };
+
+/**
+ * The sandbox's log of a failed re-verification, in a bounded box that scrolls, named apart from
+ * the authoring's own verification log so the page never holds two regions of one name.
+ */
+function CheckLog({ name, log }: { name: string; log: string }) {
+  return (
+    <div
+      tabIndex={0}
+      role="region"
+      aria-label={`Re-verification log: ${name}`}
+      className="max-h-40 overflow-y-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-inset)] p-3 font-mono text-xs leading-snug whitespace-pre-wrap break-words text-[var(--color-fg-2)]"
+    >
+      {log}
+    </div>
+  );
+}
 
 /**
  * A sibling's verified skill offered to the employee in place of writing its own (A3), in each
@@ -72,6 +94,7 @@ export function AdoptionCard({
   const adoptRefusal = writeRefusal ?? adoption.refusal;
   const decides = state === 'offered' || state === 'failed' || state === 'stalled';
   const alerting = state === 'failed' || state === 'stalled';
+  const reason = stalledReason(adoption.log);
   return (
     <div className="grid gap-3" data-adoption={state}>
       <div
@@ -91,8 +114,13 @@ export function AdoptionCard({
           </p>
         ) : null}
       </div>
-      {alerting && adoption.log ? (
-        <SkillStatusLine skill={adoption.name} text={adoption.log} />
+      {state === 'failed' && adoption.log ? (
+        <CheckLog name={adoption.name} log={adoption.log} />
+      ) : null}
+      {state === 'stalled' && reason ? (
+        <p className="text-[13px] text-[var(--color-fg-2)] break-words">
+          Why it stopped: {reason.replace(/[.!?]+$/, '')}.
+        </p>
       ) : null}
       {decides && state !== 'stalled' && writeRefusal ? (
         <p className="text-[13px] text-[var(--color-warn)] break-words">

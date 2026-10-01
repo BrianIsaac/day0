@@ -294,6 +294,21 @@ export function adoptionStateAt(adoption: AdoptionAtFields, now: number): Adopti
     : 'stalled';
 }
 
+/** How `skillActions.verifyStoredSkill` words a parked check on the row, around its reason. */
+const PARKED_CHECK = /^the stored skill was not verified: (.+?)(?:; Retry runs its check)?$/s;
+
+/**
+ * Why an adoption's check stopped short, from the row's log: the reason of a parked check without
+ * the words that point at the Not callable card's Retry (the adoption card's control is Check it
+ * again), or the log as it is.
+ *
+ * @param log - The row's `verificationLog`.
+ */
+export function stalledReason(log: string | undefined): string | undefined {
+  if (log === undefined) return undefined;
+  return PARKED_CHECK.exec(log.trim())?.[1] ?? log.trim();
+}
+
 /** The month names the card prints a day with. */
 const MONTH_NAMES = [
   'January',

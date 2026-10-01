@@ -162,6 +162,9 @@ describe('AdoptionCard', (): void => {
       "Adopting Priya's skill kanban-comment-and-close for Mateo stopped before the sandbox finished checking it. Mateo cannot use it yet.",
     );
     expect(view.container.querySelector('[role="alert"]')).not.toBeNull();
+    // Why it stopped, without the other card's control: the log's own "Retry" line is not said.
+    expect(view.container.textContent).toContain('Why it stopped: no sandbox backend answered.');
+    expect(view.container.textContent).not.toContain('Retry');
     expect(buttonNames(view.container)).toEqual([
       'Check it again | Check it again: kanban-comment-and-close',
       'Write a new one instead | Write a new one instead of kanban-comment-and-close',
@@ -188,7 +191,7 @@ describe('AdoptionCard', (): void => {
       "Priya's skill kanban-comment-and-close failed its re-verification for Mateo. Mateo cannot use it, and keeps the scopes the adoption granted.",
     );
     const log = view.container.querySelector('[role="region"]');
-    expect(log?.getAttribute('aria-label')).toBe('Verification log: kanban-comment-and-close');
+    expect(log?.getAttribute('aria-label')).toBe('Re-verification log: kanban-comment-and-close');
     expect(log?.textContent).toBe(LOG);
     expect(buttonNames(view.container)).toEqual([
       'Write a new one instead | Write a new one instead of kanban-comment-and-close',

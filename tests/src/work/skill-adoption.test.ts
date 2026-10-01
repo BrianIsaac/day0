@@ -3,6 +3,7 @@ import {
   ADOPTION_CARD_STATES,
   adoptionCardState,
   adoptionStateAt,
+  stalledReason,
   adoptionFit,
   adoptionHelp,
   adoptionWords,
@@ -244,6 +245,20 @@ describe('adoptionStateAt', (): void => {
         NOW,
       ),
     ).toBe('stalled');
+  });
+});
+
+describe('stalledReason', (): void => {
+  it('takes the reason out of a parked check, and leaves any other log as it is', (): void => {
+    expect(
+      stalledReason(
+        'the stored skill was not verified: the verification sandbox was busy with another skill for 5 minutes; Retry runs its check',
+      ),
+    ).toBe('the verification sandbox was busy with another skill for 5 minutes');
+    expect(stalledReason('the sandbox threw: socket closed')).toBe(
+      'the sandbox threw: socket closed',
+    );
+    expect(stalledReason(undefined)).toBeUndefined();
   });
 });
 
