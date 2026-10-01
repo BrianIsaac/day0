@@ -12,7 +12,7 @@ import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
 /**
- * `skillActions.verifyStoredSkill`: a stored body and smoke test verified in the sandbox under
+ * `storedVerification.verifyStoredSkill`: a stored body and smoke test verified in the sandbox under
  * the holding employee's contract and the one global lease, for an adoption and a re-check.
  */
 
@@ -234,7 +234,9 @@ describe('verifyStoredSkill', (): void => {
       finish = resolve;
     });
 
-    const pass = harness.action(internal.skillActions.verifyStoredSkill, { skillId: adopting });
+    const pass = harness.action(internal.storedVerification.verifyStoredSkill, {
+      skillId: adopting,
+    });
     await started;
     const during = await harness.mutation(internal.sandboxLease.take, other);
     finish();
@@ -269,7 +271,7 @@ describe('verifyStoredSkill', (): void => {
       failureReason: 'smoke test exited 1',
       skipped: false,
     };
-    const failed = await harness.action(internal.skillActions.verifyStoredSkill, {
+    const failed = await harness.action(internal.storedVerification.verifyStoredSkill, {
       skillId: failing,
     });
 
@@ -296,7 +298,9 @@ describe('verifyStoredSkill', (): void => {
       finish = resolve;
     });
 
-    const run = harness.action(internal.skillActions.verifyStoredSkill, { skillId: adopting });
+    const run = harness.action(internal.storedVerification.verifyStoredSkill, {
+      skillId: adopting,
+    });
     await started;
     await harness.run(async (ctx) => await ctx.db.patch(versionId, { revokedAt: 7 }));
     finish();
@@ -316,7 +320,7 @@ describe('verifyStoredSkill', (): void => {
     const held = await registeredRow(harness, priya, versionId);
 
     await expect(
-      harness.action(internal.skillActions.verifyStoredSkill, { skillId: held }),
+      harness.action(internal.storedVerification.verifyStoredSkill, { skillId: held }),
     ).resolves.toEqual({ ok: true });
 
     const after = await row(harness, held);
@@ -331,7 +335,7 @@ describe('verifyStoredSkill', (): void => {
     const { priya, versionId } = await seedOffice(harness);
     const held = await registeredRow(harness, priya, versionId);
 
-    await harness.action(internal.skillActions.verifyStoredSkill, { skillId: held });
+    await harness.action(internal.storedVerification.verifyStoredSkill, { skillId: held });
 
     const claims = await harness.run(async (ctx) =>
       (await ctx.db.query('events').collect()).filter(
@@ -350,7 +354,7 @@ describe('verifyStoredSkill', (): void => {
     recorded.outputs.push({ body: '# A rewrite nobody asked for', smokeTest: SMOKE });
 
     await expect(
-      harness.action(internal.skillActions.verifyStoredSkill, { skillId: held }),
+      harness.action(internal.storedVerification.verifyStoredSkill, { skillId: held }),
     ).resolves.toEqual({ ok: true });
 
     expect(recorded.prompts).toHaveLength(1);
@@ -378,7 +382,7 @@ describe('verifyStoredSkill', (): void => {
       skipReason: 'the sandbox service did not answer',
     };
 
-    const result = await harness.action(internal.skillActions.verifyStoredSkill, {
+    const result = await harness.action(internal.storedVerification.verifyStoredSkill, {
       skillId: held,
     });
 
@@ -406,7 +410,7 @@ describe('verifyStoredSkill', (): void => {
       skipped: false,
     };
 
-    const result = await harness.action(internal.skillActions.verifyStoredSkill, {
+    const result = await harness.action(internal.storedVerification.verifyStoredSkill, {
       skillId: held,
     });
 
@@ -424,14 +428,14 @@ describe('verifyStoredSkill', (): void => {
     await harness.run(async (ctx) => await ctx.db.patch(versionId, { revokedAt: 9 }));
 
     await expect(
-      harness.action(internal.skillActions.verifyStoredSkill, { skillId: adopting }),
+      harness.action(internal.storedVerification.verifyStoredSkill, { skillId: adopting }),
     ).resolves.toEqual({ ok: false, reason: 'the version was withdrawn from every employee' });
 
     await harness.run(
       async (ctx) => await ctx.db.patch(versionId, { revokedAt: undefined, userId: 'rival' }),
     );
     await expect(
-      harness.action(internal.skillActions.verifyStoredSkill, { skillId: adopting }),
+      harness.action(internal.storedVerification.verifyStoredSkill, { skillId: adopting }),
     ).resolves.toEqual({
       ok: false,
       reason: "the version is not one of this employee's owner's",
@@ -468,7 +472,10 @@ describe('verifyStoredSkill', (): void => {
     );
 
     await expect(
-      harness.action(internal.skillActions.verifyStoredSkill, { skillId: held, versionId: newer }),
+      harness.action(internal.storedVerification.verifyStoredSkill, {
+        skillId: held,
+        versionId: newer,
+      }),
     ).resolves.toEqual({ ok: true });
 
     expect(recorded.sandboxRuns).toEqual([{ skillBody: newerBody, smokeTest: SMOKE }]);
@@ -497,7 +504,7 @@ describe('verifyStoredSkill', (): void => {
     );
 
     await expect(
-      harness.action(internal.skillActions.verifyStoredSkill, { skillId: bare }),
+      harness.action(internal.storedVerification.verifyStoredSkill, { skillId: bare }),
     ).resolves.toEqual({ ok: false, reason: 'the skill holds no stored version to verify' });
     expect(await row(harness, bare)).toMatchObject({ state: 'approved' });
   });

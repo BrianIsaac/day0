@@ -302,7 +302,7 @@ const PARKED_CHECK = new RegExp(`^${PARKED_CHECK_OPENING}(.+?)(?:; Retry runs it
 
 /**
  * The log a stored verification that reached no verdict leaves on a row that is not callable
- * (`skillActions.verifyStoredSkill`): the row then holds a copy of the stored version's body and
+ * (`storedVerification.verifyStoredSkill`): the row then holds a copy of the stored version's body and
  * smoke test, and this log is what marks the copy as one ({@link holdsParkedStoredCopy}).
  *
  * @param reason - Why no sandbox reached a verdict.

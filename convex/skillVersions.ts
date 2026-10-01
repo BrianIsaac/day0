@@ -764,7 +764,7 @@ export async function storedVersionRefusal(
 }
 
 /**
- * Internal: what `skillActions.verifyStoredSkill` runs ({@link storedVerificationTargetOf}).
+ * Internal: what `storedVerification.verifyStoredSkill` runs ({@link storedVerificationTargetOf}).
  */
 export const storedVerificationTarget = internalQuery({
   args: { skillId: v.id('skills'), versionId: v.optional(v.id('skillVersions')) },

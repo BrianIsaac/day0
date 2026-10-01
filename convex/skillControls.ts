@@ -724,7 +724,7 @@ async function endAdoption(
 
 /**
  * Public, guarded by `assertOwnsSkill`: Re-check now. Schedules the stored verification
- * (`skillActions.verifyStoredSkill`) of the version the row holds, or, when its chip says a newer
+ * (`storedVerification.verifyStoredSkill`) of the version the row holds, or, when its chip says a newer
  * version is verified, of that newer version, so a pass moves the holder onto it
  * ({@link newerVersionToRecheck}); the employee keeps running its verified body meanwhile. A pass
  * clears "Re-check due"; a sandbox failure moves the row to `failed` with the log. Refused for a
@@ -745,7 +745,7 @@ export const recheckNow = mutation({
       throw new ConvexError(`A check of ${row.name} is already running.`);
     }
     const newer = await newerVersionToRecheck(ctx.db, row);
-    await ctx.scheduler.runAfter(0, internal.skillActions.verifyStoredSkill, {
+    await ctx.scheduler.runAfter(0, internal.storedVerification.verifyStoredSkill, {
       skillId: row._id,
       ...(newer !== undefined ? { versionId: newer } : {}),
     });

@@ -85,7 +85,7 @@ import { openRevision } from './skillControls';
 const CLAIMABLE_STATES = ['approved', 'authoring', 'verified', 'failed'] as const;
 
 /**
- * Where a stored body's verification may start (`skillActions.verifyStoredSkill`): the claimable
+ * Where a stored body's verification may start (`storedVerification.verifyStoredSkill`): the claimable
  * states, for an adoption approved and a retry of one, and `registered`, for a re-check of a
  * callable skill, which is checked again without being taken out of use.
  */
@@ -730,7 +730,7 @@ export const retireUnshaped = internalMutation({
  * An authoring claim that writes a body counts an attempt
  * (`authoringAttempts`, "Attempt n of 3"); one that carries on an attempt
  * already counted does not (`countsAsAuthoringAttempt`). A stored
- * verification (`purpose: 'verify-stored'`, `skillActions.verifyStoredSkill`)
+ * verification (`purpose: 'verify-stored'`, `storedVerification.verifyStoredSkill`)
  * writes no body and counts nothing; it may also take a registered row, for a
  * re-check, which stays registered and keeps running its verified body while
  * the check runs.
@@ -897,7 +897,7 @@ export const completeRegistration = internalMutation({
     /** The same tools surface by surface, with each surface's class. */
     harnessToolsBySurface: v.optional(v.array(surfaceToolsValidator)),
     /**
-     * The stored version a verification ran (`skillActions.verifyStoredSkill`), checked again
+     * The stored version a verification ran (`storedVerification.verifyStoredSkill`), checked again
      * here: one withdrawn, or no longer the employee's owner's, while the run held the row is
      * refused, and the run fails the row with the reason.
      */

@@ -330,7 +330,9 @@ async function adoptOffer(ctx: MutationCtx, row: Doc<'skills'>): Promise<{ scope
     },
     createdAt: now,
   });
-  await ctx.scheduler.runAfter(0, internal.skillActions.verifyStoredSkill, { skillId: row._id });
+  await ctx.scheduler.runAfter(0, internal.storedVerification.verifyStoredSkill, {
+    skillId: row._id,
+  });
   return { scopes };
 }
 
@@ -339,7 +341,7 @@ async function adoptOffer(ctx: MutationCtx, row: Doc<'skills'>): Promise<{ scope
  * {name}). Checks the offer again as it stands, then in one transaction approves the row, grants
  * only the scopes the employee lacks (the approval path's own grant, with its `skill.approved`
  * and `permission.granted` events), records `skill.adopted` with the version, and schedules
- * `skillActions.verifyStoredSkill`, which re-verifies the version in the sandbox under the
+ * `storedVerification.verifyStoredSkill`, which re-verifies the version in the sandbox under the
  * employee's own connection and tool allowlist and registers it only on a pass.
  *
  * @returns The scopes the adoption granted.
@@ -380,7 +382,7 @@ async function versionRefusal(
 /**
  * Public, guarded by `assertOwnsSkill`: Check it again, for an adoption whose stored verification
  * stopped short (no sandbox ran, the run lapsed, or it was refused before it ran). Schedules
- * `skillActions.verifyStoredSkill` once more for the version offered; writes nothing else.
+ * `storedVerification.verifyStoredSkill` once more for the version offered; writes nothing else.
  *
  * @throws ConvexError when the row has no stopped check, a live run holds it, or the version may no
  *   longer be verified.
@@ -401,7 +403,9 @@ export const verifyAgain = mutation({
     if (refusal !== undefined) {
       throw new ConvexError(`${row.name} cannot be checked again: ${refusal}.`);
     }
-    await ctx.scheduler.runAfter(0, internal.skillActions.verifyStoredSkill, { skillId: row._id });
+    await ctx.scheduler.runAfter(0, internal.storedVerification.verifyStoredSkill, {
+      skillId: row._id,
+    });
     return { ok: true };
   },
 });

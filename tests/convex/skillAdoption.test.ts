@@ -546,7 +546,7 @@ describe('skillAdoption: adopting and the stored verification (mock mode)', (): 
       async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
     );
     expect(scheduled.map((job) => [job.name, job.args[0]])).toEqual([
-      ['skillActions:verifyStoredSkill', { skillId }],
+      ['storedVerification:verifyStoredSkill', { skillId }],
     ]);
     const [verifying] = await harness.withIdentity(OWNER).query(api.skillAdoption.adoptions, {
       agentId: mateo,
