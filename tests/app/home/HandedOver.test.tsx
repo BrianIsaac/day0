@@ -41,12 +41,13 @@ describe('HandedOver (the transfer plan, 7.4)', () => {
       departure({}),
       departure({
         transferId: 'transfer-2' as HandoverDeparture['transferId'],
+        agentId: 'agent-tomas' as HandoverDeparture['agentId'],
         agentName: 'Tomas',
         toAddress: 'ana@kestrel.example',
         decidedAt: Date.UTC(2026, 9, 1, 8),
       }),
     ];
-    const view = mount(<HandedOver />);
+    const view = mount(<HandedOver held={[]} />);
     const card = view.container.querySelector('section');
     expect(card?.querySelector('h2')?.textContent).toBe('Handed over');
     expect([...(card?.querySelectorAll('li') ?? [])].map((line) => line.textContent)).toEqual([
@@ -58,16 +59,37 @@ describe('HandedOver (the transfer plan, 7.4)', () => {
 
   it('says nothing of a decline or an expiry, which People says while the employee is still the manager’s', () => {
     expect(
-      handedOver([
-        departure({ state: 'declined', declineReason: 'Not my team.' }),
-        departure({ state: 'expired' }),
-      ]),
+      handedOver(
+        [
+          departure({ state: 'declined', declineReason: 'Not my team.' }),
+          departure({ state: 'expired' }),
+        ],
+        [],
+      ),
     ).toEqual([]);
   });
 
+  it('leaves out an employee the manager holds again, handed back after it went (U4-m3)', async () => {
+    const back = departure({});
+    const gone = departure({
+      transferId: 'transfer-2' as HandoverDeparture['transferId'],
+      agentId: 'agent-tomas' as HandoverDeparture['agentId'],
+      agentName: 'Tomas',
+    });
+    expect(handedOver([back, gone], ['agent-maya'])).toEqual([gone]);
+    // Handed over twice since: named once, where it went last.
+    const again = departure({ transferId: 'transfer-4' as HandoverDeparture['transferId'] });
+    expect(handedOver([again, back], [])).toEqual([again]);
+    backend.departures = [back, { ...back, transferId: 'transfer-3' }];
+    expect(mount(<HandedOver held={['agent-maya']} />).container.innerHTML).toBe('');
+  });
+
   it('draws nothing while the read loads or when nobody was handed over', () => {
-    expect(mount(<HandedOver />).container.innerHTML).toBe('');
+    expect(mount(<HandedOver held={[]} />).container.innerHTML).toBe('');
     backend.departures = [departure({ state: 'expired' })];
-    expect(mount(<HandedOver />).container.innerHTML).toBe('');
+    expect(mount(<HandedOver held={[]} />).container.innerHTML).toBe('');
+    backend.departures = [departure({})];
+    // Until the roster is read, an employee handed back cannot be told from one that went.
+    expect(mount(<HandedOver held={undefined} />).container.innerHTML).toBe('');
   });
 });

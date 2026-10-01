@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useRef, useState } from 'react';
+import { Suspense, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { useQueries, useQuery } from 'convex/react';
 import Link from 'next/link';
@@ -67,6 +67,7 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
   const arriving = useArrival();
 
   const staffed = roster !== undefined && roster.length > 0;
+  const held = useMemo(() => roster?.map((employee) => employee.agentId), [roster]);
   const showDeployForm = roster !== undefined && (!staffed || deploying);
   // A manager with nobody yet can still be named in a handover (the transfer plan, section 7.3),
   // and one who handed over their only employee still reads where it went (7.4): for them the
@@ -122,7 +123,7 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
           className="flex min-w-0 flex-col gap-6 xl:col-start-1 xl:row-start-1"
         >
           {!staffed && showInbox ? <NeedsYouList inbox={inboxRead} now={now} /> : null}
-          {staffed ? null : <HandedOver />}
+          {staffed ? null : <HandedOver held={held} />}
           {showDeployForm ? (
             <DeployForm
               docSources={docSources}
@@ -143,7 +144,7 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
           ) : null}
           {staffed ? <NeedsYouList inbox={inboxRead} now={now} /> : null}
           <EmployeeRoster employees={roster} waiting={waitingByEmployee(inbox)} />
-          {staffed ? <HandedOver /> : null}
+          {staffed ? <HandedOver held={held} /> : null}
           <OfficeWorld
             agents={roster}
             settled={roster !== undefined && (!staffed || inboxRead !== undefined)}
