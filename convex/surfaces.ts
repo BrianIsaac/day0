@@ -44,6 +44,8 @@ import { isEventOf, type EventOf, type EventType } from '../src/events/contract'
 import { agentZone, expiryNoticeDay, expiryNoticeDue } from '../src/lib/zone';
 import { SURFACE_ACCESS_DEFAULT_DAYS, SURFACE_ACCESS_MAX_DAYS } from '../src/surfaces/access';
 import { surfaceHandoverOf, type SurfaceHandover } from '../src/surfaces/handover';
+import { assertCredentialOfOwner, credentialOwnerRefusal } from './handoverFence';
+import { log } from '../src/lib/logger';
 
 const MAX_LADDER_PATHS = 3;
 const MAX_PROBE_ATTEMPTS = 12;
@@ -635,6 +637,52 @@ export async function reconcileDocumentedSystems(
 
 const credentialKind = v.union(v.literal('value'), v.literal('location'), v.literal('oauth'));
 
+/** What a proposal carries that came from the owner the orientation read under. */
+interface ProposalProvenance {
+  readonly credentialId?: Id<'credentials'>;
+  readonly request: unknown;
+  readonly whereFound: readonly unknown[];
+  readonly intakeScope?: Doc<'surfaces'>['intakeScope'];
+}
+
+/**
+ * Why a proposal may not land on the employee's card, or null when it may: it binds a
+ * credential that is not the employee's current owner's, or quotes documentation the current
+ * owner does not hold. Both mean the orientation read under an owner the employee has since been
+ * handed away from (the wave 9 review's M5): its credential and its quotes are that owner's.
+ *
+ * @param db - The proposal's reader.
+ * @param agentId - The employee.
+ * @param proposal - What the orientation drafted.
+ */
+async function proposalOwnerRefusal(
+  db: QueryCtx['db'],
+  agentId: Id<'agents'>,
+  proposal: ProposalProvenance,
+): Promise<string | null> {
+  if (proposal.credentialId !== undefined) {
+    const refusal = await credentialOwnerRefusal(db, agentId, proposal.credentialId);
+    if (refusal !== null) return refusal;
+  }
+  const agent = await db.get(agentId);
+  const quoted = quotedSourceIds([
+    {
+      whereFound: [...proposal.whereFound],
+      intakeScope: proposal.intakeScope,
+      request: proposal.request,
+      discoveryEvidence: undefined,
+    },
+  ]);
+  for (const sourceId of quoted) {
+    const id = db.normalizeId('docSources', sourceId);
+    const source = id === null ? null : await db.get(id);
+    if (agent === null || source?.userId !== agent.userId) {
+      return 'the proposal quotes documentation its employee does not read';
+    }
+  }
+  return null;
+}
+
 /**
  * Store an evidence-backed connect request.
  *
@@ -642,6 +690,12 @@ const credentialKind = v.union(v.literal('value'), v.literal('location'), v.lite
  * approved with the rest of the card and replaced only by a new proposal.
  * A proposal names no access length and sets no end date: the approval
  * starts Q5's 90 days and the manager is the only other source (Q5, U3 D2 (b)).
+ *
+ * Internal, the orientation's. Writes nothing, and answers false, for a card no longer
+ * `declared`, and for a proposal that binds a credential not the employee's current owner's or
+ * quotes documentation that owner does not hold ({@link proposalOwnerRefusal}): an orientation
+ * still running when a handover moved the employee read the old owner's pages and credentials.
+ * The card stays declared for the new manager's own proposal.
  */
 export const propose = internalMutation({
   args: {
@@ -661,6 +715,14 @@ export const propose = internalMutation({
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) throw new Error('Surface not found.');
     if (surface.verdict !== 'declared') return false;
+    const refusal = await proposalOwnerRefusal(ctx.db, surface.agentId, args);
+    if (refusal !== null) {
+      log.warn('surface proposal refused: the employee changed owner during its orientation', {
+        surfaceId: surface._id,
+        reason: refusal,
+      });
+      return false;
+    }
     const now = Date.now();
     await ctx.db.patch(args.surfaceId, {
       verdict: 'proposed',
@@ -856,7 +918,15 @@ export const recordOrientationFailure = internalMutation({
   },
 });
 
-/** Attach an encrypted credential reference without exposing its value. */
+/**
+ * Attach an encrypted credential reference without exposing its value.
+ *
+ * Internal, for `surfaceActions.landCredential`. Refuses a credential that is not the employee's
+ * current owner's (`assertCredentialOfOwner`): the action stored it under the owner it started
+ * with, and a handover may have moved the employee since.
+ *
+ * @throws ConvexError with `CREDENTIAL_NOT_THE_OWNERS`.
+ */
 export const attachCredential = internalMutation({
   args: {
     surfaceId: v.id('surfaces'),
@@ -867,6 +937,7 @@ export const attachCredential = internalMutation({
   handler: async (ctx, args): Promise<void> => {
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) throw new Error('Surface not found.');
+    await assertCredentialOfOwner(ctx.db, surface.agentId, args.credentialId);
     const approved = surface.managerApprovedAt !== undefined;
     await ctx.db.patch(surface._id, {
       credentialId: args.credentialId,
@@ -888,6 +959,11 @@ export const attachCredential = internalMutation({
  * The app and its install link are stored together with the single-use nonce
  * that binds the link to this surface, so provisioning again simply replaces
  * the link and invalidates the previous one.
+ *
+ * Internal, for `slackProvisionActions`. Refuses a client secret that is not the employee's
+ * current owner's (`assertCredentialOfOwner`).
+ *
+ * @throws ConvexError with `CREDENTIAL_NOT_THE_OWNERS`.
  */
 export const recordProvisionedApp = internalMutation({
   args: {
@@ -906,6 +982,7 @@ export const recordProvisionedApp = internalMutation({
   handler: async (ctx, args): Promise<void> => {
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) throw new Error('Surface not found.');
+    await assertCredentialOfOwner(ctx.db, surface.agentId, args.clientSecretCredentialId);
     await ctx.db.patch(surface._id, {
       provisioning: {
         appId: args.appId,
@@ -1013,6 +1090,11 @@ export const recordInstallFailure = internalMutation({
  * The two writes belong together: the moment the dedicated identity is the
  * surface's credential, the shared token it replaces must stop being usable,
  * or a run could still reach the provider as the workspace's shared app.
+ *
+ * Internal, for `slackProvisionActions`. Refuses a bot token that is not the employee's current
+ * owner's (`assertCredentialOfOwner`), before anything is retired.
+ *
+ * @throws ConvexError with `CREDENTIAL_NOT_THE_OWNERS`.
  */
 export const recordInstalledApp = internalMutation({
   args: {
@@ -1023,6 +1105,7 @@ export const recordInstalledApp = internalMutation({
   handler: async (ctx, args): Promise<{ retiredCredentialId?: Id<'credentials'> }> => {
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) throw new Error('Surface not found.');
+    await assertCredentialOfOwner(ctx.db, surface.agentId, args.credentialId);
     const previous = surface.credentialId;
     if (previous && previous !== args.credentialId && surface.credentialKind === 'oauth') {
       throw new Error('This surface already has a dedicated identity.');
@@ -2559,7 +2642,12 @@ function namedSourceId(entry: unknown): string | undefined {
  * Every documentation source the quotes on these surfaces name: their evidence, their route
  * evidence, their intake scope and their drafted request.
  */
-function quotedSourceIds(surfaces: readonly Doc<'surfaces'>[]): Set<string> {
+function quotedSourceIds(
+  surfaces: readonly Pick<
+    Doc<'surfaces'>,
+    'discoveryEvidence' | 'whereFound' | 'intakeScope' | 'request'
+  >[],
+): Set<string> {
   const named = new Set<string>();
   const add = (entry: unknown): void => {
     const sourceId = namedSourceId(entry);

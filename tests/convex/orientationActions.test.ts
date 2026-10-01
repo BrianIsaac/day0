@@ -82,6 +82,26 @@ function notionFixture(name: NotionPageName): string {
   return sanitisedNotionPage(name);
 }
 
+/**
+ * A credential row of the fixture's owner in the harness's own table, for a fake page credential
+ * to carry as its id: the proposal binds only a credential of the employee's current owner (the
+ * wave 9 review's M5), and that check reads the row.
+ */
+async function ownersCredentialRow(harness: TestConvex<typeof schema>): Promise<Id<'credentials'>> {
+  return await harness.run(
+    async (ctx) =>
+      await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'value',
+        label: 'linear service token',
+        ciphertext: 'sealed',
+        iv: 'iv',
+        source: 'entered',
+        createdAt: 1,
+      }),
+  );
+}
+
 /** Load the deployment with a contract-level Lane A credential store. */
 function orientationModules(): Record<string, () => Promise<unknown>> {
   return {
@@ -1636,6 +1656,7 @@ describe('orientation run', (): void => {
       ],
     );
     const stored = seedFakeCredential({
+      _id: await ownersCredentialRow(harness),
       userId: 'owner',
       sourceId: String(sourceId),
       ref: 'linear-automation.md',
@@ -1731,6 +1752,7 @@ describe('orientation run', (): void => {
       plaintext: 'other',
     });
     const wanted = seedFakeCredential({
+      _id: await ownersCredentialRow(harness),
       userId: 'owner',
       sourceId: String(sourceId),
       ref: `linear-automation.md#credential=${'2'.repeat(32)}`,
