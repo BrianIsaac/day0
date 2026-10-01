@@ -207,13 +207,15 @@ export const autonomyChanges = query({
  * describe an action (a ticket's author, requester and branch, which carries
  * its assignee's handle; the charter's manager and named colleagues; a
  * manager change's previous manager as well as the new one; both addresses
- * of a handover request), and a surface's live install claim (a single-use
+ * of a handover request; the colleague who wrote an adopted or offered skill,
+ * decision 4), and a surface's live install claim (a single-use
  * state nonce and the URL that spends it). The export's policy keeps names as
  * working material in text (U12 D1 (c)); a key whose whole value is a name has
  * none to keep.
  */
 const PERSONAL_KEYS = new Set([
   'assigneeEmail',
+  'authorName',
   'boss',
   'bossEmail',
   'createdBy',

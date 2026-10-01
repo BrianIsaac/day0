@@ -696,6 +696,19 @@ describe('export redaction', (): void => {
       payload: { transferId: 'transfer-1', hasNote: true },
     });
   });
+
+  it('drops the author of an adopted or offered skill, a colleague of whoever managed then (decision 4, the wave 10 review, M8)', async (): Promise<void> => {
+    const { redactForExport } = await import('../../convex/events');
+    expect(
+      redactForExport({
+        type: 'skill.adopted',
+        payload: { name: 'kanban-comment-and-close', version: 1, authorName: 'Priya' },
+      }),
+    ).toEqual({
+      type: 'skill.adopted',
+      payload: { name: 'kanban-comment-and-close', version: 1 },
+    });
+  });
 });
 
 describe('the Record tab reader', (): void => {
