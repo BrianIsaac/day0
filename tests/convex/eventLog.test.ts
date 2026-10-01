@@ -1,5 +1,6 @@
-import { convexTest } from 'convex-test';
+import { convexTest, type TestConvex } from 'convex-test';
 import { describe, expect, it } from 'vitest';
+import { internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { appendEvent, eventsOfType } from '../../convex/eventLog';
@@ -57,5 +58,74 @@ describe('eventsOfType', (): void => {
     expect(read.all).toEqual([read.first, read.second]);
     expect(read.after).toEqual([read.second]);
     expect(read.from).toEqual([read.first, read.second]);
+  });
+});
+
+describe('eventLog.log: an action that started under one owner (U3-m2)', (): void => {
+  /** Seed Maya, now owned by `userId`. */
+  async function seedEmployee(
+    harness: TestConvex<typeof schema>,
+    userId: string,
+  ): Promise<Id<'agents'>> {
+    return await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('agents', {
+          bossEmail: MANAGER_ADDRESS,
+          name: 'Maya',
+          userId,
+          state: 'active',
+          createdAt: 1,
+        }),
+    );
+  }
+
+  /** The employee's events of the type the tests log. */
+  async function loggedOf(
+    harness: TestConvex<typeof schema>,
+    agentId: Id<'agents'>,
+  ): Promise<number> {
+    return await harness.run(
+      async (ctx) => (await eventsOfType(ctx, agentId, 'work.model-call').collect()).length,
+    );
+  }
+
+  const MODEL_CALL = {
+    type: 'work.model-call' as const,
+    payload: { stage: 'draft', model: 'openai/mock' },
+  };
+
+  it('appends the event while the employee is still the owner the action started under', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness, 'owner');
+
+    await harness.mutation(internal.eventLog.log, {
+      agentId,
+      ...MODEL_CALL,
+      startedUnder: 'owner',
+    });
+
+    expect(await loggedOf(harness, agentId)).toBe(1);
+  });
+
+  it('appends nothing once the employee was handed to another owner since the action started', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness, 'colleague');
+
+    await harness.mutation(internal.eventLog.log, {
+      agentId,
+      ...MODEL_CALL,
+      startedUnder: 'owner',
+    });
+
+    expect(await loggedOf(harness, agentId)).toBe(0);
+  });
+
+  it('appends as before for a caller that names no owner', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness, 'colleague');
+
+    await harness.mutation(internal.eventLog.log, { agentId, ...MODEL_CALL });
+
+    expect(await loggedOf(harness, agentId)).toBe(1);
   });
 });
