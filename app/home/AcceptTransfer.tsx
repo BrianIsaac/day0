@@ -99,6 +99,8 @@ interface TakeOnProps {
   readonly change: Change;
   readonly notice: RefObject<HTMLParagraphElement | null>;
   readonly onClose: () => void;
+  /** Keep this preview drawn while the answer runs: the request leaves `asked` before it returns. */
+  readonly onAnswer: (preview: HandoverPreview) => void;
 }
 
 /**
@@ -107,7 +109,7 @@ interface TakeOnProps {
  * Take on. Decline opens a short reason first, then sends it. No typed confirmation: taking on is
  * additive for the acceptor and can be handed back by the same flow.
  */
-function TakeOn({ preview, change, notice, onClose }: TakeOnProps) {
+function TakeOn({ preview, change, notice, onClose, onAnswer }: TakeOnProps) {
   const accept = useMutation(api.transferAcceptance.accept);
   const decline = useMutation(api.managerTransfers.decline);
   const [excluded, setExcluded] = useState<Id<'docSources'>[]>([]);
@@ -124,6 +126,7 @@ function TakeOn({ preview, change, notice, onClose }: TakeOnProps) {
 
   const takeOn = (): void => {
     setAnswering('accept');
+    onAnswer(preview);
     change.run(
       () =>
         accept({
@@ -146,6 +149,7 @@ function TakeOn({ preview, change, notice, onClose }: TakeOnProps) {
     if (change.busy) return;
     const why = reason.trim();
     setAnswering('decline');
+    onAnswer(preview);
     change.run(
       () => decline({ transferId: preview.transferId, ...(why === '' ? {} : { reason: why }) }),
       {
@@ -288,12 +292,21 @@ function AcceptTransferDialog({ transferId, change, notice, onClose }: AcceptTra
   const read = useTransferPreview(transferId);
   const top = useRef<HTMLDivElement>(null);
   const live = read instanceof Error || read === null || read === undefined ? undefined : read;
-  const [answered, setAnswered] = useState<HandoverPreview | undefined>(live);
-  if (live !== undefined && live !== answered) setAnswered(live);
+  // The preview an answer was given on, kept from the event that gave it; the live client hands
+  // a new object on every render, so it is never compared here.
+  const [answered, setAnswered] = useState<HandoverPreview | undefined>(undefined);
   const preview = live ?? (change.busy ? answered : undefined);
   let body: ReactNode;
   if (preview !== undefined) {
-    body = <TakeOn preview={preview} change={change} notice={notice} onClose={onClose} />;
+    body = (
+      <TakeOn
+        preview={preview}
+        change={change}
+        notice={notice}
+        onClose={onClose}
+        onAnswer={setAnswered}
+      />
+    );
   } else {
     let said: ReactNode;
     if (read === undefined) {

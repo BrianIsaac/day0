@@ -25,7 +25,13 @@ vi.mock('convex/react', () => ({
     Object.fromEntries(
       Object.entries(queries).map(([key, { query, args }]) => {
         backend.asked.push({ name: getFunctionName(query), args });
-        return [key, backend.preview];
+        // The live client hands a new object on every render, as a fresh decode does.
+        const answer = backend.preview;
+        const fresh =
+          typeof answer === 'object' && answer !== null && !(answer instanceof Error)
+            ? structuredClone(answer)
+            : answer;
+        return [key, fresh];
       }),
     ),
   useMutation:
