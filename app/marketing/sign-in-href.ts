@@ -1,4 +1,4 @@
-import { TRANSFER_PARAMETER } from '../home/AcceptTransfer';
+import { reviewHref } from '../home/transfer-link';
 
 /** The sign-in a signed-out visitor is sent to from the landing page. */
 export const SIGN_IN_HREF = '/sign-in';
@@ -17,6 +17,6 @@ const TRANSFER_ID = /^[a-z0-9]{1,64}$/i;
  */
 export function signInHref(transferId: string | null): string {
   if (transferId === null || !TRANSFER_ID.test(transferId)) return SIGN_IN_HREF;
-  const back = `/?${new URLSearchParams({ [TRANSFER_PARAMETER]: transferId }).toString()}`;
+  const back = reviewHref(transferId);
   return `${SIGN_IN_HREF}?${new URLSearchParams({ redirect_url: back }).toString()}`;
 }

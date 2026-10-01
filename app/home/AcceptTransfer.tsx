@@ -45,9 +45,7 @@ import {
   YOU_TAKE_ON,
   type HandoverPreview,
 } from '../handover-words';
-
-/** The address parameter that opens the acceptance dialog: `/?transfer=<transferId>`. */
-export const TRANSFER_PARAMETER = 'transfer';
+import { TRANSFER_PARAMETER } from './transfer-link';
 
 /**
  * The preview the dialog reads, subscribed through `useQueries` so a refusal comes back as a

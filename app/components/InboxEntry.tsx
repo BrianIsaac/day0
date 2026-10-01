@@ -6,6 +6,7 @@ import type { api } from '@convex/_generated/api';
 import { deploymentZone } from '@/lib/zone';
 import { clockTime } from './time';
 import { ButtonLink } from './Button';
+import { reviewHref } from '../home/transfer-link';
 
 /** One thing waiting on the manager, as `work.needsYou` and `work.needsYouForAgent` return it. */
 export type InboxItem = FunctionReturnType<typeof api.work.needsYou>['entries'][number];
@@ -151,7 +152,7 @@ export function inboxEntryHref(entry: InboxItem): string {
       return `${page}/surfaces`;
     case 'transfer':
       // The employee's page refuses a caller who does not own it yet; the home opens the dialog.
-      return `/?transfer=${encodeURIComponent(entry.transferId)}`;
+      return reviewHref(entry.transferId);
   }
 }
 

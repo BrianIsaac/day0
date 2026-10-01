@@ -5,7 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { DEV_BOSS_EMAIL, DEV_BOSS_FIRST_NAME, DEV_NO_AUTH } from '@/lib/dev-auth';
 import { useAccount } from './account';
 import { SignedInDashboard } from './home/SignedInDashboard';
-import { TRANSFER_PARAMETER } from './home/AcceptTransfer';
+import { TRANSFER_PARAMETER } from './home/transfer-link';
 import { MarketingLanding } from './marketing/MarketingLanding';
 import { signInHref } from './marketing/sign-in-href';
 import { SessionGate, SessionPending } from './Providers';
