@@ -1295,6 +1295,12 @@ describe('the skill library at a move (10-K, K2)', (): void => {
         'skills',
         holding(office.tomas, 'chat-thread-reply', 'slack', tomass),
       );
+      // Due a re-check because the old library has a newer version of it: a chip naming the old
+      // library's numbers.
+      await ctx.db.patch(adopted, {
+        recheckDueAt: 3,
+        recheckReason: 'v4 is verified; this runs v1',
+      });
       const offered = await ctx.db.insert('skills', {
         ...holding(office.maya, 'kanban-other', 'linear', tomass),
         state: 'proposed',
@@ -1325,6 +1331,7 @@ describe('the skill library at a move (10-K, K2)', (): void => {
     );
     for (const version of held) {
       expect(version.userId).toBe('colleague');
+      expect(['Tomas', 'Priya']).not.toContain(version.authorName);
       expect([undefined, office.maya]).toContain(version.authorAgentId);
       expect(version.authorAgentId).not.toBe(office.tomas);
       expect(version.readRefs).toEqual([]);
@@ -1345,9 +1352,13 @@ describe('the skill library at a move (10-K, K2)', (): void => {
     expect(after.own?.recheckReason).toBe(
       'its connection to linear was cut when the employee was handed over',
     );
-    expect(after.adopted?.recheckReason).toBe(
-      'its connection to slack was cut when the employee was handed over',
-    );
+    // Already due, with a reason naming the old library's numbers: the stamp stays, the reason
+    // no longer names them.
+    expect(after.adopted).toMatchObject({
+      recheckDueAt: 3,
+      recheckReason: 'it was due a re-check when the employee was handed over',
+    });
+    expect(held[1]).toMatchObject({ authorName: 'a colleague under the previous manager' });
     expect(after.tomasOwn?.recheckDueAt).toBeUndefined();
   });
 });

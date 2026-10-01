@@ -349,6 +349,94 @@ describe('verifyStoredSkill', (): void => {
     expect(after.authoringRunId).toBeUndefined();
   });
 
+  it('fails a registered row whose re-check the sandbox refuses, with the log', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { priya, versionId } = await seedOffice(harness);
+    const held = await registeredRow(harness, priya, versionId);
+    recorded.sandbox = {
+      backend: 'local',
+      sandboxId: 'local:stored-3',
+      stdout: '',
+      stderr: 'Traceback: the tool is gone',
+      ok: false,
+      failureReason: 'smoke test exited 1',
+      skipped: false,
+    };
+
+    const result = await harness.action(internal.skillActions.verifyStoredSkill, {
+      skillId: held,
+    });
+
+    expect(result.ok).toBe(false);
+    const after = await row(harness, held);
+    expect(after.state).toBe('failed');
+    expect(after.verificationLog).toContain('Traceback: the tool is gone');
+    expect(after.versionId).toBe(versionId);
+  });
+
+  it('refuses a version withdrawn from every employee, or one of another owner, before any claim', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { mateo, versionId } = await seedOffice(harness);
+    const adopting = await adoptingRow(harness, mateo, versionId);
+    await harness.run(async (ctx) => await ctx.db.patch(versionId, { revokedAt: 9 }));
+
+    await expect(
+      harness.action(internal.skillActions.verifyStoredSkill, { skillId: adopting }),
+    ).resolves.toEqual({ ok: false, reason: 'the version was withdrawn from every employee' });
+
+    await harness.run(
+      async (ctx) => await ctx.db.patch(versionId, { revokedAt: undefined, userId: 'rival' }),
+    );
+    await expect(
+      harness.action(internal.skillActions.verifyStoredSkill, { skillId: adopting }),
+    ).resolves.toEqual({
+      ok: false,
+      reason: "the version is not one of this employee's owner's",
+    });
+    expect(recorded.sandboxRuns).toEqual([]);
+    expect(await row(harness, adopting)).toMatchObject({ state: 'approved' });
+  });
+
+  it('moves a registered row onto a newer version of its name when that version is named', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { priya, mateo, versionId } = await seedOffice(harness);
+    const held = await registeredRow(harness, mateo, versionId);
+    const newerBody = BODY.replace('then close it', 'then close it once it reads back');
+    const newer = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('skillVersions', {
+          userId: 'owner',
+          name: 'kanban-comment-and-close',
+          description: 'Ticket comment-and-close.',
+          surfaceClass: 'kanban',
+          operation: 'comment-and-close',
+          version: 2,
+          body: newerBody,
+          smokeTest: SMOKE,
+          bodyHash: versionBodyHash(newerBody, SMOKE),
+          requiredScopes: [],
+          harnessTools: [],
+          authorAgentId: priya,
+          authorName: 'Priya',
+          readRefs: [],
+          verifiedAt: 2,
+          createdAt: 2,
+        }),
+    );
+
+    await expect(
+      harness.action(internal.skillActions.verifyStoredSkill, { skillId: held, versionId: newer }),
+    ).resolves.toEqual({ ok: true });
+
+    expect(recorded.sandboxRuns).toEqual([{ skillBody: newerBody, smokeTest: SMOKE }]);
+    expect(await row(harness, held)).toMatchObject({
+      state: 'registered',
+      body: newerBody,
+      versionId: newer,
+    });
+    expect((await row(harness, held)).recheckDueAt).toBeUndefined();
+  });
+
   it('refuses a row with no stored version and leaves it as it was', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { priya } = await seedOffice(harness);
@@ -531,5 +619,8 @@ describe('authoring records the pages it read and the tools it names, in real mo
       { sourceId: seeded.sourceId, ref: 'linear-runbook.md', title: 'Linear runbook' },
     ]);
     expect(version?.harnessTools).toEqual(['save_comment', 'save_issue']);
+    expect(version?.harnessToolsBySurface).toEqual([
+      { slug: 'linear', surfaceClass: 'kanban', tools: ['save_comment', 'save_issue'] },
+    ]);
   });
 });

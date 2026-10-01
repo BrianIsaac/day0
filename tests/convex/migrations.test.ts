@@ -1980,30 +1980,37 @@ describe('the skill library backfills (10-K, K3)', (): void => {
     expect(await libraryState(harness)).toEqual(before);
   });
 
-  it('backfills the use count from the work items that ran each skill, and never lowers it', async (): Promise<void> => {
+  it('backfills the use count and the last use from the claims that named each skill, never lowering either', async (): Promise<void> => {
     const harness = limitedHarness();
     const priya = await agent(harness, { userId: 'owner' });
     const used = await registeredSkill(harness, priya);
     const counted = await registeredSkill(harness, priya, { name: 'kanban-other', useCount: 9 });
     const unused = await registeredSkill(harness, priya, { name: 'kanban-third' });
     await harness.run(async (ctx) => {
-      for (const [skillId, externalId] of [
-        [used, 'OPS-1'],
-        [used, 'OPS-2'],
-        [counted, 'OPS-3'],
+      const item = await ctx.db.insert('workItems', {
+        agentId: priya,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'tickets',
+        externalId: 'OPS-1',
+        title: 'OPS-1',
+        contentSummary: 'Done.',
+        contentRefs: [],
+        state: 'completed',
+        skillId: used,
+        observedAt: 1,
+        createdAt: 1,
+      });
+      // One item run twice (a Retry) is two uses; the other skill's claim is not this one's.
+      for (const [skillId, createdAt] of [
+        [used, 100],
+        [used, 300],
+        [counted, 200],
       ] as const) {
-        await ctx.db.insert('workItems', {
+        await ctx.db.insert('events', {
           agentId: priya,
-          sourceCategory: 'ticket-queue',
-          sourceSystem: 'tickets',
-          externalId,
-          title: externalId,
-          contentSummary: 'Done.',
-          contentRefs: [],
-          state: 'completed',
-          skillId,
-          observedAt: 1,
-          createdAt: 1,
+          type: 'work.execution-claimed',
+          payload: { workItemId: item, skillId },
+          createdAt,
         });
       }
     });
@@ -2013,9 +2020,10 @@ describe('the skill library backfills (10-K, K3)', (): void => {
     const [one, two, three] = await harness.run(async (ctx) =>
       Promise.all([used, counted, unused].map((id) => ctx.db.get(id))),
     );
-    expect(one?.useCount).toBe(2);
-    expect(two?.useCount).toBe(9);
+    expect(one).toMatchObject({ useCount: 2, lastUsedAt: 300 });
+    expect(two).toMatchObject({ useCount: 9, lastUsedAt: 200 });
     expect(three?.useCount).toBeUndefined();
+    expect(three?.lastUsedAt).toBeUndefined();
     const status = await harness.query(internal.migrations.status, {});
     expect(
       status.migrations
@@ -2025,5 +2033,25 @@ describe('the skill library backfills (10-K, K3)', (): void => {
       ['skills-library', '0.13.0', true],
       ['skills-use-count', '0.13.0', true],
     ]);
+  });
+
+  it('backfills a library larger than one page, every holder once', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const priya = await agent(harness, { userId: 'owner' });
+    for (let index = 0; index < 60; index += 1) {
+      await registeredSkill(harness, priya, {
+        name: `kanban-comment-and-close-${index}`,
+        body: `# Body ${index}`,
+      });
+    }
+
+    await runAll(harness);
+
+    const [versions, skills] = await harness.run(async (ctx) => [
+      await ctx.db.query('skillVersions').collect(),
+      await ctx.db.query('skills').collect(),
+    ]);
+    expect(versions).toHaveLength(60);
+    expect(skills.every((row) => row.versionId !== undefined)).toBe(true);
   });
 });

@@ -47,7 +47,12 @@ import { spanModelFromEnv } from '../src/redaction/span-model-env';
 import { ownerKnownValues } from '../src/redaction/known-values';
 import { itemBoundModelFailure } from '../src/lib/structured-fallback';
 import { errorMessage } from '../src/lib/errors';
-import { harnessToolsNamed } from '../src/work/skill-library';
+import {
+  harnessToolsBySurface,
+  harnessToolsNamed,
+  type NamedHarnessSurface,
+  type SurfaceTools,
+} from '../src/work/skill-library';
 
 /**
  * Autonomous skill authoring action. Demo headline:
@@ -1054,6 +1059,10 @@ async function authorAndRegister(
     verificationLog: noted(verificationLog),
     smokeTest,
     harnessTools: harnessToolsNamed(body, contract.surfaces),
+    harnessToolsBySurface: harnessToolsBySurface(
+      body,
+      namedHarnessSurfaces(contract, surfaceRows.map(toSurfaceRecord)),
+    ),
     readRefs: linkedPages.map(({ page }) => ({
       sourceId: page.sourceId,
       ref: page.ref,
@@ -1065,28 +1074,52 @@ async function authorAndRegister(
   return { ok: true };
 }
 
+/**
+ * The harness contract's connected surfaces with each one's class, for the per-surface tools a
+ * version records.
+ *
+ * @param contract - The harness contract the verification ran under.
+ * @param surfaces - The employee's surfaces, for their classes.
+ */
+function namedHarnessSurfaces(
+  contract: SmokeHarnessContract,
+  surfaces: readonly SurfaceRecord[],
+): NamedHarnessSurface[] {
+  return contract.surfaces.map((surface) => {
+    const surfaceClass = surfaces.find((record) => record.slug === surface.slug)?.class;
+    return {
+      slug: surface.slug,
+      allowedTools: surface.allowedTools,
+      ...(surfaceClass !== undefined ? { surfaceClass } : {}),
+    };
+  });
+}
+
 /** What the re-check's author is told when a version's passing check was never kept (K3). */
 const KEEP_CHECK_INSTRUCTION =
   'This skill is already registered with the SKILL.md below, and it stays exactly as it is. ' +
   'Write smoke.py for it as the rules above say, and return this SKILL.md unchanged as the body.';
 
+/** What a re-check's author prompt is built from. */
+export interface KeepCheckPromptInput {
+  /** The holder row, as the author prompt reads it. */
+  readonly skill: AuthorPromptSkill;
+  /** The registered SKILL.md, which stays as it is. */
+  readonly body: string;
+  /** The holder's surfaces. */
+  readonly surfaces: readonly SurfaceRecord[];
+  /** Clock for the connection verdict. */
+  readonly now: number;
+  /** The holder's redacted documentation. */
+  readonly pages: readonly AuthorRunbookPage[];
+}
+
 /**
  * The author prompt for a re-check whose version has no kept smoke test: the authoring prompt
  * for the same skill, with the registered body fixed and only the smoke test asked for.
- *
- * @param skill - The holder row, as the author prompt reads it.
- * @param body - The registered SKILL.md.
- * @param surfaces - The holder's surfaces.
- * @param now - Clock for the connection verdict.
- * @param pages - The holder's redacted documentation.
  */
-export function buildKeepCheckPrompt(
-  skill: AuthorPromptSkill,
-  body: string,
-  surfaces: readonly SurfaceRecord[],
-  now: number,
-  pages: readonly AuthorRunbookPage[],
-): string {
+export function buildKeepCheckPrompt(input: KeepCheckPromptInput): string {
+  const { skill, body, surfaces, now, pages } = input;
   return [
     buildAuthorPrompt(skill, surfaces, now, pages, SURFACE_MODE),
     '',
@@ -1121,13 +1154,17 @@ type StoredVerificationStop =
  * @returns Whether the row registered, or why not.
  */
 export const verifyStoredSkill = internalAction({
-  args: { skillId: v.id('skills') },
+  args: {
+    skillId: v.id('skills'),
+    /** A newer version of the row's name to verify it as, in place of its own (10-C). */
+    versionId: v.optional(v.id('skillVersions')),
+  },
   handler: async (ctx, args): Promise<{ ok: boolean; reason?: string }> => {
     const target = await ctx.runQuery(internal.skillVersions.storedVerificationTarget, {
       skillId: args.skillId,
+      ...(args.versionId !== undefined ? { versionId: args.versionId } : {}),
     });
-    if (target === null)
-      return { ok: false, reason: 'the skill holds no stored version to verify' };
+    if (target.kind === 'refused') return { ok: false, reason: target.reason };
     const claim = await ctx.runMutation(internal.skills.claimAuthoringRun, {
       skillId: args.skillId,
       purpose: 'verify-stored',
@@ -1141,7 +1178,8 @@ export const verifyStoredSkill = internalAction({
     ]);
     const surfaces = surfaceRows.map(toSurfaceRecord);
     const smokeTest =
-      version.smokeTest ?? (await writeKeptCheck(ctx, skill, version.body, surfaces, pageRows));
+      version.smokeTest ??
+      (await writeKeptCheck(ctx, { skill, body: version.body, surfaces, pages: pageRows }));
     const stop =
       typeof smokeTest === 'string'
         ? await runStoredVerification(ctx, {
@@ -1160,6 +1198,7 @@ export const verifyStoredSkill = internalAction({
         verificationLog: stop.log,
         smokeTest: stop.smokeTest,
         harnessTools: stop.harnessTools,
+        harnessToolsBySurface: stop.harnessToolsBySurface,
         readRefs: version.readRefs,
       });
       return registered ? { ok: true } : { ok: false, reason: SUPERSEDED };
@@ -1189,17 +1228,20 @@ export const verifyStoredSkill = internalAction({
  */
 async function writeKeptCheck(
   ctx: ActionCtx,
-  skill: Doc<'skills'>,
-  body: string,
-  surfaces: readonly SurfaceRecord[],
-  pages: readonly Doc<'docPages'>[],
+  input: {
+    readonly skill: Doc<'skills'>;
+    readonly body: string;
+    readonly surfaces: readonly SurfaceRecord[];
+    readonly pages: readonly Doc<'docPages'>[];
+  },
 ): Promise<string | { readonly kind: 'skipped'; readonly reason: string }> {
+  const { skill, body, surfaces, pages } = input;
   let authored: z.infer<typeof authorSchema>;
   try {
     authored = await recordingAuthoringCalls(ctx, skill, () =>
       agentJson<z.infer<typeof authorSchema>>({
         agent: skillAuthorAgent,
-        user: buildKeepCheckPrompt(skill, body, surfaces, Date.now(), pages),
+        user: buildKeepCheckPrompt({ skill, body, surfaces, now: Date.now(), pages }),
         schema: authorSchemaFor(SURFACE_MODE),
       }),
     );
@@ -1241,6 +1283,7 @@ interface StoredVerificationPass {
   readonly log: string;
   readonly smokeTest: string;
   readonly harnessTools: string[];
+  readonly harnessToolsBySurface: SurfaceTools[];
 }
 
 /**
@@ -1308,6 +1351,10 @@ async function runStoredVerification(
       log: `ran in ${backend} (${result.sandboxId})\n\nstdout:\n${stdout}\n\nstderr:\n${stderr}\nok: true`,
       smokeTest: verification.smokeTest,
       harnessTools: harnessToolsNamed(args.body, contract.surfaces),
+      harnessToolsBySurface: harnessToolsBySurface(
+        args.body,
+        namedHarnessSurfaces(contract, args.surfaces),
+      ),
     };
   } catch (err) {
     return { kind: 'skipped', reason: `the sandbox threw: ${errorMessage(err)}` };

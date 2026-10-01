@@ -8,14 +8,19 @@ import {
 } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, assertOwnsSkill } from './ownership';
-import { appendEvent } from './eventLog';
+import { appendEvent, eventsOfType } from './eventLog';
+import { isEventOf } from '../src/events/contract';
 import {
   CHECK_NOT_KEPT_REASON,
+  HANDED_OVER_AUTHOR_NAME,
+  HANDED_OVER_RECHECK_REASON,
+  isNewerVersionReason,
   newerVersionReason,
   nextVersionNumber,
   sharedSkillsEnabled,
   surfaceCutReason,
   versionBodyHash,
+  type SurfaceTools,
 } from '../src/work/skill-library';
 
 /*
@@ -121,17 +126,14 @@ export async function holdersOf(
  * `skill.recheck-due` event. A row that is not registered runs nothing and is left alone.
  *
  * @param ctx - The trigger's mutation context.
- * @param skillId - The holder row.
- * @param reason - Why it is due, in the card's words.
- * @param now - The trigger's time.
+ * @param stamp - The holder row, why it is due in the card's words, and the trigger's time.
  * @returns Whether the row was stamped by this call.
  */
 export async function stampRecheckDue(
   ctx: MutationCtx,
-  skillId: Id<'skills'>,
-  reason: string,
-  now: number,
+  stamp: { readonly skillId: Id<'skills'>; readonly reason: string; readonly now: number },
 ): Promise<boolean> {
+  const { skillId, reason, now } = stamp;
   const row = await ctx.db.get(skillId);
   if (row?.state !== 'registered') return false;
   const fresh = row.recheckDueAt === undefined;
@@ -176,7 +178,8 @@ export async function stampRecheckDueOnSurfaces(
   let stamped = 0;
   for (const row of registered) {
     if (row.targetSurface === undefined || !slugs.has(row.targetSurface)) continue;
-    if (await stampRecheckDue(ctx, row._id, args.reasonFor(row.targetSurface), args.now)) {
+    const reason = args.reasonFor(row.targetSurface);
+    if (await stampRecheckDue(ctx, { skillId: row._id, reason, now: args.now })) {
       stamped += 1;
     }
   }
@@ -202,6 +205,8 @@ export interface VerifiedContent {
   /** The smoke test that passed, or undefined when the caller did not keep one. */
   readonly smokeTest: string | undefined;
   readonly harnessTools: readonly string[];
+  /** The same tools surface by surface; absent where the caller knows no surfaces. */
+  readonly harnessToolsBySurface?: readonly SurfaceTools[];
   readonly readRefs: readonly ReadRef[];
   readonly now: number;
   /**
@@ -259,6 +264,7 @@ export async function recordRegisteredVersion(
         smokeTest: content.smokeTest,
         bodyHash: versionBodyHash(own.body, content.smokeTest),
         harnessTools: [...content.harnessTools],
+        ...toolsBySurface(content.harnessToolsBySurface),
         verifiedAt: content.now,
       });
     }
@@ -278,10 +284,38 @@ export async function recordRegisteredVersion(
       kind: 'linked',
       versionId: same._id,
       version: same.version,
-      adopted: same.authorAgentId !== row.agentId,
+      // Adopted means the row took the version it was offered, never a coincidence of content.
+      adopted: row.offeredVersionId === same._id,
     };
   }
-  return await insertNextVersion(ctx, row, owner, existing, { ...content, bodyHash });
+  const readRefs = await ownedReadRefs(ctx.db, owner.ownerKey, content.readRefs);
+  return await insertNextVersion(ctx, row, owner, existing, { ...content, readRefs, bodyHash });
+}
+
+/** The optional per-surface tools as a patch: written only when the caller knows them. */
+function toolsBySurface(tools: readonly SurfaceTools[] | undefined): {
+  harnessToolsBySurface?: SurfaceTools[];
+} {
+  return tools === undefined || tools.length === 0
+    ? {}
+    : { harnessToolsBySurface: tools.map((entry) => ({ ...entry, tools: [...entry.tools] })) };
+}
+
+/**
+ * The pages a run read that are the owner's own documentation. A run that began before a
+ * handover read the previous owner's pages and may register after it; those pages are not this
+ * library's to name.
+ */
+async function ownedReadRefs(
+  db: DatabaseReader,
+  ownerKey: string,
+  readRefs: readonly ReadRef[],
+): Promise<ReadRef[]> {
+  const owned: ReadRef[] = [];
+  for (const readRef of readRefs) {
+    if ((await db.get(readRef.sourceId))?.userId === ownerKey) owned.push({ ...readRef });
+  }
+  return owned;
 }
 
 /** Write version `n+1` of a row's name, supersede what its revision replaced, stamp older holders. */
@@ -307,6 +341,7 @@ async function insertNextVersion(
     bodyHash: content.bodyHash,
     requiredScopes: [...(row.requiredScopes ?? [])],
     harnessTools: [...content.harnessTools],
+    ...toolsBySurface(content.harnessToolsBySurface),
     ...(row.targetSurface !== undefined ? { targetSurface: row.targetSurface } : {}),
     authorAgentId: row.agentId,
     authorName: owner.agent.name,
@@ -320,7 +355,8 @@ async function insertNextVersion(
     if (older.revokedAt !== undefined) continue;
     for (const holder of await holdersOf(ctx.db, older._id)) {
       if (holder._id === row._id || holder._id === row.revisionOf) continue;
-      await stampRecheckDue(ctx, holder._id, newerVersionReason(version, older.version), now);
+      const reason = newerVersionReason(version, older.version);
+      await stampRecheckDue(ctx, { skillId: holder._id, reason, now });
     }
   }
   return {
@@ -399,8 +435,10 @@ export async function deleteOwnerLibrary(ctx: MutationCtx, ownerKey: string): Pr
  * owner's library made to it, then stamp "Re-check due" on its
  * registered skills whose surface the move cut. Nothing names the old owner afterwards: each copy
  * is keyed on the new owner, numbered in the new owner's library, keeps its author only when the
- * mover wrote it, and drops the pages the old owner's documentation gave it (`readRefs`), which
- * the mover no longer reads. The old owner's versions stop naming the mover as author and are
+ * mover wrote it (any other author is {@link HANDED_OVER_AUTHOR_NAME}), and drops the pages the
+ * old owner's documentation gave it (`readRefs`), which the mover no longer reads; a chip whose
+ * reason named the old library's version numbers keeps its stamp under
+ * {@link HANDED_OVER_RECHECK_REASON}. The old owner's versions stop naming the mover as author and are
  * otherwise untouched, with their other holders.
  *
  * @param ctx - The move's mutation context.
@@ -426,6 +464,10 @@ export async function copyVersionsForMove(
     // An offer is the old owner's library speaking, not something the employee holds: it goes.
     if (row.offeredVersionId !== undefined) {
       await ctx.db.patch(row._id, { offeredVersionId: undefined });
+    }
+    // A newer-version chip names the old library's numbers, which the new one does not use.
+    if (row.recheckReason !== undefined && isNewerVersionReason(row.recheckReason)) {
+      await ctx.db.patch(row._id, { recheckReason: HANDED_OVER_RECHECK_REASON });
     }
     const versionId = row.versionId;
     if (versionId === undefined) continue;
@@ -472,9 +514,10 @@ async function copyVersion(
     bodyHash: source.bodyHash,
     requiredScopes: source.requiredScopes,
     harnessTools: source.harnessTools,
+    ...toolsBySurface(source.harnessToolsBySurface),
     ...(source.targetSurface !== undefined ? { targetSurface: source.targetSurface } : {}),
     ...(wroteIt ? { authorAgentId: args.agentId } : {}),
-    authorName: author?.name ?? source.authorName,
+    authorName: author?.name ?? HANDED_OVER_AUTHOR_NAME,
     readRefs: [],
     verifiedAt: source.verifiedAt,
     ...(source.revokedAt !== undefined
@@ -518,25 +561,30 @@ export async function backfillLibraryPage(
     });
     if (recorded.kind === 'outside') continue;
     await ctx.db.patch(row._id, { versionId: recorded.versionId });
-    await stampRecheckDue(ctx, row._id, CHECK_NOT_KEPT_REASON, now);
+    await stampRecheckDue(ctx, { skillId: row._id, reason: CHECK_NOT_KEPT_REASON, now });
     changed += 1;
   }
   return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
 }
 
-/** Skill rows one page of the use-count backfill reads. */
-const USE_COUNT_BACKFILL_PAGE = 10;
-
-/** The most work items one skill's count reads; a count that reaches it is a floor. */
-export const USE_COUNT_SCAN_LIMIT = 500;
+/** Skill rows one page of the use-count backfill reads: one, since each reads its employee's claims. */
+const USE_COUNT_BACKFILL_PAGE = 1;
 
 /**
- * One page of the `skills-use-count` migration: give every skill the number of work items an
- * execution claimed for it (`workItems.by_skill`), the "used N times" an older release never
- * counted. The count is set to the larger of the row's own and the items', never added to, so a
- * claim landing while the migration runs is counted once either way, a retry's second claim of
- * one item is kept, and the page is safe to run twice. A skill whose count reaches
- * {@link USE_COUNT_SCAN_LIMIT} keeps that floor; the page's note says how many did.
+ * The most execution claims of one employee a count reads. A claim event's payload is a handful
+ * of ids, so this stays far inside a transaction's read limit; an employee past it gives each of
+ * its skills a floor, which the page's note says.
+ */
+export const USE_COUNT_SCAN_LIMIT = 4_000;
+
+/**
+ * One page of the `skills-use-count` migration: give a skill the number of execution claims that
+ * named it, and the time of the newest, the "used N times" an older release never counted. The
+ * claims are read from the employee's `work.execution-claimed` events, the same claims
+ * `claimForExecution` now counts, with small payloads; the work items' `by_skill` index would
+ * count an item once however often it ran, and reads whole items. The count is set to the larger
+ * of the row's own and the ledger's, never added to, so a claim landing while the migration runs
+ * is counted once either way, and the page is safe to run twice.
  *
  * @param ctx - The migration's mutation context.
  * @param cursor - Where the previous page stopped, or null for the first.
@@ -551,14 +599,21 @@ export async function backfillUseCountPage(
   let changed = 0;
   let floors = 0;
   for (const row of page.page) {
-    const items = await ctx.db
-      .query('workItems')
-      .withIndex('by_skill', (q) => q.eq('skillId', row._id))
-      .take(USE_COUNT_SCAN_LIMIT);
-    if (items.length === USE_COUNT_SCAN_LIMIT) floors += 1;
-    const useCount = Math.max(row.useCount ?? 0, items.length);
-    if (useCount === (row.useCount ?? 0)) continue;
-    await ctx.db.patch(row._id, { useCount });
+    const claims = await eventsOfType(ctx, row.agentId, 'work.execution-claimed').take(
+      USE_COUNT_SCAN_LIMIT,
+    );
+    if (claims.length === USE_COUNT_SCAN_LIMIT) floors += 1;
+    const uses = claims.filter(
+      (event) => isEventOf(event, 'work.execution-claimed') && event.payload.skillId === row._id,
+    );
+    const useCount = Math.max(row.useCount ?? 0, uses.length);
+    const newest = uses.reduce((latest, event) => Math.max(latest, event.createdAt), 0);
+    const lastUsedAt = Math.max(row.lastUsedAt ?? 0, newest);
+    if (useCount === (row.useCount ?? 0) && lastUsedAt === (row.lastUsedAt ?? 0)) continue;
+    await ctx.db.patch(row._id, {
+      useCount,
+      ...(lastUsedAt > 0 ? { lastUsedAt } : {}),
+    });
     changed += 1;
   }
   return {
@@ -568,31 +623,60 @@ export async function backfillUseCountPage(
     isDone: page.isDone,
     ...(floors > 0
       ? {
-          note: `${floors} skills reached ${USE_COUNT_SCAN_LIMIT} work items, so each count is a floor`,
+          note: `${floors} skills belong to an employee with ${USE_COUNT_SCAN_LIMIT} or more execution claims, so each count is a floor`,
         }
       : {}),
   };
 }
 
+/** What a stored verification runs, or why it may not run. */
+export type StoredVerificationTarget =
+  | {
+      readonly kind: 'ready';
+      readonly skill: Doc<'skills'>;
+      readonly version: Doc<'skillVersions'>;
+    }
+  | { readonly kind: 'refused'; readonly reason: string };
+
 /**
- * Internal: the holder row and the version a stored verification runs
- * (`skillActions.verifyStoredSkill`): the row's own version, or the version offered to it.
+ * The holder row and the version a stored verification runs: the one named, or else the row's
+ * own, or else the one offered to it. The version must be the row's owner's and of the row's
+ * name, and not withdrawn, since the sandbox runs whatever body this answers.
  *
- * @returns The row and the version, or null when either is gone.
+ * @param db - A query's database.
+ * @param skillId - The holder row.
+ * @param versionId - A version to verify the row as in place of its own: a newer version of its
+ *   name, for a re-check that moves the row onto it.
+ */
+export async function storedVerificationTargetOf(
+  db: DatabaseReader,
+  skillId: Id<'skills'>,
+  versionId: Id<'skillVersions'> | undefined,
+): Promise<StoredVerificationTarget> {
+  const skill = await db.get(skillId);
+  if (skill === null) return { kind: 'refused', reason: 'the skill no longer exists' };
+  const named = versionId ?? skill.versionId ?? skill.offeredVersionId;
+  const version = named === undefined ? null : await db.get(named);
+  if (version === null) {
+    return { kind: 'refused', reason: 'the skill holds no stored version to verify' };
+  }
+  const agent = await db.get(skill.agentId);
+  if (agent?.userId !== version.userId || version.name !== skill.name) {
+    return { kind: 'refused', reason: "the version is not one of this employee's owner's" };
+  }
+  if (version.revokedAt !== undefined) {
+    return { kind: 'refused', reason: 'the version was withdrawn from every employee' };
+  }
+  return { kind: 'ready', skill, version };
+}
+
+/**
+ * Internal: what `skillActions.verifyStoredSkill` runs ({@link storedVerificationTargetOf}).
  */
 export const storedVerificationTarget = internalQuery({
-  args: { skillId: v.id('skills') },
-  handler: async (
-    ctx,
-    args,
-  ): Promise<{ skill: Doc<'skills'>; version: Doc<'skillVersions'> } | null> => {
-    const skill = await ctx.db.get(args.skillId);
-    if (skill === null) return null;
-    const versionId = skill.versionId ?? skill.offeredVersionId;
-    if (versionId === undefined) return null;
-    const version = await ctx.db.get(versionId);
-    return version === null ? null : { skill, version };
-  },
+  args: { skillId: v.id('skills'), versionId: v.optional(v.id('skillVersions')) },
+  handler: async (ctx, args): Promise<StoredVerificationTarget> =>
+    await storedVerificationTargetOf(ctx.db, args.skillId, args.versionId),
 });
 
 /**

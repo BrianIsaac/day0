@@ -1113,7 +1113,8 @@ export const recordAuthoringProgress = internalMutation({
 /**
  * Take the row a registering revision replaces out of use: the employee's own registered row
  * named by `revisionOf` becomes `superseded` in the revision's transaction, and stops being
- * picked once the revision is callable.
+ * picked once the revision is callable. Any run holding it is released, as every transition
+ * out of `registered` releases it, so a re-check in flight cannot register it again.
  *
  * @returns The superseded row, or undefined when the row is no revision or its original has
  *   already left `registered`.
@@ -1125,7 +1126,8 @@ async function supersedeReplacedRow(
   if (row.revisionOf === undefined) return undefined;
   const replaced = await ctx.db.get(row.revisionOf);
   if (replaced?.agentId !== row.agentId || replaced.state !== 'registered') return undefined;
-  await ctx.db.patch(replaced._id, { state: 'superseded' });
+  // Released, so a re-check of the replaced row still in flight is fenced out of it.
+  await ctx.db.patch(replaced._id, { state: 'superseded', ...RELEASED });
   return replaced._id;
 }
 
@@ -1165,22 +1167,43 @@ export const completeRegistration = internalMutation({
     smokeTest: v.optional(v.string()),
     /** The tools SKILL.md names that the harness's surfaces allowed. */
     harnessTools: v.optional(v.array(v.string())),
+    /** The same tools surface by surface, with each surface's class. */
+    harnessToolsBySurface: v.optional(
+      v.array(
+        v.object({
+          slug: v.string(),
+          surfaceClass: v.optional(v.string()),
+          tools: v.array(v.string()),
+        }),
+      ),
+    ),
     /** The pages the authoring run read (`linkedRunbookPages`). */
     readRefs: v.optional(v.array(readRefValidator)),
   },
   handler: async (ctx, args): Promise<{ registered: boolean }> => {
     const row = await claimHolder(ctx, args.skillId, args.runId, 'register');
     if (!row) return { registered: false };
+    // Taken out of use while the run held it: nothing brings it back but its own control.
+    if (row.state === 'retired' || row.state === 'superseded') return { registered: false };
     const now = Date.now();
     const body = redactTokenShapes(args.body);
     const library = await recordRegisteredVersion(ctx, row, {
       body,
       smokeTest: args.smokeTest === undefined ? undefined : redactTokenShapes(args.smokeTest),
       harnessTools: args.harnessTools ?? [],
+      ...(args.harnessToolsBySurface !== undefined
+        ? { harnessToolsBySurface: args.harnessToolsBySurface }
+        : {}),
       readRefs: args.readRefs ?? [],
       now,
       stampsOlderHolders: true,
     });
+    // A trigger that stamped the chip while this run was checking is about a change the run
+    // never saw, so its chip stays.
+    const stampedDuringRun =
+      row.recheckDueAt !== undefined &&
+      row.authoringClaimedAt !== undefined &&
+      row.recheckDueAt > row.authoringClaimedAt;
     const held = library.kind === 'outside' ? undefined : library;
     await ctx.db.patch(args.skillId, {
       state: 'registered',
@@ -1193,8 +1216,9 @@ export const completeRegistration = internalMutation({
       authoringDeferrals: undefined,
       versionId: held?.versionId,
       adoptedAt: held?.adopted ? (row.adoptedAt ?? now) : undefined,
-      recheckDueAt: undefined,
-      recheckReason: undefined,
+      // The offer is answered once the row registers, whichever way.
+      offeredVersionId: undefined,
+      ...(stampedDuringRun ? {} : { recheckDueAt: undefined, recheckReason: undefined }),
       ...RELEASED,
     });
     const replaced = await supersedeReplacedRow(ctx, row);
