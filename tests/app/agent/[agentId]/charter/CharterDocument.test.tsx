@@ -60,6 +60,22 @@ describe('the charter as one document', (): void => {
     expect(html).toContain('<b class="font-semibold">Priya</b>, segment and pipeline');
   });
 
+  it('names the manager it reports to and sends a handover to People, never to the header', (): void => {
+    const html = render(
+      <CharterDocument
+        body={body}
+        manager="sam@kestrel.example"
+        peopleHref="/agent/agent-1/people"
+        strikes={{ pending: true, changes: [] }}
+      />,
+    );
+    expect(html).not.toContain('change it there');
+    expect(html).not.toContain('named in the header');
+    expect(html).toMatch(
+      /<p>sam@kestrel\.example\. To move the employee to another manager, use Hand over on <a [^>]*href="\/agent\/agent-1\/people"[^>]*>People<\/a>\.<\/p>/,
+    );
+  });
+
   it('names who struck, answered and added on the record, as the actors say', (): void => {
     const approved: CharterCardBody = {
       ...body,

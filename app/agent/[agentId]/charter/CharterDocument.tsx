@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import Link from 'next/link';
 import type { StruckClause, StruckClauseField } from '@/agent/charter-constraints';
 import { managerOpenQuestions } from '@/agent/manager-questions';
 import { clockTime, useAgentZone } from '../../../components/time';
@@ -26,6 +27,10 @@ function Struck({ text, note }: { text: string; note: string }) {
     </span>
   );
 }
+
+/** The link style of running text on the page. */
+const INLINE_LINK =
+  'text-[var(--color-fg)] underline decoration-[var(--color-link-line)] underline-offset-4 hover:decoration-[var(--color-accent)]';
 
 /**
  * Whose strike the record shows beside a rewritten clause: the reader's, or the earlier manager's.
@@ -170,16 +175,19 @@ function AnsweredMark() {
  * names who did it: "you", or the earlier manager a handover took the employee from.
  *
  * @param manager - The agent row's manager, who approves this employee's work.
+ * @param peopleHref - The employee's People tab, where a handover to another manager starts.
  * @param actors - Who struck and answered what the record shows; the reader, by default.
  */
 export function CharterDocument({
   body,
   manager,
+  peopleHref,
   strikes,
   actors = READER_ACTED,
 }: {
   body: CharterCardBody;
   manager?: string;
+  peopleHref?: string;
   strikes: DocumentStrikes;
   actors?: CharterActors;
 }) {
@@ -241,7 +249,19 @@ export function CharterDocument({
       </Section>
       {manager ? (
         <Section title="Reports to">
-          <p>{manager}, the manager named in the header; change it there.</p>
+          {/* The manager is the account the employee reports to: since D14 the header holds no
+              control, and Hand over on People is the only one (the v0.12.0 walk). */}
+          <p>
+            {manager}. To move the employee to another manager, use Hand over on{' '}
+            {peopleHref === undefined ? (
+              'People'
+            ) : (
+              <Link href={peopleHref} className={INLINE_LINK}>
+                People
+              </Link>
+            )}
+            .
+          </p>
         </Section>
       ) : null}
       {systems.length > 0 ? (

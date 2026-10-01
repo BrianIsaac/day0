@@ -23,6 +23,7 @@ import { CHANGES_REQUEST_ID } from './ChangesRequest';
 import { ConstraintList } from './RuleRow';
 import { documentStrikes } from './charter-document';
 import { READER_ACTED, type CharterActors } from './charter-actors';
+import { employeeTabHref } from '../employee-tabs';
 
 /** The charter body as the card reads it; `constraints` is absent on charters drafted before the list existed. */
 export interface CharterCardBody {
@@ -48,8 +49,8 @@ export interface CharterCardBody {
  * the rules with their standing, the notes from drafting, and, on a draft, Approve with what it
  * does and the way to ask for changes; once approved, Amend behind its disclosure.
  *
- * The manager it names is the agent row's, the one the header changes
- * (U9 D3 (b)): the charter has no approval chain of its own to edit here.
+ * The manager it names is the agent row's, whom a handover on People changes
+ * (U9 D3 (b), D14): the charter has no approval chain of its own to edit here.
  *
  * @param name - The employee's name.
  * @param autonomous - Whether the employee's writes go ahead without asking.
@@ -153,6 +154,7 @@ export function CharterCard({
         <CharterDocument
           body={body}
           manager={manager}
+          peopleHref={employeeTabHref(charter.agentId, 'people')}
           strikes={documentStrikes(body, charter.approved)}
           actors={actors}
         />

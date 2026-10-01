@@ -85,7 +85,7 @@ describe('amending an approved charter from the card', (): void => {
     expect(markup).toContain('>Remove<');
   });
 
-  it("offers no approval chain of its own: the manager is the agent row's, changed from the header (U9 D3 (b))", (): void => {
+  it("offers no approval chain of its own: the manager is the agent row's, handed over from People (U9 D3 (b), D14)", (): void => {
     const panel = renderToStaticMarkup(
       <AmendCharterPanel charter={charter} body={body} busy={false} onAmend={() => undefined} />,
     );
@@ -93,7 +93,11 @@ describe('amending an approved charter from the card', (): void => {
     const card = renderToStaticMarkup(
       <CharterCard charter={{ ...charter, body }} manager="ana@kestrel.example" />,
     );
-    expect(card).toContain('ana@kestrel.example, the manager named in the header; change it there');
+    // The header holds no control since D14; Hand over on People is the only one (the v0.12.0 walk).
+    expect(card).toContain(
+      'ana@kestrel.example. To move the employee to another manager, use Hand over on',
+    );
+    expect(card).not.toContain('change it there');
   });
 
   it("says the backend's refusal in the card's live region, with the panel closed or open, and keeps focus on the control", async (): Promise<void> => {
