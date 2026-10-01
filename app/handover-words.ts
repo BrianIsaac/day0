@@ -543,6 +543,31 @@ export function arrivingLine(input: ArrivingInput): string {
   return `${input.name} is finishing ${runs} for ${input.from} and becomes yours when ${end}${deadline}.`;
 }
 
+/** The heading of the acceptor's handovers that ended without the move (decision 4). */
+export const NOT_FINISHED = 'A handover that did not finish';
+
+/** What the acceptor's line for a handover that ended without the move is made from. */
+export interface EndedHandoverInput {
+  readonly name: string;
+  /** The manager the employee stays with. */
+  readonly from: string;
+  /** When the caller accepted it. */
+  readonly acceptedAt: number;
+  readonly zone: string;
+}
+
+/**
+ * The acceptor's line for a handover it accepted that could not finish and was ended (decision 4:
+ * the automatic end after the settles failed, or the operator's): the employee is not coming, and
+ * stays with the manager who asked.
+ */
+export function endedHandoverLine(input: EndedHandoverInput): string {
+  return `${input.name} is not coming to you: the handover from ${input.from} you accepted on ${zonedStamp(
+    input.acceptedAt,
+    input.zone,
+  )} could not finish and was ended, so ${input.name} stays with ${input.from}.`;
+}
+
 /**
  * Said on the home once a decline lands.
  *

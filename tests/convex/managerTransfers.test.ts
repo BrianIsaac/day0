@@ -1082,6 +1082,48 @@ describe('managerTransfers.incoming', (): void => {
   });
 });
 
+describe('managerTransfers.endedForMe (the cockpit’s item: the acceptor is told a handover ended itself)', (): void => {
+  it('lists the handovers the caller accepted that ended without the move, to the acceptor only, for 30 days', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const maya = await employee(harness);
+    const tomas = await employee(harness, 'Tomas');
+    const juno = await employee(harness, 'Juno');
+    const acceptedAt = Date.now() - 60_000;
+    const ended = await insertRequest(harness, {
+      agentId: maya,
+      state: 'cancelled',
+      decidedAt: acceptedAt,
+      toOwnerKey: 'priya',
+    });
+    // An ask its manager cancelled before any answer: never accepted.
+    await insertRequest(harness, { agentId: tomas, state: 'cancelled', cancelReason: 'owner' });
+    // Another account signed in with the same address accepted this one.
+    await insertRequest(harness, {
+      agentId: juno,
+      state: 'cancelled',
+      decidedAt: acceptedAt,
+      toOwnerKey: 'another-priya',
+    });
+    // Ended more than 30 days ago.
+    await insertRequest(harness, {
+      agentId: juno,
+      state: 'cancelled',
+      decidedAt: Date.now() - 31 * 24 * 60 * 60 * 1000,
+      toOwnerKey: 'priya',
+    });
+
+    await expect(
+      harness.withIdentity(PRIYA).query(api.managerTransfers.endedForMe, {}),
+    ).resolves.toEqual([
+      { transferId: ended, agentName: 'Maya', fromAddress: MANAGER_ADDRESS, acceptedAt },
+    ]);
+    await expect(
+      harness.withIdentity(OWNER).query(api.managerTransfers.endedForMe, {}),
+    ).resolves.toEqual([]);
+    await expect(harness.query(api.managerTransfers.endedForMe, {})).resolves.toEqual([]);
+  });
+});
+
 describe('managerTransfers.arriving', (): void => {
   it('lists the requests the caller accepted that wait for the employee’s runs, with the runs, to the acceptor only', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());

@@ -779,6 +779,51 @@ export const arriving = query({
   },
 });
 
+/** A handover the caller accepted that ended without the move, as the acceptor's home says it. */
+const endedHandoverValidator = v.object({
+  transferId: v.id('managerTransfers'),
+  agentName: v.string(),
+  fromAddress: v.string(),
+  /** When the caller accepted it. */
+  acceptedAt: v.number(),
+});
+
+/**
+ * Public, by verified address and owner key: the handovers the caller accepted that ended
+ * without the move in the last 30 days (decision 4: the settle's automatic end, or the
+ * operator's), so the acceptor's home says the employee is not coming, as the old manager's
+ * record says it (`manager.transfer-ended`). Such a request is `cancelled` with the acceptance's
+ * stamp kept and no ask's cancel reason (`transferAcceptance.endUnmovable`). An anonymous
+ * caller, or one without a verified address, has none. Reads at most `TRANSFER_READ_LIMIT`
+ * rows; writes nothing.
+ */
+export const endedForMe = query({
+  args: {},
+  returns: v.array(endedHandoverValidator),
+  handler: async (ctx): Promise<Infer<typeof endedHandoverValidator>[]> => {
+    const caller = await getCaller(ctx);
+    const address = caller ? verifiedAddressOf(caller) : undefined;
+    if (!caller || address === undefined) return [];
+    const since = Date.now() - TRANSFER_DEPARTURES_WINDOW_MS;
+    const cancelled = await requestsInState(ctx, { toAddress: address }, 'cancelled');
+    return cancelled.flatMap((transfer) =>
+      transfer.toOwnerKey === caller.ownerKey &&
+      transfer.cancelReason === undefined &&
+      transfer.decidedAt !== undefined &&
+      transfer.decidedAt >= since
+        ? [
+            {
+              transferId: transfer._id,
+              agentName: transfer.agentName,
+              fromAddress: transfer.fromAddress,
+              acceptedAt: transfer.decidedAt,
+            },
+          ]
+        : [],
+    );
+  },
+});
+
 /** One handover that moved the employee: who it moved from, and when they accepted. */
 const earlierManagerValidator = v.object({ fromAddress: v.string(), decidedAt: v.number() });
 
