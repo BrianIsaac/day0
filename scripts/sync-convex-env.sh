@@ -35,6 +35,7 @@ KEYS=(
   DAY0_TEST_SLACK_API_URL
   DAY0_TEST_SLACK_AUTHORIZE_URL
   DAY0_EVALUATION_BED
+  DAY0_OIDC_EMAIL_TRUSTED
   NEXT_PUBLIC_DEMO_BOSS_EMAIL
 )
 
@@ -104,6 +105,9 @@ CLEAR_WHEN_EMPTY=(
   # A deployment that stops being an evaluation bed must stop serving the
   # harness, which seeds rows and spends model calls on the owner's keys (N9).
   DAY0_EVALUATION_BED
+  # A stale trust flag would keep believing addresses the customer's issuer
+  # never verified after the operator turned it off (D3).
+  DAY0_OIDC_EMAIL_TRUSTED
 )
 
 # Keys the deployment used to read and no longer does. A stale CONVEX_BIND_ADDR

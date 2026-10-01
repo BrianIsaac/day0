@@ -999,7 +999,7 @@ function customerIssuerSection(v: Values): Section | undefined {
             `${CUSTOMER_OIDC_EMAIL_TRUSTED_VAR} is off: if this issuer omits \`email_verified\`, set it to`,
             'true only if every address it signs is one it controls.',
           ]),
-      'The deployment reads the flag, so it must be set there as well.',
+      'The deployment reads the flag: `pnpm sync:env` puts it there, and takes it off once it is empty here.',
     ],
   };
 }
