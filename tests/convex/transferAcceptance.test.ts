@@ -742,34 +742,125 @@ describe('claims and the departure boundary at a move (14.1 item 4)', (): void =
     expect(departure.claims.map((kept) => kept.key)).toEqual(['linear:REVOPS-8']);
   });
 
-  it('releases a claim on work not yet begun and keeps the rejections on the departure', async (): Promise<void> => {
+  it('keeps the claim of open work for the employee under its new owner, frees the item for the old owner’s employees, and keeps the rejections', async (): Promise<void> => {
     const office = await seedOffice();
-    const released = await office.harness.run(async (ctx) => {
+    const { claim, tomasAsks, priyaAsks } = await office.harness.run(async (ctx) => {
       const planned = await ctx.db.insert('workItems', {
         ...workItemFields(office.maya, 'REVOPS-9'),
         state: 'plan-pending',
         planRejectedAt: 5,
       });
-      return await ctx.db.insert('externalClaims', {
+      const claim = await ctx.db.insert('externalClaims', {
         userId: 'owner',
         key: 'linear:REVOPS-9',
         agentId: office.maya,
         workItemId: planned,
         claimedAt: 1,
       });
+      const tomasAsks = await ctx.db.insert('workItems', {
+        ...workItemFields(office.tomas, 'REVOPS-9'),
+        state: 'discovered',
+      });
+      const priyaAsks = await ctx.db.insert('workItems', {
+        ...workItemFields(office.priya, 'REVOPS-9'),
+        state: 'discovered',
+      });
+      return { claim, tomasAsks, priyaAsks };
     });
 
     await acceptAsColleague(office);
 
-    expect(await office.harness.run(async (ctx) => await ctx.db.get(released))).toMatchObject({
-      releasedAt: expect.any(Number),
+    const kept = await office.harness.run(async (ctx) => await ctx.db.get(claim));
+    expect(kept?.userId).toBe('colleague');
+    expect(kept?.releasedAt).toBeUndefined();
+    const verdict = { decision: 'claim', value: 1, risk: 0, requiredPermissions: [] };
+    await office.harness.mutation(internal.work.setVerdict, { workItemId: priyaAsks, verdict });
+    await office.harness.mutation(internal.work.setVerdict, { workItemId: tomasAsks, verdict });
+    const [priyaRow, tomasRow] = await Promise.all([
+      office.harness.run(async (ctx) => await ctx.db.get(priyaAsks)),
+      office.harness.run(async (ctx) => await ctx.db.get(tomasAsks)),
+    ]);
+    expect(priyaRow).toMatchObject({
+      state: 'skipped',
+      skipReason: expect.stringContaining('Maya holds it'),
     });
+    expect(tomasRow?.state).not.toBe('skipped');
     const [departure] = await office.harness.run(
       async (ctx) => await ctx.db.query('retirements').collect(),
     );
+    expect(departure.claims).toEqual([]);
     expect(departure.rejections).toMatchObject([{ keys: ['linear:REVOPS-9'], rejectedAt: 5 }]);
     expect((await read(office.harness, office.transferId))?.outcome).toMatchObject({
+      claimsMoved: 1,
+      claimsReleased: 0,
+    });
+  });
+
+  it('releases the claim of closed work that wrote nothing', async (): Promise<void> => {
+    const office = await seedOffice();
+    const claim = await office.harness.run(async (ctx) => {
+      const cancelled = await ctx.db.insert('workItems', {
+        ...workItemFields(office.maya, 'REVOPS-11'),
+        state: 'cancelled',
+      });
+      return await ctx.db.insert('externalClaims', {
+        userId: 'owner',
+        key: 'linear:REVOPS-11',
+        agentId: office.maya,
+        workItemId: cancelled,
+        claimedAt: 1,
+      });
+    });
+
+    await acceptAsColleague(office);
+
+    expect(await office.harness.run(async (ctx) => await ctx.db.get(claim))).toMatchObject({
+      userId: 'owner',
+      releasedAt: expect.any(Number),
+    });
+    expect((await read(office.harness, office.transferId))?.outcome).toMatchObject({
+      claimsMoved: 0,
       claimsReleased: 1,
+    });
+  });
+
+  it('finds a key the new owner holds under another of its names', async (): Promise<void> => {
+    const office = await seedOffice();
+    const moving = await office.harness.run(async (ctx) => {
+      const held = await ctx.db.insert('workItems', {
+        ...workItemFields(office.maya, 'REVOPS-10'),
+        state: 'completed',
+      });
+      const moving = await ctx.db.insert('externalClaims', {
+        userId: 'owner',
+        key: 'linear:REVOPS-10',
+        agentId: office.maya,
+        workItemId: held,
+        claimedAt: 1,
+      });
+      const priyaHolds = await ctx.db.insert('workItems', {
+        ...workItemFields(office.priya, 'lin-uuid-10'),
+        externalClaimAlias: 'linear:REVOPS-10',
+        state: 'executing',
+      });
+      await ctx.db.insert('externalClaims', {
+        userId: 'colleague',
+        key: 'linear:lin-uuid-10',
+        aliases: ['linear:REVOPS-10'],
+        agentId: office.priya,
+        workItemId: priyaHolds,
+        claimedAt: 1,
+      });
+      return moving;
+    });
+
+    await acceptAsColleague(office);
+
+    expect(await office.harness.run(async (ctx) => await ctx.db.get(moving))).toMatchObject({
+      releasedAt: expect.any(Number),
+    });
+    expect((await read(office.harness, office.transferId))?.outcome).toMatchObject({
+      conflictingClaimKeys: ['linear:REVOPS-10'],
     });
   });
 });

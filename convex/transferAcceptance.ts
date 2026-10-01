@@ -399,12 +399,17 @@ export async function transferPreviewOf(
 /** What happened to the employee's live claims at the move. */
 interface MovedClaims {
   readonly moved: number;
-  readonly released: Id<'externalClaims'>[];
+  readonly released: number;
   readonly conflictingKeys: string[];
 }
 
+/** The most work items one name of an item matches, as the claim guard reads them. */
+const ALIAS_HOLDER_LIMIT = 20;
+
 /**
- * Whether the new owner already holds a live claim on any of a claim's names.
+ * Whether the new owner already holds a live claim on any of a claim's names: a claim keyed by
+ * one of them, or a claim on a work item whose other name is one of them (the guard's own
+ * `by_claim_alias` read).
  *
  * @param db - The move's reader.
  * @param toOwnerKey - The new owner.
@@ -415,27 +420,41 @@ async function newOwnerHolds(
   toOwnerKey: string,
   claim: Doc<'externalClaims'>,
 ): Promise<boolean> {
-  for (const key of [claim.key, ...(claim.aliases ?? [])]) {
-    const held = await db
+  for (const name of [claim.key, ...(claim.aliases ?? [])]) {
+    const keyed = await db
       .query('externalClaims')
-      .withIndex('by_user_key', (q) => q.eq('userId', toOwnerKey).eq('key', key))
+      .withIndex('by_user_key', (q) => q.eq('userId', toOwnerKey).eq('key', name))
       .filter((q) => q.eq(q.field('releasedAt'), undefined))
       .first();
-    if (held !== null) return true;
+    if (keyed !== null) return true;
+    const aliased = await db
+      .query('workItems')
+      .withIndex('by_claim_alias', (q) => q.eq('externalClaimAlias', name))
+      .take(ALIAS_HOLDER_LIMIT);
+    for (const item of aliased) {
+      const live = await db
+        .query('externalClaims')
+        .withIndex('by_work_item', (q) => q.eq('workItemId', item._id))
+        .filter((q) => q.eq(q.field('releasedAt'), undefined))
+        .first();
+      if (live?.userId === toOwnerKey) return true;
+    }
   }
   return false;
 }
 
 /**
- * Decide each live claim of the employee as the retire decides it (the transfer plan, section
- * 6.3): a claim on work that cannot have written anything is released; one on work that may have
- * written moves to the new owner, unless the new owner already holds the item, in which case it
- * is released and the conflict named. The old owner's copy of every written claim is the
- * departure boundary's, not this.
+ * Decide each live claim of the employee (the transfer plan, section 6.3). A claim stays with
+ * its item under the new owner (`userId` rewritten) while the item is open or may have written,
+ * so the new owner's other employees meet it at once: no later step retakes a claim for an open
+ * item. A claim the new owner already holds under any name is released and named instead, and
+ * the new owner's holder works the item. A closed item that wrote nothing lets its claim go.
+ * Either way a claim on work that wrote nothing no longer binds the old owner, whose employees
+ * the caller wakes; the old owner's copy of every written claim is the departure's.
  *
  * @param ctx - The move's mutation context.
  * @param items - Every work item of the employee.
- * @param boundaries - What the departure keeps, with the claims to release.
+ * @param boundaries - The live claims, and which of them wrote nothing.
  * @param toOwnerKey - The new owner.
  * @param now - The move's time.
  */
@@ -446,27 +465,23 @@ async function moveClaims(
   toOwnerKey: string,
   now: number,
 ): Promise<MovedClaims> {
-  const toRelease = new Set<string>(boundaries.released);
+  const unwritten = new Set<string>(boundaries.released);
+  const stateOf = new Map(items.map((item) => [item._id, item.state]));
   let moved = 0;
-  const released: Id<'externalClaims'>[] = [];
+  let released = 0;
   const conflictingKeys: string[] = [];
-  for (const item of items) {
-    const live = await ctx.db
-      .query('externalClaims')
-      .withIndex('by_work_item', (q) => q.eq('workItemId', item._id))
-      .filter((q) => q.eq(q.field('releasedAt'), undefined))
-      .collect();
-    for (const claim of live) {
-      if (toRelease.has(claim._id)) {
-        await ctx.db.patch(claim._id, { releasedAt: now });
-        released.push(claim._id);
-      } else if (await newOwnerHolds(ctx.db, toOwnerKey, claim)) {
-        await ctx.db.patch(claim._id, { releasedAt: now });
-        conflictingKeys.push(claim.key);
-      } else {
-        await ctx.db.patch(claim._id, { userId: toOwnerKey });
-        moved += 1;
-      }
+  for (const claim of boundaries.live) {
+    const state = stateOf.get(claim.workItemId);
+    const closed = state === undefined || CLOSED_WORK_STATES.has(state);
+    if (unwritten.has(claim._id) && closed) {
+      await ctx.db.patch(claim._id, { releasedAt: now });
+      released += 1;
+    } else if (await newOwnerHolds(ctx.db, toOwnerKey, claim)) {
+      await ctx.db.patch(claim._id, { releasedAt: now });
+      conflictingKeys.push(claim.key);
+    } else {
+      await ctx.db.patch(claim._id, { userId: toOwnerKey });
+      moved += 1;
     }
   }
   return { moved, released, conflictingKeys };
@@ -690,7 +705,7 @@ async function moveEmployeeInTransaction(
   await settleEmployeeRow(ctx, agent, transfer, now);
   await renderIdentityForManager(ctx, agent._id);
   await leaveDeparture(ctx, agent, transfer, boundaries, cut, now);
-  await wakeReleasedClaims(ctx, transfer.fromOwnerKey, claims.released);
+  await wakeReleasedClaims(ctx, transfer.fromOwnerKey, boundaries.released);
   await ctx.scheduler.runAfter(0, internal.docSources.pruneDepartedMirrors, {
     agentId: agent._id,
     transferId: transfer._id,
@@ -704,7 +719,7 @@ async function moveEmployeeInTransaction(
     credentialsKept: cut.kept,
     scopesRevoked: cut.surfaces.scopesRevoked.length,
     claimsMoved: claims.moved,
-    claimsReleased: claims.released.length,
+    claimsReleased: claims.released,
     conflictingClaimKeys: claims.conflictingKeys,
     decisionRequestsVoided: 0,
     plansReturned: 0,

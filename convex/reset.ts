@@ -328,13 +328,15 @@ export interface Boundaries {
   readonly claims: RetiredClaim[];
   readonly rejections: RetiredRejection[];
   readonly released: Id<'externalClaims'>[];
+  /** Every live claim the employee's items hold, as read, so a handover decides each in one pass. */
+  readonly live: Doc<'externalClaims'>[];
 }
 
 /**
  * Nothing kept binding: a whole-owner retire, whose every employee the boundaries protected is
  * gone too, and any mock-mode departure.
  */
-export const NO_BOUNDARIES: Boundaries = { claims: [], rejections: [], released: [] };
+export const NO_BOUNDARIES: Boundaries = { claims: [], rejections: [], released: [], live: [] };
 
 /** What one employee's retire deleted and revoked, for its tombstone. */
 interface Retired {
@@ -374,6 +376,7 @@ export async function boundariesOf(
   const claims: RetiredClaim[] = [];
   const rejections: RetiredRejection[] = [];
   const released: Id<'externalClaims'>[] = [];
+  const held: Doc<'externalClaims'>[] = [];
   for (const item of items) {
     const keys = [item.externalClaimKey, item.externalClaimAlias].filter(
       (key): key is string => key !== undefined,
@@ -387,6 +390,7 @@ export async function boundariesOf(
       .withIndex('by_work_item', (q) => q.eq('workItemId', item._id))
       .filter((q) => q.eq(q.field('releasedAt'), undefined))
       .collect();
+    held.push(...live);
     for (const claim of live) {
       if (!mayHaveWritten(item)) {
         released.push(claim._id);
@@ -408,7 +412,7 @@ export async function boundariesOf(
       });
     }
   }
-  return { claims, rejections, released };
+  return { claims, rejections, released, live: held };
 }
 
 /**
