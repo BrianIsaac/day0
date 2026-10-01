@@ -5166,6 +5166,8 @@ export const resumeExecution = internalMutation({
       internal.workActions.executeApprovedPlanInternal,
       { workItemId: row._id },
     );
+    // The run is out of flight until it claims again, which a finishing handover refuses.
+    await settleHandoverAfterRun(ctx, row.agentId);
     return { outcome: 'resumed' };
   },
 });
@@ -6120,6 +6122,7 @@ export const setAwaitingApproval = internalMutation({
       createdAt: Date.now(),
     });
     await scheduleDecisionRequest(ctx, row, 'actions');
+    await settleHandoverAfterRun(ctx, row.agentId);
     return { parked: true };
   },
 });
@@ -7028,6 +7031,7 @@ export const recoverInterruptedApply = internalMutation({
         reason: INTERRUPTED_NOTE_REASON,
       }),
     );
+    await settleHandoverAfterRun(ctx, row.agentId);
     return { recovered: 'outcome-unknown' };
   },
 });

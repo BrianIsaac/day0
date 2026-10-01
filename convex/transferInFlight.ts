@@ -55,10 +55,11 @@ export async function isBeingHandedOver(
 }
 
 /**
- * Ask the employee's finishing handover to settle, from a path out of a run: the settle moves
- * the employee once no run is left, and does nothing while one is. Scheduled rather than run
- * here, so the move is its own transaction and never part of the run's last write. Nothing is
- * scheduled for an employee with no `accepting` request.
+ * Ask the employee's finishing handover to settle, from a path out of a run (a park for the
+ * manager, a completion, a failure or stop, a return to the approved plan, an interrupted apply's
+ * record): the settle moves the employee once no run is left, and does nothing while one is.
+ * Scheduled rather than run here, so the move is its own transaction and never part of the run's
+ * last write. Nothing is scheduled for an employee with no `accepting` request.
  *
  * @param ctx - The mutation that ended the run.
  * @param agentId - The run's employee.

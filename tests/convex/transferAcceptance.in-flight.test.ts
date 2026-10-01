@@ -364,6 +364,56 @@ describe('accept with a run in flight: the request waits in accepting (transfer 
     expect((await read(handover.harness, workItemId)).approvedIndexes).toBeUndefined();
   });
 
+  it('moves the employee when its last run’s auto phase parks the rest for the manager, with no sweep', async (): Promise<void> => {
+    const handover = await seedHandover();
+    const { workItemId, runId } = await seedExecuting(handover, 'REVOPS-1');
+    const applyAttemptId = await handover.harness.run(async (ctx) => {
+      const attempt = await ctx.db.insert('events', {
+        agentId: handover.maya,
+        type: 'work.actions-applying',
+        payload: { workItemId, runId, phase: 'auto' },
+        createdAt: Date.now(),
+      });
+      await ctx.db.patch(workItemId, {
+        output: HELD_OUTPUT,
+        pendingRunId: runId,
+        approvedIndexes: [],
+        applyPhase: 'auto',
+        actionVerdicts: [{ disposition: 'held', reason: 'held for the manager' }],
+        applyAttemptId: attempt,
+        applyClaimedAt: Date.now(),
+      });
+      return attempt;
+    });
+    await accept(handover);
+
+    await handover.harness.mutation(internal.work.setAwaitingApproval, {
+      workItemId,
+      runId,
+      applyAttemptId,
+      output: HELD_OUTPUT,
+    });
+    await drain(handover.harness);
+
+    expect(await read(handover.harness, handover.transferId)).toMatchObject({ state: 'accepted' });
+  });
+
+  it('moves the employee when its last run goes back to its plan to be resumed, with no sweep', async (): Promise<void> => {
+    const handover = await seedHandover();
+    const { workItemId, runId } = await seedExecuting(handover, 'REVOPS-1');
+    await accept(handover);
+
+    await handover.harness.mutation(internal.work.resumeExecution, {
+      workItemId,
+      runId,
+      reason: 'the model timed out',
+    });
+    await drain(handover.harness);
+
+    expect(await read(handover.harness, handover.transferId)).toMatchObject({ state: 'accepted' });
+    expect(await read(handover.harness, workItemId)).toMatchObject({ state: 'plan-pending' });
+  });
+
   it('waits while another run is still executing, then moves when that one ends too', async (): Promise<void> => {
     const handover = await seedHandover();
     const first = await seedExecuting(handover, 'REVOPS-1');
