@@ -783,6 +783,30 @@ export const arriving = query({
   },
 });
 
+/** One handover that moved the employee: who it moved from, and when they accepted. */
+const earlierManagerValidator = v.object({ fromAddress: v.string(), decidedAt: v.number() });
+
+/**
+ * Public, owner-guarded (`assertOwnsAgent`): the employee's accepted handovers, oldest first, as
+ * who handed it over and when, so a page can say who did what before the employee came to its
+ * owner ("approved by {from}", not "by you"). The addresses are those the record already
+ * carries (D10). Reads at most `TRANSFER_READ_LIMIT` rows; writes nothing.
+ */
+export const earlierManagers = query({
+  args: { agentId: v.id('agents') },
+  returns: v.array(earlierManagerValidator),
+  handler: async (ctx, args): Promise<Infer<typeof earlierManagerValidator>[]> => {
+    await assertOwnsAgent(ctx, args.agentId);
+    const accepted = await requestsInState(ctx, { agentId: args.agentId }, 'accepted');
+    return accepted
+      .map((transfer) => ({
+        fromAddress: transfer.fromAddress,
+        decidedAt: transfer.decidedAt ?? transfer.requestedAt,
+      }))
+      .sort((left, right) => left.decidedAt - right.decidedAt);
+  },
+});
+
 /**
  * Public, for the account that asked: its requests that ended accepted,
  * declined or expired in the last 30 days, newest answer first, for the old

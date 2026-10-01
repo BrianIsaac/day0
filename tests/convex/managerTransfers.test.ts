@@ -1107,6 +1107,37 @@ describe('managerTransfers.arriving', (): void => {
   });
 });
 
+describe('managerTransfers.earlierManagers', (): void => {
+  it('lists who handed the employee over and when, oldest first, to its owner only', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const maya = await employee(harness, 'Maya', { userId: 'priya' });
+    await insertRequest(harness, {
+      agentId: maya,
+      state: 'accepted',
+      decidedAt: 9_000,
+      toOwnerKey: 'priya',
+    });
+    await insertRequest(harness, {
+      agentId: maya,
+      state: 'accepted',
+      fromAddress: 'wei@day0.local',
+      decidedAt: 5_000,
+      toOwnerKey: 'owner',
+    });
+    await insertRequest(harness, { agentId: maya, state: 'declined', decidedAt: 7_000 });
+
+    await expect(
+      harness.withIdentity(PRIYA).query(api.managerTransfers.earlierManagers, { agentId: maya }),
+    ).resolves.toEqual([
+      { fromAddress: 'wei@day0.local', decidedAt: 5_000 },
+      { fromAddress: MANAGER_ADDRESS, decidedAt: 9_000 },
+    ]);
+    await expect(
+      harness.withIdentity(OWNER).query(api.managerTransfers.earlierManagers, { agentId: maya }),
+    ).rejects.toThrow();
+  });
+});
+
 describe('managerTransfers.departures and departureOf', (): void => {
   it('lists the asker’s requests answered in the last 30 days, newest first, and none cancelled, older or another account’s', async (): Promise<void> => {
     vi.useFakeTimers();
