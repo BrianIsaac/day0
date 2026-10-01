@@ -52,9 +52,6 @@ import { assertNoHandoverOpen, assertNotBeingHandedOver } from './handoverFence'
 import schema from './schema';
 import { ROSTER_SCAN_LIMIT, rosterOf, rosterRowValidator, type RosterRow } from './roster';
 
-// The roster's role line moved with it (`convex/roster.ts`); the preview still reads it here.
-export { clipRoleLine } from './roster';
-
 /** Where a permission grant came from: deployment, the manager, a skill or a surface. */
 export const PERMISSION_GRANT_SOURCES = ['deploy', 'manager', 'skill', 'surface'] as const;
 /** One source of a permission grant. */

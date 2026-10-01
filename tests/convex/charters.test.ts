@@ -4,7 +4,7 @@ import { convexTest, type TestConvex } from 'convex-test';
 import { ConvexError } from 'convex/values';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
-import { clipRoleLine } from '../../convex/agents';
+import { clipRoleLine } from '../../convex/roster';
 import {
   CHANGE_REQUEST_MAX_CHARS,
   charterAtHandover,

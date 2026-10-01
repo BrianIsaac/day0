@@ -1,7 +1,7 @@
 import { ConvexError, v, type Infer } from 'convex/values';
 import type { QueryCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
-import { clipRoleLine } from './agents';
+import { clipRoleLine } from './roster';
 import { readableDocs } from './mock';
 import { RETIRE_PREVIEW_ROW_LIMIT } from './reset';
 import { surfaceHandoversOf } from './surfaces';

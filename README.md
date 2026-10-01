@@ -931,7 +931,7 @@ The schema contains 36 tables: 24 carry per-agent or agent-owned runtime state, 
 | `workItems` | Work items in the twelve-state lifecycle, including exact-action decisions, provider reconciliation, the manager's feedback, waivers and answers, and the re-evaluation stamp |
 | `externalClaims` | One live claim per provider item across employees, released on cancellation and retaken before a retry resumes |
 | `retirements` | One row per employee a real-mode retire deleted, or a handover took from its owner, under that owner: what went, what was revoked, and the claims and rejections its colleagues still meet |
-| `managerTransfers` | One row per request to hand an employee to another manager: the address it names, the old manager's note, its state from asked to accepted, declined, cancelled or expired, and what the move did; a record both managers keep, so neither a retire nor a reset deletes it, addresses and note included |
+| `managerTransfers` | One row per request to hand an employee to another manager: the address it names, the old manager's note, its state from asked to accepted, declined, cancelled or expired, and what the move did; a record both managers keep, so neither a retire nor a reset deletes it; a reset clears the note and a decline's reason from every request its owner asked or was named in |
 | `managerDecisionNotices` | Idempotent received/unknown acknowledgements for parsed manager-channel replies |
 | `decisionBatches` | One channel code per set of held action decisions open at once, naming each member's item, code and run |
 | `managerNotes` | What the gate tells the manager about a finished run, sent per run or claimed by the hourly digest |
