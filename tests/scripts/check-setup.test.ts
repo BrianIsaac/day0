@@ -618,6 +618,7 @@ describe('the company sign-in block of the auth section', (): void => {
       container: { error: 'curl: (28) Connection timed out after 10001 milliseconds' },
     });
     expect(section.status).toBe('gap');
+    expect(section.title).toBe('Auth: customer OIDC issuer - needs fixing');
     expect(section.lines.join(' ')).toContain('from inside the backend container');
     expect(section.lines.join(' ')).toContain('Connection timed out');
   });

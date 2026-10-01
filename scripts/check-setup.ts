@@ -1040,9 +1040,10 @@ function customerIssuerSection(v: Values, probes?: SignInProbes): Section | unde
   return {
     title: unreadableFlag
       ? "Auth: the customer issuer's address flag is unreadable"
-      : noAuth
-        ? 'Auth: customer OIDC issuer and the local key'
-        : 'Auth: customer OIDC issuer',
+      : titleFor(
+          status,
+          noAuth ? 'Auth: customer OIDC issuer and the local key' : 'Auth: customer OIDC issuer',
+        ),
     status,
     lines: [
       ...(unreadableFlag
