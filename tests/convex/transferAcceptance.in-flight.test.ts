@@ -1211,8 +1211,8 @@ describe('an open decision request by DM at the move (transfer plan 6.4; 14.1 it
     await handover.harness.run(async (ctx) => {
       const row = await ctx.db.get(workItemId);
       if (!row?.decision) throw new Error('no decision');
-      const { ts: _sent, ...claimed } = row.decision;
-      await ctx.db.patch(workItemId, { decision: claimed });
+      // Claimed and not yet delivered: the request carries no message timestamp.
+      await ctx.db.patch(workItemId, { decision: { ...row.decision, ts: undefined } });
     });
 
     await accept(handover);
