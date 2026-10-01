@@ -8,6 +8,7 @@ import {
 } from '@/agent/charter-constraints';
 import { Button } from '../../../components/Button';
 import { Chip } from '../../../components/Chip';
+import { READER_ACTED, type CharterActors } from './charter-actors';
 
 const CONSTRAINT_KIND_LABEL: Record<CharterConstraint['kind'], string> = {
   'candidate-property': 'what work qualifies',
@@ -102,7 +103,8 @@ export function listedWording(wording: readonly string[]): string[] {
  * in the charter, what striking it would do, its standing, and Strike or Restore.
  *
  * `justStruck` marks a rule struck since the list first rendered, whose line draws (v3 section
- * 5.2); a rule struck before the page opened is drawn struck at once.
+ * 5.2); a rule struck before the page opened is drawn struck at once. A rule the manager added
+ * names who added it: "you", or the earlier manager a handover took the employee from.
  */
 export function RuleRow({
   constraint,
@@ -111,6 +113,7 @@ export function RuleRow({
   justStruck,
   busy,
   record = false,
+  actors = READER_ACTED,
   onStrike,
   onRestore,
 }: {
@@ -121,6 +124,8 @@ export function RuleRow({
   busy: boolean;
   /** The row is the approved charter's record, drawn without the review's warn line. */
   record?: boolean;
+  /** Who added a rule the manager added; the reader, by default. */
+  actors?: CharterActors;
   onStrike?: (index: number) => void;
   onRestore?: (index: number) => void;
 }) {
@@ -173,7 +178,7 @@ export function RuleRow({
           {constraint.origin === 'derived'
             ? " · found by checking the clauses (the charter's wording, not a sentence of yours)"
             : ''}
-          {constraint.origin === 'manager' ? ' · added by you' : ''}
+          {constraint.origin === 'manager' ? ` · added by ${actors.added(constraint)}` : ''}
           {constraint.struck ? (
             <>
               {' '}
@@ -252,6 +257,7 @@ export function RuleRow({
 export function ConstraintList({
   constraints,
   approved,
+  actors,
   onStrike,
   onRestore,
   previewStrike,
@@ -259,6 +265,8 @@ export function ConstraintList({
 }: {
   constraints: CharterConstraint[];
   approved: boolean;
+  /** Who added the rules the manager added; the reader, by default. */
+  actors?: CharterActors;
   /** A change to the charter is in flight; the controls wait for it. */
   busy?: boolean;
   /** Strike a confirmed rule; before approval a draft flag, after it an amendment. */
@@ -301,6 +309,7 @@ export function ConstraintList({
             justStruck={constraint.struck === true && !struckOnArrival.has(index)}
             busy={busy}
             record={approved}
+            actors={actors}
             onStrike={onStrike}
             onRestore={onRestore}
           />

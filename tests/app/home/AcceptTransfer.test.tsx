@@ -243,7 +243,7 @@ describe('AcceptTransfer', () => {
     expect(title()).toBe('Take on Maya?');
     const description = document.getElementById(dialog().getAttribute('aria-describedby') ?? '');
     expect(description?.textContent).toBe(
-      'sam@kestrel.example manages Maya today and asks you to take over. Maya: owns triage for tier-2 asks.',
+      "Maya's manager today, sam@kestrel.example, asks you to take Maya on. Maya: owns triage for tier-2 asks.",
     );
     expect(dialog().querySelector('blockquote')?.textContent).toBe(
       '“She is mid-way through the September close.”',
@@ -395,7 +395,7 @@ describe('AcceptTransfer', () => {
     ]);
     expect(document.querySelector('[role="dialog"]')).toBeNull();
     expect(said(view.container)).toEqual([
-      "You declined to take Maya on. sam@kestrel.example sees it on Maya's People tab.",
+      "You declined to take Maya on. It shows on Maya's People tab for sam@kestrel.example.",
     ]);
   });
 
@@ -407,6 +407,35 @@ describe('AcceptTransfer', () => {
     expect(backend.calls).toEqual([
       { name: 'managerTransfers:decline', args: { transferId: 'transfer-1' } },
     ]);
+  });
+
+  it('offers a way back from the reason without sending anything, focus returning to Decline (the wave 9 review’s U4-m7)', async () => {
+    backend.preview = PREVIEW;
+    mount(<AcceptTransfer />);
+    await press(dialog(), 'Decline');
+    const reason = dialog().querySelector('textarea');
+    if (!reason) throw new Error('no reason field');
+    typeInto(reason, 'Not sure yet.');
+    await press(dialog(), 'Back');
+
+    expect(dialog().querySelector('textarea')).toBeNull();
+    expect(focusedName()).toBe('Decline');
+    expect(backend.calls).toEqual([]);
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    await press(dialog(), 'Decline');
+    expect(dialog().querySelector('textarea')?.value).toBe('');
+  });
+
+  it('takes a refused decline’s words away with Back, so they never stand beside the reset answers (second pass)', async () => {
+    backend.preview = PREVIEW;
+    backend.refusals = { 'managerTransfers:decline': 'This handover was already accepted.' };
+    mount(<AcceptTransfer />);
+    await press(dialog(), 'Decline');
+    await press(dialog(), 'Decline');
+    expect(said(dialog())).toEqual(['This handover was already accepted.']);
+    await press(dialog(), 'Back');
+    expect(said(dialog())).toEqual([]);
+    backend.refusals = {};
   });
 
   it('reveals the reason with one button and sends the decline with another, so the first click sends nothing', async () => {

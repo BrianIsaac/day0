@@ -82,6 +82,13 @@ describe('assembling a trace from its pages', (): void => {
     expect(
       readAgentTrace({ ...version2, manifest: { ...trace.manifest, version: 3 } }),
     ).toBeUndefined();
+    // A version 3 trace, complete but without the handovers version 4 adds, is still read.
+    expect(
+      readAgentTrace({ ...trace, manifest: { ...trace.manifest, version: 3 } })?.manifest.version,
+    ).toBe(3);
+    expect(readAgentTrace({ ...trace, manifest: { ...trace.manifest, version: 5 } })).toBe(
+      undefined,
+    );
   });
 
   it('keeps a row two pages both returned once', async (): Promise<void> => {

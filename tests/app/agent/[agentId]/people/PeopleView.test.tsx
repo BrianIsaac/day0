@@ -55,6 +55,10 @@ import {
   unmountAll,
 } from '../../../../fixtures/dom/press';
 import { underTarget } from '../../../../fixtures/dom/targets';
+import {
+  EVALUATION_EMPLOYEE_TRANSFER_REFUSAL,
+  UNVERIFIED_FOR_ASK,
+} from '../../../../../src/agent/manager-transfer';
 
 describe('namedPeople', () => {
   it('reads the people the charter names with how each is reached, and nobody from a body without the list', () => {
@@ -78,6 +82,17 @@ describe('namedPeople', () => {
 });
 
 describe('provenanceLine', () => {
+  it('names the earlier manager who approved the version, never "you" (the second pass, item 4)', () => {
+    const approvedAt = Date.UTC(2026, 8, 26, 14, 23);
+    expect(
+      provenanceLine(
+        { ...APPROVED_CHARTER, approvedAt } as Doc<'charters'>,
+        'UTC',
+        'sam@kestrel.example',
+      ),
+    ).toBe('Named in charter version 0.1, approved by sam@kestrel.example 26 Sep 2026, 14:23.');
+  });
+
   it('says which charter version names them, and whether and when it was approved', () => {
     const approvedAt = Date.UTC(2026, 8, 26, 14, 23);
     expect(provenanceLine({ ...APPROVED_CHARTER, approvedAt } as Doc<'charters'>, 'UTC')).toBe(
@@ -181,6 +196,15 @@ describe('PeopleView', () => {
     expect(html).toContain('Priya');
     expect(html).toContain(' · segment and pipeline · reaches out directly');
     expect(html).toContain('Named in charter version 0.1, approved by you.');
+    backend.queries['managerTransfers:earlierManagers'] = [
+      { fromAddress: 'sam@kestrel.example', decidedAt: 5_000 },
+    ];
+    const carried = renderToStaticMarkup(
+      asEmployee(<PeopleView />, { charter: { ...charter, approvedAt: 1_000 } }),
+    );
+    // Approved before a handover by the manager who handed it over (the second pass, item 4).
+    expect(carried).toContain('approved by sam@kestrel.example');
+    expect(carried).not.toContain('approved by you');
     // An amendment can add a person, so the line never claims the one-to-one named them.
     expect(html).not.toContain('From your one-to-one');
     expect(html).toContain('does not propose people for you to confirm yet');
@@ -498,7 +522,7 @@ describe('PeopleView', () => {
     const view = mount(asEmployee(<PeopleView />));
     const card = managerCard(view.container);
     expect(card.textContent).toContain(
-      'lead@day0.local accepted. Mira is finishing 2 runs; it becomes theirs when they end, by 2 Oct 2026, 10:15, UTC time at the latest.',
+      'Accepted by lead@day0.local. Mira is finishing 2 runs; it becomes theirs when they end, by 2 Oct 2026, 10:15, UTC time at the latest.',
     );
     expect(buttonNames(card)).toEqual([]);
   });
@@ -525,7 +549,7 @@ describe('PeopleView', () => {
     });
     act((): void => view.root.render(asEmployee(<PeopleView />)));
     expect(said(view.container)).toEqual([
-      'lead@day0.local declined on 3 Oct 2026, 08:30, UTC time.',
+      'Declined by lead@day0.local on 3 Oct 2026, 08:30, UTC time.',
     ]);
   });
 
@@ -562,7 +586,7 @@ describe('PeopleView', () => {
     const view = mount(asEmployee(<PeopleView />));
     const card = managerCard(view.container);
     expect(card.textContent).toContain(
-      'lead@day0.local declined on 3 Oct 2026, 08:30, UTC time: "Not my team."',
+      'Declined by lead@day0.local on 3 Oct 2026, 08:30, UTC time: "Not my team."',
     );
     expect(buttonNames(card)).toEqual(['Hand over']);
   });
@@ -643,14 +667,20 @@ describe('PeopleView', () => {
     expect(said(view.container)).toEqual(['Your sign-in does not carry a verified email address.']);
   });
 
-  it('draws an evaluation employee and an unverified owner without the flag or the you chip', () => {
+  it('draws an evaluation employee and an unverified owner without the flag or the you chip, and says why there is no Hand over (the wave 9 review’s U4-m8)', () => {
+    const why = {
+      evaluation: EVALUATION_EMPLOYEE_TRANSFER_REFUSAL,
+      unverified: UNVERIFIED_FOR_ASK,
+    } as const;
     for (const standing of ['evaluation', 'unverified'] as const) {
       settled({ 'agents:managerStanding': { standing } });
       const card = managerCard(mount(asEmployee(<PeopleView />)).container);
       expect(card.textContent).toContain('Every held write and every plan comes to you.');
       expect(card.textContent).not.toContain('who is not you');
       expect(card.innerHTML).not.toMatch(/>you<\/span>/);
-      expect(buttonNames(card)).toEqual(['Hand over']);
+      // The ask would refuse, so the card offers none and says the refusal's own words.
+      expect(buttonNames(card)).toEqual([]);
+      expect(card.textContent).toContain(why[standing]);
       unmountAll();
     }
   });

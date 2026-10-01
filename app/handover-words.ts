@@ -1,6 +1,10 @@
 import type { FunctionReturnType } from 'convex/server';
 import type { api } from '@convex/_generated/api';
-import { TRANSFER_EXPIRY_MS, TRANSFER_SETTLE_MS } from '@/agent/manager-transfer';
+import {
+  TRANSFER_DEPARTURES_WINDOW_MS,
+  TRANSFER_EXPIRY_MS,
+  TRANSFER_SETTLE_MS,
+} from '@/agent/manager-transfer';
 import { formatStamp } from '@/lib/zone';
 import { listed } from './agent/[agentId]/manage/retire-words';
 
@@ -199,6 +203,31 @@ export function cancelledWords(to: string): string {
   return `The handover to ${to} is cancelled.`;
 }
 
+/**
+ * Said in the retire dialog before the retire, of the asked request the retire cancels: what the
+ * retire will do, not what is done (the wave 9 review's U4-m7).
+ *
+ * @param to - The address asked.
+ */
+export function retireCancelsWords(to: string): string {
+  return `Retiring cancels the handover to ${to}.`;
+}
+
+/**
+ * The handover requests a retire keeps, in the retire dialog: none is deleted, since each is the
+ * other manager's record of the handover (`RETIRE_RECORD_TABLES`, the v0.12.0 walk: the dialog
+ * said the hosted office keeps nothing while it kept them).
+ *
+ * @param requests - How many requests name the employee; at least one.
+ */
+export function keptRequestsWords(requests: number): string {
+  const what =
+    requests === 1
+      ? "the two managers' addresses, the employee's name and any note or reason, kept as the record of the managers it names"
+      : "the managers' addresses, the employee's name and any note or reason, kept as the record of the managers they name";
+  return `${counted(requests, 'handover request', 'handover requests')}: ${what}.`;
+}
+
 /** What an accepting request's line on the card is drawn from. */
 export interface AcceptingCardInput {
   readonly name: string;
@@ -223,7 +252,7 @@ export function acceptingCardLine(input: AcceptingCardInput): string {
     input.settleBy === undefined
       ? ''
       : `, by ${zonedStamp(input.settleBy, input.zone)} at the latest`;
-  return `${input.to} accepted. ${input.name} is finishing ${runs}; it becomes theirs when ${end}${deadline}.`;
+  return `Accepted by ${input.to}. ${input.name} is finishing ${runs}; it becomes theirs when ${end}${deadline}.`;
 }
 
 /**
@@ -242,8 +271,8 @@ export function endedCardLine(
   const when = zonedStamp(ended.decidedAt, zone);
   if (ended.state === 'expired') return `The request to ${ended.toAddress} expired on ${when}.`;
   return ended.declineReason === undefined
-    ? `${ended.toAddress} declined on ${when}.`
-    : `${ended.toAddress} declined on ${when}: "${ended.declineReason}"`;
+    ? `Declined by ${ended.toAddress} on ${when}.`
+    : `Declined by ${ended.toAddress} on ${when}: "${ended.declineReason}"`;
 }
 
 /**
@@ -324,7 +353,7 @@ export function takeOnTitle(name: string): string {
 /** The acceptance dialog's lead: who asks, and what the employee is for. */
 export function takeOnLead(preview: Pick<HandoverPreview, 'fromAddress' | 'employee'>): string {
   const { name, roleLine } = preview.employee;
-  const lead = `${preview.fromAddress} manages ${name} today and asks you to take over.`;
+  const lead = `${name}'s manager today, ${preview.fromAddress}, asks you to take ${name} on.`;
   if (roleLine === null) return lead;
   // A role line clipped with an ellipsis, or written as a sentence, keeps its own close.
   return `${lead} ${name}: ${roleLine}${/[.…!?]$/.test(roleLine) ? '' : '.'}`;
@@ -464,6 +493,9 @@ export function takeOnLabel(name: string): string {
 /** The acceptance dialog's decline control, which opens the reason and then sends it. */
 export const DECLINE = 'Decline';
 
+/** The way back from the decline's reason to the two answers, sending nothing. */
+export const BACK_FROM_DECLINE = 'Back';
+
 /**
  * The decline's reason field.
  *
@@ -518,7 +550,7 @@ export function arrivingLine(input: ArrivingInput): string {
  * @param from - The manager who asked, who is told.
  */
 export function declinedWords(name: string, from: string): string {
-  return `You declined to take ${name} on. ${from} sees it on ${name}'s People tab.`;
+  return `You declined to take ${name} on. It shows on ${name}'s People tab for ${from}.`;
 }
 
 /** Said in the acceptance dialog while its preview is read. */
@@ -537,16 +569,58 @@ export const HANDOVER_TITLE = 'Handover';
 /** The old manager's home card of employees handed over (plan 7.4). */
 export const HANDED_OVER = 'Handed over';
 
+/** A handover the old manager reads about: where the employee went, when, and what became of it since. */
+export interface HandoverOutcome {
+  /** The employee. */
+  readonly name: string;
+  /** The manager it went to. */
+  readonly to: string;
+  /** When they accepted. */
+  readonly since: number;
+  /** The viewer's zone. */
+  readonly zone: string;
+  /** What became of the employee since, when it is not with that manager still. */
+  readonly afterwards?: HandoverDeparture['afterwards'];
+}
+
 /**
- * One line of the home's handed-over card.
- *
- * @param name - The employee.
- * @param to - The manager it went to.
- * @param since - When they accepted.
- * @param zone - The viewer's zone.
+ * What became of a handed-over employee since, after the handover itself: retired, or moved on
+ * to another manager. The handover request outlives a retire by design, so the line it is read
+ * from must not say the employee reports to anyone once it does not (the v0.12.0 walk).
  */
-export function handedOverLine(name: string, to: string, since: number, zone: string): string {
-  return `${name} now reports to ${to}, since ${zonedStamp(since, zone)}.`;
+function sinceWords(
+  outcome: HandoverOutcome & { readonly afterwards: NonNullable<HandoverOutcome['afterwards']> },
+): string {
+  const handed = `${outcome.name} was handed over to ${outcome.to} on ${zonedStamp(outcome.since, outcome.zone)}`;
+  switch (outcome.afterwards) {
+    case 'came-back':
+      return `${handed}, and has since come back to you.`;
+    case 'retired':
+      return `${handed}, and has since been retired.`;
+    case 'moved-on':
+      return `${handed}, and has since moved to another manager.`;
+    default: {
+      const unknown: never = outcome.afterwards;
+      throw new Error(`unhandled handover outcome ${String(unknown)}`);
+    }
+  }
+}
+
+/**
+ * Where the old manager's own record of a handover is, for as long as the home lists it: the
+ * departed page has no window, so it says the home's (the second pass: "your record ... is on
+ * your home" was untrue after 30 days).
+ */
+const HOME_LISTS_IT = `Your home lists the handover for ${Math.round(TRANSFER_DEPARTURES_WINDOW_MS / 86_400_000)} days.`;
+
+/**
+ * One line of the home's handed-over card: whom the employee reports to now, or, once it was
+ * retired or moved on since, what happened and that it did.
+ */
+export function handedOverLine(outcome: HandoverOutcome): string {
+  const { afterwards } = outcome;
+  if (afterwards !== undefined) return sinceWords({ ...outcome, afterwards });
+  return `${outcome.name} now reports to ${outcome.to}, since ${zonedStamp(outcome.since, outcome.zone)}.`;
 }
 
 /**
@@ -559,16 +633,25 @@ export function departedTitle(name: string): string {
 }
 
 /**
- * What the old manager's link to an employee handed over says, in place of "not yours"
- * (plan 7.4).
+ * The browser tab's title on the old manager's link to an employee handed over, on every tab of
+ * it: the title the employee's own page has names a tab of an employee that is not theirs.
  *
  * @param name - The employee.
- * @param to - The manager it went to.
- * @param since - When they accepted.
- * @param zone - The viewer's zone.
  */
-export function departedLine(name: string, to: string, since: number, zone: string): string {
-  return `${name} reports to ${to} since ${zonedStamp(since, zone)}. Its record went with it; your record of the handover is on your home.`;
+export function departedTabTitle(name: string): string {
+  return `${departedTitle(name)} · Day0`;
+}
+
+/**
+ * What the old manager's link to an employee handed over says, in place of "not yours"
+ * (plan 7.4): whom it reports to now, or, once it was retired or moved on since, what happened.
+ */
+export function departedLine(outcome: HandoverOutcome): string {
+  const { afterwards } = outcome;
+  if (afterwards !== undefined) {
+    return `${sinceWords({ ...outcome, afterwards })} ${HOME_LISTS_IT}`;
+  }
+  return `${outcome.name} reports to ${outcome.to} since ${zonedStamp(outcome.since, outcome.zone)}. Its record went with it; ${HOME_LISTS_IT.charAt(0).toLocaleLowerCase('en-GB')}${HOME_LISTS_IT.slice(1)}`;
 }
 
 /**
@@ -600,5 +683,5 @@ export function reportingElsewhereChoice(count: number): string {
  * @param to - The manager who accepted.
  */
 export function retireBlockedByAcceptance(name: string, to: string): string {
-  return `${to} has accepted ${name}; it is theirs once its runs finish.`;
+  return `${name} was accepted by ${to}; it is theirs once its runs finish.`;
 }

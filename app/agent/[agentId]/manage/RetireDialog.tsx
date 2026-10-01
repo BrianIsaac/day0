@@ -11,8 +11,9 @@ import { Field, INPUT_CLASS } from '../../../components/Field';
 import { StatusRegion } from '../../../components/StatusRegion';
 import { useChange } from '../../../components/use-change';
 import {
-  cancelledWords,
+  keptRequestsWords,
   retireBlockedByAcceptance,
+  retireCancelsWords,
   type OpenHandover,
 } from '../../../handover-words';
 import {
@@ -66,35 +67,52 @@ function keptClaimsLine(
     : `The claims on ${preview.keptClaims} items ${rest}`;
 }
 
+/** The handovers that bear on a retire: the one open on the employee, and how many name it. */
+export interface RetireHandovers {
+  /** The handover open on the employee, if any; an asked one is cancelled by the retire. */
+  readonly handover?: OpenHandover | null;
+  /** How many handover requests name the employee, each kept by the retire. */
+  readonly requests?: number;
+}
+
 /**
  * What retiring the employee does, line by line, in the manager's words (round two section 3.9):
  * what is revoked, deleted and kept, and what waits on the manager and goes undecided, with an
  * asked handover, which the retire cancels (the transfer plan, section 7.5). The hosted office
- * wipes and keeps nothing, so it says so rather than promising a record.
+ * wipes the employee and keeps nothing of it but the handover requests that name it, each the
+ * other manager's record, so it says that rather than promising a record.
  *
  * @param preview - What `reset.retirePreview` says the retire would do.
  * @param waiting - What waits on the manager, in words; empty when nothing does.
- * @param handover - The handover open on the employee, if any.
+ * @param handovers - The handover open on the employee and the requests that name it.
  */
 export function retireLines(
   preview: RetirePreview,
   waiting: string,
-  handover?: OpenHandover | null,
+  { handover, requests = 0 }: RetireHandovers = {},
 ): RetireLine[] {
   const deleted = { term: 'Deleted', details: [sentence(deletedWords(preview))] };
   const waits = {
     term: 'Waiting on you',
     details: [
-      waiting === '' ? 'Nothing.' : sentence(`${waiting}, discarded undecided`),
-      ...(handover?.state === 'asked' ? [cancelledWords(handover.toAddress)] : []),
+      ...(waiting !== ''
+        ? [sentence(`${waiting}, discarded undecided`)]
+        : handover?.state === 'asked'
+          ? []
+          : ['Nothing.']),
+      ...(handover?.state === 'asked' ? [retireCancelsWords(handover.toAddress)] : []),
     ],
   };
+  const keptRequests = requests > 0 ? [keptRequestsWords(requests)] : [];
   if (preview.mode === 'mock') {
     return [
       deleted,
       {
         term: 'Kept',
-        details: ['Nothing: the hosted office keeps no record of a retired employee.'],
+        details:
+          keptRequests.length > 0
+            ? keptRequests
+            : ['Nothing: the hosted office keeps no record of a retired employee.'],
       },
       waits,
     ];
@@ -110,6 +128,7 @@ export function retireLines(
         ]
       : []),
     ...(claims === undefined ? [] : [claims]),
+    ...keptRequests,
   ];
   return [
     {
@@ -180,6 +199,10 @@ export function RetireDialog({
     api.managerTransfers.openForAgent,
     preview === null ? 'skip' : { agentId: agent._id },
   );
+  const kept = useQuery(
+    api.transferDepartures.keptAtRetire,
+    preview === null ? 'skip' : { agentId: agent._id },
+  );
   const retire = useMutation(api.reset.retire);
   const [typed, setTyped] = useState('');
   const keep = useRef<HTMLButtonElement>(null);
@@ -187,7 +210,11 @@ export function RetireDialog({
   const blockedId = useId();
   const phrase = retirePhrase(agent.name);
   const ready =
-    preview !== undefined && preview !== null && inbox !== undefined && handover !== undefined;
+    preview !== undefined &&
+    preview !== null &&
+    inbox !== undefined &&
+    handover !== undefined &&
+    kept !== undefined;
   const accepting = handover?.state === 'accepting' ? handover : undefined;
   const matches = confirmationMatches(typed, phrase);
 
@@ -201,7 +228,10 @@ export function RetireDialog({
   } else {
     account = (
       <dl className="grid gap-x-4 gap-y-2 text-[15px] sm:grid-cols-[max-content_minmax(0,1fr)]">
-        {retireLines(preview, waitingWords(inbox.entries, inbox.total), handover).map((line) => (
+        {retireLines(preview, waitingWords(inbox.entries, inbox.total), {
+          handover,
+          requests: kept.requests,
+        }).map((line) => (
           <div key={line.term} className="contents">
             <dt className="font-medium text-[var(--color-fg)]">{line.term}</dt>
             <dd className="mb-1 grid gap-1 text-[var(--color-fg-2)] sm:mb-0">

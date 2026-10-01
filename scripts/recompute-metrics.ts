@@ -22,9 +22,9 @@
  * valid JSON file.
  *
  * An employee handed to another manager counts for each within the spans they held it, as
- * `metrics:forOwner` counts it, read from the export's `managerTransfers` rows (D12). A trace
- * carries no request rows, so a recompute from traces counts each employee for the owner who
- * holds it now: after a handover, recompute from a snapshot export.
+ * `metrics:forOwner` counts it, read from the export's `managerTransfers` rows (D12), or from a
+ * trace's manifest, which carries the employee's accepted handovers from version 4. A trace of
+ * an earlier version carries none, so its employee counts for the owner who holds it now.
  *
  * `--owner` defaults to the traces' own owner, or to the no-auth subject
  * every local bed runs as for a snapshot. With `--expect`, every field the
@@ -241,12 +241,13 @@ export function recomputeFromTraces(
   traces: readonly AgentTrace[],
   options: { owner?: string; now?: number } = {},
 ): Recomputed {
-  const owners = [...new Set(traces.flatMap((trace) => trace.agent.userId ?? []))];
+  const read = newestTraceOfEach(traces);
+  const owners = [...new Set(read.flatMap((trace) => trace.agent.userId ?? []))];
   if (options.owner === undefined && owners.length > 1) {
     throw new Error(`the traces belong to ${owners.length} owners; name one with --owner`);
   }
   const owner = options.owner ?? owners[0] ?? DEV_NO_AUTH_SUBJECT;
-  const agents = traces.map((trace) => ({
+  const agents = read.map((trace) => ({
     _id: trace.agent.id as Id<'agents'>,
     _creationTime: trace.agent.creationTime,
     userId: trace.agent.userId,
@@ -255,14 +256,22 @@ export function recomputeFromTraces(
     evaluation: trace.agent.evaluation || trace.agent.arm === 'baseline',
     trace,
   }));
-  const selection = selectCompanyEmployees(agents, owner, (agent) => agent.evaluation);
-  const records: EmployeeRecords[] = selection.employees.map(({ trace, ...agent }) => ({
-    agent,
-    events: trace.sections.events,
-    workItems: trace.sections.workItems,
-    charters: trace.sections.charters,
-    surfaces: trace.sections.surfaces,
-  }));
+  // The manifests' handovers cut each employee's history at its acceptances, as
+  // `metrics:forOwner` cuts it (D12).
+  const handovers = read.flatMap((trace) => trace.manifest.handovers ?? []);
+  const selection = selectCompanyEmployees(agents, owner, (agent) => agent.evaluation, handovers);
+  const records: EmployeeRecords[] = selection.employees.map(({ trace, ...agent }) =>
+    recordsWithinTenure(
+      {
+        agent,
+        events: trace.sections.events,
+        workItems: trace.sections.workItems,
+        charters: trace.sections.charters,
+        surfaces: trace.sections.surfaces,
+      },
+      selection.tenures.get(agent._id) ?? [],
+    ),
+  );
   return {
     owner,
     figures: computeCompanyMetrics(records, selection),
@@ -280,6 +289,24 @@ export function recomputeFromTraces(
       })),
     },
   };
+}
+
+/**
+ * One trace per employee: the newest export of each, by when it was taken. An employee's trace
+ * exported twice (by the manager who held it before a handover and by the one after, say) would
+ * otherwise count it twice; the newer carries the whole history and every handover since.
+ *
+ * @param traces - The traces read, in any order.
+ */
+function newestTraceOfEach(traces: readonly AgentTrace[]): AgentTrace[] {
+  const newest = new Map<string, AgentTrace>();
+  for (const trace of traces) {
+    const kept = newest.get(trace.agent.id);
+    if (kept === undefined || trace.manifest.exportedAt > kept.manifest.exportedAt) {
+      newest.set(trace.agent.id, trace);
+    }
+  }
+  return [...newest.values()];
 }
 
 /**
@@ -302,7 +329,7 @@ export function recompute(
       const trace = readAgentTrace(JSON.parse(readFileSync(path, 'utf8')));
       if (trace === undefined) {
         throw new Error(
-          `${path} is not a day0 trace (version 2 or 3); export it with pnpm export:trace`,
+          `${path} is not a day0 trace (version 2, 3 or 4); export it with pnpm export:trace`,
         );
       }
       return trace;

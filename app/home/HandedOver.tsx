@@ -23,7 +23,9 @@ export function handedOver(
 ): HandoverDeparture[] {
   const named = new Set(held);
   return departures.filter((departure) => {
+    // One that came back since is no longer where it went, and the card says nothing of it.
     if (departure.state !== 'accepted' || named.has(departure.agentId)) return false;
+    if (departure.afterwards === 'came-back') return false;
     named.add(departure.agentId);
     return true;
   });
@@ -32,8 +34,9 @@ export function handedOver(
 /**
  * The old manager's notice on their home (plan 7.4): a quiet card under the roster, "Handed
  * over", one line per employee another manager took on in the last 30 days, since the page that
- * would have said it closed to them at acceptance. Nothing is drawn while there is none, or while
- * the roster that says which employees came back is still read.
+ * would have said it closed to them at acceptance; one retired or moved on since says so rather
+ * than whom it reports to. Nothing is drawn while there is none, or while the roster that says
+ * which employees came back is still read.
  *
  * @param held - The employees the manager holds now, from the roster; undefined while it loads.
  */
@@ -57,7 +60,13 @@ export function HandedOver({ held }: { readonly held: readonly string[] | undefi
       <ul className="flex flex-col gap-2 px-5 py-4 text-sm text-[var(--color-fg-2)]">
         {shown.map((departure) => (
           <li key={departure.transferId}>
-            {handedOverLine(departure.agentName, departure.toAddress, departure.decidedAt, zone)}
+            {handedOverLine({
+              name: departure.agentName,
+              to: departure.toAddress,
+              since: departure.decidedAt,
+              zone,
+              afterwards: departure.afterwards,
+            })}
           </li>
         ))}
       </ul>

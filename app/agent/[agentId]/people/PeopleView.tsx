@@ -5,7 +5,11 @@ import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Doc } from '@convex/_generated/dataModel';
 import type { ManagerStanding } from '@/agent/manager-standing';
-import { LOCAL_DEV_TRANSFER_REFUSAL } from '@/agent/manager-transfer';
+import {
+  EVALUATION_EMPLOYEE_TRANSFER_REFUSAL,
+  LOCAL_DEV_TRANSFER_REFUSAL,
+  UNVERIFIED_FOR_ASK,
+} from '@/agent/manager-transfer';
 import { DEV_NO_AUTH } from '@/lib/dev-auth';
 import type { DeploymentProfile } from '@/lib/surface-mode';
 import { deploymentZone } from '@/lib/zone';
@@ -32,6 +36,7 @@ import { useEmployee } from '../employee-context';
 import { addressWithBreaks } from '../EmployeeHeader';
 import { EmployeeRail } from '../EmployeeRail';
 import { clockTime, useAgentZone } from '../../../components/time';
+import { actorAt } from '../charter/CharterAside';
 import { CancelHandoverDialog, HandOverDialog, MakeItYou } from './HandOver';
 
 /** How the employee reaches a person the charter names, as the one-to-one settled it. */
@@ -96,13 +101,18 @@ export function namedPeople(body: unknown): NamedPerson[] {
  *
  * @param charter - The charter the tab reads.
  * @param zone - The employee's zone, for the approval's date.
+ * @param approvedBy - Who approved it: "you", or the earlier manager a handover took it from.
  */
-export function provenanceLine(charter: Doc<'charters'>, zone: string | undefined): string {
+export function provenanceLine(
+  charter: Doc<'charters'>,
+  zone: string | undefined,
+  approvedBy = 'you',
+): string {
   const version = `charter version ${charter.version}`;
   if (!charter.approved) return `Named in ${version}, not approved yet.`;
   return charter.approvedAt === undefined
-    ? `Named in ${version}, approved by you.`
-    : `Named in ${version}, approved by you ${clockTime(charter.approvedAt, zone)}.`;
+    ? `Named in ${version}, approved by ${approvedBy}.`
+    : `Named in ${version}, approved by ${approvedBy} ${clockTime(charter.approvedAt, zone)}.`;
 }
 
 /**
@@ -118,6 +128,15 @@ export function PeopleView() {
   const { agent, charter, surfaceMode, arriving } = useEmployee();
   const zone = useAgentZone();
   const named = namedPeople(charter?.body);
+  const earlier = useQuery(
+    api.managerTransfers.earlierManagers,
+    charter?.approved ? { agentId: agent._id } : 'skip',
+  );
+  // Who approved it before a handover is named, never "you" for the earlier manager.
+  const approvedBy =
+    charter?.approvedAt === undefined
+      ? 'you'
+      : actorAt(charter.approvedAt, earlier, agent.bossEmail);
   return (
     <Columns
       arriving={arriving}
@@ -151,7 +170,7 @@ export function PeopleView() {
                   {person.introPath ? ` · ${INTRO_WORDS[person.introPath]}` : null}
                 </p>
                 <p className="text-[13px] text-[var(--color-muted)]">
-                  {provenanceLine(charter, zone)}
+                  {provenanceLine(charter, zone, approvedBy)}
                 </p>
               </li>
             ))}
@@ -356,17 +375,33 @@ function ManagerCard({ agent, surfaceMode }: ManagerCardProps) {
       );
       break;
     case 'standing': {
-      if (state.standing.standing === 'other') {
-        lines.push(otherStandingLine(agent.name, state.standing.bossEmail));
-        controls = (
-          <>
-            {handOver(state.standing.bossEmail, handOverToLabel(state.standing.bossEmail))}
-            <MakeItYou agent={agent} change={change} landed={landed} describedBy={flagId} />
-          </>
-        );
-      } else {
-        lines.push(MANAGER_DUTY);
-        controls = handOver();
+      switch (state.standing.standing) {
+        case 'other':
+          lines.push(otherStandingLine(agent.name, state.standing.bossEmail));
+          controls = (
+            <>
+              {handOver(state.standing.bossEmail, handOverToLabel(state.standing.bossEmail))}
+              <MakeItYou agent={agent} change={change} landed={landed} describedBy={flagId} />
+            </>
+          );
+          break;
+        case 'evaluation':
+          // The ask refuses an evaluation employee, so the card offers none and says why in the
+          // ask's own words (the wave 9 review's U4-m8: it offered Hand over and refused at the
+          // ask).
+          lines.push(MANAGER_DUTY, EVALUATION_EMPLOYEE_TRANSFER_REFUSAL);
+          break;
+        case 'unverified':
+          lines.push(MANAGER_DUTY, UNVERIFIED_FOR_ASK);
+          break;
+        case 'you':
+          lines.push(MANAGER_DUTY);
+          controls = handOver();
+          break;
+        default: {
+          const unknown: never = state.standing;
+          throw new Error(`unhandled manager standing ${String(unknown)}`);
+        }
       }
       if (state.ended !== undefined) lines.push(endedCardLine(state.ended, zone));
       // The very words `managerTransfers.ask` refuses with there: one constant for both.

@@ -23,6 +23,7 @@ import { refusalText, useChange, type Change } from '../components/use-change';
 import {
   acceptedWords,
   CHECK,
+  BACK_FROM_DECLINE,
   DECLINE,
   declinedWords,
   declineReasonLabel,
@@ -44,9 +45,7 @@ import {
   YOU_TAKE_ON,
   type HandoverPreview,
 } from '../handover-words';
-
-/** The address parameter that opens the acceptance dialog: `/?transfer=<transferId>`. */
-export const TRANSFER_PARAMETER = 'transfer';
+import { TRANSFER_PARAMETER } from './transfer-link';
 
 /**
  * The preview the dialog reads, subscribed through `useQueries` so a refusal comes back as a
@@ -119,6 +118,89 @@ interface TakeOnProps {
 }
 
 /**
+ * What the request says before the answer: the note quoted, what comes with the employee and what
+ * does not, and the runs the move waits for.
+ *
+ * @param preview - The request as the named manager reads it.
+ */
+function TakeOnSummary({ preview }: { readonly preview: HandoverPreview }) {
+  const { name } = preview.employee;
+  return (
+    <>
+      {preview.note === undefined ? null : (
+        <blockquote className="border-l-2 border-[var(--color-border-2)] pl-3 text-[15px] whitespace-pre-line text-[var(--color-fg-2)] [overflow-wrap:anywhere]">
+          <p>“{preview.note}”</p>
+        </blockquote>
+      )}
+      <dl className="grid gap-x-4 text-[15px] sm:grid-cols-[max-content_minmax(0,1fr)] sm:gap-y-3">
+        {acceptanceSections(preview).map((section) => (
+          <div key={section.term} className="contents">
+            <dt className="font-medium text-[var(--color-fg)]">{section.term}</dt>
+            <dd className="mb-3 text-[var(--color-fg-2)] sm:mb-0">
+              <ul className="grid gap-1 [overflow-wrap:anywhere]">
+                {section.lines.map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+            </dd>
+          </div>
+        ))}
+      </dl>
+      {preview.runsInFlight > 0 ? (
+        <p className="text-[15px] text-[var(--color-fg-2)]">
+          {runsInFlightLine({ name, from: preview.fromAddress, runs: preview.runsInFlight })}
+        </p>
+      ) : null}
+    </>
+  );
+}
+
+/** The documentation the employee reads, and what to do with each source while choosing. */
+interface ReadsForItProps {
+  readonly documentation: HandoverPreview['documentation'];
+  readonly excluded: readonly Id<'docSources'>[];
+  readonly busy: boolean;
+  /** A source ticked to be read, or unticked to be left out. */
+  readonly onRead: (sourceId: Id<'docSources'>, read: boolean) => void;
+}
+
+/**
+ * The sources the employee reads once taken on, each ticked until the new manager unticks it,
+ * or the line that none is linked.
+ */
+function ReadsForIt({ documentation, excluded, busy, onRead }: ReadsForItProps) {
+  return (
+    <fieldset className="grid gap-1.5">
+      <legend className="mb-1.5 text-[15px] font-medium text-[var(--color-fg)]">
+        {READS_FOR_IT}
+      </legend>
+      {documentation.length === 0 ? (
+        <p className="text-sm text-[var(--color-muted)]">{NO_DOCUMENTATION}</p>
+      ) : (
+        <>
+          {documentation.map((source) => (
+            <label
+              key={source.sourceId}
+              className="flex min-h-11 items-center gap-2 text-[15px] text-[var(--color-fg-2)]"
+            >
+              <input
+                type="checkbox"
+                className="size-4"
+                checked={!excluded.includes(source.sourceId)}
+                disabled={busy}
+                onChange={(event) => onRead(source.sourceId, event.target.checked)}
+              />
+              {source.label}
+            </label>
+          ))}
+          <p className="text-[13px] text-[var(--color-muted)]">{READS_FOR_IT_HINT}</p>
+        </>
+      )}
+    </fieldset>
+  );
+}
+
+/**
  * The acceptance dialog's body (plan 7.3): the note, what comes and what does not, the reporting
  * lines to check, the acceptor's documentation with ticks, the runs in flight, and Decline and
  * Take on. Decline opens a short reason first, then sends it. No typed confirmation: taking on is
@@ -132,11 +214,19 @@ function TakeOn({ preview, change, notice, onClose, onAnswer }: TakeOnProps) {
   const [reason, setReason] = useState('');
   const [answering, setAnswering] = useState<Answering | null>(null);
   const reasonField = useRef<HTMLTextAreaElement>(null);
+  const revealButton = useRef<HTMLButtonElement>(null);
+  // Set by Back, so focus returns to the Decline that opened the reason, not on first draw.
+  const backFromReason = useRef(false);
   const { name } = preview.employee;
   const from = preview.fromAddress;
 
   useEffect(() => {
-    if (declining) reasonField.current?.focus();
+    if (declining) {
+      reasonField.current?.focus();
+    } else if (backFromReason.current) {
+      backFromReason.current = false;
+      revealButton.current?.focus();
+    }
   }, [declining]);
 
   const takeOn = (): void => {
@@ -180,63 +270,17 @@ function TakeOn({ preview, change, notice, onClose, onAnswer }: TakeOnProps) {
 
   return (
     <>
-      {preview.note === undefined ? null : (
-        <blockquote className="border-l-2 border-[var(--color-border-2)] pl-3 text-[15px] whitespace-pre-line text-[var(--color-fg-2)] [overflow-wrap:anywhere]">
-          <p>“{preview.note}”</p>
-        </blockquote>
-      )}
-      <dl className="grid gap-x-4 text-[15px] sm:grid-cols-[max-content_minmax(0,1fr)] sm:gap-y-3">
-        {acceptanceSections(preview).map((section) => (
-          <div key={section.term} className="contents">
-            <dt className="font-medium text-[var(--color-fg)]">{section.term}</dt>
-            <dd className="mb-3 text-[var(--color-fg-2)] sm:mb-0">
-              <ul className="grid gap-1 [overflow-wrap:anywhere]">
-                {section.lines.map((line) => (
-                  <li key={line}>{line}</li>
-                ))}
-              </ul>
-            </dd>
-          </div>
-        ))}
-      </dl>
-      {preview.runsInFlight > 0 ? (
-        <p className="text-[15px] text-[var(--color-fg-2)]">
-          {runsInFlightLine({ name, from, runs: preview.runsInFlight })}
-        </p>
-      ) : null}
-      <fieldset className="grid gap-1.5">
-        <legend className="mb-1.5 text-[15px] font-medium text-[var(--color-fg)]">
-          {READS_FOR_IT}
-        </legend>
-        {preview.documentation.length === 0 ? (
-          <p className="text-sm text-[var(--color-muted)]">{NO_DOCUMENTATION}</p>
-        ) : (
-          <>
-            {preview.documentation.map((source) => (
-              <label
-                key={source.sourceId}
-                className="flex min-h-11 items-center gap-2 text-[15px] text-[var(--color-fg-2)]"
-              >
-                <input
-                  type="checkbox"
-                  className="size-4"
-                  checked={!excluded.includes(source.sourceId)}
-                  disabled={change.busy}
-                  onChange={(event) =>
-                    setExcluded((current) =>
-                      event.target.checked
-                        ? current.filter((id) => id !== source.sourceId)
-                        : [...current, source.sourceId],
-                    )
-                  }
-                />
-                {source.label}
-              </label>
-            ))}
-            <p className="text-[13px] text-[var(--color-muted)]">{READS_FOR_IT_HINT}</p>
-          </>
-        )}
-      </fieldset>
+      <TakeOnSummary preview={preview} />
+      <ReadsForIt
+        documentation={preview.documentation}
+        excluded={excluded}
+        busy={change.busy}
+        onRead={(sourceId, read) =>
+          setExcluded((current) =>
+            read ? current.filter((id) => id !== sourceId) : [...current, sourceId],
+          )
+        }
+      />
       <form className="grid gap-4" onSubmit={submitDecline}>
         {declining ? (
           <Field label={declineReasonLabel(from)}>
@@ -259,18 +303,38 @@ function TakeOn({ preview, change, notice, onClose, onAnswer }: TakeOnProps) {
           {/* Two buttons, never one that changes its type: a click that opened the reason must
               not also submit the form it turned into a submit button for. */}
           {declining ? (
-            <Button
-              key="send-decline"
-              type="submit"
-              variant="danger"
-              size="large"
-              disabled={change.busy}
-            >
-              {change.busy && answering === 'decline' ? 'Declining…' : DECLINE}
-            </Button>
+            <>
+              {/* The way back sends nothing: the reason is dropped and the two answers stand
+                  (the wave 9 review's U4-m7: only Escape left the reason, closing the dialog). */}
+              <Button
+                key="back-from-reason"
+                variant="quiet"
+                size="large"
+                disabled={change.busy}
+                onClick={() => {
+                  // A refusal of the decline is not left beside the answers it no longer concerns.
+                  change.clear();
+                  backFromReason.current = true;
+                  setReason('');
+                  setDeclining(false);
+                }}
+              >
+                {BACK_FROM_DECLINE}
+              </Button>
+              <Button
+                key="send-decline"
+                type="submit"
+                variant="danger"
+                size="large"
+                disabled={change.busy}
+              >
+                {change.busy && answering === 'decline' ? 'Declining…' : DECLINE}
+              </Button>
+            </>
           ) : (
             <Button
               key="ask-reason"
+              ref={revealButton}
               size="large"
               disabled={change.busy}
               onClick={() => {

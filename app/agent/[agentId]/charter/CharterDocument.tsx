@@ -1,8 +1,10 @@
 import type { ReactNode } from 'react';
+import Link from 'next/link';
 import type { StruckClause, StruckClauseField } from '@/agent/charter-constraints';
 import { managerOpenQuestions } from '@/agent/manager-questions';
 import { clockTime, useAgentZone } from '../../../components/time';
 import type { CharterCardBody } from './CharterCard';
+import { READER_ACTED, type CharterActors } from './charter-actors';
 import { changesTo, goalIsGap, systemsLine, type DocumentStrikes } from './charter-document';
 
 /** A section of the document: a quiet heading over its prose or list. */
@@ -26,25 +28,41 @@ function Struck({ text, note }: { text: string; note: string }) {
   );
 }
 
+/** The link style of running text on the page. */
+const INLINE_LINK =
+  'text-[var(--color-fg)] underline decoration-[var(--color-link-line)] underline-offset-4 hover:decoration-[var(--color-accent)]';
+
+/**
+ * Whose strike the record shows beside a rewritten clause: the reader's, or the earlier manager's.
+ *
+ * @param actor - "you", or the earlier manager's address.
+ */
+function strikeOf(actor: string): string {
+  return actor === 'you' ? 'your strike' : `the strike by ${actor}`;
+}
+
 /**
  * One clause as the document shows it: as it stands, or, where a strike changes it, struck. On a
- * draft the struck text is what approval will change; on the record, what it changed.
+ * draft the struck text is what approval will change; on the record, what it changed and who
+ * struck it.
  */
 function Clause({
   text,
   change,
   pending,
+  actors,
 }: {
   text: string;
   change: StruckClause | undefined;
   pending: boolean;
+  actors: CharterActors;
 }) {
   if (!change) return <>{text}</>;
   if (change.rewrittenAs === undefined) {
     return (
       <Struck
         text={change.text}
-        note={pending ? 'leaves the charter on approval' : 'struck by you'}
+        note={pending ? 'leaves the charter on approval' : `struck by ${actors.struck(change)}`}
       />
     );
   }
@@ -57,7 +75,8 @@ function Clause({
     <>
       {text}{' '}
       <span className="text-[var(--color-muted)]">
-        (before your strike: <s className="decoration-[var(--color-danger)]">{change.text}</s>)
+        (before {strikeOf(actors.struck(change))}:{' '}
+        <s className="decoration-[var(--color-danger)]">{change.text}</s>)
       </span>
     </>
   );
@@ -72,10 +91,12 @@ function ClauseList({
   field,
   items,
   strikes,
+  actors,
 }: {
   field: StruckClauseField;
   items: readonly string[];
   strikes: DocumentStrikes;
+  actors: CharterActors;
 }) {
   const changes = changesTo(strikes, field);
   const changeOf = (text: string): StruckClause | undefined =>
@@ -93,12 +114,12 @@ function ClauseList({
     <ul className="grid list-disc gap-1 pl-5">
       {items.map((item, index) => (
         <li key={`${index}:${item}`}>
-          <Clause text={item} change={changeOf(item)} pending={strikes.pending} />
+          <Clause text={item} change={changeOf(item)} pending={strikes.pending} actors={actors} />
         </li>
       ))}
       {removed.map((change) => (
         <li key={`struck:${change.text}`}>
-          <Clause text={change.text} change={change} pending={false} />
+          <Clause text={change.text} change={change} pending={false} actors={actors} />
         </li>
       ))}
     </ul>
@@ -150,18 +171,25 @@ function AnsweredMark() {
  * The charter as one document (round two section 3.5): why this hire, the function, the three
  * goals (a checkpoint the manager named nothing for drawn as a gap), the boundaries open as its
  * sections, the systems on one line, the people, what to read first, and the open questions with
- * any the manager has answered written in.
+ * any the manager has answered written in. What the record shows done, a strike or an answer,
+ * names who did it: "you", or the earlier manager a handover took the employee from.
  *
  * @param manager - The agent row's manager, who approves this employee's work.
+ * @param peopleHref - The employee's People tab, where a handover to another manager starts.
+ * @param actors - Who struck and answered what the record shows; the reader, by default.
  */
 export function CharterDocument({
   body,
   manager,
+  peopleHref,
   strikes,
+  actors = READER_ACTED,
 }: {
   body: CharterCardBody;
   manager?: string;
+  peopleHref?: string;
   strikes: DocumentStrikes;
+  actors?: CharterActors;
 }) {
   const zone = useAgentZone();
   // The record's change to the function counts only while the function still reads as the strike
@@ -182,7 +210,12 @@ export function CharterDocument({
       </Section>
       <Section title="Proposed function">
         <p>
-          <Clause text={body.proposedFunction} change={functionChange} pending={strikes.pending} />
+          <Clause
+            text={body.proposedFunction}
+            change={functionChange}
+            pending={strikes.pending}
+            actors={actors}
+          />
         </p>
       </Section>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -191,21 +224,46 @@ export function CharterDocument({
         <Goal label="90 days" text={body.shortTermGoals.day90} />
       </div>
       <Section title="Will do">
-        <ClauseList field="willDo" items={body.proposedBoundaries.willDo} strikes={strikes} />
+        <ClauseList
+          field="willDo"
+          items={body.proposedBoundaries.willDo}
+          strikes={strikes}
+          actors={actors}
+        />
       </Section>
       <Section title="Will not do">
-        <ClauseList field="willNotDo" items={body.proposedBoundaries.willNotDo} strikes={strikes} />
+        <ClauseList
+          field="willNotDo"
+          items={body.proposedBoundaries.willNotDo}
+          strikes={strikes}
+          actors={actors}
+        />
       </Section>
       <Section title="Escalates when">
         <ClauseList
           field="escalationTriggers"
           items={body.proposedBoundaries.escalationTriggers}
           strikes={strikes}
+          actors={actors}
         />
       </Section>
       {manager ? (
         <Section title="Reports to">
-          <p>{manager}, the manager named in the header; change it there.</p>
+          {/* The manager is the account the employee reports to: since D14 the header holds no
+              control. The sentence names no control, since People offers Hand over only where an
+              ask would be taken (the second pass); its address stands on its own line. */}
+          <p className="font-mono [overflow-wrap:anywhere]">{manager}</p>
+          <p>
+            Handovers to another manager are on{' '}
+            {peopleHref === undefined ? (
+              'People'
+            ) : (
+              <Link href={peopleHref} className={INLINE_LINK}>
+                People
+              </Link>
+            )}
+            .
+          </p>
         </Section>
       ) : null}
       {systems.length > 0 ? (
@@ -254,7 +312,7 @@ export function CharterDocument({
                 <AnsweredMark />
                 {entry.question}
                 <span className="block text-[var(--color-muted)]">
-                  answered by you
+                  answered by {actors.answered(entry)}
                   {Number.isNaN(Date.parse(entry.answeredAt))
                     ? ''
                     : ` at ${clockTime(Date.parse(entry.answeredAt), zone)}`}

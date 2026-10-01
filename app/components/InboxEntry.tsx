@@ -6,6 +6,7 @@ import type { api } from '@convex/_generated/api';
 import { deploymentZone } from '@/lib/zone';
 import { clockTime } from './time';
 import { ButtonLink } from './Button';
+import { reviewHref } from '../home/transfer-link';
 
 /** One thing waiting on the manager, as `work.needsYou` and `work.needsYouForAgent` return it. */
 export type InboxItem = FunctionReturnType<typeof api.work.needsYou>['entries'][number];
@@ -118,7 +119,8 @@ export function inboxEntryWords(entry: InboxItem): InboxEntryWords {
       const zone = deploymentZone();
       return {
         ask: 'an employee to take on',
-        about: `${entry.fromAddress} asks you to become its manager. Expires ${clockTime(entry.expiresAt, zone)}, ${zone} time.`,
+        // The address sits inside the sentence, never first (the wave 9 review's U4-m7).
+        about: `Its manager, ${entry.fromAddress}, asks you to take it on. Expires ${clockTime(entry.expiresAt, zone)}, ${zone} time.`,
         control: 'Review',
       };
     }
@@ -150,7 +152,7 @@ export function inboxEntryHref(entry: InboxItem): string {
       return `${page}/surfaces`;
     case 'transfer':
       // The employee's page refuses a caller who does not own it yet; the home opens the dialog.
-      return `/?transfer=${encodeURIComponent(entry.transferId)}`;
+      return reviewHref(entry.transferId);
   }
 }
 

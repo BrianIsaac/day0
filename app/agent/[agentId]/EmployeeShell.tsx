@@ -375,7 +375,7 @@ export function EmployeeShell({ agentId, children }: EmployeeShellProps) {
               <ButtonLink
                 href={employeeTabHref(agentId, 'needs-you')}
                 variant="text"
-                className="self-start"
+                className="self-start justify-self-start"
               >
                 Back to the one-to-one
               </ButtonLink>
