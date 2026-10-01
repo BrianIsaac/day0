@@ -123,6 +123,7 @@ import {
 import { agentZone } from '../src/lib/zone';
 import { accessEnded, accessEndedReason } from '../src/work/surface-access';
 import { appendEvent, eventsOfType } from './eventLog';
+import { handedOverSince } from './handoverFence';
 import { retiredClaimOn, retiredHolderName } from './retirements';
 import { isEventOf, type WorkActionsAutoApplyingPayload } from '../src/events/contract';
 import { redactTokenShapes } from '../src/surfaces/redact';
@@ -2788,15 +2789,36 @@ export const setVerdict = internalMutation({
  * told its draft was not needed.
  */
 /**
+ * Why a grounding read is refused: the draft it grounds began under the owner the employee was
+ * handed away from, so its surfaces and its owner's values are that owner's (U3-m2).
+ */
+export const GROUNDING_READ_AFTER_HANDOVER =
+  'the employee was handed over to a new manager while this plan was being drafted';
+
+/**
  * Record the one read that grounds a plan, before it is made, so the run id
  * the adapters key their idempotency on exists and the read is on the
  * timeline whatever happens next.
+ *
+ * Internal, for the draft's `readCandidateRecord`. Refused when the employee was handed over
+ * since the draft step was claimed (`draftClaimedAt`, which every real-mode draft claims before
+ * it reads): the draft read its surfaces and its owner's values under the old owner, and the
+ * read would be made with the old owner's connection onto the new owner's record. Writes the
+ * `work.plan-grounding-read` event.
+ *
+ * @throws Error with {@link GROUNDING_READ_AFTER_HANDOVER}; the draft goes on without the record.
  */
 export const beginPlanGroundingRead = internalMutation({
   args: { workItemId: v.id('workItems'), action: v.any() },
   handler: async (ctx, args): Promise<Id<'events'>> => {
     const row = await ctx.db.get(args.workItemId);
     if (!row) throw new Error('workItem not found');
+    if (
+      row.draftClaimedAt !== undefined &&
+      (await handedOverSince(ctx.db, row.agentId, row.draftClaimedAt))
+    ) {
+      throw new Error(GROUNDING_READ_AFTER_HANDOVER);
+    }
     return await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'work.plan-grounding-read',
@@ -2806,12 +2828,19 @@ export const beginPlanGroundingRead = internalMutation({
   },
 });
 
-/** Attach the ledger row to the grounding read's event. */
+/**
+ * Attach the ledger row to the grounding read's event.
+ *
+ * Internal, for the draft's `readCandidateRecord`. Attaches nothing when the employee was handed
+ * over since the read began (the event's own creation): the row is what the old owner's
+ * connection returned, and the record it would land on is the new owner's (U3-m2).
+ */
 export const finishPlanGroundingRead = internalMutation({
   args: { eventId: v.id('events'), applied: v.any() },
   handler: async (ctx, args): Promise<void> => {
     const event = await ctx.db.get(args.eventId);
     if (!event) return;
+    if (await handedOverSince(ctx.db, event.agentId, event._creationTime)) return;
     await ctx.db.patch(args.eventId, {
       payload: { ...(event.payload as Record<string, unknown>), applied: args.applied },
     });
