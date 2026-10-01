@@ -15,7 +15,6 @@ import { purgeCredential } from './credentials';
 import { appendEvent, eventsOfType } from './eventLog';
 import { readableDocs } from './mock';
 import {
-  NO_BOUNDARIES,
   RETIRE_PREVIEW_ROW_LIMIT,
   assertKeepable,
   boundariesOf,
@@ -25,7 +24,7 @@ import {
   wakeReleasedClaims,
   type Boundaries,
 } from './reset';
-import { handOverSurfaces, surfaceHandoversOf } from './surfaces';
+import { handOverSurfaces, surfaceHandoversOf, type HandedOverSurfaces } from './surfaces';
 import { canMoveTransfer } from '../src/agent/manager-transfer';
 import type { CharterConstraint } from '../src/agent/charter-constraints';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
@@ -182,7 +181,7 @@ const previewScope = v.object({
 });
 
 /** What `transferPreview` answers. */
-const transferPreviewValidator = v.object({
+export const transferPreviewValidator = v.object({
   transferId: v.id('managerTransfers'),
   mode: v.union(v.literal('mock'), v.literal('real')),
   /** Who the employee is: never a charter clause or a work item's content. */
@@ -334,10 +333,70 @@ async function departingMirrors(
 }
 
 /**
- * What accepting a handover would bring and leave, for the acceptance dialog (the transfer plan,
- * section 6.1), in the shape the retire's preview answers: bounded reads by index, at most
- * `RETIRE_PREVIEW_ROW_LIMIT` rows of each kind, counts and names only, never the content of a
- * work item, a charter or a record. A request is not a grant of read access (section 4.4).
+ * What accepting an asked handover would bring and leave (the transfer plan, section 6.1), for
+ * the account it names: bounded reads by index, at most `RETIRE_PREVIEW_ROW_LIMIT` rows of each
+ * kind, counts and names only, never the content of a work item, a charter or a record. Reads
+ * the employee's mirrors with one paged read, so one query builds one preview.
+ *
+ * @param ctx - Any query context; the caller has already checked the account is the one named.
+ * @param transfer - The request, `asked`.
+ * @param acceptorKey - The named account's owner key, whose documentation the ticks list.
+ * @throws ConvexError with {@link EMPLOYEE_LEFT_ASKER} when the employee is no longer the asker's.
+ */
+export async function transferPreviewOf(
+  ctx: QueryCtx,
+  transfer: Doc<'managerTransfers'>,
+  acceptorKey: string,
+): Promise<TransferPreview> {
+  const agent = await departingEmployee(ctx.db, transfer);
+  const planned = await surfaceHandoversOf(ctx.db, agent._id);
+  const cut = planned.filter(({ handover }) => handover === 'cut').map(({ surface }) => surface);
+  const scopesRevoked = await scopesTheCutRevokes(
+    ctx.db,
+    agent._id,
+    cut.map((surface) => surface.slug),
+  );
+  const [charter, takesOn, mirrors, sources, inFlight] = await Promise.all([
+    approvedCharterOf(ctx.db, agent._id),
+    takenOn(ctx, agent._id, new Set(scopesRevoked)),
+    departingMirrors(ctx, agent, acceptorKey),
+    ctx.db
+      .query('docSources')
+      .withIndex('by_user', (q) => q.eq('userId', acceptorKey))
+      .take(PREVIEW_SOURCE_LIMIT),
+    runsInFlight(ctx.db, agent._id),
+  ]);
+  return {
+    transferId: transfer._id,
+    mode: SURFACE_MODE,
+    employee: {
+      agentId: agent._id,
+      name: agent.name,
+      ...(agent.avatarId === undefined ? {} : { avatarId: agent.avatarId }),
+      state: shownEmployeeState(agent.state, takesOn.charter),
+      roleLine: roleLineOf(charter),
+    },
+    fromAddress: transfer.fromAddress,
+    ...(transfer.note === undefined ? {} : { note: transfer.note }),
+    requestedAt: transfer.requestedAt,
+    expiresAt: transfer.expiresAt,
+    takesOn,
+    leavesBehind: {
+      surfaces: cut.map((surface) => ({ slug: surface.slug, displayName: surface.displayName })),
+      scopesRevoked,
+      mirroredPages: mirrors.count,
+      mirroredPagesAtLeast: mirrors.atLeast,
+      autonomousActions: agent.autonomousActions === true,
+    },
+    reportingLines: reportingLinesOf(charter),
+    documentation: sources.map((source) => ({ sourceId: source._id, label: source.label })),
+    runsInFlight: inFlight,
+  };
+}
+
+/**
+ * What accepting a handover would bring and leave, for the acceptance dialog
+ * ({@link transferPreviewOf}). A request is not a grant of read access (section 4.4).
  *
  * Public, for the account the request names only (`assertNamedInTransfer`); writes nothing.
  *
@@ -350,50 +409,7 @@ export const transferPreview = query({
   handler: async (ctx, args): Promise<TransferPreview | null> => {
     const { transfer, caller } = await assertNamedInTransfer(ctx, args.transferId);
     if (transfer.state !== 'asked') return null;
-    const agent = await departingEmployee(ctx.db, transfer);
-    const planned = await surfaceHandoversOf(ctx.db, agent._id);
-    const cut = planned.filter(({ handover }) => handover === 'cut').map(({ surface }) => surface);
-    const scopesRevoked = await scopesTheCutRevokes(
-      ctx.db,
-      agent._id,
-      cut.map((surface) => surface.slug),
-    );
-    const [charter, takesOn, mirrors, sources, inFlight] = await Promise.all([
-      approvedCharterOf(ctx.db, agent._id),
-      takenOn(ctx, agent._id, new Set(scopesRevoked)),
-      departingMirrors(ctx, agent, caller.ownerKey),
-      ctx.db
-        .query('docSources')
-        .withIndex('by_user', (q) => q.eq('userId', caller.ownerKey))
-        .take(PREVIEW_SOURCE_LIMIT),
-      runsInFlight(ctx.db, agent._id),
-    ]);
-    return {
-      transferId: transfer._id,
-      mode: SURFACE_MODE,
-      employee: {
-        agentId: agent._id,
-        name: agent.name,
-        ...(agent.avatarId === undefined ? {} : { avatarId: agent.avatarId }),
-        state: shownEmployeeState(agent.state, takesOn.charter),
-        roleLine: roleLineOf(charter),
-      },
-      fromAddress: transfer.fromAddress,
-      ...(transfer.note === undefined ? {} : { note: transfer.note }),
-      requestedAt: transfer.requestedAt,
-      expiresAt: transfer.expiresAt,
-      takesOn,
-      leavesBehind: {
-        surfaces: cut.map((surface) => ({ slug: surface.slug, displayName: surface.displayName })),
-        scopesRevoked,
-        mirroredPages: mirrors.count,
-        mirroredPagesAtLeast: mirrors.atLeast,
-        autonomousActions: agent.autonomousActions === true,
-      },
-      reportingLines: reportingLinesOf(charter),
-      documentation: sources.map((source) => ({ sourceId: source._id, label: source.label })),
-      runsInFlight: inFlight,
-    };
+    return await transferPreviewOf(ctx, transfer, caller.ownerKey);
   },
 });
 
@@ -502,7 +518,7 @@ async function redactSupersededCredentials(ctx: MutationCtx, agentId: Id<'agents
 async function settleEmployeeRow(
   ctx: MutationCtx,
   agent: Doc<'agents'>,
-  transfer: Doc<'managerTransfers'> & { readonly toOwnerKey: string },
+  transfer: AcceptedTransfer,
   now: number,
 ): Promise<void> {
   const zone = transfer.toZone ?? agent.zone ?? deploymentZone();
@@ -544,17 +560,122 @@ async function settleEmployeeRow(
 /** What the move did, as the request row keeps it. */
 type TransferOutcome = NonNullable<Doc<'managerTransfers'>['outcome']>;
 
+/** A request with the acceptor's owner key written: the move's input. */
+type AcceptedTransfer = Doc<'managerTransfers'> & { readonly toOwnerKey: string };
+
+/** What cutting the employee's connections did. */
+interface Cut {
+  readonly surfaces: HandedOverSurfaces;
+  readonly revoked: number;
+  readonly kept: number;
+}
+
+/**
+ * Cut the employee's connections (D5 (a)): the surfaces through `handOverSurfaces`, then each
+ * credential they bound sorted by the retire's rule, revoked with its ciphertext deleted when
+ * nothing else of the old owner's binds it and kept for them otherwise, and every pending job
+ * naming a cut surface cancelled.
+ */
+async function cutConnections(
+  ctx: MutationCtx,
+  agent: Doc<'agents'>,
+  transfer: AcceptedTransfer,
+  now: number,
+): Promise<Cut> {
+  const surfaces = await handOverSurfaces(ctx, {
+    agentId: agent._id,
+    toOwnerKey: transfer.toOwnerKey,
+    now,
+  });
+  const bound = new Set(surfaces.cut.flatMap((surface) => surface.boundCredentials));
+  const { revoke, kept } = await sortCredentials(
+    ctx.db,
+    transfer.fromOwnerKey,
+    bound,
+    new Set([agent._id]),
+  );
+  for (const credential of revoke) await purgeCredential(ctx, credential, now);
+  await cancelJobsFor(ctx, {
+    ids: new Set(surfaces.cut.map((surface) => surface.surfaceId)),
+    employees: new Set([agent._id]),
+  });
+  return { surfaces, revoked: revoke.length, kept: kept.size };
+}
+
+/**
+ * Leave the old owner a departure row (decision D11): the boundary the employee's claims and
+ * rejections keep for the old owner's other employees, read by every reader of a retirement
+ * unchanged. Real mode only, as a single retire keeps one; mock mode keeps nothing.
+ */
+async function leaveDeparture(
+  ctx: MutationCtx,
+  agent: Doc<'agents'>,
+  transfer: AcceptedTransfer,
+  boundaries: Boundaries,
+  cut: Cut,
+  now: number,
+): Promise<void> {
+  if (SURFACE_MODE !== 'real') return;
+  await ctx.db.insert('retirements', {
+    userId: transfer.fromOwnerKey,
+    kind: 'transferred',
+    transferId: transfer._id,
+    agentId: agent._id,
+    agentName: agent.name,
+    retiredAt: now,
+    rowCounts: {},
+    revokedCredentials: cut.revoked,
+    keptCredentials: cut.kept,
+    claims: boundaries.claims,
+    rejections: boundaries.rejections,
+  });
+}
+
+/**
+ * Mark the request accepted with what the move did, and append one `manager.transferred` event
+ * to the employee's record (the transfer plan, section 7.6).
+ */
+async function recordMove(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+  transfer: AcceptedTransfer,
+  outcome: TransferOutcome,
+  cut: Cut,
+  now: number,
+): Promise<void> {
+  await ctx.db.patch(transfer._id, { state: 'accepted', outcome });
+  await appendEvent(ctx, {
+    agentId,
+    type: 'manager.transferred',
+    payload: {
+      transferId: transfer._id,
+      fromAddress: transfer.fromAddress,
+      toAddress: transfer.toAddress,
+      surfacesCut: cut.surfaces.cut.map((surface) => surface.slug),
+      scopesRevoked: [...cut.surfaces.scopesRevoked],
+      credentialsRevoked: outcome.credentialsRevoked,
+      credentialsKept: outcome.credentialsKept,
+      claimsMoved: outcome.claimsMoved,
+      claimsReleased: outcome.claimsReleased,
+      conflictingClaimKeys: outcome.conflictingClaimKeys,
+      decisionRequestsVoided: outcome.decisionRequestsVoided,
+      plansReturned: outcome.plansReturned,
+      runsStopped: outcome.runsStopped,
+      charterDiscarded: outcome.charterDiscarded,
+    },
+    createdAt: now,
+  });
+}
+
 /**
  * Move the employee to the manager who accepted its handover, in one transaction (the transfer
  * plan, sections 6.2, 6.3 and 6.5). In order: the departure boundary is read before anything
- * changes; the surfaces are cut (`handOverSurfaces`), and the credentials they bound sorted by
- * the retire's rule, revoked when nothing else of the old owner's binds them and kept otherwise;
- * pending jobs naming a cut surface are cancelled; the live claims are moved or released; the
- * old owner's credential names leave the record; the employee row is written for the new owner;
- * the identity file is rendered for them; in real mode the old owner keeps a departure row of
- * kind `transferred`; the old owner's employees a released claim refused are woken; the old
- * mirrors are deleted in pages and the new owner's documentation mirrored; and the request is
- * marked accepted with what the move did, beside one `manager.transferred` event.
+ * changes; the connections are cut ({@link cutConnections}); the live claims are moved or
+ * released; the old owner's credential names leave the record; the employee row is written for
+ * the new owner and the identity file rendered for them; the old owner keeps a departure row in
+ * real mode, and their employees a released claim refused are woken; the old mirrors are deleted
+ * in pages and the new owner's documentation mirrored; and the request is marked accepted with
+ * what the move did, beside one `manager.transferred` event.
  *
  * Work in flight is the next unit's (section 6.4): its steps go between the claims and the owner
  * write, and fill the outcome's counts of requests voided, plans returned, sessions failed, notes
@@ -569,50 +690,21 @@ type TransferOutcome = NonNullable<Doc<'managerTransfers'>['outcome']>;
  */
 async function moveEmployeeInTransaction(
   ctx: MutationCtx,
-  transfer: Doc<'managerTransfers'> & { readonly toOwnerKey: string },
+  transfer: AcceptedTransfer,
   now: number,
 ): Promise<TransferOutcome> {
   const agent = await departingEmployee(ctx.db, transfer);
-  const fromOwnerKey = transfer.fromOwnerKey;
-  const real = SURFACE_MODE === 'real';
   const items = await employeeWorkItems(ctx.db, agent._id);
   const boundaries = await boundariesOf(ctx.db, items, now);
-  if (real) assertKeepable(boundaries);
+  if (SURFACE_MODE === 'real') assertKeepable(boundaries);
 
-  const surfaces = await handOverSurfaces(ctx, {
-    agentId: agent._id,
-    toOwnerKey: transfer.toOwnerKey,
-    now,
-  });
-  const bound = new Set(surfaces.cut.flatMap((surface) => surface.boundCredentials));
-  const { revoke, kept } = await sortCredentials(ctx.db, fromOwnerKey, bound, new Set([agent._id]));
-  for (const credential of revoke) await purgeCredential(ctx, credential, now);
-  await cancelJobsFor(ctx, {
-    ids: new Set(surfaces.cut.map((surface) => surface.surfaceId)),
-    employees: new Set([agent._id]),
-  });
+  const cut = await cutConnections(ctx, agent, transfer, now);
   const claims = await moveClaims(ctx, items, boundaries, transfer.toOwnerKey, now);
   await redactSupersededCredentials(ctx, agent._id);
-
   await settleEmployeeRow(ctx, agent, transfer, now);
   await renderIdentityForManager(ctx, agent._id);
-  const departure = real ? boundaries : NO_BOUNDARIES;
-  if (real) {
-    await ctx.db.insert('retirements', {
-      userId: fromOwnerKey,
-      kind: 'transferred',
-      transferId: transfer._id,
-      agentId: agent._id,
-      agentName: agent.name,
-      retiredAt: now,
-      rowCounts: {},
-      revokedCredentials: revoke.length,
-      keptCredentials: kept.size,
-      claims: departure.claims,
-      rejections: departure.rejections,
-    });
-  }
-  await wakeReleasedClaims(ctx, fromOwnerKey, claims.released);
+  await leaveDeparture(ctx, agent, transfer, boundaries, cut, now);
+  await wakeReleasedClaims(ctx, transfer.fromOwnerKey, claims.released);
   await ctx.scheduler.runAfter(0, internal.docSources.pruneDepartedMirrors, {
     agentId: agent._id,
     transferId: transfer._id,
@@ -621,10 +713,10 @@ async function moveEmployeeInTransaction(
 
   const outcome: TransferOutcome = {
     workItemsMoved: items.length,
-    surfacesCut: surfaces.cut.length,
-    credentialsRevoked: revoke.length,
-    credentialsKept: kept.size,
-    scopesRevoked: surfaces.scopesRevoked.length,
+    surfacesCut: cut.surfaces.cut.length,
+    credentialsRevoked: cut.revoked,
+    credentialsKept: cut.kept,
+    scopesRevoked: cut.surfaces.scopesRevoked.length,
     claimsMoved: claims.moved,
     claimsReleased: claims.released.length,
     conflictingClaimKeys: claims.conflictingKeys,
@@ -632,32 +724,12 @@ async function moveEmployeeInTransaction(
     plansReturned: 0,
     sessionsFailed: 0,
     notesDiscarded: 0,
+    // Counted page by page as `pruneDepartedMirrors` deletes them.
     mirroredPagesHidden: 0,
     runsStopped: 0,
     charterDiscarded: false,
   };
-  await ctx.db.patch(transfer._id, { state: 'accepted', outcome });
-  await appendEvent(ctx, {
-    agentId: agent._id,
-    type: 'manager.transferred',
-    payload: {
-      transferId: transfer._id,
-      fromAddress: transfer.fromAddress,
-      toAddress: transfer.toAddress,
-      surfacesCut: surfaces.cut.map((surface) => surface.slug),
-      scopesRevoked: [...surfaces.scopesRevoked],
-      credentialsRevoked: outcome.credentialsRevoked,
-      credentialsKept: outcome.credentialsKept,
-      claimsMoved: outcome.claimsMoved,
-      claimsReleased: outcome.claimsReleased,
-      conflictingClaimKeys: outcome.conflictingClaimKeys,
-      decisionRequestsVoided: outcome.decisionRequestsVoided,
-      plansReturned: outcome.plansReturned,
-      runsStopped: outcome.runsStopped,
-      charterDiscarded: outcome.charterDiscarded,
-    },
-    createdAt: now,
-  });
+  await recordMove(ctx, agent._id, transfer, outcome, cut, now);
   return outcome;
 }
 
