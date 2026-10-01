@@ -35,6 +35,13 @@ vi.mock('convex/react', () => ({
     ),
   useMutation: (): (() => Promise<void>) => async (): Promise<void> => undefined,
   useAction: (): (() => Promise<void>) => async (): Promise<void> => undefined,
+  // The net's own gate: Convex holds the signed-in manager's token.
+  useConvexAuth: () => ({ isLoading: false, isAuthenticated: true }),
+}));
+
+vi.mock('@clerk/nextjs', () => ({
+  useAuth: () => ({ isLoaded: true, isSignedIn: true }),
+  useClerk: () => ({ status: 'ready' }),
 }));
 
 vi.mock('next/navigation', () => ({

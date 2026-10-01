@@ -1,7 +1,10 @@
 'use client';
 
 import { isEmployeeNotYours } from '@/agent/employee-access';
-import { EmployeePageFailed, NotYourEmployee } from './[agentId]/NoSuchEmployee';
+import { SessionGate } from '../Providers';
+import { EmployeeLoading } from './[agentId]/EmployeeShell';
+import { NotYourEmployee } from './[agentId]/EmployeeDeparted';
+import { EmployeePageFailed } from './[agentId]/NoSuchEmployee';
 
 /**
  * The employee page's net (Next's `error.js`), placed above the page's own segment because a
@@ -18,7 +21,10 @@ export default function EmployeePageError({
   unstable_retry: () => void;
 }) {
   return isEmployeeNotYours(error) ? (
-    <NotYourEmployee />
+    // The net sits above the layout's gate; asking where the employee went reads the caller.
+    <SessionGate fallback={<EmployeeLoading />}>
+      <NotYourEmployee />
+    </SessionGate>
   ) : (
     <EmployeePageFailed retry={unstable_retry} />
   );
