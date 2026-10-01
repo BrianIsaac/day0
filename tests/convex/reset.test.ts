@@ -132,6 +132,11 @@ describe('reset completeness', (): void => {
     // SECURITY.md is where the README sends a reader for what a reset deletes (review m9).
     const security = readFileSync(new URL('../../SECURITY.md', import.meta.url), 'utf8');
     expect(security).toContain(`in the ${enumerated} enumerated related tables`);
+    // What a deletion keeps, said now (the wave 9 review's decision 7): the handover requests.
+    expect(security).toContain(
+      'It keeps the two record tables that outlive an employee: `retirements`, and `managerTransfers`',
+    );
+    expect(security).toContain('the handover note and a decline\'s reason');
     expect(readme).toContain('| `externalClaims` |');
     expect(readme).toContain('| `corrections` |');
   });
