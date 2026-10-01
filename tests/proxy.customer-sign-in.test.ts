@@ -69,8 +69,19 @@ describe('the customer-local proxy gate', (): void => {
     const proxy = await loadProxy();
     const response = (await proxy(request('/agent/abc?tab=work'))) as Response;
     expect(response.status).toBe(307);
+    // Absolute, on the public origin: Next's server refuses a relative Location from the proxy
+    // (ERR_INVALID_URL, found on the customer-local bed), whatever host the request came in on.
     expect(response.headers.get('location')).toBe(
-      '/api/auth/oidc/login?returnTo=%2Fagent%2Fabc%3Ftab%3Dwork',
+      `${ORIGIN}/api/auth/oidc/login?returnTo=%2Fagent%2Fabc%3Ftab%3Dwork`,
+    );
+  });
+
+  it("redirects on the request's own origin when the public origin is not set", async (): Promise<void> => {
+    const proxy = await loadProxy({ DAY0_PUBLIC_URL: '' });
+    const response = (await proxy(request('/agent/abc'))) as Response;
+    expect(response.headers.get('location')).toBe(
+      // Next's own view of the request's origin, which writes loopback as localhost.
+      'http://localhost:3550/api/auth/oidc/login?returnTo=%2Fagent%2Fabc',
     );
   });
 
@@ -125,7 +136,7 @@ describe('the customer-local proxy gate', (): void => {
     for (const path of ['/sign-in', '/sign-up/sso-callback']) {
       const response = (await proxy(request(path, cookie))) as Response;
       expect(response.status).toBe(307);
-      expect(response.headers.get('location')).toBe('/api/auth/oidc/login?returnTo=%2F');
+      expect(response.headers.get('location')).toBe(`${ORIGIN}/api/auth/oidc/login?returnTo=%2F`);
     }
   });
 

@@ -3,6 +3,7 @@ import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
 import { DEV_NO_AUTH, isLoopbackHostHeader } from '@/lib/dev-auth';
 import { CUSTOMER_SESSION_COOKIE, joinCookie, openSession } from '@/lib/customer-session';
 import { CUSTOMER_SIGN_IN, profileMismatch } from '@/lib/customer-sign-in';
+import { publicOrigin } from '@/lib/customer-sign-in-settings';
 import {
   DEV_NO_AUTH_COOKIE,
   DEV_NO_AUTH_SESSION_SECONDS,
@@ -188,15 +189,18 @@ const isCustomerSignInRoute = createRouteMatcher(['/api/auth/oidc/(.*)']);
 /** Clerk's pages, which a customer-local build never draws. */
 const isClerkPage = createRouteMatcher(['/sign-in(.*)', '/sign-up(.*)']);
 
-/** A redirect to the company sign-in, relative so it stays on whatever host the customer's proxy serves. */
-function toCompanySignIn(returnTo: string): NextResponse {
-  return new NextResponse(null, {
-    status: 307,
-    headers: {
-      location: `/api/auth/oidc/login?returnTo=${encodeURIComponent(returnTo)}`,
-      'cache-control': 'no-store',
-    },
-  });
+/**
+ * A redirect to the company sign-in, on the public origin people reach Day0 on
+ * (`DAY0_PUBLIC_URL`), else the request's own: Next's server refuses a relative
+ * `Location` from the proxy, and behind the customer's proxy the request's own
+ * host may be an internal one.
+ */
+function toCompanySignIn(request: NextRequest, returnTo: string): NextResponse {
+  const origin = publicOrigin(process.env.DAY0_PUBLIC_URL);
+  const base = 'origin' in origin ? origin.origin : request.nextUrl.origin;
+  const location = new URL('/api/auth/oidc/login', base);
+  location.searchParams.set('returnTo', returnTo);
+  return NextResponse.redirect(location, { status: 307, headers: { 'cache-control': 'no-store' } });
 }
 
 /**
@@ -218,7 +222,7 @@ async function customerSignInGate(request: NextRequest): Promise<NextResponse> {
   if (isCustomerSignInRoute(request) || isExternallyCalledRoute(request)) {
     return NextResponse.next();
   }
-  if (isClerkPage(request)) return toCompanySignIn('/');
+  if (isClerkPage(request)) return toCompanySignIn(request, '/');
   const session = await openSession(
     process.env.DAY0_SESSION_SECRET,
     joinCookie(CUSTOMER_SESSION_COOKIE, (name) => request.cookies.get(name)?.value),
@@ -227,7 +231,7 @@ async function customerSignInGate(request: NextRequest): Promise<NextResponse> {
   if (isApiRoute(request) || (request.method !== 'GET' && request.method !== 'HEAD')) {
     return NextResponse.json({ error: 'not signed in' }, { status: 401 });
   }
-  return toCompanySignIn(`${request.nextUrl.pathname}${request.nextUrl.search}`);
+  return toCompanySignIn(request, `${request.nextUrl.pathname}${request.nextUrl.search}`);
 }
 
 export const config = {
