@@ -71,6 +71,16 @@ export function notCallableItemReason(skillName: string): string {
 }
 
 /**
+ * Why an item parked for a skill went back to be evaluated afresh: no row of the skill's name that
+ * could become callable was linked to it, so nothing would ever have moved it.
+ *
+ * @param skillName - The name of the skill it waited for.
+ */
+export function strandedItemReason(skillName: string): string {
+  return `no proposal of the skill ${skillName} reached this item, so it is evaluated afresh`;
+}
+
+/**
  * The re-check reason a skill is stamped with when the manager approved a different tool list on
  * the surface it acts on.
  *

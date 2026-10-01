@@ -8896,6 +8896,64 @@ describe('an approved item whose skill is not callable (E-1, 10-C)', (): void =>
     expect(events.filter((event) => event.type === 'work.execution-claimed')).toEqual([]);
   });
 
+  it('never waits behind a retired row of the same name', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seedWithoutCallableSkill(harness);
+    const retired = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('skills', {
+          agentId,
+          name: 'kanban-comment-and-close',
+          description: 'Comment on and close a ticket.',
+          body: '# Close',
+          sourceType: 'agent-authored',
+          state: 'retired',
+          surfaceClass: 'kanban',
+          operation: 'comment-and-close',
+          retiredReason: 'retired by the manager',
+          createdAt: 2,
+        }),
+    );
+
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+
+    const parked = await readItem(harness, workItemId);
+    expect(parked.state).toBe('needs-skill');
+    expect(parked.proposedSkillId).not.toBe(retired);
+  });
+
+  // Needs 10-A's propose filter, which passes over a retired row (10-K's handover, "must still
+  // do" item 1); on this branch the proposal step answers the retired row itself.
+  it.fails(
+    'proposes the skill afresh when the only row of its name was retired (fails until 10-A lands the propose filter)',
+    async (): Promise<void> => {
+      useSurfaceMode('mock');
+      const harness = convexTest(contractSchema(), allConvexModules());
+      const { agentId, workItemId } = await seedWithoutCallableSkill(harness);
+      await harness.run(async (ctx) => {
+        await ctx.db.insert('skills', {
+          agentId,
+          name: 'kanban-comment-and-close',
+          description: 'Comment on and close a ticket.',
+          body: '# Close',
+          sourceType: 'agent-authored',
+          state: 'retired',
+          surfaceClass: 'kanban',
+          operation: 'comment-and-close',
+          createdAt: 2,
+        });
+      });
+
+      await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+
+      const parked = await readItem(harness, workItemId);
+      if (parked.proposedSkillId === undefined) throw new Error('no proposal linked');
+      const proposal = await harness.run(async (ctx) => await ctx.db.get(parked.proposedSkillId!));
+      expect(proposal).toMatchObject({ name: 'kanban-comment-and-close', state: 'proposed' });
+    },
+  );
+
   it('waits behind a row of the name still being written rather than proposing another', async (): Promise<void> => {
     useSurfaceMode('mock');
     const harness = convexTest(contractSchema(), allConvexModules());

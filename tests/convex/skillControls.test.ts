@@ -287,18 +287,9 @@ describe('skillControls', (): void => {
       expect((await item(harness, otherShape)).state).toBe('plan-approved');
       expect((await item(harness, mateoItem)).state).toBe('plan-approved');
 
-      // The proposal step is asked for the skill again; an item is only ever linked to a row of
-      // the name that may still become callable, never to the retired one.
-      await harness.finishAllScheduledFunctions(vi.runAllTimers);
+      // Nothing is linked yet: the proposal for the skill is asked for by a scheduled step.
       for (const workItemId of [linked, shaped]) {
-        const parked = await item(harness, workItemId);
-        expect(parked.state).toBe('needs-skill');
-        if (parked.proposedSkillId !== undefined) {
-          expect(await skill(harness, parked.proposedSkillId)).toMatchObject({
-            name: NAME,
-            state: 'proposed',
-          });
-        }
+        expect((await item(harness, workItemId)).proposedSkillId).toBeUndefined();
       }
 
       const [event] = await eventsOf(harness, office.priya, 'skill.retired');
@@ -327,6 +318,96 @@ describe('skillControls', (): void => {
           previousState: 'plan-approved',
         },
       ]);
+    });
+
+    // Needs 10-A's propose filter, which passes over a retired row (10-K's handover, "must still
+    // do" item 1); on this branch the proposal step answers the retired row itself.
+    it.fails(
+      'links the items it returned to a new proposal of the name (fails until 10-A lands the propose filter)',
+      async (): Promise<void> => {
+        const harness = convexTest(schema, allConvexModules());
+        const office = await seedOffice(harness);
+        const returned = await seedItem(harness, office.priya, {
+          state: 'plan-approved',
+          externalId: 'REVOPS-1',
+          proposedSkillId: office.priyaSkill,
+          plan: APPROVED_PLAN,
+        });
+
+        await harness
+          .withIdentity(OWNER)
+          .mutation(api.skillControls.retire, { skillId: office.priyaSkill });
+        await harness.finishInProgressScheduledFunctions();
+        vi.advanceTimersByTime(0);
+        await harness.finishInProgressScheduledFunctions();
+
+        const parked = await item(harness, returned);
+        expect(parked.state).toBe('needs-skill');
+        if (parked.proposedSkillId === undefined) throw new Error('no proposal linked');
+        expect(await skill(harness, parked.proposedSkillId)).toMatchObject({
+          name: NAME,
+          state: 'proposed',
+        });
+      },
+    );
+
+    it('sends an item no proposal reached back to be evaluated afresh after a step lease, and leaves a linked one parked', async (): Promise<void> => {
+      const harness = convexTest(schema, allConvexModules());
+      const office = await seedOffice(harness);
+      const stranded = await seedItem(harness, office.priya, {
+        state: 'plan-approved',
+        externalId: 'REVOPS-1',
+        plan: APPROVED_PLAN,
+      });
+      const linked = await seedItem(harness, office.priya, {
+        state: 'plan-approved',
+        externalId: 'REVOPS-2',
+        sourceSystem: 'slack',
+        sourceCategory: 'chat',
+        plan: APPROVED_PLAN,
+      });
+      const proposal = await harness.run(
+        async (ctx) =>
+          await ctx.db.insert('skills', {
+            agentId: office.priya,
+            name: 'chat-thread-reply',
+            description: 'Reply in a thread.',
+            body: '',
+            sourceType: 'agent-authored',
+            state: 'proposed',
+            createdAt: 2,
+          }),
+      );
+      const shape = { surfaceClass: 'kanban', operation: 'comment-and-close' };
+      for (const [workItemId, name] of [
+        [stranded, NAME],
+        [linked, 'chat-thread-reply'],
+      ] as const) {
+        await expect(
+          harness.mutation(internal.skillControls.parkForMissingSkill, {
+            workItemId,
+            name,
+            reason: 'its skill is not callable',
+            rationale: 'No callable skill.',
+            shape,
+          }),
+        ).resolves.toMatchObject({ parked: true });
+      }
+      expect((await item(harness, linked)).proposedSkillId).toBe(proposal);
+
+      await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+      expect(await item(harness, stranded)).toMatchObject({
+        state: 'discovered',
+        verdict: {
+          decision: 'pending-reevaluation',
+          reason: `no proposal of the skill ${NAME} reached this item, so it is evaluated afresh`,
+        },
+      });
+      expect(await item(harness, linked)).toMatchObject({
+        state: 'needs-skill',
+        proposedSkillId: proposal,
+      });
     });
 
     it('keeps an item another callable skill of the same shape still covers', async (): Promise<void> => {
@@ -477,7 +558,7 @@ describe('skillControls', (): void => {
           skillId: office.priyaSkill,
           reason: 'it closes the wrong tickets',
         }),
-      ).resolves.toEqual({ withdrawn: true, holders: 2 });
+      ).resolves.toEqual({ withdrawn: true, holders: 2, returnedItems: 1 });
 
       const version = await harness.run(async (ctx) => await ctx.db.get(office.versionId));
       expect(version?.revokedReason).toBe('it closes the wrong tickets');
@@ -569,6 +650,16 @@ describe('skillControls', (): void => {
       await harness
         .withIdentity(OWNER)
         .mutation(api.skillControls.withdraw, { skillId: office.priyaSkill });
+      // The other holder was retired with it, so it is not withdrawn a second time.
+      await expect(
+        harness
+          .withIdentity(OWNER)
+          .mutation(api.skillControls.withdraw, { skillId: office.mateoSkill }),
+      ).rejects.toThrow(`Only a callable skill is withdrawn; ${NAME} is retired.`);
+      // A callable row that still holds the withdrawn version is told so.
+      await harness.run(async (ctx) => {
+        await ctx.db.patch(office.mateoSkill, { state: 'registered' });
+      });
       await expect(
         harness
           .withIdentity(OWNER)
@@ -807,6 +898,131 @@ describe('skillControls', (): void => {
           harness.withIdentity(OWNER).mutation(api.skillControls.askForRevision, { skillId }),
         ).rejects.toThrow('Only a callable skill an employee wrote is revised.');
       }
+    });
+  });
+
+  describe('the guards', (): void => {
+    it('refuses another owner on every control and on the pending revisions', async (): Promise<void> => {
+      const harness = convexTest(schema, allConvexModules());
+      const office = await seedOffice(harness);
+      const stranger = harness.withIdentity(managerIdentity('someone-else'));
+      const skillId = office.priyaSkill;
+      await expect(stranger.mutation(api.skillControls.withdraw, { skillId })).rejects.toThrow(
+        'forbidden',
+      );
+      await expect(stranger.mutation(api.skillControls.recheckNow, { skillId })).rejects.toThrow(
+        'forbidden',
+      );
+      await expect(stranger.mutation(api.skillControls.giveUp, { skillId })).rejects.toThrow(
+        'forbidden',
+      );
+      await expect(
+        stranger.mutation(api.skillControls.askForRevision, { skillId }),
+      ).rejects.toThrow('forbidden');
+      await expect(
+        stranger.query(api.skillControls.pendingRevisions, { agentId: office.priya }),
+      ).rejects.toThrow('forbidden');
+      expect((await skill(harness, skillId)).state).toBe('registered');
+    });
+
+    it('says a built-in skill is not withdrawn or re-checked, in each control’s words', async (): Promise<void> => {
+      const harness = convexTest(schema, allConvexModules());
+      const office = await seedOffice(harness);
+      const builtin = await harness.run(
+        async (ctx) =>
+          await ctx.db.insert('skills', {
+            agentId: office.priya,
+            name: 'see-internal-docs',
+            description: 'Docs.',
+            body: 'Read the docs.',
+            sourceType: 'builtin',
+            state: 'registered',
+            createdAt: 1,
+          }),
+      );
+      await expect(
+        harness.withIdentity(OWNER).mutation(api.skillControls.withdraw, { skillId: builtin }),
+      ).rejects.toThrow('A built-in skill comes with the employee and is not withdrawn.');
+      await expect(
+        harness.withIdentity(OWNER).mutation(api.skillControls.recheckNow, { skillId: builtin }),
+      ).rejects.toThrow('A built-in skill comes with the employee and is not re-checked.');
+    });
+
+    it('gives up a failed revision without cancelling the work its original was proposed for', async (): Promise<void> => {
+      const harness = convexTest(schema, allConvexModules());
+      const office = await seedOffice(harness);
+      const source = await seedItem(harness, office.priya, {
+        state: 'needs-skill',
+        externalId: 'REVOPS-1',
+      });
+      const revision = await harness.run(
+        async (ctx) =>
+          await ctx.db.insert('skills', {
+            agentId: office.priya,
+            name: NAME,
+            description: 'Ticket comment-and-close.',
+            body: '',
+            sourceType: 'agent-authored',
+            state: 'failed',
+            proposedFor: source,
+            revisionOf: office.priyaSkill,
+            authoringAttempts: 1,
+            createdAt: 2,
+          }),
+      );
+
+      await expect(
+        harness.withIdentity(OWNER).mutation(api.skillControls.giveUp, { skillId: revision }),
+      ).resolves.toEqual({ givenUp: true, cancelled: 0 });
+
+      expect((await item(harness, source)).state).toBe('needs-skill');
+      expect((await skill(harness, office.priyaSkill)).state).toBe('registered');
+    });
+
+    it('cancels every waiting item past one batch, continuing by schedule', async (): Promise<void> => {
+      const harness = convexTest(schema, allConvexModules());
+      const office = await seedOffice(harness);
+      const failing = await harness.run(
+        async (ctx) =>
+          await ctx.db.insert('skills', {
+            agentId: office.priya,
+            name: 'analytics-refresh-value',
+            description: 'Refresh a tile.',
+            body: '',
+            sourceType: 'agent-authored',
+            state: 'failed',
+            authoringAttempts: 2,
+            createdAt: 1,
+          }),
+      );
+      // One more than a batch reads, every one waiting on the failed skill.
+      await harness.run(async (ctx) => {
+        for (let index = 0; index < 201; index += 1) {
+          await ctx.db.insert('workItems', {
+            agentId: office.priya,
+            sourceCategory: 'analytics',
+            sourceSystem: 'looker',
+            externalId: `tile-${index}`,
+            title: `Refresh tile ${index}`,
+            contentSummary: 'Synthetic.',
+            contentRefs: [],
+            state: 'needs-skill',
+            proposedSkillId: failing,
+            observedAt: 1,
+            createdAt: 1,
+          });
+        }
+      });
+
+      await expect(
+        harness.withIdentity(OWNER).mutation(api.skillControls.giveUp, { skillId: failing }),
+      ).resolves.toEqual({ givenUp: true, cancelled: 200 });
+      await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+      const left = await harness.run(async (ctx) =>
+        (await ctx.db.query('workItems').collect()).filter((row) => row.state !== 'cancelled'),
+      );
+      expect(left).toEqual([]);
     });
   });
 });

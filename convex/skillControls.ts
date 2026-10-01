@@ -10,10 +10,11 @@ import {
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, assertOwnsSkill } from './ownership';
-import { appendEvent } from './eventLog';
+import { appendEvent, eventsOfType } from './eventLog';
 import { holdersOf } from './skillVersions';
-import { scheduleNextStep } from './workLoop';
-import type { SkillRevokedHolder } from '../src/events/contract';
+import { applyVerdict } from './work';
+import { scheduleNextStep, STEP_LEASE_MS } from './workLoop';
+import { isEventOf, type SkillRevokedHolder } from '../src/events/contract';
 import { holdsLiveAuthoringClaim } from '../src/lib/skill-authoring';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { sameSkillShape, skillShapeFor, type ShapeSurface } from '../src/work/skill-shape';
@@ -22,6 +23,7 @@ import {
   controlReasonOf,
   givenUpReason,
   RETIRED_BY_MANAGER,
+  strandedItemReason,
   takenOutItemReason,
   WITHDRAWN_BY_MANAGER,
   type TakenOut,
@@ -41,7 +43,7 @@ import {
  */
 
 /** Everything a run releases when the row it held leaves its state under it. */
-const RELEASED_CLAIM = { authoringRunId: undefined, authoringClaimedAt: undefined } as const;
+const releasedClaim = { authoringRunId: undefined, authoringClaimedAt: undefined } as const;
 
 /**
  * Approved items of one employee a Retire reads for the ones its skill would have run. An
@@ -86,31 +88,43 @@ function controlReason(
   }
 }
 
+/** The controls that act on a callable skill an employee wrote, as their refusals name them. */
+type CallableControl = 'retired' | 'withdrawn' | 're-checked' | 'revised';
+
 /**
- * Refuse a row Retire, Re-check now or Ask for a revision cannot act on: only a callable skill an
- * employee wrote. A built-in skill is installed with the employee and has no versions.
+ * Why a row is refused by a control that acts on a callable skill an employee wrote, or nothing
+ * when it may act. A built-in skill is installed with the employee and has no versions.
  *
  * @param row - The skill row.
  * @param control - Which control asks, for the refusal's words.
  */
-function assertCallableAuthored(
-  row: Doc<'skills'>,
-  control: 'retired' | 're-checked' | 'revised',
-): void {
-  if (row.sourceType !== 'agent-authored') {
-    throw new ConvexError(
-      control === 'retired'
-        ? 'A built-in skill comes with the employee and is not retired.'
-        : 'Only a callable skill an employee wrote is revised.',
-    );
+function callableAuthoredRefusal(row: Doc<'skills'>, control: CallableControl): string | undefined {
+  if (row.sourceType === 'agent-authored' && row.state === 'registered') return undefined;
+  switch (control) {
+    case 'retired':
+    case 'withdrawn':
+    case 're-checked':
+      return row.sourceType !== 'agent-authored'
+        ? `A built-in skill comes with the employee and is not ${control}.`
+        : `Only a callable skill is ${control}; ${row.name} is ${row.state}.`;
+    case 'revised':
+      return 'Only a callable skill an employee wrote is revised.';
+    default: {
+      const unhandled: never = control;
+      throw new Error(`unhandled control ${String(unhandled)}`);
+    }
   }
-  if (row.state !== 'registered') {
-    throw new ConvexError(
-      control === 'revised'
-        ? 'Only a callable skill an employee wrote is revised.'
-        : `Only a callable skill is ${control}; ${row.name} is ${row.state}.`,
-    );
-  }
+}
+
+/**
+ * Refuse a row a control on a callable skill an employee wrote cannot act on
+ * ({@link callableAuthoredRefusal}).
+ *
+ * @throws ConvexError with the refusal the card reads.
+ */
+function assertCallableAuthored(row: Doc<'skills'>, control: CallableControl): void {
+  const refusal = callableAuthoredRefusal(row, control);
+  if (refusal !== undefined) throw new ConvexError(refusal);
 }
 
 /**
@@ -146,7 +160,8 @@ interface SkillWait {
  * item waiting for that name (`skills.completeRegistration`, its same-name reach). The approved
  * plan goes with it: it was approved to run a body the employee no longer runs, and the next
  * plan is drafted and approved afresh once a skill is callable. The item's slot is freed for the
- * queue.
+ * queue, and a recovery is scheduled in case no row of the name that may still become callable
+ * is linked to it by then ({@link recoverStrandedParkedWork}).
  *
  * @param ctx - The control's or the executor's mutation context.
  * @param item - The approved item.
@@ -175,7 +190,7 @@ async function parkForSkill(
     managerAnswers: undefined,
     draftClaimedAt: undefined,
   });
-  await appendEvent(ctx, {
+  const waitingId = await appendEvent(ctx, {
     agentId: item.agentId,
     type: 'work.waiting-for-skill',
     payload: {
@@ -188,8 +203,50 @@ async function parkForSkill(
     createdAt: wait.now,
   });
   await scheduleNextStep(ctx, { ...item, state: 'needs-skill' });
+  await ctx.scheduler.runAfter(STEP_LEASE_MS, internal.skillControls.recoverStrandedParkedWork, {
+    workItemId: item._id,
+    waitingId,
+  });
   return behind?._id;
 }
+
+/** Waiting events of one employee the recovery reads for an item's newest. */
+const WAITING_EVENTS_SCAN = 200;
+
+/**
+ * Internal, scheduled by every park ({@link parkForSkill}) a step lease later: an item still
+ * parked by that park, with no row of the name that may still become callable linked to it,
+ * would wait for ever with nothing on any card to move it (the proposal step answered a row that
+ * cannot register, or never ran). It goes back to be evaluated afresh, the shape every re-queued
+ * item takes, so its next evaluation proposes the skill it needs. An item a later park, a link or
+ * any other transition reached is left alone.
+ *
+ * @returns Whether the item was sent back.
+ */
+export const recoverStrandedParkedWork = internalMutation({
+  args: { workItemId: v.id('workItems'), waitingId: v.id('events') },
+  handler: async (ctx, args): Promise<{ recovered: boolean }> => {
+    const item = await ctx.db.get(args.workItemId);
+    if (item?.state !== 'needs-skill') return { recovered: false };
+    const linked = item.proposedSkillId ? await ctx.db.get(item.proposedSkillId) : null;
+    if (linked !== null && LIVE_STATES.has(linked.state)) return { recovered: false };
+    const newest = (
+      await eventsOfType(ctx, item.agentId, 'work.waiting-for-skill')
+        .order('desc')
+        .take(WAITING_EVENTS_SCAN)
+    ).find(
+      (event) =>
+        isEventOf(event, 'work.waiting-for-skill') && event.payload.workItemId === item._id,
+    );
+    if (newest?._id !== args.waitingId) return { recovered: false };
+    const name = isEventOf(newest, 'work.waiting-for-skill') ? newest.payload.name : 'it needs';
+    await applyVerdict(ctx, item._id, {
+      decision: 'pending-reevaluation',
+      reason: strandedItemReason(name),
+    });
+    return { recovered: true };
+  },
+});
 
 /**
  * Whether an approved item would have run this skill: it names the row (a run's `skillId`, its
@@ -233,14 +290,15 @@ async function coveredItemTest(
 /**
  * Send back to `needs-skill` every approved item that would have run a row taken out of use.
  *
+ * @param ctx - The control's mutation context.
+ * @param taken - The row as the control left it, how it was taken out, and when.
  * @returns The items sent back, oldest first.
  */
 async function returnApprovedItems(
   ctx: MutationCtx,
-  row: Doc<'skills'>,
-  how: TakenOut,
-  now: number,
+  taken: { readonly row: Doc<'skills'>; readonly how: TakenOut; readonly now: number },
 ): Promise<Id<'workItems'>[]> {
+  const { row, how, now } = taken;
   const covers = await coveredItemTest(ctx, row);
   const approved = await ctx.db
     .query('workItems')
@@ -294,10 +352,10 @@ async function retireHolder(
     state: 'retired',
     retiredAt: now,
     retiredReason: reason,
-    ...RELEASED_CLAIM,
+    ...releasedClaim,
   });
   for (const revision of await openRevisionsOf(ctx, row)) {
-    await ctx.db.patch(revision._id, { state: 'rejected', ...RELEASED_CLAIM });
+    await ctx.db.patch(revision._id, { state: 'rejected', ...releasedClaim });
     await appendEvent(ctx, {
       agentId: revision.agentId,
       type: 'skill.rejected',
@@ -305,7 +363,11 @@ async function retireHolder(
       createdAt: now,
     });
   }
-  const returnedItems = await returnApprovedItems(ctx, { ...row, state: 'retired' }, how, now);
+  const returnedItems = await returnApprovedItems(ctx, {
+    row: { ...row, state: 'retired' },
+    how,
+    now,
+  });
   await appendEvent(ctx, {
     agentId: row.agentId,
     type: 'skill.retired',
@@ -446,49 +508,74 @@ export const retire = mutation({
  * holds is stamped withdrawn (`revokedAt`, `revokedReason`), so it is offered to nobody and no
  * stored verification registers it again, and every holder of it that is callable is retired as
  * Retire retires one, all in this one transaction. One `skill.revoked` on the acting employee's
- * record names every holder retired; each holder's record carries its own `skill.retired`.
+ * record names every holder retired; each holder's record carries its own `skill.retired`. Refused
+ * for a row that is not a callable skill an employee wrote.
  */
 export const withdraw = mutation({
   args: { skillId: v.id('skills'), reason: v.optional(v.string()) },
-  handler: async (ctx, args): Promise<{ withdrawn: true; holders: number }> => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ withdrawn: true; holders: number; returnedItems: number }> => {
     const row = await assertOwnsSkill(ctx, args.skillId);
     const reason = controlReason(args.reason, WITHDRAWN_BY_MANAGER);
-    const version = row.versionId === undefined ? null : await ctx.db.get(row.versionId);
-    const owner = (await ctx.db.get(row.agentId))?.userId;
-    if (version === null || version.userId !== owner) {
-      throw new ConvexError(
-        `${row.name} holds no library version, so no other employee holds it; retire it instead.`,
-      );
-    }
-    if (version.revokedAt !== undefined) {
-      throw new ConvexError(`Version ${version.version} of ${row.name} was already withdrawn.`);
-    }
-    const now = Date.now();
-    await ctx.db.patch(version._id, { revokedAt: now, revokedReason: reason });
-    const holders: SkillRevokedHolder[] = [];
-    for (const holder of await holdersOf(ctx.db, version._id)) {
-      if (holder.state !== 'registered') continue;
-      const employee = await ctx.db.get(holder.agentId);
-      if (employee === null || employee.userId !== version.userId) continue;
-      await retireHolder(ctx, holder, { reason, how: 'withdrawn', now });
-      holders.push({ skillId: holder._id, agentId: holder.agentId, agentName: employee.name });
-    }
-    await appendEvent(ctx, {
-      agentId: row.agentId,
-      type: 'skill.revoked',
-      payload: {
-        skillId: row._id,
-        name: row.name,
-        reason,
-        versionId: version._id,
-        version: version.version,
-        holders,
-      },
-      createdAt: now,
-    });
-    return { withdrawn: true, holders: holders.length };
+    assertCallableAuthored(row, 'withdrawn');
+    const withdrawn = await withdrawVersion(ctx, row, reason);
+    return { withdrawn: true, ...withdrawn };
   },
 });
+
+/**
+ * Withdraw the version a callable row holds from every employee of its owner who runs it, in the
+ * caller's transaction ({@link withdraw}).
+ *
+ * @param ctx - The control's mutation context.
+ * @param row - The row the manager withdrew it from; it holds the version.
+ * @param reason - The reason kept on the version, each holder and the record.
+ * @returns How many holders were retired and how many approved items went back to waiting.
+ * @throws ConvexError when the row holds no version of its owner's, or the version was withdrawn.
+ */
+async function withdrawVersion(
+  ctx: MutationCtx,
+  row: Doc<'skills'>,
+  reason: string,
+): Promise<{ holders: number; returnedItems: number }> {
+  const version = row.versionId === undefined ? null : await ctx.db.get(row.versionId);
+  const owner = (await ctx.db.get(row.agentId))?.userId;
+  if (version === null || version.userId !== owner) {
+    throw new ConvexError(
+      `${row.name} holds no library version, so no other employee holds it; retire it instead.`,
+    );
+  }
+  if (version.revokedAt !== undefined) {
+    throw new ConvexError(`Version ${version.version} of ${row.name} was already withdrawn.`);
+  }
+  const now = Date.now();
+  await ctx.db.patch(version._id, { revokedAt: now, revokedReason: reason });
+  const holders: SkillRevokedHolder[] = [];
+  let returnedItems = 0;
+  for (const holder of await holdersOf(ctx.db, version._id)) {
+    if (holder.state !== 'registered') continue;
+    const employee = await ctx.db.get(holder.agentId);
+    if (employee === null || employee.userId !== version.userId) continue;
+    returnedItems += (await retireHolder(ctx, holder, { reason, how: 'withdrawn', now })).length;
+    holders.push({ skillId: holder._id, agentId: holder.agentId, agentName: employee.name });
+  }
+  await appendEvent(ctx, {
+    agentId: row.agentId,
+    type: 'skill.revoked',
+    payload: {
+      skillId: row._id,
+      name: row.name,
+      reason,
+      versionId: version._id,
+      version: version.version,
+      holders,
+    },
+    createdAt: now,
+  });
+  return { holders: holders.length, returnedItems };
+}
 
 /**
  * Public, guarded by `assertOwnsSkill`: Re-check now. Schedules the stored verification
@@ -517,20 +604,38 @@ export const recheckNow = mutation({
   },
 });
 
+/** Where a Give up's cancellation is: the skill, the reason each item carries, the batch's start. */
+interface Cancellation {
+  readonly skill: Doc<'skills'>;
+  readonly reason: string;
+  /** Where the previous batch stopped; absent for the first. */
+  readonly after?: number;
+}
+
 /**
- * Cancel the parked items waiting for a skill that will never register, a batch per transaction:
- * every item at `needs-skill` linked to it, and the item it was proposed for when that one is
- * linked to nothing else. Each carries the reason on its card and a `work.cancelled` event.
+ * Whether a parked item waits for this skill: linked to it, or, for a skill that is no revision,
+ * the item it was proposed for when that one is linked to nothing. A revision shares its original's
+ * source item without being what that item waits for, so only its own links reach it.
+ */
+function waitsFor(item: Doc<'workItems'>, skill: Doc<'skills'>): boolean {
+  if (item.proposedSkillId === skill._id) return true;
+  return (
+    skill.revisionOf === undefined &&
+    item.proposedSkillId === undefined &&
+    item._id === skill.proposedFor
+  );
+}
+
+/**
+ * Cancel the parked items waiting for a skill that will never register ({@link waitsFor}), a
+ * batch per transaction. Each carries the reason on its card and a `work.cancelled` event.
  *
- * @param after - Where the previous batch stopped; absent for the first.
+ * @param ctx - The control's or its continuation's mutation context.
+ * @param cancellation - The skill, the reason, and where the batch starts.
  * @returns How many items this batch cancelled.
  */
-async function cancelWaitingWork(
-  ctx: MutationCtx,
-  skill: Doc<'skills'>,
-  reason: string,
-  after?: number,
-): Promise<number> {
+async function cancelWaitingWork(ctx: MutationCtx, cancellation: Cancellation): Promise<number> {
+  const { skill, reason, after } = cancellation;
   const page = await ctx.db
     .query('workItems')
     .withIndex('by_agent_state', (q) => {
@@ -540,10 +645,7 @@ async function cancelWaitingWork(
     .take(CANCEL_SCAN);
   let cancelled = 0;
   for (const item of page) {
-    const waits =
-      item.proposedSkillId === skill._id ||
-      (item.proposedSkillId === undefined && item._id === skill.proposedFor);
-    if (!waits) continue;
+    if (!waitsFor(item, skill)) continue;
     await ctx.db.patch(item._id, { state: 'cancelled', skipReason: reason });
     await appendEvent(ctx, {
       agentId: item.agentId,
@@ -574,7 +676,9 @@ export const continueCancellingWaitingWork = internalMutation({
   handler: async (ctx, args): Promise<{ cancelled: number }> => {
     const skill = await ctx.db.get(args.skillId);
     if (skill?.state !== 'rejected') return { cancelled: 0 };
-    return { cancelled: await cancelWaitingWork(ctx, skill, args.reason, args.after) };
+    return {
+      cancelled: await cancelWaitingWork(ctx, { skill, reason: args.reason, after: args.after }),
+    };
   },
 });
 
@@ -594,14 +698,17 @@ export const giveUp = mutation({
     }
     const attempts = Math.max(1, row.authoringAttempts ?? 0);
     const reason = givenUpReason(attempts);
-    await ctx.db.patch(row._id, { state: 'rejected', ...RELEASED_CLAIM });
+    await ctx.db.patch(row._id, { state: 'rejected', ...releasedClaim });
     await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'skill.given-up',
       payload: { skillId: row._id, name: row.name, reason, attempts },
       createdAt: Date.now(),
     });
-    const cancelled = await cancelWaitingWork(ctx, { ...row, state: 'rejected' }, reason);
+    const cancelled = await cancelWaitingWork(ctx, {
+      skill: { ...row, state: 'rejected' },
+      reason,
+    });
     return { givenUp: true, cancelled };
   },
 });

@@ -5,6 +5,7 @@ import {
   MAX_CONTROL_REASON_LENGTH,
   notCallableItemReason,
   reconnectedReason,
+  strandedItemReason,
   controlReasonOf,
   RETIRED_BY_MANAGER,
   takenOutItemReason,
@@ -57,5 +58,11 @@ describe('skill controls words', (): void => {
   it('names the surface in each re-check trigger’s reason', (): void => {
     expect(allowlistChangedReason('linear')).toBe('the tools you approved on linear changed');
     expect(reconnectedReason('linear')).toBe('its connection to linear was made again');
+  });
+
+  it('tells an item no proposal reached that it is evaluated afresh', (): void => {
+    expect(strandedItemReason('kanban-comment-and-close')).toBe(
+      'no proposal of the skill kanban-comment-and-close reached this item, so it is evaluated afresh',
+    );
   });
 });

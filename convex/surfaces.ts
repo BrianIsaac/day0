@@ -1550,7 +1550,9 @@ function frozenTools(
  * the row and the connected event name any tool it withheld. A probe that resolves a
  * different manager than the row held writes `manager.changed` (Q6), so the
  * ledger shows who the approver became and when, and any open request
- * delivered to another DM is sent again to this one.
+ * delivered to another DM is sent again to this one. A connection made again
+ * after the surface stopped being connected stamps "Re-check due" on the
+ * employee's registered skills that act on it (A13, `skill.recheck-due`).
  */
 export const recordConnected = internalMutation({
   args: {
@@ -2401,7 +2403,8 @@ const APPROVED_TOOLS_LIMIT = 200;
  * with what it added and removed. A tool taken off leaves the stored list at
  * once; the surface is probed at once so the tools the provider offers from
  * the new list reach the row, and no tool the provider does not offer is
- * ever stored.
+ * ever stored. A list that changed stamps "Re-check due" on the employee's
+ * registered skills that act on the surface (A13, `skill.recheck-due`).
  *
  * @throws ConvexError when the surface is not connected, or the list is
  *   empty, repeats a tool or passes the limit.
