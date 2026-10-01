@@ -678,6 +678,7 @@ describe('what the move does with each kind of work (transfer plan 6.4, the tabl
     const handover = await seedHandover();
     const approved = await seedItem(handover, 'REVOPS-1', 'plan-approved', {
       plan: { steps: ['Close it'] },
+      managerAnswers: [{ question: 'Who owns the tile?', answer: 'Priya.', answeredAt: 2 }],
     });
 
     await accept(handover);
@@ -686,6 +687,8 @@ describe('what the move does with each kind of work (transfer plan 6.4, the tabl
     expect(item.state).toBe('plan-pending');
     expect(item.planPendingAt).toBe(ACCEPTED_AT);
     expect(item.decision).toBeUndefined();
+    // The old manager's answers went with their approval: the new manager answers afresh (M7).
+    expect(item.managerAnswers).toBeUndefined();
     expect((await read(handover.harness, handover.transferId)).outcome).toMatchObject({
       plansReturned: 1,
     });

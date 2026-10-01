@@ -3459,7 +3459,14 @@ export async function returnApprovalsForHandover(
     ),
   );
   for (const row of approvedPlans) {
-    await ctx.db.patch(row._id, { state: 'plan-pending', planPendingAt: now, decision: undefined });
+    // The answers were given with the old manager's approval, and a run reads them as the
+    // manager's: they go with it, as on every other path back to drafting.
+    await ctx.db.patch(row._id, {
+      state: 'plan-pending',
+      planPendingAt: now,
+      decision: undefined,
+      managerAnswers: undefined,
+    });
     await appendEvent(ctx, {
       agentId,
       type: 'work.plan-held',
