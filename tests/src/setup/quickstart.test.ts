@@ -133,6 +133,37 @@ describe('the README quick starts', (): void => {
   });
 });
 
+/**
+ * The hosted demo's address, which the setup guide is served from. The README
+ * names it in the badge, the live demo link, the hosted paragraphs and the
+ * walkthrough links, in both halves; the address moved on 1 October 2026.
+ */
+describe('the hosted demo address the README gives', (): void => {
+  const { origin, host } = new URL(SETUP_PAGE_URL);
+  const chineseAt = README.indexOf(CHINESE_HEADING);
+  const halves = { english: README.slice(0, chineseAt), chinese: README.slice(chineseAt) };
+
+  it('labels and links the badge and the live demo link with it', (): void => {
+    expect(README).toContain(
+      `[![Live demo](https://img.shields.io/badge/Live%20demo-${host}-2ea043)](${origin})`,
+    );
+    expect(README).toContain(`[**Live demo**](${origin})`);
+  });
+
+  it('links the sign-in and the walkthrough by it, in both halves', (): void => {
+    for (const [name, half] of Object.entries(halves)) {
+      expect(half, name).toContain(`[\`${host}\`](${origin})`);
+      expect(half, name).toContain(`[${host}](${origin})`);
+      expect(half, name).toContain(`[/walkthrough](${origin}/walkthrough)`);
+      expect(half, name).toContain(`[\`/walkthrough\`](${origin}/walkthrough)`);
+    }
+  });
+
+  it('sends no reader to a Vercel alias of the project in its place', (): void => {
+    expect(README).not.toMatch(/day0-[\w-]*\.vercel\.app/);
+  });
+});
+
 describe('the three ways to run it', (): void => {
   it("are hosted, then local with a cloud model, then local with a local model, by the README's names", (): void => {
     expect(RUN_WAYS.map((way) => way.id)).toEqual(['hosted', 'cloud', 'local']);
