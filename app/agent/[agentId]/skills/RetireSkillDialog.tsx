@@ -10,7 +10,7 @@ import { Dialog } from '../../../components/Dialog';
 import { Field, INPUT_CLASS } from '../../../components/Field';
 import { StatusRegion } from '../../../components/StatusRegion';
 import { useChange } from '../../../components/use-change';
-import { plainSkillName } from './skill-parts';
+import { CODE_CHIP, plainSkillName } from './skill-parts';
 import { namesInWords, retireOutcome, withdrawOutcome } from './skill-card-words';
 
 /** Who stops running the skill: the one employee, or every employee who runs its version. */
@@ -128,7 +128,9 @@ export function RetireSkillDialog({
   return (
     <Dialog
       role="alertdialog"
-      title={every ? `Withdraw ${name} from every employee?` : `Retire ${name} from ${employee}?`}
+      title={
+        every ? 'Withdraw this skill from every employee?' : `Retire this skill from ${employee}?`
+      }
       description={`${
         every
           ? `${namesInWords(runners)} stop running this skill now.`
@@ -162,6 +164,10 @@ export function RetireSkillDialog({
           });
         }}
       >
+        <p className="grid min-w-0 gap-1 text-[15px] text-[var(--color-fg)]">
+          <span className="break-words">{name}</span>
+          <code className={`${CODE_CHIP} justify-self-start`}>{skill.name}</code>
+        </p>
         {choice}
         <Field label="Reason (optional)" hint="Kept on the record.">
           {(control) => (

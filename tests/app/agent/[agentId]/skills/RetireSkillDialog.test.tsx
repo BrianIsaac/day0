@@ -84,8 +84,10 @@ describe('RetireSkillDialog', (): void => {
     await settle();
 
     expect(focusedName()).toBe('Keep it');
+    expect(document.body.querySelector('h2')?.textContent).toBe('Retire this skill from Mira?');
+    // The body names the skill as its row does: the plain name, then the code name.
     expect(document.body.textContent).toContain(
-      'Retire Comment on a ticket and close it from Mira?',
+      'Comment on a ticket and close itkanban-comment-and-close',
     );
     // One holder: nothing to withdraw from anyone else.
     expect(document.body.querySelector('input[type="radio"]')).toBeNull();
@@ -132,7 +134,7 @@ describe('RetireSkillDialog', (): void => {
     });
     // The question follows the choice.
     expect(document.body.querySelector('h2')?.textContent).toBe(
-      'Withdraw Comment on a ticket and close it from every employee?',
+      'Withdraw this skill from every employee?',
     );
     expect(document.body.textContent).toContain('Mira and Tomas stop running this skill now.');
     await press(document.body, 'Withdraw from 2 employees');
