@@ -44,7 +44,7 @@ const PREVIEW: TransferPreview = {
   expiresAt: EXPIRES,
   takesOn: {
     waiting: {
-      'one-to-one': 0,
+      oneToOne: 0,
       charter: 0,
       plan: 1,
       held: 0,

@@ -226,9 +226,12 @@ export const transferPreviewValidator = v.object({
   expiresAt: v.number(),
   /** What the new manager takes on, as counts and names. */
   takesOn: v.object({
-    /** The decisions waiting on the manager now, by the inbox's kinds, as counts. */
+    /**
+     * The decisions waiting on the manager now, by the inbox's kinds, as counts. A validator's
+     * field name must be a backend identifier, so the `one-to-one` kind is `oneToOne` here.
+     */
     waiting: v.object({
-      'one-to-one': v.number(),
+      oneToOne: v.number(),
       charter: v.number(),
       plan: v.number(),
       held: v.number(),
@@ -279,7 +282,7 @@ function waitingByKind(entries: readonly NeedsYouEntry[]): TransferPreview['take
   const count = (kind: NeedsYouEntry['kind']): number =>
     entries.filter((entry) => entry.kind === kind).length;
   return {
-    'one-to-one': count('one-to-one'),
+    oneToOne: count('one-to-one'),
     charter: count('charter'),
     plan: count('plan'),
     held: count('held'),

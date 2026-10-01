@@ -96,7 +96,7 @@ const PREVIEW: HandoverPreview = {
   expiresAt: Date.UTC(2026, 9, 15, 9),
   takesOn: {
     waiting: {
-      'one-to-one': 0,
+      oneToOne: 0,
       charter: 0,
       plan: 1,
       held: 0,

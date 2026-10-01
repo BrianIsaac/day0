@@ -330,7 +330,7 @@ describe('transferPreview: what the named manager reads before accepting (transf
       note: 'Maya owns the RevOps queue.',
       takesOn: {
         waiting: {
-          'one-to-one': 0,
+          oneToOne: 0,
           charter: 0,
           plan: 1,
           held: 0,
