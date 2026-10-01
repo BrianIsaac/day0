@@ -11,7 +11,7 @@ import {
   RegisteredSkillsPanel,
   retryVerifiesSavedDraft,
 } from '../../../../../app/agent/[agentId]/skills/RegisteredSkillsPanel';
-import { button, focusedName, mount, press, settle } from '../../../../fixtures/dom/press';
+import { button, focusedName, mount, press, said, settle } from '../../../../fixtures/dom/press';
 
 const backend = vi.hoisted(() => ({
   /** Mutations and actions that reject, by function name, with the text they reject with. */
@@ -124,7 +124,7 @@ describe('what Retry does to an unregistered skill', (): void => {
 
   it('files a refused Retry as the attempt, in the words written for a person', async (): Promise<void> => {
     const attempts = await clickAndRecord(
-      'Retry',
+      'Retry with the reasons',
       'skillActions:authorAndRegisterSkill',
       'The sandbox component is not running.',
       (record) => (
@@ -161,7 +161,7 @@ describe('what Retry does to an unregistered skill', (): void => {
         onAuthoringAttempt={(attempt) => void attempts.push(attempt)}
       />,
     );
-    await press(view.container, 'Retry refresh-the-tile');
+    await press(view.container, 'Retry with the reasons for refresh-the-tile');
     expect(attempts).toEqual([
       null,
       { skillId: 'skill-2', name: 'refresh-the-tile', reason: 'authoring did not finish' },
@@ -181,9 +181,9 @@ describe('what Retry does to an unregistered skill', (): void => {
         onAuthoringAttempt={(attempt) => void attempts.push(attempt)}
       />,
     );
-    await press(view.container, 'Retry refresh-the-tile');
+    await press(view.container, 'Retry with the reasons for refresh-the-tile');
     expect(attempts).toEqual([null, { skillId: 'skill-2', name: 'refresh-the-tile' }]);
-    expect(focusedName()).toBe('Retry refresh-the-tile');
+    expect(focusedName()).toBe('Retry with the reasons for refresh-the-tile');
     view.unmount();
     backend.results = {};
   });
@@ -200,7 +200,7 @@ describe('what Retry does to an unregistered skill', (): void => {
       />
     );
     const view = mount(panel([refused]));
-    const retry = button(view.container, 'Retry refresh-the-tile');
+    const retry = button(view.container, 'Retry with the reasons for refresh-the-tile');
     retry.focus();
     await act(async (): Promise<void> => {
       retry.click();
@@ -226,7 +226,9 @@ describe('what Retry does to an unregistered skill', (): void => {
     expect(done).toMatch(
       /<div role="status" aria-live="polite" aria-atomic="true"><p[^>]*>refresh-the-tile is registered: it passed the check and is callable\.<\/p><\/div>/,
     );
-    expect(done).toMatch(/<button[^>]*class="[^"]*\bmin-h-11\b[^"]*"[^>]*>Retry<\/button>/);
+    expect(done).toMatch(
+      /<button[^>]*class="[^"]*\bmin-h-11\b[^"]*"[^>]*>Retry with the reasons<\/button>/,
+    );
     const failed = renderToStaticMarkup(
       <RegisteredSkillsPanel
         skills={[]}
@@ -281,7 +283,7 @@ describe('what Retry does to an unregistered skill', (): void => {
     );
   });
 
-  it('says Revise is the one that always authors again', (): void => {
+  it('says Ask for a revision writes a new version while this one keeps running', (): void => {
     const registered = {
       ...base,
       state: 'registered',
@@ -295,14 +297,16 @@ describe('what Retry does to an unregistered skill', (): void => {
         onAuthoringAttempt={noop}
       />,
     );
-    expect(markup).toContain('title="Discard this body and author the skill again');
-    expect(markup).toContain('>Revise<');
+    expect(markup).toContain(
+      'title="Ask for a revision: a new version is written and checked in the sandbox, and this one keeps running until the new one registers"',
+    );
+    expect(markup).toContain('>Ask for a revision<');
   });
 
   it('writes the revision as its own row and leaves the registered one running', async (): Promise<void> => {
     backend.calls.length = 0;
     backend.results = {
-      'skills:requestRevision': { ok: true, revisionId: 'revision-1' },
+      'skillControls:askForRevision': { revisionId: 'revision-1' },
       'skillActions:authorAndRegisterSkill': { ok: true },
     };
     const registered = {
@@ -319,9 +323,9 @@ describe('what Retry does to an unregistered skill', (): void => {
         onAuthoringAttempt={(attempt) => void attempts.push(attempt)}
       />,
     );
-    await press(view.container, 'Revise refresh-the-tile');
+    await press(view.container, 'Ask for a revision of refresh-the-tile');
     expect(backend.calls).toEqual([
-      { name: 'skills:requestRevision', args: { skillId: 'skill-1' } },
+      { name: 'skillControls:askForRevision', args: { skillId: 'skill-1' } },
       { name: 'skillActions:authorAndRegisterSkill', args: { skillId: 'revision-1' } },
     ]);
     expect(attempts).toEqual([null, { skillId: 'revision-1', name: 'refresh-the-tile' }]);
@@ -547,5 +551,221 @@ describe('loading is not the same as empty (P3-13, moved from the work queue sui
     );
     expect(skills).toContain('loading skills…');
     expect(skills).not.toContain('none yet');
+  });
+});
+
+describe('the five controls on the Skills cards (10-C, the prototype’s agent-skills.html)', (): void => {
+  const noop = (): void => undefined;
+  const authored = {
+    _id: 'skill-1',
+    _creationTime: 0,
+    agentId: 'agent-1',
+    name: 'kanban-comment-and-close',
+    description: 'Comment on a ticket and close it.',
+    body: '# Close',
+    sourceType: 'agent-authored',
+    state: 'registered',
+    versionId: 'version-1',
+    registeredAt: 1,
+    useCount: 1,
+    requiredScopes: ['linear:read', 'linear:write'],
+    createdAt: 0,
+  } as unknown as Doc<'skills'>;
+  const due = {
+    ...authored,
+    recheckDueAt: 5,
+    recheckReason: 'the tools you approved on linear changed',
+  } as unknown as Doc<'skills'>;
+  const failing = (attempts: number): Doc<'skills'> =>
+    ({
+      _id: `failing-${attempts}`,
+      _creationTime: 0,
+      agentId: 'agent-1',
+      name: 'analytics-refresh-value',
+      description: 'Refresh a tile.',
+      body: '',
+      sourceType: 'agent-authored',
+      state: 'failed',
+      authoringAttempts: attempts,
+      verificationLog: 'the sandbox run refused the draft: an unclosed bracket',
+      createdAt: 0,
+    }) as unknown as Doc<'skills'>;
+
+  function markupOf(skills: Doc<'skills'>[], unregistered: Doc<'skills'>[] = []): string {
+    return renderToStaticMarkup(
+      <RegisteredSkillsPanel
+        skills={skills}
+        unregistered={unregistered}
+        authoringFailure={null}
+        onAuthoringAttempt={noop}
+        employee="Mira"
+      />,
+    );
+  }
+
+  it('says how often each skill was used, a built-in one included', (): void => {
+    const builtin = {
+      ...authored,
+      _id: 'builtin-1',
+      name: 'see-internal-docs',
+      sourceType: 'builtin',
+      useCount: 3,
+    } as unknown as Doc<'skills'>;
+    const twice = { ...authored, useCount: 2 } as unknown as Doc<'skills'>;
+    const never = { ...authored, useCount: undefined } as unknown as Doc<'skills'>;
+    expect(markupOf([authored])).toContain(' · used 1 time · ');
+    expect(markupOf([twice])).toContain(' · used 2 times · ');
+    expect(markupOf([never])).toContain(' · not used yet · ');
+    expect(markupOf([builtin])).toContain(' · used 3 times · ');
+    // A built-in skill comes with the employee: none of the controls is drawn on it.
+    expect(markupOf([builtin])).not.toContain('Retire');
+  });
+
+  it('draws Re-check due with its reason and Re-check now, and only on a skill that is due', async (): Promise<void> => {
+    expect(markupOf([authored])).not.toContain('Re-check');
+    const markup = markupOf([due]);
+    expect(markup).toContain('>Re-check due<');
+    expect(markup).toContain(
+      'The tools you approved on linear changed. Mira keeps running the verified version until it is re-checked.',
+    );
+    expect(markup).toContain('>Re-check now<');
+    expect(markup).toContain('>Ask for a revision<');
+    expect(markup).toContain('>Retire<');
+
+    backend.calls.length = 0;
+    backend.results = { 'skillControls:recheckNow': { scheduled: true } };
+    const view = mount(
+      <RegisteredSkillsPanel
+        skills={[due]}
+        unregistered={[]}
+        authoringFailure={null}
+        onAuthoringAttempt={noop}
+        employee="Mira"
+      />,
+    );
+    await press(view.container, 'Re-check kanban-comment-and-close now');
+    expect(backend.calls).toEqual([
+      { name: 'skillControls:recheckNow', args: { skillId: 'skill-1' } },
+    ]);
+    expect(said(view.container)).toContain(
+      'kanban-comment-and-close is being re-checked in the sandbox; it keeps running meanwhile.',
+    );
+    view.unmount();
+    backend.results = {};
+  });
+
+  it('says a re-check is running instead of offering another', (): void => {
+    const checking = {
+      ...due,
+      authoringRunId: 'run-1',
+      authoringClaimedAt: Date.now(),
+    } as unknown as Doc<'skills'>;
+    const markup = markupOf([checking]);
+    expect(markup).toContain('>Re-checking<');
+    expect(markup).not.toContain('>Re-check due<');
+    expect(markup).toMatch(
+      /<button[^>]*disabled=""[^>]*aria-label="Re-check kanban-comment-and-close now"/,
+    );
+  });
+
+  it('draws a revision running beside the old version, and asks for no second one', (): void => {
+    const revision = {
+      ...failing(1),
+      _id: 'revision-1',
+      name: 'kanban-comment-and-close',
+      state: 'approved',
+      verificationLog: undefined,
+      authoringAttempts: undefined,
+      revisionOf: 'skill-1',
+    } as unknown as Doc<'skills'>;
+    const markup = markupOf([authored], [revision]);
+    expect(markup).toContain(
+      'A revision is being written. Mira keeps running this version until the new one registers.',
+    );
+    expect(markup).toMatch(
+      /<button[^>]*disabled=""[^>]*aria-label="Ask for a revision of kanban-comment-and-close"/,
+    );
+    expect(markup).toContain('>revision<');
+    expect(markup).toContain(
+      'A revision of a registered skill. Mira keeps running the registered version until this one registers.',
+    );
+  });
+
+  it('counts the attempt a failed draft is on, with Retry with the reasons and Give up', async (): Promise<void> => {
+    const markup = markupOf([], [failing(2)]);
+    expect(markup).toContain('>Attempt 2 of 3<');
+    expect(markup).toContain('>Retry with the reasons<');
+    expect(markup).toContain('>Give up<');
+
+    backend.calls.length = 0;
+    backend.results = { 'skillControls:giveUp': { givenUp: true, cancelled: 1 } };
+    const view = mount(
+      <RegisteredSkillsPanel
+        skills={[]}
+        unregistered={[failing(2)]}
+        authoringFailure={null}
+        onAuthoringAttempt={noop}
+        employee="Mira"
+      />,
+    );
+    await press(view.container, 'Give up analytics-refresh-value');
+    expect(backend.calls).toEqual([
+      { name: 'skillControls:giveUp', args: { skillId: 'failing-2' } },
+    ]);
+    expect(said(view.container)).toContain(
+      'analytics-refresh-value is given up; 1 waiting item is cancelled.',
+    );
+    view.unmount();
+    backend.results = {};
+  });
+
+  it('the third failed attempt withdraws Retry and leaves Give up', (): void => {
+    const markup = markupOf([], [failing(3)]);
+    expect(markup).toContain('>Attempt 3 of 3<');
+    expect(markup).not.toContain('Retry with the reasons<');
+    expect(markup).not.toMatch(/aria-label="Retry[^"]*analytics-refresh-value"/);
+    expect(markup).toContain('>Give up<');
+    expect(markup).toContain(
+      'All 3 attempts failed, so Retry is withdrawn. Give up ends the skill and cancels the work waiting for it, with the reason.',
+    );
+  });
+
+  it('opens the Retire dialog, closes it on Keep, and says the retire once it lands', async (): Promise<void> => {
+    backend.queries = {
+      'skillVersions:forSkill': {
+        held: {
+          version: { _id: 'version-1', version: 1 },
+          holders: [
+            { skillId: 'skill-1', agentId: 'agent-1', agentName: 'Mira', state: 'registered' },
+          ],
+        },
+        offered: null,
+      },
+    };
+    backend.results = { 'skillControls:retire': { retired: true, returnedItems: 0 } };
+    const card = { current: null as HTMLElement | null };
+    const view = mount(
+      <RegisteredSkillsPanel
+        skills={[authored]}
+        unregistered={[]}
+        authoringFailure={null}
+        onAuthoringAttempt={noop}
+        employee="Mira"
+        focusRef={card}
+      />,
+    );
+    await press(view.container, 'Retire kanban-comment-and-close');
+    expect(document.body.querySelector('[role="alertdialog"]')).not.toBeNull();
+    await press(document.body, 'Keep it');
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull();
+    expect(focusedName()).toBe('Retire kanban-comment-and-close');
+
+    await press(view.container, 'Retire kanban-comment-and-close');
+    await press(document.body, 'Retire from Mira');
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull();
+    expect(said(view.container)).toContain('kanban-comment-and-close is retired from Mira.');
+    view.unmount();
+    backend.queries = {};
+    backend.results = {};
   });
 });

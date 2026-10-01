@@ -52,4 +52,54 @@ describe('SkillsView', () => {
       'Authoring did not finish: refresh-the-tile: The sandbox component is not running.',
     );
   });
+
+  it('hides the last verdict once its skill was retired or replaced by its revision (10-C)', () => {
+    for (const state of ['retired', 'superseded'] as const) {
+      backend.queries = {
+        'skills:proposed': [],
+        'skills:registered': [],
+        'skills:get': { _id: 'skill-1', name: 'refresh-the-tile', state },
+      };
+      const html = renderToStaticMarkup(
+        asEmployee(<SkillsView />, {
+          lastAttempt: {
+            skillId: 'skill-1' as Id<'skills'>,
+            name: 'refresh-the-tile',
+            reason: 'The sandbox component is not running.',
+          },
+        }),
+      );
+      expect(html).not.toContain('Authoring did not finish');
+    }
+  });
+
+  it('lists a revision not yet being written with the skills not callable, beside the version it revises (10-C)', () => {
+    backend.queries = {
+      'skills:proposed': [],
+      'skills:registered': [
+        {
+          _id: 's1',
+          name: 'kanban-comment-and-close',
+          state: 'registered',
+          sourceType: 'agent-authored',
+          body: '',
+          description: 'Close.',
+        },
+      ],
+      'skillControls:pendingRevisions': [
+        {
+          _id: 's2',
+          name: 'kanban-comment-and-close',
+          state: 'approved',
+          sourceType: 'agent-authored',
+          body: '',
+          description: 'Close.',
+          revisionOf: 's1',
+        },
+      ],
+    };
+    const html = renderToStaticMarkup(asEmployee(<SkillsView />));
+    expect(html).toContain('>Not callable</h2>');
+    expect(html).toContain('keeps running this version until the new one registers.');
+  });
 });

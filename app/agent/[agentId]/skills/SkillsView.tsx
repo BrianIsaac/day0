@@ -12,6 +12,17 @@ import { ProposedSkillsPanel } from './ProposedSkillsPanel';
 import { RegisteredSkillsPanel } from './RegisteredSkillsPanel';
 
 /**
+ * The states that settle the last authoring verdict: the row registered, was rejected or given
+ * up, was retired, or was replaced by its revision. The verdict describes none of them.
+ */
+const VERDICT_SETTLED_STATES: ReadonlySet<string> = new Set([
+  'registered',
+  'rejected',
+  'retired',
+  'superseded',
+]);
+
+/**
  * The Skills tab (round two section 3.9): the skills the employee proposed, waiting on the
  * manager, the ones it can call, and the ones not callable yet, with the verdict of the last
  * authoring run the manager started from this tab (held by the shell, so it outlives a visit to
@@ -24,6 +35,8 @@ export function SkillsView() {
   const registeredSkills = useQuery(api.skills.registered, { agentId });
   const unverifiedSkills = useQuery(api.skills.awaitingVerification, { agentId });
   const failedSkills = useQuery(api.skills.verificationFailed, { agentId });
+  // A revision approved and not yet being written appears in neither list above.
+  const pendingRevisions = useQuery(api.skillControls.pendingRevisions, { agentId });
   const workItems = useQuery(api.work.listForAgent, { agentId });
   const itemTitles = useMemo(
     (): Map<string, string> => new Map((workItems ?? []).map((item) => [item._id, item.title])),
@@ -45,16 +58,16 @@ export function SkillsView() {
     api.skills.get,
     lastAttempt ? { skillId: lastAttempt.skillId } : 'skip',
   );
-  // A run holding the skill now, a registration and a rejection are all facts
-  // newer than the verdict, and each of them makes it a lie. A claim whose run
-  // died is none of them: it is left on the row by a run that never came back,
-  // so it is exactly the case the verdict is describing and must not hide it.
+  // A run holding the skill now, a registration, a rejection, a retire and a
+  // revision registering in the row's place are all facts newer than the
+  // verdict, and each of them makes it a lie. A claim whose run died is none
+  // of them: it is left on the row by a run that never came back, so it is
+  // exactly the case the verdict is describing and must not hide it.
   const authoringFailure =
     lastAttempt?.reason !== undefined &&
     attemptedSkill &&
     !holdsLiveAuthoringClaim(attemptedSkill, now) &&
-    attemptedSkill.state !== 'registered' &&
-    attemptedSkill.state !== 'rejected'
+    !VERDICT_SETTLED_STATES.has(attemptedSkill.state)
       ? `${lastAttempt.name}: ${lastAttempt.reason}`
       : null;
   // A registration the manager started is said once the row says it too.
@@ -75,13 +88,18 @@ export function SkillsView() {
       />
       <RegisteredSkillsPanel
         skills={registeredSkills ?? []}
-        unregistered={[...(unverifiedSkills ?? []), ...(failedSkills ?? [])]}
+        unregistered={[
+          ...(pendingRevisions ?? []),
+          ...(unverifiedSkills ?? []),
+          ...(failedSkills ?? []),
+        ]}
         authoringFailure={authoringFailure}
         registered={authoringRegistered}
         onAuthoringAttempt={setLastAttempt}
         surfaceMode={surfaceMode}
         focusRef={skillsCard}
         loading={registeredSkills === undefined}
+        employee={agent.name}
       />
     </Columns>
   );

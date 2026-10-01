@@ -6,15 +6,33 @@ import { useAction, useMutation } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { type RefObject, useEffect, useId, useRef, useState } from 'react';
 import { clockTime, useAgentZone, useNow } from '../../../components/time';
-import { refusalText, returnFocus } from '../../../components/use-change';
+import {
+  refusalText,
+  returnFocus,
+  useChange,
+  type ChangeOutcome,
+} from '../../../components/use-change';
 import { Button } from '../../../components/Button';
 import { Card } from '../../../components/Card';
 import { Chip } from '../../../components/Chip';
 import { Disclosure } from '../../../components/Disclosure';
+import { StatusRegion } from '../../../components/StatusRegion';
 import type { Tone } from '../../../components/tone';
 import { holdsLiveAuthoringClaim } from '@/lib/skill-authoring';
+import { attemptsSpent } from '@/work/needs-manager';
 import { RefusedDraft } from './RefusedDraft';
+import { RetireSkillDialog } from './RetireSkillDialog';
 import { CODE_CHIP, plainSkillName, ScopeChips, SkillInputs, SkillStatusLine } from './skill-parts';
+import {
+  attemptLine,
+  attemptsSpentSentence,
+  givenUpOutcome,
+  recheckSentence,
+  recheckStartedOutcome,
+  revisionRowSentence,
+  revisionSentence,
+  usedTimes,
+} from './skill-card-words';
 
 /**
  * Whether Retry on this row verifies the draft it already has rather than
@@ -59,14 +77,36 @@ export function unregisteredState(
   return { label: 'Waiting for a check', tone: 'warn' };
 }
 
+/**
+ * Whether Retry on a row authors again with the reasons it stopped: a failed draft whose check
+ * said why. The prototype's "Retry with the reasons"; every other row's Retry is plain.
+ *
+ * @param skill - The unregistered row.
+ */
+export function retriesWithReasons(
+  skill: Pick<Doc<'skills'>, 'state' | 'verificationLog'>,
+): boolean {
+  return skill.state === 'failed' && Boolean(skill.verificationLog);
+}
+
 /** The day a skill registered, in the employee's zone. */
 function registeredOn(at: number, zone: string | undefined): string {
   return clockTime(at, zone).split(',')[0] ?? '';
 }
 
+/** A row the manager is retiring, and the control that opened the dialog. */
+interface Retiring {
+  readonly skill: Doc<'skills'>;
+  readonly origin: HTMLElement;
+}
+
 /**
  * The registered skills and the ones not callable yet, with the authoring's verdict and the
- * controls that write a skill again: Revise on an authored skill, Retry on one that stopped short.
+ * manager's controls (the enhancements plan, section 4.1, "the five controls"): on a registered
+ * skill an employee wrote, how often it was used, the Re-check due chip with its reason and
+ * Re-check now, Ask for a revision (a new version written while this one keeps running) and
+ * Retire; on a skill not callable, the attempt it is on, Retry with the reasons until the third
+ * attempt, and Give up.
  */
 export function RegisteredSkillsPanel({
   skills,
@@ -77,6 +117,7 @@ export function RegisteredSkillsPanel({
   surfaceMode,
   focusRef,
   loading = false,
+  employee = 'This employee',
 }: {
   skills: Doc<'skills'>[];
   /** The registered skills' query has not answered yet. */
@@ -84,7 +125,8 @@ export function RegisteredSkillsPanel({
   /**
    * Authored but never registered: `authoring` (a run is holding it now, or no
    * sandbox ran), `failed` (the sandbox said no), and `verified` (registration
-   * was interrupted before the lifecycle was collapsed into one mutation).
+   * was interrupted before the lifecycle was collapsed into one mutation), and
+   * a revision approved and not yet being written.
    * A skill a run holds is listed here throughout, so a run that dies mid-flight
    * leaves something the boss can see and, once its claim lapses, retry.
    */
@@ -103,9 +145,13 @@ export function RegisteredSkillsPanel({
   surfaceMode?: 'mock' | 'real';
   /** The Registered card, the place focus goes when a decided skill leaves either list. */
   focusRef?: RefObject<HTMLElement | null>;
+  /** The employee's name, for the sentences that say who keeps running a skill. */
+  employee?: string;
 }) {
   const author = useAction(api.skillActions.authorAndRegisterSkill);
-  const requestRevision = useMutation(api.skills.requestRevision);
+  const askForRevision = useMutation(api.skillControls.askForRevision);
+  const recheckNow = useMutation(api.skillControls.recheckNow);
+  const giveUp = useMutation(api.skillControls.giveUp);
   const [retrying, setRetrying] = useState<Id<'skills'> | null>(null);
   // The control that started a run, and the card that stands in for it once a
   // registration moves its row out of this list.
@@ -113,6 +159,9 @@ export function RegisteredSkillsPanel({
     control: HTMLElement;
     card: HTMLElement | null;
   } | null>(null);
+  const [retiring, setRetiring] = useState<Retiring | null>(null);
+  // What the last Retire or Withdraw did, said once its dialog has closed.
+  const [retired, setRetired] = useState<ChangeOutcome | null>(null);
   const now = useNow();
   const zone = useAgentZone();
   const describedBy = useId();
@@ -120,6 +169,7 @@ export function RegisteredSkillsPanel({
   // when that run's control leaves the page with its row.
   const ownCard = useRef<HTMLElement | null>(null);
   const registeredCard = focusRef ?? ownCard;
+  const controls = useChange(registeredCard);
 
   // A retry or a revision authors for minutes, so its verdict is filed as the
   // attempt (said in the card's live region) rather than awaited by a hook.
@@ -135,7 +185,7 @@ export function RegisteredSkillsPanel({
     // A revision is its own row, written while this one keeps running.
     let written = skillId;
     try {
-      if (revise) written = (await requestRevision({ skillId })).revisionId;
+      if (revise) written = (await askForRevision({ skillId })).revisionId;
       const result = await author({ skillId: written });
       onAuthoringAttempt(
         result.ok
@@ -158,6 +208,12 @@ export function RegisteredSkillsPanel({
     }
   }
 
+  /** Start one of the row controls that change a skill at once, said in the card's live region. */
+  function runControl(call: () => Promise<string>, refused: string): void {
+    setRetired(null);
+    controls.run(call, { done: (words) => words, refused });
+  }
+
   // The button is disabled while its run holds it, so focus comes back to it
   // once it is enabled again, unless the manager has moved on.
   useEffect(() => {
@@ -166,6 +222,9 @@ export function RegisteredSkillsPanel({
     // eslint-disable-next-line react-hooks/set-state-in-effect -- the focus return happens once per settled run
     setReturnTo(null);
   }, [retrying, returnTo]);
+
+  // A revision is listed with the rows not callable yet, and named on the row it revises.
+  const revising = new Set(unregistered.flatMap((row) => row.revisionOf ?? []));
 
   return (
     <>
@@ -185,54 +244,102 @@ export function RegisteredSkillsPanel({
             </p>
           ) : null}
         </div>
+        <div className="mb-3 empty:mb-0">
+          <StatusRegion outcome={retired ?? controls.outcome} />
+        </div>
         {loading ? (
           <p className="text-sm text-[var(--color-muted)]">loading skills…</p>
         ) : skills.length === 0 ? (
           <p className="text-sm text-[var(--color-muted)]">none yet</p>
         ) : (
           <ul className="grid gap-4">
-            {skills.map((s) => (
-              <li
-                key={s._id}
-                className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2 border-t border-[var(--color-border)] pt-4 first:border-t-0 first:pt-0"
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="flex flex-wrap items-center gap-2 text-sm text-[var(--color-fg)]">
-                    <span className="font-medium break-words">{plainSkillName(s)}</span>
-                    <Chip tone={s.sourceType === 'builtin' ? 'muted' : 'accent'}>
-                      {s.sourceType === 'builtin' ? 'built in' : 'authored'}
-                    </Chip>
-                  </p>
-                  <p className="mt-1 text-xs leading-relaxed text-[var(--color-muted)] break-words">
-                    <code className={CODE_CHIP}>{s.name}</code>
-                    {s.registeredAt !== undefined
-                      ? ` · registered ${registeredOn(s.registeredAt, zone)}`
-                      : ''}
-                    {s.requiredScopes && s.requiredScopes.length > 0 ? ' · ' : ''}
-                    <ScopeChips scopes={s.requiredScopes} lead="needs" />
-                  </p>
-                  {s.sourceType === 'agent-authored' ? (
-                    <SkillInputs body={s.body} surfaceMode={surfaceMode} />
+            {skills.map((s) => {
+              const authored = s.sourceType === 'agent-authored';
+              const checking = holdsLiveAuthoringClaim(s, now);
+              const due = s.recheckDueAt !== undefined && s.recheckReason !== undefined;
+              const hasRevision = revising.has(s._id);
+              return (
+                <li
+                  key={s._id}
+                  className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2 border-t border-[var(--color-border)] pt-4 first:border-t-0 first:pt-0"
+                >
+                  <div className="min-w-0 flex-1 basis-64">
+                    <p className="flex flex-wrap items-center gap-2 text-sm text-[var(--color-fg)]">
+                      <span className="font-medium break-words">{plainSkillName(s)}</span>
+                      <Chip tone={authored ? 'accent' : 'muted'}>
+                        {authored ? 'authored' : 'built in'}
+                      </Chip>
+                      {checking ? <Chip tone="accent">Re-checking</Chip> : null}
+                      {due && !checking ? <Chip tone="warn">Re-check due</Chip> : null}
+                    </p>
+                    <p className="mt-1 text-xs leading-relaxed text-[var(--color-muted)] break-words">
+                      <code className={CODE_CHIP}>{s.name}</code>
+                      {s.registeredAt !== undefined
+                        ? ` · registered ${registeredOn(s.registeredAt, zone)}`
+                        : ''}
+                      {` · ${usedTimes(s.useCount)}`}
+                      {s.requiredScopes && s.requiredScopes.length > 0 ? ' · ' : ''}
+                      <ScopeChips scopes={s.requiredScopes} lead="needs" />
+                    </p>
+                    {authored ? <SkillInputs body={s.body} surfaceMode={surfaceMode} /> : null}
+                    {due && s.recheckReason !== undefined ? (
+                      <p className="mt-1 text-[13px] text-[var(--color-fg-2)] break-words">
+                        {recheckSentence(s.recheckReason, employee)}
+                      </p>
+                    ) : null}
+                    {hasRevision ? (
+                      <p className="mt-1 text-[13px] text-[var(--color-fg-2)]">
+                        {revisionSentence(employee)}
+                      </p>
+                    ) : null}
+                  </div>
+                  {authored ? (
+                    <div className="flex shrink-0 flex-wrap gap-2">
+                      {due && s.versionId !== undefined ? (
+                        <Button
+                          size="small"
+                          onClick={() =>
+                            runControl(async () => {
+                              await recheckNow({ skillId: s._id });
+                              return recheckStartedOutcome(s.name);
+                            }, `${s.name} was not re-checked.`)
+                          }
+                          disabled={checking || controls.busy}
+                          aria-label={`Re-check ${s.name} now`}
+                        >
+                          Re-check now
+                        </Button>
+                      ) : null}
+                      <Button
+                        size="small"
+                        onClick={(event) => {
+                          // reauthor files every outcome as the attempt and never rejects.
+                          void reauthor(s._id, s.name, true, event.currentTarget);
+                        }}
+                        disabled={retrying === s._id || hasRevision}
+                        title={hasRevision ? revisionSentence(employee) : REVISE_HINT}
+                        aria-label={`Ask for a revision of ${s.name}`}
+                        aria-describedby={`${describedBy}-revise`}
+                      >
+                        {retrying === s._id ? 'Asking…' : 'Ask for a revision'}
+                      </Button>
+                      <Button
+                        size="small"
+                        variant="danger"
+                        onClick={(event) => {
+                          setRetired(null);
+                          setRetiring({ skill: s, origin: event.currentTarget });
+                        }}
+                        disabled={controls.busy}
+                        aria-label={`Retire ${s.name}`}
+                      >
+                        Retire
+                      </Button>
+                    </div>
                   ) : null}
-                </div>
-                {s.sourceType === 'agent-authored' ? (
-                  <Button
-                    size="small"
-                    onClick={(event) => {
-                      // reauthor files every outcome as the attempt and never rejects.
-                      void reauthor(s._id, s.name, true, event.currentTarget);
-                    }}
-                    disabled={retrying === s._id}
-                    title={REVISE_HINT}
-                    aria-label={`Revise ${s.name}`}
-                    aria-describedby={`${describedBy}-revise`}
-                    className="shrink-0"
-                  >
-                    {retrying === s._id ? 'Revising…' : 'Revise'}
-                  </Button>
-                ) : null}
-              </li>
-            ))}
+                </li>
+              );
+            })}
           </ul>
         )}
         {skills.some((skill) => skill.sourceType === 'agent-authored') ? (
@@ -247,10 +354,13 @@ export function RegisteredSkillsPanel({
           <ul className="grid gap-4">
             {unregistered.map((s) => {
               const state = unregisteredState(s, now);
+              const attempt = s.state === 'failed' ? attemptLine(s.authoringAttempts) : undefined;
+              const spent = attemptsSpent(s);
+              const withReasons = retriesWithReasons(s);
               return (
                 <li
                   key={s._id}
-                  className="flex items-start justify-between gap-3 border-t border-[var(--color-border)] pt-4 first:border-t-0 first:pt-0"
+                  className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2 border-t border-[var(--color-border)] pt-4 first:border-t-0 first:pt-0"
                 >
                   {/* A traceback's caret line has no break opportunity: without
                       min-w-0 the column keeps its full width and pushes Retry
@@ -259,7 +369,18 @@ export function RegisteredSkillsPanel({
                     <p className="flex flex-wrap items-center gap-2 text-sm text-[var(--color-fg)]">
                       <span className="font-medium break-words">{s.name}</span>
                       <Chip tone={state.tone}>{state.label}</Chip>
+                      {s.revisionOf !== undefined ? <Chip tone="muted">revision</Chip> : null}
                     </p>
+                    {s.revisionOf !== undefined ? (
+                      <p className="mt-1 text-[13px] text-[var(--color-fg-2)]">
+                        {revisionRowSentence(employee)}
+                      </p>
+                    ) : null}
+                    {attempt !== undefined ? (
+                      <p className="mt-1 text-[13px] font-medium text-[var(--color-fg)]">
+                        {attempt}
+                      </p>
+                    ) : null}
                     {/* Three different things, and the row used to say the
                         first for two of them: a run working on it now, whose
                         log is the previous attempt's; a run that died holding
@@ -280,25 +401,53 @@ export function RegisteredSkillsPanel({
                       id={`${describedBy}-${s._id}`}
                       className="mt-1 text-xs text-[var(--color-muted)]"
                     >
-                      {retryHint(s, now)}
+                      {spent
+                        ? attemptsSpentSentence(s.revisionOf !== undefined)
+                        : retryHint(s, now)}
                     </p>
                     <RefusedDraft skill={s} />
                   </div>
-                  <Button
-                    variant="retry"
-                    size="small"
-                    onClick={(event) => {
-                      // reauthor files every outcome as the attempt and never rejects.
-                      void reauthor(s._id, s.name, false, event.currentTarget);
-                    }}
-                    disabled={retrying === s._id || holdsLiveAuthoringClaim(s, now)}
-                    title={retryHint(s, now)}
-                    aria-label={`Retry ${s.name}`}
-                    aria-describedby={`${describedBy}-${s._id}`}
-                    className="shrink-0"
-                  >
-                    {retrying === s._id ? 'Retrying…' : 'Retry'}
-                  </Button>
+                  <div className="flex shrink-0 flex-wrap gap-2">
+                    {spent ? null : (
+                      <Button
+                        variant="retry"
+                        size="small"
+                        onClick={(event) => {
+                          // reauthor files every outcome as the attempt and never rejects.
+                          void reauthor(s._id, s.name, false, event.currentTarget);
+                        }}
+                        disabled={retrying === s._id || holdsLiveAuthoringClaim(s, now)}
+                        title={retryHint(s, now)}
+                        aria-label={
+                          withReasons ? `Retry with the reasons for ${s.name}` : `Retry ${s.name}`
+                        }
+                        aria-describedby={`${describedBy}-${s._id}`}
+                      >
+                        {retrying === s._id
+                          ? 'Retrying…'
+                          : withReasons
+                            ? 'Retry with the reasons'
+                            : 'Retry'}
+                      </Button>
+                    )}
+                    {s.state === 'failed' ? (
+                      <Button
+                        variant="quiet"
+                        size="small"
+                        onClick={() =>
+                          runControl(async () => {
+                            const result = await giveUp({ skillId: s._id });
+                            return givenUpOutcome(s.name, result.cancelled);
+                          }, `${s.name} was not given up.`)
+                        }
+                        disabled={retrying === s._id || controls.busy}
+                        aria-label={`Give up ${s.name}`}
+                        aria-describedby={`${describedBy}-${s._id}`}
+                      >
+                        Give up
+                      </Button>
+                    ) : null}
+                  </div>
                 </li>
               );
             })}
@@ -327,13 +476,27 @@ export function RegisteredSkillsPanel({
           </div>
         </Card>
       ) : null}
+
+      {retiring !== null ? (
+        <RetireSkillDialog
+          skill={retiring.skill}
+          employee={employee}
+          onClose={() => setRetiring(null)}
+          onDone={(words) => {
+            setRetired({ tone: 'done', text: words });
+            // The row leaves the list with its Retire, so focus goes to the card.
+            setReturnTo({ control: retiring.origin, card: registeredCard.current });
+            setRetiring(null);
+          }}
+        />
+      ) : null}
     </>
   );
 }
 
-/** What Revise does, beside the registered list and for its hover. */
+/** What Ask for a revision does, beside the registered list and for its hover. */
 const REVISE_HINT =
-  'Discard this body and author the skill again, then verify it - open only before its first execution, while the item it was proposed for still waits for it';
+  'Ask for a revision: a new version is written and checked in the sandbox, and this one keeps running until the new one registers';
 
 /** What Retry does for a row whose draft is kept. */
 const RETRY_CHECKS_HINT =

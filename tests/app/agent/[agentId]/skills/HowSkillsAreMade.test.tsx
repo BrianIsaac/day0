@@ -10,8 +10,15 @@ describe('HowSkillsAreMade', (): void => {
     expect(steps).toEqual([
       'Mira proposes one when work needs it, naming the item.',
       'You approve; Mira writes it and checks it with a smoke test in a sandbox.',
-      'It registers only once the check passes; a draft that fails stays on this tab with the reason, and Retry feeds the reason back.',
+      'It registers only once the check passes; a draft that fails stays on this tab with the reason, and Retry feeds the reason back, for up to three attempts.',
     ]);
     expect(html).toContain('Retry waits while one is running and opens once it finishes');
+  });
+
+  it('says a registered skill keeps running while it is re-checked or revised, and what Retire and Withdraw reach (10-C)', (): void => {
+    const html = renderToStaticMarkup(<HowSkillsAreMade name="Mira" />);
+    expect(html).toContain(
+      'A registered skill keeps running while it is re-checked or revised. Retire takes it from Mira alone; when other employees run the same version, the same dialog can withdraw it from all of them.',
+    );
   });
 });
