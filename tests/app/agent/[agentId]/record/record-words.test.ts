@@ -222,6 +222,26 @@ describe('recordWords', (): void => {
     ).toBe('The skill kanban-comment-and-close is due a re-check: its check was not kept.');
   });
 
+  it('says a revision is written beside the running skill, and an older in-place one as it was (10-C)', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'skill.revision-requested',
+          payload: { name: 'kanban-comment-and-close', revisionId: 's2' },
+        },
+        subject,
+      ),
+    ).toBe(
+      'You asked for a revision of the skill kanban-comment-and-close; it keeps running until the revision registers.',
+    );
+    expect(
+      recordWords(
+        { type: 'skill.revision-requested', payload: { name: 'kanban-comment-and-close' } },
+        subject,
+      ),
+    ).toBe('You sent the skill kanban-comment-and-close back to be written again.');
+  });
+
   it('says a retire, a withdrawal from every employee and a Give up in the manager’s words (10-C)', (): void => {
     expect(
       recordWords(

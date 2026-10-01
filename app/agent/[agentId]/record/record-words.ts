@@ -276,7 +276,10 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
   },
   'skill.rejected': (p) => `You rejected the skill ${text(p.name) ?? 'unnamed'}`,
   'skill.revision-requested': (p) =>
-    `You sent the skill ${text(p.name) ?? 'unnamed'} back to be written again`,
+    // A row an older release wrote names no revision: its revision overwrote the body in place.
+    typeof p.revisionId === 'string'
+      ? `You asked for a revision of the skill ${text(p.name) ?? 'unnamed'}; it keeps running until the revision registers`
+      : `You sent the skill ${text(p.name) ?? 'unnamed'} back to be written again`,
   'skill.retired': (p) =>
     `The skill ${text(p.name) ?? 'unnamed'} was retired${
       p.withdrawn === true ? ' when you withdrew it from every employee' : ''

@@ -227,7 +227,9 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'skill.approved': (payload) => `skill approved: ${text(payload.name) ?? 'unnamed'}`,
   'skill.rejected': (payload) => `skill rejected: ${text(payload.name) ?? 'unnamed'}`,
   'skill.revision-requested': (payload) =>
-    `skill sent back to be written again: ${text(payload.name) ?? 'unnamed'}`,
+    typeof payload.revisionId === 'string'
+      ? `skill revision asked for: ${text(payload.name) ?? 'unnamed'}`
+      : `skill sent back to be written again: ${text(payload.name) ?? 'unnamed'}`,
   'skill.retired': (payload) =>
     `skill retired${payload.withdrawn === true ? ', withdrawn from every employee' : ''}: ${
       text(payload.name) ?? 'unnamed'

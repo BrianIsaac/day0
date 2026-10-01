@@ -274,6 +274,21 @@ describe('the live feed labels', (): void => {
     ).toBe('skill re-check due: kanban-comment-and-close (v3 is verified; this runs v2)');
   });
 
+  it('labels a revision written beside the running skill, and an older in-place one as it was (10-C)', (): void => {
+    expect(
+      eventLabel({
+        type: 'skill.revision-requested',
+        payload: { name: 'kanban-comment-and-close', revisionId: 's2' },
+      }),
+    ).toBe('skill revision asked for: kanban-comment-and-close');
+    expect(
+      eventLabel({
+        type: 'skill.revision-requested',
+        payload: { name: 'kanban-comment-and-close' },
+      }),
+    ).toBe('skill sent back to be written again: kanban-comment-and-close');
+  });
+
   it('labels a retire, a withdrawal from every employee and a Give up (10-C)', (): void => {
     expect(
       eventLabel({
