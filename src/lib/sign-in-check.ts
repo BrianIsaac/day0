@@ -137,6 +137,22 @@ function addressVerdict(
       );
 }
 
+/**
+ * The line a generic issuer's check carries whatever its token says (decision 7 (a); the wave 10
+ * review, S-m2): the domain rule admits an unverified address of an allowed domain to sign in, so
+ * an issuer where anyone can register such an address admits anyone to the model. Entra, Okta
+ * and Google control their addresses; a generic issuer may not, and Day0 cannot tell.
+ */
+function registrationVerdict(input: ClaimCheckInput): ClaimVerdict | undefined {
+  if (providerOfIssuer(input.issuer) !== 'oidc') return undefined;
+  return verdict(
+    'registration',
+    'the issuer’s own',
+    'warn',
+    'If anyone can register an address in an allowed domain at this issuer, they can sign in and spend the model: require a verified address there, or turn self-registration off.',
+  );
+}
+
 /** The provider's own claim: Google's `hd`, Entra's `tid`; none for the others. */
 function providerVerdict(
   claims: Readonly<Record<string, unknown>>,
@@ -179,8 +195,9 @@ function providerVerdict(
 
 /**
  * The verdict on each claim that matters, in a fixed order: `iss`, `aud`,
- * `sub`, `email`, the verified-address claim, the provider's own (`hd`,
- * `tid`), the token's lifetime and whether a refresh token came with it.
+ * `sub`, `email`, the verified-address claim, for a generic issuer the
+ * self-registration line, the provider's own (`hd`, `tid`), the token's
+ * lifetime and whether a refresh token came with it.
  *
  * @param claims - The verified ID token's claims.
  * @param input - The install's own settings.
@@ -201,6 +218,7 @@ export function claimVerdicts(
       ? `${Math.round((claims.exp - claims.iat) / 60)} minutes`
       : undefined;
   const provider = providerVerdict(claims, input);
+  const registration = registrationVerdict(input);
   return [
     claims.iss === input.issuer
       ? verdict('iss', claims.iss, 'ok', 'Equal to DAY0_OIDC_ISSUER byte for byte.')
@@ -230,6 +248,7 @@ export function claimVerdicts(
           OPERATOR_REFUSAL_WORDS[refusal](input.allowedDomains),
         ),
     addressVerdict(claims, input),
+    ...(registration ? [registration] : []),
     ...(provider ? [provider] : []),
     lifetime === undefined
       ? verdict('exp', claims.exp, 'gap', 'The token carries no lifetime.')

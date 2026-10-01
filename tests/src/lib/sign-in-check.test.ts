@@ -53,6 +53,19 @@ describe('the live check’s claim verdicts', (): void => {
     expect(verdicts.find((one) => one.claim === 'exp')?.value).toBe('60 minutes');
   });
 
+  it('tells the operator of a generic issuer to require a verified address where anyone can register one (decision 7 (a), the wave 10 review, S-m2)', (): void => {
+    const generic = { ...OKTA, issuer: 'https://sso.example.com/realms/ops' };
+    const registration = claimVerdicts(
+      { ...BASE, iss: generic.issuer, email_verified: true },
+      generic,
+    ).find((one) => one.claim === 'registration');
+    expect(registration).toMatchObject({ status: 'warn' });
+    expect(registration?.note).toContain('anyone can register an address');
+    expect(registration?.note).toContain('require a verified address');
+    // The named providers control their addresses: no such line.
+    expect(claimVerdicts(BASE, OKTA).map((one) => one.claim)).not.toContain('registration');
+  });
+
   it('tells the operator, not the person, what a refused address means and what to do', (): void => {
     const note = claimVerdicts({ ...BASE, email: 'eve@rival.test' }, OKTA).find(
       (one) => one.claim === 'email',
