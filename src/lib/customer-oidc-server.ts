@@ -157,7 +157,8 @@ class IssuerConnection {
   }
 
   /**
-   * The outcome of refreshing with one refresh token, shared while it is fresh.
+   * The outcome of refreshing with one refresh token, shared while it is fresh; an
+   * unreachable issuer's outcome only while the attempt is in flight.
    *
    * @param refreshToken - The token presented.
    * @param now - The current time in milliseconds.
@@ -173,7 +174,12 @@ class IssuerConnection {
     }
     const held = this.#refreshes.get(refreshToken);
     if (held) return held.outcome;
-    const outcome = perform();
+    // An issuer that could not be reached is not remembered: the browser's retries and a
+    // reload must ask it again, not be answered from here for the rest of the minute.
+    const outcome = perform().then((result) => {
+      if (result.kind === 'unavailable') this.#refreshes.delete(refreshToken);
+      return result;
+    });
     this.#refreshes.set(refreshToken, { at: now, outcome });
     return outcome;
   }

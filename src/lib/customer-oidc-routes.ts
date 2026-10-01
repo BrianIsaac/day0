@@ -377,21 +377,27 @@ export async function callbackRoute(request: NextRequest): Promise<NextResponse>
   }
 }
 
-/** How long a token must still be good for to be handed out when the issuer cannot refresh it. */
-const STILL_GOOD_MS = 30_000;
+/**
+ * How long a token must still be good for to be handed out when the issuer cannot refresh it.
+ * Convex asks for a fresh token ten seconds before expiry, always forced, so anything longer
+ * would end a live page at the first moment the issuer is down; a token past this is the
+ * deployment's to refuse, which sends Convex back for another.
+ */
+const STILL_GOOD_MS = 2_000;
 
 /**
  * Whether a state-changing request comes from the app's own pages: its
- * `Origin` is the public origin, or the browser marks it same-origin. The
- * session cookie is `SameSite=Lax`, so another site's POST does not carry it;
- * this is the second lock on the same door.
+ * `Origin` is the public origin or the origin the request was sent to (a
+ * customer's proxy may serve another name than `DAY0_PUBLIC_URL`), or the
+ * browser marks it same-origin. The session cookie is `SameSite=Lax`, so
+ * another site's POST does not carry it; this is the second lock on the door.
  *
  * @param request - The request.
  * @param settings - The sign-in's settings.
  */
 export function fromOwnPages(request: NextRequest, settings: CustomerSignInSettings): boolean {
   const origin = request.headers.get('origin');
-  if (origin !== null) return origin === settings.publicUrl;
+  if (origin !== null) return origin === settings.publicUrl || origin === request.nextUrl.origin;
   return request.headers.get('sec-fetch-site') === 'same-origin';
 }
 

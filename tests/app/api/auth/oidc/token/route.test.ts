@@ -115,6 +115,20 @@ describe('the company sign-in token route', (): void => {
     expect(setCookies(unavailable.response).size).toBe(0);
   });
 
+  it("hands out the current token on Convex's own refresh, ten seconds before expiry, while the issuer is down", async (): Promise<void> => {
+    const issuer = customerIssuer({ tokenSeconds: 120 });
+    const cookie = await signedIn(issuer, 'priya');
+    const first = await token(cookie);
+    vi.stubGlobal('fetch', async (): Promise<Response> => {
+      throw new TypeError('fetch failed');
+    });
+    // Convex refetches ten seconds before expiry, always forced (convex-js authentication manager).
+    vi.setSystemTime(START + 110_000);
+    const held = await token(cookie, { force: true });
+    expect(held.status).toBe(200);
+    expect(held.body.token).toBe(first.body.token);
+  });
+
   it('answers a browser with no session as signed out', async (): Promise<void> => {
     customerIssuer();
     const answer = await token('day0_session=v1.AAAAAAAAAAAAAAAA.AAAA');
