@@ -508,6 +508,8 @@ export const charterChangeValidator = v.union(
  *   The new charter row's id and version.
  *
  * Raises:
+ *   ConvexError: In the accepted handover's words, while a new manager's
+ *     acceptance of the employee waits for its runs (decision 9).
  *   Error: When the agent has no approved charter, a change names something
  *     the charter lacks, or the changes leave the body as it was.
  */
@@ -520,6 +522,10 @@ export async function amendCharterInTransaction(
     reason?: string;
   },
 ): Promise<{ charterId: Id<'charters'>; version: string; previousVersion: string }> {
+  // Every path that amends (the card, a question's answer, a plan approved with answers, the
+  // DMs) waits out an accepted handover: the amendment would move with the employee after the
+  // new manager's preview (decision 9; the second pass).
+  await assertNotBeingHandedOver(ctx.db, args.agentId);
   const previous = await ctx.db
     .query('charters')
     .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
@@ -617,7 +623,6 @@ export const amend = mutation({
   },
   handler: async (ctx, args): Promise<{ charterId: Id<'charters'>; version: string }> => {
     await assertOwnsAgent(ctx, args.agentId);
-    await assertNotBeingHandedOver(ctx.db, args.agentId);
     try {
       const result = await amendCharterInTransaction(ctx, {
         agentId: args.agentId,

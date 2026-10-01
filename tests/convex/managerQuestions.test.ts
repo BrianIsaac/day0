@@ -13,6 +13,7 @@ import {
   SYNTHESIS_SELF_CHECK_NOTE_2026_09_16,
 } from '../fixtures/charter-synthesis-notes-2026-09-16';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import { acceptedHandoverWords, seedAcceptingHandover } from './fakes/accepting-handover';
 
 type Harness = TestConvex<typeof schema>;
 
@@ -335,6 +336,25 @@ describe('answering a question', (): void => {
         charterId: result.amendedCharterId,
       },
     ]);
+  });
+
+  it('refuses an answer that would amend the charter once a new manager has accepted the employee (decision 9, the second pass)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId } = await seedApprovedAgent(harness);
+    const workItemId = await seedClaimed(harness, agentId, 'REVOPS-7 tile refresh');
+    await harness.mutation(internal.work.setPlan, { workItemId, plan: lookerPlan });
+    const [asked] = await questions(harness, agentId);
+    await seedAcceptingHandover(harness, agentId, 'worker 1');
+
+    await expect(
+      harness
+        .withIdentity(OWNER)
+        .mutation(api.managerQuestions.answer, { questionId: asked!._id, text: 'Priya owns it.' }),
+    ).rejects.toMatchObject({ data: acceptedHandoverWords('worker 1') });
+    const charters = await harness.run(async (ctx) =>
+      (await ctx.db.query('charters').collect()).filter((row) => row.agentId === agentId),
+    );
+    expect(charters).toHaveLength(1);
   });
 
   it('refuses a second answer, a stranger and an empty answer', async (): Promise<void> => {
