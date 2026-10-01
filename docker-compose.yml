@@ -448,6 +448,8 @@ services:
     command: ['node', '/app/server.js']
     environment:
       - FAKE_SLACK_PORT=8090
+      # Addresses that are people of their own besides the one manager (RM2).
+      - FAKE_SLACK_PEOPLE=${FAKE_SLACK_PEOPLE:-}
     volumes:
       - ./fake-slack/server.js:/app/server.js:ro
     ports:
