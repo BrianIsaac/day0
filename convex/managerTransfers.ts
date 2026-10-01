@@ -12,6 +12,7 @@ import {
   type QueryCtx,
 } from './_generated/server';
 import { appendEvent } from './eventLog';
+import { runsInFlight } from './transferInFlight';
 import { isEvaluationAgent } from './metrics';
 import {
   assertNamedInTransfer,
@@ -219,6 +220,18 @@ const incomingTransferValidator = v.object({
   note: v.optional(v.string()),
   requestedAt: v.number(),
   expiresAt: v.number(),
+});
+
+/** An accepted request on its way to the caller, for the acceptor's line on the home. */
+const arrivingTransferValidator = v.object({
+  transferId: v.id('managerTransfers'),
+  agentId: v.id('agents'),
+  agentName: v.string(),
+  fromAddress: v.string(),
+  /** When the runs in flight are stopped at the latest. */
+  settleBy: v.optional(v.number()),
+  /** The runs the move waits for, counted as the move counts them. */
+  runsInFlight: v.number(),
 });
 
 /** The states a finished request reaches that the old manager is told about. */
@@ -881,6 +894,39 @@ export const incoming = query({
     const caller = await getCaller(ctx);
     if (!caller) return [];
     return await incomingTransfersOf(ctx, caller, Date.now());
+  },
+});
+
+/**
+ * Public, by verified address and owner key: the requests the caller accepted that still wait
+ * for the employee's runs (`accepting`), each with the runs the move waits for, so the home says
+ * an employee is on its way until it arrives, across reloads (the transfer plan, section 4.2:
+ * `accepting` "is shown to both managers as accepted, handing over"). An anonymous caller, or
+ * one without a verified address, has none. Writes nothing.
+ */
+export const arriving = query({
+  args: {},
+  returns: v.array(arrivingTransferValidator),
+  handler: async (ctx): Promise<Infer<typeof arrivingTransferValidator>[]> => {
+    const caller = await getCaller(ctx);
+    const address = caller ? verifiedAddressOf(caller) : undefined;
+    if (!caller || address === undefined) return [];
+    // An accepting request is open, so the per-address bound bounds this read too.
+    const accepting = await ctx.db
+      .query('managerTransfers')
+      .withIndex('by_to_address_state', (q) => q.eq('toAddress', address).eq('state', 'accepting'))
+      .take(MAX_OPEN_TRANSFERS_PER_ADDRESS);
+    const accepted = accepting.filter((transfer) => transfer.toOwnerKey === caller.ownerKey);
+    return await Promise.all(
+      accepted.map(async (transfer) => ({
+        transferId: transfer._id,
+        agentId: transfer.agentId,
+        agentName: transfer.agentName,
+        fromAddress: transfer.fromAddress,
+        ...(transfer.settleBy !== undefined ? { settleBy: transfer.settleBy } : {}),
+        runsInFlight: await runsInFlight(ctx.db, transfer.agentId),
+      })),
+    );
   },
 });
 

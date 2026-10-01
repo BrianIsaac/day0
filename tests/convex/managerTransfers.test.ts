@@ -983,6 +983,81 @@ describe('managerTransfers.incoming', (): void => {
   });
 });
 
+describe('managerTransfers.arriving', (): void => {
+  it('lists the requests the caller accepted that wait for the employee’s runs, with the runs, to the acceptor only', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const maya = await employee(harness);
+    const tomas = await employee(harness, 'Tomas');
+    const settleBy = Date.now() + 15 * 60_000;
+    const accepting = await insertRequest(harness, {
+      agentId: maya,
+      state: 'accepting',
+      decidedAt: Date.now(),
+      toOwnerKey: 'priya',
+      settleBy,
+    });
+    // Another account signed in with the same address took this one on: it is not the caller's.
+    await insertRequest(harness, {
+      agentId: tomas,
+      state: 'accepting',
+      decidedAt: Date.now(),
+      toOwnerKey: 'another-priya',
+      settleBy,
+    });
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('workItems', {
+        agentId: maya,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'REVOPS-1',
+        externalClaimKey: 'linear:REVOPS-1',
+        title: 'Close REVOPS-1',
+        contentSummary: 'Close REVOPS-1',
+        contentRefs: [],
+        observedAt: 1,
+        createdAt: 1,
+        state: 'executing',
+      });
+    });
+
+    await expect(
+      harness.withIdentity(PRIYA).query(api.managerTransfers.arriving, {}),
+    ).resolves.toEqual([
+      {
+        transferId: accepting,
+        agentId: maya,
+        agentName: 'Maya',
+        fromAddress: MANAGER_ADDRESS,
+        settleBy,
+        runsInFlight: 1,
+      },
+    ]);
+    await expect(
+      harness.withIdentity(OWNER).query(api.managerTransfers.arriving, {}),
+    ).resolves.toEqual([]);
+    await expect(harness.query(api.managerTransfers.arriving, {})).resolves.toEqual([]);
+    await expect(
+      harness
+        .withIdentity(managerIdentity('priya', { emailVerified: false }))
+        .query(api.managerTransfers.arriving, {}),
+    ).resolves.toEqual([]);
+  });
+
+  it('lists nothing once the request is accepted and the employee has arrived', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const maya = await employee(harness, 'Maya', { userId: 'priya' });
+    await insertRequest(harness, {
+      agentId: maya,
+      state: 'accepted',
+      decidedAt: Date.now(),
+      toOwnerKey: 'priya',
+    });
+    await expect(
+      harness.withIdentity(PRIYA).query(api.managerTransfers.arriving, {}),
+    ).resolves.toEqual([]);
+  });
+});
+
 describe('managerTransfers.departures and departureOf', (): void => {
   it('lists the asker’s requests answered in the last 30 days, newest first, and none cancelled, older or another account’s', async (): Promise<void> => {
     vi.useFakeTimers();

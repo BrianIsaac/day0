@@ -26,6 +26,7 @@ import {
   type Boundaries,
 } from './reset';
 import { handOverSurfaces, surfaceHandoversOf, type HandedOverSurfaces } from './surfaces';
+import { runsInFlight } from './transferInFlight';
 import { endOneToOnesForHandover, oneToOnesAtHandoverRefusal } from './voice';
 import {
   needsYouOfEmployee,
@@ -141,23 +142,6 @@ async function departingEmployee(
     throw new ConvexError(EMPLOYEE_LEFT_ASKER);
   }
   return agent;
-}
-
-/**
- * How many of the employee's runs are in flight: the items executing, an apply that has started
- * among them (the transfer plan, section 6.4). The move waits for these. An approved set whose
- * apply has not started is not one: once the request is accepting the apply does not start, and
- * the move returns the set to held (D13).
- *
- * @param db - Any reader.
- * @param agentId - The employee.
- */
-async function runsInFlight(db: QueryCtx['db'], agentId: Id<'agents'>): Promise<number> {
-  const executing = await db
-    .query('workItems')
-    .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', 'executing'))
-    .take(PREVIEW_ROW_LIMIT);
-  return executing.length;
 }
 
 /** The employee's newest approved charter, the one in force, or null before one is approved. */
