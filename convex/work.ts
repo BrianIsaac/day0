@@ -1822,7 +1822,9 @@ export const writeClaimHolder = internalQuery({
  * guard reads (`writeTargetIds`), since the listing may print either case. A
  * ticket another work item holds is left to it, the work item's own
  * discovered item is never claimed twice, and a browser page field is
- * claimed before authoring (`takeWriteTargetClaims`), not here.
+ * claimed before authoring (`takeWriteTargetClaims`), not here. A run no
+ * longer executing takes nothing: one stopped at a handover's deadline has
+ * moved to its new owner, whose claims it must not write (U-2).
  *
  * @returns The keys taken.
  */
@@ -1834,6 +1836,7 @@ export const claimLandedTicketWrites = internalMutation({
   handler: async (ctx, args): Promise<string[]> => {
     const row = await ctx.db.get(args.workItemId);
     if (SURFACE_MODE !== 'real' || !row || isRevocationTrialRow(row)) return [];
+    if (row.state !== 'executing') return [];
     const userId = (await ctx.db.get(row.agentId))?.userId;
     if (!userId) return [];
     const keys = new Set<string>();

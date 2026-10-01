@@ -500,6 +500,20 @@ describe('a stopped run’s late writes after the move (U-2)', (): void => {
     const handover = await seedHandover();
     const { workItemId, runId } = await seedExecuting(handover, 'REVOPS-1');
     const applyAttemptId = await handover.harness.run(async (ctx) => {
+      // The tracker the apply was writing to: a landed ticket write would claim through it.
+      await ctx.db.insert('surfaces', {
+        agentId: handover.maya,
+        slug: 'linear',
+        displayName: 'Linear',
+        class: 'kanban',
+        path: 'mcp',
+        verdict: 'connected',
+        managerApprovedAt: 1,
+        credentialLanded: true,
+        lastVerifiedAt: Date.now(),
+        whereFound: [],
+        createdAt: 1,
+      });
       const attempt = await ctx.db.insert('events', {
         agentId: handover.maya,
         type: 'work.actions-applying',
@@ -591,6 +605,12 @@ describe('a stopped run’s late writes after the move (U-2)', (): void => {
         phase: 'auto',
       }),
     ).resolves.toEqual({ recovered: 'ignored' });
+    await expect(
+      handover.harness.mutation(internal.work.claimLandedTicketWrites, {
+        workItemId,
+        writes: [{ surfaceSlug: 'linear', targets: ['REVOPS-1'] }],
+      }),
+    ).resolves.toEqual([]);
     await drain(handover.harness);
 
     expect(await snapshot(handover, workItemId)).toEqual(before);
