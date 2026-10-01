@@ -5464,22 +5464,45 @@ export async function stopRunsForHandover(
     .query('workItems')
     .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', 'executing'))
     .collect();
-  for (const row of running) {
+  await stopRunsInTransaction(ctx, running, HANDOVER_STOP_REASON);
+  return running.length;
+}
+
+/**
+ * Stop runs under way, in the caller's transaction, through the stop every run's end shares
+ * ({@link failInTransaction}): the run id and the apply attempt are cleared, so the run's own
+ * next mutation is refused and writes nothing, and the item fails with the reason and the Retry
+ * a stopped run offers. A run whose apply was claimed may have sent its approved rows, so its
+ * ledger records their outcome as unknown, as the apply's dead-man switch would
+ * ({@link interruptedApplyLedger}), and it is not recorded as a stop; any other run is a stop when
+ * nothing it ran landed. A handover's deadline stops an employee's runs this way
+ * ({@link stopRunsForHandover}), and a Withdraw the runs of the version it withdraws
+ * (`skillControls.withdraw`; the wave 10 review, M4).
+ *
+ * @param ctx - The caller's mutation context.
+ * @param rows - The items whose runs stop: executing, or holding the actions a run drafted.
+ * @param reason - Why, in the words the item and the record carry after `stopped: `.
+ */
+export async function stopRunsInTransaction(
+  ctx: MutationCtx,
+  rows: readonly Doc<'workItems'>[],
+  reason: string,
+): Promise<void> {
+  for (const row of rows) {
     if (row.applyAttemptId !== undefined && row.pendingRunId !== undefined) {
       const { output, applied } = interruptedApplyLedger(row, row.pendingRunId);
       await failInTransaction(ctx, row, {
-        reason: HANDOVER_STOP_REASON,
+        reason,
         output: { ...output, applied },
         stopped: false,
       });
     } else {
       await failInTransaction(ctx, row, {
-        reason: HANDOVER_STOP_REASON,
+        reason,
         ...(row.output !== undefined ? { output: row.output } : {}),
       });
     }
   }
-  return running.length;
 }
 
 /**

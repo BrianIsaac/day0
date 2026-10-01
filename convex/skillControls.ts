@@ -13,7 +13,7 @@ import { assertOwnsAgent, assertOwnsSkill } from './ownership';
 import { appendEvent, eventsOfType } from './eventLog';
 import { assertNotBeingHandedOver } from './handoverFence';
 import { holdersOf, newerVersionToRecheck } from './skillVersions';
-import { applyVerdict } from './work';
+import { applyVerdict, stopRunsInTransaction } from './work';
 import { scheduleNextStep, STEP_LEASE_MS } from './workLoop';
 import { isEventOf, type SkillRevokedHolder } from '../src/events/contract';
 import { holdsLiveAuthoringClaim } from '../src/lib/skill-authoring';
@@ -27,6 +27,7 @@ import {
   strandedItemReason,
   takenOutItemReason,
   WITHDRAWN_BY_MANAGER,
+  withdrawnRunReason,
   type TakenOut,
 } from '../src/work/skill-controls';
 
@@ -47,8 +48,9 @@ import {
 const releasedClaim = { authoringRunId: undefined, authoringClaimedAt: undefined } as const;
 
 /**
- * Approved items of one employee a Retire reads for the ones its skill would have run. An
- * employee's approved items are bounded by its work-in-progress cap, far below this.
+ * Items of one employee in one state a Retire or a Withdraw reads for the ones its skill would
+ * have run or is running. An employee's approved and running items are bounded by its
+ * work-in-progress cap, far below this.
  */
 const APPROVED_SCAN = 200;
 
@@ -524,8 +526,8 @@ export const retire = mutation({
  * Public, guarded by `assertOwnsSkill`: Withdraw for every employee (A12). The version the row
  * holds is stamped withdrawn (`revokedAt`, `revokedReason`), so it is offered to nobody and no
  * stored verification registers it again, and every holder of it that is callable is retired as
- * Retire retires one, all in this one transaction; every adoption offering it ends with it
- * ({@link endAdoptionsOf}). One `skill.revoked` on the acting employee's record names every holder
+ * Retire retires one, all in this one transaction; a run of it already under way is stopped
+ * ({@link stopRunsOf}), and every adoption offering it ends with it ({@link endAdoptionsOf}). One `skill.revoked` on the acting employee's record names every holder
  * retired; each holder's record carries its own `skill.retired`, and each ended adoption's a
  * `skill.rejected` saying so. Refused for a row that is not a callable skill an employee wrote.
  */
@@ -534,7 +536,7 @@ export const withdraw = mutation({
   handler: async (
     ctx,
     args,
-  ): Promise<{ withdrawn: true; holders: number; returnedItems: number }> => {
+  ): Promise<{ withdrawn: true; holders: number; returnedItems: number; stoppedRuns: number }> => {
     const row = await assertOwnsSkill(ctx, args.skillId);
     const reason = controlReason(args.reason, WITHDRAWN_BY_MANAGER);
     assertCallableAuthored(row, 'withdrawn');
@@ -550,14 +552,15 @@ export const withdraw = mutation({
  * @param ctx - The control's mutation context.
  * @param row - The row the manager withdrew it from; it holds the version.
  * @param reason - The reason kept on the version, each holder and the record.
- * @returns How many holders were retired and how many approved items went back to waiting.
+ * @returns How many holders were retired, how many approved items went back to waiting, and how
+ *   many runs under way were stopped.
  * @throws ConvexError when the row holds no version of its owner's, or the version was withdrawn.
  */
 async function withdrawVersion(
   ctx: MutationCtx,
   row: Doc<'skills'>,
   reason: string,
-): Promise<{ holders: number; returnedItems: number }> {
+): Promise<{ holders: number; returnedItems: number; stoppedRuns: number }> {
   const version = row.versionId === undefined ? null : await ctx.db.get(row.versionId);
   const owner = (await ctx.db.get(row.agentId))?.userId;
   if (version === null || version.userId !== owner) {
@@ -572,10 +575,12 @@ async function withdrawVersion(
   await ctx.db.patch(version._id, { revokedAt: now, revokedReason: reason });
   const holders: SkillRevokedHolder[] = [];
   let returnedItems = 0;
+  let stoppedRuns = 0;
   for (const holder of await holdersOf(ctx.db, version._id)) {
     if (holder.state !== 'registered') continue;
     const employee = await ctx.db.get(holder.agentId);
     if (employee === null || employee.userId !== version.userId) continue;
+    stoppedRuns += await stopRunsOf(ctx, holder);
     returnedItems += (await retireHolder(ctx, holder, { reason, how: 'withdrawn', now })).length;
     holders.push({ skillId: holder._id, agentId: holder.agentId, agentName: employee.name });
   }
@@ -593,7 +598,33 @@ async function withdrawVersion(
     },
     createdAt: now,
   });
-  return { holders: holders.length, returnedItems };
+  return { holders: holders.length, returnedItems, stoppedRuns };
+}
+
+/** The states of an item whose run a Withdraw stops: running, or holding the actions it drafted. */
+const STOPPED_BY_WITHDRAW: readonly Doc<'workItems'>['state'][] = ['executing', 'actions-pending'];
+
+/**
+ * Stop the runs of one holder of a withdrawn version, as a handover's deadline stops a run
+ * (`work.stopRunsInTransaction`; decision 3 (b), the wave 10 review, M4): every item executing
+ * the row, and every item holding for the manager's approval the actions a run of it drafted,
+ * fails as stopped with {@link withdrawnRunReason} and offers Retry, so the body the manager has
+ * withdrawn as wrong writes nothing more. A Retire stops nothing: its dialog says a run already
+ * under way finishes.
+ *
+ * @returns How many runs were stopped.
+ */
+async function stopRunsOf(ctx: MutationCtx, holder: Doc<'skills'>): Promise<number> {
+  const runs: Doc<'workItems'>[] = [];
+  for (const state of STOPPED_BY_WITHDRAW) {
+    const items = await ctx.db
+      .query('workItems')
+      .withIndex('by_agent_state', (q) => q.eq('agentId', holder.agentId).eq('state', state))
+      .take(APPROVED_SCAN);
+    runs.push(...items.filter((item) => item.skillId === holder._id));
+  }
+  await stopRunsInTransaction(ctx, runs, withdrawnRunReason(holder.name));
+  return runs.length;
 }
 
 /**

@@ -322,6 +322,26 @@ describe('skillControls', (): void => {
       ]);
     });
 
+    it('leaves a run already under way to finish, as the dialog says (decision 3)', async (): Promise<void> => {
+      const harness = convexTest(schema, allConvexModules());
+      const office = await seedOffice(harness);
+      const executing = await seedItem(harness, office.mateo, {
+        state: 'executing',
+        externalId: 'REVOPS-7',
+        skillId: office.mateoSkill,
+        plan: APPROVED_PLAN,
+      });
+
+      await harness
+        .withIdentity(OWNER)
+        .mutation(api.skillControls.retire, { skillId: office.mateoSkill });
+
+      expect(await item(harness, executing)).toMatchObject({
+        state: 'executing',
+        skillId: office.mateoSkill,
+      });
+    });
+
     it('links the items it returned to a new proposal of the name', async (): Promise<void> => {
       const harness = convexTest(schema, allConvexModules());
       const office = await seedOffice(harness);
@@ -611,7 +631,7 @@ describe('skillControls', (): void => {
           skillId: office.priyaSkill,
           reason: 'it closes the wrong tickets',
         }),
-      ).resolves.toEqual({ withdrawn: true, holders: 2, returnedItems: 1 });
+      ).resolves.toEqual({ withdrawn: true, holders: 2, returnedItems: 1, stoppedRuns: 0 });
 
       const version = await harness.run(async (ctx) => await ctx.db.get(office.versionId));
       expect(version?.revokedReason).toBe('it closes the wrong tickets');
@@ -721,7 +741,7 @@ describe('skillControls', (): void => {
           skillId: office.priyaSkill,
           reason: 'it closes the wrong tickets',
         }),
-      ).resolves.toEqual({ withdrawn: true, holders: 2, returnedItems: 0 });
+      ).resolves.toEqual({ withdrawn: true, holders: 2, returnedItems: 0, stoppedRuns: 0 });
 
       for (const [agentId, skillId] of [
         [adopters.tomas, adopters.tomasSkill],
@@ -763,6 +783,51 @@ describe('skillControls', (): void => {
         expect(proposal).toMatchObject({ name: NAME, state: 'proposed' });
         expect(proposal.offeredVersionId).toBeUndefined();
       }
+    });
+
+    it('stops the runs executing the version and the actions they hold for approval, each with the reason and a Retry (decision 3 (b), the wave 10 review, M4)', async (): Promise<void> => {
+      const harness = convexTest(schema, allConvexModules());
+      const office = await seedOffice(harness);
+      const executing = await seedItem(harness, office.priya, {
+        state: 'executing',
+        externalId: 'REVOPS-7',
+        skillId: office.priyaSkill,
+        plan: APPROVED_PLAN,
+      });
+      const held = await seedItem(harness, office.mateo, {
+        state: 'actions-pending',
+        externalId: 'REVOPS-8',
+        skillId: office.mateoSkill,
+        plan: APPROVED_PLAN,
+      });
+      // A run of another skill is not this withdrawal's.
+      const other = await seedItem(harness, office.mateo, {
+        state: 'executing',
+        externalId: 'REVOPS-9',
+        plan: APPROVED_PLAN,
+      });
+
+      await expect(
+        harness.withIdentity(OWNER).mutation(api.skillControls.withdraw, {
+          skillId: office.priyaSkill,
+          reason: 'it closes the wrong tickets',
+        }),
+      ).resolves.toEqual({ withdrawn: true, holders: 2, returnedItems: 0, stoppedRuns: 2 });
+
+      const reason = `stopped: the skill ${NAME} was withdrawn from every employee while this ran`;
+      for (const [agentId, workItemId] of [
+        [office.priya, executing],
+        [office.mateo, held],
+      ] as const) {
+        expect(await item(harness, workItemId)).toMatchObject({
+          state: 'failed',
+          skipReason: reason,
+        });
+        expect(
+          (await eventsOf(harness, agentId, 'work.failed')).map((event) => event.payload),
+        ).toEqual([expect.objectContaining({ workItemId, reason, stopped: true })]);
+      }
+      expect((await item(harness, other)).state).toBe('executing');
     });
 
     it('claimForExecution refuses a withdrawn row', async (): Promise<void> => {

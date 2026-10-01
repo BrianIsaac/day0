@@ -9,6 +9,7 @@ import {
   controlReasonOf,
   RETIRED_BY_MANAGER,
   takenOutItemReason,
+  withdrawnRunReason,
   WITHDRAWN_BY_MANAGER,
 } from '../../../src/work/skill-controls';
 
@@ -63,6 +64,14 @@ describe('skill controls words', (): void => {
   it('tells an item no proposal reached that it is evaluated afresh', (): void => {
     expect(strandedItemReason('kanban-comment-and-close')).toBe(
       'no proposal of the skill kanban-comment-and-close reached this item, so it is evaluated afresh',
+    );
+  });
+});
+
+describe('withdrawnRunReason', (): void => {
+  it('says the run was stopped because its skill was withdrawn while it ran', (): void => {
+    expect(withdrawnRunReason('kanban-comment-and-close')).toBe(
+      'the skill kanban-comment-and-close was withdrawn from every employee while this ran',
     );
   });
 });
