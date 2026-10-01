@@ -251,8 +251,29 @@ describe('the acceptance dialog (plan 7.3)', () => {
     expect(lead('Owns triage.')).toMatch(/Maya: Owns triage\.$/);
   });
 
+  it('leads what the new manager takes on with the decisions waiting on them, by kind (plan 7.3, U4-m5)', () => {
+    const waiting = {
+      ...PREVIEW.takesOn.waiting,
+      plan: 1,
+      held: 2,
+      oneToOne: 1,
+    };
+    const none = { ...PREVIEW.takesOn.waiting, plan: 0 };
+    expect(takesOnLines({ takesOn: { ...PREVIEW.takesOn, waiting: none } })[0]).toBe(
+      '3 items in progress',
+    );
+    expect(takesOnLines({ takesOn: { ...PREVIEW.takesOn, waiting } })[0]).toBe(
+      '4 decisions waiting: 1 one-to-one, 1 plan and 2 items with writes held',
+    );
+    const one = { ...PREVIEW.takesOn.waiting, plan: 0, surface: 1 };
+    expect(takesOnLines({ takesOn: { ...PREVIEW.takesOn, waiting: one } })[0]).toBe(
+      '1 decision waiting: 1 connection to approve',
+    );
+  });
+
   it('lists what the new manager takes on', () => {
     expect(takesOnLines(PREVIEW)).toEqual([
+      '1 decision waiting: 1 plan',
       '3 items in progress',
       '2 skills',
       'charter version 0.2, approved',
@@ -276,6 +297,7 @@ describe('the acceptance dialog (plan 7.3)', () => {
       },
     });
     expect(lines).toEqual([
+      '1 decision waiting: 1 plan',
       'at least 200 items in progress',
       '1 skill',
       'no approved charter: you hold its Day-1 one-to-one',

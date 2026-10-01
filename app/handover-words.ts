@@ -342,8 +342,46 @@ export const CHECK = 'Check';
 /** The acceptance dialog's section of the acceptor's documentation. */
 export const READS_FOR_IT = 'Reads for it';
 
+/** The preview's waiting counts, by the inbox's kinds as the validator names them. */
+type WaitingCounts = HandoverPreview['takesOn']['waiting'];
+
 /**
- * What the new manager takes on, line by line (plan 7.3).
+ * How each kind of decision waiting is counted in the acceptance dialog, singular and plural, in
+ * the inbox's order. A held entry is counted as an item, not by its writes: the preview counts
+ * entries.
+ */
+const WAITING_DECISION_NOUNS: Readonly<
+  Record<keyof WaitingCounts, readonly [one: string, many: string]>
+> = {
+  oneToOne: ['one-to-one', 'one-to-ones'],
+  charter: ['charter to review', 'charters to review'],
+  plan: ['plan', 'plans'],
+  held: ['item with writes held', 'items with writes held'],
+  skill: ['skill to approve', 'skills to approve'],
+  parked: ['parked item', 'parked items'],
+  stopped: ['stopped run', 'stopped runs'],
+  surface: ['connection to approve', 'connections to approve'],
+};
+
+/**
+ * The dialog's line of the decisions that wait on the manager now and move to the acceptor, by
+ * kind (plan 7.3: "{n} decisions waiting: {waiting words}"), or nothing when none waits.
+ *
+ * @param waiting - The preview's counts.
+ */
+function waitingDecisionsLine(waiting: WaitingCounts): string[] {
+  const kinds = Object.keys(WAITING_DECISION_NOUNS) as (keyof WaitingCounts)[];
+  const parts = kinds.flatMap((kind) =>
+    waiting[kind] > 0 ? [counted(waiting[kind], ...WAITING_DECISION_NOUNS[kind])] : [],
+  );
+  const total = kinds.reduce((sum, kind) => sum + waiting[kind], 0);
+  if (total === 0) return [];
+  return [`${counted(total, 'decision', 'decisions')} waiting: ${listed(parts)}`];
+}
+
+/**
+ * What the new manager takes on, line by line (plan 7.3): the decisions waiting first, when any
+ * do.
  *
  * @param preview - The request's preview.
  */
@@ -351,6 +389,7 @@ export function takesOnLines(preview: Pick<HandoverPreview, 'takesOn'>): string[
   const taken = preview.takesOn;
   const scopes = taken.scopes.map((grant) => grant.scope);
   return [
+    ...waitingDecisionsLine(taken.waiting),
     `${countedAtLeast(taken.openWork, taken.openWorkAtLeast, 'item', 'items')} in progress`,
     counted(taken.registeredSkills, 'skill', 'skills'),
     taken.charter?.approved

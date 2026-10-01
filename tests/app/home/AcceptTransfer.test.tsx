@@ -251,6 +251,7 @@ describe('AcceptTransfer', () => {
     expect(sections()).toEqual([
       [
         'You take on',
+        '1 decision waiting: 1 plan',
         '3 items in progress',
         '2 skills',
         'charter version 0.2, approved',
