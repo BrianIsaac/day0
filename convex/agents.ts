@@ -654,6 +654,35 @@ function reprobedForManagerChange(surface: Doc<'surfaces'>): boolean {
 }
 
 /**
+ * Schedule a probe of every chat surface a change of manager address can
+ * mend, so the manager DM moves to the new person at once and a surface that
+ * failed on the old person's lookup comes back (Q6). A probe that resolves a
+ * different Slack user writes `manager.changed` (`via: 'probe'`) and re-sends
+ * the open decision requests delivered to the previous DM
+ * (`resendDecisionsAfterManagerChange`). Mock mode has no provider to probe.
+ *
+ * @returns How many surfaces were scheduled for a probe.
+ */
+async function reprobeForManagerChange(ctx: MutationCtx, agentId: Id<'agents'>): Promise<number> {
+  if (SURFACE_MODE === 'mock') return 0;
+  const surfaces = (
+    await ctx.db
+      .query('surfaces')
+      .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+      .collect()
+  ).filter(reprobedForManagerChange);
+  await Promise.all(
+    surfaces.map(
+      async (surface) =>
+        await ctx.scheduler.runAfter(0, internal.surfaceActions.probeInternal, {
+          surfaceId: surface._id,
+        }),
+    ),
+  );
+  return surfaces.length;
+}
+
+/**
  * Change who the agent reports to.
  *
  * Public, owner-guarded. Writes the agent's `bossEmail` and a `manager.changed`
@@ -687,22 +716,7 @@ export const setBossEmail = mutation({
       payload: { via: 'dashboard', bossEmail },
       createdAt: now,
     });
-    if (SURFACE_MODE === 'mock') return { changed: true, reprobed: 0 };
-    const surfaces = (
-      await ctx.db
-        .query('surfaces')
-        .withIndex('by_agent', (q) => q.eq('agentId', agent._id))
-        .collect()
-    ).filter(reprobedForManagerChange);
-    await Promise.all(
-      surfaces.map(
-        async (surface) =>
-          await ctx.scheduler.runAfter(0, internal.surfaceActions.probeInternal, {
-            surfaceId: surface._id,
-          }),
-      ),
-    );
-    return { changed: true, reprobed: surfaces.length };
+    return { changed: true, reprobed: await reprobeForManagerChange(ctx, agent._id) };
   },
 });
 
