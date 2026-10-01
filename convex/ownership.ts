@@ -3,7 +3,7 @@ import type { UserIdentity } from 'convex/server';
 import type { Doc, Id } from './_generated/dataModel';
 import type { QueryCtx, MutationCtx, ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
-import { EMPLOYEE_NOT_YOURS } from '../src/agent/employee-access';
+import { EMPLOYEE_GONE, EMPLOYEE_NOT_YOURS } from '../src/agent/employee-access';
 import {
   CUSTOMER_OIDC_ISSUER_VAR,
   customerOidcAllowedDomains,
@@ -250,7 +250,7 @@ export async function assertOwnsAgent(
 ): Promise<Doc<'agents'>> {
   const identity = await getCallerOrThrow(ctx);
   const agent = await ctx.db.get(agentId);
-  if (!agent) throw new Error('agent not found');
+  if (!agent) throw new ConvexError(EMPLOYEE_GONE);
   assertCallerOwns(agent, identity);
   return agent;
 }
@@ -281,7 +281,7 @@ export async function assertOwnsAgentAction(
 ): Promise<Doc<'agents'>> {
   const identity = await getCallerOrThrow(ctx);
   const agent = await ctx.runQuery(internal.agents.getInternal, { agentId });
-  if (!agent) throw new Error('agent not found');
+  if (!agent) throw new ConvexError(EMPLOYEE_GONE);
   assertCallerOwns(agent, identity);
   return agent;
 }

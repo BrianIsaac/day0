@@ -8,6 +8,12 @@ import { ConvexError } from 'convex/values';
 export const EMPLOYEE_NOT_YOURS = 'This employee is not yours.';
 
 /**
+ * The refusal a per-agent guard answers for an employee that no longer exists (retired or
+ * deleted), as a `ConvexError`'s data, so a dialog says it after production's error stripping.
+ */
+export const EMPLOYEE_GONE = 'This employee no longer exists.';
+
+/**
  * Whether a thrown value is the backend refusing an employee the caller does not own.
  *
  * @param error - What a query threw.

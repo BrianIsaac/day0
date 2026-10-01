@@ -17,7 +17,11 @@ import {
   TRANSFER_NOT_FOUND,
   UNVERIFIED_FOR_TRANSFER,
 } from '../../src/agent/manager-transfer';
-import { EMPLOYEE_NOT_YOURS, isEmployeeNotYours } from '../../src/agent/employee-access';
+import {
+  EMPLOYEE_GONE,
+  EMPLOYEE_NOT_YOURS,
+  isEmployeeNotYours,
+} from '../../src/agent/employee-access';
 import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS, localIssuerIdentity, managerIdentity } from './fakes/manager-identity';
 
@@ -141,6 +145,18 @@ describe('the per-agent guards (the cockpit’s item, FW-m5)', (): void => {
       expect(refusal).toBeInstanceOf(ConvexError);
       expect(isEmployeeNotYours(refusal)).toBe(true);
     }
+  });
+
+  it('refuse an employee that no longer exists with a ConvexError in the manager’s words', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity(managerIdentity());
+    const agentId = await owner.mutation(api.agents.deploy, {});
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.delete(agentId);
+    });
+    await expect(owner.query(api.skills.proposed, { agentId })).rejects.toMatchObject({
+      data: EMPLOYEE_GONE,
+    });
   });
 
   it('refuse an anonymous caller with a ConvexError too, in the mode’s words', async (): Promise<void> => {
