@@ -88,11 +88,14 @@ export function SkillsView() {
       />
       <RegisteredSkillsPanel
         skills={registeredSkills ?? []}
+        // An adoption in flight, stopped short or failed is drawn by the adoption card alone, whose
+        // controls check the offered version again or set the offer aside first; a Retry here
+        // would act on the row with the offer still on it (the wave 10 review, M3).
         unregistered={[
           ...(pendingRevisions ?? []),
           ...(unverifiedSkills ?? []),
           ...(failedSkills ?? []),
-        ]}
+        ].filter((skill) => skill.offeredVersionId === undefined)}
         authoringFailure={authoringFailure}
         registered={authoringRegistered}
         onAuthoringAttempt={setLastAttempt}
