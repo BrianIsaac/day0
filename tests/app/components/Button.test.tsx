@@ -59,4 +59,10 @@ describe('ButtonLink', () => {
     expect(html).toContain('href="/agent/a1/work"');
     expect(html).toContain(buttonClass('approve'));
   });
+
+  it('keeps the warn text above 4.5:1 on its hover tint (the pre-tag walk: 4.47:1 at 30%)', (): void => {
+    // #f59e0b on the card (#18181b) under a 25% tint of itself measures 5.03:1.
+    expect(buttonClass('retry', 'small')).toContain('hover:bg-[var(--color-warn)]/25');
+    expect(buttonClass('retry', 'small')).not.toContain('hover:bg-[var(--color-warn)]/30');
+  });
 });

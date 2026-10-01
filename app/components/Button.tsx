@@ -29,7 +29,7 @@ const VARIANT: Readonly<Record<ButtonVariant, string>> = {
   approve:
     'border-transparent bg-[var(--color-ok)]/20 text-[var(--color-ok)] hover:bg-[var(--color-ok)]/30',
   retry:
-    'border-transparent bg-[var(--color-warn)]/20 text-[var(--color-warn)] hover:bg-[var(--color-warn)]/30',
+    'border-transparent bg-[var(--color-warn)]/20 text-[var(--color-warn)] hover:bg-[var(--color-warn)]/25',
   danger:
     'border-[var(--color-danger-line)] bg-transparent text-[var(--color-danger)] hover:border-[var(--color-danger)]',
   quiet: 'border-transparent bg-transparent text-[var(--color-muted)] hover:text-[var(--color-fg)]',
