@@ -14,6 +14,16 @@ export function renderBullets(values: string[], indent: string): string[] {
 }
 
 /**
+ * Render USER.md, the file that names the employee's manager: from the one-to-one's label for the
+ * manager at the draft, and from the manager's address once a handover moves the employee.
+ *
+ * @param manager - Who the employee reports to, as the file names them.
+ */
+export function userFromManager(manager: string): string {
+  return `# USER\n\nBoss: ${manager}\n`;
+}
+
+/**
  * Render IDENTITY.md from a charter and the agent's manager.
  *
  * The manager is the agent row's `bossEmail`, the one source for who

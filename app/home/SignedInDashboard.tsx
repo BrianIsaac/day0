@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useRef, useState } from 'react';
+import { Suspense, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { useQueries, useQuery } from 'convex/react';
 import Link from 'next/link';
@@ -9,13 +9,14 @@ import { employeeStateTally } from '@/work/state-labels';
 import { useNow } from '../components/time';
 import { useArrival } from '../arrival';
 import { CompanySupervision } from '../CompanySupervision';
-import { reportingElsewhereLine } from '../handover-words';
 import { AcceptTransfer } from './AcceptTransfer';
 import { DeployForm } from './DeployForm';
 import { HandedOver } from './HandedOver';
 import { EmployeeRoster } from './EmployeeRoster';
 import { MonthCard } from './MonthCard';
 import { NeedsYouList } from './NeedsYouList';
+import { OnItsWay } from './OnItsWay';
+import { ReportingElsewhere } from './ReportingElsewhere';
 import { OfficeWorld } from './OfficeWorld';
 import { RetiredNotice } from '../RetiredNotice';
 import { ResetCard } from './ResetCard';
@@ -66,6 +67,7 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
   const arriving = useArrival();
 
   const staffed = roster !== undefined && roster.length > 0;
+  const held = useMemo(() => roster?.map((employee) => employee.agentId), [roster]);
   const showDeployForm = roster !== undefined && (!staffed || deploying);
   // A manager with nobody yet can still be named in a handover (the transfer plan, section 7.3),
   // and one who handed over their only employee still reads where it went (7.4): for them the
@@ -84,13 +86,7 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
               ? companyLine(roster, inbox)
               : 'Give your first employee a name. Everything else is learned from you.'}
           </p>
-          {reportingElsewhere !== undefined &&
-          reportingElsewhere !== null &&
-          reportingElsewhere > 0 ? (
-            <p className="mt-1 text-sm text-[var(--color-warn)]">
-              {reportingElsewhereLine(reportingElsewhere)}
-            </p>
-          ) : null}
+          {reportingElsewhere ? <ReportingElsewhere employees={reportingElsewhere} /> : null}
         </div>
         {staffed ? (
           // Hidden while the form it opened is on the page, whose own Cancel closes it (walk m27);
@@ -113,6 +109,7 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
       <Suspense fallback={null}>
         <AcceptTransfer />
       </Suspense>
+      <OnItsWay />
 
       <div className="grid grid-cols-[minmax(0,1fr)] gap-6 xl:grid-cols-[minmax(0,1fr)_20rem] xl:items-start">
         <div
@@ -120,7 +117,7 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
           className="flex min-w-0 flex-col gap-6 xl:col-start-1 xl:row-start-1"
         >
           {!staffed && showInbox ? <NeedsYouList inbox={inboxRead} now={now} /> : null}
-          {staffed ? null : <HandedOver />}
+          {staffed ? null : <HandedOver held={held} />}
           {showDeployForm ? (
             <DeployForm
               docSources={docSources}
@@ -141,7 +138,7 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
           ) : null}
           {staffed ? <NeedsYouList inbox={inboxRead} now={now} /> : null}
           <EmployeeRoster employees={roster} waiting={waitingByEmployee(inbox)} />
-          {staffed ? <HandedOver /> : null}
+          {staffed ? <HandedOver held={held} /> : null}
           <OfficeWorld
             agents={roster}
             settled={roster !== undefined && (!staffed || inboxRead !== undefined)}

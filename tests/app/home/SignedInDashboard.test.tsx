@@ -574,12 +574,18 @@ describe('the home during a handover (the transfer plan, sections 7.3, 7.4 and 1
     expect(page).not.toContain('>Needs you<');
   });
 
-  it('says how many employees report to someone who is not the owner, under the company line', (): void => {
-    state.reportingElsewhere = 2;
-    expect(readAs(render(roster))).toContain(
-      '2 employees report to someone who is not you. Choose on each one&#x27;s People tab.',
+  it('names the employees that report to someone who is not the owner under the company line, each a link to its People tab', (): void => {
+    state.reportingElsewhere = [
+      { agentId: 'agent-tomas', name: 'Tomas' },
+      { agentId: 'agent-aiko', name: 'Aiko' },
+    ];
+    const page = render(roster);
+    expect(readAs(page)).toContain(
+      '2 employees report to someone who is not you: Tomas and Aiko . Choose on each one&#x27;s People tab.',
     );
-    state.reportingElsewhere = 0;
+    expect(page).toContain('href="/agent/agent-tomas/people"');
+    expect(page).toContain('href="/agent/agent-aiko/people"');
+    state.reportingElsewhere = [];
     expect(readAs(render(roster))).not.toContain('who is not you');
     state.reportingElsewhere = null;
     expect(readAs(render(roster))).not.toContain('who is not you');

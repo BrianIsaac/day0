@@ -499,7 +499,7 @@ async function personNamedBy(credential: string, address: string): Promise<strin
  * Internal, scheduled by a real-mode `managerTransfers.ask`: the one DM notice
  * to the person a handover names (D7, the transfer plan section 5.2), from the
  * employee's Slack card, when the named address is a person in that
- * workspace. Claimed once by `managerTransfers.claimTransferNotice` before
+ * workspace. Claimed once by `transferNotice.claimTransferNotice` before
  * anything is sent, so it is never re-sent, a failure included; the provider's
  * timestamp is recorded as the evidence it landed. The notice decides nothing:
  * it carries no decision code, goes to a DM the decision poll never reads, and
@@ -508,7 +508,7 @@ async function personNamedBy(credential: string, address: string): Promise<strin
 export const sendTransferNotice = internalAction({
   args: { transferId: v.id('managerTransfers') },
   handler: async (ctx, args): Promise<{ sent: boolean; reason?: string }> => {
-    const claimed = await ctx.runMutation(internal.managerTransfers.claimTransferNotice, args);
+    const claimed = await ctx.runMutation(internal.transferNotice.claimTransferNotice, args);
     if (!claimed.claimed) return { sent: false, reason: claimed.reason };
     let credential = '';
     try {
@@ -529,7 +529,7 @@ export const sendTransferNotice = internalAction({
         body: { channel, text: claimed.text },
       });
       if (typeof posted.ts !== 'string') throw new Error('Slack chat.postMessage returned no ts.');
-      await ctx.runMutation(internal.managerTransfers.recordTransferNotice, {
+      await ctx.runMutation(internal.transferNotice.recordTransferNotice, {
         transferId: args.transferId,
         providerTs: posted.ts,
       });

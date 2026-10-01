@@ -190,6 +190,8 @@ vi.mock('convex/react', () => {
     if (name === 'work:needsYou') return { entries: [], total: 0, waitingByEmployee: [] };
     if (name === 'config:surfaceMode') return { mode: 'mock', label: 'mock' };
     if (name === 'managerTransfers:departures') return [];
+    if (name === 'managerTransfers:arriving') return [];
+    if (name === 'agents:employeesReportingElsewhere') return [];
     return 0;
   };
   return {

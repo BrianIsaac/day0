@@ -282,17 +282,40 @@ describe('the one-to-ones at a handover’s move (endOneToOnesForHandover)', ():
     ).resolves.toEqual({ outcome: 'claim-lost' });
   });
 
-  it('leaves a finished session alone when the charter is carried', async (): Promise<void> => {
+  it('keeps a finished session finished when the charter is carried, without the old manager’s words (wave 9 review, decision 1 (a))', async (): Promise<void> => {
     const { harness, agentId, sessionId } = await failedSession();
     await harness.run(async (ctx) => {
-      await ctx.db.patch(sessionId, { state: 'done', transcriptText: 'USER: The close.' });
+      await ctx.db.patch(sessionId, {
+        state: 'done',
+        transcriptText: 'USER: The close.',
+        answers: { 'why-this-hire': 'The close.' },
+        turns: [{ id: 't1', speaker: 'manager', text: 'The close.', at: 1 }],
+        changeRequests: [{ reason: 'Shorter.', struck: [], requestedAt: 1 }],
+      });
     });
 
     await expect(endAtHandover(harness, agentId, false)).resolves.toBe(0);
-    expect(await harness.run(async (ctx) => await ctx.db.get(sessionId))).toMatchObject({
-      state: 'done',
-      transcriptText: 'USER: The close.',
+    const session = await harness.run(async (ctx) => await ctx.db.get(sessionId));
+    expect(session).toMatchObject({ state: 'done', answers: {} });
+    expect(session?.transcriptText).toBeUndefined();
+    expect(session?.turns).toBeUndefined();
+    expect(session?.changeRequests).toBeUndefined();
+  });
+
+  it("drops a finished session's webhook token and its provider conversation id at the move (second pass)", async (): Promise<void> => {
+    const { harness, agentId, sessionId } = await failedSession();
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(sessionId, {
+        state: 'done',
+        webhookToken: 'old-manager-webhook-token',
+        elevenLabsConversationId: 'conv-old-manager',
+      });
     });
+
+    await endAtHandover(harness, agentId, false);
+    const session = await harness.run(async (ctx) => await ctx.db.get(sessionId));
+    expect(session?.webhookToken).toBeUndefined();
+    expect(session?.elevenLabsConversationId).toBeUndefined();
   });
 
   it('opens a new session for the next one-to-one over a failed one', async (): Promise<void> => {

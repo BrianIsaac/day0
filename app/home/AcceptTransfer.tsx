@@ -64,8 +64,8 @@ function useTransferPreview(transferId: string): HandoverPreview | null | undefi
     () => ({
       preview: {
         query: api.transferAcceptance.transferPreview,
-        // The backend validates the id; one that names no request is refused as a value above.
-        args: { transferId: transferId as Id<'managerTransfers'> },
+        // The backend reads a string that names no request as not found, refused as a value above.
+        args: { transferId },
       },
     }),
     [transferId],
@@ -151,7 +151,9 @@ function TakeOn({ preview, change, notice, onClose, onAnswer }: TakeOnProps) {
           ...(excluded.length > 0 ? { excludedDocSourceIds: excluded } : {}),
         }),
       {
-        done: acceptedWords(name, preview.runsInFlight),
+        // What the acceptance answered, not the preview read before it: a run that ended in
+        // between means the employee moved at once.
+        done: (answer) => acceptedWords(name, answer.state),
         refused: `${name} was not taken on.`,
         after: onClose,
         focus: () => notice.current,

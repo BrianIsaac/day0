@@ -499,6 +499,51 @@ describe('accept with a run in flight: the request waits in accepting (transfer 
     expect(await read(handover.harness, handover.transferId)).toEqual(ended);
   });
 
+  it('lets the operator end an accepting request stuck on a settle that throws, and nothing else (M3)', async (): Promise<void> => {
+    const handover = await seedHandover();
+    await seedExecuting(handover, 'REVOPS-1');
+    const approved = await seedItem(handover, 'REVOPS-2', 'plan-approved', {
+      plan: { steps: ['Close it'] },
+    });
+    await accept(handover);
+
+    await expect(
+      handover.harness.mutation(internal.transferAcceptance.endStuckHandover, {
+        transferId: handover.transferId,
+        reason: 'the settle throws on a transaction limit',
+      }),
+    ).resolves.toBe('ended');
+    const ended = await read(handover.harness, handover.transferId);
+    expect(ended).toMatchObject({ state: 'cancelled', decidedAt: ACCEPTED_AT });
+    expect(await read(handover.harness, handover.maya)).toMatchObject({ userId: 'owner' });
+    // The employee is no longer being handed over: its approved plan may start again.
+    await expect(
+      handover.harness.mutation(internal.work.claimForExecution, {
+        workItemId: approved,
+        skillId: handover.skillId,
+      }),
+    ).resolves.toMatchObject({ claimed: true });
+    await expect(
+      handover.harness.mutation(internal.transferAcceptance.endStuckHandover, {
+        transferId: handover.transferId,
+        reason: 'again',
+      }),
+    ).resolves.toBe('not-accepting');
+    expect(await read(handover.harness, handover.transferId)).toEqual(ended);
+  });
+
+  it('leaves a request that is not accepting as it is when the operator tries to end it', async (): Promise<void> => {
+    const handover = await seedHandover();
+    const asked = await read(handover.harness, handover.transferId);
+    await expect(
+      handover.harness.mutation(internal.transferAcceptance.endStuckHandover, {
+        transferId: handover.transferId,
+        reason: 'mistaken id',
+      }),
+    ).resolves.toBe('not-accepting');
+    expect(await read(handover.harness, handover.transferId)).toEqual(asked);
+  });
+
   it('refuses before entering accepting when the move it waits for would be refused', async (): Promise<void> => {
     const handover = await seedHandover('charter-pending');
     await seedExecuting(handover, 'REVOPS-1');
@@ -658,7 +703,16 @@ describe('a stopped run’s late writes after the move (U-2)', (): void => {
     await expect(
       handover.harness.mutation(internal.work.claimLandedTicketWrites, {
         workItemId,
+        runId,
         writes: [{ surfaceSlug: 'linear', targets: ['REVOPS-1'] }],
+      }),
+    ).resolves.toEqual([]);
+    // The page fields claimed before authoring are fenced by the same run (U3-m1).
+    await expect(
+      handover.harness.mutation(internal.work.takeWriteTargetClaims, {
+        workItemId,
+        runId,
+        targets: [{ surfaceSlug: 'linear', field: 'Status' }],
       }),
     ).resolves.toEqual([]);
     await drain(handover.harness);
@@ -678,6 +732,7 @@ describe('what the move does with each kind of work (transfer plan 6.4, the tabl
     const handover = await seedHandover();
     const approved = await seedItem(handover, 'REVOPS-1', 'plan-approved', {
       plan: { steps: ['Close it'] },
+      managerAnswers: [{ question: 'Who owns the tile?', answer: 'Priya.', answeredAt: 2 }],
     });
 
     await accept(handover);
@@ -686,6 +741,8 @@ describe('what the move does with each kind of work (transfer plan 6.4, the tabl
     expect(item.state).toBe('plan-pending');
     expect(item.planPendingAt).toBe(ACCEPTED_AT);
     expect(item.decision).toBeUndefined();
+    // The old manager's answers went with their approval: the new manager answers afresh (M7).
+    expect(item.managerAnswers).toBeUndefined();
     expect((await read(handover.harness, handover.transferId)).outcome).toMatchObject({
       plansReturned: 1,
     });
@@ -1154,8 +1211,8 @@ describe('an open decision request by DM at the move (transfer plan 6.4; 14.1 it
     await handover.harness.run(async (ctx) => {
       const row = await ctx.db.get(workItemId);
       if (!row?.decision) throw new Error('no decision');
-      const { ts: _sent, ...claimed } = row.decision;
-      await ctx.db.patch(workItemId, { decision: claimed });
+      // Claimed and not yet delivered: the request carries no message timestamp.
+      await ctx.db.patch(workItemId, { decision: { ...row.decision, ts: undefined } });
     });
 
     await accept(handover);

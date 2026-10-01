@@ -1,4 +1,4 @@
-import { ConvexError, v } from 'convex/values';
+import { ConvexError, v, type Infer } from 'convex/values';
 import {
   mutation,
   query,
@@ -27,7 +27,11 @@ import {
   strikePreview,
   type CharterConstraint,
 } from '../src/agent/charter-constraints';
-import { identityFromCharter, toolsFromCharter } from '../src/agent/charter-workspace';
+import {
+  identityFromCharter,
+  toolsFromCharter,
+  userFromManager,
+} from '../src/agent/charter-workspace';
 import { SYSTEM_CLASSES } from '../src/agent/system-classes';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { appendEvent } from './eventLog';
@@ -181,10 +185,12 @@ export async function renderWorkspaceFromCharter(
 }
 
 /**
- * Render IDENTITY.md (and TOOLS.md with it, through {@link renderWorkspaceFromCharter}) again for
- * the manager the employee row names now, from its newest approved charter: a handover writes the new manager's address to the row (the transfer plan, section
- * 6.2), and the file names who approves. An employee whose charter was never approved keeps its
- * file, since a draft is rendered without a manager.
+ * Render IDENTITY.md (and TOOLS.md with it, through {@link renderWorkspaceFromCharter}) and USER.md
+ * again for the manager the employee row names now, from its newest approved charter: a handover
+ * writes the new manager's address to the row (the transfer plan, section 6.2), and both files
+ * name the manager, so neither keeps the old one's (the wave 9 review, section 3). An employee
+ * whose charter was never approved keeps its files, since a draft is rendered without a manager
+ * and the handover discards it (D8).
  *
  * @param ctx - The handover's mutation context.
  * @param agentId - The employee, already under its new manager.
@@ -201,6 +207,14 @@ export async function renderIdentityForManager(
   for await (const charter of charters) {
     if (!charter.approved) continue;
     await renderWorkspaceFromCharter(ctx, agentId, charter.body as Charter);
+    const agent = await ctx.db.get(agentId);
+    if (agent) {
+      await writeFileImpl(ctx, {
+        agentId,
+        fileName: 'USER.md',
+        content: userFromManager(agent.bossEmail),
+      });
+    }
     return true;
   }
   return false;
@@ -703,18 +717,57 @@ async function firstVersionOf(ctx: QueryCtx, charter: Doc<'charters'>): Promise<
   return current;
 }
 
+/** How many of an employee's accepted handovers are read to find who held its one-to-one. */
+const HANDOVERS_SEARCHED = 50;
+
+/** What `transcriptOf` answers: the transcript kept, or whose one-to-one it was. */
+const transcriptOfValidator = v.union(
+  v.null(),
+  v.object({ transcript: v.string(), endedAt: v.union(v.number(), v.null()) }),
+  v.object({ heldBy: v.string() }),
+);
+
+/**
+ * The address of the manager who held the one-to-one a charter was drafted before a handover:
+ * the asker of the first handover accepted after the draft, whose move cleared the transcript.
+ * Undefined when no handover followed the draft.
+ */
+async function oneToOneHolderBefore(
+  ctx: QueryCtx,
+  draft: Doc<'charters'>,
+): Promise<string | undefined> {
+  const accepted = await ctx.db
+    .query('managerTransfers')
+    .withIndex('by_agent_state', (q) => q.eq('agentId', draft.agentId).eq('state', 'accepted'))
+    .take(HANDOVERS_SEARCHED);
+  const after = accepted
+    .filter((transfer) => (transfer.decidedAt ?? transfer.requestedAt) >= draft.createdAt)
+    .sort(
+      (left, right) =>
+        (left.decidedAt ?? left.requestedAt) - (right.decidedAt ?? right.requestedAt),
+    );
+  return after[0]?.fromAddress;
+}
+
 /**
  * Public, owner-guarded (`assertOwnsCharter`): the one-to-one a charter was drafted from, as the
- * room recorded it, kept beside every version it led to. Null for a charter drafted from answers
- * handed straight in, which has no transcript.
+ * room recorded it, kept beside every version it led to. When a handover has moved the employee
+ * since, the old manager's words left with them (decision 1 (a) of the wave 9 review), and the
+ * answer is whose one-to-one it was. Null for a charter drafted from answers handed straight in,
+ * which has no transcript. Writes nothing.
  */
 export const transcriptOf = query({
   args: { charterId: v.id('charters') },
-  handler: async (ctx, args): Promise<{ transcript: string; endedAt: number | null } | null> => {
+  returns: transcriptOfValidator,
+  handler: async (ctx, args): Promise<Infer<typeof transcriptOfValidator>> => {
     const charter = await assertOwnsCharter(ctx, args.charterId);
-    const session = await sessionOfCharter(ctx, await firstVersionOf(ctx, charter));
-    if (!session?.transcriptText) return null;
-    return { transcript: session.transcriptText, endedAt: session.endedAt ?? null };
+    const draft = await firstVersionOf(ctx, charter);
+    const session = await sessionOfCharter(ctx, draft);
+    if (session?.transcriptText) {
+      return { transcript: session.transcriptText, endedAt: session.endedAt ?? null };
+    }
+    const heldBy = session ? await oneToOneHolderBefore(ctx, draft) : undefined;
+    return heldBy === undefined ? null : { heldBy };
   },
 });
 

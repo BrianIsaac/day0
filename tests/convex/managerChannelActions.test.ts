@@ -7,7 +7,7 @@ import { api, internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
-import { transferNoticeText } from '../../convex/managerTransfers';
+import { transferNoticeText } from '../../convex/transferNotice';
 import { credentialOwnerBinding, encrypt } from '../../src/lib/credential-crypto';
 import { fixtureAddressOf, MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
@@ -1273,6 +1273,27 @@ describe('the handover notice to the person a request names (D7)', (): void => {
       noticeSentAt: expect.any(Number),
       noticeProviderTs: NOTICE_TS,
     });
+  });
+
+  it('names an employee stored before the deploy bounded names by the request’s clipped name (B2)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const calls = slackWorkspace();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId } = await seedMaya(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(agentId, { name: `Maya ${'y'.repeat(100_000)}` });
+    });
+
+    const transferId = await askPriya(harness, agentId);
+
+    expect(noticesIn(calls).map((notice) => notice.text)).toEqual([
+      transferNoticeText({
+        transferId,
+        employeeName: `Maya ${'y'.repeat(75)}`,
+        fromAddress: MANAGER_ADDRESS,
+      }),
+    ]);
   });
 
   it('never sends it again, once sent or once it failed', async (): Promise<void> => {

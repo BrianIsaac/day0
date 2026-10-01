@@ -55,13 +55,6 @@ const EXPIRY_DAYS = Math.round(TRANSFER_EXPIRY_MS / 86_400_000);
 export const MANAGER_DUTY =
   'Every held write and every plan comes to you. One manager per employee.';
 
-/**
- * Said in place of **Hand over** on an installation that signs every browser in as one manager:
- * the very words `managerTransfers.ask` refuses with there (a test holds the two together).
- */
-export const LOCAL_DEV_HANDOVER_LINE =
-  'This installation signs everyone in as one manager. Handing over needs each manager to sign in as themselves (the customer-local profile).';
-
 /** The label of the control that opens the hand-over dialog. */
 export const HAND_OVER = 'Hand over';
 
@@ -349,8 +342,46 @@ export const CHECK = 'Check';
 /** The acceptance dialog's section of the acceptor's documentation. */
 export const READS_FOR_IT = 'Reads for it';
 
+/** The preview's waiting counts, by the inbox's kinds as the validator names them. */
+type WaitingCounts = HandoverPreview['takesOn']['waiting'];
+
 /**
- * What the new manager takes on, line by line (plan 7.3).
+ * How each kind of decision waiting is counted in the acceptance dialog, singular and plural, in
+ * the inbox's order. A held entry is counted as an item, not by its writes: the preview counts
+ * entries.
+ */
+const WAITING_DECISION_NOUNS: Readonly<
+  Record<keyof WaitingCounts, readonly [one: string, many: string]>
+> = {
+  oneToOne: ['one-to-one', 'one-to-ones'],
+  charter: ['charter to review', 'charters to review'],
+  plan: ['plan', 'plans'],
+  held: ['item with writes held', 'items with writes held'],
+  skill: ['skill to approve', 'skills to approve'],
+  parked: ['parked item', 'parked items'],
+  stopped: ['stopped run', 'stopped runs'],
+  surface: ['connection to approve', 'connections to approve'],
+};
+
+/**
+ * The dialog's line of the decisions that wait on the manager now and move to the acceptor, by
+ * kind (plan 7.3: "{n} decisions waiting: {waiting words}"), or nothing when none waits.
+ *
+ * @param waiting - The preview's counts.
+ */
+function waitingDecisionsLine(waiting: WaitingCounts): string[] {
+  const kinds = Object.keys(WAITING_DECISION_NOUNS) as (keyof WaitingCounts)[];
+  const parts = kinds.flatMap((kind) =>
+    waiting[kind] > 0 ? [counted(waiting[kind], ...WAITING_DECISION_NOUNS[kind])] : [],
+  );
+  const total = kinds.reduce((sum, kind) => sum + waiting[kind], 0);
+  if (total === 0) return [];
+  return [`${counted(total, 'decision', 'decisions')} waiting: ${listed(parts)}`];
+}
+
+/**
+ * What the new manager takes on, line by line (plan 7.3): the decisions waiting first, when any
+ * do.
  *
  * @param preview - The request's preview.
  */
@@ -358,6 +389,7 @@ export function takesOnLines(preview: Pick<HandoverPreview, 'takesOn'>): string[
   const taken = preview.takesOn;
   const scopes = taken.scopes.map((grant) => grant.scope);
   return [
+    ...waitingDecisionsLine(taken.waiting),
     `${countedAtLeast(taken.openWork, taken.openWorkAtLeast, 'item', 'items')} in progress`,
     counted(taken.registeredSkills, 'skill', 'skills'),
     taken.charter?.approved
@@ -442,16 +474,41 @@ export function declineReasonLabel(from: string): string {
 }
 
 /**
- * Said on the home once the acceptance lands: the employee is the acceptor's, or is finishing
- * the runs the move waits for.
+ * Said on the home once the acceptance lands, from what the acceptance answered: the employee is
+ * the acceptor's, or becomes theirs when its runs end. It names no count, which would go stale on
+ * the page once the runs ended; the line {@link arrivingLine} draws is the live one.
  *
  * @param name - The employee.
- * @param runs - The runs in flight when it was accepted.
+ * @param state - The request's state as `transferAcceptance.accept` answered it.
  */
-export function acceptedWords(name: string, runs: number): string {
-  if (runs === 0) return `${name} is yours.`;
-  const finishing = finishingRuns(runs);
-  return `Accepted. ${name} is finishing ${finishing.runs}; it becomes yours when ${finishing.end}.`;
+export function acceptedWords(name: string, state: 'accepted' | 'accepting'): string {
+  return state === 'accepted'
+    ? `${name} is yours.`
+    : `You accepted ${name}. It becomes yours when its runs end.`;
+}
+
+/** What the acceptor's line for an employee on its way is drawn from. */
+export interface ArrivingInput {
+  readonly name: string;
+  readonly from: string;
+  /** The runs the move waits for, as the backend counts them now. */
+  readonly runs: number;
+  /** When the runs are stopped at the latest. */
+  readonly settleBy: number | undefined;
+  readonly zone: string;
+}
+
+/** The heading of the acceptor's employees on their way (the transfer plan, section 4.2). */
+export const ON_ITS_WAY = 'On its way to you';
+
+/** The acceptor's line for an accepted employee still finishing its runs for the old manager. */
+export function arrivingLine(input: ArrivingInput): string {
+  const { runs, end } = finishingRuns(input.runs);
+  const deadline =
+    input.settleBy === undefined
+      ? ''
+      : `, by ${zonedStamp(input.settleBy, input.zone)} at the latest`;
+  return `${input.name} is finishing ${runs} for ${input.from} and becomes yours when ${end}${deadline}.`;
 }
 
 /**
@@ -515,14 +572,24 @@ export function departedLine(name: string, to: string, since: number, zone: stri
 }
 
 /**
- * The home's one line while any employee reports to someone else (section 11.2).
+ * The start of the home's one line while any employee reports to someone else (section 11.2),
+ * before the employees are named, each a link to its People tab.
  *
  * @param count - How many do.
  */
-export function reportingElsewhereLine(count: number): string {
+export function reportingElsewhereLead(count: number): string {
   return count === 1
-    ? '1 employee reports to someone who is not you. Choose on its People tab.'
-    : `${counted(count, 'employee', 'employees')} report to someone who is not you. Choose on each one's People tab.`;
+    ? '1 employee reports to someone who is not you:'
+    : `${counted(count, 'employee', 'employees')} report to someone who is not you:`;
+}
+
+/**
+ * The end of the home's line: where the manager chooses.
+ *
+ * @param count - How many employees the line names.
+ */
+export function reportingElsewhereChoice(count: number): string {
+  return count === 1 ? 'Choose on its People tab.' : "Choose on each one's People tab.";
 }
 
 /**

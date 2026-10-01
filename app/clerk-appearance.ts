@@ -51,8 +51,8 @@ export const clerkAppearance = {
 } satisfies Appearance;
 
 /**
- * How the sign-in and sign-up flows look: the shared appearance, with Day0's mark above the card
- * on every step.
+ * How the sign-in and sign-up flows look, on their pages and in the header's two modals: the
+ * shared appearance, with Day0's mark above the card on every step.
  *
  * Inside the card the mark reached only the steps whose card asks Clerk for a logo. Clerk's
  * code-entry card (`VerificationCodeCard` in `@clerk/ui` 1.36: "Check your email", "Verify your

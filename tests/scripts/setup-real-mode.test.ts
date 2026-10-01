@@ -675,6 +675,24 @@ describe('a whole real-mode run on the Featherless route', (): void => {
     );
   });
 
+  it('refuses a manager’s address that is not one, from the flag or the prompt, before anything runs', async (): Promise<void> => {
+    const flagged = harness({ environment: { FEATHERLESS_API_KEY: SYNTHETIC_KEY } });
+    expect(await runSetup(realRoute({ bossEmail: 'not an address' }), flagged.io)).toBe(1);
+    expect(flagged.output.join('\n')).toContain(
+      'error: "not an address" is not an email address, and the local sign-in would refuse it. ' +
+        'The manager must be an email address, such as name@company.com.',
+    );
+    expect(ran(flagged)).not.toContain('convex:up');
+
+    const asked = harness({
+      environment: { FEATHERLESS_API_KEY: SYNTHETIC_KEY },
+      answers: ['boss at example'],
+    });
+    expect(await runSetup(realRoute({ bossEmail: undefined, assumeYes: false }), asked.io)).toBe(1);
+    expect(asked.output.join('\n')).toContain('error: "boss at example" is not an email address');
+    expect(ran(asked)).not.toContain('convex:up');
+  });
+
   it('refuses --sandbox daytona without a key, and skips the bundled sandbox with one', async (): Promise<void> => {
     const refused = harness({ environment: { FEATHERLESS_API_KEY: SYNTHETIC_KEY } });
     expect(await runSetup(realRoute({ sandbox: 'daytona' }), refused.io)).toBe(1);

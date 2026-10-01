@@ -5,6 +5,7 @@ import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Doc } from '@convex/_generated/dataModel';
 import type { ManagerStanding } from '@/agent/manager-standing';
+import { LOCAL_DEV_TRANSFER_REFUSAL } from '@/agent/manager-transfer';
 import { DEV_NO_AUTH } from '@/lib/dev-auth';
 import type { DeploymentProfile } from '@/lib/surface-mode';
 import { deploymentZone } from '@/lib/zone';
@@ -22,7 +23,6 @@ import {
   endedCardLine,
   HAND_OVER,
   handOverToLabel,
-  LOCAL_DEV_HANDOVER_LINE,
   MANAGER_DUTY,
   otherStandingLine,
   type HandoverDeparture,
@@ -220,23 +220,6 @@ export function managerCardState(
 }
 
 /**
- * How many of the employee's runs are in flight: items executing, and items whose held actions
- * were approved and whose apply is scheduled or running, as the move counts them before it
- * settles (the transfer plan, section 6.4).
- *
- * @param items - The employee's work items.
- */
-export function runsInFlightOf(
-  items: readonly Pick<Doc<'workItems'>, 'state' | 'approvedIndexes'>[],
-): number {
-  return items.filter(
-    (item) =>
-      item.state === 'executing' ||
-      (item.state === 'actions-pending' && item.approvedIndexes !== undefined),
-  ).length;
-}
-
-/**
  * Whether this browser signs in as the one manager of an installation that has no other: the
  * local sign-in under the `local-dev` profile, as `managerTransfers.ask` refuses it. The hosted
  * demo leaves the profile unset, but signs in through Clerk.
@@ -272,8 +255,6 @@ function ManagerCard({ agent, surfaceMode }: ManagerCardProps) {
   const standing = useQuery(api.agents.managerStanding, { agentId: agent._id });
   const departures = useQuery(api.managerTransfers.departures, {});
   const config = useQuery(api.config.surfaceMode);
-  const accepting = open?.state === 'accepting';
-  const work = useQuery(api.work.listForAgent, accepting ? { agentId: agent._id } : 'skip');
   const [dialog, setDialog] = useState<CardDialog | null>(null);
   const card = useRef<HTMLElement>(null);
   const flagId = useId();
@@ -368,7 +349,7 @@ function ManagerCard({ agent, surfaceMode }: ManagerCardProps) {
         acceptingCardLine({
           name: agent.name,
           to: state.open.toAddress,
-          runs: work === undefined ? undefined : runsInFlightOf(work),
+          runs: state.open.runsInFlight,
           settleBy: state.open.settleBy,
           zone,
         }),
@@ -388,7 +369,8 @@ function ManagerCard({ agent, surfaceMode }: ManagerCardProps) {
         controls = handOver();
       }
       if (state.ended !== undefined) lines.push(endedCardLine(state.ended, zone));
-      if (oneManager) lines.push(LOCAL_DEV_HANDOVER_LINE);
+      // The very words `managerTransfers.ask` refuses with there: one constant for both.
+      if (oneManager) lines.push(LOCAL_DEV_TRANSFER_REFUSAL);
       break;
     }
     default: {

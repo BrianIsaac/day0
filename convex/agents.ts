@@ -46,6 +46,14 @@ import {
   type ManagerStanding,
 } from '../src/agent/manager-standing';
 import { evaluationBedName, evaluationBedRefusal } from '../src/evaluation/bed-flag';
+import { AVATAR_ID_MAX_CHARS, AVATAR_ID_TOO_LONG } from '../src/agent/avatar-pets';
+import { characterCount } from '../src/lib/visible-text';
+import {
+  clippedEmployeeName,
+  EMPLOYEE_NAME_TOO_LONG,
+  isEmployeeNameWithinBound,
+  visibleEmployeeName,
+} from '../src/agent/employee-name';
 import { shownEmployeeState, type CharterApproval } from '../src/work/state-labels';
 import {
   ONE_TO_ONE_PHASE_KINDS,
@@ -526,12 +534,26 @@ function deployAddress(caller: Caller, args: DeployAddressArgs): string {
 }
 
 /**
+ * The name a deploy stores: the visible name, one line and trimmed, or `Day0` when none is given.
+ *
+ * @throws ConvexError with {@link EMPLOYEE_NAME_TOO_LONG} past the bound: the name is copied into
+ *   every handover request and every inbox entry that names the employee, so an unbounded one
+ *   could fill another person's inbox past a read's limit.
+ */
+function deployName(name: string | undefined): string {
+  if (name === undefined) return 'Day0';
+  if (!isEmployeeNameWithinBound(name)) throw new ConvexError(EMPLOYEE_NAME_TOO_LONG);
+  // A name of nothing visible names no one: the default, as with no name given.
+  return visibleEmployeeName(name) || 'Day0';
+}
+
+/**
  * Public, signed in with a verified address: creates an employee for the
  * caller, reporting to that address (or, from the evaluation harness on a
  * bed, to its reserved `evaluationAddress`), in the caller's zone with its
  * deployment grants; records both, and schedules the mirror of the caller's
  * already-synced documentation sources to it. The workspace is written
- * later, when the charter is committed.
+ * later, when the charter is committed. Refuses a name past 80 characters.
  */
 export const deploy = mutation({
   args: {
@@ -546,7 +568,12 @@ export const deploy = mutation({
   },
   handler: async (ctx, args): Promise<Id<'agents'>> => {
     const identity = await getCallerOrThrow(ctx);
-    const name = args.name ?? 'Day0';
+    const name = deployName(args.name);
+    // The row is read whole wherever the employee is named (the inbox of a handover's named
+    // account among them), so nothing on it is left unbounded (the wave 9 review's B2).
+    if (args.avatarId !== undefined && characterCount(args.avatarId) > AVATAR_ID_MAX_CHARS) {
+      throw new ConvexError(AVATAR_ID_TOO_LONG);
+    }
     const arm = args.arm ?? 'day0';
     const bossEmail = deployAddress(identity, {
       evaluationAddress: args.evaluationAddress,
@@ -673,27 +700,34 @@ export const managerStanding = query({
   },
 });
 
+/** One employee that reports to an address other than its owner's, for the home's line. */
+const reportingElsewhereValidator = v.object({ agentId: v.id('agents'), name: v.string() });
+
 /**
- * Public, any caller: how many of the caller's company employees report to
- * an address that is not the caller's verified one, for the home's one line
- * while any does (the transfer plan section 11.2). Evaluation employees are
- * left out, as the roster leaves them out, within the rows the roster reads
+ * Public, any caller: the caller's company employees that report to an
+ * address that is not the caller's verified one, newest first as the roster
+ * reads them, for the home's one line while any does, each linked to its
+ * People tab (the transfer plan section 11.2). Evaluation employees are left
+ * out, as the roster leaves them out, within the rows the roster reads
  * (`ROSTER_SCAN_LIMIT`). Writes nothing.
  *
- * @returns The count, or null for an anonymous caller or one whose sign-in asserts no verified address.
+ * @returns The employees, or null for an anonymous caller or one whose sign-in asserts no verified address.
  */
 export const employeesReportingElsewhere = query({
   args: {},
-  returns: v.union(v.number(), v.null()),
-  handler: async (ctx): Promise<number | null> => {
+  returns: v.union(v.array(reportingElsewhereValidator), v.null()),
+  handler: async (ctx): Promise<Infer<typeof reportingElsewhereValidator>[] | null> => {
     const caller = await getCaller(ctx);
     const callerAddress = caller ? verifiedAddressOf(caller) : undefined;
     if (!caller || callerAddress === undefined) return null;
     const agents = await ctx.db
       .query('agents')
       .withIndex('by_userId', (q) => q.eq('userId', caller.ownerKey))
+      .order('desc')
       .take(ROSTER_SCAN_LIMIT);
-    return agents.filter((agent) => standingOf(agent, callerAddress).standing === 'other').length;
+    return agents
+      .filter((agent) => standingOf(agent, callerAddress).standing === 'other')
+      .map((agent) => ({ agentId: agent._id, name: clippedEmployeeName(agent.name) }));
   },
 });
 

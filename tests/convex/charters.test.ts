@@ -1026,6 +1026,10 @@ describe('the identity file after a handover (transfer plan 6.2, the workspace r
     const identity = await workspaceFile(harness, agentId, 'IDENTITY.md');
     expect(identity).toContain('## Manager (who approves)\n- colleague@day0.local');
     expect(identity).not.toContain(MANAGER_ADDRESS);
+    // USER.md names the manager too: the old one's "Boss:" line went with the move (review s3).
+    expect(await workspaceFile(harness, agentId, 'USER.md')).toBe(
+      '# USER\n\nBoss: colleague@day0.local\n',
+    );
   });
 
   it('leaves the file of an employee with no approved charter alone: a draft names no manager', async (): Promise<void> => {

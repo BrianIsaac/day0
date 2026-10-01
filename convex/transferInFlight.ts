@@ -22,6 +22,26 @@ export const HANDOVER_IN_PROGRESS_REASON =
  */
 export const HANDOVER_STOP_REASON = 'the employee was handed over to a new manager';
 
+/** The most executing items {@link runsInFlight} counts, the retire preview's row bound. */
+const RUNS_IN_FLIGHT_LIMIT = 200;
+
+/**
+ * How many of the employee's runs are in flight: the items executing, an apply that has started
+ * among them (the transfer plan, section 6.4). The move waits for these, and both managers' screens
+ * count them. An approved set whose apply has not started is not one: once the request is
+ * accepting the apply does not start, and the move returns the set to held (D13).
+ *
+ * @param db - Any reader.
+ * @param agentId - The employee.
+ */
+export async function runsInFlight(db: QueryCtx['db'], agentId: Id<'agents'>): Promise<number> {
+  const executing = await db
+    .query('workItems')
+    .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', 'executing'))
+    .take(RUNS_IN_FLIGHT_LIMIT);
+  return executing.length;
+}
+
 /**
  * The employee's request that has its acceptance and waits for runs in flight, or null. At most
  * one request of an employee is open (`MAX_OPEN_TRANSFERS_PER_EMPLOYEE`), so one indexed read

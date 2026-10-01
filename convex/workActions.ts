@@ -1116,7 +1116,13 @@ async function holdDay0Actions(
       plan: args.plan,
       runId: args.runId,
     });
-    await claimPlannedWriteTargets(ctx, args.workItemId, args.plan, surfaces, mockEnv);
+    await claimPlannedWriteTargets(ctx, {
+      workItemId: args.workItemId,
+      runId: args.runId,
+      plan: args.plan,
+      surfaces,
+      mockEnv,
+    });
     const heldElsewhere = await itemsHeldElsewhere(ctx, agent, args.workItemId);
     const output = await runSkill({
       skill: {
@@ -3530,30 +3536,33 @@ function heldByAnotherWorkItem(
  * Take the documented page fields this work item's approved plan writes,
  * before it authors, so the work beside it is told and reads the page.
  *
- * Args:
- *   ctx: Convex action context.
- *   workItemId: The work item about to author.
- *   plan: Its approved plan.
- *   surfaces: The agent's surfaces.
- *   mockEnv: The loaded documentation.
+ * @param input - The work item about to author, the run authoring it (the claim's fence), its
+ *   approved plan, the agent's surfaces and the loaded documentation.
  */
 async function claimPlannedWriteTargets(
   ctx: ActionCtx,
-  workItemId: Id<'workItems'>,
-  plan: Pick<ExecutionPlan, 'obligations'>,
-  surfaces: readonly SurfaceRecord[],
-  mockEnv: {
-    howToGuides: ReadonlyArray<{ body: string }>;
-    teamDocs: ReadonlyArray<{ body: string }>;
+  input: {
+    readonly workItemId: Id<'workItems'>;
+    readonly runId: Id<'events'>;
+    readonly plan: Pick<ExecutionPlan, 'obligations'>;
+    readonly surfaces: readonly SurfaceRecord[];
+    readonly mockEnv: {
+      readonly howToGuides: ReadonlyArray<{ body: string }>;
+      readonly teamDocs: ReadonlyArray<{ body: string }>;
+    };
   },
 ): Promise<void> {
   if (SURFACE_MODE !== 'real') return;
-  const targets = plannedWriteTargets(plan.obligations, surfaces, [
-    ...mockEnv.howToGuides,
-    ...mockEnv.teamDocs,
+  const targets = plannedWriteTargets(input.plan.obligations, input.surfaces, [
+    ...input.mockEnv.howToGuides,
+    ...input.mockEnv.teamDocs,
   ]);
   if (targets.length === 0) return;
-  await ctx.runMutation(internal.work.takeWriteTargetClaims, { workItemId, targets });
+  await ctx.runMutation(internal.work.takeWriteTargetClaims, {
+    workItemId: input.workItemId,
+    runId: input.runId,
+    targets,
+  });
 }
 
 /**
@@ -3971,6 +3980,7 @@ function endedAccessView(row: Doc<'surfaces'>): Doc<'surfaces'> {
  * Hold the tickets a phase's landed writes went to, when no work item holds
  * them (P8-2; `work.claimLandedTicketWrites`). Real mode only.
  *
+ * @param runId - The run whose phase landed them: the claim's fence.
  * @param actions - The phase's actions.
  * @param applied - Their ledger rows, by index.
  * @param surfaces - The agent's surfaces.
@@ -3978,6 +3988,7 @@ function endedAccessView(row: Doc<'surfaces'>): Doc<'surfaces'> {
 async function claimLandedTicketWrites(
   ctx: ActionCtx,
   workItemId: Id<'workItems'>,
+  runId: Id<'events'>,
   actions: readonly MockAction[],
   applied: readonly AppliedAction[],
   surfaces: readonly SurfaceRecord[],
@@ -3995,7 +4006,7 @@ async function claimLandedTicketWrites(
   });
   if (writes.length === 0) return;
   try {
-    await ctx.runMutation(internal.work.claimLandedTicketWrites, { workItemId, writes });
+    await ctx.runMutation(internal.work.claimLandedTicketWrites, { workItemId, runId, writes });
   } catch (error) {
     // The writes landed; the run's outcome is recorded whatever happens to
     // the claim, which only keeps a colleague from repeating them.
@@ -4046,7 +4057,14 @@ async function finishRun(
   knownValues: readonly string[] = [],
   surfaces: readonly SurfaceRecord[] = [],
 ): Promise<{ ok: boolean; reason?: string }> {
-  await claimLandedTicketWrites(ctx, workItemId, rawOutput.actions ?? [], rawApplied, surfaces);
+  await claimLandedTicketWrites(
+    ctx,
+    workItemId,
+    claim.runId,
+    rawOutput.actions ?? [],
+    rawApplied,
+    surfaces,
+  );
   // The whole persisted record passes the exact-value layer once more here:
   // the adapters already applied it to provider text, and this covers every
   // other string the dashboard renders from the run, whatever wrote it.

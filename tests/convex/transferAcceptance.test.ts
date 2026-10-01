@@ -3,14 +3,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import type schema from '../../convex/schema';
-import { EMPLOYEE_LEFT_ASKER, SOURCE_NOT_YOURS } from '../../convex/transferAcceptance';
-import { transferStateRefusal } from '../../convex/managerTransfers';
+import { SOURCE_NOT_YOURS } from '../../convex/transferAcceptance';
+import { EMPLOYEE_LEFT_ASKER } from '../../convex/transferPreview';
 import { HANDOVER_CUT_REASON } from '../../convex/surfaces';
+import { OUTCOME_UNKNOWN_REASON } from '../../src/work/reconciliation';
 import { EMPLOYEE_NOT_YOURS } from '../../src/agent/employee-access';
 import {
-  NOT_NAMED_IN_TRANSFER,
+  TRANSFER_NOT_FOUND,
   OWN_TRANSFER,
   transferExpiresAt,
+  transferStateRefusal,
 } from '../../src/agent/manager-transfer';
 import { runThroughBody } from '../fixtures/run-through-charter-2026-09-14';
 import { MANAGER_ADDRESS, fixtureAddressOf, managerIdentity } from './fakes/manager-identity';
@@ -33,6 +35,8 @@ const OWNER_SECRETS = [
   'OWNER-QUOTE-LINEAR',
   'OWNER-PAGE-BODY',
   'Owner runbook page',
+  'OWNER-ONE-TO-ONE-ANSWER',
+  'OWNER-ONE-TO-ONE-TURN',
 ] as const;
 
 /** The reporting-line rule the old manager's charter carries. */
@@ -47,6 +51,8 @@ interface Office {
   readonly tomas: Id<'agents'>;
   readonly priya: Id<'agents'>;
   readonly transferId: Id<'managerTransfers'>;
+  /** Maya's approved charter, drafted from the old manager's finished one-to-one. */
+  readonly charterId: Id<'charters'>;
   readonly ownerSource: Id<'docSources'>;
   readonly colleagueSource: Id<'docSources'>;
   readonly only: Id<'credentials'>;
@@ -140,7 +146,7 @@ async function seedOffice(): Promise<Office> {
     const tomas = await employee('owner', 'Tomas');
     const priya = await employee('colleague', 'Priya');
     const body = runThroughBody();
-    await ctx.db.insert('charters', {
+    const charterId = await ctx.db.insert('charters', {
       agentId: maya,
       version: '0.1',
       body: {
@@ -154,10 +160,31 @@ async function seedOffice(): Promise<Office> {
       approvedAt: 2,
       createdAt: 2,
     });
+    await ctx.db.insert('voiceSessions', {
+      agentId: maya,
+      mode: 'chat',
+      state: 'done',
+      answers: { 'why-this-hire': 'OWNER-ONE-TO-ONE-ANSWER' },
+      transcriptText: 'Employee: Why was I hired?\nManager: OWNER-ONE-TO-ONE-TURN',
+      turns: [
+        { id: 't1', speaker: 'employee', text: 'Why was I hired?', at: 1 },
+        { id: 't2', speaker: 'manager', text: 'OWNER-ONE-TO-ONE-TURN', topicIndex: 0, at: 2 },
+      ],
+      charterId,
+      charterVersion: '0.1',
+      startedAt: 1,
+      endedAt: 2,
+    });
     await ctx.db.insert('workspace', {
       agentId: maya,
       fileName: 'IDENTITY.md',
       content: `# IDENTITY\n\n## Manager (who approves)\n- ${MANAGER_ADDRESS}\n`,
+      updatedAt: 2,
+    });
+    await ctx.db.insert('workspace', {
+      agentId: maya,
+      fileName: 'USER.md',
+      content: `# USER\n\nBoss: ${MANAGER_ADDRESS}\n`,
       updatedAt: 2,
     });
     const documentation = {
@@ -273,6 +300,7 @@ async function seedOffice(): Promise<Office> {
       tomas,
       priya,
       transferId,
+      charterId,
       ownerSource,
       colleagueSource,
       only,
@@ -330,7 +358,7 @@ describe('transferPreview: what the named manager reads before accepting (transf
       note: 'Maya owns the RevOps queue.',
       takesOn: {
         waiting: {
-          'one-to-one': 0,
+          oneToOne: 0,
           charter: 0,
           plan: 1,
           held: 0,
@@ -415,6 +443,19 @@ describe('transferPreview: what the named manager reads before accepting (transf
     expect(preview?.takesOn).toMatchObject({ openWork: 2, openWorkAtLeast: false });
   });
 
+  it('names an employee stored before the deploy bounded names in 80 characters', async (): Promise<void> => {
+    const office = await seedOffice();
+    await office.harness.run(async (ctx) => {
+      await ctx.db.patch(office.maya, { name: `Maya\u202E ${'y'.repeat(900_000)}` });
+    });
+
+    const preview = await office.harness
+      .withIdentity(COLLEAGUE)
+      .query(api.transferAcceptance.transferPreview, { transferId: office.transferId });
+
+    expect(preview?.employee.name).toBe(`Maya ${'y'.repeat(75)}`);
+  });
+
   it('answers nothing for an asked request past its expiry, which accept would refuse', async (): Promise<void> => {
     const office = await seedOffice();
     await office.harness.run(async (ctx) => {
@@ -433,7 +474,19 @@ describe('transferPreview: what the named manager reads before accepting (transf
       office.harness
         .withIdentity(managerIdentity('bystander'))
         .query(api.transferAcceptance.transferPreview, { transferId: office.transferId }),
-    ).rejects.toMatchObject({ data: NOT_NAMED_IN_TRANSFER });
+    ).rejects.toMatchObject({ data: TRANSFER_NOT_FOUND });
+  });
+
+  it('reads a link naming no request, or another table’s row, as one that does not exist (U4-m1)', async (): Promise<void> => {
+    const office = await seedOffice();
+    for (const transferId of ['garbage', office.maya as string]) {
+      await expect(
+        office.harness
+          .withIdentity(COLLEAGUE)
+          .query(api.transferAcceptance.transferPreview, { transferId }),
+        transferId,
+      ).rejects.toMatchObject({ data: TRANSFER_NOT_FOUND });
+    }
   });
 
   it('answers nothing for a request that is no longer waiting for an answer', async (): Promise<void> => {
@@ -533,6 +586,7 @@ describe('accept in mock mode: the office moves and nothing is kept (14.1 items 
       .query(api.workspace.read, { agentId: office.maya });
     expect(identity['IDENTITY.md']).toContain(`- ${COLLEAGUE_ADDRESS}`);
     expect(identity['IDENTITY.md']).not.toContain(MANAGER_ADDRESS);
+    expect(identity['USER.md']).toBe(`# USER\n\nBoss: ${COLLEAGUE_ADDRESS}\n`);
   });
 
   it('gives the employee the documentation the acceptor ticked, and counts every old page deleted across pages', async (): Promise<void> => {
@@ -674,6 +728,9 @@ describe('accept in real mode: two surfaces, one credential shared with a collea
       colleague.query(api.agents.permissionScopes, { agentId }),
       colleague.query(api.work.listForAgent, { agentId }),
       colleague.query(api.charters.latest, { agentId }),
+      colleague.query(api.voice.latest, { agentId }),
+      colleague.query(api.voice.list, { agentId }),
+      colleague.query(api.charters.transcriptOf, { charterId: office.charterId }),
       colleague.query(internal.events.exportHead, { agentId, exportedAt: Date.now() }),
       colleague.query(internal.events.exportPage, { agentId, section: 'surfaces', cursor: null }),
       colleague.query(internal.events.exportPage, { agentId, section: 'events', cursor: null }),
@@ -681,6 +738,24 @@ describe('accept in real mode: two surfaces, one credential shared with a collea
 
     const serialised = JSON.stringify(answers);
     for (const secret of OWNER_SECRETS) expect(serialised, secret).not.toContain(secret);
+  });
+
+  it('tells the new owner whose one-to-one the carried charter was drafted from, and keeps the session finished', async (): Promise<void> => {
+    const office = await seedOffice();
+    const before = await office.harness
+      .withIdentity(OWNER)
+      .query(api.charters.transcriptOf, { charterId: office.charterId });
+    await acceptAsColleague(office);
+
+    await expect(
+      office.harness
+        .withIdentity(COLLEAGUE)
+        .query(api.charters.transcriptOf, { charterId: office.charterId }),
+    ).resolves.toEqual({ heldBy: MANAGER_ADDRESS });
+    expect(before).toMatchObject({ transcript: expect.stringContaining('OWNER-ONE-TO-ONE-TURN') });
+    await expect(
+      office.harness.withIdentity(COLLEAGUE).query(api.voice.latest, { agentId: office.maya }),
+    ).resolves.toMatchObject({ state: 'done', charterId: office.charterId, answers: {} });
   });
 
   it('cancels the pending jobs that name a cut surface and keeps a colleague’s', async (): Promise<void> => {
@@ -900,6 +975,42 @@ describe('claims and the departure boundary at a move (14.1 item 4)', (): void =
     });
   });
 
+  it('keeps the claim of a stopped item whose write’s outcome is unknown, as one that may have written (M4)', async (): Promise<void> => {
+    const office = await seedOffice();
+    const claim = await office.harness.run(async (ctx) => {
+      const stopped = await ctx.db.insert('workItems', {
+        ...workItemFields(office.maya, 'REVOPS-12'),
+        state: 'failed',
+        output: {
+          actions: [{ tool: 'linear.save_comment', args: { issueId: 'REVOPS-12', body: 'Done.' } }],
+          applied: [
+            {
+              tool: 'linear.save_comment',
+              ok: false,
+              outcomeUnknown: true,
+              reason: OUTCOME_UNKNOWN_REASON,
+            },
+          ],
+        },
+      });
+      return await ctx.db.insert('externalClaims', {
+        userId: 'owner',
+        key: 'linear:REVOPS-12',
+        agentId: office.maya,
+        workItemId: stopped,
+        claimedAt: 1,
+      });
+    });
+
+    await acceptAsColleague(office);
+
+    const kept = await office.harness.run(async (ctx) => await ctx.db.get(claim));
+    expect(kept?.releasedAt).toBeUndefined();
+    expect((await read(office.harness, office.transferId))?.outcome).toMatchObject({
+      claimsReleased: 0,
+    });
+  });
+
   it('finds a key the new owner holds under another of its names', async (): Promise<void> => {
     const office = await seedOffice();
     const moving = await office.harness.run(async (ctx) => {
@@ -1098,6 +1209,6 @@ describe('accept: the refusals, each before anything moves', (): void => {
       office.harness
         .withIdentity(managerIdentity('bystander'))
         .mutation(api.transferAcceptance.accept, { transferId: office.transferId }),
-    ).rejects.toMatchObject({ data: NOT_NAMED_IN_TRANSFER });
+    ).rejects.toMatchObject({ data: TRANSFER_NOT_FOUND });
   });
 });

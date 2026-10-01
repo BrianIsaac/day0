@@ -361,8 +361,8 @@ describe('a draft sent back with a note (round two section 3.5)', (): void => {
       changes: [{ kind: 'edit-function', text: 'Own the finance close.' }],
     });
     expect(
-      (await owner.query(api.charters.transcriptOf, { charterId: amended.charterId }))?.transcript,
-    ).toBe(DAY_ONE_TRANSCRIPT_2026_09_14);
+      await owner.query(api.charters.transcriptOf, { charterId: amended.charterId }),
+    ).toMatchObject({ transcript: DAY_ONE_TRANSCRIPT_2026_09_14 });
   });
 
   it('returns the employee to its one-to-one when the draft has no transcript to redraft from', async (): Promise<void> => {

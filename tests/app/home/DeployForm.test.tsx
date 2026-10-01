@@ -57,6 +57,11 @@ describe('DeployForm', (): void => {
     expect(field).not.toMatch(/outline-(none|hidden)/);
   });
 
+  it('takes a name of at most 80 characters, the bound the deploy holds it to', (): void => {
+    const field = /<input[^>]*placeholder="worker 1"[^>]*>/.exec(html)?.[0] ?? '';
+    expect(field).toContain('maxLength="80"');
+  });
+
   it('states the three facts: who it reports to, where it works, how much it does alone', (): void => {
     // The server's verified address, never the browser's.
     expect(text).toContain('Reports to sam@revops.example (you)');

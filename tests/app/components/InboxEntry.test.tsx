@@ -179,6 +179,15 @@ describe('InboxEntry', (): void => {
     expect(html).not.toContain('text-[var(--color-ok)]');
   });
 
+  it('wraps a long unbroken name and its about line inside the entry, as a phone needs (U2-m4)', (): void => {
+    const html = renderToStaticMarkup(
+      <InboxEntry entry={{ ...held, employeeName: 'M'.repeat(80) }} now={NOW} named />,
+    );
+    const lines = html.match(/<p [^>]*class="[^"]*"/g) ?? [];
+    expect(lines.slice(0, 2)).toHaveLength(2);
+    for (const line of lines.slice(0, 2)) expect(line).toContain('[overflow-wrap:anywhere]');
+  });
+
   it('sets no type below the 12 px floor', (): void => {
     expect(renderToStaticMarkup(<InboxEntry entry={held} now={NOW} named />)).not.toMatch(
       /text-\[(9|10|11)px\]/,

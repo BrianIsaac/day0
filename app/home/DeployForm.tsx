@@ -9,6 +9,7 @@ import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { DEFAULT_AGENT_AVATAR, avatarById } from '@/agent/avatar-pets';
 import { UNVERIFIED_FOR_DEPLOY } from '@/agent/manager-address';
+import { EMPLOYEE_NAME_MAX_CHARS } from '@/agent/employee-name';
 import { deploymentZone } from '@/lib/zone';
 import { errorMessage } from '@/lib/errors';
 import { log } from '@/lib/logger';
@@ -172,6 +173,7 @@ export function DeployForm({
             id={nameId}
             type="text"
             required
+            maxLength={EMPLOYEE_NAME_MAX_CHARS}
             disabled={submitting}
             // The bed rehearsal's driver finds the field by this placeholder (scripts/bed/rehearsal/driver.ts).
             placeholder="worker 1"

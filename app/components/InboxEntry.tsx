@@ -191,10 +191,13 @@ export function InboxEntry({
       }`}
     >
       <div className="grid min-w-0 gap-1">
-        <p id={titleId} className="text-[15px] font-semibold text-[var(--color-fg)]">
+        <p
+          id={titleId}
+          className="text-[15px] font-semibold text-[var(--color-fg)] [overflow-wrap:anywhere]"
+        >
           {named ? `${entry.employeeName} · ${ask}` : sentence(ask)}
         </p>
-        <p className="text-sm text-[var(--color-fg-2)]">{about}</p>
+        <p className="text-sm text-[var(--color-fg-2)] [overflow-wrap:anywhere]">{about}</p>
         <p className="flex flex-wrap gap-x-2.5 text-[13px] text-[var(--color-muted)]">
           <span>{waitingFor(entry.waitingSince, now, entry.waitingAtLeast)}</span>
           {held && !entry.waitingAtLeast ? (

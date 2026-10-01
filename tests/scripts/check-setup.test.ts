@@ -372,6 +372,17 @@ describe('the auth section', (): void => {
     expect(lines).not.toContain('npx convex env set DAY0_OIDC_ISSUER');
   });
 
+  it('names the sync script as the way the address flag reaches the deployment, and off it again', (): void => {
+    const lines = authSection({
+      ...ISSUER,
+      DAY0_PROFILE: 'customer-local',
+      DAY0_OIDC_EMAIL_TRUSTED: 'true',
+    }).lines.join(' ');
+    expect(lines).toContain(
+      'The deployment reads the flag: `pnpm sync:env` puts it there, and takes it off once it is empty here.',
+    );
+  });
+
   it("reports that a manager's address comes from the issuer's email and email_verified claims", (): void => {
     const lines = authSection({ ...ISSUER, DAY0_PROFILE: 'customer-local' }).lines.join(' ');
     expect(lines).toContain('`email` claim');

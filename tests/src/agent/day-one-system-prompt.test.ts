@@ -63,6 +63,13 @@ describe('dayOneSystemPrompt', (): void => {
     );
   });
 
+  it('counts the name by character and drops its hidden characters, as the deploy does', (): void => {
+    const prompt = dayOneSystemPrompt(`Ma\u200Bya\u202E ${'\u{1F431}'.repeat(100)}`);
+    expect(prompt.split('\n')[0]).toBe(
+      `You are Maya ${'\u{1F431}'.repeat(75)}, a newly deployed workplace employee on your first day.`,
+    );
+  });
+
   it('asks only the question each turn names, once, with no follow-up (the v0.11.0 walk)', (): void => {
     const prompt = dayOneSystemPrompt('Ada');
     expect(prompt).toContain(
@@ -78,25 +85,49 @@ describe('dayOneSystemPrompt', (): void => {
   });
 });
 
+/** The line every note before the close ends with (the wave 9 review's decision 3). */
+const NO_PROMISED_RETURN =
+  ' Never promise to come back to a question or say you will circle back to it: anything the ' +
+  'boss leaves open is named at the last question.';
+
 describe('dayOneTurnNote', (): void => {
   it('names the opening question after the welcome on turn one', (): void => {
     expect(dayOneTurnNote(0)).toBe(
       'Where the one-to-one stands: the boss has answered none of the seven questions yet. ' +
         'In this turn, welcome the boss as the rules say, then ask question 1 (Why this hire) in your ' +
-        `own words: ${questionBody(DAY_ONE_TOPIC_SPECS[0].question)}`,
+        `own words: ${questionBody(DAY_ONE_TOPIC_SPECS[0].question)}` +
+        NO_PROMISED_RETURN,
     );
   });
 
   it('names the question after the replies counted, the one the progress line shows', (): void => {
     DAY_ONE_TOPIC_SPECS.forEach((spec, replies) => {
-      if (replies === 0) return;
+      if (replies === 0 || replies === DAY_ONE_TOPIC_SPECS.length - 1) return;
       expect(dayOneTurnNote(replies)).toBe(
         `Where the one-to-one stands: the boss has answered ${replies} of the seven questions. ` +
           "In this turn, acknowledge the boss's last reply in at most one short sentence, then ask " +
           `question ${replies + 1} (${DAY_ONE_TOPIC_TITLES[spec.topic]}) in your own words: ` +
-          questionBody(spec.question),
+          questionBody(spec.question) +
+          NO_PROMISED_RETURN,
       );
     });
+  });
+
+  it('never lets the employee promise a return, and has the last question name what was left open (decision 3)', (): void => {
+    const last = DAY_ONE_TOPIC_SPECS.at(-1)!;
+    expect(dayOneTurnNote(6)).toBe(
+      'Where the one-to-one stands: the boss has answered 6 of the seven questions. ' +
+        "In this turn, acknowledge the boss's last reply in at most one short sentence. Then, " +
+        "before the last question, name in one short sentence each thing the boss's earlier " +
+        'replies left open: a question they asked back, an answer they were not sure of, or ' +
+        'something they asked to come back to; name nothing when nothing was left open. Then ask ' +
+        `question 7 (${DAY_ONE_TOPIC_TITLES[last.topic]}) in your own words: ` +
+        questionBody(last.question) +
+        NO_PROMISED_RETURN,
+    );
+    for (let replies = 0; replies < 7; replies += 1) {
+      expect(dayOneTurnNote(replies)).toMatch(/Never promise to come back to a question/);
+    }
   });
 
   it('asks for the close, and no question, once all seven are answered', (): void => {

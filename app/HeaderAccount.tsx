@@ -3,7 +3,7 @@
 import { Show, SignInButton, SignUpButton, UserButton } from '@clerk/nextjs';
 import { DEV_NO_AUTH } from '@/lib/dev-auth';
 import { useAccount } from './account';
-import { clerkAppearance } from './clerk-appearance';
+import { clerkAppearance, clerkSignInAppearance } from './clerk-appearance';
 
 /** Every control in the slot sits in its one grid cell, so the cell is as large as the largest. */
 const LAYER = '[grid-area:1/1]';
@@ -116,10 +116,10 @@ function SignedOutControls({ reserved }: SignedOutControlsProps): React.ReactEle
   }
   return (
     <div className={SIGNED_OUT_ROW}>
-      <SignInButton mode="modal" appearance={clerkAppearance}>
+      <SignInButton mode="modal" appearance={clerkSignInAppearance}>
         {signIn}
       </SignInButton>
-      <SignUpButton mode="modal" appearance={clerkAppearance}>
+      <SignUpButton mode="modal" appearance={clerkSignInAppearance}>
         {createAccount}
       </SignUpButton>
     </div>

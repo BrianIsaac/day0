@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   acceptedWords,
+  arrivingLine,
   acceptingCardLine,
   askedCardLine,
   askedWords,
@@ -11,17 +12,17 @@ import {
   handedOverLine,
   handOverLines,
   leavesBehindLines,
-  LOCAL_DEV_HANDOVER_LINE,
   otherStandingLine,
-  reportingElsewhereLine,
+  reportingElsewhereChoice,
+  reportingElsewhereLead,
   retireBlockedByAcceptance,
   runsInFlightLine,
   takeOnLead,
   takesOnLines,
   zonedStamp,
 } from '../../app/handover-words';
-import { LOCAL_DEV_TRANSFER_REFUSAL } from '../../convex/managerTransfers';
-import type { TransferPreview } from '../../convex/transferAcceptance';
+import { LOCAL_DEV_TRANSFER_REFUSAL } from '../../src/agent/manager-transfer';
+import type { TransferPreview } from '../../convex/transferPreview';
 
 /** 1 October 2026, 09:00 UTC. */
 const ASKED = Date.UTC(2026, 9, 1, 9, 0);
@@ -44,7 +45,7 @@ const PREVIEW: TransferPreview = {
   expiresAt: EXPIRES,
   takesOn: {
     waiting: {
-      'one-to-one': 0,
+      oneToOne: 0,
       charter: 0,
       plan: 1,
       held: 0,
@@ -227,8 +228,10 @@ describe('the Manager card (plan 7.1)', () => {
     );
   });
 
-  it('says the local-dev line in the very words the backend refuses the ask with', () => {
-    expect(LOCAL_DEV_HANDOVER_LINE).toBe(LOCAL_DEV_TRANSFER_REFUSAL);
+  it('says the local-dev line in the very words the backend refuses the ask with, one constant both read', () => {
+    expect(LOCAL_DEV_TRANSFER_REFUSAL).toBe(
+      'This installation signs everyone in as one manager. Handing over needs each manager to sign in as themselves (the customer-local profile).',
+    );
   });
 });
 
@@ -249,8 +252,29 @@ describe('the acceptance dialog (plan 7.3)', () => {
     expect(lead('Owns triage.')).toMatch(/Maya: Owns triage\.$/);
   });
 
+  it('leads what the new manager takes on with the decisions waiting on them, by kind (plan 7.3, U4-m5)', () => {
+    const waiting = {
+      ...PREVIEW.takesOn.waiting,
+      plan: 1,
+      held: 2,
+      oneToOne: 1,
+    };
+    const none = { ...PREVIEW.takesOn.waiting, plan: 0 };
+    expect(takesOnLines({ takesOn: { ...PREVIEW.takesOn, waiting: none } })[0]).toBe(
+      '3 items in progress',
+    );
+    expect(takesOnLines({ takesOn: { ...PREVIEW.takesOn, waiting } })[0]).toBe(
+      '4 decisions waiting: 1 one-to-one, 1 plan and 2 items with writes held',
+    );
+    const one = { ...PREVIEW.takesOn.waiting, plan: 0, surface: 1 };
+    expect(takesOnLines({ takesOn: { ...PREVIEW.takesOn, waiting: one } })[0]).toBe(
+      '1 decision waiting: 1 connection to approve',
+    );
+  });
+
   it('lists what the new manager takes on', () => {
     expect(takesOnLines(PREVIEW)).toEqual([
+      '1 decision waiting: 1 plan',
       '3 items in progress',
       '2 skills',
       'charter version 0.2, approved',
@@ -274,6 +298,7 @@ describe('the acceptance dialog (plan 7.3)', () => {
       },
     });
     expect(lines).toEqual([
+      '1 decision waiting: 1 plan',
       'at least 200 items in progress',
       '1 skill',
       'no approved charter: you hold its Day-1 one-to-one',
@@ -306,11 +331,29 @@ describe('the acceptance dialog (plan 7.3)', () => {
     );
   });
 
-  it('says the employee is the acceptor’s, or still finishing its runs', () => {
-    expect(acceptedWords('Maya', 0)).toBe('Maya is yours.');
-    expect(acceptedWords('Maya', 1)).toBe(
-      'Accepted. Maya is finishing 1 run; it becomes yours when it ends.',
+  it('says the employee is the acceptor’s, or becomes theirs when its runs end, as the acceptance answered', () => {
+    expect(acceptedWords('Maya', 'accepted')).toBe('Maya is yours.');
+    expect(acceptedWords('Maya', 'accepting')).toBe(
+      'You accepted Maya. It becomes yours when its runs end.',
     );
+  });
+
+  it('says on the acceptor’s home an employee is on its way, its runs and the deadline in the viewer’s zone (M2)', () => {
+    const settleBy = Date.UTC(2026, 9, 2, 11, 15);
+    expect(
+      arrivingLine({ name: 'Maya', from: 'sam@kestrel.example', runs: 1, settleBy, zone: 'UTC' }),
+    ).toBe(
+      'Maya is finishing 1 run for sam@kestrel.example and becomes yours when it ends, by 2 Oct 2026, 11:15, UTC time at the latest.',
+    );
+    expect(
+      arrivingLine({
+        name: 'Maya',
+        from: 'sam@kestrel.example',
+        runs: 0,
+        settleBy: undefined,
+        zone: 'UTC',
+      }),
+    ).toBe('Maya is finishing its runs for sam@kestrel.example and becomes yours when they end.');
   });
 });
 
@@ -325,13 +368,11 @@ describe('the old manager’s notices (plan 7.4) and the home’s line (section 
     );
   });
 
-  it('counts the employees reporting to someone else', () => {
-    expect(reportingElsewhereLine(3)).toBe(
-      "3 employees report to someone who is not you. Choose on each one's People tab.",
-    );
-    expect(reportingElsewhereLine(1)).toBe(
-      '1 employee reports to someone who is not you. Choose on its People tab.',
-    );
+  it('counts the employees reporting to someone else, before naming them, and says where to choose', () => {
+    expect(reportingElsewhereLead(3)).toBe('3 employees report to someone who is not you:');
+    expect(reportingElsewhereChoice(3)).toBe("Choose on each one's People tab.");
+    expect(reportingElsewhereLead(1)).toBe('1 employee reports to someone who is not you:');
+    expect(reportingElsewhereChoice(1)).toBe('Choose on its People tab.');
   });
 });
 

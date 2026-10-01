@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
+import { MANAGER_ADDRESS_REFUSAL } from '../../src/agent/manager-address';
 import {
   addressBoundRefusal,
   DECLINE_REASON_TOO_LONG,
@@ -20,16 +21,11 @@ import {
   OWNER_DAILY_BOUND_REFUSAL,
   OWNER_OPEN_BOUND_REFUSAL,
   sameAddressRefusal,
-  transferNoticeText,
-  transferStateRefusal,
-  UNVERIFIED_FOR_ASK,
-} from '../../convex/managerTransfers';
-import { MANAGER_ADDRESS_REFUSAL } from '../../src/agent/manager-address';
-import {
-  NOT_NAMED_IN_TRANSFER,
   TRANSFER_DEPARTURES_WINDOW_MS,
   TRANSFER_EXPIRY_MS,
   TRANSFER_NOT_FOUND,
+  transferStateRefusal,
+  UNVERIFIED_FOR_ASK,
   UNVERIFIED_FOR_TRANSFER,
 } from '../../src/agent/manager-transfer';
 import { credentialOwnerBinding, encrypt } from '../../src/lib/credential-crypto';
@@ -312,24 +308,29 @@ describe('managerTransfers.ask', (): void => {
           toAddress: fixtureAddressOf('wei'),
         }),
       ),
-    ).toBe(openTransferRefusal('Maya', PRIYA_ADDRESS));
-    expect(openTransferRefusal('Maya', PRIYA_ADDRESS)).toBe(
+    ).toBe(openTransferRefusal('Maya', PRIYA_ADDRESS, 'asked'));
+    expect(openTransferRefusal('Maya', PRIYA_ADDRESS, 'asked')).toBe(
       'Maya already has a handover open to priya@day0.local. Change the address or cancel it first.',
     );
   });
 
-  it('refuses a second request while one is accepting', async (): Promise<void> => {
+  it('refuses a second request while one is accepting, in the words of an accepted handover rather than ones that offer a change (U2-m1)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const maya = await employee(harness);
     await insertRequest(harness, { agentId: maya, state: 'accepting' });
-    expect(
-      await refusal(
-        harness.withIdentity(OWNER).mutation(api.managerTransfers.ask, {
-          agentId: maya,
-          toAddress: fixtureAddressOf('wei'),
-        }),
-      ),
-    ).toBe(openTransferRefusal('Maya', PRIYA_ADDRESS));
+    const refused = await refusal(
+      harness.withIdentity(OWNER).mutation(api.managerTransfers.ask, {
+        agentId: maya,
+        toAddress: fixtureAddressOf('wei'),
+      }),
+    );
+    expect(refused).toBe(openTransferRefusal('Maya', PRIYA_ADDRESS, 'accepting'));
+    expect(refused).toBe(
+      `Maya's handover to ${PRIYA_ADDRESS} was already accepted: Maya becomes theirs when its runs end.`,
+    );
+    expect(openTransferRefusal('Maya', PRIYA_ADDRESS, 'asked')).toBe(
+      `Maya already has a handover open to ${PRIYA_ADDRESS}. Change the address or cancel it first.`,
+    );
   });
 
   it('expires an open request past its expiry in the ask, so it holds nothing, and asks again', async (): Promise<void> => {
@@ -432,6 +433,89 @@ describe('managerTransfers.ask', (): void => {
     ).toBe(addressBoundRefusal(PRIYA_ADDRESS));
     expect(addressBoundRefusal(PRIYA_ADDRESS)).toBe(
       'priya@day0.local has too many handovers waiting. Try again once they have answered some.',
+    );
+  });
+});
+
+describe('managerTransfers and a long or hidden text', (): void => {
+  it('clips the employee’s name at the ask, for an employee stored before the deploy bounded it', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const maya = await employee(harness, `Maya\u200B ${'y'.repeat(100_000)}`);
+    const transferId = await harness
+      .withIdentity(OWNER)
+      .mutation(api.managerTransfers.ask, { agentId: maya, toAddress: PRIYA_ADDRESS });
+    expect((await request(harness, transferId))?.agentName).toBe(`Maya ${'y'.repeat(75)}`);
+  });
+
+  it('keeps the named account’s inbox to names of 80 characters when two accounts ask ten times over long names', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const longName = (index: number): string => `${index}${'n'.repeat(900_000)}`;
+    for (const [index, asker] of [OWNER, WEI].entries()) {
+      for (let count = 0; count < 5; count += 1) {
+        const agentId = await employee(harness, longName(index * 5 + count), {
+          userId: asker.subject,
+        });
+        await harness
+          .withIdentity(asker)
+          .mutation(api.managerTransfers.ask, { agentId, toAddress: PRIYA_ADDRESS });
+      }
+    }
+
+    const incoming = await harness.withIdentity(PRIYA).query(api.managerTransfers.incoming, {});
+    const inbox = await harness.withIdentity(PRIYA).query(api.work.needsYou, {});
+    expect(incoming).toHaveLength(10);
+    expect(inbox.entries.filter((entry) => entry.kind === 'transfer')).toHaveLength(10);
+    expect(Math.max(...incoming.map((entry) => Array.from(entry.employeeName).length))).toBe(80);
+    expect(Math.max(...inbox.entries.map((entry) => Array.from(entry.employeeName).length))).toBe(
+      80,
+    );
+    expect(JSON.stringify(incoming).length + JSON.stringify(inbox).length).toBeLessThan(20_000);
+  });
+
+  it('measures the note by character after redaction, and stores none of its hidden characters', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const ask = async (agentId: Id<'agents'>, note: string): Promise<unknown> => {
+      const transferId = await harness
+        .withIdentity(OWNER)
+        .mutation(api.managerTransfers.ask, { agentId, toAddress: PRIYA_ADDRESS, note });
+      return (await request(harness, transferId))?.note;
+    };
+    const emoji = '\u{1F431}'.repeat(1_000);
+    expect(await ask(await employee(harness, 'Maya'), emoji)).toBe(emoji);
+    expect(
+      await ask(await employee(harness, 'Tomas'), 'Read\u200B the\u202E list\u0007.\r\nThanks'),
+    ).toBe('Read the list.\nThanks');
+    expect(await ask(await employee(harness, 'Aiko'), '\u200B\u200B\u2060')).toBeUndefined();
+    expect(
+      await refusal(
+        harness.withIdentity(OWNER).mutation(api.managerTransfers.ask, {
+          agentId: await employee(harness, 'Wes'),
+          toAddress: PRIYA_ADDRESS,
+          // 1,000 characters as typed; the redacted password makes the stored text 1,009.
+          note: `${'x'.repeat(974)} https://ops:p@crm.example`,
+        }),
+      ),
+    ).toBe(NOTE_TOO_LONG);
+  });
+
+  it('measures the decline reason by character after redaction, and stores none of its hidden characters', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const maya = await employee(harness);
+    const decline = async (reason: string): Promise<unknown> => {
+      const transferId = await insertRequest(harness, { agentId: maya });
+      const outcome = await refusal(
+        harness.withIdentity(PRIYA).mutation(api.managerTransfers.decline, { transferId, reason }),
+      );
+      return outcome === 'not refused'
+        ? (await request(harness, transferId))?.declineReason
+        : outcome;
+    };
+    expect(await decline('\u{1F431}'.repeat(500))).toBe('\u{1F431}'.repeat(500));
+    expect(await decline('Not\u200B this\u202E quarter')).toBe('Not this quarter');
+    expect(await decline('\u200B\uFEFF')).toBeUndefined();
+    // 500 characters as typed; the redacted password makes the stored text 509.
+    expect(await decline(`${'x'.repeat(474)} https://ops:p@crm.example`)).toBe(
+      DECLINE_REASON_TOO_LONG,
     );
   });
 });
@@ -683,8 +767,8 @@ describe('managerTransfers.decline', (): void => {
       refusal(
         harness.withIdentity(identity).mutation(api.managerTransfers.decline, { transferId }),
       );
-    expect(await decline(WEI)).toBe(NOT_NAMED_IN_TRANSFER);
-    expect(await decline(OWNER)).toBe(NOT_NAMED_IN_TRANSFER);
+    expect(await decline(WEI)).toBe(TRANSFER_NOT_FOUND);
+    expect(await decline(OWNER)).toBe(TRANSFER_NOT_FOUND);
     expect(await decline(managerIdentity('priya', { emailVerified: false }))).toBe(
       UNVERIFIED_FOR_TRANSFER,
     );
@@ -749,6 +833,27 @@ describe('managerTransfers.expireDue', (): void => {
     ]);
   });
 
+  it('expires a request whose employee is gone without writing an event for it, which no reset could reach (U2-m6)', async (): Promise<void> => {
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.UTC(2026, 9, 20));
+    const harness = convexTest(schema, allConvexModules());
+    const maya = await employee(harness);
+    const lapsed = await insertRequest(harness, {
+      agentId: maya,
+      requestedAt: Date.UTC(2026, 9, 1),
+    });
+    await harness.run(async (ctx) => {
+      await ctx.db.delete(maya);
+    });
+
+    await expect(harness.mutation(internal.managerTransfers.expireDue, {})).resolves.toEqual({
+      expired: 1,
+    });
+
+    expect(await request(harness, lapsed)).toMatchObject({ state: 'expired' });
+    expect(await handoverEvents(harness, maya)).toEqual([]);
+  });
+
   it('pages a long backlog, scheduling the next page until none is left', async (): Promise<void> => {
     vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
@@ -805,7 +910,7 @@ describe('managerTransfers.openForAgent', (): void => {
     expect(await owner.query(api.managerTransfers.openForAgent, { agentId: maya })).toBeNull();
   });
 
-  it('answers an accepting request with its deadline', async (): Promise<void> => {
+  it('answers an accepting request with its deadline and the runs the move waits for, counted as the move counts them (U4-m4)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const maya = await employee(harness);
     const transferId = await insertRequest(harness, {
@@ -813,9 +918,36 @@ describe('managerTransfers.openForAgent', (): void => {
       state: 'accepting',
       settleBy: 5_000,
     });
+    await harness.run(async (ctx) => {
+      const item = {
+        agentId: maya,
+        sourceCategory: 'ticket-queue' as const,
+        sourceSystem: 'linear',
+        contentSummary: 'Close it',
+        contentRefs: [],
+        observedAt: 1,
+        createdAt: 1,
+      };
+      await ctx.db.insert('workItems', {
+        ...item,
+        externalId: 'REVOPS-1',
+        externalClaimKey: 'linear:REVOPS-1',
+        title: 'Close REVOPS-1',
+        state: 'executing',
+      });
+      // Approved and not yet applied: kept from its apply while accepting, so not a run.
+      await ctx.db.insert('workItems', {
+        ...item,
+        externalId: 'REVOPS-2',
+        externalClaimKey: 'linear:REVOPS-2',
+        title: 'Close REVOPS-2',
+        state: 'actions-pending',
+        approvedIndexes: [0],
+      });
+    });
     expect(
       await harness.withIdentity(OWNER).query(api.managerTransfers.openForAgent, { agentId: maya }),
-    ).toMatchObject({ transferId, state: 'accepting', settleBy: 5_000 });
+    ).toMatchObject({ transferId, state: 'accepting', settleBy: 5_000, runsInFlight: 1 });
   });
 
   it('refuses another account', async (): Promise<void> => {
@@ -897,6 +1029,112 @@ describe('managerTransfers.incoming', (): void => {
       await ctx.db.delete(maya);
     });
     expect(await harness.withIdentity(PRIYA).query(api.managerTransfers.incoming, {})).toEqual([]);
+  });
+});
+
+describe('managerTransfers.arriving', (): void => {
+  it('lists the requests the caller accepted that wait for the employee’s runs, with the runs, to the acceptor only', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const maya = await employee(harness);
+    const tomas = await employee(harness, 'Tomas');
+    const settleBy = Date.now() + 15 * 60_000;
+    const accepting = await insertRequest(harness, {
+      agentId: maya,
+      state: 'accepting',
+      decidedAt: Date.now(),
+      toOwnerKey: 'priya',
+      settleBy,
+    });
+    // Another account signed in with the same address took this one on: it is not the caller's.
+    await insertRequest(harness, {
+      agentId: tomas,
+      state: 'accepting',
+      decidedAt: Date.now(),
+      toOwnerKey: 'another-priya',
+      settleBy,
+    });
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('workItems', {
+        agentId: maya,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'REVOPS-1',
+        externalClaimKey: 'linear:REVOPS-1',
+        title: 'Close REVOPS-1',
+        contentSummary: 'Close REVOPS-1',
+        contentRefs: [],
+        observedAt: 1,
+        createdAt: 1,
+        state: 'executing',
+      });
+    });
+
+    await expect(
+      harness.withIdentity(PRIYA).query(api.managerTransfers.arriving, {}),
+    ).resolves.toEqual([
+      {
+        transferId: accepting,
+        agentId: maya,
+        agentName: 'Maya',
+        fromAddress: MANAGER_ADDRESS,
+        settleBy,
+        runsInFlight: 1,
+      },
+    ]);
+    await expect(
+      harness.withIdentity(OWNER).query(api.managerTransfers.arriving, {}),
+    ).resolves.toEqual([]);
+    await expect(harness.query(api.managerTransfers.arriving, {})).resolves.toEqual([]);
+    await expect(
+      harness
+        .withIdentity(managerIdentity('priya', { emailVerified: false }))
+        .query(api.managerTransfers.arriving, {}),
+    ).resolves.toEqual([]);
+  });
+
+  it('lists nothing once the request is accepted and the employee has arrived', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const maya = await employee(harness, 'Maya', { userId: 'priya' });
+    await insertRequest(harness, {
+      agentId: maya,
+      state: 'accepted',
+      decidedAt: Date.now(),
+      toOwnerKey: 'priya',
+    });
+    await expect(
+      harness.withIdentity(PRIYA).query(api.managerTransfers.arriving, {}),
+    ).resolves.toEqual([]);
+  });
+});
+
+describe('managerTransfers.earlierManagers', (): void => {
+  it('lists who handed the employee over and when, oldest first, to its owner only', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const maya = await employee(harness, 'Maya', { userId: 'priya' });
+    await insertRequest(harness, {
+      agentId: maya,
+      state: 'accepted',
+      decidedAt: 9_000,
+      toOwnerKey: 'priya',
+    });
+    await insertRequest(harness, {
+      agentId: maya,
+      state: 'accepted',
+      fromAddress: 'wei@day0.local',
+      decidedAt: 5_000,
+      toOwnerKey: 'owner',
+    });
+    await insertRequest(harness, { agentId: maya, state: 'declined', decidedAt: 7_000 });
+
+    await expect(
+      harness.withIdentity(PRIYA).query(api.managerTransfers.earlierManagers, { agentId: maya }),
+    ).resolves.toEqual([
+      { fromAddress: 'wei@day0.local', decidedAt: 5_000 },
+      { fromAddress: MANAGER_ADDRESS, decidedAt: 9_000 },
+    ]);
+    await expect(
+      harness.withIdentity(OWNER).query(api.managerTransfers.earlierManagers, { agentId: maya }),
+    ).rejects.toThrow();
   });
 });
 
@@ -1088,44 +1326,5 @@ describe('managerTransfers.replaceNote', (): void => {
       scrubbedFrom: 'the later note',
     });
     expect((await request(harness, transferId))?.note).toBeUndefined();
-  });
-});
-
-describe('transferNoticeText', (): void => {
-  it('says who asks, for whom, where to answer and that nothing changes until they do', (): void => {
-    expect(
-      transferNoticeText({
-        transferId: 't1',
-        employeeName: 'Maya',
-        fromAddress: 'sam@company.com',
-        publicUrl: 'https://day0.company.com/',
-      }),
-    ).toBe(
-      "Maya's manager, sam@company.com, has asked you to take Maya on. Accept or decline in Day0: https://day0.company.com/?transfer=t1. Nothing changes until you do.",
-    );
-  });
-
-  it('leaves the link out when the deployment has no public address', (): void => {
-    expect(
-      transferNoticeText({
-        transferId: 't1',
-        employeeName: 'Maya',
-        fromAddress: 'sam@company.com',
-      }),
-    ).toBe(
-      "Maya's manager, sam@company.com, has asked you to take Maya on. Accept or decline in Day0. Nothing changes until you do.",
-    );
-  });
-
-  it('escapes the three characters Slack reads as markup, so a name cannot become a link or a mention', (): void => {
-    expect(
-      transferNoticeText({
-        transferId: 't1',
-        employeeName: 'Ops <!channel> & co',
-        fromAddress: 'sam@company.com',
-      }),
-    ).toBe(
-      "Ops &lt;!channel&gt; &amp; co's manager, sam@company.com, has asked you to take Ops &lt;!channel&gt; &amp; co on. Accept or decline in Day0. Nothing changes until you do.",
-    );
   });
 });

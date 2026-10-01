@@ -41,7 +41,6 @@ import {
   namedPeople,
   PeopleView,
   provenanceLine,
-  runsInFlightOf,
 } from '../../../../../app/agent/[agentId]/people/PeopleView';
 import type { CutCandidate } from '../../../../../app/agent/[agentId]/people/HandOver';
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel';
@@ -493,13 +492,8 @@ describe('PeopleView', () => {
         ...OPEN_ASKED,
         state: 'accepting',
         settleBy: Date.UTC(2026, 9, 2, 10, 15),
+        runsInFlight: 2,
       },
-      'work:listForAgent': [
-        { state: 'executing' },
-        { state: 'actions-pending', approvedIndexes: [0] },
-        { state: 'actions-pending' },
-        { state: 'plan-pending' },
-      ],
     });
     const view = mount(asEmployee(<PeopleView />));
     const card = managerCard(view.container);
@@ -666,8 +660,12 @@ describe('PeopleView', () => {
       {},
       { 'managerTransfers:openForAgent': OPEN_ASKED },
       {
-        'managerTransfers:openForAgent': { ...OPEN_ASKED, state: 'accepting', settleBy: ASKED },
-        'work:listForAgent': [],
+        'managerTransfers:openForAgent': {
+          ...OPEN_ASKED,
+          state: 'accepting',
+          settleBy: ASKED,
+          runsInFlight: 0,
+        },
       },
       { 'agents:managerStanding': { standing: 'other', bossEmail: 'ana@day0.local' } },
     ];
@@ -758,15 +756,22 @@ describe('the Manager card’s state and reads', () => {
     expect(lastEndedHandover(undefined, declined.agentId)).toBeUndefined();
   });
 
-  it('counts the runs in flight as the move does: executing, and approved writes not yet landed', () => {
-    expect(
-      runsInFlightOf([
+  it('draws the runs the server counts for the move, and reads no work of its own to count them (U4-m4)', () => {
+    settled({
+      'managerTransfers:openForAgent': {
+        ...OPEN_ASKED,
+        state: 'accepting',
+        settleBy: ASKED,
+        runsInFlight: 1,
+      },
+      // An approved set not yet applied, which the old card counted and the move does not.
+      'work:listForAgent': [
         { state: 'executing' },
-        { state: 'actions-pending', approvedIndexes: [] },
-        { state: 'actions-pending' },
-        { state: 'completed' },
-      ]),
-    ).toBe(2);
+        { state: 'actions-pending', approvedIndexes: [0] },
+      ],
+    });
+    const view = mount(asEmployee(<PeopleView />));
+    expect(managerCard(view.container).textContent).toContain('Mira is finishing 1 run;');
   });
 });
 

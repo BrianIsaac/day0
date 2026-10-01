@@ -205,6 +205,44 @@ describe('recomputing the supervision figures from an export', (): void => {
     });
   });
 
+  it('reproduces metrics:forOwner for both managers after a handover, each within the spans they held the employee (D12)', async (): Promise<void> => {
+    const harness = await companyBackend();
+    const colleague = 'company-colleague';
+    await harness.run(async (ctx): Promise<void> => {
+      const mateo = (await ctx.db.query('agents').collect()).find((row) => row.name === 'Mateo')!;
+      await ctx.db.patch(mateo._id, { userId: colleague, bossEmail: 'colleague@day0.local' });
+      await ctx.db.insert('managerTransfers', {
+        agentId: mateo._id,
+        agentName: 'Mateo',
+        fromOwnerKey: OWNER,
+        fromAddress: MANAGER_ADDRESS,
+        toAddress: 'colleague@day0.local',
+        toOwnerKey: colleague,
+        state: 'accepted',
+        requestedAt: 240_000,
+        expiresAt: 240_000 + 14 * 24 * 60 * 60 * 1000,
+        decidedAt: 250_000,
+      });
+      // A decision the new manager made after the move, which is theirs alone.
+      await ctx.db.insert('events', {
+        agentId: mateo._id,
+        type: 'work.plan-approved',
+        payload: { workItemId: 'later-item', decidedVia: 'dashboard' },
+        createdAt: 400_000,
+      });
+    });
+    const directory = await exportDirectory(harness);
+
+    for (const owner of [OWNER, colleague]) {
+      const live = await harness
+        .withIdentity(managerIdentity(owner))
+        .query(api.metrics.forOwner, {});
+      expect(recomputeFromExport(directory, { owner }).figures, owner).toEqual(live);
+    }
+    const old = recomputeFromExport(directory, { owner: OWNER }).figures;
+    expect(old.employees.map((row) => row.name)).toEqual(['Priya', 'Mateo']);
+  });
+
   it.skipIf(!hasHostTool('zip'))(
     'reads the zip Convex writes as it reads the directory (needs zip)',
     async (): Promise<void> => {
