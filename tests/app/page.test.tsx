@@ -18,6 +18,8 @@ const authState = vi.hoisted(() => ({
   // Whether Convex is still waiting on the manager's token once Clerk has answered.
   tokenPending: false,
   asked: [] as string[],
+  /** The address's query string, as `useSearchParams` reads it. */
+  search: '',
 }));
 
 vi.mock('@clerk/nextjs', () => ({
@@ -214,9 +216,9 @@ vi.mock('next/navigation', () => ({
     push: (): void => undefined,
     replace: (): void => undefined,
   }),
-  // No handover named in the address: the acceptance dialog stays closed.
+  // No handover named in the address unless a test names one: the acceptance dialog stays closed.
   usePathname: (): string => '/',
-  useSearchParams: (): URLSearchParams => new URLSearchParams(),
+  useSearchParams: (): URLSearchParams => new URLSearchParams(authState.search),
 }));
 
 import LandingPage from '../../app/page';
@@ -259,6 +261,24 @@ describe('signed-out landing page', (): void => {
     const demo = /<a\b([^>]*)>Try the demo<\/a>/.exec(html)?.[1] ?? '';
     expect(demo).toContain('href="/sign-in"');
     expect(html).not.toContain('Deploy your first agent');
+  });
+
+  it('carries a Review link’s handover through the sign-in, so the dialog opens after it (the wave 9 review’s U4-m2)', (): void => {
+    authState.search = 'transfer=pd75wvebdzqmgg9bx61nnh3kd58fenm8';
+    const reviewing = renderToStaticMarkup(<LandingPage />);
+    authState.search = 'transfer=%3Cscript%3E';
+    const garbage = renderToStaticMarkup(<LandingPage />);
+    authState.search = '';
+    const demos = (markup: string): string[] =>
+      [...markup.matchAll(/<a\b[^>]*href="([^"]*)"[^>]*>Try the demo<\/a>/g)].map(
+        ([, href]) => href,
+      );
+    expect(demos(reviewing).length).toBeGreaterThan(0);
+    for (const href of demos(reviewing)) {
+      expect(href).toBe('/sign-in?redirect_url=%2F%3Ftransfer%3Dpd75wvebdzqmgg9bx61nnh3kd58fenm8');
+    }
+    // Only an id's own shape is carried: anything else signs in to the home as before.
+    for (const href of demos(garbage)) expect(href).toBe('/sign-in');
   });
 
   it('links the recorded run as the walkthrough, below the hero and never at /demo', (): void => {

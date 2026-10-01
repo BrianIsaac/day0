@@ -10,6 +10,7 @@ import { DocumentationFrame } from './frames/DocumentationFrame';
 import { HeldWriteFrame } from './frames/HeldWriteFrame';
 import { OneToOneFrame } from './frames/OneToOneFrame';
 import { PinnedSequence, type PinnedStep } from './PinnedSequence';
+import { SIGN_IN_HREF } from './sign-in-href';
 import { SurfaceOrbit } from './SurfaceOrbit';
 
 const WRAP = 'mx-auto w-full max-w-7xl px-6';
@@ -51,8 +52,10 @@ function Section({ id, children }: { id?: string; children: ReactNode }) {
  * The signed-out `/`: the case for onboarding over engineering, the four steps as a pinned
  * sequence over product frames, the dated evidence, and the two ways in. Every sentence is in
  * `copy.ts` and `evidence.ts`.
+ *
+ * @param signIn - Where "Try the demo" goes: the sign-in, carrying a Review link's handover.
  */
-export function MarketingLanding() {
+export function MarketingLanding({ signIn = SIGN_IN_HREF }: { readonly signIn?: string }) {
   return (
     <PageMotion className="flex flex-1 flex-col">
       <section className="pb-8 pt-9 md:pb-14 md:pt-[72px]">
@@ -73,7 +76,7 @@ export function MarketingLanding() {
               {HERO.lede}
             </p>
             <div data-rise="" style={rise(2)} className="mt-8 flex flex-wrap gap-3">
-              <Link href="/sign-in" className={`${PRIMARY} max-md:w-full`}>
+              <Link href={signIn} className={`${PRIMARY} max-md:w-full`}>
                 {HERO.tryDemo}
               </Link>
               <Link href="/setup" className={`${SECONDARY} max-md:w-full`}>
@@ -159,7 +162,7 @@ export function MarketingLanding() {
           <div className={`${CARD} flex flex-col items-start gap-3 border-[var(--color-border)]`}>
             <h3 className="text-base font-semibold">{TRY.hosted.title}</h3>
             <p className="leading-relaxed text-[var(--color-muted)]">{TRY.hosted.body}</p>
-            <Link href="/sign-in" className={PRIMARY}>
+            <Link href={signIn} className={PRIMARY}>
               {HERO.tryDemo}
             </Link>
           </div>
@@ -192,7 +195,7 @@ export function MarketingLanding() {
           {TRY.closingLede}
         </p>
         <div data-rise="" style={rise(2)} className="mt-6 flex flex-wrap gap-3">
-          <Link href="/sign-in" className={`${PRIMARY} max-md:w-full`}>
+          <Link href={signIn} className={`${PRIMARY} max-md:w-full`}>
             {HERO.tryDemo}
           </Link>
           <Link href="/walkthrough" className={`${SECONDARY} max-md:w-full`}>

@@ -1,10 +1,13 @@
 'use client';
 
-import type { ReactElement } from 'react';
+import { Suspense, type ReactElement } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { DEV_BOSS_EMAIL, DEV_BOSS_FIRST_NAME, DEV_NO_AUTH } from '@/lib/dev-auth';
 import { useAccount } from './account';
 import { SignedInDashboard } from './home/SignedInDashboard';
+import { TRANSFER_PARAMETER } from './home/AcceptTransfer';
 import { MarketingLanding } from './marketing/MarketingLanding';
+import { signInHref } from './marketing/sign-in-href';
 import { SessionGate, SessionPending } from './Providers';
 
 /**
@@ -34,7 +37,12 @@ function ClerkLanding(): ReactElement | null {
     case 'resolving':
       return null;
     case 'signed-out':
-      return <MarketingLanding />;
+      // The address is read on the client only, so the page is served as it was without it.
+      return (
+        <Suspense fallback={<MarketingLanding />}>
+          <ReviewAwareLanding />
+        </Suspense>
+      );
     case 'signed-in':
       // The dashboard reads the manager's rows; until Convex holds the token it says what loads.
       return (
@@ -43,6 +51,15 @@ function ClerkLanding(): ReactElement | null {
         </SessionGate>
       );
   }
+}
+
+/**
+ * The marketing page for a signed-out visitor, its sign-in carrying the handover a Review link
+ * named, so the acceptance dialog opens once they are signed in (the wave 9 review's U4-m2).
+ */
+function ReviewAwareLanding(): ReactElement {
+  const parameters = useSearchParams();
+  return <MarketingLanding signIn={signInHref(parameters.get(TRANSFER_PARAMETER))} />;
 }
 
 /** What `/` draws while Convex confirms the manager's sign-in. */
