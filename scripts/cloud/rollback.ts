@@ -44,10 +44,12 @@ export function rollbackLines(facts: RollbackFacts): string[] {
   const notes: string[] = [];
   if (upgrade !== undefined) steps.push(rowsStep(target, upgrade));
   if (facts.appValuesChanged) {
+    // The promote it comes before is named only when the run read an earlier build to promote.
+    const before = facts.previousApp === undefined ? '' : ' before promoting the earlier build';
     steps.push(
       'its Convex values: this run set NEXT_PUBLIC_CONVEX_URL, NEXT_PUBLIC_CONVEX_SITE_URL and ' +
         "CONVEX_DEPLOYMENT on Vercel production; put back what they held (printf '%s' <value> | " +
-        `vercel env update <NAME> production --yes${scope}) before promoting the earlier build.`,
+        `vercel env update <NAME> production --yes${scope})${before}.`,
     );
   }
   if (facts.previousApp === undefined) {

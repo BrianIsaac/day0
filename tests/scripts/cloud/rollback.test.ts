@@ -61,6 +61,9 @@ describe('rollbackLines', (): void => {
     expect(lines[0]).toBe('Rollback (nothing here is run for you):');
     expect(lines[1]).toContain('  1. its Convex values: this run set NEXT_PUBLIC_CONVEX_URL');
     expect(lines[1]).toContain('put back what they held');
+    // No earlier build to promote, so the step names none (the wave 9 review's F-m4).
+    expect(lines[1]).not.toContain('earlier build');
+    expect(lines[1]).toMatch(/production --yes\)\.$/);
     expect(lines[2]).toBe('  the app: this run read no earlier production build to go back to.');
     expect(lines[3]).toBe(
       '  the deployment: brisk-heron-417 held nothing before this run; an app that points away from it leaves it serving nobody.',
