@@ -1,10 +1,11 @@
 'use node';
 
 import { randomBytes } from 'node:crypto';
-import { v } from 'convex/values';
+import { v, type Infer } from 'convex/values';
 import type { Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { internalAction, type ActionCtx } from './_generated/server';
+import { NOTICE_TO_A_GUEST, NOTICE_TO_NOBODY, NOTICE_TO_THE_MANAGER } from './transferNotice';
 import { decryptCredential } from '../src/surfaces/credentials';
 import { createMastraMcpClient } from '../src/surfaces/mcp';
 import {
@@ -468,12 +469,24 @@ async function callSlackForNotice(
   return record;
 }
 
+/** Who an address names for the notice: a person to DM, or why nobody is. */
+type NoticeRecipient = { readonly person: string } | { readonly nobody: string };
+
 /**
  * The Slack user an address names, when it is a person the bot may DM: not a
- * bot or an app, not deactivated, not the bot itself. Undefined otherwise,
- * and when the workspace has no member with the address.
+ * bot or an app, not deactivated, not the bot itself, not the manager the card
+ * already DMs, and not a guest (U2-m8). Otherwise why nobody is, the
+ * workspace having no member with the address included.
+ *
+ * @param credential - The card's token.
+ * @param address - The address the request names.
+ * @param managerUserId - The member the card DMs as the employee's manager, when it has one.
  */
-async function personNamedBy(credential: string, address: string): Promise<string | undefined> {
+async function recipientNamedBy(
+  credential: string,
+  address: string,
+  managerUserId: string | undefined,
+): Promise<NoticeRecipient> {
   const auth = await callSlackForNotice(credential, 'auth.test', { query: {} });
   let lookup: Record<string, unknown>;
   try {
@@ -482,18 +495,32 @@ async function personNamedBy(credential: string, address: string): Promise<strin
     });
   } catch (error) {
     // Not a member of this workspace: the address names nobody the notice can reach.
-    if (error instanceof Error && /users_not_found/.test(error.message)) return undefined;
+    if (error instanceof Error && /users_not_found/.test(error.message)) {
+      return { nobody: NOTICE_TO_NOBODY };
+    }
     throw error;
   }
   const user =
     lookup.user !== null && typeof lookup.user === 'object'
       ? (lookup.user as Record<string, unknown>)
       : undefined;
-  if (typeof user?.id !== 'string') return undefined;
-  if (user.is_bot === true || user.is_app_user === true || user.deleted === true) return undefined;
-  if (user.id === auth.user_id) return undefined;
-  return user.id;
+  if (typeof user?.id !== 'string') return { nobody: NOTICE_TO_NOBODY };
+  if (user.is_bot === true || user.is_app_user === true || user.deleted === true) {
+    return { nobody: NOTICE_TO_NOBODY };
+  }
+  if (user.id === auth.user_id) return { nobody: NOTICE_TO_NOBODY };
+  if (user.id === managerUserId) return { nobody: NOTICE_TO_THE_MANAGER };
+  if (user.is_restricted === true || user.is_ultra_restricted === true) {
+    return { nobody: NOTICE_TO_A_GUEST };
+  }
+  return { person: user.id };
 }
+
+/** What the notice action answers: sent, or why not. */
+const transferNoticeOutcomeValidator = v.object({
+  sent: v.boolean(),
+  reason: v.optional(v.string()),
+});
 
 /**
  * Internal, scheduled by a real-mode `managerTransfers.ask`: the one DM notice
@@ -507,21 +534,32 @@ async function personNamedBy(credential: string, address: string): Promise<strin
  */
 export const sendTransferNotice = internalAction({
   args: { transferId: v.id('managerTransfers') },
-  handler: async (ctx, args): Promise<{ sent: boolean; reason?: string }> => {
+  returns: transferNoticeOutcomeValidator,
+  handler: async (ctx, args): Promise<Infer<typeof transferNoticeOutcomeValidator>> => {
     const claimed = await ctx.runMutation(internal.transferNotice.claimTransferNotice, args);
     if (!claimed.claimed) return { sent: false, reason: claimed.reason };
     let credential = '';
+    let reason: string;
     try {
       credential = await decryptCredential(ctx, claimed.credentialId);
-      const person = await personNamedBy(credential, claimed.toAddress);
-      if (person === undefined) {
-        log.info('handover notice not sent: the named address is no person in the workspace', {
+      const recipient = await recipientNamedBy(
+        credential,
+        claimed.toAddress,
+        claimed.managerUserId,
+      );
+      if ('nobody' in recipient) {
+        log.info('handover notice not sent: the named address is nobody to tell', {
           transferId: args.transferId,
+          reason: recipient.nobody,
         });
-        return { sent: false, reason: 'the named address is no person in the workspace' };
+        await ctx.runMutation(internal.transferNotice.recordTransferNoticeUndelivered, {
+          transferId: args.transferId,
+          reason: recipient.nobody,
+        });
+        return { sent: false, reason: recipient.nobody };
       }
       const opened = await callSlackForNotice(credential, 'conversations.open', {
-        body: { users: person },
+        body: { users: recipient.person },
       });
       const channel = (opened.channel as { id?: unknown } | undefined)?.id;
       if (typeof channel !== 'string') throw new Error('Slack conversations.open returned no DM.');
@@ -535,12 +573,16 @@ export const sendTransferNotice = internalAction({
       });
       return { sent: true };
     } catch (error) {
-      const reason = safeFailureMessage(error, credential, 'Handover notice failed.');
+      reason = safeFailureMessage(error, credential, 'Handover notice failed.');
       log.warn('handover notice not sent; it is not tried again', {
         transferId: args.transferId,
         reason,
       });
-      return { sent: false, reason };
     }
+    await ctx.runMutation(internal.transferNotice.recordTransferNoticeUndelivered, {
+      transferId: args.transferId,
+      reason,
+    });
+    return { sent: false, reason };
   },
 });

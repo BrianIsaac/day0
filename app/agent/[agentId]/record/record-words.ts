@@ -199,6 +199,10 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `Asked to take ${name} on, ${text(p.toAddress) ?? 'the named manager'} declined`,
   'manager.transfer-expired': (p) =>
     `The handover to ${text(p.toAddress) ?? 'another manager'} expired unanswered`,
+  'manager.transfer-notice': (p, { name }) =>
+    p.delivered === true
+      ? `${name} told ${text(p.toAddress) ?? 'the named manager'} in Slack that they were asked to take ${name} on`
+      : `${name} did not tell ${text(p.toAddress) ?? 'the named manager'} in Slack about the handover${because(p.reason)}`,
   'manager.transferred': (p, { name }) => {
     const from = text(p.fromAddress);
     const to = text(p.toAddress);

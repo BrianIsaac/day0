@@ -169,6 +169,10 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     `${text(payload.toAddress) ?? 'the named manager'} declined the handover`,
   'manager.transfer-expired': (payload) =>
     `handover to ${text(payload.toAddress) ?? 'another manager'} expired`,
+  'manager.transfer-notice': (payload) =>
+    `handover notice to ${text(payload.toAddress) ?? 'the named manager'} ${
+      payload.delivered === true ? 'sent' : 'not sent'
+    }`,
   'manager.transferred': (payload) => {
     const from = text(payload.fromAddress);
     const to = text(payload.toAddress);

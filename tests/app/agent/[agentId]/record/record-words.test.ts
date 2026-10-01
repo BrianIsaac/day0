@@ -152,6 +152,17 @@ describe('recordWords', (): void => {
     expect(said('manager.transfer-expired', {})).toBe(
       'The handover to priya@company.com expired unanswered.',
     );
+    expect(said('manager.transfer-notice', { delivered: true })).toBe(
+      'Maya told priya@company.com in Slack that they were asked to take Maya on.',
+    );
+    expect(
+      said('manager.transfer-notice', {
+        delivered: false,
+        reason: 'the named address is a guest in the workspace',
+      }),
+    ).toBe(
+      'Maya did not tell priya@company.com in Slack about the handover: the named address is a guest in the workspace.',
+    );
   });
 
   it('says where a handed-over employee went, and what waits for its new manager to connect', (): void => {

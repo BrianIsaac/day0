@@ -38,6 +38,11 @@ describe('the live feed labels', (): void => {
       }),
       eventLabel({ type: 'manager.transfer-declined', payload: { ...request, hasReason: true } }),
       eventLabel({ type: 'manager.transfer-expired', payload: request }),
+      eventLabel({ type: 'manager.transfer-notice', payload: { ...request, delivered: true } }),
+      eventLabel({
+        type: 'manager.transfer-notice',
+        payload: { ...request, delivered: false, reason: 'nobody' },
+      }),
     ]).toEqual([
       'handover to priya@co.example asked',
       'handover to priya@co.example cancelled',
@@ -45,6 +50,8 @@ describe('the live feed labels', (): void => {
       'handover to priya@co.example cancelled for another address',
       'priya@co.example declined the handover',
       'handover to priya@co.example expired',
+      'handover notice to priya@co.example sent',
+      'handover notice to priya@co.example not sent',
     ]);
   });
 

@@ -266,6 +266,17 @@ export interface ManagerTransferDeclinedPayload extends TransferRequestEvent {
 export type ManagerTransferExpiredPayload = TransferRequestEvent;
 
 /**
+ * The payload of `manager.transfer-notice`: the one Slack DM a real-mode request sends the person
+ * it names (D7), delivered or not, and why not. Written once per request, when the notice was
+ * claimed, so the old manager's record says whether the named person was told.
+ */
+export interface ManagerTransferNoticePayload extends TransferRequestEvent {
+  readonly delivered: boolean;
+  /** Why it was not delivered: nobody the notice may reach, or the provider's failure. */
+  readonly reason?: string;
+}
+
+/**
  * The payload of `manager.transferred`: the employee moved to the manager who accepted its
  * handover (the transfer plan, section 7.6). What the move did, as counts and names, never a
  * credential's or a documentation source's label.
@@ -1137,6 +1148,7 @@ export interface EventPayloads {
   'manager.transfer-cancelled': ManagerTransferCancelledPayload;
   'manager.transfer-declined': ManagerTransferDeclinedPayload;
   'manager.transfer-expired': ManagerTransferExpiredPayload;
+  'manager.transfer-notice': ManagerTransferNoticePayload;
   'manager.transferred': ManagerTransferredPayload;
   'charter.drafted': CharterDraftedPayload;
   'charter.approved': CharterApprovedPayload;
@@ -1289,6 +1301,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'manager.transfer-cancelled',
   'manager.transfer-declined',
   'manager.transfer-expired',
+  'manager.transfer-notice',
   'manager.transferred',
   'charter.drafted',
   'charter.approved',

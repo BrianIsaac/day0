@@ -28,6 +28,10 @@ describe('the Record tab filters', (): void => {
     expect(RECORD_FILTER_OF['manager.transfer-expired']).toEqual(['refused']);
   });
 
+  it('lists the handover notice the employee sent the named person among what it wrote', (): void => {
+    expect(RECORD_FILTER_OF['manager.transfer-notice']).toEqual(['writes']);
+  });
+
   it('keeps the charter’s history, the one-to-one that drafts it included, under Charter', (): void => {
     const charter = eventTypesIn('charter');
     for (const type of EVENT_TYPES) {

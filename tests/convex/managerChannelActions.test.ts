@@ -7,7 +7,12 @@ import { api, internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
-import { transferNoticeText } from '../../convex/transferNotice';
+import {
+  NOTICE_TO_A_GUEST,
+  NOTICE_TO_THE_MANAGER,
+  transferNoticeText,
+} from '../../convex/transferNotice';
+import { sendTransferNotice as sendTransferNoticeFunction } from '../../convex/managerChannelActions';
 import { credentialOwnerBinding, encrypt } from '../../src/lib/credential-crypto';
 import { fixtureAddressOf, MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
@@ -1117,6 +1122,15 @@ describe('the handover notice to the person a request names (D7)', (): void => {
             if (email === 'gone@day0.local') {
               return answer({ ok: true, user: { id: 'UGONE', deleted: true } });
             }
+            if (email === 'manager-alias@day0.local') {
+              return answer({ ok: true, user: { id: 'UMANAGER' } });
+            }
+            if (email === 'guest@day0.local') {
+              return answer({ ok: true, user: { id: 'UGUEST', is_restricted: true } });
+            }
+            if (email === 'single-guest@day0.local') {
+              return answer({ ok: true, user: { id: 'UGUEST1', is_ultra_restricted: true } });
+            }
             return answer({ ok: false, error: 'users_not_found' });
           case 'conversations.open':
             return answer({ ok: true, channel: { id: 'D0PRIYA' } });
@@ -1379,6 +1393,99 @@ describe('the handover notice to the person a request names (D7)', (): void => {
     expect(noticesIn(calls)).toEqual([]);
   });
 
+  /** The notice events on Maya's record. */
+  async function noticeEvents(
+    harness: TestConvex<typeof schema>,
+    agentId: Id<'agents'>,
+  ): Promise<unknown[]> {
+    return await harness.run(async (ctx) =>
+      (
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent_type', (q) =>
+            q.eq('agentId', agentId).eq('type', 'manager.transfer-notice'),
+          )
+          .collect()
+      ).map((event) => event.payload),
+    );
+  }
+
+  it('names neither the card’s own manager nor a guest as the person to tell, and records why (U2-m8)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const calls = slackWorkspace();
+    vi.spyOn(console, 'log').mockImplementation((): void => undefined);
+    const recorded: unknown[] = [];
+    for (const toAddress of [
+      'manager-alias@day0.local',
+      'guest@day0.local',
+      'single-guest@day0.local',
+    ]) {
+      const harness = convexTest(schema, allConvexModules());
+      const { agentId } = await seedMaya(harness);
+      const transferId = await harness
+        .withIdentity(managerIdentity())
+        .mutation(api.managerTransfers.ask, { agentId, toAddress });
+      await harness.finishAllScheduledFunctions(vi.runAllTimers);
+      recorded.push(...(await noticeEvents(harness, agentId)));
+      expect(await noticeEvents(harness, agentId)).toEqual([
+        expect.objectContaining({ transferId, toAddress, delivered: false }),
+      ]);
+    }
+    expect(calls.filter((call) => call.method === 'conversations.open')).toEqual([]);
+    expect(noticesIn(calls)).toEqual([]);
+    expect(recorded.map((payload) => (payload as { reason: string }).reason)).toEqual([
+      NOTICE_TO_THE_MANAGER,
+      NOTICE_TO_A_GUEST,
+      NOTICE_TO_A_GUEST,
+    ]);
+  });
+
+  it('records a delivered notice on the employee’s record', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    slackWorkspace();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId } = await seedMaya(harness);
+
+    const transferId = await askPriya(harness, agentId);
+
+    expect(await noticeEvents(harness, agentId)).toEqual([
+      {
+        transferId,
+        fromAddress: MANAGER_ADDRESS,
+        toAddress: PRIYA_ADDRESS,
+        delivered: true,
+      },
+    ]);
+  });
+
+  it('records a notice that failed, with its reason, once', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    slackWorkspace({ postFails: true });
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId } = await seedMaya(harness);
+    vi.spyOn(console, 'log').mockImplementation((): void => undefined);
+
+    const transferId = await askPriya(harness, agentId);
+    await harness.action(internal.managerChannelActions.sendTransferNotice, { transferId });
+
+    expect(await noticeEvents(harness, agentId)).toEqual([
+      expect.objectContaining({
+        transferId,
+        delivered: false,
+        reason: expect.stringContaining('channel_not_found'),
+      }),
+    ]);
+  });
+
+  it('declares what the notice answers, so the backend checks it', (): void => {
+    // Convex's registration attaches the export the push sends; the public type does not name it.
+    const registered = sendTransferNoticeFunction as unknown as { exportReturns: () => string };
+    expect(JSON.parse(registered.exportReturns())).toMatchObject({ type: 'object' });
+  });
+
   it('sends nothing without the manager’s standing authority to write on the card: no write grant, or the write scope revoked under autonomous actions', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
@@ -1500,7 +1607,8 @@ describe('the handover notice to the person a request names (D7)', (): void => {
         .map((event) => event.type)
         .filter((type) => type.startsWith('manager.')),
     );
-    expect(handover).toEqual(['manager.transfer-asked']);
+    // The ask and the notice's own record; no reply answered the request.
+    expect(handover).toEqual(['manager.transfer-asked', 'manager.transfer-notice']);
     expect(noticesIn(calls)).toHaveLength(1);
   });
 });
