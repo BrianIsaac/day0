@@ -2,7 +2,7 @@ import 'server-only';
 import { ConvexHttpClient } from 'convex/browser';
 import { NextResponse, type NextRequest } from 'next/server';
 import { api } from '@convex/_generated/api';
-import { serverConvexUrl } from './convex-caller';
+import { serverConvexUrl } from './convex-url';
 import {
   CUSTOMER_SIGN_IN,
   customerSignInHref,

@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cookieAttributes, fromOwnPages } from '../../../src/lib/customer-oidc-routes';
 import type { CustomerSignInSettings } from '../../../src/lib/customer-oidc-server';
 import { CUSTOMER_OIDC_PRESETS } from '../../../src/lib/customer-oidc-presets';
@@ -55,5 +55,23 @@ describe('the sign-in cookies', (): void => {
     expect(cookieAttributes({ ...SETTINGS, publicUrl: 'http://localhost:3296' }).secure).toBe(
       false,
     );
+  });
+});
+
+describe('the company sign-in routes and Clerk (Q16)', (): void => {
+  afterEach((): void => {
+    vi.doUnmock('@clerk/nextjs/server');
+    vi.resetModules();
+  });
+
+  it('load without importing Clerk, which the customer-local profile never runs', async (): Promise<void> => {
+    vi.resetModules();
+    vi.doMock('@clerk/nextjs/server', (): never => {
+      throw new Error('Clerk was imported on the company sign-in path');
+    });
+
+    const routes = await import('../../../src/lib/customer-oidc-routes');
+
+    expect(typeof routes.fromOwnPages).toBe('function');
   });
 });
