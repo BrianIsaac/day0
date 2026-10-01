@@ -116,10 +116,11 @@ describe('reset completeness', (): void => {
     const agentOwned = AGENT_KEYED_TABLES.length + 1;
     const enumerated = AGENT_KEYED_TABLES.length;
     expect(readme).toContain(
-      `The schema contains ${total} tables: ${agentOwned} carry per-agent or agent-owned runtime state, one keeps the owner's record of the employees it retired`,
+      `The schema contains ${total} tables: ${agentOwned} carry per-agent or agent-owned runtime state, two keep the records that outlive an employee (the owner's record of the employees it retired, and the requests to hand an employee to another manager)`,
     );
-    expect(RETIRE_RECORD_TABLES).toHaveLength(1);
+    expect([...RETIRE_RECORD_TABLES]).toEqual(['retirements', 'managerTransfers']);
     expect(readme).toContain('| `retirements` |');
+    expect(readme).toContain('| `managerTransfers` |');
     expect(readme).toContain(`from ${enumerated} explicitly enumerated related tables`);
     expect(readme).toContain(`in ${enumerated} enumerated related tables`);
     // SECURITY.md is where the README sends a reader for what a reset deletes (review m9).
@@ -134,6 +135,10 @@ describe('reset completeness', (): void => {
       (table) => !(RETIRE_RECORD_TABLES as readonly string[]).includes(table),
     );
     expect(tables).toContain('managerDecisionNotices');
+    // A handover request outlives its employee (the old manager's record of where it went), so
+    // it is a record table, never one a reset deletes.
+    expect(RETIRE_RECORD_TABLES).toContain('managerTransfers');
+    expect(tables).not.toContain('managerTransfers');
     const harness = convexTest(schema, allConvexModules());
     const agentId = await harness.run(async (ctx): Promise<Id<'agents'>> => {
       const id = await ctx.db.insert('agents', {

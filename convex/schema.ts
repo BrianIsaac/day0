@@ -1,5 +1,6 @@
 import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
+import { MANAGER_TRANSFER_STATES, TRANSFER_CANCEL_REASONS } from '../src/agent/manager-transfer';
 
 /**
  * A tracker ticket as one intake listing showed it: who is assigned, its
@@ -1076,6 +1077,11 @@ export default defineSchema({
     failure: v.optional(v.string()),
     /** The mode the note was kept under: a digest note stays the digest's to send after a switch to per run. */
     keptFor: v.optional(v.union(v.literal('per-run'), v.literal('digest'))),
+    /**
+     * When an unsent note was set aside instead of sent: the employee was handed to another
+     * manager and the DM it was kept for was the old manager's. The events it summarises stay.
+     */
+    discardedAt: v.optional(v.number()),
   })
     .index('by_agent', ['agentId'])
     /** One agent's notes not sent yet, so the digest never reads the sent history. */
@@ -1227,9 +1233,17 @@ export default defineSchema({
    * `rejections` are the items the manager rejected its plan or actions for,
    * whose sibling plans still wait for the manager (N3). A whole-owner retire
    * empties both, as it deletes the live claims. No reset deletes a row.
+   *
+   * A handover leaves the same boundary for the old owner (decision D11):
+   * a row of `kind: 'transferred'` naming its request, whose employee lives
+   * on under its new owner. A row without `kind` is a retire.
    */
   retirements: defineTable({
     userId: v.string(),
+    /** How the employee left its owner; absent on a retire's row, and on every row from before handovers. */
+    kind: v.optional(v.union(v.literal('retired'), v.literal('transferred'))),
+    /** The accepted handover request, on a `transferred` row. */
+    transferId: v.optional(v.id('managerTransfers')),
     /** The retired employee's id; its row is gone. */
     agentId: v.id('agents'),
     /** Absent on a row the upgrade copied from an older tombstone event. */
@@ -1261,6 +1275,79 @@ export default defineSchema({
       }),
     ),
   }).index('by_user', ['userId', 'retiredAt']),
+
+  /**
+   * One row per request to hand an employee to another manager (the
+   * transfer plan, section 4.1): who asked, the address it names, and how it
+   * ended. Nothing about the employee changes while it is `asked`; the named
+   * manager's acceptance, signed in with that verified address, moves it. A
+   * request outlives its employee (the old manager's record of where it went,
+   * the new one's of what it took on), so it is a record table no reset
+   * deletes (`RETIRE_RECORD_TABLES`). A declined or expired request is never
+   * reopened: asking again writes a new row.
+   */
+  managerTransfers: defineTable({
+    agentId: v.id('agents'),
+    /** The employee's name when asked, for a record that outlives its row. */
+    agentName: v.string(),
+    /** The requester's owner key: the employee's `userId` when asked. */
+    fromOwnerKey: v.string(),
+    /** The requester's verified address, normalised, for the named manager's entry. */
+    fromAddress: v.string(),
+    /** The named address, normalised (`src/agent/manager-address.ts`). */
+    toAddress: v.string(),
+    /** The old manager's handover note, bounded and redacted in real mode before it is stored. */
+    note: v.optional(v.string()),
+    state: v.union(...MANAGER_TRANSFER_STATES.map((state) => v.literal(state))),
+    requestedAt: v.number(),
+    /** When an `asked` request expires (`transferExpiresAt`). */
+    expiresAt: v.number(),
+    /** When it left `asked`. */
+    decidedAt: v.optional(v.number()),
+    cancelReason: v.optional(
+      v.union(...TRANSFER_CANCEL_REASONS.map((reason) => v.literal(reason))),
+    ),
+    /** The named manager's words for declining, bounded. */
+    declineReason: v.optional(v.string()),
+    /** The acceptor's owner key, written at acceptance. */
+    toOwnerKey: v.optional(v.string()),
+    /** While `accepting`: the deadline for runs in flight (`transferSettleBy`). */
+    settleBy: v.optional(v.number()),
+    /** What the move did, as counts, for both managers' records; written when the employee moves. */
+    outcome: v.optional(
+      v.object({
+        workItemsMoved: v.number(),
+        surfacesCut: v.number(),
+        credentialsRevoked: v.number(),
+        credentialsKept: v.number(),
+        /** The write scopes the cut surfaces had granted, revoked with them. */
+        scopesRevoked: v.number(),
+        claimsMoved: v.number(),
+        claimsReleased: v.number(),
+        /** The keys released because the new owner already held a live claim on them. */
+        conflictingClaimKeys: v.array(v.string()),
+        decisionRequestsVoided: v.number(),
+        /** Approved plans not yet started, returned to pending (D13). */
+        plansReturned: v.number(),
+        sessionsFailed: v.number(),
+        notesDiscarded: v.number(),
+        /** Pages mirrored from the old owner's sources, hidden and then deleted. */
+        mirroredPagesHidden: v.number(),
+        /** Runs the settle deadline stopped. */
+        runsStopped: v.number(),
+        /** Whether a never-approved draft charter was discarded (D8). */
+        charterDiscarded: v.boolean(),
+      }),
+    ),
+  })
+    /** The one-open rule and the employee's own reads. */
+    .index('by_agent_state', ['agentId', 'state'])
+    /** The named account's inbox and the per-address bound. */
+    .index('by_to_address_state', ['toAddress', 'state'])
+    /** The old manager's notices and the per-owner bounds; `_creationTime` ranges the rolling day. */
+    .index('by_from_owner_state', ['fromOwnerKey', 'state'])
+    /** The expiry sweep over `asked` rows. */
+    .index('by_state_expires', ['state', 'expiresAt']),
 
   events: defineTable({
     agentId: v.id('agents'),
