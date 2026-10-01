@@ -10,6 +10,7 @@ import {
 import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { assertOwnsAgent, assertOwnsCharter } from './ownership';
+import { assertNotBeingHandedOver } from './handoverFence';
 import { writeFileImpl } from './workspace';
 import { declareCharterSystem, retireCharterSystem, scheduleOrientationFor } from './surfaces';
 import type { Charter } from '../src/agent/charter';
@@ -368,13 +369,17 @@ export const setConstraintStruck = mutation({
  * A strike is refused by `setConstraintStruck` before it is ever flagged,
  * so the refusal here is a last guard for a body that reached the table
  * some other way; it returns the reason rather than throwing, and leaves
- * the row as it was.
+ * the row as it was. Refused with a `ConvexError`, in the accepted
+ * handover's words, once a new manager has accepted the employee and it
+ * waits for its runs: the approved charter would move with it after the new
+ * manager's preview (decision 9; the wave 10 review, FR-m6).
  */
 export const approve = mutation({
   args: { charterId: v.id('charters') },
   returns: strikeResultValidator,
   handler: async (ctx, args): Promise<StrikeResult> => {
     const charter = await assertOwnsCharter(ctx, args.charterId);
+    await assertNotBeingHandedOver(ctx.db, charter.agentId);
     if (charter.approved) return { ok: true };
     const drafted = charter.body as Charter;
     const struck = (drafted.constraints ?? []).filter(
@@ -600,7 +605,9 @@ async function scheduleReevaluation(
  *
  * Public, owner-guarded. A refused change (an edit that removes a boundary a
  * confirmed rule stands on, a change that changes nothing, a draft) is thrown
- * as a `ConvexError` whose data is the refusal, so the card can show it.
+ * as a `ConvexError` whose data is the refusal, so the card can show it; so is
+ * any change once a new manager has accepted the employee and it waits for its
+ * runs (decision 9).
  */
 export const amend = mutation({
   args: {
@@ -610,6 +617,7 @@ export const amend = mutation({
   },
   handler: async (ctx, args): Promise<{ charterId: Id<'charters'>; version: string }> => {
     await assertOwnsAgent(ctx, args.agentId);
+    await assertNotBeingHandedOver(ctx.db, args.agentId);
     try {
       const result = await amendCharterInTransaction(ctx, {
         agentId: args.agentId,
