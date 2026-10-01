@@ -747,6 +747,36 @@ const UNDER_WAY: Readonly<Record<Doc<'voiceSessions'>['state'], boolean>> = {
 };
 
 /**
+ * What a finished one-to-one keeps of its manager's words, cleared at a handover: the transcript,
+ * the turns, the answers and the notes the drafts were sent back with. The charter it drafted is
+ * the carried result; the conversation was the old manager's own (decision 1 (a) of the wave 9
+ * review).
+ */
+const WORDS_CLEARED = {
+  answers: {},
+  transcriptText: undefined,
+  turns: undefined,
+  changeRequests: undefined,
+  replyDraft: undefined,
+  pendingTranscript: undefined,
+  pendingBossLabel: undefined,
+} as const satisfies Partial<Doc<'voiceSessions'>>;
+
+/** Whether a session still holds any of the words {@link WORDS_CLEARED} clears. */
+function holdsOldManagersWords(session: Doc<'voiceSessions'>): boolean {
+  const answers = session.answers as Record<string, unknown> | null | undefined;
+  return (
+    (answers !== null && answers !== undefined && Object.keys(answers).length > 0) ||
+    session.transcriptText !== undefined ||
+    session.turns !== undefined ||
+    session.changeRequests !== undefined ||
+    session.replyDraft !== undefined ||
+    session.pendingTranscript !== undefined ||
+    session.pendingBossLabel !== undefined
+  );
+}
+
+/**
  * The refusal when the employee has more one-to-one sessions than one handover ends, or null.
  *
  * @param db - Any reader.
@@ -776,8 +806,9 @@ export async function oneToOnesAtHandoverRefusal(
  * {@link HANDOVER_SESSION_FAILURE}: its claim and webhook token are dropped, so a finisher still
  * drafting commits nothing (`finaliseSession` refuses a session that is no longer its
  * `synthesising` claim's), its conversation stamp moves on, so a chat write composed for it is
- * refused, and the old manager's words leave it. `voice.start` opens a new session over a failed
- * one.
+ * refused, and the old manager's words leave it. A finished session keeps its state and its
+ * charter link and loses the old manager's words too ({@link WORDS_CLEARED}). `voice.start` opens
+ * a new session over a failed one.
  *
  * @param ctx - The move's mutation context.
  * @param agentId - The employee.
@@ -804,7 +835,10 @@ export async function endOneToOnesForHandover(
       await ctx.db.delete(session._id);
       continue;
     }
-    if (!held) continue;
+    if (!held) {
+      if (holdsOldManagersWords(session)) await ctx.db.patch(session._id, WORDS_CLEARED);
+      continue;
+    }
     await ctx.db.patch(session._id, {
       state: 'failed',
       finalisationError: HANDOVER_SESSION_FAILURE,

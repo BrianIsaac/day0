@@ -1,4 +1,4 @@
-import { ConvexError, v } from 'convex/values';
+import { ConvexError, v, type Infer } from 'convex/values';
 import {
   mutation,
   query,
@@ -703,18 +703,57 @@ async function firstVersionOf(ctx: QueryCtx, charter: Doc<'charters'>): Promise<
   return current;
 }
 
+/** How many of an employee's accepted handovers are read to find who held its one-to-one. */
+const HANDOVERS_SEARCHED = 50;
+
+/** What `transcriptOf` answers: the transcript kept, or whose one-to-one it was. */
+const transcriptOfValidator = v.union(
+  v.null(),
+  v.object({ transcript: v.string(), endedAt: v.union(v.number(), v.null()) }),
+  v.object({ heldBy: v.string() }),
+);
+
+/**
+ * The address of the manager who held the one-to-one a charter was drafted before a handover:
+ * the asker of the first handover accepted after the draft, whose move cleared the transcript.
+ * Undefined when no handover followed the draft.
+ */
+async function oneToOneHolderBefore(
+  ctx: QueryCtx,
+  draft: Doc<'charters'>,
+): Promise<string | undefined> {
+  const accepted = await ctx.db
+    .query('managerTransfers')
+    .withIndex('by_agent_state', (q) => q.eq('agentId', draft.agentId).eq('state', 'accepted'))
+    .take(HANDOVERS_SEARCHED);
+  const after = accepted
+    .filter((transfer) => (transfer.decidedAt ?? transfer.requestedAt) >= draft.createdAt)
+    .sort(
+      (left, right) =>
+        (left.decidedAt ?? left.requestedAt) - (right.decidedAt ?? right.requestedAt),
+    );
+  return after[0]?.fromAddress;
+}
+
 /**
  * Public, owner-guarded (`assertOwnsCharter`): the one-to-one a charter was drafted from, as the
- * room recorded it, kept beside every version it led to. Null for a charter drafted from answers
- * handed straight in, which has no transcript.
+ * room recorded it, kept beside every version it led to. When a handover has moved the employee
+ * since, the old manager's words left with them (decision 1 (a) of the wave 9 review), and the
+ * answer is whose one-to-one it was. Null for a charter drafted from answers handed straight in,
+ * which has no transcript. Writes nothing.
  */
 export const transcriptOf = query({
   args: { charterId: v.id('charters') },
-  handler: async (ctx, args): Promise<{ transcript: string; endedAt: number | null } | null> => {
+  returns: transcriptOfValidator,
+  handler: async (ctx, args): Promise<Infer<typeof transcriptOfValidator>> => {
     const charter = await assertOwnsCharter(ctx, args.charterId);
-    const session = await sessionOfCharter(ctx, await firstVersionOf(ctx, charter));
-    if (!session?.transcriptText) return null;
-    return { transcript: session.transcriptText, endedAt: session.endedAt ?? null };
+    const draft = await firstVersionOf(ctx, charter);
+    const session = await sessionOfCharter(ctx, draft);
+    if (session?.transcriptText) {
+      return { transcript: session.transcriptText, endedAt: session.endedAt ?? null };
+    }
+    const heldBy = session ? await oneToOneHolderBefore(ctx, draft) : undefined;
+    return heldBy === undefined ? null : { heldBy };
   },
 });
 

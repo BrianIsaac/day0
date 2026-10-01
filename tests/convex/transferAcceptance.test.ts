@@ -33,6 +33,8 @@ const OWNER_SECRETS = [
   'OWNER-QUOTE-LINEAR',
   'OWNER-PAGE-BODY',
   'Owner runbook page',
+  'OWNER-ONE-TO-ONE-ANSWER',
+  'OWNER-ONE-TO-ONE-TURN',
 ] as const;
 
 /** The reporting-line rule the old manager's charter carries. */
@@ -47,6 +49,8 @@ interface Office {
   readonly tomas: Id<'agents'>;
   readonly priya: Id<'agents'>;
   readonly transferId: Id<'managerTransfers'>;
+  /** Maya's approved charter, drafted from the old manager's finished one-to-one. */
+  readonly charterId: Id<'charters'>;
   readonly ownerSource: Id<'docSources'>;
   readonly colleagueSource: Id<'docSources'>;
   readonly only: Id<'credentials'>;
@@ -140,7 +144,7 @@ async function seedOffice(): Promise<Office> {
     const tomas = await employee('owner', 'Tomas');
     const priya = await employee('colleague', 'Priya');
     const body = runThroughBody();
-    await ctx.db.insert('charters', {
+    const charterId = await ctx.db.insert('charters', {
       agentId: maya,
       version: '0.1',
       body: {
@@ -153,6 +157,21 @@ async function seedOffice(): Promise<Office> {
       approved: true,
       approvedAt: 2,
       createdAt: 2,
+    });
+    await ctx.db.insert('voiceSessions', {
+      agentId: maya,
+      mode: 'chat',
+      state: 'done',
+      answers: { 'why-this-hire': 'OWNER-ONE-TO-ONE-ANSWER' },
+      transcriptText: 'Employee: Why was I hired?\nManager: OWNER-ONE-TO-ONE-TURN',
+      turns: [
+        { id: 't1', speaker: 'employee', text: 'Why was I hired?', at: 1 },
+        { id: 't2', speaker: 'manager', text: 'OWNER-ONE-TO-ONE-TURN', topicIndex: 0, at: 2 },
+      ],
+      charterId,
+      charterVersion: '0.1',
+      startedAt: 1,
+      endedAt: 2,
     });
     await ctx.db.insert('workspace', {
       agentId: maya,
@@ -273,6 +292,7 @@ async function seedOffice(): Promise<Office> {
       tomas,
       priya,
       transferId,
+      charterId,
       ownerSource,
       colleagueSource,
       only,
@@ -687,6 +707,9 @@ describe('accept in real mode: two surfaces, one credential shared with a collea
       colleague.query(api.agents.permissionScopes, { agentId }),
       colleague.query(api.work.listForAgent, { agentId }),
       colleague.query(api.charters.latest, { agentId }),
+      colleague.query(api.voice.latest, { agentId }),
+      colleague.query(api.voice.list, { agentId }),
+      colleague.query(api.charters.transcriptOf, { charterId: office.charterId }),
       colleague.query(internal.events.exportHead, { agentId, exportedAt: Date.now() }),
       colleague.query(internal.events.exportPage, { agentId, section: 'surfaces', cursor: null }),
       colleague.query(internal.events.exportPage, { agentId, section: 'events', cursor: null }),
@@ -694,6 +717,24 @@ describe('accept in real mode: two surfaces, one credential shared with a collea
 
     const serialised = JSON.stringify(answers);
     for (const secret of OWNER_SECRETS) expect(serialised, secret).not.toContain(secret);
+  });
+
+  it('tells the new owner whose one-to-one the carried charter was drafted from, and keeps the session finished', async (): Promise<void> => {
+    const office = await seedOffice();
+    const before = await office.harness
+      .withIdentity(OWNER)
+      .query(api.charters.transcriptOf, { charterId: office.charterId });
+    await acceptAsColleague(office);
+
+    await expect(
+      office.harness
+        .withIdentity(COLLEAGUE)
+        .query(api.charters.transcriptOf, { charterId: office.charterId }),
+    ).resolves.toEqual({ heldBy: MANAGER_ADDRESS });
+    expect(before).toMatchObject({ transcript: expect.stringContaining('OWNER-ONE-TO-ONE-TURN') });
+    await expect(
+      office.harness.withIdentity(COLLEAGUE).query(api.voice.latest, { agentId: office.maya }),
+    ).resolves.toMatchObject({ state: 'done', charterId: office.charterId, answers: {} });
   });
 
   it('cancels the pending jobs that name a cut surface and keeps a colleague’s', async (): Promise<void> => {
