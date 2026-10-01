@@ -22,7 +22,7 @@ vi.mock('@clerk/nextjs', () => ({
   },
 }));
 
-import { HeadedSignIn, HeadedSignUp } from '../../app/HeadedClerk';
+import { HeadedSignIn, HeadedSignUp, StepHeading } from '../../app/HeadedClerk';
 import { clerkAppearance, headedClerkAppearance } from '../../app/clerk-appearance';
 
 /** The appearance Clerk was last handed. */
@@ -116,5 +116,95 @@ describe('a Clerk widget under a page heading', (): void => {
     clerk.serverPath = '/sign-up';
     renderToStaticMarkup(<HeadedSignUp />);
     expect(lastAppearance()).toEqual(headedClerkAppearance(true));
+  });
+});
+
+/**
+ * Mount the page's step heading over the sign-in widget at `path`, as the page draws them.
+ *
+ * @param path - The path the window starts on.
+ */
+async function mountPage(path: string): Promise<{ host: HTMLElement; unmount: () => void }> {
+  window.history.replaceState(null, '', path);
+  const host = document.createElement('div');
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(
+      <>
+        <StepHeading base="/sign-in" className="page-heading">
+          Sign in to deploy an employee
+        </StepHeading>
+        <HeadedSignIn />
+      </>,
+    );
+  });
+  return {
+    host,
+    unmount: () => {
+      act(() => root.unmount());
+      host.remove();
+    },
+  };
+}
+
+/** The page heading's element, found by its words whatever its tag. */
+const pageHeading = (host: HTMLElement): Element | undefined =>
+  [...host.querySelectorAll('.page-heading')].find(
+    (element) => element.textContent === 'Sign in to deploy an employee',
+  );
+
+describe("the page's heading over a Clerk widget", (): void => {
+  it('is the one h1 on the first step, where the widget leaves its title out', async (): Promise<void> => {
+    installNavigation();
+    const { host, unmount } = await mountPage('/sign-in');
+    expect(pageHeading(host)?.tagName).toBe('H1');
+    expect(lastAppearance()).toEqual(headedClerkAppearance(true));
+    unmount();
+  });
+
+  it("steps down to a paragraph with the same words and look on a later step, where Clerk's title is the h1", async (): Promise<void> => {
+    const navigation = installNavigation();
+    const { host, unmount } = await mountPage('/sign-in');
+    await act(async () => {
+      window.history.pushState(null, '', '/sign-in/factor-one');
+      navigation.dispatchEvent(new Event('currententrychange'));
+    });
+    expect(pageHeading(host)?.tagName).toBe('P');
+    expect(host.querySelectorAll('h1')).toHaveLength(0);
+    expect(lastAppearance()).toBe(clerkAppearance);
+
+    await act(async () => {
+      window.history.replaceState(null, '', '/sign-in');
+      navigation.dispatchEvent(new Event('currententrychange'));
+    });
+    expect(pageHeading(host)?.tagName).toBe('H1');
+    unmount();
+  });
+
+  it("is a paragraph where the browser cannot say when Clerk changes step, since Clerk's title stays", async (): Promise<void> => {
+    const { host, unmount } = await mountPage('/sign-in');
+    expect(pageHeading(host)?.tagName).toBe('P');
+    expect(lastAppearance()).toBe(clerkAppearance);
+    unmount();
+  });
+
+  it("renders from Next's path on the server: an h1 on the first step, a paragraph on a later one", (): void => {
+    clerk.serverPath = '/sign-in';
+    expect(
+      renderToStaticMarkup(
+        <StepHeading base="/sign-in" className="page-heading">
+          Sign in
+        </StepHeading>,
+      ),
+    ).toBe('<h1 class="page-heading">Sign in</h1>');
+    clerk.serverPath = '/sign-in/factor-one';
+    expect(
+      renderToStaticMarkup(
+        <StepHeading base="/sign-in" className="page-heading">
+          Sign in
+        </StepHeading>,
+      ),
+    ).toBe('<p class="page-heading">Sign in</p>');
   });
 });

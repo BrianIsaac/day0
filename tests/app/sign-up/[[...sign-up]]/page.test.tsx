@@ -37,6 +37,14 @@ describe('the sign-up page', (): void => {
     expect(render()).toContain('Create an account');
   });
 
+  it("leaves the h1 to Clerk's title on a later step, keeping the heading's words and look", (): void => {
+    const heading = /<h1 class="([^"]+)">Create an account<\/h1>/.exec(render());
+    expect(heading).not.toBeNull();
+    const later = render('/sign-up/verify-email-address');
+    expect(later).not.toMatch(/<h1[\s>]/);
+    expect(later).toContain(`<p class="${heading?.[1]}">Create an account</p>`);
+  });
+
   it('leaves the one main landmark to the layout', (): void => {
     expect(render()).not.toMatch(/<main[\s>]/);
   });

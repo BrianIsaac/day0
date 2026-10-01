@@ -14,6 +14,7 @@ import {
   deploymentSiteUrl,
   deploymentUrl,
   pageNamesRelease,
+  parseFrameworkPreset,
   parseVercelInspect,
   vercelEnvNames,
   type VercelDeployment,
@@ -89,6 +90,49 @@ export function projectRefusal(
   };
 }
 
+/** The framework preset the app builds under; any other serves none of its pages. */
+const NEXT_PRESET = 'Next.js';
+
+/**
+ * Why the linked Vercel project cannot serve the app, or undefined when its
+ * framework preset is Next.js. `vercel link` sets the preset when it creates
+ * the project; one made in the dashboard or by `vercel project add` is left at
+ * "Other", and Vercel then runs `next build` and serves only `public/`, so
+ * every page answers 404 after the writes have been made.
+ *
+ * @param io - The machine.
+ * @param target - The target, for its scope.
+ */
+export function frameworkRefusal(io: CloudIo, target: CloudTarget): Failure | undefined {
+  const name = linkedProject(io);
+  if (name === undefined) {
+    return {
+      failure:
+        '.vercel/project.json does not name the linked project, so its framework preset cannot be read; run `vercel link` here.',
+    };
+  }
+  // Named by the link rather than by name, so the link's own team is asked whichever team the
+  // CLI has selected.
+  const inspected = io.run('vercel', vercelArgs(target, ['project', 'inspect']), {
+    timeoutMs: 120_000,
+  });
+  const preset =
+    inspected.status === 0
+      ? parseFrameworkPreset(`${inspected.stdout}\n${inspected.stderr}`)
+      : undefined;
+  if (preset === undefined) {
+    return {
+      failure: `\`vercel project inspect\` named no framework preset for ${name} (exit ${inspected.status ?? 'unknown'}: ${firstLine(inspected.stderr) || firstLine(inspected.stdout)}).`,
+    };
+  }
+  if (preset === NEXT_PRESET) return undefined;
+  return {
+    failure:
+      `the Vercel project ${name} has the framework preset ${preset}, so Vercel would build the app and serve none of its pages: ` +
+      "set the project's Framework Preset to Next.js (the dashboard's project Settings, Build and Deployment), then run this again.",
+  };
+}
+
 /**
  * When each production variable of the linked Vercel project was last written.
  *
@@ -128,6 +172,15 @@ export const CLERK_APP_KEYS: readonly string[] = [
 /** The user agent the public read-backs send, so the host's logs say what asked. */
 const READ_BACK_AGENT = 'Mozilla/5.0 (compatible; day0-setup-cloud read-back)';
 
+/** The status a host answers for an address that serves nothing. */
+const NOT_FOUND = 404;
+
+/** A page that did not answer 200: why, and the HTTP status when the host answered at all. */
+export interface PageFailure extends Failure {
+  /** The status the host answered with; undefined when nothing answered. */
+  readonly answered?: number;
+}
+
 /**
  * Fetch a public page of the app.
  *
@@ -136,7 +189,7 @@ const READ_BACK_AGENT = 'Mozilla/5.0 (compatible; day0-setup-cloud read-back)';
  *
  * @returns Its body when it answers 200, else why not.
  */
-export function fetchPage(io: CloudIo, url: string): { readonly body: string } | Failure {
+export function fetchPage(io: CloudIo, url: string): { readonly body: string } | PageFailure {
   const fetched = io.run(
     'curl',
     ['-sS', '-L', '--max-time', '30', '-A', READ_BACK_AGENT, '-w', '\n%{http_code}', url],
@@ -145,7 +198,10 @@ export function fetchPage(io: CloudIo, url: string): { readonly body: string } |
   const cut = fetched.stdout.lastIndexOf('\n');
   const code = fetched.stdout.slice(cut + 1).trim();
   if (fetched.status !== 0 || code !== '200') {
-    return { failure: `${url} answered ${code || `nothing (${firstLine(fetched.stderr)})`}` };
+    const failure = `${url} answered ${code || `nothing (${firstLine(fetched.stderr)})`}`;
+    // curl prints 000 when no response came back at all.
+    const answered = fetched.status === 0 && /^[1-9]\d{2}$/.test(code) ? Number(code) : undefined;
+    return answered === undefined ? { failure } : { failure, answered };
   }
   return { body: fetched.stdout.slice(0, Math.max(cut, 0)) };
 }
@@ -168,10 +224,48 @@ export function appTalksTo(
   deployment: string,
 ): { readonly talks: boolean } | Failure {
   const home = fetchPage(io, `${appUrl}/`);
-  if ('failure' in home) return home;
+  return 'failure' in home ? home : homeTalksTo(io, appUrl, home.body, deployment);
+}
+
+/**
+ * Whether the app is on the deployment already, for a setup deciding whether
+ * it may finish: a home that answers not found serves no app, so the app is
+ * not on it (a first build that stopped part way, or none yet, leaves exactly
+ * that), while any other failure (an outage, a protected page, no answer at
+ * all) cannot be told and is a failure.
+ *
+ * @param io - The machine.
+ * @param appUrl - The app's production address.
+ * @param deployment - The deployment.
+ */
+export function appOnDeployment(
+  io: CloudIo,
+  appUrl: string,
+  deployment: string,
+): { readonly on: boolean } | Failure {
+  const home = fetchPage(io, `${appUrl}/`);
+  if ('failure' in home) return home.answered === NOT_FOUND ? { on: false } : home;
+  const talks = homeTalksTo(io, appUrl, home.body, deployment);
+  return 'failure' in talks ? talks : { on: talks.talks };
+}
+
+/**
+ * Whether a home page, or one of the client chunks it loads, names the deployment's URL.
+ *
+ * @param io - The machine.
+ * @param appUrl - The app's production address.
+ * @param homeBody - The home page, fetched.
+ * @param deployment - The deployment.
+ */
+function homeTalksTo(
+  io: CloudIo,
+  appUrl: string,
+  homeBody: string,
+  deployment: string,
+): { readonly talks: boolean } | Failure {
   const address = deploymentUrl(deployment);
-  if (home.body.includes(address)) return { talks: true };
-  for (const path of clientChunkPaths(home.body).slice(0, CHUNKS_READ)) {
+  if (homeBody.includes(address)) return { talks: true };
+  for (const path of clientChunkPaths(homeBody).slice(0, CHUNKS_READ)) {
     const chunk = fetchPage(io, `${appUrl}${path}`);
     if ('failure' in chunk) return chunk;
     if (chunk.body.includes(address)) return { talks: true };

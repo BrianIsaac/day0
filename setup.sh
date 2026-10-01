@@ -21,7 +21,8 @@
 #   ./setup.sh cloud backup --target <file>
 #                                      an export with its checksum and row counts
 #   ./setup.sh cloud pause | unpause --target <file>
-#                                      hold a real-mode cloud deployment's scheduled jobs
+#                                      hold a cloud deployment's scheduled jobs (for
+#                                      real mode; a mock one takes the pause too)
 #
 # This checks the tools the setup needs (the Docker daemon itself, not only
 # its client), installs the dependencies if they are not there yet (never on
@@ -111,7 +112,8 @@ CONVEX_DEPLOYMENT=prod:<name>, the production deployment:
                                              release at a time, both halves read back
   ./setup.sh cloud backup --target <file>    an export with its checksum and row counts
   ./setup.sh cloud pause | unpause --target <file>
-                                             hold a real-mode deployment's jobs, or not
+                                             hold a deployment's jobs, or not (for real mode;
+                                             a mock one takes it too)
   Setup and upgrade end with their rollback runbook; --dry-run runs every read
   and changes nothing. The full list: ./setup.sh cloud --help
 

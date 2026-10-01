@@ -21,6 +21,7 @@ function markup(roster: string): string {
 
 const TEN_IDLE = markup('ten-idle');
 const TEN_MIXED = markup('ten-mixed');
+const TEN_SIX_SEATED = markup('ten-six-seated');
 
 /** One box, in CSS pixels. */
 interface Box {
@@ -128,6 +129,23 @@ test.describe('the mini office, laid out', () => {
     await mountOffice(page, TEN_IDLE, '886px');
     const office = await readOffice(page);
     expect(office.figures).toHaveLength(10);
+    expect(overlaps(office.figures)).toEqual([]);
+    expect(outside(office.floor, office.figures)).toEqual([]);
+  });
+
+  test('seats six of ten employees at desks apart from each other and the four standing at 1440 (review A-M1)', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto('/walkthrough', { waitUntil: 'load' });
+    await mountOffice(page, TEN_SIX_SEATED, '886px');
+    const office = await readOffice(page);
+    expect(office.figures).toHaveLength(10);
+    const seated = await page.$$eval(
+      '#office-under-test .day0-office-agent-seated',
+      (figures) => figures.length,
+    );
+    expect(seated).toBe(6);
     expect(overlaps(office.figures)).toEqual([]);
     expect(outside(office.floor, office.figures)).toEqual([]);
   });

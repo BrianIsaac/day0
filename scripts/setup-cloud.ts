@@ -39,9 +39,11 @@ import { CRONS_PAUSED_FLAG } from '../src/lib/crons-pause';
 import { errorMessage } from '../src/lib/errors';
 import {
   appConvexValues,
+  appOnDeployment,
   appTalksTo,
   CLERK_APP_KEYS,
   deployApp,
+  frameworkRefusal,
   inspectApp,
   otherHostLines,
   projectRefusal,
@@ -132,7 +134,8 @@ export interface CloudOptions {
   readonly help: boolean;
 }
 
-const USAGE = `Usage: ./setup.sh cloud <setup|upgrade|backup|pause|unpause> --target <file> [options]
+/** What `./setup.sh cloud --help` prints: every verb and flag. */
+export const CLOUD_USAGE = `Usage: ./setup.sh cloud <setup|upgrade|backup|pause|unpause> --target <file> [options]
 
 Day0 on Convex cloud and Vercel. Run it from a clean checkout of a release tag
 with no .env.local (git worktree add --detach <dir> v<release>), linked to the
@@ -150,8 +153,10 @@ and optionally DAY0_APP_URL=<the app's production address> and VERCEL_SCOPE.
             scheduled jobs are paused across it
   backup    an export with file storage, its sha256 and its row counts, mode
             600, beside the target file (--to <dir>, --name <file stem>)
-  pause     hold a real-mode deployment's scheduled jobs, pushing the stamped
-            release again so every module reads it
+  pause     hold the deployment's scheduled jobs, pushing the stamped
+            release again so every module reads it; it is for a
+            real-mode deployment, whose jobs reach the connected systems,
+            and a mock one takes it too (its jobs reach nothing outside)
   unpause   lift the pause, the same way
 
 Options:
@@ -316,8 +321,9 @@ type FirstPushState =
  * Whether the first setup may push to this deployment: it is empty, or an
  * earlier first setup stopped part way, after its push and before its stamp
  * (tables, the migrations table among them, and no stamp), or after its stamp
- * and before the app was read back (stamped at this very release). Running
- * the setup again finishes either; anything else is the upgrade's.
+ * and before the app was read back (stamped at this very release, and the
+ * app not yet on it, which `readStoppedApp` reads). Running the setup again
+ * finishes either; anything else is the upgrade's.
  *
  * @param io - The machine.
  * @param target - The deployment.
@@ -367,6 +373,99 @@ function firstPushState(
   };
 }
 
+/** What a stamped deployment's resume read of the app: the build serving its address, if any. */
+interface StoppedApp {
+  readonly previous: VercelDeployment | undefined;
+}
+
+/**
+ * The upgrade command for this target, with the host choice, the address and the team the
+ * command line gave (or a placeholder for an address nobody named), since the upgrade needs
+ * them too until the target file names them.
+ *
+ * @param options - The command line.
+ * @param target - The target.
+ */
+function upgradeCommand(options: CloudOptions, target: CloudTarget): string {
+  const app =
+    options.app === 'none'
+      ? ' --app none'
+      : target.appUrl === undefined
+        ? ' --app-url https://<host>'
+        : options.appUrl === undefined
+          ? ''
+          : ` --app-url ${target.appUrl}`;
+  const scope = options.scope === undefined ? '' : ` --scope ${options.scope}`;
+  return `\`./setup.sh cloud upgrade --target ${target.file}${app}${scope}\``;
+}
+
+/**
+ * What the app half reads when a deployment is stamped at this release,
+ * refused unless the app is not on the deployment yet: a stamped deployment
+ * the app already talks to is a finished setup, and running the setup over
+ * it would push and redeploy with no export first. The address is required,
+ * since without it a setup that stopped part way cannot be told from one that
+ * finished (the setup writes it into the target file only once it has
+ * finished). An address that answers not found from a build of the linked
+ * project is a setup that stopped before its first build read back, which the
+ * setup finishes; not found with no build proved there is refused. With `--app
+ * none` the setup ends at its stamp, so a stamped deployment has finished.
+ *
+ * @param options - The command line.
+ * @param io - The machine.
+ * @param target - The deployment.
+ * @param release - This checkout's release, the one the deployment is stamped at.
+ */
+function readStoppedApp(
+  options: CloudOptions,
+  io: CloudIo,
+  target: CloudTarget,
+  release: string,
+): StoppedApp | Failure {
+  const upgrade = upgradeCommand(options, target);
+  if (options.app === 'none') {
+    return {
+      failure:
+        `${target.deployment} is stamped v${release} already, and a setup with --app none ends at its stamp, ` +
+        `so it has finished: an upgrade moves it to a later release, ${upgrade}.`,
+    };
+  }
+  if (target.appUrl === undefined) {
+    return {
+      failure:
+        `${target.deployment} is stamped v${release} already, and no app address is named, so a first ` +
+        "setup that stopped part way cannot be told from one that finished: name the address the linked project's " +
+        `production is served at with --app-url https://<host>. A finished setup is upgraded instead: ${upgrade}.`,
+    };
+  }
+  const onIt = appOnDeployment(io, target.appUrl, target.deployment);
+  if ('failure' in onIt) {
+    return {
+      failure: `whether the app is on ${target.deployment} already could not be read (${onIt.failure}).`,
+    };
+  }
+  if (onIt.on) {
+    return {
+      failure:
+        `${target.deployment} is set up at v${release} and ${target.appUrl} serves it: this is the upgrade's, ` +
+        `which exports first: ${upgrade}.`,
+    };
+  }
+  // Not found is a stopped setup only at an address proved the linked project's: a typo or a
+  // stale alias answers not found too, and the writes would then reach the linked live project.
+  const served = inspectApp(io, target, target.appUrl);
+  if ('failure' in served) {
+    return {
+      failure:
+        `${target.appUrl} answers not found and \`vercel inspect\` names no build there, so it cannot be told ` +
+        "whether it is the linked project's address: check the address, and if the linked project has never " +
+        'deployed, deploy it once (`vercel --prod`) and run this again.',
+    };
+  }
+  const elsewhere = projectRefusal(io, served, target.appUrl);
+  return elsewhere ?? { previous: served };
+}
+
 /** What the first setup read before its first write. */
 interface SetupReads {
   readonly checkout: CheckoutState;
@@ -385,8 +484,8 @@ interface SetupReads {
 
 /**
  * Every refusal and every read the first setup makes before it writes: the
- * checkout, the target and its proof, an empty deployment, the settings, and
- * the Vercel project's names.
+ * checkout, the Vercel project's framework preset, the target and its proof,
+ * an empty deployment, the settings, and the Vercel project's names.
  *
  * @param options - The command line.
  * @param io - The machine.
@@ -397,7 +496,7 @@ async function readSetup(options: CloudOptions, io: CloudIo): Promise<SetupReads
   const target = readTarget(options, io);
   if ('failure' in target) return target;
   if (options.app === 'vercel') {
-    const refusal = vercelRefusal(io) ?? toolRefusal(io, 'curl');
+    const refusal = vercelRefusal(io) ?? toolRefusal(io, 'curl') ?? frameworkRefusal(io, target);
     if (refusal !== undefined) return refusal;
   }
   // The push itself is proved once the env is set: an empty deployment's auth
@@ -409,6 +508,11 @@ async function readSetup(options: CloudOptions, io: CloudIo): Promise<SetupReads
   );
   const resumed = firstPushState(io, target, checkout.release);
   if ('failure' in resumed) return resumed;
+  // Read before the settings are asked for, so nobody types a key into a
+  // setup that will not run.
+  const stopped =
+    resumed.state === 'stamped' ? readStoppedApp(options, io, target, checkout.release) : undefined;
+  if (stopped !== undefined && 'failure' in stopped) return stopped;
   if (resumed.state !== 'empty') io.log(resumed.note);
   const held = readDeploymentEnv(io, target);
   if ('failure' in held) return { failure: `${held.failure}.` };
@@ -430,8 +534,8 @@ async function readSetup(options: CloudOptions, io: CloudIo): Promise<SetupReads
         `${missing.map((name) => `vercel env add ${name} production --sensitive`).join('; ')} (Vercel asks for each value).`,
     };
   }
-  let previous: VercelDeployment | undefined;
-  if (target.appUrl !== undefined) {
+  let previous = stopped?.previous;
+  if (stopped === undefined && target.appUrl !== undefined) {
     const served = inspectApp(io, target, target.appUrl);
     if ('failure' in served) return { failure: `${served.failure}.` };
     const elsewhere = projectRefusal(io, served, target.appUrl);
@@ -1043,7 +1147,7 @@ async function main(): Promise<number> {
     return 2;
   }
   if (options.help) {
-    console.log(USAGE);
+    console.log(CLOUD_USAGE);
     return 0;
   }
   try {

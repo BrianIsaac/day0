@@ -58,6 +58,92 @@ describe('proveTarget', (): void => {
     );
   });
 
+  it("quotes the refusal's cause, never the stack frame the CLI prints after it", (): void => {
+    const c = cloud({
+      failing: [
+        {
+          match: 'deploy --dry-run',
+          status: 1,
+          stdout: '- Deploying to https://brisk-heron-417.convex.cloud... [dry run]\n',
+          stderr:
+            '✖ Error fetching POST https://brisk-heron-417.convex.cloud/api/deploy2/start_push 400 Bad Request: InvalidModules: Loading the pushed modules encountered the following\n' +
+            '    error:\n' +
+            '    Failed to analyze auth.config.js: Uncaught Error: This deployment has no identity provider configured\n' +
+            '        at identityProviders (../convex/auth.config.ts:49:11)\n' +
+            '        at <anonymous> (../convex/auth.config.ts:60:15)\n',
+        },
+      ],
+    });
+    expect(proveTarget(c.io, targetOf(c), 'push')?.failure).toBe(
+      'the dry run reached brisk-heron-417 and the deployment refused the push (exit 1): Failed to analyze auth.config.js: Uncaught Error: This deployment has no identity provider configured.',
+    );
+  });
+
+  it('passes over lines that only look like an error, and keeps a cause that begins with "at"', (): void => {
+    const c = cloud({
+      failing: [
+        {
+          match: 'deploy --dry-run',
+          status: 1,
+          stdout: '- Deploying to https://brisk-heron-417.convex.cloud... [dry run]\n',
+          stderr:
+            'at least one identity provider is required\n' +
+            '    at <anonymous> (../convex/auth.config.ts:60:15)\n',
+        },
+      ],
+    });
+    expect(proveTarget(c.io, targetOf(c), 'push')?.failure).toBe(
+      'the dry run reached brisk-heron-417 and the deployment refused the push (exit 1): at least one identity provider is required.',
+    );
+    const named = cloud({
+      failing: [
+        {
+          match: 'deploy --dry-run',
+          status: 1,
+          stdout: '- Deploying to https://brisk-heron-417.convex.cloud... [dry run]\n',
+          stderr:
+            '400 Bad Request: InvalidModules: at least one identity provider is required\n' +
+            'Bundling JavaScript: done\n',
+        },
+      ],
+    });
+    const uncaught = cloud({
+      failing: [
+        {
+          match: 'deploy --dry-run',
+          status: 1,
+          stdout: '- Deploying to https://brisk-heron-417.convex.cloud... [dry run]\n',
+          stderr:
+            'Uncaught AuthConfigMissingEnvironmentVariable: no identity provider is configured\n' +
+            '    at new Promise (<anonymous>)\n',
+        },
+      ],
+    });
+    expect(proveTarget(uncaught.io, targetOf(uncaught), 'push')?.failure).toBe(
+      'the dry run reached brisk-heron-417 and the deployment refused the push (exit 1): Uncaught AuthConfigMissingEnvironmentVariable: no identity provider is configured.',
+    );
+    expect(proveTarget(named.io, targetOf(named), 'push')?.failure).toBe(
+      'the dry run reached brisk-heron-417 and the deployment refused the push (exit 1): 400 Bad Request: InvalidModules: at least one identity provider is required.',
+    );
+  });
+
+  it('quotes the last line that is not a stack frame when no line names an error', (): void => {
+    const c = cloud({
+      failing: [
+        {
+          match: 'deploy --dry-run',
+          status: 1,
+          stdout: '- Deploying to https://brisk-heron-417.convex.cloud... [dry run]\n',
+          stderr:
+            'The push was not accepted.\n    at <anonymous> (../convex/auth.config.ts:60:15)\n',
+        },
+      ],
+    });
+    expect(proveTarget(c.io, targetOf(c), 'push')?.failure).toBe(
+      'the dry run reached brisk-heron-417 and the deployment refused the push (exit 1): The push was not accepted.',
+    );
+  });
+
   it('refuses a dry run after which the checkout is changed, and not a tree that was changed before it', (): void => {
     const writes = cloud({ dryRunWrites: true });
     expect(proveTarget(writes.io, targetOf(writes), 'push')?.failure).toBe(

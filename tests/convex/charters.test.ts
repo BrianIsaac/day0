@@ -158,6 +158,29 @@ describe('a strike that would change nothing (production walk 6c)', (): void => 
     const after = (await charter(harness, charterId)).body as Charter;
     expect(after.constraints?.[index]?.struck).toBeUndefined();
   });
+
+  it('is refused when the words are carried nowhere, though a clause holds a double space', async (): Promise<void> => {
+    const body = runThroughBody();
+    body.proposedFunction = body.proposedFunction.replace(' ', '  ');
+    body.constraints = [
+      ...(body.constraints ?? []),
+      {
+        kind: 'candidate-property',
+        quote: 'Escalations go to the manager.',
+        wording: ['escalations'],
+        origin: 'synthesis',
+      },
+    ];
+    const index = body.constraints.length - 1;
+    const harness = convexTest(schema, allConvexModules());
+    const { charterId } = await seedDraft(harness, body);
+    const owner = harness.withIdentity({ subject: 'owner' });
+    expect(
+      await owner.mutation(api.charters.setConstraintStruck, { charterId, index, struck: true }),
+    ).toEqual({ ok: false, reason: STRIKE_CHANGES_NOTHING });
+    const after = (await charter(harness, charterId)).body as Charter;
+    expect(after.constraints?.[index]?.struck).toBeUndefined();
+  });
 });
 
 describe('a strike the effective charter cannot honour', (): void => {

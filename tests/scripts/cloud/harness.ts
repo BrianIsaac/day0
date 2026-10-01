@@ -77,6 +77,8 @@ export interface CloudState {
   dryRunWrites: boolean;
   /** The Vercel project the served build belongs to. */
   servedProject: string;
+  /** The linked project's framework preset, as `vercel project inspect` names it. */
+  framework: string;
   /** Rows per table in an export. */
   rows: Record<string, number>;
   /** Tools that do not answer. */
@@ -178,6 +180,7 @@ export function cloud(
     envSetMangles: false,
     dryRunWrites: false,
     servedProject: 'day0',
+    framework: 'Next.js',
     rows: { agents: 2, deploymentVersions: 1, migrations: 19 },
     missing: [],
     failing: [],
@@ -215,7 +218,13 @@ export function cloud(
         return {
           status: 1,
           stdout: '',
-          stderr: `${deploying}✖ Error: Unable to start push to https://${named}.convex.cloud\nAuthConfigMissingEnvironmentVariable: no identity provider is configured\n`,
+          // The CLI prints the server's stack frames after the cause, as it did
+          // against a real empty production deployment on 1 October.
+          stderr:
+            `${deploying}✖ Error: Unable to start push to https://${named}.convex.cloud\n` +
+            'AuthConfigMissingEnvironmentVariable: no identity provider is configured\n' +
+            '    at identityProviders (../convex/auth.config.ts:49:11)\n' +
+            '    at <anonymous> (../convex/auth.config.ts:60:15)\n',
         };
       }
       if (args.includes('--dry-run')) {
@@ -303,6 +312,27 @@ export function cloud(
       state.vercelEnv.set(name, clock);
       state.vercelValues.set(name, input ?? '');
       return ok('', `Updated Environment Variable ${name}\n`);
+    }
+    if (args[0] === 'project' && args[1] === 'inspect') {
+      // With no name the CLI inspects the project the checkout is linked to.
+      const named = args[2]?.startsWith('--') === false ? args[2] : 'day0';
+      if (named !== 'day0') return fail(`Error: Project not found (${named})`);
+      return ok(
+        '',
+        [
+          `> Found Project example-team/${named} [312ms]`,
+          '',
+          '  General',
+          '',
+          '    ID\t\t\t\tprj_x',
+          `    Name\t\t\t${named}`,
+          '',
+          '  Framework Settings',
+          '',
+          `    Framework Preset\t\t${state.framework}`,
+          '',
+        ].join('\n'),
+      );
     }
     if (args[0] === 'inspect') {
       if (state.served === undefined) return fail(`Error: Can't find the deployment "${args[1]}"`);

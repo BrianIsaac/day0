@@ -150,6 +150,19 @@ export function parseVercelInspect(output: string): VercelDeployment | undefined
 }
 
 /**
+ * The framework preset `vercel project inspect` names under its Framework
+ * Settings: `Next.js`, `Other` and the rest, by the name the dashboard shows.
+ *
+ * @param output - The command's output, stdout and stderr together.
+ * @returns The preset's name, or undefined when the output names none.
+ */
+export function parseFrameworkPreset(output: string): string | undefined {
+  const preset = /^[ \t]*Framework Preset[ \t]+(\S.*?)[ \t]*$/m.exec(plainText(output))?.[1];
+  // The CLI prints `undefined` for a preset slug its framework list lacks.
+  return preset === undefined || preset === 'undefined' ? undefined : preset;
+}
+
+/**
  * When each variable a Vercel environment holds was last written, by name,
  * from `vercel env ls <environment> --format json`. The listing returns a
  * value only for a plain variable, and this reads none.

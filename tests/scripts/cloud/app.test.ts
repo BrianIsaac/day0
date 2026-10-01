@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   appConvexValues,
+  appOnDeployment,
   appTalksTo,
   deployApp,
+  frameworkRefusal,
   linkedProject,
   projectRefusal,
   readAppBack,
@@ -46,7 +48,76 @@ describe('appTalksTo', (): void => {
 
   it('fails on a page that does not answer 200', (): void => {
     const c = cloud({ served: undefined });
-    expect(appTalksTo(c.io, APP_URL, DEPLOYMENT)).toEqual({ failure: `${APP_URL}/ answered 404` });
+    expect(appTalksTo(c.io, APP_URL, DEPLOYMENT)).toEqual({
+      failure: `${APP_URL}/ answered 404`,
+      answered: 404,
+    });
+  });
+});
+
+describe('appOnDeployment', (): void => {
+  it('says the app is on the deployment when a client chunk names it, and not for another', (): void => {
+    expect(appOnDeployment(cloud().io, APP_URL, DEPLOYMENT)).toEqual({ on: true });
+    expect(appOnDeployment(cloud().io, APP_URL, DEV_DEPLOYMENT)).toEqual({ on: false });
+  });
+
+  it('reads a home that answers not found as no app on it', (): void => {
+    expect(appOnDeployment(cloud({ served: undefined }).io, APP_URL, DEPLOYMENT)).toEqual({
+      on: false,
+    });
+  });
+
+  it('fails on an HTTP error other than not found, an outage or a protected page, since then it cannot be told', (): void => {
+    for (const code of ['503', '401']) {
+      const c = cloud({
+        failing: [
+          { match: `%{http_code} ${APP_URL}/`, status: 0, stdout: `\n${code}`, stderr: '' },
+        ],
+      });
+      expect(appOnDeployment(c.io, APP_URL, DEPLOYMENT)).toEqual({
+        failure: `${APP_URL}/ answered ${code}`,
+        answered: Number(code),
+      });
+    }
+  });
+
+  it('fails when nothing answers, since then it cannot be told', (): void => {
+    const c = cloud({
+      failing: [
+        {
+          match: `%{http_code} ${APP_URL}/`,
+          status: 6,
+          stdout: '\n000',
+          stderr: 'curl: (6) Could not resolve host: day0-example.vercel.app',
+        },
+      ],
+    });
+    expect(appOnDeployment(c.io, APP_URL, DEPLOYMENT)).toEqual({
+      failure: `${APP_URL}/ answered 000`,
+    });
+  });
+});
+
+describe('frameworkRefusal', (): void => {
+  it('accepts a linked project built as Next.js and names any other preset', (): void => {
+    expect(frameworkRefusal(cloud().io, targetOf(cloud()))).toBeUndefined();
+    const other = cloud({ framework: 'Other' });
+    expect(frameworkRefusal(other.io, targetOf(other))?.failure).toContain(
+      'the Vercel project day0 has the framework preset Other',
+    );
+  });
+
+  it('refuses when the link names no project, or the project cannot be read', (): void => {
+    const unlinked = cloud({}, { linked: false });
+    expect(frameworkRefusal(unlinked.io, targetOf(unlinked))?.failure).toContain(
+      '.vercel/project.json does not name the linked project',
+    );
+    const unreadable = cloud({
+      failing: [{ match: 'vercel project inspect', status: 1, stderr: 'Error: Not authorized' }],
+    });
+    expect(frameworkRefusal(unreadable.io, targetOf(unreadable))?.failure).toBe(
+      '`vercel project inspect` named no framework preset for day0 (exit 1: Error: Not authorized).',
+    );
   });
 });
 

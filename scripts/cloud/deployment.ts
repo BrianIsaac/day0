@@ -128,17 +128,40 @@ export function proveTarget(
 }
 
 /**
- * The line a failed CLI run explains itself with: its last, where the CLI
- * prints the most specific cause.
+ * A stack frame the CLI prints after the server's cause, `at <name> (<file>:<line>:<column>)` or
+ * `at new Promise (<anonymous>)`: never the explanation, while a cause that begins with the word
+ * "at" is kept.
+ */
+const STACK_FRAME = /^at\s(?:.*:\d+:\d+\)?|.*\((?:<anonymous>|index \d+)\))$/;
+
+/**
+ * A line that names an error: the CLI's cross or a leading `Error`, a word
+ * ending in `Error` or `Exception` before a colon, or an exception code such
+ * as `AuthConfigMissingEnvironmentVariable:` that opens the line or follows a
+ * colon or `Uncaught` (`400 Bad Request: InvalidModules: ...`), so a heading such as
+ * `Bundling JavaScript: done` is not taken for one.
+ */
+const NAMES_ERROR =
+  /^(?:\u2716|Error\b)|\b[A-Za-z]*(?:Error|Exception):|(?:^|:\s|Uncaught\s)[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]*)+:\s/;
+
+/**
+ * The line a failed CLI run explains itself with: the last that names an
+ * error, where the CLI prints the most specific cause, or else the last that
+ * is not a stack frame. The server's frames follow its cause, so the very last
+ * line is often `at <anonymous> (../convex/auth.config.ts:60:15)`.
  *
  * @param result - The run.
  */
 function lastErrorLine(result: RunResult): string {
-  const line = plainText(`${result.stdout}\n${result.stderr}`)
+  const lines = plainText(`${result.stdout}\n${result.stderr}`)
     .split('\n')
     .map((candidate) => candidate.trim())
-    .filter(Boolean)
-    .at(-1);
+    .filter(Boolean);
+  const explanations = lines.filter((line) => !STACK_FRAME.test(line));
+  const line =
+    explanations.findLast((candidate) => NAMES_ERROR.test(candidate)) ??
+    explanations.at(-1) ??
+    lines.at(-1);
   return (line ?? 'no output').replace(/\.$/, '');
 }
 

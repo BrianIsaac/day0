@@ -43,7 +43,8 @@ const OFFICE_DECOR = [
   { kind: 'console', x: 52, y: 18 },
   { kind: 'console', x: 52, y: 83 },
   { kind: 'table', x: 77, y: 53 },
-  { kind: 'table', x: 18, y: 84 },
+  // Between the lounge's two desks, clear of both: the first is drawn from the ninth employee.
+  { kind: 'table', x: 20.5, y: 84 },
 ] as const;
 
 const OFFICE_SIGNALS = [
@@ -54,36 +55,41 @@ const OFFICE_SIGNALS = [
   { x: 49, y: 82, delay: 1.1 },
 ] as const;
 
+/**
+ * The desks, in the order employees take them: the employee at place n on the roster sits at desk
+ * n when working. The first ten seats stand every two clear of each other by a figure's span
+ * (`FIGURE_SPAN`), so ten employees at their desks never sit on each other (the wave 8 review's
+ * A-M1: the seventh sat on the second, and the eighth on the fourth, the ninth and the tenth); of
+ * the orders that do, this one leaves the idle figures most room, measured over every roster of
+ * one to ten and every way of seating it. The first eight are always drawn and each employee past
+ * them adds its own. Twenty seats cannot all stand clear, so from the eleventh on a desk may
+ * share its room with one taken earlier. No seat stands lower than 86 percent, where a seated
+ * figure, 140 px tall in an office 560 px tall, still clears the 8 px frame: the bottom rooms'
+ * seats stood at 87 to 90 and cut their figures off, which only an eleventh employee met until
+ * the first ten took two of them.
+ */
 const OFFICE_DESKS = [
   { x: 14, y: 17, seatX: 14, seatY: 25, variant: 'wide' },
-  { x: 29, y: 17, seatX: 29, seatY: 25, variant: 'wide' },
-  { x: 67, y: 17, seatX: 67, seatY: 25, variant: 'wide' },
   { x: 86, y: 17, seatX: 86, seatY: 25, variant: 'wide' },
   { x: 68, y: 31, seatX: 68, seatY: 37, variant: 'compact' },
-  { x: 87, y: 31, seatX: 87, seatY: 37, variant: 'compact' },
-  { x: 13, y: 50, seatX: 13, seatY: 58, variant: 'console' },
   { x: 27, y: 50, seatX: 27, seatY: 58, variant: 'console' },
-  { x: 73, y: 50, seatX: 73, seatY: 58, variant: 'compact' },
   { x: 90, y: 50, seatX: 90, seatY: 58, variant: 'compact' },
-  { x: 53, y: 79, seatX: 53, seatY: 87, variant: 'wide' },
-  { x: 67, y: 79, seatX: 67, seatY: 87, variant: 'wide' },
-  { x: 83, y: 79, seatX: 83, seatY: 87, variant: 'wide' },
-  { x: 13, y: 82, seatX: 13, seatY: 90, variant: 'compact' },
-  { x: 28, y: 82, seatX: 28, seatY: 90, variant: 'compact' },
-  { x: 15, y: 30, seatX: 15, seatY: 36, variant: 'compact' },
-  { x: 30, y: 30, seatX: 30, seatY: 36, variant: 'compact' },
+  { x: 67, y: 79, seatX: 67, seatY: 86, variant: 'wide' },
   { x: 55, y: 31, seatX: 51, seatY: 33, variant: 'console' },
   { x: 55, y: 65, seatX: 50, seatY: 63, variant: 'console' },
-  { x: 93, y: 83, seatX: 89, seatY: 88, variant: 'console' },
+  { x: 13, y: 82, seatX: 13, seatY: 86, variant: 'compact' },
+  { x: 93, y: 83, seatX: 89, seatY: 86, variant: 'console' },
+  { x: 29, y: 17, seatX: 29, seatY: 25, variant: 'wide' },
+  { x: 67, y: 17, seatX: 67, seatY: 25, variant: 'wide' },
+  { x: 87, y: 31, seatX: 87, seatY: 37, variant: 'compact' },
+  { x: 13, y: 50, seatX: 13, seatY: 58, variant: 'console' },
+  { x: 73, y: 50, seatX: 73, seatY: 58, variant: 'compact' },
+  { x: 53, y: 79, seatX: 53, seatY: 86, variant: 'wide' },
+  { x: 83, y: 79, seatX: 83, seatY: 86, variant: 'wide' },
+  { x: 28, y: 82, seatX: 28, seatY: 86, variant: 'compact' },
+  { x: 15, y: 30, seatX: 15, seatY: 36, variant: 'compact' },
+  { x: 30, y: 30, seatX: 30, seatY: 36, variant: 'compact' },
 ] as const;
-
-/**
- * The order employees take the eight desks always drawn: far apart first, so
- * two name plates never sit on each other while the office has room (the
- * first two desks are 15 percent apart, less than a plate is wide). Past the
- * eighth, each employee takes the desk its arrival adds.
- */
-const SEAT_ORDER = [0, 2, 6, 3, 7, 1, 4, 5] as const;
 
 /** How many desks the office draws for this many employees: eight at least, one each past them. */
 function deskCountFor(employees: number): number {
@@ -92,7 +98,7 @@ function deskCountFor(employees: number): number {
 
 /** The desk the employee at this place on the roster sits at when working. */
 function deskFor(index: number): number {
-  return (SEAT_ORDER[index] ?? index) % OFFICE_DESKS.length;
+  return index % OFFICE_DESKS.length;
 }
 
 type OfficeStyle = CSSProperties & {

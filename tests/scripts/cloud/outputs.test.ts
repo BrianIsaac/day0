@@ -10,6 +10,7 @@ import {
   exportLayout,
   listedTables,
   pageNamesRelease,
+  parseFrameworkPreset,
   parseVercelInspect,
   pushTarget,
   rowCount,
@@ -129,6 +130,34 @@ describe('parseVercelInspect', (): void => {
   it('reads a building deployment as not ready, and an error as no deployment', (): void => {
     expect(parseVercelInspect(INSPECT.replace('● Ready', '● Building'))?.ready).toBe(false);
     expect(parseVercelInspect('Error: Can\'t find the deployment "x"')).toBeUndefined();
+  });
+});
+
+/** `vercel project inspect` as CLI 50.22.1 prints it, the colour codes kept and the ids replaced. */
+const PROJECT_INSPECT = [
+  'Vercel CLI 50.22.1',
+  '> Found Project example-team/day0 [312ms]',
+  '',
+  '\u001b[1m  General\n\u001b[22m',
+  '    \u001b[36mID\u001b[39m\t\t\t\tprj_Example123',
+  '    \u001b[36mName\u001b[39m\t\t\tday0',
+  '    \u001b[36mNode.js Version\u001b[39m\t\t22.x',
+  '',
+  '\u001b[1m  Framework Settings\n\u001b[22m',
+  '    \u001b[36mFramework Preset\u001b[39m\t\tNext.js',
+  '    \u001b[36mBuild Command\u001b[39m\t\t\u001b[2m`npm run build` or `next build`\u001b[22m',
+].join('\n');
+
+describe('parseFrameworkPreset', (): void => {
+  it("reads the linked project's framework preset by its name", (): void => {
+    expect(parseFrameworkPreset(PROJECT_INSPECT)).toBe('Next.js');
+    expect(parseFrameworkPreset(PROJECT_INSPECT.replace('Next.js', 'Other'))).toBe('Other');
+  });
+
+  it('reads no preset from an error or a preset the CLI could not name', (): void => {
+    expect(parseFrameworkPreset('Error: Project not found')).toBeUndefined();
+    expect(parseFrameworkPreset(PROJECT_INSPECT.replace('Next.js', 'undefined'))).toBeUndefined();
+    expect(parseFrameworkPreset(PROJECT_INSPECT.replace('Next.js', ''))).toBeUndefined();
   });
 });
 
