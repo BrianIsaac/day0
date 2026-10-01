@@ -169,3 +169,119 @@ export const UNVERIFIED_FOR_TRANSFER =
  */
 export const OWN_TRANSFER =
   'This handover was asked from your own account, so your account cannot take it on.';
+
+/*
+ * The words a manager meets when a request is refused, as `ConvexError` data the dialogs show
+ * (standard 6.3), here rather than in `convex/managerTransfers.ts` so a screen can say the same
+ * words without reaching into the backend (standard 1.3). Every string is a wording draft and a
+ * product call, flagged in 9-U2's handover.
+ */
+
+/** The refusal for an ask on an installation that signs every browser in as one manager. */
+export const LOCAL_DEV_TRANSFER_REFUSAL =
+  'This installation signs everyone in as one manager. Handing over needs each manager to sign in as themselves (the customer-local profile).';
+
+/** The refusal for handing over an evaluation employee: its address is its run's marker. */
+export const EVALUATION_EMPLOYEE_TRANSFER_REFUSAL =
+  "An evaluation employee's manager is fixed by its run, so it cannot be handed over.";
+
+/** The refusal for naming an address the evaluation harness reserves, which no person signs in with. */
+export const EVALUATION_ADDRESS_TRANSFER_REFUSAL =
+  'That address is reserved for evaluation runs, and no manager signs in with it.';
+
+/** The refusal for asking without a verified address: the request tells the new manager who asked. */
+export const UNVERIFIED_FOR_ASK =
+  'Your sign-in does not carry a verified email address, so you cannot hand an employee over: the new manager is told who asked. Verify your address, then sign in again.';
+
+/** The refusal for more open requests than one owner may have (D16). */
+export const OWNER_OPEN_BOUND_REFUSAL = `You have ${MAX_OPEN_TRANSFERS_PER_OWNER} handovers waiting for an answer. Cancel one, or wait for an answer, before you ask for another.`;
+
+/** The refusal for more asks in a rolling day than one owner may make (D16). */
+export const OWNER_DAILY_BOUND_REFUSAL = `You have asked for ${MAX_TRANSFER_ASKS_PER_WINDOW} handovers in the last 24 hours. Try again later.`;
+
+/**
+ * A count with its thousands separated by commas, `1,000`, without the
+ * runtime's locale data, which the Convex runtime need not carry.
+ */
+function withThousands(count: number): string {
+  return String(count).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+/** The refusal for a handover note past its bound. */
+export const NOTE_TOO_LONG = `The note can be at most ${withThousands(MAX_TRANSFER_NOTE_LENGTH)} characters.`;
+
+/** The refusal for a decline reason past its bound. */
+export const DECLINE_REASON_TOO_LONG = `The reason can be at most ${withThousands(MAX_DECLINE_REASON_LENGTH)} characters.`;
+
+/**
+ * The refusal for naming the caller's own address.
+ *
+ * @param name - The employee's name.
+ */
+export function ownAddressRefusal(name: string): string {
+  return `That is your own address. Hand ${name} over to another manager's address.`;
+}
+
+/**
+ * The refusal for a second request while one is open (the one-open rule), in the open request's
+ * own terms: an asked one can be changed or cancelled, an accepting one can be neither (U2-m1).
+ *
+ * @param name - The employee's name.
+ * @param toAddress - The address the open request names.
+ * @param state - The open request's state.
+ */
+export function openTransferRefusal(
+  name: string,
+  toAddress: string,
+  state: OpenManagerTransferState,
+): string {
+  return state === 'accepting'
+    ? `${name}'s handover to ${toAddress} was already accepted: ${name} becomes theirs when its runs end.`
+    : `${name} already has a handover open to ${toAddress}. Change the address or cancel it first.`;
+}
+
+/**
+ * The refusal for an address that already has the most open requests one
+ * address may have (D16). It says nothing about who else asked.
+ *
+ * @param toAddress - The named address.
+ */
+export function addressBoundRefusal(toAddress: string): string {
+  return `${toAddress} has too many handovers waiting. Try again once they have answered some.`;
+}
+
+/**
+ * The refusal for changing a request's address to the one it already names.
+ *
+ * @param toAddress - The address the request names.
+ */
+export function sameAddressRefusal(toAddress: string): string {
+  return `The handover is already addressed to ${toAddress}.`;
+}
+
+/**
+ * The refusal for a move the request's state no longer allows, in the words
+ * of the state it is in: the loser of a race re-runs against the new state and
+ * reads why (the transfer plan, section 10.1).
+ *
+ * @param state - The state the request is in, or `expired` for an asked one past its expiry.
+ */
+export function transferStateRefusal(state: ManagerTransferState): string {
+  switch (state) {
+    case 'asked':
+      return 'This handover is still waiting for an answer.';
+    case 'accepting':
+    case 'accepted':
+      return 'This handover was already accepted.';
+    case 'declined':
+      return 'This handover was already declined.';
+    case 'cancelled':
+      return 'This handover was already cancelled.';
+    case 'expired':
+      return 'This handover expired before it was answered.';
+    default: {
+      const unknown: never = state;
+      throw new Error(`unhandled handover state ${String(unknown)}`);
+    }
+  }
+}

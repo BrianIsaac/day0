@@ -12,7 +12,6 @@ import { assertNamedInTransfer } from './ownership';
 import { charterAtHandover, discardUnapprovedCharter, renderIdentityForManager } from './charters';
 import { purgeCredential } from './credentials';
 import { appendEvent, eventsOfType } from './eventLog';
-import { transferStateRefusal } from './managerTransfers';
 import {
   assertKeepable,
   boundariesOf,
@@ -41,6 +40,7 @@ import {
 import {
   isTransferDue,
   transferSettleBy,
+  transferStateRefusal,
   type ManagerTransferState,
 } from '../src/agent/manager-transfer';
 import { log } from '../src/lib/logger';

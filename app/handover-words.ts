@@ -55,13 +55,6 @@ const EXPIRY_DAYS = Math.round(TRANSFER_EXPIRY_MS / 86_400_000);
 export const MANAGER_DUTY =
   'Every held write and every plan comes to you. One manager per employee.';
 
-/**
- * Said in place of **Hand over** on an installation that signs every browser in as one manager:
- * the very words `managerTransfers.ask` refuses with there (a test holds the two together).
- */
-export const LOCAL_DEV_HANDOVER_LINE =
-  'This installation signs everyone in as one manager. Handing over needs each manager to sign in as themselves (the customer-local profile).';
-
 /** The label of the control that opens the hand-over dialog. */
 export const HAND_OVER = 'Hand over';
 

@@ -5,6 +5,7 @@ import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Doc } from '@convex/_generated/dataModel';
 import type { ManagerStanding } from '@/agent/manager-standing';
+import { LOCAL_DEV_TRANSFER_REFUSAL } from '@/agent/manager-transfer';
 import { DEV_NO_AUTH } from '@/lib/dev-auth';
 import type { DeploymentProfile } from '@/lib/surface-mode';
 import { deploymentZone } from '@/lib/zone';
@@ -22,7 +23,6 @@ import {
   endedCardLine,
   HAND_OVER,
   handOverToLabel,
-  LOCAL_DEV_HANDOVER_LINE,
   MANAGER_DUTY,
   otherStandingLine,
   type HandoverDeparture,
@@ -388,7 +388,8 @@ function ManagerCard({ agent, surfaceMode }: ManagerCardProps) {
         controls = handOver();
       }
       if (state.ended !== undefined) lines.push(endedCardLine(state.ended, zone));
-      if (oneManager) lines.push(LOCAL_DEV_HANDOVER_LINE);
+      // The very words `managerTransfers.ask` refuses with there: one constant for both.
+      if (oneManager) lines.push(LOCAL_DEV_TRANSFER_REFUSAL);
       break;
     }
     default: {

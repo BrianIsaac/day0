@@ -12,7 +12,6 @@ import {
   handedOverLine,
   handOverLines,
   leavesBehindLines,
-  LOCAL_DEV_HANDOVER_LINE,
   otherStandingLine,
   reportingElsewhereLine,
   retireBlockedByAcceptance,
@@ -21,7 +20,7 @@ import {
   takesOnLines,
   zonedStamp,
 } from '../../app/handover-words';
-import { LOCAL_DEV_TRANSFER_REFUSAL } from '../../convex/managerTransfers';
+import { LOCAL_DEV_TRANSFER_REFUSAL } from '../../src/agent/manager-transfer';
 import type { TransferPreview } from '../../convex/transferPreview';
 
 /** 1 October 2026, 09:00 UTC. */
@@ -228,8 +227,10 @@ describe('the Manager card (plan 7.1)', () => {
     );
   });
 
-  it('says the local-dev line in the very words the backend refuses the ask with', () => {
-    expect(LOCAL_DEV_HANDOVER_LINE).toBe(LOCAL_DEV_TRANSFER_REFUSAL);
+  it('says the local-dev line in the very words the backend refuses the ask with, one constant both read', () => {
+    expect(LOCAL_DEV_TRANSFER_REFUSAL).toBe(
+      'This installation signs everyone in as one manager. Handing over needs each manager to sign in as themselves (the customer-local profile).',
+    );
   });
 });
 

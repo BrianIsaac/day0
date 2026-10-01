@@ -13,6 +13,7 @@ import {
 } from './_generated/server';
 import { appendEvent } from './eventLog';
 import { runsInFlight } from './transferInFlight';
+import { noticeSurfaceOf } from './transferNotice';
 import { isEvaluationAgent } from './metrics';
 import {
   assertNamedInTransfer,
@@ -28,37 +29,44 @@ import {
   normaliseManagerAddress,
 } from '../src/agent/manager-address';
 import {
+  addressBoundRefusal,
   canMoveTransfer,
+  DECLINE_REASON_TOO_LONG,
+  EVALUATION_ADDRESS_TRANSFER_REFUSAL,
+  EVALUATION_EMPLOYEE_TRANSFER_REFUSAL,
   isTransferDue,
+  LOCAL_DEV_TRANSFER_REFUSAL,
+  MANAGER_TRANSFER_STATES,
+  type ManagerTransferState,
   MAX_DECLINE_REASON_LENGTH,
   MAX_OPEN_TRANSFERS_PER_ADDRESS,
   MAX_OPEN_TRANSFERS_PER_OWNER,
   MAX_TRANSFER_ASKS_PER_WINDOW,
   MAX_TRANSFER_NOTE_LENGTH,
-  MANAGER_TRANSFER_STATES,
+  NOTE_TOO_LONG,
   OPEN_MANAGER_TRANSFER_STATES,
+  openTransferRefusal,
+  ownAddressRefusal,
+  OWNER_DAILY_BOUND_REFUSAL,
+  OWNER_OPEN_BOUND_REFUSAL,
+  sameAddressRefusal,
   TRANSFER_ASK_WINDOW_MS,
   TRANSFER_DEPARTURES_WINDOW_MS,
   TRANSFER_EXPIRY_MS,
   TRANSFER_NOT_FOUND,
-  transferExpiresAt,
-  type ManagerTransferState,
-  type OpenManagerTransferState,
   type TransferCancelReason,
+  transferExpiresAt,
+  transferStateRefusal,
+  UNVERIFIED_FOR_ASK,
 } from '../src/agent/manager-transfer';
 import { DEV_NO_AUTH_ISSUER } from '../src/lib/dev-auth-issuer';
 import { log } from '../src/lib/logger';
 import { resolveDeploymentProfile, SURFACE_MODE } from '../src/lib/surface-mode';
 import { agentZone } from '../src/lib/zone';
 import { ownerKnownValues, scrubKnownValues } from '../src/redaction/known-values';
-import { surfaceRefusal } from '../src/surfaces/policy';
-import { toSurfaceRecord } from '../src/surfaces/records';
 import { redactTokenShapes } from '../src/surfaces/redact';
 import { clippedEmployeeName } from '../src/agent/employee-name';
 import { characterCount, withoutInvisibles } from '../src/lib/visible-text';
-import { isSlackApiEndpoint } from '../src/surfaces/slack-endpoint';
-import { autonomousActionsOn } from '../src/work/autonomy';
-import { accessEnded } from '../src/work/surface-access';
 
 /*
  * A request to hand an employee to another manager, from the ask to its
@@ -69,129 +77,6 @@ import { accessEnded } from '../src/work/surface-access';
  * the dialog shows (standard 6.3). Every string here is a wording draft and a
  * product call, flagged in the unit's handover.
  */
-
-/** The refusal for an ask on an installation that signs every browser in as one manager. */
-export const LOCAL_DEV_TRANSFER_REFUSAL =
-  'This installation signs everyone in as one manager. Handing over needs each manager to sign in as themselves (the customer-local profile).';
-
-/** The refusal for handing over an evaluation employee: its address is its run's marker. */
-export const EVALUATION_EMPLOYEE_TRANSFER_REFUSAL =
-  "An evaluation employee's manager is fixed by its run, so it cannot be handed over.";
-
-/** The refusal for naming an address the evaluation harness reserves, which no person signs in with. */
-export const EVALUATION_ADDRESS_TRANSFER_REFUSAL =
-  'That address is reserved for evaluation runs, and no manager signs in with it.';
-
-/** The refusal for asking without a verified address: the request tells the new manager who asked. */
-export const UNVERIFIED_FOR_ASK =
-  'Your sign-in does not carry a verified email address, so you cannot hand an employee over: the new manager is told who asked. Verify your address, then sign in again.';
-
-/** The refusal for more open requests than one owner may have (D16). */
-export const OWNER_OPEN_BOUND_REFUSAL = `You have ${MAX_OPEN_TRANSFERS_PER_OWNER} handovers waiting for an answer. Cancel one, or wait for an answer, before you ask for another.`;
-
-/** The refusal for more asks in a rolling day than one owner may make (D16). */
-export const OWNER_DAILY_BOUND_REFUSAL = `You have asked for ${MAX_TRANSFER_ASKS_PER_WINDOW} handovers in the last 24 hours. Try again later.`;
-
-/**
- * A count with its thousands separated by commas, `1,000`, without the
- * runtime's locale data, which the Convex runtime need not carry.
- */
-function withThousands(count: number): string {
-  return String(count).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-}
-
-/** The refusal for a handover note past its bound. */
-export const NOTE_TOO_LONG = `The note can be at most ${withThousands(MAX_TRANSFER_NOTE_LENGTH)} characters.`;
-
-/** The refusal for a decline reason past its bound. */
-export const DECLINE_REASON_TOO_LONG = `The reason can be at most ${withThousands(MAX_DECLINE_REASON_LENGTH)} characters.`;
-
-/**
- * The refusal for naming the caller's own address.
- *
- * @param name - The employee's name.
- */
-export function ownAddressRefusal(name: string): string {
-  return `That is your own address. Hand ${name} over to another manager's address.`;
-}
-
-/**
- * The refusal for a second request while one is open (the one-open rule), in the open request's
- * own terms: an asked one can be changed or cancelled, an accepting one can be neither (U2-m1).
- *
- * @param name - The employee's name.
- * @param toAddress - The address the open request names.
- * @param state - The open request's state.
- */
-export function openTransferRefusal(
-  name: string,
-  toAddress: string,
-  state: OpenManagerTransferState,
-): string {
-  return state === 'accepting'
-    ? `${name}'s handover to ${toAddress} was already accepted: ${name} becomes theirs when its runs end.`
-    : `${name} already has a handover open to ${toAddress}. Change the address or cancel it first.`;
-}
-
-/**
- * The refusal for an address that already has the most open requests one
- * address may have (D16). It says nothing about who else asked.
- *
- * @param toAddress - The named address.
- */
-export function addressBoundRefusal(toAddress: string): string {
-  return `${toAddress} has too many handovers waiting. Try again once they have answered some.`;
-}
-
-/**
- * The refusal for changing a request's address to the one it already names.
- *
- * @param toAddress - The address the request names.
- */
-export function sameAddressRefusal(toAddress: string): string {
-  return `The handover is already addressed to ${toAddress}.`;
-}
-
-/**
- * The refusal for a move the request's state no longer allows, in the words
- * of the state it is in: the loser of a race re-runs against the new state and
- * reads why (the transfer plan, section 10.1).
- *
- * @param state - The state the request is in, or `expired` for an asked one past its expiry.
- */
-export function transferStateRefusal(state: ManagerTransferState): string {
-  switch (state) {
-    case 'asked':
-      return 'This handover is still waiting for an answer.';
-    case 'accepting':
-    case 'accepted':
-      return 'This handover was already accepted.';
-    case 'declined':
-      return 'This handover was already declined.';
-    case 'cancelled':
-      return 'This handover was already cancelled.';
-    case 'expired':
-      return 'This handover expired before it was answered.';
-    default: {
-      const unknown: never = state;
-      throw new Error(`unhandled handover state ${String(unknown)}`);
-    }
-  }
-}
-
-/** The Slack methods the notice needs on its card's allowlist: who the bot is, who the address is, the DM and the post. */
-const NOTICE_SLACK_METHODS = [
-  'auth.test',
-  'users.lookupByEmail',
-  'conversations.open',
-  'chat.postMessage',
-] as const;
-
-/** Bound on an employee's surfaces read for the one the notice goes through. */
-const NOTICE_SURFACE_READ_LIMIT = 50;
-
-/** Bound on an employee's grants read for the notice's authority, past any one employee's. */
-const NOTICE_GRANT_READ_LIMIT = 500;
 
 /** Bound on the requests one read of an index range returns, past every count bound it serves. */
 const TRANSFER_READ_LIMIT = 50;
@@ -512,65 +397,6 @@ async function assertWithinBounds(
   if (addressOpen.length >= MAX_OPEN_TRANSFERS_PER_ADDRESS) {
     throw new ConvexError(addressBoundRefusal(toAddress));
   }
-}
-
-/**
- * The surface the D7 notice goes through, if the employee has one: a connected
- * Slack card on the documented API, its credential landed, its access not
- * ended, whose allowlist names every method the notice calls, under the
- * manager's standing authority to read and write on it. Slack is the one
- * provider whose card resolves an address to a person (`users.lookupByEmail`),
- * so another chat surface carries no notice.
- */
-async function noticeSurfaceOf(
-  ctx: QueryCtx,
-  agent: Doc<'agents'>,
-  now: number,
-): Promise<Doc<'surfaces'> | undefined> {
-  const [surfaces, grants] = await Promise.all([
-    ctx.db
-      .query('surfaces')
-      .withIndex('by_agent', (q) => q.eq('agentId', agent._id))
-      .take(NOTICE_SURFACE_READ_LIMIT),
-    ctx.db
-      .query('permissionGrants')
-      .withIndex('by_agent_scope', (q) => q.eq('agentId', agent._id))
-      .take(NOTICE_GRANT_READ_LIMIT),
-  ]);
-  const active = new Set(grants.filter((grant) => !grant.revokedAt).map((grant) => grant.scope));
-  const revoked = new Set(
-    grants.filter((grant) => grant.revokedAt !== undefined).map((grant) => grant.scope),
-  );
-  return surfaces.find(
-    (surface) =>
-      noticeAuthorised(surface.slug, active, revoked, autonomousActionsOn(agent)) &&
-      surface.class === 'chat' &&
-      surface.credentialLanded &&
-      surface.credentialId !== undefined &&
-      surface.path === 'documented-api' &&
-      isSlackApiEndpoint(surface.endpoint) &&
-      NOTICE_SLACK_METHODS.every((method) => surface.toolAllowlist?.includes(method)) &&
-      !accessEnded(surface, now) &&
-      surfaceRefusal(toSurfaceRecord(surface), now) === undefined,
-  );
-}
-
-/**
- * Whether the manager's standing authority covers the notice on a card, by
- * the gate's own rule for each call (`grantRefusal`, `src/surfaces/policy.ts`):
- * the address lookup is a read, which needs its read scope whatever else is
- * true; the DM to a person who is not the manager is a write, which needs the
- * write scope, or autonomous actions with that scope never revoked since.
- */
-function noticeAuthorised(
-  slug: string,
-  active: ReadonlySet<string>,
-  revoked: ReadonlySet<string>,
-  autonomous: boolean,
-): boolean {
-  const write = `${slug}:write`;
-  if (!active.has(`${slug}:read`)) return false;
-  return active.has(write) || (autonomous && !revoked.has(write));
 }
 
 /** What an ask writes from: who asks, for which employee, to whom, with what note, when. */
@@ -1090,104 +916,6 @@ export const scrubNote = internalAction({
         scrubbedFrom: stored.note,
       });
     }
-    return null;
-  },
-});
-
-/** The three characters Slack reads as markup in a message's text, escaped as Slack asks. */
-function slackEscaped(text: string): string {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
-/**
- * The D7 notice, in the named person's words (the transfer plan, section
- * 5.2): who asks, for whom, where to answer, and that nothing changes until
- * they do. It links to the request on the home, where the inbox entry opens
- * the same dialog, and carries no decision code, so no reply to it is read as
- * one. What a manager typed is escaped, so a name cannot become a mention.
- *
- * @param input - The request, the employee's name, who asks, and the app's public origin when the deployment has one.
- */
-export function transferNoticeText(input: {
-  readonly transferId: string;
-  readonly employeeName: string;
-  readonly fromAddress: string;
-  readonly publicUrl?: string;
-}): string {
-  const name = slackEscaped(input.employeeName);
-  const origin = input.publicUrl?.trim().replace(/\/+$/, '');
-  const where = origin
-    ? `Day0: ${origin}/?transfer=${encodeURIComponent(input.transferId)}`
-    : 'Day0';
-  return `${name}'s manager, ${slackEscaped(input.fromAddress)}, has asked you to take ${name} on. Accept or decline in ${where}. Nothing changes until you do.`;
-}
-
-/** What the notice action sends through, once claimed. */
-const claimedNoticeValidator = v.union(
-  v.object({ claimed: v.literal(false), reason: v.string() }),
-  v.object({
-    claimed: v.literal(true),
-    credentialId: v.string(),
-    toAddress: v.string(),
-    text: v.string(),
-  }),
-);
-
-/**
- * Internal, for `managerChannelActions.sendTransferNotice`: claim the one D7
- * notice of an asked request, once. Refused when the request is no longer
- * asked, its employee is gone or no longer the asker's, the notice was already
- * claimed, the deployment is in mock mode, or the employee has no Slack card
- * that can carry it under the manager's authority. Writes
- * `noticeSentAt` at the claim, so a failed send is never tried again (D7: once,
- * never re-sent).
- */
-export const claimTransferNotice = internalMutation({
-  args: { transferId: v.id('managerTransfers') },
-  returns: claimedNoticeValidator,
-  handler: async (ctx, args): Promise<Infer<typeof claimedNoticeValidator>> => {
-    if (SURFACE_MODE !== 'real') {
-      return { claimed: false, reason: 'the notice is sent in real mode only' };
-    }
-    const transfer = await ctx.db.get(args.transferId);
-    if (!transfer) return { claimed: false, reason: 'the handover no longer exists' };
-    const now = Date.now();
-    if (transfer.state !== 'asked' || isTransferDue(transfer, now)) {
-      return { claimed: false, reason: 'the handover is no longer waiting for an answer' };
-    }
-    if (transfer.noticeSentAt !== undefined) {
-      return { claimed: false, reason: 'the notice was already sent' };
-    }
-    const agent = await ctx.db.get(transfer.agentId);
-    if (!agent || agent.userId !== transfer.fromOwnerKey) {
-      return { claimed: false, reason: "the employee is no longer the asking manager's" };
-    }
-    const surface = await noticeSurfaceOf(ctx, agent, now);
-    if (surface?.credentialId === undefined) {
-      return { claimed: false, reason: 'the employee has no chat connection that can carry it' };
-    }
-    await ctx.db.patch(transfer._id, { noticeSentAt: now });
-    return {
-      claimed: true,
-      credentialId: surface.credentialId,
-      toAddress: transfer.toAddress,
-      text: transferNoticeText({
-        transferId: transfer._id,
-        employeeName: agent.name,
-        fromAddress: transfer.fromAddress,
-        publicUrl: process.env.DAY0_PUBLIC_URL,
-      }),
-    };
-  },
-});
-
-/** Internal, for `managerChannelActions.sendTransferNotice`: the provider's timestamp of the delivered notice. */
-export const recordTransferNotice = internalMutation({
-  args: { transferId: v.id('managerTransfers'), providerTs: v.string() },
-  returns: v.null(),
-  handler: async (ctx, args): Promise<null> => {
-    if (!(await ctx.db.get(args.transferId))) return null;
-    await ctx.db.patch(args.transferId, { noticeProviderTs: args.providerTs });
     return null;
   },
 });

@@ -57,6 +57,7 @@ import type * as surfaceReopen from '../surfaceReopen.js';
 import type * as surfaces from '../surfaces.js';
 import type * as transferAcceptance from '../transferAcceptance.js';
 import type * as transferInFlight from '../transferInFlight.js';
+import type * as transferNotice from '../transferNotice.js';
 import type * as transferPreview from '../transferPreview.js';
 import type * as voice from '../voice.js';
 import type * as work from '../work.js';
@@ -116,6 +117,7 @@ declare const fullApi: ApiFromModules<{
   surfaces: typeof surfaces;
   transferAcceptance: typeof transferAcceptance;
   transferInFlight: typeof transferInFlight;
+  transferNotice: typeof transferNotice;
   transferPreview: typeof transferPreview;
   voice: typeof voice;
   work: typeof work;

@@ -5,7 +5,6 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import type schema from '../../convex/schema';
 import { SOURCE_NOT_YOURS } from '../../convex/transferAcceptance';
 import { EMPLOYEE_LEFT_ASKER } from '../../convex/transferPreview';
-import { transferStateRefusal } from '../../convex/managerTransfers';
 import { HANDOVER_CUT_REASON } from '../../convex/surfaces';
 import { OUTCOME_UNKNOWN_REASON } from '../../src/work/reconciliation';
 import { EMPLOYEE_NOT_YOURS } from '../../src/agent/employee-access';
@@ -13,6 +12,7 @@ import {
   TRANSFER_NOT_FOUND,
   OWN_TRANSFER,
   transferExpiresAt,
+  transferStateRefusal,
 } from '../../src/agent/manager-transfer';
 import { runThroughBody } from '../fixtures/run-through-charter-2026-09-14';
 import { MANAGER_ADDRESS, fixtureAddressOf, managerIdentity } from './fakes/manager-identity';
