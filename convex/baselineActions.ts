@@ -39,12 +39,19 @@ const STUB_CHARTER = {
   version: 'evaluation-baseline',
 };
 
+/**
+ * Public, signed in with a verified address, on an evaluation bed in mock
+ * mode: deploys the control arm under the harness's reserved
+ * `evaluationAddress` (its evaluation marker, which `agents.deploy` takes only
+ * on a bed), seeds its mock office, commits and approves a stub charter and
+ * grants the evaluation scopes.
+ */
 export const deployBaseline = action({
-  args: { bossEmail: v.string(), name: v.optional(v.string()) },
+  args: { evaluationAddress: v.string(), name: v.optional(v.string()) },
   handler: async (ctx, args): Promise<{ agentId: Id<'agents'>; charterId: Id<'charters'> }> => {
     requireBaselineBed('baselineActions.deployBaseline');
     const agentId: Id<'agents'> = await ctx.runMutation(api.agents.deploy, {
-      bossEmail: args.bossEmail,
+      evaluationAddress: args.evaluationAddress,
       name: args.name ?? 'ordinary agent',
       arm: 'baseline',
     });

@@ -1,4 +1,5 @@
 import { convexTest, type TestConvex } from 'convex-test';
+import { ConvexError } from 'convex/values';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
@@ -15,6 +16,8 @@ import { asAgentId } from '../../src/lib/ids';
 import { runThroughBody } from '../fixtures/run-through-charter-2026-09-14';
 import { runtimeCycleThrough } from '../fixtures/import-graph';
 import { MAX_FINALISATION_RECOVERIES } from '../../src/agent/one-to-one-phase';
+import { UNVERIFIED_FOR_DEPLOY } from '../../src/agent/manager-address';
+import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
 afterEach((): void => {
   vi.useRealTimers();
@@ -56,10 +59,9 @@ describe('agent documentation selection', (): void => {
     vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
     const sourceId = await seedSource(harness, 'other-owner', 'Private docs');
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     await expect(
       owner.mutation(api.agents.deploy, {
-        bossEmail: 'boss@day0.local',
         name: 'foreign source test',
         excludedDocSourceIds: [sourceId],
       }),
@@ -70,9 +72,8 @@ describe('agent documentation selection', (): void => {
     vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
     const sourceId = await seedSource(harness, 'owner', 'Team docs');
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     const excluding = await owner.mutation(api.agents.deploy, {
-      bossEmail: 'boss@day0.local',
       name: 'excluding',
       excludedDocSourceIds: [sourceId],
     });
@@ -80,7 +81,6 @@ describe('agent documentation selection', (): void => {
       excludedDocSourceIds: [sourceId],
     });
     const inheriting = await owner.mutation(api.agents.deploy, {
-      bossEmail: 'boss@day0.local',
       name: 'inheriting',
       excludedDocSourceIds: [],
     });
@@ -93,9 +93,8 @@ describe('agent documentation selection', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const existing = await seedSource(harness, 'owner', 'Existing');
     const excluded = await seedSource(harness, 'owner', 'Excluded');
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     const agentId = await owner.mutation(api.agents.deploy, {
-      bossEmail: 'boss@day0.local',
       name: 'inheritance test',
       excludedDocSourceIds: [excluded],
     });
@@ -114,13 +113,10 @@ describe('evaluation arm', (): void => {
   it('deploys product agents as day0 and persists an explicit baseline arm', async (): Promise<void> => {
     vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
 
-    const day0Id = await owner.mutation(api.agents.deploy, {
-      bossEmail: 'boss@day0.local',
-    });
+    const day0Id = await owner.mutation(api.agents.deploy, {});
     const baselineId = await owner.mutation(api.agents.deploy, {
-      bossEmail: 'boss@day0.local',
       arm: 'baseline',
     });
 
@@ -133,13 +129,162 @@ describe('evaluation arm', (): void => {
   });
 });
 
+describe("agents.deploy and the manager's verified address", (): void => {
+  /** The refusal a deploy met, as the client reads it, or the stored row's address and event. */
+  async function deployAs(
+    harness: TestConvex<typeof schema>,
+    who: ReturnType<typeof managerIdentity>,
+  ): Promise<string | { bossEmail: string | undefined; event: unknown }> {
+    const outcome = await harness
+      .withIdentity(who)
+      .mutation(api.agents.deploy, { name: 'Maya' })
+      .then(
+        (agentId): { agentId: Id<'agents'> } => ({ agentId }),
+        (error: unknown): { error: unknown } => ({ error }),
+      );
+    if ('error' in outcome) {
+      const { error } = outcome;
+      if (error instanceof ConvexError) return `refused: ${String(error.data)}`;
+      return `crashed: ${error instanceof Error ? error.message : String(error)}`;
+    }
+    const { agentId } = outcome;
+    return await harness.run(async (ctx) => ({
+      bossEmail: (await ctx.db.get(agentId))?.bossEmail,
+      event: (
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent_type', (q) => q.eq('agentId', agentId).eq('type', 'agent.deployed'))
+          .first()
+      )?.payload,
+    }));
+  }
+
+  it('deploy refuses a caller without a verified address and stores the verified one', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    await expect(
+      deployAs(harness, managerIdentity('owner', { emailVerified: false })),
+    ).resolves.toBe(`refused: ${UNVERIFIED_FOR_DEPLOY}`);
+    await expect(deployAs(harness, managerIdentity('owner', { email: undefined }))).resolves.toBe(
+      `refused: ${UNVERIFIED_FOR_DEPLOY}`,
+    );
+    await expect(
+      harness.run(async (ctx) => await ctx.db.query('agents').collect()),
+    ).resolves.toEqual([]);
+
+    const stored = await deployAs(
+      harness,
+      managerIdentity('owner', { email: ' Lead@Day0.local ' }),
+    );
+    expect(stored).toMatchObject({
+      bossEmail: 'lead@day0.local',
+      event: { bossEmail: 'lead@day0.local' },
+    });
+  });
+
+  it("no longer takes the browser's word for the address", async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    await expect(
+      harness.withIdentity(managerIdentity()).mutation(api.agents.deploy, {
+        bossEmail: 'someone-else@day0.local',
+      } as never),
+    ).rejects.toThrow(/bossEmail/);
+  });
+
+  it('evaluationAddress is refused off a bed and for a non-evaluation shape', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity(managerIdentity());
+    const trial = {
+      evaluationAddress: 'eval-day0-r1-1758150000000@day0.local',
+      name: 'Day0 evaluation 1',
+    };
+    vi.stubEnv('DAY0_EVALUATION_BED', '');
+    await expect(owner.mutation(api.agents.deploy, trial)).rejects.toThrow('DAY0_EVALUATION_BED');
+
+    vi.stubEnv('DAY0_EVALUATION_BED', 'w9u1');
+    for (const refused of [
+      { ...trial, evaluationAddress: 'lead@day0.local' },
+      { ...trial, evaluationAddress: 'eval-team@company.com' },
+      // Shaped like an evaluation address, but the row would not read as an evaluation employee.
+      { ...trial, name: 'worker 1' },
+    ]) {
+      await expect(owner.mutation(api.agents.deploy, refused), refused.name).rejects.toThrow(
+        'evaluation address',
+      );
+    }
+    await expect(
+      harness.run(async (ctx) => await ctx.db.query('agents').collect()),
+    ).resolves.toEqual([]);
+    vi.unstubAllEnvs();
+  });
+
+  it("stores an evaluation address on a bed as the employee's evaluation marker, still from a verified caller", async (): Promise<void> => {
+    vi.useFakeTimers();
+    vi.stubEnv('DAY0_EVALUATION_BED', 'w9u1');
+    const harness = convexTest(schema, allConvexModules());
+    const trial = {
+      evaluationAddress: 'EVAL-revocation-20260918t090000@day0.local',
+      name: 'Day0 revocation evaluation',
+    };
+    await expect(
+      harness
+        .withIdentity(managerIdentity('owner', { emailVerified: false }))
+        .mutation(api.agents.deploy, trial),
+    ).rejects.toThrow(UNVERIFIED_FOR_DEPLOY);
+    const owner = harness.withIdentity(managerIdentity());
+    const agentId = await owner.mutation(api.agents.deploy, trial);
+    const baselineId = await owner.mutation(api.agents.deploy, {
+      evaluationAddress: 'eval-baseline-r1-1758150000000@day0.local',
+      name: 'Ordinary agent evaluation 1',
+      arm: 'baseline',
+    });
+    const rows = await harness.run(async (ctx) => await ctx.db.query('agents').collect());
+    expect(rows.map((row) => [row._id, row.bossEmail])).toEqual([
+      [agentId, 'eval-revocation-20260918t090000@day0.local'],
+      [baselineId, 'eval-baseline-r1-1758150000000@day0.local'],
+    ]);
+    await expect(owner.query(api.agents.rosterForUser, {})).resolves.toEqual([]);
+    vi.unstubAllEnvs();
+  });
+});
+
+describe('agents.myManagerAddress', (): void => {
+  it("answers the caller's verified address, the one a deploy would store", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await expect(
+      harness
+        .withIdentity(managerIdentity('owner', { email: 'Lead@Day0.local' }))
+        .query(api.agents.myManagerAddress, {}),
+    ).resolves.toBe('lead@day0.local');
+  });
+
+  it('answers null for a caller with no verified address and for an anonymous one', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await expect(
+      harness
+        .withIdentity(managerIdentity('owner', { emailVerified: false }))
+        .query(api.agents.myManagerAddress, {}),
+    ).resolves.toBeNull();
+    await expect(harness.query(api.agents.myManagerAddress, {})).resolves.toBeNull();
+  });
+
+  it('is the address the shared fixture identity carries', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await expect(
+      harness.withIdentity(managerIdentity()).query(api.agents.myManagerAddress, {}),
+    ).resolves.toBe(MANAGER_ADDRESS);
+  });
+});
+
 describe('agent surface grants', (): void => {
   it('lets a slot-2 Slack action candidate reach needs-skill under deployed mock grants', async (): Promise<void> => {
     vi.useFakeTimers();
     useSurfaceMode('mock');
     const harness = convexTest(schema, allConvexModules());
-    const owner = harness.withIdentity({ subject: 'mock-owner' });
-    const agentId = await owner.mutation(api.agents.deploy, { bossEmail: 'mock@day0.local' });
+    const owner = harness.withIdentity(managerIdentity('mock-owner'));
+    const agentId = await owner.mutation(api.agents.deploy, {});
     const grants = await owner.query(api.agents.permissionScopes, { agentId });
     const candidate: WorkCandidate = {
       sourceCategory: 'inbox',
@@ -196,13 +341,11 @@ describe('agent surface grants', (): void => {
     useSurfaceMode('real');
     const { api: realApi } = await import('../../convex/_generated/api');
     const harness = convexTest(schema, allConvexModules());
-    const owner = harness.withIdentity({ subject: 'owner' });
-    await expect(
-      owner.mutation(realApi.agents.deploy, { bossEmail: 'boss@day0.local', arm: 'baseline' }),
-    ).rejects.toThrow('mock mode');
-    await expect(
-      owner.mutation(realApi.agents.deploy, { bossEmail: 'boss@day0.local', arm: 'day0' }),
-    ).resolves.toBeTruthy();
+    const owner = harness.withIdentity(managerIdentity());
+    await expect(owner.mutation(realApi.agents.deploy, { arm: 'baseline' })).rejects.toThrow(
+      'mock mode',
+    );
+    await expect(owner.mutation(realApi.agents.deploy, { arm: 'day0' })).resolves.toBeTruthy();
     const agents = await harness.run(async (ctx) => await ctx.db.query('agents').collect());
     expect(agents.map((agent) => agent.arm)).toEqual(['day0']);
   });
@@ -212,8 +355,8 @@ describe('agent surface grants', (): void => {
     useSurfaceMode('mock');
     const mockHarness = convexTest(schema, allConvexModules());
     const mockAgent = await mockHarness
-      .withIdentity({ subject: 'mock-owner' })
-      .mutation(api.agents.deploy, { bossEmail: 'mock@day0.local' });
+      .withIdentity(managerIdentity('mock-owner'))
+      .mutation(api.agents.deploy, {});
     const mockScopes = await mockHarness.run(
       async (ctx): Promise<string[]> =>
         (
@@ -245,8 +388,8 @@ describe('agent surface grants', (): void => {
     useSurfaceMode('real');
     const realHarness = convexTest(schema, allConvexModules());
     const realAgent = await realHarness
-      .withIdentity({ subject: 'real-owner' })
-      .mutation(api.agents.deploy, { bossEmail: 'real@day0.local' });
+      .withIdentity(managerIdentity('real-owner'))
+      .mutation(api.agents.deploy, {});
     const realScopes = await realHarness.run(
       async (ctx): Promise<string[]> =>
         (
@@ -270,7 +413,7 @@ describe('agent surface grants', (): void => {
     const agentId = await harness.run(
       async (ctx): Promise<Id<'agents'>> =>
         await ctx.db.insert('agents', {
-          bossEmail: 'boss@day0.local',
+          bossEmail: MANAGER_ADDRESS,
           name: 'grant test',
           userId: 'owner',
           state: 'active',
@@ -324,7 +467,7 @@ describe('agent surface grants', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await harness.run(async (ctx): Promise<Id<'agents'>> => {
       const id = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'grant test',
         userId: 'owner',
         state: 'active',
@@ -345,12 +488,12 @@ describe('agent surface grants', (): void => {
       return id;
     });
     await expect(
-      harness.withIdentity({ subject: 'intruder' }).mutation(api.agents.revokeScope, {
+      harness.withIdentity(managerIdentity('intruder')).mutation(api.agents.revokeScope, {
         agentId,
         scope: 'linear:read',
       }),
     ).rejects.toThrow('forbidden');
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     await expect(
       owner.mutation(api.agents.revokeScope, {
         agentId,
@@ -407,14 +550,14 @@ describe('revocation under adversarial use', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const [mine, other] = await harness.run(async (ctx): Promise<[Id<'agents'>, Id<'agents'>]> => {
       const a = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'mine',
         userId: 'owner',
         state: 'active',
         createdAt: 1,
       });
       const b = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'other',
         userId: 'owner',
         state: 'active',
@@ -428,7 +571,7 @@ describe('revocation under adversarial use', (): void => {
       });
       return [a, b];
     });
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     await expect(
       owner.mutation(api.agents.revokeScope, { agentId: mine, scope: 'linear:read' }),
     ).resolves.toEqual({ revoked: 0 });
@@ -447,7 +590,7 @@ describe('revocation under adversarial use', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await harness.run(async (ctx): Promise<Id<'agents'>> => {
       const id = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'same tick',
         userId: 'owner',
         state: 'active',
@@ -462,7 +605,7 @@ describe('revocation under adversarial use', (): void => {
       });
       return id;
     });
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     await expect(
       owner.mutation(api.agents.grantScopes, { agentId, scopes: ['slack:read'] }),
     ).resolves.toEqual({ added: 1 });
@@ -494,7 +637,7 @@ describe('the autonomous-actions switch', (): void => {
     const agentId = await harness.run(
       async (ctx): Promise<Id<'agents'>> =>
         await ctx.db.insert('agents', {
-          bossEmail: 'boss@day0.local',
+          bossEmail: MANAGER_ADDRESS,
           name: 'Priya',
           userId: 'owner',
           state: 'active',
@@ -503,13 +646,13 @@ describe('the autonomous-actions switch', (): void => {
     );
     await expect(
       harness
-        .withIdentity({ subject: 'intruder' })
+        .withIdentity(managerIdentity('intruder'))
         .mutation(api.agents.setAutonomousActions, { agentId, on: true }),
     ).rejects.toThrow('forbidden');
     await expect(
       harness.mutation(api.agents.setAutonomousActions, { agentId, on: true }),
     ).rejects.toThrow('not authenticated');
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     // Off is what an absent field already is, so setting it records nothing.
     await expect(
       owner.mutation(api.agents.setAutonomousActions, { agentId, on: false }),
@@ -564,7 +707,7 @@ describe('the autonomous-actions switch', (): void => {
     const agentId = await harness.run(
       async (ctx): Promise<Id<'agents'>> =>
         await ctx.db.insert('agents', {
-          bossEmail: 'boss@day0.local',
+          bossEmail: MANAGER_ADDRESS,
           name: 'Priya',
           userId: 'owner',
           state: 'active',
@@ -573,7 +716,7 @@ describe('the autonomous-actions switch', (): void => {
     );
     await expect(
       harness
-        .withIdentity({ subject: 'owner' })
+        .withIdentity(managerIdentity())
         .mutation(api.agents.setAutonomousActions, { agentId, on: true }),
     ).rejects.toThrow(
       'Autonomous actions is a local real-mode feature; this deployment runs in mock mode.',
@@ -593,7 +736,7 @@ describe('the autonomous-actions switch', (): void => {
     const agentId = await harness.run(
       async (ctx): Promise<Id<'agents'>> =>
         await ctx.db.insert('agents', {
-          bossEmail: 'boss@day0.local',
+          bossEmail: MANAGER_ADDRESS,
           name: 'Priya',
           userId: 'owner',
           state: 'active',
@@ -602,10 +745,10 @@ describe('the autonomous-actions switch', (): void => {
     );
     await expect(
       harness
-        .withIdentity({ subject: 'intruder' })
+        .withIdentity(managerIdentity('intruder'))
         .mutation(api.agents.setManagerNotifications, { agentId, mode: 'digest' }),
     ).rejects.toThrow('forbidden');
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     await expect(
       owner.mutation(api.agents.setManagerNotifications, { agentId, mode: 'per-run' }),
     ).resolves.toEqual({
@@ -637,7 +780,7 @@ describe('the autonomous-actions switch', (): void => {
     const agentId = await harness.run(
       async (ctx): Promise<Id<'agents'>> =>
         await ctx.db.insert('agents', {
-          bossEmail: 'boss@day0.local',
+          bossEmail: MANAGER_ADDRESS,
           name: 'Priya',
           userId: 'owner',
           state: 'active',
@@ -649,7 +792,7 @@ describe('the autonomous-actions switch', (): void => {
       await harness.run(async (ctx) =>
         (await ctx.db.system.query('_scheduled_functions').collect()).map((job) => job.name),
       );
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     await owner.mutation(api.agents.setManagerNotifications, { agentId, mode: 'digest' });
     expect(await scheduled()).toEqual([]);
     await owner.mutation(api.agents.setManagerNotifications, { agentId, mode: 'per-run' });
@@ -662,9 +805,8 @@ describe('the agent’s zone and mode (N12)', (): void => {
     vi.useFakeTimers();
     useSurfaceMode('mock');
     const harness = convexTest(schema, allConvexModules());
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     const agentId = await owner.mutation(api.agents.deploy, {
-      bossEmail: 'boss@day0.local',
       zone: 'Asia/Singapore',
     });
     expect(await harness.run(async (ctx) => await ctx.db.get(agentId))).toMatchObject({
@@ -680,10 +822,9 @@ describe('the agent’s zone and mode (N12)', (): void => {
   it('falls back to the deployment’s zone when the browser sends none or one the backend does not know', async (): Promise<void> => {
     vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
-    const owner = harness.withIdentity({ subject: 'owner' });
-    const none = await owner.mutation(api.agents.deploy, { bossEmail: 'boss@day0.local' });
+    const owner = harness.withIdentity(managerIdentity());
+    const none = await owner.mutation(api.agents.deploy, {});
     const unknown = await owner.mutation(api.agents.deploy, {
-      bossEmail: 'boss@day0.local',
       zone: 'Mars/Olympus',
     });
     const rows = await harness.run(
@@ -697,7 +838,7 @@ describe('the agent’s zone and mode (N12)', (): void => {
     const agentId = await harness.run(
       async (ctx): Promise<Id<'agents'>> =>
         await ctx.db.insert('agents', {
-          bossEmail: 'boss@day0.local',
+          bossEmail: MANAGER_ADDRESS,
           name: 'Priya',
           userId: 'owner',
           state: 'active',
@@ -707,10 +848,10 @@ describe('the agent’s zone and mode (N12)', (): void => {
     );
     await expect(
       harness
-        .withIdentity({ subject: 'intruder' })
+        .withIdentity(managerIdentity('intruder'))
         .mutation(api.agents.setZone, { agentId, zone: 'Asia/Singapore' }),
     ).rejects.toThrow('forbidden');
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     await expect(
       owner.mutation(api.agents.setZone, { agentId, zone: 'Nowhere/Else' }),
     ).rejects.toThrow('not a time zone');
@@ -739,7 +880,8 @@ const NOTHING_LANDED = { month: expect.stringMatching(/^\d{4}-\d{2}$/), days: []
  *   harness: Convex test harness.
  *   subject: Owner subject the deploy runs as.
  *   name: Display name, also the avatar id's suffix.
- *   options: Boss address and documentation exclusions, when not the default.
+ *   options: The deploying manager's verified address, an evaluation address (on a bed), and
+ *     documentation exclusions, when not the default.
  *
  * Returns:
  *   The new agent id.
@@ -748,10 +890,18 @@ async function deployEmployee(
   harness: Harness,
   subject: string,
   name: string,
-  options: { bossEmail?: string; excludedDocSourceIds?: Id<'docSources'>[] } = {},
+  options: {
+    managerAddress?: string;
+    evaluationAddress?: string;
+    excludedDocSourceIds?: Id<'docSources'>[];
+  } = {},
 ): Promise<Id<'agents'>> {
-  return await harness.withIdentity({ subject }).mutation(api.agents.deploy, {
-    bossEmail: options.bossEmail ?? 'boss@day0.local',
+  const identity = managerIdentity(
+    subject,
+    options.managerAddress === undefined ? {} : { email: options.managerAddress },
+  );
+  return await harness.withIdentity(identity).mutation(api.agents.deploy, {
+    evaluationAddress: options.evaluationAddress,
     name,
     avatarId: `avatar-${name.toLowerCase()}`,
     excludedDocSourceIds: options.excludedDocSourceIds,
@@ -921,19 +1071,20 @@ async function seedSkill(
 describe('the employee roster', (): void => {
   it('does not mistake an ordinary employee for a trial because of the manager address', async (): Promise<void> => {
     vi.useFakeTimers();
+    vi.stubEnv('DAY0_EVALUATION_BED', 'roster');
     const harness = convexTest(schema, allConvexModules());
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     const ordinary = await deployEmployee(harness, 'owner', 'Evaluation coordinator', {
-      bossEmail: 'eval-payroll@day0.local',
+      managerAddress: 'eval-payroll@day0.local',
     });
     await deployEmployee(harness, 'owner', 'Day0 revocation evaluation', {
-      bossEmail: 'eval-revocation-2026-09-18t07-00-00z@day0.local',
+      evaluationAddress: 'eval-revocation-2026-09-18t07-00-00z@day0.local',
     });
     await deployEmployee(harness, 'owner', 'Day0 revocation evaluation', {
-      bossEmail: 'eval-revocation-20260918t090000@day0.local',
+      evaluationAddress: 'eval-revocation-20260918t090000@day0.local',
     });
     await deployEmployee(harness, 'owner', 'Day0 evaluation 1', {
-      bossEmail: 'eval-day0-r1-1758150000000@day0.local',
+      evaluationAddress: 'eval-day0-r1-1758150000000@day0.local',
     });
 
     expect((await owner.query(api.agents.rosterForUser, {})).map((row) => row.agentId)).toEqual([
@@ -948,7 +1099,7 @@ describe('the employee roster', (): void => {
     const harness = convexTest(schema, allConvexModules());
     await harness.run(async (ctx): Promise<void> => {
       await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'Malformed owner',
         userId: '',
         state: 'deployed',
@@ -956,12 +1107,13 @@ describe('the employee roster', (): void => {
       });
     });
     await expect(
-      harness.withIdentity({ subject: '' }).query(api.agents.rosterForUser, {}),
+      harness.withIdentity(managerIdentity('')).query(api.agents.rosterForUser, {}),
     ).resolves.toEqual([]);
   });
 
   it("shows each of the owner's employees with its role, open work, what needs the manager and its autonomy, and nobody else", async (): Promise<void> => {
     useSurfaceMode('real');
+    vi.stubEnv('DAY0_EVALUATION_BED', 'roster');
     vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
     await seedSource(harness, 'owner', 'Company handbook');
@@ -974,14 +1126,14 @@ describe('the employee roster', (): void => {
       excludedDocSourceIds: [financeNotes],
     });
     const trial = await deployEmployee(harness, 'owner', 'Day0 revocation evaluation', {
-      bossEmail: 'eval-revocation-2026-09-18t07-00-00z@day0.local',
+      evaluationAddress: 'eval-revocation-2026-09-18t07-00-00z@day0.local',
     });
     await deployEmployee(harness, 'owner', 'Day0 evaluation 1', {
-      bossEmail: 'eval-day0-r1-1758150000000@day0.local',
+      evaluationAddress: 'eval-day0-r1-1758150000000@day0.local',
     });
     await harness.run(async (ctx): Promise<void> => {
       await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'Ordinary agent evaluation 1',
         userId: 'owner',
         state: 'active',
@@ -1015,7 +1167,7 @@ describe('the employee roster', (): void => {
     await seedWork(harness, mateo, ['executing', 'plan-approved', 'plan-pending', 'skipped']);
     await seedWork(harness, trial, ['actions-pending']);
     await seedWork(harness, stranger, ['plan-pending']);
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     await owner.mutation(api.agents.setAutonomousActions, { agentId: mateo, on: true });
 
     await expect(owner.query(api.agents.rosterForUser, {})).resolves.toEqual([
@@ -1074,7 +1226,7 @@ describe('the employee roster', (): void => {
       },
     ]);
     await expect(
-      harness.withIdentity({ subject: 'stranger' }).query(api.agents.rosterForUser, {}),
+      harness.withIdentity(managerIdentity('stranger')).query(api.agents.rosterForUser, {}),
     ).resolves.toEqual([
       {
         agentId: stranger,
@@ -1110,7 +1262,7 @@ describe('the employee roster', (): void => {
       }
     });
     const states = Object.fromEntries(
-      (await harness.withIdentity({ subject: 'owner' }).query(api.agents.rosterForUser, {})).map(
+      (await harness.withIdentity(managerIdentity()).query(api.agents.rosterForUser, {})).map(
         (row): [string, string] => [row.name, row.state],
       ),
     );
@@ -1167,7 +1319,7 @@ describe('the employee roster', (): void => {
       });
     }
     const roster = await harness
-      .withIdentity({ subject: 'owner' })
+      .withIdentity(managerIdentity())
       .query(api.agents.rosterForUser, {});
     const phases = Object.fromEntries(roster.map((row): [string, string] => [row.name, row.phase]));
     expect(phases).toEqual({
@@ -1191,7 +1343,7 @@ describe('the employee roster', (): void => {
     const aiko = await deployEmployee(harness, 'owner', 'Aiko');
     const counts = async (): Promise<Record<string, [number, number, number]>> =>
       Object.fromEntries(
-        (await harness.withIdentity({ subject: 'owner' }).query(api.agents.rosterForUser, {})).map(
+        (await harness.withIdentity(managerIdentity()).query(api.agents.rosterForUser, {})).map(
           (row): [string, [number, number, number]] => [
             row.name,
             [row.openCount, row.parkedCount, row.needsYou],
@@ -1234,7 +1386,7 @@ describe('the employee roster', (): void => {
     expect(await counts()).toEqual({ Priya: [0, 3, 2], Mateo: [1, 2, 1], Aiko: [0, 1, 0] });
     // The same parked rows by the state each is in, the words the roster says them in (walk m10).
     const states = Object.fromEntries(
-      (await harness.withIdentity({ subject: 'owner' }).query(api.agents.rosterForUser, {})).map(
+      (await harness.withIdentity(managerIdentity()).query(api.agents.rosterForUser, {})).map(
         (row) => [row.name, row.parkedStates],
       ),
     );
@@ -1301,7 +1453,7 @@ describe('the employee roster', (): void => {
     const aiko = await deployEmployee(harness, 'owner', 'Aiko');
     const counts = async (): Promise<Record<string, [number, number, number, number]>> =>
       Object.fromEntries(
-        (await harness.withIdentity({ subject: 'owner' }).query(api.agents.rosterForUser, {})).map(
+        (await harness.withIdentity(managerIdentity()).query(api.agents.rosterForUser, {})).map(
           (row): [string, [number, number, number, number]] => [
             row.name,
             [row.openCount, row.parkedCount, row.stoppedCount, row.needsYou],
@@ -1380,7 +1532,7 @@ describe('the employee roster', (): void => {
 
     // Rejected by the manager, through the mutation the dashboard calls: the held set waited on
     // them, the rejected row keeps its Retry but waits on nobody, since the last decision was theirs.
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     for (const [index, [externalId, reason]] of [
       ['LOG-rejected', 'not this quarter'],
       ['LOG-rejected-bare', ''],
@@ -1416,7 +1568,7 @@ describe('the employee roster', (): void => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     const roleLines = async (): Promise<Record<string, string>> =>
       Object.fromEntries(
         (await owner.query(api.agents.rosterForUser, {})).map((row): [string, string] => [
@@ -1466,7 +1618,7 @@ describe('the employee roster', (): void => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     const needsYou = async (): Promise<Record<string, number>> =>
       Object.fromEntries(
         (await owner.query(api.agents.rosterForUser, {})).map((row): [string, number] => [
@@ -1499,6 +1651,7 @@ describe('the employee roster', (): void => {
 
   it('lists at most 20 employees, newest first, and an evaluation agent never takes a place', async (): Promise<void> => {
     vi.useFakeTimers();
+    vi.stubEnv('DAY0_EVALUATION_BED', 'roster');
     const harness = convexTest(schema, allConvexModules());
     const employees: Id<'agents'>[] = [];
     for (let index = 1; index <= 21; index += 1) {
@@ -1506,12 +1659,12 @@ describe('the employee roster', (): void => {
     }
     for (let index = 1; index <= 3; index += 1) {
       await deployEmployee(harness, 'owner', 'Day0 revocation evaluation', {
-        bossEmail: `eval-revocation-2026-09-18t07-00-0${index}z@day0.local`,
+        evaluationAddress: `eval-revocation-2026-09-18t07-00-0${index}z@day0.local`,
       });
     }
 
     const roster = await harness
-      .withIdentity({ subject: 'owner' })
+      .withIdentity(managerIdentity())
       .query(api.agents.rosterForUser, {});
     expect(roster.map((row) => row.agentId)).toEqual(employees.slice(1).reverse());
   });
@@ -1540,7 +1693,7 @@ describe('the employee roster', (): void => {
       for (let index = 0; index < 20; index += 1) {
         ids.push(
           await ctx.db.insert('agents', {
-            bossEmail: 'boss@day0.local',
+            bossEmail: MANAGER_ADDRESS,
             name: `Employee ${index}`,
             userId: 'owner',
             state: 'active',
@@ -1561,7 +1714,7 @@ describe('the employee roster', (): void => {
     ];
     for (const agentId of employees) await seedWork(harness, agentId, states);
 
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     const roster = await owner.query(api.agents.rosterForUser, {});
     expect(roster).toHaveLength(20);
     expect(roster.map((row) => [row.openCount, row.needsYou])).toEqual(
@@ -1629,9 +1782,7 @@ describe('the employee roster', (): void => {
       }
     });
 
-    const [row] = await harness
-      .withIdentity({ subject: 'owner' })
-      .query(api.agents.rosterForUser, {});
+    const [row] = await harness.withIdentity(managerIdentity()).query(api.agents.rosterForUser, {});
 
     expect(row?.needsYou).toBe(1);
   });
@@ -1656,7 +1807,7 @@ describe('the employee roster', (): void => {
     await landOn('2026-09-02T02:00:00Z', 100, 'early');
     await landOn('2026-09-26T02:00:00Z', 1, 'today');
     vi.setSystemTime(new Date('2026-09-26T06:00:00Z'));
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
 
     const [busy] = await owner.query(api.agents.rosterForUser, {});
 
@@ -1680,9 +1831,7 @@ describe('the employee roster', (): void => {
       }
     });
 
-    const [row] = await harness
-      .withIdentity({ subject: 'owner' })
-      .query(api.agents.rosterForUser, {});
+    const [row] = await harness.withIdentity(managerIdentity()).query(api.agents.rosterForUser, {});
 
     expect(row?.landedThisMonth).toMatchObject({ days: [{ landed: 100 }], atLeast: false });
   });
@@ -1730,9 +1879,7 @@ describe('the employee roster', (): void => {
     await land(second, '2026-09-17T02:00:00Z');
     vi.setSystemTime(new Date('2026-09-26T06:00:00Z'));
 
-    const [row] = await harness
-      .withIdentity({ subject: 'owner' })
-      .query(api.agents.rosterForUser, {});
+    const [row] = await harness.withIdentity(managerIdentity()).query(api.agents.rosterForUser, {});
 
     expect(row.landedThisMonth).toEqual({
       month: '2026-09',
@@ -1805,8 +1952,8 @@ describe('agents.setBossEmail', (): void => {
     useSurfaceMode('real');
     const { api: realApi } = await import('../../convex/_generated/api');
     const harness = convexTest(schema, allConvexModules());
-    const owner = harness.withIdentity({ subject: 'owner' });
-    const agentId = await owner.mutation(realApi.agents.deploy, { bossEmail: 'old@day0.local' });
+    const owner = harness.withIdentity(managerIdentity('owner', { email: 'old@day0.local' }));
+    const agentId = await owner.mutation(realApi.agents.deploy, {});
     const connected = await seedApprovedSurface(harness, agentId, {
       slug: 'slack',
       class: 'chat',
@@ -1850,8 +1997,8 @@ describe('agents.setBossEmail', (): void => {
   it('writes nothing for the address the agent already reports to', async (): Promise<void> => {
     vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
-    const owner = harness.withIdentity({ subject: 'owner' });
-    const agentId = await owner.mutation(api.agents.deploy, { bossEmail: 'boss@day0.local' });
+    const owner = harness.withIdentity(managerIdentity());
+    const agentId = await owner.mutation(api.agents.deploy, {});
     await expect(
       owner.mutation(api.agents.setBossEmail, { agentId, bossEmail: 'Boss@Day0.local' }),
     ).resolves.toEqual({ changed: false, reprobed: 0 });
@@ -1864,18 +2011,19 @@ describe('agents.setBossEmail', (): void => {
   it('refuses another owner, a malformed address and an evaluation agent', async (): Promise<void> => {
     vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
-    const owner = harness.withIdentity({ subject: 'owner' });
-    const agentId = await owner.mutation(api.agents.deploy, { bossEmail: 'boss@day0.local' });
+    const owner = harness.withIdentity(managerIdentity());
+    const agentId = await owner.mutation(api.agents.deploy, {});
     await expect(
       harness
-        .withIdentity({ subject: 'intruder' })
+        .withIdentity(managerIdentity('intruder'))
         .mutation(api.agents.setBossEmail, { agentId, bossEmail: 'intruder@day0.local' }),
     ).rejects.toThrow();
     await expect(
       owner.mutation(api.agents.setBossEmail, { agentId, bossEmail: 'not an address' }),
     ).rejects.toThrow('email address');
+    vi.stubEnv('DAY0_EVALUATION_BED', 'refusals');
     const evaluationId = await owner.mutation(api.agents.deploy, {
-      bossEmail: 'eval-day0-r1-1234567890123@day0.local',
+      evaluationAddress: 'eval-day0-r1-1234567890123@day0.local',
       name: 'Day0 evaluation 1',
     });
     await expect(

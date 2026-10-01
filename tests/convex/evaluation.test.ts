@@ -7,6 +7,7 @@ import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+import { managerIdentity } from './fakes/manager-identity';
 
 const tasks = [
   {
@@ -53,9 +54,8 @@ describe('evaluation backend boundary', (): void => {
   it('seeds fixed tasks idempotently and returns owner-scoped grader state', async (): Promise<void> => {
     useSurfaceMode('mock');
     const harness = convexTest(schema, allConvexModules());
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     const agentId = await owner.mutation(api.agents.deploy, {
-      bossEmail: 'boss@day0.local',
       arm: 'day0',
     });
 
@@ -79,16 +79,15 @@ describe('evaluation backend boundary', (): void => {
       },
     ]);
     await expect(
-      harness.withIdentity({ subject: 'stranger' }).query(api.evaluation.snapshot, { agentId }),
+      harness.withIdentity(managerIdentity('stranger')).query(api.evaluation.snapshot, { agentId }),
     ).rejects.toThrow('forbidden');
   });
 
   it('refuses benchmark mutation outside mock mode', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     const agentId = await owner.mutation(api.agents.deploy, {
-      bossEmail: 'boss@day0.local',
       arm: 'day0',
     });
     await expect(owner.mutation(api.evaluation.seedTasks, { agentId, tasks })).rejects.toThrow(
@@ -99,9 +98,8 @@ describe('evaluation backend boundary', (): void => {
   it('refuses every harness function on a mock deployment that names no bed', async (): Promise<void> => {
     useSurfaceMode('mock');
     const harness = convexTest(schema, allConvexModules());
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     const agentId = await owner.mutation(api.agents.deploy, {
-      bossEmail: 'boss@day0.local',
       arm: 'day0',
     });
     vi.stubEnv('DAY0_EVALUATION_BED', '');
@@ -118,9 +116,8 @@ describe('evaluation backend boundary', (): void => {
   it('terminalises a timed-out benchmark row and fences its late execution run', async (): Promise<void> => {
     useSurfaceMode('mock');
     const harness = convexTest(schema, allConvexModules());
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     const agentId = await owner.mutation(api.agents.deploy, {
-      bossEmail: 'boss@day0.local',
       arm: 'day0',
     });
     const [workItemId] = await owner.mutation(api.evaluation.seedTasks, {
@@ -154,9 +151,8 @@ describe('evaluation backend boundary', (): void => {
   it('terminalises a benchmark row when the harness exhausts skill authoring', async (): Promise<void> => {
     useSurfaceMode('mock');
     const harness = convexTest(schema, allConvexModules());
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     const agentId = await owner.mutation(api.agents.deploy, {
-      bossEmail: 'boss@day0.local',
       arm: 'day0',
     });
     const [workItemId] = await owner.mutation(api.evaluation.seedTasks, {

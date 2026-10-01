@@ -72,3 +72,11 @@ export function isEvaluationShapedAddress(address: string): boolean {
   const normalised = normaliseManagerAddress(address);
   return normalised !== undefined && EVALUATION_ADDRESS_SHAPE.test(normalised);
 }
+
+/**
+ * The refusal a deploy meets from a caller whose sign-in asserts no verified
+ * address: an employee reports to the manager who deploys it, at the address
+ * that manager's token proves. A `ConvexError`'s data, so the form can show it.
+ */
+export const UNVERIFIED_FOR_DEPLOY =
+  'Your sign-in does not carry a verified email address, and an employee reports to the verified address of the manager who deploys it. Verify your address, then sign in again.';

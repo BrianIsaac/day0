@@ -19,6 +19,7 @@ import {
 } from '../../src/agent/manager-transfer';
 import { EMPLOYEE_NOT_YOURS, isEmployeeNotYours } from '../../src/agent/employee-access';
 import { allConvexModules } from './all-modules';
+import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
 const CUSTOMER_ISSUER = 'https://sso.example.com/realms/ops';
 
@@ -50,8 +51,10 @@ describe('the owner key', (): void => {
   it('keys an agent a customer user deploys on the issuer and the subject together', async (): Promise<void> => {
     vi.stubEnv('DAY0_OIDC_ISSUER', CUSTOMER_ISSUER);
     const harness = convexTest(schema, allConvexModules());
-    const alice = harness.withIdentity({ issuer: CUSTOMER_ISSUER, subject: 'alice' });
-    const agentId = await alice.mutation(api.agents.deploy, { bossEmail: 'alice@example.com' });
+    const alice = harness.withIdentity(
+      managerIdentity('alice', { issuer: CUSTOMER_ISSUER, email: 'alice@example.com' }),
+    );
+    const agentId = await alice.mutation(api.agents.deploy, {});
     expect((await alice.query(api.agents.get, { agentId }))?.userId).toBe(
       `${CUSTOMER_ISSUER}|alice`,
     );
@@ -60,17 +63,15 @@ describe('the owner key', (): void => {
   it('never lets a customer token that names the local subject act as the local owner', async (): Promise<void> => {
     vi.stubEnv('DAY0_OIDC_ISSUER', CUSTOMER_ISSUER);
     const harness = convexTest(schema, allConvexModules());
-    const local = harness.withIdentity({
-      issuer: DEV_NO_AUTH_ISSUER,
-      subject: DEV_NO_AUTH_SUBJECT,
-    });
-    const agentId = await local.mutation(api.agents.deploy, { bossEmail: 'boss@day0.local' });
+    const local = harness.withIdentity(
+      managerIdentity(DEV_NO_AUTH_SUBJECT, { issuer: DEV_NO_AUTH_ISSUER, email: MANAGER_ADDRESS }),
+    );
+    const agentId = await local.mutation(api.agents.deploy, {});
     expect((await local.query(api.agents.get, { agentId }))?.userId).toBe(DEV_NO_AUTH_SUBJECT);
 
-    const impostor = harness.withIdentity({
-      issuer: CUSTOMER_ISSUER,
-      subject: DEV_NO_AUTH_SUBJECT,
-    });
+    const impostor = harness.withIdentity(
+      managerIdentity(DEV_NO_AUTH_SUBJECT, { issuer: CUSTOMER_ISSUER, email: MANAGER_ADDRESS }),
+    );
     await expect(impostor.query(api.agents.get, { agentId })).rejects.toThrow(EMPLOYEE_NOT_YOURS);
   });
 });
@@ -78,8 +79,8 @@ describe('the owner key', (): void => {
 describe('agents.get, the employee page read (ownedAgentOrNull)', (): void => {
   it('answers null for an employee that is gone, so the page can say so rather than crash', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
-    const owner = harness.withIdentity({ subject: 'owner' });
-    const agentId = await owner.mutation(api.agents.deploy, { bossEmail: 'boss@example.com' });
+    const owner = harness.withIdentity(managerIdentity());
+    const agentId = await owner.mutation(api.agents.deploy, {});
     await harness.run(async (ctx): Promise<void> => {
       await ctx.db.delete(agentId);
     });
@@ -88,9 +89,9 @@ describe('agents.get, the employee page read (ownedAgentOrNull)', (): void => {
 
   it("refuses another owner's employee with a ConvexError the page can read after production strips the rest", async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
-    const owner = harness.withIdentity({ subject: 'owner' });
-    const agentId = await owner.mutation(api.agents.deploy, { bossEmail: 'boss@example.com' });
-    const stranger = harness.withIdentity({ subject: 'stranger' });
+    const owner = harness.withIdentity(managerIdentity());
+    const agentId = await owner.mutation(api.agents.deploy, {});
+    const stranger = harness.withIdentity(managerIdentity('stranger'));
     const refusal = await stranger.query(api.agents.get, { agentId }).then(
       (): unknown => undefined,
       (error: unknown): unknown => error,
@@ -100,8 +101,8 @@ describe('agents.get, the employee page read (ownedAgentOrNull)', (): void => {
 
   it('answers null for an address that names no employee at all, a truncated link included', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
-    const owner = harness.withIdentity({ subject: 'owner' });
-    const agentId = await owner.mutation(api.agents.deploy, { bossEmail: 'boss@example.com' });
+    const owner = harness.withIdentity(managerIdentity());
+    const agentId = await owner.mutation(api.agents.deploy, {});
     await expect(owner.query(api.agents.get, { agentId: 'foo' })).resolves.toBeNull();
     await expect(
       owner.query(api.agents.get, { agentId: agentId.slice(0, -3) }),
@@ -111,8 +112,8 @@ describe('agents.get, the employee page read (ownedAgentOrNull)', (): void => {
 
   it('refuses an anonymous caller before it reads the row', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
-    const owner = harness.withIdentity({ subject: 'owner' });
-    const agentId = await owner.mutation(api.agents.deploy, { bossEmail: 'boss@example.com' });
+    const owner = harness.withIdentity(managerIdentity());
+    const agentId = await owner.mutation(api.agents.deploy, {});
     await expect(harness.query(api.agents.get, { agentId })).rejects.toThrow();
   });
 });
@@ -132,7 +133,10 @@ describe('the caller session', (): void => {
   it('survives the owner key: getCaller keeps every claim, the subject as the token gave it, and adds the owner key', async (): Promise<void> => {
     vi.stubEnv('DAY0_OIDC_ISSUER', CUSTOMER_ISSUER);
     const harness = convexTest(schema, allConvexModules());
-    const alice = harness.withIdentity({ issuer: CUSTOMER_ISSUER, subject: 'alice', sid: 'tab-2' });
+    const alice = harness.withIdentity({
+      ...managerIdentity('alice', { issuer: CUSTOMER_ISSUER }),
+      sid: 'tab-2',
+    });
     const seen = await alice.run(async (ctx) => {
       const { getCaller } = await import('../../convex/ownership');
       const caller = await getCaller(ctx);
@@ -269,7 +273,7 @@ describe('assertNamedInTransfer', (): void => {
   ): Promise<Id<'managerTransfers'>> {
     return await harness.run(async (ctx) => {
       const agentId = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'Maya',
         userId: 'owner',
         state: 'deployed',
