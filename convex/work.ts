@@ -14,6 +14,7 @@ import { planDraftedWithoutValidator, ticketSnapshotValidator } from './schema';
 import { internal } from './_generated/api';
 import { assertOwnsAgent, assertOwnsWorkItem, getCaller, getCallerOrThrow } from './ownership';
 import { isEvaluationAgent } from './metrics';
+import { incomingTransfersOf, type IncomingTransfer } from './managerTransfers';
 import {
   oneToOneWaitsOnManager,
   skillWaitsOnManager,
@@ -6900,6 +6901,19 @@ const needsYouEntryValidator = v.union(
   }),
   v.object({ kind: v.literal('stopped'), ...needsYouBaseFields, workItemId: v.id('workItems') }),
   v.object({ kind: v.literal('surface'), ...needsYouBaseFields, surfaceId: v.id('surfaces') }),
+  /**
+   * A handover naming the caller (the transfer plan, section 5.1), read by the
+   * caller's verified address rather than through the caller's employees: its
+   * `agentId` is an employee the caller does not own yet, so the entry opens
+   * the acceptance dialog on the home, never the employee's page.
+   */
+  v.object({
+    kind: v.literal('transfer'),
+    ...needsYouBaseFields,
+    transferId: v.id('managerTransfers'),
+    fromAddress: v.string(),
+    expiresAt: v.number(),
+  }),
 );
 
 const needsYouValidator = v.object({
@@ -7252,10 +7266,35 @@ function longestWaitFirst(left: NeedsYouEntry, right: NeedsYouEntry): number {
 }
 
 /**
+ * A handover naming the caller as an inbox entry, waiting since it was asked.
+ *
+ * @param transfer - The request, as `incomingTransfersOf` reads it.
+ */
+function transferEntryOf(transfer: IncomingTransfer): NeedsYouEntry {
+  return {
+    kind: 'transfer',
+    key: `transfer:${transfer.transferId}`,
+    agentId: transfer.agentId,
+    employeeName: transfer.employeeName,
+    zone: transfer.zone,
+    subject: transfer.employeeName,
+    waitingSince: transfer.requestedAt,
+    waitingAtLeast: false,
+    transferId: transfer.transferId,
+    fromAddress: transfer.fromAddress,
+    expiresAt: transfer.expiresAt,
+  };
+}
+
+/**
  * Public, owner-scoped: everything waiting on the manager across their
- * employees, longest wait first, for the needs-you inbox on the signed-in
- * home (N7). Evaluation agents and the baseline arm are left out, as on the
- * roster. An anonymous caller gets an empty inbox. Writes nothing.
+ * employees, and every handover naming the caller's verified address (the
+ * ninth kind, read by address through `incomingTransfersOf`), longest wait
+ * first, for the needs-you inbox on the signed-in home (N7). Evaluation agents
+ * and the baseline arm are left out, as on the roster. A handover is counted
+ * in `total` and on no employee in `waitingByEmployee`, since its employee is
+ * not the caller's yet. An anonymous caller gets an empty inbox. Writes
+ * nothing.
  *
  * @returns At most `NEEDS_YOU_LIMIT` entries, how many there are in all, and
  *   how many wait on each employee.
@@ -7276,10 +7315,13 @@ export const needsYou = query({
       .filter((agent) => !isEvaluationAgent(agent))
       .slice(0, NEEDS_YOU_EMPLOYEE_LIMIT);
     const now = Date.now();
-    const perEmployee = await Promise.all(
-      employees.map(async (agent) => await needsYouOfEmployee(ctx, agent, now)),
+    const [perEmployee, incoming] = await Promise.all([
+      Promise.all(employees.map(async (agent) => await needsYouOfEmployee(ctx, agent, now))),
+      incomingTransfersOf(ctx, caller, now),
+    ]);
+    const entries = [...perEmployee.flat(), ...incoming.map(transferEntryOf)].sort(
+      longestWaitFirst,
     );
-    const entries = perEmployee.flat().sort(longestWaitFirst);
     return {
       entries: entries.slice(0, NEEDS_YOU_LIMIT),
       total: entries.length,

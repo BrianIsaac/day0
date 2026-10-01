@@ -27,7 +27,7 @@ import { runThroughBody } from '../fixtures/run-through-charter-2026-09-14';
 import type { Charter } from '../../src/agent/charter';
 import { skillBodyHash } from '../../src/work/skill-body';
 import { collectLedgerObservations } from '../../convex/metrics';
-import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import { fixtureAddressOf, MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
@@ -7056,6 +7056,132 @@ describe('work.earlierPlan (round two 3.7, attempt two)', (): void => {
     await expect(
       harness.withIdentity(managerIdentity('stranger')).query(api.work.earlierPlan, { workItemId }),
     ).rejects.toThrow('forbidden');
+  });
+});
+
+describe('work.needsYou, the ninth kind: an employee to take on', (): void => {
+  const PRIYA = managerIdentity('priya');
+  const PRIYA_ADDRESS = fixtureAddressOf('priya');
+
+  afterEach((): void => {
+    vi.useRealTimers();
+  });
+
+  /** Maya, the owner's, whom the owner asks Priya to take on; and Tomas, Priya's own, with a plan waiting. */
+  async function seed(harness: Harness): Promise<{
+    maya: Id<'agents'>;
+    tomas: Id<'agents'>;
+    planId: Id<'workItems'>;
+  }> {
+    return await harness.run(async (ctx) => {
+      const maya = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Maya',
+        userId: 'owner',
+        state: 'active',
+        zone: 'Europe/London',
+        createdAt: 1,
+      });
+      const tomas = await ctx.db.insert('agents', {
+        bossEmail: PRIYA_ADDRESS,
+        name: 'Tomas',
+        userId: 'priya',
+        state: 'active',
+        createdAt: 1,
+      });
+      const planId = await ctx.db.insert('workItems', {
+        agentId: tomas,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'REVOPS-1',
+        title: 'Refresh the pipeline view',
+        contentSummary: 'Synthetic.',
+        contentRefs: [],
+        state: 'plan-pending',
+        planPendingAt: Date.UTC(2026, 9, 1, 10),
+        observedAt: 1,
+        createdAt: 1,
+      });
+      return { maya, tomas, planId };
+    });
+  }
+
+  it('lists a handover naming the caller among the other eight, ordered by wait, and counts it in the total but on no employee of theirs', async (): Promise<void> => {
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.UTC(2026, 9, 1, 9));
+    const harness = convexTest(schema, allConvexModules());
+    const { maya, tomas, planId } = await seed(harness);
+    const transferId = await harness
+      .withIdentity(OWNER)
+      .mutation(api.managerTransfers.ask, { agentId: maya, toAddress: PRIYA_ADDRESS });
+    vi.setSystemTime(Date.UTC(2026, 9, 1, 11));
+
+    const inbox = await harness.withIdentity(PRIYA).query(api.work.needsYou, {});
+
+    expect(inbox.entries).toEqual([
+      {
+        kind: 'transfer',
+        key: `transfer:${transferId}`,
+        agentId: maya,
+        employeeName: 'Maya',
+        zone: 'Europe/London',
+        subject: 'Maya',
+        waitingSince: Date.UTC(2026, 9, 1, 9),
+        waitingAtLeast: false,
+        transferId,
+        fromAddress: MANAGER_ADDRESS,
+        expiresAt: Date.UTC(2026, 9, 15, 9),
+      },
+      expect.objectContaining({ kind: 'plan', workItemId: planId, agentId: tomas }),
+    ]);
+    expect(inbox.total).toBe(2);
+    expect(inbox.waitingByEmployee).toEqual([{ agentId: tomas, waiting: 1 }]);
+  });
+
+  it('reaches the named caller only: not the asker, not another account, not an unverified sign-in, and never an employee’s own tab', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { maya } = await seed(harness);
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.managerTransfers.ask, { agentId: maya, toAddress: PRIYA_ADDRESS });
+    const kinds = async (identity: ReturnType<typeof managerIdentity>): Promise<string[]> =>
+      (await harness.withIdentity(identity).query(api.work.needsYou, {})).entries.map(
+        (entry) => entry.kind,
+      );
+
+    expect(await kinds(PRIYA)).toContain('transfer');
+    expect(await kinds(OWNER)).not.toContain('transfer');
+    expect(await kinds(managerIdentity('wei'))).not.toContain('transfer');
+    expect(await kinds(managerIdentity('priya', { emailVerified: false }))).not.toContain(
+      'transfer',
+    );
+    expect(
+      (
+        await harness.withIdentity(OWNER).query(api.work.needsYouForAgent, { agentId: maya })
+      ).entries.map((entry) => entry.kind),
+    ).not.toContain('transfer');
+  });
+
+  it('drops the entry once the request is answered, cancelled or past its expiry', async (): Promise<void> => {
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.UTC(2026, 9, 1, 9));
+    const harness = convexTest(schema, allConvexModules());
+    const { maya } = await seed(harness);
+    const transferId = await harness
+      .withIdentity(OWNER)
+      .mutation(api.managerTransfers.ask, { agentId: maya, toAddress: PRIYA_ADDRESS });
+    const transfers = async (): Promise<number> =>
+      (await harness.withIdentity(PRIYA).query(api.work.needsYou, {})).entries.filter(
+        (entry) => entry.kind === 'transfer',
+      ).length;
+    expect(await transfers()).toBe(1);
+
+    vi.setSystemTime(Date.UTC(2026, 9, 15, 9));
+    expect(await transfers()).toBe(0);
+
+    vi.setSystemTime(Date.UTC(2026, 9, 1, 10));
+    await harness.withIdentity(PRIYA).mutation(api.managerTransfers.decline, { transferId });
+    expect(await transfers()).toBe(0);
   });
 });
 
