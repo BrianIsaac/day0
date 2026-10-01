@@ -242,6 +242,8 @@ export async function startSignIn(
   input: {
     readonly returnTo: string;
     readonly check?: { readonly id: string; readonly reportTo: string };
+    /** Ask the issuer to let the person choose another account (after a refusal). */
+    readonly switchAccount?: boolean;
   },
   now: number = Date.now(),
 ): Promise<StartedSignIn> {
@@ -258,6 +260,7 @@ export async function startSignIn(
     code_challenge_method: 'S256',
     state,
     nonce,
+    ...(input.switchAccount ? { prompt: settings.preset.switchAccountPrompt } : {}),
   });
   return {
     location: location.href,

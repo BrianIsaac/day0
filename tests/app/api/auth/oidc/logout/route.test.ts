@@ -60,6 +60,8 @@ describe('the company sign-out', (): void => {
     expect(response.status).toBe(200);
     const text = await response.text();
     expect(text).toContain('You are signed out');
+    // The body does not repeat the title (the second pass's design review).
+    expect(text).toContain('Your session has ended. Sign in with your work account to carry on.');
     expect(text).toContain('href="/api/auth/oidc/login?returnTo=%2F"');
   });
 });

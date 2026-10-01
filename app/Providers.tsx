@@ -624,13 +624,15 @@ function CustomerGateFrame({ children }: { readonly children: ReactNode }) {
  */
 export function CustomerSignOutButton({
   variant = 'secondary',
+  label = 'Sign out',
 }: {
   readonly variant?: 'secondary' | 'quiet' | 'primary';
+  readonly label?: string;
 }) {
   return (
     <form method="post" action={CUSTOMER_SIGN_OUT_ROUTE}>
       <Button type="submit" variant={variant}>
-        Sign out
+        {label}
       </Button>
     </form>
   );
@@ -686,10 +688,11 @@ function CustomerSignInGate({ children }: { readonly children: ReactNode }) {
         <CustomerGateFrame>
           <h1 className="text-lg font-semibold">Day0 could not confirm your sign-in</h1>
           <p className="text-sm text-[var(--color-muted)]">
-            Your company sign-in let you in, and the Day0 server did not accept it. Tell whoever
-            installed Day0: pnpm check:sign-in shows why.
+            Your company sign-in let you in, but Day0 would not accept it. Sign out and try again;
+            if it keeps happening, ask whoever installed Day0 to run <code>pnpm check:sign-in</code>
+            .
           </p>
-          <CustomerSignOutButton variant="primary" />
+          <CustomerSignOutButton variant="primary" label="Sign out and try again" />
         </CustomerGateFrame>
       );
     default: {

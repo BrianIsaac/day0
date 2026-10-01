@@ -71,7 +71,12 @@ export const CUSTOMER_SIGN_OUT_ROUTE = '/api/auth/oidc/logout';
  * The link that starts a sign-in and lands on `returnTo` afterwards.
  *
  * @param returnTo - The same-origin path to come back to.
+ * @param options - `switchAccount` asks the issuer to let the person choose another account.
  */
-export function customerSignInHref(returnTo: string): string {
-  return `/api/auth/oidc/login?returnTo=${encodeURIComponent(returnTo)}`;
+export function customerSignInHref(
+  returnTo: string,
+  options: { readonly switchAccount?: boolean } = {},
+): string {
+  const href = `/api/auth/oidc/login?returnTo=${encodeURIComponent(returnTo)}`;
+  return options.switchAccount ? `${href}&switch=1` : href;
 }

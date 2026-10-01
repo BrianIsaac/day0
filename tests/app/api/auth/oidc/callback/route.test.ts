@@ -112,7 +112,10 @@ describe('the company sign-in callback', (): void => {
     const response = await callback(back.search, started.transactionCookie);
     expect(response.status).toBe(403);
     const page = await response.text();
+    expect(page).toContain('You signed in as eve@rival.test');
     expect(page).toContain('not in a domain this installation admits');
+    // Another account means the issuer is asked to let the person choose one.
+    expect(page).toContain('href="/api/auth/oidc/login?returnTo=%2F&amp;switch=1"');
     // A refused person can tell which app refused them.
     expect(page).toContain('<p class="brand" aria-hidden="true">Day0</p>');
     expect(setCookies(response).has('day0_session')).toBe(false);

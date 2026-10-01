@@ -82,6 +82,22 @@ describe('the company sign-in login route', (): void => {
     expect(location.searchParams.get('prompt')).toBe('consent');
   });
 
+  it('asks the issuer to let the person choose another account when the refusal page sends them back', async (): Promise<void> => {
+    customerIssuer();
+    const okta = new URL(
+      (await signIn('/api/auth/oidc/login?switch=1')).headers.get('location') ?? '',
+    );
+    expect(okta.searchParams.get('prompt')).toBe('login');
+    vi.resetModules();
+    customerIssuer({ issuer: 'https://accounts.google.com' });
+    const google = new URL(
+      (await signIn('/api/auth/oidc/login?switch=1')).headers.get('location') ?? '',
+    );
+    expect(google.searchParams.get('prompt')).toBe('select_account consent');
+    const plain = new URL((await signIn('/api/auth/oidc/login')).headers.get('location') ?? '');
+    expect(plain.searchParams.get('prompt')).toBe('consent');
+  });
+
   it('says the install is unfinished, naming no value, when a setting is missing', async (): Promise<void> => {
     customerIssuer({ env: { DAY0_OIDC_CLIENT_SECRET: '' } });
     const response = await signIn('/api/auth/oidc/login');

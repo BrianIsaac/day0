@@ -26,6 +26,11 @@ export interface CustomerOidcPreset {
   /** Extra parameters on the authorisation request. */
   readonly authorizationParameters: Readonly<Record<string, string>>;
   readonly clientAuth: ClientAuthMethod;
+  /**
+   * The `prompt` that asks the issuer to let the person choose another account, sent when a
+   * refused person signs in again: `select_account` where the issuer supports it, else `login`.
+   */
+  readonly switchAccountPrompt: string;
   /** The claim that says the address is verified: `email_verified`, or Entra's `xms_edov`. */
   readonly verifiedAddressClaim: 'email_verified' | 'xms_edov';
 }
@@ -41,6 +46,7 @@ export const CUSTOMER_OIDC_PRESETS: Readonly<Record<CustomerOidcProvider, Custom
     scopes: OFFLINE_SCOPES,
     authorizationParameters: {},
     clientAuth: 'client_secret_post',
+    switchAccountPrompt: 'select_account',
     verifiedAddressClaim: 'xms_edov',
   },
   okta: {
@@ -49,6 +55,7 @@ export const CUSTOMER_OIDC_PRESETS: Readonly<Record<CustomerOidcProvider, Custom
     scopes: OFFLINE_SCOPES,
     authorizationParameters: {},
     clientAuth: 'client_secret_basic',
+    switchAccountPrompt: 'login',
     verifiedAddressClaim: 'email_verified',
   },
   google: {
@@ -59,6 +66,8 @@ export const CUSTOMER_OIDC_PRESETS: Readonly<Record<CustomerOidcProvider, Custom
     scopes: ['openid', 'email', 'profile'],
     authorizationParameters: { access_type: 'offline', prompt: 'consent' },
     clientAuth: 'client_secret_post',
+    // Consent stays, or Google would grant no refresh token on this sign-in.
+    switchAccountPrompt: 'select_account consent',
     verifiedAddressClaim: 'email_verified',
   },
   oidc: {
@@ -67,6 +76,7 @@ export const CUSTOMER_OIDC_PRESETS: Readonly<Record<CustomerOidcProvider, Custom
     scopes: OFFLINE_SCOPES,
     authorizationParameters: {},
     clientAuth: 'client_secret_basic',
+    switchAccountPrompt: 'login',
     verifiedAddressClaim: 'email_verified',
   },
 };

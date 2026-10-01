@@ -184,6 +184,7 @@ export async function signInRoute(request: NextRequest): Promise<NextResponse> {
   try {
     started = await startSignIn(settings, {
       returnTo,
+      switchAccount: request.nextUrl.searchParams.get('switch') === '1',
       ...(ticket ? { check: { id: ticket.checkId, reportTo: ticket.reportTo } } : {}),
     });
   } catch (err) {
@@ -345,11 +346,15 @@ export async function callbackRoute(request: NextRequest): Promise<NextResponse>
     }
     case 'refused': {
       log.info('customer sign-in refused by the domain rule', { reason: finished.reason });
+      const address = typeof finished.claims.email === 'string' ? finished.claims.email : '';
       const response = signInPageResponse({
         status: 403,
         title: 'Day0 is not open to this account',
-        body: SIGN_IN_REFUSAL_WORDS[finished.reason],
-        action: { href: customerSignInHref(transaction.returnTo), label: 'Use another account' },
+        body: `${address ? `You signed in as ${address}. ` : ''}${SIGN_IN_REFUSAL_WORDS[finished.reason]}`,
+        action: {
+          href: customerSignInHref(transaction.returnTo, { switchAccount: true }),
+          label: 'Use another account',
+        },
       });
       clearTransaction(response, settings);
       return response;
@@ -544,7 +549,7 @@ export function signedOutRoute(): NextResponse {
   return signInPageResponse({
     status: 200,
     title: 'You are signed out',
-    body: 'You are signed out of Day0. Sign in again to carry on.',
+    body: 'Your session has ended. Sign in with your work account to carry on.',
     action: { href: customerSignInHref('/'), label: 'Sign in' },
   });
 }
