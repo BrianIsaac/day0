@@ -55,13 +55,55 @@ describe('rollbackLines', (): void => {
     );
   });
 
+  // Re-pinned: a step with nothing to do is a note under the steps, never a numbered step.
   it('after a first push, says the deployment held nothing and the Vercel values changed', (): void => {
     const lines = rollbackLines({ target: TARGET, appValuesChanged: true });
+    expect(lines[0]).toBe('Rollback (nothing here is run for you):');
     expect(lines[1]).toContain('  1. its Convex values: this run set NEXT_PUBLIC_CONVEX_URL');
     expect(lines[1]).toContain('put back what they held');
-    expect(lines[2]).toBe('  2. the app: this run read no earlier production build to go back to.');
+    expect(lines[2]).toBe('  the app: this run read no earlier production build to go back to.');
     expect(lines[3]).toBe(
       '  the deployment: brisk-heron-417 held nothing before this run; an app that points away from it leaves it serving nobody.',
     );
+  });
+
+  it('after a first push that changed the values of a served app, puts the values back before the promote', (): void => {
+    const lines = rollbackLines({
+      target: TARGET,
+      appValuesChanged: true,
+      previousApp: 'dpl_Dev1',
+    });
+    expect(lines[0]).toBe('Rollback (nothing here is run for you), in this order:');
+    expect(lines[1]).toMatch(
+      /^ {2}1\. its Convex values: .* before promoting the earlier build\.$/,
+    );
+    expect(lines[2]).toBe(
+      '  2. the app: vercel promote dpl_Dev1, the build that served production before this run.',
+    );
+  });
+
+  it('after an upgrade that left the app alone, numbers only the step there is to take', (): void => {
+    expect(
+      rollbackLines({
+        target: TARGET,
+        upgrade: {
+          to: '0.4.0',
+          from: '0.3.0',
+          backup: { file: '/private/before-v0.4.0.zip', sha256: 'ab'.repeat(32), earlier: false },
+        },
+      }),
+    ).toEqual([
+      'Rollback (nothing here is run for you):',
+      `  1. the rows and functions: /private/before-v0.4.0.zip (sha256 ${'ab'.repeat(32)}) holds the rows from before the upgrade to v0.4.0. From a clean checkout of v0.3.0, take \`./setup.sh cloud backup\` of what you replace, then npx convex import --replace-all --deployment brisk-heron-417 /private/before-v0.4.0.zip and npx convex deploy --typecheck enable --env-file /private/prod-target.env.`,
+      '  the app: this run read no earlier production build to go back to.',
+    ]);
+  });
+
+  it('after a first push with no app, has no step to number, only what the run left', (): void => {
+    expect(rollbackLines({ target: TARGET })).toEqual([
+      'Rollback (nothing here is run for you):',
+      '  the app: this run read no earlier production build to go back to.',
+      '  the deployment: brisk-heron-417 held nothing before this run; an app that points away from it leaves it serving nobody.',
+    ]);
   });
 });
