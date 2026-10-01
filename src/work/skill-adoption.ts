@@ -346,6 +346,41 @@ export function stalledReason(log: string | undefined): string | undefined {
   return PARKED_CHECK.exec(log.trim())?.[1] ?? log.trim();
 }
 
+/** A sandbox that did not answer, in the words the sandbox client and the stall write it. */
+const NO_SANDBOX = /DAYTONA_API_KEY|sandbox:up|not running|ECONNREFUSED|no sandbox/i;
+
+/** The lease's wait, which says how long the sandbox was busy. */
+const SANDBOX_BUSY = /busy with another skill for (\d+) minutes?/;
+
+/** A sandbox that failed while it ran. */
+const SANDBOX_FAILED = /threw|timed? ?out|socket|ECONNRESET/i;
+
+/** A kept check that could not be written for a version that had none. */
+const CHECK_NOT_WRITTEN = /smoke test (?:for|written for) its unchanged body/i;
+
+/**
+ * Why an adoption's check stopped, in the manager's words (the wave 10 review, A-m6; N26): the
+ * stall's reason says which variable is unset and which command starts a sandbox, which is the
+ * operator's to read in the log, not the manager's on the card.
+ *
+ * @param reason - {@link stalledReason} of the row's log.
+ * @returns The words, without a closing stop; undefined when the row gives no reason.
+ */
+export function stalledWords(reason: string | undefined): string | undefined {
+  if (reason === undefined) return undefined;
+  const busy = SANDBOX_BUSY.exec(reason);
+  if (busy !== null) {
+    const minutes = Number(busy[1]);
+    return `the sandbox was busy checking another skill for ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`;
+  }
+  if (NO_SANDBOX.test(reason)) {
+    return 'no sandbox was running to check it, which whoever runs Day0 for you can start';
+  }
+  if (CHECK_NOT_WRITTEN.test(reason)) return 'the check for it could not be written';
+  if (SANDBOX_FAILED.test(reason)) return 'the sandbox stopped before it reached a verdict';
+  return 'the check could not run';
+}
+
 /** The month names the card prints a day with. */
 const MONTH_NAMES = [
   'January',

@@ -4,6 +4,7 @@ import {
   adoptionCardState,
   adoptionStateAt,
   stalledReason,
+  stalledWords,
   adoptionFit,
   holdsParkedStoredCopy,
   parkedCheckLog,
@@ -290,6 +291,30 @@ describe('parkedCheckLog and holdsParkedStoredCopy (the wave 10 review, B1)', ()
       holdsParkedStoredCopy({ body: '', pendingSmokeTest: 'CASES = []', verificationLog: log }),
     ).toBe(false);
     expect(holdsParkedStoredCopy({ body: '# Body', verificationLog: log })).toBe(false);
+  });
+});
+
+describe('stalledWords (the wave 10 review, A-m6)', (): void => {
+  it('says why a check stopped in the manager’s words, by what stopped it', (): void => {
+    expect(
+      stalledWords(
+        'DAYTONA_API_KEY not set and the local sandbox is not running (/run/x.sock: ECONNREFUSED). Start it with `pnpm sandbox:up`.',
+      ),
+    ).toBe('no sandbox was running to check it, which whoever runs Day0 for you can start');
+    expect(stalledWords('no sandbox backend answered')).toBe(
+      'no sandbox was running to check it, which whoever runs Day0 for you can start',
+    );
+    expect(stalledWords('the verification sandbox was busy with another skill for 5 minutes')).toBe(
+      'the sandbox was busy checking another skill for 5 minutes',
+    );
+    expect(stalledWords('the sandbox threw: socket closed')).toBe(
+      'the sandbox stopped before it reached a verdict',
+    );
+    expect(
+      stalledWords('the smoke test for its unchanged body could not be written: model down'),
+    ).toBe('the check for it could not be written');
+    expect(stalledWords('something else entirely')).toBe('the check could not run');
+    expect(stalledWords(undefined)).toBeUndefined();
   });
 });
 

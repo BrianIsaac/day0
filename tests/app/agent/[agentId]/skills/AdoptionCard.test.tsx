@@ -147,6 +147,24 @@ describe('AdoptionCard', (): void => {
     expect(view.container.querySelectorAll('button')).toHaveLength(0);
   });
 
+  it('says why a check stopped in the manager’s words, never the operator’s command or variable (the wave 10 review, A-m6)', (): void => {
+    const view = mount(
+      card('stalled', {
+        state: 'verifying',
+        rowState: 'authoring',
+        missingScopes: [],
+        log: 'the stored skill was not verified: DAYTONA_API_KEY not set and the local sandbox is not running (/run/day0-sandbox/skill-sandbox.sock: ECONNREFUSED). Start it with `pnpm sandbox:up`.; Retry runs its check',
+      }),
+    );
+    const text = view.container.textContent ?? '';
+    expect(text).toContain(
+      'Why it stopped: no sandbox was running to check it, which whoever runs Day0 for you can start.',
+    );
+    for (const operatorWord of ['DAYTONA_API_KEY', 'pnpm', 'ECONNREFUSED', '.sock']) {
+      expect(text).not.toContain(operatorWord);
+    }
+  });
+
   it('says a check that stopped short with why, and offers Check it again, Write a new one instead and Decline', async (): Promise<void> => {
     const stopped =
       'the stored skill was not verified: no sandbox backend answered; Retry runs its check';
@@ -163,7 +181,10 @@ describe('AdoptionCard', (): void => {
     );
     expect(view.container.querySelector('[role="alert"]')).not.toBeNull();
     // Why it stopped, without the other card's control: the log's own "Retry" line is not said.
-    expect(view.container.textContent).toContain('Why it stopped: no sandbox backend answered.');
+    // Re-pinned (A-m6): why it stopped in the manager's words, not the operator's.
+    expect(view.container.textContent).toContain(
+      'Why it stopped: no sandbox was running to check it, which whoever runs Day0 for you can start.',
+    );
     expect(view.container.textContent).not.toContain('Retry');
     expect(buttonNames(view.container)).toEqual([
       'Check it again | Check it again: kanban-comment-and-close',

@@ -7,6 +7,7 @@ import {
   adoptionWords,
   OFFER_WITHDRAWN_REFUSAL,
   stalledReason,
+  stalledWords,
   verifiedOnDay,
   type AdoptionCardState,
 } from '@/work/skill-adoption';
@@ -96,7 +97,7 @@ export function AdoptionCard({
   const adoptRefusal = writeRefusal ?? adoption.refusal;
   const decides = state === 'offered' || state === 'failed' || state === 'stalled';
   const alerting = state === 'failed' || state === 'stalled';
-  const reason = stalledReason(adoption.log);
+  const reason = stalledWords(stalledReason(adoption.log));
   return (
     <div className="grid gap-3" data-adoption={state}>
       <div
@@ -121,7 +122,7 @@ export function AdoptionCard({
       ) : null}
       {state === 'stalled' && reason ? (
         <p className="text-[13px] text-[var(--color-fg-2)] break-words">
-          Why it stopped: {reason.replace(/[.!?]+$/, '')}.
+          Why it stopped: {reason}.
         </p>
       ) : null}
       {decides && state !== 'stalled' && writeRefusal ? (
