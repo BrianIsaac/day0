@@ -1,5 +1,8 @@
 import 'server-only';
+import { ConvexHttpClient } from 'convex/browser';
 import { NextResponse, type NextRequest } from 'next/server';
+import { api } from '@convex/_generated/api';
+import { serverConvexUrl } from './convex-caller';
 import {
   CUSTOMER_SIGN_IN,
   customerSignInHref,
@@ -7,12 +10,13 @@ import {
   type IssuedToken,
   type SessionAccount,
 } from './customer-sign-in';
-import { SIGN_IN_REFUSAL_WORDS } from './customer-oidc';
+import { SIGN_IN_REFUSAL_WORDS, customerOidcEmailTrusted } from './customer-oidc';
 import {
   CustomerSignInUnavailable,
   customerSignInSettings,
   finishSignIn,
   issuerSignOutUrl,
+  type FinishedSignIn,
   needsRefresh,
   refreshSession,
   safeReturnTo,
@@ -20,7 +24,7 @@ import {
   startSignIn,
   type CustomerSignInSettings,
 } from './customer-oidc-server';
-import { signedOutUriOf } from './customer-sign-in-settings';
+import { serverEnv, signedOutUriOf } from './customer-sign-in-settings';
 import {
   CUSTOMER_SESSION_COOKIE,
   SIGN_IN_TRANSACTION_COOKIE,
@@ -37,6 +41,7 @@ import {
 } from './customer-session';
 import { errorMessage } from './errors';
 import { log } from './logger';
+import { claimVerdicts, openCheckTicket, type SignInCheckReport } from './sign-in-check';
 
 /**
  * The HTTP half of the customer-local sign-in: what each route under
@@ -163,9 +168,22 @@ export async function signInRoute(request: NextRequest): Promise<NextResponse> {
   const settings = settingsOrPage();
   if (settings instanceof NextResponse) return settings;
   const returnTo = safeReturnTo(request.nextUrl.searchParams.get('returnTo'));
+  const ticketText = request.nextUrl.searchParams.get('check');
+  const ticket =
+    ticketText === null ? undefined : await openCheckTicket(settings.sessionSecret, ticketText);
+  if (ticketText !== null && !ticket) {
+    return signInPageResponse({
+      status: 400,
+      title: 'This check link has expired',
+      body: 'A sign-in check link works once, for ten minutes. Run pnpm check:sign-in again for a new one.',
+    });
+  }
   let started: Awaited<ReturnType<typeof startSignIn>>;
   try {
-    started = await startSignIn(settings, { returnTo });
+    started = await startSignIn(settings, {
+      returnTo,
+      ...(ticket ? { check: { id: ticket.checkId, reportTo: ticket.reportTo } } : {}),
+    });
   } catch (err) {
     log.warn('customer sign-in could not reach the issuer', { reason: errorMessage(err) });
     return signInPageResponse({
@@ -302,6 +320,13 @@ export async function callbackRoute(request: NextRequest): Promise<NextResponse>
     return response;
   }
   const finished = await finishSignIn(settings, transaction, request.nextUrl.search);
+  if (transaction.check) {
+    const report = await checkReport(settings, transaction.check.id, finished);
+    await deliverReport(transaction.check.reportTo, report);
+    const response = checkPageResponse(report);
+    clearTransaction(response, settings);
+    return response;
+  }
   switch (finished.kind) {
     case 'failed': {
       log.warn('customer sign-in failed at the callback', { reason: finished.detail });
@@ -519,5 +544,150 @@ export function signedOutRoute(): NextResponse {
     title: 'You are signed out',
     body: 'You are signed out of Day0. Sign in again to carry on.',
     action: { href: customerSignInHref('/'), label: 'Sign in' },
+  });
+}
+
+/**
+ * What the deployment makes of a token: `config.whoAmI` asked with it, as the
+ * browser would ask, so the answer says whether the backend verified it
+ * against the issuer's keys (V3) and whether `getCaller` admits the person.
+ *
+ * @param idToken - The ID token the issuer handed over.
+ */
+async function askWhoAmI(idToken: string): Promise<SignInCheckReport['whoAmI']> {
+  try {
+    const client = new ConvexHttpClient(serverConvexUrl());
+    client.setAuth(idToken);
+    const caller = await client.query(api.config.whoAmI, {});
+    if (caller === null) {
+      return {
+        status: 'gap',
+        detail:
+          'The deployment verified the token and refused the person: outside the allowed ' +
+          'domains it holds (DAY0_OIDC_ALLOWED_DOMAINS on the deployment, pnpm sync:env).',
+      };
+    }
+    return { status: 'ok', ownerKey: caller.ownerKey, verifiedAddress: caller.verifiedAddress };
+  } catch (err) {
+    return {
+      status: 'gap',
+      detail: `The deployment did not accept the token: ${errorMessage(err)}`,
+    };
+  }
+}
+
+/**
+ * The live check's report on one sign-in: every claim's verdict and what the
+ * deployment made of the token. A sign-in that failed has no claims to judge.
+ *
+ * @param settings - The sign-in's settings.
+ * @param checkId - The check this sign-in answers.
+ * @param finished - How the callback's exchange ended.
+ */
+export async function checkReport(
+  settings: CustomerSignInSettings,
+  checkId: string,
+  finished: FinishedSignIn,
+): Promise<SignInCheckReport> {
+  const base = { version: 1, checkId, checkedAt: Date.now() } as const;
+  switch (finished.kind) {
+    case 'failed':
+      return {
+        ...base,
+        verdicts: [],
+        whoAmI: { status: 'gap', detail: `The sign-in did not complete: ${finished.detail}` },
+      };
+    case 'refused':
+    case 'signed-in': {
+      const idToken = finished.kind === 'signed-in' ? finished.session.idToken : finished.idToken;
+      const refreshTokenGranted =
+        finished.kind === 'signed-in'
+          ? finished.session.refreshToken !== undefined
+          : finished.refreshTokenGranted;
+      return {
+        ...base,
+        verdicts: claimVerdicts(finished.claims, {
+          issuer: settings.issuer,
+          clientId: settings.clientId,
+          allowedDomains: settings.allowedDomains,
+          emailTrusted: customerOidcEmailTrusted(serverEnv),
+          refreshTokenGranted,
+        }),
+        whoAmI: await askWhoAmI(idToken),
+      };
+    }
+    default: {
+      const unknown: never = finished;
+      throw new Error(`unhandled sign-in outcome ${String(unknown)}`);
+    }
+  }
+}
+
+/**
+ * Post the report to the check waiting on this machine. A check that stopped
+ * waiting loses only its terminal copy: the page shows the same lines.
+ *
+ * @param reportTo - The check's listener, on this machine (`openCheckTicket` refuses any other).
+ * @param report - The report.
+ */
+async function deliverReport(reportTo: string, report: SignInCheckReport): Promise<void> {
+  try {
+    await fetch(reportTo, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(report),
+      signal: AbortSignal.timeout(5_000),
+    });
+  } catch (err) {
+    log.warn('sign-in check report not delivered', { reason: errorMessage(err) });
+  }
+}
+
+const VERDICT_WORD: Readonly<Record<'ok' | 'warn' | 'gap', string>> = {
+  ok: 'pass',
+  warn: 'note',
+  gap: 'gap',
+};
+
+/**
+ * The page the live check's sign-in lands on: each claim's verdict in a table,
+ * then the owner key the deployment derived. Nobody is signed in.
+ *
+ * @param report - The report.
+ */
+export function checkPageResponse(report: SignInCheckReport): NextResponse {
+  const rows = report.verdicts
+    .map(
+      (one) =>
+        `<tr><th scope="row">${escapeHtml(one.claim)}</th><td>${escapeHtml(one.value)}</td>` +
+        `<td class="${one.status}">${VERDICT_WORD[one.status]}</td><td>${escapeHtml(one.note)}</td></tr>`,
+    )
+    .join('');
+  const whoAmI =
+    report.whoAmI.status === 'ok'
+      ? `<p class="ok">pass: the deployment accepted the token. Owner key <code>${escapeHtml(report.whoAmI.ownerKey)}</code>${report.whoAmI.verifiedAddress ? `, verified address ${escapeHtml(report.whoAmI.verifiedAddress)}` : ', no verified address'}.</p>`
+      : `<p class="gap">gap: ${escapeHtml(report.whoAmI.detail)}</p>`;
+  const html =
+    '<!doctype html><html lang="en-GB"><head><meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width, initial-scale=1">' +
+    '<title>Sign-in check - Day0</title><style>' +
+    'body{margin:0;background:#0a0a0b;color:#f4f4f5;font:14px/1.5 ui-sans-serif,system-ui,sans-serif}' +
+    'main{max-width:60rem;margin:0 auto;padding:2rem 1rem;display:grid;gap:1rem}' +
+    'h1{font-size:1.125rem;margin:0}p{margin:0;color:#a1a1aa}.table{overflow-x:auto}' +
+    'table{border-collapse:collapse;width:100%;min-width:36rem}' +
+    'th,td{text-align:left;vertical-align:top;padding:.5rem;border-bottom:1px solid #27272a;overflow-wrap:anywhere}' +
+    'thead th{color:#a1a1aa;font-weight:500}.ok{color:#34d399}.warn{color:#f59e0b}.gap{color:#ef4444}' +
+    'code{font-size:.8125rem}.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;' +
+    'clip-path:inset(50%);white-space:nowrap}</style></head><body><main id="main">' +
+    '<h1>Sign-in check</h1>' +
+    '<p>This sign-in was a check: nobody was signed in. The terminal that printed the link shows the same lines.</p>' +
+    '<div class="table"><table><caption class="sr-only">' +
+    'Each claim of the ID token, with its verdict</caption>' +
+    '<thead><tr><th scope="col">Claim</th><th scope="col">Value</th><th scope="col">Verdict</th>' +
+    `<th scope="col">Why</th></tr></thead><tbody>${rows}</tbody></table></div>${whoAmI}` +
+    '</main></body></html>';
+  return new NextResponse(html, {
+    status: 200,
+    headers: { 'content-type': 'text/html; charset=utf-8', ...NO_STORE },
   });
 }

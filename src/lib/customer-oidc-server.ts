@@ -239,7 +239,10 @@ export interface StartedSignIn {
  */
 export async function startSignIn(
   settings: CustomerSignInSettings,
-  input: { readonly returnTo: string; readonly checkId?: string },
+  input: {
+    readonly returnTo: string;
+    readonly check?: { readonly id: string; readonly reportTo: string };
+  },
   now: number = Date.now(),
 ): Promise<StartedSignIn> {
   const configuration = await issuerConfiguration(settings, now);
@@ -264,7 +267,7 @@ export async function startSignIn(
       nonce,
       codeVerifier,
       returnTo: input.returnTo,
-      ...(input.checkId ? { checkId: input.checkId } : {}),
+      ...(input.check ? { check: input.check } : {}),
       expiresAt: now + SIGN_IN_TRANSACTION_SECONDS * 1000,
     },
   };
@@ -284,7 +287,14 @@ export type FinishedSignIn =
       readonly session: CustomerSession;
       readonly claims: IdTokenClaims;
     }
-  | { readonly kind: 'refused'; readonly reason: SignInRefusal; readonly claims: IdTokenClaims }
+  | {
+      readonly kind: 'refused';
+      readonly reason: SignInRefusal;
+      readonly claims: IdTokenClaims;
+      /** The refused person's ID token, which only the live check uses (to ask the deployment). */
+      readonly idToken: string;
+      readonly refreshTokenGranted: boolean;
+    }
   | { readonly kind: 'failed'; readonly detail: string };
 
 /**
@@ -325,7 +335,15 @@ export async function finishSignIn(
     settings.allowedDomains,
     settings.issuer,
   );
-  if (refusal) return { kind: 'refused', reason: refusal, claims };
+  if (refusal) {
+    return {
+      kind: 'refused',
+      reason: refusal,
+      claims,
+      idToken: tokens.id_token,
+      refreshTokenGranted: tokens.refresh_token !== undefined,
+    };
+  }
   return {
     kind: 'signed-in',
     claims,

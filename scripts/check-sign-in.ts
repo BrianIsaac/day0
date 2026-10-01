@@ -10,9 +10,26 @@
  * byte, `DAY0_PUBLIC_URL` https, and the values pushed to the deployment equal
  * to the file's. It never sends a secret anywhere and never prints one.
  *
- * `pnpm check:sign-in` is the live check run with the customer's IT.
+ * `pnpm check:sign-in` is the live check run with the customer's IT:
+ *
+ *   pnpm check:sign-in [env file] [--timeout <seconds>] [--report]
+ *
+ * It prints a one-time link (ten minutes, sealed with the session secret, so
+ * only this install's server opens it), waits on a listener on this machine,
+ * and the operator signs in through the link as a test person in a private
+ * window. The callback, in this mode only, judges each claim that matters
+ * (`iss`, `aud`, `sub`, `email`, `email_verified` or `xms_edov`, `hd` or `tid`,
+ * the lifetime, the refresh token), asks the deployment `config.whoAmI` with
+ * the token, shows the verdicts on the page and posts them back here. Nobody
+ * is signed in. `--report` prints the verdicts (claim names and verdicts, no
+ * values) as one JSON document for the support bundle. It exits 0 when every
+ * line passes or is a note, 1 otherwise.
  */
 import { spawnSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { pathToFileURL } from 'node:url';
 import {
   BROWSER_PROFILE_VAR,
   CUSTOMER_OIDC_ALLOWED_DOMAINS_VAR,
@@ -24,8 +41,20 @@ import {
   parseAllowedDomains,
 } from '../src/lib/customer-oidc';
 import { sessionSecretGap } from '../src/lib/customer-session';
-import { publicOrigin, redirectUriOf, signedOutUriOf } from '../src/lib/customer-sign-in-settings';
+import {
+  customerSignInGaps,
+  publicOrigin,
+  redirectUriOf,
+  signedOutUriOf,
+} from '../src/lib/customer-sign-in-settings';
 import { errorMessage } from '../src/lib/errors';
+import {
+  CHECK_TICKET_SECONDS,
+  sealCheckTicket,
+  type CheckTicket,
+  type SignInCheckReport,
+} from '../src/lib/sign-in-check';
+import { readEnvValues } from './lib/env-file';
 import { firstLine } from './model-reach';
 import { isLoopback } from './setup-route';
 
@@ -460,4 +489,240 @@ export function readDeploymentEnv(v: Values): DeploymentRead {
   });
   if (run.status !== 0) return { error: firstLine(run.stderr ?? '') || 'the Convex CLI failed' };
   return { values: parseDeploymentEnv(run.stdout ?? '') };
+}
+
+/** How a verdict opens its line in the terminal, as `check:setup` marks a section. */
+const VERDICT_MARK: Readonly<Record<CheckStatus, string>> = {
+  ok: 'pass',
+  warn: 'note',
+  gap: 'GAP',
+};
+
+/** The width of the claim column: the longest claim name the check judges, and a gap. */
+const CLAIM_COLUMN = 16;
+
+/**
+ * The live check's report as terminal lines: each claim's verdict, value and
+ * reason in columns, then what the deployment made of the token.
+ *
+ * @param report - The callback's report.
+ */
+export function formatSignInReport(report: SignInCheckReport): string[] {
+  const valueColumn = Math.max(0, ...report.verdicts.map((one) => one.value.length)) + 2;
+  const lines = report.verdicts.map(
+    (one) =>
+      `${VERDICT_MARK[one.status].padEnd(6)}${one.claim.padEnd(CLAIM_COLUMN)}` +
+      `${one.value.padEnd(valueColumn)}${one.note}`,
+  );
+  const who = report.whoAmI;
+  lines.push(
+    who.status === 'ok'
+      ? `${'pass'.padEnd(6)}${'whoAmI'.padEnd(CLAIM_COLUMN)}${who.ownerKey}  The deployment accepted the token` +
+          (who.verifiedAddress
+            ? ` (verified address ${who.verifiedAddress}).`
+            : ' (no verified address).')
+      : `${'GAP'.padEnd(6)}${'whoAmI'.padEnd(CLAIM_COLUMN)}${who.detail}`,
+  );
+  return lines;
+}
+
+/**
+ * The exit status a report earns: 1 when any claim is a gap or the deployment
+ * did not accept the person, else 0.
+ *
+ * @param report - The callback's report.
+ */
+export function reportExitCode(report: SignInCheckReport): number {
+  const gap = report.whoAmI.status === 'gap' || report.verdicts.some((one) => one.status === 'gap');
+  return gap ? 1 : 0;
+}
+
+/**
+ * The one-time link the operator signs in through.
+ *
+ * @param settings - The public origin and the session secret the ticket is sealed with.
+ * @param ticket - The ticket.
+ */
+export async function signInCheckLink(
+  settings: { readonly publicUrl: string; readonly sessionSecret: string },
+  ticket: CheckTicket,
+): Promise<string> {
+  const sealed = await sealCheckTicket(settings.sessionSecret, ticket);
+  return `${settings.publicUrl}/api/auth/oidc/login?check=${encodeURIComponent(sealed)}`;
+}
+
+function isReport(value: unknown): value is SignInCheckReport {
+  if (typeof value !== 'object' || value === null) return false;
+  const report = value as Partial<SignInCheckReport>;
+  return (
+    report.version === 1 &&
+    typeof report.checkId === 'string' &&
+    Array.isArray(report.verdicts) &&
+    typeof report.whoAmI === 'object' &&
+    report.whoAmI !== null
+  );
+}
+
+/** A listener waiting for one check's report. */
+export interface WaitingCheck {
+  /** Where the callback posts the report: a port on this machine's loopback. */
+  readonly reportTo: string;
+  /** The report, or a rejection once the time is up. */
+  readonly report: Promise<SignInCheckReport>;
+}
+
+/**
+ * Listen on this machine's loopback for the callback's report on one check.
+ * A post for another check is answered 404 and the wait goes on; the listener
+ * closes once the report arrives or the time is up.
+ *
+ * @param checkId - The check's id.
+ * @param timeoutMs - How long to wait.
+ */
+export async function waitForReport(checkId: string, timeoutMs: number): Promise<WaitingCheck> {
+  let settle:
+    | { resolve: (report: SignInCheckReport) => void; reject: (err: Error) => void }
+    | undefined;
+  const report = new Promise<SignInCheckReport>((resolve, reject) => {
+    settle = { resolve, reject };
+  });
+  const server = createServer((request, response) => {
+    if (request.method !== 'POST' || request.url !== '/report') {
+      response.writeHead(404).end();
+      return;
+    }
+    const chunks: Buffer[] = [];
+    request.on('data', (chunk: Buffer) => chunks.push(chunk));
+    request.on('end', () => {
+      let body: unknown;
+      try {
+        body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      } catch {
+        // Not a report: answered as one for no check this listener waits on.
+        body = undefined;
+      }
+      if (!isReport(body) || body.checkId !== checkId) {
+        response.writeHead(404).end();
+        return;
+      }
+      response.writeHead(204).end();
+      settle?.resolve(body);
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const timer = setTimeout(
+    () =>
+      settle?.reject(
+        new Error(`No sign-in reached the check within ${Math.round(timeoutMs / 1000)} s.`),
+      ),
+    timeoutMs,
+  );
+  const close = (): void => {
+    clearTimeout(timer);
+    server.close();
+  };
+  report.then(close, close);
+  const { port } = server.address() as AddressInfo;
+  return { reportTo: `http://127.0.0.1:${port}/report`, report };
+}
+
+/** The sign-in names the process environment may override, as `check:setup` lets it. */
+const SIGN_IN_NAMES = [
+  'DAY0_PROFILE',
+  BROWSER_PROFILE_VAR,
+  CUSTOMER_OIDC_ISSUER_VAR,
+  CUSTOMER_OIDC_AUDIENCE_VAR,
+  CUSTOMER_OIDC_CLIENT_SECRET_VAR,
+  CUSTOMER_OIDC_ALLOWED_DOMAINS_VAR,
+  CUSTOMER_SESSION_SECRET_VAR,
+  PUBLIC_URL_VAR,
+] as const;
+
+/** The parsed command line. */
+interface CheckArguments {
+  readonly envFile: string;
+  readonly timeoutMs: number;
+  readonly report: boolean;
+}
+
+function parseArguments(argv: readonly string[]): CheckArguments {
+  const timeoutAt = argv.indexOf('--timeout');
+  const seconds = timeoutAt >= 0 ? Number(argv[timeoutAt + 1]) : CHECK_TICKET_SECONDS;
+  if (!Number.isInteger(seconds) || seconds < 1 || seconds > CHECK_TICKET_SECONDS) {
+    throw new Error(`--timeout takes whole seconds from 1 to ${CHECK_TICKET_SECONDS}.`);
+  }
+  const positional = argv.filter(
+    (argument, index) => !argument.startsWith('--') && argv[index - 1] !== '--timeout',
+  );
+  return {
+    envFile: positional[0] ?? '.env.local',
+    timeoutMs: seconds * 1000,
+    report: argv.includes('--report'),
+  };
+}
+
+/** Run the live check from the command line; the exit status is handed back. */
+async function main(argv: readonly string[]): Promise<number> {
+  let args: CheckArguments;
+  try {
+    args = parseArguments(argv);
+  } catch (err) {
+    console.error(`error: ${errorMessage(err)}`);
+    return 2;
+  }
+  const values: Record<string, string> = readEnvValues(args.envFile);
+  for (const name of SIGN_IN_NAMES) {
+    const fromProcess = process.env[name];
+    if (fromProcess !== undefined) values[name] = fromProcess;
+  }
+  const read = (name: string): string | undefined => values[name];
+  const gaps = customerSignInGaps(read);
+  const origin = publicOrigin(read(PUBLIC_URL_VAR));
+  if (gaps.length > 0 || 'gap' in origin) {
+    console.error(`The company sign-in is not set up in ${args.envFile}:`);
+    for (const gap of gaps) console.error(`  ${gap}`);
+    console.error('`./setup.sh sign-in --provider entra|okta|google` sets it up.');
+    return 1;
+  }
+  const checkId = randomBytes(12).toString('base64url');
+  const waiting = await waitForReport(checkId, args.timeoutMs);
+  const link = await signInCheckLink(
+    { publicUrl: origin.origin, sessionSecret: (read(CUSTOMER_SESSION_SECRET_VAR) ?? '').trim() },
+    { checkId, reportTo: waiting.reportTo, expiresAt: Date.now() + args.timeoutMs },
+  );
+  console.log('Open this link in a private window and sign in as the test person:');
+  console.log(`\n  ${link}\n`);
+  console.log(
+    `It works once, for ${Math.round(args.timeoutMs / 60_000)} minutes, and signs nobody in. Waiting...`,
+  );
+  let report: SignInCheckReport;
+  try {
+    report = await waiting.report;
+  } catch (err) {
+    console.error(errorMessage(err));
+    return 1;
+  }
+  console.log('');
+  for (const line of formatSignInReport(report)) console.log(line);
+  if (args.report) {
+    console.log(
+      JSON.stringify(
+        {
+          kind: 'day0-sign-in-check',
+          version: 1,
+          checkedAt: new Date(report.checkedAt).toISOString(),
+          claims: report.verdicts.map(({ claim, status }) => ({ claim, status })),
+          deployment: report.whoAmI.status,
+        },
+        null,
+        2,
+      ),
+    );
+  }
+  return reportExitCode(report);
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  // Handed back rather than passed to process.exit so a piped stdout drains.
+  process.exitCode = await main(process.argv.slice(2));
 }

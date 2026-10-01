@@ -31,6 +31,8 @@ export function customerIssuer(
     readonly env?: Readonly<Record<string, string>>;
     readonly now?: () => number;
     readonly endSession?: boolean;
+    /** Answers a request to anything but the issuer; undefined fails the test as an unexpected call. */
+    readonly elsewhere?: (request: Request) => Promise<Response | undefined>;
   } = {},
 ): FakeIssuer {
   const issuer = createIssuer({
@@ -63,10 +65,10 @@ export function customerIssuer(
     'fetch',
     async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       const request = new Request(input, init);
-      if (!request.url.startsWith(issuer.issuer)) {
-        throw new Error(`the test reached ${request.url}, which is not the test issuer`);
-      }
-      return issuer.handle(request);
+      if (request.url.startsWith(issuer.issuer)) return issuer.handle(request);
+      const answer = await options.elsewhere?.(request);
+      if (answer) return answer;
+      throw new Error(`the test reached ${request.url}, which is not the test issuer`);
     },
   );
   return issuer;

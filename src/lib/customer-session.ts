@@ -67,8 +67,11 @@ export interface SignInTransaction {
   readonly codeVerifier: string;
   /** The same-origin path to land on once signed in. */
   readonly returnTo: string;
-  /** Set when `pnpm check:sign-in` started this sign-in: the callback reports instead of signing in. */
-  readonly checkId?: string;
+  /**
+   * Set when `pnpm check:sign-in` started this sign-in: the callback reports the
+   * claims to the check on this machine instead of signing anyone in.
+   */
+  readonly check?: { readonly id: string; readonly reportTo: string };
   readonly expiresAt: number;
 }
 
@@ -190,6 +193,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function isCheck(value: unknown): value is { id: string; reportTo: string } {
+  return isRecord(value) && typeof value.id === 'string' && typeof value.reportTo === 'string';
+}
+
 /**
  * Seal a session.
  *
@@ -271,7 +278,7 @@ export async function openTransaction(
     typeof value.codeVerifier !== 'string' ||
     typeof value.returnTo !== 'string' ||
     typeof value.expiresAt !== 'number' ||
-    (value.checkId !== undefined && typeof value.checkId !== 'string')
+    (value.check !== undefined && !isCheck(value.check))
   ) {
     return undefined;
   }
@@ -282,7 +289,9 @@ export async function openTransaction(
     nonce: value.nonce,
     codeVerifier: value.codeVerifier,
     returnTo: value.returnTo,
-    ...(typeof value.checkId === 'string' ? { checkId: value.checkId } : {}),
+    ...(isCheck(value.check)
+      ? { check: { id: value.check.id, reportTo: value.check.reportTo } }
+      : {}),
     expiresAt: value.expiresAt,
   };
 }
