@@ -350,11 +350,15 @@ export async function runProvisionApp(
     // Slack answered ok, so the app exists; without its credentials Day0
     // cannot install it and would create another on the next click (P3-17).
     const appId = typeof reply.app_id === 'string' ? reply.app_id : undefined;
-    await logEvent(ctx, {
-      agentId: surface.agentId,
-      type: 'surface.app-unrecorded',
-      payload: { surfaceId: surface._id, ...(appId ? { appId } : {}) },
-    });
+    await logEvent(
+      ctx,
+      {
+        agentId: surface.agentId,
+        type: 'surface.app-unrecorded',
+        payload: { surfaceId: surface._id, ...(appId ? { appId } : {}) },
+      },
+      { startedUnder: agent.userId },
+    );
     if (!appId) throw error;
     throw new Error(
       `Slack created app ${appId} but its reply carried no client credentials, so Day0 cannot ` +

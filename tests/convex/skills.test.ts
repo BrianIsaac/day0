@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
+import { PROPOSAL_AFTER_HANDOVER } from '../../convex/skills';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
@@ -846,5 +847,45 @@ describe('skills.approve while a handover waits for its runs (U3-m3)', (): void 
     await expect(
       harness.withIdentity(OWNER).mutation(api.skills.approve, { skillId }),
     ).resolves.toEqual({ ok: true });
+  });
+});
+
+describe('skills.propose from an evaluation a handover overtook (U3-m2)', (): void => {
+  /** The proposal the evaluation makes, as the owner it read the employee under. */
+  const proposal = (agentId: Id<'agents'>, workItemId: Id<'workItems'>, startedUnder: string) => ({
+    agentId,
+    workItemId,
+    name: 'update-linear-ticket',
+    description: 'Comment on and close a Linear ticket.',
+    rationale: 'No skill handles linear work yet.',
+    requiredScopes: ['boss:message', 'linear:read', 'linear:write'],
+    startedUnder,
+  });
+
+  it('proposes the skill while the employee is still the owner the evaluation read it under', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedAgentAndWork(harness, 'linear');
+
+    const skillId = await harness.mutation(
+      internal.skills.propose,
+      proposal(agentId, workItemId, 'owner'),
+    );
+
+    expect((await harness.run(async (ctx) => await ctx.db.get(skillId)))?.state).toBe('proposed');
+  });
+
+  it('proposes nothing once the employee was handed to another owner', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedAgentAndWork(harness, 'linear');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(agentId, { userId: 'colleague' });
+    });
+
+    await expect(
+      harness.mutation(internal.skills.propose, proposal(agentId, workItemId, 'owner')),
+    ).rejects.toThrow(PROPOSAL_AFTER_HANDOVER);
+    expect(await harness.run(async (ctx) => await ctx.db.query('skills').collect())).toEqual([]);
   });
 });

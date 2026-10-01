@@ -651,7 +651,19 @@ export const installBuiltin = internalMutation({
   },
 });
 
-/** Internal: proposes a skill for the manager, from the work that needed it. */
+/** Why a skill is not proposed: the employee changed owner during the evaluation that asked. */
+export const PROPOSAL_AFTER_HANDOVER =
+  'the employee was handed over to a new manager while this work was being evaluated';
+
+/**
+ * Internal: proposes a skill for the manager, from the work that needed it. With
+ * `startedUnder`, the owner the evaluation read the employee under, the proposal is refused once
+ * the employee is gone or another owner's (the wave 9 review's U3-m2): it would land, out of the
+ * old owner's evaluation, as the new manager's to approve. The refused evaluation's step is
+ * resumed by the stall sweep, under the owner the employee has now.
+ *
+ * @throws Error with {@link PROPOSAL_AFTER_HANDOVER}.
+ */
 export const propose = internalMutation({
   args: {
     agentId: v.id('agents'),
@@ -662,8 +674,12 @@ export const propose = internalMutation({
     requiredScopes: v.array(v.string()),
     surfaceClass: v.optional(v.string()),
     operation: v.optional(v.string()),
+    startedUnder: v.optional(v.string()),
   },
-  handler: async (ctx, args): Promise<Id<'skills'>> => {
+  handler: async (ctx, { startedUnder, ...args }): Promise<Id<'skills'>> => {
+    if (startedUnder !== undefined && (await ctx.db.get(args.agentId))?.userId !== startedUnder) {
+      throw new Error(PROPOSAL_AFTER_HANDOVER);
+    }
     const target = await surfaceForWork(ctx, args.agentId, args.workItemId);
     const targetSurface = target.targetSurface;
     const requestedScopes =

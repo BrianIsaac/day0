@@ -614,6 +614,7 @@ async function evaluateWorkItemHandler(
       requiredScopes,
       surfaceClass: shape.surfaceClass,
       operation: shape.operation,
+      ...(agent?.userId === undefined ? {} : { startedUnder: agent.userId }),
     });
     await ctx.runMutation(internal.work.setProposedSkill, {
       workItemId: args.workItemId,
@@ -1137,6 +1138,7 @@ async function holdDay0Actions(
       surfaces,
       mode: SURFACE_MODE,
       autonomousActions: autonomousActionsOn(agent),
+      currentManager: agent.bossEmail,
       managerFeedback: args.managerFeedback,
       managerAnswers: args.managerAnswers,
       landedWrites: args.landedWrites,
@@ -1867,17 +1869,21 @@ async function applyCarriedReads(
     },
   );
   const applied = scrubKnownValues(rows, args.knownValues);
-  await logEvent(ctx, {
-    agentId: args.agent._id,
-    type: CARRIED_READS_APPLIED,
-    payload: {
-      workItemId: args.workItemId,
-      runId: args.runId,
-      indexes,
-      surfaces: [...new Set(args.reads.map((read) => String(read.args.surface)))],
-      landed: indexes.every((index) => applied[index]?.ok === true && !applied[index]?.held),
+  await logEvent(
+    ctx,
+    {
+      agentId: args.agent._id,
+      type: CARRIED_READS_APPLIED,
+      payload: {
+        workItemId: args.workItemId,
+        runId: args.runId,
+        indexes,
+        surfaces: [...new Set(args.reads.map((read) => String(read.args.surface)))],
+        landed: indexes.every((index) => applied[index]?.ok === true && !applied[index]?.held),
+      },
     },
-  });
+    { startedUnder: args.agent.userId },
+  );
   return { ...args.initial, actions, applied };
 }
 
@@ -2534,6 +2540,7 @@ export const authorDependentActions = internalAction({
             surfaces,
             mode: 'real',
             autonomousActions: autonomousActionsOn(agent),
+            currentManager: agent.bossEmail,
             managerFeedback: feedback,
             managerAnswers: managerAnswersOf(item),
             appliedCorrections,
@@ -2547,11 +2554,20 @@ export const authorDependentActions = internalAction({
             heldElsewhere: held,
             closingGate,
             onAuditCorrection: async (removedIndices, reason) => {
-              await logEvent(ctx, {
-                agentId: item.agentId,
-                type: 'audit.corrected',
-                payload: { workItemId: args.workItemId, runId: args.runId, removedIndices, reason },
-              });
+              await logEvent(
+                ctx,
+                {
+                  agentId: item.agentId,
+                  type: 'audit.corrected',
+                  payload: {
+                    workItemId: args.workItemId,
+                    runId: args.runId,
+                    removedIndices,
+                    reason,
+                  },
+                },
+                { startedUnder: agent.userId },
+              );
             },
           }),
         );
@@ -2586,16 +2602,20 @@ export const authorDependentActions = internalAction({
         const taken = newlyHeldWrites(output.actions, heldElsewhere, heldNow, surfaces);
         if (taken.length > 0) {
           authored = output;
-          await logEvent(ctx, {
-            agentId: item.agentId,
-            type: CLOSING_REAUTHORED,
-            payload: {
-              workItemId: args.workItemId,
-              runId: args.runId,
-              reason: HOLDER_CHANGED,
-              heldNow: taken.map((held) => held.externalId),
+          await logEvent(
+            ctx,
+            {
+              agentId: item.agentId,
+              type: CLOSING_REAUTHORED,
+              payload: {
+                workItemId: args.workItemId,
+                runId: args.runId,
+                reason: HOLDER_CHANGED,
+                heldNow: taken.map((held) => held.externalId),
+              },
             },
-          });
+            { startedUnder: agent.userId },
+          );
           heldElsewhere = heldNow;
           droppedWritesTo = taken;
           output = await authorUnder(heldNow, 'holder-changed');
@@ -2709,16 +2729,20 @@ export const authorDependentActions = internalAction({
         return { ok: false, reason: stop };
       }
       if (leftSaid.said.length > 0) {
-        await logEvent(ctx, {
-          agentId: item.agentId,
-          type: 'audit.corrected',
-          payload: {
-            workItemId: args.workItemId,
-            runId: args.runId,
-            removedIndices: [],
-            reason: `${HELD_ITEM_REPLY_COMPLETED}: ${leftSaid.said.join(' ')}`,
+        await logEvent(
+          ctx,
+          {
+            agentId: item.agentId,
+            type: 'audit.corrected',
+            payload: {
+              workItemId: args.workItemId,
+              runId: args.runId,
+              removedIndices: [],
+              reason: `${HELD_ITEM_REPLY_COMPLETED}: ${leftSaid.said.join(' ')}`,
+            },
           },
-        });
+          { startedUnder: agent.userId },
+        );
       }
       // A question this run put to the manager, here, in phase one or in an
       // earlier run, that nobody has answered: the writes the plan left to
@@ -3934,15 +3958,19 @@ async function executorCorrections(
     known: args.knownValues ?? (await knownValuesForAgent(ctx, args.agent)),
   });
   if (scrubbed.redaction) {
-    await logEvent(ctx, {
-      agentId: args.item.agentId,
-      type: 'work.corrections-redaction-limited',
-      payload: {
-        workItemId: args.item._id,
-        runId: args.runId,
-        correctionIds: carried.map((row) => row._id),
+    await logEvent(
+      ctx,
+      {
+        agentId: args.item.agentId,
+        type: 'work.corrections-redaction-limited',
+        payload: {
+          workItemId: args.item._id,
+          runId: args.runId,
+          correctionIds: carried.map((row) => row._id),
+        },
       },
-    });
+      { startedUnder: args.agent.userId },
+    );
   }
   return scrubbed.entries;
 }
