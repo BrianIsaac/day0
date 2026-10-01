@@ -101,6 +101,8 @@ const openTransferValidator = v.object({
   expiresAt: v.number(),
   /** While `accepting`: when the runs in flight are stopped at the latest. */
   settleBy: v.optional(v.number()),
+  /** While `accepting`: the runs the move waits for, counted as the move counts them. */
+  runsInFlight: v.optional(v.number()),
 });
 
 /** An open request as the account it names reads it, for the inbox and the acceptance dialog. */
@@ -654,8 +656,10 @@ export const expireDue = internalMutation({
 
 /**
  * Public, owner-guarded (`assertOwnsAgent`): the employee's open request, or
- * null, for the People card and the header. An asked request past its expiry
- * is not open, whether or not the sweep has written it. Writes nothing.
+ * null, for the People card and the header; an accepting one with the runs the
+ * move waits for, so the card never counts them by a rule of its own (U4-m4).
+ * An asked request past its expiry is not open, whether or not the sweep has
+ * written it. Writes nothing.
  */
 export const openForAgent = query({
   args: { agentId: v.id('agents') },
@@ -673,6 +677,9 @@ export const openForAgent = query({
       requestedAt: open.requestedAt,
       expiresAt: open.expiresAt,
       ...(open.settleBy !== undefined ? { settleBy: open.settleBy } : {}),
+      ...(open.state === 'accepting'
+        ? { runsInFlight: await runsInFlight(ctx.db, args.agentId) }
+        : {}),
     };
   },
 });

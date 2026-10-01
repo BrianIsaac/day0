@@ -910,7 +910,7 @@ describe('managerTransfers.openForAgent', (): void => {
     expect(await owner.query(api.managerTransfers.openForAgent, { agentId: maya })).toBeNull();
   });
 
-  it('answers an accepting request with its deadline', async (): Promise<void> => {
+  it('answers an accepting request with its deadline and the runs the move waits for, counted as the move counts them (U4-m4)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const maya = await employee(harness);
     const transferId = await insertRequest(harness, {
@@ -918,9 +918,36 @@ describe('managerTransfers.openForAgent', (): void => {
       state: 'accepting',
       settleBy: 5_000,
     });
+    await harness.run(async (ctx) => {
+      const item = {
+        agentId: maya,
+        sourceCategory: 'ticket-queue' as const,
+        sourceSystem: 'linear',
+        contentSummary: 'Close it',
+        contentRefs: [],
+        observedAt: 1,
+        createdAt: 1,
+      };
+      await ctx.db.insert('workItems', {
+        ...item,
+        externalId: 'REVOPS-1',
+        externalClaimKey: 'linear:REVOPS-1',
+        title: 'Close REVOPS-1',
+        state: 'executing',
+      });
+      // Approved and not yet applied: kept from its apply while accepting, so not a run.
+      await ctx.db.insert('workItems', {
+        ...item,
+        externalId: 'REVOPS-2',
+        externalClaimKey: 'linear:REVOPS-2',
+        title: 'Close REVOPS-2',
+        state: 'actions-pending',
+        approvedIndexes: [0],
+      });
+    });
     expect(
       await harness.withIdentity(OWNER).query(api.managerTransfers.openForAgent, { agentId: maya }),
-    ).toMatchObject({ transferId, state: 'accepting', settleBy: 5_000 });
+    ).toMatchObject({ transferId, state: 'accepting', settleBy: 5_000, runsInFlight: 1 });
   });
 
   it('refuses another account', async (): Promise<void> => {

@@ -220,23 +220,6 @@ export function managerCardState(
 }
 
 /**
- * How many of the employee's runs are in flight: items executing, and items whose held actions
- * were approved and whose apply is scheduled or running, as the move counts them before it
- * settles (the transfer plan, section 6.4).
- *
- * @param items - The employee's work items.
- */
-export function runsInFlightOf(
-  items: readonly Pick<Doc<'workItems'>, 'state' | 'approvedIndexes'>[],
-): number {
-  return items.filter(
-    (item) =>
-      item.state === 'executing' ||
-      (item.state === 'actions-pending' && item.approvedIndexes !== undefined),
-  ).length;
-}
-
-/**
  * Whether this browser signs in as the one manager of an installation that has no other: the
  * local sign-in under the `local-dev` profile, as `managerTransfers.ask` refuses it. The hosted
  * demo leaves the profile unset, but signs in through Clerk.
@@ -272,8 +255,6 @@ function ManagerCard({ agent, surfaceMode }: ManagerCardProps) {
   const standing = useQuery(api.agents.managerStanding, { agentId: agent._id });
   const departures = useQuery(api.managerTransfers.departures, {});
   const config = useQuery(api.config.surfaceMode);
-  const accepting = open?.state === 'accepting';
-  const work = useQuery(api.work.listForAgent, accepting ? { agentId: agent._id } : 'skip');
   const [dialog, setDialog] = useState<CardDialog | null>(null);
   const card = useRef<HTMLElement>(null);
   const flagId = useId();
@@ -368,7 +349,7 @@ function ManagerCard({ agent, surfaceMode }: ManagerCardProps) {
         acceptingCardLine({
           name: agent.name,
           to: state.open.toAddress,
-          runs: work === undefined ? undefined : runsInFlightOf(work),
+          runs: state.open.runsInFlight,
           settleBy: state.open.settleBy,
           zone,
         }),
