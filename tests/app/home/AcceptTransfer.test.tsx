@@ -409,6 +409,23 @@ describe('AcceptTransfer', () => {
     ]);
   });
 
+  it('offers a way back from the reason without sending anything, focus returning to Decline (the wave 9 review’s U4-m7)', async () => {
+    backend.preview = PREVIEW;
+    mount(<AcceptTransfer />);
+    await press(dialog(), 'Decline');
+    const reason = dialog().querySelector('textarea');
+    if (!reason) throw new Error('no reason field');
+    typeInto(reason, 'Not sure yet.');
+    await press(dialog(), 'Back');
+
+    expect(dialog().querySelector('textarea')).toBeNull();
+    expect(focusedName()).toBe('Decline');
+    expect(backend.calls).toEqual([]);
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    await press(dialog(), 'Decline');
+    expect(dialog().querySelector('textarea')?.value).toBe('');
+  });
+
   it('reveals the reason with one button and sends the decline with another, so the first click sends nothing', async () => {
     backend.preview = PREVIEW;
     mount(<AcceptTransfer />);

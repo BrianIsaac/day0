@@ -23,6 +23,7 @@ import { refusalText, useChange, type Change } from '../components/use-change';
 import {
   acceptedWords,
   CHECK,
+  BACK_FROM_DECLINE,
   DECLINE,
   declinedWords,
   declineReasonLabel,
@@ -132,11 +133,19 @@ function TakeOn({ preview, change, notice, onClose, onAnswer }: TakeOnProps) {
   const [reason, setReason] = useState('');
   const [answering, setAnswering] = useState<Answering | null>(null);
   const reasonField = useRef<HTMLTextAreaElement>(null);
+  const revealButton = useRef<HTMLButtonElement>(null);
+  // Set by Back, so focus returns to the Decline that opened the reason, not on first draw.
+  const backFromReason = useRef(false);
   const { name } = preview.employee;
   const from = preview.fromAddress;
 
   useEffect(() => {
-    if (declining) reasonField.current?.focus();
+    if (declining) {
+      reasonField.current?.focus();
+    } else if (backFromReason.current) {
+      backFromReason.current = false;
+      revealButton.current?.focus();
+    }
   }, [declining]);
 
   const takeOn = (): void => {
@@ -259,18 +268,36 @@ function TakeOn({ preview, change, notice, onClose, onAnswer }: TakeOnProps) {
           {/* Two buttons, never one that changes its type: a click that opened the reason must
               not also submit the form it turned into a submit button for. */}
           {declining ? (
-            <Button
-              key="send-decline"
-              type="submit"
-              variant="danger"
-              size="large"
-              disabled={change.busy}
-            >
-              {change.busy && answering === 'decline' ? 'Declining…' : DECLINE}
-            </Button>
+            <>
+              {/* The way back sends nothing: the reason is dropped and the two answers stand
+                  (the wave 9 review's U4-m7: only Escape left the reason, closing the dialog). */}
+              <Button
+                key="back-from-reason"
+                variant="quiet"
+                size="large"
+                disabled={change.busy}
+                onClick={() => {
+                  backFromReason.current = true;
+                  setReason('');
+                  setDeclining(false);
+                }}
+              >
+                {BACK_FROM_DECLINE}
+              </Button>
+              <Button
+                key="send-decline"
+                type="submit"
+                variant="danger"
+                size="large"
+                disabled={change.busy}
+              >
+                {change.busy && answering === 'decline' ? 'Declining…' : DECLINE}
+              </Button>
+            </>
           ) : (
             <Button
               key="ask-reason"
+              ref={revealButton}
               size="large"
               disabled={change.busy}
               onClick={() => {

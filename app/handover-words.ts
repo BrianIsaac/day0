@@ -489,6 +489,9 @@ export function takeOnLabel(name: string): string {
 /** The acceptance dialog's decline control, which opens the reason and then sends it. */
 export const DECLINE = 'Decline';
 
+/** The way back from the decline's reason to the two answers, sending nothing. */
+export const BACK_FROM_DECLINE = 'Back';
+
 /**
  * The decline's reason field.
  *
