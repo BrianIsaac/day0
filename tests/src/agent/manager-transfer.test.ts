@@ -7,7 +7,6 @@ import {
   MAX_OPEN_TRANSFERS_PER_OWNER,
   MAX_TRANSFER_ASKS_PER_WINDOW,
   MAX_TRANSFER_NOTE_LENGTH,
-  NOT_NAMED_IN_TRANSFER,
   OWN_TRANSFER,
   OPEN_MANAGER_TRANSFER_STATES,
   TRANSFER_ASK_WINDOW_MS,
@@ -123,7 +122,9 @@ describe('the bounds (D16)', (): void => {
 describe('the refusals the named manager reads', (): void => {
   it('say what is wrong in the words the dialog shows', (): void => {
     expect(TRANSFER_NOT_FOUND).toBe('This handover no longer exists.');
-    expect(NOT_NAMED_IN_TRANSFER).toBe('This handover is addressed to someone else.');
+    // One answer for a request that does not exist and one addressed to another account, so an
+    // id is confirmed to nobody it does not name (the wave 9 review's U1-m2).
+    expect(TRANSFER_NOT_FOUND).not.toMatch(/addressed|someone else/);
     expect(OWN_TRANSFER).toBe(
       'This handover was asked from your own account, so your account cannot take it on.',
     );

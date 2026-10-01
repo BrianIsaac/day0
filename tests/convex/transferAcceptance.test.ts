@@ -9,7 +9,7 @@ import { HANDOVER_CUT_REASON } from '../../convex/surfaces';
 import { OUTCOME_UNKNOWN_REASON } from '../../src/work/reconciliation';
 import { EMPLOYEE_NOT_YOURS } from '../../src/agent/employee-access';
 import {
-  NOT_NAMED_IN_TRANSFER,
+  TRANSFER_NOT_FOUND,
   OWN_TRANSFER,
   transferExpiresAt,
 } from '../../src/agent/manager-transfer';
@@ -467,7 +467,19 @@ describe('transferPreview: what the named manager reads before accepting (transf
       office.harness
         .withIdentity(managerIdentity('bystander'))
         .query(api.transferAcceptance.transferPreview, { transferId: office.transferId }),
-    ).rejects.toMatchObject({ data: NOT_NAMED_IN_TRANSFER });
+    ).rejects.toMatchObject({ data: TRANSFER_NOT_FOUND });
+  });
+
+  it('reads a link naming no request, or another table’s row, as one that does not exist (U4-m1)', async (): Promise<void> => {
+    const office = await seedOffice();
+    for (const transferId of ['garbage', office.maya as string]) {
+      await expect(
+        office.harness
+          .withIdentity(COLLEAGUE)
+          .query(api.transferAcceptance.transferPreview, { transferId }),
+        transferId,
+      ).rejects.toMatchObject({ data: TRANSFER_NOT_FOUND });
+    }
   });
 
   it('answers nothing for a request that is no longer waiting for an answer', async (): Promise<void> => {
@@ -1189,6 +1201,6 @@ describe('accept: the refusals, each before anything moves', (): void => {
       office.harness
         .withIdentity(managerIdentity('bystander'))
         .mutation(api.transferAcceptance.accept, { transferId: office.transferId }),
-    ).rejects.toMatchObject({ data: NOT_NAMED_IN_TRANSFER });
+    ).rejects.toMatchObject({ data: TRANSFER_NOT_FOUND });
   });
 });

@@ -148,11 +148,12 @@ export function isWithinAskWindow(requestedAt: number, now: number): boolean {
   return now - requestedAt < TRANSFER_ASK_WINDOW_MS;
 }
 
-/** The refusal for a request that no longer exists. A `ConvexError`'s data, so the dialog can show it. */
+/**
+ * The refusal for a request that no longer exists, and for one addressed to another account,
+ * which is told nothing more (the wave 9 review's U1-m2). A `ConvexError`'s data, so the dialog
+ * can show it.
+ */
 export const TRANSFER_NOT_FOUND = 'This handover no longer exists.';
-
-/** The refusal for an account the request does not name. A `ConvexError`'s data. */
-export const NOT_NAMED_IN_TRANSFER = 'This handover is addressed to someone else.';
 
 /**
  * The refusal for a caller whose sign-in asserts no verified address: a

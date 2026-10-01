@@ -212,9 +212,9 @@ describe('AcceptTransfer', () => {
   });
 
   it('says a refused read in the backend’s words, and closes by taking the request off the address', async () => {
-    backend.preview = new ConvexError('This handover is addressed to someone else.');
+    backend.preview = new ConvexError('This handover no longer exists.');
     mount(<AcceptTransfer />);
-    expect(dialog().textContent).toContain('This handover is addressed to someone else.');
+    expect(dialog().textContent).toContain('This handover no longer exists.');
     await press(dialog(), 'Close');
     expect(document.querySelector('[role="dialog"]')).toBeNull();
     expect(route.replaced).toEqual(['/']);

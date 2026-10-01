@@ -9,7 +9,6 @@ import { DEV_NO_AUTH_ISSUER, DEV_NO_AUTH_SESSION_CLAIM } from '../src/lib/dev-au
 import type { EnvReader } from '../src/lib/hosted-markers';
 import { normaliseManagerAddress, sameManagerAddress } from '../src/agent/manager-address';
 import {
-  NOT_NAMED_IN_TRANSFER,
   OWN_TRANSFER,
   TRANSFER_NOT_FOUND,
   UNVERIFIED_FOR_TRANSFER,
@@ -109,11 +108,17 @@ function callerIssuer(identity: UserIdentity, read: EnvReader): CallerIssuer {
  * OIDC provider's `email_verified` arrives mapped to `emailVerified`; a custom
  * JWT provider's (the local issuer's) arrives raw as `email_verified`, which a
  * self-hosted backend was seen to do on 1 October. Undefined when the token
- * says nothing; any value other than a boolean is not the claim and is kept
- * as said, so it never reads as absent.
+ * says nothing; `true` only when every spelling present says `true`, so two
+ * spellings that disagree verify nothing whichever comes first (the wave 9
+ * review's U1-m1). Any value other than a boolean is not the claim and is
+ * kept as said, so it never reads as absent.
  */
 function emailVerifiedClaim(identity: UserIdentity): unknown {
-  return identity.emailVerified ?? identity.email_verified;
+  const said = [identity.emailVerified, identity.email_verified].filter(
+    (claim: unknown) => claim !== undefined,
+  );
+  if (said.length === 0) return undefined;
+  return said.find((claim: unknown) => claim !== true) ?? true;
 }
 
 /**
@@ -228,21 +233,27 @@ export interface NamedInTransfer {
  * counterpart of {@link assertOwnsAgent} for the employee's owner; it says
  * nothing about the request's state, which each caller checks for its own move.
  *
- * @throws ConvexError with {@link TRANSFER_NOT_FOUND}, {@link UNVERIFIED_FOR_TRANSFER},
- *   {@link NOT_NAMED_IN_TRANSFER} or {@link OWN_TRANSFER}, words the dialog shows; the
- *   not-authenticated error for an anonymous caller.
+ * An unverified caller is refused before anything is read, and every caller the
+ * request does not name reads it as one that does not exist, as does a string
+ * that is not a request's id (a link pasted wrong, another table's row): an id
+ * is confirmed to nobody it does not name (the wave 9 review's U1-m2, U4-m1).
+ *
+ * @param transferId - The request's id as the caller gave it, checked here.
+ * @throws ConvexError with {@link UNVERIFIED_FOR_TRANSFER}, {@link TRANSFER_NOT_FOUND} or
+ *   {@link OWN_TRANSFER}, words the dialog shows; the not-authenticated error for an
+ *   anonymous caller.
  */
 export async function assertNamedInTransfer(
   ctx: QueryCtx | MutationCtx,
-  transferId: Id<'managerTransfers'>,
+  transferId: string,
 ): Promise<NamedInTransfer> {
   const caller = await getCallerOrThrow(ctx);
-  const transfer = await ctx.db.get(transferId);
-  if (!transfer) throw new ConvexError(TRANSFER_NOT_FOUND);
   const address = verifiedAddressOf(caller);
   if (address === undefined) throw new ConvexError(UNVERIFIED_FOR_TRANSFER);
-  if (!sameManagerAddress(address, transfer.toAddress)) {
-    throw new ConvexError(NOT_NAMED_IN_TRANSFER);
+  const id = ctx.db.normalizeId('managerTransfers', transferId);
+  const transfer = id === null ? null : await ctx.db.get(id);
+  if (!transfer || !sameManagerAddress(address, transfer.toAddress)) {
+    throw new ConvexError(TRANSFER_NOT_FOUND);
   }
   if (caller.ownerKey === transfer.fromOwnerKey) throw new ConvexError(OWN_TRANSFER);
   return { transfer, caller };

@@ -13,7 +13,6 @@ import {
 } from '../../convex/ownership';
 import type { Id } from '../../convex/_generated/dataModel';
 import {
-  NOT_NAMED_IN_TRANSFER,
   OWN_TRANSFER,
   TRANSFER_NOT_FOUND,
   UNVERIFIED_FOR_TRANSFER,
@@ -244,6 +243,29 @@ describe('verifiedAddressOf', (): void => {
     expect(verifiedAddressOf(said, trusted)).toBeUndefined();
   });
 
+  it('believes neither spelling of the claim when the two disagree, whichever comes first (U1-m1)', (): void => {
+    const env = deploymentEnv({
+      DAY0_OIDC_ISSUER: CUSTOMER_ISSUER,
+      DAY0_OIDC_EMAIL_TRUSTED: 'true',
+    });
+    for (const issuer of [DEV_NO_AUTH_ISSUER, CUSTOMER_ISSUER, CLERK_ISSUER]) {
+      for (const claims of [
+        { emailVerified: true, email_verified: false },
+        { emailVerified: false, email_verified: true },
+        { emailVerified: true, email_verified: 'false' },
+      ]) {
+        const both = identity(issuer, 'u', { email: 'boss@day0.local', ...claims });
+        expect(verifiedAddressOf(both, env), `${issuer} ${JSON.stringify(claims)}`).toBeUndefined();
+      }
+      const agreeing = identity(issuer, 'u', {
+        email: 'boss@day0.local',
+        emailVerified: true,
+        email_verified: true,
+      });
+      expect(verifiedAddressOf(agreeing, env), issuer).toBe('boss@day0.local');
+    }
+  });
+
   it('refuses an address that is not shaped like one, verified or not', (): void => {
     const env = deploymentEnv({});
     const odd = identity(CLERK_ISSUER, 'u', { email: 'not an address', emailVerified: true });
@@ -361,7 +383,7 @@ describe('assertNamedInTransfer', (): void => {
     ).resolves.toBe(`refused: ${OWN_TRANSFER}`);
   });
 
-  it('refuses every other account with words the dialog can show, the owner who asked included', async (): Promise<void> => {
+  it('answers every other account as it answers a request that does not exist, the owner who asked included, so no id is confirmed to anyone it does not name (U1-m2)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const transferId = await seedRequest(harness);
     for (const who of [
@@ -369,8 +391,46 @@ describe('assertNamedInTransfer', (): void => {
       { subject: 'someone', email: 'someone@day0.local', emailVerified: true },
     ]) {
       await expect(guardFor(harness, who, transferId), who.subject).resolves.toBe(
-        `refused: ${NOT_NAMED_IN_TRANSFER}`,
+        `refused: ${TRANSFER_NOT_FOUND}`,
       );
+    }
+  });
+
+  it('refuses an unverified caller before it reads the request, so a missing id and a live one answer alike (U1-m2)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const transferId = await seedRequest(harness);
+    const gone = await seedRequest(harness);
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.delete(gone);
+    });
+    const unverified = { subject: 'lead', email: 'lead@day0.local', emailVerified: false };
+    await expect(guardFor(harness, unverified, transferId)).resolves.toBe(
+      `refused: ${UNVERIFIED_FOR_TRANSFER}`,
+    );
+    await expect(guardFor(harness, unverified, gone)).resolves.toBe(
+      `refused: ${UNVERIFIED_FOR_TRANSFER}`,
+    );
+  });
+
+  it("reads an id that is not a handover request's, or not an id at all, as one that does not exist (U4-m1)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const transferId = await seedRequest(harness);
+    const agentId = await harness.run(
+      async (ctx) => (await ctx.db.get(transferId))!.agentId as string,
+    );
+    const lead = { subject: 'lead', email: 'lead@day0.local', emailVerified: true };
+    for (const id of ['garbage', agentId, '']) {
+      await expect(
+        harness.withIdentity(lead).run(async (ctx) => {
+          try {
+            await assertNamedInTransfer(ctx, id);
+            return 'answered';
+          } catch (error: unknown) {
+            return error instanceof ConvexError ? `refused: ${String(error.data)}` : 'crashed';
+          }
+        }),
+        id,
+      ).resolves.toBe(`refused: ${TRANSFER_NOT_FOUND}`);
     }
   });
 

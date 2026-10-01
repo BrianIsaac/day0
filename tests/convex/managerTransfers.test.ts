@@ -26,7 +26,6 @@ import {
 } from '../../convex/managerTransfers';
 import { MANAGER_ADDRESS_REFUSAL } from '../../src/agent/manager-address';
 import {
-  NOT_NAMED_IN_TRANSFER,
   TRANSFER_DEPARTURES_WINDOW_MS,
   TRANSFER_EXPIRY_MS,
   TRANSFER_NOT_FOUND,
@@ -766,8 +765,8 @@ describe('managerTransfers.decline', (): void => {
       refusal(
         harness.withIdentity(identity).mutation(api.managerTransfers.decline, { transferId }),
       );
-    expect(await decline(WEI)).toBe(NOT_NAMED_IN_TRANSFER);
-    expect(await decline(OWNER)).toBe(NOT_NAMED_IN_TRANSFER);
+    expect(await decline(WEI)).toBe(TRANSFER_NOT_FOUND);
+    expect(await decline(OWNER)).toBe(TRANSFER_NOT_FOUND);
     expect(await decline(managerIdentity('priya', { emailVerified: false }))).toBe(
       UNVERIFIED_FOR_TRANSFER,
     );

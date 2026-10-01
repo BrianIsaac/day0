@@ -1149,7 +1149,9 @@ export const settleDue = internalMutation({
  * @throws ConvexError with the guard's words for any other caller.
  */
 export const transferPreview = query({
-  args: { transferId: v.id('managerTransfers') },
+  // A string, not an id: the dialog reads it from the address, and the guard reads one that names
+  // no request as not found rather than letting the validator's text reach the dialog (U4-m1).
+  args: { transferId: v.string() },
   returns: v.union(v.null(), transferPreviewValidator),
   handler: async (ctx, args): Promise<TransferPreview | null> => {
     const { transfer, caller } = await assertNamedInTransfer(ctx, args.transferId);

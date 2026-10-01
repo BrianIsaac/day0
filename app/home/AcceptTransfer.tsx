@@ -64,8 +64,8 @@ function useTransferPreview(transferId: string): HandoverPreview | null | undefi
     () => ({
       preview: {
         query: api.transferAcceptance.transferPreview,
-        // The backend validates the id; one that names no request is refused as a value above.
-        args: { transferId: transferId as Id<'managerTransfers'> },
+        // The backend reads a string that names no request as not found, refused as a value above.
+        args: { transferId },
       },
     }),
     [transferId],
