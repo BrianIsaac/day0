@@ -477,6 +477,8 @@ describe('skillAdoption: adopting and the stored verification (mock mode)', (): 
     });
     expect(card).toMatchObject({
       skillId,
+      name: NAME,
+      description: 'Ticket comment-and-close on a kanban surface.',
       state: 'offered',
       versionId: offered,
       version: 1,

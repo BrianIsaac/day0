@@ -1,12 +1,15 @@
 /** @vitest-environment jsdom */
 
-import { act } from 'react';
+import { act, type ReactNode } from 'react';
 import { getFunctionName } from 'convex/server';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Doc } from '../../../../../convex/_generated/dataModel';
 import { firstNeededSentence } from '../../../../../src/work/skill-rationale';
 import { ProposedSkillsPanel } from '../../../../../app/agent/[agentId]/skills/ProposedSkillsPanel';
+import { axeViolations } from '../../../../fixtures/dom/axe';
+import { asEmployee } from '../../../../fixtures/dom/employee';
 import { focusedName, mount, press, said, settle } from '../../../../fixtures/dom/press';
+import { underTarget } from '../../../../fixtures/dom/targets';
 
 const backend = vi.hoisted(() => ({
   /** Mutations and actions that reject, by function name, with the text they reject with. */
@@ -57,13 +60,15 @@ describe('ProposedSkillsPanel', (): void => {
     backend.refusals = { 'skillActions:authorAndRegisterSkill': REDACTED_AUTHORING };
     const attempts: unknown[] = [];
     const view = mount(
-      <ProposedSkillsPanel
-        name="Mira"
-        itemTitles={new Map()}
-        skills={[proposed]}
-        surfaces={[]}
-        onAuthoringAttempt={(attempt) => void attempts.push(attempt)}
-      />,
+      asEmployee(
+        <ProposedSkillsPanel
+          name="Mira"
+          itemTitles={new Map()}
+          skills={[proposed]}
+          surfaces={[]}
+          onAuthoringAttempt={(attempt) => void attempts.push(attempt)}
+        />,
+      ),
     );
     await press(view.container, 'Approve · author and verify');
     await settle();
@@ -82,13 +87,15 @@ describe('ProposedSkillsPanel', (): void => {
     };
     const attempts: unknown[] = [];
     const view = mount(
-      <ProposedSkillsPanel
-        name="Mira"
-        itemTitles={new Map()}
-        skills={[proposed]}
-        surfaces={[]}
-        onAuthoringAttempt={(attempt) => void attempts.push(attempt)}
-      />,
+      asEmployee(
+        <ProposedSkillsPanel
+          name="Mira"
+          itemTitles={new Map()}
+          skills={[proposed]}
+          surfaces={[]}
+          onAuthoringAttempt={(attempt) => void attempts.push(attempt)}
+        />,
+      ),
     );
     await press(view.container, 'Approve · author and verify');
 
@@ -106,13 +113,15 @@ describe('ProposedSkillsPanel', (): void => {
     backend.results = { 'skillActions:authorAndRegisterSkill': { ok: true } };
     const attempts: unknown[] = [];
     const view = mount(
-      <ProposedSkillsPanel
-        name="Mira"
-        itemTitles={new Map()}
-        skills={[proposed]}
-        surfaces={[]}
-        onAuthoringAttempt={(attempt) => void attempts.push(attempt)}
-      />,
+      asEmployee(
+        <ProposedSkillsPanel
+          name="Mira"
+          itemTitles={new Map()}
+          skills={[proposed]}
+          surfaces={[]}
+          onAuthoringAttempt={(attempt) => void attempts.push(attempt)}
+        />,
+      ),
     );
     await press(view.container, 'Approve · author and verify');
 
@@ -130,13 +139,15 @@ describe('ProposedSkillsPanel', (): void => {
       'skills:reject': `[CONVEX M(skills:reject)] [Request ID: 1] Server Error\nUncaught Error: cannot reject "refresh-the-tile": it is registered\n    at handler (../convex/skills.ts:1:1)`,
     };
     const refused = mount(
-      <ProposedSkillsPanel
-        skills={[proposed]}
-        surfaces={[]}
-        onAuthoringAttempt={noop}
-        name="Mira"
-        itemTitles={new Map()}
-      />,
+      asEmployee(
+        <ProposedSkillsPanel
+          skills={[proposed]}
+          surfaces={[]}
+          onAuthoringAttempt={noop}
+          name="Mira"
+          itemTitles={new Map()}
+        />,
+      ),
     );
     await press(refused.container, 'Reject refresh-the-tile');
     expect(said(refused.container)).toEqual(['cannot reject "refresh-the-tile": it is registered']);
@@ -145,13 +156,15 @@ describe('ProposedSkillsPanel', (): void => {
     backend.refusals = {};
 
     const rejected = mount(
-      <ProposedSkillsPanel
-        skills={[proposed]}
-        surfaces={[]}
-        onAuthoringAttempt={noop}
-        name="Mira"
-        itemTitles={new Map()}
-      />,
+      asEmployee(
+        <ProposedSkillsPanel
+          skills={[proposed]}
+          surfaces={[]}
+          onAuthoringAttempt={noop}
+          name="Mira"
+          itemTitles={new Map()}
+        />,
+      ),
     );
     await press(rejected.container, 'Reject refresh-the-tile');
     expect(said(rejected.container)).toEqual([
@@ -160,13 +173,15 @@ describe('ProposedSkillsPanel', (): void => {
     // The row leaves when the query answers; the panel keeps its live region.
     act((): void =>
       rejected.root.render(
-        <ProposedSkillsPanel
-          skills={[]}
-          surfaces={[]}
-          onAuthoringAttempt={noop}
-          name="Mira"
-          itemTitles={new Map()}
-        />,
+        asEmployee(
+          <ProposedSkillsPanel
+            skills={[]}
+            surfaces={[]}
+            onAuthoringAttempt={noop}
+            name="Mira"
+            itemTitles={new Map()}
+          />,
+        ),
       ),
     );
     expect(said(rejected.container)).toEqual([
@@ -185,13 +200,15 @@ describe('ProposedSkillsPanel', (): void => {
       requiredScopes: ['slack:read', 'slack:write'],
     } as unknown as Doc<'skills'>;
     const view = mount(
-      <ProposedSkillsPanel
-        skills={[proposed]}
-        surfaces={[]}
-        onAuthoringAttempt={noop}
-        name="Mira"
-        itemTitles={new Map([['item-1', 'Draft response for new tier-two RevOps ask']])}
-      />,
+      asEmployee(
+        <ProposedSkillsPanel
+          skills={[proposed]}
+          surfaces={[]}
+          onAuthoringAttempt={noop}
+          name="Mira"
+          itemTitles={new Map([['item-1', 'Draft response for new tier-two RevOps ask']])}
+        />,
+      ),
     );
     const text = view.container.textContent ?? '';
     expect(view.container.querySelector('h2')?.textContent).toBe('Proposed · waiting on you');
@@ -203,8 +220,12 @@ describe('ProposedSkillsPanel', (): void => {
       'slack:read',
       'slack:write',
     ]);
-    expect(text).toContain('Each skill here is written and checked for Mira alone');
-    expect(text).toContain("Whether that work is within Mira's charter is judged separately.");
+    // The adoption row's sentence went with the row: with nothing offered, the card says what
+    // approving does and makes no claim about sharing.
+    expect(text).not.toContain('do not share skills');
+    expect(text).toContain(
+      "Approving writes the skill and checks it in a sandbox, then evaluates again the item that needs it. Whether that work is within Mira's charter is judged separately.",
+    );
     for (const control of view.container.querySelectorAll('button')) {
       expect(control.className).toMatch(/\bmin-h-11\b/);
     }
@@ -226,13 +247,15 @@ describe('ProposedSkillsPanel', (): void => {
       rationale: `No registered skill covers a threaded reply on a chat surface. ${firstNeededSentence('Draft response for new tier-two RevOps ask', 'slack')}`,
     } as unknown as Doc<'skills'>;
     const view = mount(
-      <ProposedSkillsPanel
-        skills={[proposed]}
-        surfaces={[]}
-        onAuthoringAttempt={noop}
-        name="Mira"
-        itemTitles={new Map([['item-1', 'Draft response for new tier-two RevOps ask']])}
-      />,
+      asEmployee(
+        <ProposedSkillsPanel
+          skills={[proposed]}
+          surfaces={[]}
+          onAuthoringAttempt={noop}
+          name="Mira"
+          itemTitles={new Map([['item-1', 'Draft response for new tier-two RevOps ask']])}
+        />,
+      ),
     );
     const text = view.container.textContent ?? '';
     expect(text.match(/First needed by/g)).toHaveLength(1);
@@ -242,34 +265,35 @@ describe('ProposedSkillsPanel', (): void => {
     view.unmount();
   });
 
-  it('says the adoption note once for the card, however many proposals wait', (): void => {
+  it('says the approving note once for the card, however many proposals wait', (): void => {
     const proposed = { ...base, state: 'proposed', requiredScopes: [] } as unknown as Doc<'skills'>;
     const view = mount(
-      <ProposedSkillsPanel
-        skills={[proposed, { ...proposed, _id: 'skill-2', name: 'another' } as Doc<'skills'>]}
-        surfaces={[]}
-        onAuthoringAttempt={noop}
-        name="Mira"
-        itemTitles={new Map()}
-      />,
+      asEmployee(
+        <ProposedSkillsPanel
+          skills={[proposed, { ...proposed, _id: 'skill-2', name: 'another' } as Doc<'skills'>]}
+          surfaces={[]}
+          onAuthoringAttempt={noop}
+          name="Mira"
+          itemTitles={new Map()}
+        />,
+      ),
     );
-    expect(view.container.textContent?.match(/written and checked for Mira alone/g)).toHaveLength(
-      1,
-    );
+    expect(view.container.textContent?.match(/is judged separately/g)).toHaveLength(1);
     view.unmount();
   });
 
   it('keeps one live region in place when the last proposal leaves, so its outcome is announced', async (): Promise<void> => {
     const proposed = { ...base, state: 'proposed', requiredScopes: [] } as unknown as Doc<'skills'>;
-    const panel = (skills: Doc<'skills'>[]) => (
-      <ProposedSkillsPanel
-        skills={skills}
-        surfaces={[]}
-        onAuthoringAttempt={noop}
-        name="Mira"
-        itemTitles={new Map()}
-      />
-    );
+    const panel = (skills: Doc<'skills'>[]) =>
+      asEmployee(
+        <ProposedSkillsPanel
+          skills={skills}
+          surfaces={[]}
+          onAuthoringAttempt={noop}
+          name="Mira"
+          itemTitles={new Map()}
+        />,
+      );
     const view = mount(panel([proposed]));
     const region = view.container.querySelector('[role="status"]');
     await press(view.container, 'Reject refresh-the-tile');
@@ -278,4 +302,204 @@ describe('ProposedSkillsPanel', (): void => {
     expect(region?.textContent).toBe('Rejected refresh-the-tile: the employee will not author it.');
     view.unmount();
   });
+});
+
+describe('ProposedSkillsPanel: adoption (A3, 10-A)', (): void => {
+  const noop = (): void => undefined;
+  const offered = {
+    _id: 'skill-9',
+    _creationTime: 0,
+    agentId: 'agent-1',
+    name: 'kanban-comment-and-close',
+    description: 'Ticket comment-and-close on a kanban surface.',
+    sourceType: 'agent-authored',
+    createdAt: 0,
+    state: 'proposed',
+    proposedFor: 'item-1',
+    rationale: 'No registered skill covers comment-and-close on a kanban surface.',
+    requiredScopes: ['linear:read', 'linear:write'],
+    offeredVersionId: 'version-1',
+  } as unknown as Doc<'skills'>;
+  const adoption = {
+    skillId: 'skill-9',
+    name: 'kanban-comment-and-close',
+    description: 'Ticket comment-and-close on a kanban surface.',
+    proposedFor: 'item-1',
+    state: 'offered',
+    versionId: 'version-1',
+    version: 1,
+    authorName: 'Priya',
+    verifiedAt: Date.UTC(2026, 8, 18, 9),
+    missingScopes: ['linear:write'],
+  };
+  const titles = new Map([['item-1', 'Close REVOPS-21 with the audit note']]);
+
+  function panel(
+    skills: Doc<'skills'>[],
+    onAuthoringAttempt: (attempt: unknown) => void = noop,
+  ): ReactNode {
+    return asEmployee(
+      <ProposedSkillsPanel
+        skills={skills}
+        surfaces={[]}
+        onAuthoringAttempt={onAuthoringAttempt}
+        name="Mira"
+        itemTitles={titles}
+      />,
+    );
+  }
+
+  afterEach((): void => {
+    backend.queries = {};
+    backend.results = {};
+    backend.refusals = {};
+    backend.calls.length = 0;
+  });
+
+  it('draws the adoption card for an offered proposal in place of Approve and Reject, and says either way in the note', (): void => {
+    backend.queries = { 'skillAdoption:adoptions': [adoption] };
+    const view = mount(panel([offered]));
+    const text = view.container.textContent ?? '';
+    expect(text).toContain(
+      'kanban-comment-and-close · Ticket comment-and-close on a kanban surface',
+    );
+    expect(text).toContain('First needed by \u201cClose REVOPS-21 with the audit note\u201d.');
+    expect(text).toContain(
+      "Priya's skill kanban-comment-and-close, verified on 18 September 2026, does this.",
+    );
+    expect(text).not.toContain('Approve · author and verify');
+    expect(text).toContain(
+      "Either way the skill is checked in a sandbox before it runs, then the item that needs it is evaluated again. Whether that work is within Mira's charter is judged separately.",
+    );
+    view.unmount();
+  });
+
+  it('offers nothing to press on an offered proposal until the backend has drawn the offer', (): void => {
+    const view = mount(panel([offered]));
+    expect(view.container.querySelectorAll('button')).toHaveLength(0);
+    view.unmount();
+  });
+
+  it('draws an ordinary proposal when the backend draws no offer for it', (): void => {
+    backend.queries = { 'skillAdoption:adoptions': [] };
+    const view = mount(panel([offered]));
+    expect(view.container.textContent).toContain('Approve · author and verify');
+    view.unmount();
+  });
+
+  it('adopts, says so, and files the attempt so the Skills card says when it registers', async (): Promise<void> => {
+    backend.queries = { 'skillAdoption:adoptions': [adoption] };
+    backend.results = { 'skillAdoption:adopt': { scopes: ['linear:write'] } };
+    const attempts: unknown[] = [];
+    const view = mount(panel([offered], (attempt) => void attempts.push(attempt)));
+    await press(view.container, 'Adopt for Mira: kanban-comment-and-close');
+    expect(backend.calls).toEqual([{ name: 'skillAdoption:adopt', args: { skillId: 'skill-9' } }]);
+    expect(said(view.container)).toEqual([
+      'Adopting kanban-comment-and-close for Mira: the sandbox is checking it again, and this card says when Mira can use it.',
+    ]);
+    expect(attempts).toEqual([{ skillId: 'skill-9', name: 'kanban-comment-and-close' }]);
+    view.unmount();
+  });
+
+  it('says a refused adoption in the words the backend wrote for the manager', async (): Promise<void> => {
+    backend.queries = { 'skillAdoption:adoptions': [adoption] };
+    backend.refusals = {
+      'skillAdoption:adopt':
+        '[CONVEX M(skillAdoption:adopt)] [Request ID: 1] Server Error\nUncaught Error: kanban-comment-and-close cannot be adopted: sharing skills between employees is switched off.\n    at handler (../convex/skillAdoption.ts:1:1)',
+    };
+    const view = mount(panel([offered]));
+    await press(view.container, 'Adopt for Mira: kanban-comment-and-close');
+    expect(said(view.container)).toEqual([
+      'kanban-comment-and-close cannot be adopted: sharing skills between employees is switched off.',
+    ]);
+    view.unmount();
+  });
+
+  it('writes a new one instead: the offer set aside, then the approval and the authoring', async (): Promise<void> => {
+    backend.queries = { 'skillAdoption:adoptions': [adoption] };
+    backend.results = {
+      'skillAdoption:setOfferAside': { ok: true },
+      'skillActions:authorAndRegisterSkill': { ok: true },
+    };
+    const attempts: unknown[] = [];
+    const view = mount(panel([offered], (attempt) => void attempts.push(attempt)));
+    await press(view.container, 'Write a new one instead of kanban-comment-and-close');
+    expect(backend.calls.map((call) => call.name)).toEqual([
+      'skillAdoption:setOfferAside',
+      'skills:approve',
+      'skillActions:authorAndRegisterSkill',
+    ]);
+    expect(said(view.container)).toEqual([
+      'Approved kanban-comment-and-close: the employee is authoring it now, and the Skills card says when it is callable.',
+    ]);
+    expect(attempts).toEqual([null, { skillId: 'skill-9', name: 'kanban-comment-and-close' }]);
+    view.unmount();
+  });
+
+  it('declines through the rejection, and keeps the card drawn declined once the row has gone', async (): Promise<void> => {
+    backend.queries = { 'skillAdoption:adoptions': [adoption] };
+    const view = mount(panel([offered]));
+    await press(view.container, 'Decline kanban-comment-and-close');
+    expect(backend.calls).toEqual([{ name: 'skills:reject', args: { skillId: 'skill-9' } }]);
+    expect(said(view.container)).toEqual([
+      'Declined kanban-comment-and-close: Mira will not adopt it.',
+    ]);
+    backend.queries = { 'skillAdoption:adoptions': [] };
+    act((): void => view.root.render(panel([])));
+    expect(view.container.textContent).toContain(
+      "You declined Priya's skill kanban-comment-and-close for Mira. Mira will not adopt it, and the work that needed it was cancelled.",
+    );
+    expect(view.container.querySelectorAll('button')).toHaveLength(0);
+    view.unmount();
+  });
+
+  it('keeps an adoption on the panel while it is checked and when the check fails, and writes a new one from the failure without a second approval', async (): Promise<void> => {
+    backend.queries = {
+      'skillAdoption:adoptions': [
+        { ...adoption, state: 'verifying', missingScopes: [] },
+        {
+          ...adoption,
+          skillId: 'skill-10',
+          name: 'chat-thread-reply',
+          description: 'Threaded reply on a chat surface.',
+          state: 'failed',
+          missingScopes: [],
+          log: 'the stored skill failed its check - smoke.py exited 1',
+        },
+      ],
+    };
+    backend.results = {
+      'skillAdoption:setOfferAside': { ok: true },
+      'skillActions:authorAndRegisterSkill': { ok: true },
+    };
+    const view = mount(panel([]));
+    const text = view.container.textContent ?? '';
+    expect(view.container.querySelector('h2')?.textContent).toBe('Proposed · waiting on you');
+    expect(text).toContain("Adopting Priya's skill kanban-comment-and-close for Mira.");
+    expect(text).toContain("Priya's skill chat-thread-reply failed its re-verification for Mira.");
+    expect(text).toContain('the stored skill failed its check - smoke.py exited 1');
+    await press(view.container, 'Write a new one instead of chat-thread-reply');
+    expect(backend.calls.map((call) => call.name)).toEqual([
+      'skillAdoption:setOfferAside',
+      'skillActions:authorAndRegisterSkill',
+    ]);
+    expect(said(view.container)).toEqual([
+      'Mira is writing chat-thread-reply now, and the Skills card says when it is callable.',
+    ]);
+    view.unmount();
+  });
+
+  it('has no axe violation and a 44 px target on every control with every adoption state drawn', async (): Promise<void> => {
+    backend.queries = {
+      'skillAdoption:adoptions': [
+        adoption,
+        { ...adoption, skillId: 'skill-11', state: 'verifying', missingScopes: [] },
+        { ...adoption, skillId: 'skill-12', state: 'failed', missingScopes: [], log: 'one\ntwo' },
+      ],
+    };
+    const view = mount(panel([offered]));
+    expect(await axeViolations(view.container, ['region'])).toEqual([]);
+    expect(underTarget(view.container)).toEqual([]);
+    view.unmount();
+  }, 30_000);
 });

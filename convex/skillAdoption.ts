@@ -364,6 +364,9 @@ export const setOfferAside = mutation({
 export interface AdoptionView {
   readonly skillId: Id<'skills'>;
   readonly name: string;
+  readonly description: string;
+  /** The item the proposal was first made for. */
+  readonly proposedFor?: Id<'workItems'>;
   readonly state: 'offered' | 'verifying' | 'failed';
   readonly versionId: Id<'skillVersions'>;
   readonly version: number;
@@ -435,6 +438,8 @@ async function adoptionView(
   return {
     skillId: row._id,
     name: row.name,
+    description: row.description,
+    ...(row.proposedFor !== undefined ? { proposedFor: row.proposedFor } : {}),
     state,
     versionId: version._id,
     version: version.version,

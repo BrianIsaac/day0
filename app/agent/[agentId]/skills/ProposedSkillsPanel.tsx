@@ -1,9 +1,10 @@
 'use client';
 
-import type { Doc } from '@convex/_generated/dataModel';
+import { useMemo, useState } from 'react';
+import type { Doc, Id } from '@convex/_generated/dataModel';
 import type { SurfaceRecord } from '@/surfaces/types';
 import { type AuthoringAttempt, AUTHORING_UNFINISHED } from './authoring';
-import { useMutation, useAction } from 'convex/react';
+import { useMutation, useAction, useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { useNow } from '../../../components/time';
 import { useChange, refusalText } from '../../../components/use-change';
@@ -11,13 +12,46 @@ import { StatusRegion } from '../../../components/StatusRegion';
 import { Button } from '../../../components/Button';
 import { Card } from '../../../components/Card';
 import { skillApprovalRefusal } from '@/surfaces/policy';
-import { AdoptionRow } from './AdoptionRow';
+import { adoptionHelp } from '@/work/skill-adoption';
+import { useEmployee } from '../employee-context';
+import { AdoptionCard, type Adoption } from './AdoptionCard';
 import { plainSkillName, ScopeChips } from './skill-parts';
 import { rationaleBesideItem } from '@/work/skill-rationale';
 
+/** A skill's name and the item that first needs it, as the panel's rows open. */
+function ProposalHead({
+  skill,
+  item,
+  rationale,
+}: {
+  skill: Pick<Doc<'skills'>, 'name' | 'description'>;
+  item: string | undefined;
+  rationale: string | undefined;
+}) {
+  return (
+    <>
+      <p className="text-sm text-[var(--color-fg)] break-words">
+        <span className="font-medium">{skill.name}</span>
+        <span className="text-[var(--color-fg-2)]"> · {plainSkillName(skill)}</span>
+      </p>
+      {item || rationale ? (
+        <p className="text-[13px] leading-relaxed text-[var(--color-fg-2)]">
+          {item ? <>First needed by &ldquo;{item}&rdquo;. </> : null}
+          {rationale ? (item ? rationaleBesideItem(rationale) : rationale) : null}
+        </p>
+      ) : null}
+    </>
+  );
+}
+
+/** The row classes of every entry of the panel's list. */
+const ROW = 'grid gap-2 border-t border-[var(--color-border)] pt-5 first:border-t-0 first:pt-0';
+
 /**
  * The skills the employee proposed and the manager has not decided, each with the item that
- * first needs it, what approving grants, where adoption would be offered, and Approve and Reject.
+ * first needs it, what approving grants, and Approve and Reject; a proposal that offers a
+ * sibling's verified skill draws the adoption card in their place (A3), and an adoption stays on
+ * the panel while the sandbox checks it again, when that check fails, and once it is declined.
  * Every decision is said in the panel's one live region.
  */
 export function ProposedSkillsPanel({
@@ -43,39 +77,108 @@ export function ProposedSkillsPanel({
   /** The employee's work item titles by id, for the item that first needs each skill. */
   itemTitles: ReadonlyMap<string, string>;
 }) {
+  const { agent } = useEmployee();
   const approve = useMutation(api.skills.approve);
   const reject = useMutation(api.skills.reject);
+  const adopt = useMutation(api.skillAdoption.adopt);
+  const setOfferAside = useMutation(api.skillAdoption.setOfferAside);
   const author = useAction(api.skillActions.authorAndRegisterSkill);
+  const adoptionArgs = useMemo(() => ({ agentId: agent._id }), [agent._id]);
+  const adoptions = useQuery(api.skillAdoption.adoptions, adoptionArgs);
   const now = useNow();
   const change = useChange(fallback);
+  // A declined adoption leaves every list with its row; the card stays drawn, declined, until
+  // the manager leaves the tab, so the decision is read where it was made.
+  const [declined, setDeclined] = useState<Adoption | null>(null);
 
-  // The approval is the manager's decision and is said here; the authoring it
-  // starts runs for minutes and files its verdict with the Skills card.
-  function onApprove(skill: Doc<'skills'>): void {
+  const offers = useMemo(
+    (): ReadonlyMap<Id<'skills'>, Adoption> =>
+      new Map((adoptions ?? []).map((adoption) => [adoption.skillId, adoption])),
+    [adoptions],
+  );
+  const proposedIds = new Set(skills.map((skill) => skill._id));
+  const inFlight = (adoptions ?? []).filter(
+    (adoption) => adoption.state !== 'offered' && !proposedIds.has(adoption.skillId),
+  );
+  const shownDeclined =
+    declined !== null && !proposedIds.has(declined.skillId) && !offers.has(declined.skillId)
+      ? declined
+      : null;
+
+  // The authoring an approval starts runs for minutes and files its verdict with the Skills card.
+  function startAuthoring(skill: Pick<Doc<'skills'>, '_id' | 'name'>): void {
     const file = (reason?: string): void =>
       onAuthoringAttempt({ skillId: skill._id, name: skill.name, ...(reason ? { reason } : {}) });
+    onAuthoringAttempt(null);
+    // Discarded because both outcomes are handled here and filed as the
+    // attempt the Skills card shows in its live region.
+    void author({ skillId: skill._id }).then(
+      (result) => file(result.ok ? undefined : (result.reason ?? AUTHORING_UNFINISHED)),
+      (err: unknown) => file(refusalText(err, AUTHORING_UNFINISHED)),
+    );
+  }
+
+  function onApprove(skill: Doc<'skills'>): void {
     change.run(() => approve({ skillId: skill._id }), {
       done: `Approved ${skill.name}: the employee is authoring it now, and the Skills card says when it is callable.`,
       refused: `${skill.name} was not approved.`,
-      after: () => {
-        onAuthoringAttempt(null);
-        // Discarded because both outcomes are handled here and filed as the
-        // attempt the Skills card shows in its live region.
-        void author({ skillId: skill._id }).then(
-          (result) => file(result.ok ? undefined : (result.reason ?? AUTHORING_UNFINISHED)),
-          (err: unknown) => file(refusalText(err, AUTHORING_UNFINISHED)),
-        );
-      },
+      after: () => startAuthoring(skill),
     });
   }
+
+  function onAdopt(adoption: Adoption): void {
+    change.run(() => adopt({ skillId: adoption.skillId }), {
+      done: `Adopting ${adoption.name} for ${name}: the sandbox is checking it again, and this card says when ${name} can use it.`,
+      refused: `${adoption.name} was not adopted.`,
+      // Filed with no reason, so the Skills card says so once the check registers it.
+      after: () => onAuthoringAttempt({ skillId: adoption.skillId, name: adoption.name }),
+    });
+  }
+
+  // Write a new one instead: the offer is set aside first, so a refused approval leaves an
+  // ordinary proposal to approve, never an approved row the card would take for an adoption.
+  function onWriteNew(adoption: Adoption): void {
+    const skill = { _id: adoption.skillId, name: adoption.name };
+    if (adoption.state === 'failed') {
+      change.run(() => setOfferAside({ skillId: adoption.skillId }), {
+        done: `${name} is writing ${adoption.name} now, and the Skills card says when it is callable.`,
+        refused: `${adoption.name} was not sent to be written.`,
+        after: () => startAuthoring(skill),
+      });
+      return;
+    }
+    change.run(
+      async () => {
+        await setOfferAside({ skillId: adoption.skillId });
+        return await approve({ skillId: adoption.skillId });
+      },
+      {
+        done: `Approved ${adoption.name}: the employee is authoring it now, and the Skills card says when it is callable.`,
+        refused: `${adoption.name} was not approved.`,
+        after: () => startAuthoring(skill),
+      },
+    );
+  }
+
+  function onDecline(adoption: Adoption): void {
+    change.run(() => reject({ skillId: adoption.skillId }), {
+      done: `Declined ${adoption.name}: ${name} will not adopt it.`,
+      refused: `${adoption.name} was not declined.`,
+      after: () => setDeclined(adoption),
+    });
+  }
+
+  const offering = skills.some((skill) => offers.get(skill._id)?.state === 'offered');
+  const waiting = skills.length + inFlight.filter((adoption) => adoption.state === 'failed').length;
+  const shown = skills.length + inFlight.length + (shownDeclined !== null ? 1 : 0);
 
   // One live region, outside the card and in the same place whether or not
   // the card is drawn: the last row leaving takes the card, and a region put
   // in anew already holding its words is not announced.
   return (
     <>
-      {skills.length > 0 ? (
-        <Card title="Proposed · waiting on you" meta={`${skills.length}`} tone="warn">
+      {shown > 0 ? (
+        <Card title="Proposed · waiting on you" meta={`${waiting}`} tone="warn">
           <ul className="grid gap-5">
             {skills.map((s) => {
               const refusal = skillApprovalRefusal(
@@ -84,19 +187,36 @@ export function ProposedSkillsPanel({
                 now,
               );
               const item = s.proposedFor ? itemTitles.get(s.proposedFor) : undefined;
+              const offer = offers.get(s._id);
+              const head = <ProposalHead skill={s} item={item} rationale={s.rationale} />;
+              if (
+                s.offeredVersionId !== undefined &&
+                (adoptions === undefined || offer?.state === 'offered')
+              ) {
+                // The offer is drawn once the backend has said what it is; until then the row
+                // offers nothing to press, so no Approve can land on an offered row. An offer
+                // the backend no longer draws (its version gone) leaves an ordinary proposal.
+                return (
+                  <li key={s._id} className={ROW}>
+                    {head}
+                    {offer?.state === 'offered' ? (
+                      <AdoptionCard
+                        adoption={offer}
+                        state="offered"
+                        adopterName={name}
+                        writeRefusal={refusal}
+                        busy={change.busy}
+                        onAdopt={() => onAdopt(offer)}
+                        onWriteNew={() => onWriteNew(offer)}
+                        onDecline={() => onDecline(offer)}
+                      />
+                    ) : null}
+                  </li>
+                );
+              }
               return (
-                <li
-                  key={s._id}
-                  className="grid gap-2 border-t border-[var(--color-border)] pt-5 first:border-t-0 first:pt-0"
-                >
-                  <p className="text-sm text-[var(--color-fg)] break-words">
-                    <span className="font-medium">{s.name}</span>
-                    <span className="text-[var(--color-fg-2)]"> · {plainSkillName(s)}</span>
-                  </p>
-                  <p className="text-[13px] leading-relaxed text-[var(--color-fg-2)]">
-                    {item ? <>First needed by &ldquo;{item}&rdquo;. </> : null}
-                    {s.rationale ? (item ? rationaleBesideItem(s.rationale) : s.rationale) : null}
-                  </p>
+                <li key={s._id} className={ROW}>
+                  {head}
                   {s.requiredScopes && s.requiredScopes.length > 0 ? (
                     <p className="text-xs leading-relaxed text-[var(--color-muted)]">
                       <ScopeChips scopes={s.requiredScopes} lead="Approving grants" />
@@ -138,13 +258,41 @@ export function ProposedSkillsPanel({
                 </li>
               );
             })}
+            {inFlight.map((adoption) => (
+              <li key={adoption.skillId} className={ROW}>
+                <ProposalHead
+                  skill={adoption}
+                  item={adoption.proposedFor ? itemTitles.get(adoption.proposedFor) : undefined}
+                  rationale={undefined}
+                />
+                <AdoptionCard
+                  adoption={adoption}
+                  state={adoption.state}
+                  adopterName={name}
+                  busy={change.busy}
+                  onAdopt={() => onAdopt(adoption)}
+                  onWriteNew={() => onWriteNew(adoption)}
+                  onDecline={() => onDecline(adoption)}
+                />
+              </li>
+            ))}
+            {shownDeclined !== null ? (
+              <li key={shownDeclined.skillId} className={ROW}>
+                <ProposalHead skill={shownDeclined} item={undefined} rationale={undefined} />
+                <AdoptionCard
+                  adoption={shownDeclined}
+                  state="declined"
+                  adopterName={name}
+                  busy={change.busy}
+                  onAdopt={() => onAdopt(shownDeclined)}
+                  onWriteNew={() => onWriteNew(shownDeclined)}
+                  onDecline={() => onDecline(shownDeclined)}
+                />
+              </li>
+            ) : null}
           </ul>
-          <div className="mt-4">
-            <AdoptionRow name={name} />
-          </div>
-          <p className="mt-3 text-xs leading-relaxed text-[var(--color-muted)]">
-            Approving writes the skill and checks it in a sandbox, then evaluates again the item
-            that needs it. Whether that work is within {name}&apos;s charter is judged separately.
+          <p className="mt-4 text-xs leading-relaxed text-[var(--color-muted)]">
+            {adoptionHelp(name, offering)}
           </p>
         </Card>
       ) : null}

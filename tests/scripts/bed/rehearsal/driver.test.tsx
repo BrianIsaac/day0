@@ -73,6 +73,7 @@ import { AgentZoneContext } from '../../../../app/components/time';
 import { WorkItemCard } from '../../../../app/agent/[agentId]/work/WorkItemCard';
 import { INIT_PROMPT } from '../../../../src/agent/day-one-turn';
 import { DRAWN, EMPLOYEE, QUESTION, SURFACES, ZONE } from '../../../fixtures/work/drawn-states';
+import { asEmployee } from '../../../fixtures/dom/employee';
 import { mount, press, settle, unmountAll } from '../../../fixtures/dom/press';
 
 /*
@@ -299,13 +300,15 @@ describe('the dashboard driver', (): void => {
       requiredScopes: [],
     } as unknown as Doc<'skills'>;
     const view = mount(
-      <ProposedSkillsPanel
-        name="Mira"
-        itemTitles={new Map()}
-        skills={[skill]}
-        surfaces={[]}
-        onAuthoringAttempt={(): void => undefined}
-      />,
+      asEmployee(
+        <ProposedSkillsPanel
+          name="Mira"
+          itemTitles={new Map()}
+          skills={[skill]}
+          surfaces={[]}
+          onAuthoringAttempt={(): void => undefined}
+        />,
+      ),
     );
     // Playwright's filter: the list item holding an element whose text is the name, exactly.
     const items = byRole(document, 'listitem', /.*/).filter((item) =>
