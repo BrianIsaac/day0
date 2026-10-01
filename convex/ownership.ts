@@ -8,6 +8,7 @@ import {
   CUSTOMER_OIDC_ISSUER_VAR,
   customerOidcAllowedDomains,
   customerOidcEmailTrusted,
+  issuerKey,
   signInRefusal,
 } from '../src/lib/customer-oidc';
 import { DEV_NO_AUTH_ISSUER, DEV_NO_AUTH_SESSION_CLAIM } from '../src/lib/dev-auth-issuer';
@@ -33,11 +34,6 @@ import { notAuthenticatedMessage } from './devAuth';
  * issuer or Clerk (see `convex/auth.config.ts`); the owner key below is what
  * keeps two issuers from ever naming one owner.
  */
-
-/** An issuer URL compared the way two spellings of one issuer should compare. */
-function issuerKey(issuer: string): string {
-  return issuer.trim().replace(/\/+$/, '');
-}
 
 /**
  * The key a caller's rows are stored under and checked against.

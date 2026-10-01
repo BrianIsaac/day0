@@ -125,8 +125,14 @@ export const GOOGLE_ISSUER = 'https://accounts.google.com';
 /** One label of a domain name: letters, digits and inner hyphens. */
 const DOMAIN_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
-/** An issuer URL compared the way two spellings of one issuer should compare. */
-function issuerKey(issuer: string): string {
+/**
+ * An issuer URL as two spellings of one issuer compare: trimmed, with no
+ * trailing slash. The owner key and the issuer of a caller are compared on
+ * this; the discovery check holds `iss` to the configured value byte for byte.
+ *
+ * @param issuer - The issuer as configured or as a token carries it.
+ */
+export function issuerKey(issuer: string): string {
   return issuer.trim().replace(/\/+$/, '');
 }
 

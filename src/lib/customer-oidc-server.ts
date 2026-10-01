@@ -185,13 +185,8 @@ class IssuerConnection {
   }
 }
 
-/** This process's connection to the issuer; replaced only by the test seam below. */
-let connection = new IssuerConnection();
-
-/** Start from a fresh connection: a test's fresh issuer needs fresh metadata. */
-export function __resetIssuerConnectionForTest(): void {
-  connection = new IssuerConnection();
-}
+/** This process's connection to the issuer. A test starts from a fresh module instead. */
+const connection = new IssuerConnection();
 
 /**
  * The issuer's configuration for this client.

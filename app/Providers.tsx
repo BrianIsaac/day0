@@ -529,6 +529,7 @@ async function askTokenRoute(force: boolean): Promise<CustomerTokenAnswer | unde
   }
   if (response.status === 401) return { kind: 'signed-out' };
   if (!response.ok) return undefined;
+  // A body that is not JSON is no token: read as the route failing to answer, which is retried.
   const body: unknown = await response.json().catch((): undefined => undefined);
   if (!isIssuedToken(body)) return undefined;
   return { kind: 'token', token: body.token, account: body.account ?? {} };

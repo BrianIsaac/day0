@@ -115,23 +115,30 @@ export const SIGN_IN_STEPS: readonly SignInStep[] = [...PUSH_STEPS, CHECK_STEP];
 /** The addresses `npx convex dev --once` rewrites in the env file, which the verb puts back. */
 const PUSH_REWRITES = ['NEXT_PUBLIC_CONVEX_URL', 'NEXT_PUBLIC_CONVEX_SITE_URL'] as const;
 
+/** One value the verb needs: what a flag gave, how to ask for it, and what stands if nothing does. */
+interface Question {
+  /** The value a flag or the environment gave, if any. */
+  readonly given?: string;
+  readonly text: string;
+  /** The flag (or variable) that answers it without a terminal. */
+  readonly flag: string;
+  readonly hidden?: boolean;
+  /** The value already set, kept when the answer is empty. */
+  readonly fallback?: string;
+}
+
 /** Ask a question the flags did not answer, or refuse where nobody can answer it. */
-async function answer(
-  io: SignInIo,
-  given: string | undefined,
-  question: string,
-  flag: string,
-  options: { readonly hidden?: boolean; readonly fallback?: string } = {},
-): Promise<string> {
+async function answer(io: SignInIo, question: Question): Promise<string> {
+  const { given, text, flag, hidden, fallback } = question;
   if (given !== undefined && given.trim() !== '') return given.trim();
   if (io.interactive === false) {
-    if (options.fallback) return options.fallback;
+    if (fallback) return fallback;
     throw new SignInRefused(`${flag} is needed: nothing can be asked without a terminal.`);
   }
-  const shown = options.fallback && !options.hidden ? ` [${options.fallback}]` : '';
-  const said = (await io.ask(`${question}${shown}: `, { hidden: options.hidden })).trim();
+  const shown = fallback && !hidden ? ` [${fallback}]` : '';
+  const said = (await io.ask(`${text}${shown}: `, { hidden })).trim();
   if (said !== '') return said;
-  if (options.fallback) return options.fallback;
+  if (fallback) return fallback;
   throw new SignInRefused(`${flag} is needed.`);
 }
 
@@ -142,12 +149,10 @@ async function chooseProvider(io: SignInIo, flags: SignInFlags): Promise<Custome
   const menu = offered
     .map((provider, index) => `  ${index + 1}  ${CUSTOMER_OIDC_PRESETS[provider].label}`)
     .join('\n');
-  const said = await answer(
-    io,
-    undefined,
-    `Which identity provider does the customer sign in with?\n${menu}\nNumber`,
-    '--provider entra|okta|google',
-  );
+  const said = await answer(io, {
+    text: `Which identity provider does the customer sign in with?\n${menu}\nNumber`,
+    flag: '--provider entra|okta|google',
+  });
   const chosen = offered[Number(said) - 1] ?? offered.find((provider) => provider === said);
   if (!chosen) throw new SignInRefused(`"${said}" is not 1, 2 or 3.`);
   return chosen;
@@ -162,33 +167,34 @@ async function issuerFor(
   switch (provider) {
     case 'entra':
       return entraIssuer(
-        await answer(
-          io,
-          flags.tenant,
-          'Directory (tenant) id, from the app registration',
-          '--tenant',
-        ),
+        await answer(io, {
+          given: flags.tenant,
+          text: 'Directory (tenant) id, from the app registration',
+          flag: '--tenant',
+        }),
       );
     case 'okta':
       return oktaIssuer(
-        await answer(io, flags.oktaDomain, 'Okta domain, such as acme.okta.com', '--okta-domain'),
-        await answer(
-          io,
-          flags.authServer,
-          "Authorisation server: 'org', 'default' or a custom server's id",
-          '--auth-server',
-          { fallback: 'org' },
-        ),
+        await answer(io, {
+          given: flags.oktaDomain,
+          text: 'Okta domain, such as acme.okta.com',
+          flag: '--okta-domain',
+        }),
+        await answer(io, {
+          given: flags.authServer,
+          text: "Authorisation server: 'org', 'default' or a custom server's id",
+          flag: '--auth-server',
+          fallback: 'org',
+        }),
       );
     case 'google':
       return googleIssuer();
     case 'oidc':
-      return answer(
-        io,
-        flags.issuer,
-        "The issuer's URL, exactly as its tokens carry it in iss",
-        '--issuer',
-      );
+      return answer(io, {
+        given: flags.issuer,
+        text: "The issuer's URL, exactly as its tokens carry it in iss",
+        flag: '--issuer',
+      });
     default: {
       const unknown: never = provider;
       throw new Error(`unhandled provider ${String(unknown)}`);
@@ -204,6 +210,11 @@ interface ResolvedSignIn {
   readonly generatedSessionSecret: boolean;
 }
 
+/** A value already set in the env file, as a question's fallback, or nothing when it is empty. */
+function kept(existing: Readonly<Record<string, string>>, name: string): string | undefined {
+  return existing[name] ? existing[name] : undefined;
+}
+
 async function resolveSignIn(
   io: SignInIo,
   flags: SignInFlags,
@@ -211,45 +222,35 @@ async function resolveSignIn(
 ): Promise<ResolvedSignIn> {
   const provider = await chooseProvider(io, flags);
   const issuer = await issuerFor(io, provider, flags);
-  const clientId = await answer(
-    io,
-    flags.clientId,
-    'Application (client) id',
-    '--client-id',
-    existing[CUSTOMER_OIDC_AUDIENCE_VAR] ? { fallback: existing[CUSTOMER_OIDC_AUDIENCE_VAR] } : {},
-  );
-  const clientSecret = await answer(
-    io,
-    io.environment[CUSTOMER_OIDC_CLIENT_SECRET_VAR],
-    'Client secret (hidden; Enter keeps the one already set)',
-    `${CUSTOMER_OIDC_CLIENT_SECRET_VAR} in the environment`,
-    {
-      hidden: true,
-      ...(existing[CUSTOMER_OIDC_CLIENT_SECRET_VAR]
-        ? { fallback: existing[CUSTOMER_OIDC_CLIENT_SECRET_VAR] }
-        : {}),
-    },
-  );
+  const clientId = await answer(io, {
+    given: flags.clientId,
+    text: 'Application (client) id',
+    flag: '--client-id',
+    fallback: kept(existing, CUSTOMER_OIDC_AUDIENCE_VAR),
+  });
+  const clientSecret = await answer(io, {
+    given: io.environment[CUSTOMER_OIDC_CLIENT_SECRET_VAR],
+    text: 'Client secret (hidden; Enter keeps the one already set)',
+    flag: `${CUSTOMER_OIDC_CLIENT_SECRET_VAR} in the environment`,
+    hidden: true,
+    fallback: kept(existing, CUSTOMER_OIDC_CLIENT_SECRET_VAR),
+  });
   const domains = parseAllowedDomains(
-    await answer(
-      io,
-      flags.allowedDomains,
-      'Email domains whose people may sign in, comma-separated',
-      '--allowed-domains',
-      existing[CUSTOMER_OIDC_ALLOWED_DOMAINS_VAR]
-        ? { fallback: existing[CUSTOMER_OIDC_ALLOWED_DOMAINS_VAR] }
-        : {},
-    ),
+    await answer(io, {
+      given: flags.allowedDomains,
+      text: 'Email domains whose people may sign in, comma-separated',
+      flag: '--allowed-domains',
+      fallback: kept(existing, CUSTOMER_OIDC_ALLOWED_DOMAINS_VAR),
+    }),
   );
   if (domains.length === 0) throw new SignInRefused('At least one allowed domain is needed.');
   const origin = publicOrigin(
-    await answer(
-      io,
-      flags.publicUrl,
-      'The https address people reach Day0 on, through the customer’s proxy',
-      '--public-url',
-      existing[PUBLIC_URL_VAR] ? { fallback: existing[PUBLIC_URL_VAR] } : {},
-    ),
+    await answer(io, {
+      given: flags.publicUrl,
+      text: 'The https address people reach Day0 on, through the customer’s proxy',
+      flag: '--public-url',
+      fallback: kept(existing, PUBLIC_URL_VAR),
+    }),
   );
   if ('gap' in origin) throw new SignInRefused(origin.gap);
   if (!origin.origin.startsWith('https:') && !isLoopback(origin.origin)) {

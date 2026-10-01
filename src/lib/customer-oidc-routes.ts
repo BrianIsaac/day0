@@ -224,24 +224,26 @@ function clearTransaction(response: NextResponse, settings: CustomerSignInSettin
   });
 }
 
+/** What `writeSession` writes: the session, for which browser, under which settings, and when. */
+export interface SessionWrite {
+  /** The request, for the cookies the browser holds now. */
+  readonly request: NextRequest;
+  readonly settings: CustomerSignInSettings;
+  readonly session: CustomerSession;
+  /** The current time in milliseconds. */
+  readonly now?: number;
+}
+
 /**
  * Write a session onto a response: sealed, split across numbered cookies when
  * it is long, every chunk an earlier and longer session left expired, and the
  * cookies kept exactly as long as the session lasts.
  *
  * @param response - The response to set the cookies on.
- * @param request - The request, for the cookies the browser holds now.
- * @param settings - The sign-in's settings.
- * @param session - The session to write.
- * @param now - The current time in milliseconds.
+ * @param write - The session and where it goes.
  */
-export async function writeSession(
-  response: NextResponse,
-  request: NextRequest,
-  settings: CustomerSignInSettings,
-  session: CustomerSession,
-  now: number = Date.now(),
-): Promise<void> {
+export async function writeSession(response: NextResponse, write: SessionWrite): Promise<void> {
+  const { request, settings, session, now = Date.now() } = write;
   const chunks = chunkCookie(
     CUSTOMER_SESSION_COOKIE,
     await sealSession(settings.sessionSecret, session),
@@ -386,7 +388,7 @@ export async function callbackRoute(request: NextRequest): Promise<NextResponse>
         headers: NO_STORE,
       });
       clearTransaction(response, settings);
-      await writeSession(response, request, settings, finished.session);
+      await writeSession(response, { request, settings, session: finished.session });
       return response;
     }
     default: {
@@ -522,7 +524,7 @@ export async function tokenRoute(request: NextRequest): Promise<NextResponse> {
   switch (outcome.kind) {
     case 'refreshed': {
       const response = issued(outcome.session);
-      await writeSession(response, request, settings, outcome.session, now);
+      await writeSession(response, { request, settings, session: outcome.session, now });
       return response;
     }
     case 'refused':

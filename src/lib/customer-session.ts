@@ -79,14 +79,17 @@ const SEAL_VERSION = 'v1';
 const SALT = new TextEncoder().encode('day0-customer-session');
 
 function base64Url(bytes: Uint8Array): string {
-  return Buffer.from(bytes).toString('base64url');
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
 function fromBase64Url(value: string): Uint8Array<ArrayBuffer> | undefined {
+  // A length of one past a multiple of four is not base64 at all, and `atob` throws on it.
   if (!/^[A-Za-z0-9_-]+$/.test(value) || value.length % 4 === 1) return undefined;
-  const decoded = Buffer.from(value, 'base64url');
-  const bytes = new Uint8Array(new ArrayBuffer(decoded.length));
-  bytes.set(decoded);
+  const binary = atob(value.replace(/-/g, '+').replace(/_/g, '/'));
+  const bytes = new Uint8Array(new ArrayBuffer(binary.length));
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
   return bytes;
 }
 
