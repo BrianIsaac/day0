@@ -178,3 +178,25 @@ describe('the header', (): void => {
     expect(metadata.description).not.toMatch(/boss|teammate/);
   });
 });
+
+/**
+ * The absolute base the canonical and Open Graph addresses are built on. Vercel
+ * names the production domain on every deployment; outside Vercel the hosted
+ * demo's own domain stands in, so a shared link never names an address that
+ * no longer serves the demo.
+ */
+describe('the base address of the page metadata', (): void => {
+  it('takes the production domain Vercel names, when it names one', async (): Promise<void> => {
+    vi.stubEnv('VERCEL_PROJECT_PRODUCTION_URL', 'day0.example.test');
+    const { metadata } = await import('../../app/layout');
+    expect(metadata.metadataBase?.href).toBe('https://day0.example.test/');
+    expect(metadata.openGraph?.url).toBe('https://day0.example.test');
+  });
+
+  it('falls back to the hosted demo’s own domain outside Vercel', async (): Promise<void> => {
+    vi.stubEnv('VERCEL_PROJECT_PRODUCTION_URL', '');
+    const { metadata } = await import('../../app/layout');
+    expect(metadata.metadataBase?.href).toBe('https://dayzer0.dev/');
+    expect(metadata.openGraph?.url).toBe('https://dayzer0.dev');
+  });
+});
