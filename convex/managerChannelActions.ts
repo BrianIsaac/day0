@@ -510,8 +510,9 @@ export const sendTransferNotice = internalAction({
   handler: async (ctx, args): Promise<{ sent: boolean; reason?: string }> => {
     const claimed = await ctx.runMutation(internal.managerTransfers.claimTransferNotice, args);
     if (!claimed.claimed) return { sent: false, reason: claimed.reason };
+    let credential = '';
     try {
-      const credential = await decryptCredential(ctx, claimed.credentialId);
+      credential = await decryptCredential(ctx, claimed.credentialId);
       const person = await personNamedBy(credential, claimed.toAddress);
       if (person === undefined) {
         log.info('handover notice not sent: the named address is no person in the workspace', {
@@ -534,7 +535,7 @@ export const sendTransferNotice = internalAction({
       });
       return { sent: true };
     } catch (error) {
-      const reason = safeFailureMessage(error, '', 'Handover notice failed.');
+      const reason = safeFailureMessage(error, credential, 'Handover notice failed.');
       log.warn('handover notice not sent; it is not tried again', {
         transferId: args.transferId,
         reason,

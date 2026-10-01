@@ -347,7 +347,7 @@ describe('managerTransfers.ask', (): void => {
       .mutation(api.managerTransfers.ask, { agentId: maya, toAddress: PRIYA_ADDRESS });
     expect(await request(harness, stale)).toMatchObject({
       state: 'expired',
-      decidedAt: Date.UTC(2026, 9, 1, 9),
+      decidedAt: Date.UTC(2026, 8, 15),
     });
     expect((await request(harness, fresh))?.state).toBe('asked');
     expect((await handoverEvents(harness, maya)).map(({ type }) => type)).toEqual([
@@ -604,6 +604,33 @@ describe('managerTransfers.changeAddress', (): void => {
   });
 });
 
+describe('managerTransfers.changeAddress under the bounds', (): void => {
+  it('rolls the cancel back when the new address has too many handovers waiting', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const maya = await employee(harness);
+    const transferId = await harness
+      .withIdentity(OWNER)
+      .mutation(api.managerTransfers.ask, { agentId: maya, toAddress: PRIYA_ADDRESS });
+    const full = fixtureAddressOf('wei');
+    for (let owner = 0; owner < 10; owner += 1) {
+      const subject = `owner-${owner}`;
+      const agentId = await employee(harness, `Aiko ${owner}`, { userId: subject });
+      await harness
+        .withIdentity(managerIdentity(subject))
+        .mutation(api.managerTransfers.ask, { agentId, toAddress: full });
+    }
+    expect(
+      await refusal(
+        harness
+          .withIdentity(OWNER)
+          .mutation(api.managerTransfers.changeAddress, { transferId, toAddress: full }),
+      ),
+    ).toBe(addressBoundRefusal(full));
+    expect(await request(harness, transferId)).toMatchObject({ state: 'asked' });
+    expect(await handoverEvents(harness, maya)).toHaveLength(1);
+  });
+});
+
 describe('managerTransfers.decline', (): void => {
   it('declines for the named account, keeps the reason for the old manager, and changes nothing about the employee', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
@@ -710,7 +737,7 @@ describe('managerTransfers.expireDue', (): void => {
 
     expect(await request(harness, lapsed)).toMatchObject({
       state: 'expired',
-      decidedAt: Date.UTC(2026, 9, 20),
+      decidedAt: Date.UTC(2026, 9, 15),
     });
     expect((await request(harness, accepting))?.state).toBe('accepting');
     expect((await request(harness, waiting))?.state).toBe('asked');
@@ -860,6 +887,16 @@ describe('managerTransfers.incoming', (): void => {
         .query(api.managerTransfers.incoming, {}),
     ).toEqual([]);
     expect(await harness.query(api.managerTransfers.incoming, {})).toEqual([]);
+  });
+
+  it('leaves out a request whose employee is gone', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const maya = await employee(harness);
+    await insertRequest(harness, { agentId: maya });
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.delete(maya);
+    });
+    expect(await harness.withIdentity(PRIYA).query(api.managerTransfers.incoming, {})).toEqual([]);
   });
 });
 
@@ -1035,22 +1072,60 @@ describe('the handover note in real mode', (): void => {
   });
 });
 
+describe('managerTransfers.replaceNote', (): void => {
+  it('writes the scrubbed note only over the note it scrubbed, never over a later one', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const maya = await employee(harness);
+    const transferId = await insertRequest(harness, { agentId: maya, note: 'the later note' });
+    await harness.mutation(internal.managerTransfers.replaceNote, {
+      transferId,
+      scrubbedFrom: 'the earlier note',
+      note: 'the <redacted> note',
+    });
+    expect((await request(harness, transferId))?.note).toBe('the later note');
+    await harness.mutation(internal.managerTransfers.replaceNote, {
+      transferId,
+      scrubbedFrom: 'the later note',
+    });
+    expect((await request(harness, transferId))?.note).toBeUndefined();
+  });
+});
+
 describe('transferNoticeText', (): void => {
   it('says who asks, for whom, where to answer and that nothing changes until they do', (): void => {
     expect(
       transferNoticeText({
+        transferId: 't1',
         employeeName: 'Maya',
         fromAddress: 'sam@company.com',
         publicUrl: 'https://day0.company.com/',
       }),
     ).toBe(
-      "Maya's manager, sam@company.com, has asked you to take Maya on. Accept or decline in Day0: https://day0.company.com/. Nothing changes until you do.",
+      "Maya's manager, sam@company.com, has asked you to take Maya on. Accept or decline in Day0: https://day0.company.com/?transfer=t1. Nothing changes until you do.",
     );
   });
 
   it('leaves the link out when the deployment has no public address', (): void => {
-    expect(transferNoticeText({ employeeName: 'Maya', fromAddress: 'sam@company.com' })).toBe(
+    expect(
+      transferNoticeText({
+        transferId: 't1',
+        employeeName: 'Maya',
+        fromAddress: 'sam@company.com',
+      }),
+    ).toBe(
       "Maya's manager, sam@company.com, has asked you to take Maya on. Accept or decline in Day0. Nothing changes until you do.",
+    );
+  });
+
+  it('escapes the three characters Slack reads as markup, so a name cannot become a link or a mention', (): void => {
+    expect(
+      transferNoticeText({
+        transferId: 't1',
+        employeeName: 'Ops <!channel> & co',
+        fromAddress: 'sam@company.com',
+      }),
+    ).toBe(
+      "Ops &lt;!channel&gt; &amp; co's manager, sam@company.com, has asked you to take Ops &lt;!channel&gt; &amp; co on. Accept or decline in Day0. Nothing changes until you do.",
     );
   });
 });
