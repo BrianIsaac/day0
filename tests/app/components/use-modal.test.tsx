@@ -185,6 +185,41 @@ describe('useModal', () => {
     expect(document.activeElement?.textContent).toBe('Last');
   });
 
+  it('moves Tab from a focused part of the panel that is not a control to the controls around it, so focus never leaves it', () => {
+    const view = mount(
+      <div
+        tabIndex={-1}
+        data-panel=""
+        onKeyDown={(event): void => keepTabInside(event, event.currentTarget)}
+      >
+        <div tabIndex={-1} data-account="">
+          An account a dialog opens on, before its controls.
+        </div>
+        <button type="button">First</button>
+        <button type="button">Last</button>
+      </div>,
+    );
+    const account = view.container.querySelector<HTMLElement>('[data-account]');
+    const pressTab = (shiftKey: boolean): KeyboardEvent => {
+      const event = new KeyboardEvent('keydown', {
+        key: 'Tab',
+        shiftKey,
+        bubbles: true,
+        cancelable: true,
+      });
+      act((): void => {
+        document.activeElement?.dispatchEvent(event);
+      });
+      return event;
+    };
+    account?.focus();
+    expect(pressTab(true).defaultPrevented).toBe(true);
+    expect(document.activeElement?.textContent).toBe('Last');
+    account?.focus();
+    expect(pressTab(false).defaultPrevented).toBe(true);
+    expect(document.activeElement?.textContent).toBe('First');
+  });
+
   it('keeps the page still under a second modal when the first closes before it (review m6)', () => {
     const view = mount(<Pair first={false} second={false} />);
     act((): void => view.root.render(<Pair first second={false} />));
