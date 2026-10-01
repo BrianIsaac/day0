@@ -181,6 +181,23 @@ describe('recordWords', (): void => {
     ).toBe('Access to the Slack connection ends within a week; renew it on its card.');
   });
 
+  it('says each way the manager changed, the adoption of the owner’s own address included (D17)', (): void => {
+    const changed = (payload: Record<string, unknown>): string =>
+      recordWords({ type: 'manager.changed', payload }, { name: 'Mira' });
+    expect(changed({ via: 'adopted', bossEmail: 'lead@kestrel.example' })).toBe(
+      "You made yourself Mira's manager at lead@kestrel.example, so its DMs come to you now.",
+    );
+    expect(changed({ via: 'adopted' })).toBe(
+      "You made yourself Mira's manager, so its DMs come to you now.",
+    );
+    expect(changed({ via: 'dashboard', bossEmail: 'ana@kestrel.example' })).toBe(
+      "You changed Mira's manager to ana@kestrel.example.",
+    );
+    expect(changed({ via: 'probe', managerUserId: 'U2' })).toBe(
+      'The chat surface showed Mira a different manager, so its DMs go to them now.',
+    );
+  });
+
   it('says an intake listing is a change the tracker shows, with intake’s refusal when there is one', (): void => {
     expect(recordWords({ type: 'work.listed', payload: { refused: 'no assignee' } }, subject)).toBe(
       'The tracker shows \u201cDraft response for new tier-two RevOps ask\u201d changed; intake did not take it: no assignee.',

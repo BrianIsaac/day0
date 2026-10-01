@@ -149,6 +149,9 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     if (payload.via === 'probe')
       return 'the chat surface found a different manager and moved the DM to them';
     const to = 'bossEmail' in payload ? text(payload.bossEmail) : undefined;
+    if (payload.via === 'adopted') {
+      return `the owner made themselves the manager${to ? ` (${to})` : ''}`;
+    }
     return `manager changed${to ? ` to ${to}` : ''} on the dashboard`;
   },
   'charter.drafted': (payload) => `charter v${text(payload.version) ?? '?'} drafted`,

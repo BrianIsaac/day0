@@ -219,8 +219,21 @@ export interface ManagerChangedByProbe {
   readonly managerUserId: string;
 }
 
+/**
+ * `manager.changed` from the owner's **Make it you** (D17 (a)): the employee's
+ * address was not its owner's, and the owner made it their own verified one.
+ */
+export interface ManagerChangedByAdoption {
+  readonly via: 'adopted';
+  /** The owner's verified address, normalised, that the employee reports to now. */
+  readonly bossEmail: string;
+}
+
 /** The payload of `manager.changed`, by where the change was seen. */
-export type ManagerChangedPayload = ManagerChangedOnDashboard | ManagerChangedByProbe;
+export type ManagerChangedPayload =
+  | ManagerChangedOnDashboard
+  | ManagerChangedByProbe
+  | ManagerChangedByAdoption;
 
 // The charter.
 
