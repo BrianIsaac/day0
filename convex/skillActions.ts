@@ -47,6 +47,7 @@ import { spanModelFromEnv } from '../src/redaction/span-model-env';
 import { ownerKnownValues } from '../src/redaction/known-values';
 import { itemBoundModelFailure } from '../src/lib/structured-fallback';
 import { errorMessage } from '../src/lib/errors';
+import { harnessToolsNamed } from '../src/work/skill-library';
 
 /**
  * Autonomous skill authoring action. Demo headline:
@@ -273,19 +274,26 @@ function withoutPageMarkers(text: string): string {
   return text.replace(/<{3,}|>{3,}/g, (run) => run.split('').join(' '));
 }
 
+/** One linked page as the author prompt carries it: the page, and its text inside its markers. */
+interface LinkedRunbookPage<Page extends AuthorRunbookPage> {
+  readonly page: Page;
+  readonly excerpt: string;
+}
+
 /**
- * The linked pages for the target surface, each inside its markers.
+ * The linked pages for the target surface, each inside its markers: the pages the authoring run
+ * reads, which registration records on the version (`readRefs`).
  *
  * @param skill - The proposed skill; only its target surface is read.
  * @param surfaces - The agent's surfaces, for the target's display name.
  * @param pages - The agent's redacted documentation.
- * @returns The page excerpts, most relevant first, within the character budget.
+ * @returns The pages and their excerpts, most relevant first, within the character budget.
  */
-function linkedRunbookExcerpts(
+function linkedRunbookExcerpts<Page extends AuthorRunbookPage>(
   skill: AuthorPromptSkill,
   surfaces: readonly SurfaceRecord[],
-  pages: readonly AuthorRunbookPage[],
-): string[] {
+  pages: readonly Page[],
+): LinkedRunbookPage<Page>[] {
   if (!skill.targetSurface) return [];
   const target = skill.targetSurface.toLowerCase();
   const connected = surfaces.find((surface) => surface.slug.toLowerCase() === target);
@@ -307,7 +315,7 @@ function linkedRunbookExcerpts(
     .slice(0, MAX_LINKED_RUNBOOKS);
 
   let remaining = MAX_LINKED_RUNBOOK_CHARS;
-  const excerpts: string[] = [];
+  const excerpts: LinkedRunbookPage<Page>[] = [];
   for (const page of relevant) {
     if (remaining <= 0) break;
     const opening = `${PAGE_OPENING(withoutPageMarkers(page.ref))}\n### ${withoutPageMarkers(page.title)}\n`;
@@ -317,7 +325,7 @@ function linkedRunbookExcerpts(
       Math.max(0, remaining - opening.length - closing.length),
     );
     const excerpt = `${opening}${markdown}${closing}`;
-    excerpts.push(excerpt);
+    excerpts.push({ page, excerpt });
     remaining -= excerpt.length;
   }
   return excerpts;
@@ -332,7 +340,7 @@ function linkedRunbookSection(
   surfaces: readonly SurfaceRecord[],
   pages: readonly AuthorRunbookPage[],
 ): string {
-  const excerpts = linkedRunbookExcerpts(skill, surfaces, pages);
+  const excerpts = linkedRunbookExcerpts(skill, surfaces, pages).map((linked) => linked.excerpt);
   if (excerpts.length === 0) return '';
   return [
     'Linked, already-redacted team documentation for the target surface:',
@@ -856,6 +864,10 @@ async function authorAndRegister(
     });
   }
 
+  // The pages the prompt carried: the gate reads their text, and the
+  // registration records which they were (`readRefs`).
+  const linkedPages = linkedRunbookExcerpts(skill, surfaceRows.map(toSurfaceRecord), pageRows);
+
   // The static gate before any sandbox spends a run: a body that repeats
   // the first work item's values, or breaks the placeholder contract the
   // executor binds by, is not a reusable procedure whatever its smoke test
@@ -871,9 +883,7 @@ async function authorAndRegister(
     // The pages alone, without the prompt's framing, whose own words would
     // otherwise read as documented controls.
     documentedProcedure:
-      SURFACE_MODE === 'real'
-        ? linkedRunbookExcerpts(skill, surfaceRows.map(toSurfaceRecord), pageRows).join('\n')
-        : '',
+      SURFACE_MODE === 'real' ? linkedPages.map((linked) => linked.excerpt).join('\n') : '',
   });
   if (issues.length > 0) {
     const reason = `the authored skill is not a reusable procedure: ${issues.join('; ')}`;
@@ -925,12 +935,18 @@ async function authorAndRegister(
     if (!recorded) return { ok: false, reason: SUPERSEDED };
     return { ok: false, reason: `sandbox verification unavailable: ${reason}` };
   }
+  const contract = smokeHarnessContract(
+    body,
+    surfaceRows.map(toSurfaceRecord),
+    skill.targetSurface,
+    Date.now(),
+  );
   try {
     const verification = await verifyAuthoredSkill(
       { skillName: skill.name, skillBody: body, smokeTest },
       authorAndVerifySkill,
       SURFACE_MODE,
-      smokeHarnessContract(body, surfaceRows.map(toSurfaceRecord), skill.targetSurface, Date.now()),
+      contract,
     );
     if (!verification.ok) {
       return await recordAuthoringFailure(ctx, skillId, runId, {
@@ -1036,8 +1052,302 @@ async function authorAndRegister(
     runId,
     body,
     verificationLog: noted(verificationLog),
+    smokeTest,
+    harnessTools: harnessToolsNamed(body, contract.surfaces),
+    readRefs: linkedPages.map(({ page }) => ({
+      sourceId: page.sourceId,
+      ref: page.ref,
+      title: page.title,
+    })),
   });
   if (!registered) return { ok: false, reason: SUPERSEDED };
 
   return { ok: true };
+}
+
+/** What the re-check's author is told when a version's passing check was never kept (K3). */
+const KEEP_CHECK_INSTRUCTION =
+  'This skill is already registered with the SKILL.md below, and it stays exactly as it is. ' +
+  'Write smoke.py for it as the rules above say, and return this SKILL.md unchanged as the body.';
+
+/**
+ * The author prompt for a re-check whose version has no kept smoke test: the authoring prompt
+ * for the same skill, with the registered body fixed and only the smoke test asked for.
+ *
+ * @param skill - The holder row, as the author prompt reads it.
+ * @param body - The registered SKILL.md.
+ * @param surfaces - The holder's surfaces.
+ * @param now - Clock for the connection verdict.
+ * @param pages - The holder's redacted documentation.
+ */
+export function buildKeepCheckPrompt(
+  skill: AuthorPromptSkill,
+  body: string,
+  surfaces: readonly SurfaceRecord[],
+  now: number,
+  pages: readonly AuthorRunbookPage[],
+): string {
+  return [
+    buildAuthorPrompt(skill, surfaces, now, pages, SURFACE_MODE),
+    '',
+    KEEP_CHECK_INSTRUCTION,
+    '',
+    'Registered SKILL.md:',
+    body,
+  ].join('\n');
+}
+
+/** Where a stored verification stops short of a verdict on the body. */
+type StoredVerificationStop =
+  | { readonly kind: 'skipped'; readonly reason: string }
+  | { readonly kind: 'failed'; readonly reason: string; readonly log: string };
+
+/**
+ * Verify a stored body and smoke test in the sandbox under the holding employee's contract, and
+ * register the row on a pass or fail it with the log (the enhancements plan, section 4.1).
+ * Internal: adoption (10-A) and Re-check now (10-C) schedule it after their own owner-guarded
+ * mutations, and the backfill's re-check is a Re-check now.
+ *
+ * The version is the row's own (a re-check) or the one offered to it (an adoption). The run takes
+ * the row's authoring claim for a stored verification, which leaves a registered row in use, then
+ * the one global sandbox lease (`holdSandboxLease`). A version whose passing check was not kept
+ * (K3) has a smoke test written for its unchanged body first, through the authoring gates. On a
+ * pass, `skills.completeRegistration` links the row to the version, keeps a missing check and
+ * clears "Re-check due"; on a failure the row is `failed` with the sandbox's log, its waiting work
+ * parked as any failed skill's is. When no sandbox ran, or the smoke test for a missing check
+ * could not be written, a registered row is released unchanged, still due, and any other row is
+ * parked with the stored body for Retry.
+ *
+ * @returns Whether the row registered, or why not.
+ */
+export const verifyStoredSkill = internalAction({
+  args: { skillId: v.id('skills') },
+  handler: async (ctx, args): Promise<{ ok: boolean; reason?: string }> => {
+    const target = await ctx.runQuery(internal.skillVersions.storedVerificationTarget, {
+      skillId: args.skillId,
+    });
+    if (target === null)
+      return { ok: false, reason: 'the skill holds no stored version to verify' };
+    const claim = await ctx.runMutation(internal.skills.claimAuthoringRun, {
+      skillId: args.skillId,
+      purpose: 'verify-stored',
+    });
+    if (!claim.claimed) return { ok: false, reason: claim.reason };
+    const { skill, version } = target;
+    const { runId } = claim;
+    const [surfaceRows, pageRows]: [Doc<'surfaces'>[], Doc<'docPages'>[]] = await Promise.all([
+      ctx.runQuery(internal.orientationData.surfacesForAgent, { agentId: skill.agentId }),
+      ctx.runQuery(internal.orientationData.pagesForAgent, { agentId: skill.agentId }),
+    ]);
+    const surfaces = surfaceRows.map(toSurfaceRecord);
+    const smokeTest =
+      version.smokeTest ?? (await writeKeptCheck(ctx, skill, version.body, surfaces, pageRows));
+    const stop =
+      typeof smokeTest === 'string'
+        ? await runStoredVerification(ctx, {
+            skill,
+            runId,
+            body: version.body,
+            smokeTest,
+            surfaces,
+          })
+        : smokeTest;
+    if (stop.kind === 'passed') {
+      const { registered } = await ctx.runMutation(internal.skills.completeRegistration, {
+        skillId: args.skillId,
+        runId,
+        body: version.body,
+        verificationLog: stop.log,
+        smokeTest: stop.smokeTest,
+        harnessTools: stop.harnessTools,
+        readRefs: version.readRefs,
+      });
+      return registered ? { ok: true } : { ok: false, reason: SUPERSEDED };
+    }
+    if (stop.kind === 'failed') {
+      return await recordAuthoringFailure(ctx, args.skillId, runId, {
+        rowReason: stop.log,
+        reason: stop.reason,
+        eventType: 'skill.verification-failed',
+      });
+    }
+    return await stopShortOfVerdict(ctx, {
+      skill,
+      runId,
+      body: version.body,
+      smokeTest: typeof smokeTest === 'string' ? smokeTest : undefined,
+      reason: stop.reason,
+    });
+  },
+});
+
+/**
+ * Write the smoke test a version's missing check needs (K3): the author is asked for smoke.py
+ * against the registered body, which stays as it is, and the authoring gates read both.
+ *
+ * @returns The smoke test, or why none could be written.
+ */
+async function writeKeptCheck(
+  ctx: ActionCtx,
+  skill: Doc<'skills'>,
+  body: string,
+  surfaces: readonly SurfaceRecord[],
+  pages: readonly Doc<'docPages'>[],
+): Promise<string | { readonly kind: 'skipped'; readonly reason: string }> {
+  let authored: z.infer<typeof authorSchema>;
+  try {
+    authored = await recordingAuthoringCalls(ctx, skill, () =>
+      agentJson<z.infer<typeof authorSchema>>({
+        agent: skillAuthorAgent,
+        user: buildKeepCheckPrompt(skill, body, surfaces, Date.now(), pages),
+        schema: authorSchemaFor(SURFACE_MODE),
+      }),
+    );
+  } catch (err) {
+    return {
+      kind: 'skipped',
+      reason: `the smoke test for its unchanged body could not be written: ${errorMessage(err)}`,
+    };
+  }
+  const smokeTest = unwrapMarkdownFence(authored.smokeTest.trim()).source.trim();
+  const instance: Doc<'workItems'> | null = skill.proposedFor
+    ? await ctx.runQuery(internal.work.getInternal, { workItemId: skill.proposedFor })
+    : null;
+  const issues = smokeTest
+    ? authoredSkillIssues({
+        body,
+        smokeTest,
+        instance,
+        documentedProcedure:
+          SURFACE_MODE === 'real'
+            ? linkedRunbookExcerpts(skill, surfaces, pages)
+                .map((linked) => linked.excerpt)
+                .join('\n')
+            : '',
+      })
+    : ['the model returned an empty smoke test'];
+  if (issues.length > 0) {
+    return {
+      kind: 'skipped',
+      reason: `the smoke test written for its unchanged body was refused: ${issues.join('; ')}`,
+    };
+  }
+  return smokeTest;
+}
+
+/** A stored verification that passed: the log, the program kept and the tools the body names. */
+interface StoredVerificationPass {
+  readonly kind: 'passed';
+  readonly log: string;
+  readonly smokeTest: string;
+  readonly harnessTools: string[];
+}
+
+/**
+ * Run a stored body and smoke test in the sandbox under the holder's contract, holding the one
+ * global lease for the run and releasing it whichever way the run went.
+ */
+async function runStoredVerification(
+  ctx: ActionCtx,
+  args: {
+    readonly skill: Doc<'skills'>;
+    readonly runId: Id<'events'>;
+    readonly body: string;
+    readonly smokeTest: string;
+    readonly surfaces: readonly SurfaceRecord[];
+  },
+): Promise<StoredVerificationPass | StoredVerificationStop> {
+  const { skill, runId } = args;
+  const lease = await holdSandboxLease(ctx, {
+    skillId: skill._id,
+    agentId: skill.agentId,
+    name: skill.name,
+    runId,
+  });
+  if (!lease.held) {
+    return {
+      kind: 'skipped',
+      reason: `the verification sandbox was busy with another skill for ${Math.round(lease.waitedMs / 60_000)} minutes`,
+    };
+  }
+  const contract = smokeHarnessContract(args.body, args.surfaces, skill.targetSurface, Date.now());
+  try {
+    const verification = await verifyAuthoredSkill(
+      { skillName: skill.name, skillBody: args.body, smokeTest: args.smokeTest },
+      authorAndVerifySkill,
+      SURFACE_MODE,
+      contract,
+    );
+    if (!verification.ok) {
+      return { kind: 'failed', reason: verification.reason, log: verification.reason };
+    }
+    const result = verification.result;
+    if (result.skipped) {
+      return { kind: 'skipped', reason: result.skipReason ?? 'no sandbox available' };
+    }
+    const backend = result.backend === 'local' ? 'the local sandbox' : 'Daytona';
+    const [stdout, stderr] = await redactAuthoringTexts(ctx, skill.agentId, [
+      result.stdout,
+      result.stderr,
+    ]);
+    if (!result.ok) {
+      const failure = result.failureReason ?? 'sandbox verification failed';
+      return {
+        kind: 'failed',
+        reason: `the stored skill failed its check - ${failure}`,
+        log:
+          `verification in ${backend} (${result.sandboxId}) failed - ${failure}\n\n` +
+          clipRefusedDraft(
+            `stderr:\n${stderr!.trim()}\n\nstdout:\n${stdout!.trim()}`,
+            FAILED_VERIFICATION_LOG_CHARS,
+          ),
+      };
+    }
+    return {
+      kind: 'passed',
+      log: `ran in ${backend} (${result.sandboxId})\n\nstdout:\n${stdout}\n\nstderr:\n${stderr}\nok: true`,
+      smokeTest: verification.smokeTest,
+      harnessTools: harnessToolsNamed(args.body, contract.surfaces),
+    };
+  } catch (err) {
+    return { kind: 'skipped', reason: `the sandbox threw: ${errorMessage(err)}` };
+  } finally {
+    await ctx.runMutation(internal.sandboxLease.release, { skillId: skill._id, runId });
+  }
+}
+
+/**
+ * End a stored verification that reached no verdict on the body. A registered row stays in use,
+ * still due its re-check, and the claim is released; any other row is parked with the stored
+ * body and smoke test, so Retry checks them without authoring.
+ */
+async function stopShortOfVerdict(
+  ctx: ActionCtx,
+  args: {
+    readonly skill: Doc<'skills'>;
+    readonly runId: Id<'events'>;
+    readonly body: string;
+    readonly smokeTest: string | undefined;
+    readonly reason: string;
+  },
+): Promise<{ ok: false; reason: string }> {
+  const { skill, runId, reason } = args;
+  if (skill.state === 'registered' || args.smokeTest === undefined) {
+    const { released } = await ctx.runMutation(internal.skillVersions.releaseStoredVerification, {
+      skillId: skill._id,
+      runId,
+      reason,
+    });
+    return { ok: false, reason: released ? reason : SUPERSEDED };
+  }
+  const { recorded } = await ctx.runMutation(internal.skills.parkUnverified, {
+    skillId: skill._id,
+    runId,
+    sandboxId: '(skipped)',
+    body: args.body,
+    smokeTest: args.smokeTest,
+    verificationLog: `the stored skill was not verified: ${reason}; Retry runs its check`,
+    reason,
+  });
+  return { ok: false, reason: recorded ? reason : SUPERSEDED };
 }
