@@ -1,6 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { CUSTOMER_OIDC_AUDIENCE_VAR, CUSTOMER_OIDC_ISSUER_VAR } from '../src/lib/customer-oidc';
+import {
+  CUSTOMER_OIDC_AUDIENCE_VAR,
+  CUSTOMER_OIDC_EMAIL_TRUSTED_VAR,
+  CUSTOMER_OIDC_ISSUER_VAR,
+} from '../src/lib/customer-oidc';
 import { PRIVATE_HOSTS_VAR } from '../src/lib/private-hosts';
 
 const EXAMPLE = readFileSync(new URL('../.env.example', import.meta.url), 'utf8');
@@ -19,6 +23,7 @@ describe('.env.example', (): void => {
       'DAY0_PROFILE',
       CUSTOMER_OIDC_ISSUER_VAR,
       CUSTOMER_OIDC_AUDIENCE_VAR,
+      CUSTOMER_OIDC_EMAIL_TRUSTED_VAR,
       PRIVATE_HOSTS_VAR,
       'CONVEX_URL',
       'DAY0_APP_HOST',
