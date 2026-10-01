@@ -535,10 +535,13 @@ describe('the record after a handover (decisions 4 and 5, the wave 10 review, M8
         {},
         { name: 'chat-thread-reply', fromAddress: 'x@company.com' },
         FULL,
+        { ...FULL, via: 'plan-approval', decidedVia: 'channel', reason: 'skip-overruled' },
       ]) {
         const words = recordWords({ type, payload }, earlier);
         expect(words).not.toMatch(/\byou(rs?|rself)?\b/i);
         expect(words).toMatch(/^[A-Z0-9“]/);
+        // The manager then is named once a sentence, and "they" after that.
+        expect(words.split('sam@company.com').length - 1).toBeLessThanOrEqual(1);
       }
     },
   );

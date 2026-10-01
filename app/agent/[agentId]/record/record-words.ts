@@ -132,9 +132,27 @@ function whose(subject: RecordSubject): string {
   return earlier === undefined ? 'your' : `${earlier}'s`;
 }
 
-/** Where the manager decided, as the end of a sentence about the decision. */
-function decidedFrom(via: unknown, subject: RecordSubject): string {
-  if (via === 'channel') return ` from ${whose(subject)} DMs`;
+/**
+ * "you" or "they", inside a sentence that has already named who decided ({@link decider}): the
+ * manager then is named once a sentence.
+ */
+function they(subject: RecordSubject): string {
+  return earlierAddress(subject) === undefined ? 'you' : 'they';
+}
+
+/** "your" or "their", inside a sentence that has already named who decided. */
+function their(subject: RecordSubject): string {
+  return earlierAddress(subject) === undefined ? 'your' : 'their';
+}
+
+/**
+ * Where the manager decided, as the end of a sentence about the decision.
+ *
+ * @param via - The decision's channel.
+ * @param dms - Whose DMs, as the sentence can say them: {@link their} after {@link decider}.
+ */
+function decidedFrom(via: unknown, dms: string): string {
+  if (via === 'channel') return ` from ${dms} DMs`;
   if (via === 'dashboard') return ' from the dashboard';
   return '';
 }
@@ -187,15 +205,15 @@ const REQUEUED_BECAUSE: Readonly<Record<string, string>> = {
 const PLAN_HELD_BECAUSE: {
   readonly [Reason in WorkPlanHeldPayload['reason']]: (subject: RecordSubject) => string;
 } = {
-  'skip-overruled': (subject) => `${addressee(subject)} waived the skip`,
+  'skip-overruled': (subject) => `${they(subject)} waived the skip`,
   'plan-rejected-for-this-item': (subject) =>
-    `${addressee(subject)} rejected a colleague's plan for this ticket`,
+    `${they(subject)} rejected a colleague's plan for this ticket`,
   'obligations-failed-open': () => 'its reads and writes could not be checked',
   'drafted-without-record': () => 'it was drafted without reading its ticket or thread',
   'approved-by-predecessor': (subject) =>
     earlierAddress(subject) === undefined
       ? 'your predecessor approved it, so approve it again'
-      : `the manager before ${addressee(subject)} approved it, so it was to be approved again`,
+      : 'their predecessor approved it, so it was to be approved again',
 };
 
 /**
@@ -263,7 +281,7 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     }
     return earlierAddress(subject) === undefined
       ? `Run notes to you now come ${mode}`
-      : `Run notes to ${addressee(subject)} came ${mode} from then`;
+      : `From then, run notes to ${addressee(subject)} came ${mode}`;
   },
   'agent.zone-changed': (p, { name }) =>
     `${name}'s working day moved${text(p.from) ? ` from ${p.from}` : ''}${
@@ -356,7 +374,7 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     }${forItem(subject)}`,
   'charter.question-answered': (p, subject) =>
     `${decider(subject)} answered a charter question${
-      p.via === 'plan-approval' ? ' as you approved a plan' : ' on the charter'
+      p.via === 'plan-approval' ? ` as ${they(subject)} approved a plan` : ' on the charter'
     }${p.amended === true ? ', and the charter was amended' : ''}`,
   'charter.evidence-rejected': (p, subject) =>
     `${counted(p.count, 'charter line') ?? 'Charter lines'} dropped: ${whose(subject)} one-to-one did not back ${
@@ -668,7 +686,7 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `The plan${forItem(subject)} is held for ${addressee(subject)}: ${
       typeof p.reason === 'string' && Object.hasOwn(PLAN_HELD_BECAUSE, p.reason)
         ? PLAN_HELD_BECAUSE[p.reason](subject)
-        : `it waits for ${whose(subject)} decision`
+        : `it waits for ${their(subject)} decision`
     }`,
   'work.plan-approved': (p, subject) => {
     if (p.by === 'autonomous') {
@@ -683,7 +701,7 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
         ? [note === 1 ? "the planner's note" : `${note} of the planner's questions`]
         : []),
     ];
-    return `${decider(subject)} approved the plan${forItem(subject)}${decidedFrom(p.decidedVia, subject)}${
+    return `${decider(subject)} approved the plan${forItem(subject)}${decidedFrom(p.decidedVia, their(subject))}${
       answered.length > 0 ? `, answering ${answered.join(' and ')}` : ''
     }`;
   },
@@ -720,9 +738,9 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
   'work.provider-reconciled': (p, subject) =>
     `The provider's state${forItem(subject)} was confirmed${text(p.actor) ? ` by ${p.actor}` : ''}`,
   'work.cancelled': (p, subject) =>
-    `${itemOf(subject)} was cancelled${decidedFrom(p.decidedVia, subject)}${because(p.reason)}`,
+    `${itemOf(subject)} was cancelled${decidedFrom(p.decidedVia, whose(subject))}${because(p.reason)}`,
   'work.dismissed': (_, subject) =>
-    `${decider(subject)} dismissed ${itemOf(subject)} from ${whose(subject)} inbox. It stays on the Work tab, where Retry runs it again`,
+    `${decider(subject)} dismissed ${itemOf(subject)} from ${their(subject)} inbox. It stays on the Work tab, where Retry runs it again`,
   'work.execution-claimed': (_, subject) => `${subject.name} started the run${forItem(subject)}`,
   'work.dependent-authoring': (_, subject) =>
     `${subject.name} wrote the closing actions${forItem(subject)} from what the first phase landed`,
@@ -744,9 +762,9 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
   'work.actions-approved': (p, subject) =>
     `${decider(subject)} approved ${counted(p.approvedIndexes?.length, 'held action') ?? 'held actions'}${onItem(
       subject,
-    )}${decidedFrom(p.decidedVia, subject)}`,
+    )}${decidedFrom(p.decidedVia, their(subject))}`,
   'work.actions-rejected': (p, subject) =>
-    `${decider(subject)} rejected the held actions${onItem(subject)}${decidedFrom(p.decidedVia, subject)}${yourReason(
+    `${decider(subject)} rejected the held actions${onItem(subject)}${decidedFrom(p.decidedVia, their(subject))}${yourReason(
       p.reason,
     )}`,
   'work.actions-applying': (p, subject) =>
