@@ -496,6 +496,9 @@ describe('skill library schema (10-K, N10: additive and optional)', (): void => 
         bodyHash: 'sha256:00',
         requiredScopes: ['linear:write'],
         harnessTools: ['save_comment'],
+        harnessToolsBySurface: [
+          { slug: 'linear', surfaceClass: 'kanban', tools: ['save_comment'] },
+        ],
         targetSurface: 'linear',
         authorAgentId: agentId,
         authorName: 'Priya',
@@ -522,6 +525,9 @@ describe('skill library schema (10-K, N10: additive and optional)', (): void => 
       return { versionId, byShape, byName, byAuthor };
     });
     expect(read.byShape.map((row) => row._id)).toEqual([read.versionId]);
+    expect(read.byShape[0]?.harnessToolsBySurface).toEqual([
+      { slug: 'linear', surfaceClass: 'kanban', tools: ['save_comment'] },
+    ]);
     expect(read.byName?._id).toBe(read.versionId);
     expect(read.byAuthor.map((row) => row._id)).toEqual([read.versionId]);
   });

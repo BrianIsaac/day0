@@ -1252,6 +1252,17 @@ export default defineSchema({
     /** The tools SKILL.md names that the smoke harness allowed: what an adopter's approved
      * allowlist must hold. Empty in mock mode and on a backfilled version. */
     harnessTools: v.array(v.string()),
+    /** The same tools surface by surface, with each surface's class, so an adopter's surface of
+     * that class is held to the tools listed for it. Absent where `harnessTools` is empty. */
+    harnessToolsBySurface: v.optional(
+      v.array(
+        v.object({
+          slug: v.string(),
+          surfaceClass: v.optional(v.string()),
+          tools: v.array(v.string()),
+        }),
+      ),
+    ),
     /** The surface slug the author's row targeted, where it had one. */
     targetSurface: v.optional(v.string()),
     /** The employee that wrote it; absent once that employee is retired or handed over. */
