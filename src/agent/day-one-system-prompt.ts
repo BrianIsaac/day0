@@ -58,6 +58,17 @@ export function dayOneSystemPrompt(employeeName: string): string {
   ].join('\n');
 }
 
+/** The end of every note before the close: the employee never promises a return it cannot keep. */
+const NO_PROMISED_RETURN =
+  ' Never promise to come back to a question or say you will circle back to it: anything the ' +
+  'boss leaves open is named at the last question.';
+
+/** What the last question's note asks first: the open threads of the earlier replies, named. */
+const LEFT_OPEN_FIRST =
+  "before the last question, name in one short sentence each thing the boss's earlier replies " +
+  'left open: a question they asked back, an answer they were not sure of, or something they ' +
+  'asked to come back to; name nothing when nothing was left open.';
+
 /**
  * Where the one-to-one stands, said to the model as the last message of every turn: the one
  * question this turn asks, or the close once all seven are answered.
@@ -67,6 +78,12 @@ export function dayOneSystemPrompt(employeeName: string): string {
  * the question asked and the question every one of them names are the same one. It is a message
  * of its own after the conversation rather than a line of the system prompt, which stays the same
  * on every turn of every one-to-one and keeps its cache.
+ *
+ * The one-to-one asks no follow-up (F-D5), so a reply that leaves a question open is not chased:
+ * every note forbids promising to come back to it, which the employee did on the wave 9 review's
+ * walk and never kept, and the last question's note has the employee name what the earlier
+ * replies left open before asking it, so the boss can settle it there (decision 3). Which replies
+ * left something open is the model's reading of the conversation, not a word list (N20).
  *
  * @param replies - `managerReplies` of the history this turn answers.
  */
@@ -83,9 +100,17 @@ export function dayOneTurnNote(replies: number): string {
   const question =
     `ask question ${answered + 1} (${DAY_ONE_TOPIC_TITLES[spec.topic]}) in your own words: ` +
     questionBody(spec.question);
-  return answered === 0
-    ? 'Where the one-to-one stands: the boss has answered none of the seven questions yet. ' +
-        `In this turn, welcome the boss as the rules say, then ${question}`
-    : `Where the one-to-one stands: the boss has answered ${answered} of the seven questions. ` +
-        `In this turn, acknowledge the boss's last reply in at most one short sentence, then ${question}`;
+  if (answered === 0) {
+    return (
+      'Where the one-to-one stands: the boss has answered none of the seven questions yet. ' +
+      `In this turn, welcome the boss as the rules say, then ${question}${NO_PROMISED_RETURN}`
+    );
+  }
+  const stands = `Where the one-to-one stands: the boss has answered ${answered} of the seven questions. `;
+  const acknowledge =
+    "In this turn, acknowledge the boss's last reply in at most one short sentence";
+  if (answered === DAY_ONE_TOPIC_COUNT - 1) {
+    return `${stands}${acknowledge}. Then, ${LEFT_OPEN_FIRST} Then ${question}${NO_PROMISED_RETURN}`;
+  }
+  return `${stands}${acknowledge}, then ${question}${NO_PROMISED_RETURN}`;
 }
