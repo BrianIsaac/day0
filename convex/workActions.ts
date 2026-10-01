@@ -599,12 +599,19 @@ async function evaluateWorkItemHandler(
     charterId: charterRow._id,
   });
 
-  // For needs-skill, propose a new skill row immediately.
+  // For needs-skill, propose a new skill row immediately, carrying a sibling's
+  // verified skill of the shape when one fits this employee (10-A).
   if (storedVerdict.decision === 'needs-skill' && verdict.decision === 'needs-skill') {
     const required = inferRequiredPermissions(candidate);
     const writeScope = `${candidate.sourceSystem}:write`;
     const requiredScopes = [...new Set([...required, writeScope])];
     const shape = verdict.suggestedSkillShape;
+    const offeredVersionId = await ctx.runQuery(internal.skillAdoption.offerFor, {
+      agentId,
+      name: verdict.suggestedSkillName,
+      surfaceClass: shape.surfaceClass,
+      operation: shape.operation,
+    });
     const skillId = await ctx.runMutation(internal.skills.propose, {
       agentId,
       workItemId: args.workItemId,
@@ -614,6 +621,7 @@ async function evaluateWorkItemHandler(
       requiredScopes,
       surfaceClass: shape.surfaceClass,
       operation: shape.operation,
+      ...(offeredVersionId !== null ? { offeredVersionId } : {}),
     });
     await ctx.runMutation(internal.work.setProposedSkill, {
       workItemId: args.workItemId,
