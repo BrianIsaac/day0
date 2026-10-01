@@ -12,7 +12,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, assertOwnsSkill } from './ownership';
 import { appendEvent, eventsOfType } from './eventLog';
 import { assertNotBeingHandedOver } from './handoverFence';
-import { holdersOf } from './skillVersions';
+import { holdersOf, newerVersionToRecheck } from './skillVersions';
 import { applyVerdict } from './work';
 import { scheduleNextStep, STEP_LEASE_MS } from './workLoop';
 import { isEventOf, type SkillRevokedHolder } from '../src/events/contract';
@@ -683,10 +683,12 @@ async function endAdoption(
 
 /**
  * Public, guarded by `assertOwnsSkill`: Re-check now. Schedules the stored verification
- * (`skillActions.verifyStoredSkill`) of the version the row holds; the employee keeps running its
- * verified body meanwhile. A pass clears "Re-check due"; a sandbox failure moves the row to
- * `failed` with the log. Refused for a row that is not callable, holds no stored version, or is
- * being checked now. Writes nothing itself: the verification's claim is on the record.
+ * (`skillActions.verifyStoredSkill`) of the version the row holds, or, when its chip says a newer
+ * version is verified, of that newer version, so a pass moves the holder onto it
+ * ({@link newerVersionToRecheck}); the employee keeps running its verified body meanwhile. A pass
+ * clears "Re-check due"; a sandbox failure moves the row to `failed` with the log. Refused for a
+ * row that is not callable, holds no stored version, or is being checked now. Writes nothing
+ * itself: the verification's claim is on the record.
  */
 export const recheckNow = mutation({
   args: { skillId: v.id('skills') },
@@ -701,8 +703,10 @@ export const recheckNow = mutation({
     if (holdsLiveAuthoringClaim(row, Date.now())) {
       throw new ConvexError(`A check of ${row.name} is already running.`);
     }
+    const newer = await newerVersionToRecheck(ctx.db, row);
     await ctx.scheduler.runAfter(0, internal.skillActions.verifyStoredSkill, {
       skillId: row._id,
+      ...(newer !== undefined ? { versionId: newer } : {}),
     });
     return { scheduled: true };
   },

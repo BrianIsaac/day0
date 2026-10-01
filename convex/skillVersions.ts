@@ -16,6 +16,7 @@ import {
   HANDED_OVER_AUTHOR_NAME,
   HANDED_OVER_RECHECK_REASON,
   isNewerVersionReason,
+  isOfferable,
   newerVersionReason,
   nextVersionNumber,
   sharedSkillsEnabled,
@@ -93,6 +94,35 @@ export async function ownerVersions(
           .order('desc')
           .take(LIBRARY_LOOKUP_LIMIT);
   return rows.sort((left, right) => right.version - left.version);
+}
+
+/**
+ * The newer version a holder's "v3 is verified; this runs v2" chip names, for Re-check now to
+ * move the holder onto (the plan's 4.1 item 2; the wave 10 review, M5): the owner's newest
+ * offerable version of the row's name that is newer than the one the row holds. Undefined when
+ * the chip gives another reason or no such version stands, and the row's own version is
+ * re-checked.
+ *
+ * @param db - A mutation's database.
+ * @param row - The holder row.
+ * @returns The version to verify the row as, or undefined.
+ */
+export async function newerVersionToRecheck(
+  db: DatabaseReader,
+  row: Doc<'skills'>,
+): Promise<Id<'skillVersions'> | undefined> {
+  if (row.recheckReason === undefined || !isNewerVersionReason(row.recheckReason)) return undefined;
+  const [held, agent] = await Promise.all([
+    row.versionId === undefined ? null : db.get(row.versionId),
+    db.get(row.agentId),
+  ]);
+  if (held === null || agent?.userId === undefined || held.userId !== agent.userId) {
+    return undefined;
+  }
+  const newer = (await ownerVersions(db, agent.userId, { by: 'name', name: row.name })).find(
+    (version) => version.version > held.version && isOfferable(version),
+  );
+  return newer?._id;
 }
 
 /**

@@ -871,6 +871,90 @@ describe('skillControls', (): void => {
       expect(failed.verificationLog).toContain('Traceback: KeyError record_id');
     });
 
+    it('moves a holder of an older version onto the newer one its chip names, and clears the chip only then (the wave 10 review, M5)', async (): Promise<void> => {
+      const harness = convexTest(schema, allConvexModules());
+      const office = await seedOffice(harness);
+      // A revision of Priya's registered version 2; Mateo still runs version 1 and was stamped.
+      const v2 = await harness.run(async (ctx) => {
+        const revised = await ctx.db.insert('skillVersions', {
+          userId: 'owner',
+          name: NAME,
+          description: 'Ticket comment-and-close.',
+          surfaceClass: 'kanban',
+          operation: 'comment-and-close',
+          version: 2,
+          body: REVISED_BODY,
+          smokeTest: SMOKE,
+          bodyHash: versionBodyHash(REVISED_BODY, SMOKE),
+          requiredScopes: [],
+          harnessTools: [],
+          authorAgentId: office.priya,
+          authorName: 'Priya',
+          readRefs: [],
+          verifiedAt: 2,
+          createdAt: 2,
+        });
+        await ctx.db.patch(office.versionId, { supersededAt: 2 });
+        await ctx.db.patch(office.priyaSkill, { versionId: revised, body: REVISED_BODY });
+        await ctx.db.patch(office.mateoSkill, {
+          recheckDueAt: 2,
+          recheckReason: 'v2 is verified; this runs v1',
+        });
+        return revised;
+      });
+
+      await harness
+        .withIdentity(OWNER)
+        .mutation(api.skillControls.recheckNow, { skillId: office.mateoSkill });
+      await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+      const moved = await skill(harness, office.mateoSkill);
+      expect(moved).toMatchObject({ state: 'registered', versionId: v2, body: REVISED_BODY });
+      expect(moved.recheckReason).toBeUndefined();
+      expect(
+        (await eventsOf(harness, office.mateo, 'skill.rechecked')).map((event) => event.payload),
+      ).toEqual([{ skillId: office.mateoSkill, name: NAME, version: 2, versionId: v2 }]);
+    });
+
+    it('re-checks the version the row holds when its chip names no newer version', async (): Promise<void> => {
+      const harness = convexTest(schema, allConvexModules());
+      const office = await seedOffice(harness);
+      await harness.run(async (ctx) => {
+        await ctx.db.insert('skillVersions', {
+          userId: 'owner',
+          name: NAME,
+          description: 'Ticket comment-and-close.',
+          surfaceClass: 'kanban',
+          operation: 'comment-and-close',
+          version: 2,
+          body: REVISED_BODY,
+          smokeTest: SMOKE,
+          bodyHash: versionBodyHash(REVISED_BODY, SMOKE),
+          requiredScopes: [],
+          harnessTools: [],
+          authorName: 'Priya',
+          readRefs: [],
+          verifiedAt: 2,
+          createdAt: 2,
+        });
+        await ctx.db.patch(office.mateoSkill, {
+          recheckDueAt: 2,
+          recheckReason: 'the tools you approved on linear changed',
+        });
+      });
+
+      await harness
+        .withIdentity(OWNER)
+        .mutation(api.skillControls.recheckNow, { skillId: office.mateoSkill });
+      await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+      expect(await skill(harness, office.mateoSkill)).toMatchObject({
+        state: 'registered',
+        versionId: office.versionId,
+        body: BODY,
+      });
+    });
+
     it('refuses a row with no stored version, one not callable, and one a check holds now', async (): Promise<void> => {
       const harness = convexTest(schema, allConvexModules());
       const office = await seedOffice(harness);
