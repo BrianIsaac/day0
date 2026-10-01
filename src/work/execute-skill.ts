@@ -990,6 +990,12 @@ export interface RunSkillArgs {
   mode?: SurfaceMode;
   /** Switch value read immediately before this execution prompt is built. */
   autonomousActions?: boolean;
+  /**
+   * The manager the employee reports to now, as the agent row holds them (`bossEmail`), named as
+   * who approves. Never the charter's `approvalChain.boss`, the label its one-to-one drafted,
+   * which a handover leaves naming the old manager; without one the prompt names the role.
+   */
+  currentManager?: string;
   /** Clock for the connection verdict; defaults to now. */
   now?: number;
   /** Evidence hook for deliberate model calls after the initial executor turn. */
@@ -1035,6 +1041,14 @@ export interface RunSkillArgs {
 }
 
 /**
+ * Who approves, in an executor prompt given no current manager: the role, never a person. The
+ * charter's `approvalChain.boss` is what its one-to-one drafted and is not rendered (as the
+ * identity file does not render it, `src/agent/charter-workspace.ts`): after a handover it names
+ * the old manager.
+ */
+export const CURRENT_MANAGER_UNNAMED = 'the manager this employee reports to now';
+
+/**
  * The charter as an executor prompt reads it. The mock prompt keeps the role
  * and the two boundary lists it always had; the real prompt adds the
  * escalation triggers, the adjacent roles, the named systems and
@@ -1044,9 +1058,15 @@ export interface RunSkillArgs {
  *
  * @param charter - The approved charter.
  * @param mode - The deployment's surface mode.
+ * @param currentManager - The manager the employee reports to now, named as who approves; the
+ *   role ({@link CURRENT_MANAGER_UNNAMED}) without one.
  * @returns The prompt lines.
  */
-export function executorCharterLines(charter: Charter, mode: SurfaceMode): string[] {
+export function executorCharterLines(
+  charter: Charter,
+  mode: SurfaceMode,
+  currentManager?: string,
+): string[] {
   const boundaries = charter.proposedBoundaries;
   const lines = [
     `Role: ${charter.proposedFunction}`,
@@ -1063,7 +1083,7 @@ export function executorCharterLines(charter: Charter, mode: SurfaceMode): strin
     `Charter adjacentRoles: ${clauses((charter.adjacentRoles ?? []).map((role) => `${role.who}: ${role.staysOutOfTheirLaneBy}`))}`,
     `Charter namedSystems: ${clauses((charter.namedSystems ?? []).map((system) => system.name))}`,
     `Charter namedCollaborators: ${clauses((charter.namedCollaborators ?? []).map((person) => `${person.name} (${person.topic})`))}`,
-    `Charter approvalChain: ${charter.approvalChain?.boss ?? '(none)'}`,
+    `Charter approvalChain: ${currentManager ?? CURRENT_MANAGER_UNNAMED}`,
     ...answeredQuestionLines(charter),
   ];
 }
@@ -2730,7 +2750,7 @@ async function authorSkillRun(args: RunSkillArgs): Promise<ExecutionOutput> {
   const runtimeSchema = executeSchemaForProcedureContract(procedureContract, candidate, plan, mode);
 
   const userPrompt = [
-    ...executorCharterLines(charter, mode),
+    ...executorCharterLines(charter, mode, args.currentManager),
     '',
     `Approved plan: ${plan.summary}`,
     `Plan steps: ${plan.steps.map((s, i) => `${i + 1}. ${s}`).join(' ')}`,
@@ -3456,7 +3476,7 @@ async function authorDependentSkillRun(
   });
   const runtimeSchema = dependentExecuteSchemaForProcedureContract(procedureContract, mode, cap);
   const userPrompt = [
-    ...executorCharterLines(charter, mode),
+    ...executorCharterLines(charter, mode, args.currentManager),
     '',
     `Approved plan: ${plan.summary}`,
     `Plan steps: ${plan.steps.map((step, index) => `${index + 1}. ${step}`).join(' ')}`,
