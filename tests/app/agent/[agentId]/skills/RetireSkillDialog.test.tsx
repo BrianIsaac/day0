@@ -116,7 +116,7 @@ describe('RetireSkillDialog', (): void => {
       ),
     };
     backend.results = {
-      'skillControls:withdraw': { withdrawn: true, holders: 2, returnedItems: 1 },
+      'skillControls:withdraw': { withdrawn: true, holders: 2, returnedItems: 1, stoppedRuns: 1 },
     };
     const { view, onDone } = open();
     await settle();
@@ -136,14 +136,46 @@ describe('RetireSkillDialog', (): void => {
     expect(document.body.querySelector('h2')?.textContent).toBe(
       'Withdraw this skill from every employee?',
     );
-    expect(document.body.textContent).toContain('Mira and Tomas stop running this skill now.');
+    expect(document.body.textContent).toContain(
+      'Mira and Tomas stop running this skill now, and a run of it already under way is stopped.',
+    );
     await press(document.body, 'Withdraw from 2 employees');
 
     expect(backend.calls).toEqual([
       { name: 'skillControls:withdraw', args: { skillId: 'skill-1' } },
     ]);
     expect(onDone).toHaveBeenCalledWith(
-      'kanban-comment-and-close is withdrawn from 2 employees. 1 approved item waits for a skill again.',
+      'kanban-comment-and-close is withdrawn from 2 employees. 1 approved item waits for a skill again. 1 run under way was stopped.',
+    );
+    view.unmount();
+  });
+
+  it('says a run already under way finishes and its writes still wait for the manager, since Retire stops no run (decision 3)', async (): Promise<void> => {
+    backend.queries = { 'skillVersions:forSkill': heldBy(['skill-1', 'Mira', 'registered']) };
+    const { view } = open();
+    await settle();
+
+    expect(document.body.textContent).toContain(
+      'Mira stops running this skill now. A run of it already under way finishes, and its writes still wait for you.',
+    );
+    view.unmount();
+  });
+
+  it('says the writes of a run under way apply without waiting while autonomous actions are on (decision 3)', async (): Promise<void> => {
+    backend.queries = { 'skillVersions:forSkill': heldBy(['skill-1', 'Mira', 'registered']) };
+    const view = mount(
+      <RetireSkillDialog
+        skill={SKILL}
+        employee="Mira"
+        autonomous
+        onClose={vi.fn()}
+        onDone={vi.fn()}
+      />,
+    );
+    await settle();
+
+    expect(document.body.textContent).toContain(
+      'A run of it already under way finishes, and with autonomous actions on its writes apply without waiting for you.',
     );
     view.unmount();
   });

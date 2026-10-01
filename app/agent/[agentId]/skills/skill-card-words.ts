@@ -100,16 +100,74 @@ export function retireOutcome(skill: string, employee: string, returned: number)
   return `${retired} ${returned} approved ${returned === 1 ? 'item waits' : 'items wait'} for a skill again.`;
 }
 
+/** What a withdrawal from every employee did, as `skillControls.withdraw` answers. */
+export interface WithdrawResult {
+  /** How many employees' copies it retired. */
+  readonly holders: number;
+  /** The approved items that went back to waiting for a skill, theirs together. */
+  readonly returnedItems: number;
+  /** The runs of the version already under way that it stopped. */
+  readonly stoppedRuns: number;
+}
+
 /**
  * What the live region says once a withdrawal from every employee lands.
  *
- * @param holders - How many employees' copies it retired.
- * @param returned - The approved items that went back to waiting for a skill, theirs together.
+ * @param result - What the withdrawal did.
  */
-export function withdrawOutcome(skill: string, holders: number, returned: number): string {
-  const withdrawn = `${skill} is withdrawn from ${holders} ${holders === 1 ? 'employee' : 'employees'}.`;
-  if (returned === 0) return withdrawn;
-  return `${withdrawn} ${returned} approved ${returned === 1 ? 'item waits' : 'items wait'} for a skill again.`;
+export function withdrawOutcome(skill: string, result: WithdrawResult): string {
+  const { holders, returnedItems, stoppedRuns } = result;
+  const sentences = [
+    `${skill} is withdrawn from ${holders} ${holders === 1 ? 'employee' : 'employees'}.`,
+  ];
+  if (returnedItems > 0) {
+    sentences.push(
+      `${returnedItems} approved ${returnedItems === 1 ? 'item waits' : 'items wait'} for a skill again.`,
+    );
+  }
+  if (stoppedRuns > 0) {
+    sentences.push(
+      `${stoppedRuns} ${stoppedRuns === 1 ? 'run under way was' : 'runs under way were'} stopped.`,
+    );
+  }
+  return sentences.join(' ');
+}
+
+/** Who a Retire or a Withdraw takes the skill from, as the dialog's sentence says it. */
+export interface RetireDialogFacts {
+  /** Withdraw for every employee, rather than Retire from one. */
+  readonly every: boolean;
+  /** The employee whose card the dialog was opened on. */
+  readonly employee: string;
+  /** Every employee who runs the version, that employee first. */
+  readonly runners: readonly string[];
+  /** Whether a revision of the row is being written, which the retire ends. */
+  readonly revisionOpen: boolean;
+  /** Whether the employee's autonomous actions are on, so a run's writes apply unasked. */
+  readonly autonomous: boolean;
+}
+
+/**
+ * The Retire dialog's sentence under its question: who stops running the skill and what becomes
+ * of a run of it already under way (decision 3: a Withdraw stops it, a Retire lets it finish),
+ * then of the approved work that would have used it.
+ *
+ * @param facts - The choice and the employees it reaches.
+ */
+export function retireDialogDescription(facts: RetireDialogFacts): string {
+  const { every, employee, runners, revisionOpen, autonomous } = facts;
+  const who = every
+    ? `${namesInWords(runners)} stop running this skill now, and a run of it already under way is stopped.`
+    : `${employee} stops running this skill now. A run of it already under way finishes, and ${
+        autonomous
+          ? 'with autonomous actions on its writes apply without waiting for you.'
+          : 'its writes still wait for you.'
+      }`;
+  const work =
+    'Approved work that would have used it goes back to waiting for a skill, and a new one is proposed for it.';
+  return [who, work, ...(revisionOpen ? ['The revision being written for it ends too.'] : [])].join(
+    ' ',
+  );
 }
 
 /** How a list of names is joined, as a British sentence joins it. */

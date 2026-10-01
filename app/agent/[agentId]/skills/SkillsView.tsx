@@ -5,6 +5,7 @@ import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { holdsLiveAuthoringClaim } from '@/lib/skill-authoring';
 import { Columns } from '../../../components/Columns';
+import { autonomousActionsOn } from '@/work/autonomy';
 import { useEmployee } from '../employee-context';
 import { useNow } from '../../../components/time';
 import { HowSkillsAreMade } from './HowSkillsAreMade';
@@ -103,6 +104,7 @@ export function SkillsView() {
         focusRef={skillsCard}
         loading={registeredSkills === undefined}
         employee={agent.name}
+        autonomous={autonomousActionsOn(agent)}
       />
     </Columns>
   );

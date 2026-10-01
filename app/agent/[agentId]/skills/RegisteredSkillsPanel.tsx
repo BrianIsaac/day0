@@ -118,6 +118,7 @@ export function RegisteredSkillsPanel({
   focusRef,
   loading = false,
   employee = 'This employee',
+  autonomous = false,
 }: {
   skills: Doc<'skills'>[];
   /** The registered skills' query has not answered yet. */
@@ -147,6 +148,8 @@ export function RegisteredSkillsPanel({
   focusRef?: RefObject<HTMLElement | null>;
   /** The employee's name, for the sentences that say who keeps running a skill. */
   employee?: string;
+  /** Whether the employee's autonomous actions are on, for what Retire says of a run under way. */
+  autonomous?: boolean;
 }) {
   const author = useAction(api.skillActions.authorAndRegisterSkill);
   const askForRevision = useMutation(api.skillControls.askForRevision);
@@ -505,6 +508,7 @@ export function RegisteredSkillsPanel({
           skill={retiring.skill}
           employee={employee}
           revisionOpen={revising.has(retiring.skill._id)}
+          autonomous={autonomous}
           onClose={() => {
             // Some browsers do not focus a button on click, so the dialog's own return can land
             // on the page: the control that opened it takes focus back, unless a run is still

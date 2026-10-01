@@ -55,11 +55,18 @@ describe('the skill cards’ words (10-C)', (): void => {
     expect(retireOutcome('kanban-comment-and-close', 'Mira', 1)).toBe(
       'kanban-comment-and-close is retired from Mira. 1 approved item waits for a skill again.',
     );
-    expect(withdrawOutcome('kanban-comment-and-close', 2, 0)).toBe(
-      'kanban-comment-and-close is withdrawn from 2 employees.',
-    );
-    expect(withdrawOutcome('kanban-comment-and-close', 1, 3)).toBe(
+    expect(
+      withdrawOutcome('kanban-comment-and-close', { holders: 2, returnedItems: 0, stoppedRuns: 0 }),
+    ).toBe('kanban-comment-and-close is withdrawn from 2 employees.');
+    expect(
+      withdrawOutcome('kanban-comment-and-close', { holders: 1, returnedItems: 3, stoppedRuns: 0 }),
+    ).toBe(
       'kanban-comment-and-close is withdrawn from 1 employee. 3 approved items wait for a skill again.',
+    );
+    expect(
+      withdrawOutcome('kanban-comment-and-close', { holders: 2, returnedItems: 0, stoppedRuns: 2 }),
+    ).toBe(
+      'kanban-comment-and-close is withdrawn from 2 employees. 2 runs under way were stopped.',
     );
   });
 
