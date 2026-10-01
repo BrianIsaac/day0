@@ -43,6 +43,7 @@ import { appendEvent, eventsOfType } from './eventLog';
 import { isEventOf, type EventOf, type EventType } from '../src/events/contract';
 import { agentZone, expiryNoticeDay, expiryNoticeDue } from '../src/lib/zone';
 import { SURFACE_ACCESS_DEFAULT_DAYS, SURFACE_ACCESS_MAX_DAYS } from '../src/surfaces/access';
+import { surfaceHandoverOf, type SurfaceHandover } from '../src/surfaces/handover';
 
 const MAX_LADDER_PATHS = 3;
 const MAX_PROBE_ATTEMPTS = 12;
@@ -2497,49 +2498,6 @@ export function credentialsBoundBy(
     if (surface.provisioning) bound.add(surface.provisioning.clientSecretCredentialId);
   }
   return bound;
-}
-
-/**
- * What a handover does to one surface of the employee. `cut`: the old manager's credential, chat
- * binding and approval are cleared and the card goes back to `proposed` for the new manager to
- * approve and connect again; `carry`: nothing of the old manager's acts through it, so it moves
- * as it is. Either way, quotes of the old owner's documentation are dropped.
- */
-export const SURFACE_HANDOVERS = ['cut', 'carry'] as const;
-
-/** One of {@link SURFACE_HANDOVERS}. */
-export type SurfaceHandover = (typeof SURFACE_HANDOVERS)[number];
-
-/** The verdicts that stand on the manager's approval of the card, the one approval there is (Q10). */
-const APPROVED_VERDICTS: ReadonlySet<Doc<'surfaces'>['verdict']> = new Set([
-  'approved',
-  'connected',
-  'ungranted',
-  'listed-dead',
-]);
-
-/**
- * The per-surface decision of a handover, stated once: every caller (the move and its preview)
- * asks here. A surface bound to a credential, which is always its owner's, is cut (D5 (a)): the
- * new manager cannot see what acts through it. A surface the old manager approved is cut too,
- * credential or not: the approval was theirs, and the new manager re-approves each system (A25).
- * Anything else is carried. Wave 11 adds its branch here: a connection on an identity the
- * organisation holds is kept and re-approved rather than cut (access plan 4.12), which it reads
- * off the bound credential rows.
- *
- * @param surface - The surface as it stands before the move.
- * @param bound - The credential rows the surface binds, as read before the move; a bound id whose
- *   row is gone still cuts.
- */
-export function surfaceHandoverOf(
-  surface: Pick<Doc<'surfaces'>, 'verdict' | 'credentialId' | 'provisioning' | 'managerApprovedAt'>,
-  bound: readonly Doc<'credentials'>[],
-): SurfaceHandover {
-  if (bound.length > 0 || credentialsBoundBy([surface]).size > 0) return 'cut';
-  if (surface.managerApprovedAt !== undefined || APPROVED_VERDICTS.has(surface.verdict)) {
-    return 'cut';
-  }
-  return 'carry';
 }
 
 /** Why a cut card is back in `proposed`, on the card. */

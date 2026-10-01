@@ -1,0 +1,53 @@
+import type { Doc } from '../../convex/_generated/dataModel';
+
+/**
+ * What a handover does to one surface of the employee. `cut`: the old manager's credential, chat
+ * binding and approval are cleared and the card goes back to `proposed` for the new manager to
+ * approve and connect again; `carry`: nothing of the old manager's acts through it, so it moves
+ * as it is. Either way, quotes of the old owner's documentation are dropped.
+ */
+export const SURFACE_HANDOVERS = ['cut', 'carry'] as const;
+
+/** One of {@link SURFACE_HANDOVERS}. */
+export type SurfaceHandover = (typeof SURFACE_HANDOVERS)[number];
+
+/** The verdicts that stand on the manager's approval of the card, the one approval there is (Q10). */
+const APPROVED_VERDICTS: ReadonlySet<Doc<'surfaces'>['verdict']> = new Set([
+  'approved',
+  'connected',
+  'ungranted',
+  'listed-dead',
+]);
+
+/** What the decision reads of a surface: a row before the move, or a card as the page lists it. */
+export type HandoverCandidate = Pick<
+  Doc<'surfaces'>,
+  'verdict' | 'credentialId' | 'provisioning' | 'managerApprovedAt'
+>;
+
+/**
+ * The per-surface decision of a handover, stated once: the move, its preview and the hand-over
+ * dialog's list of what is cut all ask here (the wave 9 review's U4-m6). A surface bound to a
+ * credential, its own or its provisioned app's client secret, which is always its owner's, is cut
+ * (D5 (a)): the new manager cannot see what acts through it. A surface the old manager approved
+ * is cut too, credential or not: the approval was theirs, and the new manager re-approves each
+ * system (A25). Anything else is carried. Wave 11 adds its branch here: a connection on an
+ * identity the organisation holds is kept and re-approved rather than cut (access plan 4.12),
+ * which it reads off the bound credential rows.
+ *
+ * @param surface - The surface as it stands before the move.
+ * @param bound - The credential rows the surface binds, as read before the move; a bound id whose
+ *   row is gone still cuts. A page that reads no credential rows passes none.
+ */
+export function surfaceHandoverOf(
+  surface: HandoverCandidate,
+  bound: readonly Doc<'credentials'>[] = [],
+): SurfaceHandover {
+  const bindsCredential =
+    bound.length > 0 || surface.credentialId !== undefined || surface.provisioning !== undefined;
+  if (bindsCredential) return 'cut';
+  if (surface.managerApprovedAt !== undefined || APPROVED_VERDICTS.has(surface.verdict)) {
+    return 'cut';
+  }
+  return 'carry';
+}

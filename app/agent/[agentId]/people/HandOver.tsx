@@ -6,6 +6,7 @@ import { api } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import { MAX_TRANSFER_NOTE_LENGTH, transferExpiresAt } from '@/agent/manager-transfer';
 import { deploymentZone } from '@/lib/zone';
+import { surfaceHandoverOf } from '@/surfaces/handover';
 import { Button } from '../../../components/Button';
 import { Dialog } from '../../../components/Dialog';
 import { Field, INPUT_CLASS } from '../../../components/Field';
@@ -33,17 +34,6 @@ import {
   WHAT_HAPPENS,
 } from '../../../handover-words';
 
-/**
- * The verdicts that stand on the old manager's approval of a card: a handover cuts each, as
- * `surfaceHandoverOf` in `convex/surfaces.ts` decides for the move.
- */
-const CUT_VERDICTS: ReadonlySet<Doc<'surfaces'>['verdict']> = new Set([
-  'approved',
-  'connected',
-  'ungranted',
-  'listed-dead',
-]);
-
 /** What the cut is decided from: a card as `surfaces.listForAgent` lists it. */
 export type CutCandidate = Pick<
   Doc<'surfaces'>,
@@ -53,18 +43,12 @@ export type CutCandidate = Pick<
 /**
  * The systems a handover would cut, by the name the Surfaces tab gives each: every card bound to
  * a credential (its own or its provisioned app's secret) or standing on the old manager's
- * approval, the rule `surfaceHandoverOf` states for the move (the transfer plan, section 6.3).
+ * approval, by the move's own rule (`surfaceHandoverOf`, the transfer plan, section 6.3).
  *
  * @param surfaces - The employee's cards.
  */
 export function cutSystems(surfaces: readonly CutCandidate[]): string[] {
-  const cut = surfaces.filter(
-    (surface) =>
-      surface.credentialId !== undefined ||
-      surface.provisioning !== undefined ||
-      surface.managerApprovedAt !== undefined ||
-      CUT_VERDICTS.has(surface.verdict),
-  );
+  const cut = surfaces.filter((surface) => surfaceHandoverOf(surface) === 'cut');
   return [...new Set(cut.map((surface) => surface.displayName))];
 }
 
