@@ -520,14 +520,17 @@ async function moveClaims(
  * moves whole (D10); the line stays, saying a credential left the documentation, without naming
  * either.
  *
- * @throws Error when the employee has more such events than one move redacts.
+ * @throws ConvexError, in words the dialog shows, when the employee has more such events than one
+ *   move redacts.
  */
 async function redactSupersededCredentials(ctx: MutationCtx, agentId: Id<'agents'>): Promise<void> {
   const events = await eventsOfType(ctx, agentId, 'credential.superseded').take(
     SUPERSEDED_EVENT_LIMIT + 1,
   );
   if (events.length > SUPERSEDED_EVENT_LIMIT) {
-    throw new Error(`the employee has more than ${SUPERSEDED_EVENT_LIMIT} superseded credentials`);
+    throw new ConvexError(
+      `This employee's record names more than ${SUPERSEDED_EVENT_LIMIT} superseded credentials, more than one handover can move.`,
+    );
   }
   for (const event of events) {
     const payload = event.payload as Record<string, unknown>;

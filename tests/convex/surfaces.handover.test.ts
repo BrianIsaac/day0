@@ -7,6 +7,7 @@ import {
   HANDOVER_CUT_REASON,
   handOverSurfaces,
   surfaceHandoverOf,
+  surfaceHandoversOf,
 } from '../../convex/surfaces';
 import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS } from './fakes/manager-identity';
@@ -33,27 +34,64 @@ function bareSurface(
 describe('the per-surface decision at a handover (D5 (a), A25)', (): void => {
   it("cuts a surface bound to the old owner's credential or a Slack app's client secret", (): void => {
     const credentialId = 'credential' as Id<'credentials'>;
-    expect(surfaceHandoverOf({ ...bareSurface('declared'), credentialId })).toBe('cut');
+    expect(surfaceHandoverOf({ ...bareSurface('declared'), credentialId }, [])).toBe('cut');
     expect(
-      surfaceHandoverOf({
-        ...bareSurface('declared'),
-        provisioning: { clientSecretCredentialId: credentialId } as Doc<'surfaces'>['provisioning'],
-      }),
+      surfaceHandoverOf(
+        {
+          ...bareSurface('declared'),
+          provisioning: {
+            clientSecretCredentialId: credentialId,
+          } as Doc<'surfaces'>['provisioning'],
+        },
+        [],
+      ),
     ).toBe('cut');
   });
 
   it('cuts a surface the old manager approved even when no credential is bound yet', (): void => {
-    expect(surfaceHandoverOf(bareSurface('approved'))).toBe('cut');
-    expect(surfaceHandoverOf({ ...bareSurface('proposed'), managerApprovedAt: 5 })).toBe('cut');
+    expect(surfaceHandoverOf(bareSurface('approved'), [])).toBe('cut');
+    expect(surfaceHandoverOf({ ...bareSurface('proposed'), managerApprovedAt: 5 }, [])).toBe('cut');
     for (const verdict of ['connected', 'ungranted', 'listed-dead'] as const) {
-      expect(surfaceHandoverOf(bareSurface(verdict))).toBe('cut');
+      expect(surfaceHandoverOf(bareSurface(verdict), [])).toBe('cut');
     }
+  });
+
+  it('cuts a surface whose bound credential row it is given, whatever its verdict says', (): void => {
+    const credential = { _id: 'credential', userId: 'owner' } as unknown as Doc<'credentials'>;
+    expect(surfaceHandoverOf(bareSurface('declared'), [credential])).toBe('cut');
   });
 
   it('carries a surface nothing of the old manager acts through', (): void => {
     for (const verdict of ['declared', 'proposed', 'absent'] as const) {
-      expect(surfaceHandoverOf(bareSurface(verdict))).toBe('carry');
+      expect(surfaceHandoverOf(bareSurface(verdict), [])).toBe('carry');
     }
+  });
+});
+
+describe('the bound on one handover’s surfaces', (): void => {
+  it('refuses, in words a dialog can show, an employee with more surfaces than a handover reads', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Maya',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      for (let index = 0; index <= 1_000; index += 1) {
+        await ctx.db.insert('surfaces', {
+          ...SURFACE_BASE,
+          agentId,
+          slug: `system-${index}`,
+          verdict: 'declared',
+        });
+      }
+      return agentId;
+    });
+    await expect(
+      harness.run(async (ctx) => await surfaceHandoversOf(ctx.db, agentId)),
+    ).rejects.toMatchObject({ data: expect.stringContaining('more than 1000 connections') });
   });
 });
 

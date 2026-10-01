@@ -1303,13 +1303,14 @@ export const pruneDepartedMirrors = internalMutation({
     transferId: v.optional(v.id('managerTransfers')),
   },
   handler: async (ctx, args): Promise<number> => {
+    // A retire since the move deleted the employee and its pages with it.
+    const agent = await ctx.db.get(args.agentId);
+    if (agent === null) return 0;
     const page = await ctx.db
       .query('mockDocs')
       .withIndex('by_agent_slug', (index) => index.eq('agentId', args.agentId))
       .paginate({ ...PAGED_READ, cursor: args.cursor ?? null });
-    const readable = new Set(
-      (await readableDocs(ctx.db, await ctx.db.get(args.agentId), page.page)).map((doc) => doc._id),
-    );
+    const readable = new Set((await readableDocs(ctx.db, agent, page.page)).map((doc) => doc._id));
     const unread = page.page.filter((doc) => !readable.has(doc._id));
     await Promise.all(unread.map(async (doc) => await ctx.db.delete(doc._id)));
     const transfer = args.transferId === undefined ? null : await ctx.db.get(args.transferId);

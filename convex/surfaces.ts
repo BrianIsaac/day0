@@ -2524,14 +2524,18 @@ const APPROVED_VERDICTS: ReadonlySet<Doc<'surfaces'>['verdict']> = new Set([
  * new manager cannot see what acts through it. A surface the old manager approved is cut too,
  * credential or not: the approval was theirs, and the new manager re-approves each system (A25).
  * Anything else is carried. Wave 11 adds its branch here: a connection on an identity the
- * organisation holds is kept and re-approved rather than cut (access plan 4.12).
+ * organisation holds is kept and re-approved rather than cut (access plan 4.12), which it reads
+ * off the bound credential rows.
  *
  * @param surface - The surface as it stands before the move.
+ * @param bound - The credential rows the surface binds, as read before the move; a bound id whose
+ *   row is gone still cuts.
  */
 export function surfaceHandoverOf(
   surface: Pick<Doc<'surfaces'>, 'verdict' | 'credentialId' | 'provisioning' | 'managerApprovedAt'>,
+  bound: readonly Doc<'credentials'>[],
 ): SurfaceHandover {
-  if (credentialsBoundBy([surface]).size > 0) return 'cut';
+  if (bound.length > 0 || credentialsBoundBy([surface]).size > 0) return 'cut';
   if (surface.managerApprovedAt !== undefined || APPROVED_VERDICTS.has(surface.verdict)) {
     return 'cut';
   }
@@ -2553,11 +2557,13 @@ export const HANDOVER_CREDENTIAL_LOCATION =
 const HANDOVER_SURFACE_LIMIT = CARD_SURFACE_LIMIT;
 
 /**
- * Every surface of an employee with what a handover would do to it.
+ * Every surface of an employee with what a handover would do to it, each decided with the
+ * credential rows it binds.
  *
  * @param db - The move's or its preview's reader.
  * @param agentId - The employee.
- * @throws Error when the employee has more surfaces than a handover reads.
+ * @throws ConvexError, in words the acceptance dialog shows, when the employee has more surfaces
+ *   than a handover reads.
  */
 export async function surfaceHandoversOf(
   db: QueryCtx['db'],
@@ -2568,9 +2574,19 @@ export async function surfaceHandoversOf(
     .withIndex('by_agent', (q) => q.eq('agentId', agentId))
     .take(HANDOVER_SURFACE_LIMIT + 1);
   if (surfaces.length > HANDOVER_SURFACE_LIMIT) {
-    throw new Error(`the employee has more than ${HANDOVER_SURFACE_LIMIT} surfaces to hand over`);
+    throw new ConvexError(
+      `This employee has more than ${HANDOVER_SURFACE_LIMIT} connections, more than one handover can move.`,
+    );
   }
-  return surfaces.map((surface) => ({ surface, handover: surfaceHandoverOf(surface) }));
+  return await Promise.all(
+    surfaces.map(async (surface) => {
+      const rows = await Promise.all(
+        [...credentialsBoundBy([surface])].map(async (id) => await db.get(id)),
+      );
+      const bound = rows.filter((row): row is Doc<'credentials'> => row !== null);
+      return { surface, handover: surfaceHandoverOf(surface, bound) };
+    }),
+  );
 }
 
 /** The documentation source a quote or an evidence entry names, when it names one. */
