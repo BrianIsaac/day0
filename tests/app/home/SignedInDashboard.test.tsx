@@ -577,7 +577,7 @@ describe('the home during a handover (the transfer plan, sections 7.3, 7.4 and 1
   it('says how many employees report to someone who is not the owner, under the company line', (): void => {
     state.reportingElsewhere = 2;
     expect(readAs(render(roster))).toContain(
-      "2 employees report to someone who is not you. Choose on each one&#x27;s People tab.",
+      '2 employees report to someone who is not you. Choose on each one&#x27;s People tab.',
     );
     state.reportingElsewhere = 0;
     expect(readAs(render(roster))).not.toContain('who is not you');
