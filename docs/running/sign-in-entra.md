@@ -99,20 +99,21 @@ value (everything else is kept, nobody is signed out), then delete the old one.
 On the customer's machine, in the Day0 checkout:
 
 ```bash
-DAY0_OIDC_CLIENT_SECRET='<the secret value>' ./setup.sh sign-in --provider entra \
+./setup.sh sign-in --provider entra \
   --tenant <Directory (tenant) ID> \
   --client-id <Application (client) ID> \
   --allowed-domains acme.com \
   --public-url https://day0.acme.com
 ```
 
-Any flag left out is asked for; the secret is asked for in a hidden prompt
-when it is not in the environment, and is never a flag. The verb derives the
-issuer, `https://login.microsoftonline.com/<tenant>/v2.0`, writes the
-customer-local block of `.env.local` with a generated session secret, pushes
-the values to the backend, restarts it, and runs `pnpm check:setup`, exiting
-with its status. Then build and start the app again (`pnpm build`, then
-`pnpm start` behind the proxy): the browser reads the profile at build.
+The client secret is asked for in a hidden prompt, never on the command line,
+where it would stay in the shell's history; any flag left out is asked for too.
+The verb derives the issuer, `https://login.microsoftonline.com/<tenant>/v2.0`,
+writes the customer-local block of `.env.local` with a generated session
+secret, pushes the values to the backend, restarts it, and runs
+`pnpm check:setup`, exiting with its status. Then build and start the app again
+(`pnpm build`, then `pnpm start` behind the proxy): the browser reads the
+profile at build.
 
 ## 7. What the live check must show
 

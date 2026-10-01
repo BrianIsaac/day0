@@ -79,19 +79,19 @@ is kept, nobody is signed out), then disable the old one.
 On the customer's machine, in the Day0 checkout:
 
 ```bash
-DAY0_OIDC_CLIENT_SECRET='<the client secret>' ./setup.sh sign-in --provider google \
+./setup.sh sign-in --provider google \
   --client-id <Client ID>.apps.googleusercontent.com \
   --allowed-domains acme.com \
   --public-url https://day0.acme.com
 ```
 
-There is no issuer to name. Any flag left out is asked for; the secret is
-asked for in a hidden prompt when it is not in the environment, and is never a
-flag. The verb writes the customer-local block of `.env.local` with a generated
-session secret, pushes the values to the backend, restarts it, and runs
-`pnpm check:setup`, exiting with its status. Then build and start the app again
-(`pnpm build`, then `pnpm start` behind the proxy): the browser reads the
-profile at build.
+There is no issuer to name. The client secret is asked for in a hidden
+prompt, never on the command line, where it would stay in the shell's history;
+any flag left out is asked for too. The verb writes the customer-local block of
+`.env.local` with a generated session secret, pushes the values to the backend,
+restarts it, and runs `pnpm check:setup`, exiting with its status. Then build
+and start the app again (`pnpm build`, then `pnpm start` behind the proxy): the
+browser reads the profile at build.
 
 ## 7. What the live check must show
 

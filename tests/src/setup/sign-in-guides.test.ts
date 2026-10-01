@@ -47,10 +47,10 @@ describe('the sign-in guides', (): void => {
   it.each(Object.keys(GUIDES) as Array<keyof typeof GUIDES>)(
     '%s hands the setup verb only flags it takes',
     (provider): void => {
-      const block =
-        /```bash\n(DAY0_OIDC_CLIENT_SECRET=[\s\S]*?)```/.exec(guide(provider))?.[1] ?? '';
+      // The secret is asked for in a hidden prompt: on the command line it stays in shell history.
+      expect(guide(provider)).not.toMatch(/DAY0_OIDC_CLIENT_SECRET=/);
+      const block = /```bash\n(\.\/setup\.sh sign-in[\s\S]*?)```/.exec(guide(provider))?.[1] ?? '';
       const words = block
-        .replace(/^DAY0_OIDC_CLIENT_SECRET='[^']*'\s*/, '')
         .replace(/\\\n/g, ' ')
         .replace(/<[^>]*>/g, 'value')
         .split(/\s+/)
