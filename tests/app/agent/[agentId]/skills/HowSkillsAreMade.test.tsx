@@ -21,4 +21,11 @@ describe('HowSkillsAreMade', (): void => {
       'A registered skill keeps running while it is revised, and while it is re-checked unless the check fails. Retire takes it from Mira alone; when other employees run the same version, the same dialog can withdraw it from all of them.',
     );
   });
+
+  it('says a colleague’s verified skill can be adopted instead, and is checked again first (A-m9)', (): void => {
+    const html = renderToStaticMarkup(<HowSkillsAreMade name="Mira" />);
+    expect(html).toContain(
+      'When another employee of yours already has a verified skill of the same shape, Mira can adopt it instead: one approval, and the sandbox checks it again under Mira&#x27;s own connection before it runs.',
+    );
+  });
 });
