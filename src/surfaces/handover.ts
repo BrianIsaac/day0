@@ -31,9 +31,7 @@ export type HandoverCandidate = Pick<
  * credential, its own or its provisioned app's client secret, which is always its owner's, is cut
  * (D5 (a)): the new manager cannot see what acts through it. A surface the old manager approved
  * is cut too, credential or not: the approval was theirs, and the new manager re-approves each
- * system (A25). Anything else is carried. Wave 11 adds its branch here: a connection on an
- * identity the organisation holds is kept and re-approved rather than cut (access plan 4.12),
- * which it reads off the bound credential rows.
+ * system (A25). Anything else is carried.
  *
  * @param surface - The surface as it stands before the move.
  * @param bound - The credential rows the surface binds, as read before the move; a bound id whose
