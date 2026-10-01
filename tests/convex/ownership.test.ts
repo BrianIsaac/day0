@@ -216,6 +216,33 @@ describe('verifiedAddressOf', (): void => {
     }
   });
 
+  it("reads the raw email_verified claim, as the backend hands over a custom JWT issuer's claims unmapped", (): void => {
+    // Seen on a self-hosted backend for the local issuer (a customJwt provider): ctx.auth
+    // carried `email` and `email_verified: true`, and no `emailVerified` (the 9-U1 bed, 1 Oct).
+    const env = deploymentEnv({ DAY0_OIDC_ISSUER: CUSTOMER_ISSUER });
+    for (const issuer of [DEV_NO_AUTH_ISSUER, CUSTOMER_ISSUER, CLERK_ISSUER]) {
+      const raw = identity(issuer, 'u', { email: 'Boss@Day0.local', email_verified: true });
+      expect(verifiedAddressOf(raw, env), issuer).toBe('boss@day0.local');
+      const rawFalse = identity(issuer, 'u', { email: 'boss@day0.local', email_verified: false });
+      expect(verifiedAddressOf(rawFalse, env), issuer).toBeUndefined();
+      // Only a boolean asserts it: a string is not the claim the issuer is specified to send.
+      const rawString = identity(issuer, 'u', { email: 'boss@day0.local', email_verified: 'true' });
+      expect(verifiedAddressOf(rawString, env), issuer).toBeUndefined();
+    }
+  });
+
+  it("treats a raw email_verified of false as the issuer's word, the trust flag notwithstanding", (): void => {
+    const trusted = deploymentEnv({
+      DAY0_OIDC_ISSUER: CUSTOMER_ISSUER,
+      DAY0_OIDC_EMAIL_TRUSTED: 'true',
+    });
+    const said = identity(CUSTOMER_ISSUER, 'alice', {
+      email: 'alice@example.com',
+      email_verified: false,
+    });
+    expect(verifiedAddressOf(said, trusted)).toBeUndefined();
+  });
+
   it('refuses an address that is not shaped like one, verified or not', (): void => {
     const env = deploymentEnv({});
     const odd = identity(CLERK_ISSUER, 'u', { email: 'not an address', emailVerified: true });

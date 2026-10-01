@@ -104,6 +104,18 @@ function callerIssuer(identity: UserIdentity, read: EnvReader): CallerIssuer {
 }
 
 /**
+ * The token's own word on its address, as the deployment hands it over. An
+ * OIDC provider's `email_verified` arrives mapped to `emailVerified`; a custom
+ * JWT provider's (the local issuer's) arrives raw as `email_verified`, which a
+ * self-hosted backend was seen to do on 1 October. Undefined when the token
+ * says nothing; any value other than a boolean is not the claim and is kept
+ * as said, so it never reads as absent.
+ */
+function emailVerifiedClaim(identity: UserIdentity): unknown {
+  return identity.emailVerified ?? identity.email_verified;
+}
+
+/**
  * The caller's verified address, trimmed and lower-cased: the address the
  * caller's own token proves, which is what makes a caller the manager of the
  * employees it owns and lets it answer a handover named to that address
@@ -117,7 +129,9 @@ function callerIssuer(identity: UserIdentity, read: EnvReader): CallerIssuer {
  *   addresses trusted (`DAY0_OIDC_EMAIL_TRUSTED`, D3). An issuer that says
  *   `false` is taken at its word, flag or not.
  *
- * Pure: it reads the token's claims and the deployment env, nothing else.
+ * The claim is read in either spelling ({@link emailVerifiedClaim}), and only
+ * a boolean `true` asserts it. Pure: it reads the token's claims and the
+ * deployment env, nothing else.
  *
  * @param identity - The caller's verified token.
  * @param read - Reads one name of the deployment's env; its own by default.
@@ -127,17 +141,15 @@ export function verifiedAddressOf(
   identity: UserIdentity,
   read: EnvReader = deploymentEnv,
 ): string | undefined {
+  const claim = emailVerifiedClaim(identity);
   const verified = ((): boolean => {
     const issuer = callerIssuer(identity, read);
     switch (issuer) {
       case 'clerk':
       case 'local':
-        return identity.emailVerified === true;
+        return claim === true;
       case 'customer':
-        return (
-          identity.emailVerified === true ||
-          (identity.emailVerified === undefined && customerOidcEmailTrusted(read))
-        );
+        return claim === true || (claim === undefined && customerOidcEmailTrusted(read));
       default: {
         const unknown: never = issuer;
         throw new Error(`unhandled issuer ${String(unknown)}`);
