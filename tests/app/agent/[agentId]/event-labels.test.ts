@@ -378,6 +378,12 @@ describe('the live feed labels', (): void => {
     ).toBe('skill adoption ended, version withdrawn: kanban-comment-and-close');
     expect(
       eventLabel({
+        type: 'skill.authoring-claimed',
+        payload: { name: 'kanban-comment-and-close', purpose: 'verify-stored' },
+      }),
+    ).toBe('skill check started: kanban-comment-and-close');
+    expect(
+      eventLabel({
         type: 'skill.rechecked',
         payload: { name: 'kanban-comment-and-close', version: 2 },
       }),

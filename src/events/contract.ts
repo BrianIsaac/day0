@@ -586,6 +586,12 @@ export interface SkillAuthoringSupersededPayload extends SkillNamed {
 /** The payload of `skill.authoring-claimed`. */
 export interface SkillAuthoringClaimedPayload extends SkillNamed {
   readonly fromState: Doc<'skills'>['state'];
+  /**
+   * What the claim is for: writing a body (`author`), or checking a stored version in the sandbox
+   * (`verify-stored`: an adoption, a Re-check now). Absent on a claim an older release wrote,
+   * which was always a writing.
+   */
+  readonly purpose?: 'author' | 'verify-stored';
 }
 
 /** The payload of `skill.authoring`. */

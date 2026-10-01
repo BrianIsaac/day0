@@ -781,7 +781,12 @@ export const claimAuthoringRun = internalMutation({
     const runId = await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'skill.authoring-claimed',
-      payload: { skillId: args.skillId, name: row.name, fromState: row.state },
+      payload: {
+        skillId: args.skillId,
+        name: row.name,
+        fromState: row.state,
+        purpose: verifying ? 'verify-stored' : 'author',
+      },
       createdAt: Date.now(),
     });
     await ctx.db.patch(args.skillId, {

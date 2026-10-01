@@ -283,7 +283,9 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
       duration(payload.heldForMs) ? `, the last run held it ${duration(payload.heldForMs)}` : ''
     }`,
   'skill.authoring-claimed': (payload) =>
-    `skill authoring started: ${text(payload.name) ?? 'unnamed'}`,
+    payload.purpose === 'verify-stored'
+      ? `skill check started: ${text(payload.name) ?? 'unnamed'}`
+      : `skill authoring started: ${text(payload.name) ?? 'unnamed'}`,
   'skill.authoring': 'skill being checked in the sandbox',
   'skill.registered': (payload) =>
     `skill registered: ${text(payload.name) ?? 'unnamed'}${

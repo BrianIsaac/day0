@@ -326,6 +326,23 @@ describe('verifyStoredSkill', (): void => {
     expect(after.authoringRunId).toBeUndefined();
   });
 
+  it('says on the record that the claim is a check of a stored version, not a writing (A-m9)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { priya, versionId } = await seedOffice(harness);
+    const held = await registeredRow(harness, priya, versionId);
+
+    await harness.action(internal.skillActions.verifyStoredSkill, { skillId: held });
+
+    const claims = await harness.run(async (ctx) =>
+      (await ctx.db.query('events').collect()).filter(
+        (event) => event.type === 'skill.authoring-claimed',
+      ),
+    );
+    expect(claims.map((event) => event.payload)).toEqual([
+      expect.objectContaining({ skillId: held, purpose: 'verify-stored' }),
+    ]);
+  });
+
   it('writes a smoke test for the unchanged body of a version whose check was not kept, then keeps it', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { priya, versionId } = await seedOffice(harness, {});

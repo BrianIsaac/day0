@@ -635,3 +635,25 @@ describe('the record after a handover (decisions 4 and 5, the wave 10 review, M8
     );
   });
 });
+
+describe('what the record says an authoring claim began (A-m9)', (): void => {
+  it('says a check of a stored version is checking, and an authoring is writing', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'skill.authoring-claimed',
+          payload: { name: 'kanban-comment-and-close', purpose: 'verify-stored' },
+        },
+        { name: 'Mira' },
+      ),
+    ).toBe('Mira started checking the skill kanban-comment-and-close in the sandbox.');
+    for (const payload of [
+      { name: 'kanban-comment-and-close', purpose: 'author' },
+      { name: 'kanban-comment-and-close' },
+    ]) {
+      expect(recordWords({ type: 'skill.authoring-claimed', payload }, { name: 'Mira' })).toBe(
+        'Mira started writing the skill kanban-comment-and-close.',
+      );
+    }
+  });
+});

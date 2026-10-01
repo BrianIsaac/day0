@@ -450,7 +450,9 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
       duration(p.heldForMs) ? `; the last run held it ${duration(p.heldForMs)}` : ''
     }`,
   'skill.authoring-claimed': (p, { name }) =>
-    `${name} started writing the skill ${text(p.name) ?? 'unnamed'}`,
+    p.purpose === 'verify-stored'
+      ? `${name} started checking the skill ${text(p.name) ?? 'unnamed'} in the sandbox`
+      : `${name} started writing the skill ${text(p.name) ?? 'unnamed'}`,
   'skill.authoring': () => 'A skill is being checked in the sandbox',
   'skill.registered': (p) =>
     `The skill ${text(p.name) ?? 'unnamed'} passed its check and can be called${
