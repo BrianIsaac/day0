@@ -136,3 +136,30 @@ describe('what the company bed stores once both sources are linked', (): void =>
     expect(chinese).toContain('连接密钥');
   });
 });
+
+describe('the rollback the cloud verbs print, as the README describes it (F, C1)', (): void => {
+  /** The paragraph of one half that describes the rollback. */
+  function rollbackParagraph(half: string, opening: string): string {
+    return half.split('\n').find((line) => line.startsWith(opening)) ?? '';
+  }
+
+  it('puts the import and the push before the promote, in the order the rollback is taken', (): void => {
+    const { english, chinese } = halves();
+    for (const paragraph of [
+      rollbackParagraph(english, 'Setup and upgrade end with their rollback'),
+      rollbackParagraph(chinese, 'setup 与 upgrade 都以回滚步骤结束'),
+    ]) {
+      expect(paragraph).not.toBe('');
+      const importAt = paragraph.indexOf('npx convex import --replace-all');
+      const promoteAt = paragraph.indexOf('vercel promote');
+      expect(importAt).toBeGreaterThan(-1);
+      expect(promoteAt).toBeGreaterThan(importAt);
+    }
+    expect(rollbackParagraph(english, 'Setup and upgrade end with their rollback')).toContain(
+      'numbered in the order it is taken',
+    );
+    expect(rollbackParagraph(chinese, 'setup 与 upgrade 都以回滚步骤结束')).toContain(
+      '按执行顺序编号',
+    );
+  });
+});
