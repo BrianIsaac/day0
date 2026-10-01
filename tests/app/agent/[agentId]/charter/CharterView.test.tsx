@@ -102,6 +102,81 @@ describe('a charter carried through a handover (wave 9 review, decision 1 (a))',
     expect(after).toContain('v0.1 approved by sam@company.com');
   });
 
+  it('names the earlier manager who struck, answered and added before the handover, never "you" (the v0.12.0 walk)', () => {
+    const rule = (quote: string) => ({
+      kind: 'candidate-property' as const,
+      quote,
+      wording: [quote],
+      origin: 'manager' as const,
+    });
+    const struck = { field: 'escalationTriggers' as const, text: 'An ask falls outside scope.' };
+    const rewritten = {
+      field: 'willDo' as const,
+      text: 'Chase stale deals.',
+      rewrittenAs: 'Chase deals.',
+    };
+    const answer = {
+      question: 'Who to meet first.',
+      answer: 'Priya.',
+      answeredAt: new Date(3_000).toISOString(),
+    };
+    const bodyAt = (extra: object) => ({
+      ...charter.body,
+      proposedBoundaries: { willDo: ['Chase deals.'], willNotDo: [], escalationTriggers: [] },
+      struckClauses: [struck, rewritten],
+      ...extra,
+    });
+    const approved = { ...charter, approvedAt: 1_000, body: bodyAt({}) };
+    const amended = {
+      ...charter,
+      _id: 'charter-2' as typeof charter._id,
+      version: '0.2',
+      supersedes: charter._id,
+      createdAt: 2_000,
+      approvedAt: 2_000,
+      body: bodyAt({ constraints: [rule('never touch closed-won deals')] }),
+    };
+    const answered = {
+      ...amended,
+      _id: 'charter-3' as typeof charter._id,
+      version: '0.3',
+      supersedes: amended._id,
+      createdAt: 3_000,
+      approvedAt: 3_000,
+      body: bodyAt({
+        constraints: [rule('never touch closed-won deals')],
+        answeredQuestions: [answer],
+      }),
+    };
+    const mine = {
+      ...charter,
+      _id: 'charter-4' as typeof charter._id,
+      version: '0.4',
+      supersedes: answered._id,
+      createdAt: 9_000,
+      approvedAt: 9_000,
+      body: bodyAt({
+        constraints: [rule('never touch closed-won deals'), rule('never email a customer')],
+        answeredQuestions: [answer],
+      }),
+    };
+    backend.queries = {
+      'charters:transcriptOf': { heldBy: 'sam@company.com' },
+      'charters:listForAgent': [mine, answered, amended, approved],
+      'managerTransfers:earlierManagers': [{ fromAddress: 'sam@company.com', decidedAt: 5_000 }],
+    };
+    const html = renderToStaticMarkup(asEmployee(<CharterView />, { charter: mine }));
+    backend.queries = {};
+    expect(html).toMatch(/An ask falls outside scope\.<\/s> struck by sam@company\.com/);
+    expect(html).toContain('(before sam@company.com&#x27;s strike: ');
+    expect(html).toMatch(/answered by sam@company\.com at /);
+    expect(html).toMatch(/never touch closed-won deals[^]*?added by sam@company\.com/);
+    expect(html).toMatch(/never email a customer[^]*?added by you/);
+    expect(html).not.toContain('struck by you');
+    expect(html).not.toContain('answered by you');
+    expect(html).not.toContain('before your strike');
+  });
+
   it('says the one-to-one was the reader’s own when it comes back to the manager who held it', () => {
     backend.queries = {
       'charters:transcriptOf': { heldBy: 'Boss@Day0.local' },
