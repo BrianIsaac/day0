@@ -146,7 +146,7 @@ describe('striking a constraint before approval', (): void => {
       harness
         .withIdentity(managerIdentity('stranger'))
         .mutation(api.charters.setConstraintStruck, { charterId, index: 0, struck: true }),
-    ).rejects.toThrow(/forbidden|not found|owner/i);
+    ).rejects.toThrow(/not yours|not found|owner/i);
     const owner = harness.withIdentity(managerIdentity());
     await expect(
       owner.mutation(api.charters.setConstraintStruck, { charterId, index: 5, struck: true }),
@@ -708,7 +708,7 @@ describe('amending an approved charter', (): void => {
       harness
         .withIdentity(managerIdentity('stranger'))
         .mutation(api.charters.amend, { agentId: draft.agentId, changes: [edit] }),
-    ).rejects.toThrow(/forbidden/);
+    ).rejects.toThrow(/not yours/);
     await expect(
       owner.mutation(api.charters.amend, {
         agentId: draft.agentId,

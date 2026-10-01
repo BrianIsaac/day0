@@ -255,7 +255,7 @@ describe('the paged trace export', (): void => {
     const agentId = await seedTracedAgent(harness);
     await expect(
       exportedTrace(harness.withIdentity(managerIdentity('intruder')), agentId),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
     const trace = await exportedTrace(harness.withIdentity(managerIdentity()), agentId);
     expect(trace.sections.events.map((event) => event.type)).toEqual([
       'work.completed',
@@ -578,7 +578,7 @@ describe('the flips of the autonomous-actions switch', (): void => {
       harness
         .withIdentity(managerIdentity('intruder'))
         .query(api.events.autonomyChanges, { agentId: priya! }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
   });
 });
 

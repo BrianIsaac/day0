@@ -1,3 +1,5 @@
+import { ConvexError } from 'convex/values';
+import { EMPLOYEE_NOT_YOURS } from '../../../../../src/agent/employee-access';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@clerk/nextjs/server', () => ({
@@ -155,6 +157,13 @@ describe('the charter synthesis route', (): void => {
     const failed = await synthesise(request(JSON_FROM_APP));
     expect(failed.status).toBe(500);
     expect(await failed.json()).toEqual({ error: 'charter synthesis failed' });
+  });
+
+  it('answers the guard’s refusal of another owner’s employee, a ConvexError in production, with a 403', async (): Promise<void> => {
+    await unlock();
+    synthesisFailure = { value: new ConvexError(EMPLOYEE_NOT_YOURS) };
+    const refused = await synthesise(request(JSON_FROM_APP));
+    expect(refused.status).toBe(403);
   });
 
   it('answers a rejection that is not an Error with the same fixed reason', async (): Promise<void> => {

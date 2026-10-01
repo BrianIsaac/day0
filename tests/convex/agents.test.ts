@@ -561,7 +561,7 @@ describe('agent surface grants', (): void => {
         agentId,
         scope: 'linear:read',
       }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
     const owner = harness.withIdentity(managerIdentity());
     await expect(
       owner.mutation(api.agents.revokeScope, {
@@ -717,7 +717,7 @@ describe('the autonomous-actions switch', (): void => {
       harness
         .withIdentity(managerIdentity('intruder'))
         .mutation(api.agents.setAutonomousActions, { agentId, on: true }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
     await expect(
       harness.mutation(api.agents.setAutonomousActions, { agentId, on: true }),
     ).rejects.toThrow('not authenticated');
@@ -816,7 +816,7 @@ describe('the autonomous-actions switch', (): void => {
       harness
         .withIdentity(managerIdentity('intruder'))
         .mutation(api.agents.setManagerNotifications, { agentId, mode: 'digest' }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
     const owner = harness.withIdentity(managerIdentity());
     await expect(
       owner.mutation(api.agents.setManagerNotifications, { agentId, mode: 'per-run' }),
@@ -919,7 +919,7 @@ describe('the agent’s zone and mode (N12)', (): void => {
       harness
         .withIdentity(managerIdentity('intruder'))
         .mutation(api.agents.setZone, { agentId, zone: 'Asia/Singapore' }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
     const owner = harness.withIdentity(managerIdentity());
     await expect(
       owner.mutation(api.agents.setZone, { agentId, zone: 'Nowhere/Else' }),
@@ -2170,7 +2170,7 @@ describe('agents.managerStanding (D17)', (): void => {
       harness
         .withIdentity(managerIdentity('intruder'))
         .query(api.agents.managerStanding, { agentId }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
     await expect(harness.query(api.agents.managerStanding, { agentId })).rejects.toThrow();
   });
 });
@@ -2265,7 +2265,7 @@ describe('agents.adoptManagerAddress (Make it you, D17)', (): void => {
       harness
         .withIdentity(managerIdentity('intruder'))
         .mutation(api.agents.adoptManagerAddress, { agentId }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
     await expect(
       harness
         .withIdentity(managerIdentity('owner', { emailVerified: false }))

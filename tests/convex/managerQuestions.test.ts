@@ -349,7 +349,7 @@ describe('answering a question', (): void => {
         questionId: asked!._id,
         text: 'Me.',
       }),
-    ).rejects.toThrow(/forbidden/);
+    ).rejects.toThrow(/not yours/);
     await expect(
       owner.mutation(api.managerQuestions.answer, { questionId: asked!._id, text: '   ' }),
     ).rejects.toThrow(/cannot be empty/);

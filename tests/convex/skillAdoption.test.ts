@@ -446,13 +446,13 @@ describe('skillAdoption: the offer at needs-skill (real mode)', (): void => {
 
     const stranger = harness.withIdentity(managerIdentity('stranger'));
     await expect(stranger.mutation(api.skillAdoption.adopt, { skillId })).rejects.toThrow(
-      'forbidden',
+      'This employee is not yours.',
     );
     await expect(stranger.mutation(api.skillAdoption.setOfferAside, { skillId })).rejects.toThrow(
-      'forbidden',
+      'This employee is not yours.',
     );
     await expect(stranger.query(api.skillAdoption.adoptions, { agentId: mateo })).rejects.toThrow(
-      'forbidden',
+      'This employee is not yours.',
     );
   });
 });

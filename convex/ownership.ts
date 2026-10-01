@@ -223,11 +223,24 @@ function addressVerified(identity: UserIdentity, read: EnvReader): boolean {
   }
 }
 
-/** The verified caller; throws the mode's not-authenticated message for an anonymous one. */
+/**
+ * The verified caller; throws the mode's not-authenticated message for an anonymous one, as a
+ * `ConvexError` so a page or a dialog can say it after production strips every other error's
+ * text (standard 6.3).
+ */
 export async function getCallerOrThrow(ctx: QueryCtx | MutationCtx | ActionCtx): Promise<Caller> {
   const identity = await getCaller(ctx);
-  if (!identity) throw new Error(notAuthenticatedMessage());
+  if (!identity) throw new ConvexError(notAuthenticatedMessage());
   return identity;
+}
+
+/**
+ * Refuse an employee the caller does not own, or one no owner holds, in the manager's words
+ * ({@link EMPLOYEE_NOT_YOURS}) as a `ConvexError`: a dialog says the backend's words, which
+ * production strips from a plain `Error` (the cockpit's item).
+ */
+function assertCallerOwns(agent: Doc<'agents'>, caller: Caller): void {
+  if (!agent.userId || agent.userId !== caller.ownerKey) throw new ConvexError(EMPLOYEE_NOT_YOURS);
 }
 
 /** The employee, if the caller owns it; throws otherwise. The guard for a row keyed by agent id; the four below cover rows keyed otherwise. */
@@ -238,8 +251,7 @@ export async function assertOwnsAgent(
   const identity = await getCallerOrThrow(ctx);
   const agent = await ctx.db.get(agentId);
   if (!agent) throw new Error('agent not found');
-  if (!agent.userId) throw new Error('forbidden: agent has no owner');
-  if (agent.userId !== identity.ownerKey) throw new Error('forbidden');
+  assertCallerOwns(agent, identity);
   return agent;
 }
 
@@ -270,8 +282,7 @@ export async function assertOwnsAgentAction(
   const identity = await getCallerOrThrow(ctx);
   const agent = await ctx.runQuery(internal.agents.getInternal, { agentId });
   if (!agent) throw new Error('agent not found');
-  if (!agent.userId) throw new Error('forbidden: agent has no owner');
-  if (agent.userId !== identity.ownerKey) throw new Error('forbidden');
+  assertCallerOwns(agent, identity);
   return agent;
 }
 

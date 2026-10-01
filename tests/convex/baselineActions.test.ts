@@ -291,7 +291,7 @@ describe('ordinary-agent comparison arm', (): void => {
       harness
         .withIdentity(managerIdentity('stranger'))
         .action(api.baselineActions.executeTask, { workItemId }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
     await harness.run(async (ctx): Promise<void> => {
       await ctx.db.patch(agentId, { arm: 'day0' });
     });

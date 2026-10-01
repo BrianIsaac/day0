@@ -858,7 +858,7 @@ describe('retire in real mode', (): void => {
       harness
         .withIdentity(managerIdentity('stranger'))
         .mutation(api.reset.retire, { agentId: retiring }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
     expect(await harness.run(async (ctx) => await ctx.db.get(retiring))).not.toBeNull();
   });
 });

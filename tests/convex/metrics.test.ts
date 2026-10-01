@@ -227,7 +227,7 @@ describe('agent evaluation metrics', (): void => {
 
     await expect(
       harness.withIdentity(managerIdentity('intruder')).query(api.metrics.forAgent, { agentId }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
     const metrics = await harness.withIdentity(OWNER).query(api.metrics.forAgent, { agentId });
     expect(metrics).toEqual({
       // The first write row that landed, carried by the run's completion; never the approval at

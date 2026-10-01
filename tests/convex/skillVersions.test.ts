@@ -456,7 +456,7 @@ describe('skillVersions: lookups are the owner’s', (): void => {
     // The other owner cannot name this owner's employee to read its library.
     await expect(
       harness.withIdentity(managerIdentity('rival')).query(api.skillVersions.library, shape),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
     // The helper itself answers only the owner it is given.
     const direct = await harness.run(
       async (ctx) =>
@@ -507,7 +507,7 @@ describe('skillVersions: lookups are the owner’s', (): void => {
       harness
         .withIdentity(managerIdentity('rival'))
         .query(api.skillVersions.forSkill, { skillId: first.skillId }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
   });
 });
 

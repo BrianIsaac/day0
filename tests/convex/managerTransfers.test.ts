@@ -202,7 +202,7 @@ describe('managerTransfers.ask', (): void => {
       harness
         .withIdentity(WEI)
         .mutation(api.managerTransfers.ask, { agentId: maya, toAddress: PRIYA_ADDRESS }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
     await expect(
       harness.mutation(api.managerTransfers.ask, { agentId: maya, toAddress: PRIYA_ADDRESS }),
     ).rejects.toThrow();
@@ -955,7 +955,7 @@ describe('managerTransfers.openForAgent', (): void => {
     const maya = await employee(harness);
     await expect(
       harness.withIdentity(PRIYA).query(api.managerTransfers.openForAgent, { agentId: maya }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
   });
 });
 

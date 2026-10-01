@@ -121,6 +121,40 @@ describe('agents.get, the employee page read (ownedAgentOrNull)', (): void => {
   });
 });
 
+describe('the per-agent guards (the cockpit’s item, FW-m5)', (): void => {
+  it("refuse another owner's employee with a ConvexError in the manager's words, through every guard that reads it", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity(managerIdentity());
+    const agentId = await owner.mutation(api.agents.deploy, {});
+    const stranger = harness.withIdentity(managerIdentity('stranger'));
+    const refusals = await Promise.all([
+      stranger.query(api.skills.proposed, { agentId }).then(
+        (): unknown => undefined,
+        (error: unknown): unknown => error,
+      ),
+      stranger.query(api.skills.registered, { agentId }).then(
+        (): unknown => undefined,
+        (error: unknown): unknown => error,
+      ),
+    ]);
+    for (const refusal of refusals) {
+      expect(refusal).toBeInstanceOf(ConvexError);
+      expect(isEmployeeNotYours(refusal)).toBe(true);
+    }
+  });
+
+  it('refuse an anonymous caller with a ConvexError too, in the mode’s words', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity(managerIdentity());
+    const agentId = await owner.mutation(api.agents.deploy, {});
+    const refusal = await harness.query(api.skills.proposed, { agentId }).then(
+      (): unknown => undefined,
+      (error: unknown): unknown => error,
+    );
+    expect(refusal).toBeInstanceOf(ConvexError);
+  });
+});
+
 describe('the caller session', (): void => {
   it('reads the session id a token carries in sid', (): void => {
     expect(callerSessionId(identity(DEV_NO_AUTH_ISSUER, DEV_NO_AUTH_SUBJECT, { sid: 'b1' }))).toBe(

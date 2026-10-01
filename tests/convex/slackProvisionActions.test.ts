@@ -316,7 +316,7 @@ describe('registering a dedicated app', (): void => {
           surfaceId,
           configurationToken: CONFIG_TOKEN,
         }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 

@@ -1,3 +1,5 @@
+import { ConvexError } from 'convex/values';
+import { EMPLOYEE_NOT_YOURS } from '../../../../src/agent/employee-access';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@clerk/nextjs/server', () => ({
@@ -135,6 +137,14 @@ describe('the seed route', (): void => {
     const failed = await seed(JSON_FROM_APP, JSON.stringify({ agentId: 'agent-1' }));
     expect(failed.status).toBe(500);
     expect(await failed.json()).toEqual({ error: 'demo seeding failed' });
+  });
+
+  it('answers the guard’s refusal of another owner’s employee, a ConvexError in production, with a 403', async (): Promise<void> => {
+    await unlock();
+    seedFailure = new ConvexError(EMPLOYEE_NOT_YOURS);
+    const refused = await seed(JSON_FROM_APP, JSON.stringify({ agentId: 'agent-1' }));
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toEqual({ error: 'that agent is not yours to seed' });
   });
 
   it('answers a signed-out caller outside no-auth mode with a 401 and seeds nothing', async (): Promise<void> => {
