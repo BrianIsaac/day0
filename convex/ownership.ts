@@ -4,15 +4,22 @@ import type { Doc, Id } from './_generated/dataModel';
 import type { QueryCtx, MutationCtx, ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import { EMPLOYEE_NOT_YOURS } from '../src/agent/employee-access';
-import { CUSTOMER_OIDC_ISSUER_VAR, customerOidcEmailTrusted } from '../src/lib/customer-oidc';
+import {
+  CUSTOMER_OIDC_ISSUER_VAR,
+  customerOidcAllowedDomains,
+  customerOidcEmailTrusted,
+  signInRefusal,
+} from '../src/lib/customer-oidc';
 import { DEV_NO_AUTH_ISSUER, DEV_NO_AUTH_SESSION_CLAIM } from '../src/lib/dev-auth-issuer';
 import type { EnvReader } from '../src/lib/hosted-markers';
 import { normaliseManagerAddress, sameManagerAddress } from '../src/agent/manager-address';
 import {
+  LOCAL_DEV_TRANSFER_REFUSAL,
   OWN_TRANSFER,
   TRANSFER_NOT_FOUND,
   UNVERIFIED_FOR_TRANSFER,
 } from '../src/agent/manager-transfer';
+import { resolveDeploymentProfile } from '../src/lib/surface-mode';
 import { notAuthenticatedMessage } from './devAuth';
 
 /**
@@ -76,15 +83,43 @@ export interface Caller extends UserIdentity {
   readonly ownerKey: string;
 }
 
-/** The verified caller, or null for an anonymous one. */
+/**
+ * The verified caller, or null for an anonymous one and for a customer-issuer
+ * caller the domain rule refuses (decision S2): the second of the two places it
+ * is checked, after the sign-in's callback, so a token forced past the callback
+ * is refused here. The local issuer and Clerk keep their own rules.
+ */
 export async function getCaller(ctx: QueryCtx | MutationCtx | ActionCtx): Promise<Caller | null> {
   const identity = await ctx.auth.getUserIdentity();
-  return identity && { ...identity, ownerKey: ownerKeyOf(identity) };
+  if (!identity) return null;
+  if (customerCallerRefused(identity, deploymentEnv)) return null;
+  return { ...identity, ownerKey: ownerKeyOf(identity) };
 }
 
 /** The deployment's own env, as the auth config and the owner key read it. */
 function deploymentEnv(name: string): string | undefined {
   return process.env[name];
+}
+
+/**
+ * Whether the domain rule refuses a caller: one the customer's issuer signed
+ * whose `email` (and, for Google, `hd`) is outside `DAY0_OIDC_ALLOWED_DOMAINS`.
+ * With no domain configured every such caller is refused, as the sign-in's
+ * callback refuses them; an unreadable list refuses them too.
+ */
+function customerCallerRefused(identity: UserIdentity, read: EnvReader): boolean {
+  if (callerIssuer(identity, read) !== 'customer') return false;
+  let allowed: readonly string[];
+  try {
+    allowed = customerOidcAllowedDomains(read);
+  } catch {
+    // An entry that is not a domain: `check:setup` names it; meanwhile nobody is admitted by it.
+    allowed = [];
+  }
+  return (
+    signInRefusal({ email: identity.email, hd: identity.hd }, allowed, identity.issuer) !==
+    undefined
+  );
 }
 
 /** The three issuers a deployment accepts tokens from (`convex/auth.config.ts`). */
@@ -135,9 +170,10 @@ function emailVerifiedClaim(identity: UserIdentity): unknown {
  * - The local issuer: the configured manager address the token route mints
  *   as `email`, with `email_verified` true, for whoever holds the signing key.
  * - The customer's issuer: `email` when `email_verified` is true; when the
- *   issuer sends no `email_verified`, only if the deployment declares its
- *   addresses trusted (`DAY0_OIDC_EMAIL_TRUSTED`, D3). An issuer that says
- *   `false` is taken at its word, flag or not.
+ *   issuer sends no `email_verified`, when Entra's `xms_edov` is true (S4), and
+ *   with neither claim only if the deployment declares its addresses trusted
+ *   (`DAY0_OIDC_EMAIL_TRUSTED`, D3). An issuer that says `false` is taken at
+ *   its word, flag or not, and an address at `day0.local` is never its.
  *
  * The claim is read in either spelling ({@link emailVerifiedClaim}), and only
  * a boolean `true` asserts it. Pure: it reads the token's claims and the
@@ -151,10 +187,26 @@ export function verifiedAddressOf(
   identity: UserIdentity,
   read: EnvReader = deploymentEnv,
 ): string | undefined {
-  return addressVerified(identity, read) ? normaliseManagerAddress(identity.email) : undefined;
+  if (!addressVerified(identity, read)) return undefined;
+  const address = normaliseManagerAddress(identity.email);
+  if (address === undefined) return undefined;
+  // The product's own domain has no mailbox, so no customer issuer can have verified one there;
+  // only the local issuer, whose domain it is, vouches for it (the wave 9 review's U1-m4).
+  if (address.endsWith(LOCAL_DOMAIN) && callerIssuer(identity, read) === 'customer') {
+    return undefined;
+  }
+  return address;
 }
 
-/** Whether the caller's token asserts its address verified, by its issuer's rule (D3). */
+/** The domain the local issuer's and the evaluation harness's addresses live at. */
+const LOCAL_DOMAIN = '@day0.local';
+
+/**
+ * Whether the caller's token asserts its address verified, by its issuer's rule (D3). A
+ * customer issuer that sends no `email_verified` may send Entra's `xms_edov` (S4): a boolean
+ * `true` verifies the address, anything else is the issuer's word against it; only with neither
+ * claim does the trust flag decide.
+ */
 function addressVerified(identity: UserIdentity, read: EnvReader): boolean {
   const claim = emailVerifiedClaim(identity);
   const issuer = callerIssuer(identity, read);
@@ -162,8 +214,12 @@ function addressVerified(identity: UserIdentity, read: EnvReader): boolean {
     case 'clerk':
     case 'local':
       return claim === true;
-    case 'customer':
-      return claim === true || (claim === undefined && customerOidcEmailTrusted(read));
+    case 'customer': {
+      if (claim !== undefined) return claim === true;
+      const domainOwnerVerified: unknown = identity.xms_edov;
+      if (domainOwnerVerified !== undefined) return domainOwnerVerified === true;
+      return customerOidcEmailTrusted(read);
+    }
     default: {
       const unknown: never = issuer;
       throw new Error(`unhandled issuer ${String(unknown)}`);
@@ -223,6 +279,22 @@ export async function assertOwnsAgentAction(
   return agent;
 }
 
+/**
+ * Whether no second account can exist on this deployment for this caller: it
+ * signed in through the local issuer, which signs every browser in as one
+ * subject, and the profile is `local-dev`. Under `customer-local` the local
+ * account is one more manager beside the customer's issuer (the transfer plan,
+ * section 8). The ask in `convex/managerTransfers.ts` reads the same rule.
+ *
+ * @param identity - The caller's verified token.
+ */
+export function signedInAsTheOneLocalManager(identity: UserIdentity): boolean {
+  return (
+    issuerKey(identity.issuer) === issuerKey(DEV_NO_AUTH_ISSUER) &&
+    resolveDeploymentProfile() === 'local-dev'
+  );
+}
+
 /** A handover request and the account it names, as {@link assertNamedInTransfer} answers them. */
 export interface NamedInTransfer {
   readonly transfer: Doc<'managerTransfers'>;
@@ -237,21 +309,25 @@ export interface NamedInTransfer {
  * counterpart of {@link assertOwnsAgent} for the employee's owner; it says
  * nothing about the request's state, which each caller checks for its own move.
  *
- * An unverified caller is refused before anything is read, and every caller the
+ * The one local manager of a `local-dev` deployment (every browser on the local
+ * key is one subject) is refused as it is at the ask, since it cannot be told
+ * apart from whoever else holds the key (the wave 9 review's U1-m3). An
+ * unverified caller is refused before anything is read, and every caller the
  * request does not name reads it as one that does not exist, as does a string
  * that is not a request's id (a link pasted wrong, another table's row): an id
  * is confirmed to nobody it does not name (the wave 9 review's U1-m2, U4-m1).
  *
  * @param transferId - The request's id as the caller gave it, checked here.
- * @throws ConvexError with {@link UNVERIFIED_FOR_TRANSFER}, {@link TRANSFER_NOT_FOUND} or
- *   {@link OWN_TRANSFER}, words the dialog shows; the not-authenticated error for an
- *   anonymous caller.
+ * @throws ConvexError with {@link LOCAL_DEV_TRANSFER_REFUSAL}, {@link UNVERIFIED_FOR_TRANSFER},
+ *   {@link TRANSFER_NOT_FOUND} or {@link OWN_TRANSFER}, words the dialog shows; the
+ *   not-authenticated error for an anonymous caller.
  */
 export async function assertNamedInTransfer(
   ctx: QueryCtx | MutationCtx,
   transferId: string,
 ): Promise<NamedInTransfer> {
   const caller = await getCallerOrThrow(ctx);
+  if (signedInAsTheOneLocalManager(caller)) throw new ConvexError(LOCAL_DEV_TRANSFER_REFUSAL);
   const address = verifiedAddressOf(caller);
   if (address === undefined) throw new ConvexError(UNVERIFIED_FOR_TRANSFER);
   const id = ctx.db.normalizeId('managerTransfers', transferId);
