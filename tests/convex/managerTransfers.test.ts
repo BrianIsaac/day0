@@ -833,6 +833,27 @@ describe('managerTransfers.expireDue', (): void => {
     ]);
   });
 
+  it('expires a request whose employee is gone without writing an event for it, which no reset could reach (U2-m6)', async (): Promise<void> => {
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.UTC(2026, 9, 20));
+    const harness = convexTest(schema, allConvexModules());
+    const maya = await employee(harness);
+    const lapsed = await insertRequest(harness, {
+      agentId: maya,
+      requestedAt: Date.UTC(2026, 9, 1),
+    });
+    await harness.run(async (ctx) => {
+      await ctx.db.delete(maya);
+    });
+
+    await expect(harness.mutation(internal.managerTransfers.expireDue, {})).resolves.toEqual({
+      expired: 1,
+    });
+
+    expect(await request(harness, lapsed)).toMatchObject({ state: 'expired' });
+    expect(await handoverEvents(harness, maya)).toEqual([]);
+  });
+
   it('pages a long backlog, scheduling the next page until none is left', async (): Promise<void> => {
     vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());

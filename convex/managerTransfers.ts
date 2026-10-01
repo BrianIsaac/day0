@@ -257,7 +257,9 @@ async function openRequests(
 
 /**
  * End an asked request past its expiry, as the sweep does: `expired`, dated
- * at its expiry, and the event on the employee's record, written now.
+ * at its expiry, and the event on the employee's record, written now. An
+ * employee retired since has no record left, and an event written for it
+ * would be a row no reset reaches (U2-m6), so the request alone says it.
  */
 async function expireInTransaction(
   ctx: MutationCtx,
@@ -266,6 +268,7 @@ async function expireInTransaction(
 ): Promise<void> {
   // It left `asked` at its expiry, whenever the sweep or an ask meets it.
   await ctx.db.patch(transfer._id, { state: 'expired', decidedAt: transfer.expiresAt });
+  if ((await ctx.db.get(transfer.agentId)) === null) return;
   await appendEvent(ctx, {
     agentId: transfer.agentId,
     type: 'manager.transfer-expired',

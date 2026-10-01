@@ -993,17 +993,36 @@ describe('a retire or a deletion during a handover request (transfer plan 10.5)'
     expect(await harness.run(async (ctx) => await ctx.db.get(agentId))).toBeNull();
   });
 
-  it('cancels through the handover’s own cancel, writing its event into the record the retire counts', async (): Promise<void> => {
+  it('cancels through the handover’s own cancel after the deletion in real mode, so its event stays in the record beside agent.retired', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
-    const [{ agentId }] = await seedRequests(harness, ['asked']);
+    const [{ agentId, transferId }] = await seedRequests(harness, ['asked']);
 
     await harness.withIdentity(managerIdentity()).mutation(api.reset.retire, { agentId });
 
     const [retirement] = await harness.run(
       async (ctx) => await ctx.db.query('retirements').collect(),
     );
-    expect(retirement?.rowCounts).toEqual({ events: 1 });
+    // Nothing of the employee's own was deleted but its record: the cancel came after.
+    expect(retirement?.rowCounts).toEqual({});
+    const kept = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+          .collect(),
+    );
+    expect(kept.map((event) => event.type).sort()).toEqual([
+      'agent.retired',
+      'manager.transfer-cancelled',
+    ]);
+    expect(
+      kept.find((event) => event.type === 'manager.transfer-cancelled')?.payload,
+    ).toMatchObject({ transferId, reason: 'retired' });
+    expect(await transferOf(harness, transferId)).toMatchObject({
+      state: 'cancelled',
+      cancelReason: 'retired',
+    });
   });
 
   it('leaves an asked request past its expiry to the expiry sweep: an expired request is not cancelled', async (): Promise<void> => {

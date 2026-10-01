@@ -780,6 +780,9 @@ export function deleteDuringHandoverRefusal(name: string, toAddress: string): st
  * @param agents - The employees to retire.
  * @param refusal - The words for an employee whose handover is finishing.
  * @param now - The retire time.
+ * @returns What is left to do once the employees are deleted: in real mode the cancels, written
+ *   after the deletion so their events stay in the record beside `agent.retired`; nothing
+ *   otherwise.
  * @throws ConvexError with `refusal`'s words when any employee's handover is `accepting`.
  */
 async function closeOpenTransfers(
@@ -787,7 +790,7 @@ async function closeOpenTransfers(
   agents: readonly Doc<'agents'>[],
   refusal: (name: string, toAddress: string) => string,
   now: number,
-): Promise<void> {
+): Promise<() => Promise<void>> {
   const open = (
     await Promise.all(
       agents.flatMap((agent) =>
@@ -806,10 +809,17 @@ async function closeOpenTransfers(
   if (finishing) {
     throw new ConvexError(refusal(finishing.agent.name, finishing.transfer.toAddress));
   }
-  for (const { transfer } of open) {
-    if (isTransferDue(transfer, now)) continue;
-    await cancelTransferInTransaction(ctx, transfer, 'retired', now);
-  }
+  const cancel = async (): Promise<void> => {
+    for (const { transfer } of open) {
+      if (isTransferDue(transfer, now)) continue;
+      await cancelTransferInTransaction(ctx, transfer, 'retired', now);
+    }
+  };
+  // Real mode keeps the employee's record beside its retirement, so the cancel follows the
+  // deletion there and its event stays in it; the hosted office wipes the record, cancel and all.
+  if (SURFACE_MODE === 'real') return cancel;
+  await cancel();
+  return async (): Promise<void> => undefined;
 }
 
 /**
@@ -831,11 +841,17 @@ export const retire = mutation({
   handler: async (ctx, args): Promise<{ agentName: string }> => {
     const identity = await getCallerOrThrow(ctx);
     const agent = await assertOwnsAgent(ctx, args.agentId);
-    await closeOpenTransfers(ctx, [agent], retireDuringHandoverRefusal, Date.now());
+    const cancelAfter = await closeOpenTransfers(
+      ctx,
+      [agent],
+      retireDuringHandoverRefusal,
+      Date.now(),
+    );
     await retireEmployees(ctx, identity.ownerKey, [agent], {
       single: true,
       unlinkDocumentation: false,
     });
+    await cancelAfter();
     return { agentName: agent.name };
   },
 });
@@ -865,11 +881,17 @@ export const deleteMyData = mutation({
       .query('agents')
       .withIndex('by_userId', (q) => q.eq('userId', userId))
       .collect();
-    await closeOpenTransfers(ctx, agents, deleteDuringHandoverRefusal, Date.now());
+    const cancelAfter = await closeOpenTransfers(
+      ctx,
+      agents,
+      deleteDuringHandoverRefusal,
+      Date.now(),
+    );
     const { unlinkedSources } = await retireEmployees(ctx, userId, agents, {
       single: false,
       unlinkDocumentation: args.alsoUnlinkDocumentation === true,
     });
+    await cancelAfter();
     return { deleted: agents.length, unlinkedSources };
   },
 });
