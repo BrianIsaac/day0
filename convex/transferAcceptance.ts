@@ -25,7 +25,6 @@ import {
   type Boundaries,
 } from './reset';
 import { handOverSurfaces, surfaceHandoversOf, type HandedOverSurfaces } from './surfaces';
-import { canMoveTransfer } from '../src/agent/manager-transfer';
 import type { CharterConstraint } from '../src/agent/charter-constraints';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { canonicalZone, deploymentZone } from '../src/lib/zone';
@@ -95,9 +94,12 @@ const CLOSED_WORK_STATES: ReadonlySet<Doc<'workItems'>['state']> = new Set([
   'failed',
 ]);
 
-/** A request, if it can still be answered now: asked, and not past its expiry. */
+/**
+ * A request, if it can still be answered now: asked, and not past its expiry. An `accepting`
+ * request may still move to `accepted`, but only its settle moves it, never a second answer.
+ */
 function assertAnswerable(transfer: Doc<'managerTransfers'>, now: number): void {
-  if (!canMoveTransfer(transfer.state, 'accepted')) throw new ConvexError(TRANSFER_NOT_OPEN);
+  if (transfer.state !== 'asked') throw new ConvexError(TRANSFER_NOT_OPEN);
   if (transfer.expiresAt <= now) throw new ConvexError(TRANSFER_EXPIRED_UNANSWERED);
 }
 

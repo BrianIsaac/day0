@@ -813,6 +813,20 @@ describe('accept: the refusals, each before anything moves', (): void => {
     await expect(acceptAsColleague(office)).rejects.toMatchObject({ data: TRANSFER_NOT_OPEN });
   });
 
+  it('refuses a request already accepted and finishing: only its settle moves it', async (): Promise<void> => {
+    const office = await seedOffice();
+    await office.harness.run(async (ctx) => {
+      await ctx.db.patch(office.transferId, {
+        state: 'accepting',
+        decidedAt: 2,
+        toOwnerKey: 'colleague',
+        settleBy: Date.now() + 60_000,
+      });
+    });
+    await expect(acceptAsColleague(office)).rejects.toMatchObject({ data: TRANSFER_NOT_OPEN });
+    expect(await read(office.harness, office.maya)).toMatchObject({ userId: 'owner' });
+  });
+
   it('refuses a documentation source of someone else’s among the unticked', async (): Promise<void> => {
     const office = await seedOffice();
     await expect(
