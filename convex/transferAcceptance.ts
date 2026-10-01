@@ -25,6 +25,7 @@ import {
   type Boundaries,
 } from './reset';
 import { handOverSurfaces, surfaceHandoversOf, type HandedOverSurfaces } from './surfaces';
+import { needsYouOfEmployee, type NeedsYouEntry } from './work';
 import type { CharterConstraint } from '../src/agent/charter-constraints';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { canonicalZone, deploymentZone } from '../src/lib/zone';
@@ -225,6 +226,17 @@ export const transferPreviewValidator = v.object({
   expiresAt: v.number(),
   /** What the new manager takes on, as counts and names. */
   takesOn: v.object({
+    /** The decisions waiting on the manager now, by the inbox's kinds, as counts. */
+    waiting: v.object({
+      'one-to-one': v.number(),
+      charter: v.number(),
+      plan: v.number(),
+      held: v.number(),
+      skill: v.number(),
+      parked: v.number(),
+      stopped: v.number(),
+      surface: v.number(),
+    }),
     /** Work items not yet closed (completed, cancelled, skipped or failed). */
     openWork: v.number(),
     openWorkAtLeast: v.boolean(),
@@ -260,15 +272,36 @@ export const transferPreviewValidator = v.object({
 export type TransferPreview = Infer<typeof transferPreviewValidator>;
 
 /**
+ * The decisions waiting on the manager, by the inbox's kinds: `needsYouOfEmployee`'s entries,
+ * the same rows the home and the employee's tab list, counted.
+ */
+function waitingByKind(entries: readonly NeedsYouEntry[]): TransferPreview['takesOn']['waiting'] {
+  const count = (kind: NeedsYouEntry['kind']): number =>
+    entries.filter((entry) => entry.kind === kind).length;
+  return {
+    'one-to-one': count('one-to-one'),
+    charter: count('charter'),
+    plan: count('plan'),
+    held: count('held'),
+    skill: count('skill'),
+    parked: count('parked'),
+    stopped: count('stopped'),
+    surface: count('surface'),
+  };
+}
+
+/**
  * What the employee takes to the new manager, as counts: its open work, its registered skills,
  * its charter, its scopes and its record, each read by index and bounded.
  */
 async function takenOn(
   ctx: QueryCtx,
-  agentId: Id<'agents'>,
+  agent: Doc<'agents'>,
   revokedScopes: ReadonlySet<string>,
 ): Promise<TransferPreview['takesOn']> {
-  const [open, skills, newest, grants, events] = await Promise.all([
+  const agentId = agent._id;
+  const [waiting, open, skills, newest, grants, events] = await Promise.all([
+    needsYouOfEmployee(ctx, agent, Date.now()),
     Promise.all(
       OPEN_WORK_STATES.map(
         async (state) =>
@@ -297,6 +330,7 @@ async function takenOn(
       .take(PREVIEW_ROW_LIMIT),
   ]);
   return {
+    waiting: waitingByKind(waiting),
     openWork: open.reduce((total, rows) => total + rows.length, 0),
     openWorkAtLeast: open.some((rows) => rows.length >= PREVIEW_ROW_LIMIT),
     registeredSkills: skills.filter((skill) => skill.state === 'registered').length,
@@ -387,7 +421,7 @@ export async function transferPreviewOf(
   );
   const [charter, takesOn, mirrors, sources, inFlight] = await Promise.all([
     approvedCharterOf(ctx.db, agent._id),
-    takenOn(ctx, agent._id, new Set(scopesRevoked)),
+    takenOn(ctx, agent, new Set(scopesRevoked)),
     departingMirrors(ctx, agent, acceptorKey),
     ctx.db
       .query('docSources')

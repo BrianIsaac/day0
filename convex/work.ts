@@ -6924,7 +6924,8 @@ const needsYouValidator = v.object({
 });
 
 /** One thing waiting on the manager. */
-type NeedsYouEntry = Infer<typeof needsYouEntryValidator>;
+/** One entry of the needs-you inbox. */
+export type NeedsYouEntry = Infer<typeof needsYouEntryValidator>;
 
 /** The fields every entry shares: a charter entry is nothing else. */
 type NeedsYouBase = Omit<Extract<NeedsYouEntry, { kind: 'charter' }>, 'kind'>;
@@ -7142,7 +7143,7 @@ async function oneToOneWaitingSince(ctx: QueryCtx, agent: Doc<'agents'>): Promis
  * @param agent - The employee.
  * @param now - The instant an authoring claim is judged against.
  */
-async function needsYouOfEmployee(
+export async function needsYouOfEmployee(
   ctx: QueryCtx,
   agent: Doc<'agents'>,
   now: number,

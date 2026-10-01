@@ -334,6 +334,16 @@ describe('transferPreview: what the named manager reads before accepting (transf
       fromAddress: MANAGER_ADDRESS,
       note: 'Maya owns the RevOps queue.',
       takesOn: {
+        waiting: {
+          'one-to-one': 0,
+          charter: 0,
+          plan: 1,
+          held: 0,
+          skill: 0,
+          parked: 0,
+          stopped: 0,
+          surface: 0,
+        },
         openWork: 1,
         openWorkAtLeast: false,
         registeredSkills: 0,
