@@ -671,6 +671,40 @@ describe('the five controls on the Skills cards (10-C, the prototype’s agent-s
     backend.results = {};
   });
 
+  it('leaves focus where the manager moved it while Re-check now was on its way (the second pass)', async (): Promise<void> => {
+    let land = (): void => {};
+    backend.results = {
+      'skillControls:recheckNow': new Promise((resolve): void => {
+        land = () => resolve({ scheduled: true });
+      }),
+    };
+    const view = mount(
+      <>
+        <RegisteredSkillsPanel
+          skills={[due]}
+          unregistered={[]}
+          authoringFailure={null}
+          onAuthoringAttempt={noop}
+          employee="Mira"
+        />
+        <button type="button">Elsewhere</button>
+      </>,
+    );
+    const recheck = button(view.container, 'Re-check now: kanban-comment-and-close');
+    recheck.focus();
+    await act(async (): Promise<void> => {
+      recheck.click();
+    });
+    button(view.container, 'Elsewhere').focus();
+    await act(async (): Promise<void> => {
+      land();
+    });
+    await settle();
+    expect(focusedName()).toBe('Elsewhere');
+    view.unmount();
+    backend.results = {};
+  });
+
   it('says a revision is being written in the live region and gives focus to the card while it is (C-m2)', async (): Promise<void> => {
     backend.results = {
       'skillControls:askForRevision': { revisionId: 'revision-1' },
@@ -686,10 +720,13 @@ describe('the five controls on the Skills cards (10-C, the prototype’s agent-s
       />,
     );
     await press(view.container, 'Ask for a revision of kanban-comment-and-close');
-    expect(said(view.container)).toContain(
+    // The run has ended here (its action answered at once): its own verdict is the Skills card's
+    // to say, so the line that it began has gone, and focus is back on the control (the second
+    // pass).
+    expect(said(view.container)).not.toContain(
       'A revision of kanban-comment-and-close is being written. Mira keeps running this version until the new one registers.',
     );
-    expect(focusedName()).toBe('Registered');
+    expect(focusedName()).toBe('Ask for a revision of kanban-comment-and-close');
     view.unmount();
     backend.results = {};
   });

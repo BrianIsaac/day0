@@ -7,6 +7,7 @@ import { api } from '@convex/_generated/api';
 import { type RefObject, useEffect, useId, useRef, useState } from 'react';
 import { clockTime, useAgentZone, useNow } from '../../../components/time';
 import {
+  focusIsFree,
   refusalText,
   returnFocus,
   useChange,
@@ -191,14 +192,17 @@ export function RegisteredSkillsPanel({
     controls.clear();
     // A revision is its own row, written while this one keeps running.
     let written = skillId;
+    let started: string | undefined;
     try {
       if (revise) {
         try {
           written = (await askForRevision({ skillId })).revisionId;
           // The control is disabled while the revision is written, which drops its focus: the
-          // card holds it meanwhile, and the live region says what began (C-m2).
-          setNotice({ tone: 'done', text: revisionStartedOutcome(name, employee) });
-          registeredCard.current?.focus();
+          // card holds it meanwhile, unless the manager moved on, and the live region says what
+          // began until the run's own verdict is said (C-m2; the second pass).
+          started = revisionStartedOutcome(name, employee);
+          setNotice({ tone: 'done', text: started });
+          if (focusIsFree(origin)) registeredCard.current?.focus();
         } catch (err) {
           // Refused before anything was authored: said here, since no attempt names a new row.
           setNotice({
@@ -227,26 +231,39 @@ export function RegisteredSkillsPanel({
       });
     } finally {
       setRetrying(null);
+      // The run's verdict is said by the Skills card now; the line that it began goes.
+      if (started !== undefined) {
+        const said = started;
+        setNotice((current) => (current?.text === said ? null : current));
+      }
     }
   }
 
   /**
-   * Start one of the row controls that change a skill at once, said in the card's live region;
-   * `focus` names where focus goes once it lands, when not back to the control.
+   * Start one of the row controls that change a skill at once, said in the card's live region.
+   * `holder`, when given, takes focus once the change lands, because the change disables its
+   * control (a check that starts); a manager who moved focus elsewhere meanwhile keeps it there.
    */
   function runControl(
     call: () => Promise<string>,
     refused: string,
-    focus?: () => HTMLElement | null,
+    holder?: RefObject<HTMLElement | null>,
   ): void {
     setNotice(null);
-    controls.run(call, { done: (words) => words, refused, ...(focus ? { focus } : {}) });
+    const origin = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    controls.run(call, {
+      done: (words) => words,
+      refused,
+      ...(holder ? { focus: () => (focusIsFree(origin) ? holder.current : null) } : {}),
+    });
   }
 
   // The button is disabled while its run holds it, so focus comes back to it
   // once it is enabled again, unless the manager has moved on.
   useEffect(() => {
     if (retrying !== null || returnTo === null) return;
+    // The card held focus for a control the run disabled: the control takes it back, if it can.
+    if (document.activeElement === returnTo.card) returnTo.card?.blur();
     returnFocus(returnTo.control, returnTo.card);
     // eslint-disable-next-line react-hooks/set-state-in-effect -- the focus return happens once per settled run
     setReturnTo(null);
@@ -334,8 +351,7 @@ export function RegisteredSkillsPanel({
                                 return recheckStartedOutcome(s.name);
                               },
                               `${s.name} was not re-checked.`,
-                              // The check that starts disables the control: the card takes focus.
-                              () => registeredCard.current,
+                              registeredCard,
                             )
                           }
                           disabled={checking || controls.busy}
