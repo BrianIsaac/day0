@@ -44,6 +44,8 @@ import { isEventOf, type EventOf, type EventType } from '../src/events/contract'
 import { agentZone, expiryNoticeDay, expiryNoticeDue } from '../src/lib/zone';
 import { SURFACE_ACCESS_DEFAULT_DAYS, SURFACE_ACCESS_MAX_DAYS } from '../src/surfaces/access';
 import { surfaceHandoverOf, type SurfaceHandover } from '../src/surfaces/handover';
+import { stampRecheckDueOnSurfaces } from './skillVersions';
+import { allowlistChangedReason, reconnectedReason } from '../src/work/skill-controls';
 
 const MAX_LADDER_PATHS = 3;
 const MAX_PROBE_ATTEMPTS = 12;
@@ -1632,6 +1634,14 @@ export const recordConnected = internalMutation({
     // planner read as dead may never have been stored as anything but connected.
     await redraftPlansDraftedWithout(ctx, surface, args.verifiedAt);
     if (transitioned) {
+      // A connection made again may answer differently from the one the employee's skills were
+      // checked against (A13): each acting on this surface is due a re-check, and keeps running.
+      await stampRecheckDueOnSurfaces(ctx, {
+        agentId: surface.agentId,
+        slugs: [surface.slug],
+        reasonFor: reconnectedReason,
+        now: args.verifiedAt,
+      });
       const readScope = `${surface.slug}:read`;
       if (!(await readRevokedSinceApproval(ctx, surface, readScope))) {
         await grantScopeInTransaction(ctx, surface.agentId, readScope, 'surface');
@@ -2432,17 +2442,24 @@ export const approveTools = mutation({
       toolArguments: (surface.toolArguments ?? []).filter((entry) => approved.has(entry.tool)),
       withheldTools: stillWithheld.length > 0 ? stillWithheld : undefined,
     });
+    const added = tools.filter((tool) => !before.has(tool));
+    const removed = [...before].filter((tool) => !tools.includes(tool));
     await appendEvent(ctx, {
       agentId: surface.agentId,
       type: 'surface.tools-approved',
-      payload: {
-        surfaceId: surface._id,
-        tools,
-        added: tools.filter((tool) => !before.has(tool)),
-        removed: [...before].filter((tool) => !tools.includes(tool)),
-      },
+      payload: { surfaceId: surface._id, tools, added, removed },
       createdAt: now,
     });
+    // A changed list is a change the employee's skills on this surface were not checked against
+    // (A13): each is due a re-check, and keeps running meanwhile.
+    if (added.length > 0 || removed.length > 0) {
+      await stampRecheckDueOnSurfaces(ctx, {
+        agentId: surface.agentId,
+        slugs: [surface.slug],
+        reasonFor: allowlistChangedReason,
+        now,
+      });
+    }
     await ctx.scheduler.runAfter(0, internal.surfaceActions.probeInternal, {
       surfaceId: surface._id,
     });
