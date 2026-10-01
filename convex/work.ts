@@ -1408,6 +1408,12 @@ const DISCOVERED_FROM_LIMIT = 32;
 /** Why an execution is not claimed with a skill a Revise has cleared. */
 const SKILL_UNDER_REVISION_REASON = 'the skill is being revised; it runs once it registers again';
 
+/** Why a claim found its skill taken out of use: retired by the manager, or replaced by its revision. */
+const SKILL_OUT_OF_USE_REASONS = {
+  retired: 'the skill was retired, so it no longer runs',
+  superseded: 'the skill was replaced by its revision, so this run did not start',
+} as const;
+
 /** The verdicts that park a row until a skill or a connection arrives; they check the claim and take none. */
 const PARKING_DECISIONS: ReadonlySet<string> = new Set(['needs-skill', 'defer']);
 
@@ -4852,9 +4858,11 @@ export const resumeStalledSteps = internalMutation({
  * unique per claim and derived from nothing the caller controls. Adapter
  * calls key their idempotency off it, so an external effect can be recognised
  * as already-applied if the run is interrupted before its completion lands.
- * The event records the skill's registration time and the hash of its body,
- * so the ledger says which body the run used; a skill sent back for revision
- * is refused.
+ * The event records the skill's registration time, the hash of its body and
+ * the library version it holds, with whether that version was adopted, so the
+ * ledger says which body the run used; a skill sent back for revision, retired
+ * or replaced by its revision is refused, and every claim counts a use on the
+ * skill ("used N times").
  */
 export const claimForExecution = internalMutation({
   args: { workItemId: v.id('workItems'), skillId: v.id('skills') },
@@ -4873,7 +4881,11 @@ export const claimForExecution = internalMutation({
       };
     }
     // The executor picked from the registered list before this transaction;
-    // a Revise in between cleared the body the run would otherwise use (P8-8).
+    // a Retire or a revision registering in between took the row out of use,
+    // and a Revise cleared the body the run would otherwise use (P8-8).
+    if (skill.state === 'retired' || skill.state === 'superseded') {
+      return { claimed: false, reason: SKILL_OUT_OF_USE_REASONS[skill.state] };
+    }
     if (skill.state !== 'registered' || skill.body === '') {
       return { claimed: false, reason: SKILL_UNDER_REVISION_REASON };
     }
@@ -4882,6 +4894,8 @@ export const claimForExecution = internalMutation({
     if (await isBeingHandedOver(ctx.db, item.agentId)) {
       return { claimed: false, reason: HANDOVER_IN_PROGRESS_REASON };
     }
+    const now = Date.now();
+    const version = skill.versionId === undefined ? null : await ctx.db.get(skill.versionId);
     const runId = await appendEvent(ctx, {
       agentId: item.agentId,
       type: 'work.execution-claimed',
@@ -4890,11 +4904,15 @@ export const claimForExecution = internalMutation({
         skillId: args.skillId,
         ...(skill.registeredAt !== undefined ? { skillRegisteredAt: skill.registeredAt } : {}),
         skillBodyHash: skillBodyHash(skill.body),
+        ...(version !== null ? { skillVersionId: version._id, skillVersion: version.version } : {}),
+        ...(skill.adoptedAt !== undefined ? { skillAdopted: true as const } : {}),
         // The item the skill was made for: a run for any other item is a reuse (A9).
         ...(skill.proposedFor !== undefined ? { proposedFor: skill.proposedFor } : {}),
       },
-      createdAt: Date.now(),
+      createdAt: now,
     });
+    // "used N times": every claim is a use, counted in the claim's own transaction.
+    await ctx.db.patch(args.skillId, { useCount: (skill.useCount ?? 0) + 1, lastUsedAt: now });
     await ctx.db.patch(args.workItemId, {
       state: 'executing',
       skillId: args.skillId,

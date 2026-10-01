@@ -5673,6 +5673,80 @@ describe('the execution claim and the skill body it runs', (): void => {
       skillBodyHash: skillBodyHash('Comment, then close.'),
     });
   });
+
+  it('claimForExecution counts a use and refuses a retired row', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, skillId } = await seedApproved(harness, {
+      state: 'registered',
+      body: 'Comment, then close.',
+    });
+    await harness.run(async (ctx) => await ctx.db.patch(skillId, { useCount: 2 }));
+
+    expect(
+      (await harness.mutation(internal.work.claimForExecution, { workItemId, skillId })).claimed,
+    ).toBe(true);
+
+    const used = await harness.run(async (ctx) => await ctx.db.get(skillId));
+    expect(used?.useCount).toBe(3);
+    expect(used?.lastUsedAt).toBeGreaterThan(0);
+
+    for (const [state, reason] of [
+      ['retired', 'the skill was retired, so it no longer runs'],
+      ['superseded', 'the skill was replaced by its revision, so this run did not start'],
+    ] as const) {
+      const retired = await seedApproved(harness, { state, body: 'Comment, then close.' });
+      expect(
+        await harness.mutation(internal.work.claimForExecution, {
+          workItemId: retired.workItemId,
+          skillId: retired.skillId,
+        }),
+      ).toEqual({ claimed: false, reason });
+      expect((await readItem(harness, retired.workItemId)).state).toBe('plan-approved');
+      expect(
+        (await harness.run(async (ctx) => await ctx.db.get(retired.skillId)))?.useCount,
+      ).toBeUndefined();
+    }
+  });
+
+  it('records the library version the run claimed, and whether it was adopted', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, skillId } = await seedApproved(harness, {
+      state: 'registered',
+      body: 'Comment, then close.',
+    });
+    const versionId = await harness.run(async (ctx) => {
+      const id = await ctx.db.insert('skillVersions', {
+        userId: 'owner',
+        name: 'update-linear-ticket',
+        description: 'Comment on and close a linear ticket.',
+        surfaceClass: 'kanban',
+        operation: 'comment-and-close',
+        version: 3,
+        body: 'Comment, then close.',
+        bodyHash: skillBodyHash('Comment, then close.'),
+        requiredScopes: [],
+        harnessTools: [],
+        authorName: 'Priya',
+        readRefs: [],
+        verifiedAt: 1,
+        createdAt: 1,
+      });
+      await ctx.db.patch(skillId, { versionId: id, adoptedAt: 4 });
+      return id;
+    });
+
+    await harness.mutation(internal.work.claimForExecution, { workItemId, skillId });
+
+    const row = await readItem(harness, workItemId);
+    const [event] = (await eventsOfType(harness, row.agentId, 'work.execution-claimed')).filter(
+      (entry) => entry._id === row.executionRunId,
+    );
+    expect(event?.payload).toMatchObject({
+      skillVersionId: versionId,
+      skillVersion: 3,
+      skillAdopted: true,
+    });
+  });
 });
 
 describe('the cap count behind every evaluation (P9-1)', (): void => {
