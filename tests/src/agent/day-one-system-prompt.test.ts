@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  DAY_ONE_COMPLETE_TOOL,
   DAY_ONE_PROMPT_CACHE_KEY,
   dayOneSystemPrompt,
   dayOneTurnNote,
@@ -80,8 +81,16 @@ describe('dayOneSystemPrompt', (): void => {
     expect(prompt).not.toContain('follow-ups are fine');
   });
 
+  it('closes as the note says, with no friendly line of its own (the v0.12.0 walk)', (): void => {
+    const prompt = dayOneSystemPrompt('Ada');
+    expect(prompt).toContain(
+      '  - Once the note says all seven are answered, close as it says, call the dayOneComplete tool and stop.',
+    );
+    expect(prompt).not.toContain('friendly closing line');
+  });
+
   it('moves the cache key on with the prompt', (): void => {
-    expect(DAY_ONE_PROMPT_CACHE_KEY).toBe('day0-day1-system-v3');
+    expect(DAY_ONE_PROMPT_CACHE_KEY).toBe('day0-day1-system-v4');
   });
 });
 
@@ -130,13 +139,30 @@ describe('dayOneTurnNote', (): void => {
     }
   });
 
-  it('asks for the close, and no question, once all seven are answered', (): void => {
+  it('asks for the close once all seven are answered: one thanks, what was left open named, no question (the v0.12.0 walk)', (): void => {
     const close =
       'Where the one-to-one stands: the boss has answered all seven questions. In this turn, ' +
-      'thank the boss in a sentence or two, ask nothing, and call the dayOneComplete tool with a ' +
-      'friendly closing line.';
+      'thank the boss once, in one short sentence. Then name, in one short sentence each, what ' +
+      "the boss's replies left open, saying it goes on the charter as an open question: a " +
+      'question they asked back, an answer they were not sure of, something they asked to come ' +
+      'back to, or anything they raised at the last question; name nothing when nothing was ' +
+      'left open. Ask nothing, and promise nothing but the charter. Then call the dayOneComplete ' +
+      'tool: its closing line only says you will now draft the charter for their review, and ' +
+      'does not thank them again.';
     expect(dayOneTurnNote(7)).toBe(close);
     expect(dayOneTurnNote(12)).toBe(close);
+  });
+
+  it('gives the close tool a closing line that drafts the charter and never thanks a second time', (): void => {
+    expect(DAY_ONE_COMPLETE_TOOL.description).toBe(
+      'Call this once all seven questions are answered, in the closing turn, after its thanks ' +
+        'and what was left open.',
+    );
+    expect(DAY_ONE_COMPLETE_TOOL.closingLine).toBe(
+      'One short sentence saying you will now draft the charter for their review. It does not ' +
+        'thank them again: the turn has already done so.',
+    );
+    expect(DAY_ONE_COMPLETE_TOOL.closingLine).not.toMatch(/friendly/i);
   });
 
   it('carries no em dash, no slug and no product name, as the prompt does not', (): void => {

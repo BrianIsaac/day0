@@ -5,9 +5,25 @@ import { clippedEmployeeName } from './employee-name';
 /**
  * The provider's prompt-cache key for the Day-1 system prompt. It names the prompt's shape, so a
  * change to the words below moves it on (v2: the employee's own name and the topics' plain
- * titles, 30 September; v3: one question per turn, the one `dayOneTurnNote` names, 1 October).
+ * titles, 30 September; v3: one question per turn, the one `dayOneTurnNote` names, 1 October;
+ * v4: the close as the note says it, with no friendly line of its own, 2 October).
  */
-export const DAY_ONE_PROMPT_CACHE_KEY = 'day0-day1-system-v3';
+export const DAY_ONE_PROMPT_CACHE_KEY = 'day0-day1-system-v4';
+
+/**
+ * The words of the tool the employee calls to end the one-to-one, said to the model with the
+ * tool: when to call it, and what its closing line says. The line is drawn after the turn's own
+ * text, so it only says the charter is next: a "friendly closing line" was a second thank-you on
+ * the v0.12.0 walk.
+ */
+export const DAY_ONE_COMPLETE_TOOL = {
+  description:
+    'Call this once all seven questions are answered, in the closing turn, after its thanks ' +
+    'and what was left open.',
+  closingLine:
+    'One short sentence saying you will now draft the charter for their review. It does not ' +
+    'thank them again: the turn has already done so.',
+} as const;
 
 /**
  * The system prompt of the Day-1 chat one-to-one, for one employee.
@@ -54,7 +70,7 @@ export function dayOneSystemPrompt(employeeName: string): string {
       'Never ask a follow-up, never go back to an earlier topic and never ask a later one early. ' +
       'An answer that leaves something out still stands: the boss can add to it at the last question.',
     "  - Do not summarise the boss's answers back in full.",
-    '  - Once the note says all seven are answered, call the dayOneComplete tool with a friendly closing line and stop.',
+    '  - Once the note says all seven are answered, close as it says, call the dayOneComplete tool and stop.',
   ].join('\n');
 }
 
@@ -62,6 +78,23 @@ export function dayOneSystemPrompt(employeeName: string): string {
 const NO_PROMISED_RETURN =
   ' Never promise to come back to a question or say you will circle back to it: anything the ' +
   'boss leaves open is named at the last question.';
+
+/**
+ * The close's note: one thanks, then what the replies left open, named as the charter's open
+ * questions, then the tool, whose line drafts the charter and does not thank again. On the
+ * v0.12.0 walk the close thanked twice (the turn, then the tool's "friendly closing line") and
+ * named neither thread question 7 had noted. Which replies left something open is the model's
+ * reading of the conversation, not a word list (N20).
+ */
+const CLOSE =
+  'Where the one-to-one stands: the boss has answered all seven questions. In this turn, ' +
+  'thank the boss once, in one short sentence. Then name, in one short sentence each, what ' +
+  "the boss's replies left open, saying it goes on the charter as an open question: a " +
+  'question they asked back, an answer they were not sure of, something they asked to come ' +
+  'back to, or anything they raised at the last question; name nothing when nothing was ' +
+  'left open. Ask nothing, and promise nothing but the charter. Then call the dayOneComplete ' +
+  'tool: its closing line only says you will now draft the charter for their review, and ' +
+  'does not thank them again.';
 
 /** What the last question's note asks first: the open threads of the earlier replies, named. */
 const LEFT_OPEN_FIRST =
@@ -82,20 +115,15 @@ const LEFT_OPEN_FIRST =
  * The one-to-one asks no follow-up (F-D5), so a reply that leaves a question open is not chased:
  * every note forbids promising to come back to it, which the employee did on the wave 9 review's
  * walk and never kept, and the last question's note has the employee name what the earlier
- * replies left open before asking it, so the boss can settle it there (decision 3). Which replies
- * left something open is the model's reading of the conversation, not a word list (N20).
+ * replies left open before asking it, so the boss can settle it there (decision 3); the close
+ * names what is still open as it goes on the charter. Which replies left something open is the
+ * model's reading of the conversation, not a word list (N20).
  *
  * @param replies - `managerReplies` of the history this turn answers.
  */
 export function dayOneTurnNote(replies: number): string {
   const answered = Math.max(0, Math.floor(replies));
-  if (answered >= DAY_ONE_TOPIC_COUNT) {
-    return (
-      'Where the one-to-one stands: the boss has answered all seven questions. In this turn, ' +
-      'thank the boss in a sentence or two, ask nothing, and call the dayOneComplete tool with a ' +
-      'friendly closing line.'
-    );
-  }
+  if (answered >= DAY_ONE_TOPIC_COUNT) return CLOSE;
   const spec = DAY_ONE_TOPIC_SPECS[topicIndexOf(answered)];
   const question =
     `ask question ${answered + 1} (${DAY_ONE_TOPIC_TITLES[spec.topic]}) in your own words: ` +
