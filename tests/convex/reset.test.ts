@@ -1103,3 +1103,72 @@ describe('a retire or a deletion during a handover request (transfer plan 10.5)'
     expect(await transferOf(harness, transferId)).toMatchObject({ state: 'accepting' });
   });
 });
+
+describe('deleteMyData and the handover requests it keeps (decision 7)', (): void => {
+  /** One handover request between two parties, with a note and a decline's reason. */
+  async function seedRequest(
+    harness: TestConvex<typeof schema>,
+    parties: {
+      readonly fromOwnerKey: string;
+      readonly fromAddress: string;
+      readonly toAddress: string;
+    },
+  ): Promise<Id<'managerTransfers'>> {
+    return await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: parties.fromAddress,
+        name: 'Maya',
+        userId: parties.fromOwnerKey,
+        state: 'active',
+        createdAt: 1,
+      });
+      return await ctx.db.insert('managerTransfers', {
+        agentId,
+        agentName: 'Maya',
+        ...parties,
+        note: 'Maya covers the Finance Ops close; ask Priya Nair about the vault.',
+        declineReason: 'I am leaving the company in March.',
+        state: 'declined',
+        requestedAt: 1,
+        expiresAt: 2,
+        decidedAt: 2,
+      });
+    });
+  }
+
+  it('scrubs the note and the decline’s reason on every request the owner asked or was named in, and keeps the rows', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const asked = await seedRequest(harness, {
+      fromOwnerKey: 'owner',
+      fromAddress: MANAGER_ADDRESS,
+      toAddress: 'colleague@day0.local',
+    });
+    const named = await seedRequest(harness, {
+      fromOwnerKey: 'colleague',
+      fromAddress: 'colleague@day0.local',
+      toAddress: MANAGER_ADDRESS,
+    });
+    const others = await seedRequest(harness, {
+      fromOwnerKey: 'colleague',
+      fromAddress: 'colleague@day0.local',
+      toAddress: 'third@day0.local',
+    });
+
+    await harness.withIdentity(managerIdentity()).mutation(api.reset.deleteMyData, {});
+
+    const [askedRow, namedRow, othersRow] = await harness.run(
+      async (ctx) => await Promise.all([ctx.db.get(asked), ctx.db.get(named), ctx.db.get(others)]),
+    );
+    for (const row of [askedRow, namedRow]) {
+      expect(row).toMatchObject({ state: 'declined' });
+      expect(row?.note).toBeUndefined();
+      expect(row?.declineReason).toBeUndefined();
+    }
+    expect(askedRow).toMatchObject({
+      fromAddress: MANAGER_ADDRESS,
+      toAddress: 'colleague@day0.local',
+    });
+    expect(othersRow?.note).toEqual(expect.stringContaining('Finance Ops'));
+    expect(othersRow?.declineReason).toEqual(expect.any(String));
+  });
+});

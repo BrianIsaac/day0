@@ -1,8 +1,20 @@
 import { v, type Infer } from 'convex/values';
-import type { Doc, Id } from './_generated/dataModel';
+import type { DataModel, Doc, Id } from './_generated/dataModel';
+import type { ExpressionOrValue, FilterBuilder, NamedTableInfo } from 'convex/server';
 import { ConvexError } from 'convex/values';
-import { mutation, query, type DatabaseReader, type MutationCtx } from './_generated/server';
-import { assertOwnsAgent, getCallerOrThrow, ownedAgentOrNull } from './ownership';
+import {
+  internalMutation,
+  mutation,
+  query,
+  type DatabaseReader,
+  type MutationCtx,
+} from './_generated/server';
+import {
+  assertOwnsAgent,
+  getCallerOrThrow,
+  ownedAgentOrNull,
+  verifiedAddressOf,
+} from './ownership';
 import { deleteOwnedDocumentation } from './docSources';
 import { purgeCredential, purgeOwnedCredentials } from './credentials';
 import { cancelTransferInTransaction } from './managerTransfers';
@@ -14,6 +26,7 @@ import { internal } from './_generated/api';
 import { landedWritesOf } from '../src/work/landed-writes';
 import { providerReconciliationEntries } from '../src/work/reconciliation';
 import {
+  MANAGER_TRANSFER_STATES,
   OPEN_MANAGER_TRANSFER_STATES,
   TRANSFER_SETTLE_MS,
   canMoveTransfer,
@@ -856,6 +869,78 @@ export const retire = mutation({
   },
 });
 
+/** The most handover requests of one party, per state and side, one page of the scrub reads. */
+const HANDOVER_SCRUB_PAGE = 200;
+
+/** Whose handover requests a deletion scrubs: the ones it asked, and the ones naming its address. */
+const handoverPartyValidator = v.object({
+  ownerKey: v.string(),
+  address: v.optional(v.string()),
+});
+
+/**
+ * Scrub the words a person wrote into the handover requests a deletion keeps (decision 7, a
+ * product call taken as recommended): the note on each request the owner asked, and both the
+ * note and the decline's reason on each that named the owner's verified address, so neither the
+ * owner's own words nor what was written to them outlives their data. The rows stay with both
+ * addresses, the employee's name and the outcome: the other manager's record of where the
+ * employee went or what it took on. Paged by state over the two indexes, the rows still carrying
+ * a note or a reason only; a full page schedules the next.
+ *
+ * @param ctx - The deletion's mutation context.
+ * @param party - The deleting owner and their verified address, when they have one.
+ * @returns How many requests were scrubbed in this page.
+ */
+async function scrubHandoverWords(
+  ctx: MutationCtx,
+  party: Infer<typeof handoverPartyValidator>,
+): Promise<number> {
+  const carryingWords = (
+    q: FilterBuilder<NamedTableInfo<DataModel, 'managerTransfers'>>,
+  ): ExpressionOrValue<boolean> =>
+    q.or(q.neq(q.field('note'), undefined), q.neq(q.field('declineReason'), undefined));
+  const { address } = party;
+  const pages = await Promise.all(
+    MANAGER_TRANSFER_STATES.flatMap((state) => [
+      ctx.db
+        .query('managerTransfers')
+        .withIndex('by_from_owner_state', (q) =>
+          q.eq('fromOwnerKey', party.ownerKey).eq('state', state),
+        )
+        .filter(carryingWords)
+        .take(HANDOVER_SCRUB_PAGE),
+      address === undefined
+        ? Promise.resolve([])
+        : ctx.db
+            .query('managerTransfers')
+            .withIndex('by_to_address_state', (q) => q.eq('toAddress', address).eq('state', state))
+            .filter(carryingWords)
+            .take(HANDOVER_SCRUB_PAGE),
+    ]),
+  );
+  const rows = new Map(pages.flat().map((row) => [row._id, row]));
+  for (const row of rows.values()) {
+    await ctx.db.patch(row._id, { note: undefined, declineReason: undefined });
+  }
+  if (pages.some((page) => page.length === HANDOVER_SCRUB_PAGE)) {
+    await ctx.scheduler.runAfter(0, internal.reset.scrubHandoverWordsPage, party);
+  }
+  return rows.size;
+}
+
+/**
+ * The next page of a deletion's scrub of handover words ({@link scrubHandoverWords}).
+ *
+ * Internal, scheduled by the scrub itself when a page was full. Writes the scrubbed fields.
+ *
+ * @returns How many requests this page scrubbed.
+ */
+export const scrubHandoverWordsPage = internalMutation({
+  args: handoverPartyValidator,
+  returns: v.number(),
+  handler: async (ctx, args): Promise<number> => await scrubHandoverWords(ctx, args),
+});
+
 /**
  * Retire every one of the signed-in owner's employees: the hosted demo's reset and the bed's.
  * Public, for the signed-in owner; idempotent. Retiring every employee keeps no claim or
@@ -868,7 +953,9 @@ export const retire = mutation({
  *
  * Every open handover request of the owner's employees is cancelled (reason `retired`); while one
  * is `accepting` nothing is deleted and the refusal names the wait. A request naming the caller
- * leaves its employee alone, since it is not the caller's until it moves.
+ * leaves its employee alone, since it is not the caller's until it moves. Every request kept,
+ * asked by the caller or naming them, loses its note and its decline's reason
+ * ({@link scrubHandoverWords}, decision 7).
  *
  * @throws ConvexError with {@link deleteDuringHandoverRefusal}'s words while a handover is finishing.
  */
@@ -892,6 +979,11 @@ export const deleteMyData = mutation({
       unlinkDocumentation: args.alsoUnlinkDocumentation === true,
     });
     await cancelAfter();
+    const address = verifiedAddressOf(identity);
+    await scrubHandoverWords(ctx, {
+      ownerKey: userId,
+      ...(address === undefined ? {} : { address }),
+    });
     return { deleted: agents.length, unlinkedSources };
   },
 });
