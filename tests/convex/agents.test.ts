@@ -2438,3 +2438,140 @@ describe("the module's runtime imports", (): void => {
     expect(runtimeCycleThrough('convex/agents.ts')).toBeNull();
   });
 });
+
+describe('the old manager’s authority while a handover is open (U3-m3, U5-m4)', (): void => {
+  /** A request of the employee's in `state`, naming the colleague. */
+  async function seedTransfer(
+    harness: TestConvex<typeof schema>,
+    agentId: Id<'agents'>,
+    state: 'asked' | 'accepting',
+  ): Promise<void> {
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('managerTransfers', {
+        agentId,
+        agentName: 'Maya',
+        fromOwnerKey: 'owner',
+        fromAddress: MANAGER_ADDRESS,
+        toAddress: 'colleague@day0.local',
+        state,
+        requestedAt: Date.now(),
+        expiresAt: Date.now() + 86_400_000,
+        ...(state === 'accepting'
+          ? { decidedAt: Date.now(), toOwnerKey: 'colleague', settleBy: Date.now() + 900_000 }
+          : {}),
+      });
+    });
+  }
+
+  /** The employee's active grants, by scope. */
+  async function activeScopes(
+    harness: TestConvex<typeof schema>,
+    agentId: Id<'agents'>,
+  ): Promise<string[]> {
+    return await harness.run(async (ctx) =>
+      (
+        await ctx.db
+          .query('permissionGrants')
+          .withIndex('by_agent_scope', (q) => q.eq('agentId', agentId))
+          .collect()
+      )
+        .filter((grant) => grant.revokedAt === undefined)
+        .map((grant) => grant.scope),
+    );
+  }
+
+  const ACCEPTED = "Maya's handover to colleague@day0.local was already accepted";
+
+  it('refuses a scope the old manager grants once the new one has accepted', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedReportingTo(harness, MANAGER_ADDRESS);
+    await seedTransfer(harness, agentId, 'accepting');
+
+    await expect(
+      harness
+        .withIdentity(managerIdentity())
+        .mutation(api.agents.grantScopes, { agentId, scopes: ['linear:write'] }),
+    ).rejects.toMatchObject({ data: expect.stringContaining(ACCEPTED) });
+    expect(await activeScopes(harness, agentId)).toEqual([]);
+  });
+
+  it('grants a scope while the handover is only asked: the employee is still the old manager’s', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedReportingTo(harness, MANAGER_ADDRESS);
+    await seedTransfer(harness, agentId, 'asked');
+
+    await expect(
+      harness
+        .withIdentity(managerIdentity())
+        .mutation(api.agents.grantScopes, { agentId, scopes: ['linear:write'] }),
+    ).resolves.toEqual({ added: 1 });
+  });
+
+  it('refuses switching autonomous actions on once the new manager has accepted, and lets it go off', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedReportingTo(harness, MANAGER_ADDRESS);
+    await seedTransfer(harness, agentId, 'accepting');
+    const owner = harness.withIdentity(managerIdentity());
+
+    await expect(
+      owner.mutation(api.agents.setAutonomousActions, { agentId, on: true }),
+    ).rejects.toMatchObject({ data: expect.stringContaining(ACCEPTED) });
+    expect(
+      autonomousActionsOn((await harness.run(async (ctx) => await ctx.db.get(agentId)))!),
+    ).toBe(false);
+
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(agentId, { autonomousActions: true });
+    });
+    await expect(
+      owner.mutation(api.agents.setAutonomousActions, { agentId, on: false }),
+    ).resolves.toMatchObject({ autonomousActions: false, changed: true });
+  });
+
+  it('refuses Make it you while a handover is asked, in the open request’s words', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedReportingTo(harness, 'old@day0.local');
+    await seedTransfer(harness, agentId, 'asked');
+
+    await expect(
+      harness.withIdentity(managerIdentity()).mutation(api.agents.adoptManagerAddress, { agentId }),
+    ).rejects.toMatchObject({
+      data: 'Maya already has a handover open to colleague@day0.local. Change the address or cancel it first.',
+    });
+    expect((await harness.run(async (ctx) => await ctx.db.get(agentId)))?.bossEmail).toBe(
+      'old@day0.local',
+    );
+  });
+
+  it('refuses Make it you once the new manager has accepted', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedReportingTo(harness, 'old@day0.local');
+    await seedTransfer(harness, agentId, 'accepting');
+
+    await expect(
+      harness.withIdentity(managerIdentity()).mutation(api.agents.adoptManagerAddress, { agentId }),
+    ).rejects.toMatchObject({ data: expect.stringContaining(ACCEPTED) });
+  });
+
+  it('lets Make it you through once an asked request has expired', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedReportingTo(harness, 'old@day0.local');
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('managerTransfers', {
+        agentId,
+        agentName: 'Maya',
+        fromOwnerKey: 'owner',
+        fromAddress: 'old@day0.local',
+        toAddress: 'colleague@day0.local',
+        state: 'asked',
+        requestedAt: 1,
+        expiresAt: 2,
+      });
+    });
+
+    await expect(
+      harness.withIdentity(managerIdentity()).mutation(api.agents.adoptManagerAddress, { agentId }),
+    ).resolves.toMatchObject({ changed: true });
+  });
+});

@@ -117,17 +117,18 @@ export async function openTransferOf(
  * words of an accepted handover, as a second ask meets them.
  *
  * @param db - The writer's reader.
- * @param agent - The employee.
- * @throws ConvexError with {@link openTransferRefusal}'s words for an accepting request.
+ * @param agentId - The employee.
+ * @throws ConvexError with {@link openTransferRefusal}'s words for an accepting request, naming
+ *   the employee as the request does.
  */
 export async function assertNotBeingHandedOver(
   db: QueryCtx['db'],
-  agent: Pick<Doc<'agents'>, '_id' | 'name'>,
+  agentId: Id<'agents'>,
 ): Promise<void> {
-  const accepting = await acceptingTransferOf(db, agent._id);
+  const accepting = await acceptingTransferOf(db, agentId);
   if (accepting === null) return;
   throw new ConvexError(
-    openTransferRefusal(clippedEmployeeName(agent.name), accepting.toAddress, 'accepting'),
+    openTransferRefusal(clippedEmployeeName(accepting.agentName), accepting.toAddress, 'accepting'),
   );
 }
 
@@ -137,20 +138,21 @@ export async function assertNotBeingHandedOver(
  * open request's own terms, as a second ask meets them.
  *
  * @param db - The writer's reader.
- * @param agent - The employee.
+ * @param agentId - The employee.
  * @param now - The instant expiry is judged against.
- * @throws ConvexError with {@link openTransferRefusal}'s words for the open request.
+ * @throws ConvexError with {@link openTransferRefusal}'s words for the open request, naming the
+ *   employee as the request does.
  */
 export async function assertNoHandoverOpen(
   db: QueryCtx['db'],
-  agent: Pick<Doc<'agents'>, '_id' | 'name'>,
+  agentId: Id<'agents'>,
   now: number,
 ): Promise<void> {
-  const open = await openTransferOf(db, agent._id, now);
+  const open = await openTransferOf(db, agentId, now);
   if (open === null) return;
   throw new ConvexError(
     openTransferRefusal(
-      clippedEmployeeName(agent.name),
+      clippedEmployeeName(open.agentName),
       open.toAddress,
       open.state === 'accepting' ? 'accepting' : 'asked',
     ),

@@ -21,6 +21,7 @@ import { namedSurfacesFor, targetSurfaceFor } from '../src/work/skill-shape';
 import { surfaceSlug } from '../src/surfaces/slug';
 import { redactTokenShapes } from '../src/surfaces/redact';
 import { appendEvent } from './eventLog';
+import { assertNotBeingHandedOver } from './handoverFence';
 import type { SkillAuthoringRefusedPayload } from '../src/events/contract';
 
 /**
@@ -713,11 +714,15 @@ export const propose = internalMutation({
  * Public, owner-guarded: approves a proposed skill whose target surface is
  * connected, grants its required scopes and records the approval. Nothing is
  * scheduled here; the dashboard starts the authoring once this returns.
+ * Refused once a new manager has accepted the employee and it waits for its
+ * runs (U3-m3): the skill and its scopes would move with it after the new
+ * manager's preview, and the approval is theirs to give.
  */
 export const approve = mutation({
   args: { skillId: v.id('skills') },
   handler: async (ctx, args) => {
     const row = await assertOwnsSkill(ctx, args.skillId);
+    await assertNotBeingHandedOver(ctx.db, row.agentId);
     if (row.state !== 'proposed') {
       throw new Error(`cannot approve "${row.name}": it is ${row.state}, not proposed`);
     }

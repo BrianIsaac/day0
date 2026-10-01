@@ -67,6 +67,7 @@ import {
 } from '../src/work/manager-notes';
 import { agentZone, canonicalZone, dayKey, dayStart, deploymentZone } from '../src/lib/zone';
 import { appendEvent, eventsOfType } from './eventLog';
+import { assertNoHandoverOpen, assertNotBeingHandedOver } from './handoverFence';
 import { isEventOf } from '../src/events/contract';
 
 /** Where a permission grant came from: deployment, the manager, a skill or a surface. */
@@ -739,16 +740,20 @@ export const employeesReportingElsewhere = query({
  * the owner at once and the open decision requests delivered to the previous
  * DM are sent again to the owner's (the probe's `recordConnected`). The one
  * writer of `bossEmail` besides deploy and an accepted handover (D1 (b),
- * D17 (a)).
+ * D17 (a)). Refused while a handover of the employee is open (U5-m4): the
+ * request names who the employee goes to, and its move would overwrite the
+ * address written here.
  *
  * @returns Whether the address changed, and how many surfaces were re-probed.
- * @throws ConvexError for a caller without a verified address or an evaluation employee.
+ * @throws ConvexError for a caller without a verified address, an evaluation employee, or an
+ *   employee with a handover open.
  */
 export const adoptManagerAddress = mutation({
   args: { agentId: v.id('agents') },
   returns: v.object({ changed: v.boolean(), reprobed: v.number() }),
   handler: async (ctx, args): Promise<{ changed: boolean; reprobed: number }> => {
     const agent = await assertOwnsAgent(ctx, args.agentId);
+    await assertNoHandoverOpen(ctx.db, agent._id, Date.now());
     const caller = await getCallerOrThrow(ctx);
     const standing = standingOf(agent, verifiedAddressOf(caller));
     switch (standing.standing) {
@@ -844,11 +849,16 @@ async function reprobeForManagerChange(ctx: MutationCtx, agentId: Id<'agents'>):
   return surfaces.length;
 }
 
-/** Public, owner-guarded: grants permission scopes to an employee as the manager. */
+/**
+ * Public, owner-guarded: grants permission scopes to an employee as the manager. Refused once a
+ * new manager has accepted the employee and it waits for its runs (U3-m3): the scopes would move
+ * with it after the new manager's preview.
+ */
 export const grantScopes = mutation({
   args: { agentId: v.id('agents'), scopes: v.array(v.string()) },
   handler: async (ctx, args) => {
     await assertOwnsAgent(ctx, args.agentId);
+    await assertNotBeingHandedOver(ctx.db, args.agentId);
     let added = 0;
     for (const scope of args.scopes) {
       if (scope.trim() === '') throw new Error('permission scope must not be empty');
@@ -1099,7 +1109,10 @@ export const setZone = mutation({
  * to change, so it is refused there before the ownership check, and the
  * header keeps its static label. Off is the deploy default (an absent field
  * reads as off). Every change that changes anything is an event; setting
- * the value the row already has records nothing.
+ * the value the row already has records nothing. Switching it on is refused
+ * once a new manager has accepted the employee and it waits for its runs
+ * (U3-m3): a run already executing would apply under it unapproved until the
+ * move; switching it off is always allowed.
  */
 export const setAutonomousActions = mutation({
   args: { agentId: v.id('agents'), on: v.boolean() },
@@ -1109,6 +1122,7 @@ export const setAutonomousActions = mutation({
   ): Promise<{ ok: true; autonomousActions: boolean; changed: boolean }> => {
     assertRealMode('Autonomous actions');
     const agent = await assertOwnsAgent(ctx, args.agentId);
+    if (args.on) await assertNotBeingHandedOver(ctx.db, args.agentId);
     const from = autonomousActionsOn(agent);
     if (from === args.on) return { ok: true, autonomousActions: from, changed: false };
     await ctx.db.patch(args.agentId, { autonomousActions: args.on });
