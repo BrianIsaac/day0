@@ -504,7 +504,13 @@ export interface SkillApprovedPayload extends SkillNamed {
 }
 
 /** The payload of `skill.rejected`. */
-export type SkillRejectedPayload = SkillNamed;
+export interface SkillRejectedPayload extends SkillNamed {
+  /**
+   * Set when nobody rejected the row: the version offered to it for adoption was withdrawn from
+   * every employee, which ended the adoption (the wave 10 review, M2).
+   */
+  readonly offerWithdrawn?: { readonly version: number };
+}
 
 /**
  * The payload of `skill.revision-requested`: the manager asked for a revision. Since 10-C a

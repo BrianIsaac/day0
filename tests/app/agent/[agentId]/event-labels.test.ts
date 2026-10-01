@@ -372,6 +372,12 @@ describe('the live feed labels', (): void => {
     ).toBe('skill given up: analytics-refresh-value after 2 attempts');
     expect(
       eventLabel({
+        type: 'skill.rejected',
+        payload: { name: 'kanban-comment-and-close', offerWithdrawn: { version: 1 } },
+      }),
+    ).toBe('skill adoption ended, version withdrawn: kanban-comment-and-close');
+    expect(
+      eventLabel({
         type: 'skill.rechecked',
         payload: { name: 'kanban-comment-and-close', version: 2 },
       }),

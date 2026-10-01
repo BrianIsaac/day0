@@ -244,7 +244,10 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     `built-in skill installed: ${text(payload.name) ?? 'unnamed'}`,
   'skill.proposed': (payload) => `skill proposed: ${text(payload.name) ?? 'unnamed'}`,
   'skill.approved': (payload) => `skill approved: ${text(payload.name) ?? 'unnamed'}`,
-  'skill.rejected': (payload) => `skill rejected: ${text(payload.name) ?? 'unnamed'}`,
+  'skill.rejected': (payload) =>
+    payload.offerWithdrawn === undefined
+      ? `skill rejected: ${text(payload.name) ?? 'unnamed'}`
+      : `skill adoption ended, version withdrawn: ${text(payload.name) ?? 'unnamed'}`,
   'skill.revision-requested': (payload) =>
     typeof payload.revisionId === 'string'
       ? `skill revision asked for: ${text(payload.name) ?? 'unnamed'}`

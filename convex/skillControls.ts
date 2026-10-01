@@ -54,6 +54,14 @@ const APPROVED_SCAN = 200;
 /** Parked items one batch of a Give up's cancellation reads before it continues by schedule. */
 const CANCEL_SCAN = 200;
 
+/**
+ * The owner's employees a Withdraw reads for adoptions offering the version, and each one's rows
+ * of the name. An offer past these bounds is still refused at Adopt, at Check it again and by the
+ * authoring action, which check the version as it stands.
+ */
+const OFFER_EMPLOYEE_SCAN = 500;
+const OFFER_ROW_SCAN = 50;
+
 /** The states in which a row of a name may still become callable: the row an item waits behind. */
 const LIVE_STATES: ReadonlySet<Doc<'skills'>['state']> = new Set([
   'proposed',
@@ -515,9 +523,10 @@ export const retire = mutation({
  * Public, guarded by `assertOwnsSkill`: Withdraw for every employee (A12). The version the row
  * holds is stamped withdrawn (`revokedAt`, `revokedReason`), so it is offered to nobody and no
  * stored verification registers it again, and every holder of it that is callable is retired as
- * Retire retires one, all in this one transaction. One `skill.revoked` on the acting employee's
- * record names every holder retired; each holder's record carries its own `skill.retired`. Refused
- * for a row that is not a callable skill an employee wrote.
+ * Retire retires one, all in this one transaction; every adoption offering it ends with it
+ * ({@link endAdoptionsOf}). One `skill.revoked` on the acting employee's record names every holder
+ * retired; each holder's record carries its own `skill.retired`, and each ended adoption's a
+ * `skill.rejected` saying so. Refused for a row that is not a callable skill an employee wrote.
  */
 export const withdraw = mutation({
   args: { skillId: v.id('skills'), reason: v.optional(v.string()) },
@@ -569,6 +578,7 @@ async function withdrawVersion(
     returnedItems += (await retireHolder(ctx, holder, { reason, how: 'withdrawn', now })).length;
     holders.push({ skillId: holder._id, agentId: holder.agentId, agentName: employee.name });
   }
+  await endAdoptionsOf(ctx, version, now);
   await appendEvent(ctx, {
     agentId: row.agentId,
     type: 'skill.revoked',
@@ -583,6 +593,91 @@ async function withdrawVersion(
     createdAt: now,
   });
   return { holders: holders.length, returnedItems };
+}
+
+/**
+ * End every adoption of the owner that offers a version being withdrawn, in the Withdraw's
+ * transaction (the wave 10 review, M2). Each row carrying the version as its offer, adopted or
+ * not, is rejected with its claim released and any parked copy of the version cleared, so no
+ * Retry, Check it again or authoring run can register the withdrawn body, and its record says the
+ * adoption ended. The work waiting on it waits for a skill again and asks for one afresh, as the
+ * work a Retire returns does; the version, withdrawn, is offered to it no more.
+ *
+ * @param ctx - The Withdraw's mutation context.
+ * @param version - The version withdrawn.
+ * @param now - The Withdraw's time.
+ */
+async function endAdoptionsOf(
+  ctx: MutationCtx,
+  version: Doc<'skillVersions'>,
+  now: number,
+): Promise<void> {
+  const employees = await ctx.db
+    .query('agents')
+    .withIndex('by_userId', (q) => q.eq('userId', version.userId))
+    .take(OFFER_EMPLOYEE_SCAN);
+  for (const employee of employees) {
+    const offered = (
+      await ctx.db
+        .query('skills')
+        .withIndex('by_agent_name', (q) => q.eq('agentId', employee._id).eq('name', version.name))
+        .take(OFFER_ROW_SCAN)
+    ).filter((row) => row.offeredVersionId === version._id);
+    for (const row of offered) await endAdoption(ctx, { row, version, now });
+  }
+}
+
+/** One adoption ended because its version was withdrawn ({@link endAdoptionsOf}). */
+async function endAdoption(
+  ctx: MutationCtx,
+  ended: {
+    readonly row: Doc<'skills'>;
+    readonly version: Doc<'skillVersions'>;
+    readonly now: number;
+  },
+): Promise<void> {
+  const { row, version, now } = ended;
+  await ctx.db.patch(row._id, {
+    state: 'rejected',
+    offeredVersionId: undefined,
+    body: '',
+    pendingSmokeTest: undefined,
+    refusedBody: undefined,
+    refusedSmokeTest: undefined,
+    ...releasedClaim,
+  });
+  await appendEvent(ctx, {
+    agentId: row.agentId,
+    type: 'skill.rejected',
+    payload: { skillId: row._id, name: row.name, offerWithdrawn: { version: version.version } },
+    createdAt: now,
+  });
+  const waiting = (
+    await ctx.db
+      .query('workItems')
+      .withIndex('by_agent_state', (q) => q.eq('agentId', row.agentId).eq('state', 'needs-skill'))
+      .take(CANCEL_SCAN)
+  ).filter((item) => waitsFor(item, row));
+  const returned: Id<'workItems'>[] = [];
+  for (const item of waiting) {
+    await parkForSkill(ctx, item, {
+      name: row.name,
+      reason: takenOutItemReason(row.name, 'withdrawn'),
+      rationale: row.rationale ?? row.description,
+      ...(row.surfaceClass !== undefined && row.operation !== undefined
+        ? { shape: { surfaceClass: row.surfaceClass, operation: row.operation } }
+        : {}),
+      now,
+    });
+    returned.push(item._id);
+  }
+  if (returned.length > 0) {
+    await ctx.scheduler.runAfter(0, internal.skillControls.proposeForReturnedWork, {
+      agentId: row.agentId,
+      workItemIds: returned,
+      proposal: proposalOf(row),
+    });
+  }
 }
 
 /**

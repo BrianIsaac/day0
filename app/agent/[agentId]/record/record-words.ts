@@ -299,7 +299,13 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     const scopes = listed(p.scopes);
     return `You approved the skill ${text(p.name) ?? 'unnamed'}${scopes ? `, granting ${scopes}` : ''}`;
   },
-  'skill.rejected': (p) => `You rejected the skill ${text(p.name) ?? 'unnamed'}`,
+  'skill.rejected': (p) => {
+    const name = text(p.name) ?? 'unnamed';
+    if (p.offerWithdrawn === undefined) return `You rejected the skill ${name}`;
+    const version =
+      typeof p.offerWithdrawn.version === 'number' ? `version ${p.offerWithdrawn.version}` : 'it';
+    return `The adoption of the skill ${name} ended: ${version} was withdrawn from every employee`;
+  },
   'skill.revision-requested': (p) =>
     // A row an older release wrote names no revision: its revision overwrote the body in place.
     typeof p.revisionId === 'string'

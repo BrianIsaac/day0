@@ -354,6 +354,17 @@ describe('recordWords', (): void => {
     ).toBe('You gave up on the skill analytics-refresh-value after 3 attempts.');
     expect(
       recordWords(
+        {
+          type: 'skill.rejected',
+          payload: { name: 'kanban-comment-and-close', offerWithdrawn: { version: 1 } },
+        },
+        subject,
+      ),
+    ).toBe(
+      'The adoption of the skill kanban-comment-and-close ended: version 1 was withdrawn from every employee.',
+    );
+    expect(
+      recordWords(
         { type: 'skill.rechecked', payload: { name: 'kanban-comment-and-close', version: 2 } },
         subject,
       ),

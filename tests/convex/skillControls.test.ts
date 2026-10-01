@@ -7,6 +7,7 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import type { SkillSandboxRun } from '../../src/lib/skill-sandbox';
 import { versionBodyHash } from '../../src/work/skill-library';
+import { parkedCheckLog } from '../../src/work/skill-adoption';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
@@ -650,6 +651,116 @@ describe('skillControls', (): void => {
         expect((await eventsOf(harness, agentId, 'skill.retired')).map((e) => e.payload)).toEqual([
           expect.objectContaining({ skillId, withdrawn: true, versionId: office.versionId }),
         ]);
+      }
+    });
+
+    it('ends every adoption that offers the version, so neither Retry nor the authoring action registers the withdrawn body (the wave 10 review, M2)', async (): Promise<void> => {
+      const harness = convexTest(schema, allConvexModules());
+      const office = await seedOffice(harness);
+      // Tomas pressed Adopt while no sandbox answered: his row holds a parked copy of version 1.
+      // Ines was offered version 1 and has not adopted it yet.
+      const adopters = await harness.run(async (ctx) => {
+        const employee = async (name: string): Promise<Id<'agents'>> =>
+          await ctx.db.insert('agents', {
+            bossEmail: MANAGER_ADDRESS,
+            name,
+            userId: 'owner',
+            state: 'active',
+            createdAt: 1,
+          });
+        const tomas = await employee('Tomas');
+        const ines = await employee('Ines');
+        const waiting = async (agentId: Id<'agents'>, externalId: string) =>
+          await ctx.db.insert('workItems', {
+            agentId,
+            sourceCategory: 'ticket-queue',
+            sourceSystem: 'linear',
+            externalId,
+            title: `Close ${externalId}`,
+            contentSummary: 'Synthetic.',
+            contentRefs: [],
+            state: 'needs-skill',
+            observedAt: 1,
+            createdAt: 1,
+          });
+        const tomasItem = await waiting(tomas, 'REVOPS-21');
+        const inesItem = await waiting(ines, 'REVOPS-22');
+        const offered = (agentId: Id<'agents'>, proposedFor: Id<'workItems'>) => ({
+          agentId,
+          name: NAME,
+          description: 'Ticket comment-and-close.',
+          sourceType: 'agent-authored' as const,
+          surfaceClass: 'kanban',
+          operation: 'comment-and-close',
+          requiredScopes: ['linear:read', 'linear:write'],
+          proposedFor,
+          offeredVersionId: office.versionId,
+          createdAt: 2,
+        });
+        const tomasSkill = await ctx.db.insert('skills', {
+          ...offered(tomas, tomasItem),
+          state: 'authoring',
+          body: BODY,
+          pendingSmokeTest: SMOKE,
+          sandboxId: '(skipped)',
+          verificationLog: parkedCheckLog('no sandbox backend answered'),
+        });
+        const inesSkill = await ctx.db.insert('skills', {
+          ...offered(ines, inesItem),
+          state: 'proposed',
+          body: '',
+        });
+        await ctx.db.patch(tomasItem, { proposedSkillId: tomasSkill });
+        await ctx.db.patch(inesItem, { proposedSkillId: inesSkill });
+        return { tomas, ines, tomasSkill, inesSkill, tomasItem, inesItem };
+      });
+
+      await expect(
+        harness.withIdentity(OWNER).mutation(api.skillControls.withdraw, {
+          skillId: office.priyaSkill,
+          reason: 'it closes the wrong tickets',
+        }),
+      ).resolves.toEqual({ withdrawn: true, holders: 2, returnedItems: 0 });
+
+      for (const [agentId, skillId] of [
+        [adopters.tomas, adopters.tomasSkill],
+        [adopters.ines, adopters.inesSkill],
+      ] as const) {
+        const ended = await skill(harness, skillId);
+        expect(ended).toMatchObject({ state: 'rejected', body: '' });
+        expect(ended.offeredVersionId).toBeUndefined();
+        expect(ended.pendingSmokeTest).toBeUndefined();
+        expect(ended.authoringRunId).toBeUndefined();
+        expect((await eventsOf(harness, agentId, 'skill.rejected')).map((e) => e.payload)).toEqual([
+          { skillId, name: NAME, offerWithdrawn: { version: 1 } },
+        ]);
+      }
+
+      const retried = await harness
+        .withIdentity(OWNER)
+        .action(api.skillActions.authorAndRegisterSkill, { skillId: adopters.tomasSkill });
+      expect(retried.ok).toBe(false);
+      expect((await skill(harness, adopters.tomasSkill)).state).toBe('rejected');
+      const library = await harness.run(
+        async (ctx) => await ctx.db.query('skillVersions').collect(),
+      );
+      expect(library.map((version) => version.version)).toEqual([1]);
+
+      // The work that waited on each adoption asks for the skill again, with no offer.
+      await harness.finishInProgressScheduledFunctions();
+      vi.advanceTimersByTime(0);
+      await harness.finishInProgressScheduledFunctions();
+      for (const workItemId of [adopters.tomasItem, adopters.inesItem]) {
+        const waiting = await item(harness, workItemId);
+        expect(waiting.state).toBe('needs-skill');
+        expect(waiting.verdict).toMatchObject({
+          reason: `the skill ${NAME} was withdrawn from every employee, so this waits for a skill again`,
+        });
+        expect(waiting.proposedSkillId).toBeDefined();
+        if (waiting.proposedSkillId === undefined) continue;
+        const proposal = await skill(harness, waiting.proposedSkillId);
+        expect(proposal).toMatchObject({ name: NAME, state: 'proposed' });
+        expect(proposal.offeredVersionId).toBeUndefined();
       }
     });
 
