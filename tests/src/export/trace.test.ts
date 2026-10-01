@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   assembleTrace,
+  handoversForRecompute,
   isAgentTrace,
+  ownerKeyDigest,
   readAgentTrace,
   sectionAfter,
   TRACE_SECTIONS,
@@ -104,5 +106,48 @@ describe('assembling a trace from its pages', (): void => {
     });
     expect(trace.sections.events).toEqual([row]);
     expect(trace.manifest.counts.events).toBe(1);
+  });
+});
+
+describe('the owner keys a manifest carries (decision 2, the wave 10 review, M6)', (): void => {
+  it('digests a key with the export time as its salt, so neither the key nor its digest repeats across traces', (): void => {
+    const first = ownerKeyDigest('user_earlier_manager', 1_000);
+    expect(first).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(first).not.toContain('user_earlier_manager');
+    expect(ownerKeyDigest('user_earlier_manager', 1_000)).toBe(first);
+    expect(ownerKeyDigest('user_earlier_manager', 1_001)).not.toBe(first);
+    expect(ownerKeyDigest('user_other_manager', 1_000)).not.toBe(first);
+  });
+
+  it('reads back the keys a recompute knows, and leaves any other manager a digest', (): void => {
+    const exportedAt = 7_000;
+    const manifest = {
+      exportedAt,
+      handovers: [
+        {
+          agentId: 'maya',
+          fromOwnerDigest: ownerKeyDigest('first', exportedAt),
+          toOwnerDigest: ownerKeyDigest('second', exportedAt),
+          acceptedAt: 2_000,
+        },
+        {
+          agentId: 'maya',
+          fromOwnerDigest: ownerKeyDigest('second', exportedAt),
+          toOwnerDigest: ownerKeyDigest('third', exportedAt),
+          acceptedAt: 5_000,
+        },
+      ],
+    };
+
+    expect(handoversForRecompute(manifest, ['second', 'third'])).toEqual([
+      {
+        agentId: 'maya',
+        fromOwnerKey: ownerKeyDigest('first', exportedAt),
+        toOwnerKey: 'second',
+        acceptedAt: 2_000,
+      },
+      { agentId: 'maya', fromOwnerKey: 'second', toOwnerKey: 'third', acceptedAt: 5_000 },
+    ]);
+    expect(handoversForRecompute({ exportedAt, handovers: undefined }, ['second'])).toEqual([]);
   });
 });

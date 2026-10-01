@@ -12,6 +12,7 @@
 import type { Doc } from '../../convex/_generated/dataModel';
 import type { EventType } from '../events/contract';
 import type { AcceptedHandover } from '../metrics/tenure';
+import { sha256OfText } from '../lib/sha256';
 
 /** The format name every trace carries, so a file says what it is. */
 export const TRACE_FORMAT = 'day0-trace';
@@ -20,7 +21,8 @@ export const TRACE_FORMAT = 'day0-trace';
  * The trace format's version: 2 is the paged trace with a manifest; 3 adds
  * the delivery records of Day0's own messages and the event contract's types;
  * 4 adds the employee's accepted handovers to the manifest, so a recompute
- * from traces cuts each manager's figures by tenure.
+ * from traces cuts each manager's figures by tenure, each owner key as a
+ * salted digest ({@link ownerKeyDigest}).
  */
 export const TRACE_VERSION = 4;
 
@@ -136,13 +138,69 @@ export interface TraceManifest {
    */
   readonly eventTypes?: readonly EventType[];
   /**
-   * The employee's accepted handovers, oldest first: who held it before and after each, and
-   * when the named manager accepted. A trace is exported by the manager who holds the employee
+   * The employee's accepted handovers, oldest first: who held it before and after each, as
+   * digests of their owner keys ({@link ownerKeyDigest}), and when the named manager accepted. A trace is exported by the manager who holds the employee
    * now and carries its whole history, so a recompute cuts each manager's figures at these, as
    * `metrics:forOwner` cuts them (D12). Absent before version 4, where the history is read as
    * the present holder's.
    */
-  readonly handovers?: readonly AcceptedHandover[];
+  readonly handovers?: readonly TraceHandover[];
+}
+
+/**
+ * One accepted handover as a trace's manifest carries it: the two owner keys as digests
+ * ({@link ownerKeyDigest}), so the file names no manager's account, and the acceptance.
+ */
+export interface TraceHandover {
+  readonly agentId: string;
+  /** The digest of the owner key that held the employee before. */
+  readonly fromOwnerDigest: string;
+  /** The digest of the owner key that holds it from the acceptance. */
+  readonly toOwnerDigest: string;
+  /** When the named manager accepted: the boundary between the two tenures. */
+  readonly acceptedAt: number;
+}
+
+/**
+ * An owner key as a trace's manifest carries it (decision 2; the wave 10 review, M6): a SHA-256
+ * digest salted with the trace's own export time. The export strips every manager address from
+ * the file and keeps no account key but the exporter's own, and a trace is made to be shared, so
+ * a handover names its two managers only this way. A recompute that knows a key (the `--owner`
+ * it is asked about, the employee's present holder) digests it with the same salt and finds its
+ * spans ({@link handoversForRecompute}); a key nobody names stays a digest.
+ *
+ * @param ownerKey - The owner key (`agents.userId`).
+ * @param exportedAt - The trace's `manifest.exportedAt`, the salt.
+ */
+export function ownerKeyDigest(ownerKey: string, exportedAt: number): string {
+  return `sha256:${sha256OfText(`day0-trace-owner\u0000${exportedAt}\u0000${ownerKey}`)}`;
+}
+
+/**
+ * The manifest's handovers with every digest of a known owner key read back as the key, for the
+ * tenure windows a recompute cuts (`tenureWindowsOf`); a digest no known key answers stays as it
+ * is, an owner that is neither of them.
+ *
+ * @param manifest - The trace's manifest.
+ * @param knownOwnerKeys - The keys the recompute knows: the owner it is asked about and the
+ *   employee's present holder.
+ */
+export function handoversForRecompute(
+  manifest: Pick<TraceManifest, 'exportedAt' | 'handovers'>,
+  knownOwnerKeys: readonly string[],
+): AcceptedHandover[] {
+  const byDigest = new Map(
+    knownOwnerKeys.map((key): [string, string] => [ownerKeyDigest(key, manifest.exportedAt), key]),
+  );
+  const read = (digest: string): string => byDigest.get(digest) ?? digest;
+  return (manifest.handovers ?? []).map(
+    (handover): AcceptedHandover => ({
+      agentId: handover.agentId,
+      fromOwnerKey: read(handover.fromOwnerDigest),
+      toOwnerKey: read(handover.toOwnerDigest),
+      acceptedAt: handover.acceptedAt,
+    }),
+  );
 }
 
 /** The first call's answer: everything but the paged sections, and where they start. */
