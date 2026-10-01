@@ -213,6 +213,7 @@ export function createIssuer(options) {
       token_endpoint: `${issuer}/token`,
       jwks_uri: `${issuer}/jwks`,
       ...(endSessionSupported ? { end_session_endpoint: `${issuer}/end-session` } : {}),
+      revocation_endpoint: `${issuer}/revoke`,
       response_types_supported: ['code'],
       subject_types_supported: ['public'],
       id_token_signing_alg_values_supported: ['RS256'],
@@ -392,6 +393,24 @@ export function createIssuer(options) {
   }
 
   /**
+   * Revoke a refresh token (RFC 7009): the client's own, and silently nothing for any other.
+   *
+   * @param {Request} request
+   * @returns {Promise<Response>}
+   */
+  async function revoke(request) {
+    const form = new URLSearchParams(await request.text());
+    const credentials = clientCredentials(request, form);
+    const client = clients.find((candidate) => candidate.id === credentials.id);
+    if (!client || client.secret !== credentials.secret) {
+      return oauthError('invalid_client', 'client authentication failed', 401);
+    }
+    const presented = form.get('token') ?? '';
+    if (refreshTokens.get(presented)?.clientId === client.id) refreshTokens.delete(presented);
+    return new Response(null, { status: 200 });
+  }
+
+  /**
    * @param {Request} request
    * @returns {Response}
    */
@@ -454,6 +473,7 @@ export function createIssuer(options) {
       if (path === '/jwks') return json(200, { keys: [publicJwk] });
       if (path === '/authorize') return authorize(request);
       if (path === '/token' && request.method === 'POST') return token(request);
+      if (path === '/revoke' && request.method === 'POST') return revoke(request);
       if (path === '/end-session') return endSession(request);
       if (path.startsWith('/admin/')) return admin(request);
       return json(404, { error: 'not_found' });

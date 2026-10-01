@@ -460,6 +460,30 @@ async function performRefresh(
 }
 
 /**
+ * Revoke a session's refresh token at the issuer (RFC 7009) when its metadata
+ * names a `revocation_endpoint` (Okta and Google do; Entra does not), so a
+ * copy of the session cookie taken before sign-out refreshes nothing. Without
+ * a session table that copy still opens until its ID token expires; this ends
+ * what it could do after. Best effort: a failure is logged, and sign-out
+ * carries on.
+ *
+ * @param settings - The sign-in's settings.
+ * @param refreshToken - The session's refresh token.
+ */
+export async function revokeRefreshToken(
+  settings: CustomerSignInSettings,
+  refreshToken: string,
+): Promise<void> {
+  try {
+    const configuration = await issuerConfiguration(settings);
+    if (!configuration.serverMetadata().revocation_endpoint) return;
+    await oidc.tokenRevocation(configuration, refreshToken, { token_type_hint: 'refresh_token' });
+  } catch (err) {
+    log.warn('customer sign-out could not revoke the refresh token', { reason: errorMessage(err) });
+  }
+}
+
+/**
  * Where to send the browser to end the issuer's session as well as the app's:
  * the issuer's `end_session_endpoint` when its metadata names one, else
  * undefined (the app's own session is ended either way).

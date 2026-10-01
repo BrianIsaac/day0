@@ -36,6 +36,21 @@ describe('the company sign-out', (): void => {
     expect(setCookies(response).get('day0_session')).toMatch(/Max-Age=0/);
   });
 
+  it('revokes the refresh token, so a copy of the cookie taken before sign-out refreshes nothing', async (): Promise<void> => {
+    const issuer = customerIssuer();
+    const cookie = await signedIn(issuer, 'priya');
+    await signOut(cookie);
+    const { POST } = await import('../../../../../../app/api/auth/oidc/token/route');
+    const copied = await POST(
+      new NextRequest(`${PUBLIC_URL}/api/auth/oidc/token`, {
+        method: 'POST',
+        headers: { cookie, origin: PUBLIC_URL, 'content-type': 'application/json' },
+        body: JSON.stringify({ force: true }),
+      }),
+    );
+    expect(copied.status).toBe(401);
+  });
+
   it('ends the session on its own when the issuer names no end_session_endpoint', async (): Promise<void> => {
     const issuer = customerIssuer({ endSession: false });
     const cookie = await signedIn(issuer, 'priya');

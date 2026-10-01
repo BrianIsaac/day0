@@ -19,6 +19,7 @@ import {
   type FinishedSignIn,
   needsRefresh,
   refreshSession,
+  revokeRefreshToken,
   safeReturnTo,
   sealedTokenClaims,
   startSignIn,
@@ -541,8 +542,9 @@ export async function tokenRoute(request: NextRequest): Promise<NextResponse> {
 }
 
 /**
- * `POST /api/auth/oidc/logout`: end the session. The cookies are cleared, and
- * the browser is sent to the issuer's `end_session_endpoint` when its metadata
+ * `POST /api/auth/oidc/logout`: end the session. The refresh token is revoked
+ * where the issuer allows it, the cookies are cleared, and the browser is sent
+ * to the issuer's `end_session_endpoint` when its metadata
  * names one, which ends the issuer's own session and sends the person back to
  * the signed-out page; without one, straight to that page.
  *
@@ -557,6 +559,7 @@ export async function signOutRoute(request: NextRequest): Promise<NextResponse> 
     return NextResponse.json({ error: 'not from this site' }, { status: 403, headers: NO_STORE });
   }
   const session = await sessionOf(request, settings);
+  if (session?.refreshToken) await revokeRefreshToken(settings, session.refreshToken);
   const destination =
     (await issuerSignOutUrl(settings, session?.idToken)) ?? signedOutUriOf(settings.publicUrl);
   // 303, so the browser follows the POST with a GET.
