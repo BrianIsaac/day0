@@ -464,6 +464,36 @@ services:
       timeout: 5s
       start_period: 10s
 
+  # The test OpenID Connect issuer (fake-oidc/, decision S3): discovery, keys,
+  # PKCE codes and rotating refresh tokens for a fixed set of test people, so a
+  # customer-local bed signs people in without an external identity provider.
+  # Never a production issuer: anyone who reaches it signs in as anyone. It
+  # serves https when fake-oidc/tls holds a certificate (fake-oidc/make-tls.sh)
+  # and plain http otherwise, and is unpublished: a bed reaches it at a fixed
+  # address on the project network (fake-oidc/compose.bed.yml), so the issuer
+  # URL is the same from the backend, this machine and its browser. Its
+  # defaults let it start harmlessly beside fake Slack on any `test` bed.
+  fake-oidc:
+    profiles: ['test']
+    image: node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32
+    command: ['node', '/app/server.js']
+    environment:
+      - FAKE_OIDC_ISSUER=${FAKE_OIDC_ISSUER:-http://fake-oidc:8443}
+      - FAKE_OIDC_PORT=${FAKE_OIDC_PORT:-8443}
+      - FAKE_OIDC_REDIRECT_URIS=${FAKE_OIDC_REDIRECT_URIS:-http://localhost:3000/api/auth/oidc/callback}
+      - FAKE_OIDC_CLIENT_ID=${FAKE_OIDC_CLIENT_ID:-day0-app}
+      - FAKE_OIDC_CLIENT_SECRET=${FAKE_OIDC_CLIENT_SECRET:-day0-test-client-secret}
+      - FAKE_OIDC_TOKEN_SECONDS=${FAKE_OIDC_TOKEN_SECONDS:-300}
+      - FAKE_OIDC_PEOPLE=${FAKE_OIDC_PEOPLE:-}
+      - FAKE_OIDC_TLS_DIR=/app/tls
+    volumes:
+      - ./fake-oidc:/app:ro
+    healthcheck:
+      test: ['CMD', 'node', '/app/healthcheck.js']
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+
   # A synthetic system with a web UI and no API: the case Day0 claims to be
   # honest about. Nothing reaches it but a browser, so it is what the browser
   # floor is demonstrated against. Unpublished, like every other real-profile

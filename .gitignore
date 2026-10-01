@@ -67,3 +67,6 @@ phase*.txt
 /skills-lock.json
 /convex/_generated/ai/ai-files.state.json
 /convex/_generated/ai/guidelines.md
+
+# the test issuer's throwaway TLS material (fake-oidc/make-tls.sh)
+/fake-oidc/tls/
