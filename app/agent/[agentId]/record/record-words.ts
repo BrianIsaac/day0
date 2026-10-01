@@ -199,6 +199,18 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `Asked to take ${name} on, ${text(p.toAddress) ?? 'the named manager'} declined`,
   'manager.transfer-expired': (p) =>
     `The handover to ${text(p.toAddress) ?? 'another manager'} expired unanswered`,
+  'manager.transfer-settle-failed': (p, { name }) =>
+    `${name} could not be moved to ${text(p.toAddress) ?? 'its new manager'} yet${
+      typeof p.attempt === 'number' ? ` (attempt ${p.attempt})` : ''
+    }; Day0 tries again each minute`,
+  'manager.transfer-ended': (p, { name }) =>
+    `The handover to ${text(p.toAddress) ?? 'another manager'} ${
+      p.reason === 'operator' ? 'was ended by the operator' : 'could not finish and was ended'
+    }${because(p.detail)}; ${name} stays with ${text(p.fromAddress) ?? 'its manager'}`,
+  'manager.transfer-notice': (p, { name }) =>
+    p.delivered === true
+      ? `${name} told ${text(p.toAddress) ?? 'the named manager'} in Slack that they were asked to take ${name} on`
+      : `${name} did not tell ${text(p.toAddress) ?? 'the named manager'} in Slack about the handover${because(p.reason)}`,
   'manager.transferred': (p, { name }) => {
     const from = text(p.fromAddress);
     const to = text(p.toAddress);

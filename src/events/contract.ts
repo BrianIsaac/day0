@@ -266,6 +266,46 @@ export interface ManagerTransferDeclinedPayload extends TransferRequestEvent {
 export type ManagerTransferExpiredPayload = TransferRequestEvent;
 
 /**
+ * Why an accepted handover ended without the move (decision 4): the move would be refused
+ * (`unmovable`), its settle kept failing (`settle-failed`), or the operator ended it (`operator`).
+ */
+export const TRANSFER_END_REASONS = ['unmovable', 'settle-failed', 'operator'] as const;
+
+/** One of {@link TRANSFER_END_REASONS}. */
+export type TransferEndReason = (typeof TRANSFER_END_REASONS)[number];
+
+/**
+ * The payload of `manager.transfer-settle-failed`: one settle of an accepting request failed and
+ * is tried again at the next sweep, until the request ends itself.
+ */
+export interface ManagerTransferSettleFailedPayload extends TransferRequestEvent {
+  /** Which failure this is, from one. */
+  readonly attempt: number;
+  readonly reason: string;
+}
+
+/**
+ * The payload of `manager.transfer-ended`: an accepted handover ended without the move; the
+ * employee stays its old manager's.
+ */
+export interface ManagerTransferEndedPayload extends TransferRequestEvent {
+  readonly reason: TransferEndReason;
+  /** The refusal, the last failure, or the operator's words. */
+  readonly detail: string;
+}
+
+/**
+ * The payload of `manager.transfer-notice`: the one Slack DM a real-mode request sends the person
+ * it names (D7), delivered or not, and why not. Written once per request, when the notice was
+ * claimed, so the old manager's record says whether the named person was told.
+ */
+export interface ManagerTransferNoticePayload extends TransferRequestEvent {
+  readonly delivered: boolean;
+  /** Why it was not delivered: nobody the notice may reach, or the provider's failure. */
+  readonly reason?: string;
+}
+
+/**
  * The payload of `manager.transferred`: the employee moved to the manager who accepted its
  * handover (the transfer plan, section 7.6). What the move did, as counts and names, never a
  * credential's or a documentation source's label.
@@ -1160,6 +1200,9 @@ export interface EventPayloads {
   'manager.transfer-cancelled': ManagerTransferCancelledPayload;
   'manager.transfer-declined': ManagerTransferDeclinedPayload;
   'manager.transfer-expired': ManagerTransferExpiredPayload;
+  'manager.transfer-notice': ManagerTransferNoticePayload;
+  'manager.transfer-settle-failed': ManagerTransferSettleFailedPayload;
+  'manager.transfer-ended': ManagerTransferEndedPayload;
   'manager.transferred': ManagerTransferredPayload;
   'charter.drafted': CharterDraftedPayload;
   'charter.approved': CharterApprovedPayload;
@@ -1313,6 +1356,9 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'manager.transfer-cancelled',
   'manager.transfer-declined',
   'manager.transfer-expired',
+  'manager.transfer-notice',
+  'manager.transfer-settle-failed',
+  'manager.transfer-ended',
   'manager.transferred',
   'charter.drafted',
   'charter.approved',

@@ -786,3 +786,65 @@ describe('registration and the library (10-K)', (): void => {
     }
   });
 });
+
+describe('skills.approve while a handover waits for its runs (U3-m3)', (): void => {
+  /** A request of the employee's in `state`, naming the colleague. */
+  async function seedTransfer(
+    harness: TestConvex<typeof schema>,
+    agentId: Id<'agents'>,
+    state: 'asked' | 'accepting',
+  ): Promise<void> {
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('managerTransfers', {
+        agentId,
+        agentName: 'Maya',
+        fromOwnerKey: 'owner',
+        fromAddress: MANAGER_ADDRESS,
+        toAddress: 'colleague@day0.local',
+        state,
+        requestedAt: Date.now(),
+        expiresAt: Date.now() + 86_400_000,
+        ...(state === 'accepting'
+          ? { decidedAt: Date.now(), toOwnerKey: 'colleague', settleBy: Date.now() + 900_000 }
+          : {}),
+      });
+    });
+  }
+
+  it('refuses the old manager’s approval once the new one has accepted, and leaves the skill proposed', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedAgentAndWork(harness, 'tickets');
+    const skillId = await propose(harness, agentId, workItemId);
+    await seedTransfer(harness, agentId, 'accepting');
+
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.skills.approve, { skillId }),
+    ).rejects.toMatchObject({
+      data: expect.stringContaining('handover to colleague@day0.local was already accepted'),
+    });
+
+    const skill = await harness.run(async (ctx) => await ctx.db.get(skillId));
+    expect(skill?.state).toBe('proposed');
+    const grants = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('permissionGrants')
+          .withIndex('by_agent_scope', (q) => q.eq('agentId', agentId))
+          .collect(),
+    );
+    expect(grants.filter((grant) => grant.source === 'skill')).toEqual([]);
+  });
+
+  it('lets the old manager approve while the handover is only asked', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedAgentAndWork(harness, 'tickets');
+    const skillId = await propose(harness, agentId, workItemId);
+    await seedTransfer(harness, agentId, 'asked');
+
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.skills.approve, { skillId }),
+    ).resolves.toEqual({ ok: true });
+  });
+});

@@ -44,6 +44,9 @@ import { isEventOf, type EventOf, type EventType } from '../src/events/contract'
 import { agentZone, expiryNoticeDay, expiryNoticeDue } from '../src/lib/zone';
 import { SURFACE_ACCESS_DEFAULT_DAYS, SURFACE_ACCESS_MAX_DAYS } from '../src/surfaces/access';
 import { surfaceHandoverOf, type SurfaceHandover } from '../src/surfaces/handover';
+import { assertCredentialOfOwner, credentialOwnerRefusal } from './handoverFence';
+import { isDay0FixedEndpoint } from '../src/surfaces/fixed-endpoints';
+import { log } from '../src/lib/logger';
 
 const MAX_LADDER_PATHS = 3;
 const MAX_PROBE_ATTEMPTS = 12;
@@ -635,6 +638,52 @@ export async function reconcileDocumentedSystems(
 
 const credentialKind = v.union(v.literal('value'), v.literal('location'), v.literal('oauth'));
 
+/** What a proposal carries that came from the owner the orientation read under. */
+interface ProposalProvenance {
+  readonly credentialId?: Id<'credentials'>;
+  readonly request: unknown;
+  readonly whereFound: readonly unknown[];
+  readonly intakeScope?: Doc<'surfaces'>['intakeScope'];
+}
+
+/**
+ * Why a proposal may not land on the employee's card, or null when it may: it binds a
+ * credential that is not the employee's current owner's, or quotes documentation the current
+ * owner does not hold. Both mean the orientation read under an owner the employee has since been
+ * handed away from (the wave 9 review's M5): its credential and its quotes are that owner's.
+ *
+ * @param db - The proposal's reader.
+ * @param agentId - The employee.
+ * @param proposal - What the orientation drafted.
+ */
+async function proposalOwnerRefusal(
+  db: QueryCtx['db'],
+  agentId: Id<'agents'>,
+  proposal: ProposalProvenance,
+): Promise<string | null> {
+  if (proposal.credentialId !== undefined) {
+    const refusal = await credentialOwnerRefusal(db, agentId, proposal.credentialId);
+    if (refusal !== null) return refusal;
+  }
+  const agent = await db.get(agentId);
+  const quoted = quotedSourceIds([
+    {
+      whereFound: [...proposal.whereFound],
+      intakeScope: proposal.intakeScope,
+      request: proposal.request,
+      discoveryEvidence: undefined,
+    },
+  ]);
+  for (const sourceId of quoted) {
+    const id = db.normalizeId('docSources', sourceId);
+    const source = id === null ? null : await db.get(id);
+    if (agent === null || source?.userId !== agent.userId) {
+      return 'the proposal quotes documentation its employee does not read';
+    }
+  }
+  return null;
+}
+
 /**
  * Store an evidence-backed connect request.
  *
@@ -642,6 +691,12 @@ const credentialKind = v.union(v.literal('value'), v.literal('location'), v.lite
  * approved with the rest of the card and replaced only by a new proposal.
  * A proposal names no access length and sets no end date: the approval
  * starts Q5's 90 days and the manager is the only other source (Q5, U3 D2 (b)).
+ *
+ * Internal, the orientation's. Writes nothing, and answers false, for a card no longer
+ * `declared`, and for a proposal that binds a credential not the employee's current owner's or
+ * quotes documentation that owner does not hold ({@link proposalOwnerRefusal}): an orientation
+ * still running when a handover moved the employee read the old owner's pages and credentials.
+ * The card stays declared for the new manager's own proposal.
  */
 export const propose = internalMutation({
   args: {
@@ -661,6 +716,14 @@ export const propose = internalMutation({
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) throw new Error('Surface not found.');
     if (surface.verdict !== 'declared') return false;
+    const refusal = await proposalOwnerRefusal(ctx.db, surface.agentId, args);
+    if (refusal !== null) {
+      log.warn('surface proposal refused: the employee changed owner during its orientation', {
+        surfaceId: surface._id,
+        reason: refusal,
+      });
+      return false;
+    }
     const now = Date.now();
     await ctx.db.patch(args.surfaceId, {
       verdict: 'proposed',
@@ -700,7 +763,14 @@ export const propose = internalMutation({
   },
 });
 
-/** Record that documentation explicitly provides no approved surface. */
+/**
+ * Record that documentation explicitly provides no approved surface.
+ *
+ * Internal, the orientation's. Writes nothing, and answers false, for a card no longer
+ * `declared`, and for quotes of documentation the employee's current owner does not hold
+ * ({@link proposalOwnerRefusal}): an orientation still running when a handover moved the
+ * employee read the old owner's pages.
+ */
 export const markAbsent = internalMutation({
   args: {
     surfaceId: v.id('surfaces'),
@@ -711,6 +781,17 @@ export const markAbsent = internalMutation({
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) throw new Error('Surface not found.');
     if (surface.verdict !== 'declared') return false;
+    const refusal = await proposalOwnerRefusal(ctx.db, surface.agentId, {
+      request: undefined,
+      whereFound: args.whereFound,
+    });
+    if (refusal !== null) {
+      log.warn('surface absence refused: the employee changed owner during its orientation', {
+        surfaceId: surface._id,
+        reason: refusal,
+      });
+      return false;
+    }
     await ctx.db.patch(args.surfaceId, {
       verdict: 'absent',
       whereFound: args.whereFound,
@@ -856,7 +937,15 @@ export const recordOrientationFailure = internalMutation({
   },
 });
 
-/** Attach an encrypted credential reference without exposing its value. */
+/**
+ * Attach an encrypted credential reference without exposing its value.
+ *
+ * Internal, for `surfaceActions.landCredential`. Refuses a credential that is not the employee's
+ * current owner's (`assertCredentialOfOwner`): the action stored it under the owner it started
+ * with, and a handover may have moved the employee since.
+ *
+ * @throws ConvexError with `CREDENTIAL_NOT_THE_OWNERS`.
+ */
 export const attachCredential = internalMutation({
   args: {
     surfaceId: v.id('surfaces'),
@@ -867,6 +956,7 @@ export const attachCredential = internalMutation({
   handler: async (ctx, args): Promise<void> => {
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) throw new Error('Surface not found.');
+    await assertCredentialOfOwner(ctx.db, surface.agentId, args.credentialId);
     const approved = surface.managerApprovedAt !== undefined;
     await ctx.db.patch(surface._id, {
       credentialId: args.credentialId,
@@ -888,6 +978,11 @@ export const attachCredential = internalMutation({
  * The app and its install link are stored together with the single-use nonce
  * that binds the link to this surface, so provisioning again simply replaces
  * the link and invalidates the previous one.
+ *
+ * Internal, for `slackProvisionActions`. Refuses a client secret that is not the employee's
+ * current owner's (`assertCredentialOfOwner`).
+ *
+ * @throws ConvexError with `CREDENTIAL_NOT_THE_OWNERS`.
  */
 export const recordProvisionedApp = internalMutation({
   args: {
@@ -906,6 +1001,7 @@ export const recordProvisionedApp = internalMutation({
   handler: async (ctx, args): Promise<void> => {
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) throw new Error('Surface not found.');
+    await assertCredentialOfOwner(ctx.db, surface.agentId, args.clientSecretCredentialId);
     await ctx.db.patch(surface._id, {
       provisioning: {
         appId: args.appId,
@@ -1013,6 +1109,11 @@ export const recordInstallFailure = internalMutation({
  * The two writes belong together: the moment the dedicated identity is the
  * surface's credential, the shared token it replaces must stop being usable,
  * or a run could still reach the provider as the workspace's shared app.
+ *
+ * Internal, for `slackProvisionActions`. Refuses a bot token that is not the employee's current
+ * owner's (`assertCredentialOfOwner`), before anything is retired.
+ *
+ * @throws ConvexError with `CREDENTIAL_NOT_THE_OWNERS`.
  */
 export const recordInstalledApp = internalMutation({
   args: {
@@ -1023,6 +1124,7 @@ export const recordInstalledApp = internalMutation({
   handler: async (ctx, args): Promise<{ retiredCredentialId?: Id<'credentials'> }> => {
     const surface = await ctx.db.get(args.surfaceId);
     if (!surface) throw new Error('Surface not found.');
+    await assertCredentialOfOwner(ctx.db, surface.agentId, args.credentialId);
     const previous = surface.credentialId;
     if (previous && previous !== args.credentialId && surface.credentialKind === 'oauth') {
       throw new Error('This surface already has a dedicated identity.');
@@ -2501,9 +2603,18 @@ export function credentialsBoundBy(
   return bound;
 }
 
-/** Why a cut card is back in `proposed`, on the card. */
+/** Why a cut card is back in `proposed`, on the card, when its route is no owner's documentation. */
 export const HANDOVER_CUT_REASON =
   'Handed over to a new manager: approve this connection, then land a credential of your own.';
+
+/**
+ * Why a cut card is back in `proposed`, on the card, when the address it connected to came from
+ * the previous manager's documentation and was cleared with it: approving it as it stands has
+ * nowhere to connect, so the new manager proposes it again from their own documentation (a
+ * rejection returns it to `declared`, where Propose orients it afresh).
+ */
+export const HANDOVER_CUT_REPROPOSE_REASON =
+  "Handed over to a new manager: the address the previous manager's documentation gave for this connection did not come with it. Reject this card, then propose it again from your own documentation.";
 
 /**
  * Where the card tells the new manager the credential is, in place of the old owner's documented
@@ -2559,7 +2670,12 @@ function namedSourceId(entry: unknown): string | undefined {
  * Every documentation source the quotes on these surfaces name: their evidence, their route
  * evidence, their intake scope and their drafted request.
  */
-function quotedSourceIds(surfaces: readonly Doc<'surfaces'>[]): Set<string> {
+function quotedSourceIds(
+  surfaces: readonly Pick<
+    Doc<'surfaces'>,
+    'discoveryEvidence' | 'whereFound' | 'intakeScope' | 'request'
+  >[],
+): Set<string> {
   const named = new Set<string>();
   const add = (entry: unknown): void => {
     const sourceId = namedSourceId(entry);
@@ -2609,6 +2725,8 @@ function withoutDepartedQuotes(
       entry.kind === 'charter' || (entry.sourceId !== undefined && readable.has(entry.sourceId)),
   );
   const scope = surface.intakeScope;
+  // The scope's notes are the model's words about the pages it read; they go when any did.
+  const departed = [...quotedSourceIds([surface])].some((sourceId) => !readable.has(sourceId));
   return {
     discoveryEvidence: evidence.length > 0 ? evidence : undefined,
     whereFound: surface.whereFound.filter(kept),
@@ -2617,7 +2735,7 @@ function withoutDepartedQuotes(
       ...(scope.project && kept(scope.project) ? { project: scope.project } : {}),
       ...(scope.projects ? { projects: scope.projects.filter(kept) } : {}),
       ...(scope.channels ? { channels: scope.channels.filter(kept) } : {}),
-      ...(scope.notes ? { notes: scope.notes } : {}),
+      ...(scope.notes && !departed ? { notes: scope.notes } : {}),
     },
     request: requestWithoutDepartedQuotes(surface.request, kept),
   };
@@ -2635,7 +2753,9 @@ function requestWithoutDepartedQuotes(
   kept: (entry: unknown) => boolean,
 ): unknown {
   if (typeof request !== 'object' || request === null) return request;
-  const { evidence, credential, ...rest } = request as Record<string, unknown>;
+  const { evidence, credential, ...drafted } = request as Record<string, unknown>;
+  const departed = Array.isArray(evidence) && !evidence.every(kept);
+  const rest = departed ? withoutDraftedProse(drafted) : drafted;
   const method =
     typeof credential === 'object' && credential !== null
       ? (credential as { method?: unknown }).method
@@ -2655,18 +2775,101 @@ function requestWithoutDepartedQuotes(
   };
 }
 
+/** The words of a drafted request that the model wrote from the pages its evidence quotes. */
+const DRAFTED_PROSE_FIELDS: ReadonlySet<string> = new Set([
+  'openQuestions',
+  'blastRadius',
+  'rollback',
+]);
+
+/** The target's fields the model wrote from those pages: its reasoning and its ladder of addresses. */
+const DRAFTED_TARGET_FIELDS: ReadonlySet<string> = new Set(['reasoning', 'ladder']);
+
+/**
+ * An object without the named fields.
+ *
+ * @param record - The object.
+ * @param left - The fields to leave out.
+ */
+function withoutFields(
+  record: Readonly<Record<string, unknown>>,
+  left: ReadonlySet<string>,
+): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(record).filter(([field]) => !left.has(field)));
+}
+
+/**
+ * A drafted request without the prose the model wrote from its evidence: the target's reasoning
+ * and its ladder of documented addresses, the open questions, the blast radius and the rollback.
+ * What remains names the system, the path chosen and the scopes, none of it a page's words.
+ *
+ * @param drafted - The request, its evidence and credential finding set aside by the caller.
+ */
+function withoutDraftedProse(drafted: Readonly<Record<string, unknown>>): Record<string, unknown> {
+  const kept = withoutFields(drafted, DRAFTED_PROSE_FIELDS);
+  const target = drafted.target;
+  if (typeof target !== 'object' || target === null) return kept;
+  return {
+    ...kept,
+    target: withoutFields(target as Record<string, unknown>, DRAFTED_TARGET_FIELDS),
+  };
+}
+
+/**
+ * The route a handed-over card keeps (the wave 9 review's section 3): a documented address is
+ * the old owner's documentation, a tenant's host among it, so the endpoint and the ladder go with
+ * the quotes. An address Day0 fixes itself (`isDay0FixedEndpoint`: Slack's Web API base, the
+ * Linear MCP server) is the same for every workspace and nobody's documentation, so it stays: the
+ * new manager's chat card reconnects on it, which re-sends the decisions still open (the transfer
+ * plan, section 6.4), and intake reads Linear only there.
+ *
+ * @param surface - The surface before the move.
+ */
+function routeAfterHandover(
+  surface: Doc<'surfaces'>,
+): Pick<Doc<'surfaces'>, 'endpoint' | 'pathCandidates'> {
+  if (!isDay0FixedEndpoint(surface.endpoint)) {
+    return { endpoint: undefined, pathCandidates: undefined };
+  }
+  const ladder = (surface.pathCandidates ?? []).filter((rung) =>
+    isDay0FixedEndpoint(rung.endpoint),
+  );
+  return { endpoint: surface.endpoint, pathCandidates: ladder.length > 0 ? ladder : undefined };
+}
+
+/**
+ * A drafted request without its target's ladder of documented addresses, for a cut card whose
+ * route went with the old owner's documentation.
+ *
+ * @param request - The request with the departed quotes already left out.
+ */
+function requestWithoutLadder(request: unknown): unknown {
+  if (typeof request !== 'object' || request === null) return request;
+  const target = (request as Record<string, unknown>).target;
+  if (typeof target !== 'object' || target === null) return request;
+  return {
+    ...request,
+    target: withoutFields(target as Record<string, unknown>, new Set(['ladder'])),
+  };
+}
+
 /**
  * The fields a cut clears: the credential, the provider's identities, the old manager's chat
- * binding and decision poll, the approval with the tools and the access clock it set, and any
- * probe in flight with its generation. The route the card proposes (path, endpoint, ladder and
- * request) stays, for the new manager to approve.
+ * binding and decision poll, the approval with the tools and the access clock it set, any probe
+ * in flight with its generation, the probe attempts (their reasons quote the old manager's
+ * address and the old owner's pages), and the documented route ({@link routeAfterHandover}). The path
+ * stays; a card whose address went says so, since approving it as it stands connects nowhere.
  *
  * @param surface - The surface before the cut.
  */
 function cutPatch(surface: Doc<'surfaces'>): Partial<Doc<'surfaces'>> {
+  const route = routeAfterHandover(surface);
+  const addressWent = surface.endpoint !== undefined && route.endpoint === undefined;
   return {
     verdict: 'proposed',
-    reason: HANDOVER_CUT_REASON,
+    reason: addressWent ? HANDOVER_CUT_REPROPOSE_REASON : HANDOVER_CUT_REASON,
+    ...route,
+    probeAttempts: undefined,
     probeGeneration: (surface.probeGeneration ?? 0) + 1,
     probeStartedAt: undefined,
     managerApprovedAt: undefined,
@@ -2770,11 +2973,31 @@ export async function handOverSurfaces(
   for (const { surface, handover } of planned) {
     const quotes = withoutDepartedQuotes(surface, readable);
     switch (handover) {
-      case 'carry':
-        await ctx.db.patch(surface._id, quotes);
+      case 'carry': {
+        // The credential's documented location is the old owner's page text, up to 500
+        // characters of it; a carried card was never probed, so its attempts are empty or stale;
+        // its reason is the old manager's rejection or an orientation's words, save an absent
+        // system's, which names only what was searched for.
+        const route = routeAfterHandover(surface);
+        await ctx.db.patch(surface._id, {
+          ...quotes,
+          ...route,
+          request:
+            route.endpoint === undefined ? requestWithoutLadder(quotes.request) : quotes.request,
+          credentialLocation: undefined,
+          probeAttempts: undefined,
+          ...(surface.verdict === 'absent' ? {} : { reason: undefined }),
+        });
         break;
+      }
       case 'cut': {
-        await ctx.db.patch(surface._id, { ...cutPatch(surface), ...quotes });
+        const patch = cutPatch(surface);
+        await ctx.db.patch(surface._id, {
+          ...patch,
+          ...quotes,
+          request:
+            patch.endpoint === undefined ? requestWithoutLadder(quotes.request) : quotes.request,
+        });
         const scope = await revokeConnectionGrant(ctx, surface, input.now);
         if (scope !== undefined) scopesRevoked.push(scope);
         await appendEvent(ctx, {

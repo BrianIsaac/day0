@@ -94,6 +94,27 @@ async function seedDeclared(
 }
 
 /**
+ * Store a credential of the fixture's owner, as the manager's landing does: a credential writer
+ * binds only a row of the employee's current owner (the wave 9 review's M5).
+ */
+async function seedOwnersCredential(
+  harness: TestConvex<typeof schema>,
+): Promise<Id<'credentials'>> {
+  return await harness.run(
+    async (ctx): Promise<Id<'credentials'>> =>
+      await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'value',
+        label: 'Linear token',
+        ciphertext: 'sealed',
+        iv: 'iv',
+        source: 'entered',
+        createdAt: 1,
+      }),
+  );
+}
+
+/**
  * Store a proposal for a surface as the orientation run would.
  *
  * Args:
@@ -1863,15 +1884,16 @@ describe('surface connection lifecycle metadata', (): void => {
         reason: 'credential missing',
       });
     });
+    const credentialId = await seedOwnersCredential(harness);
     await harness.mutation(internal.surfaces.attachCredential, {
       surfaceId,
-      credentialId: '10000credentials' as GenericId<'credentials'>,
+      credentialId,
       credentialKind: 'location',
       credentialLocation: 'entered by the manager',
     });
     expect(await readSurface(harness, surfaceId)).toMatchObject({
       verdict: 'approved',
-      credentialId: '10000credentials',
+      credentialId,
       credentialKind: 'location',
       credentialLocation: 'entered by the manager',
       credentialLanded: false,
@@ -2070,7 +2092,7 @@ describe('surface approval state machine', (): void => {
     await owner.mutation(api.surfaces.approve, { surfaceId });
     await harness.mutation(internal.surfaces.attachCredential, {
       surfaceId,
-      credentialId: '10000credentials' as GenericId<'credentials'>,
+      credentialId: await seedOwnersCredential(harness),
       credentialKind: 'value',
     });
     await harness.run(async (ctx) => {

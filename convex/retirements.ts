@@ -1,5 +1,6 @@
-import type { Doc } from './_generated/dataModel';
-import type { QueryCtx } from './_generated/server';
+import type { Doc, Id } from './_generated/dataModel';
+import type { MutationCtx, QueryCtx } from './_generated/server';
+import { log } from '../src/lib/logger';
 
 /*
  * The owner's retired employees, as the boundaries a colleague's work reads
@@ -125,4 +126,45 @@ export function retiredHolderName(
   return retirement.kind === 'transferred'
     ? `${name} (handed over to another manager)`
     : `${name} (retired)`;
+}
+
+/**
+ * Close the departure boundaries an owner keeps for an employee handed back to them (the wave 9
+ * review's U3-m6): on its return the employee's claims and rejections are the owner's own again,
+ * moved with it, so a boundary kept from its departure would read its own work as held by an
+ * employee handed to another manager. Each such row stays as the owner's record that the
+ * employee left and when; its claims and rejections are emptied. A retirement is never touched.
+ *
+ * @param ctx - The move's mutation context.
+ * @param ownerKey - The owner the employee returns to.
+ * @param agentId - The returning employee.
+ * @returns How many boundaries were closed.
+ */
+export async function closeDeparturesOnReturn(
+  ctx: Pick<MutationCtx, 'db'>,
+  ownerKey: string,
+  agentId: Id<'agents'>,
+): Promise<number> {
+  // Read without `ownerRetirements`' refusal past its bound: a move must not fail on an owner's
+  // long history, and a departure older than the bound keeps its boundary (logged).
+  const rows = await ctx.db
+    .query('retirements')
+    .withIndex('by_user', (q) => q.eq('userId', ownerKey))
+    .order('desc')
+    .take(RETIREMENT_READ_LIMIT);
+  if (rows.length === RETIREMENT_READ_LIMIT) {
+    log.warn('departures read to their bound on a return; older ones keep their boundary', {
+      agentId,
+    });
+  }
+  const departures = rows.filter(
+    (row) =>
+      row.kind === 'transferred' &&
+      row.agentId === agentId &&
+      (row.claims.length > 0 || row.rejections.length > 0),
+  );
+  for (const departure of departures) {
+    await ctx.db.patch(departure._id, { claims: [], rejections: [] });
+  }
+  return departures.length;
 }

@@ -5,9 +5,11 @@ import schema from '../../convex/schema';
 import {
   HANDOVER_CREDENTIAL_LOCATION,
   HANDOVER_CUT_REASON,
+  HANDOVER_CUT_REPROPOSE_REASON,
   handOverSurfaces,
   surfaceHandoversOf,
 } from '../../convex/surfaces';
+import { LINEAR_MCP_ENDPOINT } from '../../src/surfaces/fixed-endpoints';
 import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS } from './fakes/manager-identity';
 
@@ -119,7 +121,20 @@ describe('handOverSurfaces: the cut at a handover (transfer plan 6.3)', (): void
         agentId,
         slug: 'linear',
         path: 'mcp',
-        endpoint: 'https://mcp.linear.app/mcp',
+        endpoint: LINEAR_MCP_ENDPOINT,
+        pathCandidates: [
+          { path: 'mcp', endpoint: LINEAR_MCP_ENDPOINT },
+          { path: 'documented-api', endpoint: 'https://acme-fin.linear.app/api' },
+        ],
+        probeAttempts: [
+          {
+            path: 'mcp',
+            endpoint: LINEAR_MCP_ENDPOINT,
+            outcome: 'ungranted',
+            reason: 'credential not in the docs; ask Priya Nair for the vault Finance Ops',
+            attemptedAt: 3,
+          },
+        ],
         verdict: 'connected',
         managerApprovedAt: 2,
         credentialId: token,
@@ -153,8 +168,16 @@ describe('handOverSurfaces: the cut at a handover (transfer plan 6.3)', (): void
           notes: ['picked at orientation'],
         },
         request: {
-          target: { system: 'Linear', chosenPath: 'mcp', reasoning: 'Linear is documented.' },
+          target: {
+            system: 'Linear',
+            chosenPath: 'mcp',
+            reasoning: 'Documentation states journals over $50k need Tom Reyes (CFO).',
+            ladder: [{ path: 'mcp', endpoint: LINEAR_MCP_ENDPOINT }],
+          },
           evidence: [{ sourceId: String(handbook), ref: 'linear.md', quote: 'Use the token.' }],
+          openQuestions: ['Tom Reyes signs journals over $50k; confirm before approving.'],
+          blastRadius: 'Comments on the Finance Ops board.',
+          rollback: 'Ask Priya Nair to rotate the token.',
           scopeRequested: ['linear:read', 'linear:write'],
           credential: {
             method: 'api-key',
@@ -170,7 +193,19 @@ describe('handOverSurfaces: the cut at a handover (transfer plan 6.3)', (): void
         slug: 'slack',
         displayName: 'Slack',
         class: 'chat',
-        path: 'mcp',
+        path: 'documented-api',
+        endpoint: 'https://slack.com/api/',
+        pathCandidates: [{ path: 'documented-api', endpoint: 'https://slack.com/api/' }],
+        probeAttempts: [
+          {
+            path: 'documented-api',
+            endpoint: 'https://slack.com/api/',
+            outcome: 'ungranted',
+            reason:
+              'the manager email sam@company.com is not a member of this Slack workspace (users_not_found).',
+            attemptedAt: 3,
+          },
+        ],
         verdict: 'connected',
         managerApprovedAt: 2,
         credentialLanded: true,
@@ -192,8 +227,35 @@ describe('handOverSurfaces: the cut at a handover (transfer plan 6.3)', (): void
         slug: 'notion',
         displayName: 'Notion',
         class: 'docs',
-        verdict: 'declared',
+        verdict: 'proposed',
+        reason: 'Rejected once: Priya Nair says not this quarter.',
+        path: 'mcp',
+        endpoint: 'https://acme-fin.notion.site/mcp',
+        pathCandidates: [{ path: 'mcp', endpoint: 'https://acme-fin.notion.site/mcp' }],
+        intakeScope: {
+          project: {
+            value: 'Finance Ops',
+            sourceId: handbook,
+            ref: 'notion.md',
+            quote: 'Finance Ops',
+          },
+          notes: ['Priya Nair keeps the Finance Ops wiki'],
+        },
+        credentialLocation:
+          'the Notion API key lives in the 1Password vault Finance Ops, ask Priya Nair',
         discoveryEvidence: [documentation],
+        request: {
+          target: {
+            system: 'Notion',
+            chosenPath: 'mcp',
+            reasoning: 'The handbook says Priya Nair owns the Notion workspace.',
+          },
+          evidence: [{ sourceId: String(handbook), ref: 'notion.md', quote: 'Notion via MCP.' }],
+          openQuestions: ['Priya Nair approves new integrations.'],
+          blastRadius: 'Reads the Finance Ops wiki.',
+          rollback: 'Priya Nair removes the integration.',
+          scopeRequested: ['notion:read'],
+        },
       });
       const grant = async (scope: string, source: Doc<'permissionGrants'>['source']) =>
         await ctx.db.insert('permissionGrants', { agentId, scope, source, createdAt: 1 });
@@ -220,9 +282,12 @@ describe('handOverSurfaces: the cut at a handover (transfer plan 6.3)', (): void
       credentialLanded: false,
       probeGeneration: 8,
       path: 'mcp',
-      endpoint: 'https://mcp.linear.app/mcp',
+      // The address Day0 fixes itself stays, with only its own rung of the ladder.
+      endpoint: LINEAR_MCP_ENDPOINT,
+      pathCandidates: [{ path: 'mcp', endpoint: LINEAR_MCP_ENDPOINT }],
     });
     for (const field of [
+      'probeAttempts',
       'credentialId',
       'credentialKind',
       'credentialLocation',
@@ -259,12 +324,12 @@ describe('handOverSurfaces: the cut at a handover (transfer plan 6.3)', (): void
     expect(cut?.whereFound).toEqual([
       { ref: 'manager 1:1', quote: 'Linear is where the queue lives.' },
     ]);
+    // The scope's notes were drafted from the departed pages, so they go with them.
     expect(cut?.intakeScope).toEqual({
       channels: [{ value: '#deals', ref: 'manager', quote: 'Watch #deals too.' }],
-      notes: ['picked at orientation'],
     });
     expect(cut?.request).toEqual({
-      target: { system: 'Linear', chosenPath: 'mcp', reasoning: 'Linear is documented.' },
+      target: { system: 'Linear', chosenPath: 'mcp' },
       evidence: [],
       scopeRequested: ['linear:read', 'linear:write'],
       credential: {
@@ -273,8 +338,127 @@ describe('handOverSurfaces: the cut at a handover (transfer plan 6.3)', (): void
         location: HANDOVER_CREDENTIAL_LOCATION,
       },
     });
-    expect(carried).toMatchObject({ verdict: 'declared' });
+    expect(carried).toMatchObject({ verdict: 'proposed' });
     expect(carried?.discoveryEvidence).toBeUndefined();
+  });
+
+  it("clears a cut card's probe history and the documented address its old owner's pages gave", async (): Promise<void> => {
+    const { harness, agentId } = await seed();
+    const salesforce = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('surfaces', {
+          ...SURFACE_BASE,
+          agentId,
+          slug: 'salesforce',
+          displayName: 'Salesforce',
+          class: 'crm',
+          verdict: 'approved',
+          managerApprovedAt: 2,
+          path: 'documented-api',
+          endpoint: 'https://acme-fin.my.salesforce.com/services/data/',
+          pathCandidates: [
+            {
+              path: 'documented-api',
+              endpoint: 'https://acme-fin.my.salesforce.com/services/data/',
+            },
+          ],
+          probeAttempts: [
+            {
+              path: 'documented-api',
+              outcome: 'ungranted',
+              reason: 'credential not in the docs; ask Priya Nair for the vault Finance Ops',
+              attemptedAt: 3,
+            },
+          ],
+          request: {
+            target: {
+              system: 'Salesforce',
+              chosenPath: 'documented-api',
+              reasoning: 'Documentation states journals over $50k need Tom Reyes (CFO).',
+            },
+            evidence: [{ sourceId: 'gone-source', ref: 'crm.md', quote: 'Use the REST API.' }],
+          },
+        }),
+    );
+
+    await harness.run(
+      async (ctx) => await handOverSurfaces(ctx, { agentId, toOwnerKey: 'colleague', now: 50 }),
+    );
+
+    const row = await harness.run(async (ctx) => await ctx.db.get(salesforce));
+    expect(row).toMatchObject({ verdict: 'proposed', reason: HANDOVER_CUT_REPROPOSE_REASON });
+    expect(row?.probeAttempts).toBeUndefined();
+    expect(row?.endpoint).toBeUndefined();
+    expect(row?.pathCandidates).toBeUndefined();
+    expect(JSON.stringify(row)).not.toMatch(/acme-fin|Priya|Tom Reyes/);
+  });
+
+  it("keeps a cut chat card on Slack's own Web API base, which is no owner's documentation", async (): Promise<void> => {
+    const { harness, agentId, slack } = await seed();
+
+    await harness.run(
+      async (ctx) => await handOverSurfaces(ctx, { agentId, toOwnerKey: 'colleague', now: 50 }),
+    );
+
+    const row = await harness.run(async (ctx) => await ctx.db.get(slack));
+    expect(row).toMatchObject({
+      reason: HANDOVER_CUT_REASON,
+      path: 'documented-api',
+      endpoint: 'https://slack.com/api/',
+      pathCandidates: [{ path: 'documented-api', endpoint: 'https://slack.com/api/' }],
+    });
+    expect(row?.probeAttempts).toBeUndefined();
+    expect(JSON.stringify(row)).not.toContain('sam@company.com');
+  });
+
+  it("strips a carried card's credential location and the prose drafted from the old owner's pages", async (): Promise<void> => {
+    const { harness, agentId, notion } = await seed();
+
+    await harness.run(
+      async (ctx) => await handOverSurfaces(ctx, { agentId, toOwnerKey: 'colleague', now: 50 }),
+    );
+
+    const row = await harness.run(async (ctx) => await ctx.db.get(notion));
+    expect(row?.credentialLocation).toBeUndefined();
+    expect(row?.reason).toBeUndefined();
+    expect(row?.endpoint).toBeUndefined();
+    expect(row?.pathCandidates).toBeUndefined();
+    expect(row?.intakeScope).toEqual({});
+    expect(row?.request).toEqual({
+      target: { system: 'Notion', chosenPath: 'mcp' },
+      evidence: [],
+      scopeRequested: ['notion:read'],
+    });
+    expect(JSON.stringify(row)).not.toContain('Priya');
+  });
+
+  it("keeps a request's prose when every quote it was drawn from is one the new owner holds", async (): Promise<void> => {
+    const { harness, agentId, notion } = await seed();
+    const shared = await harness.run(async (ctx) => {
+      const handbook = await ctx.db.insert('docSources', {
+        userId: 'colleague',
+        label: 'Colleague handbook',
+        kind: 'folder',
+        locator: '.',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const request = {
+        target: { system: 'Notion', chosenPath: 'mcp', reasoning: 'Notion is documented.' },
+        evidence: [{ sourceId: String(handbook), ref: 'notion.md', quote: 'Notion via MCP.' }],
+        openQuestions: ['Confirm the workspace.'],
+      };
+      await ctx.db.patch(notion, { request });
+      return request;
+    });
+
+    await harness.run(
+      async (ctx) => await handOverSurfaces(ctx, { agentId, toOwnerKey: 'colleague', now: 50 }),
+    );
+
+    const row = await harness.run(async (ctx) => await ctx.db.get(notion));
+    expect(row?.request).toEqual(shared);
   });
 
   it('revokes the read grants the cut connections gave and keeps every other grant', async (): Promise<void> => {

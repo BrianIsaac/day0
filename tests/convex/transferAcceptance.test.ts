@@ -849,6 +849,61 @@ describe('claims and the departure boundary at a move (14.1 item 4)', (): void =
     });
   });
 
+  it('closes the old owner’s departure boundary when the employee is handed back to them (U3-m6)', async (): Promise<void> => {
+    const office = await seedOffice();
+    const tomasAsks = await office.harness.run(async (ctx) => {
+      const held = await ctx.db.insert('workItems', {
+        ...workItemFields(office.maya, 'REVOPS-7'),
+        state: 'completed',
+      });
+      await ctx.db.insert('externalClaims', {
+        userId: 'owner',
+        key: 'linear:REVOPS-7',
+        agentId: office.maya,
+        workItemId: held,
+        claimedAt: 1,
+      });
+      return await ctx.db.insert('workItems', {
+        ...workItemFields(office.tomas, 'REVOPS-7'),
+        state: 'discovered',
+      });
+    });
+    await acceptAsColleague(office);
+    const back = await office.harness.run(
+      async (ctx) =>
+        await ctx.db.insert('managerTransfers', {
+          agentId: office.maya,
+          agentName: 'Maya',
+          fromOwnerKey: 'colleague',
+          fromAddress: COLLEAGUE_ADDRESS,
+          toAddress: MANAGER_ADDRESS,
+          state: 'asked',
+          requestedAt: Date.now(),
+          expiresAt: transferExpiresAt(Date.now()),
+        }),
+    );
+
+    await office.harness
+      .withIdentity(OWNER)
+      .mutation(api.transferAcceptance.accept, { transferId: back });
+
+    const departures = await office.harness.run(
+      async (ctx) => await ctx.db.query('retirements').collect(),
+    );
+    const ownersFirst = departures.find(
+      (row) => row.userId === 'owner' && row.transferId === office.transferId,
+    );
+    expect(ownersFirst).toMatchObject({ kind: 'transferred', claims: [], rejections: [] });
+    await office.harness.mutation(internal.work.setVerdict, {
+      workItemId: tomasAsks,
+      verdict: { decision: 'claim', value: 1, risk: 0, requiredPermissions: [] },
+    });
+    expect(await office.harness.run(async (ctx) => await ctx.db.get(tomasAsks))).toMatchObject({
+      state: 'skipped',
+      skipReason: expect.stringContaining('Maya holds it'),
+    });
+  });
+
   it('releases a moving claim the new owner already holds, names it in the outcome, and keeps the old owner’s copy', async (): Promise<void> => {
     const office = await seedOffice();
     const moving = await office.harness.run(async (ctx) => {

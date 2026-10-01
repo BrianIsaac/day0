@@ -1,6 +1,7 @@
 import { v, type Infer } from 'convex/values';
 import type { Doc } from './_generated/dataModel';
-import { internalMutation, type QueryCtx } from './_generated/server';
+import { internalMutation, type MutationCtx, type QueryCtx } from './_generated/server';
+import { appendEvent } from './eventLog';
 import { isTransferDue } from '../src/agent/manager-transfer';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { surfaceRefusal } from '../src/surfaces/policy';
@@ -117,6 +118,19 @@ export function transferNoticeText(input: {
   return `${name}'s manager, ${slackEscaped(input.fromAddress)}, has asked you to take ${name} on. Accept or decline in ${where}. Nothing changes until you do.`;
 }
 
+/** Why the notice reached nobody: the address names no person the bot may DM. */
+export const NOTICE_TO_NOBODY = 'the named address is no person in the workspace';
+
+/** Why the notice reached nobody: the address is the manager the card already DMs (U2-m8). */
+export const NOTICE_TO_THE_MANAGER =
+  "the named address is the employee's own manager in this workspace";
+
+/**
+ * Why the notice reached nobody: the address is a guest's, a single- or multi-channel member
+ * from outside the company, who is not someone a handover is for (U2-m8).
+ */
+export const NOTICE_TO_A_GUEST = 'the named address is a guest in the workspace';
+
 /** What the notice action sends through, once claimed. */
 const claimedNoticeValidator = v.union(
   v.object({ claimed: v.literal(false), reason: v.string() }),
@@ -124,6 +138,8 @@ const claimedNoticeValidator = v.union(
     claimed: v.literal(true),
     credentialId: v.string(),
     toAddress: v.string(),
+    /** The Slack member the card DMs as the manager, never the person to tell. */
+    managerUserId: v.optional(v.string()),
     text: v.string(),
   }),
 );
@@ -166,6 +182,7 @@ export const claimTransferNotice = internalMutation({
       claimed: true,
       credentialId: surface.credentialId,
       toAddress: transfer.toAddress,
+      ...(surface.managerUserId === undefined ? {} : { managerUserId: surface.managerUserId }),
       text: transferNoticeText({
         transferId: transfer._id,
         // The name as the ask stored it, clipped to a name's bound (the wave 9 review's B2).
@@ -177,13 +194,58 @@ export const claimTransferNotice = internalMutation({
   },
 });
 
-/** Internal, for `managerChannelActions.sendTransferNotice`: the provider's timestamp of the delivered notice. */
+/**
+ * Append the notice's outcome to the employee's record, once per claimed notice (U2-m8). An
+ * employee retired since has no record left, and an event written for it would be a row no
+ * reset reaches (U2-m6), so the request alone says it.
+ */
+async function recordNoticeOutcome(
+  ctx: MutationCtx,
+  transfer: Doc<'managerTransfers'>,
+  outcome: { readonly delivered: true } | { readonly delivered: false; readonly reason: string },
+): Promise<void> {
+  if ((await ctx.db.get(transfer.agentId)) === null) return;
+  await appendEvent(ctx, {
+    agentId: transfer.agentId,
+    type: 'manager.transfer-notice',
+    payload: {
+      transferId: transfer._id,
+      fromAddress: transfer.fromAddress,
+      toAddress: transfer.toAddress,
+      ...outcome,
+    },
+    createdAt: Date.now(),
+  });
+}
+
+/**
+ * Internal, for `managerChannelActions.sendTransferNotice`: the provider's timestamp of the
+ * delivered notice, and `manager.transfer-notice` on the employee's record.
+ */
 export const recordTransferNotice = internalMutation({
   args: { transferId: v.id('managerTransfers'), providerTs: v.string() },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    if (!(await ctx.db.get(args.transferId))) return null;
+    const transfer = await ctx.db.get(args.transferId);
+    if (!transfer) return null;
     await ctx.db.patch(args.transferId, { noticeProviderTs: args.providerTs });
+    await recordNoticeOutcome(ctx, transfer, { delivered: true });
+    return null;
+  },
+});
+
+/**
+ * Internal, for `managerChannelActions.sendTransferNotice`: a claimed notice that reached nobody
+ * or failed, with why, as `manager.transfer-notice` on the employee's record. It is not tried
+ * again (D7).
+ */
+export const recordTransferNoticeUndelivered = internalMutation({
+  args: { transferId: v.id('managerTransfers'), reason: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const transfer = await ctx.db.get(args.transferId);
+    if (!transfer) return null;
+    await recordNoticeOutcome(ctx, transfer, { delivered: false, reason: args.reason });
     return null;
   },
 });

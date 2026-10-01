@@ -56,7 +56,8 @@ function writtenEventTypes(): { types: Set<string>; unresolved: string[] } {
         ts.isCallExpression(node) &&
         ts.isIdentifier(node.expression) &&
         WRITERS.has(node.expression.text) &&
-        node.arguments.length === 2
+        // The event is the second argument; `logEvent` may take the action's fence third.
+        node.arguments.length >= 2
       ) {
         const eventType = checker.getTypeAtLocation(node.arguments[1]).getProperty('type');
         const literals = eventType

@@ -26,7 +26,12 @@ vi.mock('../../../src/lib/mastra', () => ({
   },
 }));
 
-import { runDependentSkill, runSkill } from '../../../src/work/execute-skill';
+import {
+  CURRENT_MANAGER_UNNAMED,
+  executorCharterLines,
+  runDependentSkill,
+  runSkill,
+} from '../../../src/work/execute-skill';
 
 const charter: Charter = {
   version: '0.2',
@@ -157,7 +162,10 @@ describe('the charter in the executor prompts', (): void => {
     expect(user).toContain(
       'Which notice template applies when the ETA is unconfirmed? Delay notice B.',
     );
-    expect(user).toContain('Charter approvalChain: Manager');
+    // The approval chain names the manager the employee reports to now, never the charter's
+    // draft-time label, which a handover leaves naming the old manager (wave 9 review, section 3).
+    expect(user).toContain(`Charter approvalChain: ${CURRENT_MANAGER_UNNAMED}`);
+    expect(user).not.toContain('Charter approvalChain: Manager');
     expect(user).toContain('Charter namedSystems: (none)');
   });
 
@@ -234,5 +242,26 @@ describe('the clause a closing decision was taken under', (): void => {
     const output = await runDependentSkill(closingArgs);
 
     expect(output.planStepOutcomes[1]).not.toHaveProperty('charterClause');
+  });
+});
+
+describe('executorCharterLines: who approves, after a handover', (): void => {
+  const handedOver: Charter = {
+    ...charter,
+    approvalChain: { boss: 'sam@old.example', confidence: 'high' },
+  };
+
+  it('never renders the charter’s draft-time approver, which a handover leaves naming the old manager', (): void => {
+    const lines = executorCharterLines(handedOver, 'real');
+
+    expect(lines.join('\n')).not.toContain('sam@old.example');
+    expect(lines).toContain(`Charter approvalChain: ${CURRENT_MANAGER_UNNAMED}`);
+  });
+
+  it('names the current manager when the run is given one', (): void => {
+    const lines = executorCharterLines(handedOver, 'real', 'priya@new.example');
+
+    expect(lines).toContain('Charter approvalChain: priya@new.example');
+    expect(lines.join('\n')).not.toContain('sam@old.example');
   });
 });

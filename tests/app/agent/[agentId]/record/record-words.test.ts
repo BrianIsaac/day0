@@ -152,6 +152,31 @@ describe('recordWords', (): void => {
     expect(said('manager.transfer-expired', {})).toBe(
       'The handover to priya@company.com expired unanswered.',
     );
+    expect(said('manager.transfer-settle-failed', { attempt: 2, reason: 'too many' })).toBe(
+      'Maya could not be moved to priya@company.com yet (attempt 2); Day0 tries again each minute.',
+    );
+    expect(
+      said('manager.transfer-ended', {
+        reason: 'settle-failed',
+        detail: 'This employee has more than 1000 connections, more than one handover can move.',
+      }),
+    ).toBe(
+      'The handover to priya@company.com could not finish and was ended: This employee has more than 1000 connections, more than one handover can move; Maya stays with sam@company.com.',
+    );
+    expect(said('manager.transfer-ended', { reason: 'operator', detail: 'stuck' })).toBe(
+      'The handover to priya@company.com was ended by the operator: stuck; Maya stays with sam@company.com.',
+    );
+    expect(said('manager.transfer-notice', { delivered: true })).toBe(
+      'Maya told priya@company.com in Slack that they were asked to take Maya on.',
+    );
+    expect(
+      said('manager.transfer-notice', {
+        delivered: false,
+        reason: 'the named address is a guest in the workspace',
+      }),
+    ).toBe(
+      'Maya did not tell priya@company.com in Slack about the handover: the named address is a guest in the workspace.',
+    );
   });
 
   it('says where a handed-over employee went, and what waits for its new manager to connect', (): void => {

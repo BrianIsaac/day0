@@ -178,7 +178,11 @@ export interface IntakeRuntime {
     polledAt?: number;
     failure?: string;
   }): Promise<void>;
-  seed(candidate: IntakeSeed): Promise<void>;
+  /**
+   * Seed one listed item, fenced by the owner the sweep read the employee under: nothing lands
+   * once a handover moved it to another (U3-m2).
+   */
+  seed(candidate: IntakeSeed, startedUnder: string | null): Promise<void>;
   /** Bring the row of a ticket intake refused up to the listing, and withdraw it if it waits. */
   withdraw(candidate: IntakeSeed & { leftQueue: string }): Promise<void>;
   resolveDecision(reply: IntakeDecisionReply): Promise<void>;
@@ -1610,16 +1614,16 @@ async function pollChat(
  *
  * Args:
  *   runtime: Convex or test runtime.
- *   agentId: Candidate owner.
+ *   agent: The employee as the sweep read it; the seed lands only while its owner is unchanged.
  *   candidate: Normalised provider item.
  */
 async function seedCandidate(
   runtime: IntakeRuntime,
-  agentId: Id<'agents'>,
+  agent: Pick<Doc<'agents'>, '_id' | 'userId'>,
   candidate: IntakeCandidate,
   trackers: ReadonlyMap<string, TicketSnapshot> = new Map(),
 ): Promise<void> {
-  await runtime.seed(seedOf(agentId, candidate, trackers));
+  await runtime.seed(seedOf(agent._id, candidate, trackers), agent.userId ?? null);
 }
 
 /**
@@ -1958,7 +1962,7 @@ export async function runIntakeSweep(
         let seeded = 0;
         for (const candidate of mapped) {
           try {
-            await seedCandidate(runtime, agentId, candidate, polledPage.trackers);
+            await seedCandidate(runtime, agent, candidate, polledPage.trackers);
             seeded += 1;
           } catch (error) {
             unseeded.push({ what: candidate.externalId, error });
@@ -2187,8 +2191,8 @@ function convexRuntime(ctx: ActionCtx): IntakeRuntime {
     recordDecisionPoll: async (record): Promise<void> => {
       await ctx.runMutation(internal.work.recordDecisionPoll, record);
     },
-    seed: async (candidate: IntakeSeed): Promise<void> => {
-      await ctx.runMutation(internal.work.seedItem, candidate);
+    seed: async (candidate: IntakeSeed, startedUnder: string | null): Promise<void> => {
+      await ctx.runMutation(internal.intakeSeed.seedListedItem, { ...candidate, startedUnder });
     },
     withdraw: async (candidate: IntakeSeed & { leftQueue: string }): Promise<void> => {
       await ctx.runMutation(internal.work.withdrawListedItem, candidate);

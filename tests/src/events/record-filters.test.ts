@@ -28,6 +28,15 @@ describe('the Record tab filters', (): void => {
     expect(RECORD_FILTER_OF['manager.transfer-expired']).toEqual(['refused']);
   });
 
+  it('lists the handover notice the employee sent the named person among what it wrote', (): void => {
+    expect(RECORD_FILTER_OF['manager.transfer-notice']).toEqual(['writes']);
+  });
+
+  it('lists a handover that ended unmoved as set aside, and its failed settles in the whole record only', (): void => {
+    expect(RECORD_FILTER_OF['manager.transfer-ended']).toEqual(['refused']);
+    expect(RECORD_FILTER_OF['manager.transfer-settle-failed']).toEqual([]);
+  });
+
   it('keeps the charter’s history, the one-to-one that drafts it included, under Charter', (): void => {
     const charter = eventTypesIn('charter');
     for (const type of EVENT_TYPES) {
