@@ -161,3 +161,10 @@ export const NOT_NAMED_IN_TRANSFER = 'This handover is addressed to someone else
  */
 export const UNVERIFIED_FOR_TRANSFER =
   'Your sign-in does not carry a verified email address, so no handover can be addressed to you. Verify your address, then sign in again.';
+
+/**
+ * The refusal for the account that asked, signed in with the named address: one account
+ * cannot both give an employee and take it on, whatever its addresses. A `ConvexError`'s data.
+ */
+export const OWN_TRANSFER =
+  'This handover was asked from your own account, so your account cannot take it on.';

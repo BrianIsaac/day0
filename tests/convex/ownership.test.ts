@@ -14,6 +14,7 @@ import {
 import type { Id } from '../../convex/_generated/dataModel';
 import {
   NOT_NAMED_IN_TRANSFER,
+  OWN_TRANSFER,
   TRANSFER_NOT_FOUND,
   UNVERIFIED_FOR_TRANSFER,
 } from '../../src/agent/manager-transfer';
@@ -327,7 +328,8 @@ describe('assertNamedInTransfer', (): void => {
   ): Promise<string> {
     return await harness.withIdentity(who).run(async (ctx) => {
       try {
-        return (await assertNamedInTransfer(ctx, transferId))._id;
+        const { transfer, caller } = await assertNamedInTransfer(ctx, transferId);
+        return `${transfer._id} for ${caller.ownerKey}`;
       } catch (error: unknown) {
         return error instanceof ConvexError ? `refused: ${String(error.data)}` : 'crashed';
       }
@@ -343,7 +345,20 @@ describe('assertNamedInTransfer', (): void => {
         { subject: 'lead', email: 'Lead@Day0.local', emailVerified: true },
         transferId,
       ),
-    ).resolves.toBe(transferId);
+    ).resolves.toBe(`${transferId} for lead`);
+  });
+
+  it('refuses the account that asked even when it signs in with the named address (plan 5.1)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const transferId = await seedRequest(harness);
+    // One person, one account, two addresses: the second is now the account's verified one.
+    await expect(
+      guardFor(
+        harness,
+        { subject: 'owner', email: 'lead@day0.local', emailVerified: true },
+        transferId,
+      ),
+    ).resolves.toBe(`refused: ${OWN_TRANSFER}`);
   });
 
   it('refuses every other account with words the dialog can show, the owner who asked included', async (): Promise<void> => {
@@ -371,7 +386,7 @@ describe('assertNamedInTransfer', (): void => {
     ).resolves.toBe(`refused: ${UNVERIFIED_FOR_TRANSFER}`);
   });
 
-  it('refuses a request that no longer exists, and an anonymous caller before it reads', async (): Promise<void> => {
+  it('refuses a request that no longer exists', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const transferId = await seedRequest(harness);
     await harness.run(async (ctx): Promise<void> => {
@@ -384,8 +399,13 @@ describe('assertNamedInTransfer', (): void => {
         transferId,
       ),
     ).resolves.toBe(`refused: ${TRANSFER_NOT_FOUND}`);
+  });
+
+  it('refuses an anonymous caller as not authenticated, before it reads a live request', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const transferId = await seedRequest(harness);
     await expect(
       harness.run(async (ctx) => await assertNamedInTransfer(ctx, transferId)),
-    ).rejects.toThrow();
+    ).rejects.toThrow(/^not authenticated/);
   });
 });

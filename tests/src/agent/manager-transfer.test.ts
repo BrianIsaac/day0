@@ -8,6 +8,7 @@ import {
   MAX_TRANSFER_ASKS_PER_WINDOW,
   MAX_TRANSFER_NOTE_LENGTH,
   NOT_NAMED_IN_TRANSFER,
+  OWN_TRANSFER,
   OPEN_MANAGER_TRANSFER_STATES,
   TRANSFER_ASK_WINDOW_MS,
   TRANSFER_CANCEL_REASONS,
@@ -123,6 +124,9 @@ describe('the refusals the named manager reads', (): void => {
   it('say what is wrong in the words the dialog shows', (): void => {
     expect(TRANSFER_NOT_FOUND).toBe('This handover no longer exists.');
     expect(NOT_NAMED_IN_TRANSFER).toBe('This handover is addressed to someone else.');
+    expect(OWN_TRANSFER).toBe(
+      'This handover was asked from your own account, so your account cannot take it on.',
+    );
     expect(UNVERIFIED_FOR_TRANSFER).toBe(
       'Your sign-in does not carry a verified email address, so no handover can be addressed to you. Verify your address, then sign in again.',
     );

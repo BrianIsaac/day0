@@ -10,6 +10,7 @@ import type { EnvReader } from '../src/lib/hosted-markers';
 import { normaliseManagerAddress, sameManagerAddress } from '../src/agent/manager-address';
 import {
   NOT_NAMED_IN_TRANSFER,
+  OWN_TRANSFER,
   TRANSFER_NOT_FOUND,
   UNVERIFIED_FOR_TRANSFER,
 } from '../src/agent/manager-transfer';
@@ -211,30 +212,38 @@ export async function assertOwnsAgentAction(
   return agent;
 }
 
+/** A handover request and the account it names, as {@link assertNamedInTransfer} answers them. */
+export interface NamedInTransfer {
+  readonly transfer: Doc<'managerTransfers'>;
+  readonly caller: Caller;
+}
+
 /**
- * The handover request, if the caller is the account it names: signed in with
- * a verified address equal to the request's `toAddress`. The guard for the
- * named manager's reads and answers, the counterpart of {@link assertOwnsAgent}
- * for the employee's owner; it says nothing about the request's state, which
- * each caller checks for its own move.
+ * The handover request and its caller, if the caller is the account it names:
+ * signed in with a verified address equal to the request's `toAddress`, and
+ * not the account that asked, whatever its addresses (the transfer plan,
+ * section 5.1). The guard for the named manager's reads and answers, the
+ * counterpart of {@link assertOwnsAgent} for the employee's owner; it says
+ * nothing about the request's state, which each caller checks for its own move.
  *
- * @throws ConvexError with {@link TRANSFER_NOT_FOUND}, {@link UNVERIFIED_FOR_TRANSFER} or
- *   {@link NOT_NAMED_IN_TRANSFER}, words the dialog shows; the not-authenticated error for an
- *   anonymous caller.
+ * @throws ConvexError with {@link TRANSFER_NOT_FOUND}, {@link UNVERIFIED_FOR_TRANSFER},
+ *   {@link NOT_NAMED_IN_TRANSFER} or {@link OWN_TRANSFER}, words the dialog shows; the
+ *   not-authenticated error for an anonymous caller.
  */
 export async function assertNamedInTransfer(
   ctx: QueryCtx | MutationCtx,
   transferId: Id<'managerTransfers'>,
-): Promise<Doc<'managerTransfers'>> {
-  const identity = await getCallerOrThrow(ctx);
+): Promise<NamedInTransfer> {
+  const caller = await getCallerOrThrow(ctx);
   const transfer = await ctx.db.get(transferId);
   if (!transfer) throw new ConvexError(TRANSFER_NOT_FOUND);
-  const address = verifiedAddressOf(identity);
+  const address = verifiedAddressOf(caller);
   if (address === undefined) throw new ConvexError(UNVERIFIED_FOR_TRANSFER);
   if (!sameManagerAddress(address, transfer.toAddress)) {
     throw new ConvexError(NOT_NAMED_IN_TRANSFER);
   }
-  return transfer;
+  if (caller.ownerKey === transfer.fromOwnerKey) throw new ConvexError(OWN_TRANSFER);
+  return { transfer, caller };
 }
 
 /** The charter, if the caller owns its employee; throws otherwise. */
