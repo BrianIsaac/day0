@@ -11,7 +11,9 @@ import type { DayOneTopic } from './charter';
  *
  * Used by both the chat-mode flow and the voice flow (the questions
  * become the agent's "if you have not yet covered topic X, ask Y"
- * instructions in the ElevenLabs system prompt).
+ * instructions in the ElevenLabs system prompt). The chat flow asks each
+ * question once, in order, with no follow-up: the route names the one to
+ * ask on every turn (`dayOneTurnNote`, the v0.11.0 walk).
  */
 
 export interface DayOneTopicSpec {
@@ -75,8 +77,8 @@ export const DAY_ONE_TOPIC_SPECS: readonly DayOneTopicSpec[] = [
 /**
  * What a topic's question asks, without its "n/7" headline: the words said to the manager when a
  * turn is handed the scripted question, and the words the system prompt lists. A headline would
- * announce the topic by number and title, which the employee is asked never to do, and its number
- * counts replies, which a follow-up leaves behind the topic (the round review's r2).
+ * announce the topic by number and title, which the employee is asked never to do (the round
+ * review's r2).
  */
 export function questionBody(question: string): string {
   return question.split('\n')[1] ?? question;

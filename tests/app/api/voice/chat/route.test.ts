@@ -465,6 +465,21 @@ it('cancels a stalled provider at the 60-second route deadline', async () => {
 });
 
 describe('a turn the model answers normally', (): void => {
+  it("sends the turn's note as a system message the SDK is told to expect, so no turn logs its prompt-injection warning", async (): Promise<void> => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation((): void => undefined);
+    try {
+      const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
+
+      await (await POST(turnAfter(2))).text();
+
+      expect(warn.mock.calls.map(([first]) => String(first))).not.toContainEqual(
+        expect.stringContaining('System messages in the prompt or messages fields'),
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('names the one question the turn asks as the last thing the model reads, by the count the progress line shows (the v0.11.0 walk)', async (): Promise<void> => {
     const POST = await loadChatRoute({ baseUrl: FEATHERLESS });
 

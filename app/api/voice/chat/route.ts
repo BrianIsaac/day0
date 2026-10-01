@@ -32,8 +32,8 @@ export const runtime = 'nodejs';
 export const maxDuration = 60;
 
 /**
- * One turn of a 1:1 is a question and a short follow-up, and this has been the
- * budget since the route was written. `OPENAI_MAX_OUTPUT_TOKENS` raises it for
+ * One turn of a 1:1 is a short acknowledgement and one question, and this has
+ * been the budget since the route was written. `OPENAI_MAX_OUTPUT_TOKENS` raises it for
  * a provider that spends part of the budget on reasoning; unset, the route is
  * unchanged. A larger budget is a ceiling, not a target, but it is a ceiling
  * inside a 60-second function, so whatever a provider does with it has to fit
@@ -159,6 +159,9 @@ export async function POST(req: Request): Promise<Response> {
         model,
         system,
         messages,
+        // The one system message in the list is the route's own note (`dayOneTurnNote`), built
+        // from the reply count and never from anything the manager typed.
+        allowSystemInMessages: true,
         ...streamCallOptions({
           maxOutputTokens: DAY_ONE_MAX_OUTPUT_TOKENS,
           openai: { promptCacheKey: DAY_ONE_PROMPT_CACHE_KEY },
