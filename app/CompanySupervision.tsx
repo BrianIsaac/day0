@@ -135,11 +135,13 @@ export const PILOT_FIGURES: readonly PilotFigure[] = [
     label: 'Skill reuse',
     unit: 'runs with a skill made for other work',
     definition:
-      'Of the distinct work item and skill runs, those run with a skill first made for another item.',
+      'Of the distinct work item and skill runs, those run with a skill first made for another item. Runs of a skill adopted from another employee count as reuse, and are shown as adopted.',
     value: ({ skillReuse }) =>
       skillReuse.runs === 0 || skillReuse.rate === null
         ? 'not yet'
-        : `${skillReuse.reused} of ${skillReuse.runs} (${Math.round(skillReuse.rate * 100)}%)`,
+        : `${skillReuse.reused} of ${skillReuse.runs} (${Math.round(skillReuse.rate * 100)}%)${
+            skillReuse.adopted > 0 ? `, ${skillReuse.adopted} adopted` : ''
+          }`,
   },
   {
     label: 'Cycle time',

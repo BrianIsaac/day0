@@ -75,6 +75,8 @@ export const RECORD_FILTER_OF: { readonly [Type in EventType]: readonly RecordFi
   'skill.authoring': NONE,
   'skill.registered': NONE,
   'skill.recheck-due': NONE,
+  'skill.adoption-offered': NONE,
+  'skill.adopted': DECISIONS,
   'skill.failed': REFUSED,
   'skill.author-failed': REFUSED,
   'skill.verification-failed': REFUSED,

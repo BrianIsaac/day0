@@ -64,6 +64,7 @@ import {
 } from '../../src/work/types';
 import { allConvexModules } from './all-modules';
 import { contractSchema } from './contract-schema';
+import { versionBodyHash } from '../../src/work/skill-library';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import {
   auditNoteClosing,
@@ -4908,6 +4909,108 @@ describe('a registered skill serves every later work item of its shape', (): voi
     });
     expect(proposed?.rationale).not.toContain('REVOPS-12');
     expect(proposed?.rationale).not.toContain('Charter');
+    expect(proposed?.offeredVersionId).toBeUndefined();
+  });
+
+  it('needs-skill proposes with the offer when one passes (10-A)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId: seededItem } = await seed(harness, 'real');
+    await seedShapedSkills(harness, agentId, seededItem);
+    const versionId = await harness.run(async (ctx): Promise<Id<'skillVersions'>> => {
+      await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'close-tracker',
+        displayName: 'Close tracker',
+        class: 'spreadsheet',
+        verdict: 'connected',
+        endpoint: 'https://sheets.example.test/close-tracker',
+        path: 'documented-api',
+        toolAllowlist: ['append_row'],
+        approvedToolAllowlist: ['append_row'],
+        discoveryEvidence: [
+          {
+            kind: 'charter',
+            ref: 'charter',
+            quote: 'keeps the Close tracker',
+            current: true,
+            firstSeenAt: 1,
+            lastSeenAt: 1,
+          },
+        ],
+        credentialId: 'cred-sheet',
+        credentialLanded: true,
+        lastVerifiedAt: Date.now(),
+        whereFound: [],
+        createdAt: 1,
+      } as never);
+      const mateo = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Mateo',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const body = '# Append a row\nCall `append_row` with <row-values>.';
+      const smokeTest = 'print("ok")';
+      return await ctx.db.insert('skillVersions', {
+        userId: 'owner',
+        name: 'spreadsheet-append-row',
+        description: 'Row append on a spreadsheet surface.',
+        surfaceClass: 'spreadsheet',
+        operation: 'append-row',
+        version: 1,
+        body,
+        smokeTest,
+        bodyHash: versionBodyHash(body, smokeTest),
+        requiredScopes: ['close-tracker:read', 'close-tracker:write'],
+        harnessTools: ['append_row'],
+        harnessToolsBySurface: [
+          { slug: 'close-tracker', surfaceClass: 'spreadsheet', tools: ['append_row'] },
+        ],
+        authorAgentId: mateo,
+        authorName: 'Mateo',
+        readRefs: [],
+        verifiedAt: 1,
+        createdAt: 1,
+      });
+    });
+    const workItemId = await discoveredItem(harness, agentId, {
+      sourceSystem: 'linear',
+      externalId: 'REVOPS-12',
+      title: 'Append this week to the Close tracker',
+      contentSummary: 'Add the week 37 close figures as a new row in the Close tracker.',
+      contentRefs: ['ticket://REVOPS-12'],
+    });
+
+    await expect(
+      harness.withIdentity(OWNER).action(api.workActions.evaluateWorkItem, { workItemId }),
+    ).resolves.toEqual({ decision: 'needs-skill' });
+
+    const proposed = (
+      await harness.run(async (ctx) => await ctx.db.query('skills').collect())
+    ).find((skill) => skill.name === 'spreadsheet-append-row');
+    expect(proposed).toMatchObject({
+      state: 'proposed',
+      targetSurface: 'close-tracker',
+      offeredVersionId: versionId,
+    });
+    expect((await readItem(harness, workItemId)).proposedSkillId).toBe(proposed?._id);
+    const offered = await harness.run(async (ctx) =>
+      (await ctx.db.query('events').collect()).filter(
+        (event) => event.type === 'skill.adoption-offered',
+      ),
+    );
+    expect(offered.map((event) => event.payload)).toEqual([
+      {
+        skillId: proposed?._id,
+        name: 'spreadsheet-append-row',
+        versionId,
+        version: 1,
+        authorName: 'Mateo',
+        forWorkItem: workItemId,
+      },
+    ]);
   });
 });
 

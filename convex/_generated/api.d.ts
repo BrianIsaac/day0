@@ -53,6 +53,7 @@ import type * as roster from '../roster.js';
 import type * as sandboxLease from '../sandboxLease.js';
 import type * as seed from '../seed.js';
 import type * as skillActions from '../skillActions.js';
+import type * as skillAdoption from '../skillAdoption.js';
 import type * as skillVersions from '../skillVersions.js';
 import type * as skills from '../skills.js';
 import type * as slackProvisionActions from '../slackProvisionActions.js';
@@ -118,6 +119,7 @@ declare const fullApi: ApiFromModules<{
   sandboxLease: typeof sandboxLease;
   seed: typeof seed;
   skillActions: typeof skillActions;
+  skillAdoption: typeof skillAdoption;
   skillVersions: typeof skillVersions;
   skills: typeof skills;
   slackProvisionActions: typeof slackProvisionActions;

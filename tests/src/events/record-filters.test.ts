@@ -45,6 +45,11 @@ describe('the Record tab filters', (): void => {
     }
   });
 
+  it("lists an adoption as the manager's decision, and an offer as nothing yet decided (10-A)", (): void => {
+    expect(RECORD_FILTER_OF['skill.adopted']).toEqual(['decisions']);
+    expect(RECORD_FILTER_OF['skill.adoption-offered']).toEqual([]);
+  });
+
   it('lists a grant as a decision, and leaves a connection the documentation reopened out of them', (): void => {
     expect(RECORD_FILTER_OF['permission.granted']).toContain('decisions');
     expect(RECORD_FILTER_OF['surface.reopened']).not.toContain('decisions');

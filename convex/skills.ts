@@ -24,6 +24,7 @@ import { appendEvent } from './eventLog';
 import { assertNotBeingHandedOver } from './handoverFence';
 import type { SkillAuthoringRefusedPayload } from '../src/events/contract';
 import { recordRegisteredVersion, storedVersionRefusal } from './skillVersions';
+import { recordOffer } from './skillAdoption';
 import { readRefValidator, surfaceToolsValidator } from './schema';
 import { countsAsAuthoringAttempt } from '../src/work/skill-library';
 
@@ -656,6 +657,18 @@ export const PROPOSAL_AFTER_HANDOVER =
   'the employee was handed over to a new manager while this work was being evaluated';
 
 /**
+ * The states of a row that no longer holds its name for a proposal: a later item of the name
+ * proposes afresh beside it. A failed row is here because Retry belongs to its own card, not to
+ * a new item's evaluation.
+ */
+const ENDED_PROPOSAL_STATES: ReadonlySet<Doc<'skills'>['state']> = new Set([
+  'rejected',
+  'failed',
+  'retired',
+  'superseded',
+]);
+
+/**
  * Internal: proposes a skill for the manager, from the work that needed it. With
  * `startedUnder`, the owner the evaluation read the employee under, the proposal is refused once
  * the employee is gone or another owner's (the wave 9 review's U3-m2): it would land, out of the
@@ -675,6 +688,11 @@ export const propose = internalMutation({
     surfaceClass: v.optional(v.string()),
     operation: v.optional(v.string()),
     startedUnder: v.optional(v.string()),
+    /**
+     * A sibling's verified version of the shape to offer for adoption, as
+     * `skillAdoption.offerFor` found it (10-A); absent when none is offered.
+     */
+    offeredVersionId: v.optional(v.id('skillVersions')),
   },
   handler: async (ctx, { startedUnder, ...args }): Promise<Id<'skills'>> => {
     if (startedUnder !== undefined && (await ctx.db.get(args.agentId))?.userId !== startedUnder) {
@@ -691,15 +709,17 @@ export const propose = internalMutation({
     const proposedScopes = targetSurface
       ? [...new Set([...requestedScopes, `${targetSurface}:read`, `${targetSurface}:write`])]
       : requestedScopes;
-    // The live row of this name, wherever it sits among rejected and failed
-    // ones: reading the oldest row alone meant that once a failed proposal
-    // existed, every later item inserted a fresh duplicate beside the live one.
+    // The live row of this name, wherever it sits among the rows that ended:
+    // reading the oldest row alone meant that once a failed proposal existed,
+    // every later item inserted a fresh duplicate beside the live one. A
+    // retired or superseded row runs nothing and comes back through no
+    // control, so it ends a name as a rejection does.
     const existing = (
       await ctx.db
         .query('skills')
         .withIndex('by_agent_name', (q) => q.eq('agentId', args.agentId).eq('name', args.name))
         .collect()
-    ).find((row: Doc<'skills'>): boolean => row.state !== 'rejected' && row.state !== 'failed');
+    ).find((row: Doc<'skills'>): boolean => !ENDED_PROPOSAL_STATES.has(row.state));
     if (existing) {
       if (existing.state === 'registered') {
         // The late verdict's one way back: the verdict write parked it and
@@ -728,6 +748,8 @@ export const propose = internalMutation({
           surfaceClass: existing.surfaceClass ?? args.surfaceClass,
           operation: existing.operation ?? args.operation,
         });
+        // The latest evaluation's offer stands: a new one is said, a withdrawn one goes.
+        await recordOffer(ctx, existing, args.offeredVersionId);
       }
       return existing._id;
     }
@@ -760,6 +782,10 @@ export const propose = internalMutation({
       },
       createdAt: Date.now(),
     });
+    if (args.offeredVersionId !== undefined) {
+      const row = await ctx.db.get(id);
+      if (row !== null) await recordOffer(ctx, row, args.offeredVersionId);
+    }
     return id;
   },
 });

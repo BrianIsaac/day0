@@ -39,7 +39,7 @@ export const dashboardMetrics = (): AgentMetrics =>
     autonomyChanges: 0,
     auditTrail: { complete: 3, total: 3, fraction: 1 },
     pilot: {
-      skillReuse: { runs: 3, reused: 1, rate: 1 / 3 },
+      skillReuse: { runs: 3, reused: 1, adopted: 0, rate: 1 / 3 },
       cycleTime: {
         ended: 3,
         medianToEndMs: 60_000,
