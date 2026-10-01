@@ -118,6 +118,7 @@ const PLAN_HELD_WORDS: { readonly [Reason in WorkPlanHeldPayload['reason']]: str
   'plan-rejected-for-this-item': "a colleague's plan for this ticket was rejected",
   'obligations-failed-open': 'its reads and writes could not be checked',
   'drafted-without-record': 'it was drafted without reading its ticket or thread',
+  'approved-by-predecessor': 'approved by your predecessor; approve it again',
 };
 
 /** Why a held plan waits, or a plain line for a reason this build does not know. */

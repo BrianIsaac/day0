@@ -28,6 +28,13 @@ import type { Charter } from '../../src/agent/charter';
 import { skillBodyHash } from '../../src/work/skill-body';
 import { collectLedgerObservations } from '../../convex/metrics';
 import { fixtureAddressOf, MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import {
+  HANDED_OVER_REQUEST_REASON,
+  returnApprovalsForHandover,
+  stopRunsForHandover,
+  voidDecisionRequestsForHandover,
+} from '../../convex/work';
+import { HANDOVER_IN_PROGRESS_REASON, HANDOVER_STOP_REASON } from '../../convex/transferInFlight';
 
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
@@ -7338,5 +7345,215 @@ describe('work.needsYou, dating a wait', (): void => {
     const [entry] = (await harness.withIdentity(OWNER).query(api.work.needsYou, {})).entries;
 
     expect(entry?.zone).toBe('Asia/Singapore');
+  });
+});
+
+describe('work while its employee is handed over (transfer plan 6.4, D18)', (): void => {
+  /** Mark the seeded employee's handover accepted and waiting for its runs. */
+  async function acceptHandover(harness: Harness, agentId: Id<'agents'>): Promise<void> {
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('managerTransfers', {
+        agentId,
+        agentName: 'Priya',
+        fromOwnerKey: 'owner',
+        fromAddress: MANAGER_ADDRESS,
+        toAddress: fixtureAddressOf('colleague'),
+        state: 'accepting',
+        requestedAt: 1,
+        expiresAt: 2 * 24 * 60 * 60 * 1000,
+        decidedAt: 2,
+        toOwnerKey: 'colleague',
+        settleBy: Date.now() + 15 * 60_000,
+      });
+    });
+  }
+
+  it('claims no run for an employee whose handover is finishing', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'plan-approved');
+    const skillId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('skills', {
+          agentId,
+          name: 'close-ticket',
+          description: 'Close a ticket.',
+          body: 'Close it.',
+          sourceType: 'agent-authored',
+          state: 'registered',
+          createdAt: 1,
+          registeredAt: 2,
+        }),
+    );
+    await acceptHandover(harness, agentId);
+
+    await expect(
+      harness.mutation(internal.work.claimForExecution, { workItemId, skillId }),
+    ).resolves.toEqual({ claimed: false, reason: HANDOVER_IN_PROGRESS_REASON });
+    expect((await readItem(harness, workItemId)).state).toBe('plan-approved');
+  });
+
+  it('asks the finishing handover to settle when a run fails, and not when none is finishing', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, runId } = await seed(harness, 'executing');
+    await acceptHandover(harness, agentId);
+
+    await harness.mutation(internal.work.setFailed, { workItemId, runId, reason: 'refused' });
+
+    expect(await scheduledFunctionNames(harness)).toContain('transferAcceptance:settle');
+
+    const quiet = convexTest(schema, allConvexModules());
+    const other = await seed(quiet, 'executing');
+    await quiet.mutation(internal.work.setFailed, {
+      workItemId: other.workItemId,
+      runId: other.runId,
+      reason: 'refused',
+    });
+    expect(await scheduledFunctionNames(quiet)).not.toContain('transferAcceptance:settle');
+  });
+
+  it('closes an open request with the handover’s reason and records the failure', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'plan-pending');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        decision: {
+          id: 'abc234',
+          kind: 'plan',
+          requestedAt: 1,
+          channel: 'D0MANAGER',
+          surfaceSlug: 'slack',
+          surfaceName: 'Slack',
+          ts: '1.1',
+        },
+      });
+    });
+
+    await expect(
+      harness.run(async (ctx) => await voidDecisionRequestsForHandover(ctx, agentId, 50)),
+    ).resolves.toBe(1);
+
+    expect((await readItem(harness, workItemId)).decision).toMatchObject({
+      requestFailedAt: 50,
+      requestFailure: HANDED_OVER_REQUEST_REASON,
+    });
+    expect(await eventTypes(harness, agentId)).toContain('work.decision-request-failed');
+    await expect(
+      harness.run(async (ctx) => await voidDecisionRequestsForHandover(ctx, agentId, 60)),
+    ).resolves.toBe(0);
+  });
+
+  it('returns an approved plan not started and an approved set not applied to the new manager (D13)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId: plan } = await seed(harness, 'plan-approved');
+    const set = await harness.run(async (ctx) => {
+      const runId = await ctx.db.insert('events', {
+        agentId,
+        type: 'work.execution-claimed',
+        payload: {},
+        createdAt: 1,
+      });
+      return await ctx.db.insert('workItems', {
+        agentId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'REVOPS-2',
+        title: 'Close REVOPS-2',
+        contentSummary: 'Synthetic.',
+        contentRefs: [],
+        state: 'actions-pending',
+        output: pendingOutput,
+        pendingRunId: runId,
+        approvedIndexes: [0],
+        applyPhase: 'approved',
+        observedAt: 1,
+        createdAt: 1,
+      });
+    });
+
+    await expect(
+      harness.run(async (ctx) => await returnApprovalsForHandover(ctx, agentId, 70)),
+    ).resolves.toBe(2);
+
+    expect(await readItem(harness, plan)).toMatchObject({
+      state: 'plan-pending',
+      planPendingAt: 70,
+    });
+    const returned = await readItem(harness, set);
+    expect(returned.state).toBe('actions-pending');
+    expect(returned.approvedIndexes).toBeUndefined();
+    expect(returned.applyPhase).toBeUndefined();
+    const held = await eventsOfType(harness, agentId, 'work.plan-held');
+    expect(held.map((event) => event.payload)).toEqual([
+      { workItemId: plan, reason: 'approved-by-predecessor' },
+    ]);
+  });
+
+  it('stops each run still executing, clearing what fences its late writes', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'executing');
+
+    await expect(harness.run(async (ctx) => await stopRunsForHandover(ctx, agentId))).resolves.toBe(
+      1,
+    );
+
+    const stopped = await readItem(harness, workItemId);
+    expect(stopped).toMatchObject({
+      state: 'failed',
+      skipReason: `stopped: ${HANDOVER_STOP_REASON}`,
+    });
+    expect(stopped.executionRunId).toBeUndefined();
+  });
+});
+
+describe('an approved write whose surface waits for its connection (U-3)', (): void => {
+  /** Seed a held comment through Linear, approved, with the surface in the given verdict. */
+  async function approvedOn(
+    harness: Harness,
+    surface: Partial<Doc<'surfaces'>>,
+  ): Promise<Id<'workItems'>> {
+    const { agentId, workItemId, runId } = await seed(harness, 'actions-pending');
+    await harness.run(async (ctx) => {
+      const linear = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId).eq('slug', 'linear'))
+        .first();
+      if (linear === null) throw new Error('linear surface missing');
+      await ctx.db.patch(linear._id, surface);
+      await ctx.db.patch(workItemId, {
+        output: pendingOutput,
+        pendingRunId: runId,
+        actionVerdicts: pendingOutput.actions.map(() => ({ disposition: 'held' as const })),
+        approvedIndexes: [0],
+        applyPhase: 'approved',
+      });
+    });
+    return workItemId;
+  }
+
+  it('parks the set on the connection with the evaluator’s own verdict, sending nothing', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const workItemId = await approvedOn(harness, { verdict: 'proposed' });
+
+    await expect(
+      harness.mutation(internal.work.claimApprovedActions, { workItemId }),
+    ).resolves.toEqual({ claimed: false, reason: 'parked until linear is connected' });
+
+    const parked = await readItem(harness, workItemId);
+    expect(parked).toMatchObject({
+      state: 'deferred',
+      verdict: { decision: 'defer', reason: 'awaiting-connection', missingSurface: 'linear' },
+    });
+    expect(parked.approvedIndexes).toBeUndefined();
+    // Planned again once it returns: a kept plan would leave a returned row claimed with no draft.
+    expect(parked.plan).toBeUndefined();
+  });
+
+  it('leaves a lapsed connection to the gate, as before', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const workItemId = await approvedOn(harness, { lastVerifiedAt: 1 });
+
+    await expect(
+      harness.mutation(internal.work.claimApprovedActions, { workItemId }),
+    ).resolves.toMatchObject({ claimed: true });
   });
 });

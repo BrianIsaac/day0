@@ -5,7 +5,12 @@ import { ConvexError } from 'convex/values';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import { clipRoleLine } from '../../convex/agents';
-import { CHANGE_REQUEST_MAX_CHARS, renderIdentityForManager } from '../../convex/charters';
+import {
+  CHANGE_REQUEST_MAX_CHARS,
+  charterAtHandover,
+  discardUnapprovedCharter,
+  renderIdentityForManager,
+} from '../../convex/charters';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
@@ -1036,5 +1041,138 @@ describe('the identity file after a handover (transfer plan 6.2, the workspace r
     expect(await workspaceFile(harness, agentId, 'IDENTITY.md')).toBe(
       '# IDENTITY\n\nRole: owned, prioritized Linear tickets\n',
     );
+  });
+});
+
+describe('a charter at a handover’s move (D8)', (): void => {
+  /** An employee in a state, with charters approved or not and the files a draft writes. */
+  async function seedAtHandover(
+    state: Doc<'agents'>['state'],
+    charters: readonly boolean[],
+  ): Promise<{ harness: TestConvex<typeof schema>; agentId: Id<'agents'> }> {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await harness.run(async (ctx) => {
+      const id = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Maya',
+        userId: 'owner',
+        state,
+        createdAt: 1,
+      });
+      for (const [index, approved] of charters.entries()) {
+        await ctx.db.insert('charters', {
+          agentId: id,
+          version: `0.${index + 1}`,
+          body: runThroughBody(),
+          approved,
+          createdAt: 2 + index,
+        });
+      }
+      for (const fileName of ['IDENTITY.md', 'TOOLS.md', 'USER.md', 'SOUL.md', 'MEMORY.md']) {
+        await ctx.db.insert('workspace', {
+          agentId: id,
+          fileName,
+          content: `# ${fileName}\n`,
+          updatedAt: 2,
+        });
+      }
+      return id;
+    });
+    return { harness, agentId };
+  }
+
+  /** Discard as the move does, and read back what is left. */
+  async function discard(
+    harness: TestConvex<typeof schema>,
+    agentId: Id<'agents'>,
+  ): Promise<{
+    returnedToDeployed: boolean;
+    discarded: boolean;
+    state: string;
+    versions: number;
+    files: string[];
+  }> {
+    return await harness.run(async (ctx) => {
+      const agent = await ctx.db.get(agentId);
+      if (agent === null) throw new Error('agent missing');
+      const decided = await discardUnapprovedCharter(ctx, agent);
+      return {
+        ...decided,
+        state: (await ctx.db.get(agentId))?.state ?? 'gone',
+        versions: (
+          await ctx.db
+            .query('charters')
+            .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+            .collect()
+        ).length,
+        files: (
+          await ctx.db
+            .query('workspace')
+            .withIndex('by_agent_file', (q) => q.eq('agentId', agentId))
+            .collect()
+        ).map((file) => file.fileName),
+      };
+    });
+  }
+
+  it('discards every draft version and the files in the old manager’s words, and returns the employee to deployed', async (): Promise<void> => {
+    const { harness, agentId } = await seedAtHandover('charter-pending', [false, false]);
+
+    await expect(discard(harness, agentId)).resolves.toEqual({
+      returnedToDeployed: true,
+      discarded: true,
+      state: 'deployed',
+      versions: 0,
+      files: ['MEMORY.md', 'SOUL.md'],
+    });
+  });
+
+  it('returns an employee mid one-to-one to deployed with nothing drafted to discard', async (): Promise<void> => {
+    const { harness, agentId } = await seedAtHandover('day-one-in-progress', []);
+
+    await expect(discard(harness, agentId)).resolves.toMatchObject({
+      returnedToDeployed: true,
+      discarded: false,
+      state: 'deployed',
+    });
+  });
+
+  it('carries an approved charter, its files and its state as they are', async (): Promise<void> => {
+    const { harness, agentId } = await seedAtHandover('active', [true, false]);
+
+    await expect(discard(harness, agentId)).resolves.toEqual({
+      returnedToDeployed: false,
+      discarded: false,
+      state: 'active',
+      versions: 2,
+      files: ['IDENTITY.md', 'MEMORY.md', 'SOUL.md', 'TOOLS.md', 'USER.md'],
+    });
+  });
+
+  it('carries a charter once approved even when the employee row reads otherwise', async (): Promise<void> => {
+    const { harness, agentId } = await seedAtHandover('charter-pending', [true, false]);
+
+    await expect(discard(harness, agentId)).resolves.toMatchObject({
+      returnedToDeployed: false,
+      discarded: false,
+      state: 'charter-pending',
+      versions: 2,
+    });
+  });
+
+  it('refuses more draft versions than one move discards, before deleting any', async (): Promise<void> => {
+    const { harness, agentId } = await seedAtHandover(
+      'charter-pending',
+      Array.from({ length: 101 }, () => false),
+    );
+
+    await expect(
+      harness.run(async (ctx) => {
+        const agent = await ctx.db.get(agentId);
+        if (agent === null) throw new Error('agent missing');
+        return await charterAtHandover(ctx.db, agent);
+      }),
+    ).resolves.toMatchObject({ kind: 'refused' });
+    await expect(discard(harness, agentId)).rejects.toBeInstanceOf(ConvexError);
   });
 });

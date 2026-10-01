@@ -128,6 +128,7 @@ const PLAN_HELD_BECAUSE: { readonly [Reason in WorkPlanHeldPayload['reason']]: s
   'plan-rejected-for-this-item': "you rejected a colleague's plan for this ticket",
   'obligations-failed-open': 'its reads and writes could not be checked',
   'drafted-without-record': 'it was drafted without reading its ticket or thread',
+  'approved-by-predecessor': 'your predecessor approved it, so approve it again',
 };
 
 /**

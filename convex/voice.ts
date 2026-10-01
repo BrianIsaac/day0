@@ -5,6 +5,7 @@ import {
   internalMutation,
   internalQuery,
   type MutationCtx,
+  type QueryCtx,
 } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
@@ -87,10 +88,12 @@ export const latest = query({
  * would cover the first case and none of the others; deciding against the row is
  * what covers all of them, including a second tab.
  *
- * A session is reusable until it reaches `done`: `synthesising` is a finaliser's
- * reservation and `active` is a 1:1 still being held, both of which belong to
- * the conversation that is already under way. Only a finished one starts the
- * next 1:1, which is what makes Request Changes open a genuinely new session.
+ * A session is reusable until it reaches `done` or `failed`: `synthesising` is a
+ * finaliser's reservation and `active` is a 1:1 still being held, both of which
+ * belong to the conversation that is already under way. Only a finished one
+ * starts the next 1:1, which is what makes Request Changes open a genuinely new
+ * session; a failed one (its manager handed the employee over) starts the new
+ * manager's own.
  *
  * Reuse crosses modes on purpose - switching from chat to voice mid-1:1 is the
  * same conversation on a different surface, and the UI says as much before it
@@ -119,7 +122,7 @@ export const start = mutation({
       .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
       .order('desc')
       .first();
-    if (open && open.state !== 'done') {
+    if (open && open.state !== 'done' && open.state !== 'failed') {
       const webhookToken = open.webhookToken ?? crypto.randomUUID();
       // A call started over a chat still being held starts from the first question, as the
       // switch says: the chat's turns are set aside, not drawn again over the call.
@@ -727,3 +730,97 @@ export const sweepStalledFinalisations = internalMutation({
     return { requeued };
   },
 });
+
+/** Why a one-to-one under way stopped at a handover: the manager it was held with is no longer the employee's. */
+export const HANDOVER_SESSION_FAILURE = 'the manager changed';
+
+/** The most of one employee's one-to-one sessions a handover ends. */
+const HANDOVER_SESSION_LIMIT = 500;
+
+/** Whether a session in each state is a one-to-one still under way: held, or being drafted from. */
+const UNDER_WAY: Readonly<Record<Doc<'voiceSessions'>['state'], boolean>> = {
+  pending: true,
+  active: true,
+  synthesising: true,
+  done: false,
+  failed: false,
+};
+
+/**
+ * The refusal when the employee has more one-to-one sessions than one handover ends, or null.
+ *
+ * @param db - Any reader.
+ * @param agentId - The employee.
+ */
+export async function oneToOnesAtHandoverRefusal(
+  db: QueryCtx['db'],
+  agentId: Id<'agents'>,
+): Promise<string | null> {
+  const sessions = await db
+    .query('voiceSessions')
+    .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+    .take(HANDOVER_SESSION_LIMIT + 1);
+  return sessions.length > HANDOVER_SESSION_LIMIT
+    ? `This employee has more than ${HANDOVER_SESSION_LIMIT} one-to-one sessions, more than one handover can end.`
+    : null;
+}
+
+/**
+ * End the employee's one-to-ones at a handover's move (the transfer plan, section 6.4): the
+ * conversation is its old manager's own, and the new manager holds their own.
+ *
+ * When the employee returns to `deployed` (decision D8: its charter was never approved), every
+ * session is deleted with the old manager's words, so the new manager's room opens the Day-1
+ * one-to-one afresh; a finisher still drafting from one finds it gone and commits nothing. When
+ * the approved charter is carried, a session still being held or drafted from is `failed` with
+ * {@link HANDOVER_SESSION_FAILURE}: its claim and webhook token are dropped, so a finisher still
+ * drafting commits nothing (`finaliseSession` refuses a session that is no longer its
+ * `synthesising` claim's), its conversation stamp moves on, so a chat write composed for it is
+ * refused, and the old manager's words leave it. `voice.start` opens a new session over a failed
+ * one.
+ *
+ * @param ctx - The move's mutation context.
+ * @param agentId - The employee.
+ * @param options - `returnsToDeployed`: whether the move returned the employee to `deployed` (D8).
+ * @returns How many one-to-ones were under way.
+ * @throws ConvexError when the employee has more sessions than one move ends.
+ */
+export async function endOneToOnesForHandover(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+  options: { readonly returnsToDeployed: boolean },
+): Promise<number> {
+  const refusal = await oneToOnesAtHandoverRefusal(ctx.db, agentId);
+  if (refusal !== null) throw new ConvexError(refusal);
+  const sessions = await ctx.db
+    .query('voiceSessions')
+    .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+    .take(HANDOVER_SESSION_LIMIT);
+  let underWay = 0;
+  for (const session of sessions) {
+    const held = UNDER_WAY[session.state];
+    if (held) underWay += 1;
+    if (options.returnsToDeployed) {
+      await ctx.db.delete(session._id);
+      continue;
+    }
+    if (!held) continue;
+    await ctx.db.patch(session._id, {
+      state: 'failed',
+      finalisationError: HANDOVER_SESSION_FAILURE,
+      conversation: conversationOf(session) + 1,
+      answers: {},
+      transcriptText: undefined,
+      turns: undefined,
+      replyDraft: undefined,
+      pendingTranscript: undefined,
+      pendingBossLabel: undefined,
+      changeRequests: undefined,
+      claimToken: undefined,
+      claimedAt: undefined,
+      claimedBy: undefined,
+      webhookToken: undefined,
+    });
+  }
+  return underWay;
+}

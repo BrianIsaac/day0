@@ -206,6 +206,93 @@ export async function renderIdentityForManager(
   return false;
 }
 
+/**
+ * The workspace files a draft writes in its manager's words: the two rendered from the charter,
+ * and the one that names the manager. The draft's other files are the deployment's defaults.
+ */
+const DRAFT_MANAGER_FILES = ['IDENTITY.md', 'TOOLS.md', 'USER.md'] as const;
+
+/** The most charter versions of one employee a handover discards. */
+const DRAFT_DISCARD_LIMIT = 100;
+
+/**
+ * What a handover does with an employee's charter (decision D8 (a)): an approved one is carried;
+ * a charter never approved is discarded, every draft version of it; and an employee with more
+ * versions than one move discards is refused.
+ */
+export type CharterAtHandover =
+  | { readonly kind: 'carried' }
+  | { readonly kind: 'discarded'; readonly drafts: readonly Doc<'charters'>[] }
+  | { readonly kind: 'refused'; readonly refusal: string };
+
+/**
+ * Decide what a handover does with the employee's charter ({@link CharterAtHandover}), reading
+ * at most one move's bound of versions.
+ *
+ * @param db - Any reader.
+ * @param agent - The employee.
+ */
+export async function charterAtHandover(
+  db: QueryCtx['db'],
+  agent: Doc<'agents'>,
+): Promise<CharterAtHandover> {
+  if (agent.state === 'active') return { kind: 'carried' };
+  const versions = await db
+    .query('charters')
+    .withIndex('by_agent', (q) => q.eq('agentId', agent._id))
+    .take(DRAFT_DISCARD_LIMIT + 1);
+  if (versions.some((charter) => charter.approved)) return { kind: 'carried' };
+  if (versions.length > DRAFT_DISCARD_LIMIT) {
+    return {
+      kind: 'refused',
+      refusal: `This employee has more than ${DRAFT_DISCARD_LIMIT} draft charters, more than one handover can discard.`,
+    };
+  }
+  return { kind: 'discarded', drafts: versions };
+}
+
+/**
+ * Discard an employee's charter that was never approved, at a handover's move (decision D8 (a)):
+ * the draft is its manager's own words, and the new manager holds the Day-1 one-to-one. Every
+ * draft version is deleted, with the workspace files written in the old manager's words
+ * ({@link DRAFT_MANAGER_FILES}), and the employee returns to `deployed`. A charter the manager
+ * approved is carried as it is. The events that recorded the drafts stay in the record (D10).
+ *
+ * @param ctx - The move's mutation context.
+ * @param agent - The employee, as the move read it.
+ * @returns Whether the employee returned to `deployed` (its charter was never approved), and
+ *   whether a draft was discarded with it.
+ * @throws ConvexError when the employee has more draft versions than one move discards.
+ */
+export async function discardUnapprovedCharter(
+  ctx: MutationCtx,
+  agent: Doc<'agents'>,
+): Promise<{ readonly returnedToDeployed: boolean; readonly discarded: boolean }> {
+  const decided = await charterAtHandover(ctx.db, agent);
+  switch (decided.kind) {
+    case 'carried':
+      return { returnedToDeployed: false, discarded: false };
+    case 'refused':
+      throw new ConvexError(decided.refusal);
+    case 'discarded':
+      break;
+    default: {
+      const unknown: never = decided;
+      throw new Error(`unhandled charter decision ${String(unknown)}`);
+    }
+  }
+  for (const draft of decided.drafts) await ctx.db.delete(draft._id);
+  for (const fileName of DRAFT_MANAGER_FILES) {
+    const file = await ctx.db
+      .query('workspace')
+      .withIndex('by_agent_file', (q) => q.eq('agentId', agent._id).eq('fileName', fileName))
+      .first();
+    if (file !== null) await ctx.db.delete(file._id);
+  }
+  if (agent.state !== 'deployed') await ctx.db.patch(agent._id, { state: 'deployed' });
+  return { returnedToDeployed: true, discarded: decided.drafts.length > 0 };
+}
+
 /** A strike or an approval either lands or names the reason it was refused. */
 const strikeResultValidator = v.union(
   v.object({ ok: v.literal(true) }),

@@ -536,6 +536,23 @@ describe('the cron targets, run by the names they are scheduled under', (): void
   });
 });
 
+describe('the finishing-handover sweep', (): void => {
+  it('runs every minute behind the one gate, so a handover settles soon after its deadline', (): void => {
+    expect(crons.crons['settle finishing handovers']).toMatchObject({
+      name: 'crons:runScheduledJob',
+      args: [{ job: 'transferAcceptance:settleDue' }],
+      schedule: { type: 'interval', minutes: 1 },
+    });
+  });
+
+  it('schedules nothing when no handover is finishing', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await expect(runCron(harness, 'settle finishing handovers')).resolves.toEqual({
+      scheduled: 0,
+    });
+  });
+});
+
 describe('the crons pause switch', (): void => {
   afterEach((): void => {
     vi.unstubAllEnvs();
@@ -545,7 +562,7 @@ describe('the crons pause switch', (): void => {
 
   it('puts every scheduled job behind the one gate, the voice sweep included', (): void => {
     const jobs = Object.values(crons.crons);
-    expect(jobs).toHaveLength(8);
+    expect(jobs).toHaveLength(9);
     for (const job of jobs) expect(job.name).toBe('crons:runScheduledJob');
     expect(crons.crons['recover stalled voice finalisations']).toMatchObject({
       args: [{ job: 'voice:sweepStalledFinalisations' }],
@@ -591,7 +608,7 @@ describe('the crons pause switch', (): void => {
       ([line]) => JSON.parse(String(line)) as Record<string, unknown>,
     );
     printed.mockRestore();
-    expect(lines).toHaveLength(8);
+    expect(lines).toHaveLength(9);
     expect(lines[0]).toMatchObject({
       msg: 'scheduled job skipped: crons paused',
       reason: 'upgrade to 0.9.0',
