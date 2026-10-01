@@ -1,13 +1,5 @@
 import { defineConfig } from '@playwright/test';
 
-/**
- * The browser job (N14, step 45): the public pages rendered by `next start`
- * from the gate's own build, checked with axe at 1440 by 900 and 390 by 844.
- * The dashboard needs a backend the runner does not hold, so its axe check
- * and its pressed-button tests run under jsdom in the mirrored tests.
- *
- * Output goes under `.next/`, which the build owns and git ignores.
- */
 /** The port the gate's server listens on when the environment names none. */
 const DEFAULT_PORT = 3100;
 
@@ -30,6 +22,14 @@ function serverPort(): number {
 
 const PORT = serverPort();
 
+/**
+ * The browser job (N14, step 45): the public pages rendered by `next start`
+ * from the gate's own build, checked with axe at 1440 by 900 and 390 by 844.
+ * The dashboard needs a backend the runner does not hold, so its axe check
+ * and its pressed-button tests run under jsdom in the mirrored tests.
+ *
+ * Output goes under `.next/`, which the build owns and git ignores.
+ */
 export default defineConfig({
   testDir: 'tests/browser',
   // The specs only: `*.test.ts` beside them are the helpers' own tests, which Vitest runs.

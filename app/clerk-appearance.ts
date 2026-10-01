@@ -74,10 +74,10 @@ export const clerkSignInAppearance = {
  * Clerk draws every step's title as an h1, so on the first step, where the page's heading already
  * says what the card is for, the card's header, its title and subtitle, is left out: the mark
  * above the card and the form inside it are all the step shows (the hosted walk's m26). Later
- * steps keep their headers: they say what to do ("Check your email") and to which address, and the page's heading
- * steps down to a paragraph there (`StepHeading`), so each step has one h1. All of it goes through
- * Clerk's own element styles, never a stylesheet selector on its classes, which Clerk reports as
- * structural CSS on every page.
+ * steps keep their headers: they say what to do ("Check your email") and to which address, and
+ * the page's heading steps down to a paragraph there (`StepHeading`), so each step has one h1.
+ * All of it goes through Clerk's own element styles, never a stylesheet selector on its classes,
+ * which Clerk reports as structural CSS on every page.
  *
  * @param firstStep - Whether the widget is on its first step (`HeadedClerk.tsx` reads it off the
  *   path, by which Clerk routes its steps).
