@@ -1,9 +1,10 @@
 import { v } from 'convex/values';
-import { internalMutation, internalQuery, query } from './_generated/server';
-import type { Doc } from './_generated/dataModel';
+import { internalMutation, internalQuery, query, type DatabaseReader } from './_generated/server';
+import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent } from './ownership';
 import type { MockSurfaceSnapshot, MockWriteResult } from '../src/work/types';
 import { assertCurrentGeneration } from '../src/docs/sync-generation';
+import { agentReadsSource } from '../src/docs/agent-sources';
 
 /**
  * Read + write API for the mock work environment.
@@ -17,11 +18,59 @@ import { assertCurrentGeneration } from '../src/docs/sync-generation';
  * via these queries so edits surface live.
  */
 
-/** Internal snapshot used only by an already-authorised scheduler continuation. */
+/**
+ * Whether an employee reads a page mirrored from a documentation source: only while the source
+ * still exists, belongs to the employee's owner and is one the employee reads (the transfer
+ * plan, section 6.2). An employee handed to another manager keeps the mirrors of its old owner's
+ * sources until a paged job deletes them (`docSources.pruneDepartedMirrors`); from the moment it
+ * moves, this is what keeps the new owner from reading them.
+ *
+ * @param agent - The employee, or null when its row is gone.
+ * @param source - The mirror's source, or null when it is gone.
+ */
+export function mirrorReadable(
+  agent: Pick<Doc<'agents'>, 'userId' | 'excludedDocSourceIds'> | null,
+  source: Pick<Doc<'docSources'>, '_id' | 'userId'> | null,
+): boolean {
+  if (agent === null || source === null || agent.userId === undefined) return false;
+  return source.userId === agent.userId && agentReadsSource(agent, source._id);
+}
+
+/**
+ * An employee's office pages it may read, in the order given: every seeded page (no source), and
+ * each mirrored page whose source {@link mirrorReadable} admits. Each distinct source is read
+ * once.
+ *
+ * @param db - Any database reader.
+ * @param agent - The employee, or null when its row is gone.
+ * @param docs - Pages stored under the employee.
+ */
+export async function readableDocs(
+  db: DatabaseReader,
+  agent: Doc<'agents'> | null,
+  docs: readonly Doc<'mockDocs'>[],
+): Promise<Doc<'mockDocs'>[]> {
+  const sourceIds = [...new Set(docs.flatMap((doc) => (doc.sourceId ? [doc.sourceId] : [])))];
+  const sources = new Map(
+    await Promise.all(
+      sourceIds.map(
+        async (id): Promise<[Id<'docSources'>, Doc<'docSources'> | null]> => [id, await db.get(id)],
+      ),
+    ),
+  );
+  return docs.filter(
+    (doc) => doc.sourceId === undefined || mirrorReadable(agent, sources.get(doc.sourceId) ?? null),
+  );
+}
+
+/**
+ * Internal snapshot used only by an already-authorised scheduler continuation. Its documents are
+ * the ones the employee reads ({@link readableDocs}).
+ */
 export const snapshotInternal = internalQuery({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<MockSurfaceSnapshot> => {
-    const [docs, sheets, rows, channels, messages, tweets, tickets] = await Promise.all([
+    const [stored, sheets, rows, channels, messages, tweets, tickets] = await Promise.all([
       ctx.db
         .query('mockDocs')
         .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId))
@@ -51,6 +100,7 @@ export const snapshotInternal = internalQuery({
         .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId))
         .collect(),
     ]);
+    const docs = await readableDocs(ctx.db, await ctx.db.get(args.agentId), stored);
     return {
       howToGuides: docs
         .filter((doc) => doc.category === 'how-to-guide')
@@ -97,27 +147,31 @@ export const snapshotInternal = internalQuery({
 
 // ---------- Docs ----------
 
-/** Public, owner-guarded: the mock office's documents for one employee. */
+/** Public, owner-guarded: the mock office's documents one employee reads ({@link readableDocs}). */
 export const listDocs = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args) => {
-    await assertOwnsAgent(ctx, args.agentId);
-    return await ctx.db
+    const agent = await assertOwnsAgent(ctx, args.agentId);
+    const stored = await ctx.db
       .query('mockDocs')
       .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId))
       .collect();
+    return await readableDocs(ctx.db, agent, stored);
   },
 });
 
-/** Public, owner-guarded: one mock document by slug. */
+/** Public, owner-guarded: one mock document by slug, or null when the employee does not read it. */
 export const getDoc = query({
   args: { agentId: v.id('agents'), slug: v.string() },
   handler: async (ctx, args) => {
-    await assertOwnsAgent(ctx, args.agentId);
-    return await ctx.db
+    const agent = await assertOwnsAgent(ctx, args.agentId);
+    const stored = await ctx.db
       .query('mockDocs')
       .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId).eq('slug', args.slug))
       .unique();
+    if (stored === null) return null;
+    const [readable] = await readableDocs(ctx.db, agent, [stored]);
+    return readable ?? null;
   },
 });
 
