@@ -5,7 +5,11 @@ import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Doc } from '@convex/_generated/dataModel';
 import type { ManagerStanding } from '@/agent/manager-standing';
-import { LOCAL_DEV_TRANSFER_REFUSAL } from '@/agent/manager-transfer';
+import {
+  EVALUATION_EMPLOYEE_TRANSFER_REFUSAL,
+  LOCAL_DEV_TRANSFER_REFUSAL,
+  UNVERIFIED_FOR_ASK,
+} from '@/agent/manager-transfer';
 import { DEV_NO_AUTH } from '@/lib/dev-auth';
 import type { DeploymentProfile } from '@/lib/surface-mode';
 import { deploymentZone } from '@/lib/zone';
@@ -364,6 +368,12 @@ function ManagerCard({ agent, surfaceMode }: ManagerCardProps) {
             <MakeItYou agent={agent} change={change} landed={landed} describedBy={flagId} />
           </>
         );
+      } else if (state.standing.standing === 'evaluation') {
+        // The ask refuses an evaluation employee, so the card offers none and says why in the
+        // ask's own words (the wave 9 review's U4-m8: it offered Hand over and refused at the ask).
+        lines.push(MANAGER_DUTY, EVALUATION_EMPLOYEE_TRANSFER_REFUSAL);
+      } else if (state.standing.standing === 'unverified') {
+        lines.push(MANAGER_DUTY, UNVERIFIED_FOR_ASK);
       } else {
         lines.push(MANAGER_DUTY);
         controls = handOver();

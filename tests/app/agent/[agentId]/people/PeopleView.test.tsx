@@ -55,6 +55,10 @@ import {
   unmountAll,
 } from '../../../../fixtures/dom/press';
 import { underTarget } from '../../../../fixtures/dom/targets';
+import {
+  EVALUATION_EMPLOYEE_TRANSFER_REFUSAL,
+  UNVERIFIED_FOR_ASK,
+} from '../../../../../src/agent/manager-transfer';
 
 describe('namedPeople', () => {
   it('reads the people the charter names with how each is reached, and nobody from a body without the list', () => {
@@ -643,14 +647,20 @@ describe('PeopleView', () => {
     expect(said(view.container)).toEqual(['Your sign-in does not carry a verified email address.']);
   });
 
-  it('draws an evaluation employee and an unverified owner without the flag or the you chip', () => {
+  it('draws an evaluation employee and an unverified owner without the flag or the you chip, and says why there is no Hand over (the wave 9 review’s U4-m8)', () => {
+    const why = {
+      evaluation: EVALUATION_EMPLOYEE_TRANSFER_REFUSAL,
+      unverified: UNVERIFIED_FOR_ASK,
+    } as const;
     for (const standing of ['evaluation', 'unverified'] as const) {
       settled({ 'agents:managerStanding': { standing } });
       const card = managerCard(mount(asEmployee(<PeopleView />)).container);
       expect(card.textContent).toContain('Every held write and every plan comes to you.');
       expect(card.textContent).not.toContain('who is not you');
       expect(card.innerHTML).not.toMatch(/>you<\/span>/);
-      expect(buttonNames(card)).toEqual(['Hand over']);
+      // The ask would refuse, so the card offers none and says the refusal's own words.
+      expect(buttonNames(card)).toEqual([]);
+      expect(card.textContent).toContain(why[standing]);
       unmountAll();
     }
   });
