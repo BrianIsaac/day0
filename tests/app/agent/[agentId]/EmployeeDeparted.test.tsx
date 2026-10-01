@@ -1,20 +1,27 @@
 /** @vitest-environment jsdom */
 
 import { getFunctionName } from 'convex/server';
+import { act } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const backend = vi.hoisted(() => ({ departure: undefined as unknown }));
+const backend = vi.hoisted(() => ({
+  departure: undefined as unknown,
+  /** Every queries object handed to `useQueries`, in render order. */
+  subscriptions: [] as unknown[],
+}));
 
 vi.mock('convex/react', () => ({
-  useQueries: (queries: Record<string, { query: unknown }>) =>
-    Object.fromEntries(
+  useQueries: (queries: Record<string, { query: unknown }>) => {
+    backend.subscriptions.push(queries);
+    return Object.fromEntries(
       Object.entries(queries).map(([key, { query }]) => [
         key,
         getFunctionName(query as never) === 'managerTransfers:departureOf'
           ? backend.departure
           : undefined,
       ]),
-    ),
+    );
+  },
 }));
 
 vi.mock('next/navigation', () => ({
@@ -40,6 +47,15 @@ describe('EmployeeDeparted (the transfer plan, 7.4)', () => {
   afterEach(() => {
     unmountAll();
     backend.departure = undefined;
+    backend.subscriptions = [];
+  });
+
+  it('hands useQueries one queries object across renders, which it subscribes by identity', () => {
+    const retry = (): void => undefined;
+    const view = mount(<NotYourEmployee retry={retry} />);
+    act((): void => view.root.render(<NotYourEmployee retry={retry} />));
+    expect(backend.subscriptions.length).toBeGreaterThan(1);
+    expect(new Set(backend.subscriptions).size).toBe(1);
   });
 
   it('says whom the employee reports to since when, focuses its heading and offers the way home', async () => {

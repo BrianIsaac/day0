@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useQueries } from 'convex/react';
 import { useParams } from 'next/navigation';
 import type { FunctionReturnType } from 'convex/server';
@@ -51,12 +51,17 @@ export function EmployeeDeparted({ departure }: { departure: Departure }) {
  */
 export function NotYourEmployee({ retry }: { retry: () => void }) {
   const { agentId } = useParams<{ agentId: string }>();
-  const { departure }: Record<string, Departure | null | undefined | Error> = useQueries({
-    departure: {
-      query: api.managerTransfers.departureOf,
-      args: { agentId: agentId as Id<'agents'> },
-    },
-  });
+  // `useQueries` subscribes by the object's identity, so it is made once per employee.
+  const queries = useMemo(
+    () => ({
+      departure: {
+        query: api.managerTransfers.departureOf,
+        args: { agentId: agentId as Id<'agents'> },
+      },
+    }),
+    [agentId],
+  );
+  const { departure }: Record<string, Departure | null | undefined | Error> = useQueries(queries);
   const failed = departure instanceof Error ? departure.message : undefined;
   useEffect(() => {
     if (failed !== undefined) log.warn('departure read failed', { agentId, reason: failed });

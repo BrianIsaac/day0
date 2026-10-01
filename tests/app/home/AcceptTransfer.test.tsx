@@ -18,11 +18,14 @@ const backend = vi.hoisted(() => ({
   asked: [] as Array<{ name: string; args: unknown }>,
   /** When set, the acceptance answers only once the test calls it, as a slow round trip does. */
   hold: undefined as undefined | Promise<void>,
+  /** Every queries object handed to `useQueries`, in render order. */
+  subscriptions: [] as unknown[],
 }));
 
 vi.mock('convex/react', () => ({
-  useQueries: (queries: Record<string, { query: FunctionReference<'query'>; args: unknown }>) =>
-    Object.fromEntries(
+  useQueries: (queries: Record<string, { query: FunctionReference<'query'>; args: unknown }>) => {
+    backend.subscriptions.push(queries);
+    return Object.fromEntries(
       Object.entries(queries).map(([key, { query, args }]) => {
         backend.asked.push({ name: getFunctionName(query), args });
         // The live client hands a new object on every render, as a fresh decode does.
@@ -33,7 +36,8 @@ vi.mock('convex/react', () => ({
             : answer;
         return [key, fresh];
       }),
-    ),
+    );
+  },
   useMutation:
     (reference: unknown) =>
     async (args?: unknown): Promise<unknown> => {
@@ -157,6 +161,7 @@ describe('AcceptTransfer', () => {
     backend.calls = [];
     backend.asked = [];
     backend.hold = undefined;
+    backend.subscriptions = [];
     route.search = '';
     route.replaced = [];
   });
@@ -180,6 +185,15 @@ describe('AcceptTransfer', () => {
       name: 'transferAcceptance:transferPreview',
       args: { transferId: 'transfer-1' },
     });
+  });
+
+  it('hands useQueries one queries object across renders, which it subscribes by identity', () => {
+    backend.preview = PREVIEW;
+    const view = mount(<AcceptTransfer />);
+    act((): void => view.root.render(<AcceptTransfer />));
+    act((): void => view.root.render(<AcceptTransfer />));
+    expect(backend.subscriptions.length).toBeGreaterThan(1);
+    expect(new Set(backend.subscriptions).size).toBe(1);
   });
 
   it('says a refused read in the backend’s words, and closes by taking the request off the address', async () => {

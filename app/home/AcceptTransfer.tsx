@@ -1,6 +1,14 @@
 'use client';
 
-import { useEffect, useRef, useState, type FormEvent, type ReactNode, type RefObject } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+  type RefObject,
+} from 'react';
 import { useMutation, useQueries } from 'convex/react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { api } from '@convex/_generated/api';
@@ -50,13 +58,20 @@ export const TRANSFER_PARAMETER = 'transfer';
  *   and the `Error` the backend refused the read with.
  */
 function useTransferPreview(transferId: string): HandoverPreview | null | undefined | Error {
-  const { preview }: Record<string, HandoverPreview | null | undefined | Error> = useQueries({
-    preview: {
-      query: api.transferAcceptance.transferPreview,
-      // The backend validates the id; one that names no request is refused as a value above.
-      args: { transferId: transferId as Id<'managerTransfers'> },
-    },
-  });
+  // `useQueries` subscribes by the object's identity: a new one each render would subscribe again
+  // on every render, and the update each subscription brings would render again, without end.
+  const queries = useMemo(
+    () => ({
+      preview: {
+        query: api.transferAcceptance.transferPreview,
+        // The backend validates the id; one that names no request is refused as a value above.
+        args: { transferId: transferId as Id<'managerTransfers'> },
+      },
+    }),
+    [transferId],
+  );
+  const { preview }: Record<string, HandoverPreview | null | undefined | Error> =
+    useQueries(queries);
   return preview;
 }
 
