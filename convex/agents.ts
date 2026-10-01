@@ -27,6 +27,7 @@ import {
 import { agentReadsSource } from '../src/docs/agent-sources';
 import { isEvaluationAgent } from './metrics';
 import { isManagerLookupFailure } from '../src/surfaces/manager-lookup';
+import { MANAGER_ADDRESS_REFUSAL, isManagerAddressShaped } from '../src/agent/manager-address';
 import { shownEmployeeState, type CharterApproval } from '../src/work/state-labels';
 import {
   ONE_TO_ONE_PHASE_KINDS,
@@ -549,12 +550,6 @@ export const deploy = mutation({
   },
 });
 
-/** The longest address a mailbox can have (RFC 5321's path limit). */
-const MAX_EMAIL_LENGTH = 254;
-
-/** One `@`, a dotted domain and no spaces: enough to refuse a typo, not a validator. */
-const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
 /** The verdicts a surface keeps while its approval and credential stand. */
 const MANAGER_REPROBE_VERDICTS: ReadonlyArray<Doc<'surfaces'>['verdict']> = [
   'connected',
@@ -598,9 +593,7 @@ export const setBossEmail = mutation({
   handler: async (ctx, args): Promise<{ changed: boolean; reprobed: number }> => {
     const agent = await assertOwnsAgent(ctx, args.agentId);
     const bossEmail = args.bossEmail.trim();
-    if (bossEmail.length > MAX_EMAIL_LENGTH || !EMAIL_SHAPE.test(bossEmail)) {
-      throw new ConvexError('The manager must be an email address, such as name@company.com.');
-    }
+    if (!isManagerAddressShaped(bossEmail)) throw new ConvexError(MANAGER_ADDRESS_REFUSAL);
     if (isEvaluationAgent(agent) || isEvaluationAgent({ ...agent, bossEmail })) {
       throw new ConvexError("An evaluation agent's manager address is fixed by its run.");
     }
