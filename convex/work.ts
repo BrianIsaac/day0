@@ -7319,12 +7319,17 @@ export const needsYou = query({
       Promise.all(employees.map(async (agent) => await needsYouOfEmployee(ctx, agent, now))),
       incomingTransfersOf(ctx, caller, now),
     ]);
-    const entries = [...perEmployee.flat(), ...incoming.map(transferEntryOf)].sort(
-      longestWaitFirst,
-    );
+    const waiting = perEmployee.flat().sort(longestWaitFirst);
+    // No employee's page lists a handover, so every one stays in the entries
+    // returned (at most MAX_OPEN_TRANSFERS_PER_ADDRESS); the longest waits fill the rest.
+    const transfers = incoming.map(transferEntryOf);
+    const entries = [
+      ...transfers,
+      ...waiting.slice(0, Math.max(0, NEEDS_YOU_LIMIT - transfers.length)),
+    ].sort(longestWaitFirst);
     return {
-      entries: entries.slice(0, NEEDS_YOU_LIMIT),
-      total: entries.length,
+      entries,
+      total: waiting.length + transfers.length,
       waitingByEmployee: employees.map((agent, index) => ({
         agentId: agent._id,
         waiting: perEmployee[index]?.length ?? 0,

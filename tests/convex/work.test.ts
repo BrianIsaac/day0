@@ -7138,6 +7138,53 @@ describe('work.needsYou, the ninth kind: an employee to take on', (): void => {
     expect(inbox.waitingByEmployee).toEqual([{ agentId: tomas, waiting: 1 }]);
   });
 
+  it('sorts a handover newer than the other entries after them, by wait alone', async (): Promise<void> => {
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.UTC(2026, 9, 1, 12));
+    const harness = convexTest(schema, allConvexModules());
+    const { maya, planId } = await seed(harness);
+    const transferId = await harness
+      .withIdentity(OWNER)
+      .mutation(api.managerTransfers.ask, { agentId: maya, toAddress: PRIYA_ADDRESS });
+    const inbox = await harness.withIdentity(PRIYA).query(api.work.needsYou, {});
+    expect(inbox.entries.map((entry) => entry.key)).toEqual([
+      `plan:${planId}`,
+      `transfer:${transferId}`,
+    ]);
+  });
+
+  it('keeps every handover in the fifty it returns, since no employee’s page lists one', async (): Promise<void> => {
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.UTC(2026, 9, 1, 12));
+    const harness = convexTest(schema, allConvexModules());
+    const { maya, tomas } = await seed(harness);
+    await harness.run(async (ctx): Promise<void> => {
+      for (let index = 0; index < 55; index += 1) {
+        await ctx.db.insert('workItems', {
+          agentId: tomas,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: `REVOPS-${100 + index}`,
+          title: `Plan ${index}`,
+          contentSummary: 'Synthetic.',
+          contentRefs: [],
+          state: 'plan-pending',
+          planPendingAt: 10_000 + index,
+          observedAt: 1,
+          createdAt: 1,
+        });
+      }
+    });
+    const transferId = await harness
+      .withIdentity(OWNER)
+      .mutation(api.managerTransfers.ask, { agentId: maya, toAddress: PRIYA_ADDRESS });
+    const inbox = await harness.withIdentity(PRIYA).query(api.work.needsYou, {});
+    expect(inbox.entries).toHaveLength(50);
+    expect(inbox.total).toBe(57);
+    expect(inbox.entries.at(-1)?.key).toBe(`transfer:${transferId}`);
+    expect(inbox.entries[0]?.subject).toBe('Plan 0');
+  });
+
   it('reaches the named caller only: not the asker, not another account, not an unverified sign-in, and never an employee’s own tab', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { maya } = await seed(harness);
