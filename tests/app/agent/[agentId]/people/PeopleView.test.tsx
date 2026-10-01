@@ -550,6 +550,37 @@ describe('PeopleView', () => {
   });
 });
 
+describe('PeopleView on an installation that signs everyone in as one manager', () => {
+  afterEach(() => {
+    unmountAll();
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it('says why there is no Hand over under local-dev with the local sign-in, and offers it under customer-local', async () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    vi.stubEnv('NEXT_PUBLIC_DEV_NO_AUTH', 'true');
+    vi.resetModules();
+    const { PeopleView: LocalPeople } =
+      await import('../../../../../app/agent/[agentId]/people/PeopleView');
+    const { asEmployee: asLocalEmployee } = await import('../../../../fixtures/dom/employee');
+    settled({
+      'config:surfaceMode': { mode: 'real', label: 'real (local)', deploymentProfile: 'local-dev' },
+    });
+    const local = managerCard(mount(asLocalEmployee(<LocalPeople />)).container);
+    expect(local.textContent).toContain(
+      'This installation signs everyone in as one manager. Handing over needs each manager to sign in as themselves (the customer-local profile).',
+    );
+    expect(buttonNames(local)).toEqual([]);
+    unmountAll();
+
+    settled();
+    const customer = managerCard(mount(asLocalEmployee(<LocalPeople />)).container);
+    expect(customer.textContent).not.toContain('signs everyone in as one manager');
+    expect(buttonNames(customer)).toEqual(['Hand over']);
+  });
+});
+
 describe('the Manager card’s state and reads', () => {
   it('waits for the open request and the standing, and puts an open request before the standing', () => {
     expect(managerCardState(undefined, { standing: 'you' }, undefined)).toEqual({
