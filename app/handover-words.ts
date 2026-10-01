@@ -264,6 +264,41 @@ export function madeYouWords(name: string): string {
   return `${name} now reports to you.`;
 }
 
+/** The header's line for an employee that reports to its owner (plan 7.2). */
+export const REPORTS_TO_YOU = 'Reports to you';
+
+/** The header's link to People while a request is asked, before the address (plan 7.2). */
+export const HANDING_OVER_TO = 'handing over to';
+
+/** The header's word before the address an accepting request goes to (plan 7.2). */
+export const THEN = 'then';
+
+/**
+ * Where the header's line ends while a request is accepting: the employee is the owner's until
+ * its runs finish (plan 7.2).
+ *
+ * @param name - The employee.
+ */
+export function untilRunsFinish(name: string): string {
+  return ` until ${name}'s runs finish`;
+}
+
+/** What the header adds to an address that is not the owner's (section 11.2). */
+export const WHO_IS_NOT_YOU = ', who is not you';
+
+/** The header's link to People while the address is not the owner's. */
+export const CHOOSE_ON_PEOPLE = 'choose on People';
+
+/**
+ * The header's line when a chat surface could not find the manager: the manager, not the
+ * credential, is what failed, and with the free edit gone the address is the owner's own.
+ *
+ * @param reason - The surface's stored reason.
+ */
+export function managerLookupFailureLine(reason: string): string {
+  return `The chat surface could not find this manager: ${reason.replace(/\.$/, '')}. The credential still works; the manager’s address must be one the workspace knows.`;
+}
+
 /**
  * The acceptance dialog's title.
  *

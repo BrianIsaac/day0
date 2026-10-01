@@ -11,7 +11,20 @@ import { autonomousActionsOn } from '@/work/autonomy';
 import { employeeStateLabel, shownEmployeeState } from '@/work/state-labels';
 import { avatarById } from '@/agent/avatar-pets';
 import type { OneToOnePhase } from '@/agent/one-to-one-phase';
+import Link from 'next/link';
+import type { ManagerStanding } from '@/agent/manager-standing';
 import { Button } from '../../components/Button';
+import {
+  CHOOSE_ON_PEOPLE,
+  HANDING_OVER_TO,
+  managerLookupFailureLine,
+  REPORTS_TO_YOU,
+  THEN,
+  untilRunsFinish,
+  WHO_IS_NOT_YOU,
+  type OpenHandover,
+} from '../../handover-words';
+import { employeeTabHref } from './employee-tabs';
 import { INPUT_CLASS } from '../../components/Field';
 import { Pill } from '../../components/Pill';
 import { AgentPixelAvatar } from '../../home/PixelAvatar';
@@ -27,124 +40,74 @@ export function addressWithBreaks(address: string): ReactNode[] {
     .flatMap((part, index) => (index === 0 ? [part] : [<wbr key={index} />, part]));
 }
 
-/** What the line naming the employee's manager shows and changes. */
+/** What the line naming the employee's manager shows. */
 export interface ManagerLineProps {
-  readonly bossEmail: string;
+  readonly agent: Pick<Doc<'agents'>, '_id' | 'name' | 'bossEmail'>;
+  /** The employee's standing against the owner's address, undefined while it is read. */
+  readonly standing: ManagerStanding | undefined;
+  /** The handover open on the employee, null when none is, undefined while it is read. */
+  readonly open: OpenHandover | null | undefined;
   /** The stored reason of a chat surface whose probe could not find the manager. */
   readonly lookupFailure?: string;
-  readonly onChange: (bossEmail: string) => Promise<unknown>;
 }
 
 /**
- * Who the employee reports to, and the control that changes it (Q6), on the line under the
- * employee's name.
- *
- * The address is the one the chat surface looks up to find the manager's DM,
- * so a manager who left, or whose account Slack no longer finds, is replaced
- * here rather than by a reset. When a chat surface failed on that lookup the
- * line says so, because the card beside it would otherwise blame the credential.
+ * Who the employee reports to, on the line under its name (the transfer plan, section 7.2):
+ * "Reports to you", with an asked handover as a link to People, an accepting one as who it goes
+ * to once the runs finish, and an address that is not the owner's flagged with a link to People
+ * to choose (section 11.2). The line has no control: a handover is a dialog with an account of
+ * what happens, and People holds the only one (D14). Until the standing is read the line names
+ * the address it stores. When a chat surface failed on looking the manager up the line says so,
+ * because the card beside it would otherwise blame the credential.
  */
-export function ManagerLine({ bossEmail, lookupFailure, onChange }: ManagerLineProps) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(bossEmail);
-  const toggle = useRef<HTMLButtonElement>(null);
-  const change = useChange(toggle);
-  const close = (): void => {
-    setEditing(false);
-    toggle.current?.focus();
-  };
-  const save = (): void => {
-    const next = draft.trim();
-    change.run(() => onChange(next), {
-      done: `The employee now reports to ${next}.`,
-      refused: 'The manager was not changed.',
-      after: () => setEditing(false),
-    });
-  };
+export function ManagerLine({ agent, standing, open, lookupFailure }: ManagerLineProps) {
+  const people = employeeTabHref(agent._id, 'people');
+  const linkClass =
+    'text-[var(--color-fg-2)] underline decoration-[var(--color-link-line)] underline-offset-4 hover:decoration-[var(--color-accent)]';
+  const address = (
+    <span className="font-mono text-[var(--color-fg)] [overflow-wrap:anywhere]">
+      {addressWithBreaks(agent.bossEmail)}
+    </span>
+  );
+  const lead = standing?.standing === 'you' ? REPORTS_TO_YOU : <>Reports to {address}</>;
+  let line: ReactNode;
+  if (open?.state === 'asked') {
+    line = (
+      <>
+        {lead} ·{' '}
+        <Link href={people} className={linkClass}>
+          {HANDING_OVER_TO} {addressWithBreaks(open.toAddress)}
+        </Link>
+      </>
+    );
+  } else if (open?.state === 'accepting') {
+    line = (
+      <>
+        {lead}
+        {untilRunsFinish(agent.name)} · {THEN} {addressWithBreaks(open.toAddress)}
+      </>
+    );
+  } else if (standing?.standing === 'other') {
+    line = (
+      <>
+        {lead}
+        {WHO_IS_NOT_YOU} ·{' '}
+        <Link href={people} className={linkClass}>
+          {CHOOSE_ON_PEOPLE}
+        </Link>
+      </>
+    );
+  } else {
+    line = lead;
+  }
   return (
     <div>
-      {editing ? (
-        <form
-          className="flex flex-wrap items-center gap-2"
-          onSubmit={(event) => {
-            event.preventDefault();
-            save();
-          }}
-        >
-          <label className="text-sm text-[var(--color-muted)]" htmlFor="manager-email">
-            Reports to
-          </label>
-          <input
-            id="manager-email"
-            type="email"
-            autoFocus
-            value={draft}
-            disabled={change.busy}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Escape') {
-                event.preventDefault();
-                setDraft(bossEmail);
-                close();
-              }
-            }}
-            className={`${INPUT_CLASS} flex-1 font-mono sm:max-w-80`}
-          />
-          <Button
-            type="submit"
-            variant="primary"
-            size="small"
-            disabled={change.busy || draft.trim() === ''}
-          >
-            {change.busy ? 'Saving…' : 'Save'}
-          </Button>
-          <Button
-            size="small"
-            disabled={change.busy}
-            onClick={() => {
-              setDraft(bossEmail);
-              change.clear();
-              close();
-            }}
-          >
-            Cancel
-          </Button>
-        </form>
-      ) : (
-        <p className="flex flex-wrap items-center gap-x-2 text-sm text-[var(--color-muted)]">
-          <span className="min-w-0">
-            Reports to{' '}
-            <span className="font-mono text-[var(--color-fg)] [overflow-wrap:anywhere]">
-              {addressWithBreaks(bossEmail)}
-            </span>
-          </span>
-          <Button
-            ref={toggle}
-            variant="text"
-            size="small"
-            onClick={() => {
-              setDraft(bossEmail);
-              change.clear();
-              setEditing(true);
-            }}
-          >
-            Change manager
-          </Button>
-        </p>
-      )}
-      {editing ? (
-        <p className="mt-1 text-xs text-[var(--color-muted)]">
-          Decisions waiting in the previous manager&apos;s DM are sent again to the new one once the
-          chat surface finds them.
-        </p>
-      ) : null}
-      {lookupFailure && !editing ? (
+      <p className="text-sm text-[var(--color-muted)]">{line}</p>
+      {lookupFailure ? (
         <p className="mt-1 text-xs text-[var(--color-warn)]">
-          The chat surface could not find this manager: {lookupFailure.replace(/\.$/, '')}. The
-          credential still works; change the manager to someone the workspace knows.
+          {managerLookupFailureLine(lookupFailure)}
         </p>
       ) : null}
-      <StatusRegion outcome={change.outcome} />
     </div>
   );
 }
@@ -284,7 +247,8 @@ export interface EmployeeHeaderProps {
 
 /**
  * The employee page's header (round two section 3.3): the employee's face and name as the page's
- * one h1, who it reports to with Change manager (U9), the zone every time on the page is in with
+ * one h1, who it reports to and any handover under way (the transfer plan, section 7.2), the zone
+ * every time on the page is in with
  * its control (K), and beside them the office it works in and its state in the manager's words,
  * with the first week's stage under them once the employee is working. The autonomy switch and
  * the manager-DM setting are the Manage tab's.
@@ -304,7 +268,8 @@ export function EmployeeHeader({
   stage,
 }: EmployeeHeaderProps) {
   const surfaceConfig = useQuery(api.config.surfaceMode);
-  const setBossEmail = useMutation(api.agents.setBossEmail);
+  const open = useQuery(api.managerTransfers.openForAgent, { agentId: agent._id });
+  const standing = useQuery(api.agents.managerStanding, { agentId: agent._id });
   const setZone = useMutation(api.agents.setZone);
   const shown = shownEmployeeState(agent.state, charter);
   const status = employeeStateLabel(shown, autonomousActionsOn(agent), phase);
@@ -326,9 +291,10 @@ export function EmployeeHeader({
             {agent.name}
           </h1>
           <ManagerLine
-            bossEmail={agent.bossEmail}
+            agent={agent}
+            standing={standing}
+            open={open}
             lookupFailure={managerLookupFailure}
-            onChange={(bossEmail) => setBossEmail({ agentId: agent._id, bossEmail })}
           />
           <ZoneLine
             zone={agentZone(agent)}

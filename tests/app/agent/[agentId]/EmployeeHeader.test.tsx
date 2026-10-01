@@ -4,7 +4,7 @@ import { act } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { getFunctionName } from 'convex/server';
 import { describe, expect, it, vi } from 'vitest';
-import type { Doc } from '../../../../convex/_generated/dataModel';
+import type { Doc, Id } from '../../../../convex/_generated/dataModel';
 import {
   ManagerFeedbackNote,
   ProviderReconciliationControl,
@@ -158,42 +158,127 @@ describe("the employee's day on the page (N12, review M8)", (): void => {
   });
 });
 
-describe('the manager line', (): void => {
-  it('names the manager and offers the change on the header', (): void => {
+describe('the manager line (the transfer plan 7.2, D14)', (): void => {
+  const MIRA = { _id: 'agent-1', name: 'Mira', bossEmail: 'boss@day0.local' } as Pick<
+    Doc<'agents'>,
+    '_id' | 'name' | 'bossEmail'
+  >;
+  const OPEN = {
+    transferId: 'transfer-1' as Id<'managerTransfers'>,
+    agentId: 'agent-1' as Id<'agents'>,
+    toAddress: 'lead@day0.local',
+    state: 'asked' as const,
+    requestedAt: 1,
+    expiresAt: 2,
+  };
+
+  /** The line's text as a reader hears it, every tag dropped. */
+  function text(markup: string): string {
+    return markup
+      .replace(/<[^>]*>/g, '')
+      .replace(/&#x27;/g, "'")
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  it('says the employee reports to you, with no control: People holds the only one', (): void => {
     const markup = renderToStaticMarkup(
-      <ManagerLine bossEmail="boss@day0.local" onChange={async () => undefined} />,
+      <ManagerLine agent={MIRA} standing={{ standing: 'you' }} open={null} />,
     );
-    expect(markup).toContain('Reports to');
-    expect(markup).not.toMatch(/\bagent\b/i);
-    expect(markup).toContain('boss<wbr/>@day0.local');
-    expect(markup).toContain('Change manager');
-    expect(markup).not.toContain('could not find this manager');
+    expect(text(markup)).toBe('Reports to you');
+    expect(markup).not.toContain('<button');
+    expect(markup).not.toContain('<input');
+    expect(markup).not.toContain('Change manager');
+    expect(markup.replace(/<[^>]*>/g, ' ')).not.toMatch(/\bagent\b/i);
   });
 
-  it('wraps a long address after its plus and before its at, never mid-word (walk m32)', (): void => {
+  it('names the address until the standing is read, wrapped after its plus and before its at (walk m32)', (): void => {
     const markup = renderToStaticMarkup(
       <ManagerLine
-        bossEmail="day0-walk-20260930+clerk_test@example.com"
-        onChange={async () => undefined}
+        agent={{ ...MIRA, bossEmail: 'day0-walk-20260930+clerk_test@example.com' }}
+        standing={undefined}
+        open={undefined}
       />,
     );
     expect(markup).toContain('day0-walk-20260930+<wbr/>clerk_test<wbr/>@example.com');
     expect(markup).not.toMatch(/\bbreak-all\b/);
   });
 
-  it('says a failed manager lookup is the manager, not the credential', (): void => {
+  it('says an asked handover, the second half a link to People', (): void => {
+    const markup = renderToStaticMarkup(
+      <ManagerLine agent={MIRA} standing={{ standing: 'you' }} open={OPEN} />,
+    );
+    expect(text(markup)).toBe('Reports to you · handing over to lead@day0.local');
+    expect(markup).toMatch(
+      /<a[^>]*href="\/agent\/agent-1\/people"[^>]*>handing over to lead<wbr\/>@day0\.local<\/a>/,
+    );
+  });
+
+  it('says an accepting handover until the runs finish', (): void => {
     const markup = renderToStaticMarkup(
       <ManagerLine
-        bossEmail="left@day0.local"
+        agent={MIRA}
+        standing={{ standing: 'you' }}
+        open={{ ...OPEN, state: 'accepting', settleBy: 3 }}
+      />,
+    );
+    expect(text(markup)).toBe("Reports to you until Mira's runs finish · then lead@day0.local");
+    expect(markup).not.toContain('<a');
+  });
+
+  it('flags an address that is not the owner’s and sends the owner to People to choose (D17)', (): void => {
+    const markup = renderToStaticMarkup(
+      <ManagerLine
+        agent={{ ...MIRA, bossEmail: 'ana@day0.local' }}
+        standing={{ standing: 'other', bossEmail: 'ana@day0.local' }}
+        open={null}
+      />,
+    );
+    expect(text(markup)).toBe('Reports to ana@day0.local, who is not you · choose on People');
+    expect(markup).toMatch(/<a[^>]*href="\/agent\/agent-1\/people"[^>]*>choose on People<\/a>/);
+  });
+
+  it('names the address, unflagged, for an evaluation employee and an unverified owner', (): void => {
+    for (const standing of ['evaluation', 'unverified'] as const) {
+      const markup = renderToStaticMarkup(
+        <ManagerLine agent={MIRA} standing={{ standing }} open={null} />,
+      );
+      expect(text(markup)).toBe('Reports to boss@day0.local');
+    }
+  });
+
+  it('says a failed manager lookup is the manager, not the credential, without offering an edit', (): void => {
+    const markup = renderToStaticMarkup(
+      <ManagerLine
+        agent={MIRA}
+        standing={{ standing: 'you' }}
+        open={null}
         lookupFailure="the manager email left@day0.local is not a member of this Slack workspace (users_not_found)."
-        onChange={async () => undefined}
       />,
     );
     expect(markup).toContain(
-      'could not find this manager: the manager email left@day0.local is not a member of this Slack workspace (users_not_found). The',
+      'could not find this manager: the manager email left@day0.local is not a member of this Slack workspace (users_not_found). The credential still works; the manager’s address must be one the workspace knows.',
     );
-    expect(markup).toContain('credential still works; change the manager');
+    expect(markup).not.toContain('change the manager');
     expect(markup).not.toContain('..');
+  });
+
+  it('reads the open handover and the standing for the header, and changes nothing from it', (): void => {
+    backend.queries['managerTransfers:openForAgent'] = OPEN;
+    backend.queries['agents:managerStanding'] = { standing: 'you' };
+    try {
+      const markup = renderToStaticMarkup(
+        <EmployeeHeader
+          agent={{ ...MIRA, state: 'active', createdAt: 1, _creationTime: 1 } as Doc<'agents'>}
+          charter={null}
+        />,
+      );
+      expect(text(markup)).toContain('Reports to you · handing over to lead@day0.local');
+      expect(markup).not.toContain('Change manager');
+    } finally {
+      delete backend.queries['managerTransfers:openForAgent'];
+      delete backend.queries['agents:managerStanding'];
+    }
   });
 });
 

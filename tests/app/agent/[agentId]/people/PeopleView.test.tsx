@@ -22,6 +22,9 @@ vi.mock('convex/react', () => ({
       const name = getFunctionName(reference as never);
       backend.calls.push({ name, args });
       const refusal = backend.refusals[name];
+      // A refusal written as the transport's envelope reaches the page as a plain error, as an
+      // uncaught backend error does; any other is the `ConvexError` a refusal is.
+      if (refusal?.startsWith('[CONVEX')) throw new Error(refusal);
       if (refusal !== undefined) {
         const { ConvexError } = await import('convex/values');
         throw new ConvexError(refusal);
@@ -316,6 +319,21 @@ describe('PeopleView', () => {
     expect(focusedName()).toBe('Ask boss@day0.local');
   });
 
+  it('says a refusal that reaches the page in the transport’s envelope without it (re-pinned from the header’s Change manager)', async () => {
+    backend.refusals = {
+      'managerTransfers:ask':
+        '[CONVEX M(managerTransfers:ask)] [Request ID: 1] Server Error\nUncaught Error: That is not an e-mail address.\n    at handler (../convex/managerTransfers.ts:1:1)',
+    };
+    const view = mount(asEmployee(<PeopleView />));
+    await press(view.container, 'Hand over');
+    const address = openDialog().querySelector('input');
+    if (!address) throw new Error('no field');
+    typeInto(address, 'lead@day0');
+    await press(openDialog(), 'Ask lead@day0');
+    expect(said(openDialog())).toEqual(['That is not an e-mail address.']);
+    expect(focusedName()).toBe('Ask lead@day0');
+  });
+
   it('says nothing on the card once a refused ask is cancelled (m38), and gives focus back to Hand over', async () => {
     backend.refusals = {
       'managerTransfers:ask': 'lead@day0.local has too many handovers waiting.',
@@ -323,7 +341,11 @@ describe('PeopleView', () => {
     const view = mount(asEmployee(<PeopleView />));
 
     await press(view.container, 'Hand over');
-    await press(openDialog(), 'Ask them');
+    const address = openDialog().querySelector('input');
+    if (!address) throw new Error('no field');
+    typeInto(address, 'lead@day0.local');
+    await press(openDialog(), 'Ask lead@day0.local');
+    expect(said(openDialog())).toEqual(['lead@day0.local has too many handovers waiting.']);
     await press(openDialog(), 'Cancel');
 
     expect(document.querySelector('[role="dialog"]')).toBeNull();
