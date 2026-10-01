@@ -318,6 +318,57 @@ describe('manager transfer schema', (): void => {
     ]);
   });
 
+  it("keeps what an accepting request needs to finish the move later, and the notice's one send", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Maya',
+        userId: 'owner',
+        state: 'deployed',
+        createdAt: 1,
+      });
+      const sourceId = await ctx.db.insert('docSources', {
+        userId: 'lead',
+        label: 'Lead handbook',
+        kind: 'folder',
+        locator: '.',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const transferId = await ctx.db.insert('managerTransfers', {
+        agentId,
+        agentName: 'Maya',
+        fromOwnerKey: 'owner',
+        fromAddress: MANAGER_ADDRESS,
+        toAddress: 'lead@day0.local',
+        state: 'accepting',
+        requestedAt: 10,
+        expiresAt: 20,
+        decidedAt: 15,
+        toOwnerKey: 'lead',
+        toZone: 'Asia/Singapore',
+        toExcludedDocSourceIds: [sourceId],
+        settleBy: 900,
+        noticeSentAt: 11,
+        noticeProviderTs: '1759300000.000100',
+      });
+      const due = await ctx.db
+        .query('managerTransfers')
+        .withIndex('by_state_settle', (q) => q.eq('state', 'accepting').lte('settleBy', 1_000))
+        .collect();
+      return { transferId, row: await ctx.db.get(transferId), due: due.map((row) => row._id) };
+    });
+    expect(read.row).toMatchObject({
+      toZone: 'Asia/Singapore',
+      noticeSentAt: 11,
+      noticeProviderTs: '1759300000.000100',
+    });
+    expect(read.row?.toExcludedDocSourceIds).toHaveLength(1);
+    expect(read.due).toEqual([read.transferId]);
+  });
+
   it('refuses a state the request cannot be in', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     await expect(

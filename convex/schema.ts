@@ -1311,8 +1311,18 @@ export default defineSchema({
     declineReason: v.optional(v.string()),
     /** The acceptor's owner key, written at acceptance. */
     toOwnerKey: v.optional(v.string()),
+    /**
+     * The acceptor's browser zone and documentation choices, given at acceptance and kept so
+     * the move can apply them when an `accepting` request settles later, with no caller.
+     */
+    toZone: v.optional(v.string()),
+    toExcludedDocSourceIds: v.optional(v.array(v.id('docSources'))),
     /** While `accepting`: the deadline for runs in flight (`transferSettleBy`). */
     settleBy: v.optional(v.number()),
+    /** When the one DM notice to the named person was claimed for sending (D7); never re-sent. */
+    noticeSentAt: v.optional(v.number()),
+    /** The chat provider's message timestamp, the evidence the notice was delivered. */
+    noticeProviderTs: v.optional(v.string()),
     /** What the move did, as counts, for both managers' records; written when the employee moves. */
     outcome: v.optional(
       v.object({
@@ -1347,7 +1357,9 @@ export default defineSchema({
     /** The old manager's notices and the per-owner bounds; `_creationTime` ranges the rolling day. */
     .index('by_from_owner_state', ['fromOwnerKey', 'state'])
     /** The expiry sweep over `asked` rows. */
-    .index('by_state_expires', ['state', 'expiresAt']),
+    .index('by_state_expires', ['state', 'expiresAt'])
+    /** The settle sweep over `accepting` rows whose runs outlived `settleBy`. */
+    .index('by_state_settle', ['state', 'settleBy']),
 
   events: defineTable({
     agentId: v.id('agents'),
