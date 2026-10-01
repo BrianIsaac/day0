@@ -426,6 +426,18 @@ describe('AcceptTransfer', () => {
     expect(dialog().querySelector('textarea')?.value).toBe('');
   });
 
+  it('takes a refused decline’s words away with Back, so they never stand beside the reset answers (second pass)', async () => {
+    backend.preview = PREVIEW;
+    backend.refusals = { 'managerTransfers:decline': 'This handover was already accepted.' };
+    mount(<AcceptTransfer />);
+    await press(dialog(), 'Decline');
+    await press(dialog(), 'Decline');
+    expect(said(dialog())).toEqual(['This handover was already accepted.']);
+    await press(dialog(), 'Back');
+    expect(said(dialog())).toEqual([]);
+    backend.refusals = {};
+  });
+
   it('reveals the reason with one button and sends the decline with another, so the first click sends nothing', async () => {
     backend.preview = PREVIEW;
     mount(<AcceptTransfer />);

@@ -312,6 +312,8 @@ function TakeOn({ preview, change, notice, onClose, onAnswer }: TakeOnProps) {
                 size="large"
                 disabled={change.busy}
                 onClick={() => {
+                  // A refusal of the decline is not left beside the answers it no longer concerns.
+                  change.clear();
                   backFromReason.current = true;
                   setReason('');
                   setDeclining(false);
