@@ -17,10 +17,10 @@ import {
   refreshSession,
   safeReturnTo,
   sealedTokenClaims,
-  signedOutUriOf,
   startSignIn,
   type CustomerSignInSettings,
 } from './customer-oidc-server';
+import { signedOutUriOf } from './customer-sign-in-settings';
 import {
   CUSTOMER_SESSION_COOKIE,
   SIGN_IN_TRANSACTION_COOKIE,
