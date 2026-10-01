@@ -10,6 +10,11 @@ import { appendEvent } from './eventLog';
 import { ownerRetirements, type RetiredClaim, type RetiredRejection } from './retirements';
 import { internal } from './_generated/api';
 import { landedWritesOf } from '../src/work/landed-writes';
+import {
+  OPEN_MANAGER_TRANSFER_STATES,
+  TRANSFER_SETTLE_MS,
+  canMoveTransfer,
+} from '../src/agent/manager-transfer';
 
 /**
  * Every table whose rows belong to one agent through an `agentId` field.
@@ -740,21 +745,95 @@ async function retireEmployees(
 }
 
 /**
+ * The refusal for retiring an employee whose handover the named manager accepted and whose runs
+ * in flight are finishing: from then on the employee is theirs to keep or retire. A
+ * `ConvexError`'s data, which the retire dialog shows.
+ *
+ * @param name - The employee's name.
+ * @param toAddress - The address of the manager taking it on.
+ */
+export function retireDuringHandoverRefusal(name: string, toAddress: string): string {
+  return `${name} is being handed over to ${toAddress}, who has accepted, so ${name} can no longer be retired.`;
+}
+
+/**
+ * The refusal for deleting an owner's data while one of its employees' handovers is finishing,
+ * with the wait named. A `ConvexError`'s data, which the reset dialog shows.
+ *
+ * @param name - The employee being handed over.
+ * @param toAddress - The address of the manager taking it on.
+ */
+export function deleteDuringHandoverRefusal(name: string, toAddress: string): string {
+  const minutes = TRANSFER_SETTLE_MS / 60_000;
+  return `Your data cannot be deleted while ${name} is being handed over to ${toAddress}. The handover finishes when the work ${name} has in progress ends, within ${minutes} minutes; delete your data after that.`;
+}
+
+/**
+ * Close the open handover requests of employees about to be retired (the transfer plan, section
+ * 10.5): an `asked` request is cancelled with the retire as its reason, in the retire's own
+ * transaction; an `accepting` one refuses the whole retire, before anything is written, since
+ * its acceptance is irrevocable. A request the owner is named in is not touched: its employee is
+ * not the owner's until it moves.
+ *
+ * @param ctx - The retire's mutation context.
+ * @param agents - The employees to retire.
+ * @param refusal - The words for an employee whose handover is finishing.
+ * @param now - The retire time.
+ * @throws ConvexError with `refusal`'s words when any employee's handover is `accepting`.
+ */
+async function closeOpenTransfers(
+  ctx: MutationCtx,
+  agents: readonly Doc<'agents'>[],
+  refusal: (name: string, toAddress: string) => string,
+  now: number,
+): Promise<void> {
+  const open = (
+    await Promise.all(
+      agents.flatMap((agent) =>
+        OPEN_MANAGER_TRANSFER_STATES.map(async (state) =>
+          (
+            await ctx.db
+              .query('managerTransfers')
+              .withIndex('by_agent_state', (q) => q.eq('agentId', agent._id).eq('state', state))
+              .collect()
+          ).map((transfer) => ({ agent, transfer })),
+        ),
+      ),
+    )
+  ).flat();
+  const finishing = open.find(({ transfer }) => !canMoveTransfer(transfer.state, 'cancelled'));
+  if (finishing) {
+    throw new ConvexError(refusal(finishing.agent.name, finishing.transfer.toAddress));
+  }
+  for (const { transfer } of open) {
+    await ctx.db.patch(transfer._id, {
+      state: 'cancelled',
+      cancelReason: 'retired',
+      decidedAt: now,
+    });
+  }
+}
+
+/**
  * Retire one employee (decisions Q15 and N1): the Manage tab's Retire, once the manager has
  * typed its confirmation. Public; the caller must own the employee, and one already retired is
  * refused as not found. Real mode revokes what only it bound, deletes its working rows and
  * keeps one retirement row with an `agent.retired` event; the hosted office wipes it. What it
  * would do is `retirePreview`'s answer. Owner-level documentation and credentials are never
- * touched here: unlinking them retires every employee (`deleteMyData`).
+ * touched here: unlinking them retires every employee (`deleteMyData`). An open handover request
+ * for it is cancelled (reason `retired`); one the named manager has accepted and that is still
+ * finishing refuses the retire.
  *
  * @returns The retired employee's name.
- * @throws ConvexError when the employee holds more than one retirement keeps.
+ * @throws ConvexError when the employee holds more than one retirement keeps, or its handover is
+ *   finishing ({@link retireDuringHandoverRefusal}).
  */
 export const retire = mutation({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<{ agentName: string }> => {
     const identity = await getCallerOrThrow(ctx);
     const agent = await assertOwnsAgent(ctx, args.agentId);
+    await closeOpenTransfers(ctx, [agent], retireDuringHandoverRefusal, Date.now());
     await retireEmployees(ctx, identity.ownerKey, [agent], {
       single: true,
       unlinkDocumentation: false,
@@ -772,6 +851,12 @@ export const retire = mutation({
  * Owner-level documentation and credentials outlive it. With `alsoUnlinkDocumentation` every
  * owned source is unlinked and every owned credential is revoked with its ciphertext deleted;
  * the credential rows stay as the audit trail of what was held.
+ *
+ * Every open handover request of the owner's employees is cancelled (reason `retired`); while one
+ * is `accepting` nothing is deleted and the refusal names the wait. A request naming the caller
+ * leaves its employee alone, since it is not the caller's until it moves.
+ *
+ * @throws ConvexError with {@link deleteDuringHandoverRefusal}'s words while a handover is finishing.
  */
 export const deleteMyData = mutation({
   args: { alsoUnlinkDocumentation: v.optional(v.boolean()) },
@@ -782,6 +867,7 @@ export const deleteMyData = mutation({
       .query('agents')
       .withIndex('by_userId', (q) => q.eq('userId', userId))
       .collect();
+    await closeOpenTransfers(ctx, agents, deleteDuringHandoverRefusal, Date.now());
     const { unlinkedSources } = await retireEmployees(ctx, userId, agents, {
       single: false,
       unlinkDocumentation: args.alsoUnlinkDocumentation === true,
