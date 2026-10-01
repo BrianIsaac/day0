@@ -48,6 +48,8 @@ export function profileMismatch(serverProfile: string | undefined): string | und
 /** The account a session names, as the header's menu shows it. */
 export interface SessionAccount {
   readonly name?: string;
+  /** The token's `given_name`, else the first word of its `name`. */
+  readonly firstName?: string;
   readonly email?: string;
 }
 

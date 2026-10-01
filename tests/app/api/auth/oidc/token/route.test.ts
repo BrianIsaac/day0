@@ -55,7 +55,11 @@ describe('the company sign-in token route', (): void => {
     const answer = await token(cookie);
     expect(answer.status).toBe(200);
     expect(jwtClaims(String(answer.body.token))).toMatchObject({ email: 'priya@acme.test' });
-    expect(answer.body.account).toEqual({ name: 'Priya Raman', email: 'priya@acme.test' });
+    expect(answer.body.account).toEqual({
+      name: 'Priya Raman',
+      firstName: 'Priya',
+      email: 'priya@acme.test',
+    });
     expect(answer.response.headers.get('cache-control')).toBe('no-store');
   });
 

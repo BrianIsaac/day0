@@ -377,17 +377,23 @@ export async function sessionOf(
   return openSession(settings.sessionSecret, sealed, now);
 }
 
-/** The account a token names: its `name` (else `given_name`) and `email`, when they are strings. */
-function accountOf(idToken: string): SessionAccount {
+/** A claim's trimmed text, or undefined when it is not a non-empty string. */
+function claimText(claims: Readonly<Record<string, unknown>>, name: string): string | undefined {
+  const value = claims[name];
+  return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined;
+}
+
+/** The account a token names: its `name` (else `given_name`), first name and `email`. */
+export function accountOf(idToken: string): SessionAccount {
   const claims = sealedTokenClaims(idToken) ?? {};
-  const name =
-    typeof claims.name === 'string' && claims.name.trim() !== ''
-      ? claims.name.trim()
-      : typeof claims.given_name === 'string' && claims.given_name.trim() !== ''
-        ? claims.given_name.trim()
-        : undefined;
-  const email = typeof claims.email === 'string' ? claims.email.trim() : undefined;
-  return { ...(name ? { name } : {}), ...(email ? { email } : {}) };
+  const name = claimText(claims, 'name') ?? claimText(claims, 'given_name');
+  const firstName = claimText(claims, 'given_name') ?? name?.split(/\s+/)[0];
+  const email = claimText(claims, 'email');
+  return {
+    ...(name ? { name } : {}),
+    ...(firstName ? { firstName } : {}),
+    ...(email ? { email } : {}),
+  };
 }
 
 function issued(session: CustomerSession): NextResponse {
