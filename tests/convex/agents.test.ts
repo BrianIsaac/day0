@@ -229,7 +229,6 @@ describe("agents.deploy and the manager's verified address", (): void => {
     await expect(
       harness.run(async (ctx) => await ctx.db.query('agents').collect()),
     ).resolves.toEqual([]);
-    vi.unstubAllEnvs();
   });
 
   it("stores an evaluation address on a bed as the employee's evaluation marker, still from a verified caller", async (): Promise<void> => {
@@ -258,7 +257,6 @@ describe("agents.deploy and the manager's verified address", (): void => {
       [baselineId, 'eval-baseline-r1-1758150000000@day0.local'],
     ]);
     await expect(owner.query(api.agents.rosterForUser, {})).resolves.toEqual([]);
-    vi.unstubAllEnvs();
   });
 });
 

@@ -142,22 +142,24 @@ export function verifiedAddressOf(
   identity: UserIdentity,
   read: EnvReader = deploymentEnv,
 ): string | undefined {
+  return addressVerified(identity, read) ? normaliseManagerAddress(identity.email) : undefined;
+}
+
+/** Whether the caller's token asserts its address verified, by its issuer's rule (D3). */
+function addressVerified(identity: UserIdentity, read: EnvReader): boolean {
   const claim = emailVerifiedClaim(identity);
-  const verified = ((): boolean => {
-    const issuer = callerIssuer(identity, read);
-    switch (issuer) {
-      case 'clerk':
-      case 'local':
-        return claim === true;
-      case 'customer':
-        return claim === true || (claim === undefined && customerOidcEmailTrusted(read));
-      default: {
-        const unknown: never = issuer;
-        throw new Error(`unhandled issuer ${String(unknown)}`);
-      }
+  const issuer = callerIssuer(identity, read);
+  switch (issuer) {
+    case 'clerk':
+    case 'local':
+      return claim === true;
+    case 'customer':
+      return claim === true || (claim === undefined && customerOidcEmailTrusted(read));
+    default: {
+      const unknown: never = issuer;
+      throw new Error(`unhandled issuer ${String(unknown)}`);
     }
-  })();
-  return verified ? normaliseManagerAddress(identity.email) : undefined;
+  }
 }
 
 /** The verified caller; throws the mode's not-authenticated message for an anonymous one. */
