@@ -80,8 +80,8 @@ const NO_PROMISED_RETURN =
   'boss leaves open is named at the last question.';
 
 /**
- * The close's note: one thanks, then what the replies left open, named as the charter's open
- * questions, then the tool, whose line drafts the charter and does not thank again. On the
+ * The close's note: one thanks, then what is still open after the last answer (question 7 asks
+ * the boss to settle what was left open), named as the charter's open questions, then the tool, whose line drafts the charter and does not thank again. On the
  * v0.12.0 walk the close thanked twice (the turn, then the tool's "friendly closing line") and
  * named neither thread question 7 had noted. Which replies left something open is the model's
  * reading of the conversation, not a word list (N20).
@@ -89,10 +89,11 @@ const NO_PROMISED_RETURN =
 const CLOSE =
   'Where the one-to-one stands: the boss has answered all seven questions. In this turn, ' +
   'thank the boss once, in one short sentence. Then name, in one short sentence each, what ' +
-  "the boss's replies left open, saying it goes on the charter as an open question: a " +
-  'question they asked back, an answer they were not sure of, something they asked to come ' +
-  'back to, or anything they raised at the last question; name nothing when nothing was ' +
-  'left open. Ask nothing, and promise nothing but the charter. Then call the dayOneComplete ' +
+  "is still open after the boss's last answer, saying it goes on the charter as an open " +
+  'question: a question they asked back, an answer they were not sure of, something they ' +
+  'asked to come back to, or anything they raised at the last question; name nothing that ' +
+  'their last answer settled, and nothing when nothing is open. Ask nothing, and promise ' +
+  'nothing but the charter. Then call the dayOneComplete ' +
   'tool: its closing line only says you will now draft the charter for their review, and ' +
   'does not thank them again.';
 

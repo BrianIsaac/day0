@@ -143,10 +143,11 @@ describe('dayOneTurnNote', (): void => {
     const close =
       'Where the one-to-one stands: the boss has answered all seven questions. In this turn, ' +
       'thank the boss once, in one short sentence. Then name, in one short sentence each, what ' +
-      "the boss's replies left open, saying it goes on the charter as an open question: a " +
-      'question they asked back, an answer they were not sure of, something they asked to come ' +
-      'back to, or anything they raised at the last question; name nothing when nothing was ' +
-      'left open. Ask nothing, and promise nothing but the charter. Then call the dayOneComplete ' +
+      "is still open after the boss's last answer, saying it goes on the charter as an open " +
+      'question: a question they asked back, an answer they were not sure of, something they ' +
+      'asked to come back to, or anything they raised at the last question; name nothing that ' +
+      'their last answer settled, and nothing when nothing is open. Ask nothing, and promise ' +
+      'nothing but the charter. Then call the dayOneComplete ' +
       'tool: its closing line only says you will now draft the charter for their review, and ' +
       'does not thank them again.';
     expect(dayOneTurnNote(7)).toBe(close);
