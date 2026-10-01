@@ -28,9 +28,9 @@ export function topicTitle(topicIndex: number): string {
 
 /**
  * What the one-to-one's counter says for the question at an index (from 0, held to the seven):
- * "Question n of 7". It counts the questions the employee has put, a follow-up among them, which
- * is what the close gate counts (`topicIndexOf`), and names no topic: after a follow-up the
- * employee may still be on an earlier one than the count reaches (the round review's r2).
+ * "Question n of 7". It counts the questions the employee has put, which is what the close gate
+ * counts (`topicIndexOf`) and the question the turn is told to ask (`dayOneTurnNote`). It names
+ * no topic, which the employee is asked never to announce (the round review's r2).
  */
 export function questionLine(topicIndex: number): string {
   const index = Math.max(0, Math.min(Math.floor(topicIndex), DAY_ONE_TOPIC_COUNT - 1));
@@ -48,7 +48,8 @@ export interface DayOneTurnMetadata {
  * This is the close gate's own count (`withEarnedClose` honours `dayOneComplete` only after seven
  * replies, and puts the scripted question for this index when a turn asks nothing), so the
  * progress line and the gate never disagree: the seventh segment lights exactly when the 1:1 may
- * close. A follow-up question counts as the next one, as it does for the gate.
+ * close. It is also the question the turn is told to ask (`dayOneTurnNote`), so the count is the
+ * question asked, not an estimate of it.
  *
  * @param replies - `managerReplies` of the history the turn answers.
  */

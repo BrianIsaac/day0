@@ -483,6 +483,17 @@ interface SetupReads {
 }
 
 /**
+ * The line that names the deployment a verb writes to once `proveTarget` has
+ * proved it. The proof is a dry-run push, which the line says, so a real run's
+ * first line is never read as the run being a dry run.
+ *
+ * @param target - The proved target.
+ */
+function targetLine(target: CloudTarget): string {
+  return `The target is ${target.deployment}, the project's default production deployment, proved by a dry-run push.`;
+}
+
+/**
  * Every refusal and every read the first setup makes before it writes: the
  * checkout, the Vercel project's framework preset, the target and its proof,
  * an empty deployment, the settings, and the Vercel project's names.
@@ -503,9 +514,7 @@ async function readSetup(options: CloudOptions, io: CloudIo): Promise<SetupReads
   // config refuses every push, the dry run's included, until it has an identity.
   const proven = proveTarget(io, target, 'target');
   if (proven !== undefined) return proven;
-  io.log(
-    `The target is ${target.deployment}, the project's default production deployment (dry run).`,
-  );
+  io.log(targetLine(target));
   const resumed = firstPushState(io, target, checkout.release);
   if ('failure' in resumed) return resumed;
   // Read before the settings are asked for, so nobody types a key into a
@@ -706,9 +715,7 @@ function readUpgrade(options: CloudOptions, io: CloudIo): UpgradeReads | Failure
   if ('failure' in place) return place;
   const proven = proveTarget(io, target, 'push');
   if (proven !== undefined) return proven;
-  io.log(
-    `The target is ${target.deployment}, the project's default production deployment (dry run).`,
-  );
+  io.log(targetLine(target));
   const verdict = readReleaseVerdict((args) => convexOn(io, target, args), checkout);
   if (!verdict.allowed) return { failure: verdict.reason };
   if (verdict.from === undefined) {

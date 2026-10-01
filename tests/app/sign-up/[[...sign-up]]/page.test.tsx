@@ -20,7 +20,7 @@ vi.mock('next/navigation', () => ({
 }));
 
 import SignUpPage from '../../../../app/sign-up/[[...sign-up]]/page';
-import { clerkAppearance } from '../../../../app/clerk-appearance';
+import { clerkSignInAppearance } from '../../../../app/clerk-appearance';
 
 /**
  * The page's markup on a Clerk step, which Clerk routes by path.
@@ -52,20 +52,22 @@ describe('the sign-up page', (): void => {
   it("dresses Clerk's sign-up in the shared appearance, so its text reads on the dark page", (): void => {
     clerk.appearance.length = 0;
     render();
-    expect(clerk.appearance).toEqual([expect.objectContaining(clerkAppearance)]);
+    const { theme, variables, options } = clerkSignInAppearance;
+    expect(clerk.appearance).toEqual([expect.objectContaining({ theme, variables, options })]);
   });
 
-  it("leaves the card's title and subtitle out on the first step only, where the page's h1 says it, and keeps the mark (walk m26)", (): void => {
+  it("leaves the card's header out on the first step only, where the page's h1 says it, and keeps the mark (walk m26)", (): void => {
     clerk.appearance.length = 0;
     render();
     render('/sign-up/verify-email-address');
     const [first, later] = clerk.appearance;
+    // Re-pinned (wave 9): the mark is above the card, so the whole header is left out and the
+    // mark's own box is only spaced, never hidden.
     expect(first).toMatchObject({
-      options: clerkAppearance.options,
-      elements: { headerTitle: { display: 'none' }, headerSubtitle: { display: 'none' } },
+      options: clerkSignInAppearance.options,
+      elements: { header: { display: 'none' }, logoBox: { marginBottom: '1.75rem' } },
     });
-    expect(first).not.toHaveProperty('elements.logoBox');
-    expect(later).toBe(clerkAppearance);
+    expect(later).toBe(clerkSignInAppearance);
   });
 
   it('says what the page is in a TSDoc block on its default export, as the sign-in page does (m7)', (): void => {
