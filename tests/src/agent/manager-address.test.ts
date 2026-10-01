@@ -36,6 +36,14 @@ describe('normaliseManagerAddress', (): void => {
     expect(normaliseManagerAddress('  Boss@Day0.Local ')).toBe('boss@day0.local');
   });
 
+  it("folds only ASCII letters, so no other character can fold into somebody else's address", (): void => {
+    // U+212A KELVIN SIGN lower-cases to a plain k under full Unicode case folding.
+    expect('a@\u212Aestrel.example'.toLowerCase()).toBe('a@kestrel.example');
+    expect(normaliseManagerAddress('A@\u212Aestrel.example')).toBe('a@\u212Aestrel.example');
+    expect(sameManagerAddress('a@\u212Aestrel.example', 'a@kestrel.example')).toBe(false);
+    expect(normaliseManagerAddress('Ana@Kestrel.example')).toBe('ana@kestrel.example');
+  });
+
   it('answers undefined for an address that is not shaped like one, or for no address', (): void => {
     expect(normaliseManagerAddress('not an address')).toBeUndefined();
     expect(normaliseManagerAddress('   ')).toBeUndefined();

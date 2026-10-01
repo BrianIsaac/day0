@@ -41,14 +41,17 @@ export function isManagerAddressShaped(address: string): boolean {
 }
 
 /**
- * The one spelling of an address: trimmed and lower-cased.
+ * The one spelling of an address: trimmed, with its ASCII letters lower-cased.
+ * Only ASCII is folded: full Unicode case folding maps some characters onto
+ * others (U+212A KELVIN SIGN onto `k`), which would let an address an issuer
+ * verified for one person compare equal to another person's.
  *
  * @param address - The address as given, or nothing.
  * @returns The normalised address, or undefined when there is none or it is not shaped like one.
  */
 export function normaliseManagerAddress(address: string | undefined): string | undefined {
   if (address === undefined || !isManagerAddressShaped(address)) return undefined;
-  return address.trim().toLowerCase();
+  return address.trim().replace(/[A-Z]/g, (letter) => letter.toLowerCase());
 }
 
 /**
