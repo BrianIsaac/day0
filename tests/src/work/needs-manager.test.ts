@@ -6,6 +6,7 @@ import {
   attemptsSpent,
   parkedRowNeedsManager,
   skillWaitsOnManager,
+  skillsWaitingOnManager,
   stoppedRowNeedsManager,
   stoppedRowOffersMove,
 } from '../../../src/work/needs-manager';
@@ -108,5 +109,24 @@ describe('oneToOneWaitsOnManager (D4 (b))', (): void => {
     expect(oneToOneWaitsOnManager({ state: 'day-one-in-progress' })).toBe(false);
     expect(oneToOneWaitsOnManager({ state: 'charter-pending' })).toBe(false);
     expect(oneToOneWaitsOnManager({ state: 'active' })).toBe(false);
+  });
+});
+
+describe('skillsWaitingOnManager (the Skills tab badge, C-m1)', (): void => {
+  it('counts each skill whose next move is the manager’s once, and none a live run holds or that ended', (): void => {
+    const now = 1_000_000;
+    const skill = (id: string, fields: Partial<Doc<'skills'>>): Doc<'skills'> =>
+      ({ _id: id, name: id, ...fields }) as Doc<'skills'>;
+    const proposed = skill('a', { state: 'proposed' });
+    const rows = [
+      proposed,
+      proposed,
+      skill('b', { state: 'failed', authoringAttempts: 3 }),
+      skill('c', { state: 'authoring' }),
+      skill('d', { state: 'authoring', authoringRunId: 'run' as never, authoringClaimedAt: now }),
+      skill('e', { state: 'registered' }),
+      skill('f', { state: 'retired' }),
+    ];
+    expect(skillsWaitingOnManager(rows, now)).toBe(3);
   });
 });

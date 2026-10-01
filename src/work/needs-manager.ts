@@ -69,6 +69,23 @@ export function skillWaitsOnManager(skill: Doc<'skills'>, now: number): boolean 
 }
 
 /**
+ * How many of an employee's skills wait on the manager, the Skills tab's badge (the wave 10
+ * review, C-m1): proposals (an offered adoption among them), failed drafts and adoptions (Retry,
+ * or Give up at the third attempt), and parked or stalled rows no run holds; each row once,
+ * whichever of the tab's lists carry it.
+ *
+ * @param rows - The rows of the tab's lists, a row listed twice counted once.
+ * @param now - The instant an authoring claim is judged against.
+ */
+export function skillsWaitingOnManager(rows: readonly Doc<'skills'>[], now: number): number {
+  const counted = new Set<Id<'skills'>>();
+  for (const row of rows) {
+    if (skillWaitsOnManager(row, now)) counted.add(row._id);
+  }
+  return counted.size;
+}
+
+/**
  * Whether only the manager can release a parked row.
  *
  * A deferral waits on a connection or a read grant, both the manager's to
