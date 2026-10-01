@@ -27,6 +27,7 @@ import { recordRegisteredVersion, storedVersionRefusal } from './skillVersions';
 import { recordOffer } from './skillAdoption';
 import { readRefValidator, surfaceToolsValidator } from './schema';
 import { countsAsAuthoringAttempt } from '../src/work/skill-library';
+import { openRevision } from './skillControls';
 
 /**
  * Skill registry + propose-author-register lifecycle. Public surfaces
@@ -878,84 +879,22 @@ export const reject = mutation({
 });
 
 /**
- * Where a skill's source work may be for the skill to be revised: waiting, so
- * nothing can reach an approved plan and the executor's pick while the skill
- * is unregistered. A claimed or plan-pending row would be approved (by the
- * manager, or by the sweep under autonomy) and failed by the executor for
- * want of a registered skill, since neither approval nor the pick waits for
- * one under revision.
- */
-const REVISABLE_SOURCE_STATES: ReadonlySet<Doc<'workItems'>['state']> = new Set([
-  'discovered',
-  'needs-skill',
-  'deferred',
-]);
-
-/**
- * Send an agent-authored skill back through authoring before its first use.
- * Public; the caller must own the skill. Clears the body, re-queues the rows
- * waiting for the skill and writes `skill.revision-requested`.
+ * Ask for a revision of an agent-authored skill (the enhancements plan, section 4.1, item 6).
+ * Public; the caller must own the skill. The name the Skills tab has always called; the control
+ * itself is `skillControls.askForRevision`, and both open the revision the same way
+ * (`skillControls.openRevision`).
  *
- * Registration makes a skill callable, so revision is deliberately narrower
- * than rejection: the manager may reopen only the proposal's own skill while
- * no execution has ever claimed it and its source work is still waiting
- * (`REVISABLE_SOURCE_STATES`). Once a work row names the skill under
- * `skillId`, its body is part of a durable run and this transition is
- * permanently closed.
+ * A revision is a new version, never an overwrite: a new row in `approved` with `revisionOf`
+ * this one is written and checked while this row keeps running, and at its registration this row
+ * becomes `superseded` in the same transaction. History is kept, so a skill an execution has
+ * already claimed can be revised, whatever its source work is doing. Writes
+ * `skill.revision-requested` naming the new row.
  */
 export const requestRevision = mutation({
   args: { skillId: v.id('skills') },
-  handler: async (ctx, args): Promise<{ ok: true }> => {
+  handler: async (ctx, args): Promise<{ ok: true; revisionId: Id<'skills'> }> => {
     const row = await assertOwnsSkill(ctx, args.skillId);
-    if (row.sourceType !== 'agent-authored' || row.state !== 'registered') {
-      throw new Error('only a registered agent-authored skill can be revised');
-    }
-    const executed = await ctx.db
-      .query('workItems')
-      .withIndex('by_skill', (q) => q.eq('skillId', args.skillId))
-      .first();
-    if (executed) {
-      throw new Error('cannot revise a skill after an execution has claimed it');
-    }
-    if (!row.proposedFor) {
-      throw new Error('cannot revise an authored skill without its source work');
-    }
-    const sourceWork = await ctx.db.get(row.proposedFor);
-    if (
-      !sourceWork ||
-      sourceWork.agentId !== row.agentId ||
-      !REVISABLE_SOURCE_STATES.has(sourceWork.state)
-    ) {
-      throw new Error('cannot revise while the source work has moved on');
-    }
-
-    await ctx.db.patch(args.skillId, {
-      state: 'approved',
-      body: '',
-      sandboxId: undefined,
-      verificationLog: undefined,
-      refusedBody: undefined,
-      refusedSmokeTest: undefined,
-      pendingSmokeTest: undefined,
-      registeredAt: undefined,
-      ...RELEASED,
-    });
-    await requeueWaitingWork(
-      ctx,
-      row,
-      {
-        decision: 'needs-skill',
-        reason: 'registered skill sent back for revision before first execution',
-      },
-      { queued: true },
-    );
-    await appendEvent(ctx, {
-      agentId: row.agentId,
-      type: 'skill.revision-requested',
-      payload: { skillId: args.skillId, name: row.name },
-      createdAt: Date.now(),
-    });
-    return { ok: true };
+    return { ok: true, revisionId: await openRevision(ctx, row) };
   },
 });
 

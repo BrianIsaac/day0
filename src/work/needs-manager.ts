@@ -1,5 +1,6 @@
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import { holdsLiveAuthoringClaim } from '../lib/skill-authoring';
+import { MAX_AUTHORING_ATTEMPTS } from './skill-library';
 import {
   providerReconciliationEntries,
   retryRequiresProviderReconciliation,
@@ -44,8 +45,21 @@ export const SKILL_WAITS_ON_MANAGER_STATES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Whether a failed skill has spent its authoring attempts ("Attempt 3 of 3"): Retry is withdrawn
+ * and the manager's move is Give up. It still waits on the manager, as every failed skill does.
+ *
+ * @param skill - The skill's state and the attempts its authoring claims counted.
+ */
+export function attemptsSpent(skill: Pick<Doc<'skills'>, 'state' | 'authoringAttempts'>): boolean {
+  return skill.state === 'failed' && (skill.authoringAttempts ?? 0) >= MAX_AUTHORING_ATTEMPTS;
+}
+
+/**
  * Whether the next move on a skill is the manager's: its state waits on a
- * manager's click and no authoring run holds it.
+ * manager's click and no authoring run holds it. A failed skill waits on the
+ * manager whatever its attempts: Retry until the third, Give up after it.
+ * A skill taken out of use (`retired`, `superseded`) or ended (`rejected`)
+ * waits on nobody.
  *
  * @param skill - The skill a parked row waits on.
  * @param now - The instant an authoring claim is judged against.

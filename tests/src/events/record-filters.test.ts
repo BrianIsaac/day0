@@ -21,6 +21,12 @@ describe('the Record tab filters', (): void => {
     }
   });
 
+  it('lists the manager’s skill controls as decisions, and a Give up and a withdrawal as set aside too (10-C)', (): void => {
+    expect(RECORD_FILTER_OF['skill.retired']).toEqual(['decisions']);
+    expect(RECORD_FILTER_OF['skill.revoked']).toEqual(['decisions', 'refused']);
+    expect(RECORD_FILTER_OF['skill.given-up']).toEqual(['decisions', 'refused']);
+  });
+
   it('lists a handover asked or cancelled as the manager’s decision, a decline as a decision and a refusal, and an expiry as set aside', (): void => {
     expect(RECORD_FILTER_OF['manager.transfer-asked']).toEqual(['decisions']);
     expect(RECORD_FILTER_OF['manager.transfer-cancelled']).toEqual(['decisions']);

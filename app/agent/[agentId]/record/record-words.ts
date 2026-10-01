@@ -301,8 +301,30 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
   },
   'skill.rejected': (p) => `You rejected the skill ${text(p.name) ?? 'unnamed'}`,
   'skill.revision-requested': (p) =>
-    `You sent the skill ${text(p.name) ?? 'unnamed'} back to be written again`,
-  'skill.retired': (p) => `The skill ${text(p.name) ?? 'unnamed'} was retired${because(p.reason)}`,
+    // A row an older release wrote names no revision: its revision overwrote the body in place.
+    typeof p.revisionId === 'string'
+      ? `You asked for a revision of the skill ${text(p.name) ?? 'unnamed'}; it keeps running until the revision registers`
+      : `You sent the skill ${text(p.name) ?? 'unnamed'} back to be written again`,
+  'skill.retired': (p) =>
+    `The skill ${text(p.name) ?? 'unnamed'} was retired${
+      p.withdrawn === true ? ' when you withdrew it from every employee' : ''
+    }${because(p.reason)}`,
+  'skill.revoked': (p) => {
+    const holders = listed(
+      Array.isArray(p.holders)
+        ? p.holders.map((holder: { agentName?: unknown }) => holder.agentName)
+        : undefined,
+    );
+    return `You withdrew ${
+      typeof p.version === 'number' ? `version ${p.version} of ` : ''
+    }the skill ${text(p.name) ?? 'unnamed'} from every employee who held it${
+      holders ? ` (${holders})` : ''
+    }${because(p.reason)}`;
+  },
+  'skill.given-up': (p) => {
+    const attempts = counted(p.attempts, 'attempt');
+    return `You gave up on the skill ${text(p.name) ?? 'unnamed'}${attempts ? ` after ${attempts}` : ''}`;
+  },
   'skill.authoring-superseded': (p) =>
     `Writing the skill ${text(p.name) ?? 'unnamed'} was taken over${
       duration(p.heldForMs) ? `; the last run held it ${duration(p.heldForMs)}` : ''
@@ -454,6 +476,10 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
       trigger ? `: ${REQUEUED_BECAUSE[trigger] ?? trigger}` : ''
     }`;
   },
+  'work.waiting-for-skill': (p, subject) =>
+    `${itemOf(subject)} went back to waiting for the skill ${text(p.name) ?? 'it needs'}${because(
+      p.reason,
+    )}`,
   'work.reevaluation': (p) =>
     `${counted(p.readmitted, 'parked item') ?? 'Parked items'} sent back to be evaluated: ${
       REQUEUED_BECAUSE[text(p.trigger) ?? ''] ?? 'a policy changed'

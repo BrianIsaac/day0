@@ -47,6 +47,8 @@ import { surfaceHandoverOf, type SurfaceHandover } from '../src/surfaces/handove
 import { assertCredentialOfOwner, credentialOwnerRefusal } from './handoverFence';
 import { isDay0FixedEndpoint } from '../src/surfaces/fixed-endpoints';
 import { log } from '../src/lib/logger';
+import { stampRecheckDueOnSurfaces } from './skillVersions';
+import { allowlistChangedReason, reconnectedReason } from '../src/work/skill-controls';
 
 const MAX_LADDER_PATHS = 3;
 const MAX_PROBE_ATTEMPTS = 12;
@@ -1650,7 +1652,9 @@ function frozenTools(
  * the row and the connected event name any tool it withheld. A probe that resolves a
  * different manager than the row held writes `manager.changed` (Q6), so the
  * ledger shows who the approver became and when, and any open request
- * delivered to another DM is sent again to this one.
+ * delivered to another DM is sent again to this one. A connection made again
+ * after the surface stopped being connected stamps "Re-check due" on the
+ * employee's registered skills that act on it (A13, `skill.recheck-due`).
  */
 export const recordConnected = internalMutation({
   args: {
@@ -1734,6 +1738,14 @@ export const recordConnected = internalMutation({
     // planner read as dead may never have been stored as anything but connected.
     await redraftPlansDraftedWithout(ctx, surface, args.verifiedAt);
     if (transitioned) {
+      // A connection made again may answer differently from the one the employee's skills were
+      // checked against (A13): each acting on this surface is due a re-check, and keeps running.
+      await stampRecheckDueOnSurfaces(ctx, {
+        agentId: surface.agentId,
+        slugs: [surface.slug],
+        reasonFor: reconnectedReason,
+        now: args.verifiedAt,
+      });
       const readScope = `${surface.slug}:read`;
       if (!(await readRevokedSinceApproval(ctx, surface, readScope))) {
         await grantScopeInTransaction(ctx, surface.agentId, readScope, 'surface');
@@ -2493,7 +2505,8 @@ const APPROVED_TOOLS_LIMIT = 200;
  * with what it added and removed. A tool taken off leaves the stored list at
  * once; the surface is probed at once so the tools the provider offers from
  * the new list reach the row, and no tool the provider does not offer is
- * ever stored.
+ * ever stored. A list that changed stamps "Re-check due" on the employee's
+ * registered skills that act on the surface (A13, `skill.recheck-due`).
  *
  * @throws ConvexError when the surface is not connected, or the list is
  *   empty, repeats a tool or passes the limit.
@@ -2534,17 +2547,24 @@ export const approveTools = mutation({
       toolArguments: (surface.toolArguments ?? []).filter((entry) => approved.has(entry.tool)),
       withheldTools: stillWithheld.length > 0 ? stillWithheld : undefined,
     });
+    const added = tools.filter((tool) => !before.has(tool));
+    const removed = [...before].filter((tool) => !tools.includes(tool));
     await appendEvent(ctx, {
       agentId: surface.agentId,
       type: 'surface.tools-approved',
-      payload: {
-        surfaceId: surface._id,
-        tools,
-        added: tools.filter((tool) => !before.has(tool)),
-        removed: [...before].filter((tool) => !tools.includes(tool)),
-      },
+      payload: { surfaceId: surface._id, tools, added, removed },
       createdAt: now,
     });
+    // A changed list is a change the employee's skills on this surface were not checked against
+    // (A13): each is due a re-check, and keeps running meanwhile.
+    if (added.length > 0 || removed.length > 0) {
+      await stampRecheckDueOnSurfaces(ctx, {
+        agentId: surface.agentId,
+        slugs: [surface.slug],
+        reasonFor: allowlistChangedReason,
+        now,
+      });
+    }
     await ctx.scheduler.runAfter(0, internal.surfaceActions.probeInternal, {
       surfaceId: surface._id,
     });

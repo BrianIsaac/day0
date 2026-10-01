@@ -8940,3 +8940,146 @@ describe('a scheduled step whose row a reset deleted (step 47, P4-7)', (): void 
     ).resolves.toMatchObject({ ok: false });
   });
 });
+
+describe('an approved item whose skill is not callable (E-1, 10-C)', (): void => {
+  afterEach((): void => {
+    restoreSurfaceMode();
+  });
+
+  /** The item's skill taken out of use before the run began, as a Retire leaves it. */
+  async function seedWithoutCallableSkill(harness: Harness): Promise<Seeded> {
+    const seeded = await seed(harness, 'mock');
+    await harness.run(async (ctx) => {
+      for (const row of await ctx.db.query('skills').collect()) {
+        await ctx.db.patch(row._id, { state: 'retired', retiredReason: 'retired by the manager' });
+      }
+    });
+    return seeded;
+  }
+
+  it('an item with no callable skill parks behind the skill instead of failing', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seedWithoutCallableSkill(harness);
+
+    const result = await harness
+      .withIdentity(OWNER)
+      .action(api.workActions.executeApprovedPlan, { workItemId });
+
+    const reason =
+      'the skill kanban-comment-and-close is not callable yet, so this waits for it to register';
+    expect(result).toEqual({ ok: false, reason });
+    const parked = await readItem(harness, workItemId);
+    expect(parked).toMatchObject({
+      state: 'needs-skill',
+      verdict: {
+        decision: 'needs-skill',
+        reason,
+        suggestedSkillName: 'kanban-comment-and-close',
+        suggestedSkillShape: { surfaceClass: 'kanban', operation: 'comment-and-close' },
+      },
+    });
+    expect(parked.plan).toBeUndefined();
+    // The proposal step asked for the skill, and the item waits behind it.
+    const proposed = await harness.run(async (ctx) =>
+      (await ctx.db.query('skills').collect()).filter((row) => row.state === 'proposed'),
+    );
+    expect(proposed).toEqual([
+      expect.objectContaining({
+        agentId,
+        name: 'kanban-comment-and-close',
+        surfaceClass: 'kanban',
+        operation: 'comment-and-close',
+        proposedFor: workItemId,
+      }),
+    ]);
+    expect(parked.proposedSkillId).toBe(proposed[0]?._id);
+    const events = await harness.run(async (ctx) => await ctx.db.query('events').collect());
+    expect(events.filter((event) => event.type === 'work.failed')).toEqual([]);
+    expect(events.filter((event) => event.type === 'work.execution-claimed')).toEqual([]);
+  });
+
+  it('never waits behind a retired row of the same name', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seedWithoutCallableSkill(harness);
+    const retired = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('skills', {
+          agentId,
+          name: 'kanban-comment-and-close',
+          description: 'Comment on and close a ticket.',
+          body: '# Close',
+          sourceType: 'agent-authored',
+          state: 'retired',
+          surfaceClass: 'kanban',
+          operation: 'comment-and-close',
+          retiredReason: 'retired by the manager',
+          createdAt: 2,
+        }),
+    );
+
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+
+    const parked = await readItem(harness, workItemId);
+    expect(parked.state).toBe('needs-skill');
+    expect(parked.proposedSkillId).not.toBe(retired);
+  });
+
+  it('proposes the skill afresh when the only row of its name was retired', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seedWithoutCallableSkill(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('skills', {
+        agentId,
+        name: 'kanban-comment-and-close',
+        description: 'Comment on and close a ticket.',
+        body: '# Close',
+        sourceType: 'agent-authored',
+        state: 'retired',
+        surfaceClass: 'kanban',
+        operation: 'comment-and-close',
+        createdAt: 2,
+      });
+    });
+
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+
+    const linked = (await readItem(harness, workItemId)).proposedSkillId;
+    expect(linked).toBeDefined();
+    if (linked === undefined) return;
+    const proposal = await harness.run(async (ctx) => await ctx.db.get(linked));
+    expect(proposal).toMatchObject({ name: 'kanban-comment-and-close', state: 'proposed' });
+  });
+
+  it('waits behind a row of the name still being written rather than proposing another', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seedWithoutCallableSkill(harness);
+    const failing = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('skills', {
+          agentId,
+          name: 'kanban-comment-and-close',
+          description: 'Comment on and close a ticket.',
+          body: '',
+          sourceType: 'agent-authored',
+          state: 'failed',
+          surfaceClass: 'kanban',
+          operation: 'comment-and-close',
+          authoringAttempts: 1,
+          createdAt: 2,
+        }),
+    );
+
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+
+    expect(await readItem(harness, workItemId)).toMatchObject({
+      state: 'needs-skill',
+      proposedSkillId: failing,
+    });
+    const rows = await harness.run(async (ctx) => await ctx.db.query('skills').collect());
+    expect(rows.filter((row) => row.state === 'proposed')).toEqual([]);
+  });
+});

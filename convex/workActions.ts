@@ -116,6 +116,7 @@ import type { ExecutionOutput, LandedWrite, SkillShape } from '../src/work/types
 import {
   sameSkillShape,
   skillOperationLabel,
+  skillNameFor,
   skillShapeFor,
   skillSurfacePhrase,
   type ShapeSurface,
@@ -177,6 +178,8 @@ import {
   toolRefusal,
   UNKNOWN_SURFACE,
 } from '../src/surfaces/policy';
+import { notCallableItemReason } from '../src/work/skill-controls';
+import { proposeBehindParkedWork } from './skillControls';
 
 /**
  * Node actions for the work loop - Layer-2 evaluation, Layer-3 plan
@@ -816,6 +819,53 @@ export const draftPlanInternal = internalAction({
   },
 });
 
+/**
+ * Park an approved item the executor found no callable skill for at `needs-skill` behind the
+ * skill its shape needs (E-1), and ask the proposal step for that skill when no row of its name
+ * may still become callable. The item waits for the skill's registration, which re-queues it.
+ *
+ * @param ctx - The executor's action context.
+ * @param item - The approved item.
+ * @param candidate - The item as the matcher read it.
+ * @param shape - The shape the matcher looked for.
+ * @returns The executor's answer: not run, and why.
+ */
+async function parkBehindMissingSkill(
+  ctx: ActionCtx,
+  item: Doc<'workItems'>,
+  candidate: WorkCandidate,
+  shape: SkillShape,
+): Promise<{ ok: false; reason: string }> {
+  const name = skillNameFor(shape);
+  const reason = notCallableItemReason(name);
+  const rationale = `No callable skill covers ${skillOperationLabel(shape)} for this approved item.`;
+  const parked = await ctx.runMutation(internal.skillControls.parkForMissingSkill, {
+    workItemId: item._id,
+    name,
+    reason,
+    rationale,
+    shape: { surfaceClass: shape.surfaceClass, operation: shape.operation },
+  });
+  if (!parked.parked) return { ok: false, reason: 'the item left plan-approved before its run' };
+  if (parked.behind === null) {
+    await proposeBehindParkedWork(ctx, {
+      agentId: item.agentId,
+      workItemIds: [item._id],
+      proposal: {
+        name,
+        description: skillDescriptionFor(shape),
+        rationale,
+        requiredScopes: [
+          ...new Set([...inferRequiredPermissions(candidate), `${candidate.sourceSystem}:write`]),
+        ],
+        surfaceClass: shape.surfaceClass,
+        operation: shape.operation,
+      },
+    });
+  }
+  return { ok: false, reason };
+}
+
 async function executeApprovedPlanHandler(
   ctx: ActionCtx,
   args: { workItemId: Id<'workItems'> },
@@ -847,18 +897,12 @@ async function executeApprovedPlanHandler(
   // the skill that runs is the skill the verdict promised.
   const shapeSurfaces: readonly ShapeSurface[] =
     SURFACE_MODE === 'real' ? await loadSurfaces(ctx, agentId) : [];
-  const pickedSkill = findMatchingSkillForCandidate(
-    candidate,
-    skills,
-    skillShapeFor(candidate, shapeSurfaces, SURFACE_MODE),
-  );
+  const shape = skillShapeFor(candidate, shapeSurfaces, SURFACE_MODE);
+  const pickedSkill = findMatchingSkillForCandidate(candidate, skills, shape);
   if (!pickedSkill) {
-    const reason = `no registered skill matches source surface ${candidate.sourceSystem}`;
-    await ctx.runMutation(internal.work.setFailed, {
-      workItemId: args.workItemId,
-      reason,
-    });
-    return { ok: false, reason };
+    // E-1: a skill retired, withdrawn, superseded or still being written since the plan was
+    // approved is waited for, not failed into a Retry that fails the same way again.
+    return await parkBehindMissingSkill(ctx, item, candidate, shape);
   }
   // Nothing above this line touches a model or an adapter, so a caller that
   // loses the claim costs a handful of reads and stops here.

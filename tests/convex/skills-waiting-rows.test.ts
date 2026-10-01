@@ -503,30 +503,37 @@ describe('an authoring run that does not register the skill', (): void => {
   });
 });
 
-describe('a registered skill sent back for revision', (): void => {
-  it('parks every item queued for it, and the next registration re-queues them all', async (): Promise<void> => {
+describe('a registered skill with a revision being written', (): void => {
+  it('leaves every item queued for it with the running skill, and the revision registers in its place', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     const harness = convexTest(contractSchema(), allConvexModules());
     const { first, second, skillId } = await seedTwoWaitingForOneSkill(harness);
     await register(harness, skillId, await approveAndClaim(harness, skillId));
+    const queued = [
+      (await readItem(harness, first)).state,
+      (await readItem(harness, second)).state,
+    ];
 
-    await harness.withIdentity(OWNER).mutation(api.skills.requestRevision, { skillId });
+    const { revisionId } = await harness
+      .withIdentity(OWNER)
+      .mutation(api.skills.requestRevision, { skillId });
 
-    for (const workItemId of [first, second]) {
-      expect(await readItem(harness, workItemId)).toMatchObject({
-        state: 'needs-skill',
-        verdict: {
-          decision: 'needs-skill',
-          reason: 'registered skill sent back for revision before first execution',
-        },
-      });
-    }
+    // Nothing waits on the revision: the skill they were queued for is still callable.
+    expect([
+      (await readItem(harness, first)).state,
+      (await readItem(harness, second)).state,
+    ]).toEqual(queued);
+    expect((await readSkill(harness, skillId)).state).toBe('registered');
 
-    await register(harness, skillId, await claim(harness, skillId));
+    await register(harness, revisionId, await claim(harness, revisionId));
 
-    expect((await readItem(harness, first)).state).toBe('discovered');
-    expect((await readItem(harness, second)).state).toBe('discovered');
+    expect((await readSkill(harness, revisionId)).state).toBe('registered');
+    expect((await readSkill(harness, skillId)).state).toBe('superseded');
+    expect([
+      (await readItem(harness, first)).state,
+      (await readItem(harness, second)).state,
+    ]).toEqual(queued);
   });
 });
 

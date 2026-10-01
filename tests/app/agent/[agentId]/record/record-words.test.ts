@@ -275,6 +275,102 @@ describe('recordWords', (): void => {
     );
   });
 
+  it('says a revision is written beside the running skill, and an older in-place one as it was (10-C)', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'skill.revision-requested',
+          payload: { name: 'kanban-comment-and-close', revisionId: 's2' },
+        },
+        subject,
+      ),
+    ).toBe(
+      'You asked for a revision of the skill kanban-comment-and-close; it keeps running until the revision registers.',
+    );
+    expect(
+      recordWords(
+        { type: 'skill.revision-requested', payload: { name: 'kanban-comment-and-close' } },
+        subject,
+      ),
+    ).toBe('You sent the skill kanban-comment-and-close back to be written again.');
+  });
+
+  it('says a retire, a withdrawal from every employee and a Give up in the manager’s words (10-C)', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'skill.retired',
+          payload: { name: 'kanban-comment-and-close', reason: 'it closes the wrong tickets' },
+        },
+        subject,
+      ),
+    ).toBe('The skill kanban-comment-and-close was retired: it closes the wrong tickets.');
+    expect(
+      recordWords(
+        {
+          type: 'skill.retired',
+          payload: {
+            name: 'kanban-comment-and-close',
+            reason: 'it closes the wrong tickets',
+            withdrawn: true,
+          },
+        },
+        subject,
+      ),
+    ).toBe(
+      'The skill kanban-comment-and-close was retired when you withdrew it from every employee: it closes the wrong tickets.',
+    );
+    expect(
+      recordWords(
+        {
+          type: 'skill.revoked',
+          payload: {
+            name: 'kanban-comment-and-close',
+            version: 2,
+            reason: 'it closes the wrong tickets',
+            holders: [
+              { skillId: 's1', agentId: 'a1', agentName: 'Priya' },
+              { skillId: 's2', agentId: 'a2', agentName: 'Mateo' },
+            ],
+          },
+        },
+        subject,
+      ),
+    ).toBe(
+      'You withdrew version 2 of the skill kanban-comment-and-close from every employee who held it (Priya, Mateo): it closes the wrong tickets.',
+    );
+    expect(
+      recordWords(
+        {
+          type: 'skill.given-up',
+          payload: {
+            name: 'analytics-refresh-value',
+            reason: 'given up after 3 attempts',
+            attempts: 3,
+          },
+        },
+        subject,
+      ),
+    ).toBe('You gave up on the skill analytics-refresh-value after 3 attempts.');
+    expect(
+      recordWords(
+        {
+          type: 'work.waiting-for-skill',
+          payload: {
+            workItemId: 'w1',
+            name: 'kanban-comment-and-close',
+            reason:
+              'the skill kanban-comment-and-close was retired, so this waits for a skill again',
+            previousState: 'plan-approved',
+          },
+        },
+        { name: 'Mira', item: 'Close REVOPS-1' },
+      ),
+    ).toBe(
+      '“Close REVOPS-1” went back to waiting for the skill kanban-comment-and-close: the skill kanban-comment-and-close was retired, so this waits for a skill again.',
+    );
+  });
+
   it('says a dismissal took the item out of the inbox and kept it on the Work tab (m16)', (): void => {
     expect(
       recordWords(

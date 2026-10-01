@@ -246,9 +246,27 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'skill.approved': (payload) => `skill approved: ${text(payload.name) ?? 'unnamed'}`,
   'skill.rejected': (payload) => `skill rejected: ${text(payload.name) ?? 'unnamed'}`,
   'skill.revision-requested': (payload) =>
-    `skill sent back to be written again: ${text(payload.name) ?? 'unnamed'}`,
+    typeof payload.revisionId === 'string'
+      ? `skill revision asked for: ${text(payload.name) ?? 'unnamed'}`
+      : `skill sent back to be written again: ${text(payload.name) ?? 'unnamed'}`,
   'skill.retired': (payload) =>
-    `skill retired: ${text(payload.name) ?? 'unnamed'}${because(payload.reason)}`,
+    `skill retired${payload.withdrawn === true ? ', withdrawn from every employee' : ''}: ${
+      text(payload.name) ?? 'unnamed'
+    }${because(payload.reason)}`,
+  'skill.revoked': (payload) => {
+    const holders = Array.isArray(payload.holders)
+      ? payload.holders.flatMap((holder: { agentName?: unknown }) => text(holder.agentName) ?? [])
+      : [];
+    return `skill withdrawn from every employee: ${text(payload.name) ?? 'unnamed'}${
+      typeof payload.version === 'number' ? ` v${payload.version}` : ''
+    }${holders.length > 0 ? `, ${holders.join(', ')}` : ''}${because(payload.reason)}`;
+  },
+  'skill.given-up': (payload) =>
+    `skill given up: ${text(payload.name) ?? 'unnamed'}${
+      typeof payload.attempts === 'number'
+        ? ` after ${payload.attempts} ${payload.attempts === 1 ? 'attempt' : 'attempts'}`
+        : ''
+    }`,
   'skill.authoring-superseded': (payload) =>
     `skill authoring taken over: ${text(payload.name) ?? 'unnamed'}${
       duration(payload.heldForMs) ? `, the last run held it ${duration(payload.heldForMs)}` : ''
@@ -357,6 +375,8 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     const trigger = text(payload.trigger);
     return `sent back to be evaluated again${trigger ? `: ${REQUEUE_TRIGGER_WORDS[trigger] ?? trigger}` : ''}`;
   },
+  'work.waiting-for-skill': (payload) =>
+    `waiting for a skill again: ${text(payload.name) ?? 'unnamed'}${because(payload.reason)}`,
   'work.reevaluation': (payload) =>
     `${counted(payload.readmitted, 'parked item') ?? 'parked items'} sent back to be evaluated: ${
       REQUEUE_TRIGGER_WORDS[text(payload.trigger) ?? ''] ?? 'a policy changed'
@@ -522,6 +542,9 @@ const RECORD_KINDS: Readonly<Partial<Record<EventType, Exclude<RecordKind, 'note
   'work.actions-rejected': 'refused',
   'work.claim-refused': 'refused',
   'skill.rejected': 'refused',
+  'skill.retired': 'withheld',
+  'skill.revoked': 'withheld',
+  'skill.given-up': 'withheld',
   'skill.authoring-refused': 'refused',
   'skill.verification-failed': 'refused',
   'surface.rejected': 'refused',
@@ -542,6 +565,7 @@ const RECORD_KINDS: Readonly<Partial<Record<EventType, Exclude<RecordKind, 'note
   'work.actions-pending': 'held',
   'work.plan-held': 'held',
   'skill.proposed': 'held',
+  'work.waiting-for-skill': 'held',
   'surface.proposed': 'held',
 };
 

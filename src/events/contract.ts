@@ -506,11 +506,52 @@ export interface SkillApprovedPayload extends SkillNamed {
 /** The payload of `skill.rejected`. */
 export type SkillRejectedPayload = SkillNamed;
 
-/** The payload of `skill.revision-requested`. */
-export type SkillRevisionRequestedPayload = SkillNamed;
+/**
+ * The payload of `skill.revision-requested`: the manager asked for a revision. Since 10-C a
+ * revision is a new row (`revisionId`) written while the current one keeps running; a row an
+ * older release sent back in place names none.
+ */
+export interface SkillRevisionRequestedPayload extends SkillNamed {
+  readonly revisionId?: SkillId;
+}
 
-/** The payload of `skill.retired`. */
-export type SkillRetiredPayload = SkillReason;
+/**
+ * The payload of `skill.retired`: one employee's row taken out of its use, by the operator's
+ * `retireUnshaped` or the manager's Retire (10-C). The version and the other holders stay unless
+ * the retire was one employee's share of a withdrawal from every employee.
+ */
+export interface SkillRetiredPayload extends SkillReason {
+  /** The library version the row held, where it held one. */
+  readonly versionId?: Id<'skillVersions'>;
+  /** Set when the row was retired because its version was withdrawn from every employee. */
+  readonly withdrawn?: true;
+  /** The approved items that went back to waiting for a skill. */
+  readonly returnedItems?: readonly WorkItemId[];
+}
+
+/** One employee's row a withdrawal from every employee retired. */
+export interface SkillRevokedHolder {
+  readonly skillId: SkillId;
+  readonly agentId: Id<'agents'>;
+  readonly agentName: string;
+}
+
+/**
+ * The payload of `skill.revoked`: a version withdrawn from every employee who held it (A12),
+ * written once, on the ledger of the employee whose card the manager withdrew it from, naming
+ * every holder it retired. Each holder's own ledger carries its `skill.retired`.
+ */
+export interface SkillRevokedPayload extends SkillReason {
+  readonly versionId: Id<'skillVersions'>;
+  readonly version: number;
+  readonly holders: readonly SkillRevokedHolder[];
+}
+
+/** The payload of `skill.given-up`: a failed skill ended by the manager's Give up. */
+export interface SkillGivenUpPayload extends SkillReason {
+  /** The authoring attempts it had made. */
+  readonly attempts: number;
+}
 
 /** The payload of `skill.authoring-superseded`. */
 export interface SkillAuthoringSupersededPayload extends SkillNamed {
@@ -808,6 +849,19 @@ export interface WorkScopeSkipOverruledPayload extends WorkItemNamed {
   readonly basis: string;
   readonly namedBy?: string;
   readonly overruled?: string[];
+}
+
+/**
+ * The payload of `work.waiting-for-skill`: an approved item went back to `needs-skill` because the
+ * skill it would have run was taken out of use (Retire, Withdraw) or was not callable when its run
+ * began (E-1). Its approved plan went with it.
+ */
+export interface WorkWaitingForSkillPayload extends WorkItemNamed {
+  /** The row of the name that may still become callable, which the item waits behind. */
+  readonly skillId?: SkillId;
+  readonly name: string;
+  readonly reason: string;
+  readonly previousState: Doc<'workItems'>['state'];
 }
 
 /** The payload of `work.requeued`. */
@@ -1259,6 +1313,8 @@ export interface EventPayloads {
   'skill.rejected': SkillRejectedPayload;
   'skill.revision-requested': SkillRevisionRequestedPayload;
   'skill.retired': SkillRetiredPayload;
+  'skill.revoked': SkillRevokedPayload;
+  'skill.given-up': SkillGivenUpPayload;
   'skill.authoring-superseded': SkillAuthoringSupersededPayload;
   'skill.authoring-claimed': SkillAuthoringClaimedPayload;
   'skill.authoring': SkillAuthoringPayload;
@@ -1307,6 +1363,7 @@ export interface EventPayloads {
   'work.discovered': WorkDiscoveredPayload;
   'work.scope-skip-overruled': WorkScopeSkipOverruledPayload;
   'work.requeued': WorkRequeuedPayload;
+  'work.waiting-for-skill': WorkWaitingForSkillPayload;
   'work.reevaluation': WorkReevaluationPayload;
   'work.claim-refused': WorkClaimRefusedPayload;
   'work.evaluated': WorkEvaluatedPayload;
@@ -1418,6 +1475,8 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'skill.rejected',
   'skill.revision-requested',
   'skill.retired',
+  'skill.revoked',
+  'skill.given-up',
   'skill.authoring-superseded',
   'skill.authoring-claimed',
   'skill.authoring',
@@ -1466,6 +1525,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'work.discovered',
   'work.scope-skip-overruled',
   'work.requeued',
+  'work.waiting-for-skill',
   'work.reevaluation',
   'work.claim-refused',
   'work.evaluated',

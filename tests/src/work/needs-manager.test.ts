@@ -3,6 +3,7 @@ import type { Doc, Id } from '../../../convex/_generated/dataModel';
 import { AUTHORING_LEASE_MS } from '../../../src/lib/skill-authoring';
 import {
   oneToOneWaitsOnManager,
+  attemptsSpent,
   parkedRowNeedsManager,
   skillWaitsOnManager,
   stoppedRowNeedsManager,
@@ -41,6 +42,32 @@ describe('needs-manager rules', (): void => {
       ),
     ).toBe(true);
     expect(skillWaitsOnManager(skill({ state: 'registered' }), NOW)).toBe(false);
+  });
+
+  it('withdraws Retry at the third failed attempt, and only from a failed skill', (): void => {
+    expect(attemptsSpent(skill({ state: 'failed', authoringAttempts: 2 }))).toBe(false);
+    expect(attemptsSpent(skill({ state: 'failed', authoringAttempts: 3 }))).toBe(true);
+    expect(attemptsSpent(skill({ state: 'failed', authoringAttempts: 4 }))).toBe(true);
+    expect(attemptsSpent(skill({ state: 'failed' }))).toBe(false);
+    expect(attemptsSpent(skill({ state: 'authoring', authoringAttempts: 3 }))).toBe(false);
+  });
+
+  it('keeps a skill at its third failed attempt on the manager, for Give up', (): void => {
+    const spent = skill({ state: 'failed', authoringAttempts: 3 });
+    expect(skillWaitsOnManager(spent, NOW)).toBe(true);
+    expect(
+      parkedRowNeedsManager(
+        row({ state: 'needs-skill', proposedSkillId: SKILL_ID }),
+        new Map([[SKILL_ID, spent]]),
+        NOW,
+      ),
+    ).toBe(true);
+  });
+
+  it('leaves a row parked behind a skill taken out of use with nobody until it is proposed again', (): void => {
+    for (const state of ['retired', 'superseded', 'rejected'] as const) {
+      expect(skillWaitsOnManager(skill({ state }), NOW)).toBe(false);
+    }
   });
 
   it('counts every deferral and a skill wait only while the skill is the manager’s', (): void => {
