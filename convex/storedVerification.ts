@@ -175,6 +175,9 @@ export const verifyStoredSkill = internalAction({
         rowReason: stop.log,
         reason: stop.reason,
         eventType: 'skill.verification-failed',
+        // A row that is not callable may hold a copy an earlier stop parked; it goes with the
+        // verdict (the second pass). A registered row's body is its own verified one.
+        dropsStoredCopy: skill.state !== 'registered',
       });
     }
     return await stopShortOfVerdict(ctx, {

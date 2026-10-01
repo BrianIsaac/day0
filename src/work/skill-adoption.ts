@@ -316,20 +316,23 @@ export interface ParkedBodyFields {
   readonly body: string;
   readonly pendingSmokeTest?: string;
   readonly verificationLog?: string;
+  readonly offeredVersionId?: string;
 }
 
 /**
  * Whether a row's parked body is a copy of a stored version (an adoption's, parked when its check
- * stopped short) rather than a draft the employee wrote. Such a copy registers only under its
- * version's checks, and only while the row is still offered that version (the wave 10 review,
- * B1): the authoring action refuses one whose offer is gone.
+ * stopped short) rather than a draft the employee wrote. A row that carries an offer never holds
+ * a draft of its own (Write a new one instead sets the offer aside first), so its parked body is
+ * the copy whatever a later park wrote in its log; without an offer, the log's opening marks one.
+ * Such a copy registers only under its version's checks, and only while the row is still offered
+ * that version (the wave 10 review, B1): the authoring action refuses one whose offer is gone.
  *
  * @param row - The row, as the authoring claim read it.
  */
 export function holdsParkedStoredCopy(row: ParkedBodyFields): boolean {
+  if (row.body === '' || row.pendingSmokeTest === undefined) return false;
   return (
-    row.body !== '' &&
-    row.pendingSmokeTest !== undefined &&
+    row.offeredVersionId !== undefined ||
     (row.verificationLog?.startsWith(PARKED_CHECK_OPENING) ?? false)
   );
 }

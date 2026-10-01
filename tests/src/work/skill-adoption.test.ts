@@ -292,6 +292,17 @@ describe('parkedCheckLog and holdsParkedStoredCopy (the wave 10 review, B1)', ()
     ).toBe(false);
     expect(holdsParkedStoredCopy({ body: '# Body', verificationLog: log })).toBe(false);
   });
+
+  it('takes a parked body on a row that carries an offer for a copy, whatever a later park logged', (): void => {
+    expect(
+      holdsParkedStoredCopy({
+        body: '# Body',
+        pendingSmokeTest: 'CASES = []',
+        verificationLog: 'sandbox verification skipped - no sandbox available',
+        offeredVersionId: 'version-1',
+      }),
+    ).toBe(true);
+  });
 });
 
 describe('stalledWords (the wave 10 review, A-m6)', (): void => {

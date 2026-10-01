@@ -52,7 +52,7 @@ import {
   harnessToolsNamed,
   type NamedHarnessSurface,
 } from '../src/work/skill-library';
-import { holdsParkedStoredCopy } from '../src/work/skill-adoption';
+import { holdsParkedStoredCopy, parkedCheckLog } from '../src/work/skill-adoption';
 
 /**
  * Autonomous skill authoring action. Demo headline:
@@ -940,6 +940,9 @@ async function authorAndRegister(
     name: skill.name,
     runId,
   });
+  // A stored copy parked again keeps the mark that says it is one (holdsParkedStoredCopy).
+  const parkedLog = (log: string, reason: string): string =>
+    storedVersionId !== undefined ? parkedCheckLog(reason) : noted(log);
   if (!lease.held) {
     const pendingDraft = await redactAuthoredDraft(ctx, skill.agentId, { body, smokeTest });
     const waitedFor = `${Math.round(lease.waitedMs / 60_000)} minutes`;
@@ -952,7 +955,7 @@ async function authorAndRegister(
       sandboxId: '(skipped)',
       body: pendingDraft.body,
       smokeTest: pendingDraft.smokeTest,
-      verificationLog: noted(reason),
+      verificationLog: parkedLog(reason, reason),
       reason,
     });
     if (!recorded) return { ok: false, reason: SUPERSEDED };
@@ -1059,7 +1062,7 @@ async function authorAndRegister(
       sandboxId,
       body: pendingDraft.body,
       smokeTest: pendingDraft.smokeTest,
-      verificationLog: noted(verificationLog),
+      verificationLog: parkedLog(verificationLog, skipReason),
       reason: skipReason,
     });
     if (!recorded) return { ok: false, reason: SUPERSEDED };

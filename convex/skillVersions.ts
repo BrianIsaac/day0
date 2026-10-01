@@ -11,6 +11,7 @@ import { assertOwnsAgent, assertOwnsSkill } from './ownership';
 import { appendEvent, eventsOfType } from './eventLog';
 import { readRefValidator } from './schema';
 import { isEventOf } from '../src/events/contract';
+import { holdsParkedStoredCopy } from '../src/work/skill-adoption';
 import {
   CHECK_NOT_KEPT_REASON,
   HANDED_OVER_AUTHOR_NAME,
@@ -498,7 +499,12 @@ export async function copyVersionsForMove(
   for (const row of rows) {
     // An offer is the old owner's library speaking, not something the employee holds: it goes,
     // and an adoption under way goes with it (the wave 10 review, B1).
-    if (row.offeredVersionId !== undefined) await endOfferAtMove(ctx, row);
+    if (row.offeredVersionId !== undefined) {
+      await endOfferAtMove(ctx, row);
+    } else if (row.state !== 'registered' && holdsParkedStoredCopy(row)) {
+      // A copy whose offer is gone by any path still goes: nothing of the version crosses.
+      await ctx.db.patch(row._id, STORED_COPY_CLEARED);
+    }
     // A newer-version chip names the old library's numbers, which the new one does not use.
     if (row.recheckReason !== undefined && isNewerVersionReason(row.recheckReason)) {
       await ctx.db.patch(row._id, { recheckReason: HANDED_OVER_RECHECK_REASON });
@@ -521,27 +527,50 @@ export async function copyVersionsForMove(
 }
 
 /**
+ * Everything of a stored version an adoption's row can hold: the parked copy of its body and
+ * smoke test, a refused draft of it, and the log of its check (whose traceback quotes the body).
+ * A row patched with this holds nothing of the version (the wave 10 review, B1, and its second
+ * pass).
+ */
+export const STORED_COPY_CLEARED = {
+  body: '',
+  pendingSmokeTest: undefined,
+  refusedBody: undefined,
+  refusedSmokeTest: undefined,
+  sandboxId: undefined,
+  verificationLog: undefined,
+} as const;
+
+/** The states a row ends in: an adoption on one is over, and only its copy goes at a move. */
+const ENDED_ROW_STATES: ReadonlySet<Doc<'skills'>['state']> = new Set([
+  'rejected',
+  'retired',
+  'superseded',
+]);
+
+/**
  * Drop an adoption offer the old owner's library made to a moving employee's row. A proposal
  * keeps its place as a plain proposal, for the new manager to approve or reject. An adoption the
  * old manager pressed (approved, being checked, parked or failed) holds the old owner's version
  * or a copy of it, which no copy may carry across owners: the copy, its log and any run's claim
  * go, and the row goes back to a proposal, from which nothing registers without the new
- * manager's approval. A check still running is fenced out of the row by the released claim.
+ * manager's approval. A check still running is fenced out of the row by the released claim. An
+ * adoption that ended (declined, retired, superseded) stays as it ended, its copy gone.
  */
 async function endOfferAtMove(ctx: MutationCtx, row: Doc<'skills'>): Promise<void> {
   if (row.state === 'proposed') {
     await ctx.db.patch(row._id, { offeredVersionId: undefined });
     return;
   }
+  // A declined or ended adoption stays as it ended; only what it held of the version goes.
+  if (ENDED_ROW_STATES.has(row.state)) {
+    await ctx.db.patch(row._id, { offeredVersionId: undefined, ...STORED_COPY_CLEARED });
+    return;
+  }
   await ctx.db.patch(row._id, {
     state: 'proposed',
     offeredVersionId: undefined,
-    body: '',
-    pendingSmokeTest: undefined,
-    refusedBody: undefined,
-    refusedSmokeTest: undefined,
-    sandboxId: undefined,
-    verificationLog: undefined,
+    ...STORED_COPY_CLEARED,
     authoringAttempts: undefined,
     authoringDeferrals: undefined,
     authoringRunId: undefined,

@@ -12,7 +12,7 @@ import { assertOwnsAgent, assertOwnsSkill } from './ownership';
 import { appendEvent } from './eventLog';
 import { assertNotBeingHandedOver } from './handoverFence';
 import { grantScopeInTransaction } from './agents';
-import { ownerVersions, sharedSkillsOn } from './skillVersions';
+import { ownerVersions, sharedSkillsOn, STORED_COPY_CLEARED } from './skillVersions';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { browserComponentRefusal, withBrowserComponentState } from '../src/surfaces/browser';
 import { skillApprovalRefusal } from '../src/surfaces/policy';
@@ -416,7 +416,8 @@ export const verifyAgain = mutation({
  * on a proposal, the authoring alone on a failed or stopped adoption) writes the employee's own
  * skill and the card stops saying an adoption is under way. A stopped check's parked copy of the
  * version goes too, since an authoring run that found it would check that copy instead of writing.
- * Writes the row only; the approval and the authoring write their own events.
+ * A failed adoption's log, which quotes the version, goes as well. Writes the row only; the
+ * approval and the authoring write their own events.
  *
  * @throws ConvexError when the row is not an offered proposal, a failed adoption or one whose check
  *   stopped short.
@@ -429,11 +430,11 @@ export const setOfferAside = mutation({
     if (state !== 'offered' && state !== 'failed' && !stoppedShort(row, Date.now())) {
       throw new ConvexError(`${row.name} has no adoption to set aside.`);
     }
+    // Whatever the adoption held of the version goes with the offer (the second pass): the
+    // authoring that follows writes the employee's own skill.
     await ctx.db.patch(row._id, {
       offeredVersionId: undefined,
-      ...(state === 'verifying' && row.pendingSmokeTest !== undefined
-        ? { body: '', pendingSmokeTest: undefined }
-        : {}),
+      ...(state === 'offered' ? {} : STORED_COPY_CLEARED),
     });
     return { ok: true };
   },

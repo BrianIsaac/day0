@@ -30,10 +30,15 @@ import { redactTokenShapes } from '../src/surfaces/redact';
 import { appendEvent } from './eventLog';
 import { assertNotBeingHandedOver } from './handoverFence';
 import type { SkillAuthoringRefusedPayload } from '../src/events/contract';
-import { recordRegisteredVersion, storedVersionRefusal } from './skillVersions';
+import {
+  recordRegisteredVersion,
+  STORED_COPY_CLEARED,
+  storedVersionRefusal,
+} from './skillVersions';
 import { recordOffer } from './skillAdoption';
 import { readRefValidator, surfaceToolsValidator } from './schema';
 import { countsAsAuthoringAttempt, MAX_AUTHORING_ATTEMPTS } from '../src/work/skill-library';
+import { holdsParkedStoredCopy } from '../src/work/skill-adoption';
 import { openRevision } from './skillControls';
 
 /**
@@ -588,7 +593,13 @@ export const reject = mutation({
         `skill state is ${row.state}; expected one of ${REJECTABLE_STATES.join(', ')}`,
       );
     }
-    await ctx.db.patch(args.skillId, { state: 'rejected', ...RELEASED });
+    // A declined adoption keeps nothing of the version it was offered (the second pass).
+    const adoption = row.offeredVersionId !== undefined || holdsParkedStoredCopy(row);
+    await ctx.db.patch(args.skillId, {
+      state: 'rejected',
+      ...RELEASED,
+      ...(adoption ? { offeredVersionId: undefined, ...STORED_COPY_CLEARED } : {}),
+    });
     // Every row still waiting for this proposal leaves `needs-skill` with the
     // reason on its card, a batch at a time. A row that has moved on, or is
     // now linked to a different proposal, is not this rejection's to cancel.

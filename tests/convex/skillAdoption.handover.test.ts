@@ -80,6 +80,16 @@ const PASSED: SkillSandboxRun = {
   skipped: false,
 };
 
+const FAILED: SkillSandboxRun = {
+  backend: 'local',
+  sandboxId: 'local:adopt-2',
+  stdout: '',
+  stderr: 'Traceback: KeyError record_id',
+  ok: false,
+  skipped: false,
+  failureReason: 'smoke.py exited 1',
+};
+
 const SKIPPED: SkillSandboxRun = {
   backend: 'local',
   sandboxId: '',
@@ -369,5 +379,66 @@ describe('the authoring action on a parked stored copy (the wave 10 review, B1 l
       state: 'registered',
       versionId: office.offered,
     });
+  });
+});
+
+describe('a parked copy through every later step (the second pass)', (): void => {
+  it('keeps a re-parked copy under its version’s checks: a second Retry of a withdrawn version registers nothing', async (): Promise<void> => {
+    const office = await parkedAdoption();
+    // Retry while the sandbox is still down: the copy parks again.
+    await office.harness
+      .withIdentity(OWNER)
+      .action(api.skillActions.authorAndRegisterSkill, { skillId: office.skillId });
+    expect(await row(office.harness, office.skillId)).toMatchObject({
+      state: 'authoring',
+      offeredVersionId: office.offered,
+    });
+    await office.harness.run(async (ctx) => {
+      await ctx.db.patch(office.offered, { revokedAt: Date.now(), revokedReason: 'wrong' });
+    });
+    recorded.sandbox = PASSED;
+    recorded.sandboxRuns.length = 0;
+
+    const retried = await office.harness
+      .withIdentity(OWNER)
+      .action(api.skillActions.authorAndRegisterSkill, { skillId: office.skillId });
+
+    expect(retried.ok).toBe(false);
+    expect(recorded.sandboxRuns).toEqual([]);
+    expect((await row(office.harness, office.skillId)).state).not.toBe('registered');
+  });
+
+  it('drops the copy when its check fails and when its offer is set aside, so nothing of it reaches a new owner', async (): Promise<void> => {
+    const office = await parkedAdoption();
+    recorded.sandbox = FAILED;
+    await office.harness
+      .withIdentity(OWNER)
+      .mutation(api.skillAdoption.verifyAgain, { skillId: office.skillId });
+    await office.harness.finishAllScheduledFunctions(vi.runAllTimers);
+    const failed = await row(office.harness, office.skillId);
+    expect(failed.state).toBe('failed');
+    expect(JSON.stringify(failed)).not.toContain('OLD-OWNER-BODY');
+
+    await office.harness
+      .withIdentity(OWNER)
+      .mutation(api.skillAdoption.setOfferAside, { skillId: office.skillId });
+    const setAside = await row(office.harness, office.skillId);
+    expect(setAside.offeredVersionId).toBeUndefined();
+    expect(JSON.stringify(setAside)).not.toContain('OLD-OWNER');
+  });
+
+  it('keeps a declined adoption declined at a move, with nothing of the old owner’s on it', async (): Promise<void> => {
+    const office = await parkedAdoption();
+    // Declined while its check was stopped: the card's Decline is the rejection.
+    await office.harness
+      .withIdentity(OWNER)
+      .mutation(api.skills.reject, { skillId: office.skillId });
+    expect((await row(office.harness, office.skillId)).offeredVersionId).toBeUndefined();
+
+    await handOver(office);
+
+    const after = await row(office.harness, office.skillId);
+    expect(after.state).toBe('rejected');
+    expect(JSON.stringify(after)).not.toContain('OLD-OWNER');
   });
 });

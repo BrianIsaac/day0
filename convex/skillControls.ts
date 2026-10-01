@@ -12,7 +12,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, assertOwnsSkill } from './ownership';
 import { appendEvent, eventsOfType } from './eventLog';
 import { assertNotBeingHandedOver } from './handoverFence';
-import { holdersOf, newerVersionToRecheck } from './skillVersions';
+import { holdersOf, newerVersionToRecheck, STORED_COPY_CLEARED } from './skillVersions';
 import { applyVerdict, stopRunsInTransaction } from './work';
 import { moveWaitingWork } from './waitingWork';
 import { scheduleNextStep, STEP_LEASE_MS } from './workLoop';
@@ -650,12 +650,15 @@ async function endAdoptionsOf(
     .withIndex('by_userId', (q) => q.eq('userId', version.userId))
     .take(OFFER_EMPLOYEE_SCAN);
   for (const employee of employees) {
+    // Newest first, so a long history of one name never hides the live adoption; a declined one
+    // has nothing left to end.
     const offered = (
       await ctx.db
         .query('skills')
         .withIndex('by_agent_name', (q) => q.eq('agentId', employee._id).eq('name', version.name))
+        .order('desc')
         .take(OFFER_ROW_SCAN)
-    ).filter((row) => row.offeredVersionId === version._id);
+    ).filter((row) => row.offeredVersionId === version._id && row.state !== 'rejected');
     for (const row of offered) await endAdoption(ctx, { row, version, now });
   }
 }
@@ -682,10 +685,7 @@ async function endAdoption(
   await ctx.db.patch(row._id, {
     state: 'rejected',
     offeredVersionId: undefined,
-    body: '',
-    pendingSmokeTest: undefined,
-    refusedBody: undefined,
-    refusedSmokeTest: undefined,
+    ...STORED_COPY_CLEARED,
     ...releasedClaim,
   });
   await appendEvent(ctx, {
