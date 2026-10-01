@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { Columns } from '../../../components/Columns';
@@ -9,7 +9,12 @@ import { useAgentZone } from '../../../components/time';
 import { KnowledgeProjection } from './KnowledgeProjection';
 import { MetricsCard } from './MetricsCard';
 import { RecordExport } from './RecordExport';
-import { RecordFilters, RecordList, type RecordView as Shown } from './RecordList';
+import {
+  RecordFilters,
+  RecordList,
+  type RecordManagers,
+  type RecordView as Shown,
+} from './RecordList';
 import { WorkspacePanel } from './WorkspacePanel';
 
 /**
@@ -25,6 +30,12 @@ export function RecordView() {
   const projection = useQuery(api.memoryProjection.forAgent, { agentId });
   const metrics = useQuery(api.metrics.forAgent, { agentId });
   const workspace = useQuery(api.workspace.read, { agentId });
+  const earlier = useQuery(api.managerTransfers.earlierManagers, { agentId });
+  const managers = useMemo(
+    (): RecordManagers | undefined =>
+      earlier === undefined ? undefined : { reader: agent.bossEmail, earlier },
+    [earlier, agent.bossEmail],
+  );
   return (
     <Columns
       arriving={arriving}
@@ -40,7 +51,7 @@ export function RecordView() {
         <RecordFilters selected={shown} onSelect={setShown} />
         <RecordExport agentId={agentId} name={agent.name} />
       </div>
-      <RecordList agentId={agentId} name={agent.name} view={shown} />
+      <RecordList agentId={agentId} name={agent.name} view={shown} managers={managers} />
       <p className="text-[13px] text-[var(--color-muted)]">
         Times in {zone ?? 'your zone'}, dated; the export carries the same instants. The payload
         behind each line is the event as it is stored, credential shapes taken out; the export also

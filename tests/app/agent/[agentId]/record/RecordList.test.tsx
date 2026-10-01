@@ -33,6 +33,7 @@ import {
   RECORD_PAGE,
   RecordFilters,
   RecordList,
+  type RecordManagers,
   type RecordView,
 } from '../../../../../app/agent/[agentId]/record/RecordList';
 import { focusedName, mount, press } from '../../../../fixtures/dom/press';
@@ -61,12 +62,18 @@ function entry(
 }
 
 /** The record with its chips, as the tab draws them. */
-function Recorded({ zone = 'Asia/Singapore' }: { zone?: string }) {
+function Recorded({
+  zone = 'Asia/Singapore',
+  managers = { reader: 'boss@day0.local', earlier: [] },
+}: {
+  zone?: string;
+  managers?: RecordManagers | undefined;
+}) {
   const [view, setView] = useState<RecordView>('all');
   return (
     <AgentZoneContext value={zone}>
       <RecordFilters selected={view} onSelect={setView} />
-      <RecordList agentId={agentId} name="Mira" view={view} />
+      <RecordList agentId={agentId} name="Mira" view={view} managers={managers} />
     </AgentZoneContext>
   );
 }
@@ -243,6 +250,48 @@ describe('RecordList', (): void => {
     await press(ended.container, 'Charter');
     expect(ended.container.textContent).toContain("That is the charter's whole history.");
     ended.unmount();
+  });
+
+  it('names the manager then on a line from before the handover, and the reader on a line since (the wave 10 review, M8)', (): void => {
+    backend.entries = [
+      entry('e2', 'skill.approved', { name: 'kanban-comment-and-close' }, 9_000),
+      entry(
+        'e1',
+        'skill.adopted',
+        { name: 'kanban-comment-and-close', version: 1, authorName: 'Priya' },
+        2_000,
+      ),
+    ];
+    const view = mount(
+      <Recorded
+        managers={{
+          reader: 'lead@company.com',
+          earlier: [{ fromAddress: 'sam@company.com', decidedAt: 5_000 }],
+        }}
+      />,
+    );
+    const lines = [...view.container.querySelectorAll('ol > li')].map(
+      (line) => line.textContent ?? '',
+    );
+    expect(lines[0]).toContain('You approved the skill kanban-comment-and-close.');
+    expect(lines[1]).toContain(
+      "Mira's manager then, sam@company.com, adopted version 1 of the skill kanban-comment-and-close, written by a colleague under the previous manager",
+    );
+    // The colleague's name is not shown beneath the line either.
+    expect(view.container.textContent).not.toContain('Priya');
+    view.unmount();
+  });
+
+  it('draws no line until it knows who managed the employee when, so no line says "You" for another', (): void => {
+    backend.entries = [entry('e1', 'skill.approved', { name: 'kanban-comment-and-close' }, 2_000)];
+    const view = mount(
+      <AgentZoneContext value="Asia/Singapore">
+        <RecordList agentId={agentId} name="Mira" view="all" managers={undefined} />
+      </AgentZoneContext>,
+    );
+    expect(view.container.textContent).toContain('Loading the record');
+    expect(view.container.textContent).not.toContain('approved the skill');
+    view.unmount();
   });
 
   it('takes credential shapes out of a payload before it is drawn', (): void => {

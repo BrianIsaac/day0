@@ -65,6 +65,13 @@ export const TRANSFER_EXPIRY_MS = 14 * DAY_MS;
  */
 export const TRANSFER_SETTLE_MS = 15 * MINUTE_MS;
 
+/**
+ * The reason the record gives for the settings a handover returns to their defaults (autonomous
+ * actions off, run notes one per run): the move set them, not a manager, and the record says so
+ * whoever reads it (the wave 10 review, M8).
+ */
+export const HANDOVER_SETTINGS_REASON = 'handed over to a new manager';
+
 /** At most this many open requests for one employee. */
 export const MAX_OPEN_TRANSFERS_PER_EMPLOYEE = 1;
 

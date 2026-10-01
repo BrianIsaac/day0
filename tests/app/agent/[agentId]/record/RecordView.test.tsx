@@ -29,6 +29,7 @@ describe('RecordView', () => {
     backend.queries = {
       'memoryProjection:forAgent': { text: 'Charter 0.1', cut: false },
       'workspace:read': { 'AGENTS.md': '' },
+      'managerTransfers:earlierManagers': [],
     };
     const html = renderToStaticMarkup(asEmployee(<RecordView />));
     expect(html).toContain('>Every event</h2>');

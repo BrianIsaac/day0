@@ -50,6 +50,7 @@ describe('the Record tab against the accessibility floor (N14)', (): void => {
         'memoryProjection:forAgent': { text: 'Charter 0.1: Own triage.', cut: true },
         'metrics:forAgent': dashboardMetrics(),
         'workspace:read': { 'AGENTS.md': '# Mira', 'MEMORY.md': '' },
+        'managerTransfers:earlierManagers': [],
       };
       backend.record = [
         {

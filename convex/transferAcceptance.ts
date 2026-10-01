@@ -41,6 +41,7 @@ import {
   voidDecisionRequestsForHandover,
 } from './work';
 import {
+  HANDOVER_SETTINGS_REASON,
   isTransferDue,
   transferSettleBy,
   transferStateRefusal,
@@ -72,9 +73,6 @@ import { canonicalZone, deploymentZone } from '../src/lib/zone';
 
 /** The refusal for a documentation source among the unticked that is not the acceptor's own. */
 export const SOURCE_NOT_YOURS = 'A documentation source you unticked is not one of yours.';
-
-/** The reason the record gives for the settings a handover returns to their defaults. */
-const HANDED_OVER_REASON = 'handed over to a new manager';
 
 /** The most `credential.superseded` events of one employee the move redacts. */
 const SUPERSEDED_EVENT_LIMIT = 1_000;
@@ -253,7 +251,7 @@ async function settleEmployeeRow(
     await appendEvent(ctx, {
       agentId: agent._id,
       type: 'agent.autonomy-changed',
-      payload: { from: true, to: false, reason: HANDED_OVER_REASON },
+      payload: { from: true, to: false, reason: HANDOVER_SETTINGS_REASON },
       createdAt: now,
     });
   }
@@ -261,7 +259,7 @@ async function settleEmployeeRow(
     await appendEvent(ctx, {
       agentId: agent._id,
       type: 'agent.notifications-changed',
-      payload: { from: 'digest', to: 'per-run', reason: HANDED_OVER_REASON },
+      payload: { from: 'digest', to: 'per-run', reason: HANDOVER_SETTINGS_REASON },
       createdAt: now,
     });
   }
