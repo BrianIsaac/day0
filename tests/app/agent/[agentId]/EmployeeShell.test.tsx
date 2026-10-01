@@ -475,6 +475,21 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     view.unmount();
   });
 
+  it('draws no Skills badge until every list it counts has loaded (the second pass)', async (): Promise<void> => {
+    backend.queries = {
+      'agents:get': row('active'),
+      'charters:latest': approved,
+      'skills:proposed': [{ _id: 's1', name: 'skill-s1', state: 'proposed' }],
+    };
+    const view = mount(page());
+    await settle();
+    const skills = [...view.container.querySelectorAll('[role="tab"]')].find((candidate) =>
+      candidate.textContent?.startsWith('Skills'),
+    );
+    expect(skills?.textContent).toBe('Skills');
+    view.unmount();
+  });
+
   it('counts a stopped run the inbox lists, as the queue files it under Needs you (D7, m5)', async (): Promise<void> => {
     backend.queries = {
       'agents:get': row('active'),

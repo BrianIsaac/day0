@@ -247,7 +247,7 @@ export function RecordList({ agentId, name, view, managers }: RecordListProps) {
           })}
         </ol>
       )}
-      {status === 'CanLoadMore' || loadingMore ? (
+      {managers === undefined ? null : status === 'CanLoadMore' || loadingMore ? (
         <div className="mt-4">
           {/* Not disabled while loading: a disabled button drops the focus it holds. */}
           <Button

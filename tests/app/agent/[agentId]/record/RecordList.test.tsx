@@ -291,6 +291,9 @@ describe('RecordList', (): void => {
     );
     expect(view.container.textContent).toContain('Loading the record');
     expect(view.container.textContent).not.toContain('approved the skill');
+    // Nor the footer of a list it has not drawn (the second pass).
+    expect(view.container.textContent).not.toContain('That is the whole record.');
+    expect(view.container.querySelector('button')).toBeNull();
     view.unmount();
   });
 

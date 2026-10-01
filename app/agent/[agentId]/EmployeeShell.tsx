@@ -192,8 +192,9 @@ export function EmployeeShell({ agentId, children }: EmployeeShellProps) {
   const proposedSkills = useQuery(api.skills.proposed, present);
   const unverifiedSkills = useQuery(api.skills.awaitingVerification, present);
   const failedSkills = useQuery(api.skills.verificationFailed, present);
-  // A claim stops being live without any write, so the badge's count is read against a clock.
-  const now = useNow(60_000);
+  // A claim stops being live without any write, so the badge's count is read against the clock
+  // the Skills tab reads its cards against.
+  const now = useNow();
   const metrics = useQuery(api.metrics.forAgent, present);
   const session = useQuery(api.voice.latest, present);
   const standing = useQuery(api.agents.managerStanding, present);
@@ -333,12 +334,9 @@ export function EmployeeShell({ agentId, children }: EmployeeShellProps) {
         ? undefined
         : openWorkCount(workItems, needsYouItemIds(inbox.entries)),
     skills:
-      proposedSkills === undefined
+      proposedSkills === undefined || unverifiedSkills === undefined || failedSkills === undefined
         ? undefined
-        : skillsWaitingOnManager(
-            [...proposedSkills, ...(unverifiedSkills ?? []), ...(failedSkills ?? [])],
-            now,
-          ),
+        : skillsWaitingOnManager([...proposedSkills, ...unverifiedSkills, ...failedSkills], now),
   });
 
   return (
