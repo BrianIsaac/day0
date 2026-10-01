@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  WATCHED,
   authSection,
   browserSetupConfiguration,
   componentsSection,
@@ -369,6 +370,69 @@ describe('the auth section', (): void => {
     const lines = authSection({ ...ISSUER, DAY0_PROFILE: 'customer-local' }).lines.join(' ');
     expect(lines).toContain('`pnpm sync:env` puts them there, the audience before the issuer');
     expect(lines).not.toContain('npx convex env set DAY0_OIDC_ISSUER');
+  });
+
+  it("reports that a manager's address comes from the issuer's email and email_verified claims", (): void => {
+    const lines = authSection({ ...ISSUER, DAY0_PROFILE: 'customer-local' }).lines.join(' ');
+    expect(lines).toContain('`email` claim');
+    expect(lines).toContain('`email_verified`');
+    expect(lines).toContain('nobody can deploy an employee or take one on');
+  });
+
+  it('says the trust flag is off by default, and what turning it on means', (): void => {
+    const off = authSection({ ...ISSUER, DAY0_PROFILE: 'customer-local' }).lines.join(' ');
+    expect(off).toContain('DAY0_OIDC_EMAIL_TRUSTED is off');
+    const on = authSection({
+      ...ISSUER,
+      DAY0_PROFILE: 'customer-local',
+      DAY0_OIDC_EMAIL_TRUSTED: 'true',
+    });
+    expect(on.lines.join(' ')).toContain('DAY0_OIDC_EMAIL_TRUSTED=true');
+    expect(on.lines.join(' ')).toContain('every address this issuer signs is one it controls');
+    expect(on.status).toBe('warn');
+  });
+
+  it('is a gap for a trust flag set to anything but true or false, which reads as off, and still reports the issuer', (): void => {
+    const section = authSection({
+      ...ISSUER,
+      DAY0_PROFILE: 'customer-local',
+      DAY0_OIDC_EMAIL_TRUSTED: 'yes',
+    });
+    expect(section.status).toBe('gap');
+    const lines = section.lines.join(' ');
+    expect(lines).toContain('DAY0_OIDC_EMAIL_TRUSTED');
+    expect(lines).toContain('reads as off');
+    expect(lines).toContain('Issuer https://sso.example.com/realms/ops, audience day0.');
+    expect(lines).toContain("The app's own sign-in does not use this issuer yet");
+  });
+
+  it('lets the process environment override the trust flag and the local address, as it does the issuer', (): void => {
+    for (const name of [
+      'DAY0_OIDC_ISSUER',
+      'DAY0_OIDC_EMAIL_TRUSTED',
+      'NEXT_PUBLIC_DEMO_BOSS_EMAIL',
+    ]) {
+      expect(WATCHED, name).toContain(name);
+    }
+  });
+
+  it('is a gap for a local manager address that is not one, since the local token then refuses everyone', (): void => {
+    const local = {
+      NEXT_PUBLIC_DEV_NO_AUTH: 'true',
+      DEV_NO_AUTH_SECRET: 's',
+      DEV_NO_AUTH_SIGNING_KEY: 'k',
+      DEV_NO_AUTH_JWKS: 'data:x',
+    };
+    const section = authSection({ ...local, NEXT_PUBLIC_DEMO_BOSS_EMAIL: 'boss at work' });
+    expect(section.status).toBe('gap');
+    expect(section.lines.join(' ')).toContain('NEXT_PUBLIC_DEMO_BOSS_EMAIL');
+    expect(section.lines.join(' ')).not.toContain('boss at work');
+    expect(
+      authSection({ ...local, NEXT_PUBLIC_DEMO_BOSS_EMAIL: 'Ops@Kestrel.example' }).status,
+    ).toBe('ok');
+    expect(authSection({ ...local, ...ISSUER, NEXT_PUBLIC_DEMO_BOSS_EMAIL: 'nope' }).status).toBe(
+      'gap',
+    );
   });
 
   it('says the local key and the customer issuer are both accepted when both are on', (): void => {

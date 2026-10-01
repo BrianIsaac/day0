@@ -31,6 +31,7 @@ import { providerReconciliationEntries } from '../../src/work/reconciliation';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { HELD_WITHHELD_TRANSITION } from '../../src/surfaces/policy';
 import { randomBytes } from 'node:crypto';
+import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
 /**
  * The 16 September third run's REVOPS-5 item, replayed twice through the
@@ -153,7 +154,7 @@ vi.stubGlobal('fetch', async (input: URL | string, init?: RequestInit): Promise<
 });
 
 type Harness = TestConvex<typeof schema>;
-const OWNER = { subject: 'owner' };
+const OWNER = managerIdentity();
 const CREDENTIAL_KEY = randomBytes(32).toString('base64');
 
 /** An agent with the run's three surfaces, autonomy on, and REVOPS-5 at the apply of its first phase one. */
@@ -163,7 +164,7 @@ async function seedAtFirstApply(
 ): Promise<{ workItemId: Id<'workItems'>; runId: Id<'events'> }> {
   return await harness.run(async (ctx) => {
     const agentId = await ctx.db.insert('agents', {
-      bossEmail: 'boss@day0.local',
+      bossEmail: MANAGER_ADDRESS,
       name: 'Priya',
       userId: 'owner',
       state: 'active',
@@ -516,7 +517,7 @@ describe('the 16 September run 3 REVOPS-5 retry, re-entering phase one after a l
     const secret = ['xoxb', '2847561930', '5529104736', 'aBcDeFgHiJkLmNoPqRsTuVwX'].join('-');
     await t.run(async (ctx) => {
       const aiko = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'Aiko',
         userId: 'owner',
         state: 'active',

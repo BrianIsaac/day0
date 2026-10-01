@@ -14,6 +14,7 @@ import {
   mateoCharter,
   priyaCharter,
 } from '../src/work/scope-run-fixtures-2026-09-19';
+import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
 /**
  * Findings K and L of the second full run (19 Sep 2026), on the rows.
@@ -83,7 +84,7 @@ afterEach((): void => {
   restoreSurfaceMode();
 });
 
-const OWNER = { subject: 'owner' };
+const OWNER = managerIdentity();
 
 /** Approve, author and register the skill the row's needs-skill verdict proposed. */
 async function registerProposedSkill(harness: Harness, workItemId: Id<'workItems'>): Promise<void> {
@@ -130,7 +131,7 @@ async function seed(harness: Harness, who: 'priya' | 'mateo'): Promise<Seeded> {
         };
   return await harness.run(async (ctx) => {
     const agentId = await ctx.db.insert('agents', {
-      bossEmail: 'boss@day0.local',
+      bossEmail: MANAGER_ADDRESS,
       name: who,
       userId: 'owner',
       state: 'active',

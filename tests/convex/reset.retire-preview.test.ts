@@ -6,6 +6,7 @@ import { EMPLOYEE_NOT_YOURS } from '../../src/agent/employee-access';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import type schemaModule from '../../convex/schema';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
 /*
  * `retirePreview` in `convex/reset.ts`: what the retire dialog says before the manager confirms
@@ -49,7 +50,7 @@ async function seed(): Promise<Seeded> {
     const shared = await credential('slack bot token');
     const employee = async (name: string): Promise<Id<'agents'>> =>
       await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name,
         userId: 'owner',
         state: 'active',
@@ -133,7 +134,7 @@ describe('retirePreview in real mode', (): void => {
 
   it('says what the retire deletes, revokes and keeps, and the retire then does exactly that', async (): Promise<void> => {
     const { harness, retiring } = await seed();
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
 
     const preview = await owner.query(api.reset.retirePreview, { agentId: retiring });
 
@@ -162,7 +163,7 @@ describe('retirePreview in real mode', (): void => {
 
   it('answers null once the employee is gone, so the open dialog reads nothing after the retire', async (): Promise<void> => {
     const { harness, retiring } = await seed();
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     await owner.mutation(api.reset.retire, { agentId: retiring });
 
     await expect(owner.query(api.reset.retirePreview, { agentId: retiring })).resolves.toBeNull();
@@ -195,7 +196,7 @@ describe('retirePreview in real mode', (): void => {
     });
 
     const preview = await harness
-      .withIdentity({ subject: 'owner' })
+      .withIdentity(managerIdentity())
       .query(api.reset.retirePreview, { agentId: retiring });
 
     expect(preview?.atLeast).toBe(true);
@@ -207,9 +208,7 @@ describe('retirePreview in real mode', (): void => {
 
   it('says nothing about an id, gone or not, to a caller who is not signed in', async (): Promise<void> => {
     const { harness, retiring } = await seed();
-    await harness
-      .withIdentity({ subject: 'owner' })
-      .mutation(api.reset.retire, { agentId: retiring });
+    await harness.withIdentity(managerIdentity()).mutation(api.reset.retire, { agentId: retiring });
 
     await expect(harness.query(api.reset.retirePreview, { agentId: retiring })).rejects.toThrow();
   });
@@ -219,14 +218,14 @@ describe('retirePreview in real mode', (): void => {
 
     await expect(
       harness
-        .withIdentity({ subject: 'stranger' })
+        .withIdentity(managerIdentity('stranger'))
         .query(api.reset.retirePreview, { agentId: retiring }),
     ).rejects.toThrow(EMPLOYEE_NOT_YOURS);
   });
 
   it('revokes a shared credential once no other employee binds it', async (): Promise<void> => {
     const { harness, retiring, sibling } = await seed();
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     // The sibling's Slack goes, so nothing but the retiring employee binds the shared token.
     await harness.run(async (ctx) => {
       const rows = await ctx.db
@@ -259,7 +258,7 @@ describe('retirePreview in the hosted office', (): void => {
 
   it('counts the rows the wipe deletes and promises no revoke, no kept claim and no tombstone', async (): Promise<void> => {
     const { harness, retiring } = await seed();
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
 
     const preview = await owner.query(api.reset.retirePreview, { agentId: retiring });
 
@@ -284,7 +283,7 @@ describe('retirePreview in the hosted office', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const retiring = await harness.run(async (ctx) => {
       const agentId = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'Cleo',
         userId: 'owner',
         state: 'day-one-in-progress',
@@ -302,7 +301,7 @@ describe('retirePreview in the hosted office', (): void => {
       }
       return agentId;
     });
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
 
     const preview = await owner.query(api.reset.retirePreview, { agentId: retiring });
 

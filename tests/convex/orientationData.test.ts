@@ -6,6 +6,7 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { isReprobeCandidate } from '../../convex/orientationData';
 import { allConvexModules } from './all-modules';
+import { MANAGER_ADDRESS } from './fakes/manager-identity';
 
 /**
  * Seed one owner-level source with a single page.
@@ -53,7 +54,7 @@ describe('orientation data boundary', (): void => {
     const agentId = await harness.run(
       async (ctx): Promise<Id<'agents'>> =>
         await ctx.db.insert('agents', {
-          bossEmail: 'boss@day0.local',
+          bossEmail: MANAGER_ADDRESS,
           name: 'orientation data test',
           userId: 'owner',
           excludedDocSourceIds: [excluded],
@@ -72,7 +73,7 @@ describe('orientation data boundary', (): void => {
     const agentId = await harness.run(
       async (ctx): Promise<Id<'agents'>> =>
         await ctx.db.insert('agents', {
-          bossEmail: 'boss@day0.local',
+          bossEmail: MANAGER_ADDRESS,
           name: 'legacy agent',
           state: 'active',
           createdAt: 1,
@@ -90,7 +91,7 @@ describe('orientation data boundary', (): void => {
       for (const name of ['mine', 'theirs']) {
         ids.push(
           await ctx.db.insert('agents', {
-            bossEmail: 'boss@day0.local',
+            bossEmail: MANAGER_ADDRESS,
             name,
             userId: name,
             state: 'active',
@@ -128,7 +129,7 @@ describe('orientation data boundary', (): void => {
     const agentId = await harness.run(
       async (ctx): Promise<Id<'agents'>> =>
         await ctx.db.insert('agents', {
-          bossEmail: 'boss@day0.local',
+          bossEmail: MANAGER_ADDRESS,
           name: 're-probe test',
           userId: 'owner',
           state: 'active',
@@ -175,7 +176,7 @@ describe('orientation data boundary', (): void => {
     const agentId = await harness.run(
       async (ctx): Promise<Id<'agents'>> =>
         await ctx.db.insert('agents', {
-          bossEmail: 'boss@day0.local',
+          bossEmail: MANAGER_ADDRESS,
           name: 're-probe lookup test',
           userId: 'owner',
           state: 'active',

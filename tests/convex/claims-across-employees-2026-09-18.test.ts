@@ -8,6 +8,7 @@ import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { contractSchema } from './contract-schema';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
 /**
  * One claim per external item across the company (plan phase 5).
@@ -134,7 +135,7 @@ async function seedEmployee(
   const surfaces = options.surfaces ?? [{ kind: 'slack' }];
   return await harness.run(async (ctx) => {
     const agentId = await ctx.db.insert('agents', {
-      bossEmail: 'boss@day0.local',
+      bossEmail: MANAGER_ADDRESS,
       name: options.name,
       userId: options.userId ?? 'owner',
       state: 'active',
@@ -606,7 +607,7 @@ describe('releasing a claim', (): void => {
     const { mateo, held, refused } = await heldAndRefused(harness);
 
     await harness
-      .withIdentity({ subject: 'owner' })
+      .withIdentity(managerIdentity())
       .mutation(api.work.cancelPlan, { workItemId: held, reason: 'finance owns this ask' });
     await drain(harness);
 
@@ -635,7 +636,7 @@ describe('releasing a claim', (): void => {
     await harness.run(async (ctx) => await ctx.db.patch(mateo, { autonomousActions: true }));
 
     await harness
-      .withIdentity({ subject: 'owner' })
+      .withIdentity(managerIdentity())
       .mutation(api.work.cancelPlan, { workItemId: held, reason: 'finance owns this ask' });
     await drain(harness);
 
@@ -662,7 +663,7 @@ describe('releasing a claim', (): void => {
     await harness.run(async (ctx) => await ctx.db.patch(mateo, { autonomousActions: true }));
 
     await harness
-      .withIdentity({ subject: 'owner' })
+      .withIdentity(managerIdentity())
       .mutation(api.work.cancelPlan, { workItemId: held });
     await drain(harness);
 
@@ -690,7 +691,7 @@ describe('releasing a claim', (): void => {
       return runId;
     });
 
-    await harness.withIdentity({ subject: 'owner' }).mutation(api.work.rejectActions, {
+    await harness.withIdentity(managerIdentity()).mutation(api.work.rejectActions, {
       workItemId: held,
       pendingRunId,
       reason: 'the notice goes to finance first',
@@ -723,7 +724,7 @@ describe('releasing a claim', (): void => {
     const { held } = await heldAndRefused(harness);
 
     await harness
-      .withIdentity({ subject: 'owner' })
+      .withIdentity(managerIdentity())
       .mutation(api.work.cancelPlan, { workItemId: held, reason: 'finance owns this ask' });
     const first = await readItem(harness, held);
     expect(first.rejectedAt).toEqual(expect.any(Number));
@@ -731,7 +732,7 @@ describe('releasing a claim', (): void => {
     vi.advanceTimersByTime(60_000);
     await harness.run(async (ctx) => await ctx.db.patch(held, { state: 'plan-pending' }));
     await harness
-      .withIdentity({ subject: 'owner' })
+      .withIdentity(managerIdentity())
       .mutation(api.work.cancelPlan, { workItemId: held, reason: 'still no' });
 
     expect((await readItem(harness, held)).rejectedAt).toBe(first.rejectedAt);
@@ -754,7 +755,7 @@ describe('releasing a claim', (): void => {
     expect((await claimsOf(harness)).some((claim) => claim.workItemId === atScope)).toBe(false);
 
     await harness
-      .withIdentity({ subject: 'owner' })
+      .withIdentity(managerIdentity())
       .mutation(api.work.cancelPlan, { workItemId: held, reason: 'finance owns this ask' });
     await drain(harness);
 
@@ -773,7 +774,7 @@ describe('releasing a claim', (): void => {
     vi.useFakeTimers();
     const harness = convexTest(contractSchema(), allConvexModules());
     const { held, refused } = await heldAndRefused(harness);
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     await owner.mutation(api.work.cancelPlan, {
       workItemId: held,
       reason: 'finance owns this ask',
@@ -797,7 +798,7 @@ describe('releasing a claim', (): void => {
     const priya = await seedEmployee(harness, { name: 'Priya' });
     const held = await seedAsk(harness, priya);
     await drain(harness);
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     await owner.mutation(api.work.cancelPlan, { workItemId: held, reason: 'not yet' });
 
     const retried = await owner.mutation(api.work.retryFailed, { workItemId: held });
@@ -832,7 +833,7 @@ describe('releasing a claim', (): void => {
     });
     const first = await seedIssue(harness, priya, 'linear');
     await drain(harness);
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     await owner.mutation(api.work.cancelPlan, { workItemId: first, reason: 'try later' });
     const second = await seedIssue(harness, mateo, 'linear');
     await drain(harness);

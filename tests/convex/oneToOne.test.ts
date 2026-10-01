@@ -8,6 +8,7 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { oneToOnePhase } from '../../src/agent/one-to-one-phase';
 import { allConvexModules } from './all-modules';
+import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
 // The model seam: the charter a close drafts is not this file's subject, so every attempt at it
 // is refused, and a drained draft ends the one-to-one failed once its re-drives are spent.
@@ -42,14 +43,14 @@ async function openRoom(): Promise<Room> {
   const agentId = await harness.run(
     async (ctx) =>
       await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'Aiko',
         userId: 'owner',
         state: 'deployed',
         createdAt: 1,
       }),
   );
-  const owner = harness.withIdentity({ subject: 'owner' });
+  const owner = harness.withIdentity(managerIdentity());
   const { sessionId } = await owner.mutation(api.voice.start, { agentId, mode: 'chat' });
   return { harness, owner, agentId, sessionId };
 }
@@ -269,7 +270,7 @@ describe('the chat one-to-one kept turn by turn (30 Sep, a one-to-one lost to a 
     const room = await openRoom();
     await holdThrough(room, 1);
     await expect(
-      room.harness.withIdentity({ subject: 'stranger' }).mutation(api.oneToOne.takeTurn, {
+      room.harness.withIdentity(managerIdentity('stranger')).mutation(api.oneToOne.takeTurn, {
         agentId: room.agentId,
         request: again(null, []),
       }),
@@ -295,14 +296,14 @@ describe('the one-to-one a turn belongs to', (): void => {
     const agentId = await harness.run(
       async (ctx) =>
         await ctx.db.insert('agents', {
-          bossEmail: 'boss@day0.local',
+          bossEmail: MANAGER_ADDRESS,
           name: 'Nia',
           userId: 'owner',
           state: 'deployed',
           createdAt: 1,
         }),
     );
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     await expect(
       owner.mutation(api.oneToOne.takeTurn, { agentId, request: { kind: 'open' } }),
     ).rejects.toBeInstanceOf(ConvexError);
@@ -629,7 +630,7 @@ describe('the bounds a direct call is held to', (): void => {
     it(`refuses anyone but the owner at ${name}, and writes nothing (second review m9)`, async (): Promise<void> => {
       const room = await openRoom();
       await holdThrough(room, 1);
-      const stranger = room.harness.withIdentity({ subject: 'stranger' });
+      const stranger = room.harness.withIdentity(managerIdentity('stranger'));
       const before = await sessionOf(room);
       const attempt =
         name === 'recordAnswer'

@@ -6,6 +6,7 @@ import { internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
+import { MANAGER_ADDRESS } from './fakes/manager-identity';
 
 const sent = vi.hoisted(() => [] as Array<{ authorization: string; body: string; url: string }>);
 const hooks = vi.hoisted(() => ({
@@ -42,7 +43,7 @@ async function seedParkedPlan(
 ): Promise<{ agentId: Id<'agents'>; workItemId: Id<'workItems'> }> {
   return await harness.run(async (ctx) => {
     const agentId = await ctx.db.insert('agents', {
-      bossEmail: 'boss@day0.local',
+      bossEmail: MANAGER_ADDRESS,
       name: 'ops worker',
       userId: 'owner',
       state: 'active',
@@ -219,7 +220,7 @@ describe('the outbound manager-channel action', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const workItemId = await harness.run(async (ctx): Promise<Id<'workItems'>> => {
       const agentId = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'ops worker',
         managerNotifications: 'digest',
         userId: 'owner',

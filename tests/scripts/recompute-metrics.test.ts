@@ -16,6 +16,7 @@ import {
 import { assembleTrace, type AgentTrace } from '../../src/export/trace';
 import { allConvexModules } from '../convex/all-modules';
 import { hasHostTool } from '../setup/host-tools';
+import { MANAGER_ADDRESS, managerIdentity } from '../convex/fakes/manager-identity';
 
 /** The repository root, found from this file rather than the working directory. */
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
@@ -56,14 +57,14 @@ async function companyBackend(): Promise<ReturnType<typeof convexTest>> {
     const employees = [
       {
         name: 'Priya',
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         deployedAt: 1_000,
         approvedAt: 61_000,
         waits: [4_000, 6_000],
       },
       {
         name: 'Mateo',
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         deployedAt: 2_000,
         approvedAt: 122_000,
         waits: [30_000],
@@ -186,7 +187,7 @@ function capture(): {
 describe('recomputing the supervision figures from an export', (): void => {
   it('reproduces metrics:forOwner exactly from an export of two employees and an evaluation agent', async (): Promise<void> => {
     const harness = await companyBackend();
-    const live = await harness.withIdentity({ subject: OWNER }).query(api.metrics.forOwner, {});
+    const live = await harness.withIdentity(managerIdentity(OWNER)).query(api.metrics.forOwner, {});
     const directory = await exportDirectory(harness);
 
     const recomputed = recomputeFromExport(directory, { owner: OWNER });
@@ -331,7 +332,7 @@ describe('recomputing the supervision figures from an export', (): void => {
 
 /** Every employee's trace of the owner, through the paged export actions, as the command line assembles them. */
 async function exportedTraces(harness: ReturnType<typeof convexTest>): Promise<AgentTrace[]> {
-  const owner = harness.withIdentity({ subject: OWNER });
+  const owner = harness.withIdentity(managerIdentity(OWNER));
   const agentIds = await harness.run(async (ctx) =>
     (await ctx.db.query('agents').collect()).map((agent) => agent._id),
   );
@@ -350,7 +351,7 @@ async function exportedTraces(harness: ReturnType<typeof convexTest>): Promise<A
 describe('recomputing the figures from the owner’s exported traces', (): void => {
   it('reproduces metrics:forOwner exactly from the redacted, paged traces, the evaluation agent set aside by its flag', async (): Promise<void> => {
     const harness = await companyBackend();
-    const live = await harness.withIdentity({ subject: OWNER }).query(api.metrics.forOwner, {});
+    const live = await harness.withIdentity(managerIdentity(OWNER)).query(api.metrics.forOwner, {});
 
     const recomputed = recomputeFromTraces(await exportedTraces(harness));
 

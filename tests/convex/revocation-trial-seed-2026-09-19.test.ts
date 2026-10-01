@@ -7,6 +7,7 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+import { managerIdentity } from './fakes/manager-identity';
 
 /**
  * Finding P of the second full run, 19 Sep: the revocation trial failed three
@@ -41,8 +42,8 @@ vi.mock('../../src/lib/mastra', () => ({
 }));
 
 type Harness = TestConvex<typeof schema>;
-const OWNER = { subject: 'owner' };
-const STRANGER = { subject: 'stranger' };
+const OWNER = managerIdentity();
+const STRANGER = managerIdentity('stranger');
 
 beforeEach((): void => {
   vi.stubEnv('DAY0_EVALUATION_BED', 'revocation-test');

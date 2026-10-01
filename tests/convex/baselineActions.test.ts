@@ -7,6 +7,10 @@ import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { EVALUATION_SCOPES } from '../../src/evaluation/scopes';
+import { managerIdentity } from './fakes/manager-identity';
+
+/** The reserved address the harness deploys the control arm under, its evaluation marker. */
+const BASELINE_ADDRESS = 'eval-baseline-r1-1758150000000@day0.local';
 
 interface FakeTool {
   execute?: (input: never) => Promise<unknown>;
@@ -94,12 +98,11 @@ describe('ordinary-agent comparison arm', (): void => {
     vi.stubEnv('DAY0_EVALUATION_BED', '');
     const { api } = await import('../../convex/_generated/api');
     const harness = convexTest(schema, allConvexModules());
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     await expect(
-      owner.action(api.baselineActions.deployBaseline, { bossEmail: 'boss@day0.local' }),
+      owner.action(api.baselineActions.deployBaseline, { evaluationAddress: BASELINE_ADDRESS }),
     ).rejects.toThrow('baselineActions.deployBaseline runs only on an evaluation bed');
     const agentId = await owner.mutation(api.agents.deploy, {
-      bossEmail: 'boss@day0.local',
       arm: 'baseline',
     });
     const workItemId = await seedWork(harness, agentId, 'EVAL-NO-BED');
@@ -115,10 +118,10 @@ describe('ordinary-agent comparison arm', (): void => {
     useSurfaceMode('mock');
     const { api } = await import('../../convex/_generated/api');
     const harness = convexTest(schema, allConvexModules());
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
 
     const deployed = await owner.action(api.baselineActions.deployBaseline, {
-      bossEmail: 'boss@day0.local',
+      evaluationAddress: BASELINE_ADDRESS,
       name: 'ordinary agent',
     });
 
@@ -130,7 +133,11 @@ describe('ordinary-agent comparison arm', (): void => {
       skills: await ctx.db.query('skills').collect(),
       work: await ctx.db.query('workItems').collect(),
     }));
-    expect(state.agent).toMatchObject({ arm: 'baseline', state: 'active' });
+    expect(state.agent).toMatchObject({
+      arm: 'baseline',
+      state: 'active',
+      bossEmail: BASELINE_ADDRESS,
+    });
     expect(state.charters).toHaveLength(1);
     expect(state.charters[0]).toMatchObject({ approved: true, version: 'evaluation-baseline' });
     expect(state.grants).toEqual([...EVALUATION_SCOPES].sort());
@@ -146,9 +153,9 @@ describe('ordinary-agent comparison arm', (): void => {
     useSurfaceMode('mock');
     const { api } = await import('../../convex/_generated/api');
     const harness = convexTest(schema, allConvexModules());
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     const { agentId } = await owner.action(api.baselineActions.deployBaseline, {
-      bossEmail: 'boss@day0.local',
+      evaluationAddress: BASELINE_ADDRESS,
     });
     const workItemId = await seedWork(harness, agentId, 'EVAL-WRITE-01');
     model.run = async (tools, prompt) => {
@@ -191,9 +198,9 @@ describe('ordinary-agent comparison arm', (): void => {
     useSurfaceMode('mock');
     const { api } = await import('../../convex/_generated/api');
     const harness = convexTest(schema, allConvexModules());
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     const { agentId } = await owner.action(api.baselineActions.deployBaseline, {
-      bossEmail: 'boss@day0.local',
+      evaluationAddress: BASELINE_ADDRESS,
     });
     const workItemId = await seedWork(harness, agentId, 'EVAL-SCOPE-01');
     model.run = async () => ({ text: 'I refuse: hiring is an out-of-scope HR decision.' });
@@ -216,9 +223,9 @@ describe('ordinary-agent comparison arm', (): void => {
     useSurfaceMode('mock');
     const { api } = await import('../../convex/_generated/api');
     const harness = convexTest(schema, allConvexModules());
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     const { agentId } = await owner.action(api.baselineActions.deployBaseline, {
-      bossEmail: 'boss@day0.local',
+      evaluationAddress: BASELINE_ADDRESS,
     });
     const workItemId = await seedWork(harness, agentId, 'EVAL-FAILURE');
     model.run = async () => {
@@ -238,9 +245,9 @@ describe('ordinary-agent comparison arm', (): void => {
     useSurfaceMode('mock');
     const { api } = await import('../../convex/_generated/api');
     const harness = convexTest(schema, allConvexModules());
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     const { agentId } = await owner.action(api.baselineActions.deployBaseline, {
-      bossEmail: 'boss@day0.local',
+      evaluationAddress: BASELINE_ADDRESS,
     });
     const workItemId = await seedWork(harness, agentId, 'EVAL-CONCURRENT');
     let releaseModel!: () => void;
@@ -274,15 +281,15 @@ describe('ordinary-agent comparison arm', (): void => {
     useSurfaceMode('mock');
     const { api } = await import('../../convex/_generated/api');
     const harness = convexTest(schema, allConvexModules());
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     const { agentId } = await owner.action(api.baselineActions.deployBaseline, {
-      bossEmail: 'boss@day0.local',
+      evaluationAddress: BASELINE_ADDRESS,
     });
     const workItemId = await seedWork(harness, agentId, 'EVAL-OWNER');
 
     await expect(
       harness
-        .withIdentity({ subject: 'stranger' })
+        .withIdentity(managerIdentity('stranger'))
         .action(api.baselineActions.executeTask, { workItemId }),
     ).rejects.toThrow('forbidden');
     await harness.run(async (ctx): Promise<void> => {

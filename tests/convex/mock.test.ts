@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { internal } from '../../convex/_generated/api';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
+import { MANAGER_ADDRESS } from './fakes/manager-identity';
 
 describe('mock documentation mirrors', (): void => {
   it('preserves source metadata when a page is upserted', async (): Promise<void> => {
@@ -18,7 +19,7 @@ describe('mock documentation mirrors', (): void => {
         updatedAt: 1,
       });
       const agentId = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'mirror test',
         userId: 'owner',
         state: 'deployed',
@@ -68,7 +69,7 @@ describe('the sync generation fence on mirrors (step 14)', (): void => {
         updatedAt: 1,
       }),
       agentId: await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'mirror test',
         userId: 'owner',
         state: 'deployed',

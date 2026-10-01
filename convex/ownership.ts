@@ -4,8 +4,16 @@ import type { Doc, Id } from './_generated/dataModel';
 import type { QueryCtx, MutationCtx, ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import { EMPLOYEE_NOT_YOURS } from '../src/agent/employee-access';
-import { CUSTOMER_OIDC_ISSUER_VAR } from '../src/lib/customer-oidc';
-import { DEV_NO_AUTH_SESSION_CLAIM } from '../src/lib/dev-auth-issuer';
+import { CUSTOMER_OIDC_ISSUER_VAR, customerOidcEmailTrusted } from '../src/lib/customer-oidc';
+import { DEV_NO_AUTH_ISSUER, DEV_NO_AUTH_SESSION_CLAIM } from '../src/lib/dev-auth-issuer';
+import type { EnvReader } from '../src/lib/hosted-markers';
+import { normaliseManagerAddress, sameManagerAddress } from '../src/agent/manager-address';
+import {
+  NOT_NAMED_IN_TRANSFER,
+  OWN_TRANSFER,
+  TRANSFER_NOT_FOUND,
+  UNVERIFIED_FOR_TRANSFER,
+} from '../src/agent/manager-transfer';
 import { notAuthenticatedMessage } from './devAuth';
 
 /**
@@ -75,6 +83,85 @@ export async function getCaller(ctx: QueryCtx | MutationCtx | ActionCtx): Promis
   return identity && { ...identity, ownerKey: ownerKeyOf(identity) };
 }
 
+/** The deployment's own env, as the auth config and the owner key read it. */
+function deploymentEnv(name: string): string | undefined {
+  return process.env[name];
+}
+
+/** The three issuers a deployment accepts tokens from (`convex/auth.config.ts`). */
+type CallerIssuer = 'local' | 'customer' | 'clerk';
+
+/**
+ * Which issuer signed a caller in. The auth config admits only these three,
+ * and declares Clerk only when neither other one is configured, so a token
+ * from neither the local issuer nor the customer's is Clerk's.
+ */
+function callerIssuer(identity: UserIdentity, read: EnvReader): CallerIssuer {
+  const issuer = issuerKey(identity.issuer);
+  if (issuer === issuerKey(DEV_NO_AUTH_ISSUER)) return 'local';
+  const customer = read(CUSTOMER_OIDC_ISSUER_VAR);
+  if (customer && issuer === issuerKey(customer)) return 'customer';
+  return 'clerk';
+}
+
+/**
+ * The token's own word on its address, as the deployment hands it over. An
+ * OIDC provider's `email_verified` arrives mapped to `emailVerified`; a custom
+ * JWT provider's (the local issuer's) arrives raw as `email_verified`, which a
+ * self-hosted backend was seen to do on 1 October. Undefined when the token
+ * says nothing; any value other than a boolean is not the claim and is kept
+ * as said, so it never reads as absent.
+ */
+function emailVerifiedClaim(identity: UserIdentity): unknown {
+  return identity.emailVerified ?? identity.email_verified;
+}
+
+/**
+ * The caller's verified address, trimmed and lower-cased: the address the
+ * caller's own token proves, which is what makes a caller the manager of the
+ * employees it owns and lets it answer a handover named to that address
+ * (the transfer plan, section 3.2). Read per issuer:
+ *
+ * - Clerk: the `convex` template's `email`, when `email_verified` is true.
+ * - The local issuer: the configured manager address the token route mints
+ *   as `email`, with `email_verified` true, for whoever holds the signing key.
+ * - The customer's issuer: `email` when `email_verified` is true; when the
+ *   issuer sends no `email_verified`, only if the deployment declares its
+ *   addresses trusted (`DAY0_OIDC_EMAIL_TRUSTED`, D3). An issuer that says
+ *   `false` is taken at its word, flag or not.
+ *
+ * The claim is read in either spelling ({@link emailVerifiedClaim}), and only
+ * a boolean `true` asserts it. Pure: it reads the token's claims and the
+ * deployment env, nothing else.
+ *
+ * @param identity - The caller's verified token.
+ * @param read - Reads one name of the deployment's env; its own by default.
+ * @returns The address, or undefined when the token asserts none verified or it is not shaped like one.
+ */
+export function verifiedAddressOf(
+  identity: UserIdentity,
+  read: EnvReader = deploymentEnv,
+): string | undefined {
+  return addressVerified(identity, read) ? normaliseManagerAddress(identity.email) : undefined;
+}
+
+/** Whether the caller's token asserts its address verified, by its issuer's rule (D3). */
+function addressVerified(identity: UserIdentity, read: EnvReader): boolean {
+  const claim = emailVerifiedClaim(identity);
+  const issuer = callerIssuer(identity, read);
+  switch (issuer) {
+    case 'clerk':
+    case 'local':
+      return claim === true;
+    case 'customer':
+      return claim === true || (claim === undefined && customerOidcEmailTrusted(read));
+    default: {
+      const unknown: never = issuer;
+      throw new Error(`unhandled issuer ${String(unknown)}`);
+    }
+  }
+}
+
 /** The verified caller; throws the mode's not-authenticated message for an anonymous one. */
 export async function getCallerOrThrow(ctx: QueryCtx | MutationCtx | ActionCtx): Promise<Caller> {
   const identity = await getCaller(ctx);
@@ -125,6 +212,40 @@ export async function assertOwnsAgentAction(
   if (!agent.userId) throw new Error('forbidden: agent has no owner');
   if (agent.userId !== identity.ownerKey) throw new Error('forbidden');
   return agent;
+}
+
+/** A handover request and the account it names, as {@link assertNamedInTransfer} answers them. */
+export interface NamedInTransfer {
+  readonly transfer: Doc<'managerTransfers'>;
+  readonly caller: Caller;
+}
+
+/**
+ * The handover request and its caller, if the caller is the account it names:
+ * signed in with a verified address equal to the request's `toAddress`, and
+ * not the account that asked, whatever its addresses (the transfer plan,
+ * section 5.1). The guard for the named manager's reads and answers, the
+ * counterpart of {@link assertOwnsAgent} for the employee's owner; it says
+ * nothing about the request's state, which each caller checks for its own move.
+ *
+ * @throws ConvexError with {@link TRANSFER_NOT_FOUND}, {@link UNVERIFIED_FOR_TRANSFER},
+ *   {@link NOT_NAMED_IN_TRANSFER} or {@link OWN_TRANSFER}, words the dialog shows; the
+ *   not-authenticated error for an anonymous caller.
+ */
+export async function assertNamedInTransfer(
+  ctx: QueryCtx | MutationCtx,
+  transferId: Id<'managerTransfers'>,
+): Promise<NamedInTransfer> {
+  const caller = await getCallerOrThrow(ctx);
+  const transfer = await ctx.db.get(transferId);
+  if (!transfer) throw new ConvexError(TRANSFER_NOT_FOUND);
+  const address = verifiedAddressOf(caller);
+  if (address === undefined) throw new ConvexError(UNVERIFIED_FOR_TRANSFER);
+  if (!sameManagerAddress(address, transfer.toAddress)) {
+    throw new ConvexError(NOT_NAMED_IN_TRANSFER);
+  }
+  if (caller.ownerKey === transfer.fromOwnerKey) throw new ConvexError(OWN_TRANSFER);
+  return { transfer, caller };
 }
 
 /** The charter, if the caller owns its employee; throws otherwise. */

@@ -9,6 +9,7 @@ import { contractSchema } from './contract-schema';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import type { Id } from '../../convex/_generated/dataModel';
 import { SANDBOX_LEASE_MS } from '../../convex/sandboxLease';
+import { MANAGER_ADDRESS } from './fakes/manager-identity';
 
 /**
  * The verification sandbox serves one request at a time behind a backlog of
@@ -35,7 +36,7 @@ async function seedSkill(
 ): Promise<{ skillId: Id<'skills'>; runId: Id<'events'> }> {
   return await harness.run(async (ctx) => {
     const agentId = await ctx.db.insert('agents', {
-      bossEmail: 'boss@day0.local',
+      bossEmail: MANAGER_ADDRESS,
       name: 'Priya',
       userId: OWNER,
       state: 'active',

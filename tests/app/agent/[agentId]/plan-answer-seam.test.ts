@@ -4,6 +4,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { MANAGER_ADDRESS, managerIdentity } from '../../../convex/fakes/manager-identity';
 
 const recorded = vi.hoisted(() => ({ users: [] as string[] }));
 
@@ -56,7 +57,7 @@ import { restoreSurfaceMode, useSurfaceMode } from '../../../convex/surface-mode
 
 type Harness = TestConvex<typeof schema>;
 
-const OWNER = { subject: 'owner' };
+const OWNER = managerIdentity();
 const QUESTION = 'Who owns the Looker pipeline tile.';
 const plan = {
   summary: 'Refresh the Looker pipeline tile and comment on the ticket.',
@@ -78,7 +79,7 @@ async function seed(
 ): Promise<{ agentId: Id<'agents'>; workItemId: Id<'workItems'>; charterId: Id<'charters'> }> {
   return await harness.run(async (ctx) => {
     const agentId = await ctx.db.insert('agents', {
-      bossEmail: 'boss@day0.local',
+      bossEmail: MANAGER_ADDRESS,
       name: 'worker 1',
       userId: 'owner',
       state: 'active',

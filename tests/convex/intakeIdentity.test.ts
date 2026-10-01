@@ -4,6 +4,7 @@ import { internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
+import { MANAGER_ADDRESS } from './fakes/manager-identity';
 
 async function seedSurface(
   harness: TestConvex<typeof schema>,
@@ -12,7 +13,7 @@ async function seedSurface(
 ): Promise<Id<'surfaces'>> {
   return await harness.run(async (ctx): Promise<Id<'surfaces'>> => {
     const agentId = await ctx.db.insert('agents', {
-      bossEmail: 'boss@day0.local',
+      bossEmail: MANAGER_ADDRESS,
       name: 'identity test',
       userId: 'owner',
       state: 'active',

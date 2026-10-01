@@ -347,7 +347,7 @@ export async function runRevocationEvaluation(options: CliOptions): Promise<Revo
   ) as { bossLabel: string; transcript: string };
   const runStamp = stamp();
   const agentId = await client.mutation(api.agents.deploy, {
-    bossEmail: `eval-revocation-${runStamp.toLowerCase()}@day0.local`,
+    evaluationAddress: `eval-revocation-${runStamp.toLowerCase()}@day0.local`,
     name: 'Day0 revocation evaluation',
     arm: 'day0',
   });

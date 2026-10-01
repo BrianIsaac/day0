@@ -7,6 +7,7 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+import { MANAGER_ADDRESS } from './fakes/manager-identity';
 
 /**
  * The one correction that crosses employees (decision N3): the first plan
@@ -50,7 +51,7 @@ async function employee(
 ): Promise<Employee> {
   return await harness.run(async (ctx) => {
     const agentId = await ctx.db.insert('agents', {
-      bossEmail: 'boss@day0.local',
+      bossEmail: MANAGER_ADDRESS,
       name: options.name,
       userId: options.userId ?? 'owner',
       state: 'active',

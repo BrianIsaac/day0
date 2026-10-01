@@ -6,12 +6,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
+import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
 async function failedSession(state: 'active' | 'synthesising' = 'active') {
   const harness = convexTest(schema, allConvexModules());
   const { agentId, sessionId } = await harness.run(async (ctx) => {
     const agentId = await ctx.db.insert('agents', {
-      bossEmail: 'boss@day0.local',
+      bossEmail: MANAGER_ADDRESS,
       name: 'Mira',
       userId: 'owner',
       state: 'day-one-in-progress',
@@ -44,7 +45,7 @@ async function failedSession(state: 'active' | 'synthesising' = 'active') {
 describe('holding the one-to-one again after its draft failed for good', (): void => {
   it('sets aside the kept conversation, the old transcript, the notes and the spent retries, so none reaches the next draft or its room', async (): Promise<void> => {
     const { harness, sessionId } = await failedSession();
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     expect(await owner.mutation(api.voice.restart, { sessionId })).toEqual({ ok: true });
     const row = await harness.run(async (ctx) => await ctx.db.get(sessionId));
     // The conversation moves on, so a write still in flight for the one set aside is refused.
@@ -67,10 +68,10 @@ describe('holding the one-to-one again after its draft failed for good', (): voi
   it('refuses while a finisher holds the session, and refuses anyone but the owner', async (): Promise<void> => {
     const { harness, sessionId } = await failedSession('synthesising');
     await expect(
-      harness.withIdentity({ subject: 'owner' }).mutation(api.voice.restart, { sessionId }),
+      harness.withIdentity(managerIdentity()).mutation(api.voice.restart, { sessionId }),
     ).rejects.toBeInstanceOf(ConvexError);
     await expect(
-      harness.withIdentity({ subject: 'stranger' }).mutation(api.voice.restart, { sessionId }),
+      harness.withIdentity(managerIdentity('stranger')).mutation(api.voice.restart, { sessionId }),
     ).rejects.toThrow();
     expect((await harness.run(async (ctx) => await ctx.db.get(sessionId)))?.pendingTranscript).toBe(
       'ASSISTANT: Why?\n\nUSER: The close.',
@@ -118,7 +119,7 @@ describe('a call taking over a chat one-to-one (second pass)', (): void => {
       await ctx.db.patch(sessionId, { pendingTranscript: undefined, conversationEndedAt: 5 });
     });
     await harness
-      .withIdentity({ subject: 'owner' })
+      .withIdentity(managerIdentity())
       .mutation(api.voice.start, { agentId, mode: 'elevenlabs' });
     const row = await harness.run(async (ctx) => await ctx.db.get(sessionId));
     expect(row?.turns).toBeUndefined();
@@ -136,7 +137,7 @@ describe('opening the one-to-one on a session already under way', (): void => {
         recoveryAttempts: undefined,
       });
     });
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     expect(await owner.mutation(api.voice.start, { agentId, mode: 'chat' })).toMatchObject({
       sessionId,
       resumed: true,
@@ -160,7 +161,7 @@ describe('a call started over a chat one-to-one', (): void => {
         recoveryAttempts: undefined,
       });
     });
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     expect(await owner.mutation(api.voice.start, { agentId, mode: 'elevenlabs' })).toMatchObject({
       turns: [],
       replyDraft: null,

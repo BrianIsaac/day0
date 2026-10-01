@@ -2,11 +2,13 @@
 
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
-import { useMutation } from 'convex/react';
+import { useMutation, useQuery } from 'convex/react';
+import { ConvexError } from 'convex/values';
 import Link from 'next/link';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { DEFAULT_AGENT_AVATAR, avatarById } from '@/agent/avatar-pets';
+import { UNVERIFIED_FOR_DEPLOY } from '@/agent/manager-address';
 import { deploymentZone } from '@/lib/zone';
 import { errorMessage } from '@/lib/errors';
 import { log } from '@/lib/logger';
@@ -33,6 +35,24 @@ const AUTONOMY = {
   real: 'Supervised. Reads and messages to you apply on their own; every other action waits for your approval of the exact payload.',
 } as const;
 
+/**
+ * What a failed deploy says: a refusal the backend wrote for the manager (a `ConvexError`'s
+ * words), else the failure's own message.
+ */
+function deployFailure(err: unknown): string {
+  return err instanceof ConvexError && typeof err.data === 'string' ? err.data : errorMessage(err);
+}
+
+/**
+ * Who the new employee reports to, as the facts line reads: the server's verified address for
+ * this caller once it has loaded.
+ */
+function reportsTo(address: string | null | undefined): string {
+  if (address === undefined) return 'loading';
+  if (address === null) return 'no verified address';
+  return `${address} (you)`;
+}
+
 /** One documentation source the form offers to leave out. */
 interface DocSourceChoice {
   readonly _id: Id<'docSources'>;
@@ -45,7 +65,9 @@ interface DocSourceChoice {
  * three facts the manager is agreeing to (who it reports to, where it works,
  * how much it does alone). Deploying opens the new employee's page.
  *
- * @param boss - Whoever is deploying; the employee reports to their address.
+ * The address shown and stored is the one the caller's own sign-in proves, read from the server
+ * (`agents.myManagerAddress`); the browser's copy of it is neither shown nor sent.
+ *
  * @param docSources - The owner's documentation sources, undefined while they load.
  * @param surfaceMode - Whether the deployment runs the mock office or real systems.
  * @param pickerOpen - Whether the faces show at first: for the first employee they do.
@@ -53,14 +75,17 @@ interface DocSourceChoice {
  * @param focusOnMount - Puts the caret in the name field when the form opens on request.
  */
 export function DeployForm({
-  boss,
   docSources,
   surfaceMode,
   pickerOpen,
   onCancel,
   focusOnMount = false,
 }: {
-  boss: Boss;
+  /**
+   * @deprecated The address comes from `agents.myManagerAddress`; the form reads nothing of
+   * this. `SignedInDashboard` still passes it until the screens unit (9-U4) drops it.
+   */
+  boss?: Boss;
   docSources: readonly DocSourceChoice[] | undefined;
   surfaceMode: 'mock' | 'real' | undefined;
   pickerOpen: boolean;
@@ -69,6 +94,7 @@ export function DeployForm({
 }) {
   const router = useRouter();
   const deploy = useMutation(api.agents.deploy);
+  const managerAddress = useQuery(api.agents.myManagerAddress);
   const [name, setName] = useState(DEFAULT_NAME);
   const [avatarId, setAvatarId] = useState(DEFAULT_AGENT_AVATAR.id);
   const [excludedSourceIds, setExcludedSourceIds] = useState<Id<'docSources'>[]>([]);
@@ -87,17 +113,12 @@ export function DeployForm({
 
   async function onDeploy(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    if (!trimmed) return;
-    const bossEmail = boss.email;
-    if (!bossEmail) {
-      setError('Could not read your email address. Try signing out and back in.');
-      return;
-    }
+    // The button is held in both cases; Enter in the name field still submits.
+    if (!trimmed || !managerAddress) return;
     setSubmitting(true);
     setError(null);
     try {
       const agentId = await deploy({
-        bossEmail,
         name: trimmed,
         avatarId: avatar.id,
         // Only the unticked sources travel. Sending the ticked ones as an
@@ -124,7 +145,7 @@ export function DeployForm({
       );
       router.push(`/agent/${agentId}`);
     } catch (err) {
-      setError(errorMessage(err));
+      setError(deployFailure(err));
       setSubmitting(false);
     }
   }
@@ -201,7 +222,7 @@ export function DeployForm({
 
       <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm">
         <dt className="text-[var(--color-muted)]">Reports to</dt>
-        <dd>{boss.email ? `${boss.email} (you)` : 'you'}</dd>
+        <dd aria-live="polite">{reportsTo(managerAddress)}</dd>
         <dt className="text-[var(--color-muted)]">Works in</dt>
         <dd>{surfaceMode ? WORKS_IN[surfaceMode] : 'loading'}</dd>
         <dt className="text-[var(--color-muted)]">Autonomy</dt>
@@ -211,7 +232,7 @@ export function DeployForm({
       <div className="flex flex-wrap items-center gap-3">
         <button
           type="submit"
-          disabled={submitting}
+          disabled={submitting || !managerAddress}
           className="rounded-lg bg-[var(--color-accent)] px-5 py-2.5 text-sm font-medium text-[var(--color-bg)] disabled:opacity-50"
         >
           {/* Exactly "Deploy": the bed rehearsal's driver presses the button by that name. */}
@@ -232,6 +253,11 @@ export function DeployForm({
           </button>
         ) : null}
       </div>
+      {managerAddress === null ? (
+        <p role="status" className="text-sm text-[var(--color-danger)]">
+          {UNVERIFIED_FOR_DEPLOY}
+        </p>
+      ) : null}
       {error ? (
         <p role="alert" className="text-sm text-[var(--color-danger)]">
           {error}

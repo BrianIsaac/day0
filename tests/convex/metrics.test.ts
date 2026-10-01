@@ -6,15 +6,16 @@ import { computeAgentMetrics } from '../../convex/metrics';
 import type { OwnerMetrics } from '../../src/metrics/types';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
+import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
-const OWNER = { subject: 'owner' };
+const OWNER = managerIdentity();
 
 describe('agent evaluation metrics', (): void => {
   it('computes every supervision, permission and audit number from a durable sequence', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await harness.run(async (ctx): Promise<Id<'agents'>> => {
       const id = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'Priya',
         userId: 'owner',
         state: 'active',
@@ -220,7 +221,7 @@ describe('agent evaluation metrics', (): void => {
     });
 
     await expect(
-      harness.withIdentity({ subject: 'intruder' }).query(api.metrics.forAgent, { agentId }),
+      harness.withIdentity(managerIdentity('intruder')).query(api.metrics.forAgent, { agentId }),
     ).rejects.toThrow('forbidden');
     const metrics = await harness.withIdentity(OWNER).query(api.metrics.forAgent, { agentId });
     expect(metrics).toEqual({
@@ -283,7 +284,7 @@ describe('agent evaluation metrics', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await harness.run(async (ctx): Promise<Id<'agents'>> => {
       const id = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'New agent',
         userId: 'owner',
         state: 'deployed',
@@ -312,7 +313,7 @@ describe('metrics under adversarial sequences', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await harness.run(async (ctx): Promise<Id<'agents'>> => {
       const id = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'Waiting',
         userId: 'owner',
         state: 'active',
@@ -362,7 +363,7 @@ describe('metrics under adversarial sequences', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await harness.run(async (ctx): Promise<Id<'agents'>> => {
       const id = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'Twice revoked',
         userId: 'owner',
         state: 'active',
@@ -426,7 +427,7 @@ describe('metrics under adversarial sequences', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await harness.run(async (ctx): Promise<Id<'agents'>> => {
       const id = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'Row only',
         userId: 'owner',
         state: 'active',
@@ -470,7 +471,7 @@ describe('metrics under adversarial sequences', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await harness.run(async (ctx): Promise<Id<'agents'>> => {
       const id = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'Resent',
         userId: 'owner',
         state: 'active',
@@ -601,7 +602,7 @@ describe('a browser session re-established before an apply invocation', (): void
 });
 
 describe('supervision figures for a company of employees', (): void => {
-  const COMPANY_OWNER = { subject: 'company-owner' };
+  const COMPANY_OWNER = managerIdentity('company-owner');
 
   interface EmployeeSpec {
     name: string;

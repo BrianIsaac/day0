@@ -9,7 +9,14 @@ import {
 } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
-import { assertOwnsAgent, getCaller, getCallerOrThrow, ownedAgentOrNull } from './ownership';
+import {
+  assertOwnsAgent,
+  getCaller,
+  getCallerOrThrow,
+  ownedAgentOrNull,
+  verifiedAddressOf,
+  type Caller,
+} from './ownership';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 import { AUTONOMY_CHANGE_REASON, autonomousActionsOn } from '../src/work/autonomy';
 import {
@@ -27,6 +34,14 @@ import {
 import { agentReadsSource } from '../src/docs/agent-sources';
 import { isEvaluationAgent } from './metrics';
 import { isManagerLookupFailure } from '../src/surfaces/manager-lookup';
+import {
+  MANAGER_ADDRESS_REFUSAL,
+  UNVERIFIED_FOR_DEPLOY,
+  isEvaluationShapedAddress,
+  isManagerAddressShaped,
+  normaliseManagerAddress,
+} from '../src/agent/manager-address';
+import { evaluationBedName, evaluationBedRefusal } from '../src/evaluation/bed-flag';
 import { shownEmployeeState, type CharterApproval } from '../src/work/state-labels';
 import {
   ONE_TO_ONE_PHASE_KINDS,
@@ -467,15 +482,57 @@ export const getInternal = internalQuery({
   },
 });
 
+/** What a deploy is asked for that decides the employee's address. */
+interface DeployAddressArgs {
+  readonly evaluationAddress?: string;
+  readonly name: string;
+  readonly arm: 'day0' | 'baseline';
+}
+
 /**
- * Public, signed in: creates an employee for the caller in the caller's zone
- * with its deployment grants, records both, and schedules the mirror of the
- * caller's already-synced documentation sources to it. The workspace is
- * written later, when the charter is committed.
+ * The address a new employee reports to: the deploying caller's verified
+ * address, since the account that owns an employee is its manager (the
+ * transfer plan, section 3.3, D1 (b) and D2 (a)). The evaluation harness
+ * names a reserved address instead, its evaluation marker, taken only on an
+ * evaluation bed and only when the row it makes reads as an evaluation
+ * employee; the caller must still have a verified address of its own.
+ *
+ * @throws ConvexError for a caller without a verified address, an evaluation
+ *   address off a bed, or one that would not mark an evaluation employee.
+ */
+function deployAddress(caller: Caller, args: DeployAddressArgs): string {
+  const callerAddress = verifiedAddressOf(caller);
+  if (callerAddress === undefined) throw new ConvexError(UNVERIFIED_FOR_DEPLOY);
+  if (args.evaluationAddress === undefined) return callerAddress;
+  if (evaluationBedName() === undefined) {
+    throw new ConvexError(evaluationBedRefusal('agents.deploy with an evaluation address'));
+  }
+  const evaluationAddress = normaliseManagerAddress(args.evaluationAddress);
+  if (
+    evaluationAddress === undefined ||
+    !isEvaluationShapedAddress(evaluationAddress) ||
+    !isEvaluationAgent({ bossEmail: evaluationAddress, name: args.name, arm: args.arm })
+  ) {
+    throw new ConvexError(
+      "An evaluation address must be the harness's reserved eval-<run>@day0.local address of " +
+        'an employee named as an evaluation one.',
+    );
+  }
+  return evaluationAddress;
+}
+
+/**
+ * Public, signed in with a verified address: creates an employee for the
+ * caller, reporting to that address (or, from the evaluation harness on a
+ * bed, to its reserved `evaluationAddress`), in the caller's zone with its
+ * deployment grants; records both, and schedules the mirror of the caller's
+ * already-synced documentation sources to it. The workspace is written
+ * later, when the charter is committed.
  */
 export const deploy = mutation({
   args: {
-    bossEmail: v.string(),
+    /** The harness's reserved address; refused off an evaluation bed. */
+    evaluationAddress: v.optional(v.string()),
     name: v.optional(v.string()),
     avatarId: v.optional(v.string()),
     arm: v.optional(v.union(v.literal('day0'), v.literal('baseline'))),
@@ -485,10 +542,17 @@ export const deploy = mutation({
   },
   handler: async (ctx, args): Promise<Id<'agents'>> => {
     const identity = await getCallerOrThrow(ctx);
+    const name = args.name ?? 'Day0';
+    const arm = args.arm ?? 'day0';
+    const bossEmail = deployAddress(identity, {
+      evaluationAddress: args.evaluationAddress,
+      name,
+      arm,
+    });
     // The control arm exists only for the mock-mode comparison. Nothing on the
     // real path reads the arm, so a baseline row there would be a day0 agent
     // wearing the wrong label in the evidence.
-    if (args.arm === 'baseline' && SURFACE_MODE !== 'mock') {
+    if (arm === 'baseline' && SURFACE_MODE !== 'mock') {
       throw new Error('the baseline comparison arm can only be deployed in mock mode');
     }
     for (const sourceId of args.excludedDocSourceIds ?? []) {
@@ -499,15 +563,15 @@ export const deploy = mutation({
     }
     const zone = canonicalZone(args.zone) ?? deploymentZone();
     const agentId = await ctx.db.insert('agents', {
-      bossEmail: args.bossEmail,
-      name: args.name ?? 'Day0',
+      bossEmail,
+      name,
       avatarId: args.avatarId,
       excludedDocSourceIds: args.excludedDocSourceIds?.length
         ? args.excludedDocSourceIds
         : undefined,
       userId: identity.ownerKey,
       state: 'deployed',
-      arm: args.arm ?? 'day0',
+      arm,
       zone,
       mode: SURFACE_MODE,
       createdAt: Date.now(),
@@ -515,7 +579,7 @@ export const deploy = mutation({
     await appendEvent(ctx, {
       agentId,
       type: 'agent.deployed',
-      payload: { bossEmail: args.bossEmail, arm: args.arm ?? 'day0', zone, mode: SURFACE_MODE },
+      payload: { bossEmail, arm, zone, mode: SURFACE_MODE },
       createdAt: Date.now(),
     });
     const initialScopes =
@@ -549,11 +613,21 @@ export const deploy = mutation({
   },
 });
 
-/** The longest address a mailbox can have (RFC 5321's path limit). */
-const MAX_EMAIL_LENGTH = 254;
-
-/** One `@`, a dotted domain and no spaces: enough to refuse a typo, not a validator. */
-const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+/**
+ * Public, any caller: the verified address a deploy by this caller would
+ * store, so the deploy form shows the server's address and not the
+ * browser's. Writes nothing.
+ *
+ * @returns The address, or null for an anonymous caller or one whose sign-in asserts none verified.
+ */
+export const myManagerAddress = query({
+  args: {},
+  returns: v.union(v.string(), v.null()),
+  handler: async (ctx): Promise<string | null> => {
+    const caller = await getCaller(ctx);
+    return (caller && verifiedAddressOf(caller)) ?? null;
+  },
+});
 
 /** The verdicts a surface keeps while its approval and credential stand. */
 const MANAGER_REPROBE_VERDICTS: ReadonlyArray<Doc<'surfaces'>['verdict']> = [
@@ -598,9 +672,7 @@ export const setBossEmail = mutation({
   handler: async (ctx, args): Promise<{ changed: boolean; reprobed: number }> => {
     const agent = await assertOwnsAgent(ctx, args.agentId);
     const bossEmail = args.bossEmail.trim();
-    if (bossEmail.length > MAX_EMAIL_LENGTH || !EMAIL_SHAPE.test(bossEmail)) {
-      throw new ConvexError('The manager must be an email address, such as name@company.com.');
-    }
+    if (!isManagerAddressShaped(bossEmail)) throw new ConvexError(MANAGER_ADDRESS_REFUSAL);
     if (isEvaluationAgent(agent) || isEvaluationAgent({ ...agent, bossEmail })) {
       throw new ConvexError("An evaluation agent's manager address is fixed by its run.");
     }

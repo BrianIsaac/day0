@@ -61,6 +61,7 @@ import {
   seedFakeCredential,
 } from './fakes/credential-registry';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
 // The redaction component the actions reach through DAY0_REDACTOR_URL, served
 // in-process from the recorded span model.
@@ -214,7 +215,7 @@ async function seedOrientation(
   const seeded = await harness.run(
     async (ctx): Promise<{ agentId: Id<'agents'>; sourceId: Id<'docSources'> }> => {
       const agentId = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'orientation run test',
         userId: 'owner',
         state: 'active',
@@ -960,7 +961,7 @@ describe('orientation run', (): void => {
       const { agentId, sourceId } = await harness.run(
         async (ctx): Promise<{ agentId: Id<'agents'>; sourceId: Id<'docSources'> }> => {
           const agentId = await ctx.db.insert('agents', {
-            bossEmail: 'boss@day0.local',
+            bossEmail: MANAGER_ADDRESS,
             name: 'documentation discovery test',
             userId: 'owner',
             state: 'active',
@@ -1041,7 +1042,7 @@ describe('orientation run', (): void => {
       const { agentId, sourceId } = await harness.run(
         async (ctx): Promise<{ agentId: Id<'agents'>; sourceId: Id<'docSources'> }> => ({
           agentId: await ctx.db.insert('agents', {
-            bossEmail: 'boss@day0.local',
+            bossEmail: MANAGER_ADDRESS,
             name: 'reorientation test',
             userId: 'owner',
             state: 'active',
@@ -2076,7 +2077,7 @@ describe('orientation run', (): void => {
         { name: 'Slack', class: 'chat' },
       ],
     );
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     await expect(harness.action(internal.orientationActions.run, { agentId })).resolves.toEqual({
       scheduled: 2,
     });
@@ -2122,7 +2123,7 @@ describe('orientation run', (): void => {
     const { agentId } = await seedOrientation(harness, { 'linear.md': LINEAR_RUNBOOK }, [
       { name: 'Linear', class: 'kanban' },
     ]);
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     await expect(owner.action(api.surfaces.reorient, { agentId })).resolves.toEqual({
       scheduled: 1,
     });
@@ -2138,7 +2139,9 @@ describe('orientation run', (): void => {
       endpoint: 'https://mcp.linear.app/mcp',
     });
     await expect(
-      harness.withIdentity({ subject: 'other-owner' }).action(api.surfaces.reorient, { agentId }),
+      harness
+        .withIdentity(managerIdentity('other-owner'))
+        .action(api.surfaces.reorient, { agentId }),
     ).rejects.toThrow('forbidden');
   });
 });
@@ -2762,10 +2765,10 @@ describe('each employee reads its own role', (): void => {
     expect(before['looker-pipeline-tile'].verdict).toBe('declared');
 
     const requestProposal = api.surfaces.requestProposal;
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     await expect(
       harness
-        .withIdentity({ subject: 'other-owner' })
+        .withIdentity(managerIdentity('other-owner'))
         .mutation(requestProposal, { surfaceId: before['looker-pipeline-tile']._id }),
     ).rejects.toThrow('forbidden');
     await expect(owner.mutation(requestProposal, { surfaceId: before.linear._id })).rejects.toThrow(
@@ -2828,7 +2831,7 @@ describe('each employee reads its own role', (): void => {
     const { api: liveApi } = await import('../../convex/_generated/api');
     await expect(
       harness
-        .withIdentity({ subject: 'owner' })
+        .withIdentity(managerIdentity())
         .mutation(liveApi.surfaces.requestProposal, { surfaceId: tile._id }),
     ).rejects.toThrow('Surface proposal is a local real-mode feature');
   });
@@ -2885,7 +2888,7 @@ describe('each employee reads its own role', (): void => {
         quote: '- Channels: #finance-close, #ops-requests',
       });
     }
-    await harness.withIdentity({ subject: 'owner' }).mutation(api.surfaces.reject, {
+    await harness.withIdentity(managerIdentity()).mutation(api.surfaces.reject, {
       surfaceId: finance.slack._id,
       reason: 'Re-propose.',
     });

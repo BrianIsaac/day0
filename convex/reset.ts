@@ -45,9 +45,10 @@ export const AGENT_KEYED_TABLES = [
 
 /**
  * The tables that name an agent through `agentId` and outlive it: the record
- * a real-mode retire leaves. No reset deletes their rows.
+ * a real-mode retire leaves, and the handover requests that name an employee.
+ * No reset deletes their rows.
  */
-export const RETIRE_RECORD_TABLES = ['retirements'] as const;
+export const RETIRE_RECORD_TABLES = ['retirements', 'managerTransfers'] as const;
 
 /** A table whose rows belong to one employee and go with it. */
 export type AgentKeyedTable = (typeof AGENT_KEYED_TABLES)[number];

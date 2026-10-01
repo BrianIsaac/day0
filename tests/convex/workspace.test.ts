@@ -4,12 +4,13 @@ import { api, internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
+import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
 async function seedAgent(harness: TestConvex<typeof schema>): Promise<Id<'agents'>> {
   return await harness.run(
     async (ctx): Promise<Id<'agents'>> =>
       await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'workspace test',
         userId: 'owner',
         state: 'active',
@@ -22,7 +23,7 @@ describe('the workspace files', (): void => {
   it('read back what was written, and every known file as empty until it is written', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     await harness.mutation(internal.workspace.writeFileInternal, {
       agentId,
       fileName: 'MEMORY.md',
@@ -74,7 +75,7 @@ describe('the workspace files', (): void => {
         content: 'x',
       }),
     ).rejects.toThrow('unknown NOTES.md');
-    const stranger = harness.withIdentity({ subject: 'someone-else' });
+    const stranger = harness.withIdentity(managerIdentity('someone-else'));
     await expect(stranger.query(api.workspace.read, { agentId })).rejects.toThrow('forbidden');
     await expect(
       stranger.mutation(api.workspace.writeFile, { agentId, fileName: 'SOUL.md', content: 'x' }),

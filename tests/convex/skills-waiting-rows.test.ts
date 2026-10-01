@@ -9,6 +9,7 @@ import { allConvexModules } from './all-modules';
 import { contractSchema } from './contract-schema';
 import { SPENT_REEVALUATION_KEYS } from '../../convex/work';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
 /**
  * Several items of one employee can wait for one skill: the first evaluation
@@ -65,7 +66,7 @@ vi.mock('../../src/work/plan', async (importOriginal) => {
 });
 
 type Harness = TestConvex<typeof schema>;
-const OWNER = { subject: 'owner' };
+const OWNER = managerIdentity();
 
 afterEach((): void => {
   recorded.scopeCalls.length = 0;
@@ -89,7 +90,7 @@ afterEach((): void => {
 async function seedEmployee(harness: Harness, name = 'Aiko'): Promise<Id<'agents'>> {
   return await harness.run(async (ctx) => {
     const agentId = await ctx.db.insert('agents', {
-      bossEmail: 'boss@day0.local',
+      bossEmail: MANAGER_ADDRESS,
       name,
       userId: 'owner',
       state: 'active',

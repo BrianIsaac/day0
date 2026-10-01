@@ -283,7 +283,7 @@ vercel link                        # once: the Vercel project the app deploys to
 Four things come first, and none can be done for you:
 
 - **Convex**: a project, and its production deployment. In the [dashboard](https://dashboard.convex.dev), open the project and choose Production, which provisions it and shows its name (`<word>-<word>-<number>`); `npx convex login` on this machine. The target file names it, alone in a file outside the checkout: `mkdir -p -m 700 ~/day0-private && printf 'CONVEX_DEPLOYMENT=prod:<name>\n' > ~/day0-private/prod-target.env && chmod 600 ~/day0-private/prod-target.env`. It may also hold `DAY0_APP_URL` (the setup writes it) and `VERCEL_SCOPE`, and nothing else: it is not for keys.
-- **Clerk**: an application, with a JWT template named exactly `convex`; its Issuer URL, with no trailing slash, is `CLERK_JWT_ISSUER_DOMAIN`.
+- **Clerk**: an application, with a JWT template named exactly `convex` whose claims carry the manager's verified address (`email` and `email_verified`); its Issuer URL, with no trailing slash, is `CLERK_JWT_ISSUER_DOMAIN`.
 - **Vercel**: a Next.js project linked to the checkout, which is the Framework Preset `vercel link` sets when it creates the project; one made in the dashboard or by `vercel project add` needs it set in the project's settings, and the setup refuses any other preset. It holds the app's own keys on production: `vercel env add NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY production` and `vercel env add CLERK_SECRET_KEY production --sensitive`, each asking for its value, and the model settings the chat route reads (`OPENAI_API_KEY`, `OPENAI_MODEL`, and on Featherless `OPENAI_BASE_URL`, `OPENAI_MAX_OUTPUT_TOKENS` and `OPENAI_REASONING_EFFORT` as below) the same way. The setup refuses while the two Clerk keys are missing.
 - **The deployment's settings**: a private file outside the checkout, mode 600, one `NAME=value` per line: `CLERK_JWT_ISSUER_DOMAIN`, `OPENAI_API_KEY`, and any other name `scripts/sync-convex-env.sh` manages (`OPENAI_MODEL`, `OPENAI_BASE_URL`, `DAYTONA_API_KEY` and the rest). A copy on GLM through Featherless, the hosted demo's route, needs `OPENAI_JSON_MODE=prompt`, `OPENAI_MAX_OUTPUT_TOKENS=32768` and `OPENAI_REASONING_EFFORT=low` beside `OPENAI_BASE_URL=https://api.featherless.ai/v1`; the prompts do not ask for them, so name them in the file. Without `--env-file` the setup asks for the Clerk issuer, the model key and three optional values, the keys in hidden prompts.
 
@@ -647,7 +647,7 @@ pnpm dev                         # http://localhost:3000
 Both accounts are free to create and neither step can be done for you:
 
 - **Convex** - `pnpm convex:dev` offers a choice on first run: log in, which opens a browser to sign up at [convex.dev](https://convex.dev) and then asks you to name a project, or carry on without an account, which gives you a local [anonymous deployment](#without-docker-for-convex) instead. This route is the cloud one, so log in - it is the account. Either way the command writes `CONVEX_DEPLOYMENT` and `NEXT_PUBLIC_CONVEX_URL` into `.env.local` itself. With no terminal to prompt at, it takes the anonymous option silently, which is worth knowing before you wonder why nothing appeared on the dashboard.
-- **Clerk** - create an application at [dashboard.clerk.com](https://dashboard.clerk.com), copy the publishable and secret keys into `.env.local`, then add a JWT template named exactly `convex` (JWT Templates → New template). Copy its Issuer URL, with no trailing slash, into `CLERK_JWT_ISSUER_DOMAIN` and re-run `./scripts/sync-convex-env.sh` so the deployment sees it too. Without that template Convex cannot verify a Clerk token and every signed-in call is refused.
+- **Clerk** - create an application at [dashboard.clerk.com](https://dashboard.clerk.com), copy the publishable and secret keys into `.env.local`, then add a JWT template named exactly `convex` (JWT Templates → New template) with the claims `{"email": "{{user.primary_email_address}}", "email_verified": "{{user.email_verified}}"}`: an employee reports to the verified address of the manager who deploys it, so a token without them cannot deploy. Copy its Issuer URL, with no trailing slash, into `CLERK_JWT_ISSUER_DOMAIN` and re-run `./scripts/sync-convex-env.sh` so the deployment sees it too. Without that template Convex cannot verify a Clerk token and every signed-in call is refused.
 
 `pnpm dev` binds `localhost`, which is also the host Clerk's proxy rewrites to; a `127.0.0.1` bind reads as a foreign origin to Next 16 and breaks the sign-in handshake.
 
@@ -912,7 +912,7 @@ It resolves values the way the running app does, which matters more than it soun
 
 ## Schema (`convex/schema.ts`)
 
-The schema contains 34 tables: 24 carry per-agent or agent-owned runtime state, one keeps the owner's record of the employees it retired, six hold owner-level documentation and credential state, one is the transient lease on the verification sandbox, and two are the deployment's own record of the migrations it has run and the release its rows are at.
+The schema contains 35 tables: 24 carry per-agent or agent-owned runtime state, two keep the records that outlive an employee (the owner's record of the employees it retired, and the requests to hand an employee to another manager), six hold owner-level documentation and credential state, one is the transient lease on the verification sandbox, and two are the deployment's own record of the migrations it has run and the release its rows are at.
 
 | Table | Purpose |
 |---|---|
@@ -930,7 +930,8 @@ The schema contains 34 tables: 24 carry per-agent or agent-owned runtime state, 
 | `voiceSessions` | Day-1 1:1 sessions (`elevenlabs` / `gemini-live` / `chat`) |
 | `workItems` | Work items in the twelve-state lifecycle, including exact-action decisions, provider reconciliation, the manager's feedback, waivers and answers, and the re-evaluation stamp |
 | `externalClaims` | One live claim per provider item across employees, released on cancellation and retaken before a retry resumes |
-| `retirements` | One row per employee a real-mode retire deleted, under its owner: what went, what was revoked, and the claims and rejections its colleagues still meet |
+| `retirements` | One row per employee a real-mode retire deleted, or a handover took from its owner, under that owner: what went, what was revoked, and the claims and rejections its colleagues still meet |
+| `managerTransfers` | One row per request to hand an employee to another manager: the address it names, the old manager's note, its state from asked to accepted, declined, cancelled or expired, and what the move did; a record both managers keep, so neither a retire nor a reset deletes it, addresses and note included |
 | `managerDecisionNotices` | Idempotent received/unknown acknowledgements for parsed manager-channel replies |
 | `decisionBatches` | One channel code per set of held action decisions open at once, naming each member's item, code and run |
 | `managerNotes` | What the gate tells the manager about a finished run, sent per run or claimed by the hourly digest |
@@ -1404,7 +1405,7 @@ vercel link                        # 一次性：应用要部署到的 Vercel �
 有四件事必须先做，都无法代劳：
 
 - **Convex**：一个项目及其 production deployment。在[控制台](https://dashboard.convex.dev)中打开该项目并选择 Production，它会创建该 deployment 并显示其名称（`<词>-<词>-<数字>`）；在本机运行 `npx convex login`。target 文件记录这个名称，单独放在 checkout 之外的一个文件里：`mkdir -p -m 700 ~/day0-private && printf 'CONVEX_DEPLOYMENT=prod:<name>\n' > ~/day0-private/prod-target.env && chmod 600 ~/day0-private/prod-target.env`。它还可以包含 `DAY0_APP_URL`（setup 会写入）和 `VERCEL_SCOPE`，除此之外什么都不放：它不是存放密钥的地方。
-- **Clerk**：一个应用，以及一个名称恰好为 `convex` 的 JWT template；它的 Issuer URL（末尾不带斜杠）就是 `CLERK_JWT_ISSUER_DOMAIN`。
+- **Clerk**：一个应用，以及一个名称恰好为 `convex` 的 JWT template，其 claims 携带 manager 已验证的邮箱地址（`email` 与 `email_verified`）；它的 Issuer URL（末尾不带斜杠）就是 `CLERK_JWT_ISSUER_DOMAIN`。
 - **Vercel**：一个链接到该 checkout 的 Next.js 项目，即 `vercel link` 创建项目时设置的 Framework Preset；在控制台或用 `vercel project add` 创建的项目需要在项目设置中设定它，其他 preset 会被 setup 拒绝。它在 production 上保存应用自己的密钥：`vercel env add NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY production` 和 `vercel env add CLERK_SECRET_KEY production --sensitive`，每条都会询问其值；聊天路由读取的模型设置（`OPENAI_API_KEY`、`OPENAI_MODEL`，使用 Featherless 时还有下面的 `OPENAI_BASE_URL`、`OPENAI_MAX_OUTPUT_TOKENS` 和 `OPENAI_REASONING_EFFORT`）也用同样方式设置。缺少这两个 Clerk 密钥时 setup 会拒绝。
 - **deployment 的设置**：checkout 之外的一个私有文件，权限 600，每行一个 `NAME=value`：`CLERK_JWT_ISSUER_DOMAIN`、`OPENAI_API_KEY`，以及 `scripts/sync-convex-env.sh` 管理的其他任何名称（`OPENAI_MODEL`、`OPENAI_BASE_URL`、`DAYTONA_API_KEY` 等）。通过 Featherless 使用 GLM 的副本（即托管演示的路线）在 `OPENAI_BASE_URL=https://api.featherless.ai/v1` 之外还需要 `OPENAI_JSON_MODE=prompt`、`OPENAI_MAX_OUTPUT_TOKENS=32768` 和 `OPENAI_REASONING_EFFORT=low`；提示不会询问它们，请写在文件中。不带 `--env-file` 时，setup 会询问 Clerk issuer、模型密钥和三个可选值，密钥在隐藏提示中输入。
 

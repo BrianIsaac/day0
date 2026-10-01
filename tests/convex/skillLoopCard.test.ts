@@ -6,6 +6,7 @@ import { api } from '../../convex/_generated/api';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+import { managerIdentity } from './fakes/manager-identity';
 
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
@@ -15,7 +16,7 @@ vi.mock('../../src/lib/mastra', () => ({
   agentText: async (): Promise<string> => '',
 }));
 
-const OWNER = { subject: 'owner' };
+const OWNER = managerIdentity();
 
 // A deploy schedules the documentation mirror; it waits on the faked clock
 // instead of running on the real one mid-test (P11-1).
@@ -41,7 +42,6 @@ describe('the skill loop fires from the mock action item', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const owner = harness.withIdentity(OWNER);
     const agentId = await owner.mutation(api.agents.deploy, {
-      bossEmail: 'boss@day0.local',
       name: 'Priya',
     });
     const workItemId = await harness.run(async (ctx) => {

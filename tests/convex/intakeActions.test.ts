@@ -6,6 +6,7 @@ import type { FunctionReference } from 'convex/server';
 import type { GenericId } from 'convex/values';
 import { convexTest } from 'convex-test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
 /** The configurations the production intake client built, when a test reaches it. */
 const mastra = vi.hoisted(() => ({ configs: [] as unknown[] }));
@@ -129,7 +130,7 @@ function agentRow(): Doc<'agents'> {
   return {
     _id: id<'agents'>('agent-intake'),
     _creationTime: 1,
-    bossEmail: 'boss@day0.local',
+    bossEmail: MANAGER_ADDRESS,
     name: 'Intake test agent',
     state: 'active',
     userId: 'owner',
@@ -1279,7 +1280,7 @@ describe('real surface intake', (): void => {
     const agentId = await harness.run(
       async (ctx): Promise<Id<'agents'>> =>
         await ctx.db.insert('agents', {
-          bossEmail: 'boss@day0.local',
+          bossEmail: MANAGER_ADDRESS,
           name: 'Dedup test agent',
           state: 'active',
           createdAt: 1,
@@ -3253,7 +3254,7 @@ describe('the bot identity a probe stores', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const surfaceId = await harness.run(async (ctx): Promise<Id<'surfaces'>> => {
       const agentId = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'Identity test agent',
         state: 'active',
         createdAt: 1,
@@ -3579,7 +3580,7 @@ describe('the read grant (Q7, N2)', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const { agentId, surfaceId } = await harness.run(async (ctx) => {
       const agentId = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'read grant',
         userId: 'owner',
         state: 'active',
@@ -3612,7 +3613,7 @@ describe('the read grant (Q7, N2)', (): void => {
     );
 
     await harness
-      .withIdentity({ subject: 'owner' })
+      .withIdentity(managerIdentity())
       .mutation(liveApi.agents.revokeScope, { agentId, scope: 'jira:read' });
     await harness.action(liveInternal.intakeActions.pollSurface, { surfaceId });
     expect(await skipReason()).toBe(
@@ -3880,7 +3881,7 @@ describe('the bound on seeding (N7)', (): void => {
     const [priya, mateo] = await harness.run(async (ctx) => {
       const agent = async (name: string): Promise<Id<'agents'>> =>
         await ctx.db.insert('agents', {
-          bossEmail: 'boss@day0.local',
+          bossEmail: MANAGER_ADDRESS,
           name,
           state: 'active',
           createdAt: 1,
@@ -3926,7 +3927,7 @@ describe('the bound on seeding (N7)', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await harness.run(async (ctx) => {
       const agentId = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'waiting count',
         state: 'active',
         createdAt: 1,
@@ -4424,7 +4425,7 @@ describe("an employee's documentation as intake reads it (D D3)", (): void => {
     const harness = convexTest({ schema, modules: allConvexModules(), transactionLimits: true });
     const { agentId, sourceId } = await harness.run(async (ctx) => {
       const agentId = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'Priya',
         userId: 'owner',
         state: 'active',

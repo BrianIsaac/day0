@@ -5,6 +5,7 @@ import type { Id } from '../../convex/_generated/dataModel';
 import { PAGE_TABLE_ROWS } from '../../convex/docPages';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
+import { managerIdentity } from './fakes/manager-identity';
 
 type Harness = ReturnType<typeof convexTest>;
 
@@ -59,7 +60,7 @@ describe('docPages.listForSource', (): void => {
     const sourceId = await seed(harness);
 
     const result = await harness
-      .withIdentity({ subject: 'owner' })
+      .withIdentity(managerIdentity())
       .query(api.docPages.listForSource, { sourceId, paginationOpts: FIRST_PAGE });
 
     expect(result.isDone).toBe(true);
@@ -97,12 +98,10 @@ describe('docPages.listForSource', (): void => {
       }
     });
 
-    const result = await harness
-      .withIdentity({ subject: 'owner' })
-      .query(api.docPages.listForSource, {
-        sourceId,
-        paginationOpts: { numItems: 500, cursor: null },
-      });
+    const result = await harness.withIdentity(managerIdentity()).query(api.docPages.listForSource, {
+      sourceId,
+      paginationOpts: { numItems: 500, cursor: null },
+    });
 
     expect(result.page).toHaveLength(PAGE_TABLE_ROWS);
     expect(result.isDone).toBe(false);
@@ -114,13 +113,13 @@ describe('docPages.listForSource', (): void => {
 
     await expect(
       harness
-        .withIdentity({ subject: 'stranger' })
+        .withIdentity(managerIdentity('stranger'))
         .query(api.docPages.listForSource, { sourceId, paginationOpts: FIRST_PAGE }),
     ).rejects.toThrow('forbidden');
     await harness.run(async (ctx) => await ctx.db.delete(sourceId));
     await expect(
       harness
-        .withIdentity({ subject: 'owner' })
+        .withIdentity(managerIdentity())
         .query(api.docPages.listForSource, { sourceId, paginationOpts: FIRST_PAGE }),
     ).resolves.toEqual({ page: [], isDone: true, continueCursor: '' });
   });
@@ -132,14 +131,14 @@ describe('docPages.readState', (): void => {
     const sourceId = await seed(harness);
 
     await expect(
-      harness.withIdentity({ subject: 'owner' }).query(api.docPages.readState, { sourceId }),
+      harness.withIdentity(managerIdentity()).query(api.docPages.readState, { sourceId }),
     ).resolves.toEqual({ completedAt: 5_000, unreadCount: 1, unreadNamed: 1 });
   });
 
   it('answers null before any sync has completed, and for a source that is gone', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const sourceId = await seed(harness);
-    const owner = harness.withIdentity({ subject: 'owner' });
+    const owner = harness.withIdentity(managerIdentity());
     await harness.run(
       async (ctx) => await ctx.db.patch(sourceId, { lastCompletedSyncId: undefined }),
     );

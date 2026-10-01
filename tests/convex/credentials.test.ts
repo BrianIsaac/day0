@@ -22,6 +22,7 @@ import {
 import { credentialSourceRef } from '../../src/docs/credential-ref';
 import { FAKE_BOT_TOKEN, startFakeSlack } from '../fake-slack/spawn';
 import { temporaryDirectories } from '../setup/temporary-directories';
+import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
 const temporary = temporaryDirectories();
 
@@ -126,7 +127,7 @@ describe('credential contract', (): void => {
       SECRET,
     );
     const summary = await harness
-      .withIdentity({ subject: 'owner' })
+      .withIdentity(managerIdentity())
       .query(api.credentials.summaryForOwner, {});
     expect(summary).toEqual([
       expect.objectContaining({
@@ -141,10 +142,10 @@ describe('credential contract', (): void => {
     expect(summary[0]).not.toHaveProperty('ciphertext');
     expect(summary[0]).not.toHaveProperty('iv');
     await expect(
-      harness.withIdentity({ subject: 'owner' }).query(api.credentials.summaryForOwner, {}),
+      harness.withIdentity(managerIdentity()).query(api.credentials.summaryForOwner, {}),
     ).resolves.not.toContainEqual(expect.objectContaining({ iv: expect.anything() }));
     await expect(
-      harness.withIdentity({ subject: 'stranger' }).query(api.credentials.summaryForOwner, {}),
+      harness.withIdentity(managerIdentity('stranger')).query(api.credentials.summaryForOwner, {}),
     ).resolves.toEqual([]);
   });
 
@@ -161,7 +162,7 @@ describe('credential contract', (): void => {
       harness.action(internal.credentials.store, { ...args, plaintext: SECRET }),
     ).resolves.toBe(credentialId);
     expect(await rows(harness)).toHaveLength(1);
-    await harness.withIdentity({ subject: 'owner' }).mutation(api.credentials.revoke, {
+    await harness.withIdentity(managerIdentity()).mutation(api.credentials.revoke, {
       credentialId,
     });
     const [revoked] = await rows(harness);
@@ -187,7 +188,7 @@ describe('credential contract', (): void => {
     await expect(harness.query(internal.credentials.countStored, {})).resolves.toBe(0);
     const reason = async (): Promise<string | undefined> => {
       const [summary] = await harness
-        .withIdentity({ subject: 'owner' })
+        .withIdentity(managerIdentity())
         .query(api.credentials.summaryForOwner, {});
       return summary.statusReason;
     };
@@ -244,7 +245,7 @@ describe('credential contract', (): void => {
     expect((await rows(harness))[0]).not.toHaveProperty('supersededAt');
 
     // A revoke the owner made survives the same blink.
-    await harness.withIdentity({ subject: 'owner' }).mutation(api.credentials.revoke, {
+    await harness.withIdentity(managerIdentity()).mutation(api.credentials.revoke, {
       credentialId,
     });
     await sync(false);
@@ -443,15 +444,15 @@ describe('credential contract', (): void => {
     });
     await expect(
       harness
-        .withIdentity({ subject: 'other-owner' })
+        .withIdentity(managerIdentity('other-owner'))
         .mutation(api.credentials.revoke, { credentialId }),
     ).rejects.toThrow('not found');
     await expect(harness.query(internal.credentials.countStored, {})).resolves.toBe(1);
-    await harness.withIdentity({ subject: 'owner' }).mutation(api.credentials.revoke, {
+    await harness.withIdentity(managerIdentity()).mutation(api.credentials.revoke, {
       credentialId,
     });
     const summary = await harness
-      .withIdentity({ subject: 'owner' })
+      .withIdentity(managerIdentity())
       .query(api.credentials.summaryForOwner, {});
     expect(summary[0].revokedAt).toEqual(expect.any(Number));
     await expect(harness.query(internal.credentials.countStored, {})).resolves.toBe(0);
@@ -534,7 +535,7 @@ describe('a page whose count of values changes (P10-1)', (): void => {
       source: { sourceId, ref: pageRef },
     });
     await harness
-      .withIdentity({ subject: 'owner' })
+      .withIdentity(managerIdentity())
       .mutation(api.credentials.revoke, { credentialId });
     await expect(
       harness.action(internal.credentials.store, {
@@ -807,9 +808,7 @@ describe('credential persistence after unlink', () => {
         rotated: true,
       };
       if (existing) await harness.mutation(internal.credentials.persistEncrypted, args);
-      await harness
-        .withIdentity({ subject: 'owner' })
-        .mutation(api.docSources.unlink, { sourceId });
+      await harness.withIdentity(managerIdentity()).mutation(api.docSources.unlink, { sourceId });
       // Encryption began while the source existed; its final transaction arrives after unlink.
       await expect(harness.mutation(internal.credentials.persistEncrypted, args)).rejects.toThrow(
         'does not belong',
@@ -856,7 +855,7 @@ describe('an apply decrypts the stored row, and a revoked row stops it (P10-9)',
   ): Promise<Id<'workItems'>> {
     const { workItemId, runId } = await harness.run(async (ctx) => {
       const agentId = await ctx.db.insert('agents', {
-        bossEmail: 'boss@day0.local',
+        bossEmail: MANAGER_ADDRESS,
         name: 'Priya',
         userId: 'owner',
         state: 'active',
@@ -955,7 +954,7 @@ describe('an apply decrypts the stored row, and a revoked row stops it (P10-9)',
     // The manager's own DM is automatic and already applying; a Linear write waits for approval.
     const pending = await harness.run(async (ctx) => await ctx.db.get(workItemId));
     if (pending?.state === 'actions-pending') {
-      await harness.withIdentity({ subject: 'owner' }).mutation(api.work.approveActions, {
+      await harness.withIdentity(managerIdentity()).mutation(api.work.approveActions, {
         workItemId,
         pendingRunId: runId,
         approvedIndexes: [0],
@@ -1002,7 +1001,7 @@ describe('an apply decrypts the stored row, and a revoked row stops it (P10-9)',
     expect(posts).toEqual([`Bearer ${TOKEN}`]);
 
     await harness
-      .withIdentity({ subject: 'owner' })
+      .withIdentity(managerIdentity())
       .mutation(liveApi.credentials.revoke, { credentialId });
     const second = await approvedWrite(harness, 'slack', credentialId);
     await harness.action(liveInternal.workActions.applyApprovedActions, { workItemId: second });
@@ -1080,7 +1079,7 @@ describe('an apply decrypts the stored row, and a revoked row stops it (P10-9)',
     ]);
 
     await harness
-      .withIdentity({ subject: 'owner' })
+      .withIdentity(managerIdentity())
       .mutation(liveApi.credentials.revoke, { credentialId });
     const second = await approvedWrite(harness, 'linear', credentialId);
     await harness.action(liveInternal.workActions.applyApprovedActions, { workItemId: second });
