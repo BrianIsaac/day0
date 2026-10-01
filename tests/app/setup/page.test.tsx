@@ -2,8 +2,9 @@ import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 
-import SetupPage from '../../../app/setup/page';
+import SetupPage, { metadata } from '../../../app/setup/page';
 import {
+  HOSTED_DEMO_URL,
   DETAILED_SECTIONS,
   FIRST_SUCCESS,
   HOSTED_COPY,
@@ -16,6 +17,7 @@ import {
   REAL_MODE_VERBS,
   RUN_WAYS,
   RUN_WAY_VERBS_NOTE,
+  SETUP_PAGE_URL,
   TRAPS,
   WAY_NAMES,
 } from '../../../src/setup/quickstart';
@@ -120,6 +122,20 @@ describe('the /setup guide', (): void => {
 
   it('names the ports the installation publishes', (): void => {
     for (const port of ['3210', '3211', '6791', '3000', '11434']) expect(text).toContain(port);
+  });
+
+  it('names the hosted demo it describes by its address, linked, wherever the page is served (the v0.12.0 walk)', (): void => {
+    expect(HOSTED_DEMO_URL).toBe('https://dayzer0.dev');
+    const hosted = html.slice(html.indexOf('id="run-hosted"'), html.indexOf('id="run-cloud"'));
+    expect(hosted).toMatch(
+      /It runs at <a [^>]*href="https:\/\/dayzer0\.dev"[^>]*>dayzer0\.dev<\/a>\./,
+    );
+  });
+
+  it('gives its own address as the page every copy of it stands for', (): void => {
+    expect(metadata.alternates?.canonical).toBe(SETUP_PAGE_URL);
+    // The layout's Open Graph card stands; a page's own would replace it whole.
+    expect(metadata.openGraph).toBeUndefined();
   });
 
   it('names the three ways to run it, in order, each with its commands', (): void => {

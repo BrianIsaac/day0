@@ -19,6 +19,7 @@ import {
   REAL_MODE_NOTE,
   REAL_MODE_VERBS,
   REPOSITORY_URL,
+  SETUP_PAGE_URL,
   RUN_WAYS,
   RUN_WAY_VERBS_NOTE,
   STOP_AND_RESTART,
@@ -26,10 +27,16 @@ import {
   TRAPS,
 } from '@/setup/quickstart';
 
+/**
+ * The page's title and description, and its own address: every installation serves this guide,
+ * and the hosted copy is the one each stands for.
+ */
 export const metadata: Metadata = {
   title: 'Set up Day0',
   description:
     'Run Day0 on your own machine: what you need, the three ways to run it, the five commands, what a first success looks like, and what to do when it stops.',
+  // Only the canonical: a page's `openGraph` replaces the layout's whole, not field by field.
+  alternates: { canonical: SETUP_PAGE_URL },
 };
 
 /**
@@ -294,6 +301,20 @@ export default async function SetupPage() {
                       {way.title}
                     </h3>
                   </div>
+                  {way.address ? (
+                    // The hosted demo by its address: the page is served by every installation,
+                    // and a reader on one of them is told where the demo it describes runs.
+                    <p className="text-sm text-[var(--color-fg)] leading-relaxed mb-2">
+                      It runs at{' '}
+                      <a
+                        href={way.address.href}
+                        className="text-[var(--color-accent)] underline underline-offset-4"
+                      >
+                        {way.address.label}
+                      </a>
+                      .
+                    </p>
+                  ) : null}
                   <p className="text-sm text-[var(--color-muted)] leading-relaxed mb-3">
                     <Prose text={way.body} />
                   </p>
