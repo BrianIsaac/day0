@@ -67,7 +67,11 @@ import { createInterface, type Interface } from 'node:readline';
 import { Writable } from 'node:stream';
 import { pathToFileURL } from 'node:url';
 import { DEFAULT_DOCS_HOST_DIR, ensureDocsHostDir } from '../src/docs/host-dir';
-import { DEFAULT_LOCAL_MANAGER_ADDRESS } from '../src/agent/manager-address';
+import {
+  DEFAULT_LOCAL_MANAGER_ADDRESS,
+  isManagerAddressShaped,
+  MANAGER_ADDRESS_REFUSAL,
+} from '../src/agent/manager-address';
 import { CRONS_PAUSED_FLAG, cronsPauseReason } from '../src/lib/crons-pause';
 import {
   FIRST_SUCCESS,
@@ -2976,6 +2980,16 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       io.log(
         '  your own hosted copy on Convex cloud and Vercel is `./setup.sh cloud setup --target <file>`.',
       );
+    }
+
+    // The local token route refuses to mint for a configured address that is not one (503), so a
+    // malformed one is refused here, before anything is written or started.
+    if (bossEmail !== '' && !isManagerAddressShaped(bossEmail)) {
+      io.log(
+        `error: "${bossEmail}" is not an email address, and the local sign-in would refuse it. ` +
+          MANAGER_ADDRESS_REFUSAL,
+      );
+      return 1;
     }
 
     const createsEnv = !existsSync(envPath);
