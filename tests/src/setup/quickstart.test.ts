@@ -73,6 +73,10 @@ describe('the quick-start commands', (): void => {
     expect(SETUP_PAGE_URL.endsWith('/setup')).toBe(true);
   });
 
+  it('send a reader to the guide on the hosted demo’s own domain', (): void => {
+    expect(SETUP_PAGE_URL).toBe('https://dayzer0.dev/setup');
+  });
+
   it('render as one fenced bash block, which is what a README carries', (): void => {
     expect(QUICKSTART_BLOCK).toBe(['```bash', ...QUICKSTART_COMMANDS, '```'].join('\n'));
   });
@@ -121,7 +125,9 @@ describe('the README quick starts', (): void => {
   });
 
   it('sends a reader on to the page and to the hand-run sections', (): void => {
-    expect(README).toContain(SETUP_PAGE_URL);
+    const link = `[**Set up Day0**](${SETUP_PAGE_URL})`;
+    expect(README.slice(0, chineseAt)).toContain(link);
+    expect(README.slice(chineseAt)).toContain(link);
     const quickStart = README.slice(README.indexOf('\n## Quick start\n'), blockOffsets[0] + 2000);
     expect(quickStart).toContain('#local-dev');
   });

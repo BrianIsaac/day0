@@ -77,7 +77,7 @@ pnpm dev
 
 `./setup.sh` asks where the model runs when `--route` does not say - a hosted model through Featherless, a key you already have, an endpoint you already run, or the bundled model here - then for the key in a hidden prompt where one is needed and for the address your Slack DM is resolved from. It then does the rest: the containers and components, the generated keys written into `.env.local` rather than pasted into it, the two model addresses written as a pair, the function push and `pnpm check:setup`. It finishes by printing an unlock URL. Open that, link your documentation, deploy an agent, hold the Day-1 1:1 in chat, and approve the charter it writes; that first approval is what fills the work queue, and the connection cards on the Surfaces tab are what let it act.
 
-[**Set up Day0**](https://day0-olive.vercel.app/setup) is this quick start as a page, with what first success looks like, the setup traps worth knowing and the measured timings. [Local dev](#local-dev) gives each way's one command and says what the setup does on it, step by step, and is what to read when something needs fixing. Mock mode, the seeded office the hosted demo and the evaluation harness run on, is `pnpm setup:local` and is documented as that under [Evaluation and the mock office](#evaluation-and-the-mock-office).
+[**Set up Day0**](https://dayzer0.dev/setup) is this quick start as a page, with what first success looks like, the setup traps worth knowing and the measured timings. [Local dev](#local-dev) gives each way's one command and says what the setup does on it, step by step, and is what to read when something needs fixing. Mock mode, the seeded office the hosted demo and the evaluation harness run on, is `pnpm setup:local` and is documented as that under [Evaluation and the mock office](#evaluation-and-the-mock-office).
 
 
 ## What is unusual about it
@@ -1220,7 +1220,7 @@ pnpm dev
 
 未指定 `--route` 时，`./setup.sh` 会先问模型在哪里运行：通过 Featherless 使用托管模型、使用你已有的 key、你已经在运行的 endpoint，或在本机运行内置模型；需要 key 时通过隐藏输入读取，并询问用于解析 Slack DM 的邮箱地址。其余步骤由它完成：启动容器和各组件、把生成的密钥直接写入 `.env.local` 而不是让你粘贴、成对写入两个模型地址、推送函数并运行 `pnpm check:setup`。最后它会打印一个 unlock URL：打开该链接，链接你的文档，部署一个 Agent，用文字模式完成 Day-1 一对一，然后批准它起草的工作章程；第一次批准会填充工作队列，Surfaces 标签页上的连接卡片则决定它能操作什么。
 
-[**Set up Day0**](https://day0-olive.vercel.app/setup) 是这份快速开始的页面版本，其中包含首次成功的判断标准、值得了解的设置陷阱，以及实测耗时。[本地开发](#local-dev)给出每种方式的那一条命令，并逐步说明 setup 在该方式下做了什么，遇到问题时应当从那里读起。mock mode 是托管演示和评测 harness 所运行的预置 office，对应 `pnpm setup:local`，在[评测与 mock office](#评测与-mock-office)中按其用途说明。
+[**Set up Day0**](https://dayzer0.dev/setup) 是这份快速开始的页面版本，其中包含首次成功的判断标准、值得了解的设置陷阱，以及实测耗时。[本地开发](#local-dev)给出每种方式的那一条命令，并逐步说明 setup 在该方式下做了什么，遇到问题时应当从那里读起。mock mode 是托管演示和评测 harness 所运行的预置 office，对应 `pnpm setup:local`，在[评测与 mock office](#评测与-mock-office)中按其用途说明。
 
 ### 它的特别之处
 
