@@ -38,6 +38,7 @@ describe('mock documentation mirrors', (): void => {
       sourceRef: 'onboarding.md',
       sourceUrl: 'https://example.com/onboarding',
     });
+    if (docId === null) throw new Error('the mirror was not written');
     await expect(harness.run(async (ctx) => await ctx.db.get(docId))).resolves.toMatchObject({
       sourceId: ids.sourceId,
       sourceRef: 'onboarding.md',
@@ -178,5 +179,42 @@ describe('which mirrored pages an employee reads (transfer plan 6.2)', (): void 
       'colleague-onboarding',
       'office-welcome',
     ]);
+  });
+});
+
+describe('a mirror written for an employee that no longer reads its source (transfer plan 6.2)', (): void => {
+  it("writes nothing for a page of another owner's source, as a sync begun before a handover would", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, sourceId } = await harness.run(async (ctx) => ({
+      sourceId: await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'Owner handbook',
+        kind: 'folder',
+        locator: '.',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+      agentId: await ctx.db.insert('agents', {
+        bossEmail: fixtureAddressOf('colleague'),
+        name: 'Maya',
+        userId: 'colleague',
+        state: 'active',
+        createdAt: 1,
+      }),
+    }));
+
+    await expect(
+      harness.mutation(internal.mock.upsertDoc, {
+        agentId,
+        slug: 'owner-runbook',
+        title: 'Runbook',
+        body: '# Runbook',
+        category: 'team-doc',
+        sourceId,
+        sourceRef: 'runbook.md',
+      }),
+    ).resolves.toBeNull();
+    expect(await harness.run(async (ctx) => await ctx.db.query('mockDocs').collect())).toEqual([]);
   });
 });

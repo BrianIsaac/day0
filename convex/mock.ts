@@ -178,8 +178,10 @@ export const getDoc = query({
 /**
  * Upsert one page of an agent's Docs surface by slug. Internal; written by the
  * seed and by the documentation sync's mirror. A sync names its generation
- * and writes nothing once a newer sync has superseded it (step 14).
+ * and writes nothing once a newer sync has superseded it (step 14). A page of a source the
+ * employee does not read ({@link mirrorReadable}) is not written.
  *
+ * @returns The page's id, or null when nothing was written.
  * @throws Error when `syncRunId` is given without its source, or is not the
  *   source's running generation.
  */
@@ -196,10 +198,18 @@ export const upsertDoc = internalMutation({
     /** The sync generation mirroring the page; a superseded one writes nothing. */
     syncRunId: v.optional(v.id('docSyncRuns')),
   },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Id<'mockDocs'> | null> => {
     if (args.syncRunId !== undefined) {
       if (args.sourceId === undefined) throw new Error('A synced mirror names its source.');
       await assertCurrentGeneration(ctx, args.sourceId, args.syncRunId);
+    }
+    // A sync of the old owner's source begun before a handover finishes after it: the moved
+    // employee no longer reads that source, so its page is not written for it.
+    if (
+      args.sourceId !== undefined &&
+      !mirrorReadable(await ctx.db.get(args.agentId), await ctx.db.get(args.sourceId))
+    ) {
+      return null;
     }
     const existing = await ctx.db
       .query('mockDocs')
