@@ -98,9 +98,10 @@ type StoredVerificationStop =
  * (K3) has a smoke test written for its unchanged body first, through the authoring gates. On a
  * pass, `skills.completeRegistration` links the row to the version, keeps a missing check and
  * clears "Re-check due"; on a failure the row is `failed` with the sandbox's log, its waiting work
- * parked as any failed skill's is. When no sandbox ran, or the smoke test for a missing check
- * could not be written, a registered row is released unchanged, still due, and any other row is
- * parked with the stored body for Retry.
+ * parked as any failed skill's is. When no sandbox ran, the smoke test for a missing check could
+ * not be written, or the registration refused the version (a handover or a withdrawal while the
+ * run held the row), a registered row is released unchanged, still due; any other row is parked
+ * with the stored body for Retry, or failed with the refusal.
  *
  * @returns Whether the row registered, or why not.
  */
@@ -155,13 +156,18 @@ export const verifyStoredSkill = internalAction({
       });
       if (registered) return { ok: true };
       if (refusal === undefined) return { ok: false, reason: SUPERSEDED };
+      // A row registered before the claim keeps running the body it was verified with: the
+      // refusal is of the version (handed over, withdrawn), not of the employee's skill, so no
+      // verdict on it takes the row out of use (10-K's rule; the wave 10 review, K-m1).
+      if (skill.state === 'registered') {
+        return await releaseRegisteredRow(ctx, { skillId: args.skillId, runId, reason: refusal });
+      }
       return await recordAuthoringFailure(ctx, args.skillId, runId, {
         rowReason: storedCopyRefusedReason(refusal),
         reason: refusal,
         eventType: 'skill.verification-failed',
-        // A row that is not callable may hold a copy an earlier stop parked; a registered row's
-        // body is its own verified one.
-        dropsStoredCopy: skill.state !== 'registered',
+        // A row that is not callable may hold a copy an earlier stop parked.
+        dropsStoredCopy: true,
       });
     }
     if (stop.kind === 'failed') {
@@ -341,12 +347,7 @@ async function stopShortOfVerdict(
 ): Promise<{ ok: false; reason: string }> {
   const { skill, runId, reason } = args;
   if (skill.state === 'registered' || args.smokeTest === undefined) {
-    const { released } = await ctx.runMutation(internal.skillVersions.releaseStoredVerification, {
-      skillId: skill._id,
-      runId,
-      reason,
-    });
-    return { ok: false, reason: released ? reason : SUPERSEDED };
+    return await releaseRegisteredRow(ctx, { skillId: skill._id, runId, reason });
   }
   const { recorded } = await ctx.runMutation(internal.skills.parkUnverified, {
     skillId: skill._id,
@@ -358,4 +359,25 @@ async function stopShortOfVerdict(
     reason,
   });
   return { ok: false, reason: recorded ? reason : SUPERSEDED };
+}
+
+/**
+ * End a stored verification that leaves its row as it was: the claim released, the row still
+ * registered and still due its re-check, the skip on the record
+ * (`skillVersions.releaseStoredVerification`).
+ */
+async function releaseRegisteredRow(
+  ctx: ActionCtx,
+  release: {
+    readonly skillId: Id<'skills'>;
+    readonly runId: Id<'events'>;
+    readonly reason: string;
+  },
+): Promise<{ ok: false; reason: string }> {
+  const { released } = await ctx.runMutation(internal.skillVersions.releaseStoredVerification, {
+    skillId: release.skillId,
+    runId: release.runId,
+    reason: release.reason,
+  });
+  return { ok: false, reason: released ? release.reason : SUPERSEDED };
 }

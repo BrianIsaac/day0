@@ -314,6 +314,38 @@ describe('verifyStoredSkill', (): void => {
     ).toHaveLength(1);
   });
 
+  it('leaves a registered row running and still due when its re-check is refused at registration (the wave 10 review, K-m1)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { priya, versionId } = await seedOffice(harness);
+    const held = await registeredRow(harness, priya, versionId);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(held, { recheckDueAt: 3, recheckReason: 'its check was not kept' });
+    });
+    const started = new Promise<void>((resolve): void => {
+      recorded.started = resolve;
+    });
+    let finish = (): void => {};
+    recorded.gate = new Promise<void>((resolve): void => {
+      finish = resolve;
+    });
+
+    const run = harness.action(internal.storedVerification.verifyStoredSkill, { skillId: held });
+    await started;
+    // Handed over while the check ran: the version stayed with the old owner, so the registration
+    // is refused, and the body the employee runs is not.
+    await harness.run(async (ctx) => await ctx.db.patch(priya, { userId: 'colleague' }));
+    finish();
+
+    await expect(run).resolves.toMatchObject({ ok: false });
+    const after = await row(harness, held);
+    expect(after).toMatchObject({
+      state: 'registered',
+      versionId,
+      recheckReason: 'its check was not kept',
+    });
+    expect(after.authoringRunId).toBeUndefined();
+  });
+
   it('re-checks a registered row in use, and clears its chip on a pass', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { priya, versionId } = await seedOffice(harness);
