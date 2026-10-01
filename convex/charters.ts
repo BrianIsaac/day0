@@ -27,7 +27,11 @@ import {
   strikePreview,
   type CharterConstraint,
 } from '../src/agent/charter-constraints';
-import { identityFromCharter, toolsFromCharter } from '../src/agent/charter-workspace';
+import {
+  identityFromCharter,
+  toolsFromCharter,
+  userFromManager,
+} from '../src/agent/charter-workspace';
 import { SYSTEM_CLASSES } from '../src/agent/system-classes';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { appendEvent } from './eventLog';
@@ -181,10 +185,12 @@ export async function renderWorkspaceFromCharter(
 }
 
 /**
- * Render IDENTITY.md (and TOOLS.md with it, through {@link renderWorkspaceFromCharter}) again for
- * the manager the employee row names now, from its newest approved charter: a handover writes the new manager's address to the row (the transfer plan, section
- * 6.2), and the file names who approves. An employee whose charter was never approved keeps its
- * file, since a draft is rendered without a manager.
+ * Render IDENTITY.md (and TOOLS.md with it, through {@link renderWorkspaceFromCharter}) and USER.md
+ * again for the manager the employee row names now, from its newest approved charter: a handover
+ * writes the new manager's address to the row (the transfer plan, section 6.2), and both files
+ * name the manager, so neither keeps the old one's (the wave 9 review, section 3). An employee
+ * whose charter was never approved keeps its files, since a draft is rendered without a manager
+ * and the handover discards it (D8).
  *
  * @param ctx - The handover's mutation context.
  * @param agentId - The employee, already under its new manager.
@@ -201,6 +207,14 @@ export async function renderIdentityForManager(
   for await (const charter of charters) {
     if (!charter.approved) continue;
     await renderWorkspaceFromCharter(ctx, agentId, charter.body as Charter);
+    const agent = await ctx.db.get(agentId);
+    if (agent) {
+      await writeFileImpl(ctx, {
+        agentId,
+        fileName: 'USER.md',
+        content: userFromManager(agent.bossEmail),
+      });
+    }
     return true;
   }
   return false;

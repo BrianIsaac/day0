@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Charter } from '../../../src/agent/charter';
-import { identityFromCharter } from '../../../src/agent/charter-workspace';
+import { identityFromCharter, userFromManager } from '../../../src/agent/charter-workspace';
 import { runThroughBody } from '../../fixtures/run-through-charter-2026-09-14';
 
 describe('identityFromCharter', (): void => {
@@ -20,5 +20,11 @@ describe('identityFromCharter', (): void => {
 
   it('renders a draft with no manager section until approval names one', (): void => {
     expect(identityFromCharter(charter)).not.toContain('## Manager');
+  });
+});
+
+describe('userFromManager', (): void => {
+  it('names the manager on the Boss line, as the draft and a handover write it', (): void => {
+    expect(userFromManager('lead@kestrel.example')).toBe('# USER\n\nBoss: lead@kestrel.example\n');
   });
 });

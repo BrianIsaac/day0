@@ -180,6 +180,12 @@ async function seedOffice(): Promise<Office> {
       content: `# IDENTITY\n\n## Manager (who approves)\n- ${MANAGER_ADDRESS}\n`,
       updatedAt: 2,
     });
+    await ctx.db.insert('workspace', {
+      agentId: maya,
+      fileName: 'USER.md',
+      content: `# USER\n\nBoss: ${MANAGER_ADDRESS}\n`,
+      updatedAt: 2,
+    });
     const documentation = {
       kind: 'documentation' as const,
       sourceId: ownerSource,
@@ -579,6 +585,7 @@ describe('accept in mock mode: the office moves and nothing is kept (14.1 items 
       .query(api.workspace.read, { agentId: office.maya });
     expect(identity['IDENTITY.md']).toContain(`- ${COLLEAGUE_ADDRESS}`);
     expect(identity['IDENTITY.md']).not.toContain(MANAGER_ADDRESS);
+    expect(identity['USER.md']).toBe(`# USER\n\nBoss: ${COLLEAGUE_ADDRESS}\n`);
   });
 
   it('gives the employee the documentation the acceptor ticked, and counts every old page deleted across pages', async (): Promise<void> => {
