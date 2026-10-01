@@ -272,3 +272,36 @@ describe('closeDeparturesOnReturn (U3-m6)', (): void => {
     expect(mayaRetired?.claims).toHaveLength(1);
   });
 });
+
+describe('closeDeparturesOnReturn past its read bound', (): void => {
+  it('closes what it reads and never fails the move on an owner’s long history', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await harness.run(async (ctx) => {
+      const maya = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Maya',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      for (let index = 0; index <= RETIREMENT_READ_LIMIT; index += 1) {
+        await ctx.db.insert('retirements', {
+          userId: 'owner',
+          kind: 'retired',
+          agentId: maya,
+          retiredAt: index + 1,
+          rowCounts: {},
+          revokedCredentials: 0,
+          keptCredentials: 0,
+          claims: [],
+          rejections: [],
+        });
+      }
+      return maya;
+    });
+
+    await expect(
+      harness.run(async (ctx) => await closeDeparturesOnReturn(ctx, 'owner', agentId)),
+    ).resolves.toBe(0);
+  });
+});

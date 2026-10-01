@@ -1,5 +1,6 @@
 import type { Doc, Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
+import { log } from '../src/lib/logger';
 
 /*
  * The owner's retired employees, as the boundaries a colleague's work reads
@@ -138,14 +139,25 @@ export function retiredHolderName(
  * @param ownerKey - The owner the employee returns to.
  * @param agentId - The returning employee.
  * @returns How many boundaries were closed.
- * @throws Error when the owner has more than `RETIREMENT_READ_LIMIT` rows, so none is skipped.
  */
 export async function closeDeparturesOnReturn(
   ctx: Pick<MutationCtx, 'db'>,
   ownerKey: string,
   agentId: Id<'agents'>,
 ): Promise<number> {
-  const departures = (await ownerRetirements(ctx, ownerKey)).filter(
+  // Read without `ownerRetirements`' refusal past its bound: a move must not fail on an owner's
+  // long history, and a departure older than the bound keeps its boundary (logged).
+  const rows = await ctx.db
+    .query('retirements')
+    .withIndex('by_user', (q) => q.eq('userId', ownerKey))
+    .order('desc')
+    .take(RETIREMENT_READ_LIMIT);
+  if (rows.length === RETIREMENT_READ_LIMIT) {
+    log.warn('departures read to their bound on a return; older ones keep their boundary', {
+      agentId,
+    });
+  }
+  const departures = rows.filter(
     (row) =>
       row.kind === 'transferred' &&
       row.agentId === agentId &&

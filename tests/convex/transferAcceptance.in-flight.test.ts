@@ -4,7 +4,12 @@ import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import type schema from '../../convex/schema';
 import { HANDOVER_IN_PROGRESS_REASON, HANDOVER_STOP_REASON } from '../../convex/transferInFlight';
-import { SETTLE_FAILURES_BEFORE_END } from '../../convex/transferAcceptance';
+import {
+  SETTLE_FAILED_ON_THE_SERVER,
+  SETTLE_FAILURES_BEFORE_END,
+  settleFailureReason,
+} from '../../convex/transferAcceptance';
+import { ConvexError } from 'convex/values';
 import { HANDED_OVER_REQUEST_REASON } from '../../convex/work';
 import { HANDOVER_SESSION_FAILURE } from '../../convex/voice';
 import { TRANSFER_SETTLE_MS, transferExpiresAt } from '../../src/agent/manager-transfer';
@@ -1401,5 +1406,18 @@ describe('the stall sweep while a handover is finishing (resumeStalledSteps)', (
 
     expect(swept).toEqual({ rescheduled: 1 });
     expect(await read(handover.harness, stalled.workItemId)).toMatchObject({ state: 'failed' });
+  });
+});
+
+describe('settleFailureReason: what the record says of a failed settle', (): void => {
+  it('keeps a refusal’s own words and gives the server’s own message to the log only', (): void => {
+    expect(
+      settleFailureReason(new ConvexError('This employee has more than 1000 connections.')),
+    ).toBe('This employee has more than 1000 connections.');
+    expect(
+      settleFailureReason(
+        new Error('[Request ID: 0123abcd] Server Error in transferAcceptance:settle'),
+      ),
+    ).toBe(SETTLE_FAILED_ON_THE_SERVER);
   });
 });

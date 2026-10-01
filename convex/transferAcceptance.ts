@@ -760,8 +760,9 @@ export const settle = internalMutation({
 });
 
 /**
- * How many settles of one accepting request may fail before it ends itself (decision 4): at the
- * sweep's one a minute, about five minutes past the deadline or past the last run's end.
+ * How many settles of one accepting request may fail before it ends itself (decision 4): the
+ * deadline's own attempt and the sweep's, one a minute, so within about five minutes of the
+ * deadline or of the last run's end.
  */
 export const SETTLE_FAILURES_BEFORE_END = 5;
 
@@ -820,10 +821,21 @@ export const recordSettleFailure = internalMutation({
   },
 });
 
-/** The words a failed settle carries: a refusal's own, or the failure's message. */
-function settleFailureReason(error: unknown): string {
+/**
+ * What the record says of a failed settle that is not a refusal: the server's own message (a
+ * request id, a function path) is for the operator's log, not the manager's record.
+ */
+export const SETTLE_FAILED_ON_THE_SERVER = 'the move failed on the server';
+
+/**
+ * The words a failed settle carries on the record: a refusal's own, or
+ * {@link SETTLE_FAILED_ON_THE_SERVER} for any other failure.
+ *
+ * @param error - What the settle threw.
+ */
+export function settleFailureReason(error: unknown): string {
   if (error instanceof ConvexError && typeof error.data === 'string') return error.data;
-  return error instanceof Error ? error.message : String(error);
+  return SETTLE_FAILED_ON_THE_SERVER;
 }
 
 /**
@@ -841,15 +853,17 @@ export const attemptSettle = internalAction({
   args: { transferId: v.id('managerTransfers') },
   returns: attemptOutcomeValidator,
   handler: async (ctx, args): Promise<Infer<typeof attemptOutcomeValidator>> => {
-    let reason: string;
+    let failure: unknown;
     try {
       return await ctx.runMutation(internal.transferAcceptance.settle, args);
     } catch (error) {
-      reason = settleFailureReason(error);
+      failure = error;
     }
+    const reason = settleFailureReason(failure);
     log.warn('handover settle failed; counted toward its end', {
       transferId: args.transferId,
       reason,
+      error: failure instanceof Error ? failure.message : String(failure),
     });
     return await ctx.runMutation(internal.transferAcceptance.recordSettleFailure, {
       transferId: args.transferId,
