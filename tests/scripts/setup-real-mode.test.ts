@@ -647,6 +647,22 @@ describe('a whole real-mode run on the Featherless route', (): void => {
     expect(ran(h)).not.toContain('convex:up');
   });
 
+  it('says with --yes and no address what the sign-in carries and how an employee is moved later', async (): Promise<void> => {
+    const h = harness({
+      environment: { FEATHERLESS_API_KEY: SYNTHETIC_KEY },
+      services: ['backend', 'sandbox', 'redactor'],
+    });
+    expect(await runSetup(realRoute({ bossEmail: undefined }), h.io)).toBe(0);
+    const output = h.output.join('\n');
+    expect(output).toContain(
+      'note: NEXT_PUBLIC_DEMO_BOSS_EMAIL is unset, so your local sign-in carries boss@day0.local, ' +
+        'which no Slack workspace knows, and real mode finds your Slack DM from that address. Set it ' +
+        "(or pass --boss-email) before you deploy; set later, each employee's People tab offers " +
+        'Make it you, which moves its DM to the new address.',
+    );
+    expect(output).not.toContain('cannot correct a live agent');
+  });
+
   it('asks for the manager’s address when the file has none and --yes was not given', async (): Promise<void> => {
     const h = harness({
       environment: { FEATHERLESS_API_KEY: SYNTHETIC_KEY },
