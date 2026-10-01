@@ -641,6 +641,10 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     expect(back?.textContent).toBe('Back to the one-to-one');
     // The inline-link look the rest of the page's links in running text take (second review w4).
     expect(back?.className).toContain('decoration-[var(--color-link-line)]');
+    // A grid item stretches across the column, and the button's centring then sat the words in
+    // the middle of the page: held to the start, it lines up with the tab below (the wave 9
+    // pre-tag's recorded nit, seen on the v0.12.0 walk).
+    expect(back?.className).toContain('justify-self-start');
     view.unmount();
   });
 
@@ -655,9 +659,9 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     await settle();
     expect(view.container.textContent).toContain('the people page');
     expect(view.container.querySelector('[role="tablist"]')).toBeNull();
-    expect(view.container.querySelector('a[href="/agent/agent-1"]')?.textContent).toBe(
-      'Back to the one-to-one',
-    );
+    const back = view.container.querySelector('a[href="/agent/agent-1"]');
+    expect(back?.textContent).toBe('Back to the one-to-one');
+    expect(back?.className).toContain('justify-self-start');
     view.unmount();
   });
 
