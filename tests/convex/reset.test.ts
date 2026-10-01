@@ -649,6 +649,10 @@ describe('retire in real mode', (): void => {
     });
 
     await harness.withIdentity(managerIdentity()).mutation(api.reset.retire, { agentId: retiring });
+    // The drain runs an action from `workActions.ts`, whose first import after the registry reset
+    // can spend the drain's turn budget when other files load cold beside this one (the wave 10
+    // review, section 8): load it before the drain.
+    await import('../../convex/workActions');
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
 
     expect((await retirementsOf(harness))[0].claims).toEqual([]);
@@ -792,6 +796,10 @@ describe('retire in real mode', (): void => {
     });
 
     await harness.withIdentity(managerIdentity()).mutation(api.reset.retire, { agentId: retiring });
+    // The drain runs an action from `workActions.ts`, whose first import after the registry reset
+    // can spend the drain's turn budget when other files load cold beside this one (the wave 10
+    // review, section 8): load it before the drain.
+    await import('../../convex/workActions');
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
 
     expect((await retirementsOf(harness))[0].claims).toEqual([]);
