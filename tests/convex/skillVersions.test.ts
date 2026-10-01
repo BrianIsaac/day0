@@ -9,6 +9,7 @@ import {
   copyVersionsForMove,
   ownerVersions,
   releaseAuthor,
+  sharedSkillsOn,
   stampRecheckDue,
   stampRecheckDueOnSurfaces,
 } from '../../convex/skillVersions';
@@ -506,5 +507,16 @@ describe('skillVersions: an author leaving and an employee moving', (): void => 
       'its connection to linear was cut when the employee was handed over',
     );
     expect((await skill(harness, adopted.skillId)).recheckDueAt).toBeUndefined();
+  });
+});
+
+describe('skillVersions: the shared-skills switch (K4)', (): void => {
+  it('reads the deployment flag on each call, on unless it says off', (): void => {
+    vi.stubEnv('DAY0_SHARED_SKILLS', '');
+    expect(sharedSkillsOn()).toBe(true);
+    vi.stubEnv('DAY0_SHARED_SKILLS', 'false');
+    expect(sharedSkillsOn()).toBe(false);
+    vi.stubEnv('DAY0_SHARED_SKILLS', 'true');
+    expect(sharedSkillsOn()).toBe(true);
   });
 });
