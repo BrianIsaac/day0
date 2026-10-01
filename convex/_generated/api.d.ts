@@ -49,6 +49,7 @@ import type * as reset from '../reset.js';
 import type * as retirements from '../retirements.js';
 import type * as revocationEvaluation from '../revocationEvaluation.js';
 import type * as revocationEvaluationActions from '../revocationEvaluationActions.js';
+import type * as roster from '../roster.js';
 import type * as sandboxLease from '../sandboxLease.js';
 import type * as seed from '../seed.js';
 import type * as skillActions from '../skillActions.js';
@@ -111,6 +112,7 @@ declare const fullApi: ApiFromModules<{
   retirements: typeof retirements;
   revocationEvaluation: typeof revocationEvaluation;
   revocationEvaluationActions: typeof revocationEvaluationActions;
+  roster: typeof roster;
   sandboxLease: typeof sandboxLease;
   seed: typeof seed;
   skillActions: typeof skillActions;

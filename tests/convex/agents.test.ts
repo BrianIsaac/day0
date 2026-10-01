@@ -5,7 +5,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
-import { clipRoleLine } from '../../convex/agents';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { autonomousActionsOn } from '../../src/work/autonomy';
@@ -1804,33 +1803,6 @@ describe('the employee roster', (): void => {
     expect(afterUnlink.every((row) => row.docSourceCount === 99)).toBe(true);
   });
 
-  it('clips a long role line at a word boundary to 90 characters', (): void => {
-    const cases: Array<[string, string]> = [
-      [
-        'Own routine revenue operations work from owned, prioritized Linear tickets for the RevOps team.',
-        'Own routine revenue operations work from owned, prioritized Linear tickets for the RevOps\u2026',
-      ],
-      [
-        'Reconcile the month-end ledgers against the bank feeds, chase missing supplier invoices, and prepare the close pack.',
-        'Reconcile the month-end ledgers against the bank feeds, chase missing supplier invoices\u2026',
-      ],
-      [
-        '  Close the month,\n every month,   for the finance team. ',
-        'Close the month, every month, for the finance team.',
-      ],
-      [`${'a'.repeat(44)} ${'b'.repeat(45)}`, `${'a'.repeat(44)} ${'b'.repeat(45)}`],
-      ['x'.repeat(120), `${'x'.repeat(89)}\u2026`],
-    ];
-    for (const [text, expected] of cases) {
-      expect(clipRoleLine(text)).toBe(expected);
-      expect(clipRoleLine(text).length).toBeLessThanOrEqual(90);
-    }
-  });
-
-  it('does not split a surrogate pair when one long role word must be clipped', (): void => {
-    const glyph = '\u{1F600}';
-    expect(clipRoleLine(glyph.repeat(60))).toBe(`${glyph.repeat(44)}\u2026`);
-  });
   it('counts a new stop under needs-you even when older rejected rows fill the stopped read', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const mira = await deployEmployee(harness, 'owner', 'Mira');
