@@ -274,6 +274,24 @@ describe('the live feed labels', (): void => {
     ).toBe('skill re-check due: kanban-comment-and-close (v3 is verified; this runs v2)');
   });
 
+  it('labels an adoption offered and an adoption made with the version and its author (10-A)', (): void => {
+    expect(
+      eventLabel({
+        type: 'skill.adoption-offered',
+        payload: { name: 'kanban-comment-and-close', version: 2, authorName: 'Priya' },
+      }),
+    ).toBe('skill adoption offered: kanban-comment-and-close v2 by Priya');
+    expect(
+      eventLabel({
+        type: 'skill.adopted',
+        payload: { name: 'kanban-comment-and-close', version: 2, authorName: 'Priya' },
+      }),
+    ).toBe('skill adopted: kanban-comment-and-close v2 by Priya');
+    expect(
+      eventLabel({ type: 'skill.adopted', payload: { name: 'kanban-comment-and-close' } }),
+    ).toBe('skill adopted: kanban-comment-and-close');
+  });
+
   it('labels a dismissal as the manager setting a stopped item aside (m16)', (): void => {
     expect(eventLabel({ type: 'work.dismissed', payload: { workItemId: 'w1' } })).toBe(
       'dismissed by the manager',

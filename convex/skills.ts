@@ -23,6 +23,7 @@ import { redactTokenShapes } from '../src/surfaces/redact';
 import { appendEvent } from './eventLog';
 import type { SkillAuthoringRefusedPayload } from '../src/events/contract';
 import { recordRegisteredVersion, storedVersionRefusal } from './skillVersions';
+import { recordOffer } from './skillAdoption';
 import { readRefValidator, surfaceToolsValidator } from './schema';
 import { countsAsAuthoringAttempt } from '../src/work/skill-library';
 
@@ -673,6 +674,11 @@ export const propose = internalMutation({
     requiredScopes: v.array(v.string()),
     surfaceClass: v.optional(v.string()),
     operation: v.optional(v.string()),
+    /**
+     * A sibling's verified version of the shape to offer for adoption, as
+     * `skillAdoption.offerFor` found it (10-A); absent when none is offered.
+     */
+    offeredVersionId: v.optional(v.id('skillVersions')),
   },
   handler: async (ctx, args): Promise<Id<'skills'>> => {
     const target = await surfaceForWork(ctx, args.agentId, args.workItemId);
@@ -725,6 +731,8 @@ export const propose = internalMutation({
           surfaceClass: existing.surfaceClass ?? args.surfaceClass,
           operation: existing.operation ?? args.operation,
         });
+        // The latest evaluation's offer stands: a new one is said, a withdrawn one goes.
+        await recordOffer(ctx, existing, args.offeredVersionId);
       }
       return existing._id;
     }
@@ -757,6 +765,10 @@ export const propose = internalMutation({
       },
       createdAt: Date.now(),
     });
+    if (args.offeredVersionId !== undefined) {
+      const row = await ctx.db.get(id);
+      if (row !== null) await recordOffer(ctx, row, args.offeredVersionId);
+    }
     return id;
   },
 });

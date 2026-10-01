@@ -503,6 +503,29 @@ export interface SkillRecheckDuePayload extends SkillReason {
   readonly versionId?: Id<'skillVersions'>;
 }
 
+/** A version of the owner's library as an adoption event names it (10-A). */
+interface SkillAdoptionVersion extends SkillNamed {
+  readonly versionId: Id<'skillVersions'>;
+  readonly version: number;
+  /** The version's author as the library keeps the name, after the author left too. */
+  readonly authorName: string;
+}
+
+/**
+ * The payload of `skill.adoption-offered`: a proposal offers a sibling's verified version for the
+ * employee to adopt instead of writing its own (A3).
+ */
+export interface SkillAdoptionOfferedPayload extends SkillAdoptionVersion {
+  readonly forWorkItem: WorkItemId;
+}
+
+/**
+ * The payload of `skill.adopted`: the manager adopted the offered version, beside the
+ * `skill.approved` that granted the scopes the employee lacked; the sandbox verifies it again
+ * under the employee's own contract before it runs.
+ */
+export type SkillAdoptedPayload = SkillAdoptionVersion;
+
 /** The payload of `skill.failed`. */
 export type SkillFailedPayload = SkillReason;
 
@@ -1191,6 +1214,8 @@ export interface EventPayloads {
   'skill.authoring': SkillAuthoringPayload;
   'skill.registered': SkillRegisteredPayload;
   'skill.recheck-due': SkillRecheckDuePayload;
+  'skill.adoption-offered': SkillAdoptionOfferedPayload;
+  'skill.adopted': SkillAdoptedPayload;
   'skill.failed': SkillFailedPayload;
   'skill.author-failed': SkillAuthorFailedPayload;
   'skill.verification-failed': SkillVerificationFailedPayload;
@@ -1344,6 +1369,8 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'skill.authoring',
   'skill.registered',
   'skill.recheck-due',
+  'skill.adoption-offered',
+  'skill.adopted',
   'skill.failed',
   'skill.author-failed',
   'skill.verification-failed',

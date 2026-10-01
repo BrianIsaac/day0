@@ -222,6 +222,29 @@ describe('recordWords', (): void => {
     ).toBe('The skill kanban-comment-and-close is due a re-check: its check was not kept.');
   });
 
+  it('says whose skill was offered for adoption, and that adopting it checks it again first (10-A)', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'skill.adoption-offered',
+          payload: { name: 'kanban-comment-and-close', version: 2, authorName: 'Priya' },
+        },
+        subject,
+      ),
+    ).toBe('Mira was offered the skill kanban-comment-and-close, version 2 by Priya, to adopt.');
+    expect(
+      recordWords(
+        {
+          type: 'skill.adopted',
+          payload: { name: 'kanban-comment-and-close', version: 2, authorName: 'Priya' },
+        },
+        subject,
+      ),
+    ).toBe(
+      'You adopted the skill kanban-comment-and-close, version 2 by Priya, for Mira; the sandbox checks it again for Mira before it runs.',
+    );
+  });
+
   it('says a dismissal took the item out of the inbox and kept it on the Work tab (m16)', (): void => {
     expect(
       recordWords(

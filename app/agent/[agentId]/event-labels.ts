@@ -50,6 +50,13 @@ function listed(value: unknown): string | undefined {
   return names.length > 0 ? names.join(', ') : undefined;
 }
 
+/** ` v2 by Priya` for a library version an adoption event names, or what of it the row carries. */
+function byVersion(payload: { readonly version?: unknown; readonly authorName?: unknown }): string {
+  const version = typeof payload.version === 'number' ? ` v${payload.version}` : '';
+  const author = text(payload.authorName);
+  return `${version}${author ? ` by ${author}` : ''}`;
+}
+
 /** How long a duration reads in the feed: `90 s`, `4 min`, `2 h`. */
 function duration(ms: unknown): string | undefined {
   if (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0) return undefined;
@@ -243,6 +250,10 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     }`,
   'skill.recheck-due': (payload) =>
     `skill re-check due: ${text(payload.name) ?? 'unnamed'}${because(payload.reason)}`,
+  'skill.adoption-offered': (payload) =>
+    `skill adoption offered: ${text(payload.name) ?? 'unnamed'}${byVersion(payload)}`,
+  'skill.adopted': (payload) =>
+    `skill adopted: ${text(payload.name) ?? 'unnamed'}${byVersion(payload)}`,
   'skill.failed': (payload) =>
     `skill failed: ${text(payload.name) ?? 'unnamed'}${because(payload.reason)}`,
   'skill.author-failed': (payload) =>
