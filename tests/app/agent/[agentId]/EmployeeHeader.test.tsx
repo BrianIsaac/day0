@@ -212,8 +212,11 @@ describe('the manager line (the transfer plan 7.2, D14)', (): void => {
     expect(text(markup)).toBe('Reports to you · handing over to lead@day0.local');
     const link = /<a([^>]*)href="\/agent\/agent-1\/people"[^>]*>(.*?)<\/a>/.exec(markup);
     expect(text(link?.[2]?.replace(/&nbsp;/g, ' ') ?? '')).toBe('handing over to lead@day0.local');
-    // A 44 px target, as the zone line's control is (N14).
+    // A 44 px target, as the zone line's control is (N14), and one run of text: the link's flex
+    // box would otherwise split it into two underlined pieces with a gap between.
     expect(link?.[1]).toContain('min-h-11');
+    const inside = link?.[2] ?? '';
+    expect(inside.startsWith('<span>') && inside.endsWith('</span>')).toBe(true);
   });
 
   it('says it aloud when the named manager accepts, which nobody on this page did', (): void => {

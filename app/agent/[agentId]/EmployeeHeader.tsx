@@ -85,9 +85,9 @@ export function ManagerLine({ agent, standing, open, lookupFailure }: ManagerLin
       <>
         <span className="min-w-0">{lead} · </span>
         {toPeople(
-          <>
-            {HANDING_OVER_TO}&nbsp;{mono(open.toAddress)}
-          </>,
+          <span>
+            {HANDING_OVER_TO} {mono(open.toAddress)}
+          </span>,
         )}
       </>
     );
