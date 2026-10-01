@@ -403,6 +403,8 @@ describe('signed-in landing', () => {
       expect(pending).not.toContain('Your employees');
       expect(pending).not.toContain('Try the demo');
       expect(authState.asked).toEqual([]);
+      // The page says what it is waiting for rather than standing empty (second review x6).
+      expect(pending).toMatch(/<div role="status"[^>]*>loading your employees…<\/div>/);
     } finally {
       authState.signedIn = false;
       authState.tokenPending = false;

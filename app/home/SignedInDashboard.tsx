@@ -5,6 +5,7 @@ import { flushSync } from 'react-dom';
 import { useQueries, useQuery } from 'convex/react';
 import Link from 'next/link';
 import { api } from '@convex/_generated/api';
+import { employeeStateTally } from '@/work/state-labels';
 import { useNow } from '../components/time';
 import { useArrival } from '../arrival';
 import { CompanySupervision } from '../CompanySupervision';
@@ -148,10 +149,15 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
   );
 }
 
-/** The company in one line: who is active and how much waits on the manager. */
+/**
+ * The company in one line: how many stand at each state, counted by the words the roster's chips
+ * print, and how much waits on the manager, counted by the inbox the roster's column reads, so
+ * the line and the roster below it say the same thing (the production walk's 6d).
+ */
 function companyLine(roster: readonly RosterRow[], inbox: NeedsYouInbox | undefined): string {
-  const active = roster.filter((employee) => employee.state === 'active').length;
-  const parts = [`${active} active`];
+  const parts = employeeStateTally(roster).map(
+    ({ text, count }) => `${count} ${text.charAt(0).toLocaleLowerCase('en-GB')}${text.slice(1)}`,
+  );
   if (inbox) parts.push(`${inbox.total} ${inbox.total === 1 ? 'thing needs' : 'things need'} you`);
   return parts.join(' · ');
 }

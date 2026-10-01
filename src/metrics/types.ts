@@ -12,9 +12,10 @@ export interface AgentMetrics {
    */
   writeLanded: boolean;
   /**
-   * When the first supervised write landed (`writeLanded`), from the same rows: the first event
-   * that carried its ledger row. Null before one, and while the only one is seen on its work item
-   * with no event yet.
+   * When the first supervised write landed (`writeLanded`), from the same rows: the landing time
+   * the apply path stamped on its ledger row, or for a row sent before that stamp, the first event
+   * that carried it. Null before one, and while the only one is such an older row seen on its work
+   * item with no event yet.
    */
   workingSince: number | null;
   charter: {

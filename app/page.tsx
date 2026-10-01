@@ -5,7 +5,7 @@ import { DEV_BOSS_EMAIL, DEV_BOSS_FIRST_NAME, DEV_NO_AUTH } from '@/lib/dev-auth
 import { useAccount } from './account';
 import { SignedInDashboard } from './home/SignedInDashboard';
 import { MarketingLanding } from './marketing/MarketingLanding';
-import { SessionGate } from './Providers';
+import { SessionGate, SessionPending } from './Providers';
 
 /**
  * `/` serves both audiences from one route (decision N29): the marketing page to a signed-out
@@ -16,7 +16,11 @@ export default function LandingPage() {
   return (
     <div className="min-h-[calc(100vh-3.25rem)] flex flex-col">
       {DEV_NO_AUTH ? (
-        <SignedInDashboard boss={{ email: DEV_BOSS_EMAIL, firstName: DEV_BOSS_FIRST_NAME }} />
+        // Held above by the no-auth gate, which the session gate passes straight through; wrapped
+        // all the same, so every owned root is behind the gate whichever mode builds it.
+        <SessionGate fallback={<Pending />}>
+          <SignedInDashboard boss={{ email: DEV_BOSS_EMAIL, firstName: DEV_BOSS_FIRST_NAME }} />
+        </SessionGate>
       ) : (
         <ClerkLanding />
       )}
@@ -32,12 +36,16 @@ function ClerkLanding(): ReactElement | null {
     case 'signed-out':
       return <MarketingLanding />;
     case 'signed-in':
-      // The dashboard reads the manager's rows; until Convex holds the token it stays the
-      // neutral shell `resolving` draws.
+      // The dashboard reads the manager's rows; until Convex holds the token it says what loads.
       return (
-        <SessionGate fallback={null}>
+        <SessionGate fallback={<Pending />}>
           <SignedInDashboard boss={account.boss} />
         </SessionGate>
       );
   }
+}
+
+/** What `/` draws while Convex confirms the manager's sign-in. */
+function Pending(): ReactElement {
+  return <SessionPending>loading your employees…</SessionPending>;
 }

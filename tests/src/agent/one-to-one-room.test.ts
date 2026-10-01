@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { INIT_PROMPT } from '../../../src/agent/day-one-turn';
 import { uiMessagesOf, type OneToOneTurn } from '../../../src/agent/one-to-one-conversation';
 import {
+  answerSetAside,
   lastKeptReply,
   redrawn,
   replyInProgress,
@@ -110,5 +111,28 @@ describe('a room the session has moved past', (): void => {
       messages: uiMessagesOf(moved),
       unsent: ['Tab B, on question 1.'],
     });
+  });
+});
+
+describe('an answer the session set aside under the room (pre-tag pass minor 7)', (): void => {
+  const drawn = [...uiMessagesOf(KEPT), said('r1', 'Priya.')];
+  const withoutAnswer = KEPT.slice(0, 2);
+
+  it('is one the subscription reported and the session no longer holds, the rest drawn in order', (): void => {
+    expect(answerSetAside(drawn, withoutAnswer, new Set(['e0', 'm0', 'e1']))).toBe(true);
+  });
+
+  it('is never one the subscription has not reported yet, so a lag draws nothing away', (): void => {
+    expect(answerSetAside(drawn, withoutAnswer, new Set(['e0', 'm0']))).toBe(false);
+  });
+
+  it('is never one the session still holds, nor a room the session holds turns beyond', (): void => {
+    const seen = new Set(['e0', 'm0', 'e1', 'm1']);
+    expect(answerSetAside(drawn, KEPT, seen)).toBe(false);
+    expect(answerSetAside(drawn, [...withoutAnswer, manager('m1', 'Elsewhere.')], seen)).toBe(
+      false,
+    );
+    // Turns the room drew out of the session's order are not the session's copy either.
+    expect(answerSetAside(drawn, [KEPT[1]!, KEPT[0]!], seen)).toBe(false);
   });
 });

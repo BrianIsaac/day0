@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  MAX_KEPT_BYTES,
   MAX_KEPT_TURNS,
   REPLY_MAX_CHARS,
   TURN_ID_MAX_CHARS,
@@ -12,6 +13,7 @@ import {
   decideAnswer,
   decideTurn,
   isKeptAnswer,
+  keptBytes,
   withKeptMark,
   isClosed,
   owesAnswer,
@@ -269,6 +271,36 @@ describe('deciding a turn against the kept conversation', (): void => {
     expect(
       decideAnswer(two.turns, { answering: 'm18b', id: 'e19', text: 'More?', topicIndex: 6 }, 6),
     ).toMatchObject({ ok: true });
+  });
+});
+
+describe('the conversation’s size in bytes (second review m4)', (): void => {
+  /** A conversation at the character bounds, every reply and answer full, in one character. */
+  function full(exchanges: number, character: string): OneToOneTurn[] {
+    const turns: OneToOneTurn[] = [employee('e0', character.repeat(ANSWER_MAX_CHARS), 0)];
+    for (let index = 0; index < exchanges; index += 1) {
+      turns.push(manager(`m${index}`, character.repeat(REPLY_MAX_CHARS)));
+      turns.push(employee(`e${index + 1}`, character.repeat(ANSWER_MAX_CHARS), 6));
+    }
+    return turns;
+  }
+
+  it('counts the words as UTF-8, where a CJK character is three bytes', (): void => {
+    expect(keptBytes([manager('m0', 'abc')])).toBe(3);
+    expect(keptBytes([manager('m0', '字字')])).toBe(6);
+    expect(keptBytes([{ ...employee('e0', 'a'), closingLine: 'é' }])).toBe(3);
+  });
+
+  it('refuses a reply in a three-byte script once its answer would take the words past the bound', (): void => {
+    const turns = full(12, '字');
+    expect(turns.length).toBeLessThan(MAX_KEPT_TURNS);
+    const decision = decideTurn(turns, reply('e12', ['m12', '字'.repeat(REPLY_MAX_CHARS)]), 5);
+    expect(decision).toMatchObject({ ok: false });
+    // The same conversation in ASCII is well inside it: the turn bound still decides there.
+    expect(
+      decideTurn(full(12, 'a'), reply('e12', ['m12', 'a'.repeat(REPLY_MAX_CHARS)]), 5),
+    ).toMatchObject({ ok: true });
+    expect(keptBytes(full(19, 'a'))).toBeLessThan(MAX_KEPT_BYTES);
   });
 });
 

@@ -226,6 +226,67 @@ describe.skipIf(BASH === '')('setup.sh', (): void => {
     expect(outcome.stdout).toContain('Nothing was started and nothing was written.');
   });
 
+  it('hands a cloud verb to its typed entry without asking anything of Docker', (): void => {
+    const outcome = runSetupSh(
+      { installed: true, daemon: { ok: false, stderr: 'Cannot connect to the Docker daemon' } },
+      ['cloud', 'upgrade', '--target', '/private/prod-target.env', '--dry-run'],
+    );
+    expect(outcome.status).toBe(0);
+    expect(outcome.stderr).not.toContain('Docker');
+    expect(outcome.pnpm).toEqual([
+      'exec tsx scripts/setup-cloud.ts upgrade --target /private/prod-target.env --dry-run',
+    ]);
+  });
+
+  it('checks Node and pnpm for a cloud verb, and installs nothing on its dry run', (): void => {
+    const dry = runSetupSh({}, ['cloud', 'backup', '--target', '/p/t.env', '--dry-run']);
+    expect(dry.status).toBe(0);
+    expect(dry.pnpm).toEqual([]);
+    expect(dry.stdout).toContain(
+      '  pnpm exec tsx scripts/setup-cloud.ts backup --target /p/t.env --dry-run',
+    );
+    expect(runSetupSh({}, ['cloud', 'setup', '--target', '/p/t.env']).pnpm).toEqual([
+      'install --frozen-lockfile',
+      'exec tsx scripts/setup-cloud.ts setup --target /p/t.env',
+    ]);
+  });
+
+  it("leaves a cloud verb's help to its typed entry, and installs nothing to print it", (): void => {
+    expect(runSetupSh({ installed: true }, ['cloud', '--help']).pnpm).toEqual([
+      'exec tsx scripts/setup-cloud.ts --help',
+    ]);
+    const bare = runSetupSh({}, ['cloud', 'setup', '--help']);
+    expect(bare.pnpm).toEqual([]);
+    expect(bare.stdout).toContain('pnpm install --frozen-lockfile && ./setup.sh cloud --help');
+  });
+
+  it('names every cloud verb in its usage and its header', (): void => {
+    const outcome = runSetupSh({}, ['--help']);
+    expect(outcome.stdout).toContain(
+      './setup.sh cloud setup | upgrade | backup | pause | unpause --target <file>',
+    );
+    for (const verb of ['setup', 'upgrade', 'backup']) {
+      expect(outcome.stdout).toContain(`./setup.sh cloud ${verb} --target <file>`);
+      expect(readFileSync(SCRIPT, 'utf8')).toContain(
+        `#   ./setup.sh cloud ${verb} --target <file>`,
+      );
+    }
+    expect(outcome.stdout).toContain('./setup.sh cloud pause | unpause --target <file>');
+    expect(readFileSync(SCRIPT, 'utf8')).toContain(
+      '#   ./setup.sh cloud pause | unpause --target <file>',
+    );
+  });
+
+  it('says the cloud pause is for a real-mode deployment, and that it holds a mock one too', (): void => {
+    const outcome = runSetupSh({}, ['--help']);
+    expect(outcome.stdout).toContain(
+      "hold a deployment's jobs, or not (for real mode;\n                                             a mock one takes it too)",
+    );
+    expect(readFileSync(SCRIPT, 'utf8')).toContain(
+      "#                                      hold a cloud deployment's scheduled jobs (for\n#                                      real mode; a mock one takes the pause too)",
+    );
+  });
+
   it('installs on a real run and hands every flag to the typed entry in real mode', (): void => {
     expect(runSetupSh({}, ['--route', 'local']).pnpm).toEqual([
       'install --frozen-lockfile',

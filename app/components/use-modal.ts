@@ -133,11 +133,22 @@ function holdPageStill(): () => void {
 const INERT_HOLDS = 'data-modal-inert';
 
 /**
+ * The count a child carried when a modal opened inside it lifted it out of the others' hold: the
+ * holds still waiting to take it back once that modal closes. A modal that lets go of a lifted
+ * child takes one off this count instead.
+ */
+const INERT_LIFTED = 'data-modal-inert-lifted';
+
+/** How many open modals sit in a lifted part, so it goes back under the holds only after the last. */
+const INERT_LIFTERS = 'data-modal-inert-lifters';
+
+/**
  * Make the rest of the page inert under a modal: every child of the body but the one holding
  * the panel. Modals open at once share the hold on each child: a child is live again only when
  * the last modal holding it lets go, so one closing never wakes the page under another (review
  * m6). The panel's own child is lifted out of the hold, since a modal opened over another sits
- * in a child the first made inert, and would take neither focus nor a click.
+ * in a child the first made inert, and would take neither focus nor a click; when this modal
+ * closes first, the child goes back under the holds still open (the second review's w2).
  *
  * @param own - The panel, or null when it has not rendered.
  * @returns Let go of the hold; a second call does nothing.
@@ -146,8 +157,17 @@ function holdPageInert(own: HTMLElement | null): () => void {
   const children = [...document.body.children];
   const mine = own === null ? undefined : children.find((element) => element.contains(own));
   if (mine?.hasAttribute(INERT_HOLDS)) {
+    mine.setAttribute(INERT_LIFTED, mine.getAttribute(INERT_HOLDS) ?? '0');
     mine.removeAttribute(INERT_HOLDS);
     mine.removeAttribute('inert');
+  }
+  // A part lifted for this modal, or for another still open in it, which this one keeps lifted.
+  const lifted = mine?.hasAttribute(INERT_LIFTED) ? mine : undefined;
+  if (lifted) {
+    lifted.setAttribute(
+      INERT_LIFTERS,
+      String(Number(lifted.getAttribute(INERT_LIFTERS) ?? '0') + 1),
+    );
   }
   const behind = children.filter(
     (element) =>
@@ -162,17 +182,35 @@ function holdPageInert(own: HTMLElement | null): () => void {
     if (!held) return;
     held = false;
     for (const element of behind) {
-      // A hold lifted since (the child now holds a modal of its own) has no count left to take.
-      if (!element.hasAttribute(INERT_HOLDS)) continue;
-      const left = Number(element.getAttribute(INERT_HOLDS)) - 1;
-      if (left > 0) {
-        element.setAttribute(INERT_HOLDS, String(left));
-      } else {
-        element.removeAttribute(INERT_HOLDS);
+      // A child lifted since holds a modal of its own: this hold waits in its lifted count.
+      if (element.hasAttribute(INERT_LIFTED)) {
+        countDown(element, INERT_LIFTED);
+      } else if (element.hasAttribute(INERT_HOLDS) && countDown(element, INERT_HOLDS) === 0) {
         element.removeAttribute('inert');
       }
     }
+    // The last modal open in a lifted part puts it back under the holds still waiting for it.
+    if (lifted && countDown(lifted, INERT_LIFTERS) === 0 && lifted.hasAttribute(INERT_LIFTED)) {
+      const waiting = lifted.getAttribute(INERT_LIFTED) ?? '0';
+      lifted.removeAttribute(INERT_LIFTED);
+      if (Number(waiting) > 0) {
+        lifted.setAttribute(INERT_HOLDS, waiting);
+        lifted.setAttribute('inert', '');
+      }
+    }
   };
+}
+
+/**
+ * Take one off a count an attribute holds, removing the attribute at zero.
+ *
+ * @returns The count left.
+ */
+function countDown(element: Element, attribute: string): number {
+  const left = Number(element.getAttribute(attribute)) - 1;
+  if (left > 0) element.setAttribute(attribute, String(left));
+  else element.removeAttribute(attribute);
+  return Math.max(left, 0);
 }
 
 /**

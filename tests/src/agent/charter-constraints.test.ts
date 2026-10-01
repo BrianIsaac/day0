@@ -6,6 +6,7 @@ import {
   clauseTexts,
   deriveConstraints,
   effectiveCharter,
+  listedRules,
   normaliseConstraints,
   removeWording,
   strikeOutcome,
@@ -88,6 +89,11 @@ describe('removeWording', (): void => {
       'Disowned tickets are by nobody',
     );
     expect(removeWording('Keep the owner informed', 'owned')).toBe('Keep the owner informed');
+  });
+
+  it('returns the clause as written, spacing and all, when no phrase matched', (): void => {
+    const doubled = 'Own  routine revenue operations work ,from Linear tickets.';
+    expect(removeWording(doubled, 'escalations')).toBe(doubled);
   });
 
   it('returns an empty string when the phrase was the whole clause', (): void => {
@@ -198,6 +204,96 @@ describe('normaliseConstraints', (): void => {
         origin: 'synthesis',
       },
     ]);
+  });
+});
+
+describe('one line per rule (the production walk 6c)', (): void => {
+  /** The walk's pair: one sentence, a boundary the clauses carry and a reporting line they do not. */
+  const sentence = 'Anything that touches the CRM comes to me first.';
+  const pair = [
+    {
+      kind: 'system-boundary' as const,
+      quote: sentence,
+      wording: ['Change Northstar CRM records.'],
+    },
+    { kind: 'reporting-line' as const, quote: `${sentence.slice(0, -1)} `, wording: ['Pia'] },
+  ];
+
+  it('keeps one rule for a sentence the model listed twice, the one the clauses carry', (): void => {
+    expect(normaliseConstraints(pair, runThrough())).toEqual([
+      {
+        kind: 'system-boundary',
+        quote: sentence,
+        wording: ['Change Northstar CRM records.'],
+        origin: 'synthesis',
+      },
+    ]);
+    // Listed the other way round, the verified one still takes the place.
+    expect(normaliseConstraints([...pair].reverse(), runThrough())).toEqual([
+      {
+        kind: 'system-boundary',
+        quote: sentence,
+        wording: ['Change Northstar CRM records.'],
+        origin: 'synthesis',
+      },
+    ]);
+  });
+
+  it('merges one sentence listed twice under one kind into one rule with both wordings', (): void => {
+    const result = normaliseConstraints(
+      [
+        { kind: 'system-boundary', quote: sentence, wording: ['Change Northstar CRM records.'] },
+        { kind: 'system-boundary', quote: sentence, wording: ['Post to public Slack channels.'] },
+      ],
+      runThrough(),
+    );
+    expect(result.map((rule) => rule.wording)).toEqual([
+      ['Change Northstar CRM records.', 'Post to public Slack channels.'],
+    ]);
+  });
+
+  it('keeps a sentence that makes two rules with words of their own, and merges a third copy by its kind', (): void => {
+    const result = normaliseConstraints(
+      [
+        { kind: 'reporting-line', quote: sentence, wording: ['Change Northstar CRM records.'] },
+        { kind: 'system-boundary', quote: sentence, wording: ['Post to public Slack channels.'] },
+        { kind: 'system-boundary', quote: sentence, wording: ['Change Northstar CRM records.'] },
+      ],
+      runThrough(),
+    );
+    expect(result.map((rule) => [rule.kind, rule.wording])).toEqual([
+      ['reporting-line', ['Change Northstar CRM records.']],
+      ['system-boundary', ['Post to public Slack channels.', 'Change Northstar CRM records.']],
+    ]);
+  });
+
+  it('lists a stored draft that still holds the pair once, at the verified rule’s index', (): void => {
+    const stored: CharterConstraint[] = [
+      { kind: 'reporting-line', quote: sentence, wording: [], origin: 'synthesis' },
+      {
+        kind: 'system-boundary',
+        quote: sentence,
+        wording: ['Change Northstar CRM records.'],
+        origin: 'synthesis',
+      },
+      { kind: 'candidate-property', quote: 'Only Q3 work.', wording: [], origin: 'synthesis' },
+    ];
+    expect(listedRules(stored).map(({ index }) => index)).toEqual([1, 2]);
+    // Two unverified copies of one sentence are one line too, the first.
+    expect(listedRules([stored[0]!, { ...stored[0]!, kind: 'system-boundary' }])).toEqual([
+      { constraint: stored[0], index: 0 },
+    ]);
+  });
+
+  it('previews a strike of words no clause carries as changing nothing', (): void => {
+    const charter = runThrough([
+      { kind: 'reporting-line', quote: sentence, wording: [], origin: 'synthesis' },
+    ]);
+    expect(strikePreview(charter, 0)).toEqual({
+      removedClauses: [],
+      rewrittenClauses: [],
+      changes: false,
+    });
   });
 });
 
@@ -360,6 +456,7 @@ describe('striking a derived constraint', (): void => {
           to: 'Handle prioritized Linear tickets in the Q3 close project.',
         },
       ],
+      changes: true,
     });
   });
 
@@ -381,6 +478,7 @@ describe('striking a derived constraint', (): void => {
     expect(strikePreview(strikeRefusalBody(false), 2)).toEqual({
       removedClauses: ['Take ownership of Northstar CRM-dependent work that Sam must handle.'],
       rewrittenClauses: [],
+      changes: true,
     });
     expect(strikePreview(strikeRefusalBody(false), 0)).toEqual({
       removedClauses: [
@@ -389,18 +487,21 @@ describe('striking a derived constraint', (): void => {
         'A request requires access to Northstar CRM; route it to Sam.',
       ],
       rewrittenClauses: [],
+      changes: true,
     });
     // "Sam" is a word inside both will-not-do clauses, so this strike was
     // always refused; now the card learns that before the manager presses it.
     expect(strikePreview(strikeRefusalBody(false), 1)).toEqual({
       removedClauses: [],
       rewrittenClauses: [],
+      changes: false,
       refusal:
         'strike or edit the whole will-not-do clause; removing only part could change its boundary',
     });
     expect(strikePreview(strikeRefusalBody(false), 7)).toEqual({
       removedClauses: [],
       rewrittenClauses: [],
+      changes: false,
     });
   });
 
@@ -420,12 +521,31 @@ describe('striking a derived constraint', (): void => {
           to: 'Handle prioritized Linear tickets in the Q3 close project.',
         },
       ],
+      changes: true,
     });
     const draft = { ...charter, constraints: [ownership] };
     expect(strikePreview(draft, 0)).toEqual({
       removedClauses: [],
       rewrittenClauses: [],
+      changes: false,
       refusal: reason,
+    });
+  });
+
+  it('offers no Strike for a rule whose words no clause carries, even beside a double-spaced clause', (): void => {
+    const uncarried: CharterConstraint = {
+      kind: 'candidate-property',
+      quote: 'Escalations go to the manager.',
+      wording: ['escalations'],
+      origin: 'synthesis',
+    };
+    const charter = runThrough([uncarried]);
+    charter.proposedFunction =
+      'Own  routine revenue operations work from owned, prioritized Linear tickets for the RevOps team.';
+    expect(strikePreview(charter, 0)).toEqual({
+      removedClauses: [],
+      rewrittenClauses: [],
+      changes: false,
     });
   });
 

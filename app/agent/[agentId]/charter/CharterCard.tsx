@@ -3,6 +3,7 @@
 import {
   type CharterConstraint,
   type StruckClause,
+  listedRules,
   strikePreview,
 } from '@/agent/charter-constraints';
 import { synthesisNotes } from '@/agent/manager-questions';
@@ -72,7 +73,8 @@ export function CharterCard({
   const change = useChange(card);
   const body = charter.body as CharterCardBody;
   const constraints = body.constraints ?? [];
-  const struckCount = constraints.filter((constraint) => constraint.struck).length;
+  // Counted over the rules the card lists: a copy of a rule with no words of its own is not one.
+  const struckCount = listedRules(constraints).filter(({ constraint }) => constraint.struck).length;
   const struck =
     struckCount === 0 ? '' : `${struckCount} ${struckCount === 1 ? 'rule' : 'rules'} struck`;
 

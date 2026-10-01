@@ -626,6 +626,14 @@ export default defineSchema({
     conversation: v.optional(v.number()),
     startedAt: v.number(),
     endedAt: v.optional(v.number()),
+    /**
+     * When the conversation itself closed: the first claim of its transcript (Finish, the call's
+     * webhook, or the close it earned), kept through a redraft the manager asked for and cleared
+     * when the one-to-one is held again. The first week's rail dates the one-to-one by it, never by
+     * the draft's commit (`endedAt`), which a redraft moves (the second review's x7). Wave 8 A,
+     * additive; a session closed before it falls back to `endedAt`.
+     */
+    conversationEndedAt: v.optional(v.number()),
   })
     .index('by_agent', ['agentId'])
     .index('by_webhook_token', ['webhookToken'])
@@ -789,6 +797,12 @@ export default defineSchema({
     evaluationUnavailableCause: v.optional(v.string()),
     /** Real mode: the same claim for drafting the plan of a claimed row, released by the stored plan. */
     draftClaimedAt: v.optional(v.number()),
+    /**
+     * When the item's current run began: set when the verdict claims it and when Retry puts it
+     * back into a run, and what the queue orders runs by, the longest-running first (the second
+     * review's x4). Wave 8 A, additive; a row claimed before it sorts by when it was found.
+     */
+    claimedAt: v.optional(v.number()),
     planPendingAt: v.optional(v.number()),
     /**
      * Set with a plan drafted without its ticket or thread: the plan waits

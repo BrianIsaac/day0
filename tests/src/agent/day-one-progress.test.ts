@@ -4,6 +4,7 @@ import {
   DAY_ONE_TOPIC_COUNT,
   DAY_ONE_TOPIC_TITLES,
   dayOneTurnMetadataOf,
+  questionLine,
   topicIndexOf,
   topicTitle,
   withTopicIndex,
@@ -17,6 +18,16 @@ async function chunksOf(stream: ReadableStream<UIMessageChunk>): Promise<UIMessa
 }
 
 describe('the one-to-one progress', (): void => {
+  it('says which question of the seven it is and names no topic, which a follow-up can leave behind (review r2)', (): void => {
+    expect(questionLine(0)).toBe('Question 1 of 7');
+    expect(questionLine(3)).toBe('Question 4 of 7');
+    expect(questionLine(9)).toBe('Question 7 of 7');
+    expect(questionLine(-1)).toBe('Question 1 of 7');
+    for (const title of Object.values(DAY_ONE_TOPIC_TITLES)) {
+      expect(questionLine(3)).not.toContain(title);
+    }
+  });
+
   it('counts seven questions and names each topic', (): void => {
     expect(DAY_ONE_TOPIC_COUNT).toBe(7);
     expect(DAY_ONE_TOPICS.map((topic) => DAY_ONE_TOPIC_TITLES[topic])).toEqual([

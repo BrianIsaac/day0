@@ -116,6 +116,35 @@ describe('coworker replies in the mock office', (): void => {
     expect(events).toEqual([]);
   });
 
+  it('thanks the employee by its own name, never as Day0 (walk m5)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    await harness.run(async (ctx) => await ctx.db.patch(agentId, { name: 'Ada' }));
+    // Both replies the requester gives, each chosen by one of these two messages.
+    for (const originalBody of ['Posted the refreshed figures.', 'Posted the refreshed figures!']) {
+      await harness.mutation(internal.coworker.replyToAgentMessage, {
+        agentId,
+        channelSlug: 'revops-asks',
+        originalBody,
+      });
+    }
+    const bodies = (await officeMessages(harness, agentId)).map((reply) => reply.body);
+    expect(bodies).toContain('Thanks, Ada.');
+    expect(bodies.join(' ')).not.toContain('Day0');
+  });
+
+  it('writes nothing for an employee that no longer exists', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    await harness.run(async (ctx) => await ctx.db.delete(agentId));
+    await harness.mutation(internal.coworker.replyToAgentMessage, {
+      agentId,
+      channelSlug: 'revops-asks',
+      originalBody: 'Posted the refreshed figures.',
+    });
+    expect(await officeMessages(harness, agentId)).toEqual([]);
+  });
+
   it('keeps the reply in the thread it answers and records who replied', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);

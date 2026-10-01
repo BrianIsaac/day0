@@ -182,6 +182,9 @@ async function route(request: TurnRequest, answer: Answer): Promise<Response> {
 }
 
 beforeEach((): void => {
+  // The room's own clocks (the start and turn deadlines, the draft keeper) wait for a test to move
+  // them; `streamed` lets everything due now run (the second review's m9).
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
   (globalThis as { Element: typeof Element }).Element.prototype.scrollTo = (): void => undefined;
   posted = [];
   answers = [];
@@ -206,14 +209,30 @@ afterEach((): void => {
   document.body.replaceChildren();
 });
 
-/** Let the room open, stream and settle. */
+/** The most rounds a room may take to open, stream and settle before the test calls it stuck. */
+const SETTLE_ROUNDS = 60;
+
+/**
+ * Let the room open, stream and settle on the fake clock: run what is due now, round after round,
+ * until two rounds in a row send nothing and draw nothing new. No deadline of the room's is
+ * reached, since no time passes.
+ */
 async function streamed(): Promise<void> {
-  for (let round = 0; round < 5; round += 1) {
+  let seen = '';
+  let quiet = 0;
+  for (let round = 0; round < SETTLE_ROUNDS; round += 1) {
     await act(async (): Promise<void> => {
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await vi.advanceTimersByTimeAsync(0);
     });
+    const now = `${posted.length}|${backend.turns.length}|${document.body.innerHTML}`;
+    quiet = now === seen ? quiet + 1 : 0;
+    seen = now;
+    if (quiet === 2) {
+      await settle();
+      return;
+    }
   }
-  await settle();
+  throw new Error(`the room was still changing after ${SETTLE_ROUNDS} rounds`);
 }
 
 async function reply(view: ReturnType<typeof mount>, text: string): Promise<void> {
@@ -454,12 +473,10 @@ describe('a reply the room shows that never reached the session (review M2)', ()
     const view = mount(<ChatRoom agentId={AGENT} bossLabel="Sam" />);
     await streamed();
     await reply(view, 'Never contact customers directly.');
-    vi.useFakeTimers();
     await typeInto(view.container.querySelector('textarea')!, 'And report weekly.');
     await act(async (): Promise<void> => {
       await vi.advanceTimersByTimeAsync(800);
     });
-    vi.useRealTimers();
     expect(backend.replyDraft).toBe('Never contact customers directly.\n\nAnd report weekly.');
 
     view.unmount();
@@ -501,7 +518,6 @@ describe('an answer that failed, and the reply sent after it (second pass minors
     // Another window replies; this room has not heard, so its keep follows the wrong reply.
     backend.lagging = { _id: 'session-1', state: 'active', mode: 'chat', turns: backend.turns };
     backend.turns = [...backend.turns, kept('a1', 'manager', 'From the other window.')];
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
       await typeInto(view.container.querySelector('textarea')!, 'A long considered reply.');
       await act(async (): Promise<void> => {
@@ -516,9 +532,56 @@ describe('an answer that failed, and the reply sent after it (second pass minors
       });
       expect(backend.replyDraft).toBe('A long considered reply.');
     } finally {
-      vi.useRealTimers();
       view.unmount();
     }
+  });
+});
+
+describe('an answer another window set aside, whose regeneration then failed (pre-tag pass minor 7)', (): void => {
+  it('draws the session again at once, with nothing refused and the next reply kept', async (): Promise<void> => {
+    backend.turns = [
+      kept('e0', 'employee', 'Why this hire?'),
+      kept('m0', 'manager', 'The close.'),
+      kept('x1', 'employee', 'Which customers matter most?'),
+    ];
+    const view = mount(<ChatRoom agentId={AGENT} bossLabel="Sam" />);
+    await streamed();
+    expect(logOf(view)).toContain('Which customers matter most?');
+    // Another window asked again: the session set the answer aside, and the new one failed.
+    backend.turns = backend.turns.slice(0, 2);
+    await redraw(view);
+    expect(logOf(view)).not.toContain('Which customers matter most?');
+    expect(view.container.textContent).not.toContain('moved on in another window. Reload');
+    answers = [spoken('e2', 'Noted. Who should I meet?')];
+    await reply(view, 'Acme and Globex.');
+    expect(keptTexts()).toEqual([
+      'employee:Why this hire?',
+      'manager:The close.',
+      'manager:Acme and Globex.',
+      'employee:Noted. Who should I meet?',
+    ]);
+    expect(view.container.textContent).not.toContain('Reload to carry on');
+    view.unmount();
+  });
+
+  it('keeps an answer the subscription has not reported yet, so a lag never draws it away and back', async (): Promise<void> => {
+    backend.turns = [kept('e0', 'employee', 'Why this hire?')];
+    const view = mount(<ChatRoom agentId={AGENT} bossLabel="Sam" />);
+    await streamed();
+    // The room streams and keeps its own answer; the subscription is a moment behind.
+    backend.lagging = {
+      _id: 'session-1',
+      state: 'active',
+      mode: 'chat',
+      conversation: 0,
+      turns: [kept('e0', 'employee', 'Why this hire?')],
+    };
+    answers = [spoken('e1', 'Noted. Who should I meet?')];
+    await reply(view, 'The close.');
+    await redraw(view);
+    expect(logOf(view)).toContain('Noted. Who should I meet?');
+    backend.lagging = undefined;
+    view.unmount();
   });
 });
 

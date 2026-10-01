@@ -131,6 +131,18 @@ describe('EmployeeRoster', (): void => {
     expect(html).toContain('title="Stopped: ended short of done, with Retry on the card.');
   });
 
+  it('points only the work the manager can release at Needs you, never a row waiting on a slot (second review x10)', (): void => {
+    const waitingOnSlot = [
+      { ...roster[0], parkedCount: 1, parkedStates: { deferred: 0, needsSkill: 0, discovered: 1 } },
+    ] as RosterRow[];
+    const html = renderToStaticMarkup(
+      <EmployeeRoster employees={waitingOnSlot} waiting={waiting} />,
+    );
+    const title = /title="(Discovered:[^"]*)"/.exec(html)?.[1];
+    expect(title).toBeDefined();
+    expect(title).not.toContain('only you can release');
+  });
+
   it('names each kind of parked work by the state the Work tab shows it in (walk m10)', (): void => {
     const parked = [
       {

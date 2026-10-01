@@ -763,6 +763,32 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     view.unmount();
   });
 
+  it('dates the one-to-one on the rail by when the conversation closed, not by a later redraft’s commit (second review x7)', async (): Promise<void> => {
+    backend.queries = {
+      'agents:get': row('charter-pending'),
+      'charters:latest': { ...approved, approved: false },
+      'work:listForAgent': [],
+      'metrics:forAgent': dashboardMetrics(),
+      'voice:latest': {
+        _id: 'session-1',
+        mode: 'chat',
+        state: 'done',
+        conversationEndedAt: Date.UTC(2026, 8, 29, 9, 40),
+        // The draft sent back with a note was redrafted and committed a day later.
+        claimedAt: Date.UTC(2026, 8, 30, 11, 5),
+        endedAt: Date.UTC(2026, 8, 30, 11, 6),
+      },
+    };
+    const view = mount(page());
+    await settle();
+    const step = [...view.container.querySelectorAll('ol[aria-label="First week"] li')].find(
+      (item) => item.textContent?.includes('Day-1 one-to-one'),
+    );
+    expect(step?.textContent).toContain('29 Sep 2026, 09:40');
+    expect(step?.textContent).not.toContain('30 Sep 2026');
+    view.unmount();
+  });
+
   it('draws a working employee’s week as one card in the header, with no rail under it', async (): Promise<void> => {
     backend.queries = {
       'agents:get': row('active'),

@@ -20,8 +20,6 @@ import { AgentPixelAvatar } from '../../home/PixelAvatar';
  * An email address with the places a reader would split it marked as break opportunities: after
  * a `+` and before the `@`. A narrow header then wraps it there, and only an address with no such
  * place wider than the line breaks mid-word (the hosted walk's m32: "clerk" / "_test@...").
- *
- * @param address - The address.
  */
 export function addressWithBreaks(address: string): ReactNode[] {
   return address

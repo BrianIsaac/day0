@@ -572,8 +572,12 @@ export async function applySurfaceActions(
           durableIndex,
           idempotencyKey,
         );
+        // A mock office write that landed is stamped as a surface write is: the authority it
+        // landed under and the moment it landed (the hosted demo runs these).
         applied.push(
-          authority && outcome.ok && !outcome.held ? { ...outcome, authority } : outcome,
+          outcome.ok && !outcome.held
+            ? { ...outcome, ...(authority ? { authority } : {}), landedAt: Date.now() }
+            : outcome,
         );
         continue;
       }
@@ -778,6 +782,7 @@ export async function applySurfaceActions(
             ...outcome,
             ...(rowAuthority ? { authority: rowAuthority } : {}),
             actionClass: actionClass(parsed.action, surface),
+            landedAt: Date.now(),
           }
         : outcome;
       applied.push(restored ? { ...stamped, sessionRestore: { steps: restored.steps } } : stamped);

@@ -25,6 +25,7 @@ import {
   writeEnvValues,
   type SetupCommand,
 } from '../../scripts/setup';
+import { parseCloudArguments } from '../../scripts/setup-cloud';
 import {
   cleanupCheckouts,
   harness,
@@ -1195,10 +1196,13 @@ describe("the README's upgrade section, in both languages", (): void => {
 
   const halves = [section('### Backup, restore and upgrade'), section('#### 备份、恢复与升级')];
 
-  it('names the cloud deployment on every command and pushes the way the hosted redeploy was rehearsed', (): void => {
+  it('names the cloud deployment on every command and pushes the way the move to production ran', (): void => {
     for (const text of halves) {
-      expect(text).toContain('npx convex dev --once --typecheck enable --env-file');
-      expect(text).toContain('CONVEX_DEPLOYMENT=dev:<name>');
+      expect(text).toContain('./setup.sh cloud upgrade --target <file>');
+      expect(text).toContain('npx convex deploy --dry-run --typecheck enable --env-file');
+      expect(text).toContain('CONVEX_DEPLOYMENT=prod:<name>');
+      expect(text).not.toContain('CONVEX_DEPLOYMENT=dev:<name>');
+      expect(text).not.toContain('npx convex dev --once --typecheck enable --env-file');
       for (const verb of [
         'run migrations:runPending',
         'data deploymentVersions',
@@ -1214,11 +1218,22 @@ describe("the README's upgrade section, in both languages", (): void => {
 
   it('names only verbs the setup reads, pause and unpause among them, and the protected-project runbook', (): void => {
     for (const text of halves) {
-      const verbs = [...text.matchAll(/\.\/setup\.sh ([a-z]+)/g)].map((match) => match[1]!);
-      expect(verbs).toEqual(expect.arrayContaining(['pause', 'unpause', 'upgrade']));
-      for (const named of new Set(verbs)) {
+      const verbs = [...text.matchAll(/\.\/setup\.sh ([a-z]+)(?: ([a-z]+))?/g)].map(
+        (match) => [match[1]!, match[2]] as const,
+      );
+      expect(verbs.map(([word]) => word)).toEqual(
+        expect.arrayContaining(['pause', 'unpause', 'upgrade', 'cloud']),
+      );
+      for (const [named, cloudVerb] of verbs) {
+        if (named === 'cloud') {
+          expect(parseCloudArguments([cloudVerb!]).verb).toBe(cloudVerb);
+          continue;
+        }
         expect(parseSetupArguments([named]).command).toBe(named);
       }
+      expect(verbs.filter(([word]) => word === 'cloud').map(([, verb]) => verb)).toEqual(
+        expect.arrayContaining(['upgrade', 'pause', 'unpause']),
+      );
       expect(text).toContain('DAY0_CRONS_PAUSED');
       expect(text).toContain('day0-demo-7c65e7');
     }

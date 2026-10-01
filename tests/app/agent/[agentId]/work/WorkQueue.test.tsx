@@ -142,6 +142,18 @@ describe('the order the queue lists its items in', (): void => {
     );
   });
 
+  it('puts the run that began first on top, not the item found first and claimed later (second review x4)', (): void => {
+    const order = sortedForQueue([
+      // Found first, parked at the cap, claimed hours later and now executing.
+      { _id: 'found-first', state: 'executing', _creationTime: 1_000, claimedAt: 9_000 },
+      // Found later, claimed at once, and waiting on the manager since.
+      { _id: 'waiting-on-you', state: 'actions-pending', _creationTime: 2_000, claimedAt: 2_500 },
+      // Claimed before the claim was recorded: ordered by when it was found.
+      { _id: 'older-row', state: 'plan-pending', _creationTime: 1_500 },
+    ]).map((item) => item._id);
+    expect(order).toEqual(['older-row', 'waiting-on-you', 'found-first']);
+  });
+
   it('files a failed item the manager dismissed at the foot, after every open state (N7)', (): void => {
     const order = sortedForQueue([
       { state: 'failed', title: 'dismissed', dismissedAt: 5 },
@@ -201,5 +213,74 @@ describe('landing an inbox link on its card (U17 D13, A D8)', (): void => {
     expect(scrolled).toContain('item-w-done');
     view.unmount();
     window.location.hash = '';
+  });
+});
+
+describe('the queue gliding its cards to their new places (second review x8)', (): void => {
+  const ownOffsetTop = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetTop');
+  const ownAnimate = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'animate');
+
+  afterEach((): void => {
+    for (const [name, own] of [
+      ['offsetTop', ownOffsetTop],
+      ['animate', ownAnimate],
+    ] as const) {
+      if (own) Object.defineProperty(HTMLElement.prototype, name, own);
+      else Reflect.deleteProperty(HTMLElement.prototype, name);
+    }
+    vi.unstubAllGlobals();
+  });
+
+  it('moves a card that changed its place from where it stood, keyed by the item', (): void => {
+    // jsdom lays nothing out: each card stands 100 px below the one before it.
+    Object.defineProperty(HTMLElement.prototype, 'offsetTop', {
+      configurable: true,
+      get(this: HTMLElement): number {
+        return [...(this.parentElement?.children ?? [])].indexOf(this) * 100;
+      },
+    });
+    const moved: Array<{ id: string; from: unknown }> = [];
+    HTMLElement.prototype.animate = function (this: HTMLElement, keyframes: Keyframe[]): Animation {
+      moved.push({ id: this.id, from: keyframes[0]?.transform });
+      return {} as Animation;
+    } as HTMLElement['animate'];
+    vi.stubGlobal('matchMedia', () => ({ matches: false }));
+    const item = (id: string, state: string, created: number): Doc<'workItems'> =>
+      ({
+        _id: id,
+        state,
+        title: id,
+        _creationTime: created,
+        agentId: 'a1',
+        sourceSystem: 'linear',
+        sourceCategory: 'ticket-queue',
+        externalId: id,
+        contentSummary: 's',
+        contentRefs: [],
+        observedAt: 1,
+      }) as unknown as Doc<'workItems'>;
+    const queue = (items: Doc<'workItems'>[]) => (
+      <WorkQueue
+        agentId={'a1' as Id<'agents'>}
+        workItems={items}
+        openQuestions={[]}
+        surfaces={[]}
+        registeredSkillCount={0}
+        charterApproved
+        autonomousActions={false}
+        surfaceMode="real"
+      />
+    );
+    const view = mount(queue([item('w-a', 'completed', 1), item('w-b', 'completed', 2)]));
+    moved.length = 0;
+    // The second item starts a run, which the queue lists above what has finished.
+    act((): void =>
+      view.root.render(queue([item('w-a', 'completed', 1), item('w-b', 'claimed', 2)])),
+    );
+    expect(moved).toEqual([
+      { id: 'item-w-b', from: 'translateY(100px)' },
+      { id: 'item-w-a', from: 'translateY(-100px)' },
+    ]);
+    view.unmount();
   });
 });

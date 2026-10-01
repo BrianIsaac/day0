@@ -10,6 +10,7 @@ import { PlanExecutionLedger } from '../../../../../app/agent/[agentId]/work/Run
 import { defaultRuleClause } from '../../../../../app/agent/[agentId]/charter/AmendCharterPanel';
 import { CharterCard } from '../../../../../app/agent/[agentId]/charter/CharterCard';
 import { ConstraintList } from '../../../../../app/agent/[agentId]/charter/RuleRow';
+import { runThroughBody } from '../../../../fixtures/run-through-charter-2026-09-14';
 import { WorkItemCard } from '../../../../../app/agent/[agentId]/work/WorkItemCard';
 import { button, focusedName, mount, press, said } from '../../../../fixtures/dom/press';
 import { strikeOutcome, strikePreview } from '../../../../../src/agent/charter-constraints';
@@ -162,6 +163,20 @@ describe('charter confirm-or-strike list', (): void => {
     expect(renderToStaticMarkup(<CharterCard charter={twoStruck} />)).toContain(
       '>Approve charter, 2 rules struck<',
     );
+    // A struck copy of a listed rule with no words of its own is not listed, nor counted
+    // (second pass on the production walk's 6c).
+    const copyStruck = {
+      ...charter,
+      body: {
+        ...charter.body,
+        constraints: [
+          ...constraints,
+          { ...constraints[0]!, kind: 'reporting-line', wording: [], struck: true },
+        ],
+      },
+    } as unknown as Doc<'charters'>;
+    const copied = renderToStaticMarkup(<CharterCard charter={copyStruck} />);
+    expect(copied).toContain('>Approve charter, 1 rule struck<');
   });
 
   it.each([
@@ -228,8 +243,9 @@ describe('charter confirm-or-strike list', (): void => {
                 rewrittenClauses: [
                   { from: 'Own the close checklist.', to: 'Run the close checklist.' },
                 ],
+                changes: true,
               }
-            : { removedClauses: [], rewrittenClauses: [] }
+            : { removedClauses: [], rewrittenClauses: [], changes: true }
         }
       />,
     );
@@ -247,6 +263,7 @@ describe('charter confirm-or-strike list', (): void => {
         previewStrike={() => ({
           removedClauses: [],
           rewrittenClauses: [],
+          changes: false,
           refusal: 'strike refused: the only clause that bounds Linear',
         })}
       />,
@@ -263,11 +280,44 @@ describe('charter confirm-or-strike list', (): void => {
         constraints={constraints}
         approved={false}
         onStrike={() => undefined}
-        previewStrike={() => ({ removedClauses: [], rewrittenClauses: [] })}
+        previewStrike={() => ({ removedClauses: [], rewrittenClauses: [], changes: true })}
       />,
     );
     expect(plain).not.toContain('strikes the clause');
     expect(plain).not.toContain('cannot be struck');
+  });
+});
+
+describe('one line per rule on the card (production walk 6c)', (): void => {
+  it('lists a sentence the draft holds twice once, and offers Strike only where it changes the charter', (): void => {
+    const body = runThroughBody();
+    const sentence = 'Anything that touches the CRM comes to me first.';
+    body.constraints = [
+      {
+        kind: 'system-boundary',
+        quote: sentence,
+        wording: ['Change Northstar CRM records.'],
+        origin: 'synthesis',
+      },
+      { kind: 'reporting-line', quote: sentence, wording: [], origin: 'synthesis' },
+      { kind: 'candidate-property', quote: 'Only Q3 work.', wording: [], origin: 'synthesis' },
+    ];
+    const markup = renderToStaticMarkup(
+      <ConstraintList
+        constraints={body.constraints}
+        approved={false}
+        onStrike={() => undefined}
+        previewStrike={(index) => strikePreview(body, index)}
+      />,
+    );
+    const rows = [...markup.matchAll(/<li [^>]*data-standing="([^"]*)"/g)].map(
+      ([, standing]) => standing,
+    );
+    expect(rows).toHaveLength(2);
+    expect(markup.split(sentence)).toHaveLength(2);
+    // The unverified rule is drawn, with no Strike that would change nothing.
+    expect(markup).toContain('Only Q3 work.');
+    expect(markup).not.toContain('aria-label="Strike: Only Q3 work."');
   });
 });
 
@@ -444,9 +494,7 @@ describe('the charter card carries what step 4 stored (U18 carried members)', ()
         ]}
       />,
     );
-    expect(markup).toContain(
-      'not verified: no clause carries these words, so striking it changes nothing',
-    );
+    expect(markup).toContain('not verified: no clause carries these words');
     expect(markup).not.toContain('no clause carries it<');
     expect(markup).toContain('the charter&#x27;s wording, not a sentence of yours');
     expect(markup).not.toContain('&ldquo;Post to public Slack channels.&rdquo;');
@@ -529,7 +577,12 @@ describe('the charter card says what each change came to (step 45, K D6)', (): v
       whyThisHire: 'Close week.',
       proposedFunction: 'Own routine revenue operations work from Linear tickets.',
       shortTermGoals: { day30: 'a', day60: 'b', day90: 'c' },
-      proposedBoundaries: { willDo: [], willNotDo: [], escalationTriggers: [] },
+      // A clause carries the rule's words, so its strike changes the charter and is offered.
+      proposedBoundaries: {
+        willDo: ['Work the close tickets in the Q3 project.'],
+        willNotDo: [],
+        escalationTriggers: [],
+      },
       namedCollaborators: [],
       priorityReading: [],
       openQuestions: [],

@@ -9,6 +9,7 @@ import {
   DATA_LOCATION,
   DETAILED_SECTIONS,
   FIRST_SUCCESS,
+  HOSTED_COPY,
   MEASURED_TIMINGS,
   MOCK_OFFICE_NOTE,
   MODEL_ROUTES,
@@ -87,6 +88,32 @@ function InlineCommand({ command }: { command: string }) {
         </Fragment>
       ))}
     </code>
+  );
+}
+
+/** A command-line flag in running text, with the placeholder that follows it, if any. */
+const FLAG = /(--[a-z][a-z-]*(?: <[a-z-]+>)?)/;
+
+/**
+ * Running text whose flags wrap only as a whole, never after their hyphens,
+ * so `--dry-run` cannot break into `--` and `dry-run` at phone width (the
+ * hosted walk's m24, found again on this page at 390 px, 1 October 2026).
+ *
+ * @param text - The prose.
+ */
+function Prose({ text }: { text: string }) {
+  return (
+    <>
+      {text.split(FLAG).map((part, index) =>
+        index % 2 === 1 ? (
+          <span key={index} className="whitespace-nowrap">
+            {part}
+          </span>
+        ) : (
+          part
+        ),
+      )}
+    </>
   );
 }
 
@@ -244,7 +271,8 @@ export default async function SetupPage() {
               <InlineCommand command="./setup.sh --project day0-new --port 4210 --site-port 4211 --dashboard-port 4791" />
               . Two installations on one machine need different ports and different Compose project
               names, and the command refuses to attach a new installation to another one&rsquo;s
-              data. Use --model-port for the local model server and --app-port for the app, which
+              data. Use <span className="whitespace-nowrap">--model-port</span> for the local model
+              server and <span className="whitespace-nowrap">--app-port</span> for the app, which
               pnpm dev otherwise serves on 3000.
             </p>
           </Section>
@@ -267,7 +295,7 @@ export default async function SetupPage() {
                     </h3>
                   </div>
                   <p className="text-sm text-[var(--color-muted)] leading-relaxed mb-3">
-                    {way.body}
+                    <Prose text={way.body} />
                   </p>
                   {way.links ? (
                     <ul>
@@ -300,14 +328,14 @@ export default async function SetupPage() {
                   ) : null}
                   {way.after ? (
                     <p className="text-sm text-[var(--color-muted)] leading-relaxed mt-3">
-                      {way.after}
+                      <Prose text={way.after} />
                     </p>
                   ) : null}
                 </Panel>
               ))}
             </div>
             <p className="text-sm text-[var(--color-muted)] leading-relaxed mt-4">
-              {REAL_MODE_NOTE}
+              <Prose text={REAL_MODE_NOTE} />
             </p>
             <ul className="space-y-2 mt-3">
               {REAL_MODE_VERBS.map((verb) => (
@@ -316,14 +344,40 @@ export default async function SetupPage() {
                     {verb.command}
                   </code>
                   <span className="text-sm text-[var(--color-muted)] leading-relaxed">
-                    {verb.what}
+                    <Prose text={verb.what} />
                   </span>
                 </li>
               ))}
               <li className="text-sm text-[var(--color-muted)] leading-relaxed">
-                {RUN_WAY_VERBS_NOTE}
+                <Prose text={RUN_WAY_VERBS_NOTE} />
               </li>
             </ul>
+            <h3 id="hosted-copy" className="text-sm font-semibold tracking-tight mt-6 mb-2">
+              {HOSTED_COPY.title}
+            </h3>
+            <p className="text-sm text-[var(--color-muted)] leading-relaxed mb-3">
+              {HOSTED_COPY.body.split(HOSTED_COPY.targetLine)[0]}
+              <InlineCommand command={HOSTED_COPY.targetLine} />
+              {HOSTED_COPY.body.split(HOSTED_COPY.targetLine)[1]}
+            </p>
+            <Panel>
+              {/* Focusable so a keyboard can scroll it where a command runs wider than the panel. */}
+              <code
+                tabIndex={0}
+                role="region"
+                aria-label={`Commands: ${HOSTED_COPY.title}`}
+                className="font-mono text-xs text-[var(--color-accent)] leading-relaxed block overflow-x-auto whitespace-nowrap"
+              >
+                {HOSTED_COPY.commands.map((command) => (
+                  <span key={command} className="block">
+                    {command}
+                  </span>
+                ))}
+              </code>
+            </Panel>
+            <p className="text-sm text-[var(--color-muted)] leading-relaxed mt-3">
+              <Prose text={HOSTED_COPY.after} />
+            </p>
             <h3 id="mock-office" className="text-sm font-semibold tracking-tight mt-6 mb-2">
               {MOCK_OFFICE_NOTE.title}
             </h3>
@@ -343,7 +397,7 @@ export default async function SetupPage() {
                 <Panel key={route.id}>
                   <h3 className="text-sm font-semibold tracking-tight mb-2">{route.title}</h3>
                   <p className="text-sm text-[var(--color-muted)] leading-relaxed mb-2">
-                    {route.needs}
+                    <Prose text={route.needs} />
                   </p>
                   <p className="text-sm text-[var(--color-muted)] leading-relaxed mb-3">
                     {route.gives}
@@ -388,11 +442,12 @@ export default async function SetupPage() {
               </code>
             </pre>
             <p className="text-sm text-[var(--color-muted)] leading-relaxed mt-4">
-              The fourth command asks where the model runs when --route does not say and, where a
-              key is needed, for that key in a hidden prompt; it also asks for the email address
-              your Slack DM is resolved from. Then it starts the backend, the sandbox, the redactor,
-              the components and, on the local-model way, the model server; creates the
-              documentation folder with a placeholder page; writes the values it generates into{' '}
+              The fourth command asks where the model runs when{' '}
+              <span className="whitespace-nowrap">--route</span> does not say and, where a key is
+              needed, for that key in a hidden prompt; it also asks for the email address your Slack
+              DM is resolved from. Then it starts the backend, the sandbox, the redactor, the
+              components and, on the local-model way, the model server; creates the documentation
+              folder with a placeholder page; writes the values it generates into{' '}
               <InlineCommand command=".env.local" /> instead of asking you to paste them; pushes the
               backend functions; and finishes by running{' '}
               <InlineCommand command="pnpm check:setup" /> and printing the unlock URL. If it stops,
@@ -453,14 +508,16 @@ export default async function SetupPage() {
               <ul className="space-y-3">
                 {MEASURED_TIMINGS.map((timing) => (
                   <li key={timing.phase} className="flex flex-col sm:flex-row sm:gap-4">
-                    <span className="font-mono text-sm sm:w-64 sm:shrink-0">{timing.phase}</span>
+                    <span className="font-mono text-sm sm:w-64 sm:shrink-0">
+                      <Prose text={timing.phase} />
+                    </span>
                     <span className="text-sm">
                       <span className="text-[var(--color-accent)] font-mono">
                         {timing.measured}
                       </span>
                       <span className="text-[var(--color-muted)] leading-relaxed">
                         {' '}
-                        {timing.excludes}
+                        <Prose text={timing.excludes} />
                       </span>
                     </span>
                   </li>
@@ -485,7 +542,9 @@ export default async function SetupPage() {
               {TRAPS.map((trap) => (
                 <Panel key={trap.title}>
                   <h3 className="text-sm font-semibold tracking-tight mb-2">{trap.title}</h3>
-                  <p className="text-sm text-[var(--color-muted)] leading-relaxed">{trap.body}</p>
+                  <p className="text-sm text-[var(--color-muted)] leading-relaxed">
+                    <Prose text={trap.body} />
+                  </p>
                 </Panel>
               ))}
             </div>

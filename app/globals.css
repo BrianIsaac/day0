@@ -87,19 +87,13 @@ body {
 
   /* The page keeps a scrollbar's room whether it scrolls or not, so a page that grows one (the
      chat room) does not sit 5 px left of one that has none (the hosted walk's m31). A modal's
-     hold (app/components/use-modal.ts) writes the same value inline and gives it back. */
+     hold (app/components/use-modal.ts) writes the same value inline and gives it back. The room
+     shows the root's background colour and nothing else: no element, shadow or background image
+     paints there, so the header's tint reaches the window's edge (the same colour) and its 1 px
+     rule stops at the room (the second review's x11, measured in Chromium 153). */
   html {
     scrollbar-gutter: stable;
   }
-}
-
-/* A Clerk widget under a page's own h1 (the sign-in and sign-up pages) leaves out the header of its
-   first step, whose title Clerk draws as a second h1 (the hosted walk's m26). Only the first step:
-   later steps' headers say what to do ("Check your email", the address the code went to). Unlayered,
-   as Clerk's own styles are, and more specific than them. */
-[data-headed-clerk] .cl-signIn-start .cl-header,
-[data-headed-clerk] .cl-signUp-start .cl-header {
-  display: none;
 }
 
 /* Cross-browser fade on overflowing edges (subtle hint there's more) */
@@ -446,18 +440,51 @@ body {
   box-shadow: 2px 2px 0 #000;
 }
 
+/*
+ * A figure's place, registered as numbers so a change of place can be walked: the figure walks
+ * when its place changes, and only then. Crossing `sm` changes which of the two places the
+ * stylesheet draws, not the places, so a rotated phone redraws its figures where they stand
+ * rather than walking every one across the office (the pre-tag pass's minor 10).
+ */
+@property --x {
+  syntax: '<number>';
+  inherits: false;
+  initial-value: 50;
+}
+
+@property --y {
+  syntax: '<number>';
+  inherits: false;
+  initial-value: 50;
+}
+
+@property --px {
+  syntax: '<number>';
+  inherits: false;
+  initial-value: 50;
+}
+
+@property --py {
+  syntax: '<number>';
+  inherits: false;
+  initial-value: 90;
+}
+
 .day0-office-agent {
   transition:
-    left var(--walk-duration, 2800ms) steps(8, end),
-    top var(--walk-duration, 2800ms) steps(8, end);
+    --x var(--walk-duration, 2800ms) steps(8, end),
+    --y var(--walk-duration, 2800ms) steps(8, end),
+    --px var(--walk-duration, 2800ms) steps(8, end),
+    --py var(--walk-duration, 2800ms) steps(8, end);
 }
 
 /*
  * Where the office places a figure, a desk or a chair (`OfficeWorld`'s `placeStyle`). At a desktop
  * width, a share of the office kept `--inset` from either edge: half a name plate for a figure,
  * half the widest desk and the frame for a desk, so neither is cut by the office's clipping. Below
- * `sm`, the phone plan (`PHONE_PLAN`): a share of the width inside the 8 px frame, where a figure
- * is at most a third of that width, so three stand side by side and none crosses the frame.
+ * `sm`, the phone plan (`phonePlan`): a share of the width inside the 8 px frame, where a figure
+ * is at most a third of that width, so three stand side by side and none crosses the frame, and
+ * px down from the top, a row for every three employees in an office as tall as its rows.
  */
 .day0-office-at {
   --inset: 3.5rem;
@@ -472,7 +499,7 @@ body {
 @media (width < 40rem) {
   .day0-office-at {
     left: calc(8px + (100% - 16px) * var(--px) / 100);
-    top: calc(var(--py) * 1%);
+    top: calc(var(--py) * 1px);
   }
 
   .day0-office-agent.day0-office-at {

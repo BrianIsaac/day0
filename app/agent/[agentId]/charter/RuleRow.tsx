@@ -1,7 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import type { CharterConstraint, StrikePreview } from '@/agent/charter-constraints';
+import {
+  listedRules,
+  type CharterConstraint,
+  type StrikePreview,
+} from '@/agent/charter-constraints';
 import { Button } from '../../../components/Button';
 import { Chip } from '../../../components/Chip';
 
@@ -12,18 +16,30 @@ const CONSTRAINT_KIND_LABEL: Record<CharterConstraint['kind'], string> = {
 };
 
 /** Where a rule stands, as its chip says it. */
-export type RuleStanding = 'confirmed' | 'struck' | 'kept';
+export type RuleStanding = 'confirmed' | 'struck' | 'kept' | 'unverified';
 
 /**
  * A rule's standing: struck by the manager, kept because the charter cannot do without it (a
- * strike the effective charter refuses), or confirmed.
+ * strike the effective charter refuses), not in the clauses because no clause carries its words
+ * (none were verified, or none are left, so a strike would change nothing), or confirmed.
  */
 export function ruleStanding(
-  constraint: Pick<CharterConstraint, 'struck'>,
+  constraint: Pick<CharterConstraint, 'struck' | 'wording'>,
   preview: StrikePreview | undefined,
 ): RuleStanding {
   if (constraint.struck) return 'struck';
-  return preview?.refusal !== undefined ? 'kept' : 'confirmed';
+  if (preview?.refusal !== undefined) return 'kept';
+  const inClauses = constraint.wording.length > 0 && preview?.changes !== false;
+  return inClauses ? 'confirmed' : 'unverified';
+}
+
+/**
+ * Whether the row offers Strike: a strike the charter refuses is offered disabled with why, a
+ * strike that would change nothing is not offered at all (the production walk's 6c), and a row
+ * with no preview to ask is offered it as before.
+ */
+export function offersStrike(preview: StrikePreview | undefined): boolean {
+  return preview === undefined || preview.refusal !== undefined || preview.changes;
 }
 
 /**
@@ -36,6 +52,7 @@ const STANDING_CHIP: Readonly<
   confirmed: { label: 'Confirmed', tone: 'ok' },
   struck: { label: 'Struck', tone: 'muted' },
   kept: { label: 'Kept', tone: 'you' },
+  unverified: { label: 'Not in the clauses', tone: 'muted' },
 };
 
 /** The clauses a strike removes, quoted for the row. */
@@ -44,10 +61,29 @@ function quotedClauses(clauses: readonly string[]): string {
 }
 
 /**
+ * Whether a clause opens on a name written in lower case, which capitalising would misspell: a
+ * word with no vowel (`dbt`, `npm`, `sql`), with a capital after its first letter (`iPhone`), with
+ * a digit (`s3`), or with a dot or underscore between its letters (`stripe.com`, `pg_dump`). A
+ * hyphenated word (`follow-up`) and a word ending a sentence (`sync.`) are words, not names.
+ */
+function opensOnLowerCaseName(phrase: string): boolean {
+  const first = /^\S+/.exec(phrase)?.[0].replace(/[,;:.!?]+$/, '') ?? '';
+  return (
+    /^[a-z]/.test(first) &&
+    (!/[aeiouy]/i.test(first) ||
+      /^.+[A-Z]/.test(first) ||
+      /[0-9]/.test(first) ||
+      /[a-z0-9][._][a-z0-9]/i.test(first))
+  );
+}
+
+/**
  * The clauses' words the rule's "in the charter as" list shows, one per clause. Several are
  * capitalised alike, so clauses the model wrote in mixed case read as one list (the hosted walk's
  * m22: "answer routine asks ...; Post in any Slack channel ..."), capitalised rather than lowered
- * since a clause may open on a name; one is left as written. Only the last keeps its full stop.
+ * since a clause may open on a name; a clause that opens on a name written in lower case keeps it
+ * (`dbt models ...`, the second review's x10), and one clause is left as written. Only the last
+ * keeps its full stop.
  *
  * @param wording - The clauses' words as the charter holds them.
  */
@@ -55,7 +91,9 @@ export function listedWording(wording: readonly string[]): string[] {
   if (wording.length <= 1) return [...wording];
   return wording.map((phrase, index) => {
     const words = index === wording.length - 1 ? phrase : phrase.replace(/\.$/, '');
-    return `${words.charAt(0).toLocaleUpperCase('en-GB')}${words.slice(1)}`;
+    return opensOnLowerCaseName(words)
+      ? words
+      : `${words.charAt(0).toLocaleUpperCase('en-GB')}${words.slice(1)}`;
   });
 }
 
@@ -130,7 +168,7 @@ export function RuleRow({
               ))}
             </>
           ) : (
-            ' · not verified: no clause carries these words, so striking it changes nothing'
+            ' · not verified: no clause carries these words'
           )}
           {constraint.origin === 'derived'
             ? " · found by checking the clauses (the charter's wording, not a sentence of yours)"
@@ -152,6 +190,10 @@ export function RuleRow({
             {preview.removedClauses.length === 1 ? 'strikes the clause: ' : 'strikes the clauses: '}
             {quotedClauses(preview.removedClauses)}
           </p>
+        ) : preview && !preview.changes && constraint.wording.length > 0 ? (
+          <p className="mt-1 text-[13px] text-[var(--color-muted)]">
+            nothing to strike: no clause carries these words any more
+          </p>
         ) : null}
         {preview && !preview.refusal
           ? preview.rewrittenClauses.map((pair, i) => (
@@ -171,7 +213,7 @@ export function RuleRow({
       </div>
       <div className="flex flex-wrap items-center gap-2 sm:grid sm:content-start sm:justify-items-end">
         <Chip tone={chip.tone}>{chip.label}</Chip>
-        {!constraint.struck && onStrike ? (
+        {!constraint.struck && onStrike && offersStrike(preview) ? (
           <Button
             size="small"
             onClick={() => onStrike(index)}
@@ -248,7 +290,7 @@ export function ConstraintList({
         )}
       </div>
       <ul className="grid gap-2.5">
-        {constraints.map((constraint, index) => (
+        {listedRules(constraints).map(({ constraint, index }) => (
           <RuleRow
             key={index}
             constraint={constraint}

@@ -6,10 +6,14 @@ import type { Doc } from '@convex/_generated/dataModel';
 import { avatarById } from '@/agent/avatar-pets';
 import { useLightUpOnce } from './office-light-up';
 import {
+  desktopPlan,
   idlePlaces,
+  phoneOfficeHeight,
+  phonePlan,
+  phoneRows,
   phoneSeat,
-  PHONE_PLAN,
   type IdleFigure,
+  type OfficePlan,
   type OfficePoint,
 } from './office-places';
 import { AgentPixelAvatar } from './PixelAvatar';
@@ -39,7 +43,8 @@ const OFFICE_DECOR = [
   { kind: 'console', x: 52, y: 18 },
   { kind: 'console', x: 52, y: 83 },
   { kind: 'table', x: 77, y: 53 },
-  { kind: 'table', x: 18, y: 84 },
+  // Between the lounge's two desks, clear of both: the first is drawn from the ninth employee.
+  { kind: 'table', x: 20.5, y: 84 },
 ] as const;
 
 const OFFICE_SIGNALS = [
@@ -50,40 +55,50 @@ const OFFICE_SIGNALS = [
   { x: 49, y: 82, delay: 1.1 },
 ] as const;
 
+/**
+ * The desks, in the order employees take them: the employee at place n on the roster sits at desk
+ * n when working. The first ten seats stand every two clear of each other by a figure's span
+ * (`FIGURE_SPAN`), so ten employees at their desks never sit on each other (the wave 8 review's
+ * A-M1: the seventh sat on the second, and the eighth on the fourth, the ninth and the tenth); of
+ * the orders that do, this one leaves the idle figures most room, measured over every roster of
+ * one to ten and every way of seating it. The first eight are always drawn and each employee past
+ * them adds its own. Twenty seats cannot all stand clear, so from the eleventh on a desk may
+ * share its room with one taken earlier. No seat stands lower than 86 percent, where a seated
+ * figure, 140 px tall in an office 560 px tall, still clears the 8 px frame: the bottom rooms'
+ * seats stood at 87 to 90 and cut their figures off, which only an eleventh employee met until
+ * the first ten took two of them.
+ */
 const OFFICE_DESKS = [
   { x: 14, y: 17, seatX: 14, seatY: 25, variant: 'wide' },
-  { x: 29, y: 17, seatX: 29, seatY: 25, variant: 'wide' },
-  { x: 67, y: 17, seatX: 67, seatY: 25, variant: 'wide' },
   { x: 86, y: 17, seatX: 86, seatY: 25, variant: 'wide' },
   { x: 68, y: 31, seatX: 68, seatY: 37, variant: 'compact' },
-  { x: 87, y: 31, seatX: 87, seatY: 37, variant: 'compact' },
-  { x: 13, y: 50, seatX: 13, seatY: 58, variant: 'console' },
   { x: 27, y: 50, seatX: 27, seatY: 58, variant: 'console' },
-  { x: 73, y: 50, seatX: 73, seatY: 58, variant: 'compact' },
   { x: 90, y: 50, seatX: 90, seatY: 58, variant: 'compact' },
-  { x: 53, y: 79, seatX: 53, seatY: 87, variant: 'wide' },
-  { x: 67, y: 79, seatX: 67, seatY: 87, variant: 'wide' },
-  { x: 83, y: 79, seatX: 83, seatY: 87, variant: 'wide' },
-  { x: 13, y: 82, seatX: 13, seatY: 90, variant: 'compact' },
-  { x: 28, y: 82, seatX: 28, seatY: 90, variant: 'compact' },
-  { x: 15, y: 30, seatX: 15, seatY: 36, variant: 'compact' },
-  { x: 30, y: 30, seatX: 30, seatY: 36, variant: 'compact' },
+  { x: 67, y: 79, seatX: 67, seatY: 86, variant: 'wide' },
   { x: 55, y: 31, seatX: 51, seatY: 33, variant: 'console' },
   { x: 55, y: 65, seatX: 50, seatY: 63, variant: 'console' },
-  { x: 93, y: 83, seatX: 89, seatY: 88, variant: 'console' },
+  { x: 13, y: 82, seatX: 13, seatY: 86, variant: 'compact' },
+  { x: 93, y: 83, seatX: 89, seatY: 86, variant: 'console' },
+  { x: 29, y: 17, seatX: 29, seatY: 25, variant: 'wide' },
+  { x: 67, y: 17, seatX: 67, seatY: 25, variant: 'wide' },
+  { x: 87, y: 31, seatX: 87, seatY: 37, variant: 'compact' },
+  { x: 13, y: 50, seatX: 13, seatY: 58, variant: 'console' },
+  { x: 73, y: 50, seatX: 73, seatY: 58, variant: 'compact' },
+  { x: 53, y: 79, seatX: 53, seatY: 86, variant: 'wide' },
+  { x: 83, y: 79, seatX: 83, seatY: 86, variant: 'wide' },
+  { x: 28, y: 82, seatX: 28, seatY: 86, variant: 'compact' },
+  { x: 15, y: 30, seatX: 15, seatY: 36, variant: 'compact' },
+  { x: 30, y: 30, seatX: 30, seatY: 36, variant: 'compact' },
 ] as const;
 
-/**
- * The order employees take the eight desks always drawn: far apart first, so
- * two name plates never sit on each other while the office has room (the
- * first two desks are 15 percent apart, less than a plate is wide). Past the
- * eighth, each employee takes the desk its arrival adds.
- */
-const SEAT_ORDER = [0, 2, 6, 3, 7, 1, 4, 5] as const;
+/** How many desks the office draws for this many employees: eight at least, one each past them. */
+function deskCountFor(employees: number): number {
+  return Math.max(8, Math.min(OFFICE_DESKS.length, employees));
+}
 
 /** The desk the employee at this place on the roster sits at when working. */
 function deskFor(index: number): number {
-  return (SEAT_ORDER[index] ?? index) % OFFICE_DESKS.length;
+  return index % OFFICE_DESKS.length;
 }
 
 type OfficeStyle = CSSProperties & {
@@ -93,9 +108,11 @@ type OfficeStyle = CSSProperties & {
   /** Where the element stands at a desktop width, as a share of the office (`day0-office-at`). */
   '--x'?: number;
   '--y'?: number;
-  /** Where it stands on a phone, as a share of the office's inner width and height (`PHONE_PLAN`). */
+  /** Where it stands on a phone: a share of the office's inner width, and px down (`phonePlan`). */
   '--px'?: number;
   '--py'?: number;
+  /** How tall the office is on a phone, for as many rows as its employees need. */
+  '--phone-height'?: string;
 };
 
 /** Where an element of the office stands: at a desktop width, and on a phone. */
@@ -133,13 +150,19 @@ export function OfficeWorld({
   settled: boolean;
 }) {
   const visibleAgents = agents ?? [];
-  const deskCount = Math.max(8, Math.min(OFFICE_DESKS.length, visibleAgents.length));
-  const [agentDestinations, setAgentDestinations] = useState<Record<string, OfficePlace>>({});
+  const deskCount = deskCountFor(visibleAgents.length);
   const office = useRef<HTMLDivElement>(null);
   useLightUpOnce(office, settled);
   const layout = officeLayout(visibleAgents);
+  const seating = seatingOf(visibleAgents, layout);
+  const [roaming, setRoaming] = useState<Roaming>({ seating, places: {} });
+  // Roaming places are only good for the seating they were chosen against: once the roster
+  // changes, each idle employee opens again at once rather than a tick later (the second review's
+  // x9, a stale tick that stood a figure on a seat just taken).
+  const destinations = roaming.seating === seating ? roaming.places : NO_PLACES;
   // Where each idle employee opens, stable between renders; the roaming below moves them on.
   const opening = idleOffice(layout);
+  const officeStyle: OfficeStyle = { '--phone-height': `${layout.phoneHeight}px` };
 
   useEffect(() => {
     const roster = officeLayout(agents ?? []);
@@ -148,26 +171,30 @@ export function OfficeWorld({
     const pick = (spots: readonly OfficePoint[]): OfficePoint =>
       spots[Math.floor(Math.random() * spots.length)] ?? spots[0];
     const timer = window.setInterval(() => {
-      setAgentDestinations((current) => {
-        const from = (agentId: string): OfficePlace | undefined =>
-          current[agentId] ?? start[agentId];
-        return placesById(
-          idlePlaces(
-            roster.idle.map((figure) => ({ ...figure, previous: from(figure.agentId)?.desktop })),
-            roster.seated,
-            pick,
+      setRoaming((current) => {
+        const kept = current.seating === seating ? current.places : NO_PLACES;
+        const from = (agentId: string): OfficePlace | undefined => kept[agentId] ?? start[agentId];
+        return {
+          seating,
+          places: placesById(
+            idlePlaces(
+              roster.idle.map((figure) => ({ ...figure, previous: from(figure.agentId)?.desktop })),
+              roster.seated,
+              pick,
+              roster.desktop,
+            ),
+            idlePlaces(
+              roster.idle.map((figure) => ({ ...figure, previous: from(figure.agentId)?.phone })),
+              roster.phoneSeated,
+              pick,
+              roster.phone,
+            ),
           ),
-          idlePlaces(
-            roster.idle.map((figure) => ({ ...figure, previous: from(figure.agentId)?.phone })),
-            roster.phoneSeated,
-            pick,
-            PHONE_PLAN,
-          ),
-        );
+        };
       });
     }, 3400);
     return () => window.clearInterval(timer);
-  }, [agents]);
+  }, [agents, seating]);
 
   return (
     <section className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-card)]">
@@ -176,7 +203,11 @@ export function OfficeWorld({
         <span className="text-xs text-[var(--color-muted)]">{visibleAgents.length} total</span>
       </div>
 
-      <div ref={office} className="day0-pixel-office relative min-h-[560px] overflow-hidden">
+      <div
+        ref={office}
+        className="day0-pixel-office relative min-h-[560px] overflow-hidden max-sm:min-h-(--phone-height)"
+        style={officeStyle}
+      >
         {OFFICE_ROOMS.map((room, index) => (
           <OfficeRoom key={`${room.left}-${room.top}`} room={room} index={index} />
         ))}
@@ -211,7 +242,7 @@ export function OfficeWorld({
           const seat = OFFICE_DESKS[deskFor(index)];
           const place = layout.working.has(agent.agentId)
             ? { desktop: { x: seat.seatX, y: seat.seatY }, phone: phoneSeat(index) }
-            : (agentDestinations[agent.agentId] ?? opening[agent.agentId]);
+            : (destinations[agent.agentId] ?? opening[agent.agentId]);
           return (
             <OfficeAgent
               key={agent.agentId}
@@ -321,6 +352,30 @@ interface OfficeLayout {
   /** Where the same sitters sit on a phone. */
   readonly phoneSeated: readonly OfficePoint[];
   readonly idle: readonly IdleFigure[];
+  /** The desktop office's plan, clear of the desks it draws. */
+  readonly desktop: OfficePlan;
+  /** The phone office's plan, with a row for every three employees. */
+  readonly phone: OfficePlan;
+  /** How tall the phone office is, in px, for those rows. */
+  readonly phoneHeight: number;
+}
+
+/** Where the idle employees roam to, and the seating those places were chosen against. */
+interface Roaming {
+  readonly seating: string;
+  readonly places: Readonly<Record<string, OfficePlace>>;
+}
+
+const NO_PLACES: Readonly<Record<string, OfficePlace>> = {};
+
+/**
+ * What the idle employees' places depend on, as one key: who stands where on the roster (their
+ * desks and phone seats), their names (their seeds) and who is at a desk.
+ */
+function seatingOf(agents: readonly RosterRow[], layout: OfficeLayout): string {
+  return agents
+    .map((agent) => `${agent.agentId}:${agent.name}:${layout.working.has(agent.agentId) ? 1 : 0}`)
+    .join('|');
 }
 
 /** Each idle employee's desktop and phone places, by id, from the two plans' own placements. */
@@ -339,8 +394,8 @@ function placesById(
 /** Where each idle employee opens, on both plans. */
 function idleOffice(layout: OfficeLayout): Record<string, OfficePlace> {
   return placesById(
-    idlePlaces(layout.idle, layout.seated),
-    idlePlaces(layout.idle, layout.phoneSeated, undefined, PHONE_PLAN),
+    idlePlaces(layout.idle, layout.seated, undefined, layout.desktop),
+    idlePlaces(layout.idle, layout.phoneSeated, undefined, layout.phone),
   );
 }
 
@@ -365,7 +420,20 @@ function officeLayout(agents: readonly RosterRow[]): OfficeLayout {
       idle.push({ agentId: agent.agentId, seed: figureSeed(agent) });
     }
   });
-  return { working, seated, phoneSeated, idle };
+  const rows = phoneRows(agents.length);
+  const drawn = OFFICE_DESKS.slice(0, deskCountFor(agents.length)).flatMap((desk) => [
+    { x: desk.x, y: desk.y },
+    { x: desk.seatX, y: desk.seatY },
+  ]);
+  return {
+    working,
+    seated,
+    phoneSeated,
+    idle,
+    desktop: desktopPlan(drawn),
+    phone: phonePlan(rows),
+    phoneHeight: phoneOfficeHeight(rows),
+  };
 }
 
 /** A number of the employee's own, for its first spot and its walking pace. */
@@ -405,12 +473,18 @@ function OfficeAgent({
         />
         <div className="day0-pixel-nameplate mt-1 max-w-36 px-2 py-1 text-center max-sm:max-w-none">
           <div className="truncate text-xs text-[var(--color-fg)]">{agent.name}</div>
-          <div className="truncate text-xs text-[var(--color-fg)]/70" title={agent.roleLine}>
+          {/* A phone figure is a third of the office wide, too narrow for a role cut to a few
+            letters: the roster beneath prints it whole (the pre-tag pass's minor 10). */}
+          <div
+            className="truncate text-xs text-[var(--color-fg)]/70 max-sm:hidden"
+            title={agent.roleLine}
+          >
             {agent.roleLine}
           </div>
         </div>
-        <div className="mt-1 truncate rounded-full border border-[var(--color-border)] bg-[var(--color-card)]/90 px-2 py-0.5 text-center text-xs whitespace-nowrap text-[var(--color-muted)]">
-          {/* A phone figure is a third of the office wide: the count says it without the verb. */}
+        <div className="mt-1 truncate rounded-full border border-[var(--color-border)] bg-[var(--color-card)]/90 px-2 py-0.5 text-center text-xs whitespace-nowrap text-[var(--color-muted)] max-sm:rounded-lg max-sm:px-1 max-sm:whitespace-normal">
+          {/* A phone figure is a third of the office wide: the count says it without the verb,
+            on two lines where one does not hold it. */}
           <span className="max-sm:sr-only">reads </span>
           {agent.docSourceCount} {agent.docSourceCount === 1 ? 'location' : 'locations'}
         </div>

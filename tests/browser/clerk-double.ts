@@ -63,7 +63,7 @@ function emittedResources(answer: ClerkAnswer): Record<string, unknown> {
  */
 function clerkDoubleScript(answer: ClerkAnswer): string {
   return `(function () {
-  var resources = ${JSON.stringify(emittedResources(answer))};
+  const resources = ${JSON.stringify(emittedResources(answer))};
   if (resources.session) resources.session.getToken = function () { return Promise.resolve(null); };
   function drawNothing(node) { node.replaceChildren(); }
   window.Clerk = {
@@ -85,7 +85,7 @@ function clerkDoubleScript(answer: ClerkAnswer): string {
     mountSignUp: drawNothing,
     unmountSignUp: drawNothing,
     mountUserButton: function (node) {
-      var avatar = document.createElement('button');
+      const avatar = document.createElement('button');
       avatar.type = 'button';
       avatar.setAttribute('aria-label', 'Open user menu');
       avatar.style.cssText = 'display:block;width:28px;height:28px;border:0;border-radius:9999px;background:#22d3ee';

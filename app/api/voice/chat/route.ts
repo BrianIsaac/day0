@@ -9,14 +9,14 @@ import {
 import { ConvexError } from 'convex/values';
 import { z } from 'zod';
 import { api } from '@convex/_generated/api';
-import type { Id } from '@convex/_generated/dataModel';
+import type { Doc, Id } from '@convex/_generated/dataModel';
 import { establishConvexCaller } from '@/lib/convex-caller';
 import { crossOriginRefusal, readJsonBody } from '@/lib/json-request';
 import { errorMessage } from '@/lib/errors';
 import { log } from '@/lib/logger';
 import { languageModel } from '@/lib/openai';
 import { streamCallOptions } from '@/lib/stream-settings';
-import { DAY_ONE_TOPIC_SPECS } from '@/agent/day-one-prompts';
+import { DAY_ONE_PROMPT_CACHE_KEY, dayOneSystemPrompt } from '@/agent/day-one-system-prompt';
 import { INIT_PROMPT, dayOneTurnStream, managerReplies } from '@/agent/day-one-turn';
 import { topicIndexOf, withTopicIndex } from '@/agent/day-one-progress';
 import { uiMessagesOf, type OneToOneTurn } from '@/agent/one-to-one-conversation';
@@ -52,28 +52,13 @@ const PRIMING_TURN: UIMessage = {
   parts: [{ type: 'text', text: INIT_PROMPT }],
 };
 
-const SYSTEM_PROMPT = [
-  'You are Day0, a freshly-deployed autonomous workplace agent on its first day.',
-  'Run a Day-1 manager 1:1 with the boss who just hired you.',
-  'Walk through SEVEN topics, conversationally, one at a time:',
-  ...DAY_ONE_TOPIC_SPECS.map(
-    (s, i) => `  ${i + 1}. ${s.topic} — ${s.question.split('\n')[1] ?? s.question}`,
-  ),
-  '',
-  'Rules:',
-  '  - Lead with a short welcome on turn one, then ask topic 1.',
-  "  - Wait for the boss's reply before moving on.",
-  '  - One question per turn. Brief follow-ups are fine.',
-  "  - Do not summarise the boss's answers back in full.",
-  '  - Once topic 7 has a real answer, call the dayOneComplete tool with a friendly closing line and stop.',
-].join('\n');
-
 /**
  * Streams one turn of the Day-1 1:1 on the owner's key, from the conversation the session keeps.
  *
  * The room posts only the turn it wants (the opening, a reply or a turn asked again) for its
  * employee; the employee's held session (`oneToOne.takeTurn`) keeps a reply before the employee is asked and hands back the
- * conversation to answer, so the room's copy never decides the history. The answer is kept on the
+ * conversation to answer, so the room's copy never decides the history. The employee speaks under
+ * the name on its own row (`agents.get`), read beside the turn. The answer is kept on the
  * session (`oneToOne.recordAnswer`) before the room hears the turn finished (`keptAnswer`), so a
  * room closed at any point reopens on every turn that stood. The caller is established and the
  * request's origin checked before the body is read.
@@ -100,15 +85,23 @@ export async function POST(req: Request): Promise<Response> {
     );
   }
 
+  const agentId = body.agentId as Id<'agents'>;
   let taken: {
     sessionId: Id<'voiceSessions'>;
     conversation: number;
     turns: readonly OneToOneTurn[];
     answering: string | null;
   };
+  let employee: Doc<'agents'> | null;
   try {
+    // The employee speaks as itself: its name is read from its row, never taken from the room,
+    // and read first, so a reply is kept only once the employee to answer it is known.
+    employee = await client.query(api.agents.get, { agentId });
+    if (employee === null) {
+      return Response.json({ error: 'this employee no longer exists' }, { status: 404 });
+    }
     taken = await client.mutation(api.oneToOne.takeTurn, {
-      agentId: body.agentId as Id<'agents'>,
+      agentId,
       // The validator's arrays are mutable; the parsed request's are read-only.
       request:
         body.request.kind === 'open'
@@ -122,6 +115,7 @@ export async function POST(req: Request): Promise<Response> {
     log.warn('one-to-one turn not taken', { reason: errorMessage(err) });
     return Response.json({ error: 'Day0 could not reach your one-to-one' }, { status: 503 });
   }
+  const system = dayOneSystemPrompt(employee.name);
 
   const uiMessages: UIMessage[] = [PRIMING_TURN, ...uiMessagesOf(taken.turns)];
   const messages = await convertToModelMessages(uiMessages);
@@ -152,11 +146,11 @@ export async function POST(req: Request): Promise<Response> {
       streamText({
         abortSignal,
         model,
-        system: SYSTEM_PROMPT,
+        system,
         messages,
         ...streamCallOptions({
           maxOutputTokens: DAY_ONE_MAX_OUTPUT_TOKENS,
-          openai: { promptCacheKey: 'day0-day1-system-v1' },
+          openai: { promptCacheKey: DAY_ONE_PROMPT_CACHE_KEY },
         }),
         tools: {
           dayOneComplete: tool({

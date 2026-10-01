@@ -1,8 +1,7 @@
 import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
-import { SignIn } from '@clerk/nextjs';
 import { DEV_NO_AUTH } from '@/lib/dev-auth';
-import { clerkAppearance } from '../../clerk-appearance';
+import { HeadedSignIn, StepHeading } from '../../HeadedClerk';
 import { HostedDemoNotice } from '../../HostedDemoNotice';
 
 /** The tab's title: the hosted demo's way in. */
@@ -27,9 +26,12 @@ export default function SignInPage() {
   return (
     <div className="mx-auto grid w-full max-w-7xl grid-cols-1 items-start gap-10 px-6 py-10 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] md:gap-12 md:py-16">
       <div className="flex flex-col gap-5">
-        <h1 className="text-[1.75rem] font-semibold leading-tight tracking-[-0.02em] text-balance">
+        <StepHeading
+          base="/sign-in"
+          className="text-[1.75rem] font-semibold leading-tight tracking-[-0.02em] text-balance"
+        >
           Sign in to deploy an employee
-        </h1>
+        </StepHeading>
         <p className="max-w-[60ch] leading-relaxed text-[var(--color-muted)]">
           {/* That none of it reaches a real system is the notice's first sentence, below. */}
           The hosted office is a seeded, synthetic workplace: a Slack, a tracker, a wiki, a ticket
@@ -50,9 +52,8 @@ export default function SignInPage() {
         </ol>
         <HostedDemoNotice />
       </div>
-      {/* Clerk's first step leaves its own h1 out under the page's (app/globals.css). */}
-      <div data-headed-clerk="" className="flex justify-center">
-        <SignIn appearance={clerkAppearance} />
+      <div className="flex justify-center">
+        <HeadedSignIn />
       </div>
     </div>
   );

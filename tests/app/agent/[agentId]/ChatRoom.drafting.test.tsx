@@ -167,7 +167,9 @@ describe('the one-to-one progress (round two section 3.4)', (): void => {
     room.messages = CONVERSATION;
     const view = mount(<ChatRoom agentId={AGENT} bossLabel="Sam" />);
     await settle();
-    expect(view.container.textContent).toContain('Question 2 of 7 · The role itself');
+    // The line counts questions and names no topic, which a follow-up can leave behind (review r2).
+    expect(view.container.textContent).toContain('Question 2 of 7');
+    expect(view.container.textContent).not.toContain('Question 2 of 7 · The role itself');
     const segments = [
       ...view.container.querySelectorAll('[data-topic-progress] [data-segment]'),
     ].map((segment) => segment.getAttribute('data-segment'));
@@ -175,9 +177,11 @@ describe('the one-to-one progress (round two section 3.4)', (): void => {
     expect(view.container.querySelector('[data-topic-progress]')?.getAttribute('aria-hidden')).toBe(
       'true',
     );
+    // The progress line carries the count; a turn names no topic of its own (review r2).
     expect(view.container.querySelector('[role="log"]')?.textContent).toContain(
-      '2 of 7 · The role itselfWhat does month one look like?',
+      'Employee: What does month one look like?',
     );
+    expect(view.container.querySelector('[role="log"]')?.textContent).not.toMatch(/of 7/);
     view.unmount();
   });
 

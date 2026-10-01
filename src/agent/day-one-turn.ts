@@ -1,5 +1,5 @@
 import type { UIMessage, UIMessageChunk } from 'ai';
-import { DAY_ONE_TOPIC_SPECS } from './day-one-prompts';
+import { DAY_ONE_TOPIC_SPECS, questionBody } from './day-one-prompts';
 
 /** Prompts the agent's opening turn. Not the boss speaking, and never rendered. */
 export const INIT_PROMPT = '__init__';
@@ -116,8 +116,9 @@ async function* withEarnedClose(
       yield* kept;
       return;
     }
-    const question =
-      DAY_ONE_TOPIC_SPECS[Math.min(replies, DAY_ONE_TOPIC_SPECS.length - 1)].question;
+    const question = questionBody(
+      DAY_ONE_TOPIC_SPECS[Math.min(replies, DAY_ONE_TOPIC_SPECS.length - 1)].question,
+    );
     // The model's own last text part takes the question, so it reads on from
     // what was said; a turn with no words gets a part of its own.
     const lastTextEnd = kept.findLastIndex((chunk) => chunk.type === 'text-end');

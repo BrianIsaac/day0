@@ -1,3 +1,4 @@
+import 'server-only';
 import type { Metadata } from 'next';
 import { unstable_rethrow } from 'next/navigation';
 import { api } from '@convex/_generated/api';

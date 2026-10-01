@@ -288,10 +288,23 @@ describe('the signed-in home with nobody deployed', (): void => {
 describe('the company home', (): void => {
   it('heads the page with the company in one line and offers another deploy', (): void => {
     const page = render(roster);
-    expect(readAs(page)).toContain('Your employees 2 active · 3 things need you');
+    // Counted by the roster's own chip words: the third employee waits for its one-to-one.
+    expect(readAs(page)).toContain(
+      'Your employees 2 active · 1 waiting for your one-to-one · 3 things need you',
+    );
     expect(page).toMatch(/<button[^>]*aria-expanded="false"[^>]*aria-controls="deploy-form"/);
     expect(readAs(page)).toContain('Deploy another');
     expect(page).not.toContain('Deploy a new Day0 employee');
+  });
+
+  it('counts an employee in its one-to-one in the line the roster heads, not as nobody (production walk 6d)', (): void => {
+    const inOneToOne = [
+      { ...roster[2]!, state: 'day-one-in-progress' as const, phase: 'talking' as const },
+    ];
+    const text = readAs(render(inOneToOne));
+    expect(text).toContain('Your employees 1 in your one-to-one');
+    expect(text).not.toContain('0 active');
+    expect(text).toContain('In your one-to-one');
   });
 
   it('orders the main column as drawn: needs you, the roster, the office, the month, the figures, reset', (): void => {

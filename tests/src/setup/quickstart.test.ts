@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   DETAILED_SECTIONS,
   FIRST_SUCCESS,
+  HOSTED_COPY,
   MEASURED_TIMINGS,
   MOCK_FIRST_SUCCESS,
   MOCK_OFFICE_NOTE,
@@ -24,6 +25,7 @@ import {
   wayOfSetup,
 } from '../../../src/setup/quickstart';
 import { firstSuccessLines, parseSetupArguments } from '../../../scripts/setup';
+import { parseCloudArguments } from '../../../scripts/setup-cloud';
 
 /**
  * The commands a newcomer types exist once, here, because they are printed in
@@ -225,6 +227,34 @@ describe('the three ways to run it', (): void => {
     expect(README).toContain('\n### 托管演示\n');
     expect(README).toContain('\n### 本地运行，云端模型\n');
     expect(README).toContain('\n### 本地运行，本地模型\n');
+  });
+
+  it('give your own hosted copy as the cloud verbs, which the README gives in both halves', (): void => {
+    const chineseAt = README.indexOf(CHINESE_HEADING);
+    expect(README).toContain('\n### Your own hosted copy\n');
+    expect(README).toContain('\n#### 你自己的托管副本\n');
+    for (const command of HOSTED_COPY.commands) {
+      const [program, cloud, ...args] = command.split(' ');
+      expect(program).toBe(SETUP_SCRIPT);
+      expect(cloud).toBe('cloud');
+      expect(parseCloudArguments(args)).toMatchObject({ verb: args[0], app: 'vercel' });
+      const offsets = offsetsOf(README, command);
+      expect(offsets.length, command).toBeGreaterThanOrEqual(2);
+      expect(offsets[0]).toBeLessThan(chineseAt);
+      expect(offsets.at(-1)).toBeGreaterThan(chineseAt);
+    }
+    expect(HOSTED_COPY.body).toContain('CONVEX_DEPLOYMENT=prod:<name>');
+    // The files the commands name sit outside the clone the README makes, or the
+    // checkout would be dirty and the keys inside a repository.
+    const clones = [...README.matchAll(/git clone \S+ (\S+) && cd \1/g)].map((match) => match[1]);
+    expect(clones).toEqual(['day0-cloud', 'day0-cloud']);
+    for (const command of HOSTED_COPY.commands) {
+      for (const path of command.match(/~\/\S+/g) ?? []) {
+        expect(path.startsWith('~/day0-private/'), path).toBe(true);
+      }
+    }
+    expect(README).not.toContain('~/day0-cloud/');
+    expect(`${HOSTED_COPY.body} ${HOSTED_COPY.after}`).toContain('--dry-run');
   });
 
   it('keep the mock office as what the harness and the hosted demo run on, with its own README section', (): void => {

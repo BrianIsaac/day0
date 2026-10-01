@@ -2511,6 +2511,35 @@ describe('cancelling a pending plan', (): void => {
   });
 });
 
+describe('when an item’s run began (second review x4)', (): void => {
+  it('stamps the claim when the verdict claims the item, and anew when Retry puts it back into a run', async (): Promise<void> => {
+    vi.useFakeTimers();
+    try {
+      const claimed = Date.UTC(2026, 8, 30, 9);
+      vi.setSystemTime(claimed);
+      const harness = convexTest(schema, allConvexModules());
+      const { workItemId } = await seed(harness, 'discovered');
+      await harness.mutation(internal.work.setVerdict, {
+        workItemId,
+        verdict: { decision: 'claim' },
+      });
+      expect((await readItem(harness, workItemId)).claimedAt).toBe(claimed);
+
+      await harness.run(async (ctx): Promise<void> => {
+        await ctx.db.patch(workItemId, { state: 'failed', skipReason: 'the provider said no' });
+      });
+      const retried = Date.UTC(2026, 8, 30, 12);
+      vi.setSystemTime(retried);
+      await harness.withIdentity(OWNER).mutation(api.work.retryFailed, { workItemId });
+      const row = await readItem(harness, workItemId);
+      expect(row.state).toBe('plan-approved');
+      expect(row.claimedAt).toBe(retried);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('retrying an item the quality-fit filter skipped', (): void => {
   it('records the manager waiver on the item and in the ledger', async (): Promise<void> => {
     useSurfaceMode('real');

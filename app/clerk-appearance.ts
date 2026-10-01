@@ -1,6 +1,9 @@
 import type { Appearance } from '@clerk/ui';
 import { dark } from '@clerk/themes';
 
+/** Day0's mark drawn for Clerk's dark card (`public/day0-mark.svg`), served from the app itself. */
+export const DAY0_MARK_URL = '/day0-mark.svg';
+
 /**
  * How every Clerk surface looks: the sign-in and sign-up pages, the header's sign-in and
  * create-account modals, and the account menu.
@@ -12,9 +15,18 @@ import { dark } from '@clerk/themes';
  * came to be drawn dark on dark. `@clerk/ui`, installed for its types only, types every
  * `appearance` prop and `satisfies Appearance` here, so the typecheck refuses a name Clerk does
  * not read.
+ *
+ * Every card carries Day0's mark above its title (the operator's ask, 30 September), set here
+ * rather than in Clerk's dashboard so the deployment's code decides it.
  */
 export const clerkAppearance = {
   theme: dark,
+  options: {
+    logoImageUrl: DAY0_MARK_URL,
+    logoPlacement: 'inside',
+    // The mark leads home within the product, never to the Clerk instance's configured home.
+    logoLinkUrl: '/',
+  },
   variables: {
     colorBackground: '#18181b',
     colorForeground: '#f4f4f5',
@@ -35,3 +47,29 @@ export const clerkAppearance = {
     borderRadius: '0.5rem',
   },
 } satisfies Appearance;
+
+/**
+ * The appearance of a Clerk widget drawn under a page's own h1: the sign-in and sign-up pages.
+ *
+ * Clerk draws every step's title as an h1, so on the first step, where the page's heading already
+ * says what the card is for, the title and its subtitle are left out and the mark stands alone
+ * above the form (the hosted walk's m26), with no header gap left under it. Later steps keep their
+ * headers: they say what to do ("Check your email") and to which address, and the page's heading
+ * steps down to a paragraph there (`StepHeading`), so each step has one h1. All of it goes through
+ * Clerk's own element styles, never a stylesheet selector on its classes, which Clerk reports as
+ * structural CSS on every page.
+ *
+ * @param firstStep - Whether the widget is on its first step (`HeadedClerk.tsx` reads it off the
+ *   path, by which Clerk routes its steps).
+ */
+export function headedClerkAppearance(firstStep: boolean): Appearance {
+  if (!firstStep) return clerkAppearance;
+  return {
+    ...clerkAppearance,
+    elements: {
+      header: { gap: 0 },
+      headerTitle: { display: 'none' },
+      headerSubtitle: { display: 'none' },
+    },
+  };
+}

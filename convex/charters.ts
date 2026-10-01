@@ -21,8 +21,10 @@ import {
 } from '../src/agent/charter-amendment';
 import {
   CONSTRAINT_KINDS,
+  STRIKE_CHANGES_NOTHING,
   clauseChanges,
   strikeOutcome,
+  strikePreview,
   type CharterConstraint,
 } from '../src/agent/charter-constraints';
 import { identityFromCharter, toolsFromCharter } from '../src/agent/charter-workspace';
@@ -195,7 +197,7 @@ export type StrikeResult = { ok: true } | { ok: false; reason: string };
  * `approve` is where the struck wording leaves the clauses. The effective
  * charter is computed here all the same, with the function approval uses,
  * so a strike approval could not honour is refused now, with the reason,
- * and the flag is never set.
+ * and the flag is never set; so is a strike that would change no clause.
  */
 export const setConstraintStruck = mutation({
   args: { charterId: v.id('charters'), index: v.number(), struck: v.boolean() },
@@ -213,9 +215,12 @@ export const setConstraintStruck = mutation({
     }
     constraints[args.index] = { ...target, struck: args.struck };
     const toggled: Charter = { ...body, constraints };
-    if (args.struck) {
-      const outcome = strikeOutcome(toggled);
-      if (!outcome.ok) return { ok: false, reason: outcome.reason };
+    if (args.struck && target.struck !== true) {
+      // The card's own preview: a strike approval would refuse, or one that changes no clause,
+      // is refused here with the same reason and the flag never set (the production walk's 6c).
+      const preview = strikePreview(body, args.index);
+      if (preview.refusal !== undefined) return { ok: false, reason: preview.refusal };
+      if (!preview.changes) return { ok: false, reason: STRIKE_CHANGES_NOTHING };
     }
     await ctx.db.patch(args.charterId, { body: toggled });
     return { ok: true };
