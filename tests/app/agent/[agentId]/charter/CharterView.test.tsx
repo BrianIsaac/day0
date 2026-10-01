@@ -39,6 +39,50 @@ describe('CharterView', () => {
   });
 });
 
+describe('a charter carried through a handover (wave 9 review, decision 1 (a))', () => {
+  const charter = {
+    ...APPROVED_CHARTER,
+    body: {
+      whyThisHire: 'Close week.',
+      proposedFunction: 'Own routine revenue operations work.',
+      shortTermGoals: { day30: 'a', day60: 'b', day90: 'c' },
+      proposedBoundaries: { willDo: [], willNotDo: [], escalationTriggers: [] },
+      namedCollaborators: [],
+      priorityReading: [],
+      openQuestions: [],
+    },
+  };
+
+  it('says whose one-to-one drafted it, and offers none of its words', () => {
+    backend.queries = {
+      'charters:transcriptOf': { heldBy: 'sam@company.com' },
+      'charters:listForAgent': [charter],
+    };
+    const html = renderToStaticMarkup(asEmployee(<CharterView />, { charter }));
+    backend.queries = {};
+    expect(html).toContain('v0.1 drafted from sam@company.com&#x27;s one-to-one');
+    expect(html).toContain(
+      'sam@company.com held the one-to-one this charter was drafted from. What they said stayed with them at the handover.',
+    );
+    expect(html).not.toContain('What you said');
+    expect(html).not.toContain('Read what you said');
+    expect(html).not.toContain('drafted from your one-to-one');
+  });
+
+  it('says the one-to-one was the reader’s own when it comes back to the manager who held it', () => {
+    backend.queries = {
+      'charters:transcriptOf': { heldBy: 'Boss@Day0.local' },
+      'charters:listForAgent': [charter],
+    };
+    const html = renderToStaticMarkup(asEmployee(<CharterView />, { charter }));
+    backend.queries = {};
+    expect(html).toContain('v0.1 drafted from your one-to-one');
+    expect(html).toContain(
+      'You held the one-to-one this charter was drafted from. What you said was cleared when it was handed over.',
+    );
+  });
+});
+
 describe('the charter review, one rule struck (charter-review-struck.html)', () => {
   const struckDraft = (): typeof APPROVED_CHARTER => {
     const body = strikeRefusalBody(false);
