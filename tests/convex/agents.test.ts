@@ -1,10 +1,10 @@
 import { convexTest, type TestConvex } from 'convex-test';
+import { anyApi } from 'convex/server';
 import { ConvexError } from 'convex/values';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
-import * as agentsModule from '../../convex/agents';
 import { clipRoleLine } from '../../convex/agents';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
@@ -1965,9 +1965,17 @@ describe('agents.setBossEmail, removed with the free edit', (): void => {
     );
   }
 
-  it('is no longer a function: the address changes only by deploy, Make it you and an accepted handover', (): void => {
-    expect(Object.keys(agentsModule)).not.toContain('setBossEmail');
-    expect(Object.keys(agentsModule)).toContain('adoptManagerAddress');
+  it('is no longer a function: the address changes only by deploy, Make it you and an accepted handover', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity(managerIdentity());
+    const agentId = await seedReportingTo(harness, 'boss@day0.local');
+    // The page's old call, by name: the deployment has no such function to run.
+    await expect(
+      owner.mutation(anyApi.agents.setBossEmail, { agentId, bossEmail: 'new@day0.local' }),
+    ).rejects.toThrow(/setBossEmail/);
+    const agent = await harness.run(async (ctx) => await ctx.db.get(agentId));
+    expect(agent?.bossEmail).toBe('boss@day0.local');
   });
 
   it('re-probes, on Make it you, the chat surfaces the change can mend, as the free edit did (Q6)', async (): Promise<void> => {

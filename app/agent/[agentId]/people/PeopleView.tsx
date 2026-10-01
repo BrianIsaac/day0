@@ -282,6 +282,23 @@ function ManagerCard({ agent, surfaceMode }: ManagerCardProps) {
   const zone = deploymentZone();
   const state = managerCardState(open, standing, lastEndedHandover(departures, agent._id));
   const oneManager = signedInAsTheOneManager(config?.deploymentProfile);
+  // A decline or an expiry is the named manager's doing, or the clock's: said once, when the
+  // request that was open comes back ended. The ended request may arrive a read after the open
+  // one goes, so the card waits for it by id.
+  const openId = state.kind === 'asked' ? state.open.transferId : null;
+  const [watched, setWatched] = useState<string | null | undefined>(
+    state.kind === 'loading' ? undefined : openId,
+  );
+  const [awaiting, setAwaiting] = useState<string | null>(null);
+  const [heard, setHeard] = useState('');
+  if (state.kind !== 'loading' && openId !== watched) {
+    setAwaiting(watched ?? null);
+    setWatched(openId);
+  }
+  if (awaiting !== null && state.kind === 'standing' && state.ended?.transferId === awaiting) {
+    setHeard(endedCardLine(state.ended, zone));
+    setAwaiting(null);
+  }
   const closeDialog = (): void => {
     // A refusal said inside the dialog is not said again on the card once it is closed (m38).
     if (change.outcome?.tone === 'refused') change.clear();
@@ -406,6 +423,9 @@ function ManagerCard({ agent, surfaceMode }: ManagerCardProps) {
         {controls === null ? null : <div className="flex flex-wrap gap-2">{controls}</div>}
       </div>
       <StatusRegion outcome={dialog === null ? change.outcome : null} />
+      <p role="status" aria-live="polite" className="sr-only">
+        {heard}
+      </p>
       {dialog?.kind === 'hand-over' && surfaceMode !== undefined ? (
         <HandOverDialog
           agent={agent}

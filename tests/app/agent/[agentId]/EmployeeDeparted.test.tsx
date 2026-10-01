@@ -26,7 +26,7 @@ import {
   NotYourEmployee,
 } from '../../../../app/agent/[agentId]/EmployeeDeparted';
 import { axeViolations } from '../../../fixtures/dom/axe';
-import { mount, unmountAll } from '../../../fixtures/dom/press';
+import { mount, press, unmountAll } from '../../../fixtures/dom/press';
 import { underTarget } from '../../../fixtures/dom/targets';
 
 const DEPARTURE = {
@@ -56,21 +56,43 @@ describe('EmployeeDeparted (the transfer plan, 7.4)', () => {
   });
 
   it('draws the departure, "No such employee" when there is none, and loading while it is read', () => {
-    expect(mount(<NotYourEmployee />).container.textContent).toContain('loading employee');
+    const retry = (): void => undefined;
+    expect(mount(<NotYourEmployee retry={retry} />).container.textContent).toContain(
+      'loading employee',
+    );
     unmountAll();
     backend.departure = null;
-    expect(mount(<NotYourEmployee />).container.querySelector('h1')?.textContent).toBe(
-      'No such employee',
-    );
-    unmountAll();
-    backend.departure = new Error('ArgumentValidationError');
-    expect(mount(<NotYourEmployee />).container.querySelector('h1')?.textContent).toBe(
-      'No such employee',
-    );
+    expect(
+      mount(<NotYourEmployee retry={retry} />).container.querySelector('h1')?.textContent,
+    ).toBe('No such employee');
     unmountAll();
     backend.departure = DEPARTURE;
-    expect(mount(<NotYourEmployee />).container.querySelector('h1')?.textContent).toBe(
-      'Maya was handed over',
+    expect(
+      mount(<NotYourEmployee retry={retry} />).container.querySelector('h1')?.textContent,
+    ).toBe('Maya was handed over');
+  });
+
+  it('offers the read again when it fails, and logs why, never calling the employee "no such"', async () => {
+    const logged = vi.spyOn(console, 'log').mockImplementation((): void => undefined);
+    let retried = 0;
+    backend.departure = new Error('Server Error');
+    const view = mount(
+      <NotYourEmployee
+        retry={() => {
+          retried += 1;
+        }}
+      />,
     );
+    expect(view.container.querySelector('h1')?.textContent).toBe('This page did not load');
+    expect(logged.mock.calls.map(([line]) => JSON.parse(String(line)))).toContainEqual(
+      expect.objectContaining({
+        level: 'warn',
+        msg: 'departure read failed',
+        reason: 'Server Error',
+      }),
+    );
+    await press(view.container, 'Try again');
+    expect(retried).toBe(1);
+    logged.mockRestore();
   });
 });

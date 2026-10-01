@@ -367,6 +367,12 @@ describe('RetireDialog: what retiring does, said before it is done (Q15, N1)', (
     expect(
       document.getElementById(retireButton().getAttribute('aria-describedby') ?? '')?.textContent,
     ).toBe('lead@day0.local has accepted Mira; it is theirs once its runs finish.');
+    // Said as it lands, and read before the field it disables.
+    const reason = document.getElementById(retireButton().getAttribute('aria-describedby') ?? '');
+    expect(reason?.getAttribute('role')).toBe('status');
+    expect(
+      (reason?.compareDocumentPosition(field()) ?? 0) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     expect(focusedName()).toBe('Keep Mira');
     view.unmount();
   });

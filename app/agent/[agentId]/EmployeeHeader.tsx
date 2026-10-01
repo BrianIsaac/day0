@@ -11,9 +11,8 @@ import { autonomousActionsOn } from '@/work/autonomy';
 import { employeeStateLabel, shownEmployeeState } from '@/work/state-labels';
 import { avatarById } from '@/agent/avatar-pets';
 import type { OneToOnePhase } from '@/agent/one-to-one-phase';
-import Link from 'next/link';
 import type { ManagerStanding } from '@/agent/manager-standing';
-import { Button } from '../../components/Button';
+import { Button, ButtonLink } from '../../components/Button';
 import {
   CHOOSE_ON_PEOPLE,
   HANDING_OVER_TO,
@@ -62,47 +61,79 @@ export interface ManagerLineProps {
  */
 export function ManagerLine({ agent, standing, open, lookupFailure }: ManagerLineProps) {
   const people = employeeTabHref(agent._id, 'people');
-  const linkClass =
-    'text-[var(--color-fg-2)] underline decoration-[var(--color-link-line)] underline-offset-4 hover:decoration-[var(--color-accent)]';
-  const address = (
+  const mono = (address: string): ReactNode => (
     <span className="font-mono text-[var(--color-fg)] [overflow-wrap:anywhere]">
-      {addressWithBreaks(agent.bossEmail)}
+      {addressWithBreaks(address)}
     </span>
   );
-  const lead = standing?.standing === 'you' ? REPORTS_TO_YOU : <>Reports to {address}</>;
+  const lead =
+    standing?.standing === 'you' ? REPORTS_TO_YOU : <>Reports to {mono(agent.bossEmail)}</>;
+  // A link here is a 44 px target, as the zone line's control below it is (N14).
+  const toPeople = (label: ReactNode): ReactNode => (
+    <ButtonLink
+      href={people}
+      variant="text"
+      size="small"
+      className="!whitespace-normal [overflow-wrap:anywhere]"
+    >
+      {label}
+    </ButtonLink>
+  );
   let line: ReactNode;
   if (open?.state === 'asked') {
     line = (
       <>
-        {lead} ·{' '}
-        <Link href={people} className={linkClass}>
-          {HANDING_OVER_TO} {addressWithBreaks(open.toAddress)}
-        </Link>
+        <span className="min-w-0">{lead} · </span>
+        {toPeople(
+          <>
+            {HANDING_OVER_TO}&nbsp;{mono(open.toAddress)}
+          </>,
+        )}
       </>
     );
   } else if (open?.state === 'accepting') {
     line = (
-      <>
+      <span className="min-w-0">
         {lead}
-        {untilRunsFinish(agent.name)} · {THEN} {addressWithBreaks(open.toAddress)}
-      </>
+        {untilRunsFinish(agent.name)} · {THEN} {mono(open.toAddress)}
+      </span>
     );
   } else if (standing?.standing === 'other') {
     line = (
       <>
-        {lead}
-        {WHO_IS_NOT_YOU} ·{' '}
-        <Link href={people} className={linkClass}>
-          {CHOOSE_ON_PEOPLE}
-        </Link>
+        <span className="min-w-0">
+          {lead}
+          {WHO_IS_NOT_YOU} ·{' '}
+        </span>
+        {toPeople(CHOOSE_ON_PEOPLE)}
       </>
     );
   } else {
-    line = lead;
+    line = <span className="min-w-0">{lead}</span>;
+  }
+  // The handover moving on is another manager's doing, whichever tab is open: said once, when the
+  // named manager accepts.
+  const accepting = open?.state === 'accepting' ? open.transferId : null;
+  const [heard, setHeard] = useState<string | null | undefined>(
+    open === undefined ? undefined : accepting,
+  );
+  const [announced, setAnnounced] = useState('');
+  if (open !== undefined && accepting !== heard) {
+    if (heard !== undefined && accepting !== null && open?.state === 'accepting') {
+      setAnnounced(
+        `${standing?.standing === 'you' ? REPORTS_TO_YOU : `Reports to ${agent.bossEmail}`}${untilRunsFinish(agent.name)}, then ${open.toAddress}.`,
+      );
+    }
+    setHeard(accepting);
   }
   return (
     <div>
-      <p className="text-sm text-[var(--color-muted)]">{line}</p>
+      <p className="flex flex-wrap items-center gap-x-1.5 text-sm text-[var(--color-muted)]">
+        {line}
+      </p>
+      <p role="status" aria-live="polite" className="sr-only">
+        {announced}
+      </p>
       {lookupFailure ? (
         <p className="mt-1 text-xs text-[var(--color-warn)]">
           {managerLookupFailureLine(lookupFailure)}

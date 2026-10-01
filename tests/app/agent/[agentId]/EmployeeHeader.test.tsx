@@ -177,6 +177,7 @@ describe('the manager line (the transfer plan 7.2, D14)', (): void => {
     return markup
       .replace(/<[^>]*>/g, '')
       .replace(/&#x27;/g, "'")
+      .replace(/&nbsp;|\u00a0/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
   }
@@ -209,9 +210,41 @@ describe('the manager line (the transfer plan 7.2, D14)', (): void => {
       <ManagerLine agent={MIRA} standing={{ standing: 'you' }} open={OPEN} />,
     );
     expect(text(markup)).toBe('Reports to you · handing over to lead@day0.local');
-    expect(markup).toMatch(
-      /<a[^>]*href="\/agent\/agent-1\/people"[^>]*>handing over to lead<wbr\/>@day0\.local<\/a>/,
+    const link = /<a([^>]*)href="\/agent\/agent-1\/people"[^>]*>(.*?)<\/a>/.exec(markup);
+    expect(text(link?.[2]?.replace(/&nbsp;/g, ' ') ?? '')).toBe('handing over to lead@day0.local');
+    // A 44 px target, as the zone line's control is (N14).
+    expect(link?.[1]).toContain('min-h-11');
+  });
+
+  it('says it aloud when the named manager accepts, which nobody on this page did', (): void => {
+    const view = mount(<ManagerLine agent={MIRA} standing={{ standing: 'you' }} open={OPEN} />);
+    const region = view.container.querySelector('[role="status"]');
+    expect(region?.textContent).toBe('');
+    act((): void =>
+      view.root.render(
+        <ManagerLine
+          agent={MIRA}
+          standing={{ standing: 'you' }}
+          open={{ ...OPEN, state: 'accepting', settleBy: 3 }}
+        />,
+      ),
     );
+    expect(said(view.container)).toEqual([
+      "Reports to you until Mira's runs finish, then lead@day0.local.",
+    ]);
+    view.unmount();
+  });
+
+  it('says nothing aloud for a handover already accepting when the page opens', (): void => {
+    const view = mount(
+      <ManagerLine
+        agent={MIRA}
+        standing={{ standing: 'you' }}
+        open={{ ...OPEN, state: 'accepting', settleBy: 3 }}
+      />,
+    );
+    expect(said(view.container)).toEqual([]);
+    view.unmount();
   });
 
   it('says an accepting handover until the runs finish', (): void => {

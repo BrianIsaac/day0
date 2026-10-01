@@ -149,7 +149,7 @@ describe('the employee route with an id that names no employee of the caller', (
     await settle();
     expect(view.container.textContent).toContain('loading employee');
     view.unmount();
-    backend.queries['managerTransfers:departureOf'] = new Error('ArgumentValidationError');
+    backend.queries['managerTransfers:departureOf'] = null;
     const refused = mount(route());
     await settle();
     expect(refused.container.querySelector('h1')?.textContent).toBe('No such employee');

@@ -241,6 +241,18 @@ export function RetireDialog({
           });
         }}
       >
+        {/* In the page before it is filled, so an acceptance that lands while the dialog is open
+            is said; above the field it disables. */}
+        <p
+          id={blockedId}
+          role="status"
+          aria-live="polite"
+          className="text-[15px] text-[var(--color-fg)] empty:sr-only"
+        >
+          {accepting === undefined
+            ? ''
+            : retireBlockedByAcceptance(agent.name, accepting.toAddress)}
+        </p>
         <Field
           label={
             <>
@@ -261,11 +273,6 @@ export function RetireDialog({
             />
           )}
         </Field>
-        {accepting === undefined ? null : (
-          <p id={blockedId} className="text-[15px] text-[var(--color-fg-2)]">
-            {retireBlockedByAcceptance(agent.name, accepting.toAddress)}
-          </p>
-        )}
         <StatusRegion outcome={change.outcome} />
         <div className="flex flex-wrap justify-end gap-2">
           <Button ref={keep} size="large" disabled={change.busy} onClick={onClose}>

@@ -23,7 +23,7 @@ export default function EmployeePageError({
   return isEmployeeNotYours(error) ? (
     // The net sits above the layout's gate; asking where the employee went reads the caller.
     <SessionGate fallback={<EmployeeLoading />}>
-      <NotYourEmployee />
+      <NotYourEmployee retry={unstable_retry} />
     </SessionGate>
   ) : (
     <EmployeePageFailed retry={unstable_retry} />

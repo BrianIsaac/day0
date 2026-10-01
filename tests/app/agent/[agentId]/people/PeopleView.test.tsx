@@ -509,6 +509,48 @@ describe('PeopleView', () => {
     expect(buttonNames(card)).toEqual([]);
   });
 
+  it('says it aloud when the asked manager declines, once the decline is read', () => {
+    settled({ 'managerTransfers:openForAgent': OPEN_ASKED });
+    const view = mount(asEmployee(<PeopleView />));
+    expect(said(view.container)).toEqual([]);
+    // The request leaves asked a read before its decline arrives.
+    settled();
+    act((): void => view.root.render(asEmployee(<PeopleView />)));
+    expect(said(view.container)).toEqual([]);
+    settled({
+      'managerTransfers:departures': [
+        {
+          transferId: 'transfer-1',
+          agentId: 'agent-1',
+          agentName: 'Mira',
+          toAddress: 'lead@day0.local',
+          state: 'declined',
+          decidedAt: Date.UTC(2026, 9, 3, 8, 30),
+        },
+      ],
+    });
+    act((): void => view.root.render(asEmployee(<PeopleView />)));
+    expect(said(view.container)).toEqual([
+      'lead@day0.local declined on 3 Oct 2026, 08:30, UTC time.',
+    ]);
+  });
+
+  it('says nothing aloud of an ended request that was not open on this page', () => {
+    settled({
+      'managerTransfers:departures': [
+        {
+          transferId: 'transfer-1',
+          agentId: 'agent-1',
+          agentName: 'Mira',
+          toAddress: 'lead@day0.local',
+          state: 'expired',
+          decidedAt: Date.UTC(2026, 9, 3, 8, 30),
+        },
+      ],
+    });
+    expect(said(mount(asEmployee(<PeopleView />)).container)).toEqual([]);
+  });
+
   it('says the newest decline with its reason, and offers Hand over again', () => {
     settled({
       'managerTransfers:departures': [

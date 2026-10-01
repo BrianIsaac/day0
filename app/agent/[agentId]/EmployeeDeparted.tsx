@@ -1,14 +1,16 @@
 'use client';
 
+import { useEffect } from 'react';
 import { useQueries } from 'convex/react';
 import { useParams } from 'next/navigation';
 import type { FunctionReturnType } from 'convex/server';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
+import { log } from '@/lib/logger';
 import { deploymentZone } from '@/lib/zone';
 import { ButtonLink } from '../../components/Button';
 import { departedLine, departedTitle } from '../../handover-words';
-import { Answer, BACK, NoSuchEmployee } from './NoSuchEmployee';
+import { Answer, BACK, EmployeePageFailed, NoSuchEmployee } from './NoSuchEmployee';
 
 /** Where an employee the caller handed over went, as `managerTransfers.departureOf` answers it. */
 type Departure = NonNullable<FunctionReturnType<typeof api.managerTransfers.departureOf>>;
@@ -41,18 +43,24 @@ export function EmployeeDeparted({ departure }: { departure: Departure }) {
 
 /**
  * The employee page for an employee the caller does not own: where it went, when the caller handed
- * it over, and "No such employee" otherwise. The departure is read through `useQueries`, so a link
- * whose id the backend refuses reads as no such employee rather than failing again.
+ * it over, and "No such employee" otherwise. The departure is read through `useQueries`, so a
+ * failed read is a value: it is logged and the page offers the read again, rather than call an
+ * employee the caller may still own "no such employee".
+ *
+ * @param retry - Loads the page again, from the net above it.
  */
-export function NotYourEmployee() {
+export function NotYourEmployee({ retry }: { retry: () => void }) {
   const { agentId } = useParams<{ agentId: string }>();
   const { departure }: Record<string, Departure | null | undefined | Error> = useQueries({
     departure: {
       query: api.managerTransfers.departureOf,
-      // The backend validates the id; one that names no employee is refused as a value.
       args: { agentId: agentId as Id<'agents'> },
     },
   });
+  const failed = departure instanceof Error ? departure.message : undefined;
+  useEffect(() => {
+    if (failed !== undefined) log.warn('departure read failed', { agentId, reason: failed });
+  }, [agentId, failed]);
   if (departure === undefined) {
     return (
       <div className="flex min-h-screen items-center justify-center text-[var(--color-muted)]">
@@ -60,6 +68,7 @@ export function NotYourEmployee() {
       </div>
     );
   }
-  if (departure === null || departure instanceof Error) return <NoSuchEmployee />;
+  if (departure instanceof Error) return <EmployeePageFailed retry={retry} />;
+  if (departure === null) return <NoSuchEmployee />;
   return <EmployeeDeparted departure={departure} />;
 }
