@@ -9,7 +9,8 @@
  * allowed domains; the public origin), derives the issuer from the provider's
  * preset, writes the customer-local block of the env file with a generated
  * session secret (kept when one is already set, so a second run signs nobody
- * out), prints the two addresses to register at the issuer, pushes the
+ * out), turns the local key off (a customer build signs in through the
+ * issuer alone), prints the two addresses to register at the issuer, pushes the
  * deployment's values (`pnpm run sync:env`, the audience before the issuer),
  * pushes the functions so the auth config takes the issuer, restarts a
  * self-hosted backend so it reads them, and runs `pnpm run check:setup`.
@@ -262,6 +263,10 @@ async function resolveSignIn(
     publicUrl: origin.origin,
     generatedSessionSecret: !keptSecret,
     updates: {
+      // The local key is the operator's way in under `next dev`. A customer
+      // build signs people in through the issuer, `next build` refuses the key,
+      // and the deployment must not accept it beside the customer's people.
+      NEXT_PUBLIC_DEV_NO_AUTH: '',
       DAY0_PROFILE: 'customer-local',
       [BROWSER_PROFILE_VAR]: 'customer-local',
       [CUSTOMER_OIDC_ISSUER_VAR]: issuer,
@@ -282,9 +287,14 @@ const HIDDEN = new Set<string>([CUSTOMER_OIDC_CLIENT_SECRET_VAR, CUSTOMER_SESSIO
 /** The lines that say what is written, secrets as `(hidden)`. */
 function writtenLines(resolved: ResolvedSignIn): string[] {
   return Object.entries(resolved.updates).map(
-    ([name, value]) =>
-      `  ${name}=${HIDDEN.has(name) ? (name === CUSTOMER_SESSION_SECRET_VAR && resolved.generatedSessionSecret ? '(generated, hidden)' : '(hidden)') : value}`,
+    ([name, value]) => `  ${name}=${shownValue(name, value, resolved.generatedSessionSecret)}`,
   );
+}
+
+/** A value as the terminal may show it: a secret never, a generated one said to be so. */
+function shownValue(name: string, value: string, generated: boolean): string {
+  if (!HIDDEN.has(name)) return value;
+  return name === CUSTOMER_SESSION_SECRET_VAR && generated ? '(generated, hidden)' : '(hidden)';
 }
 
 /** What to register at the issuer, and what comes after the verb. */

@@ -85,6 +85,16 @@ describe('setup: the sign-in verb', (): void => {
     expect(bed.output.join('\n')).toContain('https://day0.acme.test/api/auth/oidc/callback');
   });
 
+  it('turns the local key off, since the build signs in through the issuer and next build refuses the key', async (): Promise<void> => {
+    const bed = harness({
+      envLocal: `${INSTALLED}NEXT_PUBLIC_DEV_NO_AUTH=true\nDEV_NO_AUTH_SECRET=generated-secret\n`,
+      environment: { DAY0_OIDC_CLIENT_SECRET: 'day0-test-client-secret' },
+    });
+    await runCommand(parseSetupArguments(ENTRA_ARGUMENTS), bed.io);
+    expect(readEnvValues(join(bed.directory, '.env.local')).NEXT_PUBLIC_DEV_NO_AUTH).toBe('');
+    expect(bed.output.join('\n')).toContain('NEXT_PUBLIC_DEV_NO_AUTH=');
+  });
+
   it('keeps a session secret already set, so nobody is signed out by a second run', async (): Promise<void> => {
     const kept = 'k'.repeat(43);
     const bed = harness({
