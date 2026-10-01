@@ -622,7 +622,8 @@ const intake: Phase = {
 /**
  * Bring the ticket to a drafted plan whatever the evaluator did with it: a
  * quality-fit skip is taken anyway from its card, a competing claim has its plan
- * cancelled, a skill proposal is approved and its registration awaited.
+ * cancelled, a skill proposal is approved (or a colleague's offered skill adopted) and its
+ * registration awaited.
  */
 async function reachPlan(ctx: RehearsalContext): Promise<WorkItemRow> {
   const dashboard = requireState(ctx.state, 'dashboard');
@@ -651,8 +652,14 @@ async function reachPlan(ctx: RehearsalContext): Promise<WorkItemRow> {
       );
       if (proposed && !acted.has(`skill:${proposed._id}`)) {
         acted.add(`skill:${proposed._id}`);
-        ctx.log(`approving the proposed skill "${proposed.name}"`);
-        await dashboard.approveSkill(proposed.name);
+        // A proposal that offers a colleague's verified skill draws Adopt in place of Approve.
+        if (proposed.offeredVersionId !== undefined) {
+          ctx.log(`adopting the skill "${proposed.name}" a colleague verified`);
+          await dashboard.decideOffer(proposed.name, 'adopt');
+        } else {
+          ctx.log(`approving the proposed skill "${proposed.name}"`);
+          await dashboard.approveSkill(proposed.name);
+        }
       }
       return undefined;
     }
