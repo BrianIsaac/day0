@@ -35,10 +35,8 @@ import { agentReadsSource } from '../src/docs/agent-sources';
 import { isEvaluationAgent } from './metrics';
 import { isManagerLookupFailure } from '../src/surfaces/manager-lookup';
 import {
-  MANAGER_ADDRESS_REFUSAL,
   UNVERIFIED_FOR_DEPLOY,
   isEvaluationShapedAddress,
-  isManagerAddressShaped,
   normaliseManagerAddress,
 } from '../src/agent/manager-address';
 import {
@@ -811,44 +809,6 @@ async function reprobeForManagerChange(ctx: MutationCtx, agentId: Id<'agents'>):
   );
   return surfaces.length;
 }
-
-/**
- * Change who the agent reports to.
- *
- * Public, owner-guarded. Writes the agent's `bossEmail` and a `manager.changed`
- * event (`via: 'dashboard'`), then, in real mode, schedules a probe of every
- * chat surface the change can mend, so the manager DM moves to the new person
- * and a surface that failed on the old person's lookup comes back (Q6). A
- * probe that resolves a different Slack user writes its own
- * `manager.changed` (`via: 'probe'`) and re-sends the open decision requests.
- * An evaluation agent's address is its evaluation marker and is refused.
- *
- * @returns Whether the address changed, and how many surfaces were re-probed.
- * @throws ConvexError for a malformed address or an evaluation agent.
- */
-export const setBossEmail = mutation({
-  args: { agentId: v.id('agents'), bossEmail: v.string() },
-  handler: async (ctx, args): Promise<{ changed: boolean; reprobed: number }> => {
-    const agent = await assertOwnsAgent(ctx, args.agentId);
-    const bossEmail = args.bossEmail.trim();
-    if (!isManagerAddressShaped(bossEmail)) throw new ConvexError(MANAGER_ADDRESS_REFUSAL);
-    if (isEvaluationAgent(agent) || isEvaluationAgent({ ...agent, bossEmail })) {
-      throw new ConvexError("An evaluation agent's manager address is fixed by its run.");
-    }
-    if (bossEmail.toLowerCase() === agent.bossEmail.trim().toLowerCase()) {
-      return { changed: false, reprobed: 0 };
-    }
-    const now = Date.now();
-    await ctx.db.patch(agent._id, { bossEmail });
-    await appendEvent(ctx, {
-      agentId: agent._id,
-      type: 'manager.changed',
-      payload: { via: 'dashboard', bossEmail },
-      createdAt: now,
-    });
-    return { changed: true, reprobed: await reprobeForManagerChange(ctx, agent._id) };
-  },
-});
 
 /** Public, owner-guarded: grants permission scopes to an employee as the manager. */
 export const grantScopes = mutation({
