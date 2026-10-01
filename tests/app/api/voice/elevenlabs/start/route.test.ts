@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('../../../../../../src/lib/dev-auth-server', () => ({
-  establishCaller: async () => ({ ok: true, userId: 'dev-no-auth-subject' }),
+// The caller is the seam every server route establishes; its own tests cover how
+// (`tests/src/lib/convex-caller.test.ts`, and the profile in `route.customer-local.test.ts`).
+vi.mock('../../../../../../src/lib/convex-caller', () => ({
+  establishConvexCaller: async () => ({ ok: true, client: {} }),
 }));
 
 /** The route, loaded with voice configured and ElevenLabs answered by `answer`. */
