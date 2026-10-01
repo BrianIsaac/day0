@@ -17,7 +17,7 @@ import { runThroughBody } from '../fixtures/run-through-charter-2026-09-14';
 import { runtimeCycleThrough } from '../fixtures/import-graph';
 import { MAX_FINALISATION_RECOVERIES } from '../../src/agent/one-to-one-phase';
 import { UNVERIFIED_FOR_DEPLOY } from '../../src/agent/manager-address';
-import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import { MANAGER_ADDRESS, localIssuerIdentity, managerIdentity } from './fakes/manager-identity';
 
 afterEach((): void => {
   vi.useRealTimers();
@@ -179,6 +179,18 @@ describe("agents.deploy and the manager's verified address", (): void => {
     expect(stored).toMatchObject({
       bossEmail: 'lead@day0.local',
       event: { bossEmail: 'lead@day0.local' },
+    });
+  });
+
+  it('stores the address of a local token as the backend hands it over, its verification raw', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const local = harness.withIdentity(localIssuerIdentity('Ops@Kestrel.example'));
+    await expect(local.query(api.agents.myManagerAddress, {})).resolves.toBe('ops@kestrel.example');
+    const agentId = await local.mutation(api.agents.deploy, { name: 'Maya' });
+    await expect(local.query(api.agents.get, { agentId })).resolves.toMatchObject({
+      bossEmail: 'ops@kestrel.example',
+      userId: 'dev-no-auth|local-boss',
     });
   });
 
