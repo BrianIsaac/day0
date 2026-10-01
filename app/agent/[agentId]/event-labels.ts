@@ -237,7 +237,12 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'skill.authoring-claimed': (payload) =>
     `skill authoring started: ${text(payload.name) ?? 'unnamed'}`,
   'skill.authoring': 'skill being checked in the sandbox',
-  'skill.registered': (payload) => `skill registered: ${text(payload.name) ?? 'unnamed'}`,
+  'skill.registered': (payload) =>
+    `skill registered: ${text(payload.name) ?? 'unnamed'}${
+      typeof payload.version === 'number' ? ` v${payload.version}` : ''
+    }`,
+  'skill.recheck-due': (payload) =>
+    `skill re-check due: ${text(payload.name) ?? 'unnamed'}${because(payload.reason)}`,
   'skill.failed': (payload) =>
     `skill failed: ${text(payload.name) ?? 'unnamed'}${because(payload.reason)}`,
   'skill.author-failed': (payload) =>

@@ -22,6 +22,8 @@ import { surfaceSlug } from '../src/surfaces/slug';
 import { redactTokenShapes } from '../src/surfaces/redact';
 import { appendEvent } from './eventLog';
 import type { SkillAuthoringRefusedPayload } from '../src/events/contract';
+import { readRefValidator, recordRegisteredVersion } from './skillVersions';
+import { countsAsAuthoringAttempt } from '../src/work/skill-library';
 
 /**
  * Skill registry + propose-author-register lifecycle. Public surfaces
@@ -70,6 +72,41 @@ import type { SkillAuthoringRefusedPayload } from '../src/events/contract';
  * is the race this claim exists to close.
  */
 const CLAIMABLE_STATES = ['approved', 'authoring', 'verified', 'failed'] as const;
+
+/**
+ * Where a stored body's verification may start (`skillActions.verifyStoredSkill`): the claimable
+ * states, for an adoption approved and a retry of one, and `registered`, for a re-check of a
+ * callable skill, which is checked again without being taken out of use.
+ */
+const STORED_VERIFICATION_STATES = [...CLAIMABLE_STATES, 'registered'] as const;
+
+/**
+ * Why a claim found a row in a state it may not take, in the words the run reports.
+ *
+ * @param state - The row's state.
+ * @param claimable - The states the claim could take.
+ */
+function unclaimableReason(
+  state: Doc<'skills'>['state'],
+  claimable: readonly Doc<'skills'>['state'][],
+): string {
+  switch (state) {
+    case 'registered':
+      return 'this skill is already registered';
+    case 'rejected':
+      return 'this skill was rejected';
+    case 'retired':
+      return 'this skill was retired';
+    case 'superseded':
+      return 'this skill was superseded by a revision';
+    case 'proposed':
+    case 'approved':
+    case 'authoring':
+    case 'verified':
+    case 'failed':
+      return `skill state is ${state}; expected one of ${claimable.join(', ')}`;
+  }
+}
 
 /** Where the boss may still reject. `registered` is out: a callable skill whose
  * source work has already been requeued is not a proposal any more. */
@@ -979,22 +1016,30 @@ export const retireUnshaped = internalMutation({
  * A claim that has outlived the lease is taken over rather than honoured. The
  * skill stays listed and retryable throughout, so a run that dies mid-flight
  * costs a lease rather than the skill.
+ *
+ * An authoring claim that writes a body counts an attempt
+ * (`authoringAttempts`, "Attempt n of 3"); one that carries on an attempt
+ * already counted does not (`countsAsAuthoringAttempt`). A stored
+ * verification (`purpose: 'verify-stored'`, `skillActions.verifyStoredSkill`)
+ * writes no body and counts nothing; it may also take a registered row, for a
+ * re-check, which stays registered and keeps running its verified body while
+ * the check runs.
  */
 export const claimAuthoringRun = internalMutation({
-  args: { skillId: v.id('skills') },
+  args: {
+    skillId: v.id('skills'),
+    /** Authoring (the default) or a stored body's verification. */
+    purpose: v.optional(v.union(v.literal('author'), v.literal('verify-stored'))),
+  },
   handler: async (ctx, args): Promise<AuthoringClaim> => {
     const row = await ctx.db.get(args.skillId);
     if (!row) throw new Error('skill not found');
-    if (!CLAIMABLE_STATES.includes(row.state as (typeof CLAIMABLE_STATES)[number])) {
-      return {
-        claimed: false,
-        reason:
-          row.state === 'registered'
-            ? 'this skill is already registered'
-            : row.state === 'rejected'
-              ? 'this skill was rejected'
-              : `skill state is ${row.state}; expected one of ${CLAIMABLE_STATES.join(', ')}`,
-      };
+    const verifying = args.purpose === 'verify-stored';
+    const claimable: readonly Doc<'skills'>['state'][] = verifying
+      ? STORED_VERIFICATION_STATES
+      : CLAIMABLE_STATES;
+    if (!claimable.includes(row.state)) {
+      return { claimed: false, reason: unclaimableReason(row.state, claimable) };
     }
     if (row.authoringRunId) {
       const heldFor = Date.now() - (row.authoringClaimedAt ?? 0);
@@ -1018,9 +1063,12 @@ export const claimAuthoringRun = internalMutation({
       createdAt: Date.now(),
     });
     await ctx.db.patch(args.skillId, {
-      state: 'authoring',
+      state: verifying && row.state === 'registered' ? 'registered' : 'authoring',
       authoringRunId: runId,
       authoringClaimedAt: Date.now(),
+      ...(!verifying && countsAsAuthoringAttempt(row)
+        ? { authoringAttempts: (row.authoringAttempts ?? 0) + 1 }
+        : {}),
     });
     return { claimed: true, runId, skill: row };
   },
@@ -1063,9 +1111,29 @@ export const recordAuthoringProgress = internalMutation({
 });
 
 /**
+ * Take the row a registering revision replaces out of use: the employee's own registered row
+ * named by `revisionOf` becomes `superseded` in the revision's transaction, and stops being
+ * picked once the revision is callable.
+ *
+ * @returns The superseded row, or undefined when the row is no revision or its original has
+ *   already left `registered`.
+ */
+async function supersedeReplacedRow(
+  ctx: MutationCtx,
+  row: Doc<'skills'>,
+): Promise<Id<'skills'> | undefined> {
+  if (row.revisionOf === undefined) return undefined;
+  const replaced = await ctx.db.get(row.revisionOf);
+  if (replaced?.agentId !== row.agentId || replaced.state !== 'registered') return undefined;
+  await ctx.db.patch(replaced._id, { state: 'superseded' });
+  return replaced._id;
+}
+
+/**
  * Everything that has to be true at once for a skill to count as registered:
- * the verified body is stored, the row becomes callable, and every work item
- * waiting for the skill goes back into the queue.
+ * the verified body is stored, the row becomes callable, the owner's library
+ * records it, and every work item waiting for the skill goes back into the
+ * queue.
  *
  * These used to be three mutations. A failure between the first and the second
  * left a `verified` row that no panel listed and no retry accepted; a failure
@@ -1076,6 +1144,16 @@ export const recordAuthoringProgress = internalMutation({
  *
  * The run releases its claim here, which is what lets the next run - a retry
  * after a later problem - start at all.
+ *
+ * The library (K1): the passing smoke test is kept on the version, not thrown
+ * away, so the body can be verified again; the row is linked to the version it
+ * was verified as or to the next version of its name
+ * (`skillVersions.recordRegisteredVersion`), with the pages the authoring read.
+ * A pass is a passing re-check, so it clears "Re-check due". A revision that
+ * registers supersedes the row it replaces in this same transaction, so one of
+ * the two is callable at every moment. The smoke test is optional only for a
+ * run that began before this release; such a version is kept without its check
+ * and is not offerable until a re-check keeps one.
  */
 export const completeRegistration = internalMutation({
   args: {
@@ -1083,26 +1161,56 @@ export const completeRegistration = internalMutation({
     runId: v.id('events'),
     body: v.string(),
     verificationLog: v.string(),
+    /** The smoke test that passed, as the sandbox ran it before the harness wrapped it. */
+    smokeTest: v.optional(v.string()),
+    /** The tools SKILL.md names that the harness's surfaces allowed. */
+    harnessTools: v.optional(v.array(v.string())),
+    /** The pages the authoring run read (`linkedRunbookPages`). */
+    readRefs: v.optional(v.array(readRefValidator)),
   },
   handler: async (ctx, args): Promise<{ registered: boolean }> => {
     const row = await claimHolder(ctx, args.skillId, args.runId, 'register');
     if (!row) return { registered: false };
+    const now = Date.now();
+    const body = redactTokenShapes(args.body);
+    const library = await recordRegisteredVersion(ctx, row, {
+      body,
+      smokeTest: args.smokeTest === undefined ? undefined : redactTokenShapes(args.smokeTest),
+      harnessTools: args.harnessTools ?? [],
+      readRefs: args.readRefs ?? [],
+      now,
+      stampsOlderHolders: true,
+    });
+    const held = library.kind === 'outside' ? undefined : library;
     await ctx.db.patch(args.skillId, {
       state: 'registered',
-      body: redactTokenShapes(args.body),
+      body,
       verificationLog: redactTokenShapes(args.verificationLog),
       refusedBody: undefined,
       refusedSmokeTest: undefined,
       pendingSmokeTest: undefined,
-      registeredAt: row.registeredAt ?? Date.now(),
+      registeredAt: row.registeredAt ?? now,
       authoringDeferrals: undefined,
+      versionId: held?.versionId,
+      adoptedAt: held?.adopted ? (row.adoptedAt ?? now) : undefined,
+      recheckDueAt: undefined,
+      recheckReason: undefined,
       ...RELEASED,
     });
+    const replaced = await supersedeReplacedRow(ctx, row);
     await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'skill.registered',
-      payload: { skillId: args.skillId, name: row.name },
-      createdAt: Date.now(),
+      payload: {
+        skillId: args.skillId,
+        name: row.name,
+        ...(held !== undefined ? { version: held.version, versionId: held.versionId } : {}),
+        ...(held?.adopted ? { adopted: true as const } : {}),
+        ...(replaced !== undefined && held?.superseded !== undefined
+          ? { supersedes: { skillId: replaced, version: held.superseded.version } }
+          : {}),
+      },
+      createdAt: now,
     });
     await requeueWaitingWork(
       ctx,

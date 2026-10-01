@@ -482,8 +482,26 @@ export interface SkillAuthoringPayload {
   readonly sandboxId: string;
 }
 
-/** The payload of `skill.registered`. */
-export type SkillRegisteredPayload = SkillNamed;
+/**
+ * The payload of `skill.registered`. A row the owner's library holds names the version it
+ * registered as; a builtin, an unshaped row and a row registered before 0.13.0 name none.
+ */
+export interface SkillRegisteredPayload extends SkillNamed {
+  readonly version?: number;
+  readonly versionId?: Id<'skillVersions'>;
+  /** Set when the row registered as a version another employee wrote. */
+  readonly adopted?: true;
+  /** The version a revision replaced, which its row stopped running in the same transaction. */
+  readonly supersedes?: { readonly skillId: SkillId; readonly version: number };
+}
+
+/**
+ * The payload of `skill.recheck-due`: a trigger stamped "Re-check due" on a registered skill
+ * (A13). The employee keeps running the verified body until a re-check passes.
+ */
+export interface SkillRecheckDuePayload extends SkillReason {
+  readonly versionId?: Id<'skillVersions'>;
+}
 
 /** The payload of `skill.failed`. */
 export type SkillFailedPayload = SkillReason;
@@ -989,6 +1007,11 @@ export interface WorkExecutionClaimedPayload extends WorkItemNamed {
   readonly skillId?: SkillId;
   readonly skillRegisteredAt?: number;
   readonly skillBodyHash?: string;
+  /** The library version the claimed row runs, when it holds one. */
+  readonly skillVersionId?: Id<'skillVersions'>;
+  readonly skillVersion?: number;
+  /** Set when the claimed row is an adopted skill: the reuse figure's adopted split (K7). */
+  readonly skillAdopted?: true;
   readonly proposedFor?: WorkItemId;
   readonly arm?: 'baseline';
   readonly trialId?: string;
@@ -1167,6 +1190,7 @@ export interface EventPayloads {
   'skill.authoring-claimed': SkillAuthoringClaimedPayload;
   'skill.authoring': SkillAuthoringPayload;
   'skill.registered': SkillRegisteredPayload;
+  'skill.recheck-due': SkillRecheckDuePayload;
   'skill.failed': SkillFailedPayload;
   'skill.author-failed': SkillAuthorFailedPayload;
   'skill.verification-failed': SkillVerificationFailedPayload;
@@ -1319,6 +1343,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'skill.authoring-claimed',
   'skill.authoring',
   'skill.registered',
+  'skill.recheck-due',
   'skill.failed',
   'skill.author-failed',
   'skill.verification-failed',

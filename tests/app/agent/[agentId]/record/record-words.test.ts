@@ -198,6 +198,30 @@ describe('recordWords', (): void => {
     );
   });
 
+  it('says the library version a skill registered as, and why a skill is due a re-check (10-K)', (): void => {
+    expect(
+      recordWords(
+        { type: 'skill.registered', payload: { name: 'kanban-comment-and-close', version: 2 } },
+        subject,
+      ),
+    ).toBe('The skill kanban-comment-and-close passed its check and can be called as version 2.');
+    expect(
+      recordWords(
+        { type: 'skill.registered', payload: { name: 'kanban-comment-and-close' } },
+        subject,
+      ),
+    ).toBe('The skill kanban-comment-and-close passed its check and can be called.');
+    expect(
+      recordWords(
+        {
+          type: 'skill.recheck-due',
+          payload: { name: 'kanban-comment-and-close', reason: 'its check was not kept' },
+        },
+        subject,
+      ),
+    ).toBe('The skill kanban-comment-and-close is due a re-check: its check was not kept.');
+  });
+
   it('says a dismissal took the item out of the inbox and kept it on the Work tab (m16)', (): void => {
     expect(
       recordWords(
