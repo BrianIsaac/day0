@@ -660,6 +660,97 @@ describe('surface probe action state', (): void => {
     },
   );
 
+  describe('the bearer a probe sends comes from the token store (11-AT)', (): void => {
+    const agentId = 'test-agent-id' as Id<'agents'>;
+    const surfaceId = 'test-surface-id' as Id<'surfaces'>;
+    const surface = {
+      _id: surfaceId,
+      agentId,
+      slug: 'docs',
+      displayName: 'Acme docs',
+      class: 'docs',
+      verdict: 'connected',
+      path: 'mcp',
+      endpoint: 'https://auth.acme.test/mcp',
+      pathCandidates: [{ path: 'mcp', endpoint: 'https://auth.acme.test/mcp' }],
+      credentialId: 'test-credential-id',
+      credentialLanded: true,
+      managerApprovedAt: 2,
+      whereFound: [],
+      createdAt: 1,
+    };
+
+    /**
+     * A probe's context whose two credential reads answer differently: the stored value, as
+     * `credentials.decrypt` opens it, and the token store's live bearer (`currentBearer`).
+     */
+    function probeContext(
+      bearer: string | Error,
+      failures: Array<Record<string, unknown>>,
+    ): ActionCtx {
+      return {
+        runMutation: async (
+          _reference: unknown,
+          args: Record<string, unknown>,
+        ): Promise<unknown> => {
+          if (Object.keys(args).length === 1) return { reserved: true, surface, generation: 1 };
+          if ('verdict' in args) {
+            failures.push(args);
+            return true;
+          }
+          return null;
+        },
+        runQuery: async (): Promise<unknown> => ({
+          surface: { ...surface, probeGeneration: 1 },
+          agent: { _id: agentId, bossEmail: MANAGER_ADDRESS },
+        }),
+        runAction: async (reference: unknown): Promise<string | string[]> => {
+          const name = getFunctionName(reference as never);
+          if (name === getFunctionName(ownerValuesRef)) return [];
+          if (name === getFunctionName(internal.mcpOauthActions.currentBearer)) {
+            if (bearer instanceof Error) throw bearer;
+            return bearer;
+          }
+          return 'stored-token-past-its-expiry';
+        },
+      } as unknown as ActionCtx;
+    }
+
+    it('checks the MCP server with the token the store refreshed, not the stored one', async (): Promise<void> => {
+      const failures: Array<Record<string, unknown>> = [];
+      const probeMcp = vi.fn(
+        async (): Promise<McpDiscovery> => ({ toolAllowlist: ['search'], toolArguments: [] }),
+      );
+      await runSurfaceProbe(
+        probeContext('refreshed-token', failures),
+        { surfaceId },
+        { probeMcp, probeBrowser: vi.fn(), probeSlack: vi.fn(), now: (): number => 1_000 },
+      );
+      expect(probeMcp).toHaveBeenCalledWith('https://auth.acme.test/mcp', 'refreshed-token');
+    });
+
+    it('ends the card when its refresh was refused and the token has expired, calling no system', async (): Promise<void> => {
+      const failures: Array<Record<string, unknown>> = [];
+      const probeMcp = vi.fn();
+      const outcome = await runSurfaceProbe(
+        probeContext(
+          new Error(
+            'Refreshing the authorisation was refused: invalid_grant Authorise the card again.',
+          ),
+          failures,
+        ),
+        { surfaceId },
+        { probeMcp, probeBrowser: vi.fn(), probeSlack: vi.fn(), now: (): number => 1_000 },
+      );
+      expect(outcome).toEqual({
+        verdict: 'ungranted',
+        reason: 'credential is unavailable or revoked',
+      });
+      expect(failures).toContainEqual(expect.objectContaining({ verdict: 'ungranted' }));
+      expect(probeMcp).not.toHaveBeenCalled();
+    });
+  });
+
   it.each(['https://slack.com/api/', 'https://slack.com/api'])(
     'reaches the Slack probe for a documented base written as %s',
     async (endpoint: string): Promise<void> => {

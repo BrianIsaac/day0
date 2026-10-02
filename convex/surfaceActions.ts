@@ -1386,7 +1386,9 @@ export async function runSurfaceProbe(
       if (context.agent.userId) known = await ownerKnownValues(ctx, context.agent.userId);
       if (surface.credentialId) {
         try {
-          credential = await ctx.runAction(credentialInternal.credentials.decrypt, {
+          // From the token store (11-AT): an authorisation's token is refreshed first when due,
+          // a Nango-held one is asked of Nango, any other credential decrypts as before.
+          credential = await ctx.runAction(internal.mcpOauthActions.currentBearer, {
             credentialId: surface.credentialId,
           });
         } catch {
