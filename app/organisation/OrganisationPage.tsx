@@ -1,6 +1,6 @@
 'use client';
 
-import { useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { ConvexError } from 'convex/values';
 import { useAction, useMutation, useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
@@ -144,6 +144,14 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
 function ConnectionCard({ connection, zone }: { connection: ConnectionView; zone: string }) {
   const [open, setOpen] = useState<'rotate' | 'revoke' | null>(null);
   const card = useRef<HTMLElement>(null);
+  // A revoke takes its control with it: the card takes focus once the dialog has closed, after
+  // the dialog hands focus back to a control that is no longer there.
+  const focusCardOnClose = useRef(false);
+  useEffect(() => {
+    if (open !== null || !focusCardOnClose.current) return;
+    focusCardOnClose.current = false;
+    card.current?.focus();
+  }, [open]);
   const chip = connectionStatusChip(connection.status);
   const live = connection.status !== 'revoked';
   return (
@@ -196,7 +204,9 @@ function ConnectionCard({ connection, zone }: { connection: ConnectionView; zone
         <RevokeDialog
           connection={connection}
           onClose={(): void => setOpen(null)}
-          landed={(): HTMLElement | null => card.current}
+          onRevoked={(): void => {
+            focusCardOnClose.current = true;
+          }}
         />
       ) : null}
       {open === 'rotate' ? (
@@ -214,11 +224,12 @@ function ConnectionCard({ connection, zone }: { connection: ConnectionView; zone
 function RevokeDialog({
   connection,
   onClose,
-  landed,
+  onRevoked,
 }: {
   connection: ConnectionView;
   onClose: () => void;
-  landed: () => HTMLElement | null;
+  /** The revoke landed; called before the dialog closes. */
+  onRevoked: () => void;
 }) {
   const revoke = useMutation(api.organisationConnections.revoke);
   const keep = useRef<HTMLButtonElement>(null);
@@ -238,8 +249,10 @@ function RevokeDialog({
       {
         done: `${connection.displayName} is revoked for the organisation.`,
         refused: `${connection.displayName} was not revoked.`,
-        after: onClose,
-        focus: landed,
+        after: (): void => {
+          onRevoked();
+          onClose();
+        },
       },
     );
   };

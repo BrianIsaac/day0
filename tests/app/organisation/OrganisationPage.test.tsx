@@ -286,6 +286,10 @@ describe('revoking and rotating a connection, confirmed first', (): void => {
       },
     ]);
     expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+    // Its Revoke goes with the revoke: the connection's card takes focus, never the page (bed).
+    expect(document.activeElement).toBe(
+      document.querySelector('section[data-connection="connection-slack"]'),
+    );
   });
 
   it('says a refused revoke inside the dialog and keeps it open', async (): Promise<void> => {
