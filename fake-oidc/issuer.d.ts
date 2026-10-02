@@ -6,11 +6,22 @@ export interface FakePerson {
   readonly claims: Readonly<Record<string, unknown>>;
 }
 
-/** A registered client: its id, secret and the redirect URIs it may use. */
+/**
+ * A registered client: its id, its secret (absent for a public client, which authenticates by its
+ * id alone, as an MCP client pre-registered without a secret does) and the redirect URIs it may use.
+ */
 export interface FakeClient {
   readonly id: string;
-  readonly secret: string;
+  readonly secret?: string;
   readonly redirectUris: readonly string[];
+}
+
+/** The minimal protected MCP resource the issuer serves as its authorisation server. */
+export interface FakeProtectedResource {
+  /** The resource's path on the issuer's origin, `/mcp`; the resource is the issuer plus it. */
+  readonly path: string;
+  /** The scopes the resource offers, named in its metadata and its challenge. */
+  readonly scopes: readonly string[];
 }
 
 /** How the test issuer is set up. */
@@ -25,6 +36,10 @@ export interface FakeIssuerOptions {
   readonly endSession?: boolean;
   /** The clock, in milliseconds. */
   readonly now?: () => number;
+  /** A protected MCP resource to serve, with this issuer as its authorisation server. */
+  readonly protectedResource?: FakeProtectedResource;
+  /** Whether public clients may register themselves (RFC 7591); false unless true. */
+  readonly dynamicRegistration?: boolean;
 }
 
 /** The running test issuer. */

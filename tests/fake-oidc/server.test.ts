@@ -11,6 +11,7 @@ import { hasHostTool } from '../setup/host-tools';
 const SERVER = fileURLToPath(new URL('../../fake-oidc/server.js', import.meta.url));
 const MAKE_TLS = fileURLToPath(new URL('../../fake-oidc/make-tls.sh', import.meta.url));
 const REDIRECT = 'http://127.0.0.1:3550/api/auth/oidc/callback';
+const MCP_REDIRECT = 'http://127.0.0.1:3550/api/oauth/mcp';
 
 let base = '';
 let child: ChildProcess | undefined;
@@ -36,6 +37,11 @@ beforeAll(async (): Promise<void> => {
       FAKE_OIDC_PORT: String(port),
       FAKE_OIDC_REDIRECT_URIS: REDIRECT,
       FAKE_OIDC_TOKEN_SECONDS: '120',
+      FAKE_OIDC_MCP_PATH: '/mcp',
+      FAKE_OIDC_MCP_SCOPES: 'read write',
+      FAKE_OIDC_MCP_CLIENT_ID: 'day0-mcp',
+      FAKE_OIDC_MCP_REDIRECT_URIS: MCP_REDIRECT,
+      FAKE_OIDC_DYNAMIC_REGISTRATION: '1',
     },
     stdio: 'ignore',
   });
@@ -178,6 +184,71 @@ describe('the test issuer', (): void => {
     const page = await (await fetch(authorise)).text();
     expect(page).toContain('Priya Raman');
     expect(page).toContain('eve@rival.test');
+  });
+
+  it('serves the protected MCP resource and its public client when the environment names them', async (): Promise<void> => {
+    const metadata = (await (
+      await fetch(`${base}/.well-known/oauth-protected-resource/mcp`)
+    ).json()) as Record<string, unknown>;
+    expect(metadata).toMatchObject({
+      resource: `${base}/mcp`,
+      authorization_servers: [base],
+      scopes_supported: ['read', 'write'],
+    });
+    const server = (await (
+      await fetch(`${base}/.well-known/oauth-authorization-server`)
+    ).json()) as Record<string, unknown>;
+    expect(server.registration_endpoint).toBe(`${base}/register`);
+
+    const verifier = randomBytes(32).toString('base64url');
+    const authorise = new URL(`${base}/authorize`);
+    for (const [name, value] of Object.entries({
+      client_id: 'day0-mcp',
+      redirect_uri: MCP_REDIRECT,
+      response_type: 'code',
+      scope: 'read',
+      resource: `${base}/mcp`,
+      state: 'state-2',
+      code_challenge: createHash('sha256').update(verifier).digest('base64url'),
+      code_challenge_method: 'S256',
+      login_hint: 'mateo',
+    })) {
+      authorise.searchParams.set(name, value);
+    }
+    const back = new URL(
+      (await fetch(authorise, { redirect: 'manual' })).headers.get('location') ?? '',
+    );
+    expect(back.searchParams.get('iss')).toBe(base);
+    const tokens = (await (
+      await fetch(`${base}/token`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'authorization_code',
+          client_id: 'day0-mcp',
+          code: back.searchParams.get('code') ?? '',
+          redirect_uri: MCP_REDIRECT,
+          code_verifier: verifier,
+          resource: `${base}/mcp`,
+        }),
+      })
+    ).json()) as Record<string, unknown>;
+    const called = await fetch(`${base}/mcp`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${String(tokens.access_token)}`,
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: { name: 'whoami', arguments: {} },
+      }),
+    });
+    expect(((await called.json()) as { result: unknown }).result).toEqual({
+      content: [{ type: 'text', text: 'mateo@acme.test' }],
+    });
   });
 
   it('ends a session and sends the browser back where it was asked to', async (): Promise<void> => {
