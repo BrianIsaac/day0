@@ -1652,8 +1652,7 @@ describe("writes the plan left to the manager's answer stop with the question (1
     expect(stopped.state).toBe('failed');
     expect(stopped.skipReason).toMatch(/^stopped: /);
     expect(stopped.skipReason).toContain('Which template should the notice use');
-    expect(stopped.skipReason).toContain('step 2');
-    expect(stopped.skipReason).toContain('step 3');
+    expect(stopped.skipReason).toContain('leaves steps 2 and 3 to');
     // The question went out once, the ticket was read, and nothing was written to it.
     expect(posts()).toHaveLength(1);
     expect(ticketWrites()).toEqual([]);
@@ -7688,7 +7687,7 @@ describe('a question asked in the notes when no chat surface can carry the manag
       expect(stopped.state).toBe('failed');
       expect(stopped.skipReason).toMatch(/^stopped: /);
       expect(stopped.skipReason).toContain(asked);
-      expect(stopped.skipReason).toContain('step 2 and step 3');
+      expect(stopped.skipReason).toContain('leaves steps 2 and 3 to');
       // The ticket was read and nothing was written to it; there was nowhere to post.
       expect(ticketWrites()).toEqual([]);
       expect(recorded.http).toEqual([]);
