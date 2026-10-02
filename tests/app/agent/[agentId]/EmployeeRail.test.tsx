@@ -72,6 +72,31 @@ describe('railFigures', () => {
   });
 });
 
+describe('railFigures for a manager who took the employee over (the v0.13.0 walk)', () => {
+  it('says the decisions count from when the reader took the employee over', () => {
+    const metrics = dashboardMetrics();
+    const decided = railFigures(
+      {
+        ...metrics,
+        decisions: { ...metrics.decisions, approved: 1, rejected: 0, partiallyApproved: 0 },
+      },
+      { tookOver: true },
+    );
+    expect(decided[0]).toEqual({
+      label: 'Decisions',
+      value: '1 by you since you took over (1 approved, 0 rejected)',
+    });
+    const none = railFigures(
+      {
+        ...metrics,
+        decisions: { ...metrics.decisions, approved: 0, rejected: 0, partiallyApproved: 0 },
+      },
+      { tookOver: true },
+    );
+    expect(none[0]).toEqual({ label: 'Decisions', value: 'none since you took over' });
+  });
+});
+
 describe('RecordLines', () => {
   it('lists the newest events in words with the item they are about, as many as asked', () => {
     const event = (id: string, type: string, workItemId?: string) =>
@@ -140,6 +165,31 @@ describe('EmployeeRail', () => {
     expect(html).toContain('href="/agent/agent-1/record"');
     expect(html).toContain('Nothing recorded yet.');
     expect(html).toContain('Where decisions reach you');
+  });
+
+  it('says the decisions count since the reader took over only when the employee came to them by a handover', () => {
+    const none = {
+      ...dashboardMetrics(),
+      decisions: {
+        ...dashboardMetrics().decisions,
+        approved: 0,
+        rejected: 0,
+        partiallyApproved: 0,
+      },
+    };
+    const decisionsLine = (earlier: unknown): string => {
+      backend.queries = {
+        'metrics:forAgent': none,
+        'events:recent': [],
+        'managerTransfers:earlierManagers': earlier,
+      };
+      return text(renderToStaticMarkup(asEmployee(<EmployeeRail />)));
+    };
+    expect(decisionsLine([{ fromAddress: 'earlier@day0.local', decidedAt: 1 }])).toContain(
+      'none since you took over',
+    );
+    expect(decisionsLine([])).toContain('>none yet<');
+    expect(decisionsLine(undefined)).toContain('>none yet<');
   });
 
   it('gives the link to the whole record a 44 px target both ways, its word kept at the right (review C5)', () => {
