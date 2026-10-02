@@ -1,15 +1,9 @@
 import { v } from 'convex/values';
-import {
-  mutation,
-  query,
-  internalMutation,
-  internalQuery,
-  type MutationCtx,
-} from './_generated/server';
+import { mutation, query, internalMutation, internalQuery } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, assertOwnsSkill } from './ownership';
-import { applyVerdict, requeueBehindRegisteredSkill } from './work';
+import { applyVerdict } from './work';
 import {
   moveWaitingWork,
   requeueWaitingWork,
@@ -20,16 +14,12 @@ import {
 } from './waitingWork';
 import { skillApprovalRefusal } from '../src/surfaces/policy';
 import { toSurfaceRecord } from '../src/surfaces/records';
-import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { browserComponentRefusal, withBrowserComponentState } from '../src/surfaces/browser';
 import { grantScopeInTransaction } from './agents';
-import { namedSurfacesFor, targetSurfaceFor } from '../src/work/skill-shape';
-import { surfaceSlug } from '../src/surfaces/slug';
 import { redactTokenShapes } from '../src/surfaces/redact';
 import { appendEvent } from './eventLog';
 import { assertNotBeingHandedOver } from './handoverFence';
 import { STORED_COPY_CLEARED } from './skillVersions';
-import { recordOffer } from './skillAdoption';
 import { holdsParkedStoredCopy } from '../src/work/skill-adoption';
 import { openRevision } from './skillControls';
 import {
@@ -39,6 +29,7 @@ import {
   type AuthoringClaim,
 } from './skillAuthoringClaim';
 import { completeRegistrationArgs, completeRegistrationInTransaction } from './skillRegistration';
+import { proposeArgs, proposeInTransaction } from './skillProposal';
 
 /**
  * Skill registry + propose-author-register lifecycle. Public surfaces
@@ -117,56 +108,6 @@ export const continueWaitingWork = internalMutation({
     return { moved: await moveWaitingWork(ctx, skill, args.move, args.scope, args.from) };
   },
 });
-
-/**
- * The target surface named by the work, falling back to its intake source.
- *
- * Args:
- *   ctx: Mutation context.
- *   agentId: The agent.
- *   workItemId: The work item the skill is proposed for.
- *
- * Returns:
- *   The source plus the literal target slug in real mode.
- */
-async function surfaceForWork(
-  ctx: MutationCtx,
-  agentId: Id<'agents'>,
-  workItemId: Id<'workItems'>,
-): Promise<{ sourceSystem: string; targetSurface?: string }> {
-  const item = await ctx.db.get(workItemId);
-  if (!item) throw new Error('work item for skill proposal not found');
-  if (item.agentId !== agentId) {
-    throw new Error('skill and work item belong to different agents');
-  }
-  if (SURFACE_MODE !== 'real') return { sourceSystem: item.sourceSystem };
-  const surfaces = await ctx.db
-    .query('surfaces')
-    .withIndex('by_agent', (q) => q.eq('agentId', agentId))
-    .collect();
-  // The same rule the evaluator shaped the proposal by, so the surface whose
-  // class named the skill is the surface the scopes and the approval gate
-  // are about.
-  const sourceSlug = surfaceSlug(item.sourceSystem);
-  const namedSlugs = [
-    ...new Set(
-      namedSurfacesFor(item, surfaces)
-        .map((surface: Doc<'surfaces'>): string => surface.slug)
-        .filter((slug: string): boolean => slug !== sourceSlug),
-    ),
-  ];
-  if (namedSlugs.length > 1) {
-    throw new Error(`work evidence names more than one target surface: ${namedSlugs.join(', ')}`);
-  }
-  const targetSurface = targetSurfaceFor(item, surfaces)?.slug ?? item.sourceSystem;
-  if (
-    surfaces.filter((surface: Doc<'surfaces'>): boolean => surface.slug === targetSurface).length >
-    1
-  ) {
-    throw new Error(`more than one surface is listed with slug ${targetSurface}`);
-  }
-  return { sourceSystem: item.sourceSystem, targetSurface };
-}
 
 /** Public, owner-guarded: an employee's registered skills. */
 export const registered = query({
@@ -299,22 +240,6 @@ export const installBuiltin = internalMutation({
   },
 });
 
-/** Why a skill is not proposed: the employee changed owner during the evaluation that asked. */
-export const PROPOSAL_AFTER_HANDOVER =
-  'the employee was handed over to a new manager while this work was being evaluated';
-
-/**
- * The states of a row that no longer holds its name for a proposal: a later item of the name
- * proposes afresh beside it. A failed row is here because Retry belongs to its own card, not to
- * a new item's evaluation.
- */
-const ENDED_PROPOSAL_STATES: ReadonlySet<Doc<'skills'>['state']> = new Set([
-  'rejected',
-  'failed',
-  'retired',
-  'superseded',
-]);
-
 /**
  * Internal: proposes a skill for the manager, from the work that needed it. With
  * `startedUnder`, the owner the evaluation read the employee under, the proposal is refused once
@@ -326,119 +251,11 @@ const ENDED_PROPOSAL_STATES: ReadonlySet<Doc<'skills'>['state']> = new Set([
  * new manager's Retry evaluates it again under the owner the employee has now (the wave 10
  * review, FR-m3).
  *
- * @throws Error with {@link PROPOSAL_AFTER_HANDOVER}.
+ * @throws Error with `PROPOSAL_AFTER_HANDOVER` (`convex/skillProposal.ts`).
  */
 export const propose = internalMutation({
-  args: {
-    agentId: v.id('agents'),
-    workItemId: v.id('workItems'),
-    name: v.string(),
-    description: v.string(),
-    rationale: v.string(),
-    requiredScopes: v.array(v.string()),
-    surfaceClass: v.optional(v.string()),
-    operation: v.optional(v.string()),
-    startedUnder: v.optional(v.string()),
-    /**
-     * A sibling's verified version of the shape to offer for adoption, as
-     * `skillAdoption.offerFor` found it (10-A); absent when none is offered.
-     */
-    offeredVersionId: v.optional(v.id('skillVersions')),
-  },
-  handler: async (ctx, { startedUnder, ...args }): Promise<Id<'skills'>> => {
-    if (startedUnder !== undefined && (await ctx.db.get(args.agentId))?.userId !== startedUnder) {
-      throw new Error(PROPOSAL_AFTER_HANDOVER);
-    }
-    const target = await surfaceForWork(ctx, args.agentId, args.workItemId);
-    const targetSurface = target.targetSurface;
-    const requestedScopes =
-      targetSurface && targetSurface !== target.sourceSystem
-        ? args.requiredScopes.filter(
-            (scope: string): boolean => scope !== `${target.sourceSystem}:write`,
-          )
-        : args.requiredScopes;
-    const proposedScopes = targetSurface
-      ? [...new Set([...requestedScopes, `${targetSurface}:read`, `${targetSurface}:write`])]
-      : requestedScopes;
-    // The live row of this name, wherever it sits among the rows that ended:
-    // reading the oldest row alone meant that once a failed proposal existed,
-    // every later item inserted a fresh duplicate beside the live one. A
-    // retired or superseded row runs nothing and comes back through no
-    // control, so it ends a name as a rejection does.
-    const existing = (
-      await ctx.db
-        .query('skills')
-        .withIndex('by_agent_name', (q) => q.eq('agentId', args.agentId).eq('name', args.name))
-        .collect()
-    ).find((row: Doc<'skills'>): boolean => !ENDED_PROPOSAL_STATES.has(row.state));
-    if (existing) {
-      if (existing.state === 'registered') {
-        // The late verdict's one way back: the verdict write parked it and
-        // stood down, so the row is re-queued here, once per registration.
-        await requeueBehindRegisteredSkill(ctx, existing, args.workItemId);
-      }
-      if (existing.state === 'proposed') {
-        if (
-          existing.targetSurface &&
-          targetSurface &&
-          existing.targetSurface !== targetSurface &&
-          existing.proposedFor !== args.workItemId
-        ) {
-          throw new Error(
-            `skill ${args.name} is already proposed for surface ${existing.targetSurface}`,
-          );
-        }
-        const targetChanged =
-          existing.targetSurface !== undefined && existing.targetSurface !== targetSurface;
-        await ctx.db.patch(existing._id, {
-          targetSurface: existing.targetSurface ?? targetSurface,
-          ...(targetChanged ? { targetSurface } : {}),
-          requiredScopes: targetChanged
-            ? proposedScopes
-            : [...new Set([...(existing.requiredScopes ?? []), ...proposedScopes])],
-          surfaceClass: existing.surfaceClass ?? args.surfaceClass,
-          operation: existing.operation ?? args.operation,
-        });
-        // The latest evaluation's offer stands: a new one is said, a withdrawn one goes.
-        await recordOffer(ctx, existing, args.offeredVersionId);
-      }
-      return existing._id;
-    }
-    // A skill proposed for work that came in from a discovered surface acts on
-    // that surface: it is named on the row so approval can insist the surface
-    // is connected, and its scopes are the surface's read and write pair.
-    const id = await ctx.db.insert('skills', {
-      agentId: args.agentId,
-      name: args.name,
-      description: args.description,
-      body: '',
-      sourceType: 'agent-authored',
-      state: 'proposed',
-      proposedFor: args.workItemId,
-      rationale: args.rationale,
-      requiredScopes: proposedScopes,
-      targetSurface,
-      surfaceClass: args.surfaceClass,
-      operation: args.operation,
-      createdAt: Date.now(),
-    });
-    await appendEvent(ctx, {
-      agentId: args.agentId,
-      type: 'skill.proposed',
-      payload: {
-        skillId: id,
-        name: args.name,
-        rationale: args.rationale,
-        forWorkItem: args.workItemId,
-      },
-      createdAt: Date.now(),
-    });
-    if (args.offeredVersionId !== undefined) {
-      const row = await ctx.db.get(id);
-      if (row !== null) await recordOffer(ctx, row, args.offeredVersionId);
-    }
-    return id;
-  },
+  args: proposeArgs,
+  handler: async (ctx, args): Promise<Id<'skills'>> => await proposeInTransaction(ctx, args),
 });
 
 /**

@@ -59,6 +59,7 @@ import type * as skillAuthoringClaim from '../skillAuthoringClaim.js';
 import type * as skillAuthoringRecord from '../skillAuthoringRecord.js';
 import type * as skillAuthoringRun from '../skillAuthoringRun.js';
 import type * as skillControls from '../skillControls.js';
+import type * as skillProposal from '../skillProposal.js';
 import type * as skillRegistration from '../skillRegistration.js';
 import type * as skillSandboxCheck from '../skillSandboxCheck.js';
 import type * as skillVersions from '../skillVersions.js';
@@ -134,6 +135,7 @@ declare const fullApi: ApiFromModules<{
   skillAuthoringRecord: typeof skillAuthoringRecord;
   skillAuthoringRun: typeof skillAuthoringRun;
   skillControls: typeof skillControls;
+  skillProposal: typeof skillProposal;
   skillRegistration: typeof skillRegistration;
   skillSandboxCheck: typeof skillSandboxCheck;
   skillVersions: typeof skillVersions;
