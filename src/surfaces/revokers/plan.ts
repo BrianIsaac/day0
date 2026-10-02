@@ -82,7 +82,7 @@ export function endRemovesApp(end: AccessEnd): boolean {
 }
 
 /** The words for a handover, which calls no vendor (A25). */
-const HANDOVER_WORDS =
+export const HANDOVER_WORDS =
   'A handover changes nothing at the vendor; the new manager re-approves the system.';
 
 /** The words for a token every employee shares (L2). */

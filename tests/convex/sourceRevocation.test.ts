@@ -301,6 +301,119 @@ describe('ending access at the vendor (11-AR; the access plan, section 4.4)', ()
   });
 });
 
+describe('the review of 11-AR: what the hold anchors and what it leaves alone', (): void => {
+  let network: VendorNetwork;
+
+  beforeEach((): void => {
+    network = stubVendorNetwork();
+  });
+
+  it('counts the 24 hours and the attempts from the hold, not from an earlier revoke by a person', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const card = await employeeWithCard(harness);
+    const { access, refresh } = await linearPair(harness);
+    // A person revoked the token two days ago; Day0 stopped using it and kept its value.
+    const twoDaysAgo = Date.now() - 2 * SOURCE_REVOCATION_KEEP_MS;
+    await harness.run(async (ctx) => await ctx.db.patch(access, { revokedAt: twoDaysAgo }));
+    network.answer('/oauth/revoke', { status: 503, body: '' });
+    const heldAt = Date.now();
+
+    await end(harness, card, [access, refresh], 'disconnect');
+    await expect(
+      harness.query(internal.sourceRevocation.overdue, { now: Date.now() }),
+    ).resolves.toEqual([]);
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const row = (await rows(harness)).find((candidate) => candidate._id === access);
+    expect(row?.revokedAt).toBe(heldAt);
+    // The third attempt ran twelve hours after the hold, not at once.
+    expect(row?.sourceRevocation?.at).toBeGreaterThanOrEqual(
+      heldAt + (SOURCE_REVOCATION_ATTEMPT_OFFSETS_MS.at(-1) ?? 0),
+    );
+  });
+
+  it('holds no row whose value is gone, and says it could not be revoked', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const card = await employeeWithCard(harness);
+    const { access } = await linearPair(harness);
+    await harness.run(
+      async (ctx) =>
+        await ctx.db.patch(access, { ciphertext: undefined, iv: undefined, revokedAt: 5 }),
+    );
+
+    await end(harness, card, [access], 'disconnect');
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(network.calls).toEqual([]);
+    const row = (await rows(harness)).find((candidate) => candidate._id === access);
+    expect(row?.sourceRevocation).toBeUndefined();
+    expect(await lines(harness, card.agentId)).toEqual([
+      expect.objectContaining({
+        system: 'linear',
+        outcome: 'failed',
+        reason:
+          "Day0 no longer held the credential's value, so it could not be revoked at the vendor.",
+      }),
+    ]);
+  });
+
+  it('revokes a refresh token held alone with its own hint', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const card = await employeeWithCard(harness);
+    const { access, refresh } = await linearPair(harness);
+    network.answer('/oauth/revoke', { status: 200, body: '' });
+    // The access token's end came first and held it; the refresh token is ended afterwards.
+    await end(harness, card, [access], 'disconnect');
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    network.calls.length = 0;
+
+    await end(harness, card, [access, refresh], 'retire');
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(network.calls.map((call) => call.form)).toEqual([
+      { token: LINEAR_REFRESH, token_type_hint: 'refresh_token' },
+    ]);
+  });
+
+  it("keeps the vendor's words short and free of any token it echoed", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const card = await employeeWithCard(harness);
+    const { access, refresh } = await linearPair(harness);
+    network.answer('/oauth/revoke', {
+      status: 400,
+      body: {
+        error: 'invalid_request',
+        error_description: `bad token ${LINEAR_REFRESH} ${'x'.repeat(600)}`,
+      },
+    });
+
+    await end(harness, card, [access, refresh], 'disconnect');
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const [line] = (await lines(harness, card.agentId)) as { reason: string }[];
+    expect(line?.reason).not.toContain(LINEAR_REFRESH);
+    expect(line?.reason.length).toBeLessThanOrEqual(300);
+    expect(JSON.stringify(await rows(harness))).not.toContain(LINEAR_REFRESH);
+  });
+
+  it('never opens a token the token store holds, and leaves it to the store', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const card = await employeeWithCard(harness);
+    const { access } = await linearPair(harness);
+    await harness.run(async (ctx) => await ctx.db.patch(access, { tokenStore: 'nango' }));
+
+    await end(harness, card, [access], 'disconnect');
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(network.calls).toEqual([]);
+    const row = (await rows(harness)).find((candidate) => candidate._id === access);
+    expect(row?.sourceRevocation).toBeUndefined();
+    expect(await lines(harness, card.agentId)).toEqual([
+      expect.objectContaining({ outcome: 'not-supported' }),
+    ]);
+  });
+});
+
 describe('the 24-hour bound, read by the nested-field index (11-AK, AK7)', (): void => {
   it('finds a revocation left pending past the bound and closes it, deleting its ciphertext', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());

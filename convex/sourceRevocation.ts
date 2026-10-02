@@ -11,7 +11,7 @@ import { finishSourceRevocation, holdForSourceRevocation, purgeCredential } from
 import { appendEvent } from './eventLog';
 import { ACCESS_ENDS, type AccessEnd } from '../src/surfaces/access-identity';
 import type { SourceRevocationOutcome } from '../src/surfaces/revokers/outcome';
-import { callOutcome, revocationPlanFor } from '../src/surfaces/revokers/plan';
+import { callOutcome, HANDOVER_WORDS, revocationPlanFor } from '../src/surfaces/revokers/plan';
 
 /*
  * Revocation at the vendor, the transaction half (wave 11, 11-AR; the access plan, section 4.4;
@@ -37,6 +37,14 @@ export const SOURCE_REVOCATION_KEEP_MS = 24 * HOUR_MS;
 /** The words a revocation that never got an answer ends with. */
 export const NO_ANSWER_WORDS = 'No answer from the vendor within 24 hours.';
 
+/** Why a credential Day0 obtained could not be revoked: its value was deleted before the end. */
+export const NO_VALUE_WORDS =
+  "Day0 no longer held the credential's value, so it could not be revoked at the vendor.";
+
+/** Why a token the token store holds is not revoked here: the store revokes it (11-AT). */
+export const TOKEN_STORE_WORDS =
+  'Its token is held by the token store, which revokes it; Day0 called no vendor itself.';
+
 /** The most overdue revocations one sweep closes. */
 const OVERDUE_SWEEP_LIMIT = 100;
 
@@ -49,6 +57,8 @@ export const revocationJobValidator = v.object({
   agentId: v.id('agents'),
   surfaceId: v.id('surfaces'),
   surfaceName: v.string(),
+  /** True where the credential is a refresh token whose access token an earlier end held. */
+  primaryIsRefresh: v.optional(v.boolean()),
 });
 
 /** One revocation job. */
@@ -172,8 +182,36 @@ export async function endAccessAtSource(
   const issued = input.credentials.filter(ownIssued);
   const pasted = input.credentials.filter((row) => row.issuedBy === undefined && !row.holder);
   const shared = input.credentials.filter((row) => row.holder !== undefined);
-  // One line per system: what Day0 obtained speaks through its attempts; else the shared token;
-  // else the pasted key, named by the card's own credential, which the caller lists first.
+  // A token the token store holds is the store's to revoke (11-AT); Day0 never opens it here.
+  const inStore = issued.filter((row) => row.tokenStore === 'nango');
+  const unheld = issued.filter(
+    (row) => row.tokenStore !== 'nango' && row.sourceRevocation === undefined,
+  );
+  const fresh = unheld.filter(holdsValue);
+  // One line per card, so per system: what Day0 obtained speaks through its attempts; with none
+  // to make, why not; else the shared token; else the pasted key, the card's own listed first.
+  const [unrevocable] = fresh.length > 0 ? [] : [...inStore, ...unheld];
+  if (unrevocable !== undefined) {
+    await appendLine(
+      ctx,
+      { ...card, credentialId: unrevocable._id },
+      unrevocable.tokenStore === 'nango'
+        ? {
+            system: unrevocable.issuedBy.system,
+            end: input.end,
+            outcome: 'not-supported',
+            now: input.now,
+            reason: TOKEN_STORE_WORDS,
+          }
+        : {
+            system: unrevocable.issuedBy.system,
+            end: input.end,
+            outcome: 'failed',
+            now: input.now,
+            reason: NO_VALUE_WORDS,
+          },
+    );
+  }
   const [line] = issued.length > 0 ? [] : shared.length > 0 ? shared : pasted;
   if (line !== undefined) {
     await appendLine(
@@ -190,36 +228,33 @@ export async function endAccessAtSource(
       },
     );
   }
-  const fresh = issued.filter((row) => row.sourceRevocation === undefined);
   if (fresh.length === 0) {
     return { held: [], purged: [], pasted: ids(pasted), shared: ids(shared) };
   }
   const primary = primaryOf(fresh);
-  const system = primary.issuedBy.system;
   if (input.end === 'transfer') {
     for (const row of fresh) await purgeCredential(ctx, row, input.now);
-    const plan = revocationPlanFor({ issuedBy: primary.issuedBy, role: 'access' }, 'transfer', {
-      configurationToken: false,
-      clientSecret: false,
-    });
     await appendLine(
       ctx,
       { ...card, credentialId: primary._id },
       {
-        system,
+        system: primary.issuedBy.system,
         end: 'transfer',
         outcome: 'not-at-vendor',
         now: input.now,
-        ...(plan.kind === 'none' ? { reason: plan.words } : {}),
+        reason: HANDOVER_WORDS,
       },
     );
     return { held: [], purged: ids(fresh), pasted: ids(pasted), shared: ids(shared) };
   }
   for (const row of fresh) await holdForSourceRevocation(ctx, row, input.end, input.now);
+  // A refresh token whose access token an earlier end already held is revoked as one (L3).
+  const primaryIsRefresh = input.credentials.some((row) => row.refreshCredentialId === primary._id);
   await ctx.scheduler.runAfter(0, internal.sourceRevocationActions.attempt, {
     ...card,
     credentialId: primary._id,
     companionIds: fresh.filter((row) => row._id !== primary._id).map((row) => row._id),
+    ...(primaryIsRefresh ? { primaryIsRefresh } : {}),
   });
   return { held: ids(fresh), purged: [], pasted: ids(pasted), shared: ids(shared) };
 }
@@ -231,8 +266,10 @@ function ids(rows: readonly Doc<'credentials'>[]): Id<'credentials'>[] {
 
 /** What Day0 holds for a credential's revocation besides the credential itself. */
 interface HeldMeans {
-  /** The active organisation connection it was issued through. */
+  /** The organisation connection it was issued through, whatever its state. */
   readonly connection: Doc<'organisationConnections'> | null;
+  /** Whether that connection is active, so its secrets may still be used. */
+  readonly active: boolean;
   /** That connection's Slack configuration token, while it still holds its value. */
   readonly configuration: Doc<'credentials'> | null;
   /** The app's client secret, while Day0 still holds its value (F19 keeps it with the token). */
@@ -249,13 +286,16 @@ interface HeldMeans {
  */
 async function meansOf(db: QueryCtx['db'], credential: IssuedCredential): Promise<HeldMeans> {
   const { issuedBy } = credential;
-  const found =
+  const connection =
     issuedBy.organisationConnectionId === undefined
       ? null
       : await db.get(issuedBy.organisationConnectionId);
-  const connection = found?.status === 'active' ? found : null;
+  // A revoked connection still names its endpoints and client; only its secret is gone with it.
+  const active = connection?.status === 'active';
   const configuration =
-    connection?.kind === 'slack-configuration' && connection.secretCredentialId !== undefined
+    active &&
+    connection.kind === 'slack-configuration' &&
+    connection.secretCredentialId !== undefined
       ? await db.get(connection.secretCredentialId)
       : null;
   const secret =
@@ -264,6 +304,7 @@ async function meansOf(db: QueryCtx['db'], credential: IssuedCredential): Promis
       : await db.get(issuedBy.clientSecretCredentialId);
   return {
     connection,
+    active,
     configuration:
       holdsValue(configuration) && configuration.revokedAt === undefined ? configuration : null,
     secret: holdsValue(secret) ? secret : null,
@@ -412,7 +453,8 @@ export const beginAttempt = internalMutation({
       ...(means.connection?.clientId !== undefined
         ? { connectionClientId: means.connection.clientId }
         : {}),
-      ...(means.connection?.kind === 'mcp-client' &&
+      ...(means.active &&
+      means.connection?.kind === 'mcp-client' &&
       means.connection.secretCredentialId !== undefined
         ? { connectionSecretCredentialId: means.connection.secretCredentialId }
         : {}),

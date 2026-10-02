@@ -151,6 +151,101 @@ async function lines(harness: Harness, agentId: Id<'agents'>): Promise<unknown[]
   );
 }
 
+describe("the RFC 7009 call after the administrator revoked the connection (the review's minor 6)", (): void => {
+  let network: VendorNetwork;
+
+  beforeEach((): void => {
+    network = stubVendorNetwork();
+  });
+
+  it("still revokes at the endpoint the revoked connection advertised, and names a bad endpoint in Day0's words", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { connectionId, agentId, surfaceId } = await harness.run(async (ctx) => {
+      const connectionId = await ctx.db.insert('organisationConnections', {
+        system: 'mcp:mcp.example.com',
+        displayName: 'Example MCP',
+        kind: 'mcp-client',
+        mode: 'per-employee',
+        scopes: [],
+        registeredBy: { via: 'setup-cli', at: 1 },
+        status: 'revoked',
+        clientId: 'day0-public',
+        authorisationEndpoints: {
+          authorisation: 'https://auth.example.com/authorize',
+          token: 'https://auth.example.com/token',
+          revocation: 'https://auth.example.com/revoke',
+          discoveredAt: 1,
+        },
+        createdAt: 1,
+      });
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: 'boss@day0.local',
+        name: 'Leo',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const surfaceId = await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'example',
+        displayName: 'Example',
+        class: 'docs',
+        verdict: 'connected',
+        whereFound: [],
+        credentialLanded: true,
+        createdAt: 1,
+      });
+      return { connectionId, agentId, surfaceId };
+    });
+    const credentialId = await stored(harness, 'owner', 'mcp-access-0123', {
+      issuedBy: {
+        system: 'mcp:mcp.example.com',
+        grant: 'authorisation-code',
+        clientId: 'day0-public',
+        organisationConnectionId: connectionId,
+      },
+    });
+    network.answer('/revoke', { status: 200, body: '' });
+
+    await endAndDrain(harness, { agentId, surfaceId }, [credentialId], 'organisation-revoked');
+
+    expect(network.calls).toEqual([
+      {
+        url: 'https://auth.example.com/revoke',
+        form: {
+          token: 'mcp-access-0123',
+          token_type_hint: 'access_token',
+          client_id: 'day0-public',
+        },
+      },
+    ]);
+    await harness.run(async (ctx) => {
+      const connection = await ctx.db.get(connectionId);
+      if (connection?.authorisationEndpoints === undefined) throw new Error('no endpoints');
+      await ctx.db.patch(connectionId, {
+        authorisationEndpoints: {
+          ...connection.authorisationEndpoints,
+          revocation: 'http://auth.example.com/revoke',
+        },
+      });
+    });
+    const second = await stored(harness, 'owner', 'mcp-access-4567', {
+      issuedBy: {
+        system: 'mcp:mcp.example.com',
+        grant: 'authorisation-code',
+        organisationConnectionId: connectionId,
+      },
+    });
+    await endAndDrain(harness, { agentId, surfaceId }, [second], 'disconnect');
+    const lines = await harness.run(async (ctx) =>
+      (await ctx.db.query('events').collect()).map((event) => event.payload as { reason?: string }),
+    );
+    expect(lines.at(-1)?.reason).toBe(
+      'Day0 refused the revocation endpoint: A revocation endpoint must be an https address.',
+    );
+  });
+});
+
 describe("Slack's two calls with their two meanings (S1, S4)", (): void => {
   let network: VendorNetwork;
 
@@ -267,6 +362,41 @@ describe("Slack's two calls with their two meanings (S1, S4)", (): void => {
     expect(await lines(harness, leo.agentId)).toEqual([
       expect.objectContaining({ outcome: 'app-uninstalled', attempt: 1 }),
     ]);
+  });
+
+  it("opens only what the call needs: a disconnect reads neither IT's token nor the app's secret, and writes nothing on IT's ledger", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const leo = await leoWithOwnApp(harness, { connection: true });
+    network.answer('/api/auth.revoke', { status: 200, body: SLACK_AUTH_REVOKE_OK });
+
+    await endAndDrain(harness, leo, [leo.token], 'disconnect');
+
+    const [configuration, secret] = await harness.run(async (ctx) => {
+      const connection = leo.connectionId ? await ctx.db.get(leo.connectionId) : null;
+      return await Promise.all([
+        connection?.secretCredentialId ? ctx.db.get(connection.secretCredentialId) : null,
+        ctx.db.get(leo.secret),
+      ]);
+    });
+    expect(configuration?.lastUsedAt).toBeUndefined();
+    expect(secret?.lastUsedAt).toBeUndefined();
+    expect(
+      await harness.run(async (ctx) => await ctx.db.query('connectionEvents').collect()),
+    ).toEqual([]);
+  });
+
+  it('never follows a redirect with a token in the body', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const leo = await leoWithOwnApp(harness, { connection: false });
+    const seen: RequestInit[] = [];
+    vi.stubGlobal('fetch', async (_input: string | URL, init?: RequestInit): Promise<Response> => {
+      seen.push(init ?? {});
+      return new Response(JSON.stringify(SLACK_AUTH_REVOKE_OK), { status: 200 });
+    });
+
+    await endAndDrain(harness, leo, [leo.token], 'disconnect');
+
+    expect(seen.map((init) => init.redirect)).toEqual(['error']);
   });
 
   it('reads a bot token Slack no longer knows as already revoked', async (): Promise<void> => {

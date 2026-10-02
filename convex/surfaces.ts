@@ -2570,17 +2570,28 @@ async function endRejectedAtSource(
   surface: Doc<'surfaces'>,
   now: number,
 ): Promise<void> {
-  const rows: Doc<'credentials'>[] = [];
-  for (const id of await credentialsBoundBy(ctx.db, [surface])) {
-    const row = await ctx.db.get(id);
-    if (row === null) continue;
-    const binders = await ctx.db
-      .query('surfaces')
-      .withIndex('by_credentialId', (q) => q.eq('credentialId', id))
-      .take(2);
-    const elsewhere = binders.some((binder) => binder._id !== surface._id);
-    if (!elsewhere || row.issuedBy === undefined) rows.push(row);
-  }
+  // A token another card still binds is not this card's to end, nor is its pair; a pasted one is
+  // listed all the same, for its line, and stays in the owner's store either way.
+  const token = surface.credentialId === undefined ? null : await ctx.db.get(surface.credentialId);
+  const binders =
+    token === null
+      ? []
+      : await ctx.db
+          .query('surfaces')
+          .withIndex('by_credentialId', (q) => q.eq('credentialId', token._id))
+          .take(2);
+  const tokenEndsHere =
+    token !== null &&
+    (token.issuedBy === undefined || binders.every((binder) => binder._id === surface._id));
+  const bound = await credentialsBoundBy(ctx.db, [
+    {
+      credentialId: tokenEndsHere ? surface.credentialId : undefined,
+      provisioning: surface.provisioning,
+    },
+  ]);
+  const rows = (await Promise.all([...bound].map(async (id) => await ctx.db.get(id)))).filter(
+    (row): row is Doc<'credentials'> => row !== null,
+  );
   if (rows.length === 0) return;
   await endAccessAtSource(ctx, {
     agentId: surface.agentId,

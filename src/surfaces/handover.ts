@@ -41,11 +41,11 @@ const OWN_IDENTITY_KINDS: ReadonlySet<NonNullable<Doc<'surfaces'>['actsAs']>['ki
  * organisation connection or is held by the organisation.
  *
  * @param surface - The surface before the move.
- * @param bound - Its bound credential rows, or none where the caller reads none.
+ * @param bound - Its bound credential rows as read, or undefined where the caller reads none.
  */
 function keepsOwnIdentity(
   surface: HandoverCandidate,
-  bound: readonly Doc<'credentials'>[],
+  bound: readonly Doc<'credentials'>[] | undefined,
 ): boolean {
   const linked =
     surface.organisationConnectionId !== undefined ||
@@ -53,9 +53,13 @@ function keepsOwnIdentity(
   if (!linked || surface.actsAs === undefined || !OWN_IDENTITY_KINDS.has(surface.actsAs.kind)) {
     return false;
   }
-  if (bound.length === 0) return surface.credentialId !== undefined;
-  return bound.every(
-    (row) => row.holder !== undefined || row.issuedBy?.organisationConnectionId !== undefined,
+  // A page reads no rows: the card's own link and identity decide. Rows read and gone keep nothing.
+  if (bound === undefined) return surface.credentialId !== undefined;
+  return (
+    bound.length > 0 &&
+    bound.every(
+      (row) => row.holder !== undefined || row.issuedBy?.organisationConnectionId !== undefined,
+    )
   );
 }
 
@@ -75,11 +79,13 @@ function keepsOwnIdentity(
  */
 export function surfaceHandoverOf(
   surface: HandoverCandidate,
-  bound: readonly Doc<'credentials'>[] = [],
+  bound?: readonly Doc<'credentials'>[],
 ): SurfaceHandover {
   if (keepsOwnIdentity(surface, bound)) return 'reapprove';
   const bindsCredential =
-    bound.length > 0 || surface.credentialId !== undefined || surface.provisioning !== undefined;
+    (bound !== undefined && bound.length > 0) ||
+    surface.credentialId !== undefined ||
+    surface.provisioning !== undefined;
   if (bindsCredential) return 'cut';
   if (surface.managerApprovedAt !== undefined || APPROVED_VERDICTS.has(surface.verdict)) {
     return 'cut';

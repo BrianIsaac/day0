@@ -17,6 +17,8 @@ import {
   callOutcome,
   revocationPlanFor,
   type RevocationCall,
+  type RevocationMeans,
+  type RevocationPlan,
   type RevocationSubject,
 } from '../src/surfaces/revokers/plan';
 import {
@@ -30,16 +32,20 @@ import type { RevocationAnswer, RevocationRequest } from '../src/surfaces/revoke
 
 /*
  * Revocation at the vendor, the call (wave 11, 11-AR; the access plan, section 4.4). One attempt:
- * count it and schedule its successor (`sourceRevocation.beginAttempt`), open what the call needs
- * through the internal-only path that admits a held row, make the calls the plan names, and
- * record the answer (`sourceRevocation.recordAttempt`). The tokens live only inside this action
- * and are never logged; a failure's words are the vendor's, with any token taken out.
+ * count it and schedule its successor (`sourceRevocation.beginAttempt`), plan the calls, open
+ * only what those calls need through the internal-only path that admits a held row, make them,
+ * and record the answer (`sourceRevocation.recordAttempt`). The tokens live only inside this
+ * action and are never logged; a failure's words are the vendor's, bounded, with every token
+ * taken out.
  */
 
 /** How long one vendor call may take. */
 const VENDOR_CALL_TIMEOUT_MS = 30_000;
 
-/** The secrets one attempt opened, by role. */
+/** The longest words a failure keeps, on the row and on the record. */
+const WORDS_LIMIT = 300;
+
+/** The secrets one attempt opened, each only where a planned call needs it. */
 interface Opened {
   readonly token: string;
   readonly refreshTokens: readonly string[];
@@ -48,14 +54,27 @@ interface Opened {
   readonly connectionSecret?: string;
 }
 
-/** What a call answered, and the outcome it means when it is done. */
+/** One call's answer, and whether the call was made with the organisation connection's secret. */
 interface CallAnswer {
   readonly answer: RevocationAnswer;
-  readonly done: Extract<AttemptResult, { kind: 'final' }>['outcome'];
+  readonly viaConnection: boolean;
+}
+
+/** What one attempt found, and whether a call made with the connection's secret was sent. */
+interface AttemptOutcome {
+  readonly result: AttemptResult;
+  readonly viaConnection: boolean;
+}
+
+/** The plans of one attempt: the held credential's, and each refresh token's of its pair. */
+interface AttemptPlans {
+  readonly own: RevocationPlan;
+  readonly refreshes: readonly RevocationPlan[];
 }
 
 /**
- * Open a held or live row for the call.
+ * Open a held or live row for the call: a held row through the path that admits it, a live one
+ * (IT's configuration token, the connection's client secret) through the ordinary decrypt.
  *
  * @throws Error when the row cannot be opened.
  */
@@ -68,19 +87,43 @@ async function open(ctx: ActionCtx, credentialId: Id<'credentials'>): Promise<st
     : await ctx.runAction(internal.credentials.decrypt, { credentialId });
 }
 
-/** Open every secret the attempt needs, the held token first. */
-async function openAll(ctx: ActionCtx, job: RevocationJob, plan: AttemptPlan): Promise<Opened> {
-  const token = await open(ctx, job.credentialId);
-  const refreshTokens = await Promise.all(
-    plan.refreshCredentialIds.map(async (id) => await open(ctx, id)),
+/** Every call the attempt's plans name. */
+function plannedCalls(plans: AttemptPlans): RevocationCall[] {
+  return [plans.own, ...plans.refreshes].flatMap((plan) =>
+    plan.kind === 'call' ? [...plan.calls] : [],
   );
-  const optional = async (id: Id<'credentials'> | undefined): Promise<string | undefined> =>
-    id === undefined ? undefined : await open(ctx, id);
-  const [clientSecret, configurationToken, connectionSecret] = await Promise.all([
-    optional(plan.clientSecretCredentialId),
-    optional(plan.configurationTokenCredentialId),
-    optional(plan.connectionSecretCredentialId),
-  ]);
+}
+
+/**
+ * Open the held token and only what the planned calls need: the refresh tokens a call revokes,
+ * IT's configuration token for an app deletion, the app's secret for an uninstall, and the
+ * connection's client secret for an RFC 7009 revoke.
+ *
+ * @throws Error when a needed row cannot be opened.
+ */
+async function openNeeded(
+  ctx: ActionCtx,
+  job: RevocationJob,
+  plan: AttemptPlan,
+  plans: AttemptPlans,
+): Promise<Opened> {
+  const calls = plannedCalls(plans);
+  const needs = (kind: RevocationCall['kind']): boolean => calls.some((call) => call.kind === kind);
+  const optional = async (
+    id: Id<'credentials'> | undefined,
+    needed: boolean,
+  ): Promise<string | undefined> => (id === undefined || !needed ? undefined : await open(ctx, id));
+  const refreshIds = plans.refreshes.some((refresh) => refresh.kind === 'call')
+    ? plan.refreshCredentialIds
+    : [];
+  const [token, refreshTokens, clientSecret, configurationToken, connectionSecret] =
+    await Promise.all([
+      open(ctx, job.credentialId),
+      Promise.all(refreshIds.map(async (id) => await open(ctx, id))),
+      optional(plan.clientSecretCredentialId, needs('slack-uninstall-app')),
+      optional(plan.configurationTokenCredentialId, needs('slack-delete-app')),
+      optional(plan.connectionSecretCredentialId, needs('oauth-revoke')),
+    ]);
   return {
     token,
     refreshTokens,
@@ -101,9 +144,37 @@ async function bodyOf(response: Response): Promise<unknown> {
   }
 }
 
+/** Every secret an attempt opened, for the words to be cleaned of. */
+function secretsOf(opened: Opened): string[] {
+  return [
+    opened.token,
+    ...opened.refreshTokens,
+    opened.clientSecret,
+    opened.configurationToken,
+    opened.connectionSecret,
+  ].filter((secret): secret is string => secret !== undefined && secret !== '');
+}
+
+/** Words a vendor or a failure gave, as one bounded line with no secret in it. */
+function cleanWords(words: string, secrets: readonly string[]): string {
+  return safeFailureMessage(new Error(words), secrets[0] ?? '', words, WORDS_LIMIT, secrets);
+}
+
+/** An answer whose words are cleaned of the attempt's secrets. */
+function cleanAnswer(answer: RevocationAnswer, secrets: readonly string[]): RevocationAnswer {
+  switch (answer.kind) {
+    case 'revoked':
+    case 'gone':
+      return answer;
+    case 'retry':
+    case 'refused':
+      return { kind: answer.kind, words: cleanWords(answer.words, secrets) };
+  }
+}
+
 /**
- * Send one revocation request and read its answer; a network failure asks for another attempt,
- * in words with the secrets taken out.
+ * Send one revocation request and read its answer. A redirect is refused rather than followed, so
+ * a token in the body never reaches another address; a network failure asks for another attempt.
  */
 async function send(
   request: RevocationRequest,
@@ -116,16 +187,23 @@ async function send(
       method: 'POST',
       headers: request.headers,
       body: request.body,
+      redirect: 'error',
       signal: AbortSignal.timeout(VENDOR_CALL_TIMEOUT_MS),
     });
   } catch (error: unknown) {
     const host = new URL(request.url).host;
     return {
       kind: 'retry',
-      words: safeFailureMessage(error, secrets[0] ?? '', `Could not reach ${host}.`, 300, secrets),
+      words: safeFailureMessage(
+        error,
+        secrets[0] ?? '',
+        `Could not reach ${host}.`,
+        WORDS_LIMIT,
+        secrets,
+      ),
     };
   }
-  return read(response.status, await bodyOf(response));
+  return cleanAnswer(read(response.status, await bodyOf(response)), secrets);
 }
 
 /** Slack's reader for one method. */
@@ -134,68 +212,97 @@ function slackReader(method: SlackRevocationMethod) {
 }
 
 /**
+ * Build an RFC 7009 request, refusing in Day0's words an endpoint the builder refuses.
+ *
+ * @returns The request, or the refusal.
+ */
+function oauthRequest(
+  call: Extract<RevocationCall, { kind: 'oauth-revoke' }>,
+  token: string,
+  plan: AttemptPlan,
+  opened: Opened,
+): RevocationRequest | { readonly refused: string } {
+  const clientId = plan.connectionClientId ?? call.clientId;
+  try {
+    return oauthTokenRevocation({
+      endpoint: call.endpoint,
+      token,
+      hint: call.hint,
+      ...(clientId !== undefined
+        ? {
+            client: {
+              clientId,
+              ...(opened.connectionSecret !== undefined
+                ? { clientSecret: opened.connectionSecret }
+                : {}),
+            },
+          }
+        : {}),
+    });
+  } catch (error: unknown) {
+    return {
+      refused: `Day0 refused the revocation endpoint: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}
+
+/**
  * Make one call of a plan.
  *
- * @returns Its answer, or a refusal in Day0's words when Day0 lacks what the call needs.
+ * @returns Its answer, or a refusal in Day0's words when Day0 lacks what the call needs, and
+ *   whether the call used the organisation connection's secret.
  */
 async function makeCall(
   call: RevocationCall,
   token: string,
   opened: Opened,
   plan: AttemptPlan,
-): Promise<RevocationAnswer> {
-  const secrets = [
-    token,
-    ...opened.refreshTokens,
-    opened.clientSecret,
-    opened.configurationToken,
-    opened.connectionSecret,
-  ].filter((secret): secret is string => secret !== undefined);
+): Promise<CallAnswer> {
+  const secrets = secretsOf(opened);
+  const direct = (answer: RevocationAnswer): CallAnswer => ({ answer, viaConnection: false });
   switch (call.kind) {
     case 'slack-revoke-token':
-      return await send(slackTokenRevocation(token), slackReader('auth.revoke'), secrets);
+      return direct(await send(slackTokenRevocation(token), slackReader('auth.revoke'), secrets));
     case 'slack-delete-app':
       if (opened.configurationToken === undefined) {
-        return { kind: 'refused', words: 'Day0 holds no configuration token to delete the app.' };
+        return direct({
+          kind: 'refused',
+          words: 'Day0 holds no configuration token to delete the app.',
+        });
       }
-      return await send(
-        slackAppDeletion(opened.configurationToken, call.appId),
-        slackReader('apps.manifest.delete'),
-        secrets,
-      );
+      return {
+        answer: await send(
+          slackAppDeletion(opened.configurationToken, call.appId),
+          slackReader('apps.manifest.delete'),
+          secrets,
+        ),
+        viaConnection: true,
+      };
     case 'slack-uninstall-app':
       if (opened.clientSecret === undefined) {
-        return { kind: 'refused', words: "Day0 no longer holds the app's client secret." };
+        return direct({ kind: 'refused', words: "Day0 no longer holds the app's client secret." });
       }
-      return await send(
-        slackAppUninstall({ token, clientId: call.clientId, clientSecret: opened.clientSecret }),
-        slackReader('apps.uninstall'),
-        secrets,
+      return direct(
+        await send(
+          slackAppUninstall({ token, clientId: call.clientId, clientSecret: opened.clientSecret }),
+          slackReader('apps.uninstall'),
+          secrets,
+        ),
       );
     case 'linear-revoke':
-      return await send(linearTokenRevocation(token, call.hint), readLinearAnswer, secrets);
+      return direct(await send(linearTokenRevocation(token, call.hint), readLinearAnswer, secrets));
     case 'oauth-revoke': {
-      const clientId = plan.connectionClientId ?? call.clientId;
+      const request = oauthRequest(call, token, plan, opened);
+      if ('refused' in request) return direct({ kind: 'refused', words: request.refused });
       const vendor = new URL(call.endpoint).host;
-      return await send(
-        oauthTokenRevocation({
-          endpoint: call.endpoint,
-          token,
-          hint: call.hint,
-          ...(clientId !== undefined
-            ? {
-                client: {
-                  clientId,
-                  ...(opened.connectionSecret !== undefined
-                    ? { clientSecret: opened.connectionSecret }
-                    : {}),
-                },
-              }
-            : {}),
-        }),
-        (status, body) => readOAuthRevocationAnswer(vendor, status, body),
-        secrets,
-      );
+      return {
+        answer: await send(
+          request,
+          (status, body) => readOAuthRevocationAnswer(vendor, status, body),
+          secrets,
+        ),
+        viaConnection: opened.connectionSecret !== undefined,
+      };
     }
   }
 }
@@ -210,66 +317,85 @@ async function runCalls(
   token: string,
   opened: Opened,
   plan: AttemptPlan,
-): Promise<AttemptResult> {
+): Promise<AttemptOutcome> {
   const refusals: string[] = [];
+  let viaConnection = false;
   for (const call of calls) {
-    const answer: CallAnswer = {
-      answer: await makeCall(call, token, opened, plan),
-      done: callOutcome(call),
-    };
-    switch (answer.answer.kind) {
+    const made = await makeCall(call, token, opened, plan);
+    viaConnection = viaConnection || made.viaConnection;
+    const { answer } = made;
+    switch (answer.kind) {
       case 'revoked':
-        return { kind: 'final', outcome: answer.done };
+        return { result: { kind: 'final', outcome: callOutcome(call) }, viaConnection };
       case 'gone':
-        return { kind: 'final', outcome: 'already-gone' };
+        return { result: { kind: 'final', outcome: 'already-gone' }, viaConnection };
       case 'retry':
-        return { kind: 'failure', words: answer.answer.words, permanent: false };
+        return {
+          result: { kind: 'failure', words: answer.words, permanent: false },
+          viaConnection,
+        };
       case 'refused':
-        refusals.push(answer.answer.words);
+        refusals.push(answer.words);
         break;
+      default: {
+        const unknown: never = answer;
+        throw new Error(`unhandled revocation answer ${String(unknown)}`);
+      }
     }
   }
-  return { kind: 'failure', words: refusals.join('; '), permanent: true };
+  return {
+    result: {
+      kind: 'failure',
+      words: cleanWords(refusals.join('; '), secretsOf(opened)),
+      permanent: true,
+    },
+    viaConnection,
+  };
 }
 
 /**
- * One attempt's calls: each refresh token of the pair first (L3: revoking the access token is not
- * documented to end it), then the held credential's plan.
+ * The attempt's plans: the held credential's, by its own role (a refresh token held alone is
+ * revoked as one), and, for an access token, each refresh token of its pair (L3: revoking the
+ * access token is not documented to end it).
  */
-async function revoke(
-  credential: Doc<'credentials'>,
-  plan: AttemptPlan,
-  opened: Opened,
-): Promise<AttemptResult> {
-  if (credential.issuedBy === undefined) {
-    // decryptForRevocation refuses such a row before this; the plan never names one either.
-    return {
-      kind: 'failure',
-      words: 'A pasted key is never revoked at the vendor.',
-      permanent: true,
-    };
-  }
-  const means = {
-    configurationToken: opened.configurationToken !== undefined,
-    clientSecret: opened.clientSecret !== undefined,
+function attemptPlans(subject: RevocationSubject, plan: AttemptPlan): AttemptPlans {
+  const means: RevocationMeans = {
+    configurationToken: plan.configurationTokenCredentialId !== undefined,
+    clientSecret: plan.clientSecretCredentialId !== undefined,
     ...(plan.revocationEndpoint !== undefined
       ? { revocationEndpoint: plan.revocationEndpoint }
       : {}),
   };
-  const subject: RevocationSubject = {
-    issuedBy: credential.issuedBy,
-    role: 'access',
-    ...(credential.holder !== undefined ? { holder: credential.holder } : {}),
+  return {
+    own: revocationPlanFor(subject, plan.end, means),
+    refreshes: plan.refreshCredentialIds.map(() =>
+      revocationPlanFor({ ...subject, role: 'refresh' }, plan.end, means),
+    ),
   };
-  for (const refreshToken of opened.refreshTokens) {
-    const refreshPlan = revocationPlanFor({ ...subject, role: 'refresh' }, plan.end, means);
-    if (refreshPlan.kind === 'none') continue;
-    const result = await runCalls(refreshPlan.calls, refreshToken, opened, plan);
-    if (result.kind === 'failure') return result;
+}
+
+/** One attempt's calls: each refresh token of the pair first, then the held credential's plan. */
+async function revoke(
+  plans: AttemptPlans,
+  plan: AttemptPlan,
+  opened: Opened,
+): Promise<AttemptOutcome> {
+  let viaConnection = false;
+  for (const [index, refreshPlan] of plans.refreshes.entries()) {
+    const refreshToken = opened.refreshTokens[index];
+    if (refreshPlan.kind === 'none' || refreshToken === undefined) continue;
+    const made = await runCalls(refreshPlan.calls, refreshToken, opened, plan);
+    viaConnection = viaConnection || made.viaConnection;
+    if (made.result.kind === 'failure') return { result: made.result, viaConnection };
   }
-  const own = revocationPlanFor(subject, plan.end, means);
-  if (own.kind === 'none') return { kind: 'final', outcome: own.outcome, reason: own.words };
-  return await runCalls(own.calls, opened.token, opened, plan);
+  if (plans.own.kind === 'none') {
+    return {
+      result: { kind: 'final', outcome: plans.own.outcome, reason: plans.own.words },
+      viaConnection,
+    };
+  }
+  const own = await runCalls(plans.own.calls, opened.token, opened, plan);
+  return { result: own.result, viaConnection: viaConnection || own.viaConnection };
 }
 
 /**
@@ -288,30 +414,44 @@ async function runAttempt(ctx: ActionCtx, job: RevocationJob): Promise<void> {
     internal.credentials.getInternal,
     { credentialId: job.credentialId },
   );
-  if (credential === null) return;
-  let result: AttemptResult;
+  // beginAttempt admits only a held row Day0 obtained; a row gone since has nothing to revoke.
+  if (credential?.issuedBy === undefined) return;
+  const plans = attemptPlans(
+    {
+      issuedBy: credential.issuedBy,
+      role: job.primaryIsRefresh === true ? 'refresh' : 'access',
+      ...(credential.holder !== undefined ? { holder: credential.holder } : {}),
+    },
+    plan,
+  );
+  let opened: Opened;
   try {
-    const opened = await openAll(ctx, job, plan);
-    result = await revoke(credential, plan, opened);
+    opened = await openNeeded(ctx, job, plan, plans);
   } catch (error: unknown) {
-    // Opening failed (a rotated key, a row emptied under it): no attempt can open it again.
+    // Opening failed (a rotated key, a row emptied under it): no later attempt opens it either.
     log.warn('revocation at the vendor could not open its credential', {
       credentialId: job.credentialId,
       error: error instanceof Error ? error.message : String(error),
     });
-    result = {
-      kind: 'failure',
-      words: 'Day0 could not open the credential to revoke it.',
-      permanent: true,
-    };
+    await ctx.runMutation(internal.sourceRevocation.recordAttempt, {
+      job,
+      attempt: plan.attempt,
+      last: plan.last,
+      result: {
+        kind: 'failure',
+        words: 'Day0 could not open the credential to revoke it.',
+        permanent: true,
+      },
+    });
+    return;
   }
+  const outcome = await revoke(plans, plan, opened);
   await ctx.runMutation(internal.sourceRevocation.recordAttempt, {
     job,
     attempt: plan.attempt,
     last: plan.last,
-    result,
-    ...(plan.configurationTokenCredentialId !== undefined ||
-    plan.connectionSecretCredentialId !== undefined
+    result: outcome.result,
+    ...(outcome.viaConnection && plan.organisationConnectionId !== undefined
       ? { viaConnection: plan.organisationConnectionId }
       : {}),
   });

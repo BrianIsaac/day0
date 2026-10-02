@@ -133,6 +133,23 @@ describe("the employee's own identity at a handover (A25)", (): void => {
     ]);
   });
 
+  it('keeps the identity when the old manager later deletes their data, since it is no longer theirs to end', async (): Promise<void> => {
+    const harness = await realHarness();
+    const leo = await seedIssuedIdentities(harness, { connection: true });
+    await handOverLeo(harness, leo);
+
+    await harness
+      .withIdentity(managerIdentity())
+      .mutation(api.reset.deleteMyData, { alsoUnlinkDocumentation: true });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const token = await read(harness, leo.slack.token);
+    expect(token?.revokedAt).toBeUndefined();
+    expect(token?.ciphertext).toEqual(expect.any(String));
+    expect((await read(harness, leo.slack.surfaceId))?.credentialId).toBe(leo.slack.token);
+    expect(network.calls).toEqual([]);
+  });
+
   it('revokes the kept identity at the vendor when the new manager rejects the card', async (): Promise<void> => {
     const harness = await realHarness();
     const leo = await seedIssuedIdentities(harness, { connection: true });

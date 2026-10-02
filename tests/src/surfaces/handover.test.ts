@@ -74,6 +74,10 @@ describe("the employee's own identity at a handover (A25; the access plan, secti
     expect(surfaceHandoverOf(ownIdentityCard())).toBe('reapprove');
   });
 
+  it('cuts a card whose bound rows were read and are gone: there is no identity left to keep', (): void => {
+    expect(surfaceHandoverOf(ownIdentityCard(), [])).toBe('cut');
+  });
+
   it('cuts a card on the connection that binds a key someone pasted (D5)', (): void => {
     const pasted = { _id: tokenId, userId: 'owner' } as unknown as Doc<'credentials'>;
     expect(surfaceHandoverOf(ownIdentityCard(), [pasted])).toBe('cut');

@@ -231,6 +231,38 @@ describe('the ends of access on a card (11-AR)', (): void => {
     ]);
   });
 
+  it('leaves a token another card still binds, and its pair, when one card is rejected', async (): Promise<void> => {
+    const harness = await realHarness();
+    const leo = await seedIssuedIdentities(harness, { connection: false });
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(leo.linear.surfaceId, { verdict: 'approved' });
+      await ctx.db.insert('surfaces', {
+        agentId: leo.agentId,
+        slug: 'linear-second',
+        displayName: 'Linear (second team)',
+        class: 'kanban',
+        verdict: 'connected',
+        whereFound: [],
+        credentialLanded: true,
+        credentialId: leo.linear.access,
+        credentialKind: 'oauth',
+        createdAt: 1,
+      });
+    });
+
+    await harness
+      .withIdentity(managerIdentity())
+      .mutation(api.surfaces.reject, { surfaceId: leo.linear.surfaceId, reason: 'One is enough.' });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(network.calls).toEqual([]);
+    const [access, refresh] = await Promise.all([
+      read(harness, leo.linear.access),
+      read(harness, leo.linear.refresh),
+    ]);
+    expect([access?.sourceRevocation, refresh?.sourceRevocation]).toEqual([undefined, undefined]);
+  });
+
   it('renews an ended card whose token was revoked at the vendor by asking for its install again, not a probe', async (): Promise<void> => {
     const harness = await realHarness();
     const leo = await seedIssuedIdentities(harness, { connection: true });

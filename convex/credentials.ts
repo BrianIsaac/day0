@@ -368,7 +368,9 @@ export async function purgeCredential(
  * Stop using a credential Day0 itself obtained and hold it for its revocation at the vendor (the
  * access plan, section 4.4; F19): revoked at once, so `decrypt` refuses it from this transaction
  * on, with its revocation `pending` for the end that asked and its ciphertext kept for the vendor
- * call. A row already pending or final is left as it is.
+ * call. The hold stamps `revokedAt` itself, even over a person's earlier revoke, since the
+ * attempts and the 24 hours the ciphertext is kept count from it. A row already pending or final
+ * is left as it is.
  *
  * @param ctx - The ending transaction.
  * @param credential - A row that carries `issuedBy`.
@@ -387,7 +389,7 @@ export async function holdForSourceRevocation(
   }
   if (credential.sourceRevocation !== undefined) return;
   await ctx.db.patch(credential._id, {
-    revokedAt: credential.revokedAt ?? now,
+    revokedAt: now,
     sourceRevocation: { state: 'pending', attempts: 0, at: now, end },
   });
 }
@@ -430,7 +432,10 @@ export async function finishSourceRevocation(
 }
 
 /**
- * Purge every credential one owner holds, for a reset that unlinks documentation.
+ * Purge every credential one owner holds, for a reset that unlinks documentation, save an
+ * identity another owner's employee still acts as: a token Day0 obtained through IT's
+ * organisation connection that a handover kept for the employee (A25) stays, with its pair and
+ * its app's secret, since ending it is the new manager's.
  *
  * Args:
  *   ctx: Convex mutation context.
@@ -445,9 +450,47 @@ export async function purgeOwnedCredentials(ctx: MutationCtx, userId: string): P
     .withIndex('by_userId', (index) => index.eq('userId', userId))
     .take(1_001);
   if (rows.length > 1_000) throw new Error('Owner exceeds 1,000 credentials.');
+  const keptForAnother = await identitiesKeptForAnotherOwner(ctx, userId, rows);
   const now = Date.now();
-  for (const row of rows) await purgeCredential(ctx, row, now);
-  return rows.length;
+  let purged = 0;
+  for (const row of rows) {
+    if (keptForAnother.has(row._id)) continue;
+    await purgeCredential(ctx, row, now);
+    purged += 1;
+  }
+  return purged;
+}
+
+/**
+ * The owner's rows that are an identity another owner's employee acts as since a handover kept
+ * it (A25): each token issued through an organisation connection that a card of an employee the
+ * owner no longer has binds, with its refresh token and its app's client secret.
+ *
+ * @param ctx - The reset's transaction.
+ * @param userId - The owner being reset.
+ * @param rows - The owner's rows.
+ */
+async function identitiesKeptForAnotherOwner(
+  ctx: MutationCtx,
+  userId: string,
+  rows: readonly Doc<'credentials'>[],
+): Promise<Set<Id<'credentials'>>> {
+  const kept = new Set<Id<'credentials'>>();
+  for (const row of rows) {
+    if (row.issuedBy?.organisationConnectionId === undefined) continue;
+    const binders = await ctx.db
+      .query('surfaces')
+      .withIndex('by_credentialId', (index) => index.eq('credentialId', row._id))
+      .take(10);
+    const agents = await Promise.all(binders.map(async (card) => await ctx.db.get(card.agentId)));
+    if (!agents.some((agent) => agent !== null && agent.userId !== userId)) continue;
+    kept.add(row._id);
+    if (row.refreshCredentialId !== undefined) kept.add(row.refreshCredentialId);
+    if (row.issuedBy.clientSecretCredentialId !== undefined) {
+      kept.add(row.issuedBy.clientSecretCredentialId);
+    }
+  }
+  return kept;
 }
 
 /** Record credential use without exposing the decrypted value. */
@@ -796,7 +839,8 @@ async function openSealed(
  * Decrypt a credential Day0 obtained for the one call that revokes it at the vendor (the access
  * plan, section 4.4). Internal; `sourceRevocationActions` is its only caller. Admits a revoked row
  * only while its revocation is `pending` and only when Day0 obtained it (`issuedBy`), so a pasted
- * key never opens here; records no use, since the employee no longer acts through it.
+ * key never opens here, nor a token the token store holds (its row keeps the store's connection
+ * id, not a token); records no use, since the employee no longer acts through it.
  *
  * @throws Error when the row is not awaiting its revocation at the vendor.
  */
@@ -807,6 +851,7 @@ export const decryptForRevocation = internalAction({
     if (
       !credential ||
       credential.issuedBy === undefined ||
+      credential.tokenStore === 'nango' ||
       credential.sourceRevocation?.state !== 'pending' ||
       credential.ciphertext === undefined ||
       credential.iv === undefined
