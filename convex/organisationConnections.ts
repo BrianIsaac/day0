@@ -59,17 +59,13 @@ const clientRegistrationValidator = v.union(
   ...MCP_CLIENT_REGISTRATIONS.map((registration) => v.literal(registration)),
 );
 
-/** What a landing gives: the registration and the secrets IT produced for it. */
-const landingFields = {
+/** What IT registered for a system: everything a landing gives but its secrets. */
+const registrationFields = {
   system: v.string(),
   displayName: v.string(),
   kind: connectionKindValidator,
   mode: connectionModeValidator,
   scopes: v.array(v.string()),
-  /** The client secret, configuration token, service key or static key. */
-  secret: v.optional(v.string()),
-  /** The refresh token that renews `secret`, where the vendor issues one (Slack's configuration token). */
-  refreshToken: v.optional(v.string()),
   clientId: v.optional(v.string()),
   appId: v.optional(v.string()),
   providerWorkspaceId: v.optional(v.string()),
@@ -80,14 +76,17 @@ const landingFields = {
   clientCredentialsScopes: v.optional(v.array(v.string())),
 };
 
+/** What a landing gives: the registration and the secrets IT produced for it. */
+const landingFields = {
+  ...registrationFields,
+  /** The client secret, configuration token, service key or static key. */
+  secret: v.optional(v.string()),
+  /** The refresh token that renews `secret`, where the vendor issues one (Slack's configuration token). */
+  refreshToken: v.optional(v.string()),
+};
+
 /** A landing as an administrator or the setup verb gives it. */
 export type Landing = ObjectType<typeof landingFields>;
-
-const {
-  secret: _landingSecret,
-  refreshToken: _landingRefreshToken,
-  ...registrationFields
-} = landingFields;
 
 /** A landing's registration without its secrets: what the recording mutation is handed. */
 const registrationValidator = v.object(registrationFields);
