@@ -41,6 +41,8 @@ const SCHEDULED_JOBS = {
     await ctx.runMutation(internal.managerTransfers.expireDue, {}),
   'transferAcceptance:settleDue': async (ctx: ActionCtx): Promise<unknown> =>
     await ctx.runMutation(internal.transferAcceptance.settleDue, {}),
+  'sourceRevocation:expireOverdue': async (ctx: ActionCtx): Promise<unknown> =>
+    await ctx.runMutation(internal.sourceRevocation.expireOverdue, {}),
 } as const;
 
 /** A job `runScheduledJob` knows, named by the function it runs. */
@@ -129,6 +131,13 @@ crons.interval('expire unanswered handovers', { minutes: 15 }, gate, {
 // settle.
 crons.interval('settle finishing handovers', { minutes: 1 }, gate, {
   job: 'transferAcceptance:settleDue',
+});
+
+// A credential held for its revocation at the vendor keeps its ciphertext 24 hours at most (F19):
+// its last attempt schedules the purge at that bound, and this hourly sweep closes any whose
+// scheduled purge was lost.
+crons.interval('close revocations past their 24 hours', { hours: 1 }, gate, {
+  job: 'sourceRevocation:expireOverdue',
 });
 
 export default crons;

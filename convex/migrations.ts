@@ -89,6 +89,7 @@ export const MIGRATION_NAMES = [
   'skills-library',
   'skills-use-count',
   'surfaces-acts-as',
+  'credentials-issued-by',
 ] as const;
 
 /** One migration's name. */
@@ -137,7 +138,10 @@ const SCHEMA_STEP_RELEASE = '0.6.0';
 /** The release of the owner's skill library (wave 10, 10-K): the library and the use count. */
 const SKILL_LIBRARY_RELEASE = '0.13.0';
 
-/** The release of the access track (wave 11, 11-AK): whom each connected card acts as. */
+/**
+ * The release of the access track (wave 11): whom each connected card acts as (11-AK), and how
+ * Day0 obtained each credential an installed app gave it (11-AR).
+ */
 const ACCESS_RELEASE = '0.14.0';
 
 /** Every migration's description, keyed by name. */
@@ -250,6 +254,12 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
     does: 'records whom each card holding a live credential acts as: its own app for an installed app’s token, named as the app, and a shared key for every pasted value or location, named as the key; a card with no credential, or a revoked or emptied one, is left for its next connection',
     thenRemoves:
       'nothing: each path that lands a credential is to write actsAs as wave 11’s connect units land; until one does, a card it connects carries none',
+  },
+  'credentials-issued-by': {
+    release: ACCESS_RELEASE,
+    does: 'records how Day0 obtained each live credential an installed Slack app gave it: the bot token from the install redirect, with the app it was issued to, and the client secret of the app the card provisioned; a pasted key, and a revoked or emptied row, are left',
+    thenRemoves:
+      'nothing: the Slack install path is to write issuedBy as 11-AS lands; until it does, a token installed after the upgrade is read as a pasted key and is not revoked at the vendor',
   },
   'surfaces-access-clock': {
     release: FIRST_MIGRATIONS_RELEASE,
@@ -665,6 +675,61 @@ async function backfillActsAs(ctx: MutationCtx, cursor: string | null): Promise<
   return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
 }
 
+/** Whether a credential row is still live: not revoked, and still holding its value. */
+function liveCredential(credential: Doc<'credentials'> | null): credential is Doc<'credentials'> {
+  return (
+    credential !== null && credential.revokedAt === undefined && credential.ciphertext !== undefined
+  );
+}
+
+/**
+ * Record how Day0 obtained each credential an installed Slack app gave it before the access track
+ * (11-AR; 11-AK's cockpit item 4), so "only what Day0 obtained is revoked at the vendor" reads one
+ * field: a card's bot token from the install redirect (`kind` and `source` both `oauth`, the only
+ * redirect v0.13.0 had) is `oauth-install`, with the app it was issued to read off the card's
+ * `provisioning` (else the row's own `appId`); the client secret `apps.manifest.create` returned
+ * for the app the card provisioned is `app-created`. A pasted or documented key is never named,
+ * and neither is a row whose access already ended (revoked or emptied). A row that already says
+ * how it was obtained is left, so a second run changes nothing.
+ */
+async function backfillIssuedBy(ctx: MutationCtx, cursor: string | null): Promise<MigrationPage> {
+  const page = await ctx.db.query('surfaces').paginate({ cursor, numItems: MIGRATION_PAGE });
+  let changed = 0;
+  for (const surface of page.page) {
+    const app = surface.provisioning;
+    if (surface.credentialId !== undefined && surface.credentialKind === 'oauth') {
+      const token = await ctx.db.get(surface.credentialId);
+      if (
+        liveCredential(token) &&
+        token.issuedBy === undefined &&
+        token.kind === 'oauth' &&
+        token.source === 'oauth'
+      ) {
+        const appId = app?.appId ?? token.appId;
+        await ctx.db.patch(token._id, {
+          issuedBy: {
+            system: 'slack',
+            grant: 'oauth-install',
+            ...(appId !== undefined ? { appId } : {}),
+            ...(app !== undefined
+              ? { clientId: app.clientId, clientSecretCredentialId: app.clientSecretCredentialId }
+              : {}),
+          },
+        });
+        changed += 1;
+      }
+    }
+    if (app === undefined) continue;
+    const secret = await ctx.db.get(app.clientSecretCredentialId);
+    if (!liveCredential(secret) || secret.issuedBy !== undefined) continue;
+    await ctx.db.patch(secret._id, {
+      issuedBy: { system: 'slack', grant: 'app-created', appId: app.appId, clientId: app.clientId },
+    });
+    changed += 1;
+  }
+  return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
+}
+
 /**
  * Re-seal one page of credentials in the Node runtime (decision Q15, step
  * 14). The action writes each page's rows itself; this reports the page.
@@ -737,6 +802,7 @@ const MIGRATION_PAGES: Readonly<
   'skills-library': async (ctx, cursor) => await backfillLibraryPage(ctx, cursor),
   'skills-use-count': async (ctx, cursor) => await backfillUseCountPage(ctx, cursor),
   'surfaces-acts-as': backfillActsAs,
+  'credentials-issued-by': backfillIssuedBy,
 };
 
 /** A migration's row, if it has started. */

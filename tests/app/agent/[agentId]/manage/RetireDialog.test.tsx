@@ -52,6 +52,10 @@ const REAL_PREVIEW: RetirePreview = {
   atLeast: false,
   revoked: [{ slug: 'linear', displayName: 'Linear' }],
   kept: [{ slug: 'slack', displayName: 'Slack' }],
+  outcomes: [
+    { slug: 'linear', displayName: 'Linear', system: 'Linear', outcome: 'pasted-key' },
+    { slug: 'slack', displayName: 'Slack', system: 'Slack', outcome: 'kept' },
+  ],
   keptClaims: 1,
   keptClaimsAtLeast: false,
   tombstone: true,

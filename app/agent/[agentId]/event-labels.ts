@@ -6,6 +6,7 @@ import {
   type WorkPlanHeldPayload,
 } from '@/events/contract';
 import type { RecordKind } from '../../components/RecordLine';
+import { systemDisplayName } from '@/surfaces/revokers/outcome';
 import { judgedAs, REEVALUATION } from './verdict-words';
 
 /**
@@ -133,6 +134,41 @@ function planHeldWords(reason: unknown): string {
   return typeof reason === 'string' && Object.hasOwn(PLAN_HELD_WORDS, reason)
     ? PLAN_HELD_WORDS[reason as WorkPlanHeldPayload['reason']]
     : 'it waits for your decision';
+}
+
+/** The label of one end of access at the vendor (11-AR), by its outcome and system. */
+function revokedAtSourceLabel(payload: Read<'credential.revoked-at-source'>): string {
+  const system = systemDisplayName(text(payload.system) ?? 'the vendor');
+  switch (payload.outcome) {
+    case 'token-revoked':
+      return `revoked at ${system}${
+        payload.channelMembershipsRemoved === true ? '; its channel memberships were removed' : ''
+      }`;
+    case 'app-deleted':
+      return `${system} app deleted in ${system}`;
+    case 'app-uninstalled':
+      return `${system} app uninstalled from ${system}`;
+    case 'already-gone':
+      return `already revoked at ${system}`;
+    case 'retrying':
+      return `revocation at ${system} failed, trying again${because(payload.reason)}`;
+    case 'failed':
+      return `revocation at ${system} failed${because(payload.reason)}; Day0's copy deleted`;
+    case 'not-supported':
+      return `not revoked at ${system}: no revocation call; Day0's copy deleted`;
+    case 'shared':
+      return `shared app token: not revoked at ${system}`;
+    case 'not-at-vendor':
+      return `nothing changed at ${system}`;
+    case 'pasted-key':
+      return `pasted key: never sent to ${system}; revoke it there`;
+    case undefined:
+      return 'access ended';
+    default: {
+      const unknown: never = payload.outcome;
+      return `access ended (${String(unknown)})`;
+    }
+  }
 }
 
 const LABELS: { readonly [Type in EventType]: Label<Type> } = {
@@ -385,6 +421,13 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     `${text(payload.displayName) ?? 'a system'}: the organisation connection revoked${because(payload.reason)}`,
   'surface.authorised': 'authorised at its authorisation server',
   'surface.authorisation-failed': (payload) => `authorisation failed${because(payload.reason)}`,
+  'surface.disconnected': (payload) =>
+    payload.by === 'organisation'
+      ? `disconnected: the organisation's connection was revoked${because(payload.reason)}`
+      : 'disconnected by the manager',
+  'credential.revoked-at-source': (payload) => revokedAtSourceLabel(payload),
+  'organisation.revoked-at-source': (payload) =>
+    `${systemDisplayName(text(payload.system) ?? 'the vendor')} organisation connection: ${revokedAtSourceLabel(payload)}`,
   'plan.obligations-judged': 'plan obligations judged',
   'plan.obligations-failed-open': (payload) =>
     `plan obligations not judged${because(payload.reason)}; the planner's stand unchecked`,
