@@ -42,6 +42,7 @@ import {
   linearCandidate,
   linearListArguments,
   mcpIssuePage,
+  PROVIDER_DID_NOT_ANSWER,
   readIntakeDocumentation,
   runDecisionSweep,
   runIntakeSweep,
@@ -4195,6 +4196,52 @@ describe('the owner the surfaces were read under (the wave 10 review FR-m4)', ()
       }),
     ).resolves.toMatchObject({ candidates: 2, polled: 1 });
     expect([...kept.seeds.values()].map((seed) => seed.startedUnder)).toEqual(['owner', 'owner']);
+  });
+});
+
+describe("a provider that does not answer in time (the real-Linear walk's m12)", (): void => {
+  const slackCredential = id<'credentials'>('credential-slack');
+  const timedOut = async (error: unknown): Promise<string | undefined> => {
+    const harness = runtimeHarness(
+      [
+        surfaceRow('slack', 'Slack', 'chat', {
+          credentialId: slackCredential,
+          endpoint: 'https://slack.com/api/',
+          toolAllowlist: ['conversations.list', 'conversations.history'],
+          providerIdentityId: 'UBOT',
+          providerBotId: 'BBOT',
+          providerWorkspaceId: 'TTEAM',
+        }),
+      ],
+      [pageRow('slack.md', 'Slack policy', SLACK)],
+      new Map([[String(slackCredential), 'slack-test-value']]),
+    );
+    await runIntakeSweep(harness.runtime, {
+      mode: 'real',
+      now: (): number => Date.parse('2026-08-26T03:00:00.000Z'),
+      sleep: async (): Promise<void> => undefined,
+      fetcher: async (): Promise<Response> => {
+        throw error;
+      },
+    });
+    return harness.records[0]?.skipReason;
+  };
+
+  it('says the provider did not answer in time, never the raw abort, whichever shape it arrives in', async (): Promise<void> => {
+    const reasons = [
+      await timedOut(new DOMException('The operation was aborted due to timeout', 'TimeoutError')),
+      // As a client that strings the abort into its own error hands it on.
+      await timedOut(new Error('TimeoutError: The operation was aborted due to timeout')),
+    ];
+    const said = `intake failed: ${PROVIDER_DID_NOT_ANSWER}`;
+    expect(reasons).toEqual([said, said]);
+    expect(said).not.toContain('TimeoutError');
+  });
+
+  it('keeps every other failure in its own words', async (): Promise<void> => {
+    expect(await timedOut(new Error('getaddrinfo ENOTFOUND slack.com'))).toBe(
+      'intake failed: getaddrinfo ENOTFOUND slack.com',
+    );
   });
 });
 

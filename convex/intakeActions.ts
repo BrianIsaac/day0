@@ -281,6 +281,24 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 }
 
 /**
+ * What an intake card says when the provider did not answer before the poll's time ran out, in
+ * place of the platform's abort (the real-Linear walk's m12: "TimeoutError: The operation was
+ * aborted due to timeout").
+ */
+export const PROVIDER_DID_NOT_ANSWER =
+  'the provider did not answer in time; the next poll tries again';
+
+/**
+ * Whether a failure is a timed-out request: the platform's `TimeoutError`, or a client's error
+ * that carries one in its words (an MCP client hands the abort on as text).
+ */
+function isTimedOut(error: unknown): boolean {
+  if (error instanceof Error && error.name === 'TimeoutError') return true;
+  const message = error instanceof Error ? error.message : String(error);
+  return /\bTimeoutError: The operation was aborted due to timeout/.test(message);
+}
+
+/**
  * Redact and bound one provider failure before it reaches surface metadata.
  *
  * Args:
@@ -291,6 +309,7 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
  *   A single safe line suitable for a surface card.
  */
 export function safeIntakeError(error: unknown, credential: string): string {
+  if (isTimedOut(error)) return PROVIDER_DID_NOT_ANSWER;
   return safeFailureMessage(error, credential, 'Provider intake failed.');
 }
 
