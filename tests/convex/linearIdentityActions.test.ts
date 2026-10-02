@@ -716,4 +716,37 @@ describe("per-employee mode: the employee's own app", (): void => {
       reason: 'Linear did not install the app: an unrecognised error.',
     });
   });
+
+  it('refuses a state this deployment did not sign, and one that lapsed, exchanging nothing', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceIds } = await seed(harness, { mode: 'per-employee' });
+    const { api } = await liveApi();
+    const registered = await harness
+      .withIdentity(managerIdentity('ines', { email: ADMINISTRATOR }))
+      .action(api.linearIdentityActions.registerEmployeeApp, {
+        surfaceId: surfaceIds[0]!,
+        clientId: LEO_CLIENT,
+        clientSecret: LEO_SECRET,
+      });
+    if (!registered.ok) throw new Error(registered.message);
+    const back = linear.consent(registered.authoriseUrl);
+    const state = back.searchParams.get('state') ?? '';
+    const code = back.searchParams.get('code') ?? '';
+
+    await expect(
+      harness.action(api.linearIdentityActions.completeAuthorisation, {
+        state: `${state.slice(0, -4)}AAAA`,
+        code,
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      reason: 'That install link is not one this deployment issued.',
+    });
+    clock += 16 * 60_000;
+    await expect(
+      harness.action(api.linearIdentityActions.completeAuthorisation, { state, code }),
+    ).resolves.toMatchObject({ ok: false, reason: expect.stringContaining('expired') });
+    expect(tokenRequests()).toEqual([]);
+    expect((await read(harness, surfaceIds[0]!)).surface.credentialId).toBeUndefined();
+  });
 });
