@@ -137,13 +137,55 @@ describe('adoptionFit', (): void => {
     expect(adoptionFit(VERSION, unchartered)).toEqual({
       fits: false,
       mismatch: 'no-charter-evidence',
-      detail: 'the charter names no kanban system',
+      detail: 'the charter names no connected kanban system',
     });
     expect(adoptionFit(VERSION, { ...unchartered, surfaces: [LINEAR, SLACK] })).toMatchObject({
       fits: true,
     });
-    expect(adoptionFit(VERSION, { ...unchartered, charterClasses: ['kanban'] })).toMatchObject({
-      fits: true,
+    // A-m1: in real mode a class the charter names no longer stands in for the system's own
+    // evidence; only the surface the sandbox would run under can carry the charter.
+    expect(adoptionFit(VERSION, { ...unchartered, charterClasses: ['kanban'] })).toEqual({
+      fits: false,
+      mismatch: 'no-charter-evidence',
+      detail: 'the charter names no connected kanban system',
+    });
+  });
+
+  describe('the charter asked of the system, not the class (the wave 10 review A-m1)', (): void => {
+    const JIRA: AdopterSurface = {
+      slug: 'jira',
+      displayName: 'Jira',
+      class: 'kanban',
+      connected: true,
+      approvedTools: ['save_comment', 'update_issue'],
+      charterEvidence: false,
+    };
+
+    it('refuses a version whose tools only a system outside the charter allows, naming the chartered one', (): void => {
+      const adopter: Adopter = {
+        ...MATEO,
+        surfaces: [{ ...LINEAR, approvedTools: ['get_issue'] }, JIRA, SLACK],
+      };
+      expect(adoptionFit(VERSION, adopter)).toEqual({
+        fits: false,
+        mismatch: 'tool-not-approved',
+        detail: 'the approved tools of Linear do not include save_comment',
+      });
+    });
+
+    it('names the chartered system as the connection when another of its class allows the tools too', (): void => {
+      expect(adoptionFit(VERSION, { ...MATEO, surfaces: [JIRA, LINEAR, SLACK] })).toEqual({
+        fits: true,
+        connection: LINEAR,
+      });
+    });
+
+    it('refuses when no connected system of the class carries the charter, whatever classes the charter names', (): void => {
+      expect(adoptionFit(VERSION, { ...MATEO, surfaces: [JIRA, SLACK] })).toEqual({
+        fits: false,
+        mismatch: 'no-charter-evidence',
+        detail: 'the charter names no connected kanban system',
+      });
     });
   });
 

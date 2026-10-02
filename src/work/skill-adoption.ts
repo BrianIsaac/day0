@@ -36,7 +36,10 @@ export interface Adopter {
   readonly mode: SurfaceMode;
   /** The employee's surfaces; the mock office has none. */
   readonly surfaces: readonly AdopterSurface[];
-  /** The classes of the systems the employee's approved charter names (`namedSystems`). */
+  /**
+   * The classes of the systems the employee's approved charter names (`namedSystems`), asked in
+   * mock mode, where no surface carries evidence; in real mode each surface's own evidence is.
+   */
   readonly charterClasses: readonly string[];
 }
 
@@ -107,12 +110,14 @@ function toolEntries(version: AdoptableVersion): readonly VersionSurfaceTools[] 
  * 1. a connected surface of the version's class;
  * 2. for every surface the version names tools on, a connected surface of that class (or, with
  *    no class kept, of that slug) whose approved allowlist holds every one of those tools;
- * 3. charter evidence for the system: the approved charter names a system of the class, or the
- *    class's surface carries current charter evidence, so a skill is never adopted onto a system
- *    the manager did not put in this employee's charter.
+ * 3. charter evidence on the system itself: the connection is a surface of the class that carries
+ *    current charter evidence and whose approved allowlist holds the version's tools for the
+ *    class, so a skill is never adopted onto a system the manager did not put in this employee's
+ *    charter, even where the charter names another system of the same class (the wave 10 review
+ *    A-m1).
  *
  * In mock mode the mock office stands in for every connection and allowlist, as it does for an
- * approval, and only the charter is asked.
+ * approval, and only the charter's classes are asked.
  *
  * @param version - The version as the library keeps it.
  * @param adopter - The employee it would be adopted for.
@@ -148,18 +153,37 @@ export function adoptionFit(version: AdoptableVersion, adopter: Adopter): Adopti
       );
     }
   }
-  const chartered =
-    adopter.charterClasses.includes(surfaceClass) ||
-    ofClass.some((surface) => surface.charterEvidence);
-  if (!chartered) {
-    return mismatch('no-charter-evidence', `the charter names no ${surfaceClass} system`);
+  return charteredConnection(version, ofClass);
+}
+
+/**
+ * The surface of the version's class the sandbox would run under: one that carries current charter
+ * evidence and approves the version's tools for the class. A surface the charter does not name
+ * never stands in for one it does, though its allowlist holds every tool.
+ */
+function charteredConnection(
+  version: AdoptableVersion,
+  ofClass: readonly AdopterSurface[],
+): AdoptionFit {
+  const chartered = ofClass.filter((surface) => surface.charterEvidence);
+  const [first] = chartered;
+  if (first === undefined) {
+    return mismatch(
+      'no-charter-evidence',
+      `the charter names no connected ${version.surfaceClass} system`,
+    );
   }
-  const allowing = toolEntries(version).find((entry) => entry.surfaceClass === surfaceClass);
-  const connection =
-    allowing === undefined
-      ? ofClass[0]
-      : (ofClass.find((surface) => firstUnapproved(allowing, surface) === undefined) ?? ofClass[0]);
-  return { fits: true, connection };
+  const allowing = toolEntries(version).find(
+    (entry) => entry.surfaceClass === version.surfaceClass,
+  );
+  if (allowing === undefined) return { fits: true, connection: first };
+  const connection = chartered.find((surface) => firstUnapproved(allowing, surface) === undefined);
+  return connection !== undefined
+    ? { fits: true, connection }
+    : mismatch(
+        'tool-not-approved',
+        `the approved tools of ${first.displayName} do not include ${firstUnapproved(allowing, first)}`,
+      );
 }
 
 /**
