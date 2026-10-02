@@ -156,7 +156,12 @@ export interface AccessRequestCard extends SystemCard {
    * The employee's own app, once Day0 created it (Slack) or an administrator recorded it (Linear):
    * its client id, and the install link IT follows.
    */
-  readonly provisioning?: { readonly clientId?: string; readonly installUrl?: string };
+  readonly provisioning?: {
+    readonly clientId?: string;
+    readonly installUrl?: string;
+    /** When the employee's own app was installed: an ended card reinstalls it from its own row. */
+    readonly installedAt?: number;
+  };
 }
 
 /** The parts of an organisation connection the access request reads. */
@@ -198,7 +203,12 @@ export function accessRequestReason(
   if (connection.mode === 'shared') return undefined;
   switch (connection.kind) {
     case 'slack-configuration':
-      return card.provisioning?.installUrl === undefined ? undefined : 'install-needed';
+      // An app installed once is installed again from the card's own reinstall row, which an
+      // administrator approves in Slack: one way on, not two (11-AC's cockpit item 9).
+      return card.provisioning?.installUrl === undefined ||
+        card.provisioning.installedAt !== undefined
+        ? undefined
+        : 'install-needed';
     case 'oauth-app':
       return card.provisioning?.clientId === undefined ? 'install-needed' : undefined;
     case 'mcp-client':

@@ -225,6 +225,30 @@ describe('when a card asks IT for access instead of offering Connect (A24)', ():
     ).toBe('install-needed');
   });
 
+  it("asks nothing of an ended Slack card whose own app is installed: its reinstall is the card's own click (11-AC's cockpit item 9)", (): void => {
+    expect(
+      accessRequestReason(
+        {
+          slug: 'slack',
+          displayName: 'Slack',
+          endpoint: 'https://slack.com/api/',
+          managerApprovedAt: 1,
+          provisioning: {
+            installUrl: 'https://slack.com/oauth/v2/authorize?x=1',
+            installedAt: 2,
+          },
+        },
+        {
+          system: 'slack',
+          displayName: 'Slack',
+          kind: 'slack-configuration',
+          mode: 'per-employee',
+          scopes: ['chat:write'],
+        },
+      ),
+    ).toBeUndefined();
+  });
+
   it('never asks for a card not yet approved, one holding a credential, or one on no organisation system', (): void => {
     expect(accessRequestReason({ ...linearCard, managerApprovedAt: undefined }, null)).toBe(
       undefined,
