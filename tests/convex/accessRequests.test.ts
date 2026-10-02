@@ -205,3 +205,26 @@ describe('drafting and sending the access request', (): void => {
     );
   });
 });
+
+describe('a request after the system was connected and revoked again (11-AO review)', (): void => {
+  it('is a new request: drafted again with its own record line, and no longer shown as sent', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, surfaceId } = await seedMaya(harness);
+    const owner = harness.withIdentity(managerIdentity());
+    await owner.mutation(api.accessRequests.draft, { surfaceId });
+    await owner.mutation(api.accessRequests.recordSent, { surfaceId, via: 'copied' });
+    await connectLinear(harness);
+    const connection = await harness.query(internal.organisationConnections.activeFor, {
+      system: 'linear',
+    });
+    await harness.mutation(internal.organisationConnections.revokeFromSetup, {
+      organisationConnectionId: connection!._id,
+      reason: 'the app was removed',
+    });
+    const shown = await owner.query(api.accessRequests.forCard, { surfaceId });
+    expect(shown).not.toHaveProperty('copiedAt');
+    expect(shown).not.toHaveProperty('draftedAt');
+    await owner.mutation(api.accessRequests.draft, { surfaceId });
+    expect(await requestEvents(harness, agentId)).toHaveLength(2);
+  });
+});

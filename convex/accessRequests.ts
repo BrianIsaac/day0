@@ -8,9 +8,10 @@ import {
   type QueryCtx,
 } from './_generated/server';
 import { internal } from './_generated/api';
-import { appendEvent } from './eventLog';
+import { appendEvent, eventsOfType } from './eventLog';
 import { activeConnectionFor } from './organisationConnections';
 import { assertOwnsAgent } from './ownership';
+import { isEventOf } from '../src/events/contract';
 import { agentZone } from '../src/lib/zone';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { ACCESS_REQUEST_REASONS } from '../src/surfaces/access-identity';
@@ -40,6 +41,12 @@ const DM_SURFACE_READ_LIMIT = 50;
 
 /** Bound on an employee's grants read for the DM's authority. */
 const DM_GRANT_READ_LIMIT = 500;
+
+/** Bound on an employee's request lines read for the words a draft recorded, newest first. */
+const DRAFT_EVENT_READ_LIMIT = 50;
+
+/** Bound on one system's connections read for one landed since a draft, past any history. */
+const SYSTEM_CONNECTION_READ_LIMIT = 100;
 
 /** The refusal for a card that asks IT for nothing. */
 export const NO_ACCESS_REQUEST = 'This card needs no access request: it connects without IT.';
@@ -111,12 +118,12 @@ const accessRequestViewValidator = v.object({
 /** The access request as the card shows it. */
 export type AccessRequestView = Infer<typeof accessRequestViewValidator>;
 
-/** The view of a current request, with what the card records of the one drafted. */
+/** The view of a current request, with what the card records of it once drafted. */
 function viewOf(
   draft: AccessRequestDraft,
   recorded: Doc<'surfaces'>['accessRequest'],
 ): AccessRequestView {
-  const matches = recorded !== undefined && sameRequest(recorded, draft);
+  const matches = recorded !== undefined;
   return {
     system: draft.system,
     reason: draft.reason,
@@ -148,6 +155,27 @@ function sameRequest(
 }
 
 /**
+ * The request the card recorded, when it is still the one the card makes now: the same reason and
+ * scopes, and no connection of its system landed since it was drafted. After a connection landed
+ * (and perhaps was revoked again), the same reason is a new request for IT, not the old one.
+ */
+async function recordedRequest(
+  ctx: Pick<QueryCtx, 'db'>,
+  surface: Doc<'surfaces'>,
+  draft: AccessRequestDraft,
+): Promise<NonNullable<Doc<'surfaces'>['accessRequest']> | undefined> {
+  const recorded = surface.accessRequest;
+  if (recorded === undefined || !sameRequest(recorded, draft)) return undefined;
+  const connections = await ctx.db
+    .query('organisationConnections')
+    .withIndex('by_system_status', (index) => index.eq('system', draft.system))
+    .take(SYSTEM_CONNECTION_READ_LIMIT);
+  return connections.some((connection) => connection.createdAt > recorded.draftedAt)
+    ? undefined
+    : recorded;
+}
+
+/**
  * The access request a card makes, for the card to show instead of a credential field, or null
  * when it makes none. Public, owner-guarded (`assertOwnsAgent`); writes nothing.
  */
@@ -157,7 +185,8 @@ export const forCard = query({
   handler: async (ctx, args): Promise<AccessRequestView | null> => {
     const { surface, agent } = await ownedCard(ctx, args.surfaceId);
     const current = await currentRequest(ctx, surface, agent);
-    return current === null ? null : viewOf(current.draft, surface.accessRequest);
+    if (current === null) return null;
+    return viewOf(current.draft, await recordedRequest(ctx, surface, current.draft));
   },
 });
 
@@ -177,10 +206,8 @@ export const draft = mutation({
     const { surface, agent } = await ownedCard(ctx, args.surfaceId);
     const current = await currentRequest(ctx, surface, agent);
     if (current === null) throw new ConvexError(NO_ACCESS_REQUEST);
-    const recorded = surface.accessRequest;
-    if (recorded !== undefined && sameRequest(recorded, current.draft)) {
-      return viewOf(current.draft, recorded);
-    }
+    const recorded = await recordedRequest(ctx, surface, current.draft);
+    if (recorded !== undefined) return viewOf(current.draft, recorded);
     const now = Date.now();
     const accessRequest = {
       reason: current.draft.reason,
@@ -281,6 +308,29 @@ function slackEscaped(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+/**
+ * The words the draft at `draftedAt` recorded on the employee's record, which the export carries:
+ * the DM sends these rather than words built again, so the two never differ.
+ */
+async function draftedWords(
+  ctx: Pick<QueryCtx, 'db'>,
+  surface: Doc<'surfaces'>,
+  draftedAt: number,
+): Promise<string | undefined> {
+  const lines = await eventsOfType(ctx, surface.agentId, 'surface.access-requested')
+    .order('desc')
+    .take(DRAFT_EVENT_READ_LIMIT);
+  const line = lines.find(
+    (event) =>
+      event.createdAt === draftedAt &&
+      isEventOf(event, 'surface.access-requested') &&
+      event.payload.surfaceId === surface._id,
+  );
+  return line !== undefined && isEventOf(line, 'surface.access-requested')
+    ? line.payload.text
+    : undefined;
+}
+
 /** What the DM action sends through, once the request is claimed for it. */
 const claimedMessageValidator = v.union(
   v.object({ claimed: v.literal(false), reason: v.string() }),
@@ -295,9 +345,11 @@ const claimedMessageValidator = v.union(
 
 /**
  * Internal, for `managerChannelActions.sendAccessRequest`: claim the DM of the request drafted at
- * `draftedAt`. Refused in mock mode, when the card or its employee is gone, the request was
- * redrafted or already sent to the DM, the card no longer makes it, or the employee has no Slack
- * card that can carry the DM. Writes nothing; the record is written once Slack has the message.
+ * `draftedAt`, with the words that draft recorded. Refused in mock mode, when the card or its
+ * employee is gone, the request was redrafted or already sent to the DM, the card no longer makes
+ * it, or the employee has no Slack card that can carry the DM. Writes nothing; the record is
+ * written once Slack has the message. Its one caller is the action `draft` schedules once per
+ * draft, so two sends of one draft never overlap; a second call after the record is refused.
  */
 export const claimMessage = internalMutation({
   args: { surfaceId: v.id('surfaces'), draftedAt: v.number() },
@@ -317,9 +369,12 @@ export const claimMessage = internalMutation({
     const agent = await ctx.db.get(surface.agentId);
     if (agent === null) return { claimed: false, reason: 'the employee is gone' };
     const current = await currentRequest(ctx, surface, agent);
-    if (current === null || !sameRequest(recorded, current.draft)) {
+    if (current === null || (await recordedRequest(ctx, surface, current.draft)) === undefined) {
       return { claimed: false, reason: 'the card no longer makes this request' };
     }
+    const words = await draftedWords(ctx, surface, args.draftedAt);
+    if (words === undefined)
+      return { claimed: false, reason: 'the drafted request is not recorded' };
     const card = await managerDmCardOf(ctx, agent._id, Date.now());
     if (card?.credentialId === undefined || card.managerDmChannelId === undefined) {
       return { claimed: false, reason: 'the employee has no chat connection that can carry it' };
@@ -328,7 +383,7 @@ export const claimMessage = internalMutation({
       claimed: true,
       credentialId: card.credentialId,
       channel: card.managerDmChannelId,
-      text: slackEscaped(current.draft.text),
+      text: slackEscaped(words),
     };
   },
 });

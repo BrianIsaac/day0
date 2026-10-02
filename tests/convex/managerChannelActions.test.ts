@@ -1763,6 +1763,23 @@ describe('the access request in the manager’s DM (11-AO, A24)', (): void => {
     expect(calls.filter((call) => call.method === 'chat.postMessage')).toHaveLength(1);
   });
 
+  it('sends the words the draft recorded, even when the card changed before the DM went out', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const calls = slackDm();
+    const harness = convexTest(schema, allConvexModules());
+    const { linearId } = await seedMaya(harness);
+    const drafted = await harness
+      .withIdentity(managerIdentity())
+      .mutation(api.accessRequests.draft, { surfaceId: linearId });
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(linearId, { expiresAt: Date.UTC(2027, 0, 31, 12) });
+    });
+    await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
+    const posts = calls.filter((call) => call.method === 'chat.postMessage');
+    expect(posts.map((post) => asRead(post.text))).toEqual([drafted.text]);
+  });
+
   it('records no DM Slack refused, and sends none without the manager DM’s grant', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
