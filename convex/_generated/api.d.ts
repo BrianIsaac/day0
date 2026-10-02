@@ -54,6 +54,7 @@ import type * as sandboxLease from '../sandboxLease.js';
 import type * as seed from '../seed.js';
 import type * as skillActions from '../skillActions.js';
 import type * as skillAdoption from '../skillAdoption.js';
+import type * as skillAuthorPrompt from '../skillAuthorPrompt.js';
 import type * as skillControls from '../skillControls.js';
 import type * as skillVersions from '../skillVersions.js';
 import type * as skills from '../skills.js';
@@ -123,6 +124,7 @@ declare const fullApi: ApiFromModules<{
   seed: typeof seed;
   skillActions: typeof skillActions;
   skillAdoption: typeof skillAdoption;
+  skillAuthorPrompt: typeof skillAuthorPrompt;
   skillControls: typeof skillControls;
   skillVersions: typeof skillVersions;
   skills: typeof skills;
