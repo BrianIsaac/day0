@@ -17,6 +17,7 @@ interface Service {
   readonly volumes?: readonly string[];
   readonly command?: readonly string[];
   readonly depends_on?: Record<string, { readonly condition: string }>;
+  readonly networks?: readonly string[] | Record<string, unknown>;
 }
 
 const COMPOSE = parse(readFileSync(new URL('../docker-compose.yml', import.meta.url), 'utf8')) as {
@@ -127,5 +128,76 @@ describe('docker-compose.yml redactor', (): void => {
         'PIP_INDEX_URL=${PIP_INDEX_URL:-https://pypi.org/simple}',
       ]),
     );
+  });
+});
+
+describe("the token store's Nango component (11-AT)", (): void => {
+  interface NangoService extends Service {
+    readonly profiles?: readonly string[];
+    readonly image?: string;
+    readonly expose?: readonly string[];
+    readonly entrypoint?: readonly string[];
+    readonly healthcheck?: { readonly test?: readonly string[] };
+  }
+  const services = COMPOSE.services as Record<string, NangoService>;
+  const networks = (COMPOSE as unknown as { networks?: Record<string, { internal?: boolean }> })
+    .networks;
+  const NANGO = ['nango-server', 'nango-db', 'nango-redis'];
+
+  /** The networks a service joins, written as a list or as a map with aliases. */
+  function networkNames(service: Service): string[] {
+    const joined = service.networks;
+    if (joined === undefined) return [];
+    return Array.isArray(joined) ? [...joined] : Object.keys(joined);
+  }
+
+  it('runs under its own profile, every image pinned to a digest, nothing published', (): void => {
+    for (const name of NANGO) {
+      const service = services[name];
+      expect(service?.profiles).toEqual(['token-store']);
+      expect(service?.image).toMatch(/^[a-z0-9./-]+:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}$/);
+      expect(service?.ports).toBeUndefined();
+    }
+    expect(services['nango-server'].image).toBe(
+      'nangohq/nango-server:hosted-0.71.11@sha256:c41e96bcbaceb2cd6b6643d9cfcead759c46678ad443f88dc34bdab2653d9984',
+    );
+  });
+
+  it('lets the backend reach the Nango server alone, and only the server reach its database, its cache and the outside', (): void => {
+    expect(networks?.nango).toEqual({ internal: true });
+    expect(networks?.['nango-store']).toEqual({ internal: true });
+    expect(services['nango-db'].networks).toEqual(['nango-store']);
+    expect(services['nango-redis'].networks).toEqual(['nango-store']);
+    expect(services['nango-server'].networks).toEqual(['nango', 'nango-store', 'nango-egress']);
+    expect(networkNames(services.backend)).toEqual(['default', 'nango']);
+    const members = (network: string): string[] =>
+      Object.entries(services)
+        .filter(([, service]) => networkNames(service).includes(network))
+        .map(([name]) => name)
+        .sort();
+    expect(members('nango')).toEqual(['backend', 'nango-server']);
+    expect(members('nango-store')).toEqual(['nango-db', 'nango-redis', 'nango-server']);
+    expect(members('nango-egress')).toEqual(['nango-server']);
+  });
+
+  it('passes the setup-minted keys and refuses to start Nango without them', (): void => {
+    const server = services['nango-server'];
+    expect(envValue(server, 'NANGO_ENCRYPTION_KEY')).toBe('${DAY0_NANGO_ENCRYPTION_KEY:-}');
+    expect(envValue(server, 'NANGO_SECRET_KEY_PROD')).toBe('${DAY0_NANGO_SECRET_KEY:-}');
+    expect(envValue(server, 'FLAG_SERVE_CONNECT_UI')).toBe('false');
+    expect(envValue(server, 'NANGO_LOGS_ENABLED')).toBe('false');
+    const guard = (server.entrypoint ?? []).join(' ');
+    expect(guard).toContain('test -n "$$NANGO_ENCRYPTION_KEY"');
+    expect(guard).toContain('test -n "$$NANGO_SECRET_KEY_PROD"');
+    expect(envValue(services['nango-db'], 'POSTGRES_PASSWORD')).toBe('${DAY0_NANGO_DB_PASSWORD:-}');
+    expect(server.depends_on?.['nango-db']?.condition).toBe('service_healthy');
+    expect(server.healthcheck?.test?.join(' ')).toContain('/health');
+  });
+
+  it('keeps the database in a named volume of its own', (): void => {
+    expect(namedMounts(services['nango-db'])).toEqual({
+      nango_db: '/var/lib/postgresql/data',
+    });
+    expect(Object.keys(COMPOSE.volumes)).toContain('nango_db');
   });
 });

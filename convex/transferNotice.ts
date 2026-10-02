@@ -31,19 +31,45 @@ const NOTICE_SURFACE_READ_LIMIT = 50;
 /** Bound on an employee's grants read for the notice's authority, past any one employee's. */
 const NOTICE_GRANT_READ_LIMIT = 500;
 
+/** Why no notice was sent: the employee has no Slack card at all (m10). */
+export const NOTICE_WITHOUT_SLACK = 'the employee has no Slack card to send it from';
+
+/** Why no notice was sent: the Slack card's credential is not landed, or its access has ended. */
+export const NOTICE_CARD_NOT_CONNECTED = "the employee's Slack card is not connected";
+
+/** Why no notice was sent: the card's approved tools lack a method the notice calls. */
+export const NOTICE_CARD_NOT_APPROVED =
+  "the employee's Slack card is not approved to look up an address and send a direct message";
+
+/** Why no notice was sent: the manager's authority does not cover reading Slack. */
+export const NOTICE_WITHOUT_READ =
+  'the employee may not read Slack, so it cannot find the named manager there';
+
 /**
- * The surface the D7 notice goes through, if the employee has one: a connected
- * Slack card on the documented API, its credential landed, its access not
- * ended, whose allowlist names every method the notice calls, under the
- * manager's standing authority to read and write on it. Slack is the one
- * provider whose card resolves an address to a person (`users.lookupByEmail`),
- * so another chat surface carries no notice.
+ * Why no notice was sent: the manager's authority does not cover a message to someone else
+ * without an approval (no write grant, autonomous actions off or the write scope revoked); the
+ * notice is never held for one. The real-Linear walk's Juno (m10).
  */
-export async function noticeSurfaceOf(
+export const NOTICE_WITHOUT_WRITE = 'the employee may not message anyone in Slack without approval';
+
+/** The card the notice goes through, or why none can carry it. */
+export type NoticeCarrier =
+  | { readonly kind: 'carried'; readonly surface: Doc<'surfaces'> }
+  | { readonly kind: 'withheld'; readonly reason: string };
+
+/**
+ * The surface the D7 notice goes through, or why the employee has none: a connected Slack card on
+ * the documented API, its credential landed, its access not ended, whose allowlist names every
+ * method the notice calls, under the manager's standing authority to read and write on it. Slack
+ * is the one provider whose card resolves an address to a person (`users.lookupByEmail`), so
+ * another chat surface carries no notice. The reason is the first of those the employee's Slack
+ * cards all fail, in that order.
+ */
+export async function noticeCarrierOf(
   ctx: QueryCtx,
   agent: Doc<'agents'>,
   now: number,
-): Promise<Doc<'surfaces'> | undefined> {
+): Promise<NoticeCarrier> {
   const [surfaces, grants] = await Promise.all([
     ctx.db
       .query('surfaces')
@@ -58,35 +84,62 @@ export async function noticeSurfaceOf(
   const revoked = new Set(
     grants.filter((grant) => grant.revokedAt !== undefined).map((grant) => grant.scope),
   );
-  return surfaces.find(
+  const slack = surfaces.filter(
     (surface) =>
-      noticeAuthorised(surface.slug, active, revoked, autonomousActionsOn(agent)) &&
       surface.class === 'chat' &&
+      surface.path === 'documented-api' &&
+      isSlackApiEndpoint(surface.endpoint),
+  );
+  if (slack.length === 0) return withheld(NOTICE_WITHOUT_SLACK);
+  const connected = slack.filter(
+    (surface) =>
       surface.credentialLanded &&
       surface.credentialId !== undefined &&
-      surface.path === 'documented-api' &&
-      isSlackApiEndpoint(surface.endpoint) &&
-      NOTICE_SLACK_METHODS.every((method) => surface.toolAllowlist?.includes(method)) &&
       !accessEnded(surface, now) &&
       surfaceRefusal(toSurfaceRecord(surface), now) === undefined,
   );
+  if (connected.length === 0) return withheld(NOTICE_CARD_NOT_CONNECTED);
+  const approved = connected.filter((surface) =>
+    NOTICE_SLACK_METHODS.every((method) => surface.toolAllowlist?.includes(method)),
+  );
+  if (approved.length === 0) return withheld(NOTICE_CARD_NOT_APPROVED);
+  const readable = approved.filter((surface) => active.has(`${surface.slug}:read`));
+  if (readable.length === 0) return withheld(NOTICE_WITHOUT_READ);
+  const surface = readable.find((card) =>
+    mayWriteUnasked(card.slug, active, revoked, autonomousActionsOn(agent)),
+  );
+  return surface === undefined ? withheld(NOTICE_WITHOUT_WRITE) : { kind: 'carried', surface };
+}
+
+/** No card carries the notice, for this reason. */
+function withheld(reason: string): NoticeCarrier {
+  return { kind: 'withheld', reason };
+}
+
+/** The surface the D7 notice goes through, if the employee has one (`noticeCarrierOf`). */
+export async function noticeSurfaceOf(
+  ctx: QueryCtx,
+  agent: Doc<'agents'>,
+  now: number,
+): Promise<Doc<'surfaces'> | undefined> {
+  const carrier = await noticeCarrierOf(ctx, agent, now);
+  return carrier.kind === 'carried' ? carrier.surface : undefined;
 }
 
 /**
- * Whether the manager's standing authority covers the notice on a card, by
- * the gate's own rule for each call (`grantRefusal`, `src/surfaces/policy.ts`):
- * the address lookup is a read, which needs its read scope whatever else is
- * true; the DM to a person who is not the manager is a write, which needs the
- * write scope, or autonomous actions with that scope never revoked since.
+ * Whether the manager's standing authority covers the notice's DM on a card, by the gate's own
+ * rule (`grantRefusal`, `src/surfaces/policy.ts`): a DM to a person who is not the manager is a
+ * write, which needs the write scope, or autonomous actions with that scope never revoked since.
+ * The address lookup is a read, which needs the read scope whatever else is true; the caller
+ * asks that first.
  */
-function noticeAuthorised(
+function mayWriteUnasked(
   slug: string,
   active: ReadonlySet<string>,
   revoked: ReadonlySet<string>,
   autonomous: boolean,
 ): boolean {
   const write = `${slug}:write`;
-  if (!active.has(`${slug}:read`)) return false;
   return active.has(write) || (autonomous && !revoked.has(write));
 }
 
@@ -195,13 +248,13 @@ export const claimTransferNotice = internalMutation({
 });
 
 /**
- * Append the notice's outcome to the employee's record, once per claimed notice (U2-m8). An
- * employee retired since has no record left, and an event written for it would be a row no
- * reset reaches (U2-m6), so the request alone says it.
+ * Append the notice's outcome to the employee's record, once per claimed notice (U2-m8), or once
+ * at the ask when no card could carry it (m10). An employee retired since has no record left, and
+ * an event written for it would be a row no reset reaches (U2-m6), so the request alone says it.
  */
-async function recordNoticeOutcome(
+export async function recordNoticeOutcome(
   ctx: MutationCtx,
-  transfer: Doc<'managerTransfers'>,
+  transfer: Pick<Doc<'managerTransfers'>, '_id' | 'agentId' | 'fromAddress' | 'toAddress'>,
   outcome: { readonly delivered: true } | { readonly delivered: false; readonly reason: string },
 ): Promise<void> {
   if ((await ctx.db.get(transfer.agentId)) === null) return;

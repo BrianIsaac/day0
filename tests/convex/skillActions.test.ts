@@ -3,6 +3,7 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
+import { verifyAuthoredSkill } from '../../convex/skillSandboxCheck';
 import {
   AUTHOR_SYSTEM,
   AUTHOR_SYSTEM_REAL,
@@ -10,8 +11,7 @@ import {
   authorSchemaFor,
   authorSystemFor,
   buildAuthorPrompt,
-  verifyAuthoredSkill,
-} from '../../convex/skillActions';
+} from '../../convex/skillAuthorPrompt';
 import { harnessedSmokeTest, smokeHarnessContract } from '../../src/work/smoke-harness';
 import type { SkillSandboxRun } from '../../src/lib/skill-sandbox';
 import type { SurfaceRecord } from '../../src/surfaces/types';

@@ -20,6 +20,7 @@ import {
   openOwnedCredential,
 } from '../../src/lib/credential-crypto';
 import { credentialSourceRef } from '../../src/docs/credential-ref';
+import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
 import { FAKE_BOT_TOKEN, startFakeSlack } from '../fake-slack/spawn';
 import { temporaryDirectories } from '../setup/temporary-directories';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
@@ -1135,5 +1136,309 @@ describe('the sync generation fence on the credential store (step 14)', (): void
       }),
     ).resolves.toBe(credentialId);
     expect((await rows(harness))[0]?.status).toBeUndefined();
+  });
+});
+
+describe("the organisation's rows and the owner-keyed reads (11-AK, AC12)", (): void => {
+  it('never returns an organisation row from an owner-keyed read: the summary, nor the exact-value list', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const sealed = { ciphertext: 'sealed', iv: 'iv', createdAt: 1 } as const;
+    const { ownerRow } = await harness.run(async (ctx) => {
+      const ownerRow = await ctx.db.insert('credentials', {
+        ...sealed,
+        userId: 'owner',
+        kind: 'value',
+        label: 'Linear access',
+        source: 'entered',
+      });
+      await ctx.db.insert('credentials', {
+        ...sealed,
+        userId: ORGANISATION_OWNER_KEY,
+        holder: ORGANISATION_HOLDER,
+        kind: 'value',
+        label: 'Slack configuration refresh token',
+        source: 'entered',
+      });
+      await ctx.db.insert('credentials', {
+        ...sealed,
+        userId: ORGANISATION_OWNER_KEY,
+        holder: ORGANISATION_HOLDER,
+        kind: 'oauth',
+        label: 'Linear app actor token',
+        source: 'oauth',
+        issuedBy: { system: 'linear', grant: 'client-credentials' },
+      });
+      return { ownerRow };
+    });
+
+    const summary = await harness
+      .withIdentity(managerIdentity())
+      .query(api.credentials.summaryForOwner, {});
+    expect(summary.map((row) => row._id)).toEqual([ownerRow]);
+    const values = await harness.query(internal.credentials.activeValuesForOwner, {
+      userId: 'owner',
+    });
+    expect(values.rows.map((row) => row._id)).toEqual([ownerRow]);
+    // A manager signed in under another key reads none of them either.
+    await expect(
+      harness.withIdentity(managerIdentity('stranger')).query(api.credentials.summaryForOwner, {}),
+    ).resolves.toEqual([]);
+  });
+});
+
+describe('the organisation holder through the store (11-AO, AC12)', (): void => {
+  const ORGANISATION_SECRET = 'xoxe-1234567890-abcdefghij';
+
+  it('stores a value the organisation holds under the reserved key, sealed for it, and opens it', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const credentialId = await harness.action(internal.credentials.store, {
+      userId: ORGANISATION_OWNER_KEY,
+      holder: ORGANISATION_HOLDER,
+      kind: 'value',
+      label: 'Slack configuration refresh token',
+      plaintext: ORGANISATION_SECRET,
+      source: 'entered',
+    });
+    const [row] = await rows(harness);
+    expect(row).toMatchObject({
+      _id: credentialId,
+      userId: ORGANISATION_OWNER_KEY,
+      holder: ORGANISATION_HOLDER,
+      keyId: credentialKeyId(process.env.DAY0_CREDENTIAL_KEY ?? ''),
+    });
+    expect(JSON.stringify(row)).not.toContain(ORGANISATION_SECRET);
+    await expect(harness.action(internal.credentials.decrypt, { credentialId })).resolves.toBe(
+      ORGANISATION_SECRET,
+    );
+  });
+
+  it('refuses a holder and a key that disagree, and a page-derived organisation value, storing nothing', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await seedSource(harness, ORGANISATION_OWNER_KEY);
+    const base = { kind: 'value' as const, label: 'secret', plaintext: ORGANISATION_SECRET };
+    await expect(
+      harness.action(internal.credentials.store, {
+        ...base,
+        userId: 'owner',
+        holder: ORGANISATION_HOLDER,
+        source: 'entered',
+      }),
+    ).rejects.toThrow(/organisation/);
+    await expect(
+      harness.action(internal.credentials.store, {
+        ...base,
+        userId: ORGANISATION_OWNER_KEY,
+        source: 'entered',
+      }),
+    ).rejects.toThrow(/organisation/);
+    await expect(
+      harness.action(internal.credentials.store, {
+        ...base,
+        userId: ORGANISATION_OWNER_KEY,
+        holder: ORGANISATION_HOLDER,
+        source: { sourceId, ref: 'slack-config' },
+      }),
+    ).rejects.toThrow(/organisation/);
+    await expect(
+      harness.mutation(internal.credentials.persistEncrypted, {
+        userId: ORGANISATION_OWNER_KEY,
+        kind: 'value',
+        label: 'secret',
+        ciphertext: 'sealed',
+        iv: 'iv',
+        keyId: 'key',
+        source: 'entered',
+        rotated: false,
+      }),
+    ).rejects.toThrow(/organisation/);
+    expect(await rows(harness)).toEqual([]);
+  });
+
+  it('counts only the owners’ credentials for the setup diagnostic, never the organisation’s', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await harness.action(internal.credentials.store, {
+      userId: ORGANISATION_OWNER_KEY,
+      holder: ORGANISATION_HOLDER,
+      kind: 'value',
+      label: 'Linear client secret',
+      plaintext: ORGANISATION_SECRET,
+      source: 'entered',
+    });
+    await expect(harness.query(internal.credentials.countStored, {})).resolves.toBe(0);
+    await harness.action(internal.credentials.store, {
+      userId: 'owner',
+      kind: 'value',
+      label: 'Linear access',
+      plaintext: SECRET,
+      source: 'entered',
+    });
+    await expect(harness.query(internal.credentials.countStored, {})).resolves.toBe(1);
+  });
+});
+
+describe('a credential Day0 obtained, held for its revocation at the vendor (11-AR, F19)', (): void => {
+  const BOT_TOKEN = ['xoxb', '1234567890', 'abcdefghij'].join('-');
+
+  /** Store a bot token as the install path does, and name how Day0 obtained it. */
+  async function issuedToken(harness: TestConvex<typeof schema>): Promise<Id<'credentials'>> {
+    const credentialId = await harness.action(internal.credentials.store, {
+      userId: 'owner',
+      kind: 'oauth',
+      label: 'Slack bot token',
+      plaintext: BOT_TOKEN,
+      source: 'oauth',
+      appId: 'A0W11AR',
+    });
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(credentialId, {
+        issuedBy: { system: 'slack', grant: 'oauth-install', appId: 'A0W11AR' },
+      });
+    });
+    return credentialId;
+  }
+
+  it('is unusable at once and keeps its ciphertext while the vendor call is pending', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const credentialId = await issuedToken(harness);
+    await harness.run(async (ctx) => {
+      const row = await ctx.db.get(credentialId);
+      await credentialsModule.holdForSourceRevocation(ctx, row!, 'disconnect', 1_000);
+    });
+    const [held] = await rows(harness);
+    expect(held).toMatchObject({
+      revokedAt: 1_000,
+      sourceRevocation: { state: 'pending', attempts: 0, at: 1_000, end: 'disconnect' },
+    });
+    expect(held.ciphertext).toEqual(expect.any(String));
+    await expect(harness.action(internal.credentials.decrypt, { credentialId })).rejects.toThrow(
+      'Credential is unavailable.',
+    );
+    await expect(
+      harness.action(internal.credentials.decryptForRevocation, { credentialId }),
+    ).resolves.toBe(BOT_TOKEN);
+  });
+
+  it('keeps a pending row’s ciphertext through a purge, and deletes it once the revocation is final', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const credentialId = await issuedToken(harness);
+    await harness.run(async (ctx) => {
+      await credentialsModule.holdForSourceRevocation(
+        ctx,
+        (await ctx.db.get(credentialId))!,
+        'retire',
+        1_000,
+      );
+      await credentialsModule.purgeCredential(ctx, (await ctx.db.get(credentialId))!, 2_000);
+    });
+    expect((await rows(harness))[0].ciphertext).toEqual(expect.any(String));
+    await harness.run(async (ctx) => {
+      await credentialsModule.finishSourceRevocation(ctx, (await ctx.db.get(credentialId))!, {
+        state: 'done',
+        now: 3_000,
+      });
+    });
+    const [finished] = await rows(harness);
+    expect(finished).toMatchObject({
+      revokedAt: 1_000,
+      sourceRevocation: { state: 'done', attempts: 0, at: 3_000, end: 'retire' },
+    });
+    expect(finished.ciphertext).toBeUndefined();
+    expect(finished.iv).toBeUndefined();
+    await expect(
+      harness.action(internal.credentials.decryptForRevocation, { credentialId }),
+    ).rejects.toThrow('Credential is not awaiting its revocation at the vendor.');
+  });
+
+  it('opens a revoked MCP client connection’s secret only for the end its own revoke made (join 8)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const secretId = await harness.action(internal.credentials.store, {
+      userId: ORGANISATION_OWNER_KEY,
+      holder: ORGANISATION_HOLDER,
+      kind: 'value',
+      label: 'Docs MCP client secret',
+      plaintext: SECRET,
+      source: 'entered',
+    });
+    const tokenId = await harness.run(async (ctx) => {
+      const connectionId = await ctx.db.insert('organisationConnections', {
+        system: 'mcp:auth.acme.test',
+        displayName: 'Docs MCP',
+        kind: 'mcp-client',
+        mode: 'per-employee',
+        clientId: 'day0-mcp',
+        scopes: [],
+        secretCredentialId: secretId,
+        registeredBy: { via: 'setup-cli', at: 1 },
+        status: 'revoked',
+        revokedAt: 1_000,
+        createdAt: 1,
+      });
+      await ctx.db.patch(secretId, { revokedAt: 1_000 });
+      return await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'oauth',
+        label: 'Docs access token',
+        ciphertext: 'sealed',
+        iv: 'iv',
+        source: 'oauth',
+        createdAt: 1,
+        issuedBy: {
+          system: 'mcp:auth.acme.test',
+          grant: 'authorisation-code',
+          organisationConnectionId: connectionId,
+        },
+        revokedAt: 1_000,
+        sourceRevocation: { state: 'pending', attempts: 0, end: 'organisation-revoked' },
+      });
+    });
+    await expect(
+      harness.action(internal.credentials.decryptConnectionSecretForRevocation, {
+        credentialId: tokenId,
+      }),
+    ).resolves.toBe(SECRET);
+    await expect(
+      harness.action(internal.credentials.decrypt, { credentialId: secretId }),
+    ).rejects.toThrow('Credential is unavailable.');
+    for (const sourceRevocation of [
+      { state: 'pending' as const, attempts: 0, end: 'disconnect' as const },
+      { state: 'done' as const, attempts: 1, end: 'organisation-revoked' as const },
+    ]) {
+      await harness.run(async (ctx) => await ctx.db.patch(tokenId, { sourceRevocation }));
+      await expect(
+        harness.action(internal.credentials.decryptConnectionSecretForRevocation, {
+          credentialId: tokenId,
+        }),
+      ).rejects.toThrow("The connection's client secret is not admitted for this revocation.");
+    }
+  });
+
+  it('never opens a pasted key for a vendor call, even one marked pending', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const credentialId = await harness.action(internal.credentials.store, {
+      userId: 'owner',
+      kind: 'value',
+      label: 'Linear access',
+      plaintext: SECRET,
+      source: 'entered',
+    });
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(credentialId, {
+        revokedAt: 1_000,
+        sourceRevocation: { state: 'pending', attempts: 0, at: 1_000, end: 'disconnect' },
+      });
+    });
+    await expect(
+      harness.action(internal.credentials.decryptForRevocation, { credentialId }),
+    ).rejects.toThrow('Credential is not awaiting its revocation at the vendor.');
+    await harness.run(async (ctx) => {
+      await expect(
+        credentialsModule.holdForSourceRevocation(
+          ctx,
+          (await ctx.db.get(credentialId))!,
+          'disconnect',
+          1_000,
+        ),
+      ).rejects.toThrow('A pasted key is never revoked at the vendor.');
+    });
   });
 });

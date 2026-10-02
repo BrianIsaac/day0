@@ -22,6 +22,8 @@ import {
   EMPLOYEE_NOT_YOURS,
   isEmployeeNotYours,
 } from '../../src/agent/employee-access';
+import { NOT_AN_ADMINISTRATOR } from '../../src/lib/administrators';
+import { ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
 import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS, localIssuerIdentity, managerIdentity } from './fakes/manager-identity';
 
@@ -581,6 +583,141 @@ describe('the domain rule in getCaller (S2)', (): void => {
     await expect(
       callerKeyOf(managerIdentity('user_1', { issuer: CLERK_ISSUER, email: 'a@elsewhere.test' })),
     ).resolves.toBe('user_1');
+  });
+});
+
+describe('the reserved organisation key in getCaller (11-AO)', (): void => {
+  it('answers a token whose bare subject is the reserved key as no caller at all', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const caller = await harness
+      .withIdentity(managerIdentity(ORGANISATION_OWNER_KEY, { issuer: CLERK_ISSUER }))
+      .run(async (ctx) => {
+        const { getCaller } = await import('../../convex/ownership');
+        return await getCaller(ctx);
+      });
+    expect(caller).toBeNull();
+    await expect(
+      harness
+        .withIdentity(managerIdentity(ORGANISATION_OWNER_KEY, { issuer: CLERK_ISSUER }))
+        .mutation(api.agents.deploy, {}),
+    ).rejects.toThrow();
+  });
+});
+
+describe('a verified address under the generic sign-in preset (the wave 10 review, decision 7 (b))', (): void => {
+  /** The owner key getCaller answers a caller with, or null when it refuses them. */
+  async function callerKeyOf(who: Partial<UserIdentity>): Promise<string | null> {
+    const harness = convexTest(schema, allConvexModules());
+    return await harness.withIdentity(who).run(async (ctx) => {
+      const { getCaller } = await import('../../convex/ownership');
+      return (await getCaller(ctx))?.ownerKey ?? null;
+    });
+  }
+
+  it('refuses an allowed-domain address a generic issuer says is unverified', async (): Promise<void> => {
+    vi.stubEnv('DAY0_OIDC_ISSUER', CUSTOMER_ISSUER);
+    vi.stubEnv('DAY0_OIDC_ALLOWED_DOMAINS', 'acme.test');
+    const unverified = managerIdentity('mallory', {
+      issuer: CUSTOMER_ISSUER,
+      email: 'mallory@acme.test',
+      emailVerified: false,
+    });
+    await expect(callerKeyOf(unverified)).resolves.toBeNull();
+    await expect(callerKeyOf({ ...unverified, emailVerified: undefined })).resolves.toBeNull();
+    await expect(
+      callerKeyOf({ ...unverified, emailVerified: undefined, email_verified: 'true' }),
+    ).resolves.toBeNull();
+  });
+
+  it('admits a generic issuer’s verified address, and an unclaimed one only where the deployment trusts its addresses (D3)', async (): Promise<void> => {
+    vi.stubEnv('DAY0_OIDC_ISSUER', CUSTOMER_ISSUER);
+    vi.stubEnv('DAY0_OIDC_ALLOWED_DOMAINS', 'acme.test');
+    const priya = managerIdentity('priya', { issuer: CUSTOMER_ISSUER, email: 'priya@acme.test' });
+    await expect(callerKeyOf(priya)).resolves.toBe(`${CUSTOMER_ISSUER}|priya`);
+    const unclaimed = { ...priya, emailVerified: undefined };
+    await expect(callerKeyOf(unclaimed)).resolves.toBeNull();
+    vi.stubEnv('DAY0_OIDC_EMAIL_TRUSTED', 'true');
+    await expect(callerKeyOf(unclaimed)).resolves.toBe(`${CUSTOMER_ISSUER}|priya`);
+  });
+
+  it('leaves Entra, Okta and Google, which control their addresses, to the domain rule alone', async (): Promise<void> => {
+    vi.stubEnv('DAY0_OIDC_ALLOWED_DOMAINS', 'acme.test');
+    const entra = 'https://login.microsoftonline.com/3f2504e0-4f89-11d3-9a0c-0305e82c3301/v2.0';
+    for (const issuer of [entra, 'https://acme.okta.com']) {
+      vi.stubEnv('DAY0_OIDC_ISSUER', issuer);
+      await expect(
+        callerKeyOf(
+          managerIdentity('ana', { issuer, email: 'ana@acme.test', emailVerified: false }),
+        ),
+      ).resolves.toBe(`${issuer}|ana`);
+    }
+    vi.stubEnv('DAY0_OIDC_ISSUER', 'https://accounts.google.com');
+    await expect(
+      callerKeyOf({
+        ...managerIdentity('g2', {
+          issuer: 'https://accounts.google.com',
+          email: 'ana@acme.test',
+          emailVerified: false,
+        }),
+        hd: 'acme.test',
+      }),
+    ).resolves.toBe('https://accounts.google.com|g2');
+  });
+});
+
+describe('assertAdministrator (B8)', (): void => {
+  /** What the guard answers a caller: the administrator's address, or the refusal's words. */
+  async function guardOf(who: Partial<UserIdentity> | undefined): Promise<string> {
+    const harness = convexTest(schema, allConvexModules());
+    const as = who === undefined ? harness : harness.withIdentity(who);
+    return await as.run(async (ctx) => {
+      const { assertAdministrator } = await import('../../convex/ownership');
+      try {
+        return (await assertAdministrator(ctx)).address;
+      } catch (error) {
+        return error instanceof ConvexError ? `refused: ${String(error.data)}` : 'threw';
+      }
+    });
+  }
+
+  it('admits a caller whose verified address the deployment names, however it is spelt', async (): Promise<void> => {
+    vi.stubEnv('DAY0_ADMINISTRATORS', 'Ines@Acme.test, ops@acme.test');
+    await expect(
+      guardOf(managerIdentity('ines', { issuer: CLERK_ISSUER, email: 'ines@ACME.test' })),
+    ).resolves.toBe('ines@acme.test');
+  });
+
+  it('refuses a manager the list does not name, in words a page can show', async (): Promise<void> => {
+    vi.stubEnv('DAY0_ADMINISTRATORS', 'ines@acme.test');
+    await expect(
+      guardOf(managerIdentity('sam', { issuer: CLERK_ISSUER, email: 'sam@acme.test' })),
+    ).resolves.toBe(`refused: ${NOT_AN_ADMINISTRATOR}`);
+  });
+
+  it('refuses a named address the token does not assert verified', async (): Promise<void> => {
+    vi.stubEnv('DAY0_ADMINISTRATORS', 'ines@acme.test');
+    await expect(
+      guardOf(
+        managerIdentity('ines', {
+          issuer: CLERK_ISSUER,
+          email: 'ines@acme.test',
+          emailVerified: false,
+        }),
+      ),
+    ).resolves.toBe(`refused: ${NOT_AN_ADMINISTRATOR}`);
+  });
+
+  it('names nobody while the deployment names no administrator, or names them unreadably', async (): Promise<void> => {
+    const ines = managerIdentity('ines', { issuer: CLERK_ISSUER, email: 'ines@acme.test' });
+    await expect(guardOf(ines)).resolves.toBe(`refused: ${NOT_AN_ADMINISTRATOR}`);
+    vi.stubEnv('DAY0_ADMINISTRATORS', 'ines@acme.test, it-team');
+    await expect(guardOf(ines)).resolves.toBe(`refused: ${NOT_AN_ADMINISTRATOR}`);
+  });
+
+  it('refuses an anonymous caller as not authenticated', async (): Promise<void> => {
+    vi.stubEnv('DAY0_ADMINISTRATORS', 'ines@acme.test');
+    await expect(guardOf(undefined)).resolves.toMatch(/^refused: /);
+    await expect(guardOf(undefined)).resolves.not.toBe(`refused: ${NOT_AN_ADMINISTRATOR}`);
   });
 });
 

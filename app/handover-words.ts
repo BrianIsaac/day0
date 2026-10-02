@@ -83,6 +83,13 @@ export const HANDOVER_NOTE_LABEL = 'A note for them (optional)';
 /** What the note is for. */
 export const HANDOVER_NOTE_HINT = 'What they should know first. They read it before they decide.';
 
+/** A card a handover keeps for re-approval (A25): its system, and whom it keeps acting as. */
+export interface ReapprovedSystem {
+  readonly system: string;
+  /** Whom the card keeps acting as, in words: "Leo's own app". */
+  readonly identity: string;
+}
+
 /** What the hand-over dialog's account of the consequences is headed. */
 export const WHAT_HAPPENS = 'What happens';
 
@@ -92,6 +99,8 @@ export interface HandOverLinesInput {
   readonly mode: 'mock' | 'real';
   /** The systems whose connection the handover cuts, by the name the Surfaces tab gives each. */
   readonly cutSystems: readonly string[];
+  /** The systems whose card keeps the employee's own identity and goes back for re-approval. */
+  readonly reapproved: readonly ReapprovedSystem[];
   /** When the request would expire if it were asked now. */
   readonly expiresAt: number;
   /** The viewer's zone. */
@@ -111,6 +120,10 @@ export function handOverLines(input: HandOverLinesInput): string[] {
           ...input.cutSystems.map(
             (system) =>
               `Its connection to ${system} is cut. They approve it and connect it again with their own credentials.`,
+          ),
+          ...input.reapproved.map(
+            ({ system, identity }) =>
+              `Its connection to ${system} stays. Re-approve: keeps acting as ${identity}; they approve it with one click and nothing to paste.`,
           ),
           `Credentials only ${name} uses are revoked. Ones another employee or your documentation uses stay yours.`,
         ];
@@ -430,18 +443,49 @@ export function takesOnLines(preview: Pick<HandoverPreview, 'takesOn'>): string[
 }
 
 /**
+ * Whom a card kept for re-approval keeps acting as, by its kind (11-AC's cockpit item 6): the
+ * employee's own app by the name the system shows, or the app the employees share.
+ *
+ * @param surface - The kept card's system, identity and kind.
+ * @param employee - The employee's name.
+ */
+function keptIdentityWords(
+  surface: HandoverPreview['leavesBehind']['reapprove'][number],
+  employee: string,
+): string {
+  switch (surface.kind) {
+    case 'own-app':
+      return `${employee}'s own app, named “${surface.identity}” in ${surface.displayName}`;
+    case 'shared-app':
+      return 'the Day0 app your employees share';
+    case 'delegated':
+    case 'shared-key':
+    case 'browser-seat':
+      return surface.identity;
+    default: {
+      const unknown: never = surface.kind;
+      throw new Error(`unhandled identity kind ${String(unknown)}`);
+    }
+  }
+}
+
+/**
  * What does not come with the employee, line by line (plan 7.3).
  *
  * @param preview - The request's preview.
  */
 export function leavesBehindLines(
-  preview: Pick<HandoverPreview, 'leavesBehind' | 'fromAddress'>,
+  preview: Pick<HandoverPreview, 'leavesBehind' | 'fromAddress' | 'employee'>,
 ): string[] {
   const left = preview.leavesBehind;
   const pages = countedAtLeast(left.mirroredPages, left.mirroredPagesAtLeast, 'page', 'pages');
   return [
     ...left.surfaces.map(
       (surface) => `${surface.displayName}: you approve and connect it with your own credentials`,
+    ),
+    ...left.reapprove.map(
+      (surface) =>
+        `${surface.displayName}: re-approve with one click; it keeps acting as ${keptIdentityWords(surface, preview.employee.name)}, with nothing to paste`,
     ),
     ...(left.mirroredPages > 0
       ? [`${pages} of ${preview.fromAddress}'s documentation it stops reading`]

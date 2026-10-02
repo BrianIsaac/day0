@@ -17,6 +17,14 @@
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import type { CharterChange, FieldDiff } from '../agent/charter-amendment';
 import type { TransferCancelReason } from '../agent/manager-transfer';
+import type {
+  AccessRequestReason,
+  OrganisationConnectionKind,
+  OrganisationConnectionMode,
+  OrganisationRegistrar,
+} from '../surfaces/access-identity';
+import type { AccessEnd } from '../surfaces/access-identity';
+import type { SourceRevocationOutcome } from '../surfaces/revokers/outcome';
 import type { ModelCallReport } from '../lib/model-call-telemetry';
 import type { SurfaceMode } from '../lib/surface-mode';
 import type { ClaimHolder } from '../work/claim-key';
@@ -768,6 +776,8 @@ export interface SurfaceConnectedPayload extends SurfaceNamed {
 /** The payload of `surface.expired`. Older code wrote this without the end date. */
 export interface SurfaceExpiredPayload extends SurfaceNamed {
   readonly expiresAt?: number;
+  /** True where the end revoked at the vendor the credential Day0 obtained (11-AR, A26). */
+  readonly revokedAtSource?: boolean;
 }
 
 /** The payload of `surface.access-set`. */
@@ -776,6 +786,10 @@ export interface SurfaceAccessSetPayload extends SurfaceNamed {
   readonly days: number;
   readonly expiresAt: number;
   readonly renewed?: boolean;
+  /** What the renewal needs issued again: the expiry revoked it at the vendor (11-AR, A26). */
+  readonly reissue?: 'install' | 'authorise';
+  /** The move a renewed pasted key is offered: its system has an organisation connection (A27). */
+  readonly offer?: 'own-identity';
   /** The end date the upgrade replaced. */
   readonly from?: number;
 }
@@ -820,6 +834,167 @@ export interface SurfaceConfigurationTokenRevokedPayload extends SurfaceNamed {
 /** The payload of `surface.app-unrecorded`. */
 export interface SurfaceAppUnrecordedPayload extends SurfaceNamed {
   readonly appId?: string;
+}
+
+/** The payload of `surface.access-requested`: the request drafted for IT, as the card shows it (A24). */
+export interface SurfaceAccessRequestedPayload extends SurfaceNamed {
+  /** The organisation system the card needs (`slack`, `linear`, `mcp:<host>`, ...). */
+  readonly system: string;
+  readonly reason: AccessRequestReason;
+  readonly scopes: readonly string[];
+  /** The request's words, the same on the card, in the manager's DM and in the export. */
+  readonly text: string;
+}
+
+// The organisation's connections (AC11): written to `connectionEvents` through
+// `appendConnectionEvent`, never to an employee's `events`.
+
+/** What every event of an organisation connection names. */
+interface OrganisationConnectionNamed {
+  readonly organisationConnectionId: Id<'organisationConnections'>;
+  readonly system: string;
+  readonly displayName: string;
+  /** Where the change was made: an administrator on the organisation page, or the setup verb. */
+  readonly via: OrganisationRegistrar;
+}
+
+/** The payload of `organisation.connection-landed`. */
+export interface OrganisationConnectionLandedPayload extends OrganisationConnectionNamed {
+  readonly kind: OrganisationConnectionKind;
+  readonly mode: OrganisationConnectionMode;
+  readonly scopes: readonly string[];
+}
+
+/** The payload of `organisation.connection-rotated`: a new secret, and the scopes it carries now. */
+export interface OrganisationConnectionRotatedPayload extends OrganisationConnectionNamed {
+  readonly scopes: readonly string[];
+  /** The scopes before the rotation, when it changed them. */
+  readonly previousScopes?: readonly string[];
+}
+
+/**
+ * The payload of `organisation.connection-corrected` (the wave 11 review's M12 e): the redirect or
+ * the scopes a connection records, corrected in place to what IT registered at the vendor; the
+ * scopes with what they were, the redirect only as corrected, so no address reaches a ledger line
+ * or an export. No secret changes and no card ends.
+ */
+export interface OrganisationConnectionCorrectedPayload extends OrganisationConnectionNamed {
+  readonly redirectCorrected?: boolean;
+  readonly scopes?: readonly string[];
+  readonly previousScopes?: readonly string[];
+}
+
+/** The payload of `organisation.connection-revoked`. */
+export interface OrganisationConnectionRevokedPayload extends OrganisationConnectionNamed {
+  readonly reason: string;
+}
+
+/** The payload of `surface.authorised`: an MCP server's authorisation landed its tokens on the card. */
+export interface SurfaceAuthorisedPayload extends SurfaceNamed {
+  /** The authorisation server that issued the tokens. */
+  readonly issuer: string;
+}
+
+/** The payload of `surface.authorisation-failed`: an authorisation or a refresh did not land. */
+export type SurfaceAuthorisationFailedPayload = SurfaceReason;
+
+/**
+ * The payload of `surface.disconnected` (11-AR): the manager's Disconnect on the card, or the
+ * administrator's revoke of the organisation connection the card acted through, with its reason.
+ * What the end did at the vendor is the `credential.revoked-at-source` line beside it.
+ */
+export interface SurfaceDisconnectedPayload extends SurfaceNamed {
+  readonly by: 'manager' | 'organisation';
+  readonly reason?: string;
+}
+
+// Ends of access at the vendor.
+
+/**
+ * The payload of `credential.revoked-at-source` (11-AR; the access plan, section 4.4): one ledger
+ * line per system per end of access, and one per further attempt. It names the card and its
+ * system as they stood when the access ended, since a retire deletes the card before the vendor
+ * answers.
+ */
+export interface CredentialRevokedAtSourcePayload extends SurfaceNamed {
+  readonly credentialId: Id<'credentials'>;
+  /** The card's name when the access ended. */
+  readonly surfaceName: string;
+  /** `issuedBy.system` for what Day0 obtained; the card's name for a pasted key. */
+  readonly system: string;
+  readonly end: AccessEnd;
+  readonly outcome: SourceRevocationOutcome;
+  /** Which attempt this line records, for an outcome a vendor call gave. */
+  readonly attempt?: number;
+  /** The vendor's words for a failure, or why no call was made. */
+  readonly reason?: string;
+  /** True where Slack's revoked bot token took the bot out of its channels (S1). */
+  readonly channelMembershipsRemoved?: boolean;
+}
+
+/**
+ * The payload of `organisation.revoked-at-source` (11-AR over 11-AO): one attempt at the vendor
+ * made with an organisation connection's secret to end an employee's access, on that connection's
+ * ledger. It names the credential and its system, never the employee or the card (AC11); the
+ * employee's own record says the same in `credential.revoked-at-source`.
+ */
+export interface OrganisationRevokedAtSourcePayload {
+  readonly credentialId: Id<'credentials'>;
+  /** `issuedBy.system` of the credential the call ended. */
+  readonly system: string;
+  readonly end: AccessEnd;
+  readonly outcome: SourceRevocationOutcome;
+  /** Which attempt made the call. */
+  readonly attempt: number;
+  /** The vendor's words for a failure. */
+  readonly reason?: string;
+}
+
+/**
+ * The Slack methods Day0 calls with the organisation's configuration token or its refresh token
+ * (11-AS), and `auth.revoke`, which ends a configuration token a revoke or a rotation took out of
+ * use (the wave 11 review's M6).
+ */
+export type SlackConfigurationMethod =
+  | 'tooling.tokens.rotate'
+  | 'apps.manifest.create'
+  | 'auth.revoke';
+
+/**
+ * The payload of `organisation.configuration-used` (11-AS; B9, AC11): one call Day0 made with the
+ * organisation's Slack configuration token or its refresh token, on that connection's ledger. It
+ * names the app a creation made, never the employee or the card, and never a token.
+ */
+export interface OrganisationConfigurationUsedPayload {
+  readonly organisationConnectionId: Id<'organisationConnections'>;
+  readonly system: string;
+  readonly displayName: string;
+  readonly method: SlackConfigurationMethod;
+  /**
+   * `done`; `failed` (Slack refused, or did not answer); `superseded` (a rotation that lost to a
+   * concurrent one: Slack issued a pair Day0 did not keep, and the winner's is used).
+   */
+  readonly outcome: 'done' | 'failed' | 'superseded';
+  /** Slack's words for a failure, or why a rotation was superseded. */
+  readonly reason?: string;
+  /** The app `apps.manifest.create` made. */
+  readonly appId?: string;
+  /** When the configuration token a rotation issued lapses. */
+  readonly expiresAt?: number;
+}
+
+/**
+ * The payload of `surface.channels-rejoined` (11-AS; RM4, ruled): after a renewal installed the
+ * employee's own Slack app again, which Slack had taken out of every channel (S1), the public
+ * channels of its approved intake scope it joined itself, and the ones a person in them must add
+ * it to (a private channel, one the workspace does not have, or a join Slack refused). Each name
+ * is `#name`; 11-AC's card reads `needsPerson` for its words.
+ */
+export interface SurfaceChannelsRejoinedPayload extends SurfaceNamed {
+  readonly joined: readonly string[];
+  readonly needsPerson: readonly string[];
+  /** Slack's words when it refused a join. */
+  readonly reason?: string;
 }
 
 // Plans and their obligations.
@@ -1386,6 +1561,18 @@ export interface EventPayloads {
   'surface.scope-reapproval-required': SurfaceScopeReapprovalRequiredPayload;
   'surface.configuration-token-revoked': SurfaceConfigurationTokenRevokedPayload;
   'surface.app-unrecorded': SurfaceAppUnrecordedPayload;
+  'surface.access-requested': SurfaceAccessRequestedPayload;
+  'organisation.connection-landed': OrganisationConnectionLandedPayload;
+  'organisation.connection-rotated': OrganisationConnectionRotatedPayload;
+  'organisation.connection-corrected': OrganisationConnectionCorrectedPayload;
+  'organisation.connection-revoked': OrganisationConnectionRevokedPayload;
+  'surface.authorised': SurfaceAuthorisedPayload;
+  'surface.authorisation-failed': SurfaceAuthorisationFailedPayload;
+  'surface.disconnected': SurfaceDisconnectedPayload;
+  'credential.revoked-at-source': CredentialRevokedAtSourcePayload;
+  'organisation.revoked-at-source': OrganisationRevokedAtSourcePayload;
+  'organisation.configuration-used': OrganisationConfigurationUsedPayload;
+  'surface.channels-rejoined': SurfaceChannelsRejoinedPayload;
   'plan.obligations-judged': PlanObligationsJudgedPayload;
   'plan.obligations-failed-open': PlanObligationsFailedOpenPayload;
   'plan.obligations-disagreed': PlanObligationsDisagreedPayload;
@@ -1550,6 +1737,18 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'surface.scope-reapproval-required',
   'surface.configuration-token-revoked',
   'surface.app-unrecorded',
+  'surface.access-requested',
+  'organisation.connection-landed',
+  'organisation.connection-rotated',
+  'organisation.connection-corrected',
+  'organisation.connection-revoked',
+  'surface.authorised',
+  'surface.authorisation-failed',
+  'surface.disconnected',
+  'credential.revoked-at-source',
+  'organisation.revoked-at-source',
+  'organisation.configuration-used',
+  'surface.channels-rejoined',
   'plan.obligations-judged',
   'plan.obligations-failed-open',
   'plan.obligations-disagreed',
@@ -1627,6 +1826,46 @@ export function isEventType(value: unknown): value is EventType {
   return typeof value === 'string' && LISTED.has(value);
 }
 
+/**
+ * The types of the organisation's connections' ledger (AC11): written to `connectionEvents`
+ * through `appendConnectionEvent` (`convex/connectionEvents.ts`), never to an employee's `events`,
+ * which `NewEvent` and `LoggedEvent` hold to the rest.
+ */
+export const CONNECTION_EVENT_TYPES = [
+  'organisation.connection-landed',
+  'organisation.connection-rotated',
+  'organisation.connection-corrected',
+  'organisation.connection-revoked',
+  'organisation.revoked-at-source',
+  'organisation.configuration-used',
+] as const satisfies readonly EventType[];
+
+/** One of {@link CONNECTION_EVENT_TYPES}. */
+export type ConnectionEventType = (typeof CONNECTION_EVENT_TYPES)[number];
+
+/** An event type an employee's ledger (`events`) takes: every type but the organisation's. */
+export type AgentEventType = Exclude<EventType, ConnectionEventType>;
+
+const CONNECTION_LISTED: ReadonlySet<string> = new Set(CONNECTION_EVENT_TYPES);
+
+/**
+ * The types an employee's ledger (`events`) takes, in the contract's order: every type but the
+ * organisation's. The runtime list `eventLog.log`'s validator admits, so a call to it by name cannot
+ * write an organisation connection's line onto an employee.
+ */
+export const AGENT_EVENT_TYPES: readonly AgentEventType[] = EVENT_TYPES.filter(
+  (type): type is AgentEventType => !CONNECTION_LISTED.has(type),
+);
+
+/**
+ * Whether a value is one of the organisation connections' event types.
+ *
+ * @returns True for a type `connectionEvents` takes; false for anything else.
+ */
+export function isConnectionEventType(value: unknown): value is ConnectionEventType {
+  return typeof value === 'string' && CONNECTION_LISTED.has(value);
+}
+
 /** An event of one type as a writer hands it over, before the ledger stamps it. */
 export interface EventOf<Type extends EventType> {
   readonly type: Type;
@@ -1638,16 +1877,29 @@ export type DayZeroEvent = { [Type in EventType]: EventOf<Type> }[EventType];
 
 /** An event a mutation appends in its own transaction (`appendEvent`). */
 export type NewEvent = {
-  [Type in EventType]: EventOf<Type> & {
+  [Type in AgentEventType]: EventOf<Type> & {
     readonly agentId: Id<'agents'>;
     readonly createdAt: number;
   };
-}[EventType];
+}[AgentEventType];
 
 /** An event an action logs through `eventLog.log` (`logEvent`), stamped when it lands. */
 export type LoggedEvent = {
-  [Type in EventType]: EventOf<Type> & { readonly agentId: Id<'agents'> };
-}[EventType];
+  [Type in AgentEventType]: EventOf<Type> & { readonly agentId: Id<'agents'> };
+}[AgentEventType];
+
+/**
+ * An event of an organisation connection, as `appendConnectionEvent` appends it in the caller's
+ * transaction: the connection, and the administrator's verified address when one made the change
+ * (absent for the operator's setup verb and for Day0 itself).
+ */
+export type NewConnectionEvent = {
+  [Type in ConnectionEventType]: EventOf<Type> & {
+    readonly organisationConnectionId: Id<'organisationConnections'>;
+    readonly actorAddress?: string;
+    readonly createdAt: number;
+  };
+}[ConnectionEventType];
 
 /** A stored event row, typed by the contract when its type is one the contract lists. */
 export type StoredEvent<Type extends EventType = EventType> = Omit<

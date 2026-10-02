@@ -20,5 +20,12 @@ const MockEnvironment = dynamic(
  */
 export function SurfacesView() {
   const { agent, surfaceMode, arriving } = useEmployee();
-  return <MockEnvironment agentId={agent._id} mode={surfaceMode} arriving={arriving} />;
+  return (
+    <MockEnvironment
+      agentId={agent._id}
+      employeeName={agent.name}
+      mode={surfaceMode}
+      arriving={arriving}
+    />
+  );
 }

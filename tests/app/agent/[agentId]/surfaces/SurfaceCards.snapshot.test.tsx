@@ -1,6 +1,7 @@
 import { getFunctionName } from 'convex/server';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { expect, it, vi } from 'vitest';
+import { withListedIdentity } from './fakes/listed-identity';
 
 vi.mock('convex/react', () => ({
   useAction: () => () => undefined,
@@ -21,7 +22,7 @@ vi.mock('convex/react', () => ({
           credentialLanded: false,
           createdAt: 1,
         },
-      ];
+      ].map((row) => withListedIdentity(row));
     if (name === 'charters:latest') return null;
     if (name === 'config:components') return { browser: false };
     if (name === 'surfaces:installRedirectConfigured') return false;
@@ -34,6 +35,8 @@ import { SurfaceCards } from '../../../../../app/agent/[agentId]/surfaces/Surfac
 
 it("keeps the Surfaces tab's cards output", () => {
   expect(
-    renderToStaticMarkup(<SurfaceCards agentId={'mock-agent' as Id<'agents'>} />),
+    renderToStaticMarkup(
+      <SurfaceCards agentId={'mock-agent' as Id<'agents'>} employeeName="Maya" />,
+    ),
   ).toMatchSnapshot();
 });

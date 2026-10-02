@@ -2,7 +2,7 @@
 
 import { randomBytes } from 'node:crypto';
 import { convexTest, type TestConvex } from 'convex-test';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import { MIGRATION_NAMES, MIGRATIONS } from '../../convex/migrations';
@@ -171,8 +171,9 @@ describe('the upgrade migrations', (): void => {
       'credentials-superseded-at',
       'decision-batches-settled',
     ];
-    // Re-pinned behind the skill library's two backfills (0.13.0), which follow them.
-    expect(MIGRATION_NAMES.slice(-secondStep.length - 2, -2)).toEqual(secondStep);
+    // Re-pinned behind the skill library's two backfills (0.13.0) and the acts-as and issued-by
+    // backfills (0.14.0), which follow them.
+    expect(MIGRATION_NAMES.slice(-secondStep.length - 4, -4)).toEqual(secondStep);
     const harness = limitedHarness();
     await runAll(harness);
     const status = await harness.query(internal.migrations.status, {});
@@ -1107,21 +1108,21 @@ describe('the release stamp', (): void => {
     });
 
     await runAll(harness);
-    // Re-pinned at 0.13.0, the skill library's release, from 0.6.0 and 0.10.0: a stamp names a
-    // release no older than the newest a shipped migration names.
+    // Re-pinned at 0.14.0, the access track's release, from 0.6.0, 0.10.0 and 0.13.0: a stamp
+    // names a release no older than the newest a shipped migration names.
     await expect(
-      harness.mutation(internal.migrations.recordRelease, { release: '0.13.0', commit: 'abc1234' }),
-    ).resolves.toEqual({ release: '0.13.0', previous: null });
+      harness.mutation(internal.migrations.recordRelease, { release: '0.14.0', commit: 'abc1234' }),
+    ).resolves.toEqual({ release: '0.14.0', previous: null });
     await expect(
-      harness.mutation(internal.migrations.recordRelease, { release: '0.13.0', commit: 'abc1234' }),
-    ).resolves.toEqual({ release: '0.13.0', previous: '0.13.0' });
+      harness.mutation(internal.migrations.recordRelease, { release: '0.14.0', commit: 'abc1234' }),
+    ).resolves.toEqual({ release: '0.14.0', previous: '0.14.0' });
     await expect(
-      harness.mutation(internal.migrations.recordRelease, { release: '0.14.0', commit: 'def5678' }),
-    ).resolves.toEqual({ release: '0.14.0', previous: '0.13.0' });
+      harness.mutation(internal.migrations.recordRelease, { release: '0.15.0', commit: 'def5678' }),
+    ).resolves.toEqual({ release: '0.15.0', previous: '0.14.0' });
 
     const status = await harness.query(internal.migrations.status, {});
     expect(status.pending).toEqual([]);
-    expect(status.release).toMatchObject({ release: '0.14.0', commit: 'def5678' });
+    expect(status.release).toMatchObject({ release: '0.15.0', commit: 'def5678' });
     expect(
       await harness.run(async (ctx) => (await ctx.db.query('deploymentVersions').collect()).length),
     ).toBe(2);
@@ -2081,5 +2082,421 @@ describe('the skill library backfills (10-K, K3)', (): void => {
     ]);
     expect(versions).toHaveLength(60);
     expect(skills.every((row) => row.versionId !== undefined)).toBe(true);
+  });
+});
+
+describe('the acts-as backfill (11-AK, the access plan section 4.2)', (): void => {
+  // The credential re-seal runs before it over the same rows and needs a key; the sealed
+  // placeholders are rows it cannot open, which it logs and leaves.
+  beforeEach((): void => {
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', randomBytes(32).toString('base64'));
+  });
+
+  /** A card as v0.13.0 left it, holding the given credential or none. */
+  async function card(
+    harness: Harness,
+    agentId: Id<'agents'>,
+    fields: Partial<Doc<'surfaces'>>,
+  ): Promise<Id<'surfaces'>> {
+    return await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'linear',
+          displayName: 'Linear',
+          class: 'kanban',
+          verdict: 'connected',
+          whereFound: [],
+          credentialLanded: true,
+          createdAt: 1,
+          ...fields,
+        }),
+    );
+  }
+
+  /** A credential row as v0.13.0 wrote it. */
+  async function credential(
+    harness: Harness,
+    fields: Pick<Doc<'credentials'>, 'kind' | 'label'> & Partial<Doc<'credentials'>>,
+  ): Promise<Id<'credentials'>> {
+    return await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('credentials', {
+          userId: 'owner',
+          source: 'entered',
+          ciphertext: 'sealed',
+          iv: 'iv',
+          createdAt: 1,
+          ...fields,
+        }),
+    );
+  }
+
+  /** Every card's `actsAs`, by id, to compare a second run against the first. */
+  async function identities(harness: Harness): Promise<unknown> {
+    return await harness.run(async (ctx) =>
+      (await ctx.db.query('surfaces').collect()).map((row) => [row._id, row.actsAs ?? null]),
+    );
+  }
+
+  it('is registered at 0.14.0, after the skill library backfills it follows', (): void => {
+    expect(MIGRATIONS['surfaces-acts-as'].release).toBe('0.14.0');
+    expect(MIGRATION_NAMES.indexOf('surfaces-acts-as')).toBeGreaterThan(
+      MIGRATION_NAMES.indexOf('skills-use-count'),
+    );
+  });
+
+  it('names an installed app’s card as its own app and every pasted key’s as a shared key, leaves the rest, and is safe to run twice', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const maya = await agent(harness, { userId: 'owner' });
+    const botToken = await credential(harness, {
+      kind: 'oauth',
+      label: 'Slack bot token (slack dedicated app)',
+      source: 'oauth',
+    });
+    const clientSecret = await credential(harness, { kind: 'value', label: 'Maya client secret' });
+    const slack = await card(harness, maya, {
+      slug: 'slack',
+      displayName: 'Slack',
+      class: 'chat',
+      credentialId: botToken,
+      credentialKind: 'oauth',
+      providerIdentityId: 'U0DAY0BOT',
+      provisioning: {
+        appId: 'A0DAY0',
+        appName: 'Maya (Day0)',
+        clientId: 'client-1',
+        clientSecretCredentialId: clientSecret,
+        installUrl: 'https://slack.com/oauth/v2/authorize',
+        redirectUrl: 'http://localhost:3000/api/oauth/slack',
+        scopes: ['chat:write'],
+        createdAt: 1,
+        installedAt: 2,
+      },
+    });
+    const pasted = await credential(harness, { kind: 'value', label: 'Linear access' });
+    const linear = await card(harness, maya, { credentialId: pasted, credentialKind: 'value' });
+    // A card the older code attached without copying the kind reads it off the credential.
+    const vault = await credential(harness, { kind: 'location', label: 'Looker key in the vault' });
+    const looker = await card(harness, maya, {
+      slug: 'looker',
+      displayName: 'Looker',
+      verdict: 'ungranted',
+      credentialLanded: false,
+      credentialId: vault,
+    });
+    const revoked = await credential(harness, {
+      kind: 'value',
+      label: 'Old Notion key',
+      revokedAt: 5,
+    });
+    const notion = await card(harness, maya, {
+      slug: 'notion',
+      credentialId: revoked,
+      credentialKind: 'value',
+    });
+    const emptied = await credential(harness, {
+      kind: 'value',
+      label: 'Unlinked key',
+      ciphertext: undefined,
+      iv: undefined,
+    });
+    const unlinked = await card(harness, maya, {
+      slug: 'drive',
+      credentialId: emptied,
+      credentialKind: 'value',
+    });
+    const gone = await credential(harness, { kind: 'value', label: 'Deleted key' });
+    await harness.run(async (ctx) => await ctx.db.delete(gone));
+    const dangling = await card(harness, maya, {
+      slug: 'github',
+      credentialId: gone,
+      credentialKind: 'value',
+    });
+    const bare = await card(harness, maya, {
+      slug: 'zendesk',
+      verdict: 'approved',
+      credentialLanded: false,
+    });
+    const written = await card(harness, maya, {
+      slug: 'hubspot',
+      credentialId: pasted,
+      credentialKind: 'value',
+      actsAs: { kind: 'shared-app', label: 'Day0' },
+    });
+
+    const first = await harness.action(internal.migrations.runPending, {});
+    expect(first.pending).toEqual([]);
+    expect(first.migrations.find((row) => row.name === 'surfaces-acts-as')).toMatchObject({
+      read: 8,
+      changed: 3,
+      completedAt: expect.any(Number),
+    });
+    const read = await harness.run(async (ctx) =>
+      Promise.all(
+        [slack, linear, looker, notion, unlinked, dangling, bare, written].map((id) =>
+          ctx.db.get(id),
+        ),
+      ),
+    );
+    expect(read.map((row) => row?.actsAs)).toEqual([
+      { kind: 'own-app', label: 'Maya (Day0)', providerIdentityId: 'U0DAY0BOT' },
+      { kind: 'shared-key', label: 'Linear access' },
+      { kind: 'shared-key', label: 'Looker key in the vault' },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { kind: 'shared-app', label: 'Day0' },
+    ]);
+    // Nothing else on a card changes: the backfill writes only whom it acts as.
+    const [slackAfter] = read;
+    expect(slackAfter).toMatchObject({
+      verdict: 'connected',
+      credentialId: botToken,
+      credentialKind: 'oauth',
+      credentialLanded: true,
+    });
+
+    // A second run, of the whole upgrade and of the backfill from its first page.
+    const before = await identities(harness);
+    await expect(harness.action(internal.migrations.runPending, {})).resolves.toEqual({
+      migrations: [],
+      pending: [],
+    });
+    await harness.run(async (ctx) => {
+      for (const row of await ctx.db.query('migrations').collect()) {
+        if (row.name === 'surfaces-acts-as') await ctx.db.delete(row._id);
+      }
+    });
+    const again = await harness.action(internal.migrations.runPending, {});
+    expect(again.migrations.map((row) => [row.name, row.changed])).toEqual([
+      ['surfaces-acts-as', 0],
+    ]);
+    expect(await identities(harness)).toEqual(before);
+  });
+
+  it('reads every card of a deployment larger than one page', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const maya = await agent(harness, { userId: 'owner' });
+    const pasted = await credential(harness, { kind: 'value', label: 'Linear access' });
+    await harness.run(async (ctx) => {
+      for (let index = 0; index < 230; index += 1) {
+        await ctx.db.insert('surfaces', {
+          agentId: maya,
+          slug: `linear-${index}`,
+          displayName: 'Linear',
+          class: 'kanban',
+          verdict: 'connected',
+          whereFound: [],
+          credentialLanded: true,
+          credentialId: pasted,
+          credentialKind: 'value',
+          createdAt: 1,
+        });
+      }
+    });
+    await runAll(harness);
+    const unnamed = await harness.run(async (ctx) =>
+      (await ctx.db.query('surfaces').collect()).filter((row) => row.actsAs === undefined),
+    );
+    expect(unnamed).toEqual([]);
+  });
+});
+
+describe('the issued-by backfill (11-AR; the cockpit item 4 of 11-AK)', (): void => {
+  // The re-seal runs before it over the same rows and needs a key; the sealed placeholders are
+  // rows it cannot open, which it logs and leaves.
+  beforeEach((): void => {
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', randomBytes(32).toString('base64'));
+  });
+
+  /** A credential row as v0.13.0 wrote it. */
+  async function credential(
+    harness: Harness,
+    fields: Pick<Doc<'credentials'>, 'kind' | 'label'> & Partial<Doc<'credentials'>>,
+  ): Promise<Id<'credentials'>> {
+    return await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('credentials', {
+          userId: 'owner',
+          source: 'entered',
+          ciphertext: 'sealed',
+          iv: 'iv',
+          createdAt: 1,
+          ...fields,
+        }),
+    );
+  }
+
+  /** A Slack card as v0.13.0 left it once its own app was installed. */
+  async function installedSlackCard(
+    harness: Harness,
+    agentId: Id<'agents'>,
+    ids: { readonly botToken: Id<'credentials'>; readonly clientSecret: Id<'credentials'> },
+  ): Promise<Id<'surfaces'>> {
+    return await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'slack',
+          displayName: 'Slack',
+          class: 'chat',
+          verdict: 'connected',
+          whereFound: [],
+          credentialLanded: true,
+          credentialId: ids.botToken,
+          credentialKind: 'oauth',
+          provisioning: {
+            appId: 'A0W11AR',
+            appName: 'Maya (Day0)',
+            clientId: '1234.5678',
+            clientSecretCredentialId: ids.clientSecret,
+            installUrl: 'https://slack.com/oauth/v2/authorize',
+            redirectUrl: 'http://localhost:3000/api/oauth/slack',
+            scopes: ['chat:write'],
+            createdAt: 1,
+            installedAt: 2,
+          },
+          createdAt: 1,
+        }),
+    );
+  }
+
+  /** Every credential's `issuedBy`, by id, to compare a second run against the first. */
+  async function issuers(harness: Harness): Promise<unknown> {
+    return await harness.run(async (ctx) =>
+      (await ctx.db.query('credentials').collect()).map((row) => [row._id, row.issuedBy ?? null]),
+    );
+  }
+
+  it('is registered at 0.14.0, after the acts-as backfill', (): void => {
+    expect(MIGRATIONS['credentials-issued-by'].release).toBe('0.14.0');
+    expect(MIGRATION_NAMES.indexOf('credentials-issued-by')).toBeGreaterThan(
+      MIGRATION_NAMES.indexOf('surfaces-acts-as'),
+    );
+  });
+
+  it("names each installed app's bot token and client secret as Day0's, leaves every pasted key, and is safe to run twice", async (): Promise<void> => {
+    const harness = limitedHarness();
+    const maya = await agent(harness, { userId: 'owner' });
+    const botToken = await credential(harness, {
+      kind: 'oauth',
+      label: 'Slack bot token (slack dedicated app)',
+      source: 'oauth',
+      appId: 'A0W11AR',
+    });
+    const clientSecret = await credential(harness, {
+      kind: 'oauth',
+      label: 'Maya (Day0) client secret',
+      source: 'oauth',
+      appId: 'A0W11AR',
+    });
+    await installedSlackCard(harness, maya, { botToken, clientSecret });
+    const pasted = await credential(harness, { kind: 'value', label: 'Linear access' });
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('surfaces', {
+        agentId: maya,
+        slug: 'linear',
+        displayName: 'Linear',
+        class: 'kanban',
+        verdict: 'connected',
+        whereFound: [],
+        credentialLanded: true,
+        credentialId: pasted,
+        credentialKind: 'value',
+        createdAt: 1,
+      });
+    });
+    // A shared bot token pasted on a Slack card before its own app replaced it, revoked then.
+    const retired = await credential(harness, {
+      kind: 'value',
+      label: 'Shared Slack bot token',
+      revokedAt: 3,
+    });
+    // An install-redirect token on a card that lost its app record still names its app.
+    const orphanToken = await credential(harness, {
+      kind: 'oauth',
+      label: 'Slack bot token (support dedicated app)',
+      source: 'oauth',
+      appId: 'A0ORPHAN',
+    });
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('surfaces', {
+        agentId: maya,
+        slug: 'support',
+        displayName: 'Support Slack',
+        class: 'chat',
+        verdict: 'connected',
+        whereFound: [],
+        credentialLanded: true,
+        credentialId: orphanToken,
+        credentialKind: 'oauth',
+        createdAt: 1,
+      });
+    });
+
+    const first = await harness.action(internal.migrations.runPending, {});
+    expect(first.pending).toEqual([]);
+    expect(first.migrations.find((row) => row.name === 'credentials-issued-by')).toMatchObject({
+      read: 3,
+      changed: 3,
+      completedAt: expect.any(Number),
+    });
+    const rows = await harness.run(async (ctx) =>
+      Promise.all(
+        [botToken, clientSecret, orphanToken, pasted, retired].map((id) => ctx.db.get(id)),
+      ),
+    );
+    expect(rows.map((row) => row?.issuedBy)).toEqual([
+      {
+        system: 'slack',
+        grant: 'oauth-install',
+        appId: 'A0W11AR',
+        clientId: '1234.5678',
+        clientSecretCredentialId: clientSecret,
+      },
+      { system: 'slack', grant: 'app-created', appId: 'A0W11AR', clientId: '1234.5678' },
+      { system: 'slack', grant: 'oauth-install', appId: 'A0ORPHAN' },
+      undefined,
+      undefined,
+    ]);
+
+    const before = await issuers(harness);
+    await harness.run(async (ctx) => {
+      for (const row of await ctx.db.query('migrations').collect()) {
+        if (row.name === 'credentials-issued-by') await ctx.db.delete(row._id);
+      }
+    });
+    const again = await harness.action(internal.migrations.runPending, {});
+    expect(again.migrations.map((row) => [row.name, row.changed])).toEqual([
+      ['credentials-issued-by', 0],
+    ]);
+    expect(await issuers(harness)).toEqual(before);
+  });
+
+  it('leaves a revoked or emptied install token, whose access already ended', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const maya = await agent(harness, { userId: 'owner' });
+    const botToken = await credential(harness, {
+      kind: 'oauth',
+      label: 'Slack bot token',
+      source: 'oauth',
+      revokedAt: 4,
+    });
+    const clientSecret = await credential(harness, {
+      kind: 'oauth',
+      label: 'client secret',
+      source: 'oauth',
+      ciphertext: undefined,
+      iv: undefined,
+      revokedAt: 4,
+    });
+    await installedSlackCard(harness, maya, { botToken, clientSecret });
+    await runAll(harness);
+    const rows = await harness.run(async (ctx) =>
+      Promise.all([botToken, clientSecret].map((id) => ctx.db.get(id))),
+    );
+    expect(rows.map((row) => row?.issuedBy)).toEqual([undefined, undefined]);
   });
 });

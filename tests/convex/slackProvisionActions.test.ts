@@ -7,6 +7,8 @@ import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { parseManifestCreate, parseOauthAccess } from '../../convex/slackProvisionActions';
 import { signOauthState } from '../../src/lib/oauth-state';
+import { SLACK_KIT_BOT_SCOPES } from '../../src/surfaces/access-kit/slack';
+import type { SlackManifest } from '../../src/surfaces/slack-manifest';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
@@ -335,8 +337,22 @@ describe('registering a dedicated app', (): void => {
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
-  it('refuses when the documentation carries no manifest template', async (): Promise<void> => {
-    vi.stubGlobal('fetch', vi.fn());
+  it("builds the access kit's app when the documentation carries no manifest template (11-AS)", async (): Promise<void> => {
+    const sent: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL, init?: RequestInit): Promise<Response> => {
+        if (String(input).endsWith('/auth.revoke')) {
+          return slackResponse({ ok: true, revoked: true });
+        }
+        sent.push(new URLSearchParams(String(init?.body ?? '')).get('manifest') ?? '');
+        return slackResponse({
+          ok: true,
+          app_id: 'A123',
+          credentials: { client_id: '111.222', client_secret: CLIENT_SECRET },
+        });
+      }),
+    );
     const { api: liveApi } = await import('../../convex/_generated/api');
     const harness = convexTest(schema, allConvexModules());
     const { surfaceId } = await seedSlackSurface(harness);
@@ -345,13 +361,17 @@ describe('registering a dedicated app', (): void => {
       if (page)
         await ctx.db.patch(page._id, { markdown: '# Slack automation policy\n\nNo template.' });
     });
-    await expect(
-      harness.withIdentity(managerIdentity()).action(liveApi.slackProvisionActions.provisionApp, {
+
+    const outcome = await harness
+      .withIdentity(managerIdentity())
+      .action(liveApi.slackProvisionActions.provisionApp, {
         surfaceId,
         configurationToken: CONFIG_TOKEN,
-      }),
-    ).rejects.toThrow('no app manifest template');
-    expect(globalThis.fetch).not.toHaveBeenCalled();
+      });
+
+    expect(outcome.appName).toBe('ops worker (Day0)');
+    const [manifest] = sent.map((text) => JSON.parse(text) as SlackManifest);
+    expect(manifest?.oauth_config.scopes.bot).toEqual([...SLACK_KIT_BOT_SCOPES]);
   });
 });
 

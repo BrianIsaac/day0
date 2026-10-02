@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { getFunctionName } from 'convex/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { withListedIdentity } from './fakes/listed-identity';
 
 /**
  * One browser-driven surface and this deployment's component status, so the
@@ -32,7 +33,8 @@ vi.mock('convex/react', () => ({
     if (name === 'surfaces:listForAgent') {
       if (state.surfaceResult === 'loading') return undefined;
       if (state.surfaceResult === 'empty') return [];
-      if (state.surfaces) return state.surfaces;
+      // The listing answers whom each card acts as (`listedCardIdentity`), as the backend does.
+      if (state.surfaces) return state.surfaces.map((row) => withListedIdentity(row as object));
       return [
         {
           _id: 'surface-tile',
@@ -48,7 +50,7 @@ vi.mock('convex/react', () => ({
           reason: state.reason,
           lastDecisionError: state.lastDecisionError,
         },
-      ];
+      ].map((row) => withListedIdentity(row));
     }
     return [];
   },
@@ -76,14 +78,14 @@ describe('SurfaceCards and the optional browser component', (): void => {
 
   it('says which connection context is loading', (): void => {
     state.surfaceResult = 'loading';
-    const markup = renderToStaticMarkup(<SurfaceCards agentId={agentId} />);
+    const markup = renderToStaticMarkup(<SurfaceCards agentId={agentId} employeeName="Maya" />);
     expect(markup).toContain(LOADING_SURFACES);
     expect(markup).not.toContain('Looker pipeline tile');
   });
 
   it('explains how an empty environment becomes populated', (): void => {
     state.surfaceResult = 'empty';
-    const markup = renderToStaticMarkup(<SurfaceCards agentId={agentId} />);
+    const markup = renderToStaticMarkup(<SurfaceCards agentId={agentId} employeeName="Maya" />);
     expect(markup).toContain(EMPTY_SURFACES);
     expect(markup).not.toContain('Looker pipeline tile');
   });
@@ -91,7 +93,7 @@ describe('SurfaceCards and the optional browser component', (): void => {
   it('proposes the path, says the component is not running, and holds approval', (): void => {
     state.browserComponent = false;
     state.reason = undefined;
-    const markup = renderToStaticMarkup(<SurfaceCards agentId={agentId} />);
+    const markup = renderToStaticMarkup(<SurfaceCards agentId={agentId} employeeName="Maya" />);
     // The evidence still stands: the path and the documented address are shown.
     expect(markup).toContain('browser-driven');
     expect(markup).toContain('http://looker-tile:8080/');
@@ -103,14 +105,14 @@ describe('SurfaceCards and the optional browser component', (): void => {
   it('says the same when a configured driver turned out not to be listening', (): void => {
     state.browserComponent = true;
     state.reason = 'BROWSER_DRIVER_ABSENT: the component is not running';
-    const markup = renderToStaticMarkup(<SurfaceCards agentId={agentId} />);
+    const markup = renderToStaticMarkup(<SurfaceCards agentId={agentId} employeeName="Maya" />);
     expect(markup).toContain('This system is reached through its web UI.');
   });
 
   it('holds approval while component status is still loading', (): void => {
     state.browserComponent = undefined;
     state.reason = undefined;
-    const markup = renderToStaticMarkup(<SurfaceCards agentId={agentId} />);
+    const markup = renderToStaticMarkup(<SurfaceCards agentId={agentId} employeeName="Maya" />);
     expect(markup.match(/<button[^>]*disabled=""[^>]*>Approve<\/button>/g)).toHaveLength(1);
   });
 
@@ -132,7 +134,7 @@ describe('SurfaceCards and the optional browser component', (): void => {
         },
       },
     ];
-    const markup = renderToStaticMarkup(<SurfaceCards agentId={agentId} />);
+    const markup = renderToStaticMarkup(<SurfaceCards agentId={agentId} employeeName="Maya" />);
     expect(markup).toContain('Not linked evidence; confirm the endpoint before you approve.');
     expect(markup).not.toMatch(/\bIT\b/);
   });
@@ -140,21 +142,21 @@ describe('SurfaceCards and the optional browser component', (): void => {
   it('names a failing manager decision poll on the card that stopped answering', (): void => {
     state.lastDecisionError =
       'decision poll failed: Connected Slack surface does not allow conversations.history.';
-    const markup = renderToStaticMarkup(<SurfaceCards agentId={agentId} />);
+    const markup = renderToStaticMarkup(<SurfaceCards agentId={agentId} employeeName="Maya" />);
     expect(markup).toContain('Manager decisions: decision poll failed:');
     expect(markup).toContain('does not allow conversations.history.');
   });
 
   it('says nothing about manager decisions while the poll is healthy', (): void => {
-    expect(renderToStaticMarkup(<SurfaceCards agentId={agentId} />)).not.toContain(
-      'Manager decisions:',
-    );
+    expect(
+      renderToStaticMarkup(<SurfaceCards agentId={agentId} employeeName="Maya" />),
+    ).not.toContain('Manager decisions:');
   });
 
   it('leaves approval alone once the component is running', (): void => {
     state.browserComponent = true;
     state.reason = undefined;
-    const markup = renderToStaticMarkup(<SurfaceCards agentId={agentId} />);
+    const markup = renderToStaticMarkup(<SurfaceCards agentId={agentId} employeeName="Maya" />);
     expect(markup).not.toContain('This system is reached through its web UI.');
     expect(markup.match(/<button[^>]*>Approve<\/button>/g)).toHaveLength(1);
     expect(markup).not.toContain('disabled=""');
@@ -163,7 +165,7 @@ describe('SurfaceCards and the optional browser component', (): void => {
   it('offers one Approve on a proposed card and names no second approver (Q10)', (): void => {
     state.browserComponent = true;
     state.reason = undefined;
-    const markup = renderToStaticMarkup(<SurfaceCards agentId={agentId} />);
+    const markup = renderToStaticMarkup(<SurfaceCards agentId={agentId} employeeName="Maya" />);
     expect(markup.match(/<button[^>]*>Approve<\/button>/g)).toHaveLength(1);
     expect(markup).toContain('data-verdict="proposed"');
     expect(markup).toContain('Day0 checks the connection as soon as you approve.');
@@ -212,7 +214,7 @@ describe('SurfaceCards and what each employee reads', (): void => {
   });
   /** Render the tab, with the entities React escapes read back as text. */
   const render = (): string =>
-    renderToStaticMarkup(<SurfaceCards agentId={agentId} />)
+    renderToStaticMarkup(<SurfaceCards agentId={agentId} employeeName="Maya" />)
       .replace(/&#x27;/g, "'")
       .replace(/&quot;/g, '"');
 
@@ -369,7 +371,7 @@ describe('SurfaceCards and the approved tools', (): void => {
       },
     ];
     try {
-      const markup = renderToStaticMarkup(<SurfaceCards agentId={agentId} />);
+      const markup = renderToStaticMarkup(<SurfaceCards agentId={agentId} employeeName="Maya" />);
       expect(markup).toContain('Withheld, outside your approval: delete_issue.');
     } finally {
       state.surfaces = undefined;
@@ -392,7 +394,7 @@ describe('SurfaceCards and the approved tools', (): void => {
       },
     ];
     try {
-      const markup = renderToStaticMarkup(<SurfaceCards agentId={agentId} />);
+      const markup = renderToStaticMarkup(<SurfaceCards agentId={agentId} employeeName="Maya" />);
       expect(markup).toMatch(/Scopes requested<\/dt><dd[^>]*>read:issues<\/dd>/);
       expect(markup).toMatch(/Cost<\/dt><dd[^>]*>free<\/dd>/);
       expect(markup).toContain('starts when you approve; the end date shows on this card');

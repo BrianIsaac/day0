@@ -1166,12 +1166,54 @@ async function readEmployeeRecords(ctx: QueryCtx, agent: Doc<'agents'>): Promise
   return { agent, events, workItems, charters, surfaces };
 }
 
+/**
+ * One employee's figures as the manager who holds it now reads them on its page. The decisions,
+ * which the page says the reader made, count within the spans that manager held it (D12 (a), the
+ * cut the company figure makes), so a handover never credits the new manager with the old one's
+ * (the v0.13.0 walk). Everything else describes the employee and counts over its whole record.
+ *
+ * @param records - The employee's whole records.
+ * @param handovers - The employee's accepted handovers, in any order.
+ * @param currentOwner - The employee's owner now, the reader; with none, nothing is cut.
+ */
+export function figuresForCurrentManager(
+  records: EmployeeRecords,
+  handovers: readonly AcceptedHandover[],
+  currentOwner: string | undefined,
+): AgentMetrics {
+  const { events, workItems, charters, surfaces = [] } = records;
+  const whole = computeAgentMetrics(events, workItems, charters, surfaces);
+  if (currentOwner === undefined) return whole;
+  const windows = tenureWindowsOf(currentOwner, currentOwner, handovers);
+  if (isWholeHistory(windows)) return whole;
+  if (windows.length === 0) {
+    // The owner now holds no span of its own handovers: the rows disagree, so nothing is cut
+    // rather than every decision dropped.
+    log.warn('an employee page read by an owner its handovers never name', {
+      agentId: records.agent._id,
+      handovers: handovers.length,
+    });
+    return whole;
+  }
+  const held = recordsWithinTenure(records, windows);
+  return { ...whole, decisions: summariseDecisions(decisionTotals(held.events, held.workItems)) };
+}
+
+/**
+ * Public, the employee's owner only (`assertOwnsAgent`): the employee's supervision figures, its
+ * decisions counted within the spans the caller held it ({@link figuresForCurrentManager}).
+ * Writes nothing.
+ */
 export const forAgent = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<AgentMetrics> => {
     const agent = await assertOwnsAgent(ctx, args.agentId);
-    const { events, workItems, charters, surfaces } = await readEmployeeRecords(ctx, agent);
-    return computeAgentMetrics(events, workItems, charters, surfaces);
+    const [records, transfers] = await Promise.all([
+      readEmployeeRecords(ctx, agent),
+      acceptedTransfersOf(ctx, agent._id),
+    ]);
+    // The guard has proved the caller owns the employee, so the row's owner is the reader.
+    return figuresForCurrentManager(records, handoversFromTransfers(transfers), agent.userId);
   },
 });
 

@@ -1,6 +1,6 @@
 import { v } from 'convex/values';
-import type { Id } from './_generated/dataModel';
-import { internalMutation } from './_generated/server';
+import type { Doc, Id } from './_generated/dataModel';
+import { internalMutation, internalQuery } from './_generated/server';
 import { ticketSnapshotValidator } from './schema';
 import { seedItemInTransaction, workItemSeedFields } from './work';
 
@@ -11,7 +11,45 @@ import { seedItemInTransaction, workItemSeedFields } from './work';
  * poll listed was read with the old owner's token. Seeding it would make the new owner's work out
  * of the old owner's read, so the seed lands only while the employee is still the owner's the
  * sweep read it under. The seed itself is `seedItemInTransaction`, the one every seed shares.
+ *
+ * The owner the fence compares is read with the surfaces, in one transaction (the wave 10
+ * review's FR-m4): the sweep polls with the surface rows it read first, so an owner read later,
+ * at the employee's turn, may already be the new manager's while the rows still carry the old
+ * connection.
  */
+
+/** One employee's owner key as the sweep's surface read saw it; null for an employee with none. */
+export interface SweepOwner {
+  readonly agentId: Id<'agents'>;
+  readonly owner: string | null;
+}
+
+/** The sweep's one read: every declared surface, and its employee's owner at the same moment. */
+export interface SweepRead {
+  readonly surfaces: Doc<'surfaces'>[];
+  /** One entry per employee that still exists; an employee gone at the read is absent. */
+  readonly owners: SweepOwner[];
+}
+
+/**
+ * Read every declared surface and, in the same transaction, the owner of each surface's employee:
+ * the owner the sweep polls the employee under and fences its seeds by.
+ *
+ * Internal, for `intakeActions`' sweep. Writes nothing. Reads one employee row per employee that
+ * has a surface, as the surface read itself reads every row.
+ */
+export const surfacesForSweep = internalQuery({
+  args: {},
+  handler: async (ctx): Promise<SweepRead> => {
+    const surfaces = await ctx.db.query('surfaces').collect();
+    const agentIds = [...new Set(surfaces.map((surface) => surface.agentId))];
+    const agents = await Promise.all(agentIds.map(async (agentId) => await ctx.db.get(agentId)));
+    const owners = agents.flatMap((agent): SweepOwner[] =>
+      agent === null ? [] : [{ agentId: agent._id, owner: agent.userId ?? null }],
+    );
+    return { surfaces, owners };
+  },
+});
 
 /** Why a listed item is not seeded: the employee is gone or changed owner during its poll. */
 export const SEED_AFTER_HANDOVER =

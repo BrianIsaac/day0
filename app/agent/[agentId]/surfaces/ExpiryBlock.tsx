@@ -32,6 +32,29 @@ const SET_BY_WORDS: Readonly<Record<NonNullable<Doc<'surfaces'>['accessSetBy']>,
 export const EXPIRY_RULE =
   'A notice reaches you a week before. Renewing is your explicit act; a working probe never extends it.';
 
+/** What a renewal answers: the new end, and what else it needs (11-AR's `setAccessDays`). */
+export interface Renewed {
+  readonly expiresAt: number;
+  /** The identity the expiry revoked at the vendor, issued again on the card. */
+  readonly reissue?: 'install' | 'authorise';
+  /** A pasted key whose system IT connected: the move to the employee's own identity (A27). */
+  readonly offer?: 'own-identity';
+}
+
+/** The move off a pasted key the card offers at its renewal (A27): its words and its control. */
+export interface MoveOffer {
+  readonly words: string;
+  /** The button's words, naming the key it moves off. */
+  readonly label: string;
+  readonly onMove: () => void;
+}
+
+/** What a renewal needs next, said after the renewal itself: the identity issued again. */
+const REISSUE_WORDS: Readonly<Record<NonNullable<Renewed['reissue']>, string>> = {
+  install: 'The end revoked its access, so install its app again below.',
+  authorise: 'The end revoked its access, so Connect it again below.',
+};
+
 /** A surface as the expiry block reads it. */
 export type ExpirySurface = Pick<
   Doc<'surfaces'>,
@@ -45,25 +68,39 @@ export type ExpirySurface = Pick<
  * nothing renews on its own, so this is the one place the manager keeps a connection alive. The
  * outcome is said in the block's live region; focus stays on the control, which stays.
  *
+ * A renewal that needs the identity issued again says so, and the card's own row issues it (A26). A
+ * card on a pasted key whose system IT has since connected is offered the move to the employee's
+ * own identity from the week its access ends, and after a renewal that offers it; the key keeps
+ * working meanwhile (A27). An ended card can say what the end did beyond the card (`endedNote`:
+ * a Slack bot's channels, RM4).
+ *
  * @param surface - The card's row.
  * @param now - The instant to judge the end date against.
- * @param onSetDays - Renews the access for that many days from now; resolves to the new end.
+ * @param onSetDays - Renews the access for that many days from now; resolves to the new end and
+ *   what the renewal needs.
+ * @param endedNote - What the end did beyond the card, said while the access has ended.
+ * @param move - The move off a pasted key, where the card offers one.
  * @returns The block, or nothing for a card whose access has not started.
  */
 export function ExpiryBlock({
   surface,
   now,
   onSetDays,
+  endedNote,
+  move,
 }: {
   surface: ExpirySurface;
   now: number;
-  onSetDays: (days: number) => Promise<{ expiresAt: number }>;
+  onSetDays: (days: number) => Promise<Renewed>;
+  endedNote?: string;
+  move?: MoveOffer;
 }) {
   const zone = useAgentZone();
   const periodId = useId();
   const [days, setDays] = useState<number>(SURFACE_ACCESS_DEFAULT_DAYS);
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<ChangeOutcome | null>(null);
+  const [offered, setOffered] = useState(false);
   const control = useRef<HTMLButtonElement>(null);
   const standing = accessStanding(surface, now, zone);
   if (standing.kind === 'none') return null;
@@ -81,14 +118,16 @@ export function ExpiryBlock({
     void onSetDays(days)
       .then((result) => {
         const ends = clockTime(result.expiresAt, zone);
+        const next = result.reissue === undefined ? '' : ` ${REISSUE_WORDS[result.reissue]}`;
         // A shorter period moves the end earlier: said as that, never as a renewal.
         setOutcome({
           tone: 'done',
           text:
             result.expiresAt < before
-              ? `${surface.displayName} access now ends ${ends}, earlier than it did.`
-              : `Renewed: ${surface.displayName} access now ends ${ends}.`,
+              ? `${surface.displayName} access now ends ${ends}, earlier than it did.${next}`
+              : `Renewed: ${surface.displayName} access now ends ${ends}.${next}`,
         });
+        if (result.offer === 'own-identity') setOffered(true);
       })
       .catch((err: unknown) =>
         setOutcome({ tone: 'refused', text: refusalText(err, 'The access was not renewed.') }),
@@ -146,6 +185,19 @@ export function ExpiryBlock({
         </Button>
       </div>
       <StatusRegion outcome={outcome} />
+      {standing.kind === 'ended' && endedNote !== undefined ? (
+        <p className="text-sm text-[var(--color-warn)]">{endedNote}</p>
+      ) : null}
+      {move !== undefined && (standing.kind !== 'running' || offered) ? (
+        <div className="grid gap-2 rounded-lg bg-[var(--color-inset)] p-3 text-sm">
+          <p className="text-[var(--color-fg-2)]">{move.words}</p>
+          <div>
+            <Button size="small" onClick={move.onMove}>
+              {move.label}
+            </Button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

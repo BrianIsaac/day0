@@ -20,13 +20,19 @@ import {
   TRACE_VERSION,
   type TraceHandover,
   type TraceHead,
+  type TraceLedgerLine,
   type TracePage,
   type TraceRetirement,
   type TraceRows,
   type TraceSection,
 } from '../src/export/trace';
 import { WORK_LISTED_EVENT } from './work';
-import { EVENT_TYPES } from '../src/events/contract';
+import {
+  EVENT_TYPES,
+  isConnectionEventType,
+  isEventOf,
+  type ConnectionEventType,
+} from '../src/events/contract';
 import { eventTypesIn, RECORD_FILTERS, type RecordEntry } from '../src/events/record-filters';
 import { eventsOfType } from './eventLog';
 
@@ -232,9 +238,34 @@ const PERSONAL_KEYS = new Set([
   'toAddress',
 ]);
 
+/** What an export writes in place of a personal key's value quoted inside a text. */
+export const PERSONAL_VALUE_REDACTION = '<redacted: personal>';
+
+/**
+ * A personal key as a JSON text quotes it, with its value: a string (escapes kept whole, and one
+ * the ledger's bound cut short running to the end of the text), or an object or array holding no
+ * other. The key must stand alone in its quotes, so `"notCreatedBy"` and prose that names a key
+ * are left. Out of its reach, and left to the export's other floors: a value nested two objects
+ * deep, and JSON quoted inside a JSON string (`\"createdBy\"`).
+ */
+const EMBEDDED_PERSONAL_VALUE = new RegExp(
+  `("(?:${[...PERSONAL_KEYS].join('|')})"\\s*:\\s*)(?:"(?:[^"\\\\]|\\\\.)*(?:"|$)|\\{[^{}]*\\}|\\[[^\\[\\]]*\\])`,
+  'g',
+);
+
+/**
+ * A text with the value of every personal key it quotes replaced: a provider's answer the ledger
+ * keeps as text (a Linear read's `gitBranchName`, which carries the Linear user's handle, and its
+ * `createdBy`; the real-Linear walk's m4), which the key filter of `redactForExport` never sees.
+ */
+function withoutEmbeddedPersonalValues(text: string): string {
+  return text.replace(EMBEDDED_PERSONAL_VALUE, `$1"${PERSONAL_VALUE_REDACTION}"`);
+}
+
 /**
  * Redact one value for export: personal keys are dropped, every string has
- * its recognisable credential shapes replaced, and containers are walked.
+ * the personal values it quotes and its recognisable credential shapes
+ * replaced, and containers are walked.
  *
  * Args:
  *   value: A stored payload, ledger entry or nested part of one.
@@ -243,7 +274,7 @@ const PERSONAL_KEYS = new Set([
  *   The same shape with nothing an export should not carry.
  */
 export function redactForExport(value: unknown): unknown {
-  if (typeof value === 'string') return redactTokenShapes(value);
+  if (typeof value === 'string') return redactTokenShapes(withoutEmbeddedPersonalValues(value));
   if (Array.isArray(value)) return value.map(redactForExport);
   if (value !== null && typeof value === 'object') {
     return Object.fromEntries(
@@ -317,9 +348,104 @@ async function acceptedHandoversOf(
     );
 }
 
+/** The newest lines of one connection's ledger the export reads, far above one employee's share. */
+const LEDGER_EXPORT_LIMIT = 500;
+
 /**
- * The head of an agent's trace: the manifest, the agent, the owner section
- * and the credential labels, and where the first page starts. Internal; the
+ * One connection's ledger as the export reads it: its newest {@link LEDGER_EXPORT_LIMIT} lines and
+ * its first, the landing, which a busy connection's later lines would otherwise push out.
+ *
+ * @param ctx - Query context.
+ * @param organisationConnectionId - The connection.
+ */
+async function connectionLedgerOf(
+  ctx: QueryCtx,
+  organisationConnectionId: Id<'organisationConnections'>,
+): Promise<Doc<'connectionEvents'>[]> {
+  const ledger = () =>
+    ctx.db
+      .query('connectionEvents')
+      .withIndex('by_connection', (q) =>
+        q.eq('organisationConnectionId', organisationConnectionId),
+      );
+  const [newest, first] = await Promise.all([
+    ledger().order('desc').take(LEDGER_EXPORT_LIMIT),
+    ledger().order('asc').first(),
+  ]);
+  return first === null || newest.some((line) => line._id === first._id)
+    ? newest
+    : [...newest, first];
+}
+
+/**
+ * The organisation's ledger lines about the connections an employee's cards use (F17; the access
+ * plan, section 8, cross-unit test 4), oldest first: each connection's landing, rotations and
+ * revoke, and of the vendor calls made with a connection's secret only those that ended this
+ * employee's own credentials (the cards' and those its record says were revoked at the source) and
+ * the configuration token's creation of this employee's own app.
+ * Each payload is redacted as the export redacts, and the administrator's address is left out.
+ */
+async function organisationLedgerOf(
+  ctx: QueryCtx,
+  agentId: Id<'agents'>,
+  surfaces: readonly Doc<'surfaces'>[],
+): Promise<TraceLedgerLine[]> {
+  const connectionIds = [
+    ...new Set(
+      surfaces.flatMap((surface) =>
+        [surface.organisationConnectionId, surface.provisioning?.organisationConnectionId].filter(
+          (id): id is Id<'organisationConnections'> => id !== undefined,
+        ),
+      ),
+    ),
+  ];
+  if (connectionIds.length === 0) return [];
+  const [ended, ...ledgers] = await Promise.all([
+    eventsOfType(ctx, agentId, 'credential.revoked-at-source').order('desc').take(TRACE_PAGE_ROWS),
+    ...connectionIds.map(
+      async (organisationConnectionId) => await connectionLedgerOf(ctx, organisationConnectionId),
+    ),
+  ]);
+  const own = new Set<string>([
+    ...surfaces.flatMap((surface) => (surface.credentialId ? [surface.credentialId] : [])),
+    ...ended.flatMap((event) =>
+      isEventOf(event, 'credential.revoked-at-source') ? [event.payload.credentialId] : [],
+    ),
+  ]);
+  const ownApps = new Set<string>(
+    surfaces.flatMap((surface) =>
+      surface.provisioning?.appId ? [surface.provisioning.appId] : [],
+    ),
+  );
+  return ledgers
+    .flat()
+    .filter((line) => isConnectionEventType(line.type))
+    .filter((line) => {
+      if (line.type === 'organisation.configuration-used') {
+        // Only the creation of this employee's own app is its: another employee's app, a renewal
+        // of the token and its revoke are the organisation's (the wave 11 review's m1).
+        const appId = (line.payload as { readonly appId?: unknown }).appId;
+        return typeof appId === 'string' && ownApps.has(appId);
+      }
+      if (line.type !== 'organisation.revoked-at-source') return true;
+      const credentialId = (line.payload as { readonly credentialId?: unknown }).credentialId;
+      return typeof credentialId === 'string' && own.has(credentialId);
+    })
+    .toSorted((left, right) => left.createdAt - right.createdAt)
+    .map(
+      (line): TraceLedgerLine => ({
+        type: line.type as ConnectionEventType,
+        organisationConnectionId: line.organisationConnectionId,
+        createdAt: line.createdAt,
+        payload: redactForExport(line.payload) as TraceLedgerLine['payload'],
+      }),
+    );
+}
+
+/**
+ * The head of an agent's trace: the manifest, the agent, the owner section,
+ * the credential labels and the organisation's ledger about its connections,
+ * and where the first page starts. Internal; the
  * export action runs it under the caller's identity, with the moment of the
  * export (a query reads no clock), and the ownership check here runs again.
  */
@@ -374,6 +500,7 @@ export const exportHead = internalQuery({
       credentialNames: credentials.flatMap((credential) =>
         credential ? [{ label: credential.label }] : [],
       ),
+      organisationLedger: await organisationLedgerOf(ctx, args.agentId, surfaces),
       next: { section: TRACE_SECTIONS[0], cursor: null },
     };
   },

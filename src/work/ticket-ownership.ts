@@ -1,13 +1,23 @@
 /**
  * Who owns a tracker ticket, and whether it is still the one a plan was made
- * for, by the kanban's own primitives (Q11): the assignee, a do-not-automate
+ * for, by the kanban's own primitives (Q11): who holds it, a do-not-automate
  * label and the workflow state.
+ *
+ * Who holds a ticket is its delegate when one is set, else its assignee: in
+ * Linear, assigning an issue to an app user sets the app as the delegate and
+ * leaves the person as the assignee (the agents page, read 2 October 2026), so
+ * a ticket a manager hands to an employee acting as its own app user carries
+ * the app user as its delegate. The ticket is the employee's when nobody holds
+ * it or the identity its token acts as does (D6, AC8): under an app identity
+ * that is the app user, never the manager.
  *
  * Intake reads a ticket with these rules before it takes one, and the apply
  * reads it again with them before a run's first write on it. People are
  * compared by id, then by email, and never by name: names are not unique in
  * Linear (review M9).
  */
+
+import type { ActsAs } from '../surfaces/access-identity';
 
 /** The label a person puts on a ticket to keep every Day0 employee off it (Q11). */
 export const DO_NOT_AUTOMATE_LABEL = 'do-not-automate';
@@ -21,9 +31,13 @@ export interface PersonIdentity {
   readonly email?: string;
 }
 
-/** A ticket as the rules read it, kept at each listing so a later read can be compared. */
+/**
+ * A ticket as the rules read it, kept at each listing so a later read can be compared. The
+ * `assignee` fields name the ticket's holder ({@link ticketHolder}): its delegate when one is set,
+ * else its assignee.
+ */
 export interface TicketSnapshot {
-  /** Whether anybody is assigned, identified or not. */
+  /** Whether anybody holds the ticket, identified or not. */
   readonly assigned: boolean;
   readonly assigneeId?: string;
   readonly assigneeEmail?: string;
@@ -126,14 +140,69 @@ export function ticketLabels(issue: Record<string, unknown>): string[] {
  * @returns The assignee's id and address, or undefined when nobody is assigned.
  */
 export function ticketAssignee(issue: Record<string, unknown>): PersonIdentity | undefined {
-  const nested = asRecord(issue.assignee);
-  const printed = typeof issue.assignee === 'string' ? issue.assignee.trim() : '';
+  return personField(issue, 'assignee');
+}
+
+/**
+ * A person field of a ticket (`assignee` or `delegate`) as the rules identify a person: the
+ * `<field>Id` or a nested object's id, and a nested object's address or a value printed as one.
+ */
+function personField(
+  issue: Record<string, unknown>,
+  field: 'assignee' | 'delegate',
+): PersonIdentity | undefined {
+  const value = issue[field];
+  const nested = asRecord(value);
+  const printed = typeof value === 'string' ? value.trim() : '';
   const identity: PersonIdentity = {
-    id: personKey(issue.assigneeId, nested?.id),
+    id: personKey(issue[`${field}Id`], nested?.id),
     email: personKey(nested?.email, printed.includes('@') ? printed : undefined),
   };
   const named = printed !== '' || personKey(nested?.name, nested?.displayName) !== undefined;
   return identity.id !== undefined || identity.email !== undefined || named ? identity : undefined;
+}
+
+/**
+ * Who holds a ticket for the ownership rule (D6): its delegate when one is set, since Linear sets
+ * an app user it is assigned to as the delegate and keeps the person as the assignee; else its
+ * assignee.
+ *
+ * @param issue - Provider issue object.
+ * @returns The holder's id and address, or undefined when nobody holds the ticket.
+ */
+export function ticketHolder(issue: Record<string, unknown>): PersonIdentity | undefined {
+  return personField(issue, 'delegate') ?? personField(issue, 'assignee');
+}
+
+/** The parts of a card that say whom its token acts as. */
+export interface ActingCard {
+  readonly actsAs?: ActsAs;
+  /** The identity the card's last probe read, where it read one. */
+  readonly providerIdentityId?: string;
+}
+
+/**
+ * Whether a card acts as an app user, its own or the organisation's shared one (D2), rather than
+ * as the owner of a key.
+ *
+ * @param card - The card's identity.
+ */
+export function isAppIdentity(card: ActingCard): boolean {
+  const kind = card.actsAs?.kind;
+  return kind === 'own-app' || kind === 'shared-app';
+}
+
+/**
+ * The app user a card acts as, when it acts as an app (its own or the organisation's shared one):
+ * the identity its last probe read, else the one its landing read. A card on a key, or one whose
+ * app user was never read, has none, and the caller reads the token's owner instead.
+ *
+ * @param card - The card's identity and its probed id.
+ */
+export function appIdentityOf(card: ActingCard): PersonIdentity | undefined {
+  if (!isAppIdentity(card)) return undefined;
+  const id = personKey(card.providerIdentityId, card.actsAs?.providerIdentityId);
+  return id === undefined ? undefined : { id };
 }
 
 /**
@@ -152,7 +221,7 @@ export function isClosedStateType(stateType: string | undefined): boolean {
  * @returns The snapshot a later read is compared with.
  */
 export function ticketSnapshot(issue: Record<string, unknown>): TicketSnapshot {
-  const assignee = ticketAssignee(issue);
+  const assignee = ticketHolder(issue);
   const state = ticketStateName(issue);
   const stateType = ticketStateType(issue);
   return {
@@ -185,15 +254,17 @@ function sameState(left: string, right: string): boolean {
  * manager retried after, since a listing is shown nowhere on the card. The
  * assignee is compared with the plan's listing alone, since a Retry does
  * not hand a person's ticket to Day0: a ticket assigned since is still the
- * item's only when it is assigned to the key's owner. With no listing to
- * compare with, the rule intake applies decides: nobody or the key's owner
- * assigned, open, and not labelled.
+ * item's only when its holder is the key's owner, the identity the token acts
+ * as (the app user under an app identity, D6). With no listing to compare
+ * with, the rule intake applies decides: nobody or the key's owner holding
+ * it, open, and not labelled.
  *
  * @param now - The ticket as it reads now.
  * @param context - The plan's listing, the listing the manager's last
  *   Retry saw (its open state only counts), the states Day0 set on the
  *   ticket (names, or types when a run set one by type), and the key's
- *   owner, read only when an assignee has to be compared with it.
+ *   owner (the app user under an app identity), read only when a holder has
+ *   to be compared with it.
  * @returns The named change, or undefined.
  */
 export async function ticketChange(

@@ -12,7 +12,7 @@ import {
 } from './_generated/server';
 import { appendEvent } from './eventLog';
 import { runsInFlight } from './transferInFlight';
-import { noticeSurfaceOf } from './transferNotice';
+import { noticeCarrierOf, recordNoticeOutcome } from './transferNotice';
 import { afterwardsOf, afterwardsValidator } from './transferDepartures';
 import { isEvaluationAgent } from './metrics';
 import {
@@ -57,6 +57,7 @@ import {
   TRANSFER_EXPIRY_MS,
   TRANSFER_NOT_FOUND,
   type TransferCancelReason,
+  endedWithoutMove,
   transferExpiresAt,
   transferStateRefusal,
   UNVERIFIED_FOR_ASK,
@@ -449,10 +450,18 @@ async function askInTransaction(
     if (note !== undefined) {
       await ctx.scheduler.runAfter(0, internal.managerTransfers.scrubNote, { transferId });
     }
-    if ((await noticeSurfaceOf(ctx, agent, now)) !== undefined) {
+    const carrier = await noticeCarrierOf(ctx, agent, now);
+    if (carrier.kind === 'carried') {
       await ctx.scheduler.runAfter(0, internal.managerChannelActions.sendTransferNotice, {
         transferId,
       });
+    } else {
+      // The asking manager reads from the record whether the other was told, and why not (m10).
+      await recordNoticeOutcome(
+        ctx,
+        { _id: transferId, agentId: agent._id, fromAddress, toAddress },
+        { delivered: false, reason: carrier.reason },
+      );
     }
   }
   return transferId;
@@ -794,7 +803,8 @@ const endedHandoverValidator = v.object({
  * without the move in the last 30 days (decision 4: the settle's automatic end, or the
  * operator's), so the acceptor's home says the employee is not coming, as the old manager's
  * record says it (`manager.transfer-ended`). Such a request is `cancelled` with the acceptance's
- * stamp kept and no ask's cancel reason (`transferAcceptance.endUnmovable`); one whose employee
+ * stamp kept and no ask's cancel reason (`transferAcceptance.endUnmovable`): `handover-ended`, or
+ * none on a row an older release ended ({@link endedWithoutMove}); one whose employee
  * has since gone, moved, or been asked for again is left out ({@link endingStillTrue}). An
  * anonymous caller, or one without a verified address, has none. Reads at most
  * `TRANSFER_READ_LIMIT` rows per index; writes nothing.
@@ -811,7 +821,7 @@ export const endedForMe = query({
     const ended = cancelled.filter(
       (transfer) =>
         transfer.toOwnerKey === caller.ownerKey &&
-        transfer.cancelReason === undefined &&
+        endedWithoutMove(transfer.cancelReason) &&
         transfer.decidedAt !== undefined &&
         transfer.decidedAt >= since,
     );

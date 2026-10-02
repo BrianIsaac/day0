@@ -16,6 +16,7 @@ import {
 } from '../../src/agent/manager-transfer';
 import { runThroughBody } from '../fixtures/run-through-charter-2026-09-14';
 import { MANAGER_ADDRESS, fixtureAddressOf, managerIdentity } from './fakes/manager-identity';
+import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 /** The account the handover names, signed in with its verified address. */
@@ -399,6 +400,54 @@ describe('transferPreview: what the named manager reads before accepting (transf
     expect(
       await office.harness.run(async (ctx) => await ctx.db.query('surfaces').collect()),
     ).toEqual(before);
+  });
+
+  it('lists a card that keeps its own identity for re-approval, and counts its read scope among the revoked (join 10)', async (): Promise<void> => {
+    const office = await seedOffice();
+    await office.harness.run(async (ctx) => {
+      const connectionId = await ctx.db.insert('organisationConnections', {
+        system: 'linear',
+        displayName: 'Linear',
+        kind: 'oauth-app',
+        mode: 'per-employee',
+        scopes: ['read', 'write', 'app:assignable'],
+        registeredBy: { via: 'setup-cli', at: 1 },
+        status: 'active',
+        createdAt: 1,
+      });
+      const own = await ctx.db.insert('credentials', {
+        userId: ORGANISATION_OWNER_KEY,
+        holder: ORGANISATION_HOLDER,
+        kind: 'oauth',
+        label: 'Day0 Maya access token',
+        ciphertext: 'sealed',
+        iv: 'iv',
+        source: 'oauth',
+        issuedBy: {
+          system: 'linear',
+          grant: 'authorisation-code',
+          organisationConnectionId: connectionId,
+        },
+        createdAt: 1,
+      });
+      await ctx.db.patch(office.linear, {
+        credentialId: own,
+        credentialKind: 'oauth',
+        organisationConnectionId: connectionId,
+        actsAs: { kind: 'own-app', label: 'Day0 Maya' },
+      });
+    });
+
+    const preview = await office.harness
+      .withIdentity(COLLEAGUE)
+      .query(api.transferAcceptance.transferPreview, { transferId: office.transferId });
+
+    expect(preview?.leavesBehind.reapprove).toEqual([
+      { slug: 'linear', displayName: 'Linear', identity: 'Day0 Maya', kind: 'own-app' },
+    ]);
+    expect(preview?.leavesBehind.surfaces).toEqual([{ slug: 'slack', displayName: 'Slack' }]);
+    expect(preview?.leavesBehind.scopesRevoked).toEqual(['linear:read']);
+    expect(preview?.takesOn.scopes.map((grant) => grant.scope)).not.toContain('linear:read');
   });
 
   it('counts the record at most to the retire preview’s bound, and says when the count is a floor', async (): Promise<void> => {

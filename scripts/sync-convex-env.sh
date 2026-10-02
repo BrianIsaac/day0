@@ -38,6 +38,12 @@ KEYS=(
   DAY0_OIDC_EMAIL_TRUSTED
   DAY0_SHARED_SKILLS
   NEXT_PUBLIC_DEMO_BOSS_EMAIL
+  # The token store's Nango (11-AT): where the backend asks for a Nango-held
+  # token and the environment key it presents. Nango's encryption key and its
+  # database password stay with the compose file and never reach the
+  # deployment.
+  DAY0_NANGO_URL
+  DAY0_NANGO_SECRET_KEY
 )
 
 # The pairs `convex/auth.config.ts` reads to decide who may call the
@@ -67,9 +73,12 @@ CLERK_ISSUER=CLERK_JWT_ISSUER_DOMAIN
 # .env.local is removed, since a stale one would keep admitting a domain the
 # operator took off. The client secret and the session secret are the app
 # server's alone and never pushed, nor is the browser's copy of the profile.
-# Wave 11 adds its customer-local names after these.
+# Wave 11 adds its customer-local names after these: the administrators named
+# at install (B8), whom `assertAdministrator` checks; a list dropped from
+# .env.local is removed, so nobody stays an administrator the operator took off.
 CUSTOMER_LOCAL_KEYS=(
   DAY0_OIDC_ALLOWED_DOMAINS
+  DAY0_ADMINISTRATORS
 )
 
 # Their absence is also meaningful, which is why they are removed rather than
@@ -124,6 +133,10 @@ CLEAR_WHEN_EMPTY=(
   # Unset means shared skills on (K4): a stale `false` would keep every offer
   # off after the operator removed the switch.
   DAY0_SHARED_SKILLS
+  # Unset means no Nango: a Nango-held credential is refused by name rather
+  # than asked of a service the operator took away, with a key it dropped.
+  DAY0_NANGO_URL
+  DAY0_NANGO_SECRET_KEY
 )
 
 # Keys the deployment used to read and no longer does. A stale CONVEX_BIND_ADDR

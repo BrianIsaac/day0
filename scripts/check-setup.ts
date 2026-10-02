@@ -64,10 +64,12 @@ import { wayOfSetup } from '../src/setup/quickstart';
 import { browserComponent } from '../src/surfaces/browser';
 import {
   containerDialArguments,
+  firstLine,
   readContainerDial,
   unreachableFix,
   type ModelDial,
 } from './model-reach';
+import { errorMessage } from '../src/lib/errors';
 import { isLoopback, setupRoute } from './setup-route';
 import {
   fetchFromContainer,
@@ -75,9 +77,19 @@ import {
   readDeploymentEnv,
   signInSetupChecks,
   worstStatus,
+  type DeploymentRead,
   type SignInCheck,
   type SignInProbes,
 } from './check-sign-in';
+import {
+  administratorsCheck,
+  connectionChecks,
+  parseConnectionRows,
+  type AccessCheck,
+  type ConnectionRow,
+} from './check-access';
+import { ADMINISTRATORS_VAR } from '../src/lib/administrators';
+import { recipeForSystem } from '../src/surfaces/access-kit';
 
 export { setupRoute, type ReportedRoute, type RouteReport } from './setup-route';
 
@@ -110,6 +122,11 @@ const COMPONENTS = [
     service: 'redactor',
     profile: 'redactor',
     purpose: 'the span model documentation sync and the ledger redact with',
+  },
+  {
+    service: 'nango-server',
+    profile: 'token-store',
+    purpose: "Nango, which keeps and refreshes the API rung's OAuth tokens",
   },
   { service: 'dashboard', profile: 'dev', purpose: 'the Convex dashboard' },
 ] as const;
@@ -166,6 +183,8 @@ export const WATCHED = [
   'DAY0_CREDENTIAL_KEY',
   'DAY0_BROWSER_MCP_URL',
   'DAY0_REDACTOR_URL',
+  'DAY0_NANGO_URL',
+  'DAY0_NANGO_SECRET_KEY',
   'DAY0_PUBLIC_URL',
   'COMPOSE_PROJECT_NAME',
 ] as const;
@@ -262,10 +281,18 @@ export function main(envFile: string = ENV_FILE, options: { report?: boolean } =
       : undefined;
   const settings = settingsSection(v);
   const signInProbes = probeSignIn(v, { selfHosted, projectName, services });
+  const backendHere = selfHosted && (services?.includes('backend') ?? false);
+  const connections = backendHere ? readConnections(v) : undefined;
+  const accessDeployment =
+    signInProbes?.deployment ??
+    (backendHere && v[ADMINISTRATORS_VAR] ? readDeploymentEnv(v) : undefined);
+  const access = accessSection(v, connections, accessDeployment);
+  const connected = connections !== undefined && 'error' in connections ? [] : (connections ?? []);
   const sections: Section[] = [
     backendSection(v),
     ...(migrations ? [migrations] : []),
     authSection(v, signInProbes),
+    ...(access ? [access] : []),
     ...(settings ? [settings] : []),
     surfacesSection(v, services),
     componentsSection(v, projectName, services),
@@ -288,6 +315,8 @@ export function main(envFile: string = ENV_FILE, options: { report?: boolean } =
           })),
           digests: fileDigests(REPORTED_FILES),
           ...(signInProbes === undefined ? {} : { signIn: signInChecksFor(v, signInProbes) }),
+          ...(access === undefined ? {} : { access: accessChecksForReport(v, connected) }),
+          connections: connected,
           commit: checkoutCommit(),
           generatedAt: new Date().toISOString(),
         }),
@@ -746,6 +775,40 @@ export function browserSetupConfiguration(configured: string | undefined): {
 }
 
 /**
+ * The token store's half-states (11-AT, `--profile token-store`): configured with nothing running,
+ * running without the key the backend presents to it, or running with day0 not told. None when it
+ * is configured and running with its key, or neither, since a credential the token store would
+ * keep is refused by name without it. Names the key only by its variable, never its value.
+ *
+ * @param values - Resolved deployment environment.
+ * @param running - Whether `nango-server` is running.
+ */
+function tokenStoreLines(values: Values, running: boolean): string[] {
+  const url = values.DAY0_NANGO_URL;
+  if (url && !running) {
+    return [
+      `DAY0_NANGO_URL names ${url} and nothing is running there.`,
+      'A credential the token store keeps cannot be read until it runs. Start it with',
+      '`pnpm convex:up --profile token-store`, or clear the variable.',
+    ];
+  }
+  if (url && !values.DAY0_NANGO_SECRET_KEY) {
+    return [
+      'DAY0_NANGO_SECRET_KEY is unset, so the backend cannot present its key to Nango.',
+      'Generate it with `pnpm dev:no-auth-key` and re-run `pnpm sync:env`.',
+    ];
+  }
+  if (!url && running) {
+    return [
+      'nango-server is running and DAY0_NANGO_URL is unset, so day0 will not use it.',
+      `Set DAY0_NANGO_URL=http://nango-server:3003 in ${ENV_FILE} and re-run \`pnpm sync:env\`,`,
+      'or stop the component.',
+    ];
+  }
+  return [];
+}
+
+/**
  * Report which optional components are running and which are merely configured.
  *
  * One thing here fails the command: the redactor in real mode, missing or not
@@ -845,6 +908,11 @@ export function componentsSection(
       'provider outcomes record that only the exact-value and structural layers ran.',
       'Start it with `pnpm redactor:up` and set DAY0_REDACTOR_URL=http://redactor:8000.',
     );
+  }
+  const tokenStore = tokenStoreLines(values, services.includes('nango-server'));
+  if (tokenStore.length > 0) {
+    status = status === 'gap' ? 'gap' : 'warn';
+    lines.push(...tokenStore);
   }
   const kinds = linkedDocSourceKinds(values);
   if (kinds === undefined) {
@@ -1491,6 +1559,145 @@ function finalisationSection(v: Values): Section {
   };
 }
 
+/** The connections the deployment holds, through the Convex CLI pointed at it. */
+function readConnections(v: Values): readonly ConnectionRow[] | { error: string } {
+  const names = ['CONVEX_SELF_HOSTED_URL', 'CONVEX_SELF_HOSTED_ADMIN_KEY'];
+  const run = spawnSync(
+    'npx',
+    ['convex', 'data', 'organisationConnections', '--limit', '200', '--format', 'jsonl'],
+    {
+      encoding: 'utf8',
+      timeout: 120_000,
+      env: {
+        ...process.env,
+        ...Object.fromEntries(names.filter((name) => v[name]).map((name) => [name, v[name]])),
+      },
+    },
+  );
+  if (run.status !== 0) return { error: firstLine(run.stderr ?? '') || 'the Convex CLI failed' };
+  try {
+    return parseConnectionRows(run.stdout ?? '');
+  } catch (err) {
+    return { error: errorMessage(err) };
+  }
+}
+
+/**
+ * The access block's checks without the network: the administrators, then each connection's
+ * status, redirect and scopes. The live half (the secret opens, the vendor answers) is
+ * `pnpm check:access`.
+ *
+ * @param v - The env file with the process environment layered on.
+ * @param connections - The organisation's connections.
+ */
+export function accessChecksForReport(
+  v: Values,
+  connections: readonly ConnectionRow[],
+): AccessCheck[] {
+  return [
+    administratorsCheck(v),
+    ...connections.flatMap((connection) => connectionChecks(connection, v)),
+  ];
+}
+
+/** How an access check opens its line in the section. */
+const ACCESS_LABEL: Readonly<Record<Status, string>> = { ok: 'pass', warn: 'note', gap: 'gap ' };
+
+/**
+ * The access block (11-AI): who administers the organisation's connections and whether the
+ * deployment holds that list, and each connection's status, redirect and scopes. Undefined for an
+ * install with no administrators, no connection and no company sign-in.
+ *
+ * @param v - The env file with the process environment layered on.
+ * @param connections - The deployment's connections; an error when they could not be read;
+ *   undefined when the backend does not run here.
+ * @param deployment - The deployment's env, when it was asked.
+ */
+export function accessSection(
+  v: Values,
+  connections: readonly ConnectionRow[] | { error: string } | undefined,
+  deployment: DeploymentRead | undefined,
+): Section | undefined {
+  const listed = connections !== undefined && !('error' in connections) ? connections : [];
+  const customerLocal = (v.DAY0_PROFILE ?? '').trim() === 'customer-local';
+  if (!customerLocal && !(v[ADMINISTRATORS_VAR] ?? '').trim() && listed.length === 0) {
+    return undefined;
+  }
+  // Before `./setup.sh access` has run there is nothing to manage yet: the sign-in's own check,
+  // which `install` runs before the access half, must not stop on the half still to come.
+  const notSetUp = listed.length === 0 && !(v[ADMINISTRATORS_VAR] ?? '').trim();
+  const checks: Array<{ status: Status; line: string }> = accessChecksForReport(v, listed).map(
+    (one) =>
+      notSetUp && one.name === 'administrators'
+        ? {
+            status: 'warn',
+            line:
+              'note  The access half is not set up yet: `./setup.sh access` names the ' +
+              "administrators and connects the organisation's systems.",
+          }
+        : {
+            status: one.status,
+            line: `${ACCESS_LABEL[one.status]}  ${one.subject} ${one.name}: ${one.detail}`,
+          },
+  );
+  const held = administratorsHeld(v, deployment);
+  checks.splice(1, 0, { status: held.status, line: `${ACCESS_LABEL[held.status]}  ${held.line}` });
+  if (connections === undefined) {
+    checks.push({
+      status: 'warn',
+      line: "note  The organisation's connections were not read: the backend does not run here.",
+    });
+  } else if ('error' in connections) {
+    checks.push({
+      status: 'warn',
+      line: `note  The organisation's connections could not be read: ${connections.error}.`,
+    });
+  } else if (listed.length === 0) {
+    checks.push({
+      status: 'warn',
+      line: 'note  No system is connected for the organisation yet: `./setup.sh access` connects them.',
+    });
+  }
+  const status: Status = checks.some((one) => one.status === 'gap')
+    ? 'gap'
+    : checks.some((one) => one.status === 'warn')
+      ? 'warn'
+      : 'ok';
+  return {
+    title: titleFor(status, "Access: the organisation's connections"),
+    status,
+    lines: [
+      ...checks.map((one) => one.line),
+      'The live check, with the customer’s IT: `pnpm check:access` opens each secret and asks each vendor.',
+    ],
+  };
+}
+
+/** Whether the deployment holds the file's administrators. */
+function administratorsHeld(
+  v: Values,
+  deployment: DeploymentRead | undefined,
+): { status: Status; line: string } {
+  if (deployment === undefined) {
+    return { status: 'warn', line: `The deployment's ${ADMINISTRATORS_VAR} was not asked.` };
+  }
+  if ('error' in deployment) {
+    return {
+      status: 'warn',
+      line: `The deployment's ${ADMINISTRATORS_VAR} could not be read: ${deployment.error}.`,
+    };
+  }
+  if (
+    (deployment.values[ADMINISTRATORS_VAR] ?? '').trim() !== (v[ADMINISTRATORS_VAR] ?? '').trim()
+  ) {
+    return {
+      status: 'gap',
+      line: `The deployment holds another ${ADMINISTRATORS_VAR} than this file: run pnpm sync:env.`,
+    };
+  }
+  return { status: 'ok', line: `The deployment holds this file’s ${ADMINISTRATORS_VAR}.` };
+}
+
 function titleFor(status: Status, base: string): string {
   return status === 'gap' ? `${base} - needs fixing` : base;
 }
@@ -1534,6 +1741,8 @@ export interface SetupReport {
   sections: Array<{ title: string; status: Status }>;
   /** The company sign-in's checks by name and verdict, when the customer-local profile runs it. */
   signIn?: Array<{ check: SignInCheck['name']; status: Status }>;
+  /** The access block's checks by subject, name and verdict, when the block runs. */
+  access?: Array<{ subject: string; check: AccessCheck['name']; status: Status }>;
 }
 
 /** The host of an address that leaves this machine, or undefined for one that stays. */
@@ -1558,13 +1767,20 @@ function outboundHost(url: string | undefined): string | undefined {
  * approved card reaches are the ones the documentation names, so they are
  * said once, not listed.
  *
+ * The organisation's connections add their vendors' hosts (the access kit's,
+ * and an MCP server's and its authorisation server's).
+ *
  * Args:
  *   values: Resolved values.
+ *   connections: The organisation's connections, when the deployment was asked.
  *
  * Returns:
  *   One row per host, first seen first.
  */
-export function egressHosts(values: Readonly<Record<string, string>>): EgressHost[] {
+export function egressHosts(
+  values: Readonly<Record<string, string>>,
+  connections: readonly ConnectionRow[] = [],
+): EgressHost[] {
   const rows: EgressHost[] = [];
   const add = (host: string | undefined, purpose: string): void => {
     if (host && !rows.some((row) => row.host === host)) rows.push({ host, purpose });
@@ -1610,7 +1826,16 @@ export function egressHosts(values: Readonly<Record<string, string>>): EgressHos
     outboundHost(values.DAY0_OIDC_ISSUER),
     "the customer's issuer: discovery, keys and tokens, from this machine and the backend",
   );
-  add('registry-1.docker.io', 'image pulls at setup (ollama, python, node)');
+  for (const connection of connections) {
+    const purpose = `${connection.displayName}, the organisation's connection`;
+    for (const host of recipeForSystem(connection.system)?.vendorHosts ?? []) add(host, purpose);
+    add(outboundHost(connection.resource), purpose);
+    add(outboundHost(connection.issuer), `${connection.displayName}'s authorisation server`);
+  }
+  add(
+    'registry-1.docker.io',
+    "image pulls at setup (ollama, python, node, and the token store's nango-server, postgres and redis)",
+  );
   add('ghcr.io', 'image pulls at setup (the Convex backend and dashboard)');
   add('mcr.microsoft.com', 'image pulls at setup (the browser component)');
   return rows;
@@ -1657,6 +1882,9 @@ export function setupReport(inputs: {
   values: Readonly<Record<string, string>>;
   sections: readonly Section[];
   signIn?: readonly SignInCheck[];
+  access?: readonly AccessCheck[];
+  /** The organisation's connections, whose vendors join the egress list. */
+  connections?: readonly ConnectionRow[];
   versions: Record<string, string | undefined>;
   images: ReadonlyArray<ComposeImage & { running: boolean }>;
   digests: Record<string, string>;
@@ -1673,11 +1901,20 @@ export function setupReport(inputs: {
     versions: inputs.versions,
     images: [...inputs.images],
     digests: inputs.digests,
-    egress: egressHosts(inputs.values),
+    egress: egressHosts(inputs.values, inputs.connections),
     sections: inputs.sections.map(({ title, status }) => ({ title, status })),
     ...(inputs.signIn === undefined
       ? {}
       : { signIn: inputs.signIn.map(({ name, status }) => ({ check: name, status })) }),
+    ...(inputs.access === undefined
+      ? {}
+      : {
+          access: inputs.access.map(({ subject, name, status }) => ({
+            subject,
+            check: name,
+            status,
+          })),
+        }),
   };
 }
 

@@ -41,6 +41,8 @@ import { allConvexModules } from './all-modules';
 import { companyPage } from '../fixtures/company-bed';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import { MCP_INVALID_TOKEN_ERROR } from '../fixtures/linear/linear-oauth-2026-10-02';
+import { LinearIssuerRefusal } from '../../src/surfaces/identity-issuers/linear';
 
 afterEach((): void => {
   restoreSurfaceMode();
@@ -659,6 +661,125 @@ describe('surface probe action state', (): void => {
       );
     },
   );
+
+  describe('the bearer a probe sends comes from the token store (11-AT)', (): void => {
+    const agentId = 'test-agent-id' as Id<'agents'>;
+    const surfaceId = 'test-surface-id' as Id<'surfaces'>;
+    const surface = {
+      _id: surfaceId,
+      agentId,
+      slug: 'docs',
+      displayName: 'Acme docs',
+      class: 'docs',
+      verdict: 'connected',
+      path: 'mcp',
+      endpoint: 'https://auth.acme.test/mcp',
+      pathCandidates: [{ path: 'mcp', endpoint: 'https://auth.acme.test/mcp' }],
+      credentialId: 'test-credential-id',
+      credentialLanded: true,
+      managerApprovedAt: 2,
+      whereFound: [],
+      createdAt: 1,
+    };
+
+    /**
+     * A probe's context whose two credential reads answer differently: the stored value, as
+     * `credentials.decrypt` opens it, and the token store's live bearer (`currentBearer`).
+     */
+    function probeContext(
+      bearer: string | Error,
+      failures: Array<Record<string, unknown>>,
+      retries: Array<Record<string, unknown>> = [],
+    ): ActionCtx {
+      return {
+        runMutation: async (
+          _reference: unknown,
+          args: Record<string, unknown>,
+        ): Promise<unknown> => {
+          if (Object.keys(args).length === 1) return { reserved: true, surface, generation: 1 };
+          if ('verdict' in args) {
+            failures.push(args);
+            return true;
+          }
+          if ('retryAfterMs' in args) {
+            retries.push(args);
+            return true;
+          }
+          return null;
+        },
+        runQuery: async (): Promise<unknown> => ({
+          surface: { ...surface, probeGeneration: 1 },
+          agent: { _id: agentId, bossEmail: MANAGER_ADDRESS },
+        }),
+        runAction: async (reference: unknown): Promise<string | string[]> => {
+          const name = getFunctionName(reference as never);
+          if (name === getFunctionName(ownerValuesRef)) return [];
+          if (name === getFunctionName(internal.mcpOauthActions.currentBearer)) {
+            if (bearer instanceof Error) throw bearer;
+            return bearer;
+          }
+          return 'stored-token-past-its-expiry';
+        },
+      } as unknown as ActionCtx;
+    }
+
+    it('checks the MCP server with the token the store refreshed, not the stored one', async (): Promise<void> => {
+      const failures: Array<Record<string, unknown>> = [];
+      const probeMcp = vi.fn(
+        async (): Promise<McpDiscovery> => ({ toolAllowlist: ['search'], toolArguments: [] }),
+      );
+      await runSurfaceProbe(
+        probeContext('refreshed-token', failures),
+        { surfaceId },
+        { probeMcp, probeBrowser: vi.fn(), probeSlack: vi.fn(), now: (): number => 1_000 },
+      );
+      expect(probeMcp).toHaveBeenCalledWith('https://auth.acme.test/mcp', 'refreshed-token');
+    });
+
+    it('keeps the verdict and asks again when the token store cannot be reached, rather than ending the card', async (): Promise<void> => {
+      const failures: Array<Record<string, unknown>> = [];
+      const retries: Array<Record<string, unknown>> = [];
+      const probeMcp = vi.fn();
+      const outcome = await runSurfaceProbe(
+        probeContext(new Error('Nango could not be reached: fetch failed'), failures, retries),
+        { surfaceId },
+        {
+          probeMcp,
+          probeBrowser: vi.fn(),
+          probeSlack: vi.fn(),
+          now: (): number => 1_000,
+          wait: async (): Promise<void> => undefined,
+        },
+      );
+      expect(outcome.verdict).toBe('skipped');
+      expect(outcome.reason).toContain('The token store could not answer for the credential');
+      expect(outcome.reason).toContain('the card keeps its verdict');
+      expect(failures).toEqual([]);
+      expect(retries.at(-1)).toMatchObject({ endsProbe: true });
+      expect(probeMcp).not.toHaveBeenCalled();
+    });
+
+    it('ends the card when its refresh was refused and the token has expired, calling no system', async (): Promise<void> => {
+      const failures: Array<Record<string, unknown>> = [];
+      const probeMcp = vi.fn();
+      const outcome = await runSurfaceProbe(
+        probeContext(
+          new Error(
+            'Refreshing the authorisation was refused: invalid_grant Authorise the card again.',
+          ),
+          failures,
+        ),
+        { surfaceId },
+        { probeMcp, probeBrowser: vi.fn(), probeSlack: vi.fn(), now: (): number => 1_000 },
+      );
+      expect(outcome).toEqual({
+        verdict: 'ungranted',
+        reason: 'credential is unavailable or revoked',
+      });
+      expect(failures).toContainEqual(expect.objectContaining({ verdict: 'ungranted' }));
+      expect(probeMcp).not.toHaveBeenCalled();
+    });
+  });
 
   it.each(['https://slack.com/api/', 'https://slack.com/api'])(
     'reaches the Slack probe for a documented base written as %s',
@@ -1475,6 +1596,68 @@ describe('credential landing from the card', (): void => {
     expect(jobs.map((job) => [job.name, job.args[0]])).toEqual([
       ['surfaceActions:probeInternal', { surfaceId }],
     ]);
+  });
+
+  it('writes whom the card acts as: the pasted key, named as the documentation labels it (11-AO)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', randomBytes(32).toString('base64'));
+    const { api: liveApi } = await import('../../convex/_generated/api');
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await seedLandingSurface(harness, 'api-key');
+    await harness.withIdentity(managerIdentity()).action(liveApi.surfaceActions.landCredential, {
+      surfaceId,
+      label: '',
+      plaintext: 'lin_api_test_value',
+    });
+    const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+    expect(surface?.actsAs).toEqual({ kind: 'shared-key', label: 'Linear API key' });
+  });
+
+  it("refuses a pasted credential while the card's system has an active organisation connection, and takes one again once it is revoked (11-AO)", async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', randomBytes(32).toString('base64'));
+    const { api: liveApi, internal: liveInternal } = await import('../../convex/_generated/api');
+    const harness = convexTest(schema, allConvexModules());
+    const organisationConnectionId = await harness.action(
+      liveInternal.organisationConnections.landFromSetup,
+      {
+        system: 'linear',
+        displayName: 'Linear',
+        kind: 'oauth-app',
+        mode: 'shared',
+        scopes: ['read', 'write'],
+        clientId: 'lin-client-1',
+        secret: 'lin_oauth_secret_0123456789',
+      },
+    );
+    const surfaceId = await seedLandingSurface(harness, 'api-key');
+    const owner = harness.withIdentity(managerIdentity());
+    const land = (): Promise<unknown> =>
+      owner.action(liveApi.surfaceActions.landCredential, {
+        surfaceId,
+        label: '',
+        plaintext: 'lin_api_pasted_value',
+      });
+    await expect(land()).rejects.toSatisfy(
+      (error: unknown) =>
+        error instanceof ConvexError &&
+        error.data ===
+          'Linear is connected for your organisation by IT, so this card connects through that connection, never a pasted key. Nothing was stored.',
+    );
+    const refused = await harness.run(async (ctx) => ({
+      surface: await ctx.db.get(surfaceId),
+      owners: (await ctx.db.query('credentials').collect()).filter(
+        (row) => row.holder === undefined,
+      ),
+    }));
+    expect(refused.owners).toEqual([]);
+    expect(refused.surface?.credentialId).toBeUndefined();
+
+    await harness.mutation(liveInternal.organisationConnections.revokeFromSetup, {
+      organisationConnectionId,
+      reason: 'the app was removed',
+    });
+    await expect(land()).resolves.toEqual({ landed: true, probeScheduled: true });
   });
 
   it('stores a documented-location landing as kind location', async (): Promise<void> => {
@@ -3344,6 +3527,179 @@ describe('one failed probe does not write listed-dead', (): void => {
     expect(second.verdict).toBe('ungranted');
     expect(driverDown).toHaveBeenCalledOnce();
     expect(wait).not.toHaveBeenCalled();
+  });
+
+  describe('the Linear app identity at the probe (11-AL)', (): void => {
+    const APP_USER = { id: 'app-user-day0-shared', name: 'Day0', app: true };
+
+    /** The card acting as the organisation's shared Linear app, holding its token. */
+    async function sharedAppCard(harness: TestConvex<typeof schema>): Promise<Id<'surfaces'>> {
+      const surfaceId = await approvedSurface(harness, { path: 'mcp' });
+      await harness.run(async (ctx) =>
+        ctx.db.patch(surfaceId, {
+          credentialKind: 'value',
+          actsAs: { kind: 'shared-app', label: 'Linear', providerIdentityId: APP_USER.id },
+        }),
+      );
+      return surfaceId;
+    }
+
+    /** A Linear identity whose bearer, renewal and app user a test scripts. */
+    function scriptedIdentity(options: {
+      bearers?: string[];
+      renewed?: string;
+      bearerFails?: Error;
+      renewFails?: Error;
+    }) {
+      const bearers = [...(options.bearers ?? ['lin_oauth_shared_1'])];
+      return {
+        bearer: vi.fn(async () => {
+          if (options.bearerFails) throw options.bearerFails;
+          return { bearer: bearers.shift() ?? 'lin_oauth_shared_1', generation: 0 };
+        }),
+        renewAfterRefusal: vi.fn(async (): Promise<string> => {
+          if (options.renewFails) throw options.renewFails;
+          return options.renewed ?? 'lin_oauth_shared_2';
+        }),
+        appUser: vi.fn(async () => APP_USER),
+      };
+    }
+
+    /** A client factory recording the bearer each client was made with. */
+    function bearerFactory(script: Discovery[]) {
+      const bearers: string[] = [];
+      const made = scriptedFactory(script);
+      return {
+        bearers,
+        factory: ((checked, credential) => {
+          bearers.push(credential);
+          return made.factory(checked, credential);
+        }) as NonNullable<Parameters<typeof probeMcpSurface>[2]>,
+      };
+    }
+
+    async function probeWith(
+      harness: TestConvex<typeof schema>,
+      surfaceId: Id<'surfaces'>,
+      identity: ReturnType<typeof scriptedIdentity>,
+      script: Discovery[],
+    ) {
+      const clients = bearerFactory(script);
+      const outcome = await runSurfaceProbe(
+        probeContext(harness),
+        { surfaceId },
+        {
+          probeMcp: (endpoint, credential) =>
+            probeMcpSurface(endpoint, credential, clients.factory, publicDns, reachable),
+          probeBrowser: vi.fn(),
+          probeSlack: vi.fn(),
+          linearIdentity: identity,
+          now: (): number => 1_000,
+          wait: vi.fn(async (): Promise<void> => undefined),
+        },
+      );
+      return { outcome, bearers: clients.bearers };
+    }
+
+    it("records the app user's id and probes with the identity's own token", async (): Promise<void> => {
+      const harness = convexTest(schema, allConvexModules());
+      const surfaceId = await sharedAppCard(harness);
+      const identity = scriptedIdentity({});
+
+      const { outcome, bearers } = await probeWith(harness, surfaceId, identity, [answers]);
+
+      expect(outcome.verdict).toBe('connected');
+      expect(bearers).toEqual(['lin_oauth_shared_1']);
+      expect(identity.appUser).toHaveBeenCalledWith('lin_oauth_shared_1');
+      const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+      expect(surface?.providerIdentityId).toBe(APP_USER.id);
+    });
+
+    it('answers a 401 with one new token before the card ends', async (): Promise<void> => {
+      const harness = convexTest(schema, allConvexModules());
+      const surfaceId = await sharedAppCard(harness);
+      const identity = scriptedIdentity({});
+
+      const { outcome, bearers } = await probeWith(harness, surfaceId, identity, [
+        fails(MCP_INVALID_TOKEN_ERROR),
+        answers,
+      ]);
+
+      expect(outcome.verdict).toBe('connected');
+      expect(identity.renewAfterRefusal).toHaveBeenCalledExactlyOnceWith(expect.any(String), 0);
+      expect(bearers).toEqual(['lin_oauth_shared_1', 'lin_oauth_shared_2']);
+    });
+
+    it('ends the card when Linear refuses the new token too, without a third request', async (): Promise<void> => {
+      const harness = convexTest(schema, allConvexModules());
+      const surfaceId = await sharedAppCard(harness);
+      const identity = scriptedIdentity({});
+
+      const { outcome, bearers } = await probeWith(harness, surfaceId, identity, [
+        fails(MCP_INVALID_TOKEN_ERROR),
+      ]);
+
+      expect(outcome.verdict).toBe('ungranted');
+      expect(outcome.reason).toContain('401');
+      expect(identity.renewAfterRefusal).toHaveBeenCalledOnce();
+      expect(bearers).toHaveLength(2);
+    });
+
+    it('ends a card with a lower rung on no other rung when Linear refuses the new token too', async (): Promise<void> => {
+      const harness = convexTest(schema, allConvexModules());
+      const surfaceId = await approvedSurface(harness, { path: 'mcp', fallback: true });
+      await harness.run(async (ctx) =>
+        ctx.db.patch(surfaceId, {
+          credentialKind: 'value',
+          actsAs: { kind: 'shared-app', label: 'Linear', providerIdentityId: APP_USER.id },
+        }),
+      );
+      const identity = scriptedIdentity({});
+
+      const { outcome } = await probeWith(harness, surfaceId, identity, [
+        fails(MCP_INVALID_TOKEN_ERROR),
+      ]);
+
+      expect(outcome.verdict).toBe('ungranted');
+      expect(outcome.reason).toContain('401');
+      const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+      expect(surface).toMatchObject({ verdict: 'ungranted', path: 'mcp' });
+    });
+
+    it('ends the card with the reason when its expired token cannot be refreshed, on no other rung', async (): Promise<void> => {
+      const harness = convexTest(schema, allConvexModules());
+      const surfaceId = await approvedSurface(harness, { path: 'mcp', fallback: true });
+      await harness.run(async (ctx) =>
+        ctx.db.patch(surfaceId, {
+          credentialKind: 'oauth',
+          actsAs: { kind: 'own-app', label: 'Day0 Leo', providerIdentityId: 'app-user-day0-leo' },
+        }),
+      );
+      const words =
+        'Linear refused to renew the token: Linear refused the token or code it was shown: Refresh token is invalid or expired. Day0 is unauthorised in Linear until a Linear administrator installs the app again from the card.';
+      const identity = scriptedIdentity({
+        bearerFails: new LinearIssuerRefusal('token-refused', words),
+      });
+
+      const { outcome, bearers } = await probeWith(harness, surfaceId, identity, [answers]);
+
+      expect(outcome).toEqual({ verdict: 'ungranted', reason: words });
+      expect(bearers).toEqual([]);
+      const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+      expect(surface).toMatchObject({ verdict: 'ungranted', reason: words, path: 'mcp' });
+    });
+
+    it('probes a Linear card on a pasted key as before, with no identity read', async (): Promise<void> => {
+      const harness = convexTest(schema, allConvexModules());
+      const surfaceId = await approvedSurface(harness, { path: 'mcp' });
+      const identity = scriptedIdentity({});
+
+      const { outcome } = await probeWith(harness, surfaceId, identity, [answers]);
+
+      expect(outcome.verdict).toBe('connected');
+      expect(identity.bearer).not.toHaveBeenCalled();
+      expect(identity.appUser).not.toHaveBeenCalled();
+    });
   });
 });
 

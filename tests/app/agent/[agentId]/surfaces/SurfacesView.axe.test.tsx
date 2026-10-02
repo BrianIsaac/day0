@@ -17,13 +17,35 @@ vi.mock('convex/react', () => ({
     if (args === 'skip') return undefined;
     const name = getFunctionName(reference as never);
     const answer = backend.queries[name];
-    return typeof answer === 'function' ? (answer as (args: unknown) => unknown)(args) : answer;
+    const value =
+      typeof answer === 'function' ? (answer as (args: unknown) => unknown)(args) : answer;
+    // The listing answers whom each card acts as (`listedCardIdentity`), as the backend does.
+    return name === 'surfaces:listForAgent' && Array.isArray(value)
+      ? value.map((row) => withListedIdentity(row, listingContext(backend.queries)))
+      : value;
   },
   useMutation: () => async (): Promise<void> => undefined,
   useAction: () => async (): Promise<void> => undefined,
 }));
 
 import { SurfacesView } from '../../../../../app/agent/[agentId]/surfaces/SurfacesView';
+import { withListedIdentity, type ListingContext } from './fakes/listed-identity';
+
+/** What the listing reads beside each row, from the same fixtures the tab's queries answer. */
+function listingContext(queries: Record<string, unknown>): ListingContext {
+  const summary = queries['organisationConnections:summaryForManager'] as
+    | { systems: { system: string; mode: 'shared' | 'per-employee'; status: 'active' }[] }
+    | undefined;
+  const credentials = (queries['credentials:summaryForOwner'] ?? []) as {
+    _id: string;
+    source: 'entered' | 'oauth' | { sourceId: string; ref: string };
+  }[];
+  return {
+    organisation: new Map((summary?.systems ?? []).map((system) => [system.system, system])),
+    credentials: new Map(credentials.map((credential) => [credential._id, credential])),
+    installRedirectConfigured: queries['surfaces:installRedirectConfigured'] === true,
+  };
+}
 import { asEmployee } from '../../../../fixtures/dom/employee';
 import { axeViolations } from '../../../../fixtures/dom/axe';
 import { mount, settle } from '../../../../fixtures/dom/press';
@@ -124,6 +146,7 @@ const row = (slug: string, fields: Record<string, unknown>): Record<string, unkn
 /** Every card state the tab draws, and a system waiting on the manager's Propose. */
 const SYSTEMS: Record<string, unknown> = {
   'config:components': { browser: true },
+  'organisationConnections:summaryForManager': { callerIsAdministrator: false, systems: [] },
   'surfaces:installRedirectConfigured': true,
   'credentials:summaryForOwner': [],
   'agents:permissionScopes': [
@@ -336,6 +359,120 @@ describe('the real-mode Surfaces tab against the floor (N14)', (): void => {
     await settle();
     expect(underTarget(view.container)).toEqual([]);
     expect(unreachableScrollRegions(view.container)).toEqual([]);
+    view.unmount();
+  }, 30_000);
+});
+
+/**
+ * The access track's card states (wave 11, 11-AC): an MCP card IT connected, waiting on Connect
+ * and acting as the manager; a GitHub card with no connection, showing its access request; a
+ * connected card holding a credential, with Disconnect; and a Slack card acting as its own app.
+ */
+const ACCESS: Record<string, unknown> = {
+  'organisationConnections:summaryForManager': {
+    callerIsAdministrator: false,
+    systems: [
+      {
+        system: 'mcp:docs.acme.test',
+        displayName: 'Acme docs',
+        mode: 'per-employee',
+        status: 'active',
+        connectedAt: NOW - 2 * DAY,
+      },
+      {
+        system: 'slack',
+        displayName: 'Slack',
+        mode: 'per-employee',
+        status: 'active',
+        connectedAt: NOW - 2 * DAY,
+      },
+    ],
+  },
+  'accessRequests:forCard': (args: unknown) =>
+    (args as { surfaceId: string }).surfaceId === 'surface-github'
+      ? {
+          system: 'github',
+          reason: 'no-connection',
+          scopes: ['github:read'],
+          subject: 'Day0 access request: GitHub for Maya',
+          text: 'Maya, a Day0 employee, needs access to GitHub.\nAccess needed: github:read.',
+          mailto: 'mailto:?subject=Day0%20access%20request',
+          draftedAt: NOW - DAY,
+          copiedAt: NOW - DAY,
+        }
+      : null,
+  'surfaces:listForAgent': [
+    row('docs', {
+      displayName: 'Acme docs',
+      verdict: 'approved',
+      endpoint: 'https://docs.acme.test/mcp',
+      managerApprovedAt: NOW - DAY,
+      expiresAt: NOW + 89 * DAY,
+      accessSetBy: 'approval',
+    }),
+    row('github', {
+      verdict: 'approved',
+      path: 'documented-api',
+      endpoint: 'https://api.github.com/',
+      managerApprovedAt: NOW - DAY,
+      expiresAt: NOW + 89 * DAY,
+      accessSetBy: 'approval',
+      request: { credential: { found: 'location', label: 'GitHub token', location: 'Access' } },
+      credentialLocation: 'Access',
+    }),
+    row('slack', {
+      class: 'chat',
+      verdict: 'connected',
+      path: 'documented-api',
+      endpoint: 'https://slack.com/api/',
+      credentialLanded: true,
+      credentialId: 'cred-slack',
+      managerApprovedAt: NOW - 10 * DAY,
+      expiresAt: NOW + 80 * DAY,
+      accessSetBy: 'approval',
+      actsAs: { kind: 'own-app', label: 'Maya (Day0)', providerIdentityId: 'U1' },
+      organisationConnectionId: 'connection-slack',
+    }),
+  ],
+};
+
+describe("the access track's card states against the floor (wave 11, 11-AC; N14)", (): void => {
+  it('has no axe violation and a 44 px target on every control with Connect, the request and Disconnect drawn', async (): Promise<void> => {
+    backend.queries = { ...OFFICE, ...SYSTEMS, ...ACCESS };
+    const view = await openTab('real', 'How a system is reached');
+    const text = view.container.textContent ?? '';
+    expect(text).toContain('Acts as');
+    expect(text).toContain('Ask IT to connect Github');
+    expect(text).toContain('Connect Acme docs');
+    expect([...view.container.querySelectorAll('button')].map((b) => b.textContent)).toContain(
+      'Disconnect',
+    );
+    expect(await axeViolations(view.container, ['region'])).toEqual([]);
+    expect(underTarget(view.container)).toEqual([]);
+    view.unmount();
+  }, 30_000);
+
+  it('opens the Disconnect dialog from the keyboard, against the floor, and Escape gives focus back', async (): Promise<void> => {
+    backend.queries = { ...OFFICE, ...SYSTEMS, ...ACCESS };
+    const view = await openTab('real', 'How a system is reached');
+    const disconnect = [...view.container.querySelectorAll<HTMLButtonElement>('button')].find(
+      (candidate) => candidate.textContent === 'Disconnect',
+    );
+    disconnect?.focus();
+    act((): void => disconnect?.click());
+    await settle();
+    const dialog = document.querySelector<HTMLElement>('[role="alertdialog"]');
+    expect(dialog?.textContent).toContain('Disconnect Slack?');
+    expect(dialog?.textContent).toContain('its bot leaves every channel');
+    expect(document.activeElement?.textContent).toBe('Keep it connected');
+    expect(await axeViolations(document.body, ['region'])).toEqual([]);
+    expect(underTarget(dialog as HTMLElement)).toEqual([]);
+    act((): void => {
+      dialog?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    await settle();
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+    expect(document.activeElement).toBe(disconnect);
     view.unmount();
   }, 30_000);
 });

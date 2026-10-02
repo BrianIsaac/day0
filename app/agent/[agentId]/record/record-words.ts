@@ -10,6 +10,7 @@ import { MANAGER_REJECTION_PREFIX } from '@/work/needs-manager';
 import { HANDOVER_SETTINGS_REASON } from '@/agent/manager-transfer';
 import { sameManagerAddress } from '@/agent/manager-address';
 import { HANDED_OVER_AUTHOR_NAME } from '@/work/skill-library';
+import { systemDisplayName } from '@/surfaces/revokers/outcome';
 import { judgedAs, REEVALUATION } from '../verdict-words';
 import type { ManagerAt } from '../earlier-manager';
 
@@ -172,9 +173,181 @@ function onItem(subject: RecordSubject): string {
   return subject.item ? ` on \u201c${subject.item}\u201d` : '';
 }
 
+/** The system an organisation connection is for, by name, or a plain stand-in for a row without one. */
+function organisationSystem(displayName: unknown): string {
+  return text(displayName) ?? 'a system';
+}
+
+/** Who changed an organisation connection, at the end of a sentence: an administrator, or the setup verb. */
+function registeredVia(via: unknown): string {
+  if (via === 'organisation-page') return ' by an administrator';
+  if (via === 'setup-cli') return ' by the setup command';
+  return '';
+}
+
 /** The connection an event is about, by name, or a plain stand-in when it names none. */
 function connectionOf(subject: RecordSubject): string {
   return subject.connection ? `the ${subject.connection} connection` : 'a connection';
+}
+
+/** A phrase with its first letter in capitals, to open a sentence. */
+function capitalised(phrase: string): string {
+  return phrase.charAt(0).toUpperCase() + phrase.slice(1);
+}
+
+/** Names as a sentence lists them: `a`, `a and b`, `a, b and c`; nothing for none. */
+function inWords(value: unknown): string | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const names = value.filter((name): name is string => typeof name === 'string' && name !== '');
+  if (names.length < 2) return names[0];
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+}
+
+/** What a correction of an organisation connection set: the redirect, the scopes, or both (M12 e). */
+function correctedParts(p: Read<'organisation.connection-corrected'>): string {
+  const scopes = listed(p.scopes);
+  const parts = [
+    ...(p.redirectCorrected === true ? ['redirect'] : []),
+    ...(scopes !== undefined ? [`scopes (now ${scopes})`] : []),
+  ];
+  return parts.length === 0 ? 'registration' : parts.join(' and ');
+}
+
+/**
+ * One call Day0 made with the organisation's Slack configuration token or its refresh token, on
+ * the connection's ledger (11-AS): it names the app a creation made, never an employee (AC11).
+ */
+function configurationUsedWords(p: Read<'organisation.configuration-used'>): string {
+  const token = `the organisation's ${organisationSystem(p.displayName)} configuration token`;
+  if (p.method === 'apps.manifest.create') {
+    const app = text(p.appId) ? ` (${text(p.appId)})` : '';
+    return p.outcome === 'done'
+      ? `Day0 created an employee's own Slack app${app} with ${token}`
+      : `Creating an employee's own Slack app with ${token} failed${because(p.reason)}`;
+  }
+  if (p.method === 'auth.revoke') {
+    return p.outcome === 'done'
+      ? `Day0 revoked ${token} at Slack and deleted its copy, once it was taken out of use`
+      : `Revoking ${token} at Slack failed${because(p.reason)}; Day0's copy was deleted`;
+  }
+  switch (p.outcome) {
+    case 'done':
+      return `Day0 renewed ${token} with its refresh token`;
+    case 'superseded':
+      return `Day0 renewed ${token} twice at once and kept the other renewal's token`;
+    case 'failed':
+    case undefined:
+      return `Day0 could not renew ${token}${because(p.reason)}`;
+    default: {
+      const unknown: never = p.outcome;
+      return `Day0 used ${token}: ${String(unknown)}`;
+    }
+  }
+}
+
+/**
+ * Which channels a renewed employee re-joined itself and which need a person in them (11-AS,
+ * RM4); the card's own words are 11-AC's.
+ */
+function channelsRejoinedWords(
+  p: Read<'surface.channels-rejoined'>,
+  subject: RecordSubject,
+): string {
+  const joined = inWords(p.joined) ?? 'no channel';
+  const answered = text(p.reason) ? ` (Slack answered ${text(p.reason)})` : '';
+  const needing = inWords(p.needsPerson);
+  const many = Array.isArray(p.needsPerson) && p.needsPerson.length > 1;
+  const rest =
+    needing === undefined
+      ? ''
+      : `; ${needing} ${many ? 'need someone in them' : 'needs someone in it'} to add ${subject.name}`;
+  return `After the renewal ${subject.name} re-joined ${joined} in Slack itself${answered}${rest}`;
+}
+
+/**
+ * What one attempt made with an organisation connection's secret did at the vendor, on the
+ * connection's ledger (11-AR over 11-AO): it names no employee and no card (AC11).
+ */
+function organisationRevokedAtSourceWords(p: Read<'organisation.revoked-at-source'>): string {
+  const system = systemDisplayName(text(p.system) ?? 'the vendor');
+  const by = `with the organisation's ${system} connection`;
+  switch (p.outcome) {
+    case 'token-revoked':
+      return `An employee's access was revoked at ${system} ${by}`;
+    case 'app-deleted':
+      return `An employee's ${system} app was deleted in ${system} ${by}`;
+    case 'app-uninstalled':
+      return `An employee's ${system} app was uninstalled from ${system} ${by}`;
+    case 'already-gone':
+      return `An employee's access was found already revoked at ${system} ${by}`;
+    case 'retrying':
+      return `Revoking an employee's access at ${system} ${by} failed and will be tried again${because(p.reason)}`;
+    case 'failed':
+      return `Revoking an employee's access at ${system} ${by} failed${because(p.reason)}`;
+    case 'not-supported':
+      return `An employee's access could not be revoked at ${system} ${by}${because(p.reason)}`;
+    case 'shared':
+    case 'not-at-vendor':
+    case 'pasted-key':
+    case undefined:
+      return `An employee's access at ${system} ended ${by}`;
+    default: {
+      const unknown: never = p.outcome;
+      return `An employee's access at ${system} ended ${by} (${String(unknown)})`;
+    }
+  }
+}
+
+/**
+ * What one end of access did at the vendor (11-AR): the connection by the card's name while the
+ * card stands, else by the name the line kept, and the system as it names itself.
+ */
+function revokedAtSourceWords(
+  p: Read<'credential.revoked-at-source'>,
+  subject: RecordSubject,
+): string {
+  const connection = connectionOf(
+    subject.connection === undefined && text(p.surfaceName) !== undefined
+      ? { ...subject, connection: text(p.surfaceName) }
+      : subject,
+  );
+  const system = systemDisplayName(text(p.system) ?? 'the vendor');
+  switch (p.outcome) {
+    case 'token-revoked': {
+      const memberships =
+        p.channelMembershipsRemoved === true ? '; its channel memberships were removed' : '';
+      // A disconnect's end is also how a re-authorisation ends the pair it replaces (11-AJ join 4),
+      // so the line says the token, never that access ended: the manager's Disconnect has its
+      // own line (`surface.disconnected`).
+      return p.end === 'disconnect'
+        ? `A token Day0 held for ${connection} was revoked at ${system}${memberships}`
+        : `Access to ${connection} was revoked at ${system}${memberships}`;
+    }
+    case 'app-deleted':
+      return `${subject.name}'s ${system} app was deleted in ${system}`;
+    case 'app-uninstalled':
+      return `${subject.name}'s ${system} app was uninstalled from ${system}`;
+    case 'already-gone':
+      return `Access to ${connection} was already revoked at ${system}`;
+    case 'retrying':
+      return `Revoking access to ${connection} at ${system} failed and will be tried again${because(p.reason)}`;
+    case 'failed':
+      return `Revoking access to ${connection} at ${system} failed${because(p.reason)}; Day0's copy was deleted`;
+    case 'not-supported':
+      return `Access to ${connection} could not be revoked at ${system}${because(p.reason)}`;
+    case 'shared':
+      return `Access to ${connection} ended; its shared app token was not revoked at ${system}, since the app's other employees use it`;
+    case 'not-at-vendor':
+      return `Access to ${connection} ended with nothing changed at ${system}${because(p.reason)}`;
+    case 'pasted-key':
+      return `Day0 stopped using the key pasted for ${connection}; it was not revoked at ${system}, so revoke it there if it should end`;
+    case undefined:
+      return `Access to ${connection} ended`;
+    default: {
+      const unknown: never = p.outcome;
+      return `Access to ${connection} ended (${String(unknown)})`;
+    }
+  }
 }
 
 /** What a decision request asks about. */
@@ -592,6 +765,32 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
       : `The app configuration token of ${connectionOf(subject)} was dropped${because(p.reason)}`,
   'surface.app-unrecorded': (_, subject) =>
     `An app registered for ${connectionOf(subject)} was not recorded; remove it at the provider`,
+  'surface.access-requested': (p, subject) => {
+    const scopes = listed(p.scopes);
+    return `${decider(subject)} asked IT for access to ${connectionOf(subject)}${scopes ? ` (${scopes})` : ''}`;
+  },
+  'organisation.connection-landed': (p) =>
+    `${organisationSystem(p.displayName)} was connected for the organisation${registeredVia(p.via)}`,
+  'organisation.connection-rotated': (p) =>
+    `The organisation's ${organisationSystem(p.displayName)} connection was given a new secret${registeredVia(p.via)}`,
+  'organisation.connection-corrected': (p) =>
+    `The organisation's ${organisationSystem(p.displayName)} connection had its recorded ${correctedParts(p)} corrected${registeredVia(p.via)}`,
+  'organisation.connection-revoked': (p) =>
+    `The organisation's ${organisationSystem(p.displayName)} connection was revoked${registeredVia(p.via)}${because(p.reason)}`,
+  'surface.authorised': (p, subject) =>
+    `${decider(subject)} authorised ${connectionOf(subject)}${
+      text(p.issuer) ? ` at ${text(p.issuer)}` : ''
+    }`,
+  'surface.authorisation-failed': (p, subject) =>
+    `Authorising ${connectionOf(subject)} failed${because(p.reason)}`,
+  'surface.disconnected': (p, subject) =>
+    p.by === 'organisation'
+      ? `${capitalised(connectionOf(subject))} was disconnected when the organisation's connection was revoked${because(p.reason)}`
+      : `${decider(subject)} disconnected ${connectionOf(subject)}`,
+  'credential.revoked-at-source': (p, subject) => revokedAtSourceWords(p, subject),
+  'organisation.revoked-at-source': (p) => organisationRevokedAtSourceWords(p),
+  'organisation.configuration-used': (p) => configurationUsedWords(p),
+  'surface.channels-rejoined': (p, subject) => channelsRejoinedWords(p, subject),
   'plan.obligations-judged': (_, subject) =>
     `What the plan${forItem(subject)} must read and write was judged`,
   'plan.obligations-failed-open': (p, subject) =>

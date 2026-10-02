@@ -90,6 +90,11 @@ describe('the no-auth proxy gate', (): void => {
     expect(await status('/api/oauth/slack')).toBe(200);
   });
 
+  it("lets the Linear app's installation redirect through without the unlock key", async (): Promise<void> => {
+    expect(await status('/api/oauth/linear')).toBe(200);
+    expect(await status('/api/oauth/linear-other')).toBe(403);
+  });
+
   it('lets the voice webhook through without the unlock key', async (): Promise<void> => {
     expect(await status('/api/voice/elevenlabs/webhook')).toBe(200);
   });
@@ -105,6 +110,10 @@ describe('the no-auth proxy gate', (): void => {
 
   it('refuses a path that merely starts like the redirect', async (): Promise<void> => {
     expect(await status('/api/oauth-slack')).toBe(403);
+  });
+
+  it("keeps the MCP authorisation redirect behind the unlock key: it returns to the manager's own browser", async (): Promise<void> => {
+    expect(await status('/api/oauth/mcp?code=x&state=y')).toBe(403);
   });
 });
 
@@ -179,5 +188,15 @@ describe('the Clerk proxy gate', (): void => {
 
   it('still protects an agent dashboard', async (): Promise<void> => {
     await expect(proxy(request('/agent/j57agent'))).rejects.toThrow('sign-in');
+  });
+
+  it("holds the MCP authorisation redirect to a signed-in session: only the card's manager completes it (the wave 11 review's M2)", async (): Promise<void> => {
+    const refused = (await proxy(request('/api/oauth/mcp?code=x&state=y'))) as Response;
+    expect(refused.status).toBe(401);
+  });
+
+  it('protects a route that only shares the redirect’s prefix', async (): Promise<void> => {
+    const refused = (await proxy(request('/api/oauth/mcpx'))) as Response;
+    expect(refused.status).toBe(401);
   });
 });

@@ -250,7 +250,10 @@ describe('ProvisioningRow', (): void => {
     );
     expect(markup).toContain('Install did not complete');
     expect(markup).toContain('invalid_code');
-    expect(markup).toContain('type="password"');
+    // The app is kept and its install link issued again with nothing to paste (11-AS's
+    // `asksForConfigurationToken` is false once an app exists; `runProvisionApp` reissues it).
+    expect(markup).not.toContain('type="password"');
+    expect(markup).toMatch(/<button[^>]*>Provision a dedicated app<\/button>/);
   });
 
   it('shows an operation error under the row', (): void => {

@@ -171,8 +171,14 @@ vi.mock('convex/react', () => {
   const answer = (reference: FunctionReference<'query'>): unknown => {
     const name = getFunctionName(reference);
     const shown = state.roster as typeof roster;
-    if (name === 'agents:listForUser') {
-      return shown.map((row) => ({ _id: row.agentId, name: row.name, state: row.state }));
+    if (name === 'reset:holdings') {
+      return {
+        employees: shown.length > 0,
+        skillLibrary: false,
+        handoverWords: false,
+        retiredBoundaries: false,
+        documentation: true,
+      };
     }
     if (name === 'agents:rosterForUser') return shown;
     if (name === 'work:needsYou') return state.inbox;
@@ -312,6 +318,26 @@ describe('the signed-in home with nobody deployed', (): void => {
   });
 });
 
+describe("an MCP authorisation the home is sent back from unfinished (the wave 11 review's M2)", (): void => {
+  afterEach((): void => {
+    route.search = '';
+  });
+
+  it("says nothing was connected and who finishes it, never the address's own words", (): void => {
+    route.search = '?authorisation=failed&reason=Send+your+password+to+evil.example';
+    const markup = readAs(render([])).replace(/&#x27;/g, "'");
+    expect(markup).toContain(
+      "That authorisation was not finished, so nothing was connected. Only the employee's manager, signed in to Day0, finishes it, from the employee's card.",
+    );
+    expect(markup).not.toContain('evil.example');
+  });
+
+  it('says nothing when the home was opened any other way', (): void => {
+    route.search = '';
+    expect(readAs(render([]))).not.toContain('That authorisation was not finished');
+  });
+});
+
 describe('the company home', (): void => {
   it('heads the page with the company in one line and offers another deploy', (): void => {
     const page = render(roster);
@@ -342,7 +368,7 @@ describe('the company home', (): void => {
       'Mini office world',
       'September, supervised from here',
       'Company supervision',
-      'Reset demo',
+      '>Your data<',
     ].map((marker) => page.indexOf(marker));
     expect(order.every((index) => index > -1)).toBe(true);
     expect(order).toEqual([...order].sort((a, b) => a - b));
@@ -360,7 +386,7 @@ describe('the company home', (): void => {
       'Mini office world',
       'September, supervised from here',
       'Company supervision',
-      'Reset demo',
+      '>Your data<',
     ]) {
       expect(page).toContain(marker);
     }
@@ -407,7 +433,7 @@ describe('the company home', (): void => {
 
   it('puts the role line on each office name plate', (): void => {
     const page = render(roster);
-    const office = page.slice(page.indexOf('Mini office world'), page.indexOf('Reset demo'));
+    const office = page.slice(page.indexOf('Mini office world'), page.indexOf('>Your data<'));
     for (const row of roster) expect(office).toContain(row.roleLine);
   });
 
@@ -486,10 +512,10 @@ describe('the company home', (): void => {
   it('puts the aside before Reset in the page order, and Reset under the main column at xl (walk m17)', (): void => {
     const page = render(roster);
     // The page order is the reading, keyboard and phone order alike (second pass M2).
-    expect(page.indexOf('<aside')).toBeLessThan(page.indexOf('Reset demo'));
+    expect(page.indexOf('<aside')).toBeLessThan(page.indexOf('>Your data<'));
     expect(page).toMatch(/<aside class="[^"]*xl:col-start-2 xl:row-span-2 xl:row-start-1"/);
     expect(page).toMatch(
-      /<div data-cards="" class="min-w-0 xl:col-start-1 xl:row-start-2"><section[^>]*>(?:(?!<\/section>).)*Reset demo/s,
+      /<div data-cards="" class="min-w-0 xl:col-start-1 xl:row-start-2"><section[^>]*>(?:(?!<\/section>).)*>Your data</s,
     );
     expect(page).not.toMatch(/\bcontents\b|\border-1\b/);
   });

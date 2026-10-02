@@ -11,18 +11,27 @@ import {
 } from './_generated/server';
 import {
   assertOwnsAgent,
+  getCaller,
   getCallerOrThrow,
   ownedAgentOrNull,
   verifiedAddressOf,
 } from './ownership';
 import { deleteOwnedDocumentation } from './docSources';
 import { purgeCredential, purgeOwnedCredentials } from './credentials';
+import { endAccessAtSource, plannedAtSource } from './sourceRevocation';
+import type { AccessEnd } from '../src/surfaces/access-identity';
+import { sharedByOrganisation } from '../src/surfaces/revokers/plan';
 import { cancelTransferInTransaction } from './managerTransfers';
 import { credentialsBoundBy } from './surfaces';
 import { deleteOwnerLibrary, releaseAuthor } from './skillVersions';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { appendEvent } from './eventLog';
-import { ownerRetirements, type RetiredClaim, type RetiredRejection } from './retirements';
+import {
+  RETIREMENT_READ_LIMIT,
+  ownerRetirements,
+  type RetiredClaim,
+  type RetiredRejection,
+} from './retirements';
 import { internal } from './_generated/api';
 import { landedWritesOf } from '../src/work/landed-writes';
 import { providerReconciliationEntries } from '../src/work/reconciliation';
@@ -80,6 +89,15 @@ export const RETIRE_RECORD_TABLES = ['retirements', 'managerTransfers'] as const
  * deletes them (`deleteOwnerLibrary`).
  */
 export const OWNER_LIBRARY_TABLES = ['skillVersions'] as const;
+
+/**
+ * The tables of the organisation as a whole (wave 11, 11-AK; the access plan, section 4.1): the
+ * systems IT connected at install and their ledger. They belong to no owner, so neither a retire
+ * nor an owner's deletion touches them, and the organisation's secrets they name are
+ * `credentials` rows under the reserved organisation key, which every owner read and purge here
+ * misses by index. Only an administrator's revoke ends a connection (11-AO).
+ */
+export const DEPLOYMENT_ACCESS_TABLES = ['organisationConnections', 'connectionEvents'] as const;
 
 /** A table whose rows belong to one employee and go with it. */
 export type AgentKeyedTable = (typeof AGENT_KEYED_TABLES)[number];
@@ -369,10 +387,19 @@ export interface Boundaries {
  */
 export const NO_BOUNDARIES: Boundaries = { claims: [], rejections: [], released: [], live: [] };
 
+/** One card a retire deleted or a handover cut, with the credentials it bound. */
+export interface RetiredCard {
+  readonly surfaceId: Id<'surfaces'>;
+  readonly displayName: string;
+  readonly bound: ReadonlySet<Id<'credentials'>>;
+}
+
 /** What one employee's retire deleted and revoked, for its tombstone. */
 interface Retired {
   readonly rowCounts: Record<string, number>;
   readonly boundCredentials: ReadonlySet<Id<'credentials'>>;
+  /** Each deleted card with what it bound, so each system's end has its own ledger line. */
+  readonly cards: readonly RetiredCard[];
   /** The employee's id and every row id deleted with it, for the jobs that name them. */
   readonly deletedIds: ReadonlySet<string>;
 }
@@ -537,7 +564,19 @@ async function deleteEmployee(ctx: MutationCtx, agent: Doc<'agents'>): Promise<R
     [...rows.values()].flat().map(async (id) => await ctx.db.delete(id as Id<AgentKeyedTable>)),
   );
   await ctx.db.delete(agent._id);
-  return { rowCounts, boundCredentials: credentialsBoundBy(surfaces), deletedIds };
+  const cards = await Promise.all(
+    surfaces.map(async (surface) => ({
+      surfaceId: surface._id,
+      displayName: surface.displayName,
+      bound: await credentialsBoundBy(ctx.db, [surface]),
+    })),
+  );
+  return {
+    rowCounts,
+    boundCredentials: new Set(cards.flatMap((card) => [...card.bound])),
+    cards,
+    deletedIds,
+  };
 }
 
 /**
@@ -574,11 +613,20 @@ function namesRow(args: readonly unknown[], named: NamedRows): boolean {
 }
 
 /**
+ * The module whose jobs end access at the vendor (11-AR): an attempt to revoke what Day0 obtained,
+ * or the token store's forget. Each reads what it needs off the credential row, never off the card,
+ * so it outlives the card it names; cancelling one leaves the row to wait for the hourly sweep and
+ * close `failed` with no further try (the wave 11 review's m5).
+ */
+const VENDOR_END_MODULE = 'sourceRevocationActions';
+
+/**
  * Cancel every pending job that names a row a reset deleted or a handover cut:
  * an evaluation, a draft, an apply's recovery, a probe or a note scheduled
  * ahead of time for a retired employee would otherwise run against nothing
  * (P4-7), and a probe or a poll of a cut surface would act on a connection the
- * new manager has not approved.
+ * new manager has not approved. A job that ends access at the vendor is kept
+ * ({@link VENDOR_END_MODULE}).
  *
  * @param ctx - The reset's or the handover's mutation context.
  * @param named - The ids it deleted or cut, and the employees it acted on.
@@ -590,7 +638,13 @@ export async function cancelJobsFor(ctx: MutationCtx, named: NamedRows): Promise
     .query('_scheduled_functions')
     .order('desc')
     .take(SCHEDULED_JOB_SCAN_LIMIT);
-  const doomed = recent.filter((job) => job.state.kind === 'pending' && namesRow(job.args, named));
+  const doomed = recent.filter(
+    (job) =>
+      job.state.kind === 'pending' &&
+      !job.name.startsWith(`${VENDOR_END_MODULE}:`) &&
+      !job.name.startsWith(`${VENDOR_END_MODULE}.js:`) &&
+      namesRow(job.args, named),
+  );
   await Promise.all(doomed.map((job) => ctx.scheduler.cancel(job._id)));
   return doomed.length;
 }
@@ -632,15 +686,16 @@ export async function stillBound(
       .query('surfaces')
       .withIndex('by_agent', (q) => q.eq('agentId', employee._id))
       .collect();
-    if (credentialsBoundBy(surfaces).has(credentialId)) return true;
+    if ((await credentialsBoundBy(db, surfaces)).has(credentialId)) return true;
   }
   return false;
 }
 
 /**
  * Which of a leaving employee's credentials a retire or a handover would revoke and which it
- * would keep for what still binds them; a credential that is gone or not the owner's is in
- * neither.
+ * would keep for what still binds them; a credential that is gone, or neither the owner's nor a
+ * per-employee identity the organisation holds for the owner's employee (the wave 11 common
+ * rules), is in neither, so the organisation's own rows never are.
  *
  * @param db - The retire's, the handover's or a preview's reader.
  * @param userId - The owner.
@@ -657,7 +712,9 @@ export async function sortCredentials(
   const kept = new Set<Id<'credentials'>>();
   for (const credentialId of bound) {
     const credential = await db.get(credentialId);
-    if (!credential || credential.userId !== userId) continue;
+    if (!credential) continue;
+    const employeeIdentity = credential.holder !== undefined && !sharedByOrganisation(credential);
+    if (credential.userId !== userId && !employeeIdentity) continue;
     if (await stillBound(db, userId, credentialId, leaving)) kept.add(credentialId);
     else revoke.push(credential);
   }
@@ -665,23 +722,64 @@ export async function sortCredentials(
 }
 
 /**
- * Revoke, and delete the ciphertext of, each credential nothing binds any more.
+ * End, at the vendor and in Day0, each credential nothing binds any more, card by card (11-AR;
+ * the access plan, section 4.4): what Day0 obtained is revoked at once and held for its vendor
+ * call (`endAccessAtSource`), its ciphertext kept until the call is final; a pasted key that
+ * nothing else binds is revoked with its ciphertext deleted, and never sent to a vendor (D5,
+ * AC4); a pasted key a colleague or a documentation source still binds is kept. Each card's end
+ * writes its system's ledger line on the retired employee's record, which real mode keeps.
  *
  * @param ctx - The reset's mutation context.
  * @param userId - The owner.
- * @param bound - The credentials the retired employees bound.
+ * @param retired - The retired employees with the cards each deleted.
+ * @param end - `retire`, `owner-deletion` when the owner's data goes with it, or `transfer` for a
+ *   handover's cut, which revokes what Day0 obtained as a Disconnect does (the wave 11 review's
+ *   M1).
  * @param now - The retire time.
+ * @param leaving - The employees whose own surfaces do not count as still binding: a handover's
+ *   employee, which still exists; after a retire has deleted them there are none to skip.
  * @returns The credentials revoked and the ones kept for what still binds them.
  */
-async function revokeUnbound(
+export async function revokeUnbound(
   ctx: MutationCtx,
   userId: string,
-  bound: ReadonlySet<Id<'credentials'>>,
+  retired: readonly { readonly agentId: Id<'agents'>; readonly cards: readonly RetiredCard[] }[],
+  end: AccessEnd,
   now: number,
+  leaving: ReadonlySet<Id<'agents'>> = new Set(),
 ): Promise<{ revoked: Set<Id<'credentials'>>; kept: Set<Id<'credentials'>> }> {
-  const { revoke, kept } = await sortCredentials(ctx.db, userId, bound, new Set());
-  for (const credential of revoke) await purgeCredential(ctx, credential, now);
-  return { revoked: new Set(revoke.map((credential) => credential._id)), kept };
+  const bound = new Set(retired.flatMap(({ cards }) => cards.flatMap((card) => [...card.bound])));
+  const { revoke, kept } = await sortCredentials(ctx.db, userId, bound, leaving);
+  const revoking = new Map(revoke.map((credential) => [credential._id, credential]));
+  const ended = new Set<Id<'credentials'>>();
+  for (const { agentId, cards } of retired) {
+    for (const card of cards) {
+      const rows: Doc<'credentials'>[] = [];
+      for (const id of card.bound) {
+        if (ended.has(id)) continue;
+        ended.add(id);
+        const row = revoking.get(id) ?? (await ctx.db.get(id));
+        // A row kept for what still binds it is the owner's to keep; only a pasted one says so.
+        if (row === null || (kept.has(id) && row.issuedBy !== undefined)) continue;
+        rows.push(row);
+      }
+      if (rows.length === 0) continue;
+      await endAccessAtSource(ctx, {
+        agentId,
+        surfaceId: card.surfaceId,
+        surfaceName: card.displayName,
+        credentials: rows.filter(
+          (row) => revoking.has(row._id) || kept.has(row._id) || row.holder !== undefined,
+        ),
+        end,
+        now,
+      });
+    }
+  }
+  for (const credential of revoke) {
+    if (credential.issuedBy === undefined) await purgeCredential(ctx, credential, now);
+  }
+  return { revoked: new Set(revoking.keys()), kept };
 }
 
 /**
@@ -741,11 +839,21 @@ async function retireEmployees(
   const unlinkedSources = options.unlinkDocumentation
     ? await deleteOwnedDocumentation(ctx, userId)
     : 0;
-  if (options.unlinkDocumentation) await purgeOwnedCredentials(ctx, userId);
-  if (!real) return { unlinkedSources };
+  if (!real) {
+    if (options.unlinkDocumentation) await purgeOwnedCredentials(ctx, userId);
+    return { unlinkedSources };
+  }
   if (!options.single) await releaseRetiredBoundaries(ctx, userId);
-  const bound = new Set([...retired.values()].flatMap((entry) => [...entry.boundCredentials]));
-  const { revoked, kept } = await revokeUnbound(ctx, userId, bound, now);
+  const { revoked, kept } = await revokeUnbound(
+    ctx,
+    userId,
+    [...retired.entries()].map(([agentId, entry]) => ({ agentId, cards: entry.cards })),
+    options.unlinkDocumentation ? 'owner-deletion' : 'retire',
+    now,
+  );
+  // The owner's other values go with the deletion only now, once what Day0 obtained is held for
+  // its vendor call: the purge leaves a held row's ciphertext for that call (F19).
+  if (options.unlinkDocumentation) await purgeOwnedCredentials(ctx, userId);
   for (const agent of agents) {
     const entry = retired.get(agent._id);
     const held = boundaries.get(agent._id) ?? NO_BOUNDARIES;
@@ -895,6 +1003,13 @@ const handoverPartyValidator = v.object({
   address: v.optional(v.string()),
 });
 
+/** A handover request still carrying words a deletion scrubs: its note or its decline's reason. */
+function carryingWords(
+  q: FilterBuilder<NamedTableInfo<DataModel, 'managerTransfers'>>,
+): ExpressionOrValue<boolean> {
+  return q.or(q.neq(q.field('note'), undefined), q.neq(q.field('declineReason'), undefined));
+}
+
 /**
  * Scrub the words a person wrote into the handover requests a deletion keeps (decision 7, a
  * product call taken as recommended): the note on each request the owner asked, and both the
@@ -912,10 +1027,6 @@ async function scrubHandoverWords(
   ctx: MutationCtx,
   party: Infer<typeof handoverPartyValidator>,
 ): Promise<number> {
-  const carryingWords = (
-    q: FilterBuilder<NamedTableInfo<DataModel, 'managerTransfers'>>,
-  ): ExpressionOrValue<boolean> =>
-    q.or(q.neq(q.field('note'), undefined), q.neq(q.field('declineReason'), undefined));
   const { address } = party;
   const pages = await Promise.all(
     MANAGER_TRANSFER_STATES.flatMap((state) => [
@@ -1005,6 +1116,106 @@ export const deleteMyData = mutation({
   },
 });
 
+/** Whether the owner holds each kind of row a deletion of their data removes or changes. */
+const holdingsValidator = v.object({
+  employees: v.boolean(),
+  skillLibrary: v.boolean(),
+  handoverWords: v.boolean(),
+  retiredBoundaries: v.boolean(),
+  documentation: v.boolean(),
+});
+
+/**
+ * What {@link deleteMyData} would take from one owner, each kind as whether any is held: an
+ * employee (evaluation agents included), a version in the owner's skill library, a handover
+ * request carrying words the scrub clears (one the owner asked, or one naming their verified
+ * address), and in real mode a retirement still keeping a claim or a rejection, which the deletion
+ * releases; and the documentation only the unlink choice takes. Each read stops at its first
+ * match, the handover reads scanning the party's requests of one state until one carries words,
+ * and the retirements read stops at their cap, so the home page can subscribe to it.
+ *
+ * @param db - The query's reader.
+ * @param party - The owner and their verified address, when they have one.
+ */
+async function deletionHoldings(
+  db: DatabaseReader,
+  party: Infer<typeof handoverPartyValidator>,
+): Promise<Infer<typeof holdingsValidator>> {
+  const { ownerKey, address } = party;
+  const [employee, version, source, requests, retirements] = await Promise.all([
+    db
+      .query('agents')
+      .withIndex('by_userId', (q) => q.eq('userId', ownerKey))
+      .first(),
+    db
+      .query('skillVersions')
+      .withIndex('by_owner_shape', (q) => q.eq('userId', ownerKey))
+      .first(),
+    db
+      .query('docSources')
+      .withIndex('by_user', (q) => q.eq('userId', ownerKey))
+      .first(),
+    Promise.all(
+      MANAGER_TRANSFER_STATES.flatMap((state) => [
+        db
+          .query('managerTransfers')
+          .withIndex('by_from_owner_state', (q) =>
+            q.eq('fromOwnerKey', ownerKey).eq('state', state),
+          )
+          .filter(carryingWords)
+          .first(),
+        address === undefined
+          ? Promise.resolve(null)
+          : db
+              .query('managerTransfers')
+              .withIndex('by_to_address_state', (q) =>
+                q.eq('toAddress', address).eq('state', state),
+              )
+              .filter(carryingWords)
+              .first(),
+      ]),
+    ),
+    // The newest up to the cap, without `ownerRetirements`' refusal past it: a subscribed read
+    // that threw would take the whole home page down. Past the cap the deletion itself refuses.
+    SURFACE_MODE === 'real'
+      ? db
+          .query('retirements')
+          .withIndex('by_user', (q) => q.eq('userId', ownerKey))
+          .order('desc')
+          .take(RETIREMENT_READ_LIMIT)
+      : Promise.resolve([]),
+  ]);
+  return {
+    employees: employee !== null,
+    skillLibrary: version !== null,
+    handoverWords: requests.some((request) => request !== null),
+    retiredBoundaries: retirements.some(
+      (retirement) => retirement.claims.length > 0 || retirement.rejections.length > 0,
+    ),
+    documentation: source !== null,
+  };
+}
+
+/**
+ * Public, any caller; reads only the caller's own: whether each kind of row a deletion of their
+ * data would remove is held ({@link deletionHoldings}), so the deletion's control is live
+ * whenever the deletion has something to take, an employee or not (the v0.13.0 walk). Writes
+ * nothing. An anonymous caller gets `null`.
+ */
+export const holdings = query({
+  args: {},
+  returns: v.union(v.null(), holdingsValidator),
+  handler: async (ctx): Promise<Infer<typeof holdingsValidator> | null> => {
+    const identity = await getCaller(ctx);
+    if (!identity) return null;
+    const address = verifiedAddressOf(identity);
+    return await deletionHoldings(ctx.db, {
+      ownerKey: identity.ownerKey,
+      ...(address === undefined ? {} : { address }),
+    });
+  },
+});
+
 /**
  * The most rows of each table the preview counts; past it the count is "at least". Past an
  * employee's own tables apart from a long-lived one's events and work items, and 4,600 rows
@@ -1015,6 +1226,25 @@ export const RETIRE_PREVIEW_ROW_LIMIT = 200;
 
 /** One connection a retire revokes or keeps, by the name the Surfaces tab gives it. */
 const previewSurface = v.object({ slug: v.string(), displayName: v.string() });
+
+/** What the retire will do at the vendor for one connection (11-AR). */
+const previewOutcome = v.object({
+  slug: v.string(),
+  displayName: v.string(),
+  /** The system the outcome is at: `issuedBy.system`, or the connection's name for a key. */
+  system: v.string(),
+  outcome: v.union(
+    v.literal('token-revoked'),
+    v.literal('app-deleted'),
+    v.literal('app-uninstalled'),
+    v.literal('not-supported'),
+    v.literal('failed'),
+    v.literal('shared'),
+    v.literal('not-at-vendor'),
+    v.literal('pasted-key'),
+    v.literal('kept'),
+  ),
+});
 
 /** What `retirePreview` answers. */
 const retirePreviewValidator = v.object({
@@ -1027,6 +1257,13 @@ const retirePreviewValidator = v.object({
   revoked: v.array(previewSurface),
   /** The connections whose credential stays, for another employee or a documentation source. */
   kept: v.array(previewSurface),
+  /**
+   * What the retire will do at the vendor, one entry per connection that binds a credential
+   * (11-AR): the token revoked or the app deleted or uninstalled there, no call the system offers,
+   * a token Day0 can no longer revoke (`failed`: its value is gone), a token the organisation
+   * shares, a pasted key deleted from Day0 and never sent, or a key kept for what still binds it.
+   */
+  outcomes: v.array(previewOutcome),
   /** The items it may already have written, whose claims its retirement keeps. */
   keptClaims: v.number(),
   /** Whether the claims were counted over the first `RETIRE_PREVIEW_ROW_LIMIT` items only, so the count is a floor. */
@@ -1062,6 +1299,7 @@ export const retirePreview = query({
         atLeast,
         revoked: [],
         kept: [],
+        outcomes: [],
         keptClaims: 0,
         keptClaimsAtLeast: false,
         tombstone: false,
@@ -1071,17 +1309,41 @@ export const retirePreview = query({
       .query('surfaces')
       .withIndex('by_agent', (q) => q.eq('agentId', agent._id))
       .take(RETIRE_PREVIEW_ROW_LIMIT);
+    const cards = await Promise.all(
+      surfaces.map(async (surface) => ({
+        surface,
+        bound: await credentialsBoundBy(ctx.db, [surface]),
+      })),
+    );
     const { revoke, kept } = await sortCredentials(
       ctx.db,
       identity.ownerKey,
-      credentialsBoundBy(surfaces),
+      new Set(cards.flatMap((card) => [...card.bound])),
       new Set([agent._id]),
     );
     const revokedIds = new Set(revoke.map((credential) => credential._id));
     const named = (holds: (id: Id<'credentials'>) => boolean) =>
-      surfaces
-        .filter((surface) => [...credentialsBoundBy([surface])].some(holds))
-        .map((surface) => ({ slug: surface.slug, displayName: surface.displayName }));
+      cards
+        .filter((card) => [...card.bound].some(holds))
+        .map(({ surface }) => ({ slug: surface.slug, displayName: surface.displayName }));
+    const outcomes: Infer<typeof previewOutcome>[] = [];
+    for (const { surface, bound } of cards) {
+      const rows = (await Promise.all([...bound].map(async (id) => await ctx.db.get(id)))).filter(
+        (row): row is Doc<'credentials'> => row !== null,
+      );
+      const planned = await plannedAtSource(
+        ctx.db,
+        {
+          surfaceName: surface.displayName,
+          ended: rows.filter((row) => revokedIds.has(row._id) || row.holder !== undefined),
+          kept: rows.filter((row) => kept.has(row._id)),
+        },
+        'retire',
+      );
+      if (planned !== null) {
+        outcomes.push({ slug: surface.slug, displayName: surface.displayName, ...planned });
+      }
+    }
     const boundaries = await boundariesOf(ctx.db, items, Date.now());
     return {
       mode: 'real',
@@ -1089,6 +1351,7 @@ export const retirePreview = query({
       atLeast,
       revoked: named((id) => revokedIds.has(id)),
       kept: named((id) => kept.has(id)),
+      outcomes,
       keptClaims: boundaries.claims.length,
       keptClaimsAtLeast: items.length >= RETIRE_PREVIEW_ROW_LIMIT,
       tombstone: true,

@@ -1,5 +1,12 @@
-import { isSurfacePath, CREDENTIAL_KINDS, type CredentialKind, type SurfaceRecord } from './types';
+import {
+  isSurfacePath,
+  CREDENTIAL_KINDS,
+  type Attribution,
+  type CredentialKind,
+  type SurfaceRecord,
+} from './types';
 import type { PersistedSurfaceVerdict } from './verdict';
+import { attributionOf, isActsAsKind } from './access-identity';
 
 /**
  * A `surfaces` row as any lane's schema revision may store it. Only the fields
@@ -18,6 +25,8 @@ export interface SurfaceRowLike {
   toolArguments?: Array<{ tool: string; arguments: string[] }>;
   credentialId?: string;
   credentialKind?: string;
+  /** Whom the card acts as (wave 11, 11-AK), written by the connect paths. */
+  actsAs?: { kind: string };
   managerDmChannelId?: string;
   managerUserId?: string;
   managerName?: string;
@@ -47,6 +56,24 @@ export function credentialKindFor(row: SurfaceRowLike): CredentialKind {
 }
 
 /**
+ * The attribution a row's identity gives its writes (`attributionOf`), where the credential the
+ * row holds is of the kind that identity holds: a shared key is a pasted value or location, and the
+ * employee's own app holds an OAuth token. A row whose identity and credential disagree (a
+ * credential replaced by a path that did not restamp the identity, as a Slack app installed over a
+ * pasted key) carries none, so its credential's kind decides, as before wave 11.
+ *
+ * @param row - The surface row.
+ * @returns The attribution field, or nothing.
+ */
+function attributionFor(row: SurfaceRowLike): { attribution?: Attribution } {
+  const kind = row.actsAs?.kind;
+  if (!isActsAsKind(kind)) return {};
+  const pasted = credentialKindFor(row) !== 'oauth';
+  if ((kind === 'shared-key' && !pasted) || (kind === 'own-app' && pasted)) return {};
+  return { attribution: attributionOf(kind) };
+}
+
+/**
  * Narrow a stored surface row to the record the executors read.
  *
  * Args:
@@ -69,6 +96,7 @@ export function toSurfaceRecord(row: SurfaceRowLike): SurfaceRecord {
     toolArguments: row.toolArguments,
     credentialId: row.credentialId,
     credentialKind: credentialKindFor(row),
+    ...attributionFor(row),
     managerDmChannelId: row.managerDmChannelId,
     managerUserId: row.managerUserId,
     managerName: row.managerName,

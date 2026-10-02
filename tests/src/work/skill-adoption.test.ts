@@ -137,13 +137,55 @@ describe('adoptionFit', (): void => {
     expect(adoptionFit(VERSION, unchartered)).toEqual({
       fits: false,
       mismatch: 'no-charter-evidence',
-      detail: 'the charter names no kanban system',
+      detail: 'no connected kanban card carries the charter',
     });
     expect(adoptionFit(VERSION, { ...unchartered, surfaces: [LINEAR, SLACK] })).toMatchObject({
       fits: true,
     });
-    expect(adoptionFit(VERSION, { ...unchartered, charterClasses: ['kanban'] })).toMatchObject({
-      fits: true,
+    // A-m1: in real mode a class the charter names no longer stands in for the system's own
+    // evidence; only the surface the sandbox would run under can carry the charter.
+    expect(adoptionFit(VERSION, { ...unchartered, charterClasses: ['kanban'] })).toEqual({
+      fits: false,
+      mismatch: 'no-charter-evidence',
+      detail: 'no connected kanban card carries the charter',
+    });
+  });
+
+  describe('the charter asked of the system, not the class (the wave 10 review A-m1)', (): void => {
+    const JIRA: AdopterSurface = {
+      slug: 'jira',
+      displayName: 'Jira',
+      class: 'kanban',
+      connected: true,
+      approvedTools: ['save_comment', 'update_issue'],
+      charterEvidence: false,
+    };
+
+    it('refuses a version whose tools only a system outside the charter allows, naming the chartered one', (): void => {
+      const adopter: Adopter = {
+        ...MATEO,
+        surfaces: [{ ...LINEAR, approvedTools: ['get_issue'] }, JIRA, SLACK],
+      };
+      expect(adoptionFit(VERSION, adopter)).toEqual({
+        fits: false,
+        mismatch: 'tool-not-approved',
+        detail: 'the approved tools of Linear do not include save_comment',
+      });
+    });
+
+    it('names the chartered system as the connection when another of its class allows the tools too', (): void => {
+      expect(adoptionFit(VERSION, { ...MATEO, surfaces: [JIRA, LINEAR, SLACK] })).toEqual({
+        fits: true,
+        connection: LINEAR,
+      });
+    });
+
+    it('refuses when no connected system of the class carries the charter, whatever classes the charter names', (): void => {
+      expect(adoptionFit(VERSION, { ...MATEO, surfaces: [JIRA, SLACK] })).toEqual({
+        fits: false,
+        mismatch: 'no-charter-evidence',
+        detail: 'no connected kanban card carries the charter',
+      });
     });
   });
 
@@ -160,6 +202,36 @@ describe('adoptionFit', (): void => {
     expect(adoptionFit(VERSION, { ...mock, charterClasses: ['chat'] })).toMatchObject({
       fits: false,
       mismatch: 'no-charter-evidence',
+    });
+  });
+
+  it('takes the work item’s own system as the charter’s evidence in mock mode, where the queue is drafted from the charter (the v0.13.0 walk)', (): void => {
+    const sol: Adopter = {
+      agentId: 'sol',
+      mode: 'mock',
+      surfaces: [],
+      charterClasses: ['spreadsheet', 'chat', 'docs', 'social'],
+      workClass: 'kanban',
+    };
+    expect(adoptionFit(VERSION, sol)).toEqual({ fits: true });
+    expect(adoptionFit(VERSION, { ...sol, workClass: 'chat' })).toEqual({
+      fits: false,
+      mismatch: 'no-charter-evidence',
+      detail: 'the charter names no kanban system',
+    });
+  });
+
+  it('never takes the work item’s system as charter evidence in real mode (10-A, 4.1)', (): void => {
+    const unchartered: Adopter = {
+      ...MATEO,
+      charterClasses: ['chat'],
+      surfaces: [{ ...LINEAR, charterEvidence: false }, SLACK],
+      workClass: 'kanban',
+    };
+    expect(adoptionFit(VERSION, unchartered)).toEqual({
+      fits: false,
+      mismatch: 'no-charter-evidence',
+      detail: 'no connected kanban card carries the charter',
     });
   });
 });
@@ -418,12 +490,23 @@ describe('adoptionWords', (): void => {
 });
 
 describe('adoptionHelp', (): void => {
+  const proposalsOnly = { offersAdoption: false, proposals: true, adoptions: false };
+
   it('says what approving does, either way when a card offers an adoption', (): void => {
-    expect(adoptionHelp('Mateo', false)).toBe(
+    expect(adoptionHelp('Mateo', proposalsOnly)).toBe(
       "Approving writes the skill and checks it in a sandbox, then evaluates again the item that needs it. Whether that work is within Mateo's charter is judged separately.",
     );
-    expect(adoptionHelp('Mateo', true)).toBe(
+    expect(adoptionHelp('Mateo', { ...proposalsOnly, offersAdoption: true })).toBe(
       "Either way the skill is checked in a sandbox before it runs, then the item that needs it is evaluated again. Whether that work is within Mateo's charter is judged separately.",
+    );
+  });
+
+  it('never says approving writes the skill on a card holding an adoption past its offer, which writes nothing', (): void => {
+    expect(adoptionHelp('Mateo', { ...proposalsOnly, proposals: false, adoptions: true })).toBe(
+      "Adopting writes nothing: the colleague's version is checked again in a sandbox before it runs, then the item that needs it is evaluated again. Whether that work is within Mateo's charter is judged separately.",
+    );
+    expect(adoptionHelp('Mateo', { ...proposalsOnly, adoptions: true })).toBe(
+      "Approving a proposal writes the skill and checks it in a sandbox; an adoption writes nothing and checks the colleague's version there again. Either way the item that needs it is evaluated again. Whether that work is within Mateo's charter is judged separately.",
     );
   });
 });

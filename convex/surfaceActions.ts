@@ -8,6 +8,12 @@ import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { action, internalAction, type ActionCtx } from './_generated/server';
 import { assertOwnsAgentAction } from './ownership';
+import {
+  actsAsLinearApp,
+  linearProbeIdentity,
+  probeLinearApp,
+  type LinearProbeIdentity,
+} from './linearIdentityActions';
 import { PROBEABLE_VERDICTS, type ProbeRefusal, type ProbeReservation } from './surfaces';
 import { relevantSystemText } from './orientationActions';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
@@ -48,9 +54,11 @@ import {
   type ChannelMembership,
 } from '../src/surfaces/slack-policy';
 import { approvedChannelNames } from '../src/surfaces/intake-scope';
+import { log } from '../src/lib/logger';
 import { safeFailureMessage } from '../src/surfaces/redact';
 import { ownerKnownValues } from '../src/redaction/known-values';
 import { isSlackApiEndpoint, slackApiUrl } from '../src/surfaces/slack-endpoint';
+import { organisationConnectedRefusal, organisationSystemOf } from '../src/surfaces/access-request';
 import { actionIntent } from '../src/surfaces/policy';
 import { DocumentedApiLimitation, probeDocumentedApi } from '../src/surfaces/http';
 import {
@@ -123,6 +131,8 @@ interface ProbeDependencies {
   now(): number;
   /** The pause before a probe's one retry; real time unless a test replaces it. */
   wait?(milliseconds: number): Promise<void>;
+  /** Linear's issuer for a card acting as a Linear app; the probe's own unless a test replaces it. */
+  linearIdentity?: LinearProbeIdentity;
 }
 
 export interface ProbeOutcome {
@@ -236,6 +246,13 @@ class ProbeRateLimited extends Error {
     super(message);
   }
 }
+
+/**
+ * The token store could not answer for a card's credential (Nango, or the
+ * authorisation server a due token is refreshed at, out of reach): an answer
+ * about reach, not an authority withdrawal, so it never ends the card.
+ */
+class TokenStoreUnavailable extends Error {}
 
 /**
  * A connection that never completed, or a provider answering 5xx.
@@ -1310,23 +1327,28 @@ export async function runSurfaceProbe(
   };
 
   /**
-   * Leave the verdict as it was after the provider rate-limited the probe, and
-   * say when Day0 asks again. A connected or dead card is asked again by the
-   * hourly sweep; any other card is not in the sweep, so one probe is
-   * scheduled for when the provider said it could answer, within bounds.
+   * Leave the verdict as it was and say when Day0 asks again: an answer about
+   * pace or reach, not about the system or the key. A connected or dead card
+   * is asked again by the hourly sweep; any other card is not in the sweep, so
+   * one probe is scheduled for when the answer said it could come, within
+   * bounds.
    */
-  const leaveRateLimited = async (limited: ProbeRateLimited): Promise<ProbeOutcome> => {
+  const keepVerdict = async (
+    reason: string,
+    retryAfterMs: number | undefined,
+    explain: (minutes: number) => string,
+  ): Promise<ProbeOutcome> => {
     const swept = SWEPT_VERDICTS.includes(surface.verdict);
     const next = swept
       ? RATE_LIMITED_REPROBE_MS.max
       : Math.min(
           RATE_LIMITED_REPROBE_MS.max,
-          Math.max(RATE_LIMITED_REPROBE_MS.min, limited.retryAfterMs ?? 0),
+          Math.max(RATE_LIMITED_REPROBE_MS.min, retryAfterMs ?? 0),
         );
     const recorded: boolean = await ctx.runMutation(internal.surfaces.recordProbeRetry, {
       surfaceId,
       generation,
-      reason: limited.message,
+      reason,
       retryAfterMs: next,
       attemptedAt: dependencies.now(),
       endsProbe: true,
@@ -1340,11 +1362,26 @@ export async function runSurfaceProbe(
         routine: true,
       });
     }
-    return {
-      verdict: 'skipped',
-      reason: `The provider is limiting its rate (${limited.message}); the card keeps its verdict and Day0 probes again in ${Math.round(next / 60_000)} minutes.`,
-    };
+    return { verdict: 'skipped', reason: explain(Math.round(next / 60_000)) };
   };
+
+  /** Leave the verdict as it was after the provider rate-limited the probe. */
+  const leaveRateLimited = async (limited: ProbeRateLimited): Promise<ProbeOutcome> =>
+    await keepVerdict(
+      limited.message,
+      limited.retryAfterMs,
+      (minutes: number): string =>
+        `The provider is limiting its rate (${limited.message}); the card keeps its verdict and Day0 probes again in ${minutes} minutes.`,
+    );
+
+  /** Leave the verdict as it was after the token store could not answer for the card's credential. */
+  const leaveUnanswered = async (unavailable: TokenStoreUnavailable): Promise<ProbeOutcome> =>
+    await keepVerdict(
+      unavailable.message,
+      undefined,
+      (minutes: number): string =>
+        `The token store could not answer for the credential (${unavailable.message}); the card keeps its verdict and Day0 probes again in ${minutes} minutes.`,
+    );
 
   // The route list is capped to the three actual rungs when orientation stores
   // it. This loop is capped independently so a malformed legacy row can never
@@ -1383,12 +1420,24 @@ export async function runSurfaceProbe(
     let known: readonly string[] = [];
     try {
       if (context.agent.userId) known = await ownerKnownValues(ctx, context.agent.userId);
-      if (surface.credentialId) {
+      const credentialId = surface.credentialId;
+      if (credentialId) {
         try {
-          credential = await ctx.runAction(credentialInternal.credentials.decrypt, {
-            credentialId: surface.credentialId,
-          });
-        } catch {
+          // From the token store (11-AT): an authorisation's token is refreshed first when due,
+          // a Nango-held one is asked of Nango, any other credential decrypts as before. The
+          // store can be out of reach (Nango restarting, an authorisation server down), so the
+          // read gets the probe's one retry and a store that stays out of reach keeps the verdict.
+          credential = await withOneRetry(
+            '',
+            known,
+            async (): Promise<string> =>
+              await ctx.runAction(internal.mcpOauthActions.currentBearer, { credentialId }),
+          );
+        } catch (error) {
+          if (error instanceof ProbeSuperseded || error instanceof ProbeRateLimited) throw error;
+          const reason = safeProviderError(error, '', known);
+          if (isTransientProbeFailure(error, reason)) throw new TokenStoreUnavailable(reason);
+          log.warn('probe found the card credential unreadable', { surfaceId, reason });
           return (
             (await failOrDemote('credential is unavailable or revoked', 'ungranted', false)) ?? {
               verdict: 'ungranted',
@@ -1406,7 +1455,32 @@ export async function runSurfaceProbe(
       let managerName: string | undefined;
       let providerIdentityId: string | undefined;
       let providerWorkspaceId: string | undefined;
-      if (surface.path === 'mcp') {
+      if (surface.path === 'mcp' && surface.credentialId && actsAsLinearApp(surface)) {
+        // The card acts as a Linear app user (11-AL): its token is read through the issuer, a 401
+        // is answered with one new token, and the app user it acts as is recorded (D6).
+        const linear = await probeLinearApp(
+          dependencies.linearIdentity ?? linearProbeIdentity(ctx),
+          surface.credentialId,
+          async (bearer: string): Promise<McpDiscovery> => {
+            credential = bearer;
+            return await withOneRetry(bearer, known, () =>
+              dependencies.probeMcp(surface.endpoint, bearer),
+            );
+          },
+        );
+        if (!linear.ok) {
+          // Linear withdrew the authority the card was approved on: no other rung stands in.
+          return (
+            (await failOrDemote(linear.reason, 'ungranted', false)) ?? {
+              verdict: 'ungranted',
+              reason: linear.reason,
+            }
+          );
+        }
+        toolAllowlist = linear.discovery.toolAllowlist;
+        toolArguments = linear.discovery.toolArguments;
+        providerIdentityId = linear.appUser.id;
+      } else if (surface.path === 'mcp') {
         const discovery = await withOneRetry(credential, known, () =>
           dependencies.probeMcp(surface.endpoint, credential),
         );
@@ -1557,6 +1631,7 @@ export async function runSurfaceProbe(
         return { verdict: 'skipped', reason: 'A newer surface probe superseded this result.' };
       }
       if (error instanceof ProbeRateLimited) return await leaveRateLimited(error);
+      if (error instanceof TokenStoreUnavailable) return await leaveUnanswered(error);
       const reason = safeProviderError(error, credential, known);
       const verdict = probeFailureVerdict(error, reason);
       const outcome = await failOrDemote(reason, verdict);
@@ -1640,9 +1715,12 @@ export function credentialLandingRefusal(
  * and probe it at once.
  *
  * Public, owner-guarded (`assertOwnsAgentAction`), real mode only. Writes one
- * `credentials` row (encrypted) and the surface's credential fields; refuses
- * with a `ConvexError`, storing nothing, before the card is approved or when
- * Slack is given anything but a bot token (`credentialLandingRefusal`).
+ * `credentials` row (encrypted) and the surface's credential fields, whom the
+ * card acts as among them; refuses with a `ConvexError`, storing nothing,
+ * before the card is approved, when Slack is given anything but a bot token
+ * (`credentialLandingRefusal`), and when the card's system has an active
+ * organisation connection, whose credential the card uses instead
+ * (`organisationConnectedRefusal`).
  */
 export const landCredential = action({
   args: { surfaceId: v.id('surfaces'), label: v.string(), plaintext: v.string() },
@@ -1658,6 +1736,13 @@ export const landCredential = action({
     if (!plaintext) throw new Error('Credential value is required.');
     const refusal = credentialLandingRefusal(context.surface, plaintext);
     if (refusal) throw new ConvexError(refusal);
+    const system = organisationSystemOf(context.surface);
+    const connection =
+      system === undefined
+        ? null
+        : await ctx.runQuery(internal.organisationConnections.activeFor, { system });
+    if (connection !== null)
+      throw new ConvexError(organisationConnectedRefusal(connection.displayName));
     // A value typed into the card is never the product of an OAuth install:
     // on an `oauth` surface it is the shared bot token landed as the fallback,
     // a shared credential like any other, so writes through it carry

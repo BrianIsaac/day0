@@ -171,6 +171,34 @@ describe.skipIf(!hasHostTool('bash'))('sync-convex-env.sh (needs bash)', (): voi
     expect(dropped.deployment).not.toContain('DAY0_OIDC_ALLOWED_DOMAINS=acme.test');
   });
 
+  it('puts the administrators on the deployment before the issuer and clears a list dropped from the file (B8)', (): void => {
+    const local = [
+      'DAY0_PROFILE=customer-local',
+      'DAY0_OIDC_AUDIENCE=day0',
+      'DAY0_OIDC_ISSUER=https://sso.example.com/realms/ops',
+      'DAY0_OIDC_ALLOWED_DOMAINS=acme.test',
+      'DAY0_ADMINISTRATORS=ines@acme.test,ops@acme.test',
+      '',
+    ].join('\n');
+    const pushed = runSync([], local);
+    expect(pushed.status).toBe(0);
+    expect(pushed.calls).toContain(
+      'convex env set DAY0_ADMINISTRATORS -- ines@acme.test,ops@acme.test',
+    );
+    expect(
+      pushed.calls.findIndex((call) => call.startsWith('convex env set DAY0_ADMINISTRATORS ')),
+    ).toBeLessThan(
+      pushed.calls.findIndex((call) => call.startsWith('convex env set DAY0_OIDC_ISSUER ')),
+    );
+
+    const localDev = runSync([], 'DAY0_ADMINISTRATORS=boss@day0.local\n');
+    expect(localDev.calls).toContain('convex env set DAY0_ADMINISTRATORS -- boss@day0.local');
+
+    const dropped = runSync(['DAY0_ADMINISTRATORS=ines@acme.test'], 'DAY0_SURFACE_MODE=mock\n');
+    expect(dropped.calls).toContain('convex env remove DAY0_ADMINISTRATORS');
+    expect(dropped.deployment).not.toContain('DAY0_ADMINISTRATORS=ines@acme.test');
+  });
+
   it('clears the retired credential names a deployment still carries', (): void => {
     const { status, calls } = runSync(
       [
@@ -238,6 +266,31 @@ describe.skipIf(!hasHostTool('bash'))('sync-convex-env.sh (needs bash)', (): voi
     expect(calls).not.toContain('convex env set DEV_NO_AUTH_JWKS -- data:text/plain;base64,abc');
     expect(calls).toContain('convex env set OPENAI_MODEL -- qwen3:4b');
     expect(calls).toContain('convex env set DAY0_SURFACE_MODE -- mock');
+  });
+
+  it("puts the token store's Nango address and key on the deployment, never the keys only Nango holds, and clears both once the file drops them (11-AT)", (): void => {
+    const configured = runSync(
+      [],
+      [
+        'DAY0_NANGO_URL=http://nango-server:3003',
+        'DAY0_NANGO_SECRET_KEY=3f1c2a9e-5b7d-4c8a-9e21-0a6b4d2c8f17',
+        'DAY0_NANGO_ENCRYPTION_KEY=nango-encryption-only',
+        'DAY0_NANGO_DB_PASSWORD=nango-database-only',
+        '',
+      ].join('\n'),
+    );
+    expect(configured.status).toBe(0);
+    expect(configured.calls).toContain('convex env set DAY0_NANGO_URL -- http://nango-server:3003');
+    expect(configured.calls).toContain(
+      'convex env set DAY0_NANGO_SECRET_KEY -- 3f1c2a9e-5b7d-4c8a-9e21-0a6b4d2c8f17',
+    );
+    expect(configured.calls.some((call) => call.includes('-only'))).toBe(false);
+    const dropped = runSync(
+      ['DAY0_NANGO_URL=http://nango-server:3003', 'DAY0_NANGO_SECRET_KEY=old'],
+      'DAY0_SURFACE_MODE=mock\n',
+    );
+    expect(dropped.calls).toContain('convex env remove DAY0_NANGO_URL');
+    expect(dropped.calls).toContain('convex env remove DAY0_NANGO_SECRET_KEY');
   });
 
   it('never pushes a credential name and clears the key when .env.local drops it', (): void => {

@@ -20,6 +20,7 @@
  */
 import { makeFunctionReference } from 'convex/server';
 import type { ActionCtx } from '../../convex/_generated/server';
+import { isOrganisationOwnerKey, ORGANISATION_OWNER_KEY } from '../lib/organisation-key';
 import { redactValue } from '../surfaces/secrets';
 
 /** The most credentials one owner may hold before the source refuses to answer. */
@@ -42,22 +43,32 @@ export const ownerValuesRef = makeFunctionReference<'action', { userId: string }
 export type FetchOwnerValues = (ctx: ActionCtx, userId: string) => Promise<readonly string[]>;
 
 /**
- * The owner's stored credential values, decrypted for exact removal.
+ * The owner's stored credential values, decrypted for exact removal, joined by the
+ * organisation's (an organisation connection's secret, a token every employee shares): those
+ * belong to no owner, and no employee may echo them either (AC12), so every caller of this one
+ * source removes them without a change of its own.
  *
  * Args:
  *   ctx: Convex action context.
  *   userId: The owner whose credentials are listed.
  *
  * Returns:
- *   Every active, decryptable value the owner holds; empty for an owner with
- *   none. The caller keeps the list for the rest of its invocation and hands
- *   it to every boundary it persists through.
+ *   Every active, decryptable value the owner holds and every one the organisation holds, each
+ *   once; empty when there are none. The caller keeps the list for the rest of its invocation
+ *   and hands it to every boundary it persists through.
  *
  * Raises:
- *   Error: With `OWNER_KNOWN_VALUES_CAP_REASON` when the owner holds more
+ *   Error: With `OWNER_KNOWN_VALUES_CAP_REASON` when the owner or the organisation holds more
  *     rows than the cap; the caller must not persist without the list.
  */
 export async function ownerKnownValues(ctx: ActionCtx, userId: string): Promise<readonly string[]> {
+  const keys = isOrganisationOwnerKey(userId) ? [userId] : [userId, ORGANISATION_OWNER_KEY];
+  const lists = await Promise.all(keys.map((key: string) => valuesHeldBy(ctx, key)));
+  return [...new Set(lists.flat())];
+}
+
+/** One holder's active values, from the Node action, checked to be a list of strings. */
+async function valuesHeldBy(ctx: ActionCtx, userId: string): Promise<readonly string[]> {
   const values: unknown = await ctx.runAction(ownerValuesRef, { userId });
   if (
     !Array.isArray(values) ||

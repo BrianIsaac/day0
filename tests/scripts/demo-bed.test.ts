@@ -374,6 +374,7 @@ describe('the protected volumes and projects', (): void => {
       'day0-p11-abc123_redactor_venv',
       'day0-p11-abc123_redactor_models',
       'day0-p11-abc123_redactor_tmp',
+      'day0-p11-abc123_nango_db',
     ]);
     expect(projectVolumeNames('day0-p11-abc123', 'volumes:\n  one:\n  two:\n')).toEqual([
       'day0-p11-abc123_one',
@@ -593,6 +594,9 @@ describe('the compose file is pinned to digests', (): void => {
       'fake-slack',
       'looker-tile',
       'model',
+      'nango-db',
+      'nango-redis',
+      'nango-server',
       'playwright-mcp',
       'redactor',
       'redactor-volumes',

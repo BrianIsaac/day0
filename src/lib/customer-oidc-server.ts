@@ -5,12 +5,14 @@ import {
   CUSTOMER_SESSION_SECRET_VAR,
   PUBLIC_URL_VAR,
   customerOidcAllowedDomains,
+  customerOidcEmailTrusted,
   customerOidcIssuer,
   signInRefusal,
-  type SignInRefusal,
+  type CustomerSignInRefusal,
 } from './customer-oidc';
 import {
   CUSTOMER_OIDC_PRESETS,
+  addressRefusal,
   providerOfIssuer,
   type CustomerOidcPreset,
 } from './customer-oidc-presets';
@@ -50,6 +52,8 @@ export interface CustomerSignInSettings {
   readonly publicUrl: string;
   readonly sessionSecret: string;
   readonly preset: CustomerOidcPreset;
+  /** Whether the issuer's `email` is believed when it sends no verification claim (`DAY0_OIDC_EMAIL_TRUSTED`). */
+  readonly emailTrusted: boolean;
 }
 
 /** The sign-in could not be set up from this environment; the message lists what is missing. */
@@ -85,7 +89,29 @@ export function customerSignInSettings(read: EnvReader = serverEnv): CustomerSig
     publicUrl: origin.origin,
     sessionSecret: read(CUSTOMER_SESSION_SECRET_VAR)?.trim() ?? '',
     preset: CUSTOMER_OIDC_PRESETS[providerOfIssuer(issuer.issuer)],
+    emailTrusted: customerOidcEmailTrusted(read),
   };
+}
+
+/**
+ * Why the customer sign-in refuses a person the issuer signed in: the domain rule, then the
+ * address rule (decision 7 (b)), as the deployment's `getCaller` refuses them.
+ *
+ * @param claims - The verified ID token's claims.
+ * @param settings - The sign-in's settings.
+ * @returns The refusal, or undefined when the person is admitted.
+ */
+function personRefusal(
+  claims: IdTokenClaims,
+  settings: CustomerSignInSettings,
+): CustomerSignInRefusal | undefined {
+  return (
+    signInRefusal(
+      { email: claims.email, hd: claims.hd },
+      settings.allowedDomains,
+      settings.issuer,
+    ) ?? addressRefusal(claims, settings.issuer, settings.emailTrusted)
+  );
 }
 
 /** How long a discovered configuration is reused before the issuer is asked again. */
@@ -293,7 +319,7 @@ export type FinishedSignIn =
     }
   | {
       readonly kind: 'refused';
-      readonly reason: SignInRefusal;
+      readonly reason: CustomerSignInRefusal;
       readonly claims: IdTokenClaims;
       /** The refused person's ID token, which only the live check uses (to ask the deployment). */
       readonly idToken: string;
@@ -334,11 +360,7 @@ export async function finishSignIn(
   }
   const claims = tokens.claims() as IdTokenClaims | undefined;
   if (!claims || !tokens.id_token) return { kind: 'failed', detail: 'the issuer sent no ID token' };
-  const refusal = signInRefusal(
-    { email: claims.email, hd: claims.hd },
-    settings.allowedDomains,
-    settings.issuer,
-  );
+  const refusal = personRefusal(claims, settings);
   if (refusal) {
     return {
       kind: 'refused',
@@ -435,11 +457,7 @@ async function performRefresh(
   if (!claims || !tokens.id_token) {
     return { kind: 'refused', detail: 'the issuer sent no ID token with the refresh' };
   }
-  const refusal = signInRefusal(
-    { email: claims.email, hd: claims.hd },
-    settings.allowedDomains,
-    settings.issuer,
-  );
+  const refusal = personRefusal(claims, settings);
   if (refusal) return { kind: 'refused', detail: refusal };
   return {
     kind: 'refreshed',

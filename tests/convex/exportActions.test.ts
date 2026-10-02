@@ -48,3 +48,58 @@ describe('the export redacts by its own policy row (review M9)', (): void => {
     expect(exported).toContain('Send the close summary');
   });
 });
+
+describe("the export drops a person a provider's answer names (the real-Linear walk's m4)", (): void => {
+  it("drops the branch name and the author a Linear read's answer carries, from the work item and its event", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read =
+      'get_issue on linear · {"id":"FIN-5","title":"Close the duplicate accruals query",' +
+      '"gitBranchName":"aiko/fin-5-close-the-duplicate-accruals-query",' +
+      '"createdBy":"Aiko Tanaka","project":"September close"}';
+    const output = { applied: [{ tool: 'mcp.call', ok: true, effect: read, providerId: 'FIN-5' }] };
+    const agentId = await harness.run(async (ctx): Promise<Id<'agents'>> => {
+      const id = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Mateo',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      await ctx.db.insert('workItems', {
+        agentId: id,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'FIN-5',
+        title: 'Close the duplicate accruals query',
+        contentSummary: 'Add an audit note, then move it to Done.',
+        contentRefs: [],
+        state: 'completed',
+        output,
+        observedAt: 1,
+        createdAt: 1,
+      });
+      await ctx.db.insert('events', {
+        agentId: id,
+        type: 'work.completed',
+        payload: { output },
+        createdAt: 2,
+      });
+      return id;
+    });
+    const owner = harness.withIdentity(managerIdentity());
+    const exported = JSON.stringify(
+      await Promise.all(
+        (['workItems', 'events'] as const).map(
+          async (section) =>
+            (await owner.action(api.exportActions.exportPage, { agentId, section, cursor: null }))
+              .rows,
+        ),
+      ),
+    );
+    for (const value of ['aiko/fin-5', 'Aiko Tanaka']) expect(exported).not.toContain(value);
+    // The answer's working material stays: the ticket, its title and its project.
+    for (const value of ['FIN-5', 'Close the duplicate accruals query', 'September close']) {
+      expect(exported).toContain(value);
+    }
+  });
+});

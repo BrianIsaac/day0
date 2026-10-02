@@ -20,7 +20,11 @@ const tab = vi.hoisted(() => ({
   second: false,
   /** A documented system the charter does not name, waiting on the manager's Propose, when set. */
   unnamed: false,
+  /** Whether the Linear card holds a credential, which Disconnect ends. */
+  credential: false,
 }));
+
+import { withListedIdentity } from './fakes/listed-identity';
 
 vi.mock('convex/react', () => {
   const call =
@@ -82,10 +86,11 @@ vi.mock('convex/react', () => {
             verdict: tab.verdict,
             path: 'mcp',
             whereFound: [],
-            credentialLanded: false,
+            credentialLanded: tab.credential,
+            ...(tab.credential ? { credentialId: 'credential-1' } : {}),
             createdAt: 1,
           },
-        ];
+        ].map((row) => withListedIdentity(row));
       }
       if (name === 'charters:latest') {
         return tab.unnamed
@@ -116,11 +121,28 @@ afterEach((): void => {
   tab.held = {};
   tab.second = false;
   tab.unnamed = false;
+  tab.credential = false;
+});
+
+describe("a card's Disconnect, confirmed in its dialog (11-AR's surfaces.disconnect)", (): void => {
+  it("says in the tab's live region that the card is disconnected, and gives the card focus", async (): Promise<void> => {
+    tab.verdict = 'connected';
+    tab.credential = true;
+    const view = mount(<SurfaceCards agentId={'agent-1' as Id<'agents'>} employeeName="Maya" />);
+    await press(view.container, 'Disconnect');
+    const dialog = document.querySelector<HTMLElement>('[role="alertdialog"]');
+    if (!dialog) throw new Error('no dialog');
+    await press(dialog, 'Disconnect Linear');
+    await settle();
+    expect(said(view.container)).toContain('Linear is disconnected.');
+    expect(document.activeElement?.id).toBe('surface-linear');
+    view.unmount();
+  });
 });
 
 describe('a decision on a surface card', (): void => {
   it('says the approval, and gives focus to the card once Approve has become its verdict', async (): Promise<void> => {
-    const view = mount(<SurfaceCards agentId={'agent-1' as Id<'agents'>} />);
+    const view = mount(<SurfaceCards agentId={'agent-1' as Id<'agents'>} employeeName="Maya" />);
     const approve = [...view.container.querySelectorAll('button')].find(
       (candidate) => candidate.textContent === 'Approve',
     );
@@ -129,7 +151,7 @@ describe('a decision on a surface card', (): void => {
       approve?.click();
       // The subscription answers before the call settles: the card is approved.
       tab.verdict = 'approved';
-      view.root.render(<SurfaceCards agentId={'agent-1' as Id<'agents'>} />);
+      view.root.render(<SurfaceCards agentId={'agent-1' as Id<'agents'>} employeeName="Maya" />);
     });
     await settle();
 
@@ -142,7 +164,7 @@ describe('a decision on a surface card', (): void => {
     tab.refusals = {
       'surfaces:approve': `[CONVEX M(surfaces:approve)] [Request ID: 1] Server Error\nUncaught Error: A documented intake queue changed; reject this card and re-run orientation before approval.\n    at handler (../convex/surfaces.ts:1:1)`,
     };
-    const view = mount(<SurfaceCards agentId={'agent-1' as Id<'agents'>} />);
+    const view = mount(<SurfaceCards agentId={'agent-1' as Id<'agents'>} employeeName="Maya" />);
     await press(view.container, 'Approve');
 
     const refusal =
@@ -168,7 +190,7 @@ describe('a decision on a surface card', (): void => {
         release = resolve;
       }),
     };
-    const view = mount(<SurfaceCards agentId={'agent-1' as Id<'agents'>} />);
+    const view = mount(<SurfaceCards agentId={'agent-1' as Id<'agents'>} employeeName="Maya" />);
     const card = (slug: string): HTMLElement => {
       const found = view.container.querySelector<HTMLElement>(`#surface-${slug}`);
       if (!found) throw new Error(`no card ${slug}`);
@@ -193,7 +215,7 @@ describe('a decision on a surface card', (): void => {
 
   it('gives focus to the systems once a proposed system leaves the list it was pressed in', async (): Promise<void> => {
     tab.unnamed = true;
-    const view = mount(<SurfaceCards agentId={'agent-1' as Id<'agents'>} />);
+    const view = mount(<SurfaceCards agentId={'agent-1' as Id<'agents'>} employeeName="Maya" />);
     const propose = view.container.querySelector<HTMLButtonElement>(
       'button[aria-label="Propose HubSpot"]',
     );
@@ -202,7 +224,7 @@ describe('a decision on a surface card', (): void => {
       propose?.click();
       // Its card is drafted: the system is no longer waiting on the manager.
       tab.unnamed = false;
-      view.root.render(<SurfaceCards agentId={'agent-1' as Id<'agents'>} />);
+      view.root.render(<SurfaceCards agentId={'agent-1' as Id<'agents'>} employeeName="Maya" />);
     });
     await settle();
 

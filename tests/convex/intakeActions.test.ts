@@ -1,5 +1,6 @@
 /** @vitest-environment node */
 
+import { randomBytes } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import { PassThrough } from 'node:stream';
 import type { FunctionReference } from 'convex/server';
@@ -7,6 +8,9 @@ import type { GenericId } from 'convex/values';
 import { convexTest } from 'convex-test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import { sealForOwner } from '../../src/lib/credential-crypto';
+import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
+import { nangoLocation } from '../../src/surfaces/nango-token-store';
 
 /** The configurations the production intake client built, when a test reaches it. */
 const mastra = vi.hoisted(() => ({ configs: [] as unknown[] }));
@@ -36,12 +40,14 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import {
   compareProviderTs,
+  convexRuntime,
   createMcpClient,
   issueProject,
   issueTeamLabels,
   linearCandidate,
   linearListArguments,
   mcpIssuePage,
+  PROVIDER_DID_NOT_ANSWER,
   readIntakeDocumentation,
   runDecisionSweep,
   runIntakeSweep,
@@ -54,10 +60,12 @@ import {
 } from '../../convex/intakeActions';
 import type { WorkCandidate } from '../../src/work/types';
 import type { TicketSnapshot } from '../../src/work/ticket-ownership';
+import { LIST_ISSUES_SELECTABLE_FIELDS } from '../fixtures/linear/linear-oauth-2026-10-02';
 import { allConvexModules } from './all-modules';
 import { companyPage } from '../fixtures/company-bed';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { WAITING_WORK_LIMIT } from '../../convex/workLoop';
+import type { SweepRead } from '../../convex/intakeSeed';
 import { NOTHING_OPEN, type OpenDecisions } from '../../src/work/manager-channel';
 import { extractDocumentedSystemOrder, waterfallEntry } from '../../src/surfaces/waterfall';
 
@@ -243,7 +251,10 @@ function runtimeHarness(
       );
       if (surface) surface.providerBotId = record.providerBotId;
     },
-    listSurfaces: async (): Promise<Doc<'surfaces'>[]> => surfaces,
+    readSweep: async (): Promise<SweepRead> => ({
+      surfaces,
+      owners: agents.map((agent) => ({ agentId: agent._id, owner: agent.userId ?? null })),
+    }),
     listChatSurfaces: async (): Promise<Doc<'surfaces'>[]> =>
       surfaces.filter((surface: Doc<'surfaces'>): boolean => surface.class === 'chat'),
     getAgent: async (agentId: Id<'agents'>): Promise<Doc<'agents'> | null> =>
@@ -1245,7 +1256,7 @@ describe('real surface intake', (): void => {
 
   it('makes mock mode a side-effect-free no-op', async (): Promise<void> => {
     const runtime: IntakeRuntime = {
-      listSurfaces: vi.fn(async (): Promise<Doc<'surfaces'>[]> => []),
+      readSweep: vi.fn(async (): Promise<SweepRead> => ({ surfaces: [], owners: [] })),
       listChatSurfaces: vi.fn(async (): Promise<Doc<'surfaces'>[]> => []),
       getAgent: vi.fn(),
       intakeDocumentation: vi.fn(),
@@ -1270,7 +1281,7 @@ describe('real surface intake', (): void => {
       skipped: 0,
       surfaces: 0,
     });
-    expect(runtime.listSurfaces).not.toHaveBeenCalled();
+    expect(runtime.readSweep).not.toHaveBeenCalled();
 
     await expect(runDecisionSweep(runtime, { mode: 'mock' })).resolves.toEqual({
       mode: 'mock',
@@ -3033,6 +3044,159 @@ describe('each employee reads its own approved queues', (): void => {
       );
       expect(seeded).toEqual(['FIN-1', 'FIN-5']);
     });
+
+    describe('under the app actor (D6, AC8)', (): void => {
+      const APP_USER = 'app-user-day0-leo';
+      const MANAGER_ID = 'user-ana';
+
+      /** A Linear client whose list selects the live fields, recording each request and get_user call. */
+      function appClient(
+        rows: Record<string, unknown>[],
+        options: {
+          selectable?: readonly string[];
+          requests?: unknown[];
+          userCalls?: unknown[];
+        } = {},
+      ) {
+        return () => ({
+          listToolDefinitionsWithErrors: async () => ({
+            definitions: {
+              surface: {
+                list_issues: {
+                  name: 'list_issues',
+                  inputSchema: {
+                    properties: {
+                      project: {},
+                      team: {},
+                      limit: {},
+                      fields: {
+                        type: 'array',
+                        items: {
+                          type: 'string',
+                          enum: [...(options.selectable ?? LIST_ISSUES_SELECTABLE_FIELDS)],
+                        },
+                      },
+                    },
+                  },
+                },
+                get_user: { name: 'get_user', inputSchema: { properties: { query: {} } } },
+              },
+            },
+            errors: {},
+          }),
+          toolFromDefinition: async ({ definition }: { definition: { name?: string } }) => ({
+            execute: async (args: Record<string, unknown>): Promise<unknown> => {
+              if (definition.name === 'get_user') {
+                options.userCalls?.push(args);
+                return { content: [{ type: 'text', text: JSON.stringify(KEY_OWNER) }] };
+              }
+              options.requests?.push(args);
+              return { issues: rows };
+            },
+          }),
+          disconnect: async (): Promise<void> => undefined,
+        });
+      }
+
+      /** Leo's Linear card, acting as its own app user as the probe read it. */
+      function leosCard(): Doc<'surfaces'> {
+        return {
+          ...companySurfaces()[1],
+          toolAllowlist: ['list_issues', 'get_user'],
+          actsAs: { kind: 'own-app', label: 'Day0 Leo', providerIdentityId: APP_USER },
+          providerIdentityId: APP_USER,
+        };
+      }
+
+      it('takes the unassigned tickets and those delegated to its app user, never one assigned to the manager', async (): Promise<void> => {
+        const requests: unknown[] = [];
+        const userCalls: unknown[] = [];
+        const harness = runtimeHarness(
+          [leosCard()],
+          companyPageRows('revops-first'),
+          companyCredentials(),
+          [financeAgent],
+        );
+
+        await runIntakeSweep(harness.runtime, {
+          mode: 'real',
+          now: (): number => POLL_AT,
+          makeMcpClient: appClient(
+            [
+              ticket('FIN-1'),
+              ticket('FIN-2', { assignee: 'Ana Lim', assigneeId: MANAGER_ID }),
+              ticket('FIN-3', {
+                assignee: 'Ana Lim',
+                assigneeId: MANAGER_ID,
+                delegate: 'Day0 Leo',
+                delegateId: APP_USER,
+              }),
+              ticket('FIN-4', { delegate: 'Another agent', delegateId: 'app-user-other' }),
+              // The token's owner by get_user is not who the card acts as: never read for it.
+              ticket('FIN-5', { assignee: 'Kestrel Ops', assigneeId: KEY_OWNER.id }),
+            ],
+            { requests, userCalls },
+          ),
+        });
+
+        expect([...harness.seeds.values()].map((seed) => seed.externalId)).toEqual([
+          'FIN-1',
+          'FIN-3',
+        ]);
+        expect(harness.withdrawn.map((row) => row.externalId)).toEqual(['FIN-2', 'FIN-4', 'FIN-5']);
+        expect(userCalls).toEqual([]);
+        expect((requests[0] as { fields?: string[] }).fields).toEqual(
+          expect.arrayContaining(['assigneeId', 'delegate', 'delegateId']),
+        );
+        // The ticket handed over by delegation is listed as the app user's, for the re-read.
+        expect([...harness.seeds.values()][1]?.tracker).toMatchObject({
+          assigned: true,
+          assigneeId: APP_USER,
+        });
+      });
+
+      it('holds the checkpoint and takes nothing when its list cannot select the delegate', async (): Promise<void> => {
+        const requests: unknown[] = [];
+        const harness = runtimeHarness(
+          [leosCard()],
+          companyPageRows('revops-first'),
+          companyCredentials(),
+          [financeAgent],
+        );
+
+        await runIntakeSweep(harness.runtime, {
+          mode: 'real',
+          now: (): number => POLL_AT,
+          makeMcpClient: appClient([ticket('FIN-1')], {
+            selectable: LIST_ISSUES_SELECTABLE_FIELDS.filter(
+              (name) => name !== 'delegate' && name !== 'delegateId',
+            ),
+            requests,
+          }),
+        });
+
+        expect(harness.seeds.size).toBe(0);
+        expect(requests).toEqual([]);
+        expect(harness.records[0]?.polledAt).toBeUndefined();
+        expect(harness.records[0]?.skipReason).toContain('a delegate');
+      });
+
+      it('reads the token owner as before for a card on a key, delegated tickets aside', async (): Promise<void> => {
+        const seeded = await seededFrom(
+          [
+            ticket('FIN-1', { assignee: 'Kestrel Ops', assigneeId: KEY_OWNER.id }),
+            ticket('FIN-2', {
+              assignee: 'Kestrel Ops',
+              assigneeId: KEY_OWNER.id,
+              delegate: 'Another agent',
+              delegateId: 'app-user-other',
+            }),
+          ],
+          { owner: KEY_OWNER },
+        );
+        expect(seeded).toEqual(['FIN-1']);
+      });
+    });
   });
 });
 
@@ -3629,6 +3793,90 @@ describe('the read grant (Q7, N2)', (): void => {
   });
 });
 
+describe("intake's Linear bearer (11-AL)", (): void => {
+  afterEach((): void => {
+    restoreSurfaceMode();
+  });
+
+  it('reads a Linear app token through the issuer: a revoked organisation connection stops the poll before Linear', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const credentialKey = randomBytes(32).toString('base64');
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', credentialKey);
+    const { internal: liveInternal } = await import('../../convex/_generated/api');
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Leo',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const connectionId = await ctx.db.insert('organisationConnections', {
+        system: 'linear',
+        displayName: 'Linear',
+        kind: 'oauth-app',
+        mode: 'shared',
+        scopes: ['read', 'write'],
+        clientCredentialsScopes: ['read', 'write'],
+        clientId: 'day0-shared',
+        registeredBy: { via: 'setup-cli', at: 1 },
+        status: 'revoked',
+        revokedAt: 2,
+        createdAt: 1,
+      });
+      const credentialId = await ctx.db.insert('credentials', {
+        userId: ORGANISATION_OWNER_KEY,
+        holder: ORGANISATION_HOLDER,
+        kind: 'oauth',
+        label: 'Linear app token',
+        ...sealForOwner('lin_oauth_shared_1', { current: credentialKey }, ORGANISATION_OWNER_KEY),
+        source: 'oauth',
+        issuedBy: {
+          system: 'linear',
+          grant: 'client-credentials',
+          organisationConnectionId: connectionId,
+          clientId: 'day0-shared',
+        },
+        expiresAt: Date.now() + 20 * 24 * 60 * 60 * 1_000,
+        generation: 0,
+        createdAt: 1,
+      });
+      await ctx.db.insert('permissionGrants', {
+        agentId,
+        scope: 'linear:read',
+        source: 'surface',
+        createdAt: 1,
+      });
+      return await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'linear',
+        displayName: 'Linear',
+        class: 'kanban',
+        verdict: 'connected',
+        whereFound: [],
+        path: 'mcp',
+        endpoint: 'https://mcp.linear.app/mcp',
+        credentialId,
+        credentialKind: 'value',
+        credentialLanded: true,
+        // No list_issues: before the issuer's read, the poll stopped here instead, with no request.
+        toolAllowlist: [],
+        actsAs: { kind: 'shared-app', label: 'Linear', providerIdentityId: 'app-user-day0-shared' },
+        organisationConnectionId: connectionId,
+        createdAt: 1,
+      });
+    });
+
+    await harness.action(liveInternal.intakeActions.pollSurface, { surfaceId });
+
+    const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
+    expect(surface?.intakeSkipReason).toBe(
+      "intake failed: The organisation's Linear connection is no longer active.",
+    );
+  });
+});
+
 describe('the ask time intake passes (U12, A9)', (): void => {
   afterEach((): void => {
     restoreSurfaceMode();
@@ -4125,6 +4373,127 @@ describe('polling that survives a 429 (step 17, Q13)', (): void => {
   });
 });
 
+describe('the owner the surfaces were read under (the wave 10 review FR-m4)', (): void => {
+  const slackCredential = id<'credentials'>('credential-slack');
+  const fetcher = async (input: string | URL | Request): Promise<Response> => {
+    const url = new URL(String(input));
+    if (url.pathname.endsWith('/conversations.list')) {
+      return slackResponse({
+        ok: true,
+        channels: [
+          { id: 'CASKS', name: 'revops-asks' },
+          { id: 'CREVOPS', name: 'revops' },
+        ],
+        response_metadata: { next_cursor: '' },
+      });
+    }
+    const channel = url.searchParams.get('channel') ?? '';
+    return slackResponse({
+      ok: true,
+      messages: [{ ts: '1770000000.000100', user: 'UUSER', text: `<@UBOT> ask in ${channel}` }],
+      response_metadata: { next_cursor: '' },
+    });
+  };
+  const harness = (): ReturnType<typeof runtimeHarness> =>
+    runtimeHarness(
+      [
+        surfaceRow('slack', 'Slack', 'chat', {
+          credentialId: slackCredential,
+          endpoint: 'https://slack.com/api/',
+          toolAllowlist: ['conversations.list', 'conversations.history'],
+          providerIdentityId: 'UBOT',
+          providerBotId: 'BBOT',
+          providerWorkspaceId: 'TTEAM',
+        }),
+      ],
+      [pageRow('slack.md', 'Slack policy', SLACK)],
+      new Map([[String(slackCredential), 'slack-test-value']]),
+    );
+
+  it('polls nothing for an employee handed over after the sweep read its cards, so the old connection seeds nothing', async (): Promise<void> => {
+    const moved = harness();
+    // The handover lands between the sweep's one surface read and this employee's turn.
+    moved.runtime.getAgent = async (): Promise<Doc<'agents'>> => ({
+      ...agentRow(),
+      userId: 'new-owner',
+    });
+    await expect(
+      runIntakeSweep(moved.runtime, {
+        mode: 'real',
+        now: (): number => Date.parse('2026-08-26T03:00:00.000Z'),
+        fetcher,
+      }),
+    ).resolves.toMatchObject({ candidates: 0, polled: 0 });
+    expect(moved.seeds.size).toBe(0);
+    expect(moved.decrypted).toEqual([]);
+    expect(moved.records).toEqual([]);
+  });
+
+  it('seeds under the owner the cards were read under while the employee stays theirs', async (): Promise<void> => {
+    const kept = harness();
+    await expect(
+      runIntakeSweep(kept.runtime, {
+        mode: 'real',
+        now: (): number => Date.parse('2026-08-26T03:00:00.000Z'),
+        fetcher,
+      }),
+    ).resolves.toMatchObject({ candidates: 2, polled: 1 });
+    expect([...kept.seeds.values()].map((seed) => seed.startedUnder)).toEqual(['owner', 'owner']);
+  });
+});
+
+describe("a provider that does not answer in time (the real-Linear walk's m12)", (): void => {
+  const slackCredential = id<'credentials'>('credential-slack');
+  const timedOut = async (error: unknown): Promise<string | undefined> => {
+    const harness = runtimeHarness(
+      [
+        surfaceRow('slack', 'Slack', 'chat', {
+          credentialId: slackCredential,
+          endpoint: 'https://slack.com/api/',
+          toolAllowlist: ['conversations.list', 'conversations.history'],
+          providerIdentityId: 'UBOT',
+          providerBotId: 'BBOT',
+          providerWorkspaceId: 'TTEAM',
+        }),
+      ],
+      [pageRow('slack.md', 'Slack policy', SLACK)],
+      new Map([[String(slackCredential), 'slack-test-value']]),
+    );
+    await runIntakeSweep(harness.runtime, {
+      mode: 'real',
+      now: (): number => Date.parse('2026-08-26T03:00:00.000Z'),
+      sleep: async (): Promise<void> => undefined,
+      fetcher: async (): Promise<Response> => {
+        throw error;
+      },
+    });
+    return harness.records[0]?.skipReason;
+  };
+
+  it('says the provider did not answer in time, never the raw abort, whichever shape it arrives in', async (): Promise<void> => {
+    const reasons = [
+      await timedOut(new DOMException('The operation was aborted due to timeout', 'TimeoutError')),
+      // As a client that strings the abort into its own error hands it on.
+      await timedOut(new Error('TimeoutError: The operation was aborted due to timeout')),
+      // As a client that wraps the abort as its error's cause.
+      await timedOut(
+        new Error('fetch failed', {
+          cause: new DOMException('The operation was aborted due to timeout', 'TimeoutError'),
+        }),
+      ),
+    ];
+    const said = 'intake failed: the provider did not answer in time';
+    expect(PROVIDER_DID_NOT_ANSWER).toBe('the provider did not answer in time');
+    expect(reasons).toEqual([said, said, said]);
+  });
+
+  it('keeps every other failure in its own words', async (): Promise<void> => {
+    expect(await timedOut(new Error('getaddrinfo ENOTFOUND slack.com'))).toBe(
+      'intake failed: getaddrinfo ENOTFOUND slack.com',
+    );
+  });
+});
+
 describe('the manager decision poll under a rate limit', (): void => {
   it('waits out a 429 on the manager DM and still resolves the reply', async (): Promise<void> => {
     const surface = surfaceRow('slack', 'Slack', 'chat', {
@@ -4494,4 +4863,49 @@ describe("an employee's documentation as intake reads it (D D3)", (): void => {
     expect(read.order).toEqual(['Slack', 'Linear']);
     expect(read.pages.map((page) => page.ref).sort()).toEqual(['linear.md', 'onboarding.md']);
   }, 60_000);
+});
+
+describe('the credential intake reads comes from the token store (11-AT)', (): void => {
+  afterEach((): void => {
+    restoreSurfaceMode();
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it('reads a Nango-held credential as the token Nango holds, never as the pointer its row seals', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const credentialKey = randomBytes(32).toString('base64');
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', credentialKey);
+    vi.stubEnv('DAY0_NANGO_URL', 'http://nango-server:3003');
+    vi.stubEnv('DAY0_NANGO_SECRET_KEY', '3f1c2a9e-5b7d-4c8a-9e21-0a6b4d2c8f17');
+    vi.stubGlobal(
+      'fetch',
+      async (): Promise<Response> =>
+        Response.json({ credentials: { type: 'OAUTH2_CC', token: 'fake-cc-9' } }),
+    );
+    const harness = convexTest(schema, allConvexModules());
+    const credentialId = await harness.run(
+      async (ctx): Promise<Id<'credentials'>> =>
+        await ctx.db.insert('credentials', {
+          userId: ORGANISATION_OWNER_KEY,
+          holder: ORGANISATION_HOLDER,
+          kind: 'location',
+          label: 'Tracker token (Nango)',
+          ...sealForOwner(
+            nangoLocation({ providerConfigKey: 'tracker-cc', connectionId: 'tracker' }),
+            { current: credentialKey },
+            ORGANISATION_OWNER_KEY,
+          ),
+          source: 'entered',
+          createdAt: 1,
+          tokenStore: 'nango',
+          issuedBy: { system: 'tracker', grant: 'client-credentials' },
+        }),
+    );
+    await expect(
+      harness.action(
+        async (ctx): Promise<string> => await convexRuntime(ctx).decrypt(credentialId),
+      ),
+    ).resolves.toBe('fake-cc-9');
+  });
 });

@@ -18,7 +18,11 @@ import {
   settingsSection,
   setupReport,
   setupRoute,
+  accessChecksForReport,
+  accessSection,
 } from '../../scripts/check-setup';
+import type { ConnectionRow } from '../../scripts/check-access';
+import { SLACK_KIT_BOT_SCOPES } from '../../src/surfaces/access-kit/slack';
 
 describe('the mode and route line', (): void => {
   it('names the route the setup wrote, without any key value', (): void => {
@@ -229,6 +233,51 @@ describe('the redactor in real mode', (): void => {
       componentsSection({ DAY0_REDACTOR_URL: 'http://redactor:8000' }, 'day0-bed', ['backend'])
         .status,
     ).toBe('warn');
+  });
+});
+
+describe('the token store component (join 9)', (): void => {
+  const nango = {
+    DAY0_NANGO_URL: 'http://nango-server:3003',
+    DAY0_NANGO_SECRET_KEY: '3f1c2a9e-5b7d-4c8a-9e21-0a6b4d2c8f17',
+  };
+
+  it('lists nango-server with its profile and what it is for', (): void => {
+    const section = componentsSection({}, 'day0-bed', ['backend']);
+    expect(section.lines).toContain(
+      "nango-server (--profile token-store): not running - Nango, which keeps and refreshes the API rung's OAuth tokens.",
+    );
+  });
+
+  it('names a configured token store with nothing running, or running without its key', (): void => {
+    const absent = componentsSection(nango, 'day0-bed', ['backend']);
+    expect(absent.status).toBe('warn');
+    expect(absent.lines.join('\n')).toContain(
+      'DAY0_NANGO_URL names http://nango-server:3003 and nothing is running there.',
+    );
+    const keyless = componentsSection({ DAY0_NANGO_URL: nango.DAY0_NANGO_URL }, 'day0-bed', [
+      'backend',
+      'nango-server',
+    ]);
+    expect(keyless.status).toBe('warn');
+    expect(keyless.lines.join('\n')).toContain('DAY0_NANGO_SECRET_KEY is unset');
+    expect(keyless.lines.join('\n')).not.toContain(nango.DAY0_NANGO_SECRET_KEY);
+  });
+
+  it('names a running token store day0 is not told about, and passes one it is', (): void => {
+    const untold = componentsSection({}, 'day0-bed', ['backend', 'nango-server']);
+    expect(untold.status).toBe('warn');
+    expect(untold.lines.join('\n')).toContain(
+      'nango-server is running and DAY0_NANGO_URL is unset, so day0 will not use it.',
+    );
+    const told = componentsSection(nango, 'day0-bed', ['backend', 'nango-server']);
+    expect(told.status).toBe('ok');
+    expect(told.lines.join('\n')).not.toContain(nango.DAY0_NANGO_SECRET_KEY);
+  });
+
+  it('names the token store’s images among the registry pulls', (): void => {
+    const registry = egressHosts({}).find((row) => row.host === 'registry-1.docker.io');
+    expect(registry?.purpose).toContain('nango-server');
   });
 });
 
@@ -722,5 +771,123 @@ describe("the support report's sign-in lines", (): void => {
       { check: 'session-secret', status: 'ok' },
     ]);
     expect(JSON.stringify(report)).not.toContain('curl');
+  });
+});
+
+describe('check:setup: the access block (11-AI)', (): void => {
+  const ACCESS_VALUES = {
+    DAY0_PROFILE: 'customer-local',
+    DAY0_PUBLIC_URL: 'https://day0.acme.test',
+    DAY0_ADMINISTRATORS: 'ines@acme.test',
+    DAY0_SURFACE_MODE: 'real',
+  };
+  const SLACK_ROW: ConnectionRow = {
+    _id: 'conn-slack',
+    system: 'slack',
+    displayName: 'Slack',
+    kind: 'slack-configuration',
+    mode: 'per-employee',
+    status: 'active',
+    scopes: [...SLACK_KIT_BOT_SCOPES],
+    redirectUrl: 'https://day0.acme.test/api/oauth/slack',
+    secretCredentialId: 'cred-slack',
+  };
+
+  it('passes the administrators, the deployment holding them, and each connection’s status, redirect and scopes', (): void => {
+    const section = accessSection(ACCESS_VALUES, [SLACK_ROW], {
+      values: { DAY0_ADMINISTRATORS: 'ines@acme.test' },
+    });
+    expect(section?.status).toBe('ok');
+    const text = section?.lines.join('\n') ?? '';
+    expect(text).toContain('ines@acme.test');
+    expect(text).toContain('The deployment holds this file’s DAY0_ADMINISTRATORS.');
+    expect(text).toContain('slack');
+    expect(text).toContain('pnpm check:access');
+  });
+
+  it('is a gap for a redirect that is not Day0’s, a list the deployment does not hold, and an unreadable deployment', (): void => {
+    const moved = accessSection(
+      ACCESS_VALUES,
+      [{ ...SLACK_ROW, redirectUrl: 'https://old.acme.test/api/oauth/slack' }],
+      { values: { DAY0_ADMINISTRATORS: 'ines@acme.test' } },
+    );
+    expect(moved?.status).toBe('gap');
+    expect(moved?.lines.join('\n')).toContain('https://old.acme.test/api/oauth/slack');
+
+    const stale = accessSection(ACCESS_VALUES, [], {
+      values: { DAY0_ADMINISTRATORS: 'sam@acme.test' },
+    });
+    expect(stale?.status).toBe('gap');
+    expect(stale?.lines.join('\n')).toContain('pnpm sync:env');
+
+    const unread = accessSection(ACCESS_VALUES, { error: 'the Convex CLI failed' }, undefined);
+    expect(unread?.status).toBe('warn');
+    expect(unread?.lines.join('\n')).toContain('the Convex CLI failed');
+  });
+
+  it('notes, not gaps, a customer install whose access half is not set up yet, so the sign-in’s check passes before access runs', (): void => {
+    const before = accessSection(
+      { DAY0_PROFILE: 'customer-local', DAY0_PUBLIC_URL: 'https://day0.acme.test' },
+      [],
+      { values: {} },
+    );
+    expect(before?.status).toBe('warn');
+    expect(before?.lines.join('\n')).toContain('./setup.sh access');
+    // Once a connection is landed, nobody to manage it is a gap.
+    const unmanaged = accessSection(
+      { DAY0_PROFILE: 'customer-local', DAY0_PUBLIC_URL: 'https://day0.acme.test' },
+      [SLACK_ROW],
+      { values: {} },
+    );
+    expect(unmanaged?.status).toBe('gap');
+  });
+
+  it('says nothing for an install with no administrators, no connection and no company sign-in', (): void => {
+    expect(accessSection({ DAY0_SURFACE_MODE: 'real' }, [], undefined)).toBeUndefined();
+  });
+
+  it('lists each connected system’s vendor hosts in the egress list, and the report carries the checks by name', (): void => {
+    const hosts = egressHosts(ACCESS_VALUES, [
+      SLACK_ROW,
+      {
+        ...SLACK_ROW,
+        _id: 'conn-linear',
+        system: 'linear',
+        displayName: 'Linear',
+        kind: 'oauth-app',
+        mode: 'shared',
+        scopes: ['read', 'write'],
+      },
+      {
+        ...SLACK_ROW,
+        _id: 'conn-mcp',
+        system: 'mcp:mcp.acme.com',
+        displayName: 'mcp.acme.com',
+        kind: 'mcp-client',
+        issuer: 'https://auth.acme.com',
+        resource: 'https://mcp.acme.com/mcp',
+      },
+    ]).map((row) => row.host);
+    expect(hosts).toEqual(
+      expect.arrayContaining(['api.linear.app', 'mcp.acme.com', 'auth.acme.com']),
+    );
+
+    const report = setupReport({
+      values: ACCESS_VALUES,
+      sections: [],
+      access: accessChecksForReport(ACCESS_VALUES, [SLACK_ROW]),
+      connections: [SLACK_ROW],
+      versions: {},
+      images: [],
+      digests: {},
+      generatedAt: '2026-10-02T00:00:00.000Z',
+    });
+    expect(report.access).toEqual([
+      { subject: 'deployment', check: 'administrators', status: 'ok' },
+      { subject: 'slack', check: 'status', status: 'ok' },
+      { subject: 'slack', check: 'redirect', status: 'ok' },
+      { subject: 'slack', check: 'scopes', status: 'ok' },
+    ]);
+    expect(JSON.stringify(report)).not.toContain('ines@acme.test');
   });
 });

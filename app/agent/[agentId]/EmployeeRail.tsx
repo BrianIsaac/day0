@@ -14,6 +14,7 @@ import { employeeTabHref } from './employee-tabs';
 import { eventItemTitle, eventLabel, recordKindOf } from './event-labels';
 import { connectedManagerChannel } from './manager-channel';
 import { clockTime, useAgentZone, useNow } from '../../components/time';
+import { sameManagerAddress } from '@/agent/manager-address';
 
 /** How many of the newest events the rail's record lists. */
 export const RAIL_RECORD_LINES = 5;
@@ -21,21 +22,31 @@ export const RAIL_RECORD_LINES = 5;
 /** The events the page reads, shared by the rail and the Record tab so both read one query. */
 export const RECENT_EVENTS = 30;
 
-/** The figures the rail prints, from the employee's supervision figures. */
+/**
+ * The figures the rail prints, from the employee's supervision figures. The decisions count only
+ * the reader's own (`metrics.forAgent` cuts them by tenure), so for a manager who took the
+ * employee over they say so, beside a record that still lists the earlier manager's.
+ *
+ * @param standing - Whether the reader took the employee over from another manager.
+ */
 export function railFigures(
   metrics: AgentMetrics,
+  standing: { readonly tookOver: boolean } = { tookOver: false },
 ): ReadonlyArray<{ readonly label: string; readonly value: string }> {
   const { approved, rejected, partiallyApproved, medianLatencyMs } = metrics.decisions;
   const decided = decidedCount(metrics.decisions);
   // A partial approval is one of the approvals, not a decision of its own.
   const inPart = partiallyApproved > 0 ? `, ${partiallyApproved} of them in part` : '';
+  const since = standing.tookOver ? ' since you took over' : '';
   return [
     {
       label: 'Decisions',
       value:
         decided === 0
-          ? 'none yet'
-          : `${decided} by you (${approved} approved${inPart}, ${rejected} rejected)`,
+          ? standing.tookOver
+            ? 'none since you took over'
+            : 'none yet'
+          : `${decided} by you${since} (${approved} approved${inPart}, ${rejected} rejected)`,
     },
     { label: 'Median wait', value: formatMetricDuration(medianLatencyMs) },
     { label: 'Held', value: String(metrics.actions.held) },
@@ -90,6 +101,7 @@ export function EmployeeRail() {
   const { agent, surfaceMode, surfaces } = useEmployee();
   const agentId = agent._id;
   const metrics = useQuery(api.metrics.forAgent, { agentId });
+  const earlier = useQuery(api.managerTransfers.earlierManagers, { agentId });
   const events = useQuery(api.events.recent, { agentId, limit: RECENT_EVENTS });
   const workItems = useQuery(api.work.listForAgent, { agentId });
   const now = useNow();
@@ -98,14 +110,21 @@ export function EmployeeRail() {
     [workItems],
   );
   const channel = surfaceMode === 'real' && connectedManagerChannel(surfaces, now) !== undefined;
+  // Handed over to the reader and never held by them before: an employee handed back is the
+  // reader's from its deploy too, and its count is not "since" anything. Only accepted handovers
+  // are listed, so one the reader is still accepting names nobody here yet.
+  const tookOver =
+    earlier !== undefined &&
+    earlier.length > 0 &&
+    !earlier.some((handover) => sameManagerAddress(handover.fromAddress, agent.bossEmail));
   return (
     <>
       <Card title="So far" meta="counts, not rates">
-        {metrics === undefined ? (
+        {metrics === undefined || earlier === undefined ? (
           <p className="text-sm text-[var(--color-muted)]">Loading the figures</p>
         ) : (
           <dl className="grid grid-cols-1 gap-x-4 gap-y-0.5 text-sm sm:grid-cols-[max-content_minmax(0,1fr)] sm:gap-y-1.5">
-            {railFigures(metrics).map((figure) => (
+            {railFigures(metrics, { tookOver }).map((figure) => (
               <div key={figure.label} className="contents">
                 <dt className="mt-2 text-[var(--color-muted)] first:mt-0 sm:mt-0">
                   {figure.label}

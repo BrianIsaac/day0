@@ -6,11 +6,15 @@ import { internal } from './_generated/api';
 import { EMPLOYEE_GONE, EMPLOYEE_NOT_YOURS } from '../src/agent/employee-access';
 import {
   CUSTOMER_OIDC_ISSUER_VAR,
+  customerAddressVerified,
   customerOidcAllowedDomains,
   customerOidcEmailTrusted,
+  emailVerifiedClaim,
   issuerKey,
   signInRefusal,
+  type CallerRefusal,
 } from '../src/lib/customer-oidc';
+import { providerOfIssuer } from '../src/lib/customer-oidc-presets';
 import { DEV_NO_AUTH_ISSUER, DEV_NO_AUTH_SESSION_CLAIM } from '../src/lib/dev-auth-issuer';
 import type { EnvReader } from '../src/lib/hosted-markers';
 import { normaliseManagerAddress, sameManagerAddress } from '../src/agent/manager-address';
@@ -20,6 +24,12 @@ import {
   TRANSFER_NOT_FOUND,
   UNVERIFIED_FOR_TRANSFER,
 } from '../src/agent/manager-transfer';
+import {
+  deploymentAdministrators,
+  isAdministratorAddress,
+  NOT_AN_ADMINISTRATOR,
+} from '../src/lib/administrators';
+import { isOrganisationOwnerKey } from '../src/lib/organisation-key';
 import { resolveDeploymentProfile } from '../src/lib/surface-mode';
 import { notAuthenticatedMessage } from './devAuth';
 
@@ -47,15 +57,35 @@ import { notAuthenticatedMessage } from './devAuth';
  * deployment with the other (Clerk is declared only when neither of the other
  * two is).
  *
+ * No token is ever keyed on the organisation's reserved key: `getCaller` answers such a token as
+ * no caller, and this throws for it.
+ *
  * @param identity - The verified token's identity.
  * @returns The owner key.
+ * @throws Error with {@link RESERVED_OWNER_KEY_REFUSAL} when the key would be the reserved one.
  */
 export function ownerKeyOf(identity: UserIdentity): string {
+  const key = ownerKeyOrReserved(identity);
+  if (key === undefined) throw new Error(RESERVED_OWNER_KEY_REFUSAL);
+  return key;
+}
+
+/** Why a token is no caller: its owner key would be the organisation's reserved key. */
+export const RESERVED_OWNER_KEY_REFUSAL =
+  "a token whose subject is the organisation's reserved key is no caller";
+
+/**
+ * The owner key a token is keyed on, or undefined when it would be the organisation's reserved
+ * key (`ORGANISATION_OWNER_KEY`): a bare subject is its issuer's to choose, and a caller
+ * keyed on it would own every organisation row (the access plan, section 4.1; AC12).
+ */
+function ownerKeyOrReserved(identity: UserIdentity): string | undefined {
   const customer = process.env[CUSTOMER_OIDC_ISSUER_VAR];
-  if (customer && issuerKey(customer) === issuerKey(identity.issuer)) {
-    return identity.tokenIdentifier;
-  }
-  return identity.subject;
+  const key =
+    customer && issuerKey(customer) === issuerKey(identity.issuer)
+      ? identity.tokenIdentifier
+      : identity.subject;
+  return isOrganisationOwnerKey(key) ? undefined : key;
 }
 
 /**
@@ -80,16 +110,21 @@ export interface Caller extends UserIdentity {
 }
 
 /**
- * The verified caller, or null for an anonymous one and for a customer-issuer
+ * The verified caller, or null for an anonymous one, for a customer-issuer
  * caller the domain rule refuses (decision S2): the second of the two places it
  * is checked, after the sign-in's callback, so a token forced past the callback
- * is refused here. The local issuer and Clerk keep their own rules.
+ * is refused here; for a caller of a generic-preset issuer whose address is not
+ * verified (decision 7 (b)), which the callback does not check; and for a token
+ * whose owner key would be the organisation's reserved key. The local issuer and
+ * Clerk keep their own rules.
  */
 export async function getCaller(ctx: QueryCtx | MutationCtx | ActionCtx): Promise<Caller | null> {
   const identity = await ctx.auth.getUserIdentity();
   if (!identity) return null;
   if (customerCallerRefused(identity, deploymentEnv)) return null;
-  return { ...identity, ownerKey: ownerKeyOf(identity) };
+  const ownerKey = ownerKeyOrReserved(identity);
+  if (ownerKey === undefined) return null;
+  return { ...identity, ownerKey };
 }
 
 /** The deployment's own env, as the auth config and the owner key read it. */
@@ -99,12 +134,29 @@ function deploymentEnv(name: string): string | undefined {
 
 /**
  * Whether the domain rule refuses a caller: one the customer's issuer signed
- * whose `email` (and, for Google, `hd`) is outside `DAY0_OIDC_ALLOWED_DOMAINS`.
- * With no domain configured every such caller is refused, as the sign-in's
- * callback refuses them; an unreadable list refuses them too.
+ * whose `email` (and, for Google, `hd`) is outside `DAY0_OIDC_ALLOWED_DOMAINS`,
+ * or, under the generic preset, whose address is not verified. With no domain
+ * configured every such caller is refused, as the sign-in's callback refuses
+ * them; an unreadable list refuses them too.
  */
 function customerCallerRefused(identity: UserIdentity, read: EnvReader): boolean {
-  if (callerIssuer(identity, read) !== 'customer') return false;
+  return callerRefusal(identity, read) !== undefined;
+}
+
+/**
+ * Why the deployment refuses a caller the customer's issuer signed, or undefined when it admits
+ * them or another issuer signed them: outside the allowed domains (the domain rule), or, under the
+ * generic preset, an address the issuer did not verify (decision 7 (b)). `config.whoAmI` answers
+ * the live check with it, so the check can say which.
+ *
+ * @param identity - The caller's verified token.
+ * @param read - Reads one name of the deployment's env; its own by default.
+ */
+export function callerRefusal(
+  identity: UserIdentity,
+  read: EnvReader = deploymentEnv,
+): CallerRefusal | undefined {
+  if (callerIssuer(identity, read) !== 'customer') return undefined;
   let allowed: readonly string[];
   try {
     allowed = customerOidcAllowedDomains(read);
@@ -112,10 +164,26 @@ function customerCallerRefused(identity: UserIdentity, read: EnvReader): boolean
     // An entry that is not a domain: `check:setup` names it; meanwhile nobody is admitted by it.
     allowed = [];
   }
-  return (
+  if (
     signInRefusal({ email: identity.email, hd: identity.hd }, allowed, identity.issuer) !==
     undefined
-  );
+  ) {
+    return 'outside-domains';
+  }
+  return unverifiedUnderGenericPreset(identity, read) ? 'unverified-address' : undefined;
+}
+
+/**
+ * Whether a caller signed in through an issuer the generic preset serves has no verified address
+ * (the wave 10 review's S-m2, decision 7 (b)). Entra, Okta and Google control the addresses they
+ * issue, so the domain rule alone admits their people; a generic issuer may let anyone register
+ * an address in an allowed domain, so its caller must also present the address verified by the
+ * issuer's own rule ({@link verifiedAddressOf}: the claim, or the deployment's declared trust
+ * when the issuer sends none).
+ */
+function unverifiedUnderGenericPreset(identity: UserIdentity, read: EnvReader): boolean {
+  if (providerOfIssuer(identity.issuer) !== 'oidc') return false;
+  return verifiedAddressOf(identity, read) === undefined;
 }
 
 /** The three issuers a deployment accepts tokens from (`convex/auth.config.ts`). */
@@ -132,28 +200,6 @@ function callerIssuer(identity: UserIdentity, read: EnvReader): CallerIssuer {
   const customer = read(CUSTOMER_OIDC_ISSUER_VAR);
   if (customer && issuer === issuerKey(customer)) return 'customer';
   return 'clerk';
-}
-
-/**
- * The token's own word on its address, as the deployment hands it over. An
- * OIDC provider's `email_verified` arrives mapped to `emailVerified`; a custom
- * JWT provider's (the local issuer's) arrives raw as `email_verified`, which a
- * self-hosted backend was seen to do on 1 October. Undefined when the token
- * says nothing; `true` only when every spelling present says `true`, so two
- * spellings that disagree verify nothing whichever comes first (the wave 9
- * review's U1-m1). Any value other than a boolean is not the claim and is
- * kept as said, so it never reads as absent.
- */
-function emailVerifiedClaim(identity: UserIdentity): unknown {
-  const said = [identity.emailVerified, identity.email_verified].filter(
-    (claim: unknown) => claim !== undefined,
-  );
-  if (said.length === 0) return undefined;
-  // Every spelling present must be `true`; anything else (a `false`, a string, a JSON null) is
-  // returned as said, so it neither verifies nor reads as absent.
-  return said.every((claim: unknown) => claim === true)
-    ? true
-    : said.find((claim: unknown) => claim !== true);
 }
 
 /**
@@ -210,12 +256,8 @@ function addressVerified(identity: UserIdentity, read: EnvReader): boolean {
     case 'clerk':
     case 'local':
       return claim === true;
-    case 'customer': {
-      if (claim !== undefined) return claim === true;
-      const domainOwnerVerified: unknown = identity.xms_edov;
-      if (domainOwnerVerified !== undefined) return domainOwnerVerified === true;
-      return customerOidcEmailTrusted(read);
-    }
+    case 'customer':
+      return customerAddressVerified(identity, customerOidcEmailTrusted(read));
     default: {
       const unknown: never = issuer;
       throw new Error(`unhandled issuer ${String(unknown)}`);
@@ -232,6 +274,51 @@ export async function getCallerOrThrow(ctx: QueryCtx | MutationCtx | ActionCtx):
   const identity = await getCaller(ctx);
   if (!identity) throw new ConvexError(notAuthenticatedMessage());
   return identity;
+}
+
+/** An administrator of the deployment: the verified caller and the address the list names. */
+export interface Administrator {
+  readonly caller: Caller;
+  readonly address: string;
+}
+
+/**
+ * The caller, if the deployment names its verified address as an administrator's
+ * (`DAY0_ADMINISTRATORS`; B8, the access plan section 4.1): the guard of every public function
+ * that lands, rotates, revokes or lists the organisation's connections. It says nothing about any
+ * employee: an administrator owns no card through it, and each employee's access keeps its one
+ * approval, the manager's. The operator's CLI acts as administrator through internal functions
+ * with the deployment's admin key, and never reaches this guard.
+ *
+ * @throws ConvexError with {@link NOT_AN_ADMINISTRATOR} for a signed-in caller the list does not
+ *   name, or whose token does not assert the address verified; the not-authenticated error for an
+ *   anonymous caller.
+ */
+export async function assertAdministrator(
+  ctx: QueryCtx | MutationCtx | ActionCtx,
+): Promise<Administrator> {
+  const caller = await getCallerOrThrow(ctx);
+  const address = administratorAddressOf(caller, deploymentEnv);
+  if (address === undefined) throw new ConvexError(NOT_AN_ADMINISTRATOR);
+  return { caller, address };
+}
+
+/**
+ * Whether the caller is one of the deployment's administrators, for a read that only shows or
+ * hides the organisation page's way in. Never a guard: a write calls {@link assertAdministrator}.
+ */
+export async function callerIsAdministrator(
+  ctx: QueryCtx | MutationCtx | ActionCtx,
+): Promise<boolean> {
+  const caller = await getCaller(ctx);
+  return caller !== null && administratorAddressOf(caller, deploymentEnv) !== undefined;
+}
+
+/** The caller's verified address when the deployment names it as an administrator's. */
+function administratorAddressOf(identity: UserIdentity, read: EnvReader): string | undefined {
+  const address = verifiedAddressOf(identity, read);
+  if (address === undefined) return undefined;
+  return isAdministratorAddress(address, deploymentAdministrators(read)) ? address : undefined;
 }
 
 /**

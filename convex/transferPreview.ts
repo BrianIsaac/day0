@@ -10,6 +10,7 @@ import { needsYouOfEmployee, type NeedsYouEntry } from './work';
 import type { CharterConstraint } from '../src/agent/charter-constraints';
 import { clippedEmployeeName } from '../src/agent/employee-name';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
+import { ACTS_AS_KINDS } from '../src/surfaces/access-identity';
 import { shownEmployeeState } from '../src/work/state-labels';
 
 /*
@@ -111,6 +112,19 @@ function reportingLinesOf(charter: Doc<'charters'> | null): string[] {
 /** One connection the handover cuts, by the name the Surfaces tab gives it. */
 const previewSurface = v.object({ slug: v.string(), displayName: v.string() });
 
+/**
+ * One connection that keeps the employee's own identity through the handover and goes back to the
+ * new manager for approval (A25): its name, and the identity it keeps, as its card names it.
+ */
+const previewReapproval = v.object({
+  slug: v.string(),
+  displayName: v.string(),
+  /** The identity's name as the system shows it. */
+  identity: v.string(),
+  /** Whom the card keeps acting as (11-AC's cockpit item 6), so the dialog says the kind. */
+  kind: v.union(...ACTS_AS_KINDS.map((kind) => v.literal(kind))),
+});
+
 /** One permission scope the employee holds, with the path that granted it. */
 const previewScope = v.object({
   scope: v.string(),
@@ -172,7 +186,12 @@ export const transferPreviewValidator = v.object({
   leavesBehind: v.object({
     /** The connections cut, which the new manager approves and connects again. */
     surfaces: v.array(previewSurface),
-    /** The read scopes those connections had granted. */
+    /**
+     * The connections that keep the employee's own identity and lose only their approval, which
+     * the new manager gives again with one click (A25; 11-AR's `handOverSurfaces`).
+     */
+    reapprove: v.array(previewReapproval),
+    /** The read scopes those connections, cut or kept for re-approval, had granted. */
     scopesRevoked: v.array(v.string()),
     /** Pages mirrored from the old manager's documentation that the employee stops reading. */
     mirroredPages: v.number(),
@@ -267,16 +286,16 @@ async function takenOn(
 }
 
 /**
- * The read scopes the cut would revoke: each cut connection's `<slug>:read` that a connection
- * granted, as `handOverSurfaces` revokes them.
+ * The read scopes the handover would revoke: each cut or re-approval connection's `<slug>:read`
+ * that a connection granted, as `handOverSurfaces` revokes them for both.
  */
-async function scopesTheCutRevokes(
+async function scopesTheHandoverRevokes(
   db: QueryCtx['db'],
   agentId: Id<'agents'>,
-  cutSlugs: readonly string[],
+  slugs: readonly string[],
 ): Promise<string[]> {
   const revoked = await Promise.all(
-    cutSlugs.map(async (slug) => {
+    [...new Set(slugs)].map(async (slug) => {
       const scope = `${slug}:read`;
       const grants = await db
         .query('permissionGrants')
@@ -334,10 +353,13 @@ export async function transferPreviewOf(
   const agent = await departingEmployee(ctx.db, transfer);
   const planned = await surfaceHandoversOf(ctx.db, agent._id);
   const cut = planned.filter(({ handover }) => handover === 'cut').map(({ surface }) => surface);
-  const scopesRevoked = await scopesTheCutRevokes(
+  const reapprove = planned
+    .filter(({ handover }) => handover === 'reapprove')
+    .map(({ surface }) => surface);
+  const scopesRevoked = await scopesTheHandoverRevokes(
     ctx.db,
     agent._id,
-    cut.map((surface) => surface.slug),
+    [...cut, ...reapprove].map((surface) => surface.slug),
   );
   const [charter, takesOn, mirrors, sources, inFlight] = await Promise.all([
     approvedCharterOf(ctx.db, agent._id),
@@ -366,6 +388,13 @@ export async function transferPreviewOf(
     takesOn,
     leavesBehind: {
       surfaces: cut.map((surface) => ({ slug: surface.slug, displayName: surface.displayName })),
+      reapprove: reapprove.map((surface) => ({
+        slug: surface.slug,
+        displayName: surface.displayName,
+        identity: surface.actsAs?.label ?? surface.displayName,
+        // A card kept for re-approval acts as the employee's own identity (A25).
+        kind: surface.actsAs?.kind ?? 'own-app',
+      })),
       scopesRevoked,
       mirroredPages: mirrors.count,
       mirroredPagesAtLeast: mirrors.atLeast,

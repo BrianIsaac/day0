@@ -86,10 +86,19 @@ function adopterSurface(row: Doc<'surfaces'>, now: number): AdopterSurface {
 }
 
 /**
- * The employee as an adoption reads it: its surfaces (none in mock mode), its charter's systems
- * and the deployment's mode.
+ * The employee as an adoption reads it: its surfaces (none in mock mode), its charter's systems,
+ * the class of the system the work needing the skill comes from, and the deployment's mode.
+ *
+ * @param read - The clock the surfaces' liveness is read against, and the proposal's shape class,
+ *   read off the work item's own system, which mock mode's fit takes as the charter's evidence
+ *   ({@link adoptionFit}).
  */
-async function adopterOf(db: DatabaseReader, agent: Doc<'agents'>, now: number): Promise<Adopter> {
+async function adopterOf(
+  db: DatabaseReader,
+  agent: Doc<'agents'>,
+  read: { readonly now: number; readonly workClass: string | undefined },
+): Promise<Adopter> {
+  const { now, workClass } = read;
   const [surfaces, charterClasses] = await Promise.all([
     SURFACE_MODE === 'real'
       ? db
@@ -104,6 +113,7 @@ async function adopterOf(db: DatabaseReader, agent: Doc<'agents'>, now: number):
     mode: SURFACE_MODE,
     surfaces: surfaces.map((row) => adopterSurface(row, now)),
     charterClasses,
+    ...(workClass !== undefined ? { workClass } : {}),
   };
 }
 
@@ -138,7 +148,11 @@ export async function offerOf(
     operation: lookup.operation,
   });
   if (versions.length === 0) return undefined;
-  return chooseOffer(versions, lookup.name, await adopterOf(db, agent, now));
+  return chooseOffer(
+    versions,
+    lookup.name,
+    await adopterOf(db, agent, { now, workClass: lookup.surfaceClass }),
+  );
 }
 
 /**
@@ -264,7 +278,7 @@ async function standingOffer(
     return refused('the offered skill is no longer in your library');
   }
   if (!sharedSkillsOn()) return refused('sharing skills between employees is switched off');
-  const adopter = await adopterOf(db, agent, now);
+  const adopter = await adopterOf(db, agent, { now, workClass: row.surfaceClass });
   if (!isOfferedTo(version, adopter)) {
     return refused(
       version.revokedAt !== undefined
@@ -566,7 +580,10 @@ async function decidedOffer(
   const { version, refusal } = await versionRefusal(db, row, agent);
   if (version === null) return { kind: 'refused', reason: refusal ?? '', version };
   if (refusal !== undefined) return { kind: 'refused', reason: refusal, version };
-  const fit = adoptionFit(version, await adopterOf(db, agent, now));
+  const fit = adoptionFit(
+    version,
+    await adopterOf(db, agent, { now, workClass: row.surfaceClass }),
+  );
   return {
     kind: 'ready',
     version,

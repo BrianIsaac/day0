@@ -10,6 +10,7 @@ import crons from '../../convex/crons';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS } from './fakes/manager-identity';
+import { NO_ANSWER_WORDS, SOURCE_REVOCATION_KEEP_MS } from '../../convex/sourceRevocation';
 
 describe('scheduled documentation sync', (): void => {
   it('runs every fifteen minutes', (): void => {
@@ -553,6 +554,58 @@ describe('the finishing-handover sweep', (): void => {
   });
 });
 
+describe('the overdue revocation sweep (11-AR; F19)', (): void => {
+  afterEach((): void => {
+    vi.useRealTimers();
+  });
+
+  it('runs every hour behind the one gate, so no held ciphertext outlives its 24 hours by more', (): void => {
+    expect(crons.crons['close revocations past their 24 hours']).toMatchObject({
+      name: 'crons:runScheduledJob',
+      args: [{ job: 'sourceRevocation:expireOverdue' }],
+      schedule: { type: 'interval', hours: 1 },
+    });
+  });
+
+  it('closes a revocation whose scheduled purge was lost, and leaves one still within its bound', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const now = Date.now();
+    const held = (revokedAt: number) => ({
+      userId: 'owner',
+      kind: 'oauth' as const,
+      label: 'Linear access token',
+      ciphertext: 'sealed',
+      iv: 'iv',
+      source: 'oauth' as const,
+      createdAt: 1,
+      issuedBy: { system: 'linear', grant: 'authorisation-code' as const },
+      revokedAt,
+      sourceRevocation: {
+        state: 'pending' as const,
+        attempts: 3,
+        at: revokedAt,
+        end: 'retire' as const,
+      },
+    });
+    const [lost, live] = await harness.run(async (ctx) => [
+      await ctx.db.insert('credentials', held(now - SOURCE_REVOCATION_KEEP_MS - 1)),
+      await ctx.db.insert('credentials', held(now - 1)),
+    ]);
+
+    await expect(runCron(harness, 'close revocations past their 24 hours')).resolves.toBe(1);
+
+    const [closed, waiting] = await harness.run(
+      async (ctx) => await Promise.all([ctx.db.get(lost), ctx.db.get(live)]),
+    );
+    expect(closed).toMatchObject({
+      sourceRevocation: { state: 'failed', lastError: NO_ANSWER_WORDS },
+    });
+    expect(closed?.ciphertext).toBeUndefined();
+    expect(waiting).toMatchObject({ ciphertext: 'sealed', sourceRevocation: { state: 'pending' } });
+  });
+});
+
 describe('the crons pause switch', (): void => {
   afterEach((): void => {
     vi.unstubAllEnvs();
@@ -562,7 +615,7 @@ describe('the crons pause switch', (): void => {
 
   it('puts every scheduled job behind the one gate, the voice sweep included', (): void => {
     const jobs = Object.values(crons.crons);
-    expect(jobs).toHaveLength(9);
+    expect(jobs).toHaveLength(10);
     for (const job of jobs) expect(job.name).toBe('crons:runScheduledJob');
     expect(crons.crons['recover stalled voice finalisations']).toMatchObject({
       args: [{ job: 'voice:sweepStalledFinalisations' }],
@@ -608,7 +661,7 @@ describe('the crons pause switch', (): void => {
       ([line]) => JSON.parse(String(line)) as Record<string, unknown>,
     );
     printed.mockRestore();
-    expect(lines).toHaveLength(9);
+    expect(lines).toHaveLength(10);
     expect(lines[0]).toMatchObject({
       msg: 'scheduled job skipped: crons paused',
       reason: 'upgrade to 0.9.0',

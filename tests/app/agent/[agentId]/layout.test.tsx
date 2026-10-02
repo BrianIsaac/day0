@@ -283,6 +283,39 @@ describe('the employee page layout', () => {
     expect(asked).toEqual(['agents:get', 'transferDepartures:employeePage']);
   });
 
+  it('titles a link to another account’s employee, or to one that is gone, as the page answers it (the pre-tag walk W-3)', async () => {
+    vi.stubEnv('NEXT_PUBLIC_CONVEX_URL', 'https://title-test.convex.cloud');
+    vi.stubEnv('NEXT_PUBLIC_DEV_NO_AUTH', undefined);
+    const titled = async (
+      employee: { status: 'success'; value: null } | { status: 'error'; errorData: string },
+      page: string,
+    ): Promise<unknown> => {
+      vi.stubGlobal('fetch', async (_url: string, init: RequestInit): Promise<Response> => {
+        const body = JSON.parse(String(init.body)) as { path: unknown };
+        const answer =
+          body.path === 'agents:get'
+            ? {
+                ...employee,
+                ...(employee.status === 'error' ? { errorMessage: 'Server Error' } : {}),
+              }
+            : { status: 'success', value: { page } };
+        return new Response(JSON.stringify(answer), {
+          status: answer.status === 'error' ? 560 : 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      });
+      const { generateMetadata } = await import('../../../../app/agent/[agentId]/layout');
+      return await generateMetadata({ params: Promise.resolve({ agentId: EMPLOYEE_ROW._id }) });
+    };
+    const answered = {
+      title: { default: 'No such employee · Day0', template: 'No such employee · Day0' },
+    };
+    expect(
+      await titled({ status: 'error', errorData: 'This employee is not yours.' }, 'not-yours'),
+    ).toEqual(answered);
+    expect(await titled({ status: 'success', value: null }, 'employee')).toEqual(answered);
+  });
+
   it('asks for the employee only once Convex holds the token, so a full load never reaches the error boundary (walk M2)', async () => {
     const server = syncServer((path, signedIn) => {
       if (path === 'config:surfaceMode') return { value: { mode: 'mock' } };

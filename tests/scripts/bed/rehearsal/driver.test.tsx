@@ -71,6 +71,7 @@ import {
   type SurfaceCardActions,
   type SurfaceCardContext,
 } from '../../../../app/agent/[agentId]/surfaces/SurfaceCard';
+import { withListedIdentity } from '../../../app/agent/[agentId]/surfaces/fakes/listed-identity';
 import { AgentZoneContext } from '../../../../app/components/time';
 import { WorkItemCard } from '../../../../app/agent/[agentId]/work/WorkItemCard';
 import { INIT_PROMPT } from '../../../../src/agent/day-one-turn';
@@ -375,6 +376,9 @@ describe('the dashboard driver', (): void => {
       credentials: new Map(),
       installRedirectConfigured: false,
       browserPresent: true,
+      employeeName: 'Maya',
+      organisation: new Map(),
+      managerDmReachable: false,
     };
     const actions: SurfaceCardActions = {
       approve: (): void => undefined,
@@ -384,6 +388,9 @@ describe('the dashboard driver', (): void => {
       provision: (): void => undefined,
       setDays: async () => ({ expiresAt: NOW }),
       approveTools: async () => undefined,
+      disconnect: async () => undefined,
+      draftAccessRequest: async () => undefined,
+      recordAccessRequestSent: async () => undefined,
     };
     const looker = (fields: Partial<ListedSurface>): ListedSurface =>
       ({
@@ -413,7 +420,7 @@ describe('the dashboard driver', (): void => {
       mount(
         <AgentZoneContext value="UTC">
           <SurfaceCard
-            surface={surface}
+            surface={withListedIdentity(surface)}
             context={context}
             operation={undefined}
             actions={actions}

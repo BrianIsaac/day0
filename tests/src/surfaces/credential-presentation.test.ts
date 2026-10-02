@@ -4,6 +4,8 @@ import {
   OAUTH_FALLBACK_NOTE,
   presentChannelsNotJoined,
   presentProvisioning,
+  ORGANISATION_PROVISION_NOTE,
+  REINSTALL_LABEL,
   presentSurfaceCredential,
   PROVISION_LABEL,
   PROVISION_NOTE,
@@ -258,6 +260,104 @@ describe('the dedicated-app procedure on the card', (): void => {
     expect(shown.offerProvisioning).toBe(false);
     expect(shown.installUrl).toBeUndefined();
     expect(shown.note).toContain('acts as its own app');
+  });
+
+  it("asks for no configuration token where the organisation's Slack connection creates the app (B9)", (): void => {
+    const shown = presentProvisioning({
+      credential: oauth,
+      hasPublicUrl: true,
+      organisationConnected: true,
+    });
+    expect(shown).toMatchObject({
+      stage: 'offer',
+      offerProvisioning: true,
+      asksForConfigurationToken: false,
+      note: ORGANISATION_PROVISION_NOTE,
+    });
+    expect(ORGANISATION_PROVISION_NOTE).not.toContain('Paste');
+  });
+
+  it('asks for the configuration token where the organisation has no Slack connection', (): void => {
+    expect(
+      presentProvisioning({ credential: oauth, hasPublicUrl: true, organisationConnected: false }),
+    ).toMatchObject({ stage: 'offer', asksForConfigurationToken: true, note: PROVISION_NOTE });
+  });
+
+  it('asks for no token once the app exists: a fresh link is for the same app', (): void => {
+    const app = {
+      appId: 'A1',
+      appName: 'ops worker (Day0)',
+      installUrl: 'https://slack.com/oauth/v2/authorize?client_id=1',
+    };
+    for (const provisioning of [app, { ...app, lastError: 'Slack refused.' }]) {
+      expect(
+        presentProvisioning({ credential: oauth, hasPublicUrl: true, provisioning })
+          .asksForConfigurationToken,
+      ).toBe(false);
+    }
+  });
+
+  it('offers the renewal of an installed app whose access ended, with no token and the channels to expect (A26, RM4)', (): void => {
+    const installed = {
+      appId: 'A1',
+      appName: 'Leo (Day0)',
+      installUrl: 'https://slack.com/oauth/v2/authorize?client_id=1',
+      installedAt: 1_787_800_000_000,
+    };
+    const ended = presentProvisioning({
+      credential: oauth,
+      hasPublicUrl: true,
+      provisioning: installed,
+      credentialHeld: false,
+    });
+    expect(ended).toMatchObject({
+      stage: 'reinstall',
+      offerProvisioning: true,
+      asksForConfigurationToken: false,
+      title: REINSTALL_LABEL,
+    });
+    expect(ended.installUrl).toBeUndefined();
+    expect(ended.note).toContain('Leo (Day0) stays in the workspace');
+    expect(ended.note).toContain('public');
+    expect(ended.note).toContain('private channel');
+
+    const linked = presentProvisioning({
+      credential: oauth,
+      hasPublicUrl: true,
+      provisioning: { ...installed, stateExpiresAt: 1_787_800_900_000 },
+      credentialHeld: false,
+    });
+    expect(linked.installUrl).toBe(installed.installUrl);
+    expect(
+      presentProvisioning({
+        credential: oauth,
+        hasPublicUrl: true,
+        provisioning: installed,
+        credentialHeld: true,
+      }).stage,
+    ).toBe('installed');
+  });
+
+  it("names why a renewal's install did not complete, and offers it again", (): void => {
+    const shown = presentProvisioning({
+      credential: oauth,
+      hasPublicUrl: true,
+      provisioning: {
+        appId: 'A1',
+        appName: 'Leo (Day0)',
+        installUrl: 'https://slack.com/oauth/v2/authorize?client_id=1',
+        installedAt: 1_787_800_000_000,
+        lastError: 'Slack oauth.v2.access failed: invalid_code.',
+      },
+      credentialHeld: false,
+    });
+    expect(shown).toMatchObject({
+      stage: 'reinstall',
+      offerProvisioning: true,
+      asksForConfigurationToken: false,
+    });
+    expect(shown.note).toContain('invalid_code');
+    expect(shown.note).toContain('Leo (Day0) stays in the workspace');
   });
 
   it('keeps the shared-token fallback beside the procedure until one is stored', (): void => {

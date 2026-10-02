@@ -213,6 +213,102 @@ describe('the live feed labels', (): void => {
     ).toBe('access set by the upgrade: 90 days');
   });
 
+  it('labels the access request and the organisation connection ledger (11-AO)', (): void => {
+    expect(
+      eventLabel({
+        type: 'surface.access-requested',
+        payload: { surfaceId: 's1', scopes: ['linear:read', 'linear:write'] },
+      }),
+    ).toBe('access requested from IT: linear:read, linear:write');
+    const named = { organisationConnectionId: 'c1', system: 'slack', displayName: 'Slack' };
+    expect(eventLabel({ type: 'organisation.connection-landed', payload: named })).toBe(
+      'Slack connected for the organisation',
+    );
+    expect(eventLabel({ type: 'organisation.connection-rotated', payload: named })).toBe(
+      "Slack: the organisation connection's secret rotated",
+    );
+    expect(
+      eventLabel({
+        type: 'organisation.connection-revoked',
+        payload: { ...named, reason: 'the workspace moved' },
+      }),
+    ).toBe('Slack: the organisation connection revoked (the workspace moved)');
+    expect(
+      eventLabel({
+        type: 'organisation.revoked-at-source',
+        payload: {
+          credentialId: 'k1',
+          system: 'slack',
+          end: 'retire',
+          outcome: 'app-deleted',
+          attempt: 1,
+        },
+      }),
+    ).toBe('Slack organisation connection: Slack app deleted in Slack');
+  });
+
+  it("labels Day0's uses of the Slack configuration token and the re-join after a renewal (11-AS)", (): void => {
+    const used = { organisationConnectionId: 'c1', system: 'slack', displayName: 'Slack' };
+    expect(
+      eventLabel({
+        type: 'organisation.configuration-used',
+        payload: { ...used, method: 'tooling.tokens.rotate', outcome: 'done' },
+      }),
+    ).toBe('Slack configuration token renewed');
+    expect(
+      eventLabel({
+        type: 'organisation.configuration-used',
+        payload: {
+          ...used,
+          method: 'tooling.tokens.rotate',
+          outcome: 'failed',
+          reason: 'invalid_refresh_token',
+        },
+      }),
+    ).toBe('Slack configuration token not renewed (invalid_refresh_token)');
+    expect(
+      eventLabel({
+        type: 'organisation.configuration-used',
+        payload: { ...used, method: 'tooling.tokens.rotate', outcome: 'superseded' },
+      }),
+    ).toBe('Slack configuration token renewed twice at once: the other renewal kept');
+    expect(
+      eventLabel({
+        type: 'organisation.configuration-used',
+        payload: { ...used, method: 'apps.manifest.create', outcome: 'done', appId: 'A123' },
+      }),
+    ).toBe("an employee's Slack app A123 created with the configuration token");
+    expect(
+      eventLabel({
+        type: 'organisation.configuration-used',
+        payload: {
+          ...used,
+          method: 'apps.manifest.create',
+          outcome: 'failed',
+          reason: 'invalid_auth',
+        },
+      }),
+    ).toBe("an employee's Slack app not created (invalid_auth)");
+    expect(
+      eventLabel({
+        type: 'surface.channels-rejoined',
+        payload: { surfaceId: 's1', joined: ['#revops'], needsPerson: ['#revops-leads'] },
+      }),
+    ).toBe('re-joined #revops; #revops-leads needs a person to add it');
+    expect(
+      eventLabel({
+        type: 'surface.channels-rejoined',
+        payload: { surfaceId: 's1', joined: [], needsPerson: ['#revops', '#revops-leads'] },
+      }),
+    ).toBe('#revops, #revops-leads need a person to add it');
+    expect(
+      eventLabel({
+        type: 'surface.channels-rejoined',
+        payload: { surfaceId: 's1', joined: [], needsPerson: [] },
+      }),
+    ).toBe('no channel to re-join');
+  });
+
   it('says which credential the documentation dropped and how many cards need one again', (): void => {
     expect(
       eventLabel({
@@ -482,5 +578,48 @@ describe('what a record line says an event did', (): void => {
     for (const type of EVENT_TYPES) {
       expect(['landed', 'refused', 'withheld', 'held', 'noted']).toContain(recordKindOf({ type }));
     }
+  });
+});
+
+describe('the labels of an end of access at the vendor (11-AR)', (): void => {
+  it('labels each outcome by the system, naming the channel memberships a revoked bot lost', (): void => {
+    const label = (payload: Record<string, unknown>): string =>
+      eventLabel({ type: 'credential.revoked-at-source', payload });
+    expect(
+      label({ system: 'slack', outcome: 'token-revoked', channelMembershipsRemoved: true }),
+    ).toBe('revoked at Slack; its channel memberships were removed');
+    expect(label({ system: 'slack', outcome: 'app-deleted' })).toBe('Slack app deleted in Slack');
+    expect(label({ system: 'slack', outcome: 'app-uninstalled' })).toBe(
+      'Slack app uninstalled from Slack',
+    );
+    expect(label({ system: 'linear', outcome: 'already-gone' })).toBe('already revoked at Linear');
+    expect(
+      label({ system: 'linear', outcome: 'retrying', reason: 'Linear answered HTTP 503.' }),
+    ).toBe('revocation at Linear failed, trying again (Linear answered HTTP 503)');
+    expect(label({ system: 'linear', outcome: 'failed', reason: 'Linear refused: x' })).toBe(
+      "revocation at Linear failed (Linear refused: x); Day0's copy deleted",
+    );
+    expect(label({ system: 'zendesk', outcome: 'not-supported' })).toBe(
+      "not revoked at zendesk: no revocation call; Day0's copy deleted",
+    );
+    expect(label({ system: 'linear', outcome: 'shared' })).toBe(
+      'shared app token: not revoked at Linear',
+    );
+    expect(label({ system: 'slack', outcome: 'not-at-vendor' })).toBe('nothing changed at Slack');
+    expect(label({ system: 'Zendesk', outcome: 'pasted-key' })).toBe(
+      'pasted key: never sent to Zendesk; revoke it there',
+    );
+  });
+
+  it('labels a disconnection by who made it', (): void => {
+    expect(eventLabel({ type: 'surface.disconnected', payload: { by: 'manager' } })).toBe(
+      'disconnected by the manager',
+    );
+    expect(
+      eventLabel({
+        type: 'surface.disconnected',
+        payload: { by: 'organisation', reason: 'revoked by IT' },
+      }),
+    ).toBe("disconnected: the organisation's connection was revoked (revoked by IT)");
   });
 });

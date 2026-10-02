@@ -144,6 +144,12 @@ describe('retirePreview in real mode', (): void => {
       atLeast: false,
       revoked: [{ slug: 'linear', displayName: 'Linear' }],
       kept: [{ slug: 'slack', displayName: 'Slack' }],
+      // Re-pinned (11-AR): the preview now says per connection what happens at the vendor; both
+      // keys here were pasted, so neither is ever sent to one.
+      outcomes: [
+        { slug: 'linear', displayName: 'Linear', system: 'Linear', outcome: 'pasted-key' },
+        { slug: 'slack', displayName: 'Slack', system: 'Slack', outcome: 'kept' },
+      ],
       keptClaims: 1,
       keptClaimsAtLeast: false,
       tombstone: true,

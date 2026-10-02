@@ -8,7 +8,7 @@ import {
   type QueryCtx,
 } from './_generated/server';
 import {
-  EVENT_TYPES,
+  AGENT_EVENT_TYPES,
   type EventType,
   type LoggedEvent,
   type NewEvent,
@@ -100,15 +100,16 @@ export async function logEvent(
 /**
  * Append the event an action logs, stamped when it lands. Internal; reached
  * only through `logEvent`, which types the payload. The type is checked
- * against the contract's list here as well, so nothing that calls this
- * mutation by name can write an unlisted one. With `startedUnder`, nothing is
+ * against the contract's list of an employee's types here as well
+ * (`AGENT_EVENT_TYPES`), so nothing that calls this mutation by name can write
+ * an unlisted one, or an organisation connection's. With `startedUnder`, nothing is
  * appended once the employee is gone or another owner's ({@link LogFence});
  * the dropped event is logged for the operator.
  */
 export const log = internalMutation({
   args: {
     agentId: v.id('agents'),
-    type: v.union(...EVENT_TYPES.map((type) => v.literal(type))),
+    type: v.union(...AGENT_EVENT_TYPES.map((type) => v.literal(type))),
     payload: v.any(),
     startedUnder: v.optional(v.string()),
   },

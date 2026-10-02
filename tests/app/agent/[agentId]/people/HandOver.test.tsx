@@ -24,6 +24,7 @@ import {
   CancelHandoverDialog,
   cutSystems,
   HandOverDialog,
+  reapprovedSystems,
   MakeItYou,
   type CutCandidate,
 } from '../../../../../app/agent/[agentId]/people/HandOver';
@@ -52,6 +53,35 @@ describe('cutSystems (the rule surfaceHandoverOf states for the move)', () => {
         card({ displayName: 'Linear', verdict: 'ungranted' }),
       ]),
     ).toEqual(['Linear', 'Slack', 'Looker', 'Jira']);
+  });
+});
+
+describe('reapprovedSystems (the cards a handover keeps for re-approval, A25)', () => {
+  it("names each card that keeps the employee's own identity and whom it keeps acting as, and cuts it from nothing", () => {
+    const kept = card({
+      displayName: 'Slack',
+      verdict: 'connected',
+      credentialId: 'c1' as never,
+      organisationConnectionId: 'connection-slack' as never,
+      actsAs: { kind: 'own-app', label: 'Leo (Day0)' },
+    });
+    const shared = card({
+      displayName: 'Linear',
+      verdict: 'connected',
+      credentialId: 'c2' as never,
+      organisationConnectionId: 'connection-linear' as never,
+      actsAs: { kind: 'shared-app', label: 'Linear' },
+    });
+    const pasted = card({
+      displayName: 'Notion',
+      verdict: 'connected',
+      credentialId: 'c3' as never,
+    });
+    expect(reapprovedSystems([kept, shared, pasted], 'Leo')).toEqual([
+      { system: 'Slack', identity: "Leo's own app" },
+      { system: 'Linear', identity: 'the Day0 app your employees share' },
+    ]);
+    expect(cutSystems([kept, shared, pasted])).toEqual(['Notion']);
   });
 });
 

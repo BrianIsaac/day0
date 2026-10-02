@@ -481,6 +481,222 @@ describe('recordWords', (): void => {
   });
 });
 
+describe('the access request and the organisation connection ledger in the record (11-AO)', (): void => {
+  it('says the manager asked IT for access, naming the scopes', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'surface.access-requested',
+          payload: {
+            surfaceId: 's1',
+            system: 'linear',
+            reason: 'no-connection',
+            scopes: ['linear:read', 'linear:write'],
+            text: 'request',
+          },
+        },
+        { ...subject, connection: 'Linear' },
+      ),
+    ).toBe('You asked IT for access to the Linear connection (linear:read, linear:write).');
+  });
+
+  it('says what happened to an organisation connection and who did it, with a revoke’s reason', (): void => {
+    const named = {
+      organisationConnectionId: 'c1',
+      system: 'slack',
+      displayName: 'Slack',
+    };
+    expect(
+      recordWords(
+        {
+          type: 'organisation.connection-landed',
+          payload: { ...named, via: 'organisation-page', kind: 'slack-configuration' },
+        },
+        subject,
+      ),
+    ).toBe('Slack was connected for the organisation by an administrator.');
+    expect(
+      recordWords(
+        { type: 'organisation.connection-rotated', payload: { ...named, via: 'setup-cli' } },
+        subject,
+      ),
+    ).toBe("The organisation's Slack connection was given a new secret by the setup command.");
+    expect(
+      recordWords(
+        {
+          type: 'organisation.connection-corrected',
+          payload: {
+            ...named,
+            via: 'setup-cli',
+            redirectCorrected: true,
+            scopes: ['chat:write', 'im:write'],
+            previousScopes: ['chat:write'],
+          },
+        },
+        subject,
+      ),
+    ).toBe(
+      "The organisation's Slack connection had its recorded redirect and scopes (now chat:write, im:write) corrected by the setup command.",
+    );
+    expect(
+      recordWords(
+        {
+          type: 'organisation.connection-revoked',
+          payload: { ...named, via: 'organisation-page', reason: 'the workspace moved.' },
+        },
+        subject,
+      ),
+    ).toBe(
+      "The organisation's Slack connection was revoked by an administrator: the workspace moved.",
+    );
+    const attempt = { credentialId: 'k1', system: 'slack', end: 'retire', attempt: 1 };
+    expect(
+      recordWords(
+        { type: 'organisation.revoked-at-source', payload: { ...attempt, outcome: 'app-deleted' } },
+        subject,
+      ),
+    ).toBe(
+      "An employee's Slack app was deleted in Slack with the organisation's Slack connection.",
+    );
+    expect(
+      recordWords(
+        {
+          type: 'organisation.revoked-at-source',
+          payload: { ...attempt, outcome: 'failed', reason: 'invalid_auth' },
+        },
+        subject,
+      ),
+    ).toBe(
+      "Revoking an employee's access at Slack with the organisation's Slack connection failed: invalid_auth.",
+    );
+  });
+});
+
+describe("what Day0's uses of the Slack configuration token and the re-join say in the record (11-AS)", (): void => {
+  const subject = { name: 'Leo', connection: 'Slack' };
+  const used = { organisationConnectionId: 'c1', system: 'slack', displayName: 'Slack' };
+
+  it("says each call on the organisation's ledger without naming an employee", (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'organisation.configuration-used',
+          payload: { ...used, method: 'tooling.tokens.rotate', outcome: 'done' },
+        },
+        subject,
+      ),
+    ).toBe("Day0 renewed the organisation's Slack configuration token with its refresh token.");
+    expect(
+      recordWords(
+        {
+          type: 'organisation.configuration-used',
+          payload: {
+            ...used,
+            method: 'tooling.tokens.rotate',
+            outcome: 'failed',
+            reason: 'invalid_refresh_token',
+          },
+        },
+        subject,
+      ),
+    ).toBe(
+      "Day0 could not renew the organisation's Slack configuration token: invalid_refresh_token.",
+    );
+    expect(
+      recordWords(
+        {
+          type: 'organisation.configuration-used',
+          payload: { ...used, method: 'tooling.tokens.rotate', outcome: 'superseded' },
+        },
+        subject,
+      ),
+    ).toBe(
+      "Day0 renewed the organisation's Slack configuration token twice at once and kept the other renewal's token.",
+    );
+    expect(
+      recordWords(
+        {
+          type: 'organisation.configuration-used',
+          payload: { ...used, method: 'apps.manifest.create', outcome: 'done', appId: 'A123' },
+        },
+        subject,
+      ),
+    ).toBe(
+      "Day0 created an employee's own Slack app (A123) with the organisation's Slack configuration token.",
+    );
+    expect(
+      recordWords(
+        {
+          type: 'organisation.configuration-used',
+          payload: {
+            ...used,
+            method: 'apps.manifest.create',
+            outcome: 'failed',
+            reason: 'invalid_auth',
+          },
+        },
+        subject,
+      ),
+    ).toBe(
+      "Creating an employee's own Slack app with the organisation's Slack configuration token failed: invalid_auth.",
+    );
+  });
+
+  it('says which channels the employee re-joined itself and which need a person', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'surface.channels-rejoined',
+          payload: {
+            surfaceId: 's1',
+            joined: ['#revops', '#revops-asks'],
+            needsPerson: ['#revops-leads'],
+          },
+        },
+        subject,
+      ),
+    ).toBe(
+      'After the renewal Leo re-joined #revops and #revops-asks in Slack itself; #revops-leads needs someone in it to add Leo.',
+    );
+    expect(
+      recordWords(
+        {
+          type: 'surface.channels-rejoined',
+          payload: {
+            surfaceId: 's1',
+            joined: [],
+            needsPerson: ['#revops'],
+            reason: 'missing_scope',
+          },
+        },
+        subject,
+      ),
+    ).toBe(
+      'After the renewal Leo re-joined no channel in Slack itself (Slack answered missing_scope); #revops needs someone in it to add Leo.',
+    );
+    expect(
+      recordWords(
+        {
+          type: 'surface.channels-rejoined',
+          payload: { surfaceId: 's1', joined: ['#revops'], needsPerson: [] },
+        },
+        subject,
+      ),
+    ).toBe('After the renewal Leo re-joined #revops in Slack itself.');
+    expect(
+      recordWords(
+        {
+          type: 'surface.channels-rejoined',
+          payload: { surfaceId: 's1', joined: [], needsPerson: ['#revops-leads', '#finance'] },
+        },
+        subject,
+      ),
+    ).toBe(
+      'After the renewal Leo re-joined no channel in Slack itself; #revops-leads and #finance need someone in them to add Leo.',
+    );
+  });
+});
+
 describe('what an evaluation and a plan approval say in the record (walk m15)', (): void => {
   const subject = { name: 'Ada', item: 'Priya asks for tracker update' };
 
@@ -658,5 +874,149 @@ describe('what the record says an authoring claim began (A-m9)', (): void => {
         'Mira started writing the skill kanban-comment-and-close.',
       );
     }
+  });
+});
+
+describe('what the record says an end of access did at the vendor (11-AR; the access plan 4.4)', (): void => {
+  const leo = { name: 'Leo', connection: 'Slack' };
+  const ended = (
+    payload: Record<string, unknown>,
+    at: { readonly name: string; readonly connection?: string } = leo,
+  ): string => recordWords({ type: 'credential.revoked-at-source', payload }, at);
+
+  it('says the bot token was revoked and its channel memberships removed, the app kept', (): void => {
+    expect(
+      ended({
+        system: 'slack',
+        surfaceName: 'Slack',
+        end: 'expiry',
+        outcome: 'token-revoked',
+        channelMembershipsRemoved: true,
+      }),
+    ).toBe(
+      'Access to the Slack connection was revoked at Slack; its channel memberships were removed.',
+    );
+  });
+
+  it("says the employee's own app was deleted in the system, by the card's name once the card is gone", (): void => {
+    expect(
+      ended(
+        { system: 'slack', surfaceName: 'Slack', end: 'retire', outcome: 'app-deleted' },
+        { name: 'Leo' },
+      ),
+    ).toBe("Leo's Slack app was deleted in Slack.");
+    expect(
+      ended({ system: 'slack', surfaceName: 'Slack', end: 'retire', outcome: 'app-uninstalled' }),
+    ).toBe("Leo's Slack app was uninstalled from Slack.");
+    // A disconnect-end line says the token (11-AJ join 4); an expiry's still says the access.
+    expect(
+      ended(
+        { system: 'linear', surfaceName: 'Linear', end: 'disconnect', outcome: 'token-revoked' },
+        { name: 'Maya' },
+      ),
+    ).toBe('A token Day0 held for the Linear connection was revoked at Linear.');
+    expect(
+      ended(
+        { system: 'linear', surfaceName: 'Linear', end: 'expiry', outcome: 'token-revoked' },
+        { name: 'Maya' },
+      ),
+    ).toBe('Access to the Linear connection was revoked at Linear.');
+  });
+
+  it("says a token a disconnect-end revoked as the token, never as the manager's Disconnect, since a re-authorisation ends the pair it replaces the same way (11-AJ join 4)", (): void => {
+    const line = ended(
+      { system: 'linear', surfaceName: 'Linear', end: 'disconnect', outcome: 'token-revoked' },
+      { name: 'Maya', connection: 'Linear' },
+    );
+    expect(line).toBe('A token Day0 held for the Linear connection was revoked at Linear.');
+    expect(line).not.toMatch(/disconnect|Access to/i);
+  });
+
+  it("says a failure in the vendor's words, and whether another attempt follows", (): void => {
+    expect(
+      ended({
+        system: 'linear',
+        surfaceName: 'Linear',
+        end: 'disconnect',
+        outcome: 'retrying',
+        reason: 'Linear answered HTTP 503.',
+      }),
+    ).toBe(
+      'Revoking access to the Slack connection at Linear failed and will be tried again: Linear answered HTTP 503.',
+    );
+    expect(
+      ended({
+        system: 'linear',
+        surfaceName: 'Linear',
+        end: 'disconnect',
+        outcome: 'failed',
+        reason: 'Linear refused: invalid_client',
+      }),
+    ).toBe(
+      "Revoking access to the Slack connection at Linear failed: Linear refused: invalid_client; Day0's copy was deleted.",
+    );
+  });
+
+  it('says a pasted key was never sent to the vendor, and a shared token was not revoked', (): void => {
+    expect(
+      ended({
+        system: 'Zendesk',
+        surfaceName: 'Zendesk',
+        end: 'disconnect',
+        outcome: 'pasted-key',
+      }),
+    ).toBe(
+      'Day0 stopped using the key pasted for the Slack connection; it was not revoked at Zendesk, so revoke it there if it should end.',
+    );
+    expect(
+      ended({ system: 'linear', surfaceName: 'Linear', end: 'retire', outcome: 'shared' }),
+    ).toBe(
+      "Access to the Slack connection ended; its shared app token was not revoked at Linear, since the app's other employees use it.",
+    );
+  });
+
+  it('says what an end that calls no vendor did, in its own words', (): void => {
+    expect(
+      ended({
+        system: 'slack',
+        surfaceName: 'Slack',
+        end: 'transfer',
+        outcome: 'not-at-vendor',
+        reason: 'A handover changes nothing at the vendor; the new manager re-approves the system.',
+      }),
+    ).toBe(
+      'Access to the Slack connection ended with nothing changed at Slack: A handover changes nothing at the vendor; the new manager re-approves the system.',
+    );
+    expect(
+      ended({
+        system: 'zendesk',
+        surfaceName: 'Zendesk',
+        end: 'disconnect',
+        outcome: 'not-supported',
+        reason: "zendesk: no revocation endpoint; Day0's copy is deleted.",
+      }),
+    ).toBe(
+      "Access to the Slack connection could not be revoked at zendesk: zendesk: no revocation endpoint; Day0's copy is deleted.",
+    );
+    expect(
+      ended({ system: 'slack', surfaceName: 'Slack', end: 'disconnect', outcome: 'already-gone' }),
+    ).toBe('Access to the Slack connection was already revoked at Slack.');
+  });
+
+  it('says who disconnected a connection', (): void => {
+    expect(recordWords({ type: 'surface.disconnected', payload: { by: 'manager' } }, leo)).toBe(
+      'You disconnected the Slack connection.',
+    );
+    expect(
+      recordWords(
+        {
+          type: 'surface.disconnected',
+          payload: { by: 'organisation', reason: 'Slack was disconnected for everyone by IT' },
+        },
+        leo,
+      ),
+    ).toBe(
+      "The Slack connection was disconnected when the organisation's connection was revoked: Slack was disconnected for everyone by IT.",
+    );
   });
 });

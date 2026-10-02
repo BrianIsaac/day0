@@ -128,13 +128,28 @@ async function employee(
   });
 }
 
-/** A connected Linear surface of an employee, with the tools the manager approved on it. */
+/**
+ * A connected Linear surface of an employee, with the tools the manager approved on it, and the
+ * charter evidence the approval's seeding writes (`declareCharterSystem`) when the employee's
+ * approved charter names Linear.
+ */
 async function linear(
   harness: Harness,
   agentId: Id<'agents'>,
   surface: Partial<Doc<'surfaces'>> = {},
 ): Promise<void> {
   await harness.run(async (ctx) => {
+    const charters = await ctx.db
+      .query('charters')
+      .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+      .collect();
+    const namesLinear = charters.some(
+      (charter) =>
+        charter.approved &&
+        (charter.body as { namedSystems?: Array<{ name: string }> }).namedSystems?.some(
+          (system) => system.name === 'Linear',
+        ),
+    );
     await ctx.db.insert('surfaces', {
       agentId,
       slug: 'linear',
@@ -146,6 +161,20 @@ async function linear(
       credentialLanded: true,
       lastVerifiedAt: Date.now(),
       approvedToolAllowlist: ['get_issue', 'save_comment', 'update_issue'],
+      ...(namesLinear
+        ? {
+            discoveryEvidence: [
+              {
+                kind: 'charter' as const,
+                ref: 'manager 1:1',
+                quote: 'the one-to-one',
+                current: true,
+                firstSeenAt: 1,
+                lastSeenAt: 1,
+              },
+            ],
+          }
+        : {}),
       createdAt: 1,
       ...surface,
     });
@@ -462,6 +491,51 @@ describe('skillAdoption: adopting and the stored verification (mock mode)', (): 
     useSurfaceMode('mock');
     recorded.sandboxRuns.length = 0;
     recorded.sandbox = PASSED;
+  });
+
+  it("offers a sibling's verified skill for work from the ticket queue though the drafted charter names no ticket system (the v0.13.0 walk)", async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const wren = await employee(harness, 'Wren');
+    // The charter the drafter wrote on the hosted walk: the manager said "the ticket queue",
+    // which names no product, so no system of the kanban class is listed.
+    const sol = await employee(harness, 'Sol', {
+      charterClasses: ['spreadsheet', 'chat', 'docs', 'social'],
+    });
+    const offered = await version(harness, wren);
+
+    expect(await offerFor(harness, sol)).toBe(offered);
+    const skillId = await propose(harness, sol);
+    const [card] = await harness.withIdentity(OWNER).query(api.skillAdoption.adoptions, {
+      agentId: sol,
+    });
+    expect(card).toMatchObject({
+      skillId,
+      state: 'offered',
+      versionId: offered,
+      authorName: 'Wren',
+    });
+    expect(card).not.toHaveProperty('refusal');
+  });
+
+  it('asks the charter alone in mock mode for a proposal that kept no shape, so its offer is refused', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const wren = await employee(harness, 'Wren');
+    const sol = await employee(harness, 'Sol', {
+      charterClasses: ['spreadsheet', 'chat', 'docs', 'social'],
+    });
+    await version(harness, wren);
+    const skillId = await propose(harness, sol);
+    // A row from before proposals kept their shape: nothing names the work's system.
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(skillId, { surfaceClass: undefined, operation: undefined });
+    });
+
+    const [card] = await harness.withIdentity(OWNER).query(api.skillAdoption.adoptions, {
+      agentId: sol,
+    });
+    expect(card).toMatchObject({ skillId, refusal: 'the charter names no kanban system' });
   });
 
   it('refuses Adopt once a new manager has accepted the employee, in the accepted handover’s words, and grants nothing (the wave 10 review, M1)', async (): Promise<void> => {

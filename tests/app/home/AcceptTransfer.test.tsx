@@ -119,6 +119,7 @@ const PREVIEW: HandoverPreview = {
   },
   leavesBehind: {
     surfaces: [{ slug: 'linear', displayName: 'Linear' }],
+    reapprove: [],
     scopesRevoked: ['linear:read'],
     mirroredPages: 12,
     mirroredPagesAtLeast: false,

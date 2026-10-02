@@ -48,6 +48,8 @@ export const PROFILES: Readonly<Record<string, string>> = {
   model: 'a bundled OpenAI-compatible model server',
   sandbox: 'the local sandbox that verifies an authored skill',
   redactor: 'the span model that redacts documentation and the ledger (redactor)',
+  'token-store':
+    "Nango, which keeps and refreshes the API rung's OAuth tokens (nango-server, nango-db, nango-redis)",
 };
 
 export interface ComposeInvocation {

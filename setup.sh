@@ -14,6 +14,13 @@
 #   ./setup.sh sign-in --provider entra|okta|google
 #                                      the company sign-in, with the customer's IT; exits
 #                                      with the check's status, so a later verb composes it
+#   ./setup.sh access                  the organisation's systems, with the customer's IT:
+#                                      the administrators, each system's recipe and mode,
+#                                      its secret (hidden, or --secrets-stdin), check:access
+#   ./setup.sh install --provider entra|okta|google
+#                                      both halves in one command: the target checks, sign-in,
+#                                      access, check:setup and check:sign-in, stopping at the
+#                                      first that fails (docs/running/install.md)
 #
 #   ./setup.sh cloud setup --target <file>
 #                                      Convex cloud and Vercel: the first push to an empty
@@ -46,6 +53,8 @@ Usage: ./setup.sh --route <featherless|key|endpoint|local> [setup flags]
        ./setup.sh backup | restore <file> | upgrade [--yes] [--to <dir>]
        ./setup.sh pause | unpause [--dry-run]
        ./setup.sh sign-in --provider <entra|okta|google> [--dry-run]
+       ./setup.sh access [--administrators <a@x>] [--secrets-stdin] [--dry-run]
+       ./setup.sh install --provider <entra|okta|google> [sign-in and access flags]
        ./setup.sh cloud setup | upgrade | backup | pause | unpause --target <file>
 
 Real mode, on your own documentation and systems: day0 reads the pages you
@@ -115,6 +124,18 @@ The company sign-in, with the customer's IT, on an installation this command mad
                                         server, Google for no issuer.
                                         pnpm setup:local --help lists the flags that
                                         answer each question.
+
+The organisation's systems, with the customer's IT (docs/running/install.md walks both halves):
+  ./setup.sh access                     names the administrators who manage the organisation's
+                                        connections, lists the systems the documentation names,
+                                        shows each one's recipe (docs/running/access-<system>.md),
+                                        asks for what it produces, a secret in a hidden prompt
+                                        or on stdin with --secrets-stdin and never as a flag,
+                                        lands it, runs check:access and writes the install record
+  ./setup.sh install --provider entra   the lifecycle target checks, then sign-in, access,
+                                        check:setup and check:sign-in, stopping at the first that
+                                        fails and saying which; --backend-url <https://...> for an
+                                        install behind the customer's proxy
 
 Your own copy on Convex cloud and Vercel, from a clean checkout of a release
 tag with no .env.local; <file> sits outside the checkout and holds

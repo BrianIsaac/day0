@@ -1,4 +1,5 @@
 import { convexTest, type TestConvex } from 'convex-test';
+import { makeFunctionReference } from 'convex/server';
 import { describe, expect, it } from 'vitest';
 import { internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
@@ -127,5 +128,41 @@ describe('eventLog.log: an action that started under one owner (U3-m2)', (): voi
     await harness.mutation(internal.eventLog.log, { agentId, ...MODEL_CALL });
 
     expect(await loggedOf(harness, agentId)).toBe(1);
+  });
+});
+
+describe("eventLog.log: the types an employee's ledger takes", (): void => {
+  /** `eventLog.log` reached by name, as nothing typed through `logEvent` reaches it. */
+  const logByName = makeFunctionReference<'mutation', Record<string, unknown>, null>(
+    'eventLog:log',
+  );
+
+  it("refuses an organisation connection's ledger type called by name", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('agents', {
+          bossEmail: MANAGER_ADDRESS,
+          name: 'Maya',
+          userId: 'owner',
+          state: 'active',
+          createdAt: 1,
+        }),
+    );
+
+    await expect(
+      harness.mutation(logByName, {
+        agentId,
+        type: 'organisation.connection-landed',
+        payload: {
+          organisationConnectionId: 'c',
+          system: 'slack',
+          displayName: 'Slack',
+          via: 'setup-cli',
+        },
+      }),
+    ).rejects.toThrow(/Validator error/);
+    const written = await harness.run(async (ctx) => await ctx.db.query('events').collect());
+    expect(written).toHaveLength(0);
   });
 });

@@ -121,6 +121,44 @@ describe('the company sign-in callback', (): void => {
     expect(setCookies(response).has('day0_session')).toBe(false);
   });
 
+  it('refuses a person whose address the generic issuer did not verify, with words that say why (decision 7 (b))', async (): Promise<void> => {
+    const issuer = customerIssuer({
+      people: [
+        { id: 'nora', claims: { email: 'nora@acme.test' } },
+        { id: 'priya', claims: { email: 'priya@acme.test', email_verified: true } },
+      ],
+    });
+    const unverified = await startSignIn();
+    const refused = await callback(
+      (await issuerRedirect(issuer, unverified, 'nora')).search,
+      unverified.transactionCookie,
+    );
+    expect(refused.status).toBe(403);
+    const page = await refused.text();
+    expect(page).toContain('You signed in as nora@acme.test');
+    expect(page).toContain('has not verified your email address');
+    expect(setCookies(refused).has('day0_session')).toBe(false);
+    const verified = await startSignIn();
+    const admitted = await callback(
+      (await issuerRedirect(issuer, verified, 'priya')).search,
+      verified.transactionCookie,
+    );
+    expect(admitted.status).toBe(302);
+  });
+
+  it('admits an unverified address under the generic preset only when the deployment declares the issuer trusted and it sends no claim', async (): Promise<void> => {
+    const issuer = customerIssuer({
+      people: [{ id: 'nora', claims: { email: 'nora@acme.test' } }],
+      env: { DAY0_OIDC_EMAIL_TRUSTED: 'true' },
+    });
+    const started = await startSignIn();
+    const response = await callback(
+      (await issuerRedirect(issuer, started, 'nora')).search,
+      started.transactionCookie,
+    );
+    expect(response.status).toBe(302);
+  });
+
   it('refuses a Google token without the allowed hd', async (): Promise<void> => {
     const issuer = customerIssuer({
       issuer: 'https://accounts.google.com',
@@ -255,6 +293,26 @@ describe('the callback in check mode (pnpm check:sign-in)', (): void => {
       reports[0] as { verdicts: Array<{ claim: string; status: string }> }
     ).verdicts.find((one) => one.claim === 'email');
     expect(email?.status).toBe('gap');
+  });
+
+  it('tells an unverified address apart from one outside the allowed domains in what the deployment said', async (): Promise<void> => {
+    const { reports, issuer } = checkBed({ refused: 'unverified-address' });
+    const started = await startCheck(await checkLink());
+    const back = await issuerRedirect(issuer, started, 'priya');
+    await callback(back.search, started.transactionCookie);
+    const said = (reports[0] as { whoAmI: { status: string; detail: string } }).whoAmI;
+    expect(said.status).toBe('gap');
+    expect(said.detail).toContain('not verified');
+    expect(said.detail).not.toContain('outside the allowed domains');
+  });
+
+  it('says outside the allowed domains when that is what the deployment refused', async (): Promise<void> => {
+    const { reports, issuer } = checkBed({ refused: 'outside-domains' });
+    const started = await startCheck(await checkLink());
+    const back = await issuerRedirect(issuer, started, 'priya');
+    await callback(back.search, started.transactionCookie);
+    const said = (reports[0] as { whoAmI: { status: string; detail: string } }).whoAmI;
+    expect(said.detail).toContain('outside the allowed domains');
   });
 
   it('reports an issuer that refused the test person, rather than leaving the check to wait', async (): Promise<void> => {

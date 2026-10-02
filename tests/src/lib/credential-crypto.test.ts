@@ -2,7 +2,9 @@ import { createHash, randomBytes } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
   CREDENTIAL_KEY_CHANGED_MESSAGE,
+  credentialBindingOf,
   credentialKeyId,
+  credentialOrganisationBinding,
   credentialOwnerBinding,
   credentialValueFingerprint,
   decrypt,
@@ -10,6 +12,7 @@ import {
   openOwnedCredential,
   sealForOwner,
 } from '../../../src/lib/credential-crypto';
+import { ORGANISATION_OWNER_KEY } from '../../../src/lib/organisation-key';
 
 /** Generate one valid AES-256 key for a test case. */
 function key(): string {
@@ -247,6 +250,54 @@ describe('credential value fingerprints', (): void => {
   it('refuses a key that is not 32 bytes of canonical base64', (): void => {
     expect(() => credentialValueFingerprint('value', 'not-a-key', 'owner-a')).toThrow(
       'must be a base64-encoded 32-byte key',
+    );
+  });
+});
+
+describe('the organisation seal (F18, AC12)', (): void => {
+  it('binds an organisation row to the reserved key in its own namespace, never as an owner', (): void => {
+    expect(credentialBindingOf(ORGANISATION_OWNER_KEY)).toBe(credentialOrganisationBinding());
+    expect(credentialOrganisationBinding()).toContain(ORGANISATION_OWNER_KEY);
+    expect(credentialOrganisationBinding()).not.toBe(
+      credentialOwnerBinding(ORGANISATION_OWNER_KEY),
+    );
+    expect(credentialBindingOf('owner')).toBe(credentialOwnerBinding('owner'));
+  });
+
+  it('opens what it sealed for the organisation, and nothing sealed as an owner or moved from one', (): void => {
+    const keyring = { current: key() };
+    const sealed = sealForOwner('xoxe-1234567890-abcdefghij', keyring, ORGANISATION_OWNER_KEY);
+    const asOrganisation = { ...sealed, userId: ORGANISATION_OWNER_KEY };
+    expect(openOwnedCredential(asOrganisation, keyring, { allowUnbound: false })).toBe(
+      'xoxe-1234567890-abcdefghij',
+    );
+    // The organisation's ciphertext copied onto an owner's row does not open there.
+    expect(() =>
+      openOwnedCredential({ ...sealed, userId: 'owner' }, keyring, { allowUnbound: true }),
+    ).toThrow(CREDENTIAL_KEY_CHANGED_MESSAGE);
+    // A value sealed under the owner binding of the reserved key's spelling is not the organisation's.
+    const forged = {
+      ...encrypt('forged', keyring.current, credentialOwnerBinding(ORGANISATION_OWNER_KEY)),
+      keyId: credentialKeyId(keyring.current),
+      userId: ORGANISATION_OWNER_KEY,
+    };
+    expect(() => openOwnedCredential(forged, keyring, { allowUnbound: true })).toThrow(
+      CREDENTIAL_KEY_CHANGED_MESSAGE,
+    );
+  });
+
+  it('never opens an organisation row unbound, even while legacy owner rows may', (): void => {
+    const keyring = { current: key() };
+    const unbound = { ...encrypt('legacy', keyring.current), userId: ORGANISATION_OWNER_KEY };
+    expect(() => openOwnedCredential(unbound, keyring, { allowUnbound: true })).toThrow(
+      CREDENTIAL_KEY_CHANGED_MESSAGE,
+    );
+  });
+
+  it('fingerprints an organisation value apart from the same value an owner holds', (): void => {
+    const credentialKey = key();
+    expect(credentialValueFingerprint('shared', credentialKey, ORGANISATION_OWNER_KEY)).not.toBe(
+      credentialValueFingerprint('shared', credentialKey, 'owner'),
     );
   });
 });

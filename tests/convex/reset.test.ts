@@ -5,6 +5,7 @@ import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import {
   AGENT_KEYED_TABLES,
+  DEPLOYMENT_ACCESS_TABLES,
   OWNER_LIBRARY_TABLES,
   RETIRE_RECORD_TABLES,
   deleteDuringHandoverRefusal,
@@ -16,6 +17,8 @@ import { browserFieldId, providerItemKey } from '../../src/work/claim-key';
 import { agentKeyedTables, insertMinimalRow } from './schema-fixtures';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
+import { RETIREMENT_READ_LIMIT } from '../../convex/retirements';
 
 /**
  * Seed one owner with an agent and linked documentation.
@@ -197,6 +200,119 @@ describe('reset completeness', (): void => {
     // before a demo finds it.
     expect([...AGENT_KEYED_TABLES].sort()).toEqual(tables);
     expect([...AGENT_KEYED_TABLES, ...RETIRE_RECORD_TABLES].sort()).toEqual(agentKeyedTables());
+  });
+});
+
+describe("the organisation's deployment tables (11-AK)", (): void => {
+  it('names the two tables of the organisation, none of them agent-keyed or an owner’s library', (): void => {
+    expect([...DEPLOYMENT_ACCESS_TABLES]).toEqual(['organisationConnections', 'connectionEvents']);
+    for (const table of DEPLOYMENT_ACCESS_TABLES) {
+      expect(Object.keys(schema.tables), table).toContain(table);
+      expect(agentKeyedTables(), table).not.toContain(table);
+      expect([...AGENT_KEYED_TABLES, ...RETIRE_RECORD_TABLES], table).not.toContain(table);
+      expect([...OWNER_LIBRARY_TABLES], table).not.toContain(table);
+    }
+  });
+
+  describe('in each surface mode', (): void => {
+    afterEach((): void => {
+      restoreSurfaceMode();
+    });
+
+    it.each(['mock', 'real'] as const)(
+      "keeps every organisation row through a retire and the whole owner's deletion in %s mode, even one a card binds",
+      async (mode): Promise<void> => {
+        useSurfaceMode(mode);
+        // The modules are re-read under the mode, as the retire reads SURFACE_MODE at load.
+        const [{ default: modeSchema }, { allConvexModules: modeModules }, { api: modeApi }] =
+          await Promise.all([
+            import('../../convex/schema'),
+            import('./all-modules'),
+            import('../../convex/_generated/api'),
+          ]);
+        const harness = convexTest(modeSchema, modeModules());
+        await seedOwner(harness);
+        const { retiring, secret } = await harness.run(async (ctx) => {
+          const retiring = await ctx.db.insert('agents', {
+            bossEmail: MANAGER_ADDRESS,
+            name: 'Leo',
+            userId: 'owner',
+            state: 'active',
+            createdAt: 1,
+          });
+          const secret = await ctx.db.insert('credentials', {
+            userId: ORGANISATION_OWNER_KEY,
+            holder: ORGANISATION_HOLDER,
+            kind: 'value',
+            label: 'Slack configuration refresh token',
+            source: 'entered',
+            ciphertext: 'sealed',
+            iv: 'iv',
+            createdAt: 1,
+          });
+          const connection = await ctx.db.insert('organisationConnections', {
+            system: 'slack',
+            displayName: 'Slack',
+            kind: 'slack-configuration',
+            mode: 'shared',
+            scopes: ['app_configurations:write'],
+            secretCredentialId: secret,
+            registeredBy: { via: 'setup-cli', at: 1 },
+            status: 'active',
+            createdAt: 1,
+          });
+          await ctx.db.insert('connectionEvents', {
+            organisationConnectionId: connection,
+            type: 'organisation.connection-landed',
+            payload: { system: 'slack' },
+            createdAt: 1,
+          });
+          // A shared-mode card on the organisation's token: the retire walks what the card binds.
+          await ctx.db.insert('surfaces', {
+            agentId: retiring,
+            slug: 'slack',
+            displayName: 'Slack',
+            class: 'chat',
+            verdict: 'connected',
+            whereFound: [],
+            credentialLanded: true,
+            credentialId: secret,
+            credentialKind: 'value',
+            organisationConnectionId: connection,
+            actsAs: { kind: 'shared-app', label: 'Day0' },
+            provisioning: {
+              appId: 'A0DAY0',
+              appName: 'Day0',
+              clientId: 'client-1',
+              clientSecretCredentialId: secret,
+              installUrl: 'https://slack.com/oauth/v2/authorize',
+              redirectUrl: 'http://localhost:3000/api/oauth/slack',
+              scopes: ['chat:write'],
+              createdAt: 1,
+            },
+            createdAt: 1,
+          });
+          return { retiring, secret };
+        });
+        const organisationRows = async (): Promise<unknown> =>
+          await harness.run(async (ctx) => ({
+            organisationConnections: await ctx.db.query('organisationConnections').collect(),
+            connectionEvents: await ctx.db.query('connectionEvents').collect(),
+            secret: await ctx.db.get(secret),
+          }));
+        const before = await organisationRows();
+
+        const owner = harness.withIdentity(managerIdentity());
+        await owner.mutation(modeApi.reset.retire, { agentId: retiring });
+        expect(await organisationRows()).toEqual(before);
+        await owner.mutation(modeApi.reset.deleteMyData, { alsoUnlinkDocumentation: true });
+        expect(await organisationRows()).toEqual(before);
+        expect(await harness.run(async (ctx) => await ctx.db.get(secret))).toMatchObject({
+          ciphertext: 'sealed',
+          iv: 'iv',
+        });
+      },
+    );
   });
 });
 
@@ -480,11 +596,22 @@ describe('retire in real mode', (): void => {
       claims: [],
       rejections: [],
     });
-    expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({
+    // Re-pinned (11-AR): the retire now writes each connection's end on the record beside its one
+    // `agent.retired`: both connections here bound pasted keys, never sent to a vendor.
+    const retiredEvents = events.filter((event) => event.type === 'agent.retired');
+    expect(retiredEvents).toHaveLength(1);
+    expect(retiredEvents[0]).toMatchObject({
       type: 'agent.retired',
       payload: { retirementId: retirement._id, agentId: retiring, retiredAt: retirement.retiredAt },
     });
+    expect(
+      events
+        .filter((event) => event.type !== 'agent.retired')
+        .map((event) => [event.type, (event.payload as { outcome?: unknown }).outcome]),
+    ).toEqual([
+      ['credential.revoked-at-source', 'pasted-key'],
+      ['credential.revoked-at-source', 'pasted-key'],
+    ]);
     expect(await harness.run(async (ctx) => await ctx.db.get(retiring))).toBeNull();
     const surfaces = await harness.run(
       async (ctx) =>
@@ -1285,5 +1412,273 @@ describe('deleteMyData and the handover requests it keeps (decision 7)', (): voi
     });
     expect(othersRow?.note).toEqual(expect.stringContaining('Finance Ops'));
     expect(othersRow?.declineReason).toEqual(expect.any(String));
+  });
+});
+
+describe('holdings: what a deletion would remove, read before its control is pressed (the v0.13.0 walk)', (): void => {
+  const NOTHING = {
+    employees: false,
+    skillLibrary: false,
+    handoverWords: false,
+    retiredBoundaries: false,
+    documentation: false,
+  };
+
+  afterEach((): void => {
+    restoreSurfaceMode();
+  });
+
+  /** One version in an owner's library, as a handover copies it in. */
+  async function seedVersion(harness: TestConvex<typeof schema>, userId: string): Promise<void> {
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('skillVersions', {
+        userId,
+        name: 'kanban-comment-and-close',
+        description: 'Ticket comment-and-close.',
+        surfaceClass: 'kanban',
+        operation: 'comment-and-close',
+        version: 1,
+        body: '# Comment and close',
+        bodyHash: 'sha256:02',
+        requiredScopes: [],
+        harnessTools: [],
+        authorName: 'Wren',
+        readRefs: [],
+        verifiedAt: 1,
+        createdAt: 1,
+      });
+    });
+  }
+
+  /** A handover request that named the manager's address, accepted, with or without a note. */
+  async function seedNamingRequest(
+    harness: TestConvex<typeof schema>,
+    note: string | undefined,
+  ): Promise<void> {
+    await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: 'colleague@day0.local',
+        name: 'Wren',
+        userId: 'colleague',
+        state: 'active',
+        createdAt: 1,
+      });
+      await ctx.db.insert('managerTransfers', {
+        agentId,
+        agentName: 'Wren',
+        fromOwnerKey: 'colleague',
+        fromAddress: 'colleague@day0.local',
+        toAddress: MANAGER_ADDRESS,
+        ...(note === undefined ? {} : { note }),
+        state: 'accepted',
+        requestedAt: 1,
+        expiresAt: 2,
+        decidedAt: 2,
+        toOwnerKey: 'owner',
+      });
+    });
+  }
+
+  it('answers an anonymous caller with nothing to read', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    expect(await harness.query(api.reset.holdings, {})).toBeNull();
+  });
+
+  it('holds nothing for a manager who has stored nothing, and another owner’s rows do not count', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await seedVersion(harness, 'rival');
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('agents', {
+        bossEmail: 'rival@day0.local',
+        name: 'Tomas',
+        userId: 'rival',
+        state: 'active',
+        createdAt: 1,
+      });
+    });
+
+    expect(await harness.withIdentity(managerIdentity()).query(api.reset.holdings, {})).toEqual(
+      NOTHING,
+    );
+  });
+
+  it('holds a skill library and a handover note for a manager with no employee, and the deletion takes both', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await seedVersion(harness, 'owner');
+    await seedNamingRequest(
+      harness,
+      'Wren handles the RevOps tickets; ask Priya about the tracker.',
+    );
+    const owner = harness.withIdentity(managerIdentity());
+
+    expect(await owner.query(api.reset.holdings, {})).toEqual({
+      ...NOTHING,
+      skillLibrary: true,
+      handoverWords: true,
+    });
+
+    expect(await owner.mutation(api.reset.deleteMyData, {})).toEqual({
+      deleted: 0,
+      unlinkedSources: 0,
+    });
+    expect(await owner.query(api.reset.holdings, {})).toEqual(NOTHING);
+    const request = await harness.run(
+      async (ctx) => await ctx.db.query('managerTransfers').unique(),
+    );
+    expect(request).toMatchObject({ state: 'accepted', toAddress: MANAGER_ADDRESS });
+    expect(request?.note).toBeUndefined();
+  });
+
+  it('holds the words on a request the manager asked, and a decline’s reason alone', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Wren',
+        userId: 'colleague',
+        state: 'active',
+        createdAt: 1,
+      });
+      await ctx.db.insert('managerTransfers', {
+        agentId,
+        agentName: 'Wren',
+        fromOwnerKey: 'owner',
+        fromAddress: MANAGER_ADDRESS,
+        toAddress: 'colleague@day0.local',
+        note: 'Wren covers the close.',
+        state: 'accepted',
+        requestedAt: 1,
+        expiresAt: 2,
+        decidedAt: 2,
+        toOwnerKey: 'colleague',
+      });
+    });
+    const owner = harness.withIdentity(managerIdentity());
+    expect(await owner.query(api.reset.holdings, {})).toEqual({ ...NOTHING, handoverWords: true });
+
+    await owner.mutation(api.reset.deleteMyData, {});
+    expect(await owner.query(api.reset.holdings, {})).toEqual(NOTHING);
+
+    await harness.run(async (ctx) => {
+      const row = await ctx.db.query('managerTransfers').unique();
+      await ctx.db.patch(row!._id, {
+        state: 'declined',
+        declineReason: 'I am leaving in March.',
+      });
+    });
+    expect(await owner.query(api.reset.holdings, {})).toEqual({ ...NOTHING, handoverWords: true });
+  });
+
+  it('counts a request only while it carries words a deletion scrubs', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await seedNamingRequest(harness, undefined);
+
+    expect(await harness.withIdentity(managerIdentity()).query(api.reset.holdings, {})).toEqual(
+      NOTHING,
+    );
+  });
+
+  it('holds the employees and the documentation the unlink choice would take', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await seedOwner(harness);
+
+    expect(await harness.withIdentity(managerIdentity()).query(api.reset.holdings, {})).toEqual({
+      ...NOTHING,
+      employees: true,
+      documentation: true,
+    });
+  });
+
+  it('answers past the retirements cap instead of taking the home page down, reading the newest first', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Maya',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const workItemId = await ctx.db.insert('workItems', {
+        agentId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'REVOPS-8',
+        title: 'Rejected before the newest retire',
+        contentSummary: 'Synthetic work.',
+        contentRefs: [],
+        state: 'failed',
+        observedAt: 1,
+        createdAt: 1,
+      });
+      for (let index = 0; index <= RETIREMENT_READ_LIMIT; index += 1) {
+        const newest = index === RETIREMENT_READ_LIMIT;
+        await ctx.db.insert('retirements', {
+          userId: 'owner',
+          agentId,
+          retiredAt: index,
+          rowCounts: {},
+          revokedCredentials: 0,
+          keptCredentials: 0,
+          claims: [],
+          rejections: newest ? [{ workItemId, keys: ['linear:REVOPS-8'], rejectedAt: index }] : [],
+        });
+      }
+      await ctx.db.delete(agentId);
+    });
+
+    expect(await harness.withIdentity(managerIdentity()).query(api.reset.holdings, {})).toEqual({
+      ...NOTHING,
+      retiredBoundaries: true,
+    });
+  });
+
+  it('holds a retired employee’s kept boundaries in real mode only, where the deletion releases them', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Maya',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const workItemId = await ctx.db.insert('workItems', {
+        agentId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'REVOPS-7',
+        title: 'Rejected before the retire',
+        contentSummary: 'Synthetic work.',
+        contentRefs: [],
+        state: 'failed',
+        observedAt: 1,
+        createdAt: 1,
+      });
+      await ctx.db.insert('retirements', {
+        userId: 'owner',
+        agentId,
+        agentName: 'Maya',
+        retiredAt: 3,
+        rowCounts: {},
+        revokedCredentials: 0,
+        keptCredentials: 0,
+        claims: [],
+        rejections: [{ workItemId, keys: ['linear:REVOPS-7'], rejectedAt: 2 }],
+      });
+      await ctx.db.delete(agentId);
+    });
+    const owner = harness.withIdentity(managerIdentity());
+
+    useSurfaceMode('mock');
+    expect(await owner.query(api.reset.holdings, {})).toEqual(NOTHING);
+    useSurfaceMode('real');
+    expect(await owner.query(api.reset.holdings, {})).toEqual({
+      ...NOTHING,
+      retiredBoundaries: true,
+    });
+    await owner.mutation(api.reset.deleteMyData, {});
+    expect(await owner.query(api.reset.holdings, {})).toEqual(NOTHING);
   });
 });

@@ -10,6 +10,7 @@ import {
   CUSTOMER_SESSION_SECRET_VAR,
   PUBLIC_URL_VAR,
 } from '../src/lib/customer-oidc';
+import { ADMINISTRATORS_VAR } from '../src/lib/administrators';
 import { PRIVATE_HOSTS_VAR } from '../src/lib/private-hosts';
 
 const EXAMPLE = readFileSync(new URL('../.env.example', import.meta.url), 'utf8');
@@ -40,6 +41,32 @@ describe('.env.example', (): void => {
     ]) {
       expect(DECLARED, name).toContain(name);
     }
+  });
+
+  it('declares the administrators after the customer-local sign-in block, empty by default (B8)', (): void => {
+    expect(DECLARED).toContain(ADMINISTRATORS_VAR);
+    expect(EXAMPLE).toMatch(/^DAY0_ADMINISTRATORS=$/m);
+    expect(EXAMPLE.indexOf('DAY0_ADMINISTRATORS=')).toBeGreaterThan(
+      EXAMPLE.indexOf('DAY0_OIDC_EMAIL_TRUSTED='),
+    );
+    expect(EXAMPLE.indexOf('DAY0_ADMINISTRATORS=')).toBeLessThan(EXAMPLE.indexOf('# --- Clerk'));
+  });
+
+  it("declares the token store's Nango lines after the administrators, the address empty by default (11-AT)", (): void => {
+    for (const name of [
+      'DAY0_NANGO_URL',
+      'DAY0_NANGO_SECRET_KEY',
+      'DAY0_NANGO_ENCRYPTION_KEY',
+      'DAY0_NANGO_DB_PASSWORD',
+    ]) {
+      expect(EXAMPLE, name).toMatch(new RegExp(`^${name}=$`, 'm'));
+      expect(EXAMPLE.indexOf(`\n${name}=`)).toBeGreaterThan(
+        EXAMPLE.indexOf('\nDAY0_ADMINISTRATORS='),
+      );
+      expect(EXAMPLE.indexOf(`\n${name}=`)).toBeLessThan(EXAMPLE.indexOf('# --- Clerk'));
+      expect(COMPOSE.includes(name) || name === 'DAY0_NANGO_URL', name).toBe(true);
+    }
+    expect(EXAMPLE).toContain('DAY0_NANGO_URL=http://nango-server:3003');
   });
 
   it('declares the shared-skills switch, on by default (K4)', (): void => {
