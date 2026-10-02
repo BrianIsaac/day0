@@ -395,9 +395,9 @@ describe('the supervision metrics card', (): void => {
     expect(html).toContain('>So far</h2>');
     expect(html).toContain('time to first approved charter');
     expect(html).toContain('3 min 28 s');
-    expect(html).toContain('human decisions (approved / rejected)');
+    expect(html).toContain('your decisions (approved / rejected)');
     expect(html).toContain('2 / 0');
-    expect(html).toContain('human decisions (dashboard / phone)');
+    expect(html).toContain('your decisions (dashboard / phone)');
     expect(html).toContain('0 / 2');
     expect(html).toContain('median decision latency');
     expect(html).toContain('1 s');

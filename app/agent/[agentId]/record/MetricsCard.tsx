@@ -56,8 +56,8 @@ export function MetricsCard({ metrics }: { metrics: AgentMetrics | undefined }) 
       label: 'time to first approved charter',
       value: metrics ? formatMetricDuration(metrics.charter.timeToFirstApprovedMs) : undefined,
     },
-    { label: 'human decisions (approved / rejected)', value: humanDecisions },
-    { label: 'human decisions (dashboard / phone)', value: decidedFrom },
+    { label: 'your decisions (approved / rejected)', value: humanDecisions },
+    { label: 'your decisions (dashboard / phone)', value: decidedFrom },
     {
       label: 'median decision latency',
       value: metrics ? formatMetricDuration(metrics.decisions.medianLatencyMs) : undefined,
