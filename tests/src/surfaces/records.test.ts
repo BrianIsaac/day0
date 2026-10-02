@@ -69,3 +69,18 @@ describe('the attribution a record carries (join 14)', (): void => {
     );
   });
 });
+
+describe('an identity its credential contradicts (join 14, the second pass)', (): void => {
+  it('carries no attribution, so the credential’s kind decides as before wave 11', (): void => {
+    expect(
+      toSurfaceRecord({ ...base, credentialKind: 'oauth', actsAs: { kind: 'shared-key' } }),
+    ).not.toHaveProperty('attribution');
+    expect(
+      toSurfaceRecord({ ...base, credentialKind: 'value', actsAs: { kind: 'own-app' } }),
+    ).not.toHaveProperty('attribution');
+    expect(
+      toSurfaceRecord({ ...base, credentialKind: 'value', actsAs: { kind: 'shared-app' } })
+        .attribution,
+    ).toBe('trailer');
+  });
+});

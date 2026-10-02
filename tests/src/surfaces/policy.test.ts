@@ -1195,6 +1195,12 @@ describe('the provenance every existing card carries (join 14, pinned before the
       fields: { credentialKind: 'value', actsAs: { kind: 'shared-app', label: 'Linear' } },
       sign: true,
     },
+    {
+      // recordInstalledApp replaces the pasted key with the app's token and leaves actsAs as it was.
+      name: 'a pasted key the dedicated app replaced, its identity not restamped',
+      fields: { credentialKind: 'oauth', actsAs: { kind: 'shared-key', label: 'a pasted key' } },
+      sign: false,
+    },
   ];
 
   for (const shape of existing) {
