@@ -352,3 +352,24 @@ describe('an authority withdrawn', (): void => {
     expect(isAuthorityRefusal(new Error('HTTP 401'))).toBe(false);
   });
 });
+
+describe('an answer without expires_in', (): void => {
+  it("takes Linear's documented lifetime for the grant, so a token is never requested on every read", async (): Promise<void> => {
+    const shared = await requestAppActorToken(
+      answering(200, { access_token: 'lin_oauth_shared_9', token_type: 'Bearer', scope: 'read' })
+        .fetch,
+      { clientId: 'day0-shared', clientCredentialsScopes: ['read'] },
+      's',
+      NOW,
+    );
+    expect(shared.expiresAt).toBe(NOW + 2_591_999_000);
+
+    const own = await requestLinearTokens(
+      answering(200, { access_token: 'lin_oauth_access_9', refresh_token: 'lin_refresh_9' }).fetch,
+      { clientId: 'day0-leo', clientSecret: 'leo-secret' },
+      { grant: 'refresh_token', refreshToken: 'lin_refresh_8' },
+      NOW,
+    );
+    expect(own.expiresAt).toBe(NOW + 86_399_000);
+  });
+});

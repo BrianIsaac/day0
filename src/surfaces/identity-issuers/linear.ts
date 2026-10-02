@@ -53,6 +53,16 @@ export const TOKEN_READ_MARGIN_MS = 2 * 60 * 1_000;
 /** The soonest a scheduled renewal runs after it is scheduled, so a short-lived token cannot loop. */
 export const MIN_RENEWAL_INTERVAL_MS = 30_000;
 
+/**
+ * How long each grant's token lives by Linear's documentation (L2: 30 days; L3: 24 hours), the
+ * expiry taken when an answer omits `expires_in`, so a token is never treated as due on every read.
+ */
+const DOCUMENTED_LIFETIME_MS: { readonly [Grant in LinearTokenGrant['grant']]: number } = {
+  client_credentials: 2_591_999_000,
+  authorization_code: 86_399_000,
+  refresh_token: 86_399_000,
+};
+
 /** The PKCE verifier's length in bytes before encoding (RFC 7636: 43 to 128 characters). */
 const PKCE_VERIFIER_BYTES = 32;
 
@@ -354,7 +364,10 @@ export async function requestLinearTokens(
     },
     body: tokenRequestBody(client, grant).toString(),
   });
-  return readTokenResponse(response.status, await bodyOf(response), now);
+  const tokens = readTokenResponse(response.status, await bodyOf(response), now);
+  return tokens.expiresAt !== undefined
+    ? tokens
+    : { ...tokens, expiresAt: now + DOCUMENTED_LIFETIME_MS[grant.grant] };
 }
 
 /**
