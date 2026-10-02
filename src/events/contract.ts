@@ -18,6 +18,7 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import type { CharterChange, FieldDiff } from '../agent/charter-amendment';
 import type { TransferCancelReason } from '../agent/manager-transfer';
 import type {
+  AccessRequestReason,
   OrganisationConnectionKind,
   OrganisationConnectionMode,
   OrganisationRegistrar,
@@ -827,6 +828,16 @@ export interface SurfaceAppUnrecordedPayload extends SurfaceNamed {
   readonly appId?: string;
 }
 
+/** The payload of `surface.access-requested`: the request drafted for IT, as the card shows it (A24). */
+export interface SurfaceAccessRequestedPayload extends SurfaceNamed {
+  /** The organisation system the card needs (`slack`, `linear`, `mcp:<host>`, ...). */
+  readonly system: string;
+  readonly reason: AccessRequestReason;
+  readonly scopes: readonly string[];
+  /** The request's words, the same on the card, in the manager's DM and in the export. */
+  readonly text: string;
+}
+
 // The organisation's connections (AC11): written to `connectionEvents` through
 // `appendConnectionEvent`, never to an employee's `events`.
 
@@ -1422,6 +1433,7 @@ export interface EventPayloads {
   'surface.scope-reapproval-required': SurfaceScopeReapprovalRequiredPayload;
   'surface.configuration-token-revoked': SurfaceConfigurationTokenRevokedPayload;
   'surface.app-unrecorded': SurfaceAppUnrecordedPayload;
+  'surface.access-requested': SurfaceAccessRequestedPayload;
   'organisation.connection-landed': OrganisationConnectionLandedPayload;
   'organisation.connection-rotated': OrganisationConnectionRotatedPayload;
   'organisation.connection-revoked': OrganisationConnectionRevokedPayload;
@@ -1589,6 +1601,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'surface.scope-reapproval-required',
   'surface.configuration-token-revoked',
   'surface.app-unrecorded',
+  'surface.access-requested',
   'organisation.connection-landed',
   'organisation.connection-rotated',
   'organisation.connection-revoked',

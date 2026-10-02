@@ -213,7 +213,13 @@ describe('the live feed labels', (): void => {
     ).toBe('access set by the upgrade: 90 days');
   });
 
-  it('labels the organisation connection ledger (11-AO)', (): void => {
+  it('labels the access request and the organisation connection ledger (11-AO)', (): void => {
+    expect(
+      eventLabel({
+        type: 'surface.access-requested',
+        payload: { surfaceId: 's1', scopes: ['linear:read', 'linear:write'] },
+      }),
+    ).toBe('access requested from IT: linear:read, linear:write');
     const named = { organisationConnectionId: 'c1', system: 'slack', displayName: 'Slack' };
     expect(eventLabel({ type: 'organisation.connection-landed', payload: named })).toBe(
       'Slack connected for the organisation',

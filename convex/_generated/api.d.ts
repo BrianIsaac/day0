@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as accessRequests from '../accessRequests.js';
 import type * as agents from '../agents.js';
 import type * as baselineActions from '../baselineActions.js';
 import type * as charters from '../charters.js';
@@ -79,6 +80,7 @@ import type * as workspace from '../workspace.js';
 import type { ApiFromModules, FilterApi, FunctionReference } from 'convex/server';
 
 declare const fullApi: ApiFromModules<{
+  accessRequests: typeof accessRequests;
   agents: typeof agents;
   baselineActions: typeof baselineActions;
   charters: typeof charters;

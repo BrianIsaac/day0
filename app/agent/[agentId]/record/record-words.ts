@@ -604,6 +604,10 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
       : `The app configuration token of ${connectionOf(subject)} was dropped${because(p.reason)}`,
   'surface.app-unrecorded': (_, subject) =>
     `An app registered for ${connectionOf(subject)} was not recorded; remove it at the provider`,
+  'surface.access-requested': (p, subject) => {
+    const scopes = listed(p.scopes);
+    return `${decider(subject)} asked IT for access to ${connectionOf(subject)}${scopes ? ` (${scopes})` : ''}`;
+  },
   'organisation.connection-landed': (p) =>
     `${organisationSystem(p.displayName)} was connected for the organisation${registeredVia(p.via)}`,
   'organisation.connection-rotated': (p) =>

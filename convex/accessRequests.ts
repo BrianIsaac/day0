@@ -1,0 +1,354 @@
+import { ConvexError, v, type Infer } from 'convex/values';
+import type { Doc, Id } from './_generated/dataModel';
+import {
+  internalMutation,
+  mutation,
+  query,
+  type MutationCtx,
+  type QueryCtx,
+} from './_generated/server';
+import { internal } from './_generated/api';
+import { appendEvent } from './eventLog';
+import { activeConnectionFor } from './organisationConnections';
+import { assertOwnsAgent } from './ownership';
+import { agentZone } from '../src/lib/zone';
+import { SURFACE_MODE } from '../src/lib/surface-mode';
+import { ACCESS_REQUEST_REASONS } from '../src/surfaces/access-identity';
+import {
+  accessRequestReason,
+  draftAccessRequest,
+  organisationSystemOf,
+  type AccessRequestDraft,
+} from '../src/surfaces/access-request';
+import { BOSS_MESSAGE_SCOPE, surfaceRefusal } from '../src/surfaces/policy';
+import { toSurfaceRecord } from '../src/surfaces/records';
+import { isSlackApiEndpoint } from '../src/surfaces/slack-endpoint';
+import { accessEnded } from '../src/work/surface-access';
+
+/*
+ * The access request (the access plan, section 4.5; A24): when an approved card's system has no
+ * active organisation connection, needs an administrator's install, or needs a wider scope, the
+ * card shows a request for IT instead of a credential field. Its words come from one pure
+ * function (`src/surfaces/access-request.ts`) over the card and the connection, so they are the
+ * same on the card (`forCard`), in the manager's DM (`managerChannelActions.sendAccessRequest`)
+ * and in the export (the `surface.access-requested` event). It is a request, never a grant:
+ * nothing changes until an administrator lands the connection.
+ */
+
+/** Bound on an employee's surfaces read for the Slack card the DM goes through. */
+const DM_SURFACE_READ_LIMIT = 50;
+
+/** Bound on an employee's grants read for the DM's authority. */
+const DM_GRANT_READ_LIMIT = 500;
+
+/** The refusal for a card that asks IT for nothing. */
+export const NO_ACCESS_REQUEST = 'This card needs no access request: it connects without IT.';
+
+/** The refusal for marking a request sent before it was drafted. */
+const NOT_DRAFTED = 'Draft the access request before marking it sent.';
+
+/** The request a card makes now, and the connection it was judged against. */
+interface CurrentRequest {
+  readonly draft: AccessRequestDraft;
+  readonly connection: Doc<'organisationConnections'> | null;
+}
+
+/**
+ * The access request a card makes now, or null when it makes none: its system's active
+ * connection read, the reason judged, and the words built from the card, the employee and the
+ * employee's zone.
+ */
+async function currentRequest(
+  ctx: Pick<QueryCtx, 'db'>,
+  surface: Doc<'surfaces'>,
+  agent: Doc<'agents'>,
+): Promise<CurrentRequest | null> {
+  const system = organisationSystemOf(surface);
+  if (system === undefined) return null;
+  const connection = await activeConnectionFor(ctx, system);
+  const reason = accessRequestReason(surface, connection);
+  if (reason === undefined) return null;
+  const publicUrl = process.env.DAY0_PUBLIC_URL;
+  const draft = draftAccessRequest({
+    card: surface,
+    connection,
+    reason,
+    employeeName: agent.name,
+    zone: agentZone(agent),
+    ...(publicUrl ? { publicUrl } : {}),
+  });
+  return { draft, connection };
+}
+
+/** The card and its employee, if the caller owns the employee; throws otherwise. */
+async function ownedCard(
+  ctx: QueryCtx | MutationCtx,
+  surfaceId: Id<'surfaces'>,
+): Promise<{ surface: Doc<'surfaces'>; agent: Doc<'agents'> }> {
+  const surface = await ctx.db.get(surfaceId);
+  if (surface === null) throw new ConvexError('That card no longer exists.');
+  const agent = await assertOwnsAgent(ctx, surface.agentId);
+  return { surface, agent };
+}
+
+const reasonValidator = v.union(...ACCESS_REQUEST_REASONS.map((reason) => v.literal(reason)));
+
+/** The access request as the card shows it. */
+const accessRequestViewValidator = v.object({
+  system: v.string(),
+  reason: reasonValidator,
+  scopes: v.array(v.string()),
+  subject: v.string(),
+  text: v.string(),
+  mailto: v.string(),
+  /** When it was drafted and how it went out, once the manager drafted it. */
+  draftedAt: v.optional(v.number()),
+  copiedAt: v.optional(v.number()),
+  emailedAt: v.optional(v.number()),
+  messagedAt: v.optional(v.number()),
+});
+
+/** The access request as the card shows it. */
+export type AccessRequestView = Infer<typeof accessRequestViewValidator>;
+
+/** The view of a current request, with what the card records of the one drafted. */
+function viewOf(
+  draft: AccessRequestDraft,
+  recorded: Doc<'surfaces'>['accessRequest'],
+): AccessRequestView {
+  const matches = recorded !== undefined && sameRequest(recorded, draft);
+  return {
+    system: draft.system,
+    reason: draft.reason,
+    scopes: [...draft.scopes],
+    subject: draft.subject,
+    text: draft.text,
+    mailto: draft.mailto,
+    ...(matches && recorded !== undefined
+      ? {
+          draftedAt: recorded.draftedAt,
+          ...(recorded.copiedAt === undefined ? {} : { copiedAt: recorded.copiedAt }),
+          ...(recorded.emailedAt === undefined ? {} : { emailedAt: recorded.emailedAt }),
+          ...(recorded.messagedAt === undefined ? {} : { messagedAt: recorded.messagedAt }),
+        }
+      : {}),
+  };
+}
+
+/** Whether a recorded request is the one the card makes now: the same reason and scopes. */
+function sameRequest(
+  recorded: NonNullable<Doc<'surfaces'>['accessRequest']>,
+  draft: AccessRequestDraft,
+): boolean {
+  return (
+    recorded.reason === draft.reason &&
+    recorded.scopes.length === draft.scopes.length &&
+    recorded.scopes.every((scope, index) => scope === draft.scopes[index])
+  );
+}
+
+/**
+ * The access request a card makes, for the card to show instead of a credential field, or null
+ * when it makes none. Public, owner-guarded (`assertOwnsAgent`); writes nothing.
+ */
+export const forCard = query({
+  args: { surfaceId: v.id('surfaces') },
+  returns: v.union(v.null(), accessRequestViewValidator),
+  handler: async (ctx, args): Promise<AccessRequestView | null> => {
+    const { surface, agent } = await ownedCard(ctx, args.surfaceId);
+    const current = await currentRequest(ctx, surface, agent);
+    return current === null ? null : viewOf(current.draft, surface.accessRequest);
+  },
+});
+
+/**
+ * Draft the card's access request: record it on the card (`accessRequest`), append
+ * `surface.access-requested` with its words to the employee's record, and in real mode schedule
+ * the one DM to the manager (`managerChannelActions.sendAccessRequest`). A request already drafted
+ * with the same reason and scopes is answered as it stands, with no second event or DM. Public,
+ * owner-guarded (`assertOwnsAgent`).
+ *
+ * @throws ConvexError with {@link NO_ACCESS_REQUEST} for a card that asks IT for nothing.
+ */
+export const draft = mutation({
+  args: { surfaceId: v.id('surfaces') },
+  returns: accessRequestViewValidator,
+  handler: async (ctx, args): Promise<AccessRequestView> => {
+    const { surface, agent } = await ownedCard(ctx, args.surfaceId);
+    const current = await currentRequest(ctx, surface, agent);
+    if (current === null) throw new ConvexError(NO_ACCESS_REQUEST);
+    const recorded = surface.accessRequest;
+    if (recorded !== undefined && sameRequest(recorded, current.draft)) {
+      return viewOf(current.draft, recorded);
+    }
+    const now = Date.now();
+    const accessRequest = {
+      reason: current.draft.reason,
+      scopes: [...current.draft.scopes],
+      ...(current.connection === null ? {} : { organisationConnectionId: current.connection._id }),
+      draftedAt: now,
+    };
+    await ctx.db.patch(surface._id, { accessRequest });
+    await appendEvent(ctx, {
+      agentId: surface.agentId,
+      type: 'surface.access-requested',
+      payload: {
+        surfaceId: surface._id,
+        system: current.draft.system,
+        reason: current.draft.reason,
+        scopes: current.draft.scopes,
+        text: current.draft.text,
+      },
+      createdAt: now,
+    });
+    if (SURFACE_MODE === 'real') {
+      await ctx.scheduler.runAfter(0, internal.managerChannelActions.sendAccessRequest, {
+        surfaceId: surface._id,
+        draftedAt: now,
+      });
+    }
+    return viewOf(current.draft, accessRequest);
+  },
+});
+
+/**
+ * Record that the manager copied the drafted request or opened it in their email ("Sent to IT on
+ * 3 October"). Public, owner-guarded (`assertOwnsAgent`); writes `accessRequest.copiedAt` or
+ * `emailedAt`.
+ *
+ * @throws ConvexError when the card has no drafted request.
+ */
+export const recordSent = mutation({
+  args: {
+    surfaceId: v.id('surfaces'),
+    via: v.union(v.literal('copied'), v.literal('emailed')),
+  },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const { surface } = await ownedCard(ctx, args.surfaceId);
+    if (surface.accessRequest === undefined) throw new ConvexError(NOT_DRAFTED);
+    const now = Date.now();
+    await ctx.db.patch(surface._id, {
+      accessRequest: {
+        ...surface.accessRequest,
+        ...(args.via === 'copied' ? { copiedAt: now } : { emailedAt: now }),
+      },
+    });
+    return null;
+  },
+});
+
+/**
+ * The Slack card the employee's manager DM goes through, if it has one: connected on Slack's
+ * documented API, its credential landed, its access not ended, its allowlist naming
+ * `chat.postMessage`, its manager DM known, and the DM granted as the gate grants it
+ * (`boss:message` or the card's own write scope, `grantingScopes`).
+ */
+async function managerDmCardOf(
+  ctx: Pick<QueryCtx, 'db'>,
+  agentId: Id<'agents'>,
+  now: number,
+): Promise<Doc<'surfaces'> | undefined> {
+  const [surfaces, grants] = await Promise.all([
+    ctx.db
+      .query('surfaces')
+      .withIndex('by_agent', (index) => index.eq('agentId', agentId))
+      .take(DM_SURFACE_READ_LIMIT),
+    ctx.db
+      .query('permissionGrants')
+      .withIndex('by_agent_scope', (index) => index.eq('agentId', agentId))
+      .take(DM_GRANT_READ_LIMIT),
+  ]);
+  const active = new Set(grants.filter((grant) => !grant.revokedAt).map((grant) => grant.scope));
+  return surfaces.find(
+    (surface) =>
+      surface.class === 'chat' &&
+      surface.verdict === 'connected' &&
+      surface.credentialLanded &&
+      surface.credentialId !== undefined &&
+      surface.managerDmChannelId !== undefined &&
+      surface.path === 'documented-api' &&
+      isSlackApiEndpoint(surface.endpoint) &&
+      surface.toolAllowlist?.includes('chat.postMessage') === true &&
+      (active.has(BOSS_MESSAGE_SCOPE) || active.has(`${surface.slug}:write`)) &&
+      !accessEnded(surface, now) &&
+      surfaceRefusal(toSurfaceRecord(surface), now) === undefined,
+  );
+}
+
+/** The three characters Slack reads as markup in a message's text, escaped as Slack asks. */
+function slackEscaped(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/** What the DM action sends through, once the request is claimed for it. */
+const claimedMessageValidator = v.union(
+  v.object({ claimed: v.literal(false), reason: v.string() }),
+  v.object({
+    claimed: v.literal(true),
+    credentialId: v.string(),
+    channel: v.string(),
+    /** The request's words, escaped for Slack; Slack shows them as written. */
+    text: v.string(),
+  }),
+);
+
+/**
+ * Internal, for `managerChannelActions.sendAccessRequest`: claim the DM of the request drafted at
+ * `draftedAt`. Refused in mock mode, when the card or its employee is gone, the request was
+ * redrafted or already sent to the DM, the card no longer makes it, or the employee has no Slack
+ * card that can carry the DM. Writes nothing; the record is written once Slack has the message.
+ */
+export const claimMessage = internalMutation({
+  args: { surfaceId: v.id('surfaces'), draftedAt: v.number() },
+  returns: claimedMessageValidator,
+  handler: async (ctx, args): Promise<Infer<typeof claimedMessageValidator>> => {
+    if (SURFACE_MODE !== 'real') {
+      return { claimed: false, reason: 'the DM is sent in real mode only' };
+    }
+    const surface = await ctx.db.get(args.surfaceId);
+    const recorded = surface?.accessRequest;
+    if (surface === null || recorded === undefined || recorded.draftedAt !== args.draftedAt) {
+      return { claimed: false, reason: 'the request was redrafted or is gone' };
+    }
+    if (recorded.messagedAt !== undefined) {
+      return { claimed: false, reason: 'the request was already sent to the manager' };
+    }
+    const agent = await ctx.db.get(surface.agentId);
+    if (agent === null) return { claimed: false, reason: 'the employee is gone' };
+    const current = await currentRequest(ctx, surface, agent);
+    if (current === null || !sameRequest(recorded, current.draft)) {
+      return { claimed: false, reason: 'the card no longer makes this request' };
+    }
+    const card = await managerDmCardOf(ctx, agent._id, Date.now());
+    if (card?.credentialId === undefined || card.managerDmChannelId === undefined) {
+      return { claimed: false, reason: 'the employee has no chat connection that can carry it' };
+    }
+    return {
+      claimed: true,
+      credentialId: card.credentialId,
+      channel: card.managerDmChannelId,
+      text: slackEscaped(current.draft.text),
+    };
+  },
+});
+
+/**
+ * Internal, for `managerChannelActions.sendAccessRequest`: record the DM Slack accepted, with its
+ * timestamp as the evidence, on the request drafted at `draftedAt` only.
+ */
+export const recordMessage = internalMutation({
+  args: { surfaceId: v.id('surfaces'), draftedAt: v.number(), providerTs: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const surface = await ctx.db.get(args.surfaceId);
+    const recorded = surface?.accessRequest;
+    if (surface === null || recorded === undefined || recorded.draftedAt !== args.draftedAt) {
+      return null;
+    }
+    await ctx.db.patch(surface._id, {
+      accessRequest: { ...recorded, messagedAt: Date.now(), messageProviderTs: args.providerTs },
+    });
+    return null;
+  },
+});

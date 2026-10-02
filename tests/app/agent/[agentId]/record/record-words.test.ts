@@ -481,7 +481,25 @@ describe('recordWords', (): void => {
   });
 });
 
-describe('the organisation connection ledger in the record (11-AO)', (): void => {
+describe('the access request and the organisation connection ledger in the record (11-AO)', (): void => {
+  it('says the manager asked IT for access, naming the scopes', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'surface.access-requested',
+          payload: {
+            surfaceId: 's1',
+            system: 'linear',
+            reason: 'no-connection',
+            scopes: ['linear:read', 'linear:write'],
+            text: 'request',
+          },
+        },
+        { ...subject, connection: 'Linear' },
+      ),
+    ).toBe('You asked IT for access to the Linear connection (linear:read, linear:write).');
+  });
+
   it('says what happened to an organisation connection and who did it, with a revoke’s reason', (): void => {
     const named = {
       organisationConnectionId: 'c1',

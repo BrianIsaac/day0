@@ -373,6 +373,10 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
       ? 'app configuration token revoked at the provider'
       : `app configuration token dropped${because(payload.reason)}`,
   'surface.app-unrecorded': 'a registered app was not recorded: remove it at the provider',
+  'surface.access-requested': (payload) => {
+    const scopes = listed(payload.scopes);
+    return `access requested from IT${scopes ? `: ${scopes}` : ''}`;
+  },
   'organisation.connection-landed': (payload) =>
     `${text(payload.displayName) ?? 'a system'} connected for the organisation`,
   'organisation.connection-rotated': (payload) =>
