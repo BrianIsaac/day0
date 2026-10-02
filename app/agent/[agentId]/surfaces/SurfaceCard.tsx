@@ -421,7 +421,9 @@ export function SurfaceCard({
           }
           move={move}
         />
-        {surface.verdict !== 'declared' && surface.verdict !== 'absent' ? (
+        {/* The employee's own app is Slack's alone (`provisionApp`), and is registered only for an
+            approved card, as the action refuses one before. */}
+        {slack && surface.managerApprovedAt !== undefined ? (
           <ProvisioningRow
             error={failed('provision')}
             onProvision={actions.provision}

@@ -488,4 +488,26 @@ describe('whom the card acts as, and how it connects (wave 11, 11-AC)', (): void
     );
     expect(markup).toMatch(/<button[^>]*>Move to its own identity<\/button>/);
   });
+
+  it("draws the Slack app's provisioning row only on an approved Slack card, never on an MCP card or before approval (bed, 2 Oct)", (): void => {
+    const mcp = render(
+      listed({
+        endpoint: 'https://docs.acme.test/mcp',
+        displayName: 'Acme docs',
+        verdict: 'approved',
+        managerApprovedAt: NOW - DAY,
+        expiresAt: NOW + 89 * DAY,
+        request: { credential: { found: 'none', method: 'oauth', label: 'Acme docs access' } },
+      }),
+      { installRedirectConfigured: true },
+    );
+    expect(mcp).not.toContain('Provision a dedicated app');
+    expect(mcp).not.toContain('configuration-token');
+    const proposed = render(listed(SLACK_CARD), {
+      organisation: organisation({ system: 'slack' }),
+      installRedirectConfigured: true,
+    });
+    expect(proposed).not.toContain('Provision a dedicated app');
+    expect(proposed).not.toMatch(/<button[^>]*>Connect<\/button>/);
+  });
 });
