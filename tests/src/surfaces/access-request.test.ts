@@ -163,6 +163,38 @@ describe('when a card asks IT for access instead of offering Connect (A24)', ():
     expect(accessRequestReason(linearCard, linear)).toBeUndefined();
   });
 
+  it('asks for a per-employee app only until an administrator records it, then offers Connect and never a lapsed link', (): void => {
+    const perEmployee = { ...linear, mode: 'per-employee' as const };
+    expect(accessRequestReason(linearCard, perEmployee)).toBe('install-needed');
+    const recorded = {
+      ...linearCard,
+      provisioning: {
+        clientId: 'leo-app',
+        installUrl: 'https://linear.app/oauth/authorize?client_id=leo-app',
+      },
+    };
+    expect(accessRequestReason(recorded, perEmployee)).toBeUndefined();
+  });
+
+  it('asks nothing of an MCP card whose server is connected: its manager authorises it (AM6)', (): void => {
+    const mcpCard = {
+      slug: 'docs',
+      displayName: 'Acme docs',
+      path: 'mcp',
+      endpoint: 'https://mcp.acme.com:8443/mcp',
+      managerApprovedAt: 1,
+    };
+    const server = {
+      system: 'mcp:mcp.acme.com:8443',
+      displayName: 'mcp.acme.com',
+      kind: 'mcp-client' as const,
+      mode: 'per-employee' as const,
+      scopes: [],
+    };
+    expect(accessRequestReason(mcpCard, server)).toBeUndefined();
+    expect(accessRequestReason(mcpCard, null)).toBe('no-connection');
+  });
+
   it('asks for a scope the registration does not hold, when the card names the scopes it needs', (): void => {
     expect(accessRequestReason(linearCard, linear, ['read', 'issues:create'])).toBe(
       'scope-widening',

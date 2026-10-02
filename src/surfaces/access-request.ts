@@ -153,8 +153,11 @@ export interface AccessRequestCard extends SystemCard {
   /** The card's proposal, whose `scopeRequested` names the scopes it was approved for. */
   readonly request?: unknown;
   readonly discoveryEvidence?: ReadonlyArray<{ readonly quote: string; readonly current: boolean }>;
-  /** The employee's own app, when Day0 created one: its install link is what IT follows. */
-  readonly provisioning?: { readonly installUrl?: string };
+  /**
+   * The employee's own app, once Day0 created it (Slack) or an administrator recorded it (Linear):
+   * its client id, and the install link IT follows.
+   */
+  readonly provisioning?: { readonly clientId?: string; readonly installUrl?: string };
 }
 
 /** The parts of an organisation connection the access request reads. */
@@ -170,11 +173,13 @@ export interface AccessRequestConnection {
  * Why an approved card asks IT for access instead of offering Connect, or undefined when it does
  * not (the access plan, section 4.5; A24): its system has no active organisation connection; the
  * connection is per employee and an administrator must install the employee's app (Linear's app
- * per employee, L1; Slack's only when the install link the workspace holds for approval waits on
+ * per employee until an administrator records it, L1, after which Connect starts its installation
+ * with a fresh link; Slack's only when the install link the workspace holds for approval waits on
  * IT, since Day0 creates Slack's app itself); or the card needs scopes the registration does not
- * hold, when the caller knows the vendor scopes it needs. A card not yet approved, one holding a
- * credential (a pasted key keeps working to expiry, A27), and one on no organisation system never
- * ask.
+ * hold, when the caller knows the vendor scopes it needs. An MCP card on its server's client is
+ * authorised by its manager's own consent (AM6), so it never asks once the server is connected. A
+ * card not yet approved, one holding a credential (a pasted key keeps working to expiry, A27),
+ * and one on no organisation system never ask.
  *
  * @param card - The card.
  * @param connection - The system's active organisation connection, or null.
@@ -192,10 +197,21 @@ export function accessRequestReason(
     return 'scope-widening';
   }
   if (connection.mode === 'shared') return undefined;
-  if (connection.kind === 'slack-configuration') {
-    return card.provisioning?.installUrl === undefined ? undefined : 'install-needed';
+  switch (connection.kind) {
+    case 'slack-configuration':
+      return card.provisioning?.installUrl === undefined ? undefined : 'install-needed';
+    case 'oauth-app':
+      return card.provisioning?.clientId === undefined ? 'install-needed' : undefined;
+    case 'mcp-client':
+      return undefined;
+    case 'service-account':
+    case 'static-key':
+      return 'install-needed';
+    default: {
+      const unknown: never = connection.kind;
+      throw new Error(`unhandled organisation connection kind ${String(unknown)}`);
+    }
   }
-  return 'install-needed';
 }
 
 /** Everything the request's words are built from. */
