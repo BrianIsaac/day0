@@ -11,14 +11,13 @@ import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { assertNamedInTransfer } from './ownership';
 import { charterAtHandover, discardUnapprovedCharter, renderIdentityForManager } from './charters';
-import { purgeCredential } from './credentials';
 import { appendEvent, eventsOfType } from './eventLog';
 import {
   assertKeepable,
   boundariesOf,
   cancelJobsFor,
   employeeWorkItems,
-  sortCredentials,
+  revokeUnbound,
   wakeReleasedClaims,
   type Boundaries,
 } from './reset';
@@ -41,6 +40,7 @@ import {
   voidDecisionRequestsForHandover,
 } from './work';
 import {
+  HANDOVER_ENDED_CANCEL_REASON,
   HANDOVER_SETTINGS_REASON,
   isTransferDue,
   transferSettleBy,
@@ -280,9 +280,11 @@ interface Cut {
 
 /**
  * Cut the employee's connections (D5 (a)): the surfaces through `handOverSurfaces`, then each
- * credential they bound sorted by the retire's rule, revoked with its ciphertext deleted when
- * nothing else of the old owner's binds it and kept for them otherwise, and every pending job
- * naming a cut surface cancelled.
+ * credential the cut ones bound sorted by the retire's rule, revoked with its ciphertext deleted
+ * when nothing else of the old owner's binds it and kept for them otherwise, each cut card's end
+ * written as its system's ledger line with nothing called at the vendor (A25), and every pending
+ * job naming a cut or re-approved surface cancelled. A card that kept the employee's own identity
+ * keeps its credential.
  */
 async function cutConnections(
   ctx: MutationCtx,
@@ -295,19 +297,28 @@ async function cutConnections(
     toOwnerKey: transfer.toOwnerKey,
     now,
   });
-  const bound = new Set(surfaces.cut.flatMap((surface) => surface.boundCredentials));
-  const { revoke, kept } = await sortCredentials(
-    ctx.db,
+  const { revoked, kept } = await revokeUnbound(
+    ctx,
     transfer.fromOwnerKey,
-    bound,
+    [
+      {
+        agentId: agent._id,
+        cards: surfaces.cut.map((surface) => ({
+          surfaceId: surface.surfaceId,
+          displayName: surface.displayName,
+          bound: new Set(surface.boundCredentials),
+        })),
+      },
+    ],
+    'transfer',
+    now,
     new Set([agent._id]),
   );
-  for (const credential of revoke) await purgeCredential(ctx, credential, now);
   await cancelJobsFor(ctx, {
-    ids: new Set(surfaces.cut.map((surface) => surface.surfaceId)),
+    ids: new Set([...surfaces.cut, ...surfaces.reapproved].map((surface) => surface.surfaceId)),
     employees: new Set([agent._id]),
   });
-  return { surfaces, revoked: revoke.length, kept: kept.size };
+  return { surfaces, revoked: revoked.size, kept: kept.size };
 }
 
 /**
@@ -657,15 +668,21 @@ interface HandoverEnding {
  * both read it); this one write, the settle's own and never a caller's, steps outside the table
  * on purpose. The ending is logged and, while the employee exists, appended to its record as
  * `manager.transfer-ended` (decision 4): the old manager reads there why the handover ended. The
- * request's `cancelReason` names an ask's cancel only and is left unset (its values are the
- * schema's; recorded for the cockpit).
+ * request's `cancelReason` is {@link HANDOVER_ENDED_CANCEL_REASON}, which `endedForMe` reads as an
+ * ending rather than an ask's cancel; a settle's last failure is counted in `settleFailures` by
+ * its caller in the same patch.
  */
 async function endUnmovable(
   ctx: MutationCtx,
   transfer: Doc<'managerTransfers'>,
   ending: HandoverEnding,
+  settleFailures?: number,
 ): Promise<void> {
-  await ctx.db.patch(transfer._id, { state: 'cancelled' });
+  await ctx.db.patch(transfer._id, {
+    state: 'cancelled',
+    cancelReason: HANDOVER_ENDED_CANCEL_REASON,
+    ...(settleFailures !== undefined ? { settleFailures } : {}),
+  });
   log.error('accepted handover could not move; ended', {
     transferId: transfer._id,
     agentId: transfer.agentId,
@@ -780,11 +797,28 @@ const SETTLE_FAILURE_CHARS = 500;
 const attemptOutcomeValidator = v.union(settleOutcomeValidator, v.literal('failed'));
 
 /**
+ * How many settles of an accepting request have failed: its own count, or, for a request whose
+ * failures an older release counted only on the employee's record, the record's.
+ */
+async function settleFailuresSoFar(
+  ctx: MutationCtx,
+  transfer: Doc<'managerTransfers'>,
+): Promise<number> {
+  if (transfer.settleFailures !== undefined) return transfer.settleFailures;
+  const earlier = await eventsOfType(ctx, transfer.agentId, 'manager.transfer-settle-failed', {
+    from: transfer.decidedAt ?? transfer.requestedAt,
+  }).take(SETTLE_FAILURES_BEFORE_END);
+  return earlier.filter(
+    (event) => (event.payload as { transferId?: unknown }).transferId === transfer._id,
+  ).length;
+}
+
+/**
  * Count one failed settle of an accepting request, and end the request once
- * {@link SETTLE_FAILURES_BEFORE_END} have failed (decision 4). The failures are counted from the
- * employee's record, where each is `manager.transfer-settle-failed` (the request has no field
- * for a count: recorded for the cockpit), so the count survives the throw that rolled the settle
- * back.
+ * {@link SETTLE_FAILURES_BEFORE_END} have failed (decision 4). The count is the request's own
+ * `settleFailures`, written in the same patch as each failure's `manager.transfer-settle-failed`
+ * event, in a transaction of its own, so it survives the throw that rolled the settle back; a
+ * request whose failures an older release counted only on the record starts from that record.
  *
  * Internal, for {@link attemptSettle}. Writes the failure's event, or the ending.
  *
@@ -798,20 +832,20 @@ export const recordSettleFailure = internalMutation({
     if (transfer === null || transfer.state !== 'accepting') return 'not-accepting';
     const reason = args.reason.slice(0, SETTLE_FAILURE_CHARS);
     if ((await ctx.db.get(transfer.agentId)) === null) {
-      await endUnmovable(ctx, transfer, { reason: 'settle-failed', detail: reason });
+      await endUnmovable(
+        ctx,
+        transfer,
+        { reason: 'settle-failed', detail: reason },
+        (transfer.settleFailures ?? 0) + 1,
+      );
       return 'ended';
     }
-    const earlier = await eventsOfType(ctx, transfer.agentId, 'manager.transfer-settle-failed', {
-      from: transfer.decidedAt ?? transfer.requestedAt,
-    }).take(SETTLE_FAILURES_BEFORE_END);
-    const attempt =
-      earlier.filter(
-        (event) => (event.payload as { transferId?: unknown }).transferId === transfer._id,
-      ).length + 1;
+    const attempt = (await settleFailuresSoFar(ctx, transfer)) + 1;
     if (attempt >= SETTLE_FAILURES_BEFORE_END) {
-      await endUnmovable(ctx, transfer, { reason: 'settle-failed', detail: reason });
+      await endUnmovable(ctx, transfer, { reason: 'settle-failed', detail: reason }, attempt);
       return 'ended';
     }
+    await ctx.db.patch(transfer._id, { settleFailures: attempt });
     await appendEvent(ctx, {
       agentId: transfer.agentId,
       type: 'manager.transfer-settle-failed',

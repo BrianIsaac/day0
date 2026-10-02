@@ -673,6 +673,47 @@ describe('accept with a run in flight: the request waits in accepting (transfer 
     ]);
   });
 
+  it('counts each failed settle on the request, and names its own ending there (11-AK item 3)', async (): Promise<void> => {
+    const handover = await seedHandover();
+    await seedExecuting(handover, 'REVOPS-1');
+    await accept(handover);
+    await seedUnmovableSurfaces(handover);
+
+    for (let attempt = 1; attempt < SETTLE_FAILURES_BEFORE_END; attempt += 1) {
+      vi.setSystemTime(ACCEPTED_AT + TRANSFER_SETTLE_MS + attempt * 60_000);
+      await handover.harness.mutation(internal.transferAcceptance.settleDue, {});
+      await drain(handover.harness);
+      expect(await read(handover.harness, handover.transferId)).toMatchObject({
+        state: 'accepting',
+        settleFailures: attempt,
+      });
+    }
+    vi.setSystemTime(ACCEPTED_AT + TRANSFER_SETTLE_MS + SETTLE_FAILURES_BEFORE_END * 60_000);
+    await handover.harness.mutation(internal.transferAcceptance.settleDue, {});
+    await drain(handover.harness);
+
+    expect(await read(handover.harness, handover.transferId)).toMatchObject({
+      state: 'cancelled',
+      cancelReason: 'handover-ended',
+      settleFailures: SETTLE_FAILURES_BEFORE_END,
+    });
+  });
+
+  it("names the operator's ending of a stuck request on the request (11-AK item 3)", async (): Promise<void> => {
+    const handover = await seedHandover();
+    await seedExecuting(handover, 'REVOPS-1');
+    await accept(handover);
+
+    await handover.harness.mutation(internal.transferAcceptance.endStuckHandover, {
+      transferId: handover.transferId,
+      reason: 'the settle throws on a transaction limit',
+    });
+
+    const ended = await read(handover.harness, handover.transferId);
+    expect(ended).toMatchObject({ state: 'cancelled', cancelReason: 'handover-ended' });
+    expect(ended?.settleFailures).toBeUndefined();
+  });
+
   it('leaves a request that is not accepting as it is when the operator tries to end it', async (): Promise<void> => {
     const handover = await seedHandover();
     const asked = await read(handover.harness, handover.transferId);

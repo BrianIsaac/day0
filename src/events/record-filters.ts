@@ -116,6 +116,8 @@ export const RECORD_FILTER_OF: { readonly [Type in EventType]: readonly RecordFi
   'organisation.connection-landed': NONE,
   'organisation.connection-rotated': NONE,
   'organisation.connection-revoked': NONE,
+  'surface.disconnected': DECISIONS,
+  'credential.revoked-at-source': NONE,
   'plan.obligations-judged': NONE,
   'plan.obligations-failed-open': NONE,
   'plan.obligations-disagreed': NONE,

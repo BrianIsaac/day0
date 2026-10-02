@@ -596,11 +596,22 @@ describe('retire in real mode', (): void => {
       claims: [],
       rejections: [],
     });
-    expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({
+    // Re-pinned (11-AR): the retire now writes each connection's end on the record beside its one
+    // `agent.retired`: both connections here bound pasted keys, never sent to a vendor.
+    const retiredEvents = events.filter((event) => event.type === 'agent.retired');
+    expect(retiredEvents).toHaveLength(1);
+    expect(retiredEvents[0]).toMatchObject({
       type: 'agent.retired',
       payload: { retirementId: retirement._id, agentId: retiring, retiredAt: retirement.retiredAt },
     });
+    expect(
+      events
+        .filter((event) => event.type !== 'agent.retired')
+        .map((event) => [event.type, (event.payload as { outcome?: unknown }).outcome]),
+    ).toEqual([
+      ['credential.revoked-at-source', 'pasted-key'],
+      ['credential.revoked-at-source', 'pasted-key'],
+    ]);
     expect(await harness.run(async (ctx) => await ctx.db.get(retiring))).toBeNull();
     const surfaces = await harness.run(
       async (ctx) =>

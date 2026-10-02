@@ -23,6 +23,8 @@ import type {
   OrganisationConnectionMode,
   OrganisationRegistrar,
 } from '../surfaces/access-identity';
+import type { AccessEnd } from '../surfaces/access-identity';
+import type { SourceRevocationOutcome } from '../surfaces/revokers/outcome';
 import type { ModelCallReport } from '../lib/model-call-telemetry';
 import type { SurfaceMode } from '../lib/surface-mode';
 import type { ClaimHolder } from '../work/claim-key';
@@ -774,6 +776,8 @@ export interface SurfaceConnectedPayload extends SurfaceNamed {
 /** The payload of `surface.expired`. Older code wrote this without the end date. */
 export interface SurfaceExpiredPayload extends SurfaceNamed {
   readonly expiresAt?: number;
+  /** True where the end revoked at the vendor the credential Day0 obtained (11-AR, A26). */
+  readonly revokedAtSource?: boolean;
 }
 
 /** The payload of `surface.access-set`. */
@@ -782,6 +786,10 @@ export interface SurfaceAccessSetPayload extends SurfaceNamed {
   readonly days: number;
   readonly expiresAt: number;
   readonly renewed?: boolean;
+  /** What the renewal needs issued again: the expiry revoked it at the vendor (11-AR, A26). */
+  readonly reissue?: 'install' | 'authorise';
+  /** The move a renewed pasted key is offered: its system has an organisation connection (A27). */
+  readonly offer?: 'own-identity';
   /** The end date the upgrade replaced. */
   readonly from?: number;
 }
@@ -867,6 +875,40 @@ export interface OrganisationConnectionRotatedPayload extends OrganisationConnec
 /** The payload of `organisation.connection-revoked`. */
 export interface OrganisationConnectionRevokedPayload extends OrganisationConnectionNamed {
   readonly reason: string;
+}
+
+/**
+ * The payload of `surface.disconnected` (11-AR): the manager's Disconnect on the card, or the
+ * administrator's revoke of the organisation connection the card acted through, with its reason.
+ * What the end did at the vendor is the `credential.revoked-at-source` line beside it.
+ */
+export interface SurfaceDisconnectedPayload extends SurfaceNamed {
+  readonly by: 'manager' | 'organisation';
+  readonly reason?: string;
+}
+
+// Ends of access at the vendor.
+
+/**
+ * The payload of `credential.revoked-at-source` (11-AR; the access plan, section 4.4): one ledger
+ * line per system per end of access, and one per further attempt. It names the card and its
+ * system as they stood when the access ended, since a retire deletes the card before the vendor
+ * answers.
+ */
+export interface CredentialRevokedAtSourcePayload extends SurfaceNamed {
+  readonly credentialId: Id<'credentials'>;
+  /** The card's name when the access ended. */
+  readonly surfaceName: string;
+  /** `issuedBy.system` for what Day0 obtained; the card's name for a pasted key. */
+  readonly system: string;
+  readonly end: AccessEnd;
+  readonly outcome: SourceRevocationOutcome;
+  /** Which attempt this line records, for an outcome a vendor call gave. */
+  readonly attempt?: number;
+  /** The vendor's words for a failure, or why no call was made. */
+  readonly reason?: string;
+  /** True where Slack's revoked bot token took the bot out of its channels (S1). */
+  readonly channelMembershipsRemoved?: boolean;
 }
 
 // Plans and their obligations.
@@ -1437,6 +1479,8 @@ export interface EventPayloads {
   'organisation.connection-landed': OrganisationConnectionLandedPayload;
   'organisation.connection-rotated': OrganisationConnectionRotatedPayload;
   'organisation.connection-revoked': OrganisationConnectionRevokedPayload;
+  'surface.disconnected': SurfaceDisconnectedPayload;
+  'credential.revoked-at-source': CredentialRevokedAtSourcePayload;
   'plan.obligations-judged': PlanObligationsJudgedPayload;
   'plan.obligations-failed-open': PlanObligationsFailedOpenPayload;
   'plan.obligations-disagreed': PlanObligationsDisagreedPayload;
@@ -1605,6 +1649,8 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'organisation.connection-landed',
   'organisation.connection-rotated',
   'organisation.connection-revoked',
+  'surface.disconnected',
+  'credential.revoked-at-source',
   'plan.obligations-judged',
   'plan.obligations-failed-open',
   'plan.obligations-disagreed',

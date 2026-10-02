@@ -16,6 +16,7 @@ import { isOrganisationOwnerKey, ORGANISATION_HOLDER } from '../src/lib/organisa
 import { OWNER_KNOWN_VALUE_CAP } from '../src/redaction/known-values';
 import { credentialPageRef, credentialRefRange, isValueKeyedRef } from '../src/docs/credential-ref';
 import { assertCurrentGeneration } from '../src/docs/sync-generation';
+import type { AccessEnd, SourceRevocationState } from '../src/surfaces/access-identity';
 
 const credentialKind = v.union(v.literal('value'), v.literal('location'), v.literal('oauth'));
 
@@ -372,6 +373,9 @@ export const getInternal = internalQuery({
  * The reset and unlink paths delete the value outright: nothing can be
  * rotated back into a source that no longer exists. The label, source and
  * dates stay so the audit trail still says what was held and when it ended.
+ * A credential Day0 obtained whose revocation at the vendor is still pending
+ * is revoked and keeps its ciphertext for that call (F19): its final state
+ * deletes it (`finishSourceRevocation`), within 24 hours in any case.
  *
  * Args:
  *   ctx: Convex mutation context.
@@ -386,6 +390,12 @@ export async function purgeCredential(
   if (credential.ciphertext === undefined && credential.iv === undefined && credential.revokedAt) {
     return;
   }
+  // Deferred deletion (F19): a credential whose revocation at the vendor is still pending keeps
+  // its ciphertext for that call, and only its final state deletes it (finishSourceRevocation).
+  if (credential.sourceRevocation?.state === 'pending') {
+    if (credential.revokedAt === undefined) await ctx.db.patch(credential._id, { revokedAt: now });
+    return;
+  }
   await ctx.db.patch(credential._id, {
     revokedAt: credential.revokedAt ?? now,
     ciphertext: undefined,
@@ -394,7 +404,77 @@ export async function purgeCredential(
 }
 
 /**
- * Purge every credential one owner holds, for a reset that unlinks documentation.
+ * Stop using a credential Day0 itself obtained and hold it for its revocation at the vendor (the
+ * access plan, section 4.4; F19): revoked at once, so `decrypt` refuses it from this transaction
+ * on, with its revocation `pending` for the end that asked and its ciphertext kept for the vendor
+ * call. The hold stamps `revokedAt` itself, even over a person's earlier revoke, since the
+ * attempts and the 24 hours the ciphertext is kept count from it. A row already pending or final
+ * is left as it is.
+ *
+ * @param ctx - The ending transaction.
+ * @param credential - A row that carries `issuedBy`.
+ * @param end - The end of access that asked.
+ * @param now - When the access ended.
+ * @throws Error for a row without `issuedBy`: a pasted key is never revoked at the vendor (D5).
+ */
+export async function holdForSourceRevocation(
+  ctx: MutationCtx,
+  credential: Doc<'credentials'>,
+  end: AccessEnd,
+  now: number,
+): Promise<void> {
+  if (credential.issuedBy === undefined) {
+    throw new Error('A pasted key is never revoked at the vendor.');
+  }
+  if (credential.sourceRevocation !== undefined) return;
+  await ctx.db.patch(credential._id, {
+    revokedAt: now,
+    sourceRevocation: { state: 'pending', attempts: 0, at: now, end },
+  });
+}
+
+/**
+ * Write a held credential's final revocation state and delete its ciphertext (F19): `done`,
+ * `not-supported`, or `failed` with the vendor's words. The attempts and the end are kept as the
+ * attempts wrote them.
+ *
+ * @param ctx - The recording transaction.
+ * @param credential - The held row.
+ * @param outcome - The final state, when it was reached, and the vendor's words for a failure.
+ */
+export async function finishSourceRevocation(
+  ctx: MutationCtx,
+  credential: Doc<'credentials'>,
+  outcome: {
+    readonly state: Exclude<SourceRevocationState, 'pending'>;
+    readonly now: number;
+    readonly lastError?: string;
+  },
+): Promise<void> {
+  const held = credential.sourceRevocation;
+  await ctx.db.patch(credential._id, {
+    revokedAt: credential.revokedAt ?? outcome.now,
+    ciphertext: undefined,
+    iv: undefined,
+    sourceRevocation: {
+      state: outcome.state,
+      attempts: held?.attempts ?? 0,
+      at: outcome.now,
+      ...(held?.end !== undefined ? { end: held.end } : {}),
+      ...(outcome.lastError !== undefined
+        ? { lastError: outcome.lastError }
+        : held?.lastError !== undefined
+          ? { lastError: held.lastError }
+          : {}),
+    },
+  });
+}
+
+/**
+ * Purge every credential one owner holds, for a reset that unlinks documentation, save an
+ * identity another owner's employee still acts as: a token Day0 obtained through IT's
+ * organisation connection that a handover kept for the employee (A25) stays, with its pair and
+ * its app's secret, since ending it is the new manager's.
  *
  * Args:
  *   ctx: Convex mutation context.
@@ -409,9 +489,85 @@ export async function purgeOwnedCredentials(ctx: MutationCtx, userId: string): P
     .withIndex('by_userId', (index) => index.eq('userId', userId))
     .take(1_001);
   if (rows.length > 1_000) throw new Error('Owner exceeds 1,000 credentials.');
+  const keptForAnother = await identitiesKeptForAnotherOwner(ctx, userId, rows);
   const now = Date.now();
-  for (const row of rows) await purgeCredential(ctx, row, now);
-  return rows.length;
+  let purged = 0;
+  for (const row of rows) {
+    if (keptForAnother.has(row._id)) continue;
+    await purgeCredential(ctx, row, now);
+    purged += 1;
+  }
+  return purged;
+}
+
+/**
+ * The owner's rows that are an identity another owner's employee acts as since a handover kept
+ * it (A25): each token issued through an organisation connection that a card of an employee the
+ * owner no longer has binds, with its refresh token and its app's client secret.
+ *
+ * @param ctx - The reset's transaction.
+ * @param userId - The owner being reset.
+ * @param rows - The owner's rows.
+ */
+async function identitiesKeptForAnotherOwner(
+  ctx: MutationCtx,
+  userId: string,
+  rows: readonly Doc<'credentials'>[],
+): Promise<Set<Id<'credentials'>>> {
+  const issuedThroughConnection = rows.filter(
+    (row) => row.issuedBy?.organisationConnectionId !== undefined,
+  );
+  const keptRows = await Promise.all(
+    issuedThroughConnection.map(async (row) =>
+      (await boundForAnotherOwner(ctx, userId, row)) ? row : null,
+    ),
+  );
+  const kept = new Set<Id<'credentials'>>();
+  for (const row of keptRows) {
+    if (row === null) continue;
+    kept.add(row._id);
+    if (row.refreshCredentialId !== undefined) kept.add(row.refreshCredentialId);
+    if (row.issuedBy?.clientSecretCredentialId !== undefined) {
+      kept.add(row.issuedBy.clientSecretCredentialId);
+    }
+  }
+  return kept;
+}
+
+/** The most cards one row's binders, or one connection's cards, are read for. */
+const KEPT_IDENTITY_SCAN_LIMIT = 1_000;
+
+/**
+ * Whether a card of an employee another owner now has binds a row issued through an
+ * organisation connection: as its credential, or as its app's client secret (a card Disconnect
+ * left with only its app, then handed over).
+ */
+async function boundForAnotherOwner(
+  ctx: MutationCtx,
+  userId: string,
+  row: Doc<'credentials'>,
+): Promise<boolean> {
+  const connectionId = row.issuedBy?.organisationConnectionId;
+  const [byCredential, byConnection] = await Promise.all([
+    ctx.db
+      .query('surfaces')
+      .withIndex('by_credentialId', (index) => index.eq('credentialId', row._id))
+      .take(KEPT_IDENTITY_SCAN_LIMIT),
+    connectionId === undefined || row.issuedBy?.grant !== 'app-created'
+      ? Promise.resolve([])
+      : ctx.db
+          .query('surfaces')
+          .withIndex('by_organisation_connection', (index) =>
+            index.eq('organisationConnectionId', connectionId),
+          )
+          .take(KEPT_IDENTITY_SCAN_LIMIT),
+  ]);
+  const binders = [
+    ...byCredential,
+    ...byConnection.filter((card) => card.provisioning?.clientSecretCredentialId === row._id),
+  ];
+  const agents = await Promise.all(binders.map(async (card) => await ctx.db.get(card.agentId)));
+  return agents.some((agent) => agent !== null && agent.userId !== userId);
 }
 
 /** Record credential use without exposing the decrypted value. */
@@ -738,15 +894,57 @@ export const decrypt = internalAction({
     ) {
       throw new Error('Credential is unavailable.');
     }
-    const plaintext = await ctx.runAction(internal.credentialCryptoActions.open, {
-      ciphertext: credential.ciphertext,
-      iv: credential.iv,
-      userId: credential.userId,
-      keyId: credential.keyId,
-    });
-    if (!plaintext) throw new Error('Credential does not contain a landed value.');
+    const plaintext = await openSealed(ctx, credential, credential.ciphertext, credential.iv);
     await ctx.runMutation(internal.credentials.touch, args);
     return plaintext;
+  },
+});
+
+/**
+ * Open a row's sealed value on its owner's row.
+ *
+ * @throws Error when the row holds no landed value.
+ */
+async function openSealed(
+  ctx: ActionCtx,
+  credential: Doc<'credentials'>,
+  ciphertext: string,
+  iv: string,
+): Promise<string> {
+  const plaintext = await ctx.runAction(internal.credentialCryptoActions.open, {
+    ciphertext,
+    iv,
+    userId: credential.userId,
+    keyId: credential.keyId,
+  });
+  if (!plaintext) throw new Error('Credential does not contain a landed value.');
+  return plaintext;
+}
+
+/**
+ * Decrypt a credential Day0 obtained for the one call that revokes it at the vendor (the access
+ * plan, section 4.4). Internal; `sourceRevocationActions` is its only caller. Admits a revoked row
+ * only while its revocation is `pending` and only when Day0 obtained it (`issuedBy`), so a pasted
+ * key never opens here, nor a token the token store holds (its row keeps the store's connection
+ * id, not a token); records no use, since the employee no longer acts through it.
+ *
+ * @throws Error when the row is not awaiting its revocation at the vendor.
+ */
+export const decryptForRevocation = internalAction({
+  args: { credentialId: v.id('credentials') },
+  handler: async (ctx, args): Promise<string> => {
+    const credential = await ctx.runQuery(internal.credentials.getInternal, args);
+    if (
+      !credential ||
+      credential.issuedBy === undefined ||
+      credential.tokenStore === 'nango' ||
+      credential.sourceRevocation?.state !== 'pending' ||
+      credential.ciphertext === undefined ||
+      credential.iv === undefined
+    ) {
+      throw new Error('Credential is not awaiting its revocation at the vendor.');
+    }
+    return await openSealed(ctx, credential, credential.ciphertext, credential.iv);
   },
 });
 
