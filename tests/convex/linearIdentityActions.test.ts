@@ -815,6 +815,49 @@ describe("per-employee mode: the employee's own app", (): void => {
     });
   });
 
+  it('renews an expired card by re-authorising its own app through the issuer, with a fresh link (join 6)', async (): Promise<void> => {
+    // The expiry's revocation reaches Linear through the deployment's own fetch: the fake's.
+    vi.stubGlobal(
+      'fetch',
+      async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> =>
+        await linear.fetch(new URL(String(input)), init ?? {}),
+    );
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceIds } = await seed(harness, { mode: 'per-employee' });
+    const { api, internal } = await liveApi();
+    await installLeo(harness, surfaceIds[0]!);
+    const surfaceId = surfaceIds[0]!;
+    await harness.run(async (ctx) => await ctx.db.patch(surfaceId, { expiresAt: Date.now() - 1 }));
+    await harness.mutation(internal.surfaces.recordExpired, { surfaceId, now: Date.now() });
+    await vi.waitFor(async (): Promise<void> => {
+      const { events } = await read(harness, surfaceId);
+      expect(events.map((event) => event.type)).toContain('credential.revoked-at-source');
+    });
+
+    const renewal = await harness
+      .withIdentity(managerIdentity())
+      .mutation(api.surfaces.setAccessDays, { surfaceId, days: 30 });
+    expect(renewal).toEqual({ expiresAt: expect.any(Number), reissue: 'authorise' });
+
+    const started = await harness
+      .withIdentity(managerIdentity())
+      .action(api.linearIdentityActions.startAuthorisation, { surfaceId });
+    if (!started.ok) throw new Error(started.message);
+    const back = linear.consent(started.authoriseUrl);
+    await expect(
+      harness.action(api.linearIdentityActions.completeAuthorisation, {
+        state: back.searchParams.get('state') ?? '',
+        code: back.searchParams.get('code') ?? '',
+      }),
+    ).resolves.toMatchObject({ ok: true });
+    const { surface } = await read(harness, surfaceId);
+    expect(surface).toMatchObject({
+      verdict: 'approved',
+      actsAs: { kind: 'own-app', providerIdentityId: 'app-user-day0-leo' },
+    });
+    expect(linear.live(await bearerOf(harness, surface.credentialId!))).toBe(true);
+  });
+
   it("keeps the installed app's secret until a newly recorded app's installation lands", async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { surfaceIds } = await seed(harness, { mode: 'per-employee' });
