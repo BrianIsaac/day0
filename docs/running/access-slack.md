@@ -63,6 +63,7 @@ same app, since Day0's documentation reader finds it there.
         "chat:write",
         "channels:read",
         "channels:history",
+        "channels:join",
         "im:read",
         "im:write",
         "im:history",
@@ -89,9 +90,13 @@ Each employee's app asks for exactly the methods Day0 calls in Slack, and no
 more: `chat.postMessage` and `chat.update` (`chat:write`), `conversations.list`
 (`channels:read`, `im:read`), `conversations.history` and
 `conversations.replies` (`channels:history`, `im:history`), `conversations.open`
-(`im:write`) and `users.lookupByEmail` (`users:read.email`, which Slack grants
-only with `users:read`). `auth.test` needs none. There is no `groups:` scope:
-a private channel is added by hand by someone in it.
+(`im:write`), `users.lookupByEmail` (`users:read.email`, which Slack grants
+only with `users:read`) and `conversations.join` (`channels:join`). `auth.test`
+needs none. When an employee's access is renewed after it expired or was
+disconnected, Slack has taken its bot out of every channel; with
+`channels:join` the employee re-joins the public channels its approved intake
+scope names itself. There is no `groups:` scope: a private channel is added by
+hand by someone in it, and the employee's card names each one that needs it.
 
 <!-- access-kit: scopes per-employee -->
 
@@ -99,6 +104,7 @@ a private channel is added by hand by someone in it.
 chat:write
 channels:read
 channels:history
+channels:join
 im:read
 im:write
 im:history
@@ -158,7 +164,7 @@ redirect URI above.
 |---|---|
 | `status` | `pass`: Slack is connected, per employee |
 | `redirect` | `pass`: the registered redirect is `${DAY0_PUBLIC_URL}/api/oauth/slack` |
-| `scopes` | `pass`: the eight scopes above |
+| `scopes` | `pass`: the nine scopes above |
 | `secret` | `pass`: opens under the deployment's key |
 | `identity` | `pass`: Slack accepts the configuration token and the kit's manifest (`apps.manifest.validate`); a `note` once the token is more than 12 hours old, which the refresh token renews when Day0 next creates an app |
 

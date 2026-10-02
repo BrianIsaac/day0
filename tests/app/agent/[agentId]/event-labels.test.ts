@@ -247,6 +247,68 @@ describe('the live feed labels', (): void => {
     ).toBe('Slack organisation connection: Slack app deleted in Slack');
   });
 
+  it("labels Day0's uses of the Slack configuration token and the re-join after a renewal (11-AS)", (): void => {
+    const used = { organisationConnectionId: 'c1', system: 'slack', displayName: 'Slack' };
+    expect(
+      eventLabel({
+        type: 'organisation.configuration-used',
+        payload: { ...used, method: 'tooling.tokens.rotate', outcome: 'done' },
+      }),
+    ).toBe('Slack configuration token renewed');
+    expect(
+      eventLabel({
+        type: 'organisation.configuration-used',
+        payload: {
+          ...used,
+          method: 'tooling.tokens.rotate',
+          outcome: 'failed',
+          reason: 'invalid_refresh_token',
+        },
+      }),
+    ).toBe('Slack configuration token not renewed (invalid_refresh_token)');
+    expect(
+      eventLabel({
+        type: 'organisation.configuration-used',
+        payload: { ...used, method: 'tooling.tokens.rotate', outcome: 'superseded' },
+      }),
+    ).toBe('Slack configuration token renewed twice at once: the other renewal kept');
+    expect(
+      eventLabel({
+        type: 'organisation.configuration-used',
+        payload: { ...used, method: 'apps.manifest.create', outcome: 'done', appId: 'A123' },
+      }),
+    ).toBe("an employee's Slack app A123 created with the configuration token");
+    expect(
+      eventLabel({
+        type: 'organisation.configuration-used',
+        payload: {
+          ...used,
+          method: 'apps.manifest.create',
+          outcome: 'failed',
+          reason: 'invalid_auth',
+        },
+      }),
+    ).toBe("an employee's Slack app not created (invalid_auth)");
+    expect(
+      eventLabel({
+        type: 'surface.channels-rejoined',
+        payload: { surfaceId: 's1', joined: ['#revops'], needsPerson: ['#revops-leads'] },
+      }),
+    ).toBe('re-joined #revops; #revops-leads needs a person to add it');
+    expect(
+      eventLabel({
+        type: 'surface.channels-rejoined',
+        payload: { surfaceId: 's1', joined: [], needsPerson: ['#revops', '#revops-leads'] },
+      }),
+    ).toBe('#revops, #revops-leads need a person to add it');
+    expect(
+      eventLabel({
+        type: 'surface.channels-rejoined',
+        payload: { surfaceId: 's1', joined: [], needsPerson: [] },
+      }),
+    ).toBe('no channel to re-join');
+  });
+
   it('says which credential the documentation dropped and how many cards need one again', (): void => {
     expect(
       eventLabel({

@@ -22,13 +22,16 @@ import type { AccessRecipe } from './types';
  * method's documented scope (read 1 October 2026): `chat.postMessage` and `chat.update`
  * (`chat:write`), `conversations.list` (`channels:read`, `im:read`), `conversations.history` and
  * `conversations.replies` (`channels:history`, `im:history`), `conversations.open` (`im:write`)
- * and `users.lookupByEmail` (`users:read.email`, which Slack grants only beside `users:read`).
- * `auth.test` needs none. Private channels are added by hand (RM4), so no `groups:` scope.
+ * and `users.lookupByEmail` (`users:read.email`, which Slack grants only beside `users:read`),
+ * and `conversations.join` (`channels:join`), with which a renewed employee re-joins the public
+ * channels its approved intake scope names (RM4, ruled 2 October). `auth.test` needs none. Private
+ * channels are added by hand by someone in them (RM4), so no `groups:` scope.
  */
 export const SLACK_KIT_BOT_SCOPES: readonly string[] = [
   'chat:write',
   'channels:read',
   'channels:history',
+  'channels:join',
   'im:read',
   'im:write',
   'im:history',
