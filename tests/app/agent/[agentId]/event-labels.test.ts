@@ -213,6 +213,22 @@ describe('the live feed labels', (): void => {
     ).toBe('access set by the upgrade: 90 days');
   });
 
+  it('labels the organisation connection ledger (11-AO)', (): void => {
+    const named = { organisationConnectionId: 'c1', system: 'slack', displayName: 'Slack' };
+    expect(eventLabel({ type: 'organisation.connection-landed', payload: named })).toBe(
+      'Slack connected for the organisation',
+    );
+    expect(eventLabel({ type: 'organisation.connection-rotated', payload: named })).toBe(
+      "Slack: the organisation connection's secret rotated",
+    );
+    expect(
+      eventLabel({
+        type: 'organisation.connection-revoked',
+        payload: { ...named, reason: 'the workspace moved' },
+      }),
+    ).toBe('Slack: the organisation connection revoked (the workspace moved)');
+  });
+
   it('says which credential the documentation dropped and how many cards need one again', (): void => {
     expect(
       eventLabel({

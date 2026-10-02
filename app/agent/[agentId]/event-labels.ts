@@ -373,6 +373,12 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
       ? 'app configuration token revoked at the provider'
       : `app configuration token dropped${because(payload.reason)}`,
   'surface.app-unrecorded': 'a registered app was not recorded: remove it at the provider',
+  'organisation.connection-landed': (payload) =>
+    `${text(payload.displayName) ?? 'a system'} connected for the organisation`,
+  'organisation.connection-rotated': (payload) =>
+    `${text(payload.displayName) ?? 'a system'}: the organisation connection's secret rotated`,
+  'organisation.connection-revoked': (payload) =>
+    `${text(payload.displayName) ?? 'a system'}: the organisation connection revoked${because(payload.reason)}`,
   'plan.obligations-judged': 'plan obligations judged',
   'plan.obligations-failed-open': (payload) =>
     `plan obligations not judged${because(payload.reason)}; the planner's stand unchecked`,

@@ -172,6 +172,18 @@ function onItem(subject: RecordSubject): string {
   return subject.item ? ` on \u201c${subject.item}\u201d` : '';
 }
 
+/** The system an organisation connection is for, by name, or a plain stand-in for a row without one. */
+function organisationSystem(displayName: unknown): string {
+  return text(displayName) ?? 'a system';
+}
+
+/** Who changed an organisation connection, at the end of a sentence: an administrator, or the setup verb. */
+function registeredVia(via: unknown): string {
+  if (via === 'organisation-page') return ' by an administrator';
+  if (via === 'setup-cli') return ' by the setup verb';
+  return '';
+}
+
 /** The connection an event is about, by name, or a plain stand-in when it names none. */
 function connectionOf(subject: RecordSubject): string {
   return subject.connection ? `the ${subject.connection} connection` : 'a connection';
@@ -592,6 +604,12 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
       : `The app configuration token of ${connectionOf(subject)} was dropped${because(p.reason)}`,
   'surface.app-unrecorded': (_, subject) =>
     `An app registered for ${connectionOf(subject)} was not recorded; remove it at the provider`,
+  'organisation.connection-landed': (p) =>
+    `${organisationSystem(p.displayName)} was connected for the organisation${registeredVia(p.via)}`,
+  'organisation.connection-rotated': (p) =>
+    `The organisation's ${organisationSystem(p.displayName)} connection was given a new secret${registeredVia(p.via)}`,
+  'organisation.connection-revoked': (p) =>
+    `The organisation's ${organisationSystem(p.displayName)} connection was revoked${registeredVia(p.via)}${because(p.reason)}`,
   'plan.obligations-judged': (_, subject) =>
     `What the plan${forItem(subject)} must read and write was judged`,
   'plan.obligations-failed-open': (p, subject) =>

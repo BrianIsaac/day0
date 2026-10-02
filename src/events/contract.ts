@@ -17,6 +17,11 @@
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import type { CharterChange, FieldDiff } from '../agent/charter-amendment';
 import type { TransferCancelReason } from '../agent/manager-transfer';
+import type {
+  OrganisationConnectionKind,
+  OrganisationConnectionMode,
+  OrganisationRegistrar,
+} from '../surfaces/access-identity';
 import type { ModelCallReport } from '../lib/model-call-telemetry';
 import type { SurfaceMode } from '../lib/surface-mode';
 import type { ClaimHolder } from '../work/claim-key';
@@ -822,6 +827,37 @@ export interface SurfaceAppUnrecordedPayload extends SurfaceNamed {
   readonly appId?: string;
 }
 
+// The organisation's connections (AC11): written to `connectionEvents` through
+// `appendConnectionEvent`, never to an employee's `events`.
+
+/** What every event of an organisation connection names. */
+interface OrganisationConnectionNamed {
+  readonly organisationConnectionId: Id<'organisationConnections'>;
+  readonly system: string;
+  readonly displayName: string;
+  /** Where the change was made: an administrator on the organisation page, or the setup verb. */
+  readonly via: OrganisationRegistrar;
+}
+
+/** The payload of `organisation.connection-landed`. */
+export interface OrganisationConnectionLandedPayload extends OrganisationConnectionNamed {
+  readonly kind: OrganisationConnectionKind;
+  readonly mode: OrganisationConnectionMode;
+  readonly scopes: readonly string[];
+}
+
+/** The payload of `organisation.connection-rotated`: a new secret, and the scopes it carries now. */
+export interface OrganisationConnectionRotatedPayload extends OrganisationConnectionNamed {
+  readonly scopes: readonly string[];
+  /** The scopes before the rotation, when it changed them. */
+  readonly previousScopes?: readonly string[];
+}
+
+/** The payload of `organisation.connection-revoked`. */
+export interface OrganisationConnectionRevokedPayload extends OrganisationConnectionNamed {
+  readonly reason: string;
+}
+
 // Plans and their obligations.
 
 /** The payload of `plan.obligations-judged`. */
@@ -1386,6 +1422,9 @@ export interface EventPayloads {
   'surface.scope-reapproval-required': SurfaceScopeReapprovalRequiredPayload;
   'surface.configuration-token-revoked': SurfaceConfigurationTokenRevokedPayload;
   'surface.app-unrecorded': SurfaceAppUnrecordedPayload;
+  'organisation.connection-landed': OrganisationConnectionLandedPayload;
+  'organisation.connection-rotated': OrganisationConnectionRotatedPayload;
+  'organisation.connection-revoked': OrganisationConnectionRevokedPayload;
   'plan.obligations-judged': PlanObligationsJudgedPayload;
   'plan.obligations-failed-open': PlanObligationsFailedOpenPayload;
   'plan.obligations-disagreed': PlanObligationsDisagreedPayload;
@@ -1550,6 +1589,9 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'surface.scope-reapproval-required',
   'surface.configuration-token-revoked',
   'surface.app-unrecorded',
+  'organisation.connection-landed',
+  'organisation.connection-rotated',
+  'organisation.connection-revoked',
   'plan.obligations-judged',
   'plan.obligations-failed-open',
   'plan.obligations-disagreed',
@@ -1627,6 +1669,34 @@ export function isEventType(value: unknown): value is EventType {
   return typeof value === 'string' && LISTED.has(value);
 }
 
+/**
+ * The types of the organisation's connections' ledger (AC11): written to `connectionEvents`
+ * through `appendConnectionEvent` (`convex/connectionEvents.ts`), never to an employee's `events`,
+ * which `NewEvent` and `LoggedEvent` hold to the rest.
+ */
+export const CONNECTION_EVENT_TYPES = [
+  'organisation.connection-landed',
+  'organisation.connection-rotated',
+  'organisation.connection-revoked',
+] as const satisfies readonly EventType[];
+
+/** One of {@link CONNECTION_EVENT_TYPES}. */
+export type ConnectionEventType = (typeof CONNECTION_EVENT_TYPES)[number];
+
+/** An event type an employee's ledger (`events`) takes: every type but the organisation's. */
+export type AgentEventType = Exclude<EventType, ConnectionEventType>;
+
+const CONNECTION_LISTED: ReadonlySet<string> = new Set(CONNECTION_EVENT_TYPES);
+
+/**
+ * Whether a value is one of the organisation connections' event types.
+ *
+ * @returns True for a type `connectionEvents` takes; false for anything else.
+ */
+export function isConnectionEventType(value: unknown): value is ConnectionEventType {
+  return typeof value === 'string' && CONNECTION_LISTED.has(value);
+}
+
 /** An event of one type as a writer hands it over, before the ledger stamps it. */
 export interface EventOf<Type extends EventType> {
   readonly type: Type;
@@ -1638,16 +1708,29 @@ export type DayZeroEvent = { [Type in EventType]: EventOf<Type> }[EventType];
 
 /** An event a mutation appends in its own transaction (`appendEvent`). */
 export type NewEvent = {
-  [Type in EventType]: EventOf<Type> & {
+  [Type in AgentEventType]: EventOf<Type> & {
     readonly agentId: Id<'agents'>;
     readonly createdAt: number;
   };
-}[EventType];
+}[AgentEventType];
 
 /** An event an action logs through `eventLog.log` (`logEvent`), stamped when it lands. */
 export type LoggedEvent = {
-  [Type in EventType]: EventOf<Type> & { readonly agentId: Id<'agents'> };
-}[EventType];
+  [Type in AgentEventType]: EventOf<Type> & { readonly agentId: Id<'agents'> };
+}[AgentEventType];
+
+/**
+ * An event of an organisation connection, as `appendConnectionEvent` appends it in the caller's
+ * transaction: the connection, and the administrator's verified address when one made the change
+ * (absent for the operator's setup verb and for Day0 itself).
+ */
+export type NewConnectionEvent = {
+  [Type in ConnectionEventType]: EventOf<Type> & {
+    readonly organisationConnectionId: Id<'organisationConnections'>;
+    readonly actorAddress?: string;
+    readonly createdAt: number;
+  };
+}[ConnectionEventType];
 
 /** A stored event row, typed by the contract when its type is one the contract lists. */
 export type StoredEvent<Type extends EventType = EventType> = Omit<
