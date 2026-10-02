@@ -14,6 +14,7 @@ import { safeFailureMessage } from '../src/surfaces/redact';
 import { linearTokenRevocation, readLinearAnswer } from '../src/surfaces/revokers/linear';
 import { oauthTokenRevocation, readOAuthRevocationAnswer } from '../src/surfaces/revokers/oauth';
 import {
+  callOutcome,
   revocationPlanFor,
   type RevocationCall,
   type RevocationSubject,
@@ -51,20 +52,6 @@ interface Opened {
 interface CallAnswer {
   readonly answer: RevocationAnswer;
   readonly done: Extract<AttemptResult, { kind: 'final' }>['outcome'];
-}
-
-/** The outcome each call means once the vendor did it. */
-function doneOutcome(call: RevocationCall): 'token-revoked' | 'app-deleted' | 'app-uninstalled' {
-  switch (call.kind) {
-    case 'slack-delete-app':
-      return 'app-deleted';
-    case 'slack-uninstall-app':
-      return 'app-uninstalled';
-    case 'slack-revoke-token':
-    case 'linear-revoke':
-    case 'oauth-revoke':
-      return 'token-revoked';
-  }
 }
 
 /**
@@ -228,7 +215,7 @@ async function runCalls(
   for (const call of calls) {
     const answer: CallAnswer = {
       answer: await makeCall(call, token, opened, plan),
-      done: doneOutcome(call),
+      done: callOutcome(call),
     };
     switch (answer.answer.kind) {
       case 'revoked':

@@ -1,12 +1,17 @@
 import { v, type Infer } from 'convex/values';
-import { internalMutation, internalQuery, type MutationCtx } from './_generated/server';
+import {
+  internalMutation,
+  internalQuery,
+  type MutationCtx,
+  type QueryCtx,
+} from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { finishSourceRevocation, holdForSourceRevocation, purgeCredential } from './credentials';
 import { appendEvent } from './eventLog';
 import { ACCESS_ENDS, type AccessEnd } from '../src/surfaces/access-identity';
 import type { SourceRevocationOutcome } from '../src/surfaces/revokers/outcome';
-import { revocationPlanFor } from '../src/surfaces/revokers/plan';
+import { callOutcome, revocationPlanFor } from '../src/surfaces/revokers/plan';
 
 /*
  * Revocation at the vendor, the transaction half (wave 11, 11-AR; the access plan, section 4.4;
@@ -147,8 +152,9 @@ async function appendLine(
  * attempt is scheduled for the one the call is made for, the others finished with it; a handover
  * calls no vendor (A25), so it purges them at once with its line. A pasted key is never sent to a
  * vendor: its line says so and the caller's own rule decides whether Day0's copy goes. A row the
- * organisation holds is untouched, with its line. A row already held by an earlier end keeps its
- * scheduled attempts and is not scheduled again.
+ * organisation holds is untouched, with its line. One line is written per card, so per system: the
+ * attempts' where Day0 obtained a row, else the shared token's, else the pasted key's. A row
+ * already held by an earlier end keeps its scheduled attempts and is not scheduled again.
  *
  * @param ctx - The ending transaction.
  * @param input - The card, its credentials, the end and its time.
@@ -166,21 +172,20 @@ export async function endAccessAtSource(
   const issued = input.credentials.filter(ownIssued);
   const pasted = input.credentials.filter((row) => row.issuedBy === undefined && !row.holder);
   const shared = input.credentials.filter((row) => row.holder !== undefined);
-  for (const row of pasted) {
+  // One line per system: what Day0 obtained speaks through its attempts; else the shared token;
+  // else the pasted key, named by the card's own credential, which the caller lists first.
+  const [line] = issued.length > 0 ? [] : shared.length > 0 ? shared : pasted;
+  if (line !== undefined) {
     await appendLine(
       ctx,
-      { ...card, credentialId: row._id },
-      { system: input.surfaceName, end: input.end, outcome: 'pasted-key', now: input.now },
-    );
-  }
-  for (const row of shared) {
-    await appendLine(
-      ctx,
-      { ...card, credentialId: row._id },
+      { ...card, credentialId: line._id },
       {
-        system: row.issuedBy?.system ?? input.surfaceName,
+        system:
+          line.holder !== undefined
+            ? (line.issuedBy?.system ?? input.surfaceName)
+            : input.surfaceName,
         end: input.end,
-        outcome: 'shared',
+        outcome: line.holder !== undefined ? 'shared' : 'pasted-key',
         now: input.now,
       },
     );
@@ -222,6 +227,105 @@ export async function endAccessAtSource(
 /** The ids of some rows. */
 function ids(rows: readonly Doc<'credentials'>[]): Id<'credentials'>[] {
   return rows.map((row) => row._id);
+}
+
+/** What Day0 holds for a credential's revocation besides the credential itself. */
+interface HeldMeans {
+  /** The active organisation connection it was issued through. */
+  readonly connection: Doc<'organisationConnections'> | null;
+  /** That connection's Slack configuration token, while it still holds its value. */
+  readonly configuration: Doc<'credentials'> | null;
+  /** The app's client secret, while Day0 still holds its value (F19 keeps it with the token). */
+  readonly secret: Doc<'credentials'> | null;
+}
+
+/**
+ * Read what a credential's revocation may use beside it: the organisation connection it was
+ * issued through while that is active, the connection's configuration token, and the app's client
+ * secret, each only while it still holds a value.
+ *
+ * @param db - Any reader.
+ * @param credential - A credential Day0 obtained.
+ */
+async function meansOf(db: QueryCtx['db'], credential: IssuedCredential): Promise<HeldMeans> {
+  const { issuedBy } = credential;
+  const found =
+    issuedBy.organisationConnectionId === undefined
+      ? null
+      : await db.get(issuedBy.organisationConnectionId);
+  const connection = found?.status === 'active' ? found : null;
+  const configuration =
+    connection?.kind === 'slack-configuration' && connection.secretCredentialId !== undefined
+      ? await db.get(connection.secretCredentialId)
+      : null;
+  const secret =
+    issuedBy.clientSecretCredentialId === undefined
+      ? null
+      : await db.get(issuedBy.clientSecretCredentialId);
+  return {
+    connection,
+    configuration:
+      holdsValue(configuration) && configuration.revokedAt === undefined ? configuration : null,
+    secret: holdsValue(secret) ? secret : null,
+  };
+}
+
+/** What an end of access will do at the vendor for one card, as the retire dialog says it. */
+export type PlannedOutcome =
+  | 'token-revoked'
+  | 'app-deleted'
+  | 'app-uninstalled'
+  | 'not-supported'
+  | 'shared'
+  | 'not-at-vendor'
+  | 'pasted-key'
+  | 'kept';
+
+/**
+ * What ending one card's access will do at the vendor, by the rule {@link endAccessAtSource} and
+ * the attempt follow: the plan of the credential the call is made for, its preferred call's
+ * meaning; a pasted key that only this card binds is Day0's copy deleted and never sent; a row
+ * that something else still binds is kept; a row the organisation holds is shared.
+ *
+ * @param db - Any reader.
+ * @param card - The card's name, the rows the end takes, the rows something else keeps.
+ * @param end - The end of access.
+ * @returns The outcome and the system it is at, or null for a card that binds nothing.
+ */
+export async function plannedAtSource(
+  db: QueryCtx['db'],
+  card: {
+    readonly surfaceName: string;
+    readonly ended: readonly Doc<'credentials'>[];
+    readonly kept: readonly Doc<'credentials'>[];
+  },
+  end: AccessEnd,
+): Promise<{ readonly system: string; readonly outcome: PlannedOutcome } | null> {
+  const issued = card.ended.filter(ownIssued);
+  if (issued.length > 0) {
+    const primary = primaryOf(issued);
+    const means = await meansOf(db, primary);
+    const plan = revocationPlanFor({ issuedBy: primary.issuedBy, role: 'access' }, end, {
+      configurationToken: means.configuration !== null,
+      clientSecret: means.secret !== null,
+      ...(means.connection?.authorisationEndpoints?.revocation !== undefined
+        ? { revocationEndpoint: means.connection.authorisationEndpoints.revocation }
+        : {}),
+    });
+    const [preferred] = plan.kind === 'call' ? plan.calls : [];
+    return {
+      system: primary.issuedBy.system,
+      outcome:
+        plan.kind === 'none' ? plan.outcome : preferred ? callOutcome(preferred) : 'not-supported',
+    };
+  }
+  const organisation = [...card.ended, ...card.kept].find((row) => row.holder !== undefined);
+  if (organisation !== undefined) {
+    return { system: organisation.issuedBy?.system ?? card.surfaceName, outcome: 'shared' };
+  }
+  if (card.ended.length > 0) return { system: card.surfaceName, outcome: 'pasted-key' };
+  if (card.kept.length > 0) return { system: card.surfaceName, outcome: 'kept' };
+  return null;
 }
 
 /** What an attempt needs beyond the credential: the means a plan reads and their rows. */
@@ -268,7 +372,7 @@ export const beginAttempt = internalMutation({
   handler: async (ctx, job): Promise<AttemptPlan | null> => {
     const credential = await ctx.db.get(job.credentialId);
     const held = credential?.sourceRevocation;
-    if (!credential?.issuedBy || held?.state !== 'pending') return null;
+    if (credential === null || !ownIssued(credential) || held?.state !== 'pending') return null;
     const attempt = held.attempts + 1;
     const now = Date.now();
     await ctx.db.patch(credential._id, {
@@ -290,37 +394,27 @@ export const beginAttempt = internalMutation({
         job,
       );
     }
-    const { issuedBy } = credential;
-    const connection =
-      issuedBy.organisationConnectionId === undefined
-        ? null
-        : await ctx.db.get(issuedBy.organisationConnectionId);
-    const usable = connection?.status === 'active' ? connection : null;
-    const configuration =
-      usable?.kind === 'slack-configuration' && usable.secretCredentialId !== undefined
-        ? await ctx.db.get(usable.secretCredentialId)
-        : null;
-    const secret =
-      issuedBy.clientSecretCredentialId === undefined
-        ? null
-        : await ctx.db.get(issuedBy.clientSecretCredentialId);
+    const means = await meansOf(ctx.db, credential);
     const companions = await Promise.all(job.companionIds.map(async (id) => await ctx.db.get(id)));
     return {
       attempt,
       last,
       end: held.end ?? 'disconnect',
-      system: issuedBy.system,
-      ...(holdsValue(configuration) && configuration.revokedAt === undefined
-        ? { configurationTokenCredentialId: configuration._id }
+      system: credential.issuedBy.system,
+      ...(means.configuration !== null
+        ? { configurationTokenCredentialId: means.configuration._id }
         : {}),
-      ...(usable !== null ? { organisationConnectionId: usable._id } : {}),
-      ...(holdsValue(secret) ? { clientSecretCredentialId: secret._id } : {}),
-      ...(usable?.authorisationEndpoints?.revocation !== undefined
-        ? { revocationEndpoint: usable.authorisationEndpoints.revocation }
+      ...(means.connection !== null ? { organisationConnectionId: means.connection._id } : {}),
+      ...(means.secret !== null ? { clientSecretCredentialId: means.secret._id } : {}),
+      ...(means.connection?.authorisationEndpoints?.revocation !== undefined
+        ? { revocationEndpoint: means.connection.authorisationEndpoints.revocation }
         : {}),
-      ...(usable?.clientId !== undefined ? { connectionClientId: usable.clientId } : {}),
-      ...(usable?.kind === 'mcp-client' && usable.secretCredentialId !== undefined
-        ? { connectionSecretCredentialId: usable.secretCredentialId }
+      ...(means.connection?.clientId !== undefined
+        ? { connectionClientId: means.connection.clientId }
+        : {}),
+      ...(means.connection?.kind === 'mcp-client' &&
+      means.connection.secretCredentialId !== undefined
+        ? { connectionSecretCredentialId: means.connection.secretCredentialId }
         : {}),
       refreshCredentialIds: companions
         .filter(

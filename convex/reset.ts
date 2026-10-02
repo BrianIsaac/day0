@@ -17,6 +17,8 @@ import {
 } from './ownership';
 import { deleteOwnedDocumentation } from './docSources';
 import { purgeCredential, purgeOwnedCredentials } from './credentials';
+import { endAccessAtSource, plannedAtSource } from './sourceRevocation';
+import type { AccessEnd } from '../src/surfaces/access-identity';
 import { cancelTransferInTransaction } from './managerTransfers';
 import { credentialsBoundBy } from './surfaces';
 import { deleteOwnerLibrary, releaseAuthor } from './skillVersions';
@@ -378,10 +380,19 @@ export interface Boundaries {
  */
 export const NO_BOUNDARIES: Boundaries = { claims: [], rejections: [], released: [], live: [] };
 
+/** One card a retire deleted, with the credentials it bound, for the revocation at the vendor. */
+interface RetiredCard {
+  readonly surfaceId: Id<'surfaces'>;
+  readonly displayName: string;
+  readonly bound: ReadonlySet<Id<'credentials'>>;
+}
+
 /** What one employee's retire deleted and revoked, for its tombstone. */
 interface Retired {
   readonly rowCounts: Record<string, number>;
   readonly boundCredentials: ReadonlySet<Id<'credentials'>>;
+  /** Each deleted card with what it bound, so each system's end has its own ledger line. */
+  readonly cards: readonly RetiredCard[];
   /** The employee's id and every row id deleted with it, for the jobs that name them. */
   readonly deletedIds: ReadonlySet<string>;
 }
@@ -546,7 +557,19 @@ async function deleteEmployee(ctx: MutationCtx, agent: Doc<'agents'>): Promise<R
     [...rows.values()].flat().map(async (id) => await ctx.db.delete(id as Id<AgentKeyedTable>)),
   );
   await ctx.db.delete(agent._id);
-  return { rowCounts, boundCredentials: credentialsBoundBy(surfaces), deletedIds };
+  const cards = await Promise.all(
+    surfaces.map(async (surface) => ({
+      surfaceId: surface._id,
+      displayName: surface.displayName,
+      bound: await credentialsBoundBy(ctx.db, [surface]),
+    })),
+  );
+  return {
+    rowCounts,
+    boundCredentials: new Set(cards.flatMap((card) => [...card.bound])),
+    cards,
+    deletedIds,
+  };
 }
 
 /**
@@ -641,7 +664,7 @@ export async function stillBound(
       .query('surfaces')
       .withIndex('by_agent', (q) => q.eq('agentId', employee._id))
       .collect();
-    if (credentialsBoundBy(surfaces).has(credentialId)) return true;
+    if ((await credentialsBoundBy(db, surfaces)).has(credentialId)) return true;
   }
   return false;
 }
@@ -674,23 +697,59 @@ export async function sortCredentials(
 }
 
 /**
- * Revoke, and delete the ciphertext of, each credential nothing binds any more.
+ * End, at the vendor and in Day0, each credential nothing binds any more, card by card (11-AR;
+ * the access plan, section 4.4): what Day0 obtained is revoked at once and held for its vendor
+ * call (`endAccessAtSource`), its ciphertext kept until the call is final; a pasted key that
+ * nothing else binds is revoked with its ciphertext deleted, and never sent to a vendor (D5,
+ * AC4); a pasted key a colleague or a documentation source still binds is kept. Each card's end
+ * writes its system's ledger line on the retired employee's record, which real mode keeps.
  *
  * @param ctx - The reset's mutation context.
  * @param userId - The owner.
- * @param bound - The credentials the retired employees bound.
+ * @param retired - The retired employees with the cards each deleted.
+ * @param end - `retire`, or `owner-deletion` when the owner's data goes with it.
  * @param now - The retire time.
  * @returns The credentials revoked and the ones kept for what still binds them.
  */
 async function revokeUnbound(
   ctx: MutationCtx,
   userId: string,
-  bound: ReadonlySet<Id<'credentials'>>,
+  retired: readonly { readonly agentId: Id<'agents'>; readonly cards: readonly RetiredCard[] }[],
+  end: AccessEnd,
   now: number,
 ): Promise<{ revoked: Set<Id<'credentials'>>; kept: Set<Id<'credentials'>> }> {
+  const bound = new Set(retired.flatMap(({ cards }) => cards.flatMap((card) => [...card.bound])));
   const { revoke, kept } = await sortCredentials(ctx.db, userId, bound, new Set());
-  for (const credential of revoke) await purgeCredential(ctx, credential, now);
-  return { revoked: new Set(revoke.map((credential) => credential._id)), kept };
+  const revoking = new Map(revoke.map((credential) => [credential._id, credential]));
+  const ended = new Set<Id<'credentials'>>();
+  for (const { agentId, cards } of retired) {
+    for (const card of cards) {
+      const rows: Doc<'credentials'>[] = [];
+      for (const id of card.bound) {
+        if (ended.has(id)) continue;
+        ended.add(id);
+        const row = revoking.get(id) ?? (await ctx.db.get(id));
+        // A row kept for what still binds it is the owner's to keep; only a pasted one says so.
+        if (row === null || (kept.has(id) && row.issuedBy !== undefined)) continue;
+        rows.push(row);
+      }
+      if (rows.length === 0) continue;
+      await endAccessAtSource(ctx, {
+        agentId,
+        surfaceId: card.surfaceId,
+        surfaceName: card.displayName,
+        credentials: rows.filter(
+          (row) => revoking.has(row._id) || kept.has(row._id) || row.holder !== undefined,
+        ),
+        end,
+        now,
+      });
+    }
+  }
+  for (const credential of revoke) {
+    if (credential.issuedBy === undefined) await purgeCredential(ctx, credential, now);
+  }
+  return { revoked: new Set(revoking.keys()), kept };
 }
 
 /**
@@ -750,11 +809,21 @@ async function retireEmployees(
   const unlinkedSources = options.unlinkDocumentation
     ? await deleteOwnedDocumentation(ctx, userId)
     : 0;
-  if (options.unlinkDocumentation) await purgeOwnedCredentials(ctx, userId);
-  if (!real) return { unlinkedSources };
+  if (!real) {
+    if (options.unlinkDocumentation) await purgeOwnedCredentials(ctx, userId);
+    return { unlinkedSources };
+  }
   if (!options.single) await releaseRetiredBoundaries(ctx, userId);
-  const bound = new Set([...retired.values()].flatMap((entry) => [...entry.boundCredentials]));
-  const { revoked, kept } = await revokeUnbound(ctx, userId, bound, now);
+  const { revoked, kept } = await revokeUnbound(
+    ctx,
+    userId,
+    [...retired.entries()].map(([agentId, entry]) => ({ agentId, cards: entry.cards })),
+    options.unlinkDocumentation ? 'owner-deletion' : 'retire',
+    now,
+  );
+  // The owner's other values go with the deletion only now, once what Day0 obtained is held for
+  // its vendor call: the purge leaves a held row's ciphertext for that call (F19).
+  if (options.unlinkDocumentation) await purgeOwnedCredentials(ctx, userId);
   for (const agent of agents) {
     const entry = retired.get(agent._id);
     const held = boundaries.get(agent._id) ?? NO_BOUNDARIES;
@@ -1025,6 +1094,24 @@ export const RETIRE_PREVIEW_ROW_LIMIT = 200;
 /** One connection a retire revokes or keeps, by the name the Surfaces tab gives it. */
 const previewSurface = v.object({ slug: v.string(), displayName: v.string() });
 
+/** What the retire will do at the vendor for one connection (11-AR). */
+const previewOutcome = v.object({
+  slug: v.string(),
+  displayName: v.string(),
+  /** The system the outcome is at: `issuedBy.system`, or the connection's name for a key. */
+  system: v.string(),
+  outcome: v.union(
+    v.literal('token-revoked'),
+    v.literal('app-deleted'),
+    v.literal('app-uninstalled'),
+    v.literal('not-supported'),
+    v.literal('shared'),
+    v.literal('not-at-vendor'),
+    v.literal('pasted-key'),
+    v.literal('kept'),
+  ),
+});
+
 /** What `retirePreview` answers. */
 const retirePreviewValidator = v.object({
   mode: v.union(v.literal('mock'), v.literal('real')),
@@ -1036,6 +1123,13 @@ const retirePreviewValidator = v.object({
   revoked: v.array(previewSurface),
   /** The connections whose credential stays, for another employee or a documentation source. */
   kept: v.array(previewSurface),
+  /**
+   * What the retire will do at the vendor, one entry per connection that binds a credential
+   * (11-AR): the token revoked or the app deleted or uninstalled there, no call the system offers,
+   * a token the organisation shares, a pasted key deleted from Day0 and never sent, or a key kept
+   * for what still binds it.
+   */
+  outcomes: v.array(previewOutcome),
   /** The items it may already have written, whose claims its retirement keeps. */
   keptClaims: v.number(),
   /** Whether the claims were counted over the first `RETIRE_PREVIEW_ROW_LIMIT` items only, so the count is a floor. */
@@ -1071,6 +1165,7 @@ export const retirePreview = query({
         atLeast,
         revoked: [],
         kept: [],
+        outcomes: [],
         keptClaims: 0,
         keptClaimsAtLeast: false,
         tombstone: false,
@@ -1080,17 +1175,41 @@ export const retirePreview = query({
       .query('surfaces')
       .withIndex('by_agent', (q) => q.eq('agentId', agent._id))
       .take(RETIRE_PREVIEW_ROW_LIMIT);
+    const cards = await Promise.all(
+      surfaces.map(async (surface) => ({
+        surface,
+        bound: await credentialsBoundBy(ctx.db, [surface]),
+      })),
+    );
     const { revoke, kept } = await sortCredentials(
       ctx.db,
       identity.ownerKey,
-      credentialsBoundBy(surfaces),
+      new Set(cards.flatMap((card) => [...card.bound])),
       new Set([agent._id]),
     );
     const revokedIds = new Set(revoke.map((credential) => credential._id));
     const named = (holds: (id: Id<'credentials'>) => boolean) =>
-      surfaces
-        .filter((surface) => [...credentialsBoundBy([surface])].some(holds))
-        .map((surface) => ({ slug: surface.slug, displayName: surface.displayName }));
+      cards
+        .filter((card) => [...card.bound].some(holds))
+        .map(({ surface }) => ({ slug: surface.slug, displayName: surface.displayName }));
+    const outcomes: Infer<typeof previewOutcome>[] = [];
+    for (const { surface, bound } of cards) {
+      const rows = (await Promise.all([...bound].map(async (id) => await ctx.db.get(id)))).filter(
+        (row): row is Doc<'credentials'> => row !== null,
+      );
+      const planned = await plannedAtSource(
+        ctx.db,
+        {
+          surfaceName: surface.displayName,
+          ended: rows.filter((row) => revokedIds.has(row._id) || row.holder !== undefined),
+          kept: rows.filter((row) => kept.has(row._id)),
+        },
+        'retire',
+      );
+      if (planned !== null) {
+        outcomes.push({ slug: surface.slug, displayName: surface.displayName, ...planned });
+      }
+    }
     const boundaries = await boundariesOf(ctx.db, items, Date.now());
     return {
       mode: 'real',
@@ -1098,6 +1217,7 @@ export const retirePreview = query({
       atLeast,
       revoked: named((id) => revokedIds.has(id)),
       kept: named((id) => kept.has(id)),
+      outcomes,
       keptClaims: boundaries.claims.length,
       keptClaimsAtLeast: items.length >= RETIRE_PREVIEW_ROW_LIMIT,
       tombstone: true,

@@ -2608,17 +2608,33 @@ export const reorient = action({
 // ---------- The handover's cut (transfer plan 6.3; D5 (a), A25) ----------
 
 /**
- * The credentials surfaces bind: each connection credential and each Slack app's client secret.
+ * The credentials surfaces bind: each connection credential and each Slack app's client secret,
+ * and, through each bound row, the refresh token paired with it and the client secret of the app
+ * it was issued to (11-AK item 1), so a retire or a handover that ends a token ends its pair and
+ * its app's secret with it. A pointer whose row is gone is still named, as the card's own are.
  *
+ * @param db - The retire's, the handover's or a preview's reader.
  * @param surfaces - Surface rows, of one employee or of several.
  */
-export function credentialsBoundBy(
+export async function credentialsBoundBy(
+  db: QueryCtx['db'],
   surfaces: readonly Pick<Doc<'surfaces'>, 'credentialId' | 'provisioning'>[],
-): Set<Id<'credentials'>> {
+): Promise<Set<Id<'credentials'>>> {
   const bound = new Set<Id<'credentials'>>();
+  const unread: Id<'credentials'>[] = [];
+  const add = (id: Id<'credentials'> | undefined): void => {
+    if (id === undefined || bound.has(id)) return;
+    bound.add(id);
+    unread.push(id);
+  };
   for (const surface of surfaces) {
-    if (surface.credentialId) bound.add(surface.credentialId);
-    if (surface.provisioning) bound.add(surface.provisioning.clientSecretCredentialId);
+    add(surface.credentialId);
+    add(surface.provisioning?.clientSecretCredentialId);
+  }
+  for (let id = unread.pop(); id !== undefined; id = unread.pop()) {
+    const row = await db.get(id);
+    add(row?.refreshCredentialId);
+    add(row?.issuedBy?.clientSecretCredentialId);
   }
   return bound;
 }
@@ -2671,7 +2687,7 @@ export async function surfaceHandoversOf(
   return await Promise.all(
     surfaces.map(async (surface) => {
       const rows = await Promise.all(
-        [...credentialsBoundBy([surface])].map(async (id) => await db.get(id)),
+        [...(await credentialsBoundBy(db, [surface]))].map(async (id) => await db.get(id)),
       );
       const bound = rows.filter((row): row is Doc<'credentials'> => row !== null);
       return { surface, handover: surfaceHandoverOf(surface, bound) };
@@ -3030,7 +3046,7 @@ export async function handOverSurfaces(
           surfaceId: surface._id,
           slug: surface.slug,
           displayName: surface.displayName,
-          boundCredentials: [...credentialsBoundBy([surface])],
+          boundCredentials: [...(await credentialsBoundBy(ctx.db, [surface]))],
         });
         break;
       }

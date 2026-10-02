@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import {
+  credentialsBoundBy,
   HANDOVER_CREDENTIAL_LOCATION,
   HANDOVER_CUT_REASON,
   HANDOVER_CUT_REPROPOSE_REASON,
@@ -24,6 +25,78 @@ const SURFACE_BASE: Pick<
   credentialLanded: false,
   createdAt: 1,
 };
+
+describe('the credentials a card binds (11-AK item 1, for the retire and the handover)', (): void => {
+  it("walks a bound token's refresh token and its app's client secret, so neither outlives the token", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const bound = await harness.run(async (ctx) => {
+      const row = async (label: string, fields: Partial<Doc<'credentials'>> = {}) =>
+        await ctx.db.insert('credentials', {
+          userId: 'owner',
+          kind: 'oauth',
+          label,
+          ciphertext: 'sealed',
+          iv: 'iv',
+          source: 'oauth',
+          createdAt: 1,
+          ...fields,
+        });
+      const appSecret = await row('Linear app client secret');
+      const refresh = await row('Linear refresh token');
+      const access = await row('Linear access token', {
+        refreshCredentialId: refresh,
+        issuedBy: {
+          system: 'linear',
+          grant: 'authorisation-code',
+          clientSecretCredentialId: appSecret,
+        },
+      });
+      const slackSecret = await row('Slack client secret');
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Maya',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 1,
+      });
+      const linear = await ctx.db.insert('surfaces', {
+        ...SURFACE_BASE,
+        agentId,
+        slug: 'linear',
+        verdict: 'connected',
+        credentialId: access,
+      });
+      const slack = await ctx.db.insert('surfaces', {
+        ...SURFACE_BASE,
+        agentId,
+        slug: 'slack',
+        displayName: 'Slack',
+        verdict: 'approved',
+        provisioning: {
+          appId: 'A0W11AR',
+          appName: 'Maya (Day0)',
+          clientId: '1234.5678',
+          clientSecretCredentialId: slackSecret,
+          installUrl: 'https://slack.com/oauth/v2/authorize',
+          redirectUrl: 'http://localhost:3000/api/oauth/slack',
+          scopes: [],
+          createdAt: 1,
+        },
+      });
+      const cards = await Promise.all([linear, slack].map(async (id) => await ctx.db.get(id)));
+      return {
+        walked: [
+          ...(await credentialsBoundBy(
+            ctx.db,
+            cards.filter((card): card is Doc<'surfaces'> => card !== null),
+          )),
+        ],
+        expected: [access, slackSecret, refresh, appSecret],
+      };
+    });
+    expect([...bound.walked].sort()).toEqual([...bound.expected].sort());
+  });
+});
 
 describe('the bound on one handover’s surfaces', (): void => {
   it('refuses, in words a dialog can show, an employee with more surfaces than a handover reads', async (): Promise<void> => {

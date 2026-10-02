@@ -177,3 +177,24 @@ export function revocationPlanFor(
     words: `${system}: no revocation endpoint; Day0's copy is deleted.`,
   };
 }
+
+/**
+ * What a call means once the vendor did it: a token revoked, or the app deleted or uninstalled.
+ * Exhaustive by its declared return.
+ *
+ * @param call - One call of a plan.
+ */
+export function callOutcome(
+  call: RevocationCall,
+): 'token-revoked' | 'app-deleted' | 'app-uninstalled' {
+  switch (call.kind) {
+    case 'slack-delete-app':
+      return 'app-deleted';
+    case 'slack-uninstall-app':
+      return 'app-uninstalled';
+    case 'slack-revoke-token':
+    case 'linear-revoke':
+    case 'oauth-revoke':
+      return 'token-revoked';
+  }
+}
