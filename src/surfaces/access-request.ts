@@ -83,7 +83,8 @@ export function organisationSystemOf(card: SystemCard): string | undefined {
     return undefined;
   }
   if (url.protocol !== 'https:') return undefined;
-  const host = url.hostname.toLowerCase();
+  // A fully qualified host's trailing dot names the same host.
+  const host = url.hostname.toLowerCase().replace(/\.$/, '');
   const known = SYSTEM_HOSTS.find((entry) =>
     entry.hosts.some((domain: string): boolean => hostWithin(host, domain)),
   );

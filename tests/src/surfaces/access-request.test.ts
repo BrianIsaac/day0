@@ -67,6 +67,13 @@ describe('the organisation system a card needs', (): void => {
     expect(
       organisationSystemOf({ ...card, endpoint: 'https://api.linear.app.evil.test/graphql' }),
     ).toBeUndefined();
+    // A fully qualified host's trailing dot names the same host.
+    expect(organisationSystemOf({ ...card, endpoint: 'https://api.linear.app./graphql' })).toBe(
+      'linear',
+    );
+    expect(
+      organisationSystemOf({ ...card, path: 'mcp', endpoint: 'https://mcp.acme.test./mcp' }),
+    ).toBe('mcp:mcp.acme.test');
     expect(organisationSystemOf({ ...card, endpoint: 'https://slack.com.evil.test/api/' })).toBe(
       undefined,
     );
