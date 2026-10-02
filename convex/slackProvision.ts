@@ -297,16 +297,22 @@ const installLinkFields = {
   stateExpiresAt: v.number(),
 };
 
+/** Why an app created under the employee's previous owner is not recorded (m10). */
+const CHANGED_HANDS =
+  'The employee changed hands while its app was being created, so the app was not recorded.';
+
 /**
  * Record the app Day0 just created for an employee, with its install link, in one transaction:
  * the card's `provisioning` (the connection that created it, when one did: 11-AR's retire reads it
  * to choose `apps.manifest.delete`, S4), the client secret's `issuedBy` (`app-created`), and the
  * record's `surface.app-provisioned`. The client secret is a row the organisation holds, stored by
  * the action with its holder, which nothing names until this write. Internal, for
- * `slackProvisionActions`.
+ * `slackProvisionActions`. Refuses an employee that changed hands since the action started, as the
+ * Linear and MCP recorders do (the wave 11 review's m10): the old manager's app never lands on a
+ * card the handover gave another.
  *
- * @throws ConvexError with {@link CARD_HAS_APP} when the card was given an app meanwhile, or when
- *   the secret is not a fresh row the organisation holds.
+ * @throws ConvexError with {@link CARD_HAS_APP} when the card was given an app meanwhile, when the
+ *   employee changed hands, or when the secret is not a fresh row the organisation holds.
  */
 export const recordCreatedApp = internalMutation({
   args: {
@@ -319,6 +325,8 @@ export const recordCreatedApp = internalMutation({
     scopes: v.array(v.string()),
     organisationConnectionId: v.optional(v.id('organisationConnections')),
     ...installLinkFields,
+    /** The owner key the provisioning action started under. */
+    startedUnder: v.string(),
     now: v.number(),
   },
   returns: v.null(),
@@ -328,6 +336,8 @@ export const recordCreatedApp = internalMutation({
       ctx.db.get(args.clientSecretCredentialId),
     ]);
     if (surface === null) throw new ConvexError('Surface not found.');
+    const agent = await ctx.db.get(surface.agentId);
+    if (agent?.userId !== args.startedUnder) throw new ConvexError(CHANGED_HANDS);
     if (surface.provisioning !== undefined) throw new ConvexError(CARD_HAS_APP);
     if (!liveOrganisationRow(secret) || secret.issuedBy !== undefined) {
       throw new ConvexError("The app's client secret is not one the organisation holds for it.");

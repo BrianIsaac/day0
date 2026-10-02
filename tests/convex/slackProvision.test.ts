@@ -249,9 +249,30 @@ describe('the app a card is given', (): void => {
       installUrl: 'https://slack.com/oauth/v2/authorize?client_id=1234.1',
       stateNonce: 'nonce-1',
       stateExpiresAt: Date.now() + 15 * 60 * 1000,
+      startedUnder: 'owner',
       now: Date.now(),
     };
   }
+
+  it("refuses an app created under the employee's previous owner, recording nothing (the review's m10)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const surfaceId = await card(harness);
+    const secretId = await secret(harness, 'organisation');
+
+    await expect(
+      harness.mutation(internal.slackProvision.recordCreatedApp, {
+        ...app(surfaceId, secretId),
+        startedUnder: 'previous-owner',
+      }),
+    ).rejects.toThrow('changed hands');
+
+    const after = await harness.run(async (ctx) => ({
+      surface: await ctx.db.get(surfaceId),
+      secret: await ctx.db.get(secretId),
+    }));
+    expect(after.surface?.provisioning).toBeUndefined();
+    expect(after.secret?.issuedBy).toBeUndefined();
+  });
 
   it("records the app and stamps its client secret's issuedBy", async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
