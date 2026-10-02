@@ -269,12 +269,6 @@ async function chooseMode(
     chosen = landable[Number(said) - 1];
     if (chosen === undefined) throw new AccessRefused(`"${said}" is not one of the modes offered.`);
   }
-  if (!chosen.landsAtInstall) {
-    throw new AccessRefused(
-      `${recipe.displayName} ${modeWords(chosen.mode)} is not landed at install: ${chosen.summary} ` +
-        `(${recipe.guide}).`,
-    );
-  }
   return chosen;
 }
 
@@ -457,14 +451,28 @@ async function resolvePlan(
       });
       continue;
     }
+    const mode = await chooseMode(from, recipe, one.system, modes);
+    if (!mode.landsAtInstall) {
+      // The mode is the customer's choice and is recorded; there is nothing to land for it yet.
+      skipped.push({
+        system: one.system,
+        reason: `${modeWords(mode.mode)}, not landed at install: ${mode.summary.replace(/\.$/, '')} (${recipe.guide})`,
+      });
+      continue;
+    }
     planned.push({
       system: one.system,
       recipe,
-      mode: await chooseMode(from, recipe, one.system, modes),
+      mode,
       ...(one.address === undefined || recipe.system !== 'mcp' ? {} : { address: one.address }),
     });
   }
   return { administrators, named, planned, skipped };
+}
+
+/** A skipped system as the list names it: a kit system by its display name, any other by its key. */
+function skippedName(system: string): string {
+  return recipeForSystem(system)?.displayName ?? system;
 }
 
 /** The systems found, as the verb lists them before it asks. */
@@ -479,7 +487,9 @@ function listLines(resolved: Resolved): string[] {
         `  ${one.recipe.system === 'mcp' ? one.system : one.recipe.displayName}${where(one.system)}: ` +
         `connect ${modeWords(one.mode.mode)}. ${one.mode.summary} Recipe: ${one.recipe.guide}`,
     ),
-    ...resolved.skipped.map((one) => `  ${one.system}${where(one.system)}: ${one.reason}.`),
+    ...resolved.skipped.map(
+      (one) => `  ${skippedName(one.system)}${where(one.system)}: ${one.reason}.`,
+    ),
   ];
 }
 

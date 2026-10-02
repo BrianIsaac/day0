@@ -71,9 +71,12 @@ It runs, in order, and **stops at the first step that fails, naming it**:
    backend and runs `pnpm check:setup`.
 4. **The organisation's systems** (`./setup.sh access`): it asks for the
    administrators, lists the systems the documentation names, and for each one
-   the kit connects shows its recipe, asks for its mode (per employee or
-   shared) and for what the recipe produced (secrets hidden), lands it, runs
-   `pnpm check:access` and writes the install record.
+   the kit connects shows its recipe and records its mode (Slack and an MCP
+   server per employee; Linear shared, or per employee with
+   `--connect-mode linear=per-employee`, which lands nothing now and leaves each
+   employee's app to its access request), asks for what the recipe produced
+   (secrets hidden), lands it, runs `pnpm check:access` and writes the install
+   record.
 5. **`pnpm check:setup`**, now with the access block.
 6. **`pnpm build`**: the browser reads the company sign-in's profile at build.
    Then start the app behind the proxy (`pnpm start`, in another terminal or
@@ -147,5 +150,18 @@ expires. It holds no secret. Hand it to the customer's IT.
 
 ## How long it takes
 
-Timed from a clean clone on a test bed (fake identity provider, fake Slack),
-2 October 2026: see the section below once measured.
+Measured on 2 October 2026 on a test bed (the test identity provider and the
+fake Slack, one system connected), on a machine that already held the Docker
+images, the pnpm store and a copy of the redactor's volumes (`--warm-from`):
+
+| Step | Time |
+|---|---|
+| Clean clone to dependencies installed | 2 s |
+| `./setup.sh --route featherless` (the machine) | 40 s |
+| The bed's own step (the test issuer added to the stack) | 24 s |
+| `./setup.sh install`, the build and the live sign-in check included | 55 s |
+| **From a clean clone to a passing install** | **2 min 1 s** |
+
+A first install on a new machine adds the image pulls, the redactor's model
+download and IT's own steps at each vendor; time those with the customer and
+plan for them.

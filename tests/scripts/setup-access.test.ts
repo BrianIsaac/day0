@@ -293,18 +293,27 @@ describe('setup: the access verb', (): void => {
     );
   });
 
-  it('takes the systems and their modes from flags, and refuses a mode the kit does not land at install', async (): Promise<void> => {
+  it('takes the systems and their modes from flags, and records a mode not landed at install while landing the rest', async (): Promise<void> => {
     const bed = accessBed();
     const status = await bed.run([
       ...ACCESS,
       '--systems',
-      'linear',
+      'slack,linear',
       '--connect-mode',
       'linear=per-employee',
+      '--record',
+      bed.record,
     ]);
-    expect(status).toBe(1);
-    expect(bed.bed.output.join('\n')).toContain('per employee');
-    expect(bed.deployment.calls.filter((call) => call.kind === 'action')).toEqual([]);
+    expect(status).toBe(0);
+    const landed = bed.deployment.calls
+      .filter((call) => call.path === 'organisationConnections:landFromSetup')
+      .map((call) => call.args.system);
+    expect(landed).toEqual(['slack']);
+    expect(bed.bed.output.join('\n')).toContain('Linear: per employee, not landed at install: ');
+    const [file] = readdirSync(bed.record);
+    expect(readFileSync(join(bed.record, file), 'utf8')).toContain(
+      '- linear: per employee, not landed at install:',
+    );
   });
 
   it('prints the plan on a dry run, asks no secret, writes and lands nothing', async (): Promise<void> => {
