@@ -5,6 +5,7 @@ import {
   randomBytes,
   timingSafeEqual,
 } from 'node:crypto';
+import { isOrganisationOwnerKey, ORGANISATION_OWNER_KEY } from './organisation-key';
 
 const ALGORITHM = 'aes-256-gcm';
 const IV_BYTES = 12;
@@ -28,7 +29,8 @@ export const CREDENTIAL_KEY_CHANGED_MESSAGE =
   'the credential key changed: this value was sealed under a different DAY0_CREDENTIAL_KEY, or altered since it was stored, so it cannot be read; enter the credential again';
 
 /**
- * The associated data that binds a sealed value to its owner.
+ * The associated data that binds a sealed value to its owner. A row the organisation holds is
+ * bound by {@link credentialOrganisationBinding} instead ({@link credentialBindingOf}).
  *
  * A credential row's id does not exist when its value is sealed, and its
  * label, kind and page reference move with every documentation sync, so the
@@ -39,6 +41,28 @@ export const CREDENTIAL_KEY_CHANGED_MESSAGE =
  */
 export function credentialOwnerBinding(userId: string): string {
   return `day0-credential:v1:owner:${userId}`;
+}
+
+/**
+ * The associated data that binds a sealed value to the organisation (F18, AC12): the reserved
+ * key, in a namespace of its own, so a value sealed for an owner (whatever the owner key's
+ * spelling) never opens as the organisation's, nor the organisation's on an owner's row.
+ */
+export function credentialOrganisationBinding(): string {
+  return `day0-credential:v1:organisation:${ORGANISATION_OWNER_KEY}`;
+}
+
+/**
+ * The binding a row's value is sealed under, by the row's `userId`: the organisation's for the
+ * reserved key (the only key an organisation row carries, and one no caller is ever keyed on),
+ * the owner's for every other.
+ *
+ * @param userId - The credential row's `userId`.
+ */
+export function credentialBindingOf(userId: string): string {
+  return isOrganisationOwnerKey(userId)
+    ? credentialOrganisationBinding()
+    : credentialOwnerBinding(userId);
 }
 
 /**
@@ -185,7 +209,7 @@ export function credentialValueFingerprint(
     .update(FINGERPRINT_DERIVATION_LABEL)
     .digest();
   return createHmac('sha256', fingerprintKey)
-    .update(credentialOwnerBinding(userId), 'utf8')
+    .update(credentialBindingOf(userId), 'utf8')
     .update('\0', 'utf8')
     .update(plaintext, 'utf8')
     .digest('hex')
@@ -217,7 +241,8 @@ export interface StoredSeal {
 }
 
 /**
- * Seal a value for its owner under the keyring's current key.
+ * Seal a value for its owner under the keyring's current key, bound to the owner, or to the
+ * organisation for the reserved key ({@link credentialBindingOf}).
  *
  * @param plaintext - Credential value to protect.
  * @param keyring - The deployment's keys; only the current one seals.
@@ -229,7 +254,7 @@ export function sealForOwner(
   userId: string,
 ): SealedCredential {
   return {
-    ...encrypt(plaintext, keyring.current, credentialOwnerBinding(userId)),
+    ...encrypt(plaintext, keyring.current, credentialBindingOf(userId)),
     keyId: credentialKeyId(keyring.current),
   };
 }
@@ -272,7 +297,7 @@ export function openOwnedCredential(
   options: { readonly allowUnbound: boolean },
 ): string {
   const sealed = { ciphertext: stored.ciphertext, iv: stored.iv };
-  const binding = credentialOwnerBinding(stored.userId);
+  const binding = credentialBindingOf(stored.userId);
   if (stored.keyId !== undefined) {
     const key = keyWithId(keyring, stored.keyId);
     if (key === undefined) {
@@ -283,7 +308,11 @@ export function openOwnedCredential(
   const keys = [keyring.current, keyring.previous].filter(
     (key): key is string => key !== undefined,
   );
-  const bindings = options.allowUnbound ? [binding, undefined] : [binding];
+  // Every organisation row was sealed bound, so none opens unbound whatever the policy.
+  const bindings =
+    options.allowUnbound && !isOrganisationOwnerKey(stored.userId)
+      ? [binding, undefined]
+      : [binding];
   for (const key of keys) {
     for (const associatedData of bindings) {
       try {
