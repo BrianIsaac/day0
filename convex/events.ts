@@ -352,6 +352,32 @@ async function acceptedHandoversOf(
 const LEDGER_EXPORT_LIMIT = 500;
 
 /**
+ * One connection's ledger as the export reads it: its newest {@link LEDGER_EXPORT_LIMIT} lines and
+ * its first, the landing, which a busy connection's later lines would otherwise push out.
+ *
+ * @param ctx - Query context.
+ * @param organisationConnectionId - The connection.
+ */
+async function connectionLedgerOf(
+  ctx: QueryCtx,
+  organisationConnectionId: Id<'organisationConnections'>,
+): Promise<Doc<'connectionEvents'>[]> {
+  const ledger = () =>
+    ctx.db
+      .query('connectionEvents')
+      .withIndex('by_connection', (q) =>
+        q.eq('organisationConnectionId', organisationConnectionId),
+      );
+  const [newest, first] = await Promise.all([
+    ledger().order('desc').take(LEDGER_EXPORT_LIMIT),
+    ledger().order('asc').first(),
+  ]);
+  return first === null || newest.some((line) => line._id === first._id)
+    ? newest
+    : [...newest, first];
+}
+
+/**
  * The organisation's ledger lines about the connections an employee's cards use (F17; the access
  * plan, section 8, cross-unit test 4), oldest first: each connection's landing, rotations and
  * revoke, and of the vendor calls made with a connection's secret only those that ended this
@@ -374,16 +400,9 @@ async function organisationLedgerOf(
   ];
   if (connectionIds.length === 0) return [];
   const [ended, ...ledgers] = await Promise.all([
-    eventsOfType(ctx, agentId, 'credential.revoked-at-source').take(TRACE_PAGE_ROWS),
+    eventsOfType(ctx, agentId, 'credential.revoked-at-source').order('desc').take(TRACE_PAGE_ROWS),
     ...connectionIds.map(
-      async (organisationConnectionId) =>
-        await ctx.db
-          .query('connectionEvents')
-          .withIndex('by_connection', (q) =>
-            q.eq('organisationConnectionId', organisationConnectionId),
-          )
-          .order('desc')
-          .take(LEDGER_EXPORT_LIMIT),
+      async (organisationConnectionId) => await connectionLedgerOf(ctx, organisationConnectionId),
     ),
   ]);
   const own = new Set<string>([

@@ -232,6 +232,66 @@ describe('the organisation’s ledger in the audit export (join 11)', (): void =
   });
 });
 
+describe('the organisation’s ledger on a busy connection (join 11, the second pass)', (): void => {
+  it('keeps the connection’s landing however many other employees’ lines came after it', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedTracedAgent(harness);
+    await harness.run(async (ctx) => {
+      const linear = await ctx.db.insert('organisationConnections', {
+        system: 'linear',
+        displayName: 'Linear',
+        kind: 'oauth-app',
+        mode: 'per-employee',
+        scopes: ['read'],
+        registeredBy: { via: 'setup-cli', at: 1 },
+        status: 'active',
+        createdAt: 1,
+      });
+      const surface = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+        .first();
+      await ctx.db.patch(surface!._id, { organisationConnectionId: linear });
+      const other = await ctx.db.insert('credentials', {
+        userId: 'someone-else',
+        kind: 'oauth',
+        label: 'Another employee’s token',
+        source: 'oauth',
+        createdAt: 1,
+      });
+      await ctx.db.insert('connectionEvents', {
+        organisationConnectionId: linear,
+        type: 'organisation.connection-landed',
+        payload: { organisationConnectionId: linear, system: 'linear', displayName: 'Linear' },
+        createdAt: 2,
+      });
+      for (let index = 0; index < 501; index += 1) {
+        await ctx.db.insert('connectionEvents', {
+          organisationConnectionId: linear,
+          type: 'organisation.revoked-at-source',
+          payload: {
+            credentialId: other,
+            system: 'linear',
+            end: 'retire',
+            outcome: 'token-revoked',
+            attempt: 1,
+          },
+          createdAt: 3 + index,
+        });
+      }
+    });
+    const { api } = await import('../../convex/_generated/api');
+
+    const head = await harness
+      .withIdentity(managerIdentity())
+      .action(api.exportActions.exportForAgent, { agentId });
+
+    expect(head.organisationLedger.map((one) => one.type)).toEqual([
+      'organisation.connection-landed',
+    ]);
+  });
+});
+
 describe('the paged trace export', (): void => {
   afterEach((): void => {
     vi.useRealTimers();
