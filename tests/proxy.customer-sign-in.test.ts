@@ -140,6 +140,13 @@ describe('the customer-local proxy gate', (): void => {
     }
   });
 
+  it('refuses every request when the server runs the customer profile and the build was made without it (the wave 10 review, S-m1)', async (): Promise<void> => {
+    const proxy = await loadProxy({ NEXT_PUBLIC_DAY0_PROFILE: '', NEXT_PUBLIC_DEV_NO_AUTH: '' });
+    const response = (await proxy(request('/', await sessionCookie()))) as Response;
+    expect(response.status).toBe(503);
+    expect(await response.text()).toContain('NEXT_PUBLIC_DAY0_PROFILE=customer-local');
+  });
+
   it('refuses every request when the server runs another profile than the build', async (): Promise<void> => {
     const proxy = await loadProxy({ DAY0_PROFILE: 'local-dev' });
     const response = (await proxy(request('/', await sessionCookie()))) as Response;

@@ -102,4 +102,39 @@ describe('SkillsView', () => {
     expect(html).toContain('>Not callable</h2>');
     expect(html).toContain('keeps running this version until the new one registers.');
   });
+  it('leaves an adoption in flight, stopped short or failed to the adoption card, so Not callable offers no Retry on it (the wave 10 review, M3 and B1)', () => {
+    const adoption = (id: string, state: string): Record<string, unknown> => ({
+      _id: id,
+      name: `adopted-${state}`,
+      state,
+      sourceType: 'agent-authored',
+      body: '',
+      description: 'Close.',
+      offeredVersionId: 'version-1',
+      authoringAttempts: 1,
+      verificationLog: 'the stored skill was not verified: no sandbox; Retry runs its check',
+    });
+    backend.queries = {
+      'skills:proposed': [],
+      'skills:registered': [],
+      'skills:awaitingVerification': [adoption('s1', 'authoring')],
+      'skills:verificationFailed': [
+        adoption('s2', 'failed'),
+        {
+          _id: 's3',
+          name: 'own-draft',
+          state: 'failed',
+          sourceType: 'agent-authored',
+          body: '',
+          description: 'Its own.',
+          authoringAttempts: 1,
+          verificationLog: 'smoke.py exited 1',
+        },
+      ],
+    };
+    const html = renderToStaticMarkup(asEmployee(<SkillsView />));
+    expect(html).toContain('own-draft');
+    expect(html).not.toContain('adopted-authoring');
+    expect(html).not.toContain('adopted-failed');
+  });
 });

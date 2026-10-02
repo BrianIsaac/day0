@@ -65,6 +65,13 @@ export const TRANSFER_EXPIRY_MS = 14 * DAY_MS;
  */
 export const TRANSFER_SETTLE_MS = 15 * MINUTE_MS;
 
+/**
+ * The reason the record gives for the settings a handover returns to their defaults (autonomous
+ * actions off, run notes one per run): the move set them, not a manager, and the record says so
+ * whoever reads it (the wave 10 review, M8).
+ */
+export const HANDOVER_SETTINGS_REASON = 'handed over to a new manager';
+
 /** At most this many open requests for one employee. */
 export const MAX_OPEN_TRANSFERS_PER_EMPLOYEE = 1;
 
@@ -88,6 +95,16 @@ export const MAX_DECLINE_REASON_LENGTH = 500;
 
 /** How long a finished request stays among the old manager's notices. */
 export const TRANSFER_DEPARTURES_WINDOW_MS = 30 * DAY_MS;
+
+/**
+ * Whether a request answered at `decidedAt` is still the old manager's to read at `now`: one
+ * rule for the home's line and the old link to a handed-over employee (the operator's ruling of
+ * 2 October, decision 8), so the link never outlives the "Your home lists the handover for 30
+ * days." it says.
+ */
+export function isDepartureListed(decidedAt: number, now: number): boolean {
+  return decidedAt >= now - TRANSFER_DEPARTURES_WINDOW_MS;
+}
 
 /** Whether a request in this state is still open. */
 export function isOpenTransferState(

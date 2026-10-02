@@ -11,6 +11,7 @@ import {
   isNewerVersionReason,
   isOfferable,
   newerVersionReason,
+  newerVersionWords,
   nextVersionNumber,
   sharedSkillsEnabled,
   surfaceCutReason,
@@ -157,5 +158,17 @@ describe('what a handover rewrites', (): void => {
     expect(HANDED_OVER_RECHECK_REASON).toBe(
       'it was due a re-check when the employee was handed over',
     );
+  });
+});
+
+describe('newerVersionWords', (): void => {
+  it('says a newer-version reason in words, and nothing for any other reason (the pre-tag walk, W-1)', (): void => {
+    expect(newerVersionWords(newerVersionReason(2, 1))).toBe(
+      'version 2 is verified; this runs version 1',
+    );
+    expect(newerVersionWords(`${newerVersionReason(12, 3)}.`)).toBe(
+      'version 12 is verified; this runs version 3',
+    );
+    expect(newerVersionWords(CHECK_NOT_KEPT_REASON)).toBeUndefined();
   });
 });

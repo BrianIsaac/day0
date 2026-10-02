@@ -12,6 +12,7 @@ import { toSurfaceRecord } from '@/surfaces/records';
 import { isManagerLookupFailure } from '@/surfaces/manager-lookup';
 import type { SurfaceRecord } from '@/surfaces/types';
 import { needsYouItemIds, openWorkCount } from '@/work/state-display';
+import { skillsWaitingOnManager } from '@/work/needs-manager';
 import { shownEmployeeState } from '@/work/state-labels';
 import { useArrival } from '../../arrival';
 import { FirstWeekCard } from '../../components/FirstWeekCard';
@@ -36,7 +37,7 @@ import {
 import { EmployeeHeader } from './EmployeeHeader';
 import { EmployeeRetired, NoSuchEmployee } from './NoSuchEmployee';
 import { currentStep, firstWeekSteps } from './first-week';
-import { AgentZoneContext } from '../../components/time';
+import { AgentZoneContext, useNow } from '../../components/time';
 import { ButtonLink } from '../../components/Button';
 
 /** Said, with focus on the one-to-one, when a charter sent back returns the page to it. */
@@ -94,8 +95,8 @@ function movedOn(before: number | undefined, step: number): boolean {
 
 /**
  * The strip's tabs with their counts: what waits on the manager (in warn), the work still open
- * (under the queue's Needs you and In progress filters), the skills proposed. A tab with nothing
- * to count draws no badge.
+ * (under the queue's Needs you and In progress filters), the skills that wait on the manager. A
+ * tab with nothing to count draws no badge.
  *
  * @param agentId - The employee.
  * @param counts - The counts, each undefined while its query loads.
@@ -189,6 +190,11 @@ export function EmployeeShell({ agentId, children }: EmployeeShellProps) {
   const inbox = useQuery(api.work.needsYouForAgent, present);
   const workItems = useQuery(api.work.listForAgent, present);
   const proposedSkills = useQuery(api.skills.proposed, present);
+  const unverifiedSkills = useQuery(api.skills.awaitingVerification, present);
+  const failedSkills = useQuery(api.skills.verificationFailed, present);
+  // A claim stops being live without any write, so the badge's count is read against the clock
+  // the Skills tab reads its cards against.
+  const now = useNow();
   const metrics = useQuery(api.metrics.forAgent, present);
   const session = useQuery(api.voice.latest, present);
   const standing = useQuery(api.agents.managerStanding, present);
@@ -327,7 +333,10 @@ export function EmployeeShell({ agentId, children }: EmployeeShellProps) {
       workItems === undefined || inbox === undefined
         ? undefined
         : openWorkCount(workItems, needsYouItemIds(inbox.entries)),
-    skills: proposedSkills?.length,
+    skills:
+      proposedSkills === undefined || unverifiedSkills === undefined || failedSkills === undefined
+        ? undefined
+        : skillsWaitingOnManager([...proposedSkills, ...unverifiedSkills, ...failedSkills], now),
   });
 
   return (

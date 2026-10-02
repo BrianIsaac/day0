@@ -504,7 +504,13 @@ export interface SkillApprovedPayload extends SkillNamed {
 }
 
 /** The payload of `skill.rejected`. */
-export type SkillRejectedPayload = SkillNamed;
+export interface SkillRejectedPayload extends SkillNamed {
+  /**
+   * Set when nobody rejected the row: the version offered to it for adoption was withdrawn from
+   * every employee, which ended the adoption (the wave 10 review, M2).
+   */
+  readonly offerWithdrawn?: { readonly version: number };
+}
 
 /**
  * The payload of `skill.revision-requested`: the manager asked for a revision. Since 10-C a
@@ -580,6 +586,12 @@ export interface SkillAuthoringSupersededPayload extends SkillNamed {
 /** The payload of `skill.authoring-claimed`. */
 export interface SkillAuthoringClaimedPayload extends SkillNamed {
   readonly fromState: Doc<'skills'>['state'];
+  /**
+   * What the claim is for: writing a body (`author`), or checking a stored version in the sandbox
+   * (`verify-stored`: an adoption, a Re-check now). Absent on a claim an older release wrote,
+   * which was always a writing.
+   */
+  readonly purpose?: 'author' | 'verify-stored';
 }
 
 /** The payload of `skill.authoring`. */

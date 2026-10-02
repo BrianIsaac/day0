@@ -92,7 +92,19 @@ export function newerVersionReason(newer: number, held: number): string {
 }
 
 /** The shape `newerVersionReason` writes, and nothing else. */
-const NEWER_VERSION_REASON = /^v\d+ is verified; this runs v\d+$/;
+const NEWER_VERSION_REASON = /^v(\d+) is verified; this runs v(\d+)$/;
+
+/**
+ * A newer-version reason as a manager reads it: "version 3 is verified; this runs version 2".
+ * The stored reason keeps its short form, which the triggers and the handover match on.
+ *
+ * @param reason - A row's `recheckReason`, with or without a closing full stop.
+ * @returns The words, or undefined for any other reason.
+ */
+export function newerVersionWords(reason: string): string | undefined {
+  const match = NEWER_VERSION_REASON.exec(reason.trim().replace(/[.]+$/, ''));
+  return match ? `version ${match[1]} is verified; this runs version ${match[2]}` : undefined;
+}
 
 /**
  * Whether a re-check reason is the newer-version one, which names version numbers of the
@@ -116,6 +128,17 @@ export const HANDED_OVER_RECHECK_REASON = 'it was due a re-check when the employ
  * who did stays with the previous manager, and the new manager's library does not name them.
  */
 export const HANDED_OVER_AUTHOR_NAME = 'a colleague under the previous manager';
+
+/**
+ * Whose version an adopted skill holds, as its registered card says it: the version's number and
+ * the author the owner's library names, which after a handover is
+ * {@link HANDED_OVER_AUTHOR_NAME} (the real-Linear walk, m2).
+ */
+export interface AdoptedSource {
+  readonly skillId: string;
+  readonly version: number;
+  readonly authorName: string;
+}
 
 /**
  * The re-check reason a moved employee's skill is stamped with when the handover cut the

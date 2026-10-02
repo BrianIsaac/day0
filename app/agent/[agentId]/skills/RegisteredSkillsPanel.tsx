@@ -7,6 +7,7 @@ import { api } from '@convex/_generated/api';
 import { type RefObject, useEffect, useId, useRef, useState } from 'react';
 import { clockTime, useAgentZone, useNow } from '../../../components/time';
 import {
+  focusIsFree,
   refusalText,
   returnFocus,
   useChange,
@@ -20,19 +21,24 @@ import { StatusRegion } from '../../../components/StatusRegion';
 import type { Tone } from '../../../components/tone';
 import { holdsLiveAuthoringClaim } from '@/lib/skill-authoring';
 import { attemptsSpent } from '@/work/needs-manager';
+import { stalledReason, stalledWords } from '@/work/skill-adoption';
 import { RefusedDraft } from './RefusedDraft';
 import { RetireSkillDialog } from './RetireSkillDialog';
 import { CODE_CHIP, plainSkillName, ScopeChips, SkillInputs, SkillStatusLine } from './skill-parts';
 import {
+  adoptedFromWords,
   attemptLine,
   attemptsSpentSentence,
   givenUpOutcome,
   recheckSentence,
   recheckStartedOutcome,
+  registeredSourceChip,
   revisionRowSentence,
+  revisionStartedOutcome,
   revisionSentence,
   usedTimes,
 } from './skill-card-words';
+import type { AdoptedSource } from '@/work/skill-library';
 
 /**
  * Whether Retry on this row verifies the draft it already has rather than
@@ -89,6 +95,23 @@ export function retriesWithReasons(
   return skill.state === 'failed' && Boolean(skill.verificationLog);
 }
 
+/**
+ * The status line of a not-callable row with no run on it: for a skill parked because its check
+ * never ran, why, in the manager's words (the sandbox's own log names the operator's commands, as
+ * the stalled adoption card's did before A-m6); otherwise the row's verdict as it stands.
+ *
+ * @param skill - The unregistered row.
+ */
+function parkedLine(
+  skill: Pick<
+    Doc<'skills'>,
+    'state' | 'body' | 'pendingSmokeTest' | 'verificationLog' | 'description'
+  >,
+): string {
+  if (!retryVerifiesSavedDraft(skill)) return skill.verificationLog ?? skill.description;
+  return `The check did not run: ${stalledWords(stalledReason(skill.verificationLog)) ?? 'Day0 could not start the check'}.`;
+}
+
 /** The day a skill registered, in the employee's zone. */
 function registeredOn(at: number, zone: string | undefined): string {
   return clockTime(at, zone).split(',')[0] ?? '';
@@ -118,6 +141,8 @@ export function RegisteredSkillsPanel({
   focusRef,
   loading = false,
   employee = 'This employee',
+  autonomous = false,
+  adoptedFrom = [],
 }: {
   skills: Doc<'skills'>[];
   /** The registered skills' query has not answered yet. */
@@ -147,6 +172,10 @@ export function RegisteredSkillsPanel({
   focusRef?: RefObject<HTMLElement | null>;
   /** The employee's name, for the sentences that say who keeps running a skill. */
   employee?: string;
+  /** Whether the employee's autonomous actions are on, for what Retire says of a run under way. */
+  autonomous?: boolean;
+  /** Whose version each adopted skill runs, as `skillVersions.adoptedSources` answers. */
+  adoptedFrom?: readonly AdoptedSource[];
 }) {
   const author = useAction(api.skillActions.authorAndRegisterSkill);
   const askForRevision = useMutation(api.skillControls.askForRevision);
@@ -187,10 +216,17 @@ export function RegisteredSkillsPanel({
     controls.clear();
     // A revision is its own row, written while this one keeps running.
     let written = skillId;
+    let started: string | undefined;
     try {
       if (revise) {
         try {
           written = (await askForRevision({ skillId })).revisionId;
+          // The control is disabled while the revision is written, which drops its focus: the
+          // card holds it meanwhile, unless the manager moved on, and the live region says what
+          // began until the run's own verdict is said (C-m2; the second pass).
+          started = revisionStartedOutcome(name, employee);
+          setNotice({ tone: 'done', text: started });
+          if (focusIsFree(origin)) registeredCard.current?.focus();
         } catch (err) {
           // Refused before anything was authored: said here, since no attempt names a new row.
           setNotice({
@@ -219,19 +255,39 @@ export function RegisteredSkillsPanel({
       });
     } finally {
       setRetrying(null);
+      // The run's verdict is said by the Skills card now; the line that it began goes.
+      if (started !== undefined) {
+        const said = started;
+        setNotice((current) => (current?.text === said ? null : current));
+      }
     }
   }
 
-  /** Start one of the row controls that change a skill at once, said in the card's live region. */
-  function runControl(call: () => Promise<string>, refused: string): void {
+  /**
+   * Start one of the row controls that change a skill at once, said in the card's live region.
+   * `holder`, when given, takes focus once the change lands, because the change disables its
+   * control (a check that starts); a manager who moved focus elsewhere meanwhile keeps it there.
+   */
+  function runControl(
+    call: () => Promise<string>,
+    refused: string,
+    holder?: RefObject<HTMLElement | null>,
+  ): void {
     setNotice(null);
-    controls.run(call, { done: (words) => words, refused });
+    const origin = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    controls.run(call, {
+      done: (words) => words,
+      refused,
+      ...(holder ? { focus: () => (focusIsFree(origin) ? holder.current : null) } : {}),
+    });
   }
 
   // The button is disabled while its run holds it, so focus comes back to it
   // once it is enabled again, unless the manager has moved on.
   useEffect(() => {
     if (retrying !== null || returnTo === null) return;
+    // The card held focus for a control the run disabled: the control takes it back, if it can.
+    if (document.activeElement === returnTo.card) returnTo.card?.blur();
     returnFocus(returnTo.control, returnTo.card);
     // eslint-disable-next-line react-hooks/set-state-in-effect -- the focus return happens once per settled run
     setReturnTo(null);
@@ -269,6 +325,8 @@ export function RegisteredSkillsPanel({
           <ul className="grid gap-4">
             {skills.map((s) => {
               const authored = s.sourceType === 'agent-authored';
+              const source = registeredSourceChip(s);
+              const adopted = adoptedFrom.find((entry) => entry.skillId === s._id);
               const checking = holdsLiveAuthoringClaim(s, now);
               const due = s.recheckDueAt !== undefined && s.recheckReason !== undefined;
               const hasRevision = revising.has(s._id);
@@ -280,14 +338,15 @@ export function RegisteredSkillsPanel({
                   <div className="min-w-0 flex-1 basis-64">
                     <p className="flex flex-wrap items-center gap-2 text-sm text-[var(--color-fg)]">
                       <span className="font-medium break-words">{plainSkillName(s)}</span>
-                      <Chip tone={authored ? 'accent' : 'muted'}>
-                        {authored ? 'authored' : 'built in'}
-                      </Chip>
+                      <Chip tone={authored ? 'accent' : 'muted'}>{source}</Chip>
                       {checking ? <Chip tone="accent">Re-checking</Chip> : null}
                       {due && !checking ? <Chip tone="warn">Re-check due</Chip> : null}
                     </p>
                     <p className="mt-1 text-xs leading-relaxed text-[var(--color-muted)] break-words">
                       <code className={CODE_CHIP}>{s.name}</code>
+                      {source === 'adopted' && adopted !== undefined
+                        ? ` · ${adoptedFromWords(adopted)}`
+                        : ''}
                       {s.registeredAt !== undefined
                         ? ` · registered ${registeredOn(s.registeredAt, zone)}`
                         : ''}
@@ -313,10 +372,14 @@ export function RegisteredSkillsPanel({
                         <Button
                           size="small"
                           onClick={() =>
-                            runControl(async () => {
-                              await recheckNow({ skillId: s._id });
-                              return recheckStartedOutcome(s.name);
-                            }, `${s.name} was not re-checked.`)
+                            runControl(
+                              async () => {
+                                await recheckNow({ skillId: s._id });
+                                return recheckStartedOutcome(s.name);
+                              },
+                              `${s.name} was not re-checked.`,
+                              registeredCard,
+                            )
                           }
                           disabled={checking || controls.busy}
                           aria-label={`Re-check now: ${s.name}`}
@@ -410,7 +473,7 @@ export function RegisteredSkillsPanel({
                           ? 'authoring now · a run holds this skill'
                           : s.authoringRunId
                             ? 'a run stopped without reporting · Retry takes the skill over'
-                            : (s.verificationLog ?? s.description)
+                            : parkedLine(s)
                       }
                     />
                     <SkillInputs body={s.body || s.refusedBody || ''} />
@@ -475,25 +538,23 @@ export function RegisteredSkillsPanel({
               );
             })}
           </ul>
-          {/* Two backends can run the check, so naming one of them is advice
-              half the readers cannot act on. The rule that picks between them
-              is what tells a reader which line is theirs. And a retry costs an
-              authoring call for some of these rows and none for others, which
-              is the difference between waiting on a sandbox and waiting on the
-              model, so the text says which is which rather than claiming one
-              for all of them. */}
+          {/* A retry costs an authoring call for some of these rows and none for others, which
+              is the difference between waiting on a sandbox and waiting on the model, so the
+              text says which is which rather than claiming one for all of them. Starting a
+              sandbox is the operator's step, not the manager's: the card says whom to ask, as
+              the stalled adoption card does (A-m6), and the operator's commands stay in the
+              running guide (docs/running/components.md). */}
           <div className="mt-3">
-            <Disclosure summary="What Retry does, and starting a sandbox">
+            <Disclosure summary="What Retry does">
               <p className="text-xs leading-relaxed text-[var(--color-muted)]">
-                Retry picks a skill up where it stopped. One parked because the check never ran -
-                the sandbox was busy, absent, or threw - keeps its body and smoke test and is
+                Retry picks a skill up where it stopped. One parked because the check never ran (the
+                sandbox was busy, not running, or failed) keeps its body and smoke test and is
                 checked again as it stands, with no second authoring call; one the gate or the check
                 itself turned down is authored again, with the reason fed back. Either way it has to
-                pass the check before it is callable. If the sandbox was skipped, start one first:
-                run pnpm sandbox:up for the bundled local sandbox, or set DAYTONA_API_KEY on the
-                deployment to use Daytona instead. Only one authoring run holds a skill at a time,
-                so a retry while one is still running is refused until that run finishes or its
-                claim lapses.
+                pass the check before it is callable. If no sandbox was running, ask whoever runs
+                this Day0 installation to start one, then press Retry. Only one authoring run holds
+                a skill at a time, so a retry while one is still running is refused until that run
+                finishes or its claim lapses.
               </p>
             </Disclosure>
           </div>
@@ -505,6 +566,7 @@ export function RegisteredSkillsPanel({
           skill={retiring.skill}
           employee={employee}
           revisionOpen={revising.has(retiring.skill._id)}
+          autonomous={autonomous}
           onClose={() => {
             // Some browsers do not focus a button on click, so the dialog's own return can land
             // on the page: the control that opened it takes focus back, unless a run is still

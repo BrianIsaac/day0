@@ -61,7 +61,7 @@ describe('the live feed labels', (): void => {
       'handover to priya@co.example cancelled',
       'handover to priya@co.example cancelled at the retire',
       'handover to priya@co.example cancelled for another address',
-      'priya@co.example declined the handover',
+      'handover declined by priya@co.example',
       'handover to priya@co.example expired',
       'handover to priya@co.example not finished yet',
       'handover to priya@co.example ended, it could not finish',
@@ -370,6 +370,18 @@ describe('the live feed labels', (): void => {
         },
       }),
     ).toBe('skill given up: analytics-refresh-value after 2 attempts');
+    expect(
+      eventLabel({
+        type: 'skill.rejected',
+        payload: { name: 'kanban-comment-and-close', offerWithdrawn: { version: 1 } },
+      }),
+    ).toBe('skill adoption ended, version withdrawn: kanban-comment-and-close');
+    expect(
+      eventLabel({
+        type: 'skill.authoring-claimed',
+        payload: { name: 'kanban-comment-and-close', purpose: 'verify-stored' },
+      }),
+    ).toBe('skill check started: kanban-comment-and-close');
     expect(
       eventLabel({
         type: 'skill.rechecked',

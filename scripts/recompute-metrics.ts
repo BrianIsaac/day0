@@ -49,7 +49,12 @@ import {
 } from '../convex/metrics';
 import type { OwnerMetrics } from '../src/metrics/types';
 import { exportEntries, exportRows } from './convex-export';
-import { readAgentTrace, type AgentTrace, type TraceManifest } from '../src/export/trace';
+import {
+  handoversForRecompute,
+  readAgentTrace,
+  type AgentTrace,
+  type TraceManifest,
+} from '../src/export/trace';
 import { isEventType, type EventType } from '../src/events/contract';
 import { errorMessage } from '../src/lib/errors';
 
@@ -257,8 +262,15 @@ export function recomputeFromTraces(
     trace,
   }));
   // The manifests' handovers cut each employee's history at its acceptances, as
-  // `metrics:forOwner` cuts it (D12).
-  const handovers = read.flatMap((trace) => trace.manifest.handovers ?? []);
+  // `metrics:forOwner` cuts it (D12). They carry each owner key as a digest salted with the
+  // trace's own export time: the owner asked about and the employee's present holder are digested
+  // the same way and read back, and any other manager stays a digest (decision 2, M6).
+  const handovers = read.flatMap((trace) =>
+    handoversForRecompute(trace.manifest, [
+      owner,
+      ...(trace.agent.userId !== undefined ? [trace.agent.userId] : []),
+    ]),
+  );
   const selection = selectCompanyEmployees(agents, owner, (agent) => agent.evaluation, handovers);
   const records: EmployeeRecords[] = selection.employees.map(({ trace, ...agent }) =>
     recordsWithinTenure(

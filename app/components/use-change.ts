@@ -63,6 +63,18 @@ export interface Change {
 }
 
 /**
+ * Whether focus may be moved once a change settles: it is on the page itself, nowhere, or still
+ * on the control the manager pressed. A manager who moved it elsewhere while the call ran keeps it
+ * there, wherever the change would have sent it.
+ *
+ * @param origin - What held focus when the change started.
+ */
+export function focusIsFree(origin: HTMLElement | null): boolean {
+  const active = document.activeElement;
+  return active === null || active === document.body || active === origin;
+}
+
+/**
  * Where focus goes once a change settles.
  *
  * The control the manager pressed keeps it when it is still on the page and
@@ -74,9 +86,7 @@ export interface Change {
  * @param fallback - The element that stands in for a control that went away.
  */
 export function returnFocus(origin: HTMLElement | null, fallback: HTMLElement | null): void {
-  const active = document.activeElement;
-  const lost = active === null || active === document.body || active === origin;
-  if (!lost) return;
+  if (!focusIsFree(origin)) return;
   const usable =
     origin !== null &&
     origin.isConnected &&

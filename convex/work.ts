@@ -2759,15 +2759,39 @@ export const recoverUnproposedSkill = internalMutation({
       await eventsOfType(ctx, row.agentId, 'work.evaluated').order('desc').take(REEVALUATION_BATCH)
     ).find((event) => (event.payload as { workItemId?: unknown }).workItemId === row._id);
     if (latest?._id !== args.evaluatedId) return { recovered: 'ignored' };
-    const name = (row.verdict as { suggestedSkillName?: unknown } | undefined)?.suggestedSkillName;
-    const skill = typeof name === 'string' && name ? `the skill "${name}"` : 'a skill';
-    await failInTransaction(ctx, row, {
-      reason: `evaluation found this item needs ${skill}, but its proposal was never recorded; Retry evaluates the item again`,
-      stopped: true,
-    });
+    await stopUnproposedInTransaction(ctx, row);
     return { recovered: 'failed' };
   },
 });
+
+/**
+ * A `needs-skill` row's stop when the proposal its evaluation promised threw in that same
+ * evaluation: at once, rather than a lease later by {@link recoverUnproposedSkill}, and in either
+ * surface mode, so the card offers Retry instead of a proposal that was never written (the
+ * real-Linear walk, m7). A row that left `needs-skill`, or whose proposal landed, is left alone.
+ * Internal; the evaluating action's.
+ */
+export const stopUnproposedSkill = internalMutation({
+  args: { workItemId: v.id('workItems') },
+  handler: async (ctx, args): Promise<{ recovered: 'failed' | 'ignored' }> => {
+    const row = await ctx.db.get(args.workItemId);
+    if (!row || row.state !== 'needs-skill' || row.proposedSkillId !== undefined) {
+      return { recovered: 'ignored' };
+    }
+    await stopUnproposedInTransaction(ctx, row);
+    return { recovered: 'failed' };
+  },
+});
+
+/** Stops a `needs-skill` row with no proposal, naming the skill it needed, so Retry evaluates it. */
+async function stopUnproposedInTransaction(ctx: MutationCtx, row: Doc<'workItems'>): Promise<void> {
+  const name = (row.verdict as { suggestedSkillName?: unknown } | undefined)?.suggestedSkillName;
+  const skill = typeof name === 'string' && name ? `the skill "${name}"` : 'a skill';
+  await failInTransaction(ctx, row, {
+    reason: `evaluation found this item needs ${skill}, but its proposal was never recorded; Retry evaluates the item again`,
+    stopped: true,
+  });
+}
 
 /**
  * Record an evaluation's verdict. Internal; the evaluation stage's, which
@@ -5464,22 +5488,45 @@ export async function stopRunsForHandover(
     .query('workItems')
     .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', 'executing'))
     .collect();
-  for (const row of running) {
+  await stopRunsInTransaction(ctx, running, HANDOVER_STOP_REASON);
+  return running.length;
+}
+
+/**
+ * Stop runs under way, in the caller's transaction, through the stop every run's end shares
+ * ({@link failInTransaction}): the run id and the apply attempt are cleared, so the run's own
+ * next mutation is refused and writes nothing, and the item fails with the reason and the Retry
+ * a stopped run offers. A run whose apply was claimed may have sent its approved rows, so its
+ * ledger records their outcome as unknown, as the apply's dead-man switch would
+ * ({@link interruptedApplyLedger}), and it is not recorded as a stop; any other run is a stop when
+ * nothing it ran landed. A handover's deadline stops an employee's runs this way
+ * ({@link stopRunsForHandover}), and a Withdraw the runs of the version it withdraws
+ * (`skillControls.withdraw`; the wave 10 review, M4).
+ *
+ * @param ctx - The caller's mutation context.
+ * @param rows - The items whose runs stop: executing, or holding the actions a run drafted.
+ * @param reason - Why, in the words the item and the record carry after `stopped: `.
+ */
+export async function stopRunsInTransaction(
+  ctx: MutationCtx,
+  rows: readonly Doc<'workItems'>[],
+  reason: string,
+): Promise<void> {
+  for (const row of rows) {
     if (row.applyAttemptId !== undefined && row.pendingRunId !== undefined) {
       const { output, applied } = interruptedApplyLedger(row, row.pendingRunId);
       await failInTransaction(ctx, row, {
-        reason: HANDOVER_STOP_REASON,
+        reason,
         output: { ...output, applied },
         stopped: false,
       });
     } else {
       await failInTransaction(ctx, row, {
-        reason: HANDOVER_STOP_REASON,
+        reason,
         ...(row.output !== undefined ? { output: row.output } : {}),
       });
     }
   }
-  return running.length;
 }
 
 /**

@@ -253,7 +253,7 @@ describe('who can put a row past the scope stage this way', (): void => {
         trialId: 'rev-scope-01',
         kind: 'queued-read',
       }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
     const rows = await harness.run(async (ctx) => await ctx.db.query('workItems').collect());
     expect(rows).toEqual([]);
   });

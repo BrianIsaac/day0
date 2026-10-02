@@ -4,7 +4,10 @@ import {
   adoptionCardState,
   adoptionStateAt,
   stalledReason,
+  stalledWords,
   adoptionFit,
+  holdsParkedStoredCopy,
+  parkedCheckLog,
   adoptionHelp,
   adoptionWords,
   chooseOffer,
@@ -262,6 +265,76 @@ describe('stalledReason', (): void => {
   });
 });
 
+describe('parkedCheckLog and holdsParkedStoredCopy (the wave 10 review, B1)', (): void => {
+  it('marks a parked copy of a stored version, and reads the reason back out of it', (): void => {
+    const log = parkedCheckLog('no sandbox backend answered');
+    expect(stalledReason(log)).toBe('no sandbox backend answered');
+    expect(
+      holdsParkedStoredCopy({
+        body: '# Body',
+        pendingSmokeTest: 'CASES = []',
+        verificationLog: log,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not take an employee's own parked draft, or a row with no parked body, for a copy", (): void => {
+    expect(
+      holdsParkedStoredCopy({
+        body: '# Body',
+        pendingSmokeTest: 'CASES = []',
+        verificationLog: 'sandbox verification skipped - no sandbox available',
+      }),
+    ).toBe(false);
+    const log = parkedCheckLog('no sandbox backend answered');
+    expect(
+      holdsParkedStoredCopy({ body: '', pendingSmokeTest: 'CASES = []', verificationLog: log }),
+    ).toBe(false);
+    expect(holdsParkedStoredCopy({ body: '# Body', verificationLog: log })).toBe(false);
+  });
+
+  it('takes a parked body on a row that carries an offer for a copy, whatever a later park logged', (): void => {
+    expect(
+      holdsParkedStoredCopy({
+        body: '# Body',
+        pendingSmokeTest: 'CASES = []',
+        verificationLog: 'sandbox verification skipped - no sandbox available',
+        offeredVersionId: 'version-1',
+      }),
+    ).toBe(true);
+  });
+});
+
+describe('stalledWords (the wave 10 review, A-m6)', (): void => {
+  it('says why a check stopped in the manager’s words, by what stopped it', (): void => {
+    expect(
+      stalledWords(
+        'DAYTONA_API_KEY not set and the local sandbox is not running (/run/x.sock: ECONNREFUSED). Start it with `pnpm sandbox:up`.',
+      ),
+    ).toBe('no sandbox was running to check it; the operator can start one');
+    expect(stalledWords('no sandbox backend answered')).toBe(
+      'no sandbox was running to check it; the operator can start one',
+    );
+    expect(stalledWords('the verification sandbox was busy with another skill for 5 minutes')).toBe(
+      'the sandbox was busy checking another skill for 5 minutes',
+    );
+    expect(stalledWords('the sandbox threw: socket closed')).toBe(
+      'the sandbox failed while it ran',
+    );
+    expect(
+      stalledWords('the smoke test for its unchanged body could not be written: model down'),
+    ).toBe('the check for it could not be written');
+    expect(stalledWords('something else entirely')).toBe('Day0 could not start the check');
+    // A check that could not be written names the model's error, which may refuse a connection.
+    expect(
+      stalledWords(
+        'the smoke test for its unchanged body could not be written: connect ECONNREFUSED 10.0.0.1:443',
+      ),
+    ).toBe('the check for it could not be written');
+    expect(stalledWords(undefined)).toBeUndefined();
+  });
+});
+
 describe('verifiedOnDay', (): void => {
   it('prints the day in the zone given, the same on every runtime', (): void => {
     const at = Date.UTC(2026, 8, 18, 23, 30);
@@ -286,6 +359,16 @@ describe('adoptionWords', (): void => {
       scopesLead: 'Scopes Mateo would gain',
       noScopes: 'Mateo already holds every scope the skill needs.',
     });
+  });
+
+  it('words an offer whose version was withdrawn as withdrawn, never as one the adopter can adopt (A-m5)', (): void => {
+    const words = adoptionWords({ ...base, state: 'offered', withdrawn: true });
+    expect(words.lead).toBe(
+      "Priya's skill kanban-comment-and-close, verified on 18 September 2026, was withdrawn from every employee.",
+    );
+    expect(words.body).toBe(
+      'Mateo cannot adopt it. Write a new one instead to have Mateo write and verify its own, or decline it.',
+    );
   });
 
   it("words a copy handed over from another manager as its own case, never as that author's name", (): void => {

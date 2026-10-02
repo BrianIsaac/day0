@@ -16,6 +16,7 @@ import { EmployeeRoster } from './EmployeeRoster';
 import { MonthCard } from './MonthCard';
 import { NeedsYouList } from './NeedsYouList';
 import { OnItsWay } from './OnItsWay';
+import { HandoverEnded } from './HandoverEnded';
 import { ReportingElsewhere } from './ReportingElsewhere';
 import { OfficeWorld } from './OfficeWorld';
 import { RetiredNotice } from '../RetiredNotice';
@@ -110,6 +111,7 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
         <AcceptTransfer />
       </Suspense>
       <OnItsWay />
+      <HandoverEnded />
 
       <div className="grid grid-cols-[minmax(0,1fr)] gap-6 xl:grid-cols-[minmax(0,1fr)_20rem] xl:items-start">
         <div

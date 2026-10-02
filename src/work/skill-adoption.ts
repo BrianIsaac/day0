@@ -294,8 +294,48 @@ export function adoptionStateAt(adoption: AdoptionAtFields, now: number): Adopti
     : 'stalled';
 }
 
-/** How `skillActions.verifyStoredSkill` words a parked check on the row, around its reason. */
-const PARKED_CHECK = /^the stored skill was not verified: (.+?)(?:; Retry runs its check)?$/s;
+/** The opening of the log a stored verification parks on a row ({@link parkedCheckLog}). */
+const PARKED_CHECK_OPENING = 'the stored skill was not verified: ';
+
+/** How {@link parkedCheckLog} words a parked check on the row, around its reason. */
+const PARKED_CHECK = new RegExp(`^${PARKED_CHECK_OPENING}(.+?)(?:; Retry runs its check)?$`, 's');
+
+/**
+ * The log a stored verification that reached no verdict leaves on a row that is not callable
+ * (`storedVerification.verifyStoredSkill`): the row then holds a copy of the stored version's body and
+ * smoke test, and this log is what marks the copy as one ({@link holdsParkedStoredCopy}).
+ *
+ * @param reason - Why no sandbox reached a verdict.
+ */
+export function parkedCheckLog(reason: string): string {
+  return `${PARKED_CHECK_OPENING}${reason}; Retry runs its check`;
+}
+
+/** What tells a row's parked body from a parked copy of a stored version. */
+export interface ParkedBodyFields {
+  readonly body: string;
+  readonly pendingSmokeTest?: string;
+  readonly verificationLog?: string;
+  readonly offeredVersionId?: string;
+}
+
+/**
+ * Whether a row's parked body is a copy of a stored version (an adoption's, parked when its check
+ * stopped short) rather than a draft the employee wrote. A row that carries an offer never holds
+ * a draft of its own (Write a new one instead sets the offer aside first), so its parked body is
+ * the copy whatever a later park wrote in its log; without an offer, the log's opening marks one.
+ * Such a copy registers only under its version's checks, and only while the row is still offered
+ * that version (the wave 10 review, B1): the authoring action refuses one whose offer is gone.
+ *
+ * @param row - The row, as the authoring claim read it.
+ */
+export function holdsParkedStoredCopy(row: ParkedBodyFields): boolean {
+  if (row.body === '' || row.pendingSmokeTest === undefined) return false;
+  return (
+    row.offeredVersionId !== undefined ||
+    (row.verificationLog?.startsWith(PARKED_CHECK_OPENING) ?? false)
+  );
+}
 
 /**
  * Why an adoption's check stopped short, from the row's log: the reason of a parked check without
@@ -307,6 +347,42 @@ const PARKED_CHECK = /^the stored skill was not verified: (.+?)(?:; Retry runs i
 export function stalledReason(log: string | undefined): string | undefined {
   if (log === undefined) return undefined;
   return PARKED_CHECK.exec(log.trim())?.[1] ?? log.trim();
+}
+
+/** A sandbox that did not answer, in the words the sandbox client and the stall write it. */
+const NO_SANDBOX = /DAYTONA_API_KEY|sandbox:up|not running|ECONNREFUSED|no sandbox/i;
+
+/** The lease's wait, which says how long the sandbox was busy. */
+const SANDBOX_BUSY = /busy with another skill for (\d+) minutes?/;
+
+/** A sandbox that failed while it ran. */
+const SANDBOX_FAILED = /threw|timed? ?out|socket|ECONNRESET/i;
+
+/** A kept check that could not be written for a version that had none. */
+const CHECK_NOT_WRITTEN = /smoke test (?:for|written for) its unchanged body/i;
+
+/**
+ * Why an adoption's check stopped, in the manager's words (the wave 10 review, A-m6; N26): the
+ * stall's reason says which variable is unset and which command starts a sandbox, which is the
+ * operator's to read in the log, not the manager's on the card.
+ *
+ * @param reason - {@link stalledReason} of the row's log.
+ * @returns The words, without a closing stop; undefined when the row gives no reason.
+ */
+export function stalledWords(reason: string | undefined): string | undefined {
+  if (reason === undefined) return undefined;
+  const busy = SANDBOX_BUSY.exec(reason);
+  if (busy !== null) {
+    const minutes = Number(busy[1]);
+    return `the sandbox was busy checking another skill for ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`;
+  }
+  // Before the sandbox's own words: a check that could not be written names a model's error,
+  // which can carry the same refused connection.
+  if (CHECK_NOT_WRITTEN.test(reason)) return 'the check for it could not be written';
+  if (NO_SANDBOX.test(reason))
+    return 'no sandbox was running to check it; the operator can start one';
+  if (SANDBOX_FAILED.test(reason)) return 'the sandbox failed while it ran';
+  return 'Day0 could not start the check';
 }
 
 /** The month names the card prints a day with. */
@@ -348,7 +424,12 @@ export interface AdoptionWordsInput {
   readonly verifiedOn: string;
   /** The adopter's connection the sandbox runs under, by name; absent in mock mode. */
   readonly connection?: string;
+  /** The offered version was withdrawn from every employee ({@link OFFER_WITHDRAWN_REFUSAL}). */
+  readonly withdrawn?: boolean;
 }
+
+/** Why an offer may no longer be adopted or checked again: its version was withdrawn. */
+export const OFFER_WITHDRAWN_REFUSAL = 'the offered skill was withdrawn from every employee';
 
 /** The card's sentences. */
 export interface AdoptionWords {
@@ -382,6 +463,15 @@ export function adoptionWords(input: AdoptionWordsInput): AdoptionWords {
   };
   switch (input.state) {
     case 'offered':
+      // A withdrawn version is offered to nobody: the card says so rather than that it can be
+      // adopted (the wave 10 review, A-m5).
+      if (input.withdrawn === true) {
+        return {
+          lead: `${opening}, verified on ${verifiedOn}, was withdrawn from every employee.`,
+          body: `${adopterName} cannot adopt it. Write a new one instead to have ${adopterName} write and verify its own, or decline it.`,
+          ...scopes,
+        };
+      }
       return {
         lead: handedOver
           ? `${opening}, which came with an employee handed over to you and was verified on ${verifiedOn}, does this.`
@@ -396,11 +486,17 @@ export function adoptionWords(input: AdoptionWordsInput): AdoptionWords {
         ...scopes,
       };
     case 'stalled':
-      return {
-        lead: `Adopting ${skill} for ${adopterName} stopped before the sandbox finished checking it.`,
-        body: `${adopterName} cannot use it yet. Check it again, write a new one instead, or decline it.`,
-        ...scopes,
-      };
+      return input.withdrawn === true
+        ? {
+            lead: `Adopting ${skill} for ${adopterName} stopped, and the version was then withdrawn from every employee.`,
+            body: `${adopterName} cannot use it. Write a new one instead, or decline it.`,
+            ...scopes,
+          }
+        : {
+            lead: `Adopting ${skill} for ${adopterName} stopped before the sandbox finished checking it.`,
+            body: `${adopterName} cannot use it yet. Check it again, write a new one instead, or decline it.`,
+            ...scopes,
+          };
     case 'failed':
       return {
         lead: `${opening} failed its re-verification for ${adopterName}.`,

@@ -1,5 +1,4 @@
 import { ConvexError, v, type Infer } from 'convex/values';
-import type { UserIdentity } from 'convex/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import {
@@ -21,6 +20,7 @@ import {
   assertOwnsAgent,
   getCaller,
   getCallerOrThrow,
+  signedInAsTheOneLocalManager,
   verifiedAddressOf,
   type Caller,
 } from './ownership';
@@ -35,6 +35,7 @@ import {
   DECLINE_REASON_TOO_LONG,
   EVALUATION_ADDRESS_TRANSFER_REFUSAL,
   EVALUATION_EMPLOYEE_TRANSFER_REFUSAL,
+  isDepartureListed,
   isTransferDue,
   LOCAL_DEV_TRANSFER_REFUSAL,
   MANAGER_TRANSFER_STATES,
@@ -60,9 +61,8 @@ import {
   transferStateRefusal,
   UNVERIFIED_FOR_ASK,
 } from '../src/agent/manager-transfer';
-import { DEV_NO_AUTH_ISSUER } from '../src/lib/dev-auth-issuer';
 import { log } from '../src/lib/logger';
-import { resolveDeploymentProfile, SURFACE_MODE } from '../src/lib/surface-mode';
+import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { agentZone } from '../src/lib/zone';
 import { ownerKnownValues, scrubKnownValues } from '../src/redaction/known-values';
 import { redactTokenShapes } from '../src/surfaces/redact';
@@ -152,26 +152,6 @@ export type OpenTransfer = Infer<typeof openTransferValidator>;
 
 /** An open request as the account it names reads it. */
 export type IncomingTransfer = Infer<typeof incomingTransferValidator>;
-
-/** An issuer URL compared the way two spellings of one issuer should compare. */
-function issuerKey(issuer: string): string {
-  return issuer.trim().replace(/\/+$/, '');
-}
-
-/**
- * Whether no second account can exist on this deployment for this caller: it
- * signed in through the local issuer, which signs every browser in as one
- * subject, and the profile is `local-dev`. Under `customer-local` the local
- * account is one more manager beside the customer's issuer (the transfer
- * plan, section 8), and a Clerk caller on the hosted demo, whose profile is
- * unset, is its own account.
- */
-function signedInAsTheOneLocalManager(identity: UserIdentity): boolean {
-  return (
-    issuerKey(identity.issuer) === issuerKey(DEV_NO_AUTH_ISSUER) &&
-    resolveDeploymentProfile() === 'local-dev'
-  );
-}
 
 /** Whether a request is open now: asked and not yet past its expiry, or accepting. */
 function isOpenNow(transfer: Doc<'managerTransfers'>, now: number): boolean {
@@ -800,6 +780,73 @@ export const arriving = query({
   },
 });
 
+/** A handover the caller accepted that ended without the move, as the acceptor's home says it. */
+const endedHandoverValidator = v.object({
+  transferId: v.id('managerTransfers'),
+  agentName: v.string(),
+  fromAddress: v.string(),
+  /** When the caller accepted it. */
+  acceptedAt: v.number(),
+});
+
+/**
+ * Public, by verified address and owner key: the handovers the caller accepted that ended
+ * without the move in the last 30 days (decision 4: the settle's automatic end, or the
+ * operator's), so the acceptor's home says the employee is not coming, as the old manager's
+ * record says it (`manager.transfer-ended`). Such a request is `cancelled` with the acceptance's
+ * stamp kept and no ask's cancel reason (`transferAcceptance.endUnmovable`); one whose employee
+ * has since gone, moved, or been asked for again is left out ({@link endingStillTrue}). An
+ * anonymous caller, or one without a verified address, has none. Reads at most
+ * `TRANSFER_READ_LIMIT` rows per index; writes nothing.
+ */
+export const endedForMe = query({
+  args: {},
+  returns: v.array(endedHandoverValidator),
+  handler: async (ctx): Promise<Infer<typeof endedHandoverValidator>[]> => {
+    const caller = await getCaller(ctx);
+    const address = caller ? verifiedAddressOf(caller) : undefined;
+    if (!caller || address === undefined) return [];
+    const since = Date.now() - TRANSFER_DEPARTURES_WINDOW_MS;
+    const cancelled = await requestsInState(ctx, { toAddress: address }, 'cancelled');
+    const ended = cancelled.filter(
+      (transfer) =>
+        transfer.toOwnerKey === caller.ownerKey &&
+        transfer.cancelReason === undefined &&
+        transfer.decidedAt !== undefined &&
+        transfer.decidedAt >= since,
+    );
+    const standing = await Promise.all(
+      ended.map(async (transfer) => ((await endingStillTrue(ctx, transfer)) ? [transfer] : [])),
+    );
+    return standing.flat().map((transfer) => ({
+      transferId: transfer._id,
+      agentName: transfer.agentName,
+      fromAddress: transfer.fromAddress,
+      acceptedAt: transfer.decidedAt ?? transfer.requestedAt,
+    }));
+  },
+});
+
+/** The request states a later handover of the same employee may be in. */
+const LATER_REQUEST_STATES = ['asked', 'accepting', 'accepted'] as const;
+
+/**
+ * Whether an ended handover still says what is so: the employee exists and is still with the
+ * manager who asked, and no later request of it was made. Otherwise the acceptor's line would say
+ * an employee is not coming that is on their roster, retired, or asked for again (the second
+ * pass).
+ */
+async function endingStillTrue(ctx: QueryCtx, transfer: Doc<'managerTransfers'>): Promise<boolean> {
+  const agent = await ctx.db.get(transfer.agentId);
+  if (agent === null || agent.userId !== transfer.fromOwnerKey) return false;
+  const later = await Promise.all(
+    LATER_REQUEST_STATES.map(
+      async (state) => await requestsInState(ctx, { agentId: transfer.agentId }, state),
+    ),
+  );
+  return !later.flat().some((request) => request._creationTime > transfer._creationTime);
+}
+
 /** One handover that moved the employee: who it moved from, and when they accepted. */
 const earlierManagerValidator = v.object({ fromAddress: v.string(), decidedAt: v.number() });
 
@@ -859,7 +906,7 @@ export const departures = query({
           transfer.state === 'asked'
             ? transfer.expiresAt
             : (transfer.decidedAt ?? transfer.expiresAt);
-        return decidedAt < since ? [] : [{ transfer, state, decidedAt }];
+        return isDepartureListed(decidedAt, now) ? [{ transfer, state, decidedAt }] : [];
       })
       .sort((left, right) => right.decidedAt - left.decidedAt)
       .slice(0, DEPARTURES_LIMIT);

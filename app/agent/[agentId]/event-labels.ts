@@ -173,7 +173,7 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
           : ''
     }`,
   'manager.transfer-declined': (payload) =>
-    `${text(payload.toAddress) ?? 'the named manager'} declined the handover`,
+    `handover declined by ${text(payload.toAddress) ?? 'the named manager'}`,
   'manager.transfer-expired': (payload) =>
     `handover to ${text(payload.toAddress) ?? 'another manager'} expired`,
   'manager.transfer-settle-failed': (payload) =>
@@ -244,7 +244,10 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     `built-in skill installed: ${text(payload.name) ?? 'unnamed'}`,
   'skill.proposed': (payload) => `skill proposed: ${text(payload.name) ?? 'unnamed'}`,
   'skill.approved': (payload) => `skill approved: ${text(payload.name) ?? 'unnamed'}`,
-  'skill.rejected': (payload) => `skill rejected: ${text(payload.name) ?? 'unnamed'}`,
+  'skill.rejected': (payload) =>
+    payload.offerWithdrawn === undefined
+      ? `skill rejected: ${text(payload.name) ?? 'unnamed'}`
+      : `skill adoption ended, version withdrawn: ${text(payload.name) ?? 'unnamed'}`,
   'skill.revision-requested': (payload) =>
     typeof payload.revisionId === 'string'
       ? `skill revision asked for: ${text(payload.name) ?? 'unnamed'}`
@@ -280,7 +283,9 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
       duration(payload.heldForMs) ? `, the last run held it ${duration(payload.heldForMs)}` : ''
     }`,
   'skill.authoring-claimed': (payload) =>
-    `skill authoring started: ${text(payload.name) ?? 'unnamed'}`,
+    payload.purpose === 'verify-stored'
+      ? `skill check started: ${text(payload.name) ?? 'unnamed'}`
+      : `skill authoring started: ${text(payload.name) ?? 'unnamed'}`,
   'skill.authoring': 'skill being checked in the sandbox',
   'skill.registered': (payload) =>
     `skill registered: ${text(payload.name) ?? 'unnamed'}${

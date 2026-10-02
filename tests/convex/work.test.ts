@@ -373,7 +373,7 @@ describe('batched decisions', (): void => {
           { workItemId: second.workItemId, pendingRunId: second.runId, approvedIndexes: [0] },
         ],
       }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
   });
 
   async function batchOnChannel(harness: Harness): Promise<{
@@ -1277,7 +1277,7 @@ describe('manager channel request claims', (): void => {
       harness.withIdentity(managerIdentity('stranger')).mutation(api.work.resendDecisionRequest, {
         workItemId,
       }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
     await harness.withIdentity(OWNER).mutation(api.work.resendDecisionRequest, { workItemId });
     expect(
       (await scheduledFunctionNames(harness)).filter(
@@ -2465,7 +2465,7 @@ describe('approving a plan with answers', (): void => {
         workItemId,
         answers: [{ questionId: question._id, text: 'Priya.' }],
       }),
-    ).rejects.toThrow(/forbidden/);
+    ).rejects.toThrow(/not yours/);
     expect((await readItem(harness, workItemId)).state).toBe('plan-pending');
     expect((await readItem(harness, other)).state).toBe('plan-pending');
     expect(
@@ -3019,7 +3019,7 @@ describe('the exact-action gate', (): void => {
         pendingRunId: runId,
         approvedIndexes: [0],
       }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
     await expect(
       harness.withIdentity(OWNER).mutation(api.work.approveActions, {
         workItemId,
@@ -3450,7 +3450,7 @@ describe('the exact-action gate', (): void => {
         workItemId,
         confirmed: true,
       }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
 
     await expect(
       harness.withIdentity(OWNER).mutation(api.work.reconcileFailed, {
@@ -6355,6 +6355,39 @@ describe('a recovery for every claim (P5-1, P5-2, P5-3)', (): void => {
       }),
     ).resolves.toEqual({ recovered: 'ignored' });
     expect((await readItem(harness, workItemId)).state).toBe('needs-skill');
+    // The evaluation's own stop leaves it alone too (m7).
+    await expect(
+      harness.mutation(internal.work.stopUnproposedSkill, { workItemId }),
+    ).resolves.toEqual({ recovered: 'ignored' });
+    expect((await readItem(harness, workItemId)).state).toBe('needs-skill');
+  });
+
+  it('stops a needs-skill row with no proposal at once, in mock mode as in real, naming the skill (m7)', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await seed(harness, 'discovered');
+    await harness.run(async (ctx) => await ctx.db.patch(workItemId, { plan: undefined }));
+    await expect(
+      harness.mutation(internal.work.stopUnproposedSkill, { workItemId }),
+    ).resolves.toEqual({ recovered: 'ignored' });
+    await harness.mutation(internal.work.setVerdict, {
+      workItemId,
+      verdict: {
+        decision: 'needs-skill',
+        reason: 'no registered skill closes a Linear ticket',
+        suggestedSkillName: 'linear-close',
+        suggestedSkillRationale: 'closing tickets is the charter work',
+        suggestedSkillShape: { surfaceClass: 'kanban', operation: 'close' },
+      },
+    });
+    await expect(
+      harness.mutation(internal.work.stopUnproposedSkill, { workItemId }),
+    ).resolves.toEqual({ recovered: 'failed' });
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('failed');
+    expect(row.skipReason).toBe(
+      'stopped: evaluation found this item needs the skill "linear-close", but its proposal was never recorded; Retry evaluates the item again',
+    );
   });
 
   it('stops a phase-one run that emitted nothing to decide instead of parking it', async (): Promise<void> => {
@@ -6986,7 +7019,7 @@ describe('work.needsYou', (): void => {
 
       await expect(
         harness.withIdentity(OWNER).query(api.work.needsYouForAgent, { agentId: theirs }),
-      ).rejects.toThrow('forbidden');
+      ).rejects.toThrow('This employee is not yours.');
       await expect(harness.query(api.work.needsYouForAgent, { agentId: theirs })).rejects.toThrow();
     });
   });
@@ -7074,7 +7107,7 @@ describe('work.dismissFailed (N7)', (): void => {
       harness
         .withIdentity(managerIdentity('intruder'))
         .mutation(api.work.dismissFailed, { workItemId }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
     const { workItemId: pending } = await seed(harness, 'plan-pending');
     const refusal = harness
       .withIdentity(OWNER)
@@ -7137,7 +7170,7 @@ describe('work.earlierPlan (round two 3.7, attempt two)', (): void => {
     expect(await owner.query(api.work.earlierPlan, { workItemId: other })).toBeNull();
     await expect(
       harness.withIdentity(managerIdentity('stranger')).query(api.work.earlierPlan, { workItemId }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
   });
 });
 

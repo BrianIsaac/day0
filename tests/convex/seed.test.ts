@@ -125,6 +125,6 @@ describe('demo seed', (): void => {
     );
     await expect(
       harness.withIdentity(managerIdentity('stranger')).action(api.seed.seedDemo, { agentId }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
   });
 });

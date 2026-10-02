@@ -257,7 +257,7 @@ describe('surface persistence', (): void => {
       harness
         .withIdentity(managerIdentity('other-owner'))
         .query(api.surfaces.listForAgent, { agentId }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
   });
 
   it('never seeds a surface for a documentation location', async (): Promise<void> => {
@@ -2075,10 +2075,12 @@ describe('surface approval state machine', (): void => {
     const surfaceId = await seedDeclared(harness, agentId);
     await propose(harness, surfaceId);
     const other = harness.withIdentity(managerIdentity('other-owner'));
-    await expect(other.mutation(api.surfaces.approve, { surfaceId })).rejects.toThrow('forbidden');
+    await expect(other.mutation(api.surfaces.approve, { surfaceId })).rejects.toThrow(
+      'This employee is not yours.',
+    );
     expect(await readSurface(harness, surfaceId)).toMatchObject({ verdict: 'proposed' });
     await expect(other.mutation(api.surfaces.reject, { surfaceId, reason: 'no' })).rejects.toThrow(
-      'forbidden',
+      'This employee is not yours.',
     );
   });
 
@@ -2356,7 +2358,7 @@ describe('owner-triggered orientation', (): void => {
       harness
         .withIdentity(managerIdentity('other-owner'))
         .action(api.surfaces.reorient, { agentId }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
   });
 
   it('refuses reorient outside real mode', async (): Promise<void> => {
@@ -3020,7 +3022,7 @@ describe('access expiry (Q5)', (): void => {
       harness
         .withIdentity(managerIdentity('intruder'))
         .mutation(api.surfaces.setAccessDays, { surfaceId: approved, days: 30 }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
     expect((await readSurface(harness, approved)).expiresAt).toBe(ENDS_AT);
     expect(await payloads(harness, 'surface.access-set')).toEqual([
       { surfaceId: approved, by: 'approval', days: 90, expiresAt: ENDS_AT },
@@ -3666,7 +3668,7 @@ describe('the approved tool list (U10 D2 (b), wave 2 review M2)', (): void => {
       harness
         .withIdentity(managerIdentity('stranger'))
         .mutation(api.surfaces.approveTools, { surfaceId, tools: ['list_issues'] }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
   });
 
   it('takes a tool the manager removes off the stored list at once, before any probe', async (): Promise<void> => {

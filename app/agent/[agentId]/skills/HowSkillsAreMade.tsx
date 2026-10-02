@@ -4,7 +4,8 @@ import { Card } from '../../../components/Card';
 /**
  * How a skill is made, beside the Skills tab's lists: proposed when work needs it, approved by
  * the manager, written and checked in a sandbox, registered only once the check passes, with up
- * to three attempts each; and what the manager's controls on a registered skill reach.
+ * to three attempts each; that a colleague's verified skill of the same shape can be adopted
+ * instead; and what the manager's controls on a registered skill reach.
  *
  * @param name - The employee's name.
  */
@@ -20,6 +21,11 @@ export function HowSkillsAreMade({ name }: { name: string }) {
         </li>
       </ol>
       <p className="mt-3 text-[13px] text-[var(--color-muted)]">
+        When another of your employees already has a verified skill that does the same job, {name}{' '}
+        can adopt it instead: one approval, and the sandbox checks it again for {name} before it
+        runs.
+      </p>
+      <p className="mt-2 text-[13px] text-[var(--color-muted)]">
         One run writes a skill at a time: Retry waits while one is running and opens once it
         finishes or its hold lapses.
       </p>

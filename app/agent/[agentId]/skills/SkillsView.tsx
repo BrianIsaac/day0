@@ -5,6 +5,7 @@ import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { holdsLiveAuthoringClaim } from '@/lib/skill-authoring';
 import { Columns } from '../../../components/Columns';
+import { autonomousActionsOn } from '@/work/autonomy';
 import { useEmployee } from '../employee-context';
 import { useNow } from '../../../components/time';
 import { HowSkillsAreMade } from './HowSkillsAreMade';
@@ -37,6 +38,7 @@ export function SkillsView() {
   const failedSkills = useQuery(api.skills.verificationFailed, { agentId });
   // A revision approved and not yet being written appears in neither list above.
   const pendingRevisions = useQuery(api.skillControls.pendingRevisions, { agentId });
+  const adoptedSources = useQuery(api.skillVersions.adoptedSources, { agentId });
   const workItems = useQuery(api.work.listForAgent, { agentId });
   const itemTitles = useMemo(
     (): Map<string, string> => new Map((workItems ?? []).map((item) => [item._id, item.title])),
@@ -88,11 +90,14 @@ export function SkillsView() {
       />
       <RegisteredSkillsPanel
         skills={registeredSkills ?? []}
+        // An adoption in flight, stopped short or failed is drawn by the adoption card alone, whose
+        // controls check the offered version again or set the offer aside first; a Retry here
+        // would act on the row with the offer still on it (the wave 10 review, M3).
         unregistered={[
           ...(pendingRevisions ?? []),
           ...(unverifiedSkills ?? []),
           ...(failedSkills ?? []),
-        ]}
+        ].filter((skill) => skill.offeredVersionId === undefined)}
         authoringFailure={authoringFailure}
         registered={authoringRegistered}
         onAuthoringAttempt={setLastAttempt}
@@ -100,6 +105,8 @@ export function SkillsView() {
         focusRef={skillsCard}
         loading={registeredSkills === undefined}
         employee={agent.name}
+        autonomous={autonomousActionsOn(agent)}
+        adoptedFrom={adoptedSources ?? []}
       />
     </Columns>
   );

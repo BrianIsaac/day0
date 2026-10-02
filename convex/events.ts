@@ -10,14 +10,15 @@ import { assertOwnsAgent } from './ownership';
 import { handoversFromTransfers, isEvaluationAgent } from './metrics';
 import { ownerRetirements } from './retirements';
 import { redactTokenShapes } from '../src/surfaces/redact';
-import type { AcceptedHandover } from '../src/metrics/tenure';
 import { agentZone, dayKey } from '../src/lib/zone';
 import {
+  ownerKeyDigest,
   sectionAfter,
   TRACE_FORMAT,
   TRACE_PAGE_ROWS,
   TRACE_SECTIONS,
   TRACE_VERSION,
+  type TraceHandover,
   type TraceHead,
   type TracePage,
   type TraceRetirement,
@@ -206,13 +207,15 @@ export const autonomyChanges = query({
  * describe an action (a ticket's author, requester and branch, which carries
  * its assignee's handle; the charter's manager and named colleagues; a
  * manager change's previous manager as well as the new one; both addresses
- * of a handover request), and a surface's live install claim (a single-use
+ * of a handover request; the colleague who wrote an adopted or offered skill,
+ * decision 4), and a surface's live install claim (a single-use
  * state nonce and the URL that spends it). The export's policy keeps names as
  * working material in text (U12 D1 (c)); a key whose whole value is a name has
  * none to keep.
  */
 const PERSONAL_KEYS = new Set([
   'assigneeEmail',
+  'authorName',
   'boss',
   'bossEmail',
   'createdBy',
@@ -283,12 +286,16 @@ const ACCEPTED_HANDOVER_STATES = ['accepting', 'accepted'] as const;
 /**
  * An employee's accepted handovers for its trace's manifest, oldest first, read as
  * `metrics:forOwner` reads them: so a recompute from the trace cuts each manager's figures at the
- * acceptance. The per-account bounds keep an employee's requests far under one page.
+ * acceptance. Each owner key goes as its digest salted with the export's time
+ * (`ownerKeyDigest`; decision 2, the wave 10 review, M6), since the file is made to be shared
+ * and names no account but the exporter's own. The per-account bounds keep an employee's
+ * requests far under one page.
  */
 async function acceptedHandoversOf(
   ctx: QueryCtx,
   agentId: Id<'agents'>,
-): Promise<AcceptedHandover[]> {
+  exportedAt: number,
+): Promise<TraceHandover[]> {
   const byState = await Promise.all(
     ACCEPTED_HANDOVER_STATES.map(
       async (state) =>
@@ -298,9 +305,16 @@ async function acceptedHandoversOf(
           .take(TRACE_PAGE_ROWS),
     ),
   );
-  return handoversFromTransfers(byState.flat()).toSorted(
-    (left, right) => left.acceptedAt - right.acceptedAt,
-  );
+  return handoversFromTransfers(byState.flat())
+    .toSorted((left, right) => left.acceptedAt - right.acceptedAt)
+    .map(
+      (handover): TraceHandover => ({
+        agentId: handover.agentId,
+        fromOwnerDigest: ownerKeyDigest(handover.fromOwnerKey, exportedAt),
+        toOwnerDigest: ownerKeyDigest(handover.toOwnerKey, exportedAt),
+        acceptedAt: handover.acceptedAt,
+      }),
+    );
 }
 
 /**
@@ -322,7 +336,7 @@ export const exportHead = internalQuery({
         .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
         .take(TRACE_PAGE_ROWS),
       retiredEmployees(ctx, agent.userId),
-      acceptedHandoversOf(ctx, args.agentId),
+      acceptedHandoversOf(ctx, args.agentId, exportedAt),
     ]);
     const credentials = await Promise.all(
       [

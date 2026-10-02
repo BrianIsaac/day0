@@ -32,6 +32,8 @@ export interface Dashboard {
   approveCard(slug: string): Promise<void>;
   /** Approve a proposed skill by name. */
   approveSkill(name: string): Promise<void>;
+  /** Decide a proposal that offers a colleague's verified skill (10-A), by the skill's name. */
+  decideOffer(name: string, choice: OfferChoice): Promise<void>;
   /** Approve the drafted plan on a work item card. */
   approvePlan(title: string): Promise<void>;
   /** Approve every held action on a work item card. */
@@ -85,6 +87,42 @@ export const APPROVE_PLAN = /^Approve plan( with answers)?$/;
 export const APPROVE_ALL = 'Approve all';
 /** A proposed skill's approval. */
 export const APPROVE_SKILL = 'Approve · author and verify';
+
+/**
+ * What a manager can do with a proposal that offers a colleague's verified skill (10-A), whose
+ * card draws these in place of {@link APPROVE_SKILL}.
+ */
+export const OFFER_CHOICES = ['adopt', 'write-new', 'decline'] as const;
+
+/** One of {@link OFFER_CHOICES}. */
+export type OfferChoice = (typeof OFFER_CHOICES)[number];
+
+/** A name with every character a regular expression reads as syntax escaped. */
+function escapedForPattern(name: string): string {
+  return name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * The accessible name of one choice on an offered proposal's card, for the skill by name: "Adopt
+ * for {employee}: {skill}", "Write a new one instead of {skill}", "Decline {skill}".
+ *
+ * @param choice - The choice.
+ * @param skill - The skill's name.
+ */
+export function offerChoiceName(choice: OfferChoice, skill: string): string | RegExp {
+  switch (choice) {
+    case 'adopt':
+      return new RegExp(`^Adopt for .+: ${escapedForPattern(skill)}$`);
+    case 'write-new':
+      return `Write a new one instead of ${skill}`;
+    case 'decline':
+      return `Decline ${skill}`;
+    default: {
+      const unhandled: never = choice;
+      throw new Error(`unhandled offer choice ${String(unhandled)}`);
+    }
+  }
+}
 /** The control that opens a plan's cancellation, and the one that sends it with no reason. */
 export const CANCEL_ITEM = 'Cancel this item';
 export const CANCEL_WITHOUT_REASON = 'Cancel without a reason';
@@ -321,6 +359,14 @@ export class PlaywrightDashboard implements Dashboard {
       .getByRole('listitem')
       .filter({ has: this.page.getByText(name, { exact: true }) });
     await skill.getByRole('button', { name: APPROVE_SKILL, exact: true }).click();
+  }
+
+  async decideOffer(name: string, choice: OfferChoice): Promise<void> {
+    await this.showTab('skills');
+    const control = offerChoiceName(choice, name);
+    await this.page
+      .getByRole('button', { name: control, exact: typeof control === 'string' })
+      .click();
   }
 
   async approvePlan(title: string): Promise<void> {

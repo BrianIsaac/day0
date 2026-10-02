@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { getFunctionName } from 'convex/server';
 import { describe, expect, it, vi } from 'vitest';
 import { declareUndeclaredInputs } from '../../../../../src/work/skill-inputs';
+import { HANDED_OVER_AUTHOR_NAME } from '../../../../../src/work/skill-library';
 import type { Doc } from '../../../../../convex/_generated/dataModel';
 import {
   RegisteredSkillsPanel,
@@ -259,8 +260,9 @@ describe('what Retry does to an unregistered skill', (): void => {
     expect(markup).not.toContain('Retry re-authors the skill');
     expect(markup).toContain('is checked again as it stands, with no second authoring call');
     expect(markup).toContain('is authored again, with the reason fed back');
-    expect(markup).toContain('pnpm sandbox:up');
-    expect(markup).toContain('DAYTONA_API_KEY');
+    expect(markup).toContain(
+      'If no sandbox was running, ask whoever runs this Day0 installation to start one, then press Retry.',
+    );
     expect(markup).toContain('Only one authoring run holds a skill at a time');
   });
 
@@ -530,11 +532,31 @@ describe('what Retry does to an unregistered skill', (): void => {
     expect(markup).toContain('>Being written<');
   });
 
-  it('keeps the operator’s sandbox instructions behind a disclosure', (): void => {
+  it('says why a parked skill was not checked in the manager’s words, never the sandbox’s own (as A-m6 did for the stalled card)', (): void => {
+    const outage = {
+      ...parked,
+      verificationLog:
+        'DAYTONA_API_KEY not set and the local sandbox is not running (/run/day0-sandbox/skill-sandbox.sock: ECONNREFUSED). Start it with `pnpm sandbox:up`.',
+    } as unknown as Doc<'skills'>;
+    const markup = panel([outage]);
+    expect(markup).toContain(
+      'The check did not run: no sandbox was running to check it; the operator can start one.',
+    );
+    expect(markup).not.toContain('DAYTONA_API_KEY');
+    expect(markup).not.toContain('sandbox:up');
+    expect(markup).not.toContain('ECONNREFUSED');
+    expect(panel([parked])).toContain(
+      'The check did not run: the sandbox was busy checking another skill for 5 minutes.',
+    );
+  });
+
+  it('says what Retry does in the manager’s words behind a disclosure, never the operator’s commands (as A-m6 did for the stalled card)', (): void => {
     const markup = panel([refused]);
     expect(markup).toMatch(
-      /What Retry does, and starting a sandbox<\/summary>[\s\S]*pnpm sandbox:up/,
+      /What Retry does<\/summary>[\s\S]*ask whoever runs this Day0 installation/,
     );
+    expect(markup).not.toContain('pnpm sandbox:up');
+    expect(markup).not.toContain('DAYTONA_API_KEY');
   });
 });
 
@@ -621,6 +643,36 @@ describe('the five controls on the Skills cards (10-C, the prototype’s agent-s
     expect(markupOf([builtin])).not.toContain('Retire');
   });
 
+  it('says whose version an adopted skill runs instead of "authored" (the real-Linear walk, m2)', (): void => {
+    const adopted = {
+      ...authored,
+      adoptedAt: 5,
+      versionId: 'version-1',
+    } as unknown as Doc<'skills'>;
+    const draw = (authorName: string): string =>
+      renderToStaticMarkup(
+        <RegisteredSkillsPanel
+          skills={[adopted]}
+          unregistered={[]}
+          authoringFailure={null}
+          onAuthoringAttempt={noop}
+          employee="Mira"
+          adoptedFrom={[{ skillId: adopted._id, version: 1, authorName }]}
+        />,
+      );
+    expect(draw('Priya')).toContain('>adopted<');
+    expect(draw('Priya')).not.toContain('>authored<');
+    expect(draw('Priya')).toContain(' · version 1, adopted from Priya · ');
+    // After a handover the new manager's library names no colleague of the old one.
+    expect(draw(HANDED_OVER_AUTHOR_NAME)).toContain(
+      ' · version 1, adopted from a colleague under the previous manager · ',
+    );
+    // A skill the employee wrote stays "authored"; while the source loads no author is guessed.
+    expect(markupOf([authored])).toContain('>authored<');
+    expect(markupOf([adopted])).toContain('>adopted<');
+    expect(markupOf([adopted])).not.toContain('adopted from');
+  });
+
   it('draws Re-check due with its reason and Re-check now, and only on a skill that is due', async (): Promise<void> => {
     expect(markupOf([authored])).not.toContain('Re-check');
     const markup = markupOf([due]);
@@ -650,6 +702,83 @@ describe('the five controls on the Skills cards (10-C, the prototype’s agent-s
     expect(said(view.container)).toContain(
       'A re-check of kanban-comment-and-close was asked for. It keeps running unless the check fails.',
     );
+    view.unmount();
+    backend.results = {};
+  });
+
+  it('gives focus to the Registered card after Re-check now, since the check that starts disables the control (the wave 10 review, C-m2)', async (): Promise<void> => {
+    backend.results = { 'skillControls:recheckNow': { scheduled: true } };
+    const view = mount(
+      <RegisteredSkillsPanel
+        skills={[due]}
+        unregistered={[]}
+        authoringFailure={null}
+        onAuthoringAttempt={noop}
+        employee="Mira"
+      />,
+    );
+    await press(view.container, 'Re-check now: kanban-comment-and-close');
+    expect(focusedName()).toBe('Registered');
+    view.unmount();
+    backend.results = {};
+  });
+
+  it('leaves focus where the manager moved it while Re-check now was on its way (the second pass)', async (): Promise<void> => {
+    let land = (): void => {};
+    backend.results = {
+      'skillControls:recheckNow': new Promise((resolve): void => {
+        land = () => resolve({ scheduled: true });
+      }),
+    };
+    const view = mount(
+      <>
+        <RegisteredSkillsPanel
+          skills={[due]}
+          unregistered={[]}
+          authoringFailure={null}
+          onAuthoringAttempt={noop}
+          employee="Mira"
+        />
+        <button type="button">Elsewhere</button>
+      </>,
+    );
+    const recheck = button(view.container, 'Re-check now: kanban-comment-and-close');
+    recheck.focus();
+    await act(async (): Promise<void> => {
+      recheck.click();
+    });
+    button(view.container, 'Elsewhere').focus();
+    await act(async (): Promise<void> => {
+      land();
+    });
+    await settle();
+    expect(focusedName()).toBe('Elsewhere');
+    view.unmount();
+    backend.results = {};
+  });
+
+  it('says a revision is being written in the live region and gives focus to the card while it is (C-m2)', async (): Promise<void> => {
+    backend.results = {
+      'skillControls:askForRevision': { revisionId: 'revision-1' },
+      'skillActions:authorAndRegisterSkill': { ok: true },
+    };
+    const view = mount(
+      <RegisteredSkillsPanel
+        skills={[due]}
+        unregistered={[]}
+        authoringFailure={null}
+        onAuthoringAttempt={noop}
+        employee="Mira"
+      />,
+    );
+    await press(view.container, 'Ask for a revision of kanban-comment-and-close');
+    // The run has ended here (its action answered at once): its own verdict is the Skills card's
+    // to say, so the line that it began has gone, and focus is back on the control (the second
+    // pass).
+    expect(said(view.container)).not.toContain(
+      'A revision of kanban-comment-and-close is being written. Mira keeps running this version until the new one registers.',
+    );
+    expect(focusedName()).toBe('Ask for a revision of kanban-comment-and-close');
     view.unmount();
     backend.results = {};
   });

@@ -11,11 +11,14 @@ import { assertOwnsAgent, assertOwnsSkill } from './ownership';
 import { appendEvent, eventsOfType } from './eventLog';
 import { readRefValidator } from './schema';
 import { isEventOf } from '../src/events/contract';
+import { holdsParkedStoredCopy } from '../src/work/skill-adoption';
 import {
+  type AdoptedSource,
   CHECK_NOT_KEPT_REASON,
   HANDED_OVER_AUTHOR_NAME,
   HANDED_OVER_RECHECK_REASON,
   isNewerVersionReason,
+  isOfferable,
   newerVersionReason,
   nextVersionNumber,
   sharedSkillsEnabled,
@@ -93,6 +96,35 @@ export async function ownerVersions(
           .order('desc')
           .take(LIBRARY_LOOKUP_LIMIT);
   return rows.sort((left, right) => right.version - left.version);
+}
+
+/**
+ * The newer version a holder's "v3 is verified; this runs v2" chip names, for Re-check now to
+ * move the holder onto (the plan's 4.1 item 2; the wave 10 review, M5): the owner's newest
+ * offerable version of the row's name that is newer than the one the row holds. Undefined when
+ * the chip gives another reason or no such version stands, and the row's own version is
+ * re-checked.
+ *
+ * @param db - A mutation's database.
+ * @param row - The holder row.
+ * @returns The version to verify the row as, or undefined.
+ */
+export async function newerVersionToRecheck(
+  db: DatabaseReader,
+  row: Doc<'skills'>,
+): Promise<Id<'skillVersions'> | undefined> {
+  if (row.recheckReason === undefined || !isNewerVersionReason(row.recheckReason)) return undefined;
+  const [held, agent] = await Promise.all([
+    row.versionId === undefined ? null : db.get(row.versionId),
+    db.get(row.agentId),
+  ]);
+  if (held === null || agent?.userId === undefined || held.userId !== agent.userId) {
+    return undefined;
+  }
+  const newer = (await ownerVersions(db, agent.userId, { by: 'name', name: row.name })).find(
+    (version) => version.version > held.version && isOfferable(version),
+  );
+  return newer?._id;
 }
 
 /**
@@ -436,8 +468,9 @@ export async function deleteOwnerLibrary(ctx: MutationCtx, ownerKey: string): Pr
 /**
  * The handover's library step (K2), inside the move: copy every version the moving employee's
  * rows hold into the new owner's library and re-point each row, drop any adoption offer the old
- * owner's library made to it, then stamp "Re-check due" on its
- * registered skills whose surface the move cut. Nothing names the old owner afterwards: each copy
+ * owner's library made to it with any adoption under way and its parked copy, then stamp
+ * "Re-check due" on its registered skills whose surface the move cut. Nothing names the old
+ * owner afterwards: each copy
  * is keyed on the new owner, numbered in the new owner's library, keeps its author only when the
  * mover wrote it (any other author is {@link HANDED_OVER_AUTHOR_NAME}), and drops the pages the
  * old owner's documentation gave it (`readRefs`), which the mover no longer reads; a chip whose
@@ -465,11 +498,13 @@ export async function copyVersionsForMove(
     .collect();
   const copies = new Map<Id<'skillVersions'>, Id<'skillVersions'> | null>();
   for (const row of rows) {
-    // An offer is the old owner's library speaking, not something the employee holds: it goes.
-    // A run holding the row finishes under its fence, as the transfer plan's table has it
-    // (6.4); a stored verification's registration refuses a version the move left behind.
+    // An offer is the old owner's library speaking, not something the employee holds: it goes,
+    // and an adoption under way goes with it (the wave 10 review, B1).
     if (row.offeredVersionId !== undefined) {
-      await ctx.db.patch(row._id, { offeredVersionId: undefined });
+      await endOfferAtMove(ctx, row);
+    } else if (row.state !== 'registered' && holdsParkedStoredCopy(row)) {
+      // A copy whose offer is gone by any path still goes: nothing of the version crosses.
+      await ctx.db.patch(row._id, STORED_COPY_CLEARED);
     }
     // A newer-version chip names the old library's numbers, which the new one does not use.
     if (row.recheckReason !== undefined && isNewerVersionReason(row.recheckReason)) {
@@ -490,6 +525,58 @@ export async function copyVersionsForMove(
     now,
   });
   return { copied: [...copies.values()].filter((id) => id !== null).length, stamped };
+}
+
+/**
+ * Everything of a stored version an adoption's row can hold: the parked copy of its body and
+ * smoke test, a refused draft of it, and the log of its check (whose traceback quotes the body).
+ * A row patched with this holds nothing of the version (the wave 10 review, B1, and its second
+ * pass).
+ */
+export const STORED_COPY_CLEARED = {
+  body: '',
+  pendingSmokeTest: undefined,
+  refusedBody: undefined,
+  refusedSmokeTest: undefined,
+  sandboxId: undefined,
+  verificationLog: undefined,
+} as const;
+
+/** The states a row ends in: an adoption on one is over, and only its copy goes at a move. */
+const ENDED_ROW_STATES: ReadonlySet<Doc<'skills'>['state']> = new Set([
+  'rejected',
+  'retired',
+  'superseded',
+]);
+
+/**
+ * Drop an adoption offer the old owner's library made to a moving employee's row. A proposal
+ * keeps its place as a plain proposal, for the new manager to approve or reject. An adoption the
+ * old manager pressed (approved, being checked, parked or failed) holds the old owner's version
+ * or a copy of it, which no copy may carry across owners: the copy, its log and any run's claim
+ * go, and the row goes back to a proposal, from which nothing registers without the new
+ * manager's approval. A check still running is fenced out of the row by the released claim. An
+ * adoption that ended (declined, retired, superseded) stays as it ended, its copy gone.
+ */
+async function endOfferAtMove(ctx: MutationCtx, row: Doc<'skills'>): Promise<void> {
+  if (row.state === 'proposed') {
+    await ctx.db.patch(row._id, { offeredVersionId: undefined });
+    return;
+  }
+  // A declined or ended adoption stays as it ended; only what it held of the version goes.
+  if (ENDED_ROW_STATES.has(row.state)) {
+    await ctx.db.patch(row._id, { offeredVersionId: undefined, ...STORED_COPY_CLEARED });
+    return;
+  }
+  await ctx.db.patch(row._id, {
+    state: 'proposed',
+    offeredVersionId: undefined,
+    ...STORED_COPY_CLEARED,
+    authoringAttempts: undefined,
+    authoringDeferrals: undefined,
+    authoringRunId: undefined,
+    authoringClaimedAt: undefined,
+  });
 }
 
 /** One version copied into the new owner's library, or null when it no longer exists. */
@@ -707,7 +794,7 @@ export async function storedVersionRefusal(
 }
 
 /**
- * Internal: what `skillActions.verifyStoredSkill` runs ({@link storedVerificationTargetOf}).
+ * Internal: what `storedVerification.verifyStoredSkill` runs ({@link storedVerificationTargetOf}).
  */
 export const storedVerificationTarget = internalQuery({
   args: { skillId: v.id('skills'), versionId: v.optional(v.id('skillVersions')) },
@@ -766,6 +853,35 @@ export const library = query({
       operation: args.operation,
     });
     return versions.map(libraryEntry);
+  },
+});
+
+/** The most registered skills of one employee the adopted-source read looks at. */
+const ADOPTED_SOURCES_LIMIT = 200;
+
+/**
+ * Public, guarded by `assertOwnsAgent`: for each registered skill of the employee that was
+ * adopted, the version it holds and its author, as the owner's library names them, for the
+ * registered card (the real-Linear walk, m2: the card said "authored" and named nobody). A row
+ * whose version is not the owner's names nothing. Reads only.
+ */
+export const adoptedSources = query({
+  args: { agentId: v.id('agents') },
+  handler: async (ctx, args): Promise<AdoptedSource[]> => {
+    const agent = await assertOwnsAgent(ctx, args.agentId);
+    const registered = await ctx.db
+      .query('skills')
+      .withIndex('by_agent_state', (q) => q.eq('agentId', args.agentId).eq('state', 'registered'))
+      .take(ADOPTED_SOURCES_LIMIT);
+    const sources = await Promise.all(
+      registered.map(async (row): Promise<AdoptedSource | null> => {
+        if (row.adoptedAt === undefined || row.versionId === undefined) return null;
+        const version = await ctx.db.get(row.versionId);
+        if (version === null || version.userId !== agent.userId) return null;
+        return { skillId: row._id, version: version.version, authorName: version.authorName };
+      }),
+    );
+    return sources.filter((source): source is AdoptedSource => source !== null);
   },
 });
 

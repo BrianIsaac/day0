@@ -11,7 +11,12 @@ import { Field, INPUT_CLASS } from '../../../components/Field';
 import { StatusRegion } from '../../../components/StatusRegion';
 import { useChange } from '../../../components/use-change';
 import { CODE_CHIP, plainSkillName } from './skill-parts';
-import { namesInWords, retireOutcome, withdrawOutcome } from './skill-card-words';
+import {
+  namesInWords,
+  retireDialogDescription,
+  retireOutcome,
+  withdrawOutcome,
+} from './skill-card-words';
 
 /** Who stops running the skill: the one employee, or every employee who runs its version. */
 type RetireScope = 'one' | 'every';
@@ -26,6 +31,8 @@ type RetireScope = 'one' | 'every';
  * @param skill - The registered row.
  * @param employee - The employee's name.
  * @param revisionOpen - Whether a revision of the row is being written, which the retire ends.
+ * @param autonomous - Whether the employee's autonomous actions are on, which decides what the
+ *   dialog says of a run already under way.
  * @param onClose - Close the dialog without retiring.
  * @param onDone - The change landed, with what the Skills card's live region says.
  */
@@ -33,12 +40,14 @@ export function RetireSkillDialog({
   skill,
   employee,
   revisionOpen = false,
+  autonomous = false,
   onClose,
   onDone,
 }: {
   skill: Doc<'skills'>;
   employee: string;
   revisionOpen?: boolean;
+  autonomous?: boolean;
   onClose: () => void;
   onDone: (words: string) => void;
 }) {
@@ -131,13 +140,13 @@ export function RetireSkillDialog({
       title={
         every ? 'Withdraw this skill from every employee?' : `Retire this skill from ${employee}?`
       }
-      description={`${
-        every
-          ? `${namesInWords(runners)} stop running this skill now.`
-          : `${employee} stops running this skill now.`
-      } Approved work that would have used it goes back to waiting for a skill, and a new one is proposed for it.${
-        revisionOpen ? ' The revision being written for it ends too.' : ''
-      }`}
+      description={retireDialogDescription({
+        every,
+        employee,
+        runners,
+        revisionOpen,
+        autonomous,
+      })}
       onClose={onClose}
       initialFocus={keep}
       busy={change.busy}
@@ -150,10 +159,9 @@ export function RetireSkillDialog({
           const withReason = trimmed === '' ? {} : { reason: trimmed };
           if (every) {
             change.run(() => withdraw({ skillId: skill._id, ...withReason }), {
-              done: (result) => withdrawOutcome(skill.name, result.holders, result.returnedItems),
+              done: (result) => withdrawOutcome(skill.name, result),
               refused: `${skill.name} was not withdrawn.`,
-              after: (result) =>
-                onDone(withdrawOutcome(skill.name, result.holders, result.returnedItems)),
+              after: (result) => onDone(withdrawOutcome(skill.name, result)),
             });
             return;
           }

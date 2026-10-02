@@ -119,6 +119,16 @@ export function providerReconciliationEntries(output: unknown): ReconciliationEn
   );
 }
 
+/**
+ * How many rows of a run's ledger reached the work environment, reads and writes alike, across
+ * both phases: what the card's landed list counts.
+ */
+export function landedRowCount(output: unknown): number {
+  return ledgerPhases(output)
+    .flatMap(({ applied }) => applied)
+    .filter((entry) => entry.ok === true && entry.held !== true).length;
+}
+
 /** Whether a retry must wait for the provider reconciliation checklist. */
 export function retryRequiresProviderReconciliation(output: unknown, skipReason?: string): boolean {
   return (

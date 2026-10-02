@@ -133,6 +133,8 @@ describe('reset completeness', (): void => {
     // SECURITY.md is where the README sends a reader for what a reset deletes (review m9).
     const security = readFileSync(new URL('../../SECURITY.md', import.meta.url), 'utf8');
     expect(security).toContain(`in the ${enumerated} enumerated related tables`);
+    // And the owner's skill library, which the deletion deletes whole (10-K; the cockpit's item).
+    expect(security).toContain("and the caller's skill library (`skillVersions`)");
     // What a deletion keeps, said now (the wave 9 review's decision 7): the handover requests.
     expect(security).toContain(
       'It keeps the two record tables that outlive an employee: `retirements`, and `managerTransfers`',
@@ -649,6 +651,10 @@ describe('retire in real mode', (): void => {
     });
 
     await harness.withIdentity(managerIdentity()).mutation(api.reset.retire, { agentId: retiring });
+    // The drain runs an action from `workActions.ts`, whose first import after the registry reset
+    // can spend the drain's turn budget when other files load cold beside this one (the wave 10
+    // review, section 8): load it before the drain.
+    await import('../../convex/workActions');
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
 
     expect((await retirementsOf(harness))[0].claims).toEqual([]);
@@ -792,6 +798,10 @@ describe('retire in real mode', (): void => {
     });
 
     await harness.withIdentity(managerIdentity()).mutation(api.reset.retire, { agentId: retiring });
+    // The drain runs an action from `workActions.ts`, whose first import after the registry reset
+    // can spend the drain's turn budget when other files load cold beside this one (the wave 10
+    // review, section 8): load it before the drain.
+    await import('../../convex/workActions');
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
 
     expect((await retirementsOf(harness))[0].claims).toEqual([]);
@@ -848,7 +858,7 @@ describe('retire in real mode', (): void => {
       harness
         .withIdentity(managerIdentity('stranger'))
         .mutation(api.reset.retire, { agentId: retiring }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
     expect(await harness.run(async (ctx) => await ctx.db.get(retiring))).not.toBeNull();
   });
 });

@@ -61,6 +61,17 @@ export function takenOutItemReason(skillName: string, how: TakenOut): string {
 }
 
 /**
+ * Why a run was stopped by a Withdraw: the body it ran was withdrawn from every employee while it
+ * ran, so it writes nothing more (decision 3 (b); the wave 10 review, M4). The item and the record
+ * carry it after `stopped: `, and the item offers Retry as any stopped run does.
+ *
+ * @param skillName - The skill's name.
+ */
+export function withdrawnRunReason(skillName: string): string {
+  return `the skill ${skillName} was withdrawn from every employee while this ran`;
+}
+
+/**
  * Why an approved item the executor found no callable skill for parks rather than fails (E-1):
  * its skill is still being written, waits on the manager, or was taken out of use.
  *

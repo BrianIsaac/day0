@@ -2164,7 +2164,7 @@ describe('orientation run', (): void => {
       harness
         .withIdentity(managerIdentity('other-owner'))
         .action(api.surfaces.reorient, { agentId }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
   });
 });
 
@@ -2792,7 +2792,7 @@ describe('each employee reads its own role', (): void => {
       harness
         .withIdentity(managerIdentity('other-owner'))
         .mutation(requestProposal, { surfaceId: before['looker-pipeline-tile']._id }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
     await expect(owner.mutation(requestProposal, { surfaceId: before.linear._id })).rejects.toThrow(
       'Only a declared system can be proposed; this one is proposed.',
     );

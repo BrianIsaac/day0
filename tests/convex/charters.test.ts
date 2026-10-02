@@ -20,6 +20,7 @@ import { STRIKE_CHANGES_NOTHING } from '../../src/agent/charter-constraints';
 import { runThroughBody } from '../fixtures/run-through-charter-2026-09-14';
 import { strikeRefusalBody } from '../fixtures/charter-strike-refusal-2026-09-15';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import { acceptedHandoverWords, seedAcceptingHandover } from './fakes/accepting-handover';
 
 type Harness = TestConvex<typeof schema>;
 
@@ -87,6 +88,41 @@ async function eventsOf(harness: Harness, agentId: Id<'agents'>): Promise<Doc<'e
   );
 }
 
+describe('the charter while a handover waits for its runs (decision 9, FR-m6)', (): void => {
+  it('refuses the old manager’s approval of a draft once the new manager has accepted', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, charterId } = await seedDraft(harness);
+    await seedAcceptingHandover(harness, agentId, 'worker 1');
+
+    await expect(
+      harness.withIdentity(managerIdentity()).mutation(api.charters.approve, { charterId }),
+    ).rejects.toMatchObject({ data: acceptedHandoverWords('worker 1') });
+    expect((await charter(harness, charterId)).approved).toBe(false);
+  });
+
+  it('refuses the old manager’s amendment once the new manager has accepted', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, charterId } = await seedDraft(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(charterId, { approved: true, approvedAt: 3 });
+    });
+    await seedAcceptingHandover(harness, agentId, 'worker 1');
+
+    await expect(
+      harness.withIdentity(managerIdentity()).mutation(api.charters.amend, {
+        agentId,
+        changes: [{ kind: 'strike-constraint', index: 0 }],
+      }),
+    ).rejects.toMatchObject({ data: acceptedHandoverWords('worker 1') });
+    const versions = await harness.run(async (ctx) =>
+      (await ctx.db.query('charters').collect()).filter((row) => row.agentId === agentId),
+    );
+    expect(versions).toHaveLength(1);
+  });
+});
+
 describe('striking a constraint before approval', (): void => {
   it('marks the constraint struck on the draft and can restore it', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
@@ -110,7 +146,7 @@ describe('striking a constraint before approval', (): void => {
       harness
         .withIdentity(managerIdentity('stranger'))
         .mutation(api.charters.setConstraintStruck, { charterId, index: 0, struck: true }),
-    ).rejects.toThrow(/forbidden|not found|owner/i);
+    ).rejects.toThrow(/not yours|not found|owner/i);
     const owner = harness.withIdentity(managerIdentity());
     await expect(
       owner.mutation(api.charters.setConstraintStruck, { charterId, index: 5, struck: true }),
@@ -672,7 +708,7 @@ describe('amending an approved charter', (): void => {
       harness
         .withIdentity(managerIdentity('stranger'))
         .mutation(api.charters.amend, { agentId: draft.agentId, changes: [edit] }),
-    ).rejects.toThrow(/forbidden/);
+    ).rejects.toThrow(/not yours/);
     await expect(
       owner.mutation(api.charters.amend, {
         agentId: draft.agentId,

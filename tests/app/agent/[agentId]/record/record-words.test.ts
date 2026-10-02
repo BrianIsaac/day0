@@ -354,6 +354,17 @@ describe('recordWords', (): void => {
     ).toBe('You gave up on the skill analytics-refresh-value after 3 attempts.');
     expect(
       recordWords(
+        {
+          type: 'skill.rejected',
+          payload: { name: 'kanban-comment-and-close', offerWithdrawn: { version: 1 } },
+        },
+        subject,
+      ),
+    ).toBe(
+      'The adoption of the skill kanban-comment-and-close ended: version 1 was withdrawn from every employee.',
+    );
+    expect(
+      recordWords(
         { type: 'skill.rechecked', payload: { name: 'kanban-comment-and-close', version: 2 } },
         subject,
       ),
@@ -505,5 +516,147 @@ describe('what an evaluation and a plan approval say in the record (walk m15)', 
     ).toBe(
       "You approved the plan for “Priya asks for tracker update” from the dashboard, answering 1 charter question and the planner's note.",
     );
+  });
+});
+
+describe('the record after a handover (decisions 4 and 5, the wave 10 review, M8)', (): void => {
+  /** An event older than the reader's tenure: the manager then was sam@company.com. */
+  const earlier = {
+    name: 'Mira',
+    item: 'Draft response for new tier-two RevOps ask',
+    manager: { kind: 'earlier', address: 'sam@company.com' },
+    reader: 'lead@company.com',
+  } as const;
+
+  it.each(EVENT_TYPES)(
+    'says %s without "you" or "your" when the manager then was another',
+    (type): void => {
+      for (const payload of [
+        {},
+        { name: 'chat-thread-reply', fromAddress: 'x@company.com' },
+        FULL,
+        { ...FULL, via: 'plan-approval', decidedVia: 'channel', reason: 'skip-overruled' },
+      ]) {
+        const words = recordWords({ type, payload }, earlier);
+        expect(words).not.toMatch(/\byou(rs?|rself)?\b/i);
+        expect(words).toMatch(/^[A-Z0-9“]/);
+        // The manager then is named once a sentence, and "they" after that.
+        expect(words.split('sam@company.com').length - 1).toBeLessThanOrEqual(1);
+      }
+    },
+  );
+
+  it('names the manager then as the one who decided, never opening on an address', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'skill.approved',
+          payload: { name: 'kanban-comment-and-close', scopes: ['linear:write'] },
+        },
+        earlier,
+      ),
+    ).toBe(
+      "Mira's manager then, sam@company.com, approved the skill kanban-comment-and-close, granting linear:write.",
+    );
+    expect(
+      recordWords(
+        { type: 'permission.granted', payload: { scope: 'linear:write', source: 'skill' } },
+        earlier,
+      ),
+    ).toBe('Mira was granted linear:write with a skill sam@company.com approved.');
+    // The reader's own decisions still read "You".
+    expect(
+      recordWords(
+        { type: 'skill.approved', payload: { name: 'kanban-comment-and-close' } },
+        { ...earlier, manager: { kind: 'reader' } },
+      ),
+    ).toBe('You approved the skill kanban-comment-and-close.');
+  });
+
+  it('says an adoption under the manager then names its author as a colleague under the previous manager', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'skill.adopted',
+          payload: { name: 'kanban-comment-and-close', version: 1, authorName: 'Priya' },
+        },
+        earlier,
+      ),
+    ).toBe(
+      "Mira's manager then, sam@company.com, adopted version 1 of the skill kanban-comment-and-close, written by a colleague under the previous manager, for Mira; the sandbox checks it again for Mira before it runs.",
+    );
+    expect(
+      recordWords(
+        {
+          type: 'skill.adoption-offered',
+          payload: { name: 'kanban-comment-and-close', version: 1, authorName: 'Priya' },
+        },
+        earlier,
+      ),
+    ).not.toContain('Priya');
+  });
+
+  it('says the move turned autonomous actions off and set run notes, whoever reads it', (): void => {
+    for (const about of [earlier, { ...earlier, manager: { kind: 'reader' } } as const]) {
+      expect(
+        recordWords(
+          {
+            type: 'agent.autonomy-changed',
+            payload: { from: true, to: false, reason: 'handed over to a new manager' },
+          },
+          about,
+        ),
+      ).toBe('Autonomous actions were turned off when Mira was handed over.');
+      expect(
+        recordWords(
+          {
+            type: 'agent.notifications-changed',
+            payload: { from: 'digest', to: 'per-run', reason: 'handed over to a new manager' },
+          },
+          about,
+        ),
+      ).toBe('Run notes went back to one per run when Mira was handed over.');
+    }
+  });
+
+  it('says a withheld handover note to the manager it was addressed to as addressed to them', (): void => {
+    const withheld = {
+      type: 'manager.transfer-note-withheld',
+      payload: { fromAddress: 'sam@company.com', toAddress: 'lead@company.com' },
+    } as const;
+    expect(recordWords(withheld, earlier)).toBe(
+      'The note from sam@company.com to you was withheld: Day0 could not check it for stored credentials.',
+    );
+    expect(
+      recordWords(withheld, {
+        name: 'Mira',
+        manager: { kind: 'reader' },
+        reader: 'sam@company.com',
+      }),
+    ).toBe(
+      'Your note to lead@company.com was withheld: Day0 could not check it for stored credentials.',
+    );
+  });
+});
+
+describe('what the record says an authoring claim began (A-m9)', (): void => {
+  it('says a check of a stored version is checking, and an authoring is writing', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'skill.authoring-claimed',
+          payload: { name: 'kanban-comment-and-close', purpose: 'verify-stored' },
+        },
+        { name: 'Mira' },
+      ),
+    ).toBe('Mira started checking the skill kanban-comment-and-close in the sandbox.');
+    for (const payload of [
+      { name: 'kanban-comment-and-close', purpose: 'author' },
+      { name: 'kanban-comment-and-close' },
+    ]) {
+      expect(recordWords({ type: 'skill.authoring-claimed', payload }, { name: 'Mira' })).toBe(
+        'Mira started writing the skill kanban-comment-and-close.',
+      );
+    }
   });
 });

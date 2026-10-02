@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  adoptedFromWords,
+  registeredSourceChip,
   attemptLine,
   attemptsSpentSentence,
   givenUpOutcome,
@@ -8,6 +10,7 @@ import {
   revisionRowSentence,
   recheckSentence,
   retireOutcome,
+  revisionStartedOutcome,
   revisionSentence,
   usedTimes,
   withdrawOutcome,
@@ -34,8 +37,18 @@ describe('the skill cards’ words (10-C)', (): void => {
     expect(recheckSentence('the tools you approved on linear changed', 'Mira')).toBe(
       'The tools you approved on linear changed. Mira keeps running the verified version until it is re-checked.',
     );
+    // The stored newer-version reason is said in words (the pre-tag walk, W-1: "V2 is verified").
+    expect(recheckSentence('v3 is verified; this runs v2', 'Mira')).toBe(
+      'Version 3 is verified; this runs version 2. Mira keeps running the verified version until it is re-checked.',
+    );
     expect(recheckSentence('v3 is verified; this runs v2.', 'Mira')).toBe(
-      'V3 is verified; this runs v2. Mira keeps running the verified version until it is re-checked.',
+      'Version 3 is verified; this runs version 2. Mira keeps running the verified version until it is re-checked.',
+    );
+  });
+
+  it('says a revision began, and that the running version keeps running (C-m2)', (): void => {
+    expect(revisionStartedOutcome('kanban-comment-and-close', 'Mira')).toBe(
+      'A revision of kanban-comment-and-close is being written. Mira keeps running this version until the new one registers.',
     );
   });
 
@@ -55,11 +68,18 @@ describe('the skill cards’ words (10-C)', (): void => {
     expect(retireOutcome('kanban-comment-and-close', 'Mira', 1)).toBe(
       'kanban-comment-and-close is retired from Mira. 1 approved item waits for a skill again.',
     );
-    expect(withdrawOutcome('kanban-comment-and-close', 2, 0)).toBe(
-      'kanban-comment-and-close is withdrawn from 2 employees.',
-    );
-    expect(withdrawOutcome('kanban-comment-and-close', 1, 3)).toBe(
+    expect(
+      withdrawOutcome('kanban-comment-and-close', { holders: 2, returnedItems: 0, stoppedRuns: 0 }),
+    ).toBe('kanban-comment-and-close is withdrawn from 2 employees.');
+    expect(
+      withdrawOutcome('kanban-comment-and-close', { holders: 1, returnedItems: 3, stoppedRuns: 0 }),
+    ).toBe(
       'kanban-comment-and-close is withdrawn from 1 employee. 3 approved items wait for a skill again.',
+    );
+    expect(
+      withdrawOutcome('kanban-comment-and-close', { holders: 2, returnedItems: 0, stoppedRuns: 2 }),
+    ).toBe(
+      'kanban-comment-and-close is withdrawn from 2 employees. 2 runs under way were stopped.',
     );
   });
 
@@ -97,5 +117,19 @@ describe('the skill cards’ words (10-C)', (): void => {
     expect(namesInWords(['Mira'])).toBe('Mira');
     expect(namesInWords(['Mira', 'Tomas'])).toBe('Mira and Tomas');
     expect(namesInWords(['Mira', 'Tomas', 'Aiko'])).toBe('Mira, Tomas and Aiko');
+  });
+});
+
+describe('where a registered skill came from (the real-Linear walk, m2)', (): void => {
+  it('chips a skill the employee wrote, one it adopted and a built-in one apart', (): void => {
+    expect(registeredSourceChip({ sourceType: 'agent-authored' })).toBe('authored');
+    expect(registeredSourceChip({ sourceType: 'agent-authored', adoptedAt: 5 })).toBe('adopted');
+    expect(registeredSourceChip({ sourceType: 'builtin' })).toBe('built in');
+  });
+
+  it('says whose version an adopted skill runs', (): void => {
+    expect(adoptedFromWords({ version: 2, authorName: 'Priya' })).toBe(
+      'version 2, adopted from Priya',
+    );
   });
 });

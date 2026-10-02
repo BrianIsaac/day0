@@ -197,24 +197,24 @@ describe('skill author prompts', (): void => {
   });
 
   it('puts the shape and the execution inputs in front of the author', (): void => {
-    const prompt = buildAuthorPrompt(
-      {
-        ...skill,
-        name: 'analytics-refresh-value',
-        surfaceClass: 'analytics',
-        operation: 'refresh-value',
-      },
-      [],
-      now,
-    );
+    const shaped = {
+      ...skill,
+      name: 'analytics-refresh-value',
+      surfaceClass: 'analytics',
+      operation: 'refresh-value',
+    };
+    const prompt = buildAuthorPrompt(shaped, [], now);
     expect(prompt).toContain('Skill name: analytics-refresh-value');
     expect(prompt).toContain('Shape: value refresh on an analytics surface');
     expect(prompt).toContain('Execution inputs the executor can supply');
     expect(prompt).toContain('`<record-id>`');
     expect(prompt).toContain('`<requested-value>`');
-    expect(prompt).toContain('`<reply-channel>`');
     expect(prompt).toContain('`<originating-surface>`');
     expect(prompt).toContain('The rationale names the first work item; it is an instance');
+    // A real author with no chat surface connected is taught no reply (m11); the mock author's
+    // recorded lines keep theirs.
+    expect(prompt).not.toContain('`<reply-channel>`');
+    expect(buildAuthorPrompt(shaped, [], now, [], 'mock')).toContain('`<reply-channel>`');
   });
 
   // Demo rehearsal 2, 19 Sep 2026, finding 1: real mode says which surface
@@ -259,10 +259,27 @@ describe('skill author prompts', (): void => {
     );
   });
 
-  it('names no reply surface when no chat surface is connected', (): void => {
+  it('teaches a Linear-only real author no reply, so no case aims one at an unconnected chat surface (the real-Linear walk, m11)', (): void => {
     const prompt = buildAuthorPrompt(kanbanSkill, [linear], now, [], 'real');
-    expect(prompt).toContain('  - `<reply-surface>`:');
     expect(prompt).not.toContain('Here `<reply-surface>` is');
+    for (const input of ['<reply-surface>', '<reply-channel>', '<reply-thread>']) {
+      expect(prompt).not.toContain(input);
+    }
+    expect(prompt).toContain(
+      '  This employee has no connected chat surface Day0 can send a reply on, so it sends no reply: SKILL.md declares no reply input, no case in `CASES` gives `reply-channel`, `reply-thread` or `reply-surface`, and no action is a reply. Every action is on a connected surface the Surfaces list names.',
+    );
+    // A chat surface connected on no path a reply can take is said truly, not as "none connected"
+    // (the second pass).
+    const escalateOnly = { ...slack, path: 'escalate' as never };
+    const unsendable = buildAuthorPrompt(kanbanSkill, [linear, escalateOnly], now, [], 'real');
+    expect(unsendable).not.toContain('<reply-surface>');
+    expect(unsendable).toContain('no connected chat surface Day0 can send a reply on');
+    expect(unsendable).not.toContain('No chat surface is connected');
+    // With a chat surface connected and then gone, the line follows the connection.
+    const lapsed = { ...slack, verdict: 'approved' as const, credentialLanded: false };
+    expect(buildAuthorPrompt(kanbanSkill, [linear, lapsed], now, [], 'real')).not.toContain(
+      '<reply-surface>',
+    );
   });
 
   it('tells a real-mode author that a case with a reply channel gives the reply surface too', (): void => {

@@ -544,6 +544,38 @@ export function arrivingLine(input: ArrivingInput): string {
 }
 
 /**
+ * The heading of the acceptor's handovers that ended without the move (decision 4), by how many
+ * there are.
+ *
+ * @param count - How many lines the card draws.
+ */
+export function notFinishedHeading(count: number): string {
+  return count === 1 ? 'A handover that did not finish' : 'Handovers that did not finish';
+}
+
+/** What the acceptor's line for a handover that ended without the move is made from. */
+export interface EndedHandoverInput {
+  readonly name: string;
+  /** The manager the employee stays with. */
+  readonly from: string;
+  /** When the caller accepted it. */
+  readonly acceptedAt: number;
+  readonly zone: string;
+}
+
+/**
+ * The acceptor's line for a handover it accepted that could not finish and was ended (decision 4:
+ * the automatic end after the settles failed, or the operator's): the employee stays with the
+ * manager who asked, said once, and when the acceptance was made last.
+ */
+export function endedHandoverLine(input: EndedHandoverInput): string {
+  return `${input.name} stays with ${input.from}: the handover you accepted could not finish and was ended (accepted ${zonedStamp(
+    input.acceptedAt,
+    input.zone,
+  )}).`;
+}
+
+/**
  * Said on the home once a decline lands.
  *
  * @param name - The employee.
@@ -608,8 +640,8 @@ function sinceWords(
 
 /**
  * Where the old manager's own record of a handover is, for as long as the home lists it: the
- * departed page has no window, so it says the home's (the second pass: "your record ... is on
- * your home" was untrue after 30 days).
+ * departed page answers for the same thirty days (`isDepartureListed`, decision 8), so the line
+ * stays true for as long as the page draws it.
  */
 const HOME_LISTS_IT = `Your home lists the handover for ${Math.round(TRANSFER_DEPARTURES_WINDOW_MS / 86_400_000)} days.`;
 

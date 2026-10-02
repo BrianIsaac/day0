@@ -51,8 +51,8 @@ import {
   harnessToolsBySurface,
   harnessToolsNamed,
   type NamedHarnessSurface,
-  type SurfaceTools,
 } from '../src/work/skill-library';
+import { holdsParkedStoredCopy, parkedCheckLog } from '../src/work/skill-adoption';
 
 /**
  * Autonomous skill authoring action. Demo headline:
@@ -167,7 +167,8 @@ export function authorSystemFor(mode: SurfaceMode): string {
   return mode === 'real' ? AUTHOR_SYSTEM_REAL : AUTHOR_SYSTEM;
 }
 
-const skillAuthorAgent = makeAgent('day0-skill-author', authorSystemFor(SURFACE_MODE));
+/** The skill author, one agent for every authoring call and the stored verification's kept check. */
+export const skillAuthorAgent = makeAgent('day0-skill-author', authorSystemFor(SURFACE_MODE));
 
 /** What the author prompt needs from a skill row. */
 export interface AuthorPromptSkill {
@@ -191,6 +192,27 @@ const PATH_VERBS: Record<string, string> = {
 };
 
 /**
+ * What a real-mode author is told when the employee has no connected chat surface on a path a reply
+ * can take, in place of naming one: the cause of the walk's refused first drafts was the prompt teaching a
+ * reply the employee could not send (m11), so the prompt says there is none rather than any check
+ * filtering the draft's words afterwards.
+ */
+const NO_CHAT_LINE =
+  '  This employee has no connected chat surface Day0 can send a reply on, so it sends no reply: SKILL.md declares no reply input, no case in `CASES` gives `reply-channel`, `reply-thread` or `reply-surface`, and no action is a reply. Every action is on a connected surface the Surfaces list names.';
+
+/**
+ * The connected chat surface a reply goes to, by a path the gate can reach, if any.
+ *
+ * @param connected - The agent's connected surfaces.
+ */
+function connectedChatSurface(connected: readonly SurfaceRecord[]): SurfaceRecord | undefined {
+  return connected.find(
+    (surface): boolean =>
+      surface.class === 'chat' && !!surface.path && PATH_VERBS[surface.path] !== undefined,
+  );
+}
+
+/**
  * Which connected surface `<reply-surface>` is on this deployment, for a
  * real-mode author.
  *
@@ -199,29 +221,20 @@ const PATH_VERBS: Record<string, string> = {
  * takes, and names the target surface's verb beside it, so the author reads
  * that the ticket surface cannot carry a `chat.postMessage` rather than
  * inferring it. The executor binds the input per run; the slug here is for
- * the smoke test's cases.
+ * the smoke test's cases. With no chat surface connected it says there is no
+ * reply to send instead (m11).
  *
- * Args:
- *   skill: The proposed skill, for its target surface.
- *   surfaces: The agent's surfaces.
- *   now: Clock for the connection verdict.
- *
- * Returns:
- *   One prompt line, or none when no chat surface is connected.
+ * @param skill - The proposed skill, for its target surface.
+ * @param connected - The agent's connected surfaces.
+ * @param chat - The connected chat surface, if any, as {@link connectedChatSurface} finds it.
+ * @returns One prompt line.
  */
 function replySurfaceLines(
   skill: AuthorPromptSkill,
-  surfaces: readonly SurfaceRecord[],
-  now: number,
+  connected: readonly SurfaceRecord[],
+  chat: SurfaceRecord | undefined,
 ): string[] {
-  const connected = surfaces.filter(
-    (surface): boolean => surfaceVerdictFor(surface, now) === 'connected',
-  );
-  const chat = connected.find(
-    (surface): boolean =>
-      surface.class === 'chat' && !!surface.path && PATH_VERBS[surface.path] !== undefined,
-  );
-  if (!chat?.path) return [];
+  if (!chat?.path) return [NO_CHAT_LINE];
   const input = `\`<${REPLY_SURFACE_INPUT}>\``;
   const target = connected.find(
     (surface): boolean => surface.slug === skill.targetSurface && surface.slug !== chat.slug,
@@ -243,13 +256,17 @@ function shapeSection(
 ): string[] {
   if (!skill.surfaceClass || !skill.operation) return [];
   const shape = { surfaceClass: skill.surfaceClass, operation: skill.operation };
+  const connected = surfaces.filter(
+    (surface): boolean => surfaceVerdictFor(surface, now) === 'connected',
+  );
+  const chat = connectedChatSurface(connected);
   return [
     `Shape: ${skillOperationLabel(shape)} on ${skillSurfacePhrase(shape)} (${skillNameFor(shape)}).`,
     'The rationale names the first work item; it is an instance, and none of its identifiers, figures or quoted words belong in the skill.',
     '',
     'Execution inputs the executor can supply, to declare under `## Inputs` as the procedure needs them:',
-    ...executionInputLines(mode),
-    ...(mode === 'real' ? replySurfaceLines(skill, surfaces, now) : []),
+    ...executionInputLines(mode, { chatConnected: chat !== undefined }),
+    ...(mode === 'real' ? replySurfaceLines(skill, connected, chat) : []),
   ];
 }
 
@@ -294,7 +311,7 @@ interface LinkedRunbookPage<Page extends AuthorRunbookPage> {
  * @param pages - The agent's redacted documentation.
  * @returns The pages and their excerpts, most relevant first, within the character budget.
  */
-function linkedRunbookExcerpts<Page extends AuthorRunbookPage>(
+export function linkedRunbookExcerpts<Page extends AuthorRunbookPage>(
   skill: AuthorPromptSkill,
   surfaces: readonly SurfaceRecord[],
   pages: readonly Page[],
@@ -601,7 +618,7 @@ export async function holdSandboxLease(
  * whichever decision replaced this run: another run's, or the boss's own
  * rejection.
  */
-const SUPERSEDED =
+export const SUPERSEDED =
   'this authoring run no longer holds the skill - it was rejected or taken over, ' +
   "so this run's result was discarded";
 
@@ -613,7 +630,7 @@ const SUPERSEDED =
  * waiting. All three in one fenced transaction - a failing run that has lost
  * its claim writes none of them.
  */
-async function recordAuthoringFailure(
+export async function recordAuthoringFailure(
   ctx: ActionCtx,
   skillId: Id<'skills'>,
   runId: Id<'events'>,
@@ -622,6 +639,8 @@ async function recordAuthoringFailure(
     reason: string;
     eventType: 'skill.author-failed' | 'skill.verification-failed';
     refusedDraft?: { body: string; smokeTest: string };
+    /** The row's body is a parked copy of a stored version that may not register: it goes. */
+    dropsStoredCopy?: boolean;
   },
 ): Promise<{ ok: false; reason: string }> {
   const { refusedDraft, ...failure } = args;
@@ -682,7 +701,7 @@ async function redactAuthoredDraft(
  * Returns:
  *   The redacted texts, in the order given.
  */
-async function redactAuthoringTexts(
+export async function redactAuthoringTexts(
   ctx: ActionCtx,
   agentId: Id<'agents'>,
   texts: readonly string[],
@@ -708,7 +727,7 @@ async function redactAuthoringTexts(
  * first-try failure is diagnosed from; bounded because the retry prompt
  * carries it back beside the refused draft.
  */
-const FAILED_VERIFICATION_LOG_CHARS = 2_000;
+export const FAILED_VERIFICATION_LOG_CHARS = 2_000;
 
 /**
  * Run the authoring call with its model-call report on the ledger, in real
@@ -722,7 +741,7 @@ const FAILED_VERIFICATION_LOG_CHARS = 2_000;
  * @param fn - The authoring call.
  * @returns What the call returned.
  */
-async function recordingAuthoringCalls<T>(
+export async function recordingAuthoringCalls<T>(
   ctx: ActionCtx,
   skill: Pick<Doc<'skills'>, '_id' | 'agentId' | 'proposedFor'>,
   fn: () => Promise<T>,
@@ -794,7 +813,22 @@ async function authorAndRegister(
   // panels, with nothing to press. Record the failure instead: `failed` is
   // listed, carries the reason, and offers Retry.
   let authored: AuthoredSkill;
+  // A parked copy of a stored version registers under that version's checks or not at all (the
+  // wave 10 review, B1): its own draft is the employee's, the copy is the library's.
+  let storedVersionId: Id<'skillVersions'> | undefined;
   if (skill.state === 'authoring' && skill.pendingSmokeTest && skill.body) {
+    if (holdsParkedStoredCopy(skill)) {
+      const refusal = await parkedCopyRefusal(ctx, skill);
+      if (refusal !== undefined) {
+        return await recordAuthoringFailure(ctx, skillId, runId, {
+          rowReason: storedCopyRefusedReason(refusal),
+          reason: refusal,
+          eventType: 'skill.verification-failed',
+          dropsStoredCopy: true,
+        });
+      }
+      storedVersionId = skill.offeredVersionId;
+    }
     authored = { body: skill.body, smokeTest: skill.pendingSmokeTest };
   } else {
     const userPrompt = buildAuthorPrompt(
@@ -922,6 +956,9 @@ async function authorAndRegister(
     name: skill.name,
     runId,
   });
+  // A stored copy parked again keeps the mark that says it is one (holdsParkedStoredCopy).
+  const parkedLog = (log: string, reason: string): string =>
+    storedVersionId !== undefined ? parkedCheckLog(reason) : noted(log);
   if (!lease.held) {
     const pendingDraft = await redactAuthoredDraft(ctx, skill.agentId, { body, smokeTest });
     const waitedFor = `${Math.round(lease.waitedMs / 60_000)} minutes`;
@@ -934,7 +971,7 @@ async function authorAndRegister(
       sandboxId: '(skipped)',
       body: pendingDraft.body,
       smokeTest: pendingDraft.smokeTest,
-      verificationLog: noted(reason),
+      verificationLog: parkedLog(reason, reason),
       reason,
     });
     if (!recorded) return { ok: false, reason: SUPERSEDED };
@@ -1041,7 +1078,7 @@ async function authorAndRegister(
       sandboxId,
       body: pendingDraft.body,
       smokeTest: pendingDraft.smokeTest,
-      verificationLog: noted(verificationLog),
+      verificationLog: parkedLog(verificationLog, skipReason),
       reason: skipReason,
     });
     if (!recorded) return { ok: false, reason: SUPERSEDED };
@@ -1052,7 +1089,7 @@ async function authorAndRegister(
   // requeue of the work item that asked for the skill either all land or none
   // of them do. Anything that fails here leaves the row in a state the skills
   // panel lists and the next claim accepts.
-  const { registered } = await ctx.runMutation(internal.skills.completeRegistration, {
+  const { registered, refusal } = await ctx.runMutation(internal.skills.completeRegistration, {
     skillId: skillId,
     runId,
     body,
@@ -1068,10 +1105,39 @@ async function authorAndRegister(
       ref: page.ref,
       title: page.title,
     })),
+    ...(storedVersionId !== undefined ? { storedVersionId } : {}),
   });
-  if (!registered) return { ok: false, reason: SUPERSEDED };
+  if (registered) return { ok: true };
+  if (refusal === undefined) return { ok: false, reason: SUPERSEDED };
+  return await recordAuthoringFailure(ctx, skillId, runId, {
+    rowReason: storedCopyRefusedReason(refusal),
+    reason: refusal,
+    eventType: 'skill.verification-failed',
+    dropsStoredCopy: true,
+  });
+}
 
-  return { ok: true };
+/**
+ * Why a row's parked copy of a stored version may not be checked: its offer is gone (a handover,
+ * a Withdraw or a later evaluation took it), or the version offered is no longer one the row may
+ * register as. Undefined when the copy may be checked, under the version's checks again at
+ * registration.
+ */
+async function parkedCopyRefusal(
+  ctx: ActionCtx,
+  skill: Doc<'skills'>,
+): Promise<string | undefined> {
+  if (skill.offeredVersionId === undefined) return 'the skill it copied is no longer offered';
+  const target = await ctx.runQuery(internal.skillVersions.storedVerificationTarget, {
+    skillId: skill._id,
+    versionId: skill.offeredVersionId,
+  });
+  return target.kind === 'refused' ? target.reason : undefined;
+}
+
+/** The row's line for a stored version's copy that was refused, around the refusal. */
+export function storedCopyRefusedReason(refusal: string): string {
+  return `the stored skill was not registered: ${refusal}`;
 }
 
 /**
@@ -1081,7 +1147,7 @@ async function authorAndRegister(
  * @param contract - The harness contract the verification ran under.
  * @param surfaces - The employee's surfaces, for their classes.
  */
-function namedHarnessSurfaces(
+export function namedHarnessSurfaces(
   contract: SmokeHarnessContract,
   surfaces: readonly SurfaceRecord[],
 ): NamedHarnessSurface[] {
@@ -1093,315 +1159,4 @@ function namedHarnessSurfaces(
       ...(surfaceClass !== undefined ? { surfaceClass } : {}),
     };
   });
-}
-
-/** What the re-check's author is told when a version's passing check was never kept (K3). */
-const KEEP_CHECK_INSTRUCTION =
-  'This skill is already registered with the SKILL.md below, and it stays exactly as it is. ' +
-  'Write smoke.py for it as the rules above say, and return this SKILL.md unchanged as the body.';
-
-/** What a re-check's author prompt is built from. */
-export interface KeepCheckPromptInput {
-  /** The holder row, as the author prompt reads it. */
-  readonly skill: AuthorPromptSkill;
-  /** The registered SKILL.md, which stays as it is. */
-  readonly body: string;
-  /** The holder's surfaces. */
-  readonly surfaces: readonly SurfaceRecord[];
-  /** Clock for the connection verdict. */
-  readonly now: number;
-  /** The holder's redacted documentation. */
-  readonly pages: readonly AuthorRunbookPage[];
-}
-
-/**
- * The author prompt for a re-check whose version has no kept smoke test: the authoring prompt
- * for the same skill, with the registered body fixed and only the smoke test asked for.
- */
-export function buildKeepCheckPrompt(input: KeepCheckPromptInput): string {
-  const { skill, body, surfaces, now, pages } = input;
-  return [
-    buildAuthorPrompt(skill, surfaces, now, pages, SURFACE_MODE),
-    '',
-    KEEP_CHECK_INSTRUCTION,
-    '',
-    'Registered SKILL.md:',
-    body,
-  ].join('\n');
-}
-
-/** Where a stored verification stops short of a verdict on the body. */
-type StoredVerificationStop =
-  | { readonly kind: 'skipped'; readonly reason: string }
-  | { readonly kind: 'failed'; readonly reason: string; readonly log: string };
-
-/**
- * Verify a stored body and smoke test in the sandbox under the holding employee's contract, and
- * register the row on a pass or fail it with the log (the enhancements plan, section 4.1).
- * Internal: adoption (10-A) and Re-check now (10-C) schedule it after their own owner-guarded
- * mutations, and the backfill's re-check is a Re-check now.
- *
- * The version is the row's own (a re-check) or the one offered to it (an adoption). The run takes
- * the row's authoring claim for a stored verification, which leaves a registered row in use, then
- * the one global sandbox lease (`holdSandboxLease`). A version whose passing check was not kept
- * (K3) has a smoke test written for its unchanged body first, through the authoring gates. On a
- * pass, `skills.completeRegistration` links the row to the version, keeps a missing check and
- * clears "Re-check due"; on a failure the row is `failed` with the sandbox's log, its waiting work
- * parked as any failed skill's is. When no sandbox ran, or the smoke test for a missing check
- * could not be written, a registered row is released unchanged, still due, and any other row is
- * parked with the stored body for Retry.
- *
- * @returns Whether the row registered, or why not.
- */
-export const verifyStoredSkill = internalAction({
-  args: {
-    skillId: v.id('skills'),
-    /** A newer version of the row's name to verify it as, in place of its own (10-C). */
-    versionId: v.optional(v.id('skillVersions')),
-  },
-  handler: async (ctx, args): Promise<{ ok: boolean; reason?: string }> => {
-    const target = await ctx.runQuery(internal.skillVersions.storedVerificationTarget, {
-      skillId: args.skillId,
-      ...(args.versionId !== undefined ? { versionId: args.versionId } : {}),
-    });
-    if (target.kind === 'refused') return { ok: false, reason: target.reason };
-    const claim = await ctx.runMutation(internal.skills.claimAuthoringRun, {
-      skillId: args.skillId,
-      purpose: 'verify-stored',
-    });
-    if (!claim.claimed) return { ok: false, reason: claim.reason };
-    const { skill, version } = target;
-    const { runId } = claim;
-    const [surfaceRows, pageRows]: [Doc<'surfaces'>[], Doc<'docPages'>[]] = await Promise.all([
-      ctx.runQuery(internal.orientationData.surfacesForAgent, { agentId: skill.agentId }),
-      ctx.runQuery(internal.orientationData.pagesForAgent, { agentId: skill.agentId }),
-    ]);
-    const surfaces = surfaceRows.map(toSurfaceRecord);
-    const smokeTest =
-      version.smokeTest ??
-      (await writeKeptCheck(ctx, { skill, body: version.body, surfaces, pages: pageRows }));
-    const stop =
-      typeof smokeTest === 'string'
-        ? await runStoredVerification(ctx, {
-            skill,
-            runId,
-            body: version.body,
-            smokeTest,
-            surfaces,
-          })
-        : smokeTest;
-    if (stop.kind === 'passed') {
-      const { registered, refusal } = await ctx.runMutation(internal.skills.completeRegistration, {
-        skillId: args.skillId,
-        runId,
-        body: version.body,
-        verificationLog: stop.log,
-        smokeTest: stop.smokeTest,
-        harnessTools: stop.harnessTools,
-        harnessToolsBySurface: stop.harnessToolsBySurface,
-        readRefs: version.readRefs,
-        storedVersionId: version._id,
-      });
-      if (registered) return { ok: true };
-      if (refusal === undefined) return { ok: false, reason: SUPERSEDED };
-      return await recordAuthoringFailure(ctx, args.skillId, runId, {
-        rowReason: `the stored skill was not registered: ${refusal}`,
-        reason: refusal,
-        eventType: 'skill.verification-failed',
-      });
-    }
-    if (stop.kind === 'failed') {
-      return await recordAuthoringFailure(ctx, args.skillId, runId, {
-        rowReason: stop.log,
-        reason: stop.reason,
-        eventType: 'skill.verification-failed',
-      });
-    }
-    return await stopShortOfVerdict(ctx, {
-      skill,
-      runId,
-      body: version.body,
-      smokeTest: typeof smokeTest === 'string' ? smokeTest : undefined,
-      reason: stop.reason,
-    });
-  },
-});
-
-/**
- * Write the smoke test a version's missing check needs (K3): the author is asked for smoke.py
- * against the registered body, which stays as it is, and the authoring gates read both.
- *
- * @returns The smoke test, or why none could be written.
- */
-async function writeKeptCheck(
-  ctx: ActionCtx,
-  input: {
-    readonly skill: Doc<'skills'>;
-    readonly body: string;
-    readonly surfaces: readonly SurfaceRecord[];
-    readonly pages: readonly Doc<'docPages'>[];
-  },
-): Promise<string | { readonly kind: 'skipped'; readonly reason: string }> {
-  const { skill, body, surfaces, pages } = input;
-  let authored: z.infer<typeof authorSchema>;
-  try {
-    authored = await recordingAuthoringCalls(ctx, skill, () =>
-      agentJson<z.infer<typeof authorSchema>>({
-        agent: skillAuthorAgent,
-        user: buildKeepCheckPrompt({ skill, body, surfaces, now: Date.now(), pages }),
-        schema: authorSchemaFor(SURFACE_MODE),
-      }),
-    );
-  } catch (err) {
-    return {
-      kind: 'skipped',
-      reason: `the smoke test for its unchanged body could not be written: ${errorMessage(err)}`,
-    };
-  }
-  const smokeTest = unwrapMarkdownFence(authored.smokeTest.trim()).source.trim();
-  const instance: Doc<'workItems'> | null = skill.proposedFor
-    ? await ctx.runQuery(internal.work.getInternal, { workItemId: skill.proposedFor })
-    : null;
-  const issues = smokeTest
-    ? authoredSkillIssues({
-        body,
-        smokeTest,
-        instance,
-        documentedProcedure:
-          SURFACE_MODE === 'real'
-            ? linkedRunbookExcerpts(skill, surfaces, pages)
-                .map((linked) => linked.excerpt)
-                .join('\n')
-            : '',
-      })
-    : ['the model returned an empty smoke test'];
-  if (issues.length > 0) {
-    return {
-      kind: 'skipped',
-      reason: `the smoke test written for its unchanged body was refused: ${issues.join('; ')}`,
-    };
-  }
-  return smokeTest;
-}
-
-/** A stored verification that passed: the log, the program kept and the tools the body names. */
-interface StoredVerificationPass {
-  readonly kind: 'passed';
-  readonly log: string;
-  readonly smokeTest: string;
-  readonly harnessTools: string[];
-  readonly harnessToolsBySurface: SurfaceTools[];
-}
-
-/**
- * Run a stored body and smoke test in the sandbox under the holder's contract, holding the one
- * global lease for the run and releasing it whichever way the run went.
- */
-async function runStoredVerification(
-  ctx: ActionCtx,
-  args: {
-    readonly skill: Doc<'skills'>;
-    readonly runId: Id<'events'>;
-    readonly body: string;
-    readonly smokeTest: string;
-    readonly surfaces: readonly SurfaceRecord[];
-  },
-): Promise<StoredVerificationPass | StoredVerificationStop> {
-  const { skill, runId } = args;
-  const lease = await holdSandboxLease(ctx, {
-    skillId: skill._id,
-    agentId: skill.agentId,
-    name: skill.name,
-    runId,
-  });
-  if (!lease.held) {
-    return {
-      kind: 'skipped',
-      reason: `the verification sandbox was busy with another skill for ${Math.round(lease.waitedMs / 60_000)} minutes`,
-    };
-  }
-  const contract = smokeHarnessContract(args.body, args.surfaces, skill.targetSurface, Date.now());
-  try {
-    const verification = await verifyAuthoredSkill(
-      { skillName: skill.name, skillBody: args.body, smokeTest: args.smokeTest },
-      authorAndVerifySkill,
-      SURFACE_MODE,
-      contract,
-    );
-    if (!verification.ok) {
-      return { kind: 'failed', reason: verification.reason, log: verification.reason };
-    }
-    const result = verification.result;
-    if (result.skipped) {
-      return { kind: 'skipped', reason: result.skipReason ?? 'no sandbox available' };
-    }
-    const backend = result.backend === 'local' ? 'the local sandbox' : 'Daytona';
-    const [stdout, stderr] = await redactAuthoringTexts(ctx, skill.agentId, [
-      result.stdout,
-      result.stderr,
-    ]);
-    if (!result.ok) {
-      const failure = result.failureReason ?? 'sandbox verification failed';
-      return {
-        kind: 'failed',
-        reason: `the stored skill failed its check - ${failure}`,
-        log:
-          `verification in ${backend} (${result.sandboxId}) failed - ${failure}\n\n` +
-          clipRefusedDraft(
-            `stderr:\n${stderr!.trim()}\n\nstdout:\n${stdout!.trim()}`,
-            FAILED_VERIFICATION_LOG_CHARS,
-          ),
-      };
-    }
-    return {
-      kind: 'passed',
-      log: `ran in ${backend} (${result.sandboxId})\n\nstdout:\n${stdout}\n\nstderr:\n${stderr}\nok: true`,
-      smokeTest: verification.smokeTest,
-      harnessTools: harnessToolsNamed(args.body, contract.surfaces),
-      harnessToolsBySurface: harnessToolsBySurface(
-        args.body,
-        namedHarnessSurfaces(contract, args.surfaces),
-      ),
-    };
-  } catch (err) {
-    return { kind: 'skipped', reason: `the sandbox threw: ${errorMessage(err)}` };
-  } finally {
-    await ctx.runMutation(internal.sandboxLease.release, { skillId: skill._id, runId });
-  }
-}
-
-/**
- * End a stored verification that reached no verdict on the body. A registered row stays in use,
- * still due its re-check, and the claim is released; any other row is parked with the stored
- * body and smoke test, so Retry checks them without authoring.
- */
-async function stopShortOfVerdict(
-  ctx: ActionCtx,
-  args: {
-    readonly skill: Doc<'skills'>;
-    readonly runId: Id<'events'>;
-    readonly body: string;
-    readonly smokeTest: string | undefined;
-    readonly reason: string;
-  },
-): Promise<{ ok: false; reason: string }> {
-  const { skill, runId, reason } = args;
-  if (skill.state === 'registered' || args.smokeTest === undefined) {
-    const { released } = await ctx.runMutation(internal.skillVersions.releaseStoredVerification, {
-      skillId: skill._id,
-      runId,
-      reason,
-    });
-    return { ok: false, reason: released ? reason : SUPERSEDED };
-  }
-  const { recorded } = await ctx.runMutation(internal.skills.parkUnverified, {
-    skillId: skill._id,
-    runId,
-    sandboxId: '(skipped)',
-    body: args.body,
-    smokeTest: args.smokeTest,
-    verificationLog: `the stored skill was not verified: ${reason}; Retry runs its check`,
-    reason,
-  });
-  return { ok: false, reason: recorded ? reason : SUPERSEDED };
 }

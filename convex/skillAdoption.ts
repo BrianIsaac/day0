@@ -10,8 +10,9 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, assertOwnsSkill } from './ownership';
 import { appendEvent } from './eventLog';
+import { assertNotBeingHandedOver } from './handoverFence';
 import { grantScopeInTransaction } from './agents';
-import { ownerVersions, sharedSkillsOn } from './skillVersions';
+import { ownerVersions, sharedSkillsOn, STORED_COPY_CLEARED } from './skillVersions';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { browserComponentRefusal, withBrowserComponentState } from '../src/surfaces/browser';
 import { skillApprovalRefusal } from '../src/surfaces/policy';
@@ -19,6 +20,7 @@ import { toSurfaceRecord } from '../src/surfaces/records';
 import { verdictFor } from '../src/surfaces/verdict';
 import { holdsLiveAuthoringClaim } from '../src/lib/skill-authoring';
 import {
+  OFFER_WITHDRAWN_REFUSAL,
   adoptionCardState,
   adoptionFit,
   chooseOffer,
@@ -266,7 +268,7 @@ async function standingOffer(
   if (!isOfferedTo(version, adopter)) {
     return refused(
       version.revokedAt !== undefined
-        ? 'the offered skill was withdrawn from every employee'
+        ? OFFER_WITHDRAWN_REFUSAL
         : version.supersededAt !== undefined
           ? 'a revision replaced the offered skill'
           : 'the offered skill cannot be offered now',
@@ -286,11 +288,15 @@ async function standingOffer(
 /**
  * Adopt the offered version for an offered proposal, in the caller's transaction: the approval of
  * the scopes the employee lacks, `skill.approved` and `skill.adopted`, and the stored verification
- * scheduled.
+ * scheduled. Refused, as the plain approval is, once a new manager has accepted the employee and
+ * it waits for its runs: the skill and its scopes would move with it after the new manager's
+ * preview (U3-m3; the wave 10 review, M1).
  *
- * @throws ConvexError when the row is not an offered proposal or the offer no longer stands.
+ * @throws ConvexError when a handover of the employee was accepted, the row is not an offered
+ *   proposal or the offer no longer stands.
  */
 async function adoptOffer(ctx: MutationCtx, row: Doc<'skills'>): Promise<{ scopes: string[] }> {
+  await assertNotBeingHandedOver(ctx.db, row.agentId);
   if (row.state !== 'proposed' || row.offeredVersionId === undefined) {
     throw new ConvexError(`${row.name} has no skill offered to adopt.`);
   }
@@ -324,7 +330,9 @@ async function adoptOffer(ctx: MutationCtx, row: Doc<'skills'>): Promise<{ scope
     },
     createdAt: now,
   });
-  await ctx.scheduler.runAfter(0, internal.skillActions.verifyStoredSkill, { skillId: row._id });
+  await ctx.scheduler.runAfter(0, internal.storedVerification.verifyStoredSkill, {
+    skillId: row._id,
+  });
   return { scopes };
 }
 
@@ -333,12 +341,12 @@ async function adoptOffer(ctx: MutationCtx, row: Doc<'skills'>): Promise<{ scope
  * {name}). Checks the offer again as it stands, then in one transaction approves the row, grants
  * only the scopes the employee lacks (the approval path's own grant, with its `skill.approved`
  * and `permission.granted` events), records `skill.adopted` with the version, and schedules
- * `skillActions.verifyStoredSkill`, which re-verifies the version in the sandbox under the
+ * `storedVerification.verifyStoredSkill`, which re-verifies the version in the sandbox under the
  * employee's own connection and tool allowlist and registers it only on a pass.
  *
  * @returns The scopes the adoption granted.
- * @throws ConvexError, in words for the manager, when the row is not an offered proposal or the
- *   offer no longer stands.
+ * @throws ConvexError, in words for the manager, when a handover of the employee was accepted, the
+ *   row is not an offered proposal or the offer no longer stands.
  */
 export const adopt = mutation({
   args: { skillId: v.id('skills') },
@@ -366,7 +374,7 @@ async function versionRefusal(
     return { version, refusal: 'the offered skill is no longer in your library' };
   }
   if (version.revokedAt !== undefined) {
-    return { version, refusal: 'the offered skill was withdrawn from every employee' };
+    return { version, refusal: OFFER_WITHDRAWN_REFUSAL };
   }
   return { version };
 }
@@ -374,7 +382,7 @@ async function versionRefusal(
 /**
  * Public, guarded by `assertOwnsSkill`: Check it again, for an adoption whose stored verification
  * stopped short (no sandbox ran, the run lapsed, or it was refused before it ran). Schedules
- * `skillActions.verifyStoredSkill` once more for the version offered; writes nothing else.
+ * `storedVerification.verifyStoredSkill` once more for the version offered; writes nothing else.
  *
  * @throws ConvexError when the row has no stopped check, a live run holds it, or the version may no
  *   longer be verified.
@@ -395,7 +403,9 @@ export const verifyAgain = mutation({
     if (refusal !== undefined) {
       throw new ConvexError(`${row.name} cannot be checked again: ${refusal}.`);
     }
-    await ctx.scheduler.runAfter(0, internal.skillActions.verifyStoredSkill, { skillId: row._id });
+    await ctx.scheduler.runAfter(0, internal.storedVerification.verifyStoredSkill, {
+      skillId: row._id,
+    });
     return { ok: true };
   },
 });
@@ -406,7 +416,8 @@ export const verifyAgain = mutation({
  * on a proposal, the authoring alone on a failed or stopped adoption) writes the employee's own
  * skill and the card stops saying an adoption is under way. A stopped check's parked copy of the
  * version goes too, since an authoring run that found it would check that copy instead of writing.
- * Writes the row only; the approval and the authoring write their own events.
+ * A failed adoption's log, which quotes the version, goes as well. Writes the row only; the
+ * approval and the authoring write their own events.
  *
  * @throws ConvexError when the row is not an offered proposal, a failed adoption or one whose check
  *   stopped short.
@@ -419,11 +430,11 @@ export const setOfferAside = mutation({
     if (state !== 'offered' && state !== 'failed' && !stoppedShort(row, Date.now())) {
       throw new ConvexError(`${row.name} has no adoption to set aside.`);
     }
+    // Whatever the adoption held of the version goes with the offer (the second pass): the
+    // authoring that follows writes the employee's own skill.
     await ctx.db.patch(row._id, {
       offeredVersionId: undefined,
-      ...(state === 'verifying' && row.pendingSmokeTest !== undefined
-        ? { body: '', pendingSmokeTest: undefined }
-        : {}),
+      ...(state === 'offered' ? {} : STORED_COPY_CLEARED),
     });
     return { ok: true };
   },

@@ -1,4 +1,8 @@
-import { MAX_AUTHORING_ATTEMPTS } from '@/work/skill-library';
+import {
+  type AdoptedSource,
+  MAX_AUTHORING_ATTEMPTS,
+  newerVersionWords,
+} from '@/work/skill-library';
 
 /*
  * The Skills tab's words for the five controls (10-C; the prototype's `agent-skills.html`): how
@@ -41,7 +45,7 @@ function sentence(reason: string): string {
  * @param reason - The stamp's reason (`recheckReason`).
  */
 export function recheckSentence(reason: string, employee: string): string {
-  return `${sentence(reason)} ${employee} keeps running the verified version until it is re-checked.`;
+  return `${sentence(newerVersionWords(reason) ?? reason)} ${employee} keeps running the verified version until it is re-checked.`;
 }
 
 /**
@@ -82,6 +86,17 @@ export function givenUpOutcome(skill: string, cancelled: number): string {
 }
 
 /**
+ * What the live region says once a revision is opened and its writing has begun (the wave 10
+ * review, C-m2).
+ *
+ * @param skill - The skill's name.
+ * @param employee - The employee who keeps running the current version.
+ */
+export function revisionStartedOutcome(skill: string, employee: string): string {
+  return `A revision of ${skill} is being written. ${employee} keeps running this version until the new one registers.`;
+}
+
+/**
  * What the live region says once a re-check is on its way.
  */
 export function recheckStartedOutcome(skill: string): string {
@@ -100,16 +115,74 @@ export function retireOutcome(skill: string, employee: string, returned: number)
   return `${retired} ${returned} approved ${returned === 1 ? 'item waits' : 'items wait'} for a skill again.`;
 }
 
+/** What a withdrawal from every employee did, as `skillControls.withdraw` answers. */
+export interface WithdrawResult {
+  /** How many employees' copies it retired. */
+  readonly holders: number;
+  /** The approved items that went back to waiting for a skill, theirs together. */
+  readonly returnedItems: number;
+  /** The runs of the version already under way that it stopped. */
+  readonly stoppedRuns: number;
+}
+
 /**
  * What the live region says once a withdrawal from every employee lands.
  *
- * @param holders - How many employees' copies it retired.
- * @param returned - The approved items that went back to waiting for a skill, theirs together.
+ * @param result - What the withdrawal did.
  */
-export function withdrawOutcome(skill: string, holders: number, returned: number): string {
-  const withdrawn = `${skill} is withdrawn from ${holders} ${holders === 1 ? 'employee' : 'employees'}.`;
-  if (returned === 0) return withdrawn;
-  return `${withdrawn} ${returned} approved ${returned === 1 ? 'item waits' : 'items wait'} for a skill again.`;
+export function withdrawOutcome(skill: string, result: WithdrawResult): string {
+  const { holders, returnedItems, stoppedRuns } = result;
+  const sentences = [
+    `${skill} is withdrawn from ${holders} ${holders === 1 ? 'employee' : 'employees'}.`,
+  ];
+  if (returnedItems > 0) {
+    sentences.push(
+      `${returnedItems} approved ${returnedItems === 1 ? 'item waits' : 'items wait'} for a skill again.`,
+    );
+  }
+  if (stoppedRuns > 0) {
+    sentences.push(
+      `${stoppedRuns} ${stoppedRuns === 1 ? 'run under way was' : 'runs under way were'} stopped.`,
+    );
+  }
+  return sentences.join(' ');
+}
+
+/** Who a Retire or a Withdraw takes the skill from, as the dialog's sentence says it. */
+export interface RetireDialogFacts {
+  /** Withdraw for every employee, rather than Retire from one. */
+  readonly every: boolean;
+  /** The employee whose card the dialog was opened on. */
+  readonly employee: string;
+  /** Every employee who runs the version, that employee first. */
+  readonly runners: readonly string[];
+  /** Whether a revision of the row is being written, which the retire ends. */
+  readonly revisionOpen: boolean;
+  /** Whether the employee's autonomous actions are on, so a run's writes apply unasked. */
+  readonly autonomous: boolean;
+}
+
+/**
+ * The Retire dialog's sentence under its question: who stops running the skill and what becomes
+ * of a run of it already under way (decision 3: a Withdraw stops it, a Retire lets it finish),
+ * then of the approved work that would have used it.
+ *
+ * @param facts - The choice and the employees it reaches.
+ */
+export function retireDialogDescription(facts: RetireDialogFacts): string {
+  const { every, employee, runners, revisionOpen, autonomous } = facts;
+  const who = every
+    ? `${namesInWords(runners)} start no new run of this skill, and a run of it already under way ends now.`
+    : `${employee} starts no new run of this skill. A run of it already under way finishes, ${
+        autonomous
+          ? 'and with autonomous actions on, its writes apply without waiting for you.'
+          : 'and its writes still wait for you.'
+      }`;
+  const work =
+    'Approved work that would have used it goes back to waiting for a skill, and a new one is proposed for it.';
+  return [who, work, ...(revisionOpen ? ['The revision being written for it ends too.'] : [])].join(
+    ' ',
+  );
 }
 
 /** How a list of names is joined, as a British sentence joins it. */
@@ -122,4 +195,28 @@ const NAME_LIST = new Intl.ListFormat('en-GB', { style: 'long', type: 'conjuncti
  */
 export function namesInWords(names: readonly string[]): string {
   return NAME_LIST.format(names);
+}
+
+/**
+ * The chip on a registered skill, by where its body came from: written by the employee, adopted
+ * from a colleague's verified version (the real-Linear walk, m2), or built in.
+ *
+ * @param skill - The registered row.
+ */
+export function registeredSourceChip(skill: {
+  readonly sourceType: string;
+  readonly adoptedAt?: number;
+}): 'authored' | 'adopted' | 'built in' {
+  if (skill.sourceType !== 'agent-authored') return 'built in';
+  return skill.adoptedAt === undefined ? 'authored' : 'adopted';
+}
+
+/**
+ * Whose version an adopted skill runs, for its card's detail line: "version 1, adopted from
+ * Priya", or "from a colleague under the previous manager" once a handover brought it.
+ *
+ * @param source - The version and author the owner's library names.
+ */
+export function adoptedFromWords(source: Pick<AdoptedSource, 'version' | 'authorName'>): string {
+  return `version ${source.version}, adopted from ${source.authorName}`;
 }

@@ -1111,7 +1111,7 @@ describe('surface probe action state', (): void => {
       harness.withIdentity(managerIdentity('other-owner')).action(api.surfaceActions.probe, {
         surfaceId,
       }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
     const surface = await harness.run(async (ctx) => await ctx.db.get(surfaceId));
     expect(surface?.probeGeneration).toBeUndefined();
   });
@@ -1501,7 +1501,7 @@ describe('credential landing from the card', (): void => {
       harness
         .withIdentity(managerIdentity('stranger'))
         .action(liveApi.surfaceActions.landCredential, { surfaceId, label: 'x', plaintext: 'y' }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
   });
 });
 

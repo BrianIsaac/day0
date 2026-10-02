@@ -4,7 +4,12 @@ import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
-import { assembleTrace, type AgentTrace, type TracePage } from '../../src/export/trace';
+import {
+  assembleTrace,
+  ownerKeyDigest,
+  type AgentTrace,
+  type TracePage,
+} from '../../src/export/trace';
 import { EVENT_TYPES } from '../../src/events/contract';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
@@ -191,9 +196,57 @@ describe('the paged trace export', (): void => {
       });
     });
     const trace = await exportedTrace(harness.withIdentity(managerIdentity('wei')), agentId);
+    // Re-pinned (decision 2, M6): each owner key as its digest, salted with the export's time.
+    const digest = (key: string): string => ownerKeyDigest(key, trace.manifest.exportedAt);
     expect(trace.manifest.handovers).toEqual([
-      { agentId, fromOwnerKey: 'owner', toOwnerKey: 'priya', acceptedAt: 5_000 },
-      { agentId, fromOwnerKey: 'priya', toOwnerKey: 'wei', acceptedAt: 9_000 },
+      {
+        agentId,
+        fromOwnerDigest: digest('owner'),
+        toOwnerDigest: digest('priya'),
+        acceptedAt: 5_000,
+      },
+      {
+        agentId,
+        fromOwnerDigest: digest('priya'),
+        toOwnerDigest: digest('wei'),
+        acceptedAt: 9_000,
+      },
+    ]);
+  });
+
+  it('names no earlier manager’s account in its manifest: each handover carries digests of the two owner keys, salted with the export’s time (decision 2, the wave 10 review, M6)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedTracedAgent(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(agentId, { userId: 'user_present_holder' });
+      await ctx.db.insert('managerTransfers', {
+        agentId,
+        agentName: 'Priya',
+        fromAddress: MANAGER_ADDRESS,
+        toAddress: 'lead@day0.local',
+        requestedAt: 1_000,
+        expiresAt: 1_000 + 14 * 24 * 60 * 60 * 1000,
+        fromOwnerKey: 'user_earlier_manager',
+        toOwnerKey: 'user_present_holder',
+        state: 'accepted',
+        decidedAt: 5_000,
+      });
+    });
+
+    const trace = await exportedTrace(
+      harness.withIdentity(managerIdentity('user_present_holder')),
+      agentId,
+    );
+
+    expect(JSON.stringify(trace.manifest)).not.toContain('user_earlier_manager');
+    expect(JSON.stringify(trace)).not.toContain('user_earlier_manager');
+    expect(trace.manifest.handovers).toEqual([
+      {
+        agentId,
+        fromOwnerDigest: ownerKeyDigest('user_earlier_manager', trace.manifest.exportedAt),
+        toOwnerDigest: ownerKeyDigest('user_present_holder', trace.manifest.exportedAt),
+        acceptedAt: 5_000,
+      },
     ]);
   });
 
@@ -202,7 +255,7 @@ describe('the paged trace export', (): void => {
     const agentId = await seedTracedAgent(harness);
     await expect(
       exportedTrace(harness.withIdentity(managerIdentity('intruder')), agentId),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
     const trace = await exportedTrace(harness.withIdentity(managerIdentity()), agentId);
     expect(trace.sections.events.map((event) => event.type)).toEqual([
       'work.completed',
@@ -525,7 +578,7 @@ describe('the flips of the autonomous-actions switch', (): void => {
       harness
         .withIdentity(managerIdentity('intruder'))
         .query(api.events.autonomyChanges, { agentId: priya! }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
   });
 });
 
@@ -641,6 +694,19 @@ describe('export redaction', (): void => {
     ).toEqual({
       type: 'manager.transfer-asked',
       payload: { transferId: 'transfer-1', hasNote: true },
+    });
+  });
+
+  it('drops the author of an adopted or offered skill, a colleague of whoever managed then (decision 4, the wave 10 review, M8)', async (): Promise<void> => {
+    const { redactForExport } = await import('../../convex/events');
+    expect(
+      redactForExport({
+        type: 'skill.adopted',
+        payload: { name: 'kanban-comment-and-close', version: 1, authorName: 'Priya' },
+      }),
+    ).toEqual({
+      type: 'skill.adopted',
+      payload: { name: 'kanban-comment-and-close', version: 1 },
     });
   });
 });

@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { auth } from '@clerk/nextjs/server';
 import { ConvexHttpClient } from 'convex/browser';
+import { serverConvexUrl } from './convex-url';
 import { CUSTOMER_SESSION_COOKIE, joinCookie, openSession } from './customer-session';
 import { CUSTOMER_SIGN_IN } from './customer-sign-in';
 import { DEV_NO_AUTH } from './dev-auth';
@@ -28,23 +29,6 @@ import {
 export type ConvexCaller =
   | { ok: true; client: ConvexHttpClient }
   | { ok: false; refusal: NextResponse };
-
-/**
- * The address a server route dials the backend on.
- *
- * `NEXT_PUBLIC_CONVEX_URL` is the browser's address and is inlined into the
- * bundle at build. A server process may need a different one (a compose
- * service name, a private address), so `CONVEX_URL` names it when set.
- *
- * @param values - Environment values to read.
- * @returns `CONVEX_URL`, else `NEXT_PUBLIC_CONVEX_URL`.
- * @throws Error when neither is set.
- */
-export function serverConvexUrl(values: Partial<Record<string, string>> = process.env): string {
-  const url = values.CONVEX_URL?.trim() || values.NEXT_PUBLIC_CONVEX_URL?.trim();
-  if (!url) throw new Error('Neither CONVEX_URL nor NEXT_PUBLIC_CONVEX_URL is set.');
-  return url;
-}
 
 /** The established caller's Convex token, or null when their issuer gave none. */
 async function convexToken(): Promise<string | null> {

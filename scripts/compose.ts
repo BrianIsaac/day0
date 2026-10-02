@@ -43,7 +43,7 @@ export const PROFILES: Readonly<Record<string, string>> = {
   'docs-notion': 'read documentation out of Notion (docs-notion-mcp)',
   browser: 'reach a system that has a web UI and no API (playwright-mcp)',
   demo: 'the synthetic Looker tile the browser component is shown against',
-  test: 'the fake Slack provider used by tests and review panes',
+  test: 'the fake Slack provider and the test OpenID Connect issuer, for tests and review beds',
   dev: 'the Convex dashboard',
   model: 'a bundled OpenAI-compatible model server',
   sandbox: 'the local sandbox that verifies an authored skill',

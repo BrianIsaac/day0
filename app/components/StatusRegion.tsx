@@ -16,7 +16,7 @@ export function StatusRegion({ outcome }: { outcome: ChangeOutcome | null }) {
       role="status"
       aria-live="polite"
       aria-atomic="true"
-      className={`empty:sr-only text-xs leading-snug ${
+      className={`empty:sr-only text-xs leading-snug break-words ${
         outcome?.tone === 'refused' ? 'text-[var(--color-danger)]' : 'text-[var(--color-muted)]'
       }`}
     >

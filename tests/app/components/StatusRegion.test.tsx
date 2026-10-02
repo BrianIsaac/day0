@@ -28,4 +28,11 @@ describe('StatusRegion', (): void => {
     expect(markup).toMatch(/\btext-xs\b/);
     expect(markup).not.toMatch(/text-\[(9|10|11)px\]/);
   });
+
+  it('wraps a long unbroken name rather than widen the page at 390 px (the second pass)', (): void => {
+    const markup = renderToStaticMarkup(
+      <StatusRegion outcome={{ tone: 'done', text: 'kanban-comment-and-close-everywhere.' }} />,
+    );
+    expect(markup).toMatch(/\bbreak-words\b/);
+  });
 });

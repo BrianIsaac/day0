@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { establishCaller } from '@/lib/dev-auth-server';
+import { establishConvexCaller } from '@/lib/convex-caller';
 import { env } from '@/env';
 import { log } from '@/lib/logger';
 
@@ -25,7 +25,9 @@ const UNCONFIGURED_REASON =
  *
  * Every signed URL is minted against the owner's ElevenLabs quota, so
  * the caller is established here and not left to the proxy matcher
- * alone.
+ * alone, through the one seam every server route uses: under the
+ * customer-local profile that is the company sign-in's session, and Clerk
+ * is never asked (the wave 10 review, M7).
  *
  * A non-OK response from ElevenLabs is never silent, since a silent
  * fallback made it impossible to tell a wrong API key from a wrong agent id
@@ -46,7 +48,7 @@ const UNCONFIGURED_REASON =
  * when the tab dies mid-call.
  */
 export async function GET(req: Request): Promise<NextResponse> {
-  const caller = await establishCaller();
+  const caller = await establishConvexCaller();
   if (!caller.ok) return caller.refusal;
 
   const apiKey = env.ELEVENLABS_API_KEY;

@@ -202,7 +202,7 @@ describe('managerTransfers.ask', (): void => {
       harness
         .withIdentity(WEI)
         .mutation(api.managerTransfers.ask, { agentId: maya, toAddress: PRIYA_ADDRESS }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
     await expect(
       harness.mutation(api.managerTransfers.ask, { agentId: maya, toAddress: PRIYA_ADDRESS }),
     ).rejects.toThrow();
@@ -955,7 +955,7 @@ describe('managerTransfers.openForAgent', (): void => {
     const maya = await employee(harness);
     await expect(
       harness.withIdentity(PRIYA).query(api.managerTransfers.openForAgent, { agentId: maya }),
-    ).rejects.toThrow('forbidden');
+    ).rejects.toThrow('This employee is not yours.');
   });
 });
 
@@ -1079,6 +1079,79 @@ describe('managerTransfers.incoming', (): void => {
       await ctx.db.delete(maya);
     });
     expect(await harness.withIdentity(PRIYA).query(api.managerTransfers.incoming, {})).toEqual([]);
+  });
+});
+
+describe('managerTransfers.endedForMe (the cockpit’s item: the acceptor is told a handover ended itself)', (): void => {
+  it('lists the handovers the caller accepted that ended without the move, to the acceptor only, for 30 days', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const maya = await employee(harness);
+    const tomas = await employee(harness, 'Tomas');
+    const juno = await employee(harness, 'Juno');
+    const acceptedAt = Date.now() - 60_000;
+    const ended = await insertRequest(harness, {
+      agentId: maya,
+      state: 'cancelled',
+      decidedAt: acceptedAt,
+      toOwnerKey: 'priya',
+    });
+    // An ask its manager cancelled before any answer: never accepted.
+    await insertRequest(harness, { agentId: tomas, state: 'cancelled', cancelReason: 'owner' });
+    // Another account signed in with the same address accepted this one.
+    await insertRequest(harness, {
+      agentId: juno,
+      state: 'cancelled',
+      decidedAt: acceptedAt,
+      toOwnerKey: 'another-priya',
+    });
+    // Ended more than 30 days ago.
+    await insertRequest(harness, {
+      agentId: juno,
+      state: 'cancelled',
+      decidedAt: Date.now() - 31 * 24 * 60 * 60 * 1000,
+      toOwnerKey: 'priya',
+    });
+
+    await expect(
+      harness.withIdentity(PRIYA).query(api.managerTransfers.endedForMe, {}),
+    ).resolves.toEqual([
+      { transferId: ended, agentName: 'Maya', fromAddress: MANAGER_ADDRESS, acceptedAt },
+    ]);
+    await expect(
+      harness.withIdentity(OWNER).query(api.managerTransfers.endedForMe, {}),
+    ).resolves.toEqual([]);
+    await expect(harness.query(api.managerTransfers.endedForMe, {})).resolves.toEqual([]);
+  });
+});
+
+describe('managerTransfers.endedForMe once the story moved on (the second pass)', (): void => {
+  it('drops an ended handover once the employee is gone, is the caller’s after all, or has a later request', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const acceptedAt = Date.now() - 60_000;
+    const ended = async (agentId: Id<'agents'>): Promise<Id<'managerTransfers'>> =>
+      await insertRequest(harness, {
+        agentId,
+        state: 'cancelled',
+        decidedAt: acceptedAt,
+        toOwnerKey: 'priya',
+        requestedAt: acceptedAt - 1_000,
+      });
+    const stays = await employee(harness, 'Maya');
+    const came = await employee(harness, 'Tomas', { userId: 'priya' });
+    const retired = await employee(harness, 'Juno');
+    const askedAgain = await employee(harness, 'Wren');
+    const kept = await ended(stays);
+    await ended(came);
+    await ended(retired);
+    await ended(askedAgain);
+    await harness.run(async (ctx) => {
+      await ctx.db.delete(retired);
+    });
+    await insertRequest(harness, { agentId: askedAgain, state: 'asked' });
+
+    const shown = await harness.withIdentity(PRIYA).query(api.managerTransfers.endedForMe, {});
+
+    expect(shown.map((transfer) => transfer.transferId)).toEqual([kept]);
   });
 });
 
