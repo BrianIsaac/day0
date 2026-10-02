@@ -226,20 +226,28 @@ async function refusalOf(response: Response, ref: NangoConnectionRef): Promise<E
     await response.body?.cancel();
     return transient;
   }
-  const code = errorCodeOf(parsedBody(await boundedText(response)));
-  if (response.status === 401 || response.status === 403) {
+  return refusalFor(response.status, errorCodeOf(parsedBody(await boundedText(response))), ref);
+}
+
+/** The refusal an answer's status and safe error code stand for. */
+function refusalFor(
+  status: number,
+  code: string | undefined,
+  ref: NangoConnectionRef,
+): NangoRefusal {
+  if (status === 401 || status === 403) {
     return new NangoRefusal(
       'key-refused',
       "Nango refused Day0's key (DAY0_NANGO_SECRET_KEY does not match the key Nango was started with).",
     );
   }
-  if (response.status === 404) {
+  if (status === 404) {
     return new NangoRefusal(
       'not-found',
       `Nango holds no connection ${ref.connectionId} for ${ref.providerConfigKey}.`,
     );
   }
-  if ((response.status === 400 || response.status === 424) && code === 'invalid_credentials') {
+  if ((status === 400 || status === 424) && code === 'invalid_credentials') {
     // 424 is Nango backing off for 30 seconds after a refusal: the same refusal, not a new one.
     return new NangoRefusal(
       'refresh-refused',
@@ -248,7 +256,7 @@ async function refusalOf(response: Response, ref: NangoConnectionRef): Promise<E
   }
   return new NangoRefusal(
     'unexpected-answer',
-    `Nango answered HTTP ${response.status}${code ? ` (${code})` : ''}.`,
+    `Nango answered HTTP ${status}${code ? ` (${code})` : ''}.`,
   );
 }
 
@@ -313,6 +321,13 @@ export async function forgetNangoConnection(
   if (response.ok || response.status === 404) {
     await response.body?.cancel();
     return;
+  }
+  if (response.status === 400) {
+    const code = errorCodeOf(parsedBody(await boundedText(response)));
+    // Nango 0.71.11 answers a delete of a connection it does not hold (a second delete, or one
+    // never made) with 400 `unknown_connection`, not 404 (seen on the 11-AT bed).
+    if (code === 'unknown_connection') return;
+    throw refusalFor(response.status, code, ref);
   }
   throw await refusalOf(response, ref);
 }

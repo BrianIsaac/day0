@@ -236,6 +236,12 @@ describe('forgetting a Nango connection', (): void => {
     );
     const gone = nango(() => Response.json({ error: { code: 'not_found' } }, { status: 404 }));
     await expect(forgetNangoConnection(gone.fetch, CONFIG, REF)).resolves.toBeUndefined();
+    // Recorded on the 11-AT bed, 2 October: Nango 0.71.11 answers a second delete of the same
+    // connection, or one it never held, with 400 and this code rather than 404.
+    const unknown = nango(() =>
+      Response.json({ error: { code: 'unknown_connection' } }, { status: 400 }),
+    );
+    await expect(forgetNangoConnection(unknown.fetch, CONFIG, REF)).resolves.toBeUndefined();
   });
 
   it('refuses when Nango does not delete it', async (): Promise<void> => {
